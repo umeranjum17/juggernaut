@@ -80,5 +80,28 @@ test_chat_answer_over_an_open_card_prints_no_block() {
   pass "jg-turnend-guard: a chat answer over an open card prints no block"
 }
 
+test_reply_text_is_the_last_assistant_text() {
+  local d t text
+  d=$(setup reply-text)
+  t=$d/transcript.jsonl
+  # The captain's own last message ends in a question; the assistant's reply is not
+  # a question, so the last text of this transcript must be the assistant's sentence.
+  printf '%s\n' \
+    '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done. The fix is merged."}]}}' \
+    '{"type":"user","message":{"role":"user","content":"armored juggernaut shooting maybe?"}}' > "$t"
+  text=$(jg_question_reply_text "$(printf '{"transcript_path":"%s"}' "$t")")
+  [ "$text" = "Done. The fix is merged." ] || fail "helper quoted the user turn: $text"
+  jg_question_asks "$text" && fail "the assistant reply is not a question: $text"
+  # The assistant's own final reply ending in a question is still the reply text.
+  printf '%s\n' \
+    '{"type":"user","message":{"role":"user","content":"ok"}}' \
+    '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Should I merge it?"}]}}' > "$t"
+  text=$(jg_question_reply_text "$(printf '{"transcript_path":"%s"}' "$t")")
+  [ "$text" = "Should I merge it?" ] || fail "helper lost the assistant question: $text"
+  jg_question_asks "$text" || fail "the assistant question was not read as one: $text"
+  pass "jg-question-lib: the reply text is the last assistant text, never a user turn"
+}
+
 test_reply_ending_in_a_question_prints_no_block
 test_chat_answer_over_an_open_card_prints_no_block
+test_reply_text_is_the_last_assistant_text

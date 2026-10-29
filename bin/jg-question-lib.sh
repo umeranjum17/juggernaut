@@ -104,7 +104,8 @@ jg_question_filed() {
   return 1
 }
 
-# Print the last assistant text of a turn-end payload's transcript, if it has one.
+# Print the last assistant text of a turn-end payload's transcript, if it has one;
+# a user turn, a tool result and a system notice are never the reply.
 jg_question_reply_text() {  # <turn-end payload json>
   local path
   command -v jq >/dev/null 2>&1 || return 0
@@ -113,6 +114,7 @@ jg_question_reply_text() {  # <turn-end payload json>
   tail -n 400 "$path" 2>/dev/null | jq -Rrs '
     split("\n")
     | map(fromjson? // empty)
+    | map(select((.type == "assistant") or (.message.role == "assistant") or (.payload.role == "assistant")))
     | map(
         if ((.message.content? | type) == "array") then
           (.message.content[]? | if type == "object" and (.type == "text") then .text else empty end)
