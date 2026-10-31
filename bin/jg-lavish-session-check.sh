@@ -65,8 +65,8 @@ if [ "$install" = 1 ]; then
   [ -d "$STATE" ] || die "state directory is unavailable: $STATE"
   check="$STATE/lavish-session.check.sh"
   [ ! -e "$check" ] || [ ! -L "$check" ] || die "refusing a symlinked check path: $check"
-  printf '#!/usr/bin/env bash\n# Registered sweep: ${SCRIPT_DIR}/jg-lavish-session-check.sh\nJG_HOME=%q exec %q --root %q\n' \
-    "$JG_HOME" "$SCRIPT_DIR/jg-lavish-session-check.sh" "$JG_HOME" > "$check" \
+  printf '#!/usr/bin/env bash\n# Registered sweep: %s/jg-lavish-session-check.sh\nJG_HOME=%q exec %q --root %q\n' \
+    "$SCRIPT_DIR" "$JG_HOME" "$SCRIPT_DIR/jg-lavish-session-check.sh" "$JG_HOME" > "$check" \
     || die "cannot write $check"
   chmod 0700 "$check" || die "cannot make $check executable"
   "$SCRIPT_DIR/jg-check-register.sh" lavish-session || die "cannot register the check"
