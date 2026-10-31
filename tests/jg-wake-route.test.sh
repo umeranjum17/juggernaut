@@ -20,6 +20,12 @@ test_classes() {
     "a turn-end must be batched, not woken on"
   assert_equals "$(route "$home" "$state" check startup 'check: MISSING')" now \
     "a startup failure must wake at once"
+  assert_equals "$(route "$home" "$state" check "$state/board-gate.check.sh" \
+    "check: $state/board-gate.check.sh: board ask routed to Overwatch, not a must: ask-mac-screen-grant - Allow screen recording? (record owd-1)")" batch \
+    "a board ask without a must category must land in a digest, not wake a model"
+  assert_equals "$(route "$home" "$state" check "$state/board-gate.check.sh" \
+    "check: $state/board-gate.check.sh: merge landed with no board Evidence card: m1 https://example.test/o/r/pull/7")" now \
+    "a merge with no board proof must still wake at once"
   printf 'working [at=1]: editing\n' > "$state/lane.status"
   printf 'needs-decision [at=2]: pick one\n' > "$state/pick.status"
   assert_equals "$(route "$home" "$state" signal pick.status "signal: x")" now \

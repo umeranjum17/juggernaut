@@ -85,6 +85,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/jg-ask-gate-lib.sh"
 # shellcheck source=bin/jg-board-link-lib.sh
 . "$SCRIPT_DIR/jg-board-link-lib.sh"
+# shellcheck source=bin/jg-board-record-lib.sh
+. "$SCRIPT_DIR/jg-board-record-lib.sh"
 # shellcheck source=bin/jg-captain-card-lib.sh
 . "$SCRIPT_DIR/jg-captain-card-lib.sh"
 
@@ -267,6 +269,16 @@ cmd_post() {
   fi
   [ -z "$ROUTE" ] || "$SCRIPT_DIR/jg-board-answers.sh" route "$key" "$ROUTE" "$DECISION_KEY" >&2 \
     || die "the card $key is posted but its route to $ROUTE was not recorded; run jg-board-answers.sh route $key $ROUTE"
+  # The detail field is where the card's must category lives, and a rebuild of
+  # the feed writes its own detail. Record it beside the board as well, so the
+  # category outlives any rebuild (bin/jg-board-record-lib.sh).
+  detail=$(flag_value --detail)
+  if [ -n "$(jg_ask_card_category "$detail")" ]; then
+    board_now=${BOARD:-$(jg_question_board)}
+    [ -z "$board_now" ] \
+      || jg_board_detail_record "$board_now" "$key" "$detail" \
+      || printf 'jg-question-card: posted %s but could not record its detail beside the board\n' "$key" >&2
+  fi
   printf '%s\n' "$key"
   link=$(jg_board_link decide "$key") && printf 'link: %s\n' "$link" >&2
   # The captain channel tees this card onto the bus in shadow (bin/jg-bus.sh):
