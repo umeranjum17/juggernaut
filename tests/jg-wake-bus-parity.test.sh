@@ -28,6 +28,7 @@ HOME_DIR="$DIR/home"
 STATE_DIR="$HOME_DIR/state"
 RECORDS="$DIR/records"
 SERVER_PID=
+# shellcheck disable=SC2329 # Registered by the EXIT trap below.
 cleanup() {
   [ -z "$SERVER_PID" ] || kill "$SERVER_PID" 2>/dev/null || true
 }
