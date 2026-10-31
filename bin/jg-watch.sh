@@ -3837,6 +3837,9 @@ EOF
 }
 
 while :; do
+  # Each cycle starts with no routing verdict: a class gates only its own cycle.
+  JG_WAKE_LAST=
+  JG_WAKE_CYCLE_URGENT=
   # Home-gone exit: a deleted home, state directory, or code root means this
   # watcher's world is gone (a torn-down temporary home or a discarded
   # disposable checkout). Exit with a logged reason rather than writing state
@@ -4441,6 +4444,9 @@ EOF
       triage_log "absorbed heartbeat (no captain-relevant change)"
     fi
   fi
+
+  # Re-delivering rows the ordinary scan already recorded is the resurface
+  # timer's job (own_queue_resurface), not a second wake path here.
 
   # Renew liveness only after a complete supervision scan. The predecessor's
   # beacon stays readable during handoff but keeps its original age while

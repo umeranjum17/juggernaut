@@ -204,6 +204,15 @@ Declared external-wait stale rows are excluded and retain their existing pause c
 Reminders preserve the queued reason except that a signal payload marked `needs-decision:` is delivered as the supported `signal:` reason, leaving the durable decision marker intact for routing and drain.
 `tests/jg-watch-triage.test.sh`'s `test_own_queue_redelivers_without_churning_successors` exercises the watcher, live grant, reminder, drain, and acknowledgement journey.
 
+### Wake urgency classes
+
+Every event gets one class from the routing rule file, and the same three apply to a wake aimed at a model as to an alert aimed at the captain: `now` wakes at once for a captain decision, security, a failed release, a stuck worker past its threshold, or a finished task; `batch` waits for a turn that happens anyway; `silent` is recorded and wakes nobody.
+`bin/jg-wake-lib.sh` decides the class where the event is recorded, from `defaults/wake-routing` or that home's `config/wake-routing`.
+A `batch` event is an ordinary durable row that does not leave the watcher cycle by itself, so it arrives with the next wake of any kind or with the queue-resurface cadence, and a run of routine events costs one turn.
+A `silent` event is written to `state/.wake-settled` and never queued, and no class drops an event: a record that cannot be written falls back to the ordinary queue row.
+The rule file owns the threshold, never a constant in code: a repeated identical event inside `re-alert-minutes` cannot wake again, a changed payload still wakes, and the drain already groups rows of one kind and key.
+`bin/jg-wake.sh next` drains, classifies, and reports in one call and returns the drain's own exit code.
+
 ### Manual recovery and other harnesses
 
 - The model no longer re-arms after ordinary wakes.
