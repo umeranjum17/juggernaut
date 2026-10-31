@@ -262,3 +262,14 @@ sign-off-axi ticket "$work/board.json" --id "$legacy" --title 'Umer legacy row i
 feed_assignee "$legacy" | jq -e '.lead == "main" and .live == false and .model == "no worker yet"'
 sign-off-axi ticket "$work/board.json" --id "$legacy" --json | jq -e '.ticket.title == "Umer legacy row item" and .ticket.state == "queued" and .ticket.progress == 0 and ((.ticket.last_event_at // "") == "") and ((.ticket.stage // "") == "")'
 echo 'PASS: the row from before the re-keyed ids names the same owner, and only that field moves'
+
+# The ten project images are still under the retired catalog directory: the one-repo fold's image slice
+# moves them into `core/tickets-sync/icons`, and it waits for design sign-off because an image is design
+# surface. Until then `sync.py` reads that retired root as a second place to look, and this is the only
+# test of it; the image slice deletes this block together with the fallback it covers.
+(cd "$JG_HOME"; tasks-axi add draft 'Umer first draft practice' --repo first-draft --priority 2 >/dev/null)
+"$JG_HOME/state/tickets-sync.check.sh" >/dev/null
+deferred="$root/../addons/tickets-sync/icons/first-draft.svg"
+sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | select(.name == "first-draft")] | length == 1 and .[0].icon.sha256 == "'"$(sha256sum "$deferred" | cut -d" " -f1)"'"'
+cmp "$deferred" "$work/icons/first-draft.svg"
+echo 'PASS: a deferred project image registers from the retired catalog root the image slice will empty'
