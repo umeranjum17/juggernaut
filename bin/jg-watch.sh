@@ -4142,6 +4142,11 @@ EOF
   procevent_surface_queued
 
   if declare -F jg_wait_timers_tick >/dev/null; then jg_wait_timers_tick || { echo "watcher: waiting-state timer check failed" >&2; exit 1; }; fi
+  # Migration step 5c shadow: the ladder that just ran stays authoritative, and
+  # the escalation workflow definition re-times the same open waits beside it
+  # (docs/escalation-workflows.md). Off costs one file test, and a shadow that
+  # cannot read its definition can never fail or delay a poll.
+  [ ! -e "$CONFIG/escalation-workflows" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-escalation-workflows.sh" tick >/dev/null 2>&1 || true
 
   host_memory_surface_queued
 

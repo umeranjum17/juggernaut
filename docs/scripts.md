@@ -151,6 +151,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |
 | `jg-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |
 | `jg-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
+| `jg-escalation-workflows.sh` | The escalation ladders and wait timers as one workflow definition: `show` the definition in force, `tick` its shadow beside the authoritative ladder, and `parity` replay recorded events through both ([ladders](escalation-workflows.md)) |
 | `jg-path-lib.sh`         | Fork-free `dirname`/`basename` equivalents with no source-time side effects             |
 | `jg-classify-lib.sh`     | Shared wake classification, durable keyed-decision folds and scans, unread status selection, home-owned status-append ranges, and bounded latest-event snapshots |
 | `jg-send.sh`             | Steer a task via a durable inbox record plus doorbell, or send a supported key or typed harness invocation through the recorded backend |
