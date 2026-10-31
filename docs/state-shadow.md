@@ -126,7 +126,7 @@ here; nothing below is an estimate.
 
 Bus path, `bin/jg-state-bus.sh`: 500 lines.
 
-- 59 header and contract.
+- 60 header and contract, including `set -u`.
 - 92 shared vocabulary: the client gate, the buckets, the key reads and writes,
   the home key and the dead-pid helper.
 - 75 for the file path's instant: `snapshot_home` and `rows_of`.
