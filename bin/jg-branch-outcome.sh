@@ -587,6 +587,12 @@ case "$CMD" in
     fi
     jg_lock_release "$LOCK"
     printf '%s\n' "$SEQ"
+    # The captain channel tees a captain-facing row onto the bus in shadow
+    # (bin/jg-bus.sh): the row above is stored exactly as before, and a routine
+    # or silent row is not captain-facing, so only this one is teed.
+    if [ "$VERDICT" = captain ] && [ "$SILENT" = false ]; then
+      "$SCRIPT_DIR/jg-bus.sh" publish outcome "$TASK" "$SUMMARY" >/dev/null 2>&1 || true
+    fi
     ;;
   unread)
     [ "$#" -eq 0 ] || usage

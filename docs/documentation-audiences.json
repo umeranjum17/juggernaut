@@ -405,6 +405,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/captain-channel.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/captain-hold-lifecycle.md",
       "audience": "maintainer-architecture"
     },
@@ -558,6 +562,10 @@
     },
     {
       "path": "docs/verification/agy.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/captain-channel.md",
       "audience": "maintainer-verification"
     },
     {
