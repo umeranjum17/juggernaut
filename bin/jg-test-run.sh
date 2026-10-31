@@ -321,7 +321,8 @@ family_for_basename() {
     jg-mail.test.sh|jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|\
     jg-pi-wake-replay.test.sh|jg-wake-bus-parity.test.sh|\
     jg-state-bus-parity.test.sh|jg-reply-bus-parity.test.sh|\
-    jg-metrics-shadow-parity.test.sh)
+    jg-metrics-shadow-parity.test.sh|\
+    jg-escalation-workflows.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
     jg-afk-inject-herdr-e2e.test.sh|jg-backend-herdr-presentation-e2e.test.sh|\
@@ -586,6 +587,7 @@ tests/jg-design-gate-first-draft.test.sh 680
 tests/jg-design-gate.test.sh 467
 tests/jg-devin-signals-live-e2e.test.sh 65
 tests/jg-escalation-chain.test.sh 120130
+tests/jg-escalation-workflows.test.sh 4000
 tests/jg-fast-evals.test.sh 704
 tests/jg-fleet-heartbeat.test.sh 1186
 tests/jg-fleet-sync.test.sh 42151
@@ -1240,8 +1242,9 @@ families_for_changed_path() {
       printf '%s\n' real-herdr-gated
       printf '%s\n' pure-contract-unit
       ;;
-    bin/jg-watch*|bin/jg-wake*|bin/jg-inactive-reconcile.sh|\
-    bin/jg-classify-lib.sh|bin/jg-daemon*|bin/jg-turnend-guard*|bin/jg-guard.sh)
+    bin/jg-watch*|bin/jg-wake*|bin/jg-escalation-workflows.sh|\
+    bin/jg-inactive-reconcile.sh|bin/jg-classify-lib.sh|bin/jg-daemon*|\
+    bin/jg-turnend-guard*|bin/jg-guard.sh)
       printf '%s\n' watcher-wake-lock
       ;;
     bin/jg-afk*)
