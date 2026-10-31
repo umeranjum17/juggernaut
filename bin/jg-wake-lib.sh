@@ -2508,8 +2508,8 @@ _jg_wake_realert_record() {
   rm -f "$tmp" 2>/dev/null || true
 }
 
-# _jg_wake_settled_locked <kind> <key> <payload>: the record-only class, readable
-# with bin/jg-wake.sh settled. It never reaches the queue.
+# _jg_wake_settled_locked <kind> <key> <payload>: the record-only class, readable with
+# bin/jg-wake.sh settled. It never reaches the queue.
 _jg_wake_settled_locked() {
   local now
   jg_epoch_seconds_to now
@@ -2535,12 +2535,16 @@ jg_wake_append_locked() {
   clean_key=$(printf '%s' "$key" | jg_wake_clean_field)
   clean_payload=$(printf '%s' "$payload" | jg_wake_clean_field)
   class=$(jg_wake_route_class "$kind" "$clean_key" "$clean_payload")
-  # 0 while that exact event was already delivered inside re-alert-minutes.
-  if [ "$class" = now ] && [ -s "$STATE/.wake-realert" ] \
-    && grep -qF -- "$(printf '\t%s\t%s\t%s' "$kind" "$clean_key" "$clean_payload")" \
-      "$STATE/.wake-realert" 2>/dev/null; then
-    class='batch'
-  fi
+  # A status-file row records only the file list, so two different status events look
+  # identical: re-alert dedupe applies where the payload is the event itself.
+  case "$clean_key" in
+    *.status) ;;
+    *) if [ "$class" = now ] && [ -s "$STATE/.wake-realert" ] \
+      && grep -qF -- "$(printf '\t%s\t%s\t%s' "$kind" "$clean_key" "$clean_payload")" \
+        "$STATE/.wake-realert" 2>/dev/null; then
+      class='batch'
+    fi ;;
+  esac
   if [ "$class" = silent ]; then
     _jg_wake_settled_locked "$kind" "$clean_key" "$clean_payload" || true
     JG_WAKE_LAST="silent:$clean_key"

@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# jg-wake.sh - one supervision entry point over the durable wake queue: `next`
-# drains, classifies, and reports in a single call, replacing a drain plus a hand
-# classification of what came back. The drain still owns presentation, open
-# decisions, unread status lines, record divergence, branch outcomes, watcher
-# liveness, and the exact WAKE_ACK_REQUIRED command; `next` returns its exit code and
-# adds which rows are the wakes this turn exists for, that the rest wait for a turn,
-# and how many events were recorded since the last report. `settled [COUNT]` prints
-# the last record-only events. docs/watcher-continuity.md "Wake urgency classes" owns
-# the classes, the threshold, and the batch cadence.
+# jg-wake.sh - one supervision entry point over the durable wake queue: `next` drains,
+# classifies, and reports in a single call, replacing a drain plus a hand classification
+# of what came back. The drain still owns presentation, open decisions, unread status
+# lines, record divergence, branch outcomes, watcher liveness, and the exact
+# WAKE_ACK_REQUIRED command; `next` returns its exit code and adds which rows are the
+# wakes this turn exists for, that the rest wait for a turn, and how many events were
+# recorded since the last report. `settled [COUNT]` prints the last record-only events;
+# docs/watcher-continuity.md "Wake urgency classes" owns the classes and the threshold.
 #
 # Usage: jg-wake.sh next [--ack-through SEQUENCE --recovery-generation GENERATION]
 #        jg-wake.sh settled [COUNT]

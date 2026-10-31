@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Wake urgency routing (docs/watcher-continuity.md "Wake urgency classes"): the rule
-# file assigns now, batch, or silent, a home adds a record-only class with one rule
-# line and no core change, a batched row hands the wake owner `batch:<key>` so its
-# wake is gated, and an urgent row from the same event latches the cycle.
+# Wake urgency routing (docs/watcher-continuity.md "Wake urgency classes"): the rule file
+# assigns now, batch, or silent; a batched row cannot end the watcher cycle; and an urgent
+# row from the same event still latches it.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
@@ -29,8 +28,8 @@ test_classes() {
   printf 'silent signal *.status working*\nnow * * *\n' > "$home.routing"
   assert_equals "$(JG_WAKE_ROUTING="$home.routing" route "$home" "$state" signal lane.status x)" \
     silent "a home rule must be able to record an event only"
-  assert_equals "$(route "$home" "$state" signal lane.status "signal: x")" batch \
-    "a routine working line must wait for a turn"
+  assert_equals "$(route "$home" "$state" signal lane.status "signal: x")" now \
+    "a status line still wakes unless a home rule holds it"
   pass "the rule file assigns now, batch, and silent"
 }
 
