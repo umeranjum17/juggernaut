@@ -245,7 +245,7 @@ npx skills add umeranjum17/learn-from-mistakes --skill ljg-retro
 ```
 
 - `config/brief-include.md` is appended to every ship and recon brief, so every operator proves its change with done-done ([details](docs/configuration.md#home-brief-include-configbrief-includemd)).
-- `config/merge-gate` refuses a merge that done-done has not proven, whether or not any add-on is installed ([details](docs/configuration.md#home-merge-gate-configmerge-gate)). The gate runs `done-done check` against the mission's PR, or its `data/<task-id>/checks.md` when there is no PR, with the default-branch rules, then `receipt --verify <head>`. A nonzero exit refuses the merge and shows its output. Run `git fetch origin` first, since the gate reads local origin refs.
+- `config/merge-gate` refuses a merge that done-done has not proven, whatever else the home has wired ([details](docs/configuration.md#home-merge-gate-configmerge-gate)). The gate runs `done-done check` against the mission's PR, or its `data/<task-id>/checks.md` when there is no PR, with the default-branch rules, then `receipt --verify <head>`. A nonzero exit refuses the merge and shows its output. Run `git fetch origin` first, since the gate reads local origin refs.
 
 **sign-off** raises a card on the sign-off board for every mission held in a home where it is armed. Your first session installs the pinned `sign-off-axi` package and its skill, and tells you in one line that the home still needs arming. Run `bin/jg-procevent-signoff.sh arm` once in a home; arm each Squad Lead home the same way, and your click comes back to Juggernaut as the answer to that hold ([details](docs/configuration.md#process-to-event-sources-stateprocevent)). Open the board with `sign-off-axi open`, and turn the link off with `bin/jg-procevent-signoff.sh retire`.
 
@@ -277,7 +277,7 @@ Sign-off collects the questions, designs, reports, and proof that need a person,
 
 ### The fleet dashboard: Lookout
 
-Lookout is the only fleet dashboard. [`lookout-adapter`](addons/lookout-adapter/README.md) supplies its read-only fleet data. Run the pinned package with `npx --yes --package=lookout-axi@0.1.0 lookout serve`.
+Lookout is the only fleet dashboard. [`lookout-adapter`](core/lookout-adapter/README.md) supplies its read-only fleet data. Run the pinned package with `npx --yes --package=lookout-axi@0.1.0 lookout serve`.
 
 <p align="center">
   <picture>

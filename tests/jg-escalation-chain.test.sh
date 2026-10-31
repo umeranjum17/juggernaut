@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The stuck-worker escalation chain (addons/wait-timers/README.md): a stuck
+# The stuck-worker escalation chain (core/wait-timers/README.md): a stuck
 # operator goes to its owning lead, a stuck lead goes to Main, and only what
 # Main cannot settle becomes a board card; every rung fires again while the
 # wait stays open. Real watcher and drain cycles over a copy of this checkout's
-# bin/ and add-ons; only the terminal, the board, and the steer and interrupt
+# bin/ and features; only the terminal, the board, and the steer and interrupt
 # endpoints are recorders. One test per scenario row.
 set -eu
 
@@ -12,7 +12,7 @@ set -eu
 TMP_ROOT=$(jg_test_tmproot jg-escalation-chain)
 FORK="$TMP_ROOT/fork"
 mkdir -p "$FORK"
-cp -a "$ROOT/bin" "$ROOT/addons" "$FORK/"
+cp -a "$ROOT/bin" "$ROOT/core" "$FORK/"
 # The steer and interrupt endpoints record their calls in the calling home.
 for f in jg-send.sh jg-control.sh; do
   # shellcheck disable=SC2016 # the recorder expands its own arguments when run
@@ -87,7 +87,7 @@ cycle() {  # <home> [absent]
   mark="$h/tmp/cycle-mark"
   touch "$mark"
   env -u JG_TASK_ID JG_WATCH_HANDLING_SUCCESSOR="$successor" HOME="$h/home" TMPDIR="$h/tmp" PATH="$h/fakebin:$PATH" \
-    JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" JG_ADDONS_DIR="$FORK/addons" \
+    JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" \
     JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS="${LIVENESS:-99999999}" JG_BUSY_TURN_MAX_SECS=999999 JG_STALE_ESCALATE_SECS=999999 \
     JG_SQUAD_LEAD_WAKE_STALL_SECS=999999 JG_WAIT_ALERT_SECS=2 JG_WAIT_ESCALATE_SECS=4 JG_WAIT_CARD_SECS="${CARD_SECS:-6}" \

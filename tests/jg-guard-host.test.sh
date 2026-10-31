@@ -54,11 +54,11 @@ check "GH_REPO resolves the target like --repo" "$(verdict "$clone" 'gh-axi pr c
 check "a write with no resolvable repository is refused" "$(verdict "$d" 'gh-axi pr create')" 2
 
 # --- a new guard is one .rego file, with no core change ---
-mkdir -p "$d/addon/core/guard-host" "$d/addon/policy/guard"
-cp "$ROOT/core/guard-host/host.mjs" "$d/addon/core/guard-host/"
-cp "$ROOT"/policy/guard/*.rego "$d/addon/policy/guard/"
+mkdir -p "$d/feature/core/guard-host" "$d/feature/policy/guard"
+cp "$ROOT/core/guard-host/host.mjs" "$d/feature/core/guard-host/"
+cp "$ROOT"/policy/guard/*.rego "$d/feature/policy/guard/"
 before=$(cd "$ROOT" && sha256sum core/guard-host/host.mjs)
-cat >"$d/addon/policy/guard/zz_probe.rego" <<'PROBE'
+cat >"$d/feature/policy/guard/zz_probe.rego" <<'PROBE'
 # A throwaway rule. Adding it changed no core file, which is the host's contract.
 package guard.zz_probe
 
@@ -67,13 +67,13 @@ import future.keywords.if
 
 deny contains "probe refused it" if input.command != ""
 PROBE
-probe=$d/addon/core/guard-host/host.mjs
+probe=$d/feature/core/guard-host/host.mjs
 check "one new file is enough for the host to load the rule" "$(node "$probe" --list | paste -sd ' ' -)" "repo_guard zz_probe"
 out=$(cd "$clone" && jq -Rn --arg c 'echo probe-me' '{tool_name:"Bash",tool_input:{command:$c},cwd:""}' | node "$probe" 2>&1) && rc=0 || rc=$?
 check "the new rule refuses the call it judges" "$rc" 2
 has "the refusal names the new rule" "$out" '[zz_probe] probe refused it'
 check "the core files are byte-identical with the new rule loaded" "$(cd "$ROOT" && sha256sum core/guard-host/host.mjs)" "$before"
-check "the whole added cost is one file" "$(diff -rq -- "$ROOT/core" "$d/addon/core"; diff -q -- "$ROOT/policy/guard/repo_guard.rego" "$d/addon/policy/guard/repo_guard.rego" || true)" ""
+check "the whole added cost is one file" "$(diff -rq -- "$ROOT/core" "$d/feature/core"; diff -q -- "$ROOT/policy/guard/repo_guard.rego" "$d/feature/policy/guard/repo_guard.rego" || true)" ""
 
 [ "$fails" -eq 0 ] || { printf '%s check(s) failed\n' "$fails" >&2; exit 1; }
 printf 'guard-host: one Rego rule file plus one test file, no core change, OPA decides\n'

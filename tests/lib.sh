@@ -51,7 +51,7 @@ export JG_GATE_REFUSE_BYPASS=1
 # JG_TEST_HARNESS harness pin). Normal primary launches do not arm it, so a
 # leaked harness pin alone stays inert outside a suite.
 export JG_TEST_SEAM=1
-# A host-installed task-priority add-on must not change what test fixtures can add.
+# A host-installed task-priority feature must not change what test fixtures can add.
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 
 # Clear the task-worker marker bin/jg-spawn.sh exports into ship and scout

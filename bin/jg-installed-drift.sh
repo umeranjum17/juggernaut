@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jg-installed-drift.sh - prove every installed runtime copy still matches the repo copy it came from.
 #
-# An add-on installs into ${XDG_DATA_HOME:-~/.local/share}/<product>-<add-on> and runs from there, so a repo
+# An feature installs into ${XDG_DATA_HOME:-~/.local/share}/<product>-<feature> and runs from there, so a repo
 # fix never reaches the running copy by itself and a retired file can keep running for days. This check
 # compares every regular file of every installed copy with its repo counterpart.
 #
@@ -15,7 +15,7 @@
 #   unknown origin <installed path>       no repo directory can be discovered for this copy
 #
 # Origin of a copy, first match that names an existing directory wins: <copy>/.jg-origin, whose first line is
-# the repo directory the copy was installed from, else <root>/addons/<name>, where <name> is the copy's
+# the repo directory the copy was installed from, else <root>/core/<name>, where <name> is the copy's
 # directory name without its fm- or jg prefix. The repo counterpart of an installed file is that file's path
 # inside the repo directory, or the only file of the same basename anywhere under it; a file with neither is
 # reported missing. A copy also grows files the repo never installs - Python bytecode, `*.bak-*` backups, the
@@ -39,7 +39,7 @@ die() { printf 'jg-installed-drift: %s\n' "$1" >&2; exit "${2:-1}"; }
 origin() { # origin <copy> <name>: print the repo directory this installed copy came from.
   local src
   src=$(sed -n '1p' "$1/.jg-origin" 2>/dev/null)
-  [ -d "${src:-/nonexistent}" ] || src=$ROOT/addons/$2
+  [ -d "${src:-/nonexistent}" ] || src=$ROOT/core/$2
   [ -d "$src" ] && printf '%s\n' "$src"
 }
 

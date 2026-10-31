@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Progress add-on for jg-watch.sh. The watcher supplies its state, timers and
+# Progress feature for jg-watch.sh. The watcher supplies its state, timers and
 # classification helpers; jg-busy-lib.sh supplies worker-generation identity.
 
 # Observe native activity, execution status and turn events independently of

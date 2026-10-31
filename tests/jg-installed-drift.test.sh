@@ -12,11 +12,11 @@ set -eu
 WORK=$(jg_test_tmproot jg-installed-drift)
 repo=$WORK/repo
 share=$WORK/share
-mkdir -p "$repo/addons/demo/bin" "$share/fm-demo/bin"
-printf 'installed\n' >"$repo/addons/demo/bin/tool.sh"
-printf 'readme\n' >"$repo/addons/demo/README.md"
-cp -p "$repo/addons/demo/bin/tool.sh" "$share/fm-demo/bin/tool.sh"
-cp -p "$repo/addons/demo/README.md" "$share/fm-demo/README.md"
+mkdir -p "$repo/core/demo/bin" "$share/fm-demo/bin"
+printf 'installed\n' >"$repo/core/demo/bin/tool.sh"
+printf 'readme\n' >"$repo/core/demo/README.md"
+cp -p "$repo/core/demo/bin/tool.sh" "$share/fm-demo/bin/tool.sh"
+cp -p "$repo/core/demo/README.md" "$share/fm-demo/README.md"
 drift() { JG_HOME=$WORK/home "$ROOT/bin/jg-installed-drift.sh" --root "$repo" --data-home "$share"; }
 one_line() { [ "$(printf '%s\n' "$1" | wc -l)" -eq 1 ] || fail "expected exactly one line, got: $1"; }
 
@@ -26,14 +26,14 @@ out=$(drift) || fail "the check must exit 0"
 printf 'changed\n' >"$share/fm-demo/bin/tool.sh"
 out=$(drift) || fail "a drifted copy must still exit 0"
 one_line "$out"
-assert_contains "$out" "differ $share/fm-demo/bin/tool.sh $repo/addons/demo/bin/tool.sh" \
+assert_contains "$out" "differ $share/fm-demo/bin/tool.sh $repo/core/demo/bin/tool.sh" \
   "one changed byte names the running path, the repo path and differ"
 
-cp -p "$repo/addons/demo/bin/tool.sh" "$share/fm-demo/bin/tool.sh"
+cp -p "$repo/core/demo/bin/tool.sh" "$share/fm-demo/bin/tool.sh"
 printf 'retired\n' >"$share/fm-demo/stale.sh"
 out=$(drift)
 one_line "$out"
-assert_contains "$out" "missing $share/fm-demo/stale.sh $repo/addons/demo/stale.sh" \
+assert_contains "$out" "missing $share/fm-demo/stale.sh $repo/core/demo/stale.sh" \
   "an installed file the repo dropped is reported missing"
 
 mkdir -p "$share/jg-orphan"
@@ -41,7 +41,7 @@ printf 'x\n' >"$share/jg-orphan/x.sh"
 out=$(drift) || fail "an unknown-origin copy must still exit 0"
 assert_contains "$out" "unknown origin $share/jg-orphan" "a copy with no discoverable repo directory is reported, never passed"
 
-# arm is the registration an add-on installer performs: it must leave a bound check in a real home.
+# arm is the registration an feature installer performs: it must leave a bound check in a real home.
 mkdir -p "$WORK/armed/state"
 JG_HOME=$WORK/armed JG_STATE_OVERRIDE=$WORK/armed/state "$ROOT/bin/jg-installed-drift.sh" arm >/dev/null \
   || fail "arm must register the check in a home"

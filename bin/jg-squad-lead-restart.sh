@@ -147,9 +147,9 @@ for arg in "$@"; do
 done
 [ "${#IDS[@]}" -gt 0 ] || { usage >&2; exit 2; }
 
-# Parked-home guard (juggernaut-addons/parked-homes): a parked squad_lead home
+# Parked-home guard (core/parked-homes): a parked squad_lead home
 # gets no restart pass at all - no persist request, no relaunch, no nudge. One
-# line names each skip. The shim answers not parked when the add-on is absent.
+# line names each skip. The shim answers not parked when the feature is absent.
 # shellcheck source=bin/jg-parked-homes-lib.sh
 . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
 LIVE_IDS=()

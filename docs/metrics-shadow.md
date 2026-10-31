@@ -158,7 +158,7 @@ Shell path, the four numbers as they are gathered today, measured with `wc -l`:
   `jg_reaper_load_groups` and `jg_reaper_load_alarm`.
 - 11 lines of `bin/jg-tmp-sweep.sh` for the disk number: `fs_use`, which is two
   `df -P` calls for space and inodes.
-- 320 lines of `bin/jg-jev-mem-guard.py` and 236 lines of `addons/host-memory`
+- 320 lines of `bin/jg-jev-mem-guard.py` and 236 lines of `core/host-memory`
   for memory. Only the threshold and the alarm move to a rule; the process
   accounting and the kill stay in code.
 

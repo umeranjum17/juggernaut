@@ -12,7 +12,7 @@ The declared-wait vocabulary, including the legacy "external wait" label, is own
 
 A zero-token bash watcher (`bin/jg-watch.sh`) sleeps on the fleet, classifies detected wakes in bash, and wakes the Overwatch only when something is actionable.
 Actionable wakes include captain-relevant status signals, no-verb signals without positive evidence that their crew is still executing, authenticated check output such as PR merge polling or a Relay mention, stale panes whose crew is not provably working whether their status log looks terminal or non-terminal, provably-working stale panes that persist past `JG_STALE_ESCALATE_SECS` with no wait their own worker declared, no writes to their own task worktree, and - in a home that armed `config/wedge-defer-parked-gate` - no validation gate of their own awaiting an unanswered supervisor decision, declared external waits and attended captain-held transfers that remain declared past `JG_PAUSE_RESURFACE_SECS`, and heartbeat backstop hits.
-When the `wait-timers` add-on is installed, it adds owner and escalation rechecks for recorded blocked, needs-decision, and declared paused waits.
+`core/wait-timers` adds owner and escalation rechecks for recorded blocked, needs-decision, and declared paused waits.
 For an ordinary crew task, a wait is read from both of its records: the status line a worker declared, and the backlog hold `bin/jg-captain-hold.sh` recorded once Juggernaut handed the work to the captain.
 So a delivered ordinary crew task whose last line stays a `done` PR-ready line bounds repeated alarms from new pane hashes to the `JG_PAUSE_RESURFACE_SECS` cadence for the length of the captain's decision.
 The first hash still alarms, each new hash inside that window is absorbed, and a new hash after the window re-surfaces the hold; a terminal pane hash that never changes stays inert after its first alarm exactly as it did before this bound.
@@ -385,8 +385,8 @@ A ship brief records its mode as a fixed machine-readable line and the spawn ref
 `bin/jg-dod-lib.sh` is the one owner of that mode's definition of done, rendered into a generated ship brief, the ship instructions a promoted Recon receives, and that Recon's own `brief.md` so a later relaunch reads the same contract, so a promoted worker cannot be handed a weaker contract than a briefed one.
 It also owns the named-head reachability gate that refuses a ship `done:` while that head exists only in the worker's disposable copy, testing the named head rather than whether some branch moved.
 A cross-repository lane lands a pull request in a repository other than its worktree's origin, and the merge binds to that pull request's verified forge head rather than the worktree's HEAD.
-When the optional receipts add-on defines `jg_receipts_pr_candidate`, `bin/jg-pr-check.sh` asks it for the receipt candidate from the verified forge head and refuses a hook failure or any non-empty candidate other than that head; [`bin/jg-pr-check.sh`](../bin/jg-pr-check.sh) owns the hook contract.
-Without the add-on the gate receives no candidate, so it binds a named-head or outside-origin pull request to its recorded `pr_head`, and every gate caller binds the same candidate from local state. The receipts add-on's `jg_receipts_accept_done` consumes the candidate it is given, and core enforces no completion receipt when that add-on is not installed.
+`core/receipts` defines `jg_receipts_pr_candidate`, and `bin/jg-pr-check.sh` asks it for the receipt candidate from the verified forge head and refuses a hook failure or any non-empty candidate other than that head; [`bin/jg-pr-check.sh`](../bin/jg-pr-check.sh) owns the hook contract.
+A hook failure or any non-empty candidate other than the verified forge head refuses the gate; otherwise it binds a named-head or outside-origin pull request to its recorded `pr_head`, and every gate caller binds the same candidate from local state. `jg_receipts_accept_done` consumes the candidate it is given.
 The gate's one exception is a done naming a pull request whose live forge head is exactly the worktree HEAD, because the push that opened the PR can leave no remote-tracking ref in the copy.
 `bin/jg-crew-state.sh`, `bin/jg-pr-check.sh`, and the Squad Lead ledger-first publisher call that same gate before treating a ship `done:` as ready.
 The watcher passes every changed ship status through `bin/jg-pr-check.sh --from-status` before it wakes Main, so an accepted ready line records `pr=`, arms the merge poll, posts the ready card, and moves the ticket to review without waiting on Main.
@@ -438,6 +438,20 @@ The durable Treehouse lease is the only ownership store.
 Allocation and return serialize on one project lock per machine-local Juggernaut tree: every home reachable through local parent links shares that lock, and a home seeded from another machine anchors its own, because a lock taken on this filesystem is neither held nor observable across that boundary.
 Before the worktree is returned, teardown concludes the task's own no-mistakes run when it is parked at a gate, including a run whose head the task copy cannot resolve - the shared runs-ledger continuation proof is the only recognition for that case, so cleanup never orphans a parked run the pipeline advanced past the submitted head.
 [`bin/jg-teardown.sh`](../bin/jg-teardown.sh)'s header owns the landed-work proofs, record-exclusivity check, endpoint-close refusal, PR-discovery fallback, pre-teardown run conclusion, task-owned process and scratch cleanup, and stale-lock recovery procedure; [`tests/jg-teardown-endpoint-safety.test.sh`](../tests/jg-teardown-endpoint-safety.test.sh) and [`tests/jg-squad-lead-safety.test.sh`](../tests/jg-squad-lead-safety.test.sh) pin the slot-collision boundary, while [`tests/jg-teardown.test.sh`](../tests/jg-teardown.test.sh) covers scratch cleanup and interruption recovery.
+
+### The retired catalog stays retired
+
+The bolt-on catalog was a second product: a directory beside the core, one installer per feature, and a
+separate repository. The features live in the core tree now (`core/<feature>/`), wired
+by the core's own `bin/jg-host-wiring.sh`, and `bin/jg-retired-catalog-check.sh` is the gate that keeps
+them there: it refuses any path a change adds under the retired directory and any tracked one outside a named,
+shrinking deferred list, and the repo invariants job in `.github/workflows/ci.yml` runs it on every pull
+request, so restoring the catalog fails the merge instead of quietly reopening the pattern.
+The deferred list holds exactly the catalog's images - the ten `tickets-sync` project images slice B of
+the fold moves and the two catalog logos it deletes; it may only shrink, and that slice deletes it with
+the move. `--self-test` proves the refusal against a
+fixture file, and `docs/configuration.md#home-merge-gate-configmerge-gate` owns how a home can run the
+same check inside its own merge gate.
 
 ## Optional Relay
 

@@ -109,6 +109,8 @@ export JG_HOME
 . "$SCRIPT_DIR/jg-procevent-lib.sh"
 # shellcheck source=bin/jg-ask-gate-lib.sh
 . "$SCRIPT_DIR/jg-ask-gate-lib.sh"
+# shellcheck source=bin/jg-board-record-lib.sh
+. "$SCRIPT_DIR/jg-board-record-lib.sh"
 
 SOURCE_ID=signoff
 DELIVERED="$STATE/signoff-delivered"
@@ -192,7 +194,7 @@ built_title() {  # <task-title>
 }
 
 cmd_raise() {
-  local out identity title rc=0 must='' refusal rec args=() detail=() ticket=''
+  local out identity title rc=0 must='' refusal rec args=() detail=() ticket='' card_key=''
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --must) shift; must=${1-}; [ -n "$must" ] || usage ;;
@@ -226,7 +228,8 @@ cmd_raise() {
   # beside that ticket's On hold row (bin/jg-ticket.sh owns the ticket id).
   ticket=$("$SCRIPT_DIR/jg-ticket.sh" id "$1" 2>/dev/null) || ticket=''
   [ -z "$ticket" ] || detail+=(--ticket "$ticket")
-  out=$(signoff raise --key "$(home_key_prefix)$1-$(stamp_token "${identity%%#*}")" \
+  card_key="$(home_key_prefix)$1-$(stamp_token "${identity%%#*}")"
+  out=$(signoff raise --key "$card_key" \
     --title "$title" --ask-ref "$1" --about "$3" --why "$(card_why "$3")" \
     ${detail[@]+"${detail[@]}"} \
     --outcome yes="Answer recorded: yes." \
@@ -247,6 +250,15 @@ cmd_raise() {
     printf 'sign-off-axi raise failed: %s\n' "$out" >&2
     return 1
   }
+  # The must category rides in the card's detail field, and a feed rebuild writes
+  # its own detail. Record it beside the board too, so the category outlives a
+  # rebuild (bin/jg-board-record-lib.sh).
+  if [ -n "$must" ] && [ -n "$card_key" ]; then
+    board_now=$(jg_question_board)
+    [ -z "$board_now" ] \
+      || jg_board_detail_record "$board_now" "$card_key" "must: $must" \
+      || printf 'sign-off card %s raised but its must category was not recorded beside the board\n' "$card_key" >&2
+  fi
   printf 'sign-off card on the board for %s\n' "$1" >&2
 }
 

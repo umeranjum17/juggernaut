@@ -1261,7 +1261,7 @@ test_home_brief_include_is_appended_last() {
   pass "jg-brief.sh: the home brief include lands last on ship and scout, verbatim, and fails closed"
 }
 
-# With the brief-inherit add-on uninstalled, the scaffold still succeeds and the
+# With the brief-inherit feature uninstalled, the scaffold still succeeds and the
 # home-local include lands last.
 test_brief_include_works_without_add_on() {
   local home addons brief last_heading
@@ -1271,13 +1271,13 @@ test_brief_include_works_without_add_on() {
   mkdir -p "$home/config" "$addons"
   printf '%s\n' 'Prefer small commits.' > "$home/config/brief-include.md"
   JG_HOME="$home" JG_ADDONS_DIR="$addons" "$ROOT/bin/jg-brief.sh" no-add-on some-proj --scout >/dev/null \
-    || fail "scout scaffold failed without the brief-inherit add-on"
+    || fail "scout scaffold failed without the brief-inherit feature"
   brief="$home/data/no-add-on/brief.md"
-  assert_grep 'Prefer small commits.' "$brief" "home-local include missing without the add-on"
+  assert_grep 'Prefer small commits.' "$brief" "home-local include missing without the feature"
   last_heading=$(grep '^# ' "$brief" | tail -n 1)
   [ "$last_heading" = '# Home brief additions' ] \
-    || fail "home-local include was not the last section without the add-on (got: $last_heading)"
-  pass "jg-brief.sh: with no brief-inherit add-on, the home-local include still lands last"
+    || fail "home-local include was not the last section without the feature (got: $last_heading)"
+  pass "jg-brief.sh: with no brief-inherit feature, the home-local include still lands last"
 }
 
 # --base-branch names the branch a task starts from and a ship's PR targets. It is

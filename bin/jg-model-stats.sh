@@ -21,22 +21,20 @@ else
     jg_compat_meta_is_squad_lead() { grep -q "^kind=squad_lead\$" "${1-}" 2>/dev/null; }'
 fi
 unset _jg_d
-# jg-model-stats.sh - thin shim for the fleet per-model statistics reader, which lives in this repository's addons/.
+# jg-model-stats.sh - thin shim for the fleet per-model statistics reader, which lives in this repository's core/.
 #
-# The reader is the fleet-stats add-on (fleet-stats/bin/jg-model-stats.sh, importing
-# jg_stats_lib from that same folder); this shim only resolves the add-ons
+# The reader is the fleet-stats feature (fleet-stats/bin/jg-model-stats.sh, importing
+# jg_stats_lib from that same folder); this shim only resolves the features
 # directory and execs it with JG_BIN pointing at this fork's bin/, the same
-# contract as the fleet add-on shims.
+# contract as the fleet feature shims.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOME_DIR="${JG_HOME:-$CODE_ROOT}"
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$SCRIPT_DIR/jg-addons-dir-lib.sh"
-TARGET=$(jg_addon_path "$HOME_DIR" fleet-stats/bin/jg-model-stats.sh)
+TARGET="$CODE_ROOT/core/fleet-stats/bin/jg-model-stats.sh"
 if [ ! -f "$TARGET" ]; then
-  echo "jg-model-stats: the add-ons are missing or refused (set JG_ADDONS_DIR)" >&2
+  echo "jg-model-stats: the reader is missing at $TARGET" >&2
   exit 1
 fi
 JG_BIN="$SCRIPT_DIR" JG_HOME="$HOME_DIR" exec "$TARGET" "$@"

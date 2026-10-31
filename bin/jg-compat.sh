@@ -9,9 +9,6 @@
 #      unset, so a shell profile, a systemd unit, a pane, or a generated
 #      per-lane extension that still exports the old names keeps working.
 #      Sourcing this file runs that pass; it is idempotent.
-#   2. the add-ons checkout - a home that has not migrated still keeps its
-#      add-on clones under projects/firstmate-addons. jg_compat_addons_dir
-#      names whichever of the two directories exists.
 #   3. record readers - schema ids, endpoint labels, the operational input
 #      marker and the second-mate home marker accept the old spelling while
 #      homes are migrated. Each helper names the exact legacy value it accepts,
@@ -36,25 +33,7 @@ jg_compat_env_aliases() {
 jg_compat_env_aliases
 unset -f jg_compat_env_aliases
 
-# --- 2. the add-ons checkout ------------------------------------------------
-# <root> is the home whose projects/ directory holds the add-on clones. Prints
-# the new directory when it exists, the pre-rename one when only that exists,
-# and the new path otherwise (so an error still names the expected location).
-jg_compat_addons_dir() {  # <root>
-  local root=${1:-} new old
-  [ -n "$root" ] || return 0
-  new="$root/projects/juggernaut-addons"
-  old="$root/projects/firstmate-addons"
-  if [ -d "$new" ]; then
-    printf '%s\n' "$new"
-  elif [ -d "$old" ]; then
-    printf '%s\n' "$old"
-  else
-    printf '%s\n' "$new"
-  fi
-}
-
-# --- 3. record readers ------------------------------------------------------
+# --- 2. record readers ------------------------------------------------------
 # <actual> <current> [<legacy>...]: true when a live record carries the current
 # spelling or one of the legacy spellings it replaced. Callers pass the legacy
 # value explicitly, so migration is a list, never a guess.
@@ -186,9 +165,9 @@ jg_compat_mirror_vars() {  # <JG_ prefix>
   done
 }
 
-# Old function names for a library reached through its old path. The add-ons
-# source the old library path and call the old function names (fm_* for jg_*,
-# the old nested-supervisor word for squad_lead_*). A shim that loads a library
+# Old function names for a library reached through its old path. A shim that
+# still loads a library by its pre-rename path calls the old function names
+# (fm_* for jg_*, the old nested-supervisor word for squad_lead_*), so a shim
 # calls this once afterwards; a name already defined is left alone.
 jg_compat_function_aliases() {
   local fn old
@@ -221,19 +200,3 @@ jg_compat_claims_root() {  # <new-root>
   old=${new//\/juggernaut\//\/firstmate\/}
   if [ ! -d "$new" ] && [ -d "$old" ]; then printf '%s\n' "$old"; else printf '%s\n' "$new"; fi
 }
-
-# The add-ons checkout a home already has. Exported here so every caller's
-# ${JG_ADDONS_DIR:-<home>/projects/juggernaut-addons} default resolves to the
-# directory that exists, without touching each of the 23 call sites.
-# Only for a checkout with no in-repo addons/: the retired clone holds only
-# fm- names, so pinning it there hid every jg- add-on (bin/jg-addons-dir-lib.sh
-# gives JG_ADDONS_DIR priority) and left the wait ladder unloaded.
-if [ -z "${JG_ADDONS_DIR-}" ] && [ ! -d "$(cd "${BASH_SOURCE[0]%/*}/.." 2>/dev/null && pwd)/addons" ]; then
-  _jg_addons_root=${JG_HOME:-$(cd "${BASH_SOURCE[0]%/*}/.." 2>/dev/null && pwd)}
-  if [ -n "${_jg_addons_root-}" ] && [ -d "$_jg_addons_root/projects/firstmate-addons" ] \
-    && [ ! -d "$_jg_addons_root/projects/juggernaut-addons" ]; then
-    JG_ADDONS_DIR="$_jg_addons_root/projects/firstmate-addons"
-    export JG_ADDONS_DIR
-  fi
-  unset _jg_addons_root
-fi
