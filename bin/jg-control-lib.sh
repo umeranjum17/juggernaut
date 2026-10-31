@@ -28,7 +28,7 @@
 #      which command exits the agent, and which task kinds the adapter is
 #      verified to run. These are the empirically verified facts previously
 #      carried only in the harness-adapters skill's per-adapter tables; they now
-#      live in defaults/harness-quirks/<harness>.json, and the accessors below
+#      live in bin/harness-quirks/<harness>.json, and the accessors below
 #      read that one table rather than a second copy of it.
 #   3. Per-backend capability: which named keys a runtime backend can deliver,
 #      and whether the backend has a recovery-grade agent-state classifier

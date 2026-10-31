@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# jg-harness-quirks: defaults/harness-quirks owns what a runtime does on a trust prompt,
+# jg-harness-quirks: bin/harness-quirks owns what a runtime does on a trust prompt,
 # on composer submission, on interrupt, on resume, and what its pane shows. These pin the
 # table shape, the accessors the core reads, the home override, and the unknown-harness
 # answer: a warning and a documented refusal, never a break.
@@ -16,7 +16,7 @@ set -u
 # shellcheck source=/dev/null
 . "$ROOT/bin/jg-prompt-gate-lib.sh"
 
-QUIRKS=$ROOT/defaults/harness-quirks
+QUIRKS=$ROOT/bin/harness-quirks
 VERIFIED="claude codex opencode pi grok kimi cursor gemini muse rovo omp agy devin"
 
 # One table per verified runtime, in the when/use/why shape, carrying every key the

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # jg-harness-quirks-lib.sh - the ONE reader of the per-harness quirk tables.
 #
-# What a runtime does on a trust prompt, on composer submission, on interrupt, on
-# resume, and in what its pane shows is DATA, not a `case "$harness"` arm in each core:
-# defaults/harness-quirks/<harness>.json holds it, one file per runtime, in the same
-# when / use / why shape as config/crew-dispatch.json, and a home may override one file
-# at config/harness-quirks/. Every `use` value is a string.
-# A runtime with NO table is unknown: each lookup prints one warning on stderr and
-# returns nonzero, so the caller keeps its own documented refusal and nothing breaks;
-# a key absent from a table that exists is a recorded "this runtime has none".
+# What a runtime does on a trust prompt, on composer submission, on interrupt, on resume,
+# and in what its pane shows is DATA, not a `case "$harness"` arm in each core:
+# bin/harness-quirks/<harness>.json holds it, one file per runtime, in the same when /
+# use / why shape as config/crew-dispatch.json, with a home override at
+# config/harness-quirks/. Every `use` value is a string.
+# A runtime with NO table is unknown: each lookup warns on stderr and returns nonzero,
+# so the caller keeps its own documented refusal; a key absent from an existing table is a
+# recorded "this runtime has none". The tables sit under bin/ beside this reader, so a
+# fixture that copies or symlinks bin/ carries them.
 _jg_hq_self=${BASH_SOURCE[0]}
 while [ -L "$_jg_hq_self" ]; do
   _jg_hq_link=$(readlink "$_jg_hq_self")
@@ -42,7 +43,7 @@ jg_hq_value() {  # <recorded-harness> <key>
   if [ -n "${JG_HOME:-}" ] && [ -f "$JG_HOME/config/harness-quirks/$name.json" ]; then
     file=$JG_HOME/config/harness-quirks/$name.json
   else
-    file=$_jg_hq_dir/../defaults/harness-quirks/$name.json
+    file=$_jg_hq_dir/harness-quirks/$name.json
     [ -f "$file" ] || file=
   fi
   [ -n "$file" ] || return 1

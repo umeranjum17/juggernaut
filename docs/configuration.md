@@ -973,7 +973,7 @@ Its private worker config disables Claude Code imports (including the captain's 
 New harnesses get verified through a supervised trial task before joining the set.
 The verified adapter evidence - each harness's busy-state source, interrupt and exit behavior, skill-invocation syntax, and per-harness quirks - lives in the skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 
-The interrupt, exit, resume, trust and pane mechanics live as data in `defaults/harness-quirks/<harness>.json`, read by [`bin/jg-harness-quirks-lib.sh`](../bin/jg-harness-quirks-lib.sh) and owned by [`bin/jg-control-lib.sh`](../bin/jg-control-lib.sh); [`docs/agent-control.md`](agent-control.md) owns their lifecycle-control architecture.
+The interrupt, exit, resume, trust and pane mechanics live as data in `bin/harness-quirks/<harness>.json`, read by [`bin/jg-harness-quirks-lib.sh`](../bin/jg-harness-quirks-lib.sh) and owned by [`bin/jg-control-lib.sh`](../bin/jg-control-lib.sh); [`docs/agent-control.md`](agent-control.md) owns their lifecycle-control architecture.
 Launch mechanics, including the verified command templates, live in [`bin/jg-spawn.sh`](../bin/jg-spawn.sh).
 A Claude worker's launch brief is published as an operational record in the receiving home's state and delivered as a printable doorbell; if publication fails, the spawn reports the failure and launches nothing rather than sending a marker that Claude Code would strip.
 Other harnesses retain the typed operational-marker launch path.
