@@ -43,6 +43,7 @@ cfg auto
 printf '1.2.3\n' >"$WORK/running-a"
 printf '1.2.3\n' >"$WORK/running-b"
 out=$(run check) || fail "every service current must exit 0, got: $?"
+printf -- '--- check, both current\n%s\n' "$out"
 assert_contains "$out" "svc-a: current 1.2.3" "a current service reports its version"
 assert_contains "$out" "svc-b: current 1.2.3" "a current manual service reports its version too"
 [ -s "$WORK/calls" ] && fail "a current fleet must restart nothing, got: $(cat "$WORK/calls")"
@@ -57,8 +58,10 @@ assert_contains "$out" "svc-b: running 1.1.0, wanted 1.2.3" "a behind manual ser
 
 # refresh: the auto line restarts exactly once and reads current; the manual line is only reported.
 out=$(run refresh) && fail "a manual line still behind must keep the exit at 1"
+printf -- '--- refresh, one auto and one manual behind\n%s\n' "$out"
 assert_contains "$out" "svc-a: current 1.2.3" "the restarted auto service reads current after the restart"
 assert_contains "$out" "svc-b: running 1.1.0, wanted 1.2.3" "the manual service is reported, not restarted"
+printf -- '--- systemctl calls\n%s\n' "$(cat "$WORK/calls")"
 [ "$(cat "$WORK/calls")" = "--user restart svc-a.service" ] \
   || fail "only the listed auto unit restarts, once, got: $(cat "$WORK/calls")"
 
