@@ -262,3 +262,12 @@ sign-off-axi ticket "$work/board.json" --id "$legacy" --title 'Umer legacy row i
 feed_assignee "$legacy" | jq -e '.lead == "main" and .live == false and .model == "no worker yet"'
 sign-off-axi ticket "$work/board.json" --id "$legacy" --json | jq -e '.ticket.title == "Umer legacy row item" and .ticket.state == "queued" and .ticket.progress == 0 and ((.ticket.last_event_at // "") == "") and ((.ticket.stage // "") == "")'
 echo 'PASS: the row from before the re-keyed ids names the same owner, and only that field moves'
+
+# A project image now lives only in the core tree. Slice B moved the ten catalog images here and deleted
+# the retired directory, so a name resolves in `core/tickets-sync/icons` or not at all; a second root left
+# behind would have registered this one from a directory the retired-catalog gate refuses.
+(cd "$JG_HOME"; tasks-axi add draft 'Umer first draft practice' --repo first-draft --priority 2 >/dev/null)
+"$JG_HOME/state/tickets-sync.check.sh" >/dev/null
+sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | select(.name == "first-draft")] | length == 1 and .[0].icon.sha256 == "'"$(sha256sum "$root/tickets-sync/icons/first-draft.svg" | cut -d" " -f1)"'"'
+cmp "$root/tickets-sync/icons/first-draft.svg" "$work/icons/first-draft.svg"
+echo 'PASS: a moved project image is registered from core/tickets-sync/icons, which is the only root'

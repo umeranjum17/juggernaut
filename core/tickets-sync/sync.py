@@ -48,10 +48,6 @@ def rows(args, env, cwd=None):
     return result
 
 ICONS = Path(__file__).resolve().parent / 'icons'
-# Slice B of the one-repo fold moves ten project images that are still under the retired catalog
-# directory into `core/tickets-sync/icons`; until that lands they are found there, and this second
-# root is deleted with the move. Nothing else may live under the retired directory.
-DEFERRED_ICONS = Path(__file__).resolve().parent.parent.parent / 'addons' / 'tickets-sync' / 'icons'
 ALIAS = {'juggernaut-fork': 'juggernaut', 'main': 'juggernaut', 'muxr': 'pockit'}
 
 def icon_problem(image):
@@ -67,7 +63,7 @@ def icon_problem(image):
 def register_icon(board, project, registry):
     """Register a local project image; return a skip reason or None."""
     name = ALIAS.get(project.lower(), project.lower())
-    found = sorted(ICONS.glob(name + '.*')) or sorted(DEFERRED_ICONS.glob(name + '.*'))
+    found = sorted(ICONS.glob(name + '.*'))
     if not found: return 'no local image'
     image = found[0]
     problem = icon_problem(image)
