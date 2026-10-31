@@ -14,6 +14,7 @@ set -u
 
 CHECK="$ROOT/bin/jg-live-claim.sh"
 REPORT="$ROOT/bin/jg-squad-lead-report.sh"
+WRITER="$ROOT/bin/jg-release-record.sh"
 TMP_ROOT=$(jg_test_tmproot jg-live-claim)
 
 # One home with an optional release record; every case reads its own.
@@ -44,6 +45,74 @@ expect_verdict() {  # <expected-rc> <home> <verb> <claim> <label>
     fail "$label"
   fi
   pass "$label"
+}
+
+# The record writer is what turns today's downgrade into a passing claim: it
+# reads public release metadata, writes data/releases, and the same live claim
+# then stands. Both exits are asserted, with no record and with one.
+test_the_record_writer_makes_a_live_claim_pass() {
+  local dir empty fb claim='fixed: live: 1.4.0 @ the dashboard'
+  dir=$(home record-writer)
+  empty=$(home record-writer-empty)
+  fb=$(jg_fakebin "$dir")
+  printf '%s\n' \
+    '- app [direct-PR +yolo] - fixture app that ships to npm as app-axi (umeranjum17/app; npm app-axi) (fixture)' \
+    '- releaseonly [direct-PR +yolo] - fixture project released by a forge tag (umeranjum17/releaseonly) (fixture)' \
+    '- neverreleased [direct-PR +yolo] - fixture project with no release at all (umeranjum17/neverreleased) (fixture)' \
+    > "$dir/data/projects.md"
+  # Canned answers filtered through the caller's own --jq, so the writer's jq
+  # filters run. The first release is a draft and must lose to the older tag.
+  cat > "$fb/gh" <<'SH'
+#!/usr/bin/env bash
+path= filter=.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --method|-X) shift 2 ;;
+    --jq) filter=$2; shift 2 ;;
+    -f) shift 2 ;;
+    *) path=$1; shift ;;
+  esac
+done
+case "$path" in
+  repos/*/neverreleased/releases) raw='[]' ;;
+  */releases) raw='[{"tag_name":"v9.9.9","published_at":null},{"tag_name":"v2.0.0","published_at":"2026-10-20T08:00:00Z"}]' ;;
+  search/issues) raw='{"total_count":7}' ;;
+  *) raw='[]' ;;
+esac
+printf '%s' "$raw" | jq -r "$filter"
+SH
+  cat > "$fb/npm" <<'SH'
+#!/usr/bin/env bash
+# npm answers a one-item array here; the writer accepts both shapes.
+printf '%s' '[{"version":"1.4.0","time":{"1.4.0":"2026-10-21T09:00:00.000Z"}}]'
+SH
+  chmod +x "$fb/gh" "$fb/npm"
+
+  verdict "$empty" 'done' "$claim"
+  assert_equals 3 "$RC" 'with no record the live claim is downgraded, as it is in every home today'
+
+  PATH="$fb:$PATH" JG_HOME=$dir JG_DATA_OVERRIDE=$dir/data bash "$WRITER" \
+    > "$dir/writer.out" 2>"$dir/stderr" \
+    || fail "the record writer must succeed: $(cat "$dir/stderr")"
+  OUT=$(cat "$dir/writer.out")
+  assert_contains "$OUT" 'RELEASE: app 1.4.0 2026-10-21, 7 merges since' \
+    'the npm version is the ref, with the merges since it'
+  assert_contains "$OUT" 'RELEASE: releaseonly v2.0.0 2026-10-20, 7 merges since' \
+    'the newest published forge tag is used, not the draft above it'
+  assert_contains "$OUT" 'RELEASE: neverreleased no release recorded' \
+    'a project that never released is said to have no release, never given a version'
+
+  assert_grep '1.4.0 app 2026-10-21T09:00:00.000Z npm' "$dir/data/releases" \
+    'the npm ref is written in the record format the live rule reads'
+  assert_grep 'v2.0.0 releaseonly 2026-10-20T08:00:00Z forge-release' "$dir/data/releases" \
+    'the forge release is written with its project and published date'
+  assert_grep '# none neverreleased' "$dir/data/releases" \
+    'a project with no release is recorded as none rather than given a version'
+
+  verdict "$dir" 'done' "$claim"
+  assert_equals 0 "$RC" 'with the writer record the same live claim stands'
+  assert_equals "$claim" "$OUT" 'the passing claim is printed untouched'
+  pass 'the record writer turns a downgraded live claim into a passing one'
 }
 
 test_a_merged_only_fix_is_downgraded() {
@@ -136,4 +205,5 @@ test_a_screen_free_change_passes
 test_an_ordinary_report_is_untouched
 test_the_lead_report_path_writes_the_downgrade
 test_the_lead_report_path_keeps_a_live_claim
+test_the_record_writer_makes_a_live_claim_pass
 printf 'jg-live-claim: ok\n'

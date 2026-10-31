@@ -78,7 +78,7 @@ Each effective `JG_HOME` contains private operational directories.
 - Project and Squad Lead registries.
 - Captain preferences and optional shared captain preferences.
 - Learnings, backlog, briefs, Recon reports, and the optional per-task no-mistakes pipeline-spend ledger.
-- The release record that [`bin/jg-live-claim.sh`](../bin/jg-live-claim.sh) reads to decide whether a claimed fix is released.
+- The release record that [`bin/jg-live-claim.sh`](../bin/jg-live-claim.sh) reads to decide whether a claimed fix is released, written by [`bin/jg-release-record.sh`](../bin/jg-release-record.sh).
 - Explicitly installed content-addressed extension packages under `data/extensions/packages/`.
 
 `state/` holds runtime records:

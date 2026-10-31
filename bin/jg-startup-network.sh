@@ -45,6 +45,14 @@
 #     holds it through the bounded mutating run. A takeover stays read-only until
 #     that run settles, so old and new owners can never sweep concurrently.
 #
+# The release record refresh also rides this worker. bin/jg-release-record.sh
+# reads public release metadata and writes data/releases, and its RELEASE lines
+# (one per registered project, with the merges that sit since the recorded
+# version) print with the other network results here. That keeps the read off
+# the blocking path it would otherwise sit on, and it is why a report can finally
+# say which version is live instead of always merged-not-released. It runs only
+# in the locked worker, with the sweeps, because it writes a file.
+#
 # Usage: jg-startup-network.sh start --locked <0|1> --harvest-pid <pid>
 #          Launch the detached worker and return immediately. Single-flight: a
 #          running worker is reused only when its phases cover this request and,
@@ -246,7 +254,7 @@ worker_alive() {
 phase_label() {  # <phases>
   case "$1" in
     probe) printf 'GitHub authentication' ;;
-    probe,sweeps) printf 'GitHub authentication, dead-squad-lead relaunch, squad_lead convergence, pending handoff delivery, project clone refresh with its drift reporting, and inactive terminal-outcome reconciliation' ;;
+    probe,sweeps) printf 'GitHub authentication, dead-squad-lead relaunch, squad_lead convergence, pending handoff delivery, project clone refresh with its drift reporting, release record refresh, and inactive terminal-outcome reconciliation' ;;
     *) printf 'the deferred network checks' ;;
   esac
 }
@@ -600,6 +608,7 @@ EOF
       bash -c '
         script_dir=$1
         "$script_dir/jg-inactive-reconcile.sh" scan --startup >/dev/null 2>&1 || true
+        "$script_dir/jg-release-record.sh" || true
         exec "$script_dir/jg-bootstrap.sh"
       ' _ "$SCRIPT_DIR" >"$out" 2>&1 || rc=$?
   else
