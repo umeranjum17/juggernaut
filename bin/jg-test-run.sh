@@ -321,7 +321,7 @@ family_for_basename() {
     jg-mail.test.sh|jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|\
     jg-pi-wake-replay.test.sh|jg-wake-bus-parity.test.sh|\
     jg-state-bus-parity.test.sh|jg-reply-bus-parity.test.sh|\
-    jg-metrics-shadow-parity.test.sh)
+    jg-metrics-shadow-parity.test.sh|jg-bus-leaf-parity.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
     jg-afk-inject-herdr-e2e.test.sh|jg-backend-herdr-presentation-e2e.test.sh|\
@@ -567,6 +567,7 @@ tests/jg-behavior-determinism.test.sh 34000
 tests/jg-board-answers.test.sh 2206
 tests/jg-board-asks.test.sh 860
 tests/jg-board-gate.test.sh 437
+tests/jg-bus-leaf-parity.test.sh 4245
 tests/jg-bus.test.sh 1541
 tests/jg-bootstrap.test.sh 83933
 tests/jg-browser-reaper.test.sh 8000

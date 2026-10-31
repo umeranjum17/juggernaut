@@ -19,15 +19,17 @@
 # CONTRACT (this header is the one owner of the leaf's shape here).
 #   config   One key file decides everything: defaults/bus-leaf, then the home's
 #            config/bus-leaf, then JG_BUS_LEAF_<KEY> in the environment; the first
-#            source carrying a key wins and no value is hard-coded here. There is
-#            no `config/bus-leaf` switch file: the leaf runs when an operator
-#            starts it, not on every poll, so it needs no per-home toggle. `config`
-#            prints the values in force.
+#            source carrying a key wins and no address, subject or credential is
+#            hard-coded here. No toggle file turns it on, because a leaf is started
+#            by an operator rather than on every poll. `config` prints the values in
+#            force.
 #   hub      The home bus side: the base server configuration in force
 #            (core/bus/nats.conf, or the home's config/bus/nats.conf) with one
 #            leafnodes block appended - the listen address, and the user and
 #            password a leaf must present. Rendered into the runtime directory, so
-#            the base file is never edited.
+#            the base file is never edited. `serve hub` starts that bus side for a
+#            run; giving a home's long-running bus service the same block is part of
+#            the switch, not of this step.
 #   leaf     The remote home side: its own message server plus one remote entry
 #            dialling the hub's leaf listener as that user. Rendered from the same
 #            key file into the runtime directory.
@@ -49,10 +51,13 @@
 #            ordered views row by row. The SSH leg calls the real transport
 #            (bin/jg-on.sh) once per event; the leaf leg starts a hub and a leaf
 #            from the rendered configurations, subscribes on the leaf's own client
-#            port, and publishes the same set on the hub. Both legs write into
+#            address, and publishes the same set on the hub. Both legs write into
 #            separate directories under --state, so a run never touches a real
-#            home's records. `--corrupt` tampers with one event on the leaf leg, and
-#            a green comparison after that would mean the check is vacuous.
+#            home's records. It starts its own servers on free ports, so a run never
+#            collides with a bus that is already up, and it bounds every wait, so a
+#            leg that delivers nothing fails instead of hanging. `--corrupt` tampers
+#            with one event on the leaf leg, and a green comparison after that would
+#            mean the check is vacuous.
 #   write    Nothing here edits the file path's plumbing or the SSH path's records.
 #            `parity` writes only under its own --state directory and the runtime
 #            directory it starts.
@@ -62,7 +67,8 @@
 #   jg-bus-leaf.sh serve hub|leaf
 #   jg-bus-leaf.sh stop
 #   jg-bus-leaf.sh send <index> <kind> <key> <payload>   publish one event
-#   jg-bus-leaf.sh consume --state <dir> [--count <n>]   subscribe and apply
+#   jg-bus-leaf.sh send < rows                          publish a batch, in order
+#   jg-bus-leaf.sh consume --state <dir> [--wait <duration>]
 #   jg-bus-leaf.sh apply --state <dir> <index> <kind> <key> <payload>
 #   jg-bus-leaf.sh dump --state <dir>                    print the ordered view
 #   jg-bus-leaf.sh parity --route <id> --state <dir> [--corrupt]
@@ -103,18 +109,22 @@ bus_leaf_key() { # <file> <key>
   awk -v k="$2" '$1 == "set" && $2 == k { sub(/^[[:space:]]*set[[:space:]]+[^[:space:]]+[[:space:]]+/, ""); print; exit }' "$1" 2>/dev/null
 }
 
-# conf_field <key> <value>: one value safe to place inside a config file. A value
-# that could close the string it sits in is refused rather than rendered.
-conf_field() { # <key> <value>
-  case "$2" in
-    ''|*[\"\\\ \	]*|*$'\n'*|*$'\r'*) die "config key $1 has an unsafe value" ;;
-  esac
-  printf '%s' "$2"
+# conf_check <key> <value> [<key> <value>...]: refuse a value that could close the
+# string it is rendered into. It runs in the caller's own shell and prints nothing,
+# so a refusal aborts the render instead of leaving the caller with an empty value.
+conf_check() { # <key> <value>...
+  [ "$#" -ge 2 ] || die "conf_check needs a key and a value"
+  while [ "$#" -ge 2 ]; do
+    case "$2" in
+      ''|*[[:space:]]*|*[\"\\]*) die "config key $1 has an unsafe value" ;;
+    esac
+    shift 2
+  done
 }
 
-# conf_endpoint <key> <value>: host:port, where the port may be -1 for "any free
-# port", which is how a run avoids a fixed address.
-conf_endpoint() { # <key> <value>
+# conf_check_endpoint <key> <value>: host:port, where the port may be -1 for "any
+# free port", which is how a run avoids a fixed address.
+conf_check_endpoint() { # <key> <value>
   local host port
   case "$2" in
     *:*:*) die "config key $1 must be host:port" ;;
@@ -123,11 +133,10 @@ conf_endpoint() { # <key> <value>
   esac
   [ -n "$host" ] || die "config key $1 has an empty host"
   case "$port" in
-    -1|[0-9]*) ;;
-    *) die "config key $1 has a non-numeric port" ;;
+    -1) ;;
+    ''|*[!0-9]*) die "config key $1 has a non-numeric port" ;;
   esac
-  case "$port" in *[!0-9-]*) die "config key $1 has a non-numeric port" ;; esac
-  conf_field "$1" "$host:$port"
+  conf_check "$1" "$2"
 }
 
 # --- the two server configurations -------------------------------------------
@@ -137,15 +146,17 @@ base_conf() {
   else printf '%s\n' "$ROOT/core/bus/nats.conf"; fi
 }
 
+# Both renders name every value in this shell before writing it, so a refusal is
+# reported as the key it belongs to and never as a half-written file.
 render_hub_conf() { # <out>
   local out=$1 listen user pass
-  listen=$(conf_endpoint hub-leaf-listen "$(cfg hub-leaf-listen)")
-  user=$(conf_field leaf-user "$(cfg leaf-user)")
-  pass=$(conf_field leaf-pass "$(cfg leaf-pass)")
+  listen=$(cfg hub-leaf-listen); conf_check_endpoint hub-leaf-listen "$listen"
+  user=$(cfg leaf-user); conf_check leaf-user "$user"
+  pass=$(cfg leaf-pass); conf_check leaf-pass "$pass"
   mkdir -p "$(dirname "$out")" || die "cannot create $(dirname "$out")"
   {
-    printf '# rendered by bin/jg-bus-leaf.sh serve hub: the base bus configuration\n'
-    printf '# plus the leaf listener this remote home connects to.\n'
+    printf '# rendered by bin/jg-bus-leaf.sh: the base bus configuration plus the\n'
+    printf '# leaf listener a remote home connects to.\n'
     cat "$(base_conf)" || die "cannot read $(base_conf)"
     printf '\nleafnodes {\n  listen: "%s"\n  authorization {\n    users = [ { user: "%s", password: "%s" } ]\n  }\n}\n' \
       "$listen" "$user" "$pass"
@@ -155,15 +166,15 @@ render_hub_conf() { # <out>
 
 render_leaf_conf() { # <hub-leaf-endpoint> <out>
   local dial=$1 out=$2 listen name user pass
-  listen=$(conf_endpoint leaf-listen "$(cfg leaf-listen)")
-  dial=$(conf_endpoint hub-leaf-dial "$dial")
-  name=$(conf_field leaf-name "$(cfg leaf-name)")
-  user=$(conf_field leaf-user "$(cfg leaf-user)")
-  pass=$(conf_field leaf-pass "$(cfg leaf-pass)")
+  listen=$(cfg leaf-listen); conf_check_endpoint leaf-listen "$listen"
+  conf_check_endpoint hub-leaf-dial "$dial"
+  name=$(cfg leaf-name); conf_check leaf-name "$name"
+  user=$(cfg leaf-user); conf_check leaf-user "$user"
+  pass=$(cfg leaf-pass); conf_check leaf-pass "$pass"
   mkdir -p "$(dirname "$out")" || die "cannot create $(dirname "$out")"
   {
-    printf '# rendered by bin/jg-bus-leaf.sh serve leaf: this home is a leaf node\n'
-    printf '# of the main home bus.\n'
+    printf '# rendered by bin/jg-bus-leaf.sh: this home is a leaf node of the main\n'
+    printf '# home bus.\n'
     printf 'server_name: "%s"\n' "$name"
     printf 'host: "%s"\nport: %s\n' "${listen%:*}" "${listen##*:}"
     printf 'leafnodes {\n  remotes = [ { url: "nats-leaf://%s:%s@%s" } ]\n}\n' \
@@ -213,7 +224,9 @@ start_server() { # <runtime> <role> <conf>
   addr=$(log_line "$log" 's/.*Listening for client connections on \(.*\)$/\1/p') \
     || die "$role: the server never reported a client address (see $log)"
   client_url "$addr" >"$runtime/$role.client-url"
-  addr=$(log_line "$log" 's/.*Listening for leafnode connections on \(.*\)$/\1/p' 2) || addr=
+  # The leaf listener is optional: only the hub side has one, and nats-server logs
+  # it before the client line, so one read after that line is enough.
+  addr=$(log_line "$log" 's/.*Listening for leafnode connections on \(.*\)$/\1/p' 1) || addr=
   [ -z "$addr" ] || printf '%s\n' "$addr" >"$runtime/$role.leaf-url"
   printf '%s: client %s' "$role" "$(cat "$runtime/$role.client-url")"
   [ -z "$addr" ] || printf ', leaf %s' "$addr"
@@ -229,19 +242,22 @@ stop_server() { # <runtime> <role>
 }
 
 cmd_serve() { # hub|leaf
-  local side=${1:-} dial
+  local side=${1:-} conf dial
   case "$side" in
     hub)
-      gate_server
-      start_server "$RUNTIME" hub "$(render_hub_conf "$RUNTIME/hub.conf")"
+      conf=$(render_hub_conf "$RUNTIME/hub.conf") || exit 2
       ;;
     leaf)
-      gate_server
       dial=$(cfg hub-leaf-dial)
-      start_server "$RUNTIME" leaf "$(render_leaf_conf "$dial" "$RUNTIME/leaf.conf")"
+      conf=$(render_leaf_conf "$dial" "$RUNTIME/leaf.conf") || exit 2
       ;;
     *) die "serve needs hub or leaf" ;;
   esac
+  # The configuration is rendered and validated first, so a bad value is reported as
+  # itself rather than as a missing binary, and a render that refused never reaches
+  # the server.
+  gate_server
+  start_server "$RUNTIME" "$side" "$conf"
 }
 
 cmd_stop() {
@@ -296,6 +312,12 @@ cmd_apply() { # <base> <index> <kind> <key> <payload>
   [ "$index" -eq $((last + 1)) ] || { printf 'skip: index %s is not %s\n' "$index" "$((last + 1))" >&2; return 0; }
   cleaned=$(clean_field "$payload")
   mkdir -p "$base" || die "cannot create $base"
+  # Both libraries resolve the home they write into when they are sourced, and the
+  # inbox library sources the wake library itself, so the record path is named
+  # before either one loads: a later event must never inherit an earlier home.
+  JG_STATE_OVERRIDE=$base
+  JG_WAKE_QUEUE=$base/.wake-queue
+  JG_WAKE_QUEUE_LOCK=$base/.wake-queue.lock
   case "$kind" in
     task)
       # shellcheck source=bin/jg-task-inbox-lib.sh
@@ -306,7 +328,6 @@ cmd_apply() { # <base> <index> <kind> <key> <payload>
       printf '%s\n' "$payload" >>"$base/$key.status" || die "apply: the status line was not written"
       ;;
     wake)
-      JG_STATE_OVERRIDE=$base
       # shellcheck source=bin/jg-wake-lib.sh
       . "$SCRIPT_DIR/jg-wake-lib.sh"
       jg_wake_append signal "$key" "$payload" || die "apply: the wake row was not written"
@@ -322,38 +343,60 @@ cmd_apply() { # <base> <index> <kind> <key> <payload>
 apply_line() { # <base> <line>
   local base=$1 line=$2 index kind key payload
   IFS=$'\t' read -r index kind key payload <<<"$line"
-  case "${index:-}${kind:-}${key:-}" in ''|*[!a-z0-9._-]*) printf 'skip: malformed event row\n' >&2; return 0 ;; esac
-  [ -n "${payload:-}" ] || { printf 'skip: malformed event row\n' >&2; return 0; }
+  case "${index:-}" in ''|*[!0-9]*) printf 'skip: malformed event row\n' >&2; return 0 ;; esac
+  case "${kind:-}" in task|status|wake) ;; *) printf 'skip: malformed event row\n' >&2; return 0 ;; esac
+  { [ -n "${key:-}" ] && [ -n "${payload:-}" ]; } || { printf 'skip: malformed event row\n' >&2; return 0; }
   cmd_apply "$base" "$index" "$kind" "$(unb64 "$key")" "$(unb64 "$payload")"
 }
 
-cmd_send() { # <index> <kind> <key> <payload>
-  local index=${1:-} kind=${2:-} key=${3:-} payload=${4:-}
-  [ "$#" -eq 4 ] || die "send needs <index> <kind> <key> <payload>"
+# encode_rows: event rows on stdin, one wire line per row on stdout.
+encode_rows() {
+  local index kind key payload
+  while IFS=$'\t' read -r index kind key payload; do
+    [ -n "${index:-}" ] || continue
+    printf '%s\t%s\t%s\t%s\n' "$index" "$kind" \
+      "$(printf '%s' "$key" | b64)" "$(printf '%s' "$payload" | b64)"
+  done
+}
+
+# send: one event from argv, or any number of rows on stdin. A batch goes out on
+# ONE connection in the order it is written, because the order the server receives
+# is the order this step has to prove; a separate connection per event would let
+# the server interleave them and the comparison would fail for the sender's
+# reason, not the leaf's.
+cmd_send() { # [<index> <kind> <key> <payload>] | rows on stdin
   gate_client
-  printf '%s\t%s\t%s\t%s\n' "$index" "$kind" "$(printf '%s' "$key" | b64)" "$(printf '%s' "$payload" | b64)" \
-    | "$NATS_BIN" -s "$(cfg url)" pub --force-stdin --no-templates "$(cfg subject)" >/dev/null 2>&1 \
+  {
+    if [ "$#" -eq 4 ]; then
+      printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"
+    elif [ "$#" -eq 0 ]; then
+      cat
+    else
+      die "send needs <index> <kind> <key> <payload>, or event rows on stdin"
+    fi
+  } | encode_rows \
+    | "$NATS_BIN" -s "$(cfg url)" pub --force-stdin --count 1 --send-on=newline --no-templates "$(cfg subject)" \
+      >/dev/null 2>&1 \
     || die "send: the event was not published"
 }
 
-cmd_consume() { # --state <dir> [--count <n>]
-  local base='' count='' line
+cmd_consume() { # --state <dir> [--wait <duration>]
+  local base='' idle='' line
+  local -a args=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --state) base=${2:-}; shift 2 || die "consume --state needs a directory" ;;
-      --count) count=${2:-}; shift 2 || die "consume --count needs a number" ;;
+      --wait) idle=${2:-}; shift 2 || die "consume --wait needs a duration" ;;
       *) die "consume: unknown argument $1" ;;
     esac
   done
   [ -n "$base" ] || die "consume needs --state <dir>"
   gate_client
-  if [ -n "$count" ]; then
-    "$NATS_BIN" -s "$(cfg url)" sub "$(cfg subject)" --raw --count "$count" 2>/dev/null \
-      | while IFS= read -r line; do [ -z "$line" ] || apply_line "$base" "$line"; done
-  else
-    "$NATS_BIN" -s "$(cfg url)" sub "$(cfg subject)" --raw 2>/dev/null \
-      | while IFS= read -r line; do [ -z "$line" ] || apply_line "$base" "$line"; done
-  fi
+  [ -z "$idle" ] || args+=(--wait "$idle")
+  # --wait bounds a reader nobody is feeding, which is how a replay ends; a reader
+  # with no bound stays subscribed, as a live consumer of the home must.
+  "$NATS_BIN" -s "$(cfg url)" sub "$(cfg subject)" --raw ${args[@]+"${args[@]}"} 2>/dev/null \
+    | while IFS= read -r line; do [ -z "$line" ] || apply_line "$base" "$line"; done
 }
 
 cmd_dump() { # --state <dir>
@@ -384,6 +427,24 @@ event_set() {
 
 event_count() { event_set | awk 'END { print NR }'; }
 
+# publish_from <from-index> <corrupt> <hub-url>: the events the leaf leg still owes,
+# as one ordered batch on one connection, from the first index the home has not
+# applied.
+publish_from() { # <from> <corrupt> <hub-url>
+  local from=$1 corrupt=$2 hub=$3 index kind key payload
+  {
+    while IFS=$'\t' read -r index kind key payload; do
+      [ -n "$index" ] || continue
+      [ "$index" -gt "$from" ] || continue
+      if [ "$corrupt" -eq 1 ] && [ "$index" -eq 3 ]; then
+        payload="$payload (corrupted by the parity test)"
+      fi
+      printf '%s\t%s\t%s\t%s\n' "$index" "$kind" "$key" "$payload"
+    done < <(event_set)
+  } | JG_BUS_LEAF_URL=$hub "$SELF" send \
+    || die "parity: the leaf leg could not publish its events"
+}
+
 # ssh_leg <route> <base>: the real transport, one call per event, so the order the
 # lead sees is the order the caller sent.
 ssh_leg() { # <route> <base>
@@ -398,40 +459,38 @@ ssh_leg() { # <route> <base>
 }
 
 # leaf_leg <base> <runtime>: start a hub and a leaf from the rendered
-# configurations, subscribe on the leaf's own client port, and publish the same
-# set on the hub until every event has been applied.
+# configurations, subscribe on the leaf's own address, and publish the same set on
+# the hub until every event has been applied.
 leaf_leg() { # <base> <runtime> <corrupt>
-  local base=$1 runtime=$2 corrupt=${3:-0} index kind key payload consumer
+  local base=$1 runtime=$2 corrupt=${3:-0} consumer
   local hub_leaf applied tries=0 want
   gate_server
   gate_client
   mkdir -p "$runtime" || die "parity: cannot create $runtime"
-  hub_leaf=$(conf_endpoint hub-leaf-listen 127.0.0.1:-1)
+  hub_leaf=127.0.0.1:-1
   start_server "$runtime" hub \
-    "$(JG_BUS_LEAF_HUB_LEAF_LISTEN="$hub_leaf" render_hub_conf "$runtime/hub.conf")" >/dev/null
+    "$(JG_BUS_LEAF_HUB_LEAF_LISTEN="$hub_leaf" render_hub_conf "$runtime/hub.conf")" >/dev/null \
+    || exit 2
   hub_leaf=$(cat "$runtime/hub.leaf-url" 2>/dev/null) || die "parity: the hub has no leaf listener"
   start_server "$runtime" leaf \
-    "$(JG_BUS_LEAF_LEAF_LISTEN=127.0.0.1:-1 render_leaf_conf "$hub_leaf" "$runtime/leaf.conf")" >/dev/null
+    "$(JG_BUS_LEAF_LEAF_LISTEN=127.0.0.1:-1 render_leaf_conf "$hub_leaf" "$runtime/leaf.conf")" >/dev/null \
+    || exit 2
   want=$(event_count)
   JG_BUS_LEAF_URL=$(cat "$runtime/leaf.client-url") \
-    "$SELF" consume --state "$base" --count "$want" >"$runtime/consume.log" 2>&1 &
+    "$SELF" consume --state "$base" --wait 1s >"$runtime/consume.log" 2>&1 &
   consumer=$!
   while [ "$tries" -lt 200 ]; do
     applied=$(view_last_index "$base")
     [ "$applied" -ge "$want" ] && break
-    while IFS=$'\t' read -r index kind key payload; do
-      [ -n "$index" ] || continue
-      [ "$index" -gt "$applied" ] || continue
-      if [ "$corrupt" -eq 1 ] && [ "$index" -eq 3 ]; then
-        payload="$payload (corrupted by the parity test)"
-      fi
-      JG_BUS_LEAF_URL=$(cat "$runtime/hub.client-url") \
-        "$SELF" send "$index" "$kind" "$key" "$payload" || die "parity: the leaf leg could not publish event $index"
-    done < <(event_set)
+    publish_from "$applied" "$corrupt" "$(cat "$runtime/hub.client-url")"
     tries=$((tries + 1))
     sleep 0.05
   done
-  wait "$consumer" 2>/dev/null || true
+  if [ "$(view_last_index "$base")" -ge "$want" ]; then
+    wait "$consumer" 2>/dev/null || true
+  else
+    kill "$consumer" 2>/dev/null || true
+  fi
   stop_server "$runtime" leaf
   stop_server "$runtime" hub
   [ "$(view_last_index "$base")" -ge "$want" ] \
@@ -479,11 +538,13 @@ cmd_parity() { # --route <id> --state <dir> [--corrupt]
   fi
   differences=$(grep -c '^[-+][^-+]' "$state/parity.diff" 2>/dev/null || true)
   case "${differences:-}" in ''|*[!0-9]*) differences=0 ;; esac
+  # A difference that did not come out as a changed line - a side that is missing
+  # altogether - still counts as one, so the report never reads as agreement.
+  [ "$status" -eq 0 ] || [ "$differences" -gt 0 ] || differences=1
   printf 'rows=%s differences=%s route=%s\n' "$rows" "$differences" "$route"
   if [ "$status" -ne 0 ]; then
     printf 'the two paths disagree; see %s\n' "$state/parity.diff"
     sed -n '1,40p' "$state/parity.diff"
-    [ "$differences" -gt 0 ] || differences=1
   fi
   return "$status"
 }
@@ -505,10 +566,14 @@ case "${1:-}" in
   consume) shift; cmd_consume "$@" ;;
   apply)
     shift
-    base=
-    if [ "${1:-}" = --state ]; then base=${2:-}; [ -n "$base" ] || die "apply --state needs a directory"; shift 2; fi
+    # No default: this writes into the home it is given, so a missing --state would
+    # write into whichever home happens to be current.
+    [ "${1:-}" = --state ] || die "apply needs --state <dir>"
+    base=${2:-}
+    [ -n "$base" ] || die "apply --state needs a directory"
+    shift 2
     [ "$#" -eq 4 ] || die "apply needs <index> <kind> <key> <payload>"
-    cmd_apply "${base:-$STATE}" "$1" "$2" "$3" "$4"
+    cmd_apply "$base" "$1" "$2" "$3" "$4"
     ;;
   dump) shift; cmd_dump "$@" ;;
   parity) shift; cmd_parity "$@" ;;
