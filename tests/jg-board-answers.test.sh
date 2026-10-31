@@ -48,6 +48,16 @@ answer() {  # <case-dir> <key> <value> [at]
     >> "$1/so/.sign-off/decisions.answers.jsonl"
 }
 
+# `post` prints the card key alone on stdout and its own diagnostics, including
+# the card-rule measurement, on stderr, so a key read from the merged streams is
+# a diagnostic line the moment the measurement has anything to say.
+run_key() {  # <case-dir> <command...> -> the command's stdout alone
+  local d=$1
+  shift
+  env PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" SIGN_OFF_HOME="$d/so" \
+    SIGNOFF_LOG="$d/signoff.log" JG_SEND_SETTLE=0 "$@" 2>/dev/null
+}
+
 test_routed_answer_reaches_the_lead_and_closes_its_decision() {
   local d out rec
   d=$(setup routed)
@@ -119,7 +129,7 @@ test_failed_delivery_is_retried_and_reported_once() {
 test_question_card_route_records_the_owner() {
   local d out
   d=$(setup card)
-  out=$(run "$d" "$CARD" post --route muxr --decision-key use-key --title "Q for muxr?" --ask-ref m1 --must design-pick \
+  out=$(run_key "$d" "$CARD" post --route muxr --decision-key use-key --title "Q for muxr?" --ask-ref m1 --must design-pick \
     --outcome yes="It is." --outcome no="It is not.")
   assert_equals $'lead=muxr\ndecision=use-key' "$(cat "$d/home/state/board-routes/$out")" "the route was not recorded under the printed card key"
   out=$(run "$d" "$CARD" post --route ghost --title "Q2?" --ask-ref m1 --must design-pick \

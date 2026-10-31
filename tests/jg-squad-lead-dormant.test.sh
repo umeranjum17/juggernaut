@@ -99,7 +99,12 @@ test_a_lead_with_open_work_or_recent_activity_is_left_alone() {
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$d/lead/data/backlog.md"
   touch -d '2 hours ago' "$d/lead/data/backlog.md"
   assert_equals "$(sweep "$d")" "" "an idle time of 0 turns the rule off"
-  printf '1\n' > "$d/main/config/squad-lead-dormant-secs"
+  # The rule compares whole-second mtimes (bin/jg-squad-lead-dormant.sh
+  # quiet_secs), so a one-second threshold is met by the fraction of a second a
+  # touch takes to cross a boundary and the case flips on the wall clock alone.
+  # Three seconds keeps the case clear of that granularity: a record touched a
+  # moment ago still reads well under the threshold.
+  printf '3\n' > "$d/main/config/squad-lead-dormant-secs"
   touch "$d/lead/data/backlog.md"
   assert_equals "$(sweep "$d")" "" "a lead whose records just changed is not idle yet"
   pass "a lead with open work or recent activity is left alone"
