@@ -120,12 +120,14 @@ bash "$ROOT/bin/fm-supervision-engine-lib.sh" enabled "$h/host-config" opencode 
 pass "an old caller running a library through bash reaches the renamed library"
 # the handover those shims each carried is one library now: no shim keeps its
 # own copy, and every shim still resolves to the file its old form named
+# shellcheck source=bin/jg-alias-lib.sh
+. "$ROOT/bin/jg-alias-lib.sh"
 for shim in "$ROOT"/bin/fm-*.sh; do
   [ "$(wc -l < "$shim")" -le 8 ] \
     || fail "${shim##*/} carries its own copy of the alias handover again"
   ! grep -q 'exec bash' "$shim" \
     || fail "${shim##*/} hands over by itself instead of calling bin/jg-alias-lib.sh"
-  target=$(cd "$ROOT/bin" && . ./jg-alias-lib.sh && jg_alias_target "${shim##*/}")
+  target=$(jg_alias_target "${shim##*/}")
   [ -f "$ROOT/bin/$target" ] \
     || fail "${shim##*/} hands over to $target, which does not exist"
 done
