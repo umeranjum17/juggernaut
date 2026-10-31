@@ -1,0 +1,8 @@
+# Services this fleet runs, one per line; `#` starts a comment.
+# Copy it to config/running-products and list the services you want watched.
+# Each line has five fields; quote a command that has spaces:
+#   <name> <systemd-user-unit> <running-version-command> <wanted-version-command> <auto|manual>
+# `bin/jg-running-products.sh check` reports every line and exits 1 when one is behind.
+# `refresh` restarts each behind `auto` line with `systemctl --user restart <unit>` and re-reads its version.
+# A `manual` line is only reported, and a service no line names is never touched.
+# This file starts empty on purpose: naming a service to restart is a decision, never an inference.
