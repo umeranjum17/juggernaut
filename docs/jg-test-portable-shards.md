@@ -26,9 +26,12 @@ The measured maxima pack four shards to about 1520 s and five to about 1215 s ag
 The complete local host suite remains available through `JG_SUPERVISION_HOST_PART=all bash tests/jg-supervision-host.test.sh`.
 The 2026-10-07 polytoken adapter tests carry provisional local measurements instead - 21090 ms for `tests/jg-polytoken-harness.test.sh` and the 103 ms live-guard skip for `tests/jg-polytoken-signals-live-e2e.test.sh`, both measured on the adapter-verification macOS host - until the next CI refresh replaces them with Ubuntu measurements, because they postdate the 2026-09-30 baseline.
 The 2026-10-30 `tests/jg-design-gate-first-draft.test.sh` carries its provisional local measurement of 680 ms from `bin/jg-test-run.sh --json` on the Linux workspace host for the same reason, and the next CI refresh replaces it with an Ubuntu measurement.
+The 2026-11-01 `tests/jg-reply-bus-parity.test.sh` carries its provisional local measurement of 2655 ms from `bin/jg-test-run.sh --json` on the Linux workspace host, which starts its own throwaway `nats-server`, for the same reason.
 The 2026-10-30 hints for the fourteen scripts that had none (the ones the coverage guard listed) carry provisional local measurements from one serial `bin/jg-test-run.sh --json` run on the Linux workspace host, the largest being 14071 ms for `tests/jg-tmp-sweep.test.sh`; the next CI refresh replaces them with Ubuntu measurements.
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
 `tests/jg-board-gate.test.sh` (437 ms) postdates that refresh and carries a provisional local measurement until the next CI refresh replaces it, so the no-hint coverage guard keeps its margin.
+`tests/jg-state-bus-parity.test.sh` (6515 ms) postdates it too, and its hint is the slowest of two serial local runs against a real throwaway JetStream server; CI gate-skips the script when `nats-server` is absent, so until the lane installs one this hint over-states its CI cost rather than under-stating it.
+`tests/jg-board-asks.test.sh` (860 ms, the maximum of five local runs) postdates it too and carries a provisional measurement for the same reason.
 
 ## Parallel lanes
 

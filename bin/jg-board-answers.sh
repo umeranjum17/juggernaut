@@ -4,12 +4,21 @@
 #
 # Usage:
 #   jg-board-answers.sh route <card-key> <lead> [<decision-key>]
+#   jg-board-answers.sh route-answer <card-key> <at> <answer> [<label>]
 #   jg-board-answers.sh [check|poll]
 #   jg-board-answers.sh arm | disarm
 #
 # route  Record that <lead> (a task id in this home) owns the card; written by
 #        `jg-question-card.sh post --route <lead> [--decision-key <slug>]`. The
 #        decision key defaults to the card key.
+# route-answer
+#        Take ONE answer to its routed lead now, with the same marked line and
+#        the same decision close the check sends, and record it as answered so
+#        a later pass does not send it twice. This is the route a captain reply
+#        that arrives from the bus (bin/jg-bus.sh reply) takes, so a reply is
+#        routed by exactly the rule a board answer is routed by. It refuses a
+#        card with no route: that answer stays with Main, as it does today.
+#        Prints `routed: <card-key> -> <lead>` on success.
 # check  One deterministic pass, no model. Read the board's answers through
 #        sign-off-axi, then for each:
 #          ROUTED: send the lead one marked answer line (card key, answer, time,
@@ -67,6 +76,14 @@ deliver() {  # <key> <lead> <decision> <text> <delivery-id>; 0 = recorded in the
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-send.sh" "$lead" ${args[@]+"${args[@]}"} "$text" 2>&1
 }
 
+# The one owner of the marked answer line a lead reads. A board answer and a
+# captain reply that arrived on the bus are the same event, so both send the
+# captain's words in the one shape the lead's acknowledgement looks for.
+answer_text() {  # <key> <at> <answer> <label> <note> <link>
+  printf 'board-answer [key=%s at=%s]: the captain answered "%s"%s%s.%s Move this record to handled/ to acknowledge; no other reply is owed.' \
+    "$1" "$2" "$3" "${4:+ ($4)}" "${5:+ - note: $5}" "${6:+ Card: $6.}"
+}
+
 cmd_check() {
   local json board key answer label note at lead dk link text id out first=0 report=''
   jg_question_signoff_available || { say "board answers cannot be read: sign-off-axi is not on PATH"; return 0; }
@@ -89,7 +106,7 @@ cmd_check() {
     if [ "$(rget "$key" answered)" != "$at" ]; then
       dk=$(rget "$key" decision)
       id=$(printf '%s' "$key|$at" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-16)
-      text="board-answer [key=$key at=$at]: the captain answered \"$answer\"${label:+ ($label)}${note:+ - note: $note}.${link:+ Card: $link.} Move this record to handled/ to acknowledge; no other reply is owed."
+      text="$(answer_text "$key" "$at" "$answer" "$label" "$note" "$link")"
       if out=$(deliver "$key" "$lead" "$dk" "$text" "$id"); then
         rput "$key" answered "$at"
         report="${report}$(say "info: board answer \"$answer\" on $key went to $lead; nothing for Main to do")"$'\n'
@@ -105,6 +122,25 @@ cmd_check() {
   [ -z "$report" ] || printf '%s' "$report"
 }
 
+cmd_route_answer() {
+  local key=${1-} at=${2-} answer=${3-} label=${4-} lead dk link text id out
+  key_ok "$key" || die "route-answer needs a card key" 2
+  { [ -n "$at" ] && [ -n "$answer" ]; } || die "route-answer needs the answer time and the captain's answer" 2
+  mkdir -p "$ROUTES"
+  lead=$(rget "$key" lead)
+  if [ -z "$lead" ]; then
+    case "$key" in jg-*) die "refused: $key belongs to the captain-hold adapter, not a routed card" 3 ;; esac
+    die "refused: card $key is not routed to a lead, so its answer stays with Main as it does today" 3
+  fi
+  dk=$(rget "$key" decision)
+  link=$(JG_HOME="$JG_HOME" jg_board_link answered "$key" 2>/dev/null)
+  id=$(printf '%s' "$key|$at" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-16)
+  text=$(answer_text "$key" "$at" "$answer" "$label" '' "$link")
+  out=$(deliver "$key" "$lead" "$dk" "$text" "$id") || die "the answer could not reach $lead: ${out//$'\n'/ }"
+  rput "$key" answered "$at"
+  printf 'routed: %s -> %s\n' "$key" "$lead"
+}
+
 cmd_arm() {
   local tmp
   tmp=$(umask 077; mktemp "$STATE/.jg-board-answers.XXXXXX") || die "cannot write the check shim"
@@ -117,6 +153,7 @@ cmd_arm() {
 
 case "${1:-check}" in
   route) shift; cmd_route "$@" ;;
+  route-answer) shift; cmd_route_answer "$@" ;;
   check|poll) cmd_check ;;
   arm) cmd_arm ;;
   disarm) rm -f -- "$SHIM" "$STATE/board-answers.check-trust"; printf 'disarmed: board-answers\n' ;;

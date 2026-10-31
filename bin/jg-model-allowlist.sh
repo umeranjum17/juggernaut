@@ -10,7 +10,7 @@
 #   jg-model-allowlist.sh install|uninstall
 #
 # The list is config/model-allow-list.json, one key per provider
-# ({"codex": ["gpt-5.6-sol"]}), the same file the model-gate add-on reads.
+# ({"codex": ["gpt-5.6-sol"]}), the same file the model-gate feature reads.
 # docs/configuration.md "Model allow-lists" owns the key shape, the match rule, and
 # the refusal wording; this file implements them for every launch.
 #

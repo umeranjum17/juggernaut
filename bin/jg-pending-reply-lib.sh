@@ -136,7 +136,7 @@ _JG_PENDING_REPLY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/n
 # bin/jg-wake-lib.sh's single directed expansion below; a second directive
 # here would re-expand the same transitive graph.
 . "$_JG_PENDING_REPLY_LIB_DIR/jg-classify-lib.sh"
-# Parked-home gate (juggernaut-addons/parked-homes); the shim answers "not parked" without the add-on.
+# Parked-home gate (core/parked-homes); the shim answers "not parked" without the feature.
 # shellcheck source=bin/jg-parked-homes-lib.sh
 . "$_JG_PENDING_REPLY_LIB_DIR/jg-parked-homes-lib.sh"
 
@@ -1586,9 +1586,9 @@ jg_pending_reply_tick() {  # <state-dir>
       jg_pending_reply_close_escalation "$state" "$corr" || true
       continue
     fi
-    # Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
+    # Parked-home guard (core/parked-homes): a parked home gets no
     # recovery resend and no missed-report escalation - the request keeps its
-    # record and stays as-is. No-op without the add-on checkout.
+    # record and stays as-is. No-op without the feature checkout.
     jg_parked_skip_meta "$state/${task_id}.meta" "$task_id" pending-reply && continue
     jg_pending_reply_reconcile_delivery "$state" "$corr" || true
     phase=$(jg_pending_reply_get "$rec" phase)

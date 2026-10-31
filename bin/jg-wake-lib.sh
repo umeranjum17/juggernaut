@@ -2448,15 +2448,86 @@ jg_wake_append() {
   return "$status"
 }
 
+# --- wake urgency routing -----------------------------------------------------
+# One rule file gives every event a class: `now` wakes at once, `batch` waits for a turn
+# that happens anyway, and `silent` is recorded only. defaults/wake-routing owns the
+# classes, the threshold, and the rationale; a home or JG_WAKE_ROUTING overrides it.
+jg_wake_routing_file() {
+  local file
+  for file in "${JG_WAKE_ROUTING:-}" "${JG_HOME:-$JG_WAKE_DEFAULT_ROOT}/config/wake-routing" \
+    "$JG_WAKE_DEFAULT_ROOT/defaults/wake-routing"; do
+    [ -n "$file" ] && [ -f "$file" ] && { printf '%s\n' "$file"; return 0; }
+  done
+  return 0
+}
+
+# jg_wake_route_class <kind> <key> <payload>: now, batch, or silent. First rule wins
+# and no match answers `now`, so a missing rule file can never hide an event. A
+# status-file event is matched against its newest line so a rule can name the state
+# word; an unreadable log falls back to the recorded payload.
+jg_wake_route_class() {
+  local kind=$1 key=$2 payload=$3 file class rkind rkey rpay line
+  file=$(jg_wake_routing_file)
+  [ -n "$file" ] || { printf 'now\n'; return 0; }
+  case "$key" in
+    *.status) [ ! -f "$STATE/$key" ] || [ -L "$STATE/$key" ] || {
+      line=$(tail -n 1 -- "$STATE/$key" 2>/dev/null) && [ -n "$line" ] && payload=$line
+    } ;;
+  esac
+  while read -r class rkind rkey rpay; do
+    case "$class" in ''|'#'*|set) continue ;; esac
+    case "$rkind" in '*'|"$kind") ;; *) continue ;; esac
+    # shellcheck disable=SC2254  # the rule file's key and payload fields are globs
+    case "$key" in $rkey) ;; *) continue ;; esac
+    # shellcheck disable=SC2254
+    case "$payload" in $rpay) printf '%s\n' "$class"; return 0 ;; esac
+  done < "$file"
+  printf 'now\n'
+}
+
+# _jg_wake_realert_record <kind> <key> <payload>: remember a delivered event for the
+# rule file's re-alert-minutes only, so the same unchanged event cannot wake again.
+_jg_wake_realert_record() {
+  local kind=$1 key=$2 payload=$3 rules="$STATE/.wake-realert" tmp cutoff window=30
+  local tag name value rest file
+  file=$(jg_wake_routing_file)
+  if [ -n "$file" ]; then
+    while read -r tag name value rest; do
+      [ "$tag:$name" = set:re-alert-minutes ] || continue
+      case "$value" in ''|*[!0-9]*) continue ;; esac
+      window=$value
+    done < "$file"
+  fi
+  [ "$window" -gt 0 ] || return 0
+  jg_epoch_seconds_to cutoff
+  cutoff=$((cutoff - window * 60))
+  printf '%s\t%s\t%s\t%s\n' "$((cutoff + window * 60))" "$kind" "$key" "$payload" \
+    >> "$rules" 2>/dev/null || return 0
+  tmp="$rules.tmp.$$"
+  awk -F '\t' -v c="$cutoff" '$1 >= c' "$rules" 2>/dev/null > "$tmp" && mv -f "$tmp" "$rules" 2>/dev/null
+  rm -f "$tmp" 2>/dev/null || true
+}
+
+# _jg_wake_settled_locked <kind> <key> <payload>: the record-only class, readable with
+# bin/jg-wake.sh settled. It never reaches the queue.
+_jg_wake_settled_locked() {
+  local now
+  jg_epoch_seconds_to now
+  printf '%s\tsilent\t%s\t%s\t%s\n' "$now" "$1" "$2" "$3" >> "$STATE/.wake-settled"
+}
+
 # jg_wake_append_locked <kind> <key> <payload>
-# Locked core of jg_wake_append: appends the wake row under an already-held
-# JG_WAKE_QUEUE_LOCK. Callers that must commit another durable record atomically
-# with the append (holding this lock excludes the drain's acknowledgement, which
-# deletes consumed rows under the same lock) acquire the lock once, run this and
-# their own write, then release.
+# Locked core of jg_wake_append: records one event under an already-held
+# JG_WAKE_QUEUE_LOCK. Callers that must commit another durable record atomically with
+# the append (holding this lock excludes the drain's acknowledgement, which deletes
+# consumed rows under the same lock) acquire the lock once, run this and their own
+# write, then release. The class decides the destination: `silent` is recorded and
+# returns at once, and `batch` is an ordinary row whose wake is gated, so it settles
+# with no turn. JG_WAKE_LAST carries `<class>:<key>` to that gate, and
+# JG_WAKE_CYCLE_URGENT latches once any row this cycle was `now`.
+# shellcheck disable=SC2034 # JG_WAKE_LAST and JG_WAKE_CYCLE_URGENT are read by wake() in the separately linted transition owner.
 jg_wake_append_locked() {
-  local kind=$1 key=$2 payload=$3 clean_key clean_payload epoch seq seq_file status
-  local recovery_marker
+  local kind=$1 key=$2 payload=$3 clean_key clean_payload class epoch seq seq_file status=0
   case "$kind" in
     signal|stale|check|heartbeat) ;;
     *) printf 'jg_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
@@ -2464,12 +2535,26 @@ jg_wake_append_locked() {
 
   clean_key=$(printf '%s' "$key" | jg_wake_clean_field)
   clean_payload=$(printf '%s' "$payload" | jg_wake_clean_field)
-  epoch=$(date +%s)
-  seq_file="$STATE/.wake-queue.seq"
-  recovery_marker="$STATE/.watcher-down"
-  status=0
+  class=$(jg_wake_route_class "$kind" "$clean_key" "$clean_payload")
+  # A status-file row records only the file list, so two different status events look
+  # identical: re-alert dedupe applies where the payload is the event itself.
+  case "$clean_key" in
+    *.status) ;;
+    *) if [ "$class" = now ] && [ -s "$STATE/.wake-realert" ] \
+      && grep -qF -- "$(printf '\t%s\t%s\t%s' "$kind" "$clean_key" "$clean_payload")" \
+        "$STATE/.wake-realert" 2>/dev/null; then
+      class='batch'
+    fi ;;
+  esac
+  if [ "$class" = silent ]; then
+    _jg_wake_settled_locked "$kind" "$clean_key" "$clean_payload" || true
+    JG_WAKE_LAST="silent:$clean_key"
+    return 0
+  fi
 
-  _jg_recovery_marker_publish "$recovery_marker" downtime "" append || status=$?
+  jg_epoch_seconds_to epoch
+  seq_file="$STATE/.wake-queue.seq"
+  _jg_recovery_marker_publish "$STATE/.watcher-down" downtime "" append || status=$?
   if [ "$status" -eq 0 ]; then
     seq=$(cat "$seq_file" 2>/dev/null || echo 0)
     case "$seq" in
@@ -2483,19 +2568,24 @@ jg_wake_append_locked() {
   fi
   if [ "$status" -ne 0 ]; then
     _jg_wake_append_recovery_restore_locked || true
-  else
-    JG_WAKE_APPEND_RECOVERY_PREVIOUS_TOKEN=
-    JG_WAKE_APPEND_RECOVERY_PUBLISHED_TOKEN=
-    # #fleet: the same event, in plain words, on the fleet chat channel. This is
-    # the call site that already records the wake, so the channel needs no scan
-    # of its own; a chat problem can never fail a wake.
-    if [ -x "$JG_WAKE_LIB_DIR/jg-chat.sh" ]; then
-      JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
-        "$JG_WAKE_LIB_DIR/jg-chat.sh" note '#fleet' "${clean_key%.status}" - wake - \
-        "$kind: $clean_key $clean_payload" >/dev/null 2>&1 || true
-    fi
+    return "$status"
   fi
-  return "$status"
+  JG_WAKE_APPEND_RECOVERY_PREVIOUS_TOKEN=
+  JG_WAKE_APPEND_RECOVERY_PUBLISHED_TOKEN=
+  JG_WAKE_LAST="$class:$clean_key"
+  if [ "$class" = now ]; then
+    JG_WAKE_CYCLE_URGENT=1
+    _jg_wake_realert_record "$kind" "$clean_key" "$clean_payload" || true
+  fi
+  # #fleet: the same event, in plain words, on the fleet chat channel. This is
+  # the call site that already records the wake, so the channel needs no scan of
+  # its own; a chat problem can never fail a wake.
+  if [ -x "$JG_WAKE_LIB_DIR/jg-chat.sh" ]; then
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
+      "$JG_WAKE_LIB_DIR/jg-chat.sh" note '#fleet' "${clean_key%.status}" - wake - \
+      "$kind: $clean_key $clean_payload" >/dev/null 2>&1 || true
+  fi
+  return 0
 }
 
 # jg_wake_queued_keys <kind>

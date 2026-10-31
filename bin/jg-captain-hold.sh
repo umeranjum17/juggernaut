@@ -51,8 +51,8 @@
 # semantics (`--until` is the optional hold deferral), so the create waives
 # Beads `due.required` through `BD_DUE_REQUIRED` rather than inventing a due
 # date or registering a `types.custom` captain issue type. When the optional
-# task-priority add-on is installed, a created task needs `--priority 0-3`; the
-# add-on's refusal is returned as-is (bin/jg-tasks-axi.sh owns that hook).
+# task-priority feature is installed, a created task needs `--priority 0-3`; the
+# feature's refusal is returned as-is (bin/jg-tasks-axi.sh owns that hook).
 # The command records a UTC `Captain hold set:` timestamp in the task body:
 # repeating an active hold preserves the existing timestamp, while re-holding
 # released work starts a new lifecycle. A task already closed is refused rather
@@ -66,7 +66,7 @@
 # card.
 # When this home has armed the sign-off adapter, an undated `hold` also
 # raises a sign-off board card keyed by this home's tag, the task id and the hold
-# stamp; that adapter owns the card (the juggernaut-addons signoff script when
+# stamp; that adapter owns the card (core/signoff/bin/jg-procevent-signoff.sh when
 # it is installed, else bin/jg-procevent-signoff.sh),
 # and a card it cannot raise fails the command (the hold stays recorded).
 # A hold that is the captain's own instruction raises nothing at all: one whose
@@ -268,9 +268,6 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 
-# shellcheck source=bin/jg-addons-dir-lib.sh
-# shellcheck disable=SC1091
-. "$SCRIPT_DIR/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-classify-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-classify-lib.sh"
@@ -968,7 +965,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
 
 command_hold() {
   local id=${1:-} priority='' priority_check title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
-  local signoff_script addon_signoff existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0 card_close=release must='' refusal rec own_instruction=''
+  local signoff_script existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0 card_close=release must='' refusal rec own_instruction=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1015,11 +1012,12 @@ command_hold() {
   # The board gate before anything is recorded: an ask that is not a must never
   # becomes a captain hold card while the leash is when-it-matters; it becomes an
   # Overwatch record Main answers (bin/jg-ask-gate-lib.sh owns the list and words).
-  # The add-ons signoff script authors its own owner-must class, so only the
-  # legacy raise path here needs --must.
-  signoff_script=$SCRIPT_DIR/jg-procevent-signoff.sh
-  addon_signoff=$(jg_addon_path "$JG_HOME" signoff/bin/jg-procevent-signoff.sh)
-  [ ! -f "$addon_signoff" ] || signoff_script=$addon_signoff
+  # core/signoff owns the card: it authors the owner-must class itself, decides
+  # whether the home is armed, and refuses an ask it cannot author. The older
+  # bin/jg-procevent-signoff.sh remains the board's answer intake.
+  # JG_SIGNOFF_SCRIPT names another card path, the same test seam as
+  # JG_TASK_PRIORITY_CHECK below.
+  signoff_script=${JG_SIGNOFF_SCRIPT:-$SCRIPT_DIR/../core/signoff/bin/jg-procevent-signoff.sh}
   if [ -z "$own_instruction" ] && [ "$signoff_script" = "$SCRIPT_DIR/jg-procevent-signoff.sh" ] && [ -z "$until" ] \
     && [ -f "$STATE/procevent/signoff.source" ] && ! refusal=$(jg_ask_gate_refusal "$must"); then
     rec=$("$SCRIPT_DIR/jg-board-gate.sh" route --title "${title:-$reason}" --filer captain-hold --ref "$id" 2>&1) || rec=''
@@ -1059,7 +1057,7 @@ command_hold() {
     [ -n "$repo" ] || repo=juggernaut
     validate_one_line repo "$repo"
     [ -z "$origin" ] || body=$(printf 'Origin: %s' "$origin")
-    # Optional task-priority add-on: a created task must carry --priority. No-op when not installed.
+    # Optional task-priority feature: a created task must carry --priority. No-op when not installed.
     priority_check=${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}
     if [ -x "$priority_check" ]; then
       "$priority_check" add "$id" "$title" --kind captain ${priority:+--priority "$priority"} >/dev/null \
@@ -1113,7 +1111,7 @@ command_hold() {
     || fail "task $id lost its hold-set stamp while being held"
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
   # Optional sign-off card, raised only while the sign-off adapter is armed here.
-  # The juggernaut-addons signoff script is used when installed, else this repo's
+  # core/signoff owns the card; this repo's own adapter
   # bin/jg-procevent-signoff.sh. A created question closes on answer, held work is
   # released; a dated deferral gets no live card, and a card failure exits nonzero
   # (the hold stays recorded).

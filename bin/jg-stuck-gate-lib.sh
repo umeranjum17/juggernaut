@@ -3,7 +3,7 @@
 # Sourced by the watcher, which supplies STATE, hash_pane, age_of and the
 # window helpers. Each detector records a wait source
 # (state/.wait-sources/<task>.<source>, rewritten on every sighting and removed
-# once the cause is gone) and addons/wait-timers/README.md owns the ladder that
+# once the cause is gone) and core/wait-timers/README.md owns the ladder that
 # climbs from there: worker's lead, Main, then a board card, again every
 # interval while the source stays. No model decides any step.
 #

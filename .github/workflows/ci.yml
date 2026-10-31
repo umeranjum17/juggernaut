@@ -103,6 +103,15 @@ jobs:
             '@AGENTS.md' >"$tmp"
           cmp -s CLAUDE.md "$tmp" || { echo "::error::CLAUDE.md must be the canonical @AGENTS.md pointer"; exit 1; }
           [ "$(readlink .claude/skills)" = "../.agents/skills" ] || { echo "::error::.claude/skills must be a symlink to ../.agents/skills"; exit 1; }
+      - name: The retired catalog stays retired
+        run: |
+          set -eu
+          # A pull request is judged on the paths it adds; a main push re-checks the whole tree.
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            bin/jg-retired-catalog-check.sh --base "${{ github.event.pull_request.base.sha }}"
+          else
+            bin/jg-retired-catalog-check.sh
+          fi
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu

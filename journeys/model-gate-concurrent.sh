@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# done-done journey: run the real addons/model-gate/bin/jg-model-gate six times at once against a throwaway
+# done-done journey: run the real core/model-gate/bin/jg-model-gate six times at once against a throwaway
 # opencode.json and write the before/after config, run log and leftovers into the evidence folder.
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -11,7 +11,7 @@ echo '{"deepseek":["m1"]}' >"$T/home/config/model-allow-list.json"
 echo '{"provider":{"deepseek":{"models":{"m1":{}}}},"plugin":["keep-me"]}' >"$T/oc/opencode.json"
 cp "$T/oc/opencode.json" "$OUT/before.json"
 export HOME=$T/home JG_HOME=$T/home OPENCODE_CONFIG=$T/oc/opencode.json
-for i in 1 2 3 4 5 6; do ( "$REPO/addons/model-gate/bin/jg-model-gate" opencode >>"$OUT/runs.log" 2>&1; echo "run $i exit $?" >>"$T/exits" ) & done
+for i in 1 2 3 4 5 6; do ( "$REPO/core/model-gate/bin/jg-model-gate" opencode >>"$OUT/runs.log" 2>&1; echo "run $i exit $?" >>"$T/exits" ) & done
 wait
 cp "$T/oc/opencode.json" "$OUT/after.json"
 { echo "concurrent runs started together: 6; finished: $(wc -l <"$T/exits"); exited 0: $(grep -c 'exit 0$' "$T/exits")"; echo "bytes: $(wc -c <"$T/oc/opencode.json")"; jq -c . "$T/oc/opencode.json"; echo "leftover lock/tmp files: $(find "$T/oc" \( -name '*.lock' -o -name '*.tmp.*' \) | wc -l)"; } | tee "$OUT/result.txt"

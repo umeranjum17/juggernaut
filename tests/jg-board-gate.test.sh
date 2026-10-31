@@ -165,6 +165,46 @@ test_check_reports_a_merge_with_no_board_evidence() {
   pass "a merge with no Evidence card wakes the board owner and one with it stays silent"
 }
 
+test_check_leaves_a_dismissed_card_alone() {
+  local d out
+  d=$(setup dismissed-card)
+  # The feed rebuild put the card back after its owner dismissed it: the key is on
+  # the board with no dismissal flag, and only the record says it is dismissed.
+  add_card "$d" ask-rebuilt "" "$(iso_ago 7200)"
+  printf '%s\n' '{"key":"ask-rebuilt","dismissed":true,"at":"2026-10-31T20:24:33Z"}' \
+    > "$d/so/.sign-off/decisions.dismissed.jsonl"
+  : > "$d/signoff.log"
+  out=$(run "$d" "$GATE" check)
+  assert_equals "" "$out" "a rebuilt card its owner dismissed woke the board owner again"
+  assert_no_grep "dismiss ask-rebuilt" "$d/signoff.log" "a rebuilt card its owner dismissed was dismissed from the board again"
+  assert_equals "0" "$(records "$d" | grep -c '^- Ask: ask-rebuilt' || true)" \
+    "a rebuilt card its owner dismissed was routed to Overwatch again"
+  assert_equals "0" "$(run "$d" "$GATE" waiting)" "a dismissed card counted as waiting on the captain"
+  # The record's last line decides: an undone dismissal is the owner taking it back.
+  printf '%s\n' '{"key":"ask-rebuilt","dismissed":false,"at":"2026-10-31T21:24:33Z"}' \
+    >> "$d/so/.sign-off/decisions.dismissed.jsonl"
+  out=$(run "$d" "$GATE" check)
+  assert_contains "$out" "board ask routed to Overwatch, not a must: ask-rebuilt" \
+    "a card whose dismissal was undone was still treated as dismissed"
+  pass "a dismissal is a record, not an absence, so a rebuilt card stays dismissed until its owner undoes it"
+}
+
+test_check_reads_the_category_record() {
+  local d out
+  d=$(setup carried-category)
+  # A rebuild wrote its own detail over the card, so the item itself carries no
+  # must category; the card's own record still does.
+  add_card "$d" ask-screen "TakeOne Mac recording needs it" "$(iso_ago 200000)"
+  printf '%s\n' '{"key":"ask-screen","detail":"must: security","at":"2026-10-31T19:00:00Z"}' \
+    > "$d/so/.sign-off/decisions.card-detail.jsonl"
+  assert_equals "1" "$(run "$d" "$GATE" waiting)" "a card that lost its detail field kept no must category"
+  out=$(run "$d" "$GATE" check)
+  assert_not_contains "$out" "board ask routed to Overwatch" "a card carrying a recorded category was routed off the board"
+  assert_contains "$out" "must ask waiting over 48h: ask-screen - ask-screen (security)" \
+    "a must card over 48 hours was not re-pinged from its recorded category"
+  pass "a card keeps its must category through a rebuild that dropped its detail field"
+}
+
 test_decided_writes_mains_decision() {
   local d out id
   d=$(setup decided)
@@ -182,4 +222,6 @@ test_must_ask_is_posted_and_counted
 test_check_re_pings_an_old_must_ask_once
 test_check_moves_an_unclassified_ask_to_overwatch
 test_check_reports_a_merge_with_no_board_evidence
+test_check_leaves_a_dismissed_card_alone
+test_check_reads_the_category_record
 test_decided_writes_mains_decision

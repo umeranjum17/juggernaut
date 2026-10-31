@@ -405,6 +405,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/captain-channel.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/captain-hold-lifecycle.md",
       "audience": "maintainer-architecture"
     },
@@ -489,6 +493,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/reply-shadow.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/squad-lead-parent-channel.md",
       "audience": "maintainer-architecture"
     },
@@ -499,6 +507,10 @@
     {
       "path": "docs/sessionstart-nudge.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/state-shadow.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/subagent-guard.md",
@@ -558,6 +570,10 @@
     },
     {
       "path": "docs/verification/agy.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/captain-channel.md",
       "audience": "maintainer-verification"
     },
     {
@@ -741,247 +757,243 @@
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/SKILL.md",
+      "path": ".agents/skills/done-done-verify-suites/SKILL.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/README.md",
+      "path": ".agents/skills/done-done-verify-suites/features/README.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/account-next-relaunch.md",
+      "path": ".agents/skills/done-done-verify-suites/features/account-next-relaunch.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/claude-accounts-first-run.md",
+      "path": ".agents/skills/done-done-verify-suites/features/claude-accounts-first-run.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/claude-accounts-pick.md",
+      "path": ".agents/skills/done-done-verify-suites/features/claude-accounts-pick.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/claude-accounts-quota.md",
+      "path": ".agents/skills/done-done-verify-suites/features/claude-accounts-quota.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/claude-accounts-timer.md",
+      "path": ".agents/skills/done-done-verify-suites/features/claude-accounts-timer.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/fleet-flow-lane-cap.md",
+      "path": ".agents/skills/done-done-verify-suites/features/fleet-flow-lane-cap.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/fleet-pulse-newest-retro.md",
+      "path": ".agents/skills/done-done-verify-suites/features/fleet-pulse-newest-retro.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/incremental-fleet-pulse-chat-export.md",
+      "path": ".agents/skills/done-done-verify-suites/features/incremental-fleet-pulse-chat-export.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/merge-card-one-card-per-pr.md",
+      "path": ".agents/skills/done-done-verify-suites/features/merge-card-one-card-per-pr.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/merge-card-retitle.md",
+      "path": ".agents/skills/done-done-verify-suites/features/merge-card-retitle.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/model-pool-helper.md",
+      "path": ".agents/skills/done-done-verify-suites/features/model-pool-helper.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/pipeline-route-switch.md",
+      "path": ".agents/skills/done-done-verify-suites/features/pipeline-route-switch.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/pipeline-route.md",
+      "path": ".agents/skills/done-done-verify-suites/features/pipeline-route.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/quota-axi-pool.md",
+      "path": ".agents/skills/done-done-verify-suites/features/quota-axi-pool.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/quota-failover-limit-handoff.md",
+      "path": ".agents/skills/done-done-verify-suites/features/quota-failover-limit-handoff.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/quota-failover-live-route.md",
+      "path": ".agents/skills/done-done-verify-suites/features/quota-failover-live-route.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/quota-failover-prelimit.md",
+      "path": ".agents/skills/done-done-verify-suites/features/quota-failover-prelimit.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/.agents/skills/done-done-verify-juggernaut-addons/features/quota-failover-screen-match.md",
+      "path": ".agents/skills/done-done-verify-suites/features/quota-failover-screen-match.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/FORK-EXIT.md",
+      "path": "core/FORK-EXIT.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "addons/README.md",
+      "path": "core/README.md",
       "audience": "public-product"
     },
     {
-      "path": "addons/VISION.md",
+      "path": "core/VISION.md",
       "audience": "public-product"
     },
     {
-      "path": "addons/account-pool/README.md",
+      "path": "core/account-pool/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/alerts/README.md",
+      "path": "core/alerts/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/brief-inherit/README.md",
+      "path": "core/brief-inherit/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/claude-accounts/README.md",
+      "path": "core/claude-accounts/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/docs/addons-reference.md",
+      "path": "core/docs/media/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/docs/media/README.md",
+      "path": "core/fleet-contract-check/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/fleet-contract-check/README.md",
+      "path": "core/fleet-flow/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/fleet-flow/README.md",
+      "path": "core/fleet-pulse/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/fleet-pulse/README.md",
+      "path": "core/fleet-report/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/fleet-report/README.md",
+      "path": "core/fleet-stats/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/fleet-stats/README.md",
+      "path": "core/host-memory/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/host-memory/README.md",
+      "path": "core/key-in-env-check/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/key-in-env-check/README.md",
+      "path": "core/kill-guard/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/kill-guard/README.md",
+      "path": "core/lead-wake/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/lead-wake/README.md",
+      "path": "core/lookout-adapter/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/lookout-adapter/README.md",
+      "path": "core/merge-card/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/merge-card/README.md",
+      "path": "core/merge-on-green/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/merge-on-green/README.md",
+      "path": "core/model-gate/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/model-gate/README.md",
+      "path": "core/nm-drain/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/nm-drain/README.md",
+      "path": "core/owner-guard/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/owner-guard/README.md",
+      "path": "core/owner-rules/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/owner-rules/README.md",
-      "audience": "operator-current"
-    },
-    {
-      "path": "addons/owner-rules/skill/SKILL.md",
+      "path": "core/owner-rules/skill/SKILL.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "addons/parked-homes/README.md",
+      "path": "core/parked-homes/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/pipeline-literal-delete/rule.txt",
+      "path": "core/pipeline-literal-delete/rule.txt",
       "audience": "operator-example"
     },
     {
-      "path": "addons/pipeline-quota-failover/README.md",
+      "path": "core/pipeline-quota-failover/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/quota-axi-pool/README.md",
+      "path": "core/quota-axi-pool/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/receipts/README.md",
+      "path": "core/receipts/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/report-actions/README.md",
+      "path": "core/report-actions/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/report-actions/tests/fixtures/recorded-report.md",
+      "path": "core/report-actions/tests/fixtures/recorded-report.md",
       "audience": "maintainer-verification"
     },
     {
-      "path": "addons/sentinel/README.md",
+      "path": "core/sentinel/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/signoff/README.md",
+      "path": "core/signoff/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/status-wait-check/README.md",
+      "path": "core/status-wait-check/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/supervisor-guard/README.md",
+      "path": "core/supervisor-guard/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/supervisor-guard/docs/supervisor-work-guard.md",
+      "path": "core/supervisor-guard/docs/supervisor-work-guard.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "addons/task-priority/README.md",
+      "path": "core/task-priority/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/tickets-sync/README.md",
+      "path": "core/tickets-sync/README.md",
       "audience": "operator-current"
     },
     {
-      "path": "addons/wait-timers/README.md",
+      "path": "core/wait-timers/README.md",
       "audience": "operator-current"
     }
   ]
