@@ -23,7 +23,10 @@
 # path updates it.
 # A tracked-files fast-forward never touches the gitignored operational dirs
 # (data/, state/, config/, projects/, .no-mistakes/), so it cannot disturb a
-# squad_lead's backlog, projects, or in-flight work.
+# squad_lead's backlog, projects, or in-flight work. For the same reason,
+# untracked output inside those dirs (and the retired board tool's .lavish/)
+# never makes a home dirty: only tracked, staged, or genuinely stray untracked
+# files do, and a skip names each of them.
 # The seeded .jg-squad-lead-home identity marker is gitignored too; the local
 # sync tolerates only that marker during the one-time upgrade of pre-ignore
 # linked-worktree homes.
@@ -274,13 +277,36 @@ remote_inherit_failure_reason() { # <output>
   fi
 }
 
-dirty_status() {
-  local dir=$1 ignore_seed_marker=${2:-no}
-  if [ "$ignore_seed_marker" = yes ]; then
-    git -C "$dir" status --porcelain 2>/dev/null | awk -v marker="?? $SUB_HOME_MARKER" '$0 != marker { print; exit }'
-  else
-    git -C "$dir" status --porcelain 2>/dev/null | head -1
-  fi
+# Untracked output the rules own, so it never makes a home dirty. A
+# tracked-files fast-forward cannot disturb these paths, and each one belongs to
+# the running home rather than to the tracked surface being advanced: the
+# backlog and records (data/, state/, config/), project clones (projects/),
+# validation scratch (.no-mistakes/), and the retired board tool's .lavish/.
+OPERATIONAL_UNTRACKED_DIRS="data state config projects .no-mistakes .lavish"
+
+# Print the paths that make a checkout dirty, one per line, in
+# `git status --porcelain` order. Empty output means clean.
+# Counted: tracked changes and staged changes, plus a genuinely untracked file
+# anywhere outside the operational dirs (a stray source file still refuses).
+# Never counted: a gitignored path, which `git status --porcelain` already omits,
+# and an untracked path inside OPERATIONAL_UNTRACKED_DIRS.
+dirty_paths() { # <dir> [ignore_seed_marker]
+  local dir=$1 ignore_seed_marker=${2:-no} entry path first
+  git -C "$dir" status --porcelain 2>/dev/null | while IFS= read -r entry; do
+    case "$entry" in
+      '?? '*)
+        path=${entry#\?\? }
+        if [ "$ignore_seed_marker" = yes ] && [ "$path" = "$SUB_HOME_MARKER" ]; then
+          continue
+        fi
+        first=${path%%/*}
+        case " $OPERATIONAL_UNTRACKED_DIRS " in
+          *" $first "*) continue ;;
+        esac
+        ;;
+    esac
+    printf '%s\n' "${entry:3}"
+  done
 }
 
 squad_lead_update_reconcile_marker_path() { # <state> <id>
@@ -471,7 +497,7 @@ ff_target() {
     return 0
   fi
 
-  local default base cur instr local_rev base_rev before after out
+  local default base cur instr local_rev base_rev before after out path dirty
   default=$(default_branch "$dir") || {
     echo "$label: skipped: cannot determine default branch"
     return 0
@@ -507,8 +533,14 @@ ff_target() {
     return 0
   fi
 
-  if [ -n "$(dirty_status "$dir" "$ignore_seed_marker")" ]; then
+  dirty=$(dirty_paths "$dir" "$ignore_seed_marker")
+  if [ -n "$dirty" ]; then
     echo "$label: skipped: dirty working tree"
+    # Name every path, one per line, so a skip stays diagnosable without
+    # reading this source.
+    printf '%s\n' "$dirty" | while IFS= read -r path; do
+      echo "  dirty path: $path"
+    done
     return 0
   fi
 

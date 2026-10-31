@@ -12,7 +12,7 @@
 # local branch (changed-file mode, including the no-mistakes lint step) drops
 # --external-sources, keeps dataflow, and excludes SC1091, SC2034, SC2153,
 # and SC2329, the codes that need library context. CI checks those codes
-# on source-following attempts (see the memory failure handling below). Explicit
+# on source-following attempts (see the memory fallback below). Explicit
 # paths attempt --external-sources with the selected dataflow mode.
 # Tests stop source analysis at imported production modules because CI analyzes
 # every production shell separately as a canonical, source-aware root.
@@ -46,8 +46,9 @@
 # run holds at most JOBS concurrent ShellCheck processes. Diagnostics replay
 # in stable shard/root order. JG_LINT_JOBS=1 changes concurrency, not diagnostics
 # or exit selection.
-# --partition <k>of<n> splits the entire canonical inventory across n CI
-# runners, each with those same concurrency-limited workers.
+# --partition <k>of<n> splits the entire canonical inventory across n CI runners,
+# each with those same concurrency-limited workers.
+# n is 2 to 8 and k is 1 to n; CI derives n from strategy.job-total.
 # Partitions are complete, disjoint, and byte-weight balanced; --list-files
 # exposes their actual roots.
 # Partition mode starts with full source-aware analysis, never changed-only
@@ -107,7 +108,7 @@
 #   jg-lint.sh --fast [path]...       local lint with extended analysis disabled
 #   jg-lint.sh <path>...               lint explicit roots with the same config
 #   jg-lint.sh --jobs <1|2> [path]...  override concurrent worker count
-#   jg-lint.sh --partition <k>of<n>    lint one canonical CI partition (see memory handling above)
+#   jg-lint.sh --partition <k>of<n> lint one canonical CI partition (see fallback above)
 #   jg-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
 #   jg-lint.sh --required-version      print the ShellCheck pin
 #   jg-lint.sh --list-files            print the file set that would be linted
@@ -793,7 +794,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --partition)
-      [ "$#" -ge 2 ] || { printf 'jg-lint.sh: --partition requires 1of2 or 2of2.\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] || { printf 'jg-lint.sh: --partition requires <k>of<n>, for example 1of4.\n' >&2; exit 2; }
       PARTITION=$2
       PARTITION_REQUESTED=1
       shift 2
@@ -829,34 +830,33 @@ case "$JOBS" in
   *) printf 'jg-lint.sh: jobs must be 1 or 2, got %s.\n' "$JOBS" >&2; exit 2 ;;
 esac
 
-case "$PARTITION" in
-  '')
-    if [ "$PARTITION_REQUESTED" -eq 1 ]; then
-      printf 'jg-lint.sh: --partition requires <k>of<n>, for example 1of4.\n' >&2
-      exit 2
-    fi
-    ;;
-  *of*)
-    partition_index=${PARTITION%%of*}
-    partition_count=${PARTITION##*of}
-    case "$partition_index:$partition_count" in
-      *[!0-9:]*|:*|*:)
-        printf 'jg-lint.sh: --partition must be <k>of<n>, got %s.\n' "$PARTITION" >&2
-        exit 2
-        ;;
-    esac
-    if [ "$partition_index" -lt 1 ] || [ "$partition_count" -lt 2 ] \
-      || [ "$partition_index" -gt "$partition_count" ]; then
-      printf 'jg-lint.sh: --partition needs 1 <= k <= n and n >= 2, got %s.\n' "$PARTITION" >&2
-      exit 2
-    fi
-    if [ "$FAST" -eq 1 ] || [ "$#" -gt 0 ]; then
-      printf 'jg-lint.sh: --partition requires full canonical lint; omit --fast and explicit paths.\n' >&2
-      exit 2
-    fi
-    ;;
-  *) printf 'jg-lint.sh: --partition must be <k>of<n>, got %s.\n' "$PARTITION" >&2; exit 2 ;;
-esac
+# jg_lint_partition_valid <k>of<n>: n is 2 to 8 and k is 1 to n, so one partition
+# is one non-empty part of a split that covers the inventory exactly once.
+jg_lint_partition_valid() {
+  local spec=$1 k n
+  case $spec in *of*) ;; *) return 1 ;; esac
+  k=${spec%%of*}
+  n=${spec##*of}
+  # Exactly one "of", so "1of2of3" is refused rather than read as 1of3.
+  [ "$spec" = "${k}of${n}" ] || return 1
+  case $k in ''|*[!0-9]*) return 1 ;; esac
+  case $n in ''|*[!0-9]*) return 1 ;; esac
+  [ "$n" -ge 2 ] && [ "$n" -le 8 ] && [ "$k" -ge 1 ] && [ "$k" -le "$n" ]
+}
+
+if [ -n "$PARTITION" ]; then
+  if ! jg_lint_partition_valid "$PARTITION"; then
+    printf 'jg-lint.sh: --partition must be <k>of<n> with n 2 to 8 and k 1 to n, got %s.\n' "$PARTITION" >&2
+    exit 2
+  fi
+  if [ "$FAST" -eq 1 ] || [ "$#" -gt 0 ]; then
+    printf 'jg-lint.sh: --partition requires full canonical lint; omit --fast and explicit paths.\n' >&2
+    exit 2
+  fi
+elif [ "$PARTITION_REQUESTED" -eq 1 ]; then
+  printf 'jg-lint.sh: --partition requires <k>of<n>, for example 1of4.\n' >&2
+  exit 2
+fi
 
 if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; }; then
   printf 'jg-lint.sh: --fast is local-only; CI uses full ShellCheck analysis.\n' >&2
@@ -961,15 +961,11 @@ if [ -n "$PARTITION" ]; then
   partition_weights=$(jg_lint_root_weights) || exit $?
   while IFS="$TAB" read -r index path; do
     PARTITION_ROOTS+=("$path")
-  done < <(printf '%s\n' "$partition_weights" | LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n | awk -F '\t' \
-    -v want="$partition_index" -v bins="$partition_count" '
-    # Largest-first into the least-loaded partition keeps the n CI runners
-    # byte-weight balanced without changing which roots are linted. For two
-    # partitions this is exactly the older two-way rule.
-    { bin = 1
-      for (i = 2; i <= bins; i++) if (load[i] < load[bin]) bin = i
-      load[bin] += $1
-      if (bin == want) print $2 "\t" $3 }
+  done < <(printf '%s\n' "$partition_weights" | LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n | awk -F '\t' -v want="${PARTITION%%of*}" -v total="${PARTITION##*of}" '
+    # Largest-first packing onto the currently lightest of n shards: complete,
+    # disjoint, and within one large root of byte-balanced.
+    { shard=1; for (i=2; i<=total; i++) if (load[i] < load[shard]) shard=i; load[shard]+=$1
+      if (shard == want) print $2 "\t" $3 }
   ' | LC_ALL=C sort -t "$TAB" -k1,1n)
   ROOTS=("${PARTITION_ROOTS[@]}")
 fi
@@ -1102,6 +1098,7 @@ PROGRESS=0
 if [ -n "$PARTITION" ]; then
   PROGRESS=1
 fi
+
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/jg-lint.XXXXXX") || exit 1
 ACTIVE_PIDS=()
 # shellcheck disable=SC2329 # Registered by the EXIT and signal traps below.

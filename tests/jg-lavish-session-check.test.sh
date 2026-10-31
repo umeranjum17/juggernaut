@@ -101,6 +101,15 @@ test_the_registered_check_is_a_single_line_sweep() {
     "$CHECK" --install >/dev/null || fail "the sweep could not install itself as a check"
   check="$HOME_DIR/state/lavish-session.check.sh"
   [ -f "$check" ] || fail "the registered check was not written"
+  # The registered script must name the interpreter and the real sweep path.
+  # A single-quoted format string leaves ${SCRIPT_DIR} literal here, which is
+  # both a wrong comment and a ShellCheck SC2016 failure in the lint gate.
+  grep -qx '#!/usr/bin/env bash' "$check" \
+    || fail "the registered check does not open with a bash shebang"
+  grep -qF "# Registered sweep: $ROOT/bin/jg-lavish-session-check.sh" "$check" \
+    || fail "the registered check does not name its real sweep path: $(sed -n '2p' "$check")"
+  ! grep -qF "\${SCRIPT_DIR}" "$check" \
+    || fail "the registered check kept a literal \${SCRIPT_DIR} instead of the path"
   assert_present "$HOME_DIR/state/lavish-session.check-trust" \
     "the registered check was not bound by the custom-check trust record"
   pass 'the sweep registers as a watcher check with its own trust record'

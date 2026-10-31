@@ -313,6 +313,53 @@ test_dirty_squad_lead_skipped() {
   pass "T4 dirty squad_lead skipped, local edit preserved"
 }
 
+# --- T4b: ignored untracked output never refuses; real dirt does -----------
+# The retired board tool left an untracked .lavish/ directory in every home it
+# ran in, and homes also carry their own untracked data/ output. Neither is part
+# of the tracked surface an update advances, so neither may refuse it - that
+# refusal is what kept seven homes on old code. A tracked edit, or a genuinely
+# untracked file outside those dirs, must still refuse and name the path.
+test_ignored_untracked_output_does_not_refuse() {
+  local w out w2 out2 w3 out3
+  w=$(new_world t4b)
+  add_sm "$w" sm1
+  bump_origin "$w" instr
+  mkdir -p "$w/sm1/.lavish" "$w/sm1/data"
+  printf 'board page\n' > "$w/sm1/.lavish/board.htm"
+  printf 'local note\n' > "$w/sm1/data/note.md"
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "squad_lead sm1: updated " \
+    "untracked operational output must not refuse the update"
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$(git -C "$w/sm1" rev-parse origin/main)" ] \
+    || fail "the home with ignored untracked output did not land on origin/main"
+  assert_present "$w/sm1/.lavish/board.htm" "the update removed untracked operational output"
+
+  w2=$(new_world t4b-tracked)
+  add_sm "$w2" sm1
+  bump_origin "$w2" instr
+  printf 'local tracked edit\n' >> "$w2/sm1/README.md"
+
+  out2=$(run_update "$w2")
+
+  assert_contains "$out2" "squad_lead sm1: skipped: dirty working tree" \
+    "a tracked change must still refuse the update"
+  assert_contains "$out2" "dirty path: README.md" "the skip must name the dirty path"
+
+  w3=$(new_world t4b-stray)
+  add_sm "$w3" sm1
+  bump_origin "$w3" instr
+  printf 'stray\n' > "$w3/sm1/notes.txt"
+
+  out3=$(run_update "$w3")
+
+  assert_contains "$out3" "squad_lead sm1: skipped: dirty working tree" \
+    "a genuinely untracked source file must still refuse the update"
+  assert_contains "$out3" "dirty path: notes.txt" "the skip must name the stray untracked file"
+  pass "T4b ignored untracked output updates; tracked and stray files still refuse by name"
+}
+
 # --- T5: diverged squad_lead is skipped, its commit preserved --------------
 test_diverged_squad_lead_skipped() {
   local w out before marker second_out
@@ -563,6 +610,7 @@ test_unprovable_runtime_gets_fallback_nudge
 test_dead_squad_lead_gets_no_action
 test_legacy_remote_advance_restarts
 test_dirty_squad_lead_skipped
+test_ignored_untracked_output_does_not_refuse
 test_diverged_squad_lead_skipped
 test_squash_merged_divergence_reconciles
 test_already_current_squad_lead_still_restarts

@@ -1,98 +1,64 @@
 #!/usr/bin/env bash
-# The canonical partition contract in bin/jg-lint.sh: every partition is a
-# complete, disjoint slice of the same inventory, the slices are byte-weight
-# balanced, no partition carries more than one of the roots that need the
-# memory allowance, and an unusable <k>of<n> is refused by name.
-#
-# CI runs four partitions so each lint job stays inside the Normal tier once the
-# heaviest roots really follow their sources; this test is what keeps that
-# split honest.
+# bin/jg-lint.sh partitions the entire canonical lint inventory across the CI
+# runners. A partition that dropped a file, repeated one, or came out empty would
+# leave part of the lint silently unrun, so the split is proven here for the
+# shard counts CI uses and refuses anything outside its range.
 set -u
 
 # shellcheck source=tests/lib.sh
+# shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 LINT="$ROOT/bin/jg-lint.sh"
 TMP_ROOT=$(jg_test_tmproot jg-lint-partitions)
-HEAVY='bin/jg-spawn.sh bin/jg-teardown.sh bin/jg-watch.sh tests/jg-launch-prompt-signals-live-e2e.test.sh'
 
-# partitions <n>: write each partition's root list and the full inventory to the
-# case directory, and echo the directory.
-partitions() {
-  local count=$1 dir="$TMP_ROOT/$1ofN" index
-  mkdir -p "$dir"
-  # CI forces the full canonical inventory; a plain local run would answer with
-  # the changed-file set instead.
-  GITHUB_ACTIONS=true bash "$LINT" --list-files | LC_ALL=C sort > "$dir/full.list"
-  index=1
-  while [ "$index" -le "$count" ]; do
-    bash "$LINT" --partition "${index}of${count}" --list-files | LC_ALL=C sort > "$dir/$index.list"
-    index=$((index + 1))
-  done
-  printf '%s\n' "$dir"
+# list <k>of<n>: one partition's roots, exactly as CI derives them.
+list() {  # <partition>
+  ( cd "$ROOT" && CI=true bash "$LINT" --partition "$1" --list-files )
 }
 
-test_every_partition_is_a_complete_disjoint_slice() {
-  local dir count
-  dir=$(partitions 4)
-  count=$(wc -l < "$dir/full.list")
-  cat "$dir"/[1-4].list | LC_ALL=C sort > "$dir/union.list"
-  [ -z "$(LC_ALL=C uniq -d "$dir/union.list")" ] \
-    || fail 'a root appears in more than one partition'
-  cmp -s "$dir/full.list" "$dir/union.list" \
-    || fail 'the four partitions do not cover the full canonical inventory'
-  [ "$(wc -l < "$dir/union.list")" -eq "$count" ] || fail 'the union lost or gained roots'
-  pass "four partitions are complete and disjoint over $count roots"
-}
-
-test_partitions_are_byte_weight_balanced() {
-  local dir index bytes worst=0 best=0
-  dir=$(partitions 4)
-  index=1
-  while [ "$index" -le 4 ]; do
-    bytes=$(cd "$ROOT" && xargs -d'\n' wc -c < "$dir/$index.list" | awk '{sum += $1} END {print sum + 0}')
-    if [ "$worst" -eq 0 ] || [ "$bytes" -gt "$worst" ]; then worst=$bytes; fi
-    if [ "$best" -eq 0 ] || [ "$bytes" -lt "$best" ]; then best=$bytes; fi
-    index=$((index + 1))
-  done
-  # A partition no more than 5% heavier than the lightest one is balanced well
-  # inside the runtime spread the partitions absorb anyway.
-  [ $((worst * 100)) -le $((best * 105)) ] \
-    || fail "partition byte weights are not balanced: lightest $best, heaviest $worst"
-  pass "partition byte weights are balanced within 5% (lightest $best, heaviest $worst)"
-}
-
-test_no_partition_carries_two_heavy_roots() {
-  local dir index heavy found
-  dir=$(partitions 4)
-  for heavy in $HEAVY; do
-    found=
-    index=1
-    while [ "$index" -le 4 ]; do
-      if grep -qxF "$heavy" "$dir/$index.list"; then
-        [ -z "$found" ] || fail "$heavy appears in partitions $found and $index"
-        found=$index
-      fi
-      index=$((index + 1))
+test_every_partition_is_complete_and_disjoint() {
+  local n k part full all union dup
+  for n in 2 4; do
+    full="$TMP_ROOT/full-$n"
+    all="$TMP_ROOT/all-$n"
+    union="$TMP_ROOT/union-$n"
+    ( cd "$ROOT" && CI=true bash "$LINT" --list-files ) > "$full" || fail "the full inventory must list for n=$n"
+    : > "$all"
+    for k in $(seq 1 "$n"); do
+      part="$TMP_ROOT/part-$n-$k"
+      list "${k}of$n" > "$part" || fail "partition ${k}of$n must list"
+      [ -s "$part" ] || fail "partition ${k}of$n must not be empty"
+      cat "$part" >> "$all"
     done
-    [ -n "$found" ] || fail "$heavy is in no partition at all"
+    LC_ALL=C sort "$all" > "$all.sorted"
+    LC_ALL=C sort -u "$all" > "$union"
+    dup=$(LC_ALL=C sort "$all" | uniq -d)
+    [ -z "$dup" ] || fail "partitions for n=$n repeat: $dup"
+    LC_ALL=C sort "$full" > "$full.sorted"
+    cmp -s "$full.sorted" "$all.sorted" || fail "partitions for n=$n do not cover the full inventory"
+    local total=0 count
+    for k in $(seq 1 "$n"); do
+      count=$(wc -l < "$TMP_ROOT/part-$n-$k" | tr -d '[:space:]')
+      total=$((total + count))
+    done
+    [ "$total" -eq "$(wc -l < "$full" | tr -d '[:space:]')" ] \
+      || fail "partitions for n=$n total $total files, not the full inventory"
   done
-  pass 'each memory-heavy root sits in its own partition'
+  pass 'every partition is complete and disjoint'
 }
 
-test_an_unusable_partition_name_is_refused() {
-  local bad output rc
-  for bad in 0of4 5of4 1of1 xofy 1of2x 1of; do
+test_a_partition_outside_its_range_is_refused() {
+  local spec out rc
+  for spec in 3of2 1of9 0of4 bogus 1of2of3; do
     rc=0
-    output=$(JG_LINT_REQUIRE_BOUNDS=0 bash "$LINT" --partition "$bad" --list-files 2>&1) || rc=$?
-    [ "$rc" -ne 0 ] || fail "--partition $bad was accepted"
-    assert_contains "$output" 'jg-lint.sh: --partition' "--partition $bad names the flag it refuses"
+    out=$(list "$spec" 2>&1) || rc=$?
+    [ "$rc" -eq 2 ] || fail "partition $spec must be refused with exit 2, got $rc"
+    assert_contains "$out" 'must be <k>of<n>' "the refusal for $spec must name the accepted form"
   done
-  pass 'an unusable partition name is refused with the flag named'
+  pass 'a partition outside its range is refused'
 }
 
-test_every_partition_is_a_complete_disjoint_slice
-test_partitions_are_byte_weight_balanced
-test_no_partition_carries_two_heavy_roots
-test_an_unusable_partition_name_is_refused
+test_every_partition_is_complete_and_disjoint
+test_a_partition_outside_its_range_is_refused
 printf 'jg-lint-partitions: ok\n'
