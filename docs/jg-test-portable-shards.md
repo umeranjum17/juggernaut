@@ -30,6 +30,7 @@ The 2026-10-30 hints for the fourteen scripts that had none (the ones the covera
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
 `tests/jg-board-gate.test.sh` (437 ms) postdates that refresh and carries a provisional local measurement until the next CI refresh replaces it, so the no-hint coverage guard keeps its margin.
 `tests/jg-state-bus-parity.test.sh` (6515 ms) postdates it too, and its hint is the slowest of two serial local runs against a real throwaway JetStream server; CI gate-skips the script when `nats-server` is absent, so until the lane installs one this hint over-states its CI cost rather than under-stating it.
+`tests/jg-board-asks.test.sh` (860 ms, the maximum of five local runs) postdates it too and carries a provisional measurement for the same reason.
 
 ## Parallel lanes
 
