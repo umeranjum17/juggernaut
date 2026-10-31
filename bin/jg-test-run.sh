@@ -554,6 +554,7 @@ tests/jg-agents-md-floor.test.sh 423
 tests/jg-agy-signals-live-e2e.test.sh 61
 tests/jg-backend-tmux-smoke.test.sh 320
 tests/jg-backlog-handoff.test.sh 74166
+tests/jg-behavior-determinism.test.sh 34000
 tests/jg-board-answers.test.sh 2206
 tests/jg-board-gate.test.sh 437
 tests/jg-bootstrap.test.sh 83933
