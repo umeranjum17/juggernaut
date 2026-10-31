@@ -221,6 +221,8 @@ rendered config is what Prometheus runs and it scrapes the shadow's own exporter
 the bridge carries the shipped collector's six shape series, parity is green with
 9 fields compared and 0 differences, one tampered sample on the new path fails it
 and names the field, the heal restores it, a parity that did not run exits
-non-zero, and `stop` leaves no listener behind.
+non-zero, and `stop` leaves no listener behind. An EXIT trap stops both
+processes on any failure path too, so a failing suite can never leave a scraper
+listening on the host running it.
 The test gate-skips when `prometheus` or `node_exporter` is missing; set
 `JG_PROMETHEUS_BIN` and `JG_NODE_EXPORTER_BIN` to pin them.

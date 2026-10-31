@@ -40,6 +40,12 @@ free_port() { # <lower> <upper>
 PROM_PORT=$(free_port 29100 29199) || fail "no free port for prometheus"
 NODE_PORT=$(free_port 29200 29299) || fail "no free port for node_exporter"
 
+# A run that fails at any point still stops the two processes it started, so a
+# failing suite can never leave a scraper listening on this host.
+# shellcheck disable=SC2329 # Registered by the EXIT trap below.
+cleanup() { declare -F shadow >/dev/null && shadow stop >/dev/null 2>&1; return 0; }
+trap cleanup EXIT
+
 # shadow <args...>: the shadow, scoped to this test's home, configured by file.
 shadow() {
   JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE_DIR" JG_METRICS_SHADOW_DIR="$SHADOW" \
