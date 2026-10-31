@@ -1219,6 +1219,20 @@ fi
 } >> "$ROOTS_LOG"
 
 SHARD_COUNT=2
+# A partition made only of isolated roots runs one root at a time. CI sets two
+# workers, and two full-mode analyses of the heaviest roots at once is what
+# killed Lint 4: bin/jg-spawn.sh (14,953,368 KiB resident) and
+# bin/jg-teardown.sh (14,097,224 KiB) began in the same second, about 29 GiB of
+# demand against a 16 GiB runner, and the job died with the runner's shutdown
+# signal before either root finished. Serial keeps the partition's peak at one
+# root, a level this runner has already carried.
+if [ -n "$PARTITION" ] && [ "$ROOT_COUNT" -gt 0 ]; then
+  serial_partition=1
+  for partition_root in "${ROOTS[@]}"; do
+    jg_lint_isolated_root "$partition_root" || serial_partition=0
+  done
+  [ "$serial_partition" -eq 0 ] || SHARD_COUNT=1
+fi
 worker=0
 while [ "$worker" -lt "$SHARD_COUNT" ]; do
   : > "$TMP_ROOT/manifest.$worker"
@@ -1230,13 +1244,23 @@ jg_lint_root_weights > "$WEIGHTS" || exit $?
 # Largest-first deterministic greedy assignment balances the two worker
 # queues without affecting replay order. Direct bytes are a stable portable
 # proxy after the expensive dynamic adapter source fan-out is cut.
-WORKER_LOADS=(0 0)
+# The shard count is whatever SHARD_COUNT says, so a serialised partition packs
+# every root into the one worker it actually runs: a manifest no worker reads
+# would drop roots from the lint while the run still reported success.
+WORKER_LOADS=()
+worker=0
+while [ "$worker" -lt "$SHARD_COUNT" ]; do
+  WORKER_LOADS[worker]=0
+  worker=$((worker + 1))
+done
 LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n "$WEIGHTS" > "$WEIGHTS.sorted"
 while IFS="$TAB" read -r weight index path; do
   worker=0
-  if [ "${WORKER_LOADS[1]}" -lt "${WORKER_LOADS[0]}" ]; then
-    worker=1
-  fi
+  candidate=1
+  while [ "$candidate" -lt "$SHARD_COUNT" ]; do
+    [ "${WORKER_LOADS[candidate]}" -ge "${WORKER_LOADS[worker]}" ] || worker=$candidate
+    candidate=$((candidate + 1))
+  done
   printf '%s\t%s\n' "$index" "$path" >> "$TMP_ROOT/manifest.$worker"
   WORKER_LOADS[worker]=$((WORKER_LOADS[worker] + weight))
 done < "$WEIGHTS.sorted"
