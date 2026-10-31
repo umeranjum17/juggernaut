@@ -63,7 +63,7 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/jg-test"
-          bin/jg-test-run.sh --lane portable-parallel-1 \
+          bin/jg-test-run.sh --lane portable-parallel-1 --enforce-test-speed \
             --json "$RUNNER_TEMP/jg-test/jg-test-timing-portable-parallel-1.json"
       - name: Upload shard 1 timing artifact
         if: always()
@@ -102,7 +102,7 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/jg-test"
-          bin/jg-test-run.sh --lane portable-parallel-2 \
+          bin/jg-test-run.sh --lane portable-parallel-2 --enforce-test-speed \
             --json "$RUNNER_TEMP/jg-test/jg-test-timing-portable-parallel-2.json"
       - name: Upload shard 2 timing artifact
         if: always()
@@ -166,7 +166,7 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/jg-test"
-          bin/jg-test-run.sh --lane "$JG_SERIAL_LANE" \
+          bin/jg-test-run.sh --lane "$JG_SERIAL_LANE" --enforce-test-speed \
             --json "$RUNNER_TEMP/jg-test/jg-test-timing-portable-serial-${JG_SERIAL_SHARD}.json"
       - name: Upload portable serial shard ${{ matrix.shard }} timing artifact
         if: always()
@@ -276,7 +276,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/jg-test"
           # Serial only. Fail if any script reports herdr not found. Live
           # harness credential tests stay outside this family (opt-in env only).
-          bin/jg-test-run.sh --family real-herdr-gated \
+          bin/jg-test-run.sh --family real-herdr-gated --enforce-test-speed \
             --fail-on-gate-skip 'herdr not found' \
             --json "$RUNNER_TEMP/jg-test/jg-test-timing-herdr.json"
       - name: Cleanup job-owned Herdr lab sessions

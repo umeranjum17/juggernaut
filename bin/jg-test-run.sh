@@ -207,6 +207,13 @@ JOBS_EXPLICIT=0
 JOBS_MAX=8
 MAX_WALL_MS=
 PER_SCRIPT_TIMEOUT_SECS=0
+# Per-test speed limits, read from defaults/test-speed-limits and overridden by
+# JG_HOME/config/test-speed-limits. The nightly enforces them; the pre-merge
+# path only reports, because a pre-merge failure would refuse every merge until
+# the slow list empties. A test over its limit fails naming its measured time.
+TEST_SPEED_ENFORCE=0
+TEST_SPEED_E2E_SECONDS=60
+TEST_SPEED_UNIT_SECONDS=5
 # Bound applied automatically on the automatic --changed path, derived from
 # measured healthy runtimes with margin rather than picked: the slowest measured
 # script is tests/jg-watch-triage.test.sh at about 1075s under CI load (the hint
@@ -1730,6 +1737,12 @@ while [ "$#" -gt 0 ]; do
       PER_SCRIPT_TIMEOUT_SECS=${1#--per-script-timeout-secs=}
       shift
       ;;
+    --enforce-test-speed)
+      # Turn a speed-limit breach into a failure. The nightly sets this; the
+      # pre-merge path deliberately does not, so it reports without refusing.
+      TEST_SPEED_ENFORCE=1
+      shift
+      ;;
     --list)
       LIST_ONLY=1
       shift
@@ -2135,12 +2148,59 @@ family_bump() {
   mv "$tmp" "$FAMILIES_TSV"
 }
 
+test_speed_class_for() {  # <basename> -> e2e|unit
+  case $1 in *-e2e.test.sh) printf 'e2e\n' ;; *) printf 'unit\n' ;; esac
+}
+
+test_speed_limit_for() {  # <class> -> whole seconds, 0 when unset
+  case $1 in
+    e2e) printf '%s\n' "${TEST_SPEED_E2E_SECONDS:-60}" ;;
+    *) printf '%s\n' "${TEST_SPEED_UNIT_SECONDS:-5}" ;;
+  esac
+}
+
+# Read the limits once. A home's config file wins over the shipped default, so a
+# captain can loosen one class without editing tracked material.
+load_test_speed_limits() {
+  local f v
+  for f in "${TEST_SPEED_LIMITS_FILE:-}" "${JG_HOME:-}/config/test-speed-limits" \
+           "$ROOT/defaults/test-speed-limits"; do
+    [ -n "$f" ] && [ -r "$f" ] || continue
+    v=$(sed -n 's/^e2e_seconds=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_E2E_SECONDS=$v ;; esac
+    v=$(sed -n 's/^unit_seconds=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_UNIT_SECONDS=$v ;; esac
+    return 0
+  done
+  return 0
+}
+
+# Shipped defaults, overridden by the home's config file; see defaults/test-speed-limits.
+load_test_speed_limits
+
 record_script_result() {
   local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5
   local base family expected gate_skip gate_reason fail_delta
   base=$(basename "$script")
   family=$(family_for_basename "$base")
   expected=$(expected_gate_skip_for_family "$family")
+
+  # Hard per-class speed limit. The measured time goes in the message so the
+  # next reader sees how far over it is rather than only that it was over.
+  local speed_limit speed_class speed_ms
+  speed_class=$(test_speed_class_for "$base")
+  speed_limit=$(test_speed_limit_for "$speed_class")
+  speed_ms=$((speed_limit * 1000))
+  if [ "$speed_limit" -gt 0 ] && [ "$duration" -gt "$speed_ms" ]; then
+    if [ "$TEST_SPEED_ENFORCE" -eq 1 ]; then
+      printf 'not ok - %s took %ss, over its %ss %s limit\n' \
+        "$script" "$(( (duration + 999) / 1000 ))" "$speed_limit" "$speed_class" >>"$out"
+      log "speed limit: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
+      rc=1
+    else
+      log "speed over limit, reported only: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
+    fi
+  fi
 
   if [ -n "$FAIL_ON_GATE_SKIP" ] && detect_gate_skip_token "$out" "$FAIL_ON_GATE_SKIP"; then
     log "required gate skip token seen in $script: skip: $FAIL_ON_GATE_SKIP"
