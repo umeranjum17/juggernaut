@@ -582,6 +582,7 @@ tests/jg-gate-refuse.test.sh 14876
 tests/jg-grok-continuity-live-e2e.test.sh 53
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 57
 tests/jg-herdr-lead-label.test.sh 99
+tests/jg-guard-host.test.sh 829
 tests/jg-herdr-names.test.sh 1061
 tests/jg-herdr-version-floor-live-e2e.test.sh 61
 tests/jg-hold-reason-gate.test.sh 1608
