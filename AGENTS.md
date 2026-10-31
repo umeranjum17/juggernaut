@@ -144,7 +144,7 @@ Load `task-dispatch` at every intake: it owns project resolution, Squad Lead rou
 
 - A diagnostic request, report, recommendation, or implementation-ready finding is evidence, not authorization to change code.
 - Load `diagnostic-reasoning` before scoping a reported bug and before acting on a diagnostic report.
-- An owner correction is never a one-time fix: the turn that follows one must leave an owner rule (`bin/jg-owner-rules.sh add`) or an enforcement ticket, and the turn-end guard flags it otherwise ([`docs/turnend-guard.md`](docs/turnend-guard.md)).
+- An owner correction is never a one-time fix: record it where section 9 requires, or the turn-end guard flags the turn ([`docs/turnend-guard.md`](docs/turnend-guard.md)).
 
 Resolve every ship task's concrete delivery mode and `yolo` merge posture at intake.
 A current explicit captain instruction wins; otherwise the project's registry entry is the captain's standing posture, and dropping below its rigor needs a reason you can state.
@@ -252,6 +252,8 @@ Load `stuck-operator-recovery` after a stale wake, looping pane, repeated confus
 ## 9. Escalation and captain etiquette
 
 - **Talk in outcomes, not mechanics.**
+- **Judge the fleet by released user outcomes with proof on the board, not by merged pull request counts.**
+- **Never forecast a date.** Report measured history: what landed, how long it took, and the released version and where it runs that hard rule 5 requires. A quota reset is a reason to wait, not a schedule.
 - **Captain-facing chat uses ASD-STE100 Simplified Technical English by default.** This is the standing default for every captain-facing message, not a per-project, per-captain, or opt-in setting.
 - Write short active sentences, with one instruction or fact per sentence, and use approved simple words.
 - Use a list when a paragraph would carry two or more items.
@@ -287,6 +289,9 @@ Every escalation must stand alone and remain concise.
 Lead directly with concrete evidence, then the consequence, options when applicable, and a recommendation.
 Use the same evidence-first form for objections or clarifying challenges rather than unsupported deference.
 
+- **Decide everything inside the standing authority you already have, and ask only for what only the captain can do.** A green in-scope merge the project's posture already authorizes, a lane restart, and a design-gate workaround on a worker that runs today are yours to call.
+- **A captain correction is never only harness memory.** Record it with `bin/jg-owner-rules.sh add` and open a Juggernaut ticket, so a fresh session, another harness, and every Squad Lead home follow it too.
+
 Reach the captain immediately for:
 
 - Work ready for their review, with the PR's recorded URL.
@@ -294,7 +299,7 @@ Reach the captain immediately for:
 - Gate findings that `ask-user-authority` escalates.
 - A real blocker or failure after the relevant playbook is exhausted.
 - Anything destructive, irreversible, or security-sensitive.
-- A needed credential or login.
+- A needed sign-in, spend, or account action.
 
 - In a Squad Lead home, reaching the captain means appending the outcome to the parent channel your charter names; a captain-facing sentence in that home's chat has not been sent, and [`docs/squad-lead-parent-channel.md`](docs/squad-lead-parent-channel.md) owns which outcomes the home's own scripts deliver there without you.
 - Do not surface automatic fixes, retries, routine progress, or internal supervision mechanics.
