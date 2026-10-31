@@ -3837,7 +3837,9 @@ EOF
 
 while :; do
   # Each cycle starts with no routing verdict: a class gates only its own cycle.
+  # shellcheck disable=SC2034 # Read by wake() in the separately linted transition owner.
   JG_WAKE_LAST=
+  # shellcheck disable=SC2034 # Read by wake() in the separately linted transition owner.
   JG_WAKE_CYCLE_URGENT=
   # Home-gone exit: a deleted home, state directory, or code root means this
   # watcher's world is gone (a torn-down temporary home or a discarded
