@@ -162,11 +162,11 @@ a switch lands nearer 168 + 101 = 269 lines against 363: about 95 fewer lines fo
 this ladder, and, which is the actual objective, one definition plus one test for
 the next rung instead of a change inside a 266-line decision loop.
 
-Replay measured on this branch, over this home's last 7 days: 229 recorded events,
-246 rungs compared at 363 replayed instants, 0 differences, in 7m01s. The same
+Replay measured on this branch, over this home's last 7 days: 225 recorded events,
+246 rungs compared at 359 replayed instants, 0 differences, in 6m20s. The same
 replay with one event's arming time shifted by one second on the new path reports
 10 changed lines, which are exactly that episode's five rows moved by one second,
-in 9m37s: the check is not vacuous.
+in 9m02s: the check is not vacuous.
 
 ## Test
 
