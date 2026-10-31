@@ -13,3 +13,4 @@ config/
 
 .tools/
 .opencode/opencode.json
+.lavish/
