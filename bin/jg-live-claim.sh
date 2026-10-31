@@ -34,6 +34,9 @@
 # One release per line, `#` starts a comment line, and the first field is the
 # released ref: a version tag, or a commit id, where a claimed commit id of 7 or
 # more characters also matches a record whose ref starts with it.
+# The writer is bin/jg-release-record.sh, and it adds only what this reader
+# already tolerates: the project name in the second field, and a
+# `# none <project>` comment line for a project that has never released.
 # An absent, unreadable, or silent record proves no release, so a ref it does not
 # name is downgraded rather than accepted.
 set -u
