@@ -118,6 +118,27 @@ printf 'claude claude-haiku-5-5\n' > "$h/host-config/supervision-host"
 bash "$ROOT/bin/fm-supervision-engine-lib.sh" enabled "$h/host-config" opencode 2>/dev/null \
   || fail "the old engine path did not see the home's supervision host"
 pass "an old caller running a library through bash reaches the renamed library"
+# the handover those shims each carried is one library now: no shim keeps its
+# own copy, and every shim still resolves to the file its old form named
+for shim in "$ROOT"/bin/fm-*.sh; do
+  [ "$(wc -l < "$shim")" -le 8 ] \
+    || fail "${shim##*/} carries its own copy of the alias handover again"
+  ! grep -q 'exec bash' "$shim" \
+    || fail "${shim##*/} hands over by itself instead of calling bin/jg-alias-lib.sh"
+  target=$(cd "$ROOT/bin" && . ./jg-alias-lib.sh && jg_alias_target "${shim##*/}")
+  [ -f "$ROOT/bin/$target" ] \
+    || fail "${shim##*/} hands over to $target, which does not exist"
+done
+# an executed shim still hands its own arguments through, one argument at a time
+argdir=$h/aliasargs
+mkdir -p "$argdir"
+cp "$ROOT/bin/jg-alias-lib.sh" "$argdir/"
+cp "$ROOT/bin/fm-role-lib.sh" "$argdir/fm-args.sh"
+printf '#!/usr/bin/env bash\nprintf "%%s|" "$@"\n' > "$argdir/jg-args.sh"
+chmod +x "$argdir/jg-args.sh"
+[ "$(bash "$argdir/fm-args.sh" a 'b c')" = 'a|b c|' ] \
+  || fail "an executed shim no longer hands its own arguments through"
+pass "every old path hands over from one library, and keeps its arguments"
 # a per-lead pin left under the old directory name
 mkdir -p "$h/config/${legacy_lead}s/lead1"
 printf 'claude claude-haiku-5-5 low\n' > "$h/config/${legacy_lead}s/lead1/harness"
