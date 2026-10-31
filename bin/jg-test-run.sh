@@ -207,6 +207,13 @@ JOBS_EXPLICIT=0
 JOBS_MAX=8
 MAX_WALL_MS=
 PER_SCRIPT_TIMEOUT_SECS=0
+# Per-test speed limits, read from defaults/test-speed-limits and overridden by
+# JG_HOME/config/test-speed-limits. The nightly enforces them; the pre-merge
+# path only reports, because a pre-merge failure would refuse every merge until
+# the slow list empties. A test over its limit fails naming its measured time.
+TEST_SPEED_ENFORCE=0
+TEST_SPEED_E2E_SECONDS=60
+TEST_SPEED_UNIT_SECONDS=5
 # Bound applied automatically on the automatic --changed path, derived from
 # measured healthy runtimes with margin rather than picked: the slowest measured
 # script is tests/jg-watch-triage.test.sh at about 1075s under CI load (the hint
@@ -562,6 +569,7 @@ tests/jg-bootstrap.test.sh 83933
 tests/jg-browser-reaper.test.sh 8000
 tests/jg-calm-home-links.test.sh 381
 tests/jg-chat-answer-card.test.sh 1030
+tests/jg-ci-required.test.sh 122
 tests/jg-claude-stop-autoarm-live-e2e.test.sh 58
 tests/jg-codex-continuity-live-e2e.test.sh 57
 tests/jg-codex-hook-layer-live-e2e.test.sh 68
@@ -575,12 +583,14 @@ tests/jg-design-gate-first-draft.test.sh 680
 tests/jg-design-gate.test.sh 467
 tests/jg-devin-signals-live-e2e.test.sh 65
 tests/jg-escalation-chain.test.sh 120130
+tests/jg-fast-evals.test.sh 704
 tests/jg-fleet-heartbeat.test.sh 1186
 tests/jg-fleet-sync.test.sh 42151
 tests/jg-flow.test.sh 919
 tests/jg-gate-refuse.test.sh 14876
 tests/jg-grok-continuity-live-e2e.test.sh 53
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 57
+tests/jg-harness-quirks.test.sh 321
 tests/jg-herdr-lead-label.test.sh 99
 tests/jg-herdr-names.test.sh 1061
 tests/jg-herdr-version-floor-live-e2e.test.sh 61
@@ -588,6 +598,7 @@ tests/jg-hold-reason-gate.test.sh 1608
 tests/jg-hometag-lead-label.test.sh 393
 tests/jg-inbox.test.sh 8757
 tests/jg-launch-prompt-signals-live-e2e.test.sh 56
+tests/jg-lint-partitions.test.sh 4361
 tests/jg-mail.test.sh 10524
 tests/jg-merge-gate-lib.test.sh 83
 tests/jg-muse-signals-live-e2e.test.sh 61
@@ -601,6 +612,7 @@ tests/jg-pi-branch-live-e2e.test.sh 56
 tests/jg-pi-primary-live-e2e.test.sh 58
 tests/jg-pi-seeded-home-trust-live-e2e.test.sh 85
 tests/jg-pi-wake-replay.test.sh 1500
+tests/jg-post-merge-ci-main.test.sh 154
 tests/jg-pr-state-live-e2e.test.sh 59
 tests/jg-procevent.test.sh 351871
 tests/jg-project-mode.test.sh 164
@@ -618,6 +630,7 @@ tests/jg-send-inbox-doorbell-live-e2e.test.sh 55
 tests/jg-send-inbox.test.sh 51917
 tests/jg-session-start.test.sh 347046
 tests/jg-sessionstart-hook-live-e2e.test.sh 61
+tests/jg-ship-local.test.sh 521
 tests/jg-spawn-dispatch-profile.test.sh 506834
 tests/jg-squad-lead-dormant.test.sh 1091
 tests/jg-squad-lead-lifecycle-e2e.test.sh 15675
@@ -1389,7 +1402,7 @@ families_for_changed_path() {
     .agents/skills/*/SKILL.md)
       printf '%s\n' pure-contract-unit
       ;;
-    .github/workflows/ci.yml|.no-mistakes.yaml)
+    .github/workflows/ci.yml|.github/workflows/behavior.yml|.no-mistakes.yaml)
       printf '%s\n' pure-contract-unit
       printf '%s\n' real-herdr-gated
       ;;
@@ -1724,6 +1737,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     --per-script-timeout-secs=*)
       PER_SCRIPT_TIMEOUT_SECS=${1#--per-script-timeout-secs=}
+      shift
+      ;;
+    --enforce-test-speed)
+      # Turn a speed-limit breach into a failure. The nightly sets this; the
+      # pre-merge path deliberately does not, so it reports without refusing.
+      TEST_SPEED_ENFORCE=1
       shift
       ;;
     --list)
@@ -2131,12 +2150,59 @@ family_bump() {
   mv "$tmp" "$FAMILIES_TSV"
 }
 
+test_speed_class_for() {  # <basename> -> e2e|unit
+  case $1 in *-e2e.test.sh) printf 'e2e\n' ;; *) printf 'unit\n' ;; esac
+}
+
+test_speed_limit_for() {  # <class> -> whole seconds, 0 when unset
+  case $1 in
+    e2e) printf '%s\n' "${TEST_SPEED_E2E_SECONDS:-60}" ;;
+    *) printf '%s\n' "${TEST_SPEED_UNIT_SECONDS:-5}" ;;
+  esac
+}
+
+# Read the limits once. A home's config file wins over the shipped default, so a
+# captain can loosen one class without editing tracked material.
+load_test_speed_limits() {
+  local f v
+  for f in "${TEST_SPEED_LIMITS_FILE:-}" "${JG_HOME:-}/config/test-speed-limits" \
+           "$ROOT/defaults/test-speed-limits"; do
+    [ -n "$f" ] && [ -r "$f" ] || continue
+    v=$(sed -n 's/^e2e_seconds=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_E2E_SECONDS=$v ;; esac
+    v=$(sed -n 's/^unit_seconds=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_UNIT_SECONDS=$v ;; esac
+    return 0
+  done
+  return 0
+}
+
+# Shipped defaults, overridden by the home's config file; see defaults/test-speed-limits.
+load_test_speed_limits
+
 record_script_result() {
   local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5
   local base family expected gate_skip gate_reason fail_delta
   base=$(basename "$script")
   family=$(family_for_basename "$base")
   expected=$(expected_gate_skip_for_family "$family")
+
+  # Hard per-class speed limit. The measured time goes in the message so the
+  # next reader sees how far over it is rather than only that it was over.
+  local speed_limit speed_class speed_ms
+  speed_class=$(test_speed_class_for "$base")
+  speed_limit=$(test_speed_limit_for "$speed_class")
+  speed_ms=$((speed_limit * 1000))
+  if [ "$speed_limit" -gt 0 ] && [ "$duration" -gt "$speed_ms" ]; then
+    if [ "$TEST_SPEED_ENFORCE" -eq 1 ]; then
+      printf 'not ok - %s took %ss, over its %ss %s limit\n' \
+        "$script" "$(( (duration + 999) / 1000 ))" "$speed_limit" "$speed_class" >>"$out"
+      log "speed limit: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
+      rc=1
+    else
+      log "speed over limit, reported only: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
+    fi
+  fi
 
   if [ -n "$FAIL_ON_GATE_SKIP" ] && detect_gate_skip_token "$out" "$FAIL_ON_GATE_SKIP"; then
     log "required gate skip token seen in $script: skip: $FAIL_ON_GATE_SKIP"
