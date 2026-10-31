@@ -27,10 +27,9 @@
 #      that key, which adapter-owned cancellation acknowledgement is observable,
 #      which command exits the agent, and which task kinds the adapter is
 #      verified to run. These are the empirically verified facts previously
-#      carried only in the harness-adapters skill's per-adapter tables; that
-#      skill now points here so one executable owner holds them, and
-#      bin/jg-send.sh's --key path reads the same table rather than a second
-#      copy of it.
+#      carried only in the harness-adapters skill's per-adapter tables; they now
+#      live in defaults/harness-quirks/<harness>.json, and the accessors below
+#      read that one table rather than a second copy of it.
 #   3. Per-backend capability: which named keys a runtime backend can deliver,
 #      and whether the backend has a recovery-grade agent-state classifier
 #      (bin/jg-backend.sh's jg_backend_agent_state) able to PROVE that an agent
@@ -43,6 +42,9 @@
 # its durable instruction. The relaunch-time exception is
 # jg_control_relaunch_resume_flag below: a reference the endpoint's runtime
 # bound as its status authority is returned to a replacement with that adapter.
+
+# shellcheck source=bin/jg-harness-quirks-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-harness-quirks-lib.sh"
 
 # The complete control-plane verb allowlist, one per line.
 jg_control_verbs() {
@@ -130,21 +132,13 @@ jg_control_harness_supports_kind() {  # <harness> <kind>
 # afterwards, and /quit exit (verified omp 18.1.2 in a PTY, re-verified 18.1.11
 # through Herdr).
 jg_control_interrupt_key() {  # <harness>
-  case "${1-}" in
-    claude|codex|opencode|pi|pi-signed|omp|kimi|cursor|gemini|muse|rovo|agy|devin) printf 'Escape' ;;
-    grok) printf 'C-c' ;;
-    *) return 1 ;;
-  esac
+  jg_hq_value "${1-}" interrupt_key
 }
 
 # How many times the interrupt key must be delivered. OpenCode and Devin need a double
 # Escape; every other verified adapter interrupts on a single press.
 jg_control_interrupt_repeat() {  # <harness>
-  case "${1-}" in
-    opencode|devin) printf '2' ;;
-    claude|codex|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy) printf '1' ;;
-    *) return 1 ;;
-  esac
+  jg_hq_value "${1-}" interrupt_repeat
 }
 
 # The rendered proof, read from the visible viewport between presses, that the
@@ -159,22 +153,14 @@ jg_control_interrupt_repeat() {  # <harness>
 # 0.05-0.1 s gap and did not at 0.15 s or more, and a running turn cancelled
 # with a 0.6 s gap.
 jg_control_interrupt_arm_signal() {  # <harness>
-  case "${1-}" in
-    devin) printf '%s' 'esc again to interrupt' ;;
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy) ;;
-    *) return 1 ;;
-  esac
+  jg_hq_value "${1-}" interrupt_arm_signal
 }
 
 # The minimum seconds between two presses of an armed interrupt: several times
 # Devin's observed idle double-tap window, well inside its three-second armed
 # window. A turn that ends between the presses therefore cannot pair them.
 jg_control_interrupt_press_gap() {  # <harness>
-  case "${1-}" in
-    devin) printf '0.5' ;;
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy) printf '0.2' ;;
-    *) return 1 ;;
-  esac
+  jg_hq_value "${1-}" interrupt_press_gap
 }
 
 # A rendered surface that a mistimed interrupt press can open and that must be
@@ -183,11 +169,7 @@ jg_control_interrupt_press_gap() {  # <harness>
 # two independent rows, its `Revert to step:` title or its `↵ revert` footer,
 # and Escape cancels it without reverting (verified live, devin 3000.11.1).
 jg_control_interrupt_hazard_signal() {  # <harness>
-  case "${1-}" in
-    devin) printf '%s' 'Revert to step:|↵ revert' ;;
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy) ;;
-    *) return 1 ;;
-  esac
+  jg_hq_value "${1-}" interrupt_hazard_signal
 }
 
 # The key that must follow the interrupt key to leave the composer empty, or
@@ -201,35 +183,23 @@ jg_control_interrupt_hazard_signal() {  # <harness>
 # a harness with no verified mechanics returns nonzero, matching the tables
 # above.
 jg_control_interrupt_clear_key() {  # <harness>
-  case "${1-}" in
-    muse) printf 'C-u' ;;
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|devin) ;;
-    *) return 1 ;;
-  esac
+  jg_hq_value "${1-}" interrupt_clear_key
 }
 
+# cursor's transcript DOES type an aborted close, but its write latency after
+# an interrupt was measured as variable - sometimes seconds, sometimes not
+# within 20 - so a cancellation claim built on it would be unreliable. Normal
+# turn completion is prompt, which is what the busy fold depends on. rovo's TUI
+# prints "Agent cancelled" on Escape, but for parity with claude/cursor it keeps
+# 'none': the ack is a rendered string, not a recorded state source, and rovo has
+# no busy wiring to confirm against. Both facts are recorded in each table.
 jg_control_interrupt_ack_source() {  # <harness>
-  case "${1-}" in
-    muse) printf 'muse-session-terminal' ;;
-    # cursor's transcript DOES type an aborted close, but its write latency
-    # after an interrupt was measured as variable - sometimes seconds, sometimes
-    # not within 20 - so a cancellation claim built on it would be unreliable.
-    # Normal turn completion is prompt, which is what the busy fold depends on.
-    # rovo's TUI prints "Agent cancelled" on Escape, but for parity with
-    # claude/cursor this stays 'none': the ack is a rendered string, not a
-    # recorded state source, and rovo has no busy wiring to confirm against.
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|devin) printf 'none' ;;
-    *) return 1 ;;
-  esac
+  jg_hq_value "${1-}" interrupt_ack_source
 }
 
 # The command that exits the agent from its own composer.
 jg_control_exit_command() {  # <harness>
-  case "${1-}" in
-    claude|opencode|grok|kimi|cursor|muse|rovo) printf '/exit' ;;
-    codex|pi|pi-signed|omp|gemini|agy|devin) printf '/quit' ;;
-    *) return 1 ;;
-  esac
+  jg_hq_value "${1-}" exit_command
 }
 
 # The launch argument that makes a RELAUNCH of <harness> RESUME an exact agent
@@ -261,11 +231,10 @@ jg_control_exit_command() {  # <harness>
 # Prints the flag name only; the caller quotes and appends the reference, since
 # shell quoting belongs to the owner of the launch line (bin/jg-spawn.sh).
 jg_control_relaunch_resume_flag() {  # <harness> <registered-agent>
-  case "${1-}" in
-    pi|pi-signed)
-      [ "${2-}" = pi ] && printf -- '--session'
-      ;;
-  esac
+  local flag agent
+  flag=$(jg_hq_value "${1-}" resume_flag) || return 0
+  agent=$(jg_hq_value "${1-}" resume_agent) || return 0
+  [ -n "$flag" ] && [ "$agent" = "${2-}" ] && printf -- '%s' "$flag"
   return 0
 }
 
@@ -445,7 +414,7 @@ jg_control_harness_turnend_auth_path() {  # <harness> <token>
 # records a permanent decline); jg-control closes the endpoint instead.
 # Input is a plain full viewport. Output: gate|none.
 jg_control_startup_gate() {  # <harness> <viewport>
-  [ "${1-}" = claude ] || { printf 'none'; return 0; }
+  [ -n "$(jg_hq_value "${1-}" startup_gate)" ] || { printf 'none'; return 0; }
   printf '%s\n' "${2-}" | awk '
     /Allow external CLAUDE\.md file imports\?|Is this a project you created or one you trust\?/ { gate = 1 }
     /Enter to confirm · Esc to cancel/ { prompt = 1 }
@@ -457,7 +426,7 @@ jg_control_startup_gate() {  # <harness> <viewport>
 # already selected is supported; other selections or changed dialogs refuse.
 # Input is a plain full viewport. Output: stop|refuse|none.
 jg_control_exit_confirmation() {  # <harness> <viewport>
-  [ "${1-}" = claude ] || { printf 'none'; return 0; }
+  [ -n "$(jg_hq_value "${1-}" exit_confirmation)" ] || { printf 'none'; return 0; }
   printf '%s\n' "${2-}" | awk '
     { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
     /Background work is running|Exit and stop tasks|Move to background and exit/ { seen = 1 }
