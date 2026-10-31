@@ -1728,6 +1728,7 @@ case "$PROVIDER" in
       exit 1
     fi
     if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$JG_PR_MERGE_HEAD" "$URL" >&2 || exit 1; fi
+    if declare -F jg_dod_proof_gate >/dev/null; then jg_dod_proof_gate "$JG_HOME" "$ID" "$JG_PR_MERGE_HEAD" "$URL" >&2 || exit 1; fi
     # The away record is locked first, so this last presence and authority read
     # and the forge command below share one live-owner critical section.
     hold_away_record_for_merge || exit 1
@@ -1804,6 +1805,7 @@ case "$PROVIDER" in
   gitlab)
     gitlab_verify_mergeable || exit 1
     if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$JG_PR_MERGE_HEAD" "$URL" >&2 || exit 1; fi
+    if declare -F jg_dod_proof_gate >/dev/null; then jg_dod_proof_gate "$JG_HOME" "$ID" "$JG_PR_MERGE_HEAD" "$URL" >&2 || exit 1; fi
     # --sha binds the merge to the head this run verified, so a push that lands
     # in between is refused by GitLab instead of merged unverified. --yes only
     # skips the interactive confirmation, which no supervised run can answer;

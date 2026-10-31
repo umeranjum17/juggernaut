@@ -15,6 +15,8 @@ journeys:
     command: bash addons/fleet-report/run-proof.sh
   proof-attach:
     command: bash journeys/proof-attach.sh
+  merge-proof-gate:
+    command: bash journeys/merge-proof-gate.sh
   design-call-gate:
     command: bash journeys/design-call-gate.sh
   demo-call-gate:

@@ -3,7 +3,7 @@
 #
 # Usage:
 #   jg-proof-attach.sh find   <task-id> [--pr <url>] [--head <sha>]
-#   jg-proof-attach.sh attach <ready|review|merged> <task-id> [--pr <url>] [--head <sha>] [--board <file>]
+#   jg-proof-attach.sh attach <ready|review|merged> <task-id> [--pr <url>] [--head <sha>] [--board <file>] [--require 1]
 #
 # The captain's rule (2026-10-29): a card for UI or video work is never text-only,
 # and no model decides that. This script decides, from files:
@@ -17,7 +17,8 @@
 # for the same PR that has no media. It then writes a `## Proof` section into the PR body
 # (run id, file names, sha256 - never the board link, which carries the board token).
 # GitHub has no upload path for a PR body, so the images live on the board card.
-# The board is --board, else $JG_PROOF_BOARD, else the --board of config/post-merge.
+# The board is --board, else the one jg_board_file names (bin/jg-board-link-lib.sh).
+# --require 1 is the merge gate's: a missing add-on, tool or board refuses instead of skipping.
 # find prints `mode:`, `receipt:` and `media:` lines. Exit 0 also when the board tools
 # or the merge-card add-on are absent (one line says proof was skipped).
 set -u
@@ -26,18 +27,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-board-link-lib.sh
 . "$SCRIPT_DIR/jg-board-link-lib.sh"
+# shellcheck source=bin/jg-compat.sh
+. "$SCRIPT_DIR/jg-compat.sh"
+# shellcheck source=bin/jg-squad-lead-parent-lib.sh
+. "$SCRIPT_DIR/jg-squad-lead-parent-lib.sh"
 
 die() { printf 'jg-proof-attach: %s\n' "$1" >&2; exit 1; }
 refuse() { printf 'proof refused for %s: %s\n' "$ID" "$1"; exit 1; }
-skip() { printf 'proof skipped for %s: %s\n' "$ID" "$1" >&2; exit 0; }
+skip() {
+  [ -z "$REQUIRE" ] || refuse "$1, and this merge needs the proof card on the board"
+  printf 'proof skipped for %s: %s\n' "$ID" "$1" >&2; exit 0
+}
 
-KIND='' ID='' PR=- HEAD=- BOARD=${JG_PROOF_BOARD:-}
+KIND='' ID='' PR=- HEAD=- BOARD=${JG_PROOF_BOARD:-} REQUIRE=
 CMD=${1:-}
 case $CMD in find) shift ;; attach) KIND=${2:-}; [ $# -ge 3 ] || die "usage: attach <ready|review|merged> <task-id>"; shift 2 ;; *) die "usage: find|attach (see the header)" ;; esac
 ID=${1:-}; shift
 while [ $# -gt 0 ]; do
   [ -n "${2:-}" ] || die "$1 needs a value"
-  case $1 in --pr) PR=$2 ;; --head) HEAD=$2 ;; --board) BOARD=$2 ;; *) die "unknown option $1" ;; esac
+  case $1 in --pr) PR=$2 ;; --head) HEAD=$2 ;; --board) BOARD=$2 ;; --require) REQUIRE=$2 ;; *) die "unknown option $1" ;; esac
   shift 2
 done
 case $KIND in ''|ready|review|merged) ;; *) die "kind must be ready, review or merged" ;; esac
@@ -73,7 +81,7 @@ fi
 command -v sign-off-axi >/dev/null 2>&1 || skip "sign-off-axi is not installed"
 
 if [ -z "$BOARD" ]; then
-  BOARD=$(sed -n "s/.*--board[= ]'\{0,1\}\([^' ]*\).*/\1/p" "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}/post-merge" 2>/dev/null | head -n 1)
+  BOARD=$(jg_board_file "$JG_HOME") || BOARD=''
 fi
 [ -n "$BOARD" ] || refuse "no board: pass --board <file> or set JG_PROOF_BOARD"
 if [ "$PR" != - ]; then key=$(jg_board_merge_key "$PR") link=$PR; else key=merge-$HEAD link=$HEAD; fi

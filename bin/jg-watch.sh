@@ -3928,6 +3928,12 @@ while :; do
     JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-procevent.sh" reconcile >/dev/null 2>&1 || true
   fi
 
+  # Merge alerts the board refused while it was down are posted once it is back
+  # (bin/jg-merge-alert.sh drain); a no-op with nothing queued, and it never wakes.
+  if [ -d "$STATE/merge-alerts/pending" ]; then
+    JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-merge-alert.sh" drain >/dev/null 2>&1 || true
+  fi
+
   # The decision must read the wake queue as it stood at cycle start, because
   # the signal scan below appends this cycle's own rows. While unconsumed rows
   # from a previous cycle exist (a post-queue crash left its terminal row

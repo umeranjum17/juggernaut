@@ -26,6 +26,7 @@
 # The hooks also get FM_HOME (the pre-rename name) because installed add-on hooks and done-done's merge-gate still read it; delete with the S10 shim.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
+_JG_GATE_LIB_DIR=$(cd "$_jg_d" && pwd)
 if [ -r "$_jg_d/jg-compat.sh" ]; then
   # shellcheck source=bin/jg-compat.sh
   . "$_jg_d/jg-compat.sh"
@@ -320,5 +321,24 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
   [ -n "$removed" ] || return 0
   if [ -n "$(_jg_nav_line 'Removed by captain words')" ]; then return 0; fi
   echo "merge refused: $id is a UI change and its PR body drops from Nav before ($removed) with no 'Removed by captain words: <quote>' line; a UI change never removes an existing menu, tab or screen unless the captain's own words ask for it"
+  return 1
+}
+
+# jg_dod_proof_gate is the proof-card gate both merge paths call: a merge lands only
+# when its proof card is on the board, so no lead has to remember it. It runs
+# bin/jg-proof-attach.sh with --require, which posts the card when it is missing and
+# refuses when the proof, the board client or the board is not there. A home with no
+# board anywhere (its own config/post-merge, $JG_PROOF_BOARD, or its parent's) has
+# nowhere to post and is not gated. A shell check decides.
+jg_dod_proof_gate() {  # <home> <id> <candidate-head> <pr-url|->
+  local home=$1 id=$2 head=$3 url=${4:--} out rc=0 args=()
+  # shellcheck source=bin/jg-board-link-lib.sh
+  if ! declare -F jg_board_file >/dev/null; then . "$_JG_GATE_LIB_DIR/jg-board-link-lib.sh" || return 0; fi
+  jg_board_file "$home" >/dev/null || return 0
+  [ "$url" = - ] || args=(--pr "$url")
+  out=$(JG_HOME=$home "$_JG_GATE_LIB_DIR/jg-proof-attach.sh" attach ready "$id" --head "$head" --require 1 "${args[@]+"${args[@]}"}" 2>&1) || rc=$?
+  printf '%s\n' "$out" | sed 's/^/proof: /' >&2
+  [ "$rc" -eq 0 ] && return 0
+  echo "merge refused: $id has no proof card on the board; fix what the proof lines above name, then merge again"
   return 1
 }

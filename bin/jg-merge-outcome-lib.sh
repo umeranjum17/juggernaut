@@ -127,6 +127,10 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
   if [ "$status" -eq 0 ] && { [ -e "${JG_CONFIG_OVERRIDE:-$home/config}/post-merge" ] || [ -n "${JG_PROOF_BOARD:-}" ]; }; then
     JG_HOME=$home "$_JG_MERGE_OUTCOME_LIB_DIR/jg-proof-attach.sh" attach merged "$id" --pr "$JG_PR_URL" 2>&1 | sed 's/^/proof: /' >&2 || true
   fi
+  # One board alert per proven merge, queued durably when the board is down; it never changes the outcome.
+  if [ "$status" -eq 0 ]; then
+    JG_HOME=$home JG_STATE_OVERRIDE=$state "$_JG_MERGE_OUTCOME_LIB_DIR/jg-merge-alert.sh" post "$id" --pr "$JG_PR_URL" --authority "${authority:-attended}" 2>&1 | sed 's/^/alert: /' >&2 || true
+  fi
   return "$status"
 }
 
