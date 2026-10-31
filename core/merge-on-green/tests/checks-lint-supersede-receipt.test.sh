@@ -3,7 +3,7 @@
 # completion record. Real lint, the real completion-receipt publisher and the merge path's real acceptance, with
 # a local report file in place of a PR (no gh, no network). A run that still fails must keep reading FAIL.
 set -euo pipefail
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) # addons/
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) # the core tree
 LINT=$ROOT/merge-on-green/jg-checks-lint.sh
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
@@ -16,7 +16,7 @@ is() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1: got [$2], want [$3]"; fi 
 
 # A lane of this home: its brief requires a receipt, and the fork libraries the publisher and the merge path
 # use are this candidate's own, not a copy of another checkout.
-cp "$ROOT/../bin/"*.sh "$d/fm/bin/"
+cp -a "$ROOT/../bin" "$ROOT/../core" "$d/fm/"
 git -C "$d/wt" init -q .
 git -C "$d/wt" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 head=$(git -C "$d/wt" rev-parse HEAD)

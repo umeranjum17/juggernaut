@@ -100,7 +100,7 @@ bash "$here/core/owner-rules/wiring.sh" "$home" >/dev/null 2>&1 || no 'owner-rul
 
 # One file, both steps, in the required order, and no chain files left behind.
 is 'the home previous gate is kept aside' "$(tail -n 1 "$prev" 2>/dev/null)" "$kept_gate_last_line"
-[ -f "$gate" ] && [ ! -L "$gate" ] && ok 'config/merge-gate is one regular file' || no 'config/merge-gate is not a regular file'
+if [ -f "$gate" ] && [ ! -L "$gate" ]; then ok 'config/merge-gate is one regular file'; else no 'config/merge-gate is not a regular file'; fi
 body=$(cat "$gate")
 has 'the single file runs the owner-details scan' "$body" "$XDG_DATA_HOME/jg-owner-guard/owner-guard merge-gate \"\$@\""
 has 'the single file runs the owner-rules proof gate' "$body" "$here/core/owner-rules/bin/jg-owner-rules-gate.sh \"\$@\""
@@ -211,10 +211,10 @@ has 'uninstalling the proof gate keeps the owner-details scan' "$(cat "$gate")" 
 lacks 'uninstalling the proof gate drops its step' "$(cat "$gate")" 'owner-rules-gate.sh "$@"'
 bash "$here/core/owner-guard/wiring.sh" --uninstall "$home" >/dev/null 2>&1 || no 'owner-guard uninstall failed'
 is 'the last uninstall restores the home own gate' "$(cat "$gate")" "$(cat "$w/orig-prev-gate")"
-[ ! -e "$steps" ] && ok 'the last uninstall drops the steps record' || no 'the steps record survived the last uninstall'
-[ ! -e "$prev" ] && ok 'the last uninstall moves the previous gate back' || no 'the previous gate is still aside'
+if [ ! -e "$steps" ]; then ok 'the last uninstall drops the steps record'; else no 'the steps record survived the last uninstall'; fi
+if [ ! -e "$prev" ]; then ok 'the last uninstall moves the previous gate back'; else no 'the previous gate is still aside'; fi
 left=0
 for f in "$home"/config/merge-gate.pre-owner-*; do [ -e "$f" ] || [ -L "$f" ] || continue; left=$((left + 1)); done
 is 'the last uninstall leaves no old path symlink' "$left" 0
 
-[ "$fails" -eq 0 ] && echo "PASS merge-gate-one-entry" || { echo "FAIL merge-gate-one-entry: $fails"; exit 1; }
+if [ "$fails" -eq 0 ]; then echo "PASS merge-gate-one-entry"; else echo "FAIL merge-gate-one-entry: $fails"; exit 1; fi
