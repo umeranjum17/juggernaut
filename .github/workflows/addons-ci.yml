@@ -238,6 +238,10 @@ jobs:
       # Fixture home, stub gh and receipts; no merge runs.
       - name: Owner-rules gate test
         run: bash owner-rules/tests/owner-rules-gate.test.sh
+      - name: Owner-rules gate repoint test
+        run: bash owner-rules/tests/gate-repoint.test.sh
+      - name: Merge-card evidence-root message test
+        run: bash merge-card/tests/dd-root-message.test.sh
       - name: Owner-rules design flag test
         run: bash owner-rules/tests/design-flag.test.sh
       - name: Pipeline route switch test

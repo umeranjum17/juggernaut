@@ -402,6 +402,13 @@ dd_root() {
   printf '%s' "${root/#\~/$HOME}"
 }
 
+# dd_root_why: one sentence saying where done-done's evidence root was looked for and was not found, else nothing.
+dd_root_why() {
+  [ -z "$(dd_root)" ] || return 0
+  printf "could not find done-done's evidence root: done-done doctor, run in %s, found no valid .done-done.yaml there (a git repository with that file), so only the task folder %s was searched for the sealed run" \
+    "${JG_HOME:-<JG_HOME unset>}" "${JG_HOME:-}/data"
+}
+
 # dd_receipt <task-id> <head> <claim> <evidence> <root>: done-done's own answer to "is there a receipt at
 # <head>", asked in the task's lane worktree when the task's record names one, else here, printed as the card's
 # receipt. Nothing when done-done is absent, refuses, or names no run the card can carry: the caller then scans
@@ -557,6 +564,7 @@ post() {
       local seal="cd '$wt' && done-done run -- <the command that proves it>"
       [ "$wt" != - ] || seal="in the copy at $head: done-done run -- <the command that proves it>"
       echo "merge-card: no passed-test receipt for $key: seal a clean done-done run at $head with $seal; a screen: none card needs no capture"
+      local why; why=$(dd_root_why); [ -z "$why" ] || echo "merge-card: $why"
       return 1
     }
     local outcome evidence body capture command exit_code excerpt note
