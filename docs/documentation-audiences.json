@@ -493,6 +493,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/reply-shadow.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/squad-lead-parent-channel.md",
       "audience": "maintainer-architecture"
     },
