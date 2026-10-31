@@ -6,7 +6,7 @@
 # WHY THIS EXISTS (migration step 5c). The ladder is shell today: the owner
 # alert threshold, the escalation, the board card, the re-alert cadence, the
 # pause cadence and the wait-source priority are rebuilt by hand inside
-# addons/wait-timers/bin/jg-wait-timers-lib.sh, and procevent, ask-default,
+# core/wait-timers/bin/jg-wait-timers-lib.sh, and procevent, ask-default,
 # lead-wake, fleet-stall, nm-drain and merge-on-green each carry their own copy
 # of the same shape. The decided shape is one workflow definition with timers and
 # external events, so a new rung or threshold is a config line plus a test and
@@ -16,13 +16,13 @@
 # it reads.
 #
 # CONTRACT (this header is the one owner of the ladder's shape).
-#   definition  core/workflows/escalation-wait-timers.json, overridable per home
+#   definition  core/bus/workflows/escalation-wait-timers.json, overridable per home
 #               at config/escalation-workflows.json or by JG_ESCALATION_WORKFLOW.
 #               It owns the rungs, which timer each rung fires on, each timer's
 #               seconds and the environment name it answers to, the ladder a wait
 #               class uses, the re-alert cadence, the wait-source priority and
 #               the episode key template. The Dapr side of the same definition is
-#               core/workflows/dapr/resiliency.yaml.
+#               core/bus/dapr/resiliency.yaml.
 #   facts       The one thing the definition does not own is how a fact is read:
 #               a status log, a wait source, the pause-until token and the captain
 #               hold are read with the same shared libraries the ladder code reads
@@ -65,7 +65,7 @@ say() { printf '%s\n' "$*" >&2; }
 definition() {  # the workflow definition file in force
   local f
   for f in "${JG_ESCALATION_WORKFLOW:-}" "$CONFIG/escalation-workflows.json" \
-    "$ROOT/core/workflows/escalation-wait-timers.json"; do
+    "$ROOT/core/bus/workflows/escalation-wait-timers.json"; do
     [ -n "$f" ] && [ -f "$f" ] || continue
     printf '%s' "$f"
     return 0
@@ -582,7 +582,7 @@ cmd_parity() {
   done
   case "$days" in '' | *[!0-9]* | 0*) die '--days must be positive decimal days' ;; esac
   [ -d "$home/state" ] || die "no state directory under $home"
-  [ -r "$ROOT/addons/wait-timers/bin/jg-wait-timers-lib.sh" ] \
+  [ -r "$ROOT/core/wait-timers/bin/jg-wait-timers-lib.sh" ] \
     || { printf 'skip: the authoritative ladder library is not in this tree\n'; return 0; }
   end=$(date +%s)
   since=$((end - days * 86400))
@@ -684,7 +684,7 @@ load_fact_libs() {
 }
 
 load_ladder_libs() {
-  local W="$ROOT/addons/wait-timers/bin/jg-wait-timers-lib.sh"
+  local W="$ROOT/core/wait-timers/bin/jg-wait-timers-lib.sh"
   [ -r "$W" ] || return 1
   load_fact_libs || return 1
   # shellcheck source=/dev/null

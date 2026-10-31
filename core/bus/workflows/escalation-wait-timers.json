@@ -5,7 +5,7 @@
     "name": "escalation-wait-timers",
     "migrationStep": "5c",
     "mode": "shadow",
-    "authoritative": "bin/jg-watch.sh and addons/wait-timers/bin/jg-wait-timers-lib.sh keep deciding; this definition only runs beside them",
+    "authoritative": "bin/jg-watch.sh and core/wait-timers/bin/jg-wait-timers-lib.sh keep deciding; this definition only runs beside them",
     "reader": "bin/jg-escalation-workflows.sh is the one reader; a home may override this file at config/escalation-workflows.json or with JG_ESCALATION_WORKFLOW"
   },
   "spec": {

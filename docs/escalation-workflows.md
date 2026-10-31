@@ -3,7 +3,7 @@
 Migration step 5c. The stuck-worker ladder is shell today: the owner alert, the
 escalation, the board card, the re-alert cadence, the pause cadence and the
 wait-source priority are rebuilt by hand inside
-`addons/wait-timers/bin/jg-wait-timers-lib.sh`, and `procevent`,
+`core/wait-timers/bin/jg-wait-timers-lib.sh`, and `procevent`,
 `ask-default`, `lead-wake`, `fleet-stall`, `nm-drain` and `merge-on-green` each
 carry a copy of the same shape. The decided shape is one workflow definition with
 timers and external events, configured rather than coded, so a new rung or
@@ -17,12 +17,12 @@ the shadow record it keeps is its own.
 
 ## What runs
 
-- `core/workflows/escalation-wait-timers.json` is the definition: the rungs, the
+- `core/bus/workflows/escalation-wait-timers.json` is the definition: the rungs, the
   timer each rung fires on, each timer's seconds and the environment name it
   answers to, the ladder a wait class uses, the re-alert cadence, the wait-source
   priority and the episode key template. A home may override the whole file at
   `config/escalation-workflows.json` or with `JG_ESCALATION_WORKFLOW`.
-- `core/workflows/dapr/resiliency.yaml` is the same workflow's Dapr side: the
+- `core/bus/dapr/resiliency.yaml` is the same workflow's Dapr side: the
   retry and timeout policy for one rung delivery. No Dapr worker exists in this
   step, so it ships unloaded, beside the definition it belongs to.
 - `bin/jg-escalation-workflows.sh tick` is the shadow. Once per watcher poll, for
@@ -80,7 +80,7 @@ ladder events through both paths and compares one row per rung fired:
 ```
 
 Both sides run on the same replayed instants, in one order, over one replayed
-home. The current side is the real `jg_wait_timers_tick` from the add-on library,
+home. The current side is the real `jg_wait_timers_tick` from the waiting-state library,
 with its delivery stubbed and its clock replayed: every rung it would deliver is
 one row, and the episode bookkeeping the real wake does after a delivered output
 still runs, so the ladder's own state machine is unchanged. The new side is the
@@ -135,7 +135,7 @@ below is an estimate.
 
 Current path, the ladder and its timers as they are:
 
-- 663 lines, `addons/wait-timers/bin/jg-wait-timers-lib.sh`. 363 of them are the
+- 663 lines, `core/wait-timers/bin/jg-wait-timers-lib.sh`. 363 of them are the
   ladder this definition models: 266 in `jg_wait_timers_tick` (the rung
   decision), 25 the board card, 19 plus 19 the two delivered-wait sources, 34 the
   record format, identity, parent report and episode end, 25 the rest of its
@@ -145,8 +145,8 @@ Current path, the ladder and its timers as they are:
 
 New path, the same ladder as configuration:
 
-- 137 lines, `core/workflows/escalation-wait-timers.json` (the definition).
-- 31 lines, `core/workflows/dapr/resiliency.yaml` (retry and timeout policy).
+- 137 lines, `core/bus/workflows/escalation-wait-timers.json` (the definition).
+- 31 lines, `core/bus/dapr/resiliency.yaml` (retry and timeout policy).
 - 724 lines, `bin/jg-escalation-workflows.sh`: 53 the header contract, 88 the
   definition reader and rung helpers, 63 the facts, 29 `show`, 39 `tick`, 134 the
   two runners and their fired-rung bookkeeping (`wf_step` alone 71), 125 the
