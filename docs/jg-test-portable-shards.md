@@ -109,9 +109,10 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 
 ## Lint partitions and end-to-end latency
 
-`bin/jg-lint.sh` owns two canonical CI partitions, each attempting full source-aware ShellCheck analysis and running workflow validation and backend-purity checks.
-CI requires its per-root bounds, so an unenforceable deadline or address-space limit refuses lint rather than running uncapped; the script header owns the envelope, per-root execution contract, and memory fallback.
-Its `--list-files` interface exposes partition membership; `tests/jg-lint.test.sh` verifies complete/disjoint executed roots, initial analysis flags, and fallback reporting.
+`bin/jg-lint.sh` owns four canonical CI partitions, each attempting full source-aware ShellCheck analysis and running workflow validation and backend-purity checks.
+The last partition holds only the heaviest roots (`jg_lint_isolated_root`), so a job that carries a multi-gigabyte analysis carries nothing else and ordinary roots never queue behind one; the same files are linted either way.
+CI requires its per-root bounds, so an unenforceable deadline or address-space limit refuses lint rather than running uncapped; the script header owns the envelope, the per-root execution contract, and the measured allowance a root too heavy for the default envelope re-runs under.
+Its `--list-files` interface exposes partition membership; `tests/jg-lint-partitions.test.sh` verifies complete/disjoint executed roots and `tests/jg-lint-root-memory.test.sh` verifies that a heavy root re-runs with source following and that one exceeding even its allowance fails.
 The workflow uploads each partition's quiet telemetry plus its per-root lifecycle sidecar to distinguish analysis cost, memory use, and host contention.
 No fast mode, path skips, or paid runner provisioning is part of this layout.
 

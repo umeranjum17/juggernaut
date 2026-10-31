@@ -3096,9 +3096,11 @@ admission_retry_waits_memory() {
 # (free-lanes or no-worker), and READY_STALL_LANES (the open lane ids,
 # comma-joined, so the chain can see a start). When ready work exists but the
 # condition does not hold, READY_STALL_WHY names the reason (lanes-working or
-# project-capacity). Returns 0 when the condition holds, 1 when it does not,
-# and 2 when the backlog cannot be read, so an unknown poll never clears or
-# fires an episode.
+# project-capacity). The wait-timers add-on reads the mode and the reason, so
+# they are outputs of this function and not local scratch. Returns 0 when the
+# condition holds, 1 when it does not, and 2 when the backlog cannot be read, so
+# an unknown poll never clears or fires an episode.
+# shellcheck disable=SC2034,SC2100 # READY_STALL_MODE and READY_STALL_WHY are read by addons/wait-timers, outside the linted set.
 ready_backlog_stall_state() {
   local rows rc id repo proj cfg seen='|' full='|' meta kind
   READY_STALL_IDS='' READY_STALL_OPEN='' READY_STALL_TARGET='' READY_STALL_LANES='' READY_STALL_MODE='' READY_STALL_WHY=''

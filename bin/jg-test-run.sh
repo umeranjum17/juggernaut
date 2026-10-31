@@ -604,6 +604,7 @@ tests/jg-host-wiring.test.sh 817
 tests/jg-inbox.test.sh 8757
 tests/jg-launch-prompt-signals-live-e2e.test.sh 56
 tests/jg-lint-partitions.test.sh 4361
+tests/jg-lint-root-memory.test.sh 4747
 tests/jg-mail.test.sh 10524
 tests/jg-merge-gate-lib.test.sh 83
 tests/jg-muse-signals-live-e2e.test.sh 61

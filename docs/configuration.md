@@ -13,6 +13,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), and [host memory guard](#host-memory-guard-confighost-memory) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
+| Release branch that follows main | [Version branch](#version-branch-configversion-branch) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## JG_HOME
@@ -471,6 +472,18 @@ A task that names none of those ships as `--mode direct-PR` with a done-done che
 The brief records the reason on a `Delivery risk (no-mistakes): <reason>` line, and a value outside the list is refused.
 `--risk` is refused on a `--scout` brief and on a `--squad-lead` charter.
 The local presence flag `config/delivery-risk-loose` turns the question off for this home; an unlisted value is still refused.
+
+## Version branch (config/version-branch)
+
+The optional local, gitignored `config/version-branch` names the long-lived release branch pull requests for the next release target, for example `release/c-1`.
+It holds the branch name and nothing else, and an absent or blank file means this home carries no version branch.
+When it exists, `bin/jg-merge-outcome-lib.sh` runs `bin/jg-version-branch-sync.sh run` as part of recording a merge, so the branch moves with no human step and no home-owned hook to write.
+That pass covers a merge this home performed and a merge its poll detected, because both record through that one operation.
+
+The carry is a push of the default branch's commit onto the version ref, with no `+` and no force, so the remote refuses anything that is not a fast-forward.
+A version branch holding its own commits is reported and left exactly as it is, because closing that gap needs a real merge toward the default branch, which is a human decision rather than something a post-merge pass may invent.
+A dirty copy is skipped and each path is named.
+One line per outcome prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
 
 ## Runtime backend (config/backend / JG_BACKEND)
 
