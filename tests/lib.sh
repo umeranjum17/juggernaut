@@ -119,12 +119,17 @@ jg_test_launch_git_prefix() {  # <launch>
 }
 
 # The command a pane runs after the launch's Git configuration prefix and its
-# leading export statements, for suites that split it into arguments.
+# leading statements, for suites that split it into arguments. Only the launches
+# this suite builds reach here, and after this strip each one is a single simple
+# command, so the `set --` these callers eval cannot run part of the launch.
 jg_test_launch_command() {  # <launch>
   local command=$1 end=' || return 1 2>/dev/null || exit 1; '
   case "$command" in *"$end"*) command=${command#*"$end"} ;; esac
-  while [[ "$command" == export\ *\;* ]]; do
-    command=${command#*; }
+  while [[ "$command" == *\;* ]]; do
+    case "$command" in
+    export\ *\;* | unset\ *\;* | :) command=${command#*; } ;;
+    *) break ;;
+    esac
   done
   printf '%s' "$command"
 }

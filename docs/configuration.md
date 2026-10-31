@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), and [host memory guard](#host-memory-guard-confighost-memory) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
@@ -1283,6 +1283,33 @@ The filter runs at the worker command boundary, after the terminal daemon and pa
 This is not a sandbox: it cannot revoke same-user access to credential files, prevent tools or later shells from loading credentials again, or isolate processes from the same user's other processes.
 
 Regression coverage executes emitted launch commands with synthetic nonsecret values in [`tests/jg-spawn-dispatch-profile.test.sh`](../tests/jg-spawn-dispatch-profile.test.sh).
+
+### Provider credentials stripped from every launch
+
+Every launch drops the credential-shaped variables the launching process carries, whether or not that home opted into the allowlist above.
+This is the default, with no file and no flag to turn it off, and it covers ship, Recon, squad_lead, local and remote, raw commands, and relaunches.
+Stripped shapes are matched on the name's ending, case-insensitively:
+
+```text
+_API_KEY  _APIKEY  _TOKEN  _SECRET  _SECRET_KEY  _PASSWORD  _PASSWD
+_CREDENTIAL  _CREDENTIALS  _ACCESS_KEY  _ACCESS_KEY_ID  _PRIVATE_KEY
+```
+
+A name that merely contains `KEY` is not a credential and is never stripped, so `STARSHIP_SESSION_KEY` and `GIT_CONFIG_KEY_0` reach the worker unchanged.
+The list is a shape rule rather than a list of provider names, so a credential a later provider introduces is stripped without a code change.
+[`bin/jg-launch-env-lib.sh`](../bin/jg-launch-env-lib.sh) owns the shapes and is the only implementation.
+
+Listing a name in `config/launch-env-allowlist` is the way to keep it, and it is the only way; an allowlisted credential reaches the worker as described above.
+A home whose workers authenticate a provider through an environment variable therefore names that variable in the allowlist file, which also opts the home into the full filter described above.
+
+An allowlisted name keeps the value the destination pane supplies; a stripped name is reported nowhere.
+Diagnostics print names only, and no value is copied, logged, written to a record, or sent anywhere.
+
+Limit: this is not a sandbox, and the strip is computed from the process that builds the launch.
+A variable that exists only inside the destination pane, not in that process, survives, and tools or later shells can still create or reload credentials.
+For the population side of the same problem, [`addons/key-in-env-check`](../addons/key-in-env-check/README.md) scans running processes for provider keys.
+
+Regression coverage plants a synthetic credential name and runs the real launch-environment builder in a subshell in [`tests/jg-launch-env-strip.test.sh`](../tests/jg-launch-env-strip.test.sh).
 
 ### Compact adviser setting
 

@@ -139,6 +139,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
 | `jg-project-capacity-lib.sh` | Per-project worker capacity: `config/project-capacity` parsing, what holds a place, and the spawn-time fit check ([configuration.md](configuration.md#project-capacity-configproject-capacity)) |
 | `jg-exclude-tools-lib.sh` | Parse `config/crew-exclude-tools` and check launch-time runtime support for worker tool exclusions ([configuration.md](configuration.md#worker-tool-exclusions-configcrew-exclude-tools)) |
+| `jg-launch-env-lib.sh`   | Single owner of the provider-credential shapes every launch strips from the worker environment, and of the `unset` prefix the pane runs ([configuration.md](configuration.md#provider-credentials-stripped-from-every-launch)) |
 | `jg-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
 | `jg-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `jg-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |
