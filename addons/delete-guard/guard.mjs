@@ -147,12 +147,14 @@ export function blockedDelete(command) {
 }
 
 // Log rows keep any block replayable: the whole command, or the head plus the part around the blocked delete.
+// The cap sits above the longest command the fleet has recorded, because a cut row cannot be replayed and so
+// cannot be scored against a second decider at all.
 function loggedCommand(command, target) {
 	const cmd = String(command);
-	if (cmd.length <= 600) return cmd;
+	if (cmd.length <= 2000) return cmd;
 	const at = cmd.lastIndexOf(target);
 	const around = cmd.slice(Math.max(0, (at < 0 ? cmd.length : at) - 250), (at < 0 ? cmd.length : at) + 350);
-	return `${cmd.slice(0, 600)} …[${cmd.length} chars total; around the delete: ${around}]`;
+	return `${cmd.slice(0, 2000)} …[${cmd.length} chars total; around the delete: ${around}]`;
 }
 
 function escalate(row) {

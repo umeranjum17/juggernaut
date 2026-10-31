@@ -1,0 +1,14 @@
+# Known OPA gaps for the fleet delete guard: records the shell guard and the policy decide differently on, named
+# by the record's own timestamp. Three parser holes, all still to port: a mktemp assignment the command guards
+# with && or ||, a `sh -c` body Rego cannot re-enter because it forbids recursion, and the last assignment being
+# earlier than the delete when the policy takes the last one in the command. `opa-shadow.mjs --expect` refuses a
+# run that disagrees on anything not named here, so closing these means deleting their line.
+2026-10-16T20:39:59.515Z
+2026-10-17T02:39:02.236Z
+2026-10-18T10:50:23.078Z
+2026-10-19T17:18:43.467Z
+2026-10-20T04:40:59.985Z
+2026-10-20T04:41:04.241Z
+2026-10-26T20:41:19.596Z
+2026-10-27T00:03:31.388Z
+2026-10-30T15:45:45.838Z
