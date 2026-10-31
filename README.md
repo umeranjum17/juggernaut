@@ -386,6 +386,20 @@ Two notes on what the screens show:
 - [docs/fleet-ledger.md](docs/fleet-ledger.md) — the opt-in activity ledger outside tools can read to follow a home's missions, and its record contract.
 - [docs/wedge-alarm.md](docs/wedge-alarm.md) — configure the active alert for an away-mode escalation delivery that gets stuck.
 
+#### Editing the rules files
+
+`config/architecture.json`, `config/preferred-stack.json`, `config/engineering-rules.json` and
+`config/crew-dispatch.json` hold this home's rules in one shape: `when` (the case), `use` (the
+instruction or recommendation), `why` (one line), and optionally `id`, `kind` and `enforcedBy`.
+`kind` is `judgement` (a person decides) or `checkable` (a script or CI check decides); a `checkable`
+rule must name its check in `enforcedBy` as a path in this checkout, and a `judgement` rule must not.
+A brief prints judgement rules as advice and checkable rules as the check that decides them, and
+nothing here can refuse a build.
+
+Copy a starting point from [`docs/examples/`](docs/examples/) into `config/` and edit it. A malformed
+file, an unknown medium or language, or a `checkable` rule with no real check is one warning and no
+advice from that file, never a failed brief.
+
 ### Backends
 
 - [docs/tmux-backend.md](docs/tmux-backend.md) — current setup and limits for the tmux reference backend.
