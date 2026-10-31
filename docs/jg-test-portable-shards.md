@@ -30,6 +30,7 @@ The 2026-11-01 `tests/jg-reply-bus-parity.test.sh` carries its provisional local
 The 2026-10-30 hints for the fourteen scripts that had none (the ones the coverage guard listed) carry provisional local measurements from one serial `bin/jg-test-run.sh --json` run on the Linux workspace host, the largest being 14071 ms for `tests/jg-tmp-sweep.test.sh`; the next CI refresh replaces them with Ubuntu measurements.
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
 `tests/jg-board-gate.test.sh` (437 ms) postdates that refresh and carries a provisional local measurement until the next CI refresh replaces it, so the no-hint coverage guard keeps its margin.
+`tests/jg-state-bus-parity.test.sh` (6515 ms) postdates it too, and its hint is the slowest of two serial local runs against a real throwaway JetStream server; CI gate-skips the script when `nats-server` is absent, so until the lane installs one this hint over-states its CI cost rather than under-stating it.
 
 ## Parallel lanes
 
