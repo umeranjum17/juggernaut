@@ -84,6 +84,9 @@ The slot stays reserved across restarts until the lease is released.
 Release happens only on explicit retirement or seed rollback, never on routine restart or recovery.
 
 `bin/jg-home-seed.sh` copies the charter into the Squad Lead home as `data/charter.md`.
+Seeding also gives the new home the two pieces that make a merge visible, so its first landing shows a card instead of nothing: the primary's declared inheritable config, which includes `config/fleet-board`, and the owner-rules proof gate at `config/merge-gate`.
+[`bin/jg-config-inherit-lib.sh`](../../../bin/jg-config-inherit-lib.sh) owns the inherited list and [`addons/lib/merge-gate-lib.sh`](../../../addons/lib/merge-gate-lib.sh) owns the gate file, so seeding runs those owners rather than writing either one itself, and a failure in either fails the seed.
+[`bin/jg-fleet-proof-check.sh`](../../../bin/jg-fleet-proof-check.sh) reports every registered local home missing either piece, which is how a home seeded before that wiring is found; a remote home is left to its own host.
 It also writes the gitignored `.jg-squad-lead-parent` durable binding before the required `.jg-squad-lead-home` identity marker; the parser header in [`bin/jg-squad-lead-parent-lib.sh`](../../../bin/jg-squad-lead-parent-lib.sh) owns the record contract, and both files must remain in place.
 `bin/jg-spawn.sh --squad-lead` uses the mate-specific profile resolved by `bin/jg-harness.sh squad lead <id>`, with model and effort exposed by `squad-lead-model <id>` and `squad-lead-effort <id>`.
 The per-mate pin, global fallback, schema, and refusal contract are owned by [`docs/configuration.md`](../../../docs/configuration.md#choose-the-squad-lead-harness).

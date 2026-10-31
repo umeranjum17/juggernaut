@@ -30,6 +30,9 @@ for a, b in ring:
 t = t.replace('\nwhile :; do\n', '\n' + src + 'while :; do\n', 1)
 p.write_text(t)
 p = bin_ / 'jg-config-inherit-lib.sh'
-t = p.read_text().replace(' lane-target}"', '}"')
+t = p.read_text()
+# The fork's list has no lane-target: the add-on appends it from its own inherited
+# item, and later additions sit after it, so drop it and everything after it.
+t = re.sub(r' lane-target(?: [^ }]+)*}"', '}"', t)
 t = re.sub(r'^(JG_INHERITABLE_CONFIG=.*\n)', r'\1[ ! -r "${JG_ADDONS_DIR:-${JG_HOME:-}/projects/juggernaut-addons}/lead-wake/bin/jg-lead-wake-inherit.sh" ] || . "${JG_ADDONS_DIR:-${JG_HOME:-}/projects/juggernaut-addons}/lead-wake/bin/jg-lead-wake-inherit.sh"\n', t, count=1, flags=re.M)
 p.write_text(t)
