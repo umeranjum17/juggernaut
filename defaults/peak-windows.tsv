@@ -1,0 +1,24 @@
+# Peak-price windows: the only owner of when a provider charges more.
+# bin/jg-peak-lib.sh reads this file in place from the code root; nothing about
+# a window is coded in a script. A home overrides it with config/peak-windows.tsv.
+#
+# Tab-separated columns:
+#   provider    the route's provider prefix; an -cloud suffix is ignored, so
+#               ollama-cloud routes match the ollama row
+#   model glob  matched against the whole route and against its model part
+#   days        UTC ISO weekdays that peak: *, N, N-M, or a comma-separated list
+#   hours       UTC peak windows HH:MM-HH:MM, end-exclusive, comma-separated,
+#               never crossing UTC midnight
+#   source      where the window was read
+#   checked     the UTC date that source was read
+#   status      confirmed gates dispatch; unconfirmed is recorded evidence that
+#               decides nothing, so a guess never blocks work
+#
+# Ollama charges double on DeepSeek V4.1 Flash and V4 Pro inside its weekday
+# peak window and the list price outside it, all weekend included.
+# DeepSeek's own API peaks in two earlier weekday windows; its off-peak rate is
+# half price everywhere else, weekends and Chinese public holidays in full.
+provider	model glob	days	hours	source	checked	status
+ollama	deepseek-v4*	1-5	12:00-18:00	https://ollama.com/pricing	2026-10-30	confirmed
+deepseek	deepseek-*	1-5	01:00-04:00,06:00-10:00	https://api-docs.deepseek.com/quick_start/pricing	2026-10-30	confirmed
+openrouter	deepseek-*	-	-	https://openrouter.ai/deepseek	2026-10-30	unconfirmed

@@ -1774,6 +1774,14 @@ if [ "${JG_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-board-gate.sh" arm >/dev/null 2>&1 \
       || echo "MISSING: the board gate could not be armed; non-must asks stay on the board and merges go unproven"
   fi
+  # The peak-price window end is a deterministic event: the watcher runs this
+  # check, which wakes the leads to dispatch the work that waited, with no model
+  # in the loop. config/peak-guard-off opts a home out.
+  if local_phase && [ ! -e "$(jg_compat_marker "$JG_HOME")" ] \
+    && [ ! -e "$CONFIG/peak-guard-off" ] && [ "$STATE" = "$JG_HOME/state" ] && [ -d "$STATE" ]; then
+    JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-peak-gate.sh" arm >/dev/null 2>&1 \
+      || echo "MISSING: the peak-price window check could not be armed; work deferred for off-peak will not wake a lead"
+  fi
   if [ -n "$fleet_sync_pid" ]; then
     wait "$fleet_sync_pid" || true
     cat "$fleet_sync_out"

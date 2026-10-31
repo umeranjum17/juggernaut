@@ -1009,6 +1009,14 @@ else
   printf 'absent\n'
 fi
 
+# The peak-price answer belongs in the digest rather than in a remembered rule:
+# a lead that does not know it is mid-peak pays double on every workhorse lane.
+# bin/jg-peak-gate.sh owns the sentence and the waiting count; this prints or
+# says it could not, and never blocks the digest.
+subsection "Peak-price windows"
+JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" \
+  "$SCRIPT_DIR/jg-peak-gate.sh" status 2>/dev/null || printf 'unavailable\n'
+
 # Public commitments made through the myjuggernaut relay. A promise to reply in a
 # public thread must survive compaction and restart, so it is surfaced from disk
 # here rather than from conversation memory. jg-public-followup-lib.sh owns both

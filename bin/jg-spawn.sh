@@ -55,6 +55,11 @@
 #   Every local launch, relaunches and squad_leads included, also checks host
 #   memory admission; docs/configuration.md "Host memory guard" owns refusal
 #   behavior, retry guidance, and thresholds.
+#   --peak-override <reason> admits a new ship, scout, or relaunch whose route is
+#   inside a provider peak-price window, which bin/jg-peak-gate.sh otherwise defers
+#   for off-peak; it appends one line naming the task, the route, the window, and
+#   the reason. It is the captain-urgent path, is refused on --squad-lead spawns
+#   because those are never gated, and never reaches a lane already running.
 #   Ship/scout launches always put jg-dod-lib.sh's current worker role scope
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
@@ -784,6 +789,8 @@ BASE_BRANCH_SET=0
 UPSTREAM_CONSENT=
 UPSTREAM_CONSENT_SET=0
 TRACEPARENT_SET=0
+PEAK_OVERRIDE=
+PEAK_OVERRIDE_SET=0
 RELAUNCH=0
 # Opt-in only: exact-resume presentation-order lock waits instead of refusing.
 # Absent/unset keeps upstream refuse-on-contention. See header.
@@ -839,6 +846,10 @@ for a in "$@"; do
     traceparent)
       TRACEPARENT_ARG=$a
       TRACEPARENT_SET=1
+      ;;
+    peak-override)
+      PEAK_OVERRIDE=$a
+      PEAK_OVERRIDE_SET=1
       ;;
     *)
       echo "error: internal parser state for --$want_value" >&2
@@ -909,6 +920,11 @@ for a in "$@"; do
     TRACEPARENT_ARG=${a#--traceparent=}
     TRACEPARENT_SET=1
     ;;
+  --peak-override) want_value="peak-override" ;;
+  --peak-override=*)
+    PEAK_OVERRIDE=${a#--peak-override=}
+    PEAK_OVERRIDE_SET=1
+    ;;
   *) POS+=("$a") ;;
   esac
 done
@@ -946,6 +962,10 @@ done
 }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || {
   echo "error: --traceparent requires a non-empty value" >&2
+  exit 1
+}
+[ "$PEAK_OVERRIDE_SET" -eq 0 ] || [ -n "$PEAK_OVERRIDE" ] || {
+  echo "error: --peak-override requires a non-empty reason" >&2
   exit 1
 }
 # A parent-delivered carrier replaces this home's own resolution, so it is
@@ -2747,6 +2767,22 @@ fi
 # Every model pick this home makes reaches its launch through here, so the
 # per-provider allow-list refuses an off-list model once.
 jg_model_allowlist_require "$HARNESS" "$MODEL" || exit 1
+# Peak-price dispatch gate (bin/jg-peak-gate.sh): this decides WHEN, never WHICH,
+# and it is the last stop before any worktree or endpoint exists, so a deferred
+# task keeps its backlog place and its pooled copy is never taken. A squad_lead
+# is standing infrastructure rather than a workhorse lane, so it is not gated; a
+# lane already running never reaches here, so this can never stop one.
+if [ "$KIND" != squad_lead ]; then
+  if [ "$PEAK_OVERRIDE_SET" -eq 1 ]; then
+    [ "$RELAUNCH" -eq 0 ] || {
+      echo "error: --peak-override is refused on --relaunch; drive the lane through bin/jg-control.sh" >&2
+      exit 1
+    }
+    "$SCRIPT_DIR/jg-peak-gate.sh" admit --task "$ID" --model "$MODEL" --override "$PEAK_OVERRIDE" || exit 1
+  else
+    "$SCRIPT_DIR/jg-peak-gate.sh" admit --task "$ID" --model "$MODEL" || exit 1
+  fi
+fi
 # Worker account pin (header above): resolved before any endpoint, worktree, or
 # record exists. An absent pin selects nothing and leaves every later launch
 # step exactly as it was. A pinned Claude root is exported here as well, so the

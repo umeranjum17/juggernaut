@@ -1197,6 +1197,20 @@ The optional local, gitignored presence flag `config/fleet-heartbeat-off` opts a
 
 If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`addons/wait-timers/README.md`](../addons/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
 
+## Peak-price guard (config/peak-billing)
+
+The guard decides when a lane starts, never which model it runs.
+[`defaults/peak-windows.tsv`](../defaults/peak-windows.tsv) is the only owner of the windows: one row per provider and model glob, each carrying the provider, the glob, the UTC days and hours, the source URL, and the date that source was checked.
+A row gates only when its status column says `confirmed`; an `unconfirmed` row is recorded evidence that decides nothing, so a guess never holds work back.
+`bin/jg-peak-lib.sh` answers exactly two questions from that file, purely: is this route at peak now, and when does that peak end.
+The optional local, gitignored `config/peak-windows.tsv` replaces the shipped rows for this home.
+The optional local, gitignored `config/peak-billing` says whether peak costs anything: `per-token` gates, and `capped` - the older session and weekly caps, where a busy hour is free - admits every route without gating.
+An absent or unreadable file resolves to `per-token`, which is the avoiding default, so an unknown plan waits for off-peak rather than paying double.
+[`bin/jg-spawn.sh`](../bin/jg-spawn.sh) refuses a new ship, Recon, or relaunch on a peak-priced route and leaves the task ready in the backlog; a lane already running is never touched, and a Squad Lead is standing infrastructure so it is not gated.
+`--peak-override <reason>` admits captain-urgent work and appends one line naming the task, the route, the window, and the reason to `state/.peak-overrides.log`.
+The optional local, gitignored presence flag `config/peak-guard-off` leaves the window-end check unarmed, and bootstrap then never wakes a lead when a peak window closes.
+[`jg-peak-gate.sh`](../bin/jg-peak-gate.sh) owns the exact refusal, status, and wake contracts.
+
 ## Launch environment hook (config/launch-env-hook)
 
 The optional local, gitignored `config/launch-env-hook` is an executable that adds environment to every local launch: ship, Recon, Squad Lead, and relaunch.
