@@ -15,11 +15,11 @@ bash "$gate" --self-test >"$tmp/self.log" 2>&1 || { cat "$tmp/self.log" >&2; no 
 pass 'the gate refuses a fixture file placed under addons/ and passes a clean tree'
 
 # The real checkout is clean: the only paths left under the retired directory are the ten deferred images,
-# which slice B moves, and the whole-tree scan names neither them nor anything else.
+# which slice B moves or deletes, and the whole-tree scan names neither them nor anything else.
 bash "$gate" >"$tmp/tree.log" 2>&1 || { cat "$tmp/tree.log" >&2; no 'this checkout still carries a retired path'; }
-pass 'the whole-tree scan passes with only the ten deferred images left'
+pass 'the whole-tree scan passes with only the twelve deferred images left'
 
-# An eleventh file arriving beside the deferred images is still refused: the exemption is exact paths, not a directory.
+# Another file arriving beside the deferred images is still refused: the exemption is exact paths, not a directory.
 d2="$tmp/deferred"
 git init -q "$d2"
 mkdir -p "$d2/addons/tickets-sync/icons"
@@ -29,7 +29,7 @@ git -C "$d2" add -A
 git -C "$d2" -c user.email=fixture@example.invalid -c user.name=Fixture commit -q -m deferred
 if out=$(bash "$gate" --root "$d2" 2>&1); then no 'a file beside the deferred images was accepted'; fi
 case $out in *'retired path: addons/tickets-sync/icons/extra.svg'*) ;; *) no "the refusal did not name the extra file: $out" ;; esac
-pass 'the deferred list exempts exactly the ten named images, not their directory'
+pass 'the deferred list exempts exactly the twelve named images, not their directory'
 
 # A pull request that only adds core files passes; one that adds a catalog file is refused with the path named.
 d="$tmp/pr"

@@ -21,10 +21,13 @@
 set -eu
 
 RETIRED=(addons)
-# Slice B of the one-repo fold is deferred: ten project images are design surface, so they stay under
-# the retired directory until that slice moves them. This list may only shrink, and slice B deletes it
-# with the move. Nothing outside it may appear under a retired root.
+# Slice B of the one-repo fold is deferred: the catalog's images are design surface, so they stay under
+# the retired directory until that slice moves the ten project images and deletes the two catalog logos.
+# This list may only shrink, and slice B deletes it with that move. Nothing outside it may appear under
+# a retired root.
 DEFERRED=(
+  addons/docs/media/logo-dark.svg
+  addons/docs/media/logo-light.svg
   addons/tickets-sync/icons/byokit.svg
   addons/tickets-sync/icons/desklink.svg
   addons/tickets-sync/icons/done-done.svg
