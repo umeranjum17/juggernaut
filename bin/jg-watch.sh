@@ -3892,6 +3892,10 @@ while :; do
   # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
   # test, and a mirror that cannot reach its bus can never fail or delay a wake.
   [ ! -e "$CONFIG/state-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-state-bus.sh" sync >/dev/null 2>&1 || true
+  # Migration step 5g shadow: the host and fleet numbers on Prometheus plus
+  # node_exporter, beside the shell collection (docs/metrics-shadow.md). Off costs
+  # one file test, and a shadow that cannot start can never fail or delay a wake.
+  [ ! -e "$CONFIG/metrics-shadow" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-metrics-shadow.sh" sync >/dev/null 2>&1 || true
 
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
     home_summary_refresh_detached
