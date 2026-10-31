@@ -164,8 +164,9 @@ the next rung instead of a change inside a 266-line decision loop.
 
 Replay measured on this branch, over this home's last 7 days: 229 recorded events,
 246 rungs compared at 363 replayed instants, 0 differences, in 7m01s. The same
-replay with one event shifted by one second on the new path reports a difference
-of exactly that episode's rows, so the check is not vacuous.
+replay with one event's arming time shifted by one second on the new path reports
+10 changed lines, which are exactly that episode's five rows moved by one second,
+in 9m37s: the check is not vacuous.
 
 ## Test
 
