@@ -8,7 +8,6 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 TMP_ROOT=$(jg_test_tmproot jg-wake-route)
 
-# route <home> <state> <kind> <key> <payload>: the class the rule file gives it.
 route() {
   JG_HOME="$1" JG_STATE_OVERRIDE="$2" bash -c '
     . "$1/bin/jg-wake-lib.sh"; jg_wake_route_class "$2" "$3" "$4"' _ "$ROOT" "$3" "$4" "$5"

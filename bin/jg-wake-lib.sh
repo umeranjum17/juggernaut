@@ -2525,6 +2525,7 @@ _jg_wake_settled_locked() {
 # returns at once, and `batch` is an ordinary row whose wake is gated, so it settles
 # with no turn. JG_WAKE_LAST carries `<class>:<key>` to that gate, and
 # JG_WAKE_CYCLE_URGENT latches once any row this cycle was `now`.
+# shellcheck disable=SC2034 # JG_WAKE_LAST and JG_WAKE_CYCLE_URGENT are read by wake() in the separately linted transition owner.
 jg_wake_append_locked() {
   local kind=$1 key=$2 payload=$3 clean_key clean_payload class epoch seq seq_file status=0
   case "$kind" in
