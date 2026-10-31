@@ -78,11 +78,14 @@ fi
 # leaves alone, so writing afterwards would silently drop our rules from every fresh home.
 # A template's name is its destination inside the home, spelled out here because the home's own
 # config/ and data/ directories are gitignored and must never hold the template itself.
-for src in "$root"/defaults/*.md; do
+# A defaults/*.json seeds config/ by its own name, once, for a home that has none. defaults/crew-dispatch.json
+# is deliberately absent: a home's routing is private, and docs/examples/crew-dispatch.json is the example.
+for src in "$root"/defaults/*.md "$root"/defaults/*.json; do
   [ -e "$src" ] || continue
   case ${src##*/} in
     brief-include.md) rel=config/brief-include.md ;;
     owner-rules.md) rel=data/owner-rules.md ;;
+    *.json) rel=config/${src##*/} ;;
     *) say "defaults: skipped ${src##*/}, which names no destination"; continue ;;
   esac
   if [ -e "$HOME_DIR/$rel" ]; then
