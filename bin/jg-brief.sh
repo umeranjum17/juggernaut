@@ -70,6 +70,12 @@
 # bin/jg-spawn.sh records ui_change= and bin/jg-merge-gate-lib.sh's jg_dod_nav_gate
 # refuses to merge a yes-task whose PR body drops a nav item without a
 # `Removed by captain words: <quote>` line. No flag (an older brief) warns and counts as no.
+# Every ship brief also carries a `# Prior art` section: new or complex work
+# starts from what already exists, so the worker surveys similar products and
+# open-source projects, checks their licences, compares three to five options,
+# and fills the section with its pick and the reasons. bin/jg-prior-art-gate.sh
+# refuses the section left empty or holding the scaffold text; a change that is
+# neither new nor complex records `Prior art: none needed - <why>` instead.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Juggernaut
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
@@ -882,6 +888,18 @@ case "$MODE" in
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
     ;;
 esac
+# Every ship brief carries the prior-art step: new or complex work starts from
+# what already exists, and a change that is neither records that in one line.
+# bin/jg-prior-art-gate.sh refuses the section left empty or holding this
+# scaffold text, so the worker fills it before reporting done.
+IFS= read -r -d '' PRIOR_ART_SECTION <<EOF || true
+# Prior art
+New or complex work starts from what already exists, so survey it before you design or write code.
+Load the \`prior-art\` skill for the procedure: search online for similar products and open-source projects, check each candidate's licence and say plainly whether it can be used here, compare three to five real options with their trade-offs, and name the pick and the reasons.
+Replace the survey line below with the record, then run \`$JG_ROOT/bin/jg-prior-art-gate.sh $DATA/$ID/brief.md\`; it refuses the section left empty or unreplaced, and passes only with a recorded pick and its licence decision.
+Prior art (survey): <replace with \`Prior art pick: <name>\` and \`Licence: <licence - usable here or not>\` lines, or with \`Prior art: none needed - <why this work is neither new nor complex>\`>
+EOF
+PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
 DESIGN_SECTION=
 if [ -n "$DESIGN_CALL" ]; then
   DESIGN_SECTION="
@@ -953,7 +971,7 @@ cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
 $TASK_SECTION
-$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
+$PRIOR_ART_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
 $STACK_BLOCK
 
