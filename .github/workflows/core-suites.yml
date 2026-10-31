@@ -32,7 +32,7 @@ jobs:
     # The full-fork hook journeys take several minutes; leave room for them
     # alongside shell checks and the stubbed feature integration suites.
     timeout-minutes: 30
-    # The feature suites run from the core tree, the same way the catalog's did from addons/,
+    # The feature suites run from the core tree, the same way the retired catalog ran its own,
     # so a suite's relative paths keep resolving and a fixture copy still has the same shape.
     defaults:
       run:

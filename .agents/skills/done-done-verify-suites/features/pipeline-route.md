@@ -10,7 +10,7 @@ Run `bash pipeline-quota-failover/run-proof.sh` from the repository root (the do
 
 Live: `done-done run pipeline-route-live` (`bash pipeline-quota-failover/run-live-proof.sh`) sends a review, a test and a fix prompt through this checkout's wrapper with no-mistakes' argv shape, on the real Claude account pool with rests in a throwaway pool state folder. A pi shim answers claude-bridge's own limit text for the first account each call lands on, and the next account answers with real Haiku through the real pi and bridge. Evidence: `roles.txt` (each role's account move and answer), `wrapper.log` (account ids only) and the step record `steps.json`.
 
-The same wrapper's longer journey is `pipeline-quota-failover/tests/pi-quota-failover-e2e.sh`. `pipeline-quota-failover/README.md`, the root `README.md` and `.github/workflows/addons-ci.yml` name the same commands.
+The same wrapper's longer journey is `pipeline-quota-failover/tests/pi-quota-failover-e2e.sh`. `pipeline-quota-failover/README.md`, the root `README.md` and `.github/workflows/core-suites.yml` name the same commands.
 
 ## Evidence
 

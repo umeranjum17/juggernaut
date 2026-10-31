@@ -157,7 +157,7 @@
 #                          (ready_backlog_stall_state owns the condition;
 #                          core/wait-timers/README.md owns the rungs)
 #   check: ask-default safe default applied while the captain was unreachable: <ids> ...
-#                          the juggernaut-addons ask-default feature, when installed,
+#                          the core ask-default feature,
 #                          applied the recorded safe default of each named ask
 #                          (ask_default_tick owns the hook; the feature owns the
 #                          decision and its applied.log record)
@@ -3164,9 +3164,8 @@ record_ready_work_surfaced() {
 # decision: for each ask it recorded that has not been defaulted yet, run
 # `ask-default decide` and let it apply the ask's safe default when the captain
 # is unreachable and the ask's clock has run out. Located like the other feature
-# shims (JG_ADDONS_DIR, else the in-repo core/, else the pre-fold clone at
-# $JG_HOME/projects/juggernaut-addons); with the
-# feature absent this returns at once, writing nothing, and the loop is unchanged.
+# reads from `bin/../core/ask-default`; in a checkout copied from `bin/` alone the
+# feature is absent, so this returns at once, writing nothing, and the loop is unchanged.
 # Runs once per CHECK_INTERVAL. The probe reads the away record: the captain is
 # reachable unless an away record (never quiet mode's) exists. Held, waiting, and
 # reachable asks stay exactly as they are; a decide error is logged, never a wake.

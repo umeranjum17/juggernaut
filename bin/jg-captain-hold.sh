@@ -66,7 +66,7 @@
 # card.
 # When this home has armed the sign-off adapter, an undated `hold` also
 # raises a sign-off board card keyed by this home's tag, the task id and the hold
-# stamp; that adapter owns the card (the juggernaut-addons signoff script when
+# stamp; that adapter owns the card (core/signoff/bin/jg-procevent-signoff.sh when
 # it is installed, else bin/jg-procevent-signoff.sh),
 # and a card it cannot raise fails the command (the hold stays recorded).
 # A hold that is the captain's own instruction raises nothing at all: one whose
@@ -1111,7 +1111,7 @@ command_hold() {
     || fail "task $id lost its hold-set stamp while being held"
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
   # Optional sign-off card, raised only while the sign-off adapter is armed here.
-  # The juggernaut-addons signoff script is used when installed, else this repo's
+  # core/signoff owns the card; this repo's own adapter
   # bin/jg-procevent-signoff.sh. A created question closes on answer, held work is
   # released; a dated deferral gets no live card, and a card failure exits nonzero
   # (the hold stays recorded).

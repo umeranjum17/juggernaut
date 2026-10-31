@@ -849,10 +849,6 @@
       "audience": "operator-current"
     },
     {
-      "path": "core/docs/addons-reference.md",
-      "audience": "operator-current"
-    },
-    {
       "path": "core/docs/media/README.md",
       "audience": "operator-current"
     },

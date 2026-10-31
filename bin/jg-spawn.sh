@@ -5981,7 +5981,7 @@ fi
 # `config/launch-env-hook <out-file>` and sources the one export statement it
 # writes, the same shape as the trailer step above. Prepended after it, so it
 # runs first and the trailer hooks dir is appended after its GIT_CONFIG_*
-# entries. A failure stops the launch. The juggernaut-addons git-identity feature
+# entries. A failure stops the launch. The core git-identity feature
 # pins the lane's git identity and pre-push check through it.
 if [ -f "$CONFIG/launch-env-hook" ] && [ -x "$CONFIG/launch-env-hook" ]; then
   LAUNCH_ENV_HOOK_FILE=$(shell_quote "$LAUNCH_DIR/launch-env.$SPAWN_GEN.sh")

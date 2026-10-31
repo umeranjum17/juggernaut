@@ -17,6 +17,11 @@ SHA=0123456789abcdef0123456789abcdef01234567
 OTHER=89abcdef0123456789abcdef0123456789abcdef
 URL=https://github.com/o/r/pull/4
 T=$(mktemp -d)
+# The hook lives in the core tree, so the scenario drives a private copy of bin/ and core/ and stubs
+# that copy's receipts library instead of the checkout's own.
+fork=$T/fork
+mkdir -p "$fork"
+cp -a "$REPO/bin" "$REPO/core" "$fork/"
 export GIT_AUTHOR_NAME=journey GIT_AUTHOR_EMAIL=journey@example.invalid
 export GIT_COMMITTER_NAME=journey GIT_COMMITTER_EMAIL=journey@example.invalid
 mkdir -p "$T/fakebin" "$T/guardroot/bin"
@@ -33,7 +38,8 @@ expect() {  # <label> <want> <got>
   [ "$2" = "$3" ] || { echo "FAIL $1: want [$2] got [$3]"; : > "$T/fails"; }
 }
 run() {  # <name> <feature-mode> <want-exit> <want-gate-log> <want-recorded> <want-armed> <want-stderr>
-  local d="$T/$1" addons="$T/$1/addons" rc gate recorded armed
+  local d="$T/$1" rc gate recorded armed
+  local core=$fork/core
   mkdir -p "$d/home/state" "$d/home/data" "$d/home/config" "$d/wt" "$core/receipts/bin"
   git -C "$d/wt" init -q; git -C "$d/wt" commit -q --allow-empty -m init
   git -C "$d/wt" update-ref refs/remotes/origin/main "$(git -C "$d/wt" rev-parse HEAD)"
@@ -48,8 +54,8 @@ run() {  # <name> <feature-mode> <want-exit> <want-gate-log> <want-recorded> <wa
   [ "$2" != none ] || rm -f "$core/receipts/bin/jg-receipts-lib.sh"
   : > "$d/gate.log"
   echo "== scenario $1 (feature: $2)"
-  JG_ROOT_OVERRIDE="$T/guardroot" JG_HOME="$d/home" JG_ADDONS_DIR="$addons" GATE_LOG="$d/gate.log" PATH="$T/fakebin:$PATH" \
-    "$REPO/bin/jg-pr-check.sh" task-a "$URL" >"$d/out" 2>"$d/err"; rc=$?
+  JG_ROOT_OVERRIDE="$T/guardroot" JG_HOME="$d/home" GATE_LOG="$d/gate.log" PATH="$T/fakebin:$PATH" \
+    "$fork/bin/jg-pr-check.sh" task-a "$URL" >"$d/out" 2>"$d/err"; rc=$?
   gate=$(cat "$d/gate.log")
   recorded=$(grep -E '^(pr|pr_head)=' "$d/home/state/task-a.meta" | paste -sd' ' -)
   armed=$([ -e "$d/home/state/task-a.check.sh" ] && echo yes || echo no)
@@ -64,7 +70,7 @@ run() {  # <name> <feature-mode> <want-exit> <want-gate-log> <want-recorded> <wa
   expect "$1 stderr" "$7" "$(cat "$d/err")"
 }
 {
-  run no-addon none 0 "" "pr=$URL pr_head=$SHA" yes ""
+  run no-feature none 0 "" "pr=$URL pr_head=$SHA" yes ""
   run feature-returns-pr-head pr_head 0 "hook consulted: pr_head=$SHA
 gate-candidate=[$SHA]" "pr=$URL pr_head=$SHA" yes ""
   run feature-returns-other other 1 "hook consulted" "" no "error: receipts feature hook jg_receipts_pr_candidate returned a candidate other than the verified pull request head; no receipt candidate was chosen"
