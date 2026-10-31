@@ -24,10 +24,10 @@ trap cleanup EXIT
 export HOME=$d/user TMPDIR=$d/tmp
 mkdir -p "$HOME" "$TMPDIR"
 git clone --shared "$JG_TEST_FORK" "$d/fork" >/dev/null
-# The current fork already has the optional feature source and call-site hooks.
-# Keep its scripts intact so the fork's executable journeys cover those hooks.
+# The fork carries the feature source in its core tree and the call sites that load it, so its own
+# executable journeys cover those hooks; the one shim below names this checkout's copy of the reader.
 # shellcheck disable=SC2016 # the shim body expands when the shim runs
-printf '#!/usr/bin/env bash\nJG_FORK_BIN="$(dirname "$0")" exec "$JG_ADDONS_DIR/receipts/bin/jg-run-receipt.sh" "$@"\n' > "$d/fork/bin/jg-run-receipt.sh"
+printf '#!/usr/bin/env bash\nJG_FORK_BIN="$(dirname "$0")" exec "$(dirname "$0")/../core/receipts/bin/jg-run-receipt.sh" "$@"\n' > "$d/fork/bin/jg-run-receipt.sh"
 chmod +x "$d/fork/bin/jg-run-receipt.sh"
 bash -n "$d/fork/bin/jg-dod-lib.sh"
 
@@ -138,18 +138,19 @@ cand() { jg_receipts_pr_candidate "$w" "$1" direct-PR "$st/t.meta" "$2"; }
 cand https://github.com/o/other/pull/4 "$sha" >/dev/null || { echo "FAIL: hook must exit 0" >&2; exit 1; }
 hook_run() {  # <name> <pr-url> <want-candidate>
   local hd=$d/hook-$1 got
-  mkdir -p "$hd/home/state" "$hd/home/data" "$hd/home/config" "$hd/wt" "$hd/addons/receipts/bin" "$hd/fakebin" "$hd/guardroot/bin"
+  mkdir -p "$hd/home/state" "$hd/home/data" "$hd/home/config" "$hd/wt" "$hd/fakebin" "$hd/guardroot/bin"
   git -C "$hd/wt" init -q; git -C "$hd/wt" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   git -C "$hd/wt" remote add origin https://github.com/o/r.git
   git -C "$hd/wt" update-ref refs/remotes/origin/main "$(git -C "$hd/wt" rev-parse HEAD)"
   printf 'window=fm:t\nendpoint_task_id=task-a\nworktree=%s\nproject=%s\nkind=ship\nmode=direct-PR\n' "$hd/wt" "$hd/project" > "$hd/home/state/task-a.meta"
+  # The hook lives in the fork's own core tree, so the stub replaces that copy for this run.
   { cat "$addons/receipts/bin/jg-receipts-lib.sh"
     # shellcheck disable=SC2016 # stub body expands when the gate runs
-    echo 'jg_receipts_accept_done() { printf "%s" "${7:-}" > "$GATE_LOG"; }'; } > "$hd/addons/receipts/bin/jg-receipts-lib.sh"
+    echo 'jg_receipts_accept_done() { printf "%s" "${7:-}" > "$GATE_LOG"; }'; } > "$d/fork/core/receipts/bin/jg-receipts-lib.sh"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$hd/guardroot/bin/jg-guard.sh"
   printf '#!/usr/bin/env bash\ncase " $* " in *" --json isDraft "*) echo "{\\"isDraft\\":false}" ;; *headRefOid*) echo %s ;; esac\n' "$sha" > "$hd/fakebin/gh"
   chmod +x "$hd/guardroot/bin/jg-guard.sh" "$hd/fakebin/gh"
-  JG_ROOT_OVERRIDE=$hd/guardroot JG_HOME=$hd/home JG_STATE_OVERRIDE=$hd/home/state JG_ADDONS_DIR=$hd/addons GATE_LOG=$hd/gate PATH=$hd/fakebin:$PATH \
+  JG_ROOT_OVERRIDE=$hd/guardroot JG_HOME=$hd/home JG_STATE_OVERRIDE=$hd/home/state GATE_LOG=$hd/gate PATH=$hd/fakebin:$PATH \
     "$d/fork/bin/jg-pr-check.sh" task-a "$2" >"$hd/out" 2>"$hd/err" \
     || { echo "FAIL: jg-pr-check with feature hook ($1): $(cat "$hd/err")" >&2; exit 1; }
   got=$(cat "$hd/gate")
@@ -158,13 +159,24 @@ hook_run() {  # <name> <pr-url> <want-candidate>
 hook_run outside https://github.com/o/other/pull/4 "$sha"
 hook_run same-repo https://github.com/o/r/pull/4 ""
 
-# Absent: source the real fork library with no feature and prove it defines no hooks.
-( set -e; JG_ADDONS_DIR=$d/none JG_HOME=$d/absent-home
+# A checkout copied from bin/ alone carries no core/ tree, so the hooks are absent and the guarded
+# call sites stay a no-op there; the real checkout always has them, which the two runs below prove.
+mkdir -p "$d/bare"
+cp -a "$d/fork/bin" "$d/bare/"
+( set -e; JG_HOME=$d/bare-home
+  unset -f jg_receipts_brief jg_receipts_inherit jg_receipts_promote jg_receipts_accept_done jg_dod_receipt_accept
+  # shellcheck disable=SC1091 # sourced from the private fork clone at runtime
+  . "$d/bare/bin/jg-dod-lib.sh"
+  for fn in jg_receipts_brief jg_receipts_inherit jg_receipts_promote jg_receipts_accept_done jg_dod_receipt_accept; do
+    if declare -F "$fn" >/dev/null; then exit 1; fi
+  done ) \
+  || { echo "FAIL: a bin/-only checkout must define no receipt hooks" >&2; exit 1; }
+( set -e; JG_HOME=$d/fork-home
   unset -f jg_receipts_brief jg_receipts_inherit jg_receipts_promote jg_receipts_accept_done jg_dod_receipt_accept
   # shellcheck disable=SC1091 # sourced from the private fork clone at runtime
   . "$d/fork/bin/jg-dod-lib.sh"
   for fn in jg_receipts_brief jg_receipts_inherit jg_receipts_promote jg_receipts_accept_done jg_dod_receipt_accept; do
-    if declare -F "$fn" >/dev/null; then exit 1; fi
+    declare -F "$fn" >/dev/null || exit 1
   done ) \
-  || { echo "FAIL: absent feature must be a no-op" >&2; exit 1; }
+  || { echo "FAIL: the real checkout must always define the receipt hooks" >&2; exit 1; }
 echo "ok: done-acceptance, local-delivery and both PR-merge suites pass with feature loaded; next PR of a lane after a merge-notified meta accepts when that PR is open in the same repo; the PR candidate hook prints PR_HEAD only outside the origin through the real jg-pr-check.sh; absent feature loads no hooks"

@@ -133,7 +133,7 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
 # shellcheck source=bin/jg-merge-gate-lib.sh
 . "$_JG_MERGE_OUTCOME_LIB_DIR/jg-merge-gate-lib.sh"
 # Optional merge-card feature: defines the same two hooks for homes that install it.
-_jg_mo_hooks=$_JG_MERGE_OUTCOME_LIB_DIR/../core/merge-card/bin/jg-merge-hooks-lib.sh
+_jg_mo_hooks=$_JG_MERGE_OUTCOME_LIB_DIR/../core/merge-card/bin/jg-merge-hooks-lib.sh  # absent in a bin/-only fixture
 # shellcheck source=/dev/null
 [ ! -r "$_jg_mo_hooks" ] || . "$_jg_mo_hooks"
 

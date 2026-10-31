@@ -746,9 +746,15 @@ jg_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/jg-worker-account-lib.sh"
 # shellcheck source=bin/jg-model-allowlist.sh
 . "$SCRIPT_DIR/jg-model-allowlist.sh"
-# Account pool (core/account-pool): the pool hook every launch and relaunch routes through.
-# shellcheck source=core/account-pool/bin/jg-account-pool-lib.sh
-. "$SCRIPT_DIR/../core/account-pool/bin/jg-account-pool-lib.sh" || { printf 'error: core/account-pool/bin/jg-account-pool-lib.sh failed to load\n' >&2; exit 1; }
+# Account pool (core/account-pool): the pool hook every launch and relaunch routes through, and a
+# no-op in a fixture checkout copied from bin/ alone, which carries no core/ tree.
+_jg_ap=$SCRIPT_DIR/../core/account-pool/bin/jg-account-pool-lib.sh
+if [ -r "$_jg_ap" ]; then
+  # shellcheck source=core/account-pool/bin/jg-account-pool-lib.sh
+  . "$_jg_ap" || { printf 'error: %s failed to load\n' "$_jg_ap" >&2; exit 1; }
+else
+  jg_account_hook() { :; }
+fi
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/jg-gate-refuse-lib.sh).
 jg_refuse_if_gate_agent

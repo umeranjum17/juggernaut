@@ -16,7 +16,7 @@ JG_PUSH_TRANSITION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/jg-transition-lib.sh
 . "$JG_PUSH_TRANSITION_LIB_DIR/jg-transition-lib.sh"
 # Optional wait-timers feature.
-_jg_pt_timers=$JG_PUSH_TRANSITION_LIB_DIR/../core/wait-timers/bin/jg-wait-timers-lib.sh
+_jg_pt_timers=$JG_PUSH_TRANSITION_LIB_DIR/../core/wait-timers/bin/jg-wait-timers-lib.sh  # absent in a bin/-only fixture
 # shellcheck source=/dev/null
 [ ! -r "$_jg_pt_timers" ] || . "$_jg_pt_timers"
 

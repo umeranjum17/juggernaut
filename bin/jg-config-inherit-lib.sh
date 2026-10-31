@@ -86,8 +86,10 @@ JG_SHARED_CAPTAIN_MODE="444"
 # Extend here to inherit more of the primary's local config; override via the
 # environment only in tests. Items must not contain whitespace.
 JG_INHERITABLE_CONFIG="${JG_INHERITABLE_CONFIG:-crew-dispatch.json preferred-stack.json architecture.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode keep-ai-trailers supervision-host-off juggernaut-role lane-target}"
-# shellcheck source=core/brief-inherit/bin/jg-brief-inherit-lib.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../core/brief-inherit/bin" && pwd)/jg-brief-inherit-lib.sh" && jg_brief_inherit_config
+# core/brief-inherit owns the shared-instruction seam; a fixture checkout copied from bin/ alone has
+# no core/ tree, so the seam is simply absent there and the home's own config stands alone.
+_bi=$(cd "$(dirname "${BASH_SOURCE[0]}")/../core/brief-inherit/bin" 2>/dev/null && pwd)/jg-brief-inherit-lib.sh
+[ -r "$_bi" ] && { . "$_bi" && jg_brief_inherit_config; }
 
 # juggernaut-role additionally carries a proof-of-state receipt: a scoped role
 # grant (or its recorded absence) authorizes a squad_lead home only while

@@ -141,11 +141,14 @@
 # jg_dod_merge_gate and jg_merge_post_hook for every home, and it is loaded after
 # the core library above so its version is the one that runs.
 _jg_dod_home=${JG_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+# A fixture checkout copied from bin/ alone has no core/ tree: the core hook and the receipt gate are
+# then simply absent, exactly as the core library above already behaves with no home hook.
+_jg_dod_core=$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/../core
 # shellcheck source=core/merge-card/bin/jg-merge-hooks-lib.sh
-. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/../core/merge-card/bin/jg-merge-hooks-lib.sh"
+[ ! -r "$_jg_dod_core/merge-card/bin/jg-merge-hooks-lib.sh" ] || . "$_jg_dod_core/merge-card/bin/jg-merge-hooks-lib.sh"
 # core/receipts owns the completion-receipt gate: jg_dod_receipt_accept and the jg_receipts_* helpers.
 # shellcheck source=core/receipts/bin/jg-receipts-lib.sh
-. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/../core/receipts/bin/jg-receipts-lib.sh"
+[ ! -r "$_jg_dod_core/receipts/bin/jg-receipts-lib.sh" ] || . "$_jg_dod_core/receipts/bin/jg-receipts-lib.sh"
 
 jg_brief_worker_role() {  # <state-dir> <task-id> <code-root>
   local state=$1 task_id=$2 root=$3
