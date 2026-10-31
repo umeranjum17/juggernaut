@@ -21,6 +21,14 @@ now      *       *                blocked*
 now      *       *                done*
 batch    signal  *.turn-ended     *
 batch    check   merged-*         *
+# A board ask that carries no must category is a rule failure, not an alarm: the
+# gate routes it to Overwatch and Main answers it there, so it rides the next
+# digest instead of waking a model of its own. The two board-gate reports that do
+# need a model keep the default: a merge with no proof, and a must ask waiting
+# over 48 hours.
+now      check   *board-gate.check.sh   *merge landed with no board Evidence card*
+now      check   *board-gate.check.sh   *must ask waiting over 48h*
+batch    check   *board-gate.check.sh   *board ask*
 batch    check   *dpr-green*      *
 batch    check   post-merge-ci-*  *
 now      *       *                *
