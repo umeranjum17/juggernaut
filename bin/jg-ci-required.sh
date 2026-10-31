@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # jg-ci-required.sh - the single merge-gate verdict for ci.yml's `CI required`.
 #
-# JG_CI_NEEDS is GitHub's toJSON(needs), JG_CI_BEHAVIOR the invariants job's
-# scope verdict, and JG_CI_SKIP_MACOS the fork's macOS opt-out. A behavior
-# change needs every lane passed, with macOS skipped only under that opt-out; a
-# documentation change needs the lanes deliberately skipped. Anything else
-# refuses, so a path filter can never become a silent skip.
+# JG_CI_NEEDS is GitHub's toJSON(needs) and JG_CI_BEHAVIOR the invariants job's
+# scope verdict. A behavior change needs every lane passed; a documentation
+# change needs the lanes deliberately skipped. Anything else refuses, so a path
+# filter can never become a silent skip.
+#
+# The lanes are the thin pull request set only. The heavy behaviour suite is
+# .github/workflows/behavior.yml, which is nightly and post-merge and never a
+# pull request gate, so no verdict here names it.
 #
 #   JG_CI_NEEDS='{"invariants":{"result":"success"},...}' JG_CI_BEHAVIOR=true \
 #     bin/jg-ci-required.sh
@@ -32,7 +35,7 @@ else
 fi
 set -eu
 
-JG_CI_REQUIRED_LANES='lint tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial tests-herdr'
+JG_CI_REQUIRED_LANES='lint syntax smoke evals'
 
 jg_ci_required_die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
@@ -58,12 +61,10 @@ jg_ci_required_main() {
   # The scope verdict is always needed: without it no lane verdict counts.
   [ "$(jg_ci_required_result invariants)" = success ] || bad="$bad invariants=not-passed"
   # shellcheck disable=SC2086  # the lane list is a deliberate word split
-  for lane in $JG_CI_REQUIRED_LANES macos-stock-bash; do
+  for lane in $JG_CI_REQUIRED_LANES; do
     result=$(jg_ci_required_result "$lane") || result=unreadable
     if [ "$want" = skipped ]; then
       case $result in failure|cancelled) bad="$bad $lane=$result" ;; esac
-    elif [ "$lane" = macos-stock-bash ] && [ "$result" = skipped ] && [ "${JG_CI_SKIP_MACOS:-}" = 1 ]; then
-      :
     elif [ "$result" != success ]; then
       bad="$bad $lane=$result"
     fi
