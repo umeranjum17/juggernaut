@@ -17,12 +17,13 @@
 # the same appender: either way it is one captain message and its tag is asked
 # for the same way. The hook is a silent no-op outside a genuine primary
 # checkout, and it drops a prompt the operational-input protocol classifies
-# (bin/jg-operational-input.sh), a prompt whose first line is doorbell-shaped
-# (a record-backed doorbell carries no marker, so `classify` cannot see it; this
-# shape check keeps a reworded doorbell from ever counting as a captain message),
-# and a harness-started <task-notification> turn,
-# so only what the captain typed is counted. A primary with no prompt hook
-# records nothing, so nothing there is ever pending. A home whose
+# (bin/jg-operational-input.sh) and a harness-started <task-notification> turn,
+# so only what the captain typed is counted. A leading doorbell line is stripped
+# first (bin/jg-operational-input.sh strip-doorbell), so a doorbell left unsent
+# in his composer keeps its own line out of the count while the words he
+# submitted after it are counted as his message; a prompt that held only a
+# doorbell records nothing. A primary with no prompt hook records nothing, so
+# nothing there is ever pending. A home whose
 # config/overwatch-kpi reads `off` records nothing either; that is for a lab
 # whose prompts are scripted rather than typed by a captain.
 #
@@ -191,8 +192,13 @@ case "$1" in
       | select(.hook_event_name == "UserPromptSubmit" or .hook_event_name == "beforeSubmitPrompt")
       | (.prompt // "") | tostring' 2>/dev/null) || exit 0
     case "${TEXT#"${TEXT%%[![:space:]]*}"}" in ''|'<task-notification>'*) exit 0 ;; esac
+    # A doorbell left unsent in the captain's composer is submitted glued to his
+    # own next sentence (captured in a real primary's message box). The text that follows it is
+    # what he actually said, so strip the doorbell lines and count the rest;
+    # only a prompt that was nothing but doorbell records no message at all.
+    TEXT=$(printf '%s' "$TEXT" | "$SCRIPT_DIR/jg-operational-input.sh" strip-doorbell 2>/dev/null) || true
+    case "${TEXT#"${TEXT%%[![:space:]]*}"}" in ''|'<task-notification>'*) exit 0 ;; esac
     printf '%s' "$TEXT" | "$SCRIPT_DIR/jg-operational-input.sh" classify >/dev/null 2>&1 && exit 0
-    printf '%s' "$TEXT" | "$SCRIPT_DIR/jg-operational-input.sh" doorbell-shaped >/dev/null 2>&1 && exit 0
     record_message "$TEXT" || true
     exit 0
     ;;

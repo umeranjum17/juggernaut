@@ -363,6 +363,33 @@ jg_operational_doorbell_shaped() {  # <message>
   return 1
 }
 
+# <message> with every leading doorbell-shaped line removed: what remains is the
+# captain's own text when a doorbell was left in his composer and his next
+# sentence was submitted glued onto it (captured in a real primary's message box). Returns 1
+# and prints nothing when the first line is not a doorbell, so a caller can tell
+# the two apart; otherwise prints the remainder, even when it is empty.
+jg_operational_strip_doorbell() {  # <message> <result-var>
+  local message=${1-} result_var=${2-} first
+  [ -n "$result_var" ] || return 2
+  first=${message%%$'\n'*}
+  case "$first" in
+    "$JG_OPERATIONAL_DOORBELL_PREFIX"*) ;;
+    *) printf -v "$result_var" '%s' "$message"; return 1 ;;
+  esac
+  while :; do
+    first=${message%%$'\n'*}
+    case "$first" in
+      "$JG_OPERATIONAL_DOORBELL_PREFIX"*) ;;
+      *) break ;;
+    esac
+    case "$message" in
+      *$'\n'*) message=${message#*$'\n'} ;;
+      *) message= ;;
+    esac
+  done
+  printf -v "$result_var" '%s' "$message"
+}
+
 # A doorbell whose named record exists and holds a current generic envelope.
 jg_operational_doorbell_record_kind() {  # <message> <result-var>
   local named_record
@@ -409,6 +436,7 @@ Usage:
   bin/jg-operational-input.sh record <kind>  # body on stdin; prints the doorbell
   bin/jg-operational-input.sh doorbell-kind  # doorbell on stdin; record's kind
   bin/jg-operational-input.sh doorbell-shaped # doorbell-shaped text on stdin; exit 0
+  bin/jg-operational-input.sh strip-doorbell  # text on stdin; leading doorbell lines removed
   bin/jg-operational-input.sh open <path>    # this home's record; prints its body
 
 Current construction kinds:
@@ -420,6 +448,11 @@ prefix. It proves nothing about a record, so use it only where a false positive
 costs nothing and a false negative is a bug - a counter that must not record a
 doorbell as a typed captain message.
 
+`strip-doorbell` removes every leading doorbell-shaped line and prints what is
+left, so a message the captain submitted glued after a stuck doorbell is still
+his own words. A message whose first line is not a doorbell is printed
+unchanged and exits 1.
+
 The from-juggernaut kind uses its established live-charter-compatible carrier.
 A record-backed doorbell counts as operational input only when the record it
 names holds a current generic envelope; `open` also requires that record to be
@@ -428,7 +461,7 @@ EOF
 }
 
 jg_operational_main() {
-  local command=${1-} argument=${2-} input output state
+  local command=${1-} argument=${2-} input output state rc
   case "$command" in
     -h|--help|help)
       jg_operational_usage
@@ -474,6 +507,13 @@ jg_operational_main() {
       [ "$#" -eq 1 ] || return 2
       jg_operational_read_stdin input || return 2
       jg_operational_doorbell_shaped "$input" || return 1
+      ;;
+    strip-doorbell)
+      [ "$#" -eq 1 ] || return 2
+      jg_operational_read_stdin input || return 2
+      if jg_operational_strip_doorbell "$input" output; then rc=0; else rc=1; fi
+      printf '%s' "$output"
+      return "$rc"
       ;;
     open)
       [ "$#" -eq 2 ] || return 2

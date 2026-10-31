@@ -397,9 +397,10 @@ jg_task_inbox_doorbell_line() {  # <record-path>
 # budget, verdict discarded.
 # Returns 0 rang, 1 skipped because the composer PROVENLY holds pending text
 # other than our own doorbell (the watcher re-rings later), 2 the backend send
-# failed, 3 skipped because the endpoint is positively dead or missing (nothing
-# typed; recovery owns the record). No return value is delivery proof; the
-# acknowledgement move is the only delivery signal.
+# failed or our own doorbell could not be cleared from the composer, 3 skipped
+# because the endpoint is positively dead or missing (nothing typed; recovery
+# owns the record). No return value is delivery proof; the acknowledgement move
+# is the only delivery signal.
 # The skip is deliberately narrow: only an exact `pending` verdict can defer,
 # because there our Enter could submit someone's real half-typed content.
 # `pending-unproven` and `unknown` still ring - the worst outcome is a garbled
@@ -408,12 +409,16 @@ jg_task_inbox_doorbell_line() {  # <record-path>
 # positively identify (that classifier is advisory here by design).
 # A pending composer holding exactly our own doorbell line is a previous ring
 # whose Enter never landed, so on an agent not reported busy it is submitted
-# rather than skipped; skipping it would block every later ring. On both paths
-# a lost first Enter gets one confirmed retry.
+# rather than skipped; skipping it would block every later ring. A composer
+# holding only a leading PART of our line is the same stuck text, cleared the
+# same way. In both cases the doorbell is submitted, then cleared within
+# JG_COMPOSER_DOORBELL_WAIT_DEFAULT seconds when Enter cannot clear it, so no
+# doorbell is ever left for a human's next sentence to glue onto. A draft of the
+# human's own is still only skipped.
 # On return 2, JG_TASK_INBOX_RING_REASON holds the backend's refusal
 # diagnostics on one line, for callers to log; it is empty otherwise.
 jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
-  local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict errf
+  local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict errf held
   JG_TASK_INBOX_RING_REASON=
   case "$(jg_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
     dead|missing) return 3 ;;
@@ -425,13 +430,19 @@ jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   cstate=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
   case "$cstate" in
     pending)
-      jg_task_inbox_composer_holds "$backend" "$target" "$line" "$label" \
-        && [ "$(jg_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] \
-        || return 1
+      # A composer holding OUR doorbell - whole (a previous ring whose Enter
+      # never landed) or a leading part (typing interrupted) - is submitted, then
+      # cleared within the wait when Enter cannot clear it, so it is never left
+      # for a human's next sentence to glue onto (task
+      # doorbell-composer-cleanup). Anything else is a human draft: skip instead.
+      held=$(jg_task_inbox_composer_content "$backend" "$target" "$label") || return 1
+      jg_composer_own_doorbell_length "$held" "$line" >/dev/null || return 1
+      [ "$(jg_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] || return 1
       jg_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-      sleep 0.3
-      jg_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
-      jg_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
+      jg_composer_clear_own_doorbell "$backend" "$target" "$line" "$label" || {
+        JG_TASK_INBOX_RING_REASON="the composer still holds our doorbell after clearing it"
+        return 2
+      }
       return 0
       ;;
   esac
@@ -451,17 +462,23 @@ jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
     JG_TASK_INBOX_RING_REASON=${JG_TASK_INBOX_RING_REASON:-the backend reported send-failed without a reason}
     return 2
   fi
+  # Typed and submitted: a doorbell the harness swallowed stays in the composer
+  # until it is cleared, so verify the composer emptied and clear our own line if
+  # it did not. A human's draft beside it is never keyed.
+  jg_composer_clear_own_doorbell "$backend" "$target" "$line" "$label" || {
+    JG_TASK_INBOX_RING_REASON="the composer still holds our doorbell after submitting it"
+    return 2
+  }
   JG_TASK_INBOX_RING_REASON=
   return 0
 }
 
-# Whether the composer's content, ignoring line wrapping, is exactly <line>.
-jg_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
-  local cap held
+# The composer's content, with line wrapping ignored.
+jg_task_inbox_composer_content() {  # <backend> <target> [expected-label]
+  local cap
   jg_backend_source "$1" || return 1
-  cap=$(jg_backend_capture "$1" "$2" "$JG_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) || return 1
-  held=$(jg_composer_extract_selected_content styled=0 "$cap") || return 1
-  [ -n "$held" ] && [ "$(printf '%s' "$held" | tr -d '[:space:]')" = "$(printf '%s' "$3" | tr -d '[:space:]')" ]
+  cap=$(jg_backend_capture "$1" "$2" "$JG_COMPOSER_CAPTURE_LINES" "${3:-}" 2>/dev/null) || return 1
+  jg_composer_extract_selected_content styled=0 "$cap"
 }
 
 jg_task_inbox_is_fire_and_forget() {  # <record-path>

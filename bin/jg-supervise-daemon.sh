@@ -1438,6 +1438,13 @@ window_for_task() {  # <task-key> [state]
 #     after dim/faint ghost text and borders are ignored (a human's half-typed
 #     line, or a previous injection's unsent text), defer entirely - injecting
 #     would merge with the human's text.
+#   - NEVER LEAVE OUR OWN DOORBELL BEHIND: an unconfirmed submit can leave the
+#     record-backed doorbell sitting in the composer, and the captain's own next
+#     sentence then glues onto it and arrives as one wrong message (captured
+#     a real primary). After the confirmation budget, text proven to be our
+#     own doorbell line is cleared from the composer (jg_composer_clear_own_
+#     doorbell, bin/jg-composer-lib.sh); the buffer preserves the escalation for
+#     the next cycle, when the composer is empty again.
 inject_msg() {  # <message> [state]
   local msg=$1 state target backend retries sleep_s verdict composer encoded bytes errf err='' body
   state="${2:-$(_state_root)}"
@@ -1520,6 +1527,16 @@ inject_msg() {  # <message> [state]
   fi
   if [ "$verdict" = empty ]; then
     return 0  # Backend confirmed the submit.
+  fi
+  # An unconfirmed submit can leave OUR doorbell line sitting in the captain's
+  # composer, and his own next sentence then glues onto it and is submitted as
+  # one wrong message (captured in a real primary's message box). Give the composer its ten
+  # seconds to clear, then remove only text proven to be our own doorbell: his
+  # draft, or a draft glued after it, is never keyed.
+  if jg_composer_clear_own_doorbell "$backend" "$target" "$msg" ""; then
+    INJECT_LAST_FAILURE="the doorbell left $target's composer after an unconfirmed submit; the escalation stays buffered"
+    log "inject: $INJECT_LAST_FAILURE"
+    return 1
   fi
   err=$(_collapse_newlines "$err")
   _utf8_prefix "$err" 512 err

@@ -2425,6 +2425,79 @@ jg_composer_queued_enter_verdict() {  # <composer-state> <busy|idle|unknown>
   fi
 }
 
+# --- OUR OWN TYPED DOORBELL (task doorbell-composer-cleanup) ------------------
+# A doorbell is one printable-ASCII line this fleet types into a composer (the
+# steering ring in bin/jg-task-inbox-lib.sh, and the away daemon's record-backed
+# doorbell for a Claude primary). A swallowed Enter leaves it sitting there: the
+# next ring types a second line onto the first, and a human's own next sentence
+# is submitted glued onto it (captured in the captain's own message box, where
+# his words arrived counted as one wrong message). Reading the composer as OURS is
+# what makes removal safe - text that is provably a leading part of the line we
+# typed, and nothing else, is ours to delete; a draft beside it never is.
+#
+# Whitespace is ignored on both sides because a TUI wraps a long line at
+# arbitrary columns and a doorbell is wider than a narrow pane, so row
+# boundaries are not characters. A part shorter than
+# JG_COMPOSER_DOORBELL_PARTIAL_MIN proves nothing (the human may have typed a
+# leading ':'), and content LONGER than the line is a draft glued after it,
+# which stays untouched.
+JG_COMPOSER_DOORBELL_WAIT_DEFAULT=10
+JG_COMPOSER_DOORBELL_PARTIAL_MIN=8
+
+# How many of our own doorbell characters the composer content holds: the whole
+# line (stuck), or a leading part of it (partial). Prints that count and returns
+# 0; prints nothing and returns 1 for any other content.
+jg_composer_own_doorbell_length() {  # <composer-content> <doorbell-line>
+  local content=${1-} line=${2-} want got
+  want=${line//[[:space:]]/}
+  got=${content//[[:space:]]/}
+  [ -n "$want" ] && [ -n "$got" ] || return 1
+  [ "${#got}" -le "${#want}" ] || return 1
+  [ "${#got}" -ge "$JG_COMPOSER_DOORBELL_PARTIAL_MIN" ] || return 1
+  [ "${want#"$got"}" != "$want" ] || return 1
+  printf '%s' "${#got}"
+}
+
+# jg_composer_clear_own_doorbell: after Enter, give the composer <wait> seconds
+# (default JG_COMPOSER_DOORBELL_WAIT_DEFAULT) to clear on its own, then clear
+# our own doorbell text with the fleet's line-clearing key (C-u, the one clear
+# key bin/jg-tmux-lib.sh and every bin/backends adapter already normalizes).
+# Only text the content check above proves is ours is keyed, so a human draft, a
+# worker's draft, and a draft glued after the doorbell all survive. Returns 0
+# when the composer no longer holds our doorbell, 1 when it still does; prints
+# nothing. This is the one place this library reaches back into
+# bin/jg-backend.sh, because the read and the key must hit the same pane; every
+# caller already has that library sourced.
+jg_composer_clear_own_doorbell() {  # <backend> <target> <doorbell-line> <label> [wait]
+  local backend=$1 target=$2 line=$3 label=${4:-} wait=${5:-$JG_COMPOSER_DOORBELL_WAIT_DEFAULT}
+  local polls i cap content
+  case "$wait" in ''|*[!0-9]*) wait=$JG_COMPOSER_DOORBELL_WAIT_DEFAULT ;; esac
+  polls=$((wait * 2))
+  i=0
+  while [ "$i" -lt "$polls" ]; do
+    [ "$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null)" != empty ] || return 0
+    sleep 0.5
+    i=$((i + 1))
+  done
+  # A busy endpoint holds our line only until it consumes its queue, and keying
+  # there would cancel the queued steer, so a busy pane is never cleared.
+  [ "$(jg_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] || return 0
+  cap=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) || return 1
+  content=$(jg_composer_extract_selected_content styled=0 "$cap") || return 1
+  jg_composer_own_doorbell_length "$content" "$line" >/dev/null || return 1
+  # One verified press per attempt: C-u clears one composer line, and a wrapped
+  # doorbell occupies more than one.
+  i=0
+  while [ "$i" -lt 4 ]; do
+    jg_backend_send_key "$backend" "$target" C-u "$label" >/dev/null 2>&1 || return 1
+    cap=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) || return 1
+    content=$(jg_composer_extract_selected_content styled=0 "$cap") || return 1
+    jg_composer_own_doorbell_length "$content" "$line" >/dev/null || return 0
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # Pi stderr notice rows (task jg-composer-warning-fp1): an extension
 # console.warn fired between TUI frames writes plain, unstyled text straight
 # to the terminal, overwriting the editor input row IN PLACE, so the pane
