@@ -505,6 +505,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/state-shadow.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/subagent-guard.md",
       "audience": "maintainer-architecture"
     },

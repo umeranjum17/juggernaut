@@ -3889,6 +3889,10 @@ while :; do
   # beside the files (docs/bus-shadow.md). Off costs one file test, and a mirror
   # that cannot reach its bus can never fail or delay a wake.
   [ ! -e "$CONFIG/wake-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" sync >/dev/null 2>&1 || true
+  # Migration step 5e shadow: the same task leases and busy events, mirrored to
+  # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
+  # test, and a mirror that cannot reach its bus can never fail or delay a wake.
+  [ ! -e "$CONFIG/state-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-state-bus.sh" sync >/dev/null 2>&1 || true
 
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
     home_summary_refresh_detached
