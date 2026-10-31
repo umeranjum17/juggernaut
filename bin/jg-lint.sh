@@ -278,16 +278,44 @@ jg_lint_classify_root() {  # <rc> <root-stderr-file>
 # JG_LINT_ROOT_ALLOWANCE_KIB, when set, is the allowance for every root in this
 # run, the same kind of explicit knob as JG_LINT_ROOT_MEMORY_KIB; the fast eval
 # uses it to exercise the scoped re-run on a fixture root.
-jg_lint_scoped_allowance() {  # <path>
-  if [ -n "${JG_LINT_ROOT_ALLOWANCE_KIB:-}" ]; then
-    printf '%s\n' "$JG_LINT_ROOT_ALLOWANCE_KIB"
-    return 0
-  fi
+# The allowance listed for a root here is the one it runs under from its first
+# attempt: the default envelope is measured to be too small for it, so failing
+# there first would only spend deadline and climb the runner's memory twice.
+# bin/jg-watch.sh's 9,505,808 KiB resident peak at its measured 122,538 ms in CI
+# confirms the table's number is real on the hosted runner, not just here.
+jg_lint_root_allowance() {  # <path>
   case "${1#./}" in
     bin/jg-spawn.sh|bin/jg-teardown.sh|bin/jg-watch.sh|tests/jg-launch-prompt-signals-live-e2e.test.sh)
       printf '%s\n' 25165824
       ;;
   esac
+}
+
+# The roots isolated into the last partition. Each one's own analysis is the
+# heaviest work in the inventory - measured resident peaks from 2.3 GiB to
+# 14.1 GiB, and the CI roots log records 9,505,808 KiB for bin/jg-watch.sh
+# alone - so a job that carries them only carries them, and ordinary roots stop
+# queueing behind a multi-gigabyte analysis that a hosted runner can kill
+# mid-flight. Every root is still linted exactly once: the split moves a root's
+# job, never its analysis.
+jg_lint_isolated_root() {  # <path>
+  case "${1#./}" in
+    bin/jg-spawn.sh|bin/jg-teardown.sh|bin/jg-watch.sh|bin/jg-wake-drain.sh|bin/jg-watch-arm.sh|tests/jg-launch-prompt-signals-live-e2e.test.sh)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# The allowance a root may be re-run under after a memory failure: the run-wide
+# override when a caller set one, else its listed allowance. Without either, a
+# memory failure stands and lint fails rather than analysing less.
+jg_lint_scoped_allowance() {  # <path>
+  if [ -n "${JG_LINT_ROOT_ALLOWANCE_KIB:-}" ]; then
+    printf '%s\n' "$JG_LINT_ROOT_ALLOWANCE_KIB"
+    return 0
+  fi
+  jg_lint_root_allowance "$1"
 }
 
 # Run one ShellCheck invocation under the given deadline and the per-root
@@ -331,7 +359,7 @@ jg_lint_run_root() {  # <index> <path> <output-dir> <shard-index>
   local scoped_err="$output_dir/root.$shard_index.$index.scoped.err"
   local scoped_rss="$output_dir/root.$shard_index.$index.scoped.rss"
   local start_ms end_ms duration_ms invocation_rc=0 reason rss_kib initial_rc initial_reason
-  local scoped_secs scoped_allowance
+  local scoped_secs scoped_allowance root_memory_kib listed_allowance
   local final_follow_sources=${JG_LINT_INTERNAL_FOLLOW_SOURCES:-1}
   start_ms=$(jg_lint_now_ms)
   if [ -n "${JG_LINT_INTERNAL_ROOTS_LOG:-}" ]; then
@@ -343,8 +371,13 @@ jg_lint_run_root() {  # <index> <path> <output-dir> <shard-index>
     printf 'jg-lint: begin %s (shard %s, %s mode)\n' \
       "$path" "$shard_index" "${JG_LINT_INTERNAL_MODE:-unknown}" >&2
   fi
+  root_memory_kib=$JG_LINT_INTERNAL_MEMORY_KIB
+  if [ "${JG_LINT_INTERNAL_BOUNDED:-none}" != none ]; then
+    listed_allowance=$(jg_lint_root_allowance "$path")
+    [ -z "$listed_allowance" ] || root_memory_kib=$listed_allowance
+  fi
   jg_lint_exec_root "$path" "$root_out" "$root_err" "$rss_file" \
-    "$JG_LINT_INTERNAL_ROOT_SECS" "$JG_LINT_INTERNAL_MEMORY_KIB" "${JG_LINT_WORKER_ARGS[@]}"
+    "$JG_LINT_INTERNAL_ROOT_SECS" "$root_memory_kib" "${JG_LINT_WORKER_ARGS[@]}"
   invocation_rc=$JG_LINT_LAST_RC
   reason=$(jg_lint_classify_root "$invocation_rc" "$root_err")
   initial_rc=$invocation_rc
@@ -959,14 +992,35 @@ jg_lint_root_weights() {
 if [ -n "$PARTITION" ]; then
   PARTITION_ROOTS=()
   partition_weights=$(jg_lint_root_weights) || exit $?
+  # The isolated roots own the last partition; the ordinary roots pack
+  # largest-first onto the currently lightest of the n-1 remaining shards, so
+  # every partition stays complete, disjoint, and non-empty.
+  ordinary_weights=$(
+    printf '%s\n' "$partition_weights" | while IFS="$TAB" read -r weight index path; do
+      jg_lint_isolated_root "$path" || printf '%s\t%s\t%s\n' "$weight" "$index" "$path"
+    done
+  )
+  isolated_weights=$(
+    printf '%s\n' "$partition_weights" | while IFS="$TAB" read -r weight index path; do
+      jg_lint_isolated_root "$path" && printf '%s\t%s\t%s\n' "$weight" "$index" "$path"
+    done
+  )
+  partition_meta_index=${PARTITION%%of*}
+  partition_meta_count=${PARTITION##*of}
+  if [ "$partition_meta_index" -eq "$partition_meta_count" ]; then
+    partition_selected=$(printf '%s\n' "$isolated_weights" \
+      | awk -F '\t' 'NF == 3 { print $2 "\t" $3 }')
+  else
+    partition_selected=$(printf '%s\n' "$ordinary_weights" \
+      | LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n \
+      | awk -F '\t' -v want="$partition_meta_index" -v total=$((partition_meta_count - 1)) '
+        { shard=1; for (i=2; i<=total; i++) if (load[i] < load[shard]) shard=i; load[shard]+=$1
+          if (shard == want) print $2 "\t" $3 }')
+  fi
   while IFS="$TAB" read -r index path; do
+    [ -n "${path:-}" ] || continue
     PARTITION_ROOTS+=("$path")
-  done < <(printf '%s\n' "$partition_weights" | LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n | awk -F '\t' -v want="${PARTITION%%of*}" -v total="${PARTITION##*of}" '
-    # Largest-first packing onto the currently lightest of n shards: complete,
-    # disjoint, and within one large root of byte-balanced.
-    { shard=1; for (i=2; i<=total; i++) if (load[i] < load[shard]) shard=i; load[shard]+=$1
-      if (shard == want) print $2 "\t" $3 }
-  ' | LC_ALL=C sort -t "$TAB" -k1,1n)
+  done < <(printf '%s\n' "$partition_selected" | LC_ALL=C sort -t "$TAB" -k1,1n)
   ROOTS=("${PARTITION_ROOTS[@]}")
 fi
 ROOT_COUNT=${#ROOTS[@]}
