@@ -35,6 +35,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-squad-lead-reconcile.sh` | Queue Bearings reconcile requests for later supervision delivery and ask each mismatched home through its durable inbox with a per-home cooldown |
 | `jg-update.sh`           | Guarded self-update of Juggernaut and local or remote Squad Lead homes, reconciling redundant divergence and classifying every live mate left on the target commit for restart or fallback nudge |
 | `jg-squad-lead-restart.sh` | Persist open conversational work, then restart eligible Squad Leads or report the fallback outcome |
+| `jg-fleet-autosync.sh`   | Carry a landed merge to this home and every live local Squad Lead home from the merge itself, alarm when a home stays more than two merges behind, and report each home's distance for the session digest |
 | `jg-squad-lead-restart-lib.sh` | Shared Squad Lead restart capability and persistence-request contract |
 | `jg-on.sh`               | Execute one tracked Juggernaut command in a configured remote Squad Lead home, using its job worker except for the doctor bootstrap |
 | `jg-remote-job-lib.sh`   | Shared bounded remote job queue, worker readiness, LaunchAgent contract, and filesystem-composed PATH |
