@@ -562,6 +562,7 @@ tests/jg-bootstrap.test.sh 83933
 tests/jg-browser-reaper.test.sh 8000
 tests/jg-calm-home-links.test.sh 381
 tests/jg-chat-answer-card.test.sh 1030
+tests/jg-ci-required.test.sh 122
 tests/jg-claude-stop-autoarm-live-e2e.test.sh 58
 tests/jg-codex-continuity-live-e2e.test.sh 57
 tests/jg-codex-hook-layer-live-e2e.test.sh 68
@@ -575,6 +576,7 @@ tests/jg-design-gate-first-draft.test.sh 680
 tests/jg-design-gate.test.sh 467
 tests/jg-devin-signals-live-e2e.test.sh 65
 tests/jg-escalation-chain.test.sh 120130
+tests/jg-fast-evals.test.sh 704
 tests/jg-fleet-heartbeat.test.sh 1186
 tests/jg-fleet-sync.test.sh 42151
 tests/jg-flow.test.sh 919
@@ -588,6 +590,7 @@ tests/jg-hold-reason-gate.test.sh 1608
 tests/jg-hometag-lead-label.test.sh 393
 tests/jg-inbox.test.sh 8757
 tests/jg-launch-prompt-signals-live-e2e.test.sh 56
+tests/jg-lint-partitions.test.sh 4361
 tests/jg-mail.test.sh 10524
 tests/jg-merge-gate-lib.test.sh 83
 tests/jg-muse-signals-live-e2e.test.sh 61
@@ -601,6 +604,7 @@ tests/jg-pi-branch-live-e2e.test.sh 56
 tests/jg-pi-primary-live-e2e.test.sh 58
 tests/jg-pi-seeded-home-trust-live-e2e.test.sh 85
 tests/jg-pi-wake-replay.test.sh 1500
+tests/jg-post-merge-ci-main.test.sh 154
 tests/jg-pr-state-live-e2e.test.sh 59
 tests/jg-procevent.test.sh 351871
 tests/jg-project-mode.test.sh 164
@@ -1389,7 +1393,7 @@ families_for_changed_path() {
     .agents/skills/*/SKILL.md)
       printf '%s\n' pure-contract-unit
       ;;
-    .github/workflows/ci.yml|.no-mistakes.yaml)
+    .github/workflows/ci.yml|.github/workflows/behavior.yml|.no-mistakes.yaml)
       printf '%s\n' pure-contract-unit
       printf '%s\n' real-herdr-gated
       ;;
