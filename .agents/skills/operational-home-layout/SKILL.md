@@ -103,7 +103,7 @@ state/               runtime records and signals; gitignored
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/jg-mail.sh (mail schema: docs/configuration.md "Mail plane")
   startup-growth.check.sh  generated daily startup-growth poll shim and its .check-trust binding; present only after bin/jg-startup-growth-check.sh arm; its record .startup-growth-check holds the daily gate, the per-file growth baselines, and the last reported finding set, so removing it re-baselines growth silently and repeats a standing finding such as a budget overrun once (docs/configuration.md "Daily startup growth check")
   pending-replies/   parent-owned squad lead pending-reply records (correlation id, delivery vs reply, recovery, escalation); jg-pending-reply-lib.sh
-  .waiting-timers/   one durable waiting-state episode per recorded task (first-observation time, owner and parent levels, native-admission key); the wait-timers add-on owns them
+  .waiting-timers/   one durable waiting-state episode per recorded task (first-observation time, owner and parent levels, native-admission key); the wait-timers feature owns them
   procevent/         registered process-to-event sources, one private record per canonical source id; written only by bin/jg-procevent.sh, and their presence alone keeps supervision required (`process-event-sources` skill)
   procevent-inbox/   private captured results and their durable handled-acknowledgement markers; source output lives here and never in an event line
   decision-bindings/ private records marking a captured-answer source as feeding the keyed-answer intake, with a legacy origin on pre-collapse records; written only by bin/jg-captain-hold.sh bind, dropped by unbind and by source retirement (`process-event-sources` and `captain-hold-lifecycle` skills; docs/captain-hold-lifecycle.md)
@@ -130,7 +130,7 @@ state/               runtime records and signals; gitignored
   .cursor-park-owner .cursor-park-owner.lock .turnend-cursor-blocks   Cursor stop-hook owner record, publication and commit lock, and bounded repair-nag budget; never touch
   .hash-* .count-* .stale-* .stale-since-* .churn-since-* .activity-* .paused-* .wedge-escalations-* .dead-reported-* .writing-* .waiting-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak .squad-lead-liveness-tick .squad-lead-liveness-*.lock* .pruned-panes .pruned-panes.next   watcher internals; never touch (clearing the bounded .pruned-panes key ledger re-opens the once-only vanished-pane notice)
   .squad-lead-relaunch-<id> .squad-lead-relaunch-bound-<id>   durable relaunch history and parked-bound state; never touch (bin/jg-squad-lead-liveness-lib.sh owns the ledger contract)
-  .model-outages/    watcher-owned OpenCode model-error scan records (per-lane, per-episode alert records); the alerts add-on owns them; never touch
+  .model-outages/    watcher-owned OpenCode model-error scan records (per-lane, per-episode alert records); the alerts feature owns them; never touch
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon; publication and freshness: docs/turnend-guard.md "Guard grace and the poll cadence"
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch

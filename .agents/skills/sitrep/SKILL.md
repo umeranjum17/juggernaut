@@ -89,7 +89,7 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
 
 ## Board answers
 
-Captain-facing board answers arrive through the sign-off adapter, not through this skill: `addons/signoff/README.md` owns the read mark and the card contract, and `bin/jg-captain-hold.sh` owns the one keyed-answer intake that closes or releases an answered captain-held task.
+Captain-facing board answers arrive through the sign-off adapter, not through this skill: `core/signoff/README.md` owns the read mark and the card contract, and `bin/jg-captain-hold.sh` owns the one keyed-answer intake that closes or releases an answered captain-held task.
 This skill composes no board and arms no source.
 A visual report is published with `sign-off-axi`, and its link goes in the digest.
 

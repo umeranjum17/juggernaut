@@ -45,7 +45,7 @@ A missed-reply escalation includes the complete first sighting path and line num
 ## What is deliberately not built
 
 - No mirror of the mate's chat: chat can mix outcomes with other conversation, so choosing which sentence is an outcome would itself be model behavior, and every harness exposes turn text differently.
-- No threshold escalation of a child's open decision or blocker in the fork: the optional `wait-timers` add-on owns that escalation and publishes it through this channel when installed; a decision the mate neither answers nor escalates is a supervision-quality question, separable from channel delivery.
+- No threshold escalation of a child's open decision or blocker in the fork: `core/wait-timers` owns that escalation and publishes it through this channel; a decision the mate neither answers nor escalates is a supervision-quality question, separable from channel delivery.
 - No second watcher or standalone scanner: a lightweight ledger pass runs inside the existing inactive-outcome command on every watcher poll and reuses its receipts and upstream append.
 - No orphan lifecycle: teardown refuses instead of removing an undelivered outcome, the same way it refuses on other unlanded conditions.
 

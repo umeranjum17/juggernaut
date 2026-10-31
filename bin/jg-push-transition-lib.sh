@@ -7,8 +7,6 @@
 
 JG_PUSH_TRANSITION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$JG_PUSH_TRANSITION_LIB_DIR/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$JG_PUSH_TRANSITION_LIB_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-classify-lib.sh
@@ -17,8 +15,8 @@ JG_PUSH_TRANSITION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$JG_PUSH_TRANSITION_LIB_DIR/jg-backend.sh"
 # shellcheck source=bin/jg-transition-lib.sh
 . "$JG_PUSH_TRANSITION_LIB_DIR/jg-transition-lib.sh"
-# Optional wait-timers add-on.
-_jg_pt_timers=$(jg_addon_path "${JG_HOME:-$JG_PUSH_TRANSITION_LIB_DIR/..}" wait-timers/bin/jg-wait-timers-lib.sh)
+# Optional wait-timers feature.
+_jg_pt_timers=$JG_PUSH_TRANSITION_LIB_DIR/../core/wait-timers/bin/jg-wait-timers-lib.sh  # absent in a bin/-only fixture
 # shellcheck source=/dev/null
 [ ! -r "$_jg_pt_timers" ] || . "$_jg_pt_timers"
 
@@ -178,7 +176,7 @@ handle_push_transition() {  # <backend> <session> <record>
   [ -n "$pane_id" ] || { sleep 1; return; }
   window="$session:$pane_id"
   task=$(window_to_task "$window" "$STATE")
-  # Optional alerts add-on: suppresses the immediate wake for lanes it names (Cursor, held for the captain).
+  # Optional alerts feature: suppresses the immediate wake for lanes it names (Cursor, held for the captain).
   if declare -F jg_alerts_push_suppress >/dev/null && jg_alerts_push_suppress "$task"; then
     jg_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
     return

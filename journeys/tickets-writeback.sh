@@ -15,16 +15,16 @@ OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
 cd "$REPO" || exit 1
 failed=0
 
-# 1. The port plus the writer and the check, through the add-on's own suite and a
+# 1. The port plus the writer and the check, through the feature's own suite and a
 #    disposable fleet board: real tasks-axi, real sign-off-axi, no live board.
-JG_TEST_FORK=$REPO bash addons/tickets-sync/tests/sync.test.sh >"$OUT/tickets-sync-test.log" 2>&1 || failed=1
+JG_TEST_FORK=$REPO bash core/tickets-sync/tests/sync.test.sh >"$OUT/tickets-sync-test.log" 2>&1 || failed=1
 if grep -q '^PASS:' "$OUT/tickets-sync-test.log" && ! grep -q '^FAIL' "$OUT/tickets-sync-test.log"; then
   grep '^PASS:' "$OUT/tickets-sync-test.log" >"$OUT/tickets-sync-passed.log"
 else
   failed=1
 fi
 
-# 2. The fork shim: silent without the add-on or a board, and it hands an installed
+# 2. The fork shim: silent without the feature or a board, and it hands an installed
 #    writer this home's task and flags.
 bash tests/jg-ticket.test.sh >"$OUT/jg-ticket-test.log" 2>&1 || failed=1
 
@@ -35,7 +35,7 @@ fi
 python3 - "$OUT/steps.json" "$(git rev-parse HEAD)" <<'PY'
 import json, sys
 steps = [
-    "Run the add-on sync test so a ticket publishes its stage and last event from the lane.",
+    "Run the feature sync test so a ticket publishes its stage and last event from the lane.",
     "Write a dispatched ticket's stage and state, then a delivered PR, through the lifecycle writer.",
     "Repeat the same write and read the board unchanged; confirm a ticket the poll never published is untouched.",
     "Make a ticket contradict its backlog item and read the check naming it, then settle the board and read silence.",

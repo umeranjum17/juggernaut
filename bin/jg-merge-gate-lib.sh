@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Sourced merge adapters owned by core, so a home's config/merge-gate and
-# config/post-merge are honoured whether or not any add-on is installed.
+# config/post-merge are honoured whether or not any feature is installed.
 # Usage: . bin/jg-merge-gate-lib.sh
 #
 # Both are no-ops when the home has no such file. jg_dod_merge_gate runs
 # config/merge-gate and refuses the merge when it exits nonzero; the two merge
 # paths call it before every landing. jg_merge_post_hook runs config/post-merge
 # after a recorded merge and never changes that merge's outcome. The merge-card
-# add-on defines the same two functions for homes that install it; core owning a
+# feature defines the same two functions for homes that install it; core owning a
 # copy is what makes them fire without it. Callers supply jg_dod_meta_value;
 # jg_run_timed and jg_timed_out come from bin/jg-timeout-lib.sh, sourced here.
 # jg_dod_design_gate is the first-draft design-call gate both merge paths call:
 # a task recorded design_call=yes (bin/jg-brief.sh --design-call) merges only when
-# its completion receipt (state/<id>.run-receipt.json, the receipts add-on's record)
+# its completion receipt (state/<id>.run-receipt.json, the receipts feature's record)
 # binds the candidate head with verdict PASS and its evidence carries a
 # `first-draft receipt: <ref>` line. design_call=no passes; a record with no
 # design_call (an older task) warns and counts as no. A task past the small-tweak size
@@ -23,7 +23,7 @@
 # refused by name. jg_design_done_gate applies the same rule at done. jg_dod_demo_gate is the same
 # check for TakeOne demo videos, behind the config/takeone-demo switch.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
-# The hooks also get FM_HOME (the pre-rename name) because installed add-on hooks and done-done's merge-gate still read it; delete with the S10 shim.
+# The hooks also get FM_HOME (the pre-rename name) because installed feature hooks and done-done's merge-gate still read it; delete with the S10 shim.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
 if [ -r "$_jg_d/jg-compat.sh" ]; then
@@ -83,7 +83,7 @@ jg_merge_post_hook() {  # <config-dir> <home> <id> <meta> <head|-> <pr-url|->
 }
 
 # True when the task's completion receipt binds this head with verdict PASS and its
-# evidence carries a `<label>: <ref>` line (the receipts add-on's record).
+# evidence carries a `<label>: <ref>` line (the receipts feature's record).
 _jg_dod_receipt_line() {  # <state> <id> <head> <label>
   local receipt=$1/$2.run-receipt.json
   [ -f "$receipt" ] && [ ! -L "$receipt" ] && command -v jq >/dev/null 2>&1 \
