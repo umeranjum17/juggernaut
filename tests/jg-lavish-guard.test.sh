@@ -19,9 +19,7 @@ TMP_ROOT=$(jg_test_tmproot jg-lavish-guard)
 # to a Lavish page on the retired port.
 TONIGHT='done [at=1793417000]: report at http://review.example:4387/session/876d22727c2c3776'
 
-# guard() -> ERR, RC. The guard intercepts the words and writes nothing to
-# stdout, so there is no captured stdout to assert on.
-guard() {  # <text>
+guard() {  # <text> -> ERR, RC: the guard's own line is ERR, so only its status is kept
   printf '%s\n' "$1" | bash "$GUARD" 2>"$TMP_ROOT/stderr"
   RC=$?
   ERR=$(cat "$TMP_ROOT/stderr")

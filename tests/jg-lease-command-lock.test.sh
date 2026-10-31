@@ -73,13 +73,12 @@ wait_for_file() {
 # the lock libraries sourced and $STATE set, and set HOLDER_PID to that child.
 # The pid travels in a variable, never on stdout: a command substitution would
 # wait on the child's inherited stdout until the child exits.
-# The prelude is written with escaped dollars so the child shell expands $1, $2,
-# and $3; the body arrives already literal from its here-document.
 HOLDER_PID=
 start_holder() {
   local state=$1 ready=$2 body=$3
+  # shellcheck disable=SC2016 # the inner shell expands $1/$2/$3, not this one.
   env JG_ROOT_OVERRIDE="${state%/state}" JG_STATE_OVERRIDE="$state" \
-    bash -c ". \"\$1\"; . \"\$2\"; STATE=\$3; $body" \
+    bash -c '. "$1"; . "$2"; STATE=$3; '"$body" \
     _ "$WAKE_LIB" "$ROOT/bin/jg-lease-lib.sh" "$state" "$ready" &
   HOLDER_PID=$!
   wait_for_file "$ready" || {
@@ -112,13 +111,11 @@ test_killed_holder_lets_the_next_send_deliver() {
   local dir state pid err start elapsed rc record
   dir=$(setup_case killed-holder)
   state="$dir/home/state"
+  # shellcheck disable=SC2016 # the holder's own shell expands $STATE, not this one.
   start_holder "$state" "$dir/ready" \
-    "$(cat <<'EOS'
-jg_lease_command_lock_acquire "$STATE/.jg-lease-command.lock" "holder" || exit 9
-printf ready >"$4"
-sleep 60
-EOS
-)"
+    'jg_lease_command_lock_acquire "$STATE/.jg-lease-command.lock" "holder" || exit 9
+     printf ready >"$4"
+     sleep 60'
   pid=$HOLDER_PID
   kill -9 "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
@@ -179,6 +176,13 @@ test_no_steal_directory_survives_a_run() {
   # A leftover steal directory whose recorded pid was recycled onto this live
   # test process cannot be proven dead, so its age is the only proof left; the
   # send must age it out instead of waiting on it forever.
+  #
+  # The lease file is what makes jg-send's guard engage the lease-command lock
+  # (bin/jg-lease-lib.sh jg_lease_guard): the ordinary send above cleared the
+  # stale one, and a host with no coding-agent marker and no supervision host - a
+  # CI runner - then skips the lock and never looks at this scratch at all. Write
+  # the precondition again so the case drives the lock on every host.
+  printf 'main\t%d\t0\n' 999999 >"$state/.lease-t1"
   mkdir -p "$state/.jg-lease-command.lock.steal.owner.recycled"
   printf '%s\n' "$$" >"$state/.jg-lease-command.lock.steal.owner.recycled/pid"
   ln -s "$state/.jg-lease-command.lock.steal.owner.recycled" "$state/.jg-lease-command.lock.steal"
@@ -193,13 +197,11 @@ test_no_steal_directory_survives_a_run() {
 
   # A signal must not strand the steal directory either: hold it exactly as the
   # acquire does, then kill the holder while it waits the way the acquire waits.
+  # shellcheck disable=SC2016 # the holder's own shell expands $STATE, not this one.
   start_holder "$state" "$dir/ready-steal" \
-    "$(cat <<'EOS'
-jg_lock_steal_hold "$STATE/x.lock.steal" 5 || exit 9
-printf ready >"$4"
-while :; do sleep 0.1; done
-EOS
-)"
+    'jg_lock_steal_hold "$STATE/x.lock.steal" 5 || exit 9
+     printf ready >"$4"
+     while :; do sleep 0.1; done'
   pid=$HOLDER_PID
   kill -TERM "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
