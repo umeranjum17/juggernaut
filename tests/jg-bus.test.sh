@@ -46,8 +46,8 @@ open(portfile, 'w').write(str(srv.server_address[1]))
 srv.serve_forever()
 PY
   SINK_PID=$!
-  local i
-  for i in $(seq 100); do [ -s "$portfile" ] && { cat "$portfile"; return 0; }; sleep 0.1; done
+  local _
+  for _ in $(seq 100); do [ -s "$portfile" ] && { cat "$portfile"; return 0; }; sleep 0.1; done
   fail "the delivery sink never started"
 }
 PORT=$(start_sink)
@@ -109,9 +109,9 @@ assert_equals "1" "$(jq -s 'length' "$d/so/.sign-off/decisions.json")" "the boar
 
 # --- a captain outcome is teed, a routine one is not --------------------------
 d=$(setup outcome)
-seq=$(run_quiet "$d" "$OUTCOME" append --task muxr --verdict routine --summary "no change")
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict routine --summary "no change" >/dev/null
 assert_equals "0" "$(events "$d" | wc -l | tr -d ' ')" "a routine outcome is not captain-facing, so it is not teed"
-seq=$(run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The key is fixed and released in 0.4.1")
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The key is fixed and released in 0.4.1" >/dev/null
 assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "a captain outcome is teed once"
 assert_contains "$(events "$d")" '"kind":"outcome"' "the teed event names the outcome"
 assert_equals "2" "$(wc -l <"$d/home/state/branch-outcomes.jsonl" | tr -d ' ')" "the outcome store still holds both rows"
