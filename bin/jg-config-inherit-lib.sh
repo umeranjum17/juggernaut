@@ -29,6 +29,10 @@
 # Primary config/supervision-host-off is the fleet's supervision-host opt-out,
 # so a primary that opts out opts every squad_lead home out too, while each
 # home's config/supervision-host engine line stays its own.
+# Primary config/fleet-board is the path of the board file this fleet appends
+# merge proof cards to, so a squad_lead home inherits the same board link its
+# merges are expected to appear on; a home without one refuses a carded merge
+# instead of landing silently.
 # It also pushes
 # the one primary-authoritative shared captain-preference file,
 # data/captain-shared.md, into each squad_lead home's data/ as a read-only copy.
@@ -87,7 +91,7 @@ JG_SHARED_CAPTAIN_MODE="444"
 # The declared inheritable set (space-separated, config-dir-relative item paths).
 # Extend here to inherit more of the primary's local config; override via the
 # environment only in tests. Items must not contain whitespace.
-JG_INHERITABLE_CONFIG="${JG_INHERITABLE_CONFIG:-crew-dispatch.json preferred-stack.json architecture.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode keep-ai-trailers supervision-host-off juggernaut-role lane-target}"
+JG_INHERITABLE_CONFIG="${JG_INHERITABLE_CONFIG:-crew-dispatch.json preferred-stack.json architecture.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode keep-ai-trailers supervision-host-off juggernaut-role lane-target fleet-board}"
 _bi=$(jg_addon_path "${JG_HOME:-$(dirname "${BASH_SOURCE[0]}")/..}" brief-inherit/bin/jg-brief-inherit-lib.sh); [ ! -f "$_bi" ] || { . "$_bi" && jg_brief_inherit_config; }
 
 # juggernaut-role additionally carries a proof-of-state receipt: a scoped role

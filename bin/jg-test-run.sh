@@ -574,6 +574,7 @@ tests/jg-design-gate.test.sh 467
 tests/jg-devin-signals-live-e2e.test.sh 65
 tests/jg-escalation-chain.test.sh 120130
 tests/jg-fleet-heartbeat.test.sh 1186
+tests/jg-fleet-proof-check.test.sh 377
 tests/jg-fleet-sync.test.sh 42151
 tests/jg-flow.test.sh 919
 tests/jg-gate-refuse.test.sh 14876

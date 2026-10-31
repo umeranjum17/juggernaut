@@ -26,6 +26,11 @@
 #       when no filled charter brief exists. Set JG_SQUAD_LEAD_SCOPE='<scope>'
 #       to override the registry routing scope. Otherwise the registry summary
 #       and scope are derived from the filled charter brief.
+#       Seeding also gives the new home the two pieces that make a merge
+#       visible: the primary's declared local config, which now includes
+#       config/fleet-board, and the owner-rules proof gate at config/merge-gate.
+#       A failure in either fails the seed, so a home never lands half-wired;
+#       bin/jg-fleet-proof-check.sh reports homes that predate this wiring.
 #   jg-home-seed.sh validate
 #       Refuse records that operational consumers cannot parse, unavailable or
 #       unsafe registry files when present, non-absolute or unresolvable homes,
@@ -71,6 +76,8 @@ SUB_HOME_PARENT_MARKER=".jg-squad-lead-parent"
 . "$SCRIPT_DIR/jg-squad-lead-charter-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
+# shellcheck source=bin/jg-config-inherit-lib.sh
+. "$SCRIPT_DIR/jg-config-inherit-lib.sh"
 
 usage() {
   echo "usage: jg-home-seed.sh <id> <home|-> {<project>...|--no-projects}" >&2
@@ -791,6 +798,34 @@ initialize_no_mistakes_project() {
   }
 }
 
+# Give a new home the wiring that makes its merges visible, instead of leaving it
+# to a hand install someone must remember:
+#   - the primary's declared inheritable config, which carries config/fleet-board
+#     (bin/jg-config-inherit-lib.sh owns that list, so seeding inherits exactly
+#     what every other convergence point inherits);
+#   - the owner-rules proof gate at config/merge-gate, written by the add-on's own
+#     installer, which also owns the file's shape and its step record.
+# The home's own add-on copy is preferred, so the gate it writes points inside
+# this home rather than at the primary's checkout; a checkout without addons/
+# falls back to this repo's copy. Either failure fails the seed.
+seed_wire_proof_config() {
+  local home=$1 installer
+  propagate_inheritable_config "$JG_HOME/config" "$home/config" "$JG_HOME" || {
+    echo "error: could not push the primary's inheritable config into $home/config" >&2
+    return 1
+  }
+  installer="$home/addons/owner-rules/install.sh"
+  [ -x "$installer" ] || installer="$JG_ROOT/addons/owner-rules/install.sh"
+  if [ ! -x "$installer" ]; then
+    echo "error: no owner-rules installer at $home/addons/owner-rules/ or $JG_ROOT/addons/owner-rules/; cannot wire config/merge-gate" >&2
+    return 1
+  fi
+  "$installer" "$home" >/dev/null || {
+    echo "error: owner-rules could not wire config/merge-gate in $home (see its message above)" >&2
+    return 1
+  }
+}
+
 write_registry() {
   local id=$1 home=$2 projects_csv=$3 brief=$4 scope summary tmp today
   mkdir -p "$DATA"
@@ -1016,6 +1051,7 @@ seed_home() {
   done
 
   cp "$SEED_PARENT_BRIEF" "$home/data/charter.md"
+  seed_wire_proof_config "$home" || return 1
 
   projects_csv=$(join_projects "$@")
   # Durable record of this home's route to its parent, written once here next
