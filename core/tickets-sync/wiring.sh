@@ -26,6 +26,9 @@ mkdir -p "$dest/tickets-sync/icons" "$JG_HOME/state"
 install -m 755 "$src/tickets-sync/"{sync,ticket}.py "$dest/tickets-sync/"
 install -m 644 "$src/tickets-sync/"{lane,hierarchy,task_rows,cleanup,reconcile}.py "$dest/tickets-sync/"
 cp -f "$src"/tickets-sync/icons/* "$dest/tickets-sync/icons/"
+# Slice B of the one-repo fold moves these ten images into the core tree; until then they are copied
+# from the retired directory and this second copy line is deleted with the move.
+[ ! -d "$src/../addons/tickets-sync/icons" ] || cp -f "$src"/../addons/tickets-sync/icons/* "$dest/tickets-sync/icons/"
 printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec python3 %q 2>&1\n' "$JG_HOME" "$dest/tickets-sync/sync.py" > "$JG_HOME/state/tickets-sync.check.sh"
 printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec python3 %q --check 2>&1\n' "$JG_HOME" "$dest/tickets-sync/sync.py" > "$JG_HOME/state/tickets-stale.check.sh"
 printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec python3 %q --cleanup 2>&1\n' "$JG_HOME" "$dest/tickets-sync/sync.py" > "$JG_HOME/state/tickets-cleanup.check.sh"
