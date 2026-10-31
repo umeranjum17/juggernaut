@@ -65,6 +65,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-install-treehouse.sh`| Install CI's exact-version Treehouse pin for real-Herdr E2E that needs spawn worktrees |
 | `jg-herdr-ci-cleanup.sh` | Snapshot and tear down only job-owned `jg-lab-*` sessions in the Herdr CI lane       |
 | `jg-test-run.sh`         | Behavior-test runner: selection, portable lanes, bounded concurrency, budgets, coverage guard, timing/JSON; refuses to execute in the repository primary checkout when `JG_TASK_ID` marks a task worker |
+| `jg-fast-evals.sh`       | Run the deterministic fast behaviour evals the thin pull request gate owns (a home boots, a brief carries its isolation assertion, a ticket round-trips, a fix claim without a release is downgraded); `--smoke` runs the boot eval alone |
 | `jg-test-isolation-proof.sh` | Concurrent isolation harness and portable candidate set owner |
 | `jg-ensure-agents-md.sh` | Manually initialize project agent-memory files (see the helper's header and help) |
 | `jg-guard.sh`            | Warn on primary-checkout tangles, main-session pending wakes, and unhealthy supervision |
@@ -172,6 +173,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-contributions.sh`    | Observe owned publications, retain exact-head judgments, measure required actors, and wake on maintainer signals |
 | `jg-pr-check.sh`         | Record validated task `pr=` and `pr_head=` values, then atomically arm a static merge poll; refuses GitHub drafts and persistent Squad Lead records (see [architecture.md](architecture.md)) |
 | `jg-pr-merge.sh`         | Record PR metadata, merge a task's canonical full GitHub, GitLab, or Forgejo URL, refuse a Gerrit change because Juggernaut never submits one, then refuse an outcome it cannot prove landed or queued |
+| `jg-ship-local.sh`       | Ship one task locally in four timed stages: push the lane branch, prove that exact head with the sealed local suite, merge through the guarded merge path, then sync this home and every lead home through the guarded update path, printing each stage's wall clock and the commit every home ends on |
 | `jg-pr-state.sh`         | Read-only: print one line per GitHub pull-request blocker it can see, reporting on checks that have reported rather than verdicting merge-readiness |
 | `jg-pr-reviewers.sh`     | Read-only: suggest reviewers from GitHub's own author mapping of recent commits on a pull request's changed files, never requesting one |
 | `jg-merge-outcome-lib.sh` | Publish a confirmed merge's durable, role-routed supervision outcome |

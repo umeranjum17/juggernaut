@@ -56,7 +56,7 @@ On [PR 1495](https://github.com/kunchenguid/juggernaut/pull/1495), its main step
 Each shard is still strictly serial in itself, and separate runners mean no two of these stateful scripts ever share a machine, so the split needs no concurrency isolation proof.
 
 `bin/jg-test-run.sh` owns `n` and refuses any lane whose `of<n>` disagrees with it.
-`.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
+`.github/workflows/behavior.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the suite unrun.
 
 Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/jg-test-run.sh`.
 [Verification inputs](#verification-inputs) owns the measurement provenance and exceptions.
@@ -102,7 +102,7 @@ Its hint-coverage and modeled-budget checks are described in [Portable serial CI
 
 Portable shards, each portable serial shard, and the Herdr lane upload runner-generated timing JSON.
 `bin/jg-test-run.sh --aggregate-json` creates the combined summary artifact.
-`.github/workflows/ci.yml` owns the exact artifact names and aggregation wiring.
+`.github/workflows/behavior.yml` owns the exact artifact names and aggregation wiring, and its `timing` job downloads and combines them.
 
 ## Lint partitions and end-to-end latency
 
@@ -114,7 +114,7 @@ No fast mode, path skips, or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the watcher-lock floor alone exceeds that objective.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
-The layout uses twelve long-lived Linux jobs (six serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
+The layout uses ten long-lived Linux jobs (six serial, two parallel, Herdr, two lint), plus short checks and macOS; the heavy ten run in `behavior.yml` and only the two lint partitions plus the short checks gate a pull request, so insufficient shared account capacity can still delay a merge's backstop.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
 
@@ -131,9 +131,11 @@ A lane that reaches its tier bound needs investigation and a distribution or run
 
 | Tier | Jobs | Bound | Rationale |
 |---|---|---|---|
-| Fast | coverage guard, repo invariants, timing aggregate | 5 minutes | Seconds-long local work, so the tripwire only catches a hung runner. |
-| Normal | lint partitions, portable parallel shards, portable serial shards, macOS stock Bash | 30 minutes, one value shared by every job in the tier | One shared hang tripwire keeps every ordinary test and lint lane on the same policy instead of allowing per-lane packing estimates or one-off caps to set the bound. |
+| Fast | coverage guard, repo invariants, shell syntax, smoke, fast evals, required verdict | 5 minutes | Seconds-long local work, so the tripwire only catches a hung runner. |
+| Normal | lint partitions, portable parallel shards, portable serial shards, macOS stock Bash, timing aggregate | 30 minutes, one value shared by every job in the tier | One shared hang tripwire keeps every ordinary test and lint lane on the same policy instead of allowing per-lane packing estimates or one-off caps to set the bound. |
 | Heavy | Herdr | family-run step 20 minutes under a 75-minute job-level last-resort backstop | Healthy runs finish in about 7-10 minutes, so the step tripwire fails a wedged suite while the `always()` cleanup and timing upload still run, and the job cap only catches a hang outside that step. |
+| Eval | fast evals | 10 minutes | The set is seconds long; the bound leaves room for the runner's npm install of tasks-axi before the tripwire is reached. |
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) holds the executable values and names each job's tier beside its `timeout-minutes`.
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) holds the executable values for the pull request gate, and [`.github/workflows/behavior.yml`](../.github/workflows/behavior.yml) holds them for the nightly and post-merge suite.
+Each names a job's tier beside its `timeout-minutes`.
 A passing coverage guard does not establish a healthy job duration; refresh the healthy figures above from the lanes' uploaded timing artifacts.
