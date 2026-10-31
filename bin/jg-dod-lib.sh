@@ -122,8 +122,6 @@
 # It takes the same optional trailing forge argument, because the rule that keeps
 # a worker off a remote is exactly the rule that changes when the forge does.
 
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-pr-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-pr-lib.sh"
 # shellcheck source=bin/jg-classify-lib.sh
@@ -136,19 +134,18 @@
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-timeout-lib.sh"
 
 # Merge hooks owned by core: config/merge-gate and config/post-merge are honoured
-# whether or not the merge-card add-on is installed.
+# whether or not the merge-card feature is installed.
 # shellcheck source=bin/jg-merge-gate-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-merge-gate-lib.sh"
-# Optional merge-card add-on: defines the same two hooks for homes that install it.
-# Optional merge-card add-on: defines jg_dod_merge_gate and jg_merge_post_hook.
+# core/merge-card owns the merge and post-merge hooks homes chain to; it defines
+# jg_dod_merge_gate and jg_merge_post_hook for every home, and it is loaded after
+# the core library above so its version is the one that runs.
 _jg_dod_home=${JG_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
-_jg_dod_hooks=$(jg_addon_path "$_jg_dod_home" merge-card/bin/jg-merge-hooks-lib.sh)
-# shellcheck source=/dev/null
-[ ! -r "$_jg_dod_hooks" ] || . "$_jg_dod_hooks"
-# Optional receipts add-on: defines jg_dod_receipt_accept and the jg_receipts_* helpers.
-# shellcheck source=/dev/null
-_jg_dod_receipts=$(jg_addon_path "$_jg_dod_home" receipts/bin/jg-receipts-lib.sh)
-[ ! -r "$_jg_dod_receipts" ] || . "$_jg_dod_receipts"
+# shellcheck source=core/merge-card/bin/jg-merge-hooks-lib.sh
+. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/../core/merge-card/bin/jg-merge-hooks-lib.sh"
+# core/receipts owns the completion-receipt gate: jg_dod_receipt_accept and the jg_receipts_* helpers.
+# shellcheck source=core/receipts/bin/jg-receipts-lib.sh
+. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/../core/receipts/bin/jg-receipts-lib.sh"
 
 jg_brief_worker_role() {  # <state-dir> <task-id> <code-root>
   local state=$1 task_id=$2 root=$3
@@ -821,11 +818,11 @@ jg_dod_forge_pr_head_live() {  # <provider> <host> <path> <number> <url>
 # Optional captured run output preserves an explicit unreturned-custody refusal
 # even when the declared head is already on the forge.
 # The optional trailing <forge-head> is the receipt candidate a caller chose; the
-# fork passes only the receipts add-on's pick, which must equal the verified
+# fork passes only the receipts feature's pick, which must equal the verified
 # forge head (bin/jg-pr-check.sh). When none is given and the done note names the
 # registered pr= in a named-head mode, or a direct-PR outside that origin, the
 # recorded pr_head stands in, so every caller binds the receipt to the same
-# candidate. The receipts add-on (jg_receipts_accept_done) uses the head it is given.
+# candidate. The receipts feature (jg_receipts_accept_done) uses the head it is given.
 jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta> <run-output> [<forge-head>]]
   local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} run_out=${9:-} forge_head=${10:-} url sha gerrit recorded_head design_head
   jg_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0

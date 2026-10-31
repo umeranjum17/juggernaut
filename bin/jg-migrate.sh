@@ -27,7 +27,7 @@ MARKER_SCHEMA = (re.compile(rb"^schema=fm-secondmate-parent\.v1$", re.M), b"sche
 PIN_DIRS = ("config/secondmates", "config/squad_leads")
 LEGACY = re.compile(rb"FIRSTMATE_OP:|FIRSTMATE|firstmate-addons|firstmate|secondmate|crewmate|second mate|first mate|FM_|fm-|fm_")
 KNOWN_NONRECORDS = (re.compile(r"state/model-gate\.check\.sh"),)
-# An old script path, environment name, function name, add-ons path or operational-input marker
+# An old script path, environment name, function name, features path or operational-input marker
 # still resolves through the compatibility layer, so it needs no rewrite.
 COMPAT_RESOLVED = re.compile(rb"\bbin/fm-[a-z0-9-]+\.sh|\bfm-[a-z0-9-]+\.sh|\bFM_[A-Z0-9_]+|\bfm_[a-z0-9_]+|FIRSTMATE_OP:|firstmate-addons|(?m:^kind=secondmate$)|(?m:^(?:window|endpoint|session|tab|pane)=fm-\S*)|[\w./@+~-]*/[\w./@+~-]*(?:firstmate|secondmate|fm-)[\w./@+~-]*")
 # The last alternative is an absolute or relative host path; it names where a home sits, which no migration can change.

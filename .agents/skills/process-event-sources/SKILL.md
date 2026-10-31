@@ -32,7 +32,7 @@ Captain answers on a sign-off board come in through this home's sign-off source:
 bin/jg-procevent-signoff.sh arm
 ```
 
-Arming is per home and dormant until it is done, and `addons/signoff/README.md` owns the card, answer, and read-mark contract.
+Arming is per home and dormant until it is done, and `core/signoff/README.md` owns the card, answer, and read-mark contract.
 A worker-owned round re-arms with its reply after each nonterminal round; the existing handled marker is the acknowledgement.
 Arm it once, then re-arm only when a round is actually waiting: arming again with nothing to acknowledge is refused.
 A terminal round is never re-armed: the round stays yours until you acknowledge it with `bin/jg-procevent.sh handled <source-id> <sequence>`, which retires it.

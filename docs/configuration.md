@@ -168,14 +168,14 @@ This preference is local to each Juggernaut home and is not part of Squad Lead i
 
 A home can limit any provider to a list of allowed models, so an off-list pick is refused instead of launched.
 The list is one JSON file, `config/model-allow-list.json`, one key per provider: `{"codex": ["gpt-5.6-sol"], "ollama-cloud": ["deepseek-v4.1-flash"]}`.
-It is the same file the `model-gate` add-on reads, so a home that already limits Ollama keeps that limit here too.
+It is the same file `core/model-gate` reads, so a home that already limits Ollama keeps that limit here too.
 A provider the file does not name is not limited, so the file only ever constrains a limit the captain wrote down.
 The key is the segment before the `/` of a qualified model id (`openai-codex`, `ollama-cloud`), and the harness name for a bare model id, which is how the harnesses that take one name their family (`claude`, `codex`, `cursor`).
 A `<provider>/` prefix is stripped before matching, and a model matches a listed entry when it is that entry or a pinned tag of it, so a listed `deepseek-v4.1-flash` also allows `deepseek-v4.1-flash:1017`.
 A provider named with no models refuses every model of that provider.
 
 `bin/jg-spawn.sh` refuses an off-list model on every launch, before any endpoint, local copy, or task record exists, whichever source the model came from: a `--model` flag, a dispatch profile, or a `config/crew-harness` and `config/squad-lead-harness` token.
-An account-pool route is refused by the `model-gate` add-on against the same file.
+`core/model-gate` refuses an account-pool route against the same file.
 Every refusal is one line naming the provider, the model, the models it allows, and the command that allows it, and since a model can still start outside the launch gate, the fleet check reports any such model once, reading the launches this home actually made.
 
 ```sh
@@ -720,7 +720,7 @@ The flag is a home-local supervision-noise preference and is not inherited by Sq
 
 The watcher treats a worker or Squad Lead pane showing a permission or trust prompt as stuck at once.
 It approves only an OpenCode read it can prove is inside this fleet's own files, and rejects one that touches a secrets path (`.env`, `~/.config`, or a home's `data/` or `config/`), telling the worker why.
-Every other prompt wakes the owning home at once and then rides the stuck-worker escalation chain: owner, Main, then a board card from the main home only ([`addons/wait-timers/README.md`](../addons/wait-timers/README.md) owns the rungs).
+Every other prompt wakes the owning home at once and then rides the stuck-worker escalation chain: owner, Main, then a board card from the main home only ([`core/wait-timers/README.md`](../core/wait-timers/README.md) owns the rungs).
 While the same prompt stays on screen it is approved, rejected, or re-alerted again every 10 minutes (`JG_PROMPT_REALERT_SECS`), with no once-per-prompt latch.
 The optional local, gitignored `config/prompt-approve-off` presence flag turns approval off, so every prompt that is not rejected rides the chain.
 `bin/jg-prompt-gate-lib.sh` owns the roots and the records, and `bin/jg-prompt-gate.py` owns the matcher.
@@ -850,7 +850,7 @@ Unreadable `app.slice` pressure is reported as not judged: pressure then holds n
 It classifies measurable memory as `OK`, `WAIT` (new agents should wait), or `ALERT`, and names the largest consumers by owning task; unavailable measurements read `UNKNOWN`.
 These controls reduce risk but cannot guarantee avoidance of an out-of-memory kill:
 
-- When the host-memory add-on is installed, each watcher loads its `host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and supervises one independent sampler per home.
+- Each watcher loads the `core/host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and supervises one independent sampler per home.
   The sampler records every 10 seconds by default (`JG_HOST_MEMORY_SECS`) into `state/host-memory.tsv`, even during slow recovery or custom checks.
   Lookout does not currently show host-memory readings.
   The home-scoped `state/.host-memory-sampler.pid` records PID and process identity; the watcher restarts a dead sampler and stops only the exact recorded PID after verifying its identity, script, home, and state.
@@ -868,7 +868,7 @@ These controls reduce risk but cannot guarantee avoidance of an out-of-memory ki
 - Local Squad Lead liveness recovery checks admission before consuming its retry budget or removing a dead endpoint, so memory deferral leaves recovery eligible when pressure eases.
   Memory deferral and a no-longer-relaunchable endpoint keep the watcher polling rather than failing supervision.
 
-`config/host-memory` is optional and read only when passed with `--config`, which the add-on sampler, `bin/jg-spawn.sh`, and `bin/jg-control.sh relaunch` always do; otherwise the helper uses its defaults.
+`config/host-memory` is optional and read only when passed with `--config`, which the memory sampler, `bin/jg-spawn.sh`, and `bin/jg-control.sh relaunch` always do; otherwise the helper uses its defaults.
 Each setting is `key=number`, blank lines and lines beginning with `#` are ignored, and a missing file or key keeps its default:
 
 | Key | Default | Meaning |
@@ -1174,7 +1174,7 @@ Pins are not inherited into Squad Lead homes: a local Squad Lead agent launches 
 A remote Squad Lead is launched on its host from its own home's configuration, so create the file in that remote home.
 
 [`bin/jg-worker-account-lib.sh`](../bin/jg-worker-account-lib.sh) owns parsing, the sign-in check, and the full list of credentials a Claude launch unsets; [runtime backend verification](verification/runtime-backends.md#worker-account-pin-sign-in-check) records the check against the real runners.
-The worker account pool (`config/account-pool` and `relaunch --account`) is owned by the `account-pool` add-on, not this fork.
+The worker account pool (`config/account-pool` and `relaunch --account`) is owned by `core/account-pool`.
 
 ## Lane floor (config/lane-target)
 
@@ -1195,7 +1195,7 @@ The floor is a floor, not a cap: it never asks a home to stop working above its 
 A primary home also runs the fleet heartbeat (`bin/jg-fleet-heartbeat.sh`) by default: bootstrap arms it on every session start, and it wakes Main when any home turns GAP or STALLED.
 The optional local, gitignored presence flag `config/fleet-heartbeat-off` opts a home out, and bootstrap then leaves the check unarmed.
 
-If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`addons/wait-timers/README.md`](../addons/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
+If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`core/wait-timers/README.md`](../core/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
 
 ## Launch environment hook (config/launch-env-hook)
 
@@ -1203,7 +1203,7 @@ The optional local, gitignored `config/launch-env-hook` is an executable that ad
 When the file exists and is executable, the pane runs `config/launch-env-hook <out-file>` from the launch directory (the worktree for ship and Recon) right before the worker starts, then sources `<out-file>`, which must hold one plain `export` statement.
 It runs before the AI-trailer step in "Commit attribution", so `GIT_CONFIG_*` entries it appends after the inherited `GIT_CONFIG_COUNT` come before the trailer `core.hooksPath` entry.
 A nonzero exit, or an export the pane shell cannot source, stops the launch before the worker runs; an absent file changes nothing, and a present but non-executable file prints a warning at spawn and the launch proceeds without it.
-The hook's content is home-local policy, for example the `git-identity` add-on, which pins a lane's git identity and pre-push identity check; [`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the invocation mechanics.
+The hook's content is home-local policy, for example `core/git-identity`, which pins a lane's git identity and pre-push identity check; [`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the invocation mechanics.
 
 ## Home brief include (config/brief-include.md)
 
@@ -1217,10 +1217,11 @@ The text is static and never executed or expanded; Squad Lead charters never tak
 
 An executable `config/merge-gate` in a home is run before every landing - `bin/jg-pr-merge.sh` for a pull request and `bin/jg-merge-local.sh` for local-only work - with `<task-id> <worktree|-> <candidate-head> <pr-url|->`.
 A nonzero exit refuses that merge and prints the gate's own reason; an absent file changes nothing, and a present but non-executable one refuses the merge until it is fixed.
-`bin/jg-merge-gate-lib.sh` owns the hook, so the gate runs whether or not any add-on is installed; the merge-card add-on defines the same two hooks for homes that install it.
+`bin/jg-merge-gate-lib.sh` owns the hook, so the gate runs with nothing else wired; `core/merge-card` defines the same two hooks and is the version that runs.
 `config/post-merge` is the matching after-the-fact hook and never changes a merge's outcome.
+A home that wants the retired-catalog rule in its own gate adds one line to `config/merge-gate`: `bin/jg-retired-catalog-check.sh --base "${3:--}"` (or the whole-tree form with no `--base`), which refuses a landing that restores a path under `addons/`; the repo's own invariants job runs the same check on every pull request.
 The gate's content is home-local policy; `bin/jg-tool-wiring.sh` places done-done's gate only in a home that has none.
-Where the owner-guard and owner-rules add-ons are installed, their installers write one gate file holding both checks, and `addons/lib/merge-gate-lib.sh` owns that file, the steps it records, and the home's own gate kept at `config/merge-gate.pre-chain`.
+`core/owner-guard/wiring.sh` and `core/owner-rules/wiring.sh` write one gate file holding both checks, and `core/lib/merge-gate-lib.sh` owns that file, the steps it records, and the home's own gate kept at `config/merge-gate.pre-chain`.
 
 ## Worker launch environment (config/launch-env-allowlist)
 
@@ -2294,7 +2295,7 @@ Never run the registered blocking source command directly in a conversational tu
 A long-polling external process is registered as a *source* through its adapter, whose header and `--help` own the commands and flags.
 `bin/jg-procevent.sh` owns the generic contract; built-in adapters retain their tracked `bin/jg-procevent-<adapter>.sh` commands, while an explicitly bound external adapter routes through the trusted host contract above.
 
-`bin/jg-procevent-signoff.sh` is the built-in adapter for captain answers on a sign-off board; its header and `addons/signoff/README.md` own the card, answer, read-mark, and delivery contract.
+`bin/jg-procevent-signoff.sh` is the built-in adapter for captain answers on a sign-off board; its header and `core/signoff/README.md` own the card, answer, read-mark, and delivery contract.
 A home opts in with `bin/jg-procevent-signoff.sh arm` and stays exactly as it was until it does.
 `bin/jg-procevent-when.sh`, `bin/jg-procevent-quota.sh`, and `bin/jg-procevent-remote-reply.sh` are the other built-in adapters, each owning its own lifecycle rules.
 
@@ -2319,7 +2320,7 @@ The `signoff` adapter (`bin/jg-procevent-signoff.sh`) connects captain holds to 
 Armed, it binds itself to the keyed-answer intake above and registers one source whose child waits in `sign-off-axi wait` without waking Juggernaut.
 Arming is per home: a Squad Lead home arms itself, and a hold recorded in a home that is not armed raises no card.
 An answer saved on the board for a task this home still holds for the captain is captured, woken as an ordinary `check` wake, and fed to `bin/jg-captain-hold.sh answers`, so the person never copies the answer across by hand.
-While armed, `bin/jg-captain-hold.sh hold` also raises a board card for that hold; when the `signoff` add-on is installed (resolved by `bin/jg-addons-dir-lib.sh`: `JG_ADDONS_DIR`, else the in-repo `addons/`, else the pre-fold clone at `projects/juggernaut-addons`), the card goes through that add-on's script instead of this adapter, and the card rules below describe this adapter. Its title is the reason's last `?` sentence, or its first sentence when it has no `?`, with leading `[tag]`, `Captain hold:`, `Captain:` and `Say yes or no:` prefixes dropped, cut to 12 words and ending in one `?` (built from the task title only when nothing remains); its why is the whole reason followed by `Answer yes or no. The hold stays open until you answer.`, the reason cut so the whole why stays within 200 characters; its outcomes are yes or no. A card that cannot be raised makes `hold` exit non-zero with the sign-off-axi error on stderr while the hold stays recorded; a task held again whose card is already answered reuses that card, a task held again with a changed question keeps its existing card and exits zero, and a dated deferral gets no card.
+While armed, `bin/jg-captain-hold.sh hold` also raises a board card for that hold; it goes through `core/signoff/bin/jg-procevent-signoff.sh`, and the card rules below describe `bin/jg-procevent-signoff.sh`, the fallback for a home with no sign-off board. Its title is the reason's last `?` sentence, or its first sentence when it has no `?`, with leading `[tag]`, `Captain hold:`, `Captain:` and `Say yes or no:` prefixes dropped, cut to 12 words and ending in one `?` (built from the task title only when nothing remains); its why is the whole reason followed by `Answer yes or no. The hold stays open until you answer.`, the reason cut so the whole why stays within 200 characters; its outcomes are yes or no. A card that cannot be raised makes `hold` exit non-zero with the sign-off-axi error on stderr while the hold stays recorded; a task held again whose card is already answered reuses that card, a task held again with a changed question keeps its existing card and exits zero, and a dated deferral gets no card.
 Each hold occurrence gets its own card, so a task held again after an answered card gets a new live one.
 The adapter needs `sign-off-axi` on PATH: `arm` refuses without it, and the card attempt prints an install hint.
 Board keys carry a digest of this home's `JG_HOME` and the hold's stamp, so the machine's one shared board never delivers another home's answer or an earlier card's answer to this one.

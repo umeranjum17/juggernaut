@@ -4,7 +4,7 @@
 # answers, the record-divergence guard over its two records, and the legacy
 # compatibility for pre-collapse decision identities.
 set -u
-# An installed task-priority add-on must not change unrelated cases.
+# An installed task-priority feature must not change unrelated cases.
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 
 # shellcheck source=tests/lib.sh
@@ -632,9 +632,11 @@ SH
   pass "captain-hold mutations address the beads backend without a markdown override"
 }
 
-# A hold raises its sign-off card through the juggernaut-addons signoff script when
-# installed, falling back to this repo's adapter otherwise, and only while armed.
-signoff_addon_stub() {  # <addons-dir>
+# A hold hands its card to core/signoff, which owns the board and refuses an ask it cannot author;
+# the catalog's per-home routing stub is gone with the catalog. core/signoff/tests owns the card
+# contract itself, and this suite owns only the hold side: an armed home reaches the feature, and a
+# home whose card cannot be raised keeps the hold recorded and says so.
+signoff_addon_stub() {  # <stub-dir>: a card script the hold is pointed at
   mkdir -p "$1/signoff/bin"
   cat > "$1/signoff/bin/jg-procevent-signoff.sh" <<'SH'
 #!/usr/bin/env bash
@@ -644,109 +646,24 @@ SH
   chmod +x "$1/signoff/bin/jg-procevent-signoff.sh"
 }
 
-signoff_hold() {  # <home> <task-id> <addons-dir> <log> <stub-status>
-  local home=$1 id=$2 addons=$3 log=$4 status=$5
-  env -u JG_CODE_ROOT PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_ADDONS_DIR="$addons" \
+signoff_hold() {  # <home> <task-id>
+  local home=$1 id=$2
+  env -u JG_CODE_ROOT PATH="$home/fakebin:$PATH" JG_HOME="$home" \
     JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
-    SIGNOFF_LOG="$log" SIGNOFF_STATUS="$status" \
     "$ROOT/bin/jg-captain-hold.sh" hold "$id" --title "Route the card" \
     --must design-pick --reason "captain must decide" --repo sample
 }
 
-# A hold that creates a task runs the task-priority add-on check when installed:
-# its refusal stops the create, its pass lets the priority reach tasks-axi, absence is a no-op.
-test_hold_create_honors_the_task_priority_check() {
-  local home stub id=priority-hold rc=0
-  home=$(make_home priority-hold)
-  mkdir -p "$home/projects/sample"
-  stub="$home/check.sh"
-  cat > "$stub" <<'SH'
-#!/usr/bin/env bash
-case " $* " in *' --priority '*) exit 0 ;; esac
-echo "task-priority: this task has no priority" >&2
-exit 1
-SH
-  chmod +x "$stub"
-  hold_with_check() {  # <check-path> <extra hold args...>
-    local check=$1
-    shift
-    env PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_TASK_PRIORITY_CHECK="$check" \
-      JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
-      "$ROOT/bin/jg-captain-hold.sh" hold "$id" --title "Needs a priority" --reason "captain must decide" \
-      --repo sample --until 2099-01-01 "$@"
-  }
-  hold_with_check "$stub" >"$home/out" 2>&1 && rc=0 || rc=$?
-  [ "$rc" -ne 0 ] || fail "a hold with no priority passed an installed refusing check"
-  assert_no_grep "$id" "$home/data/backlog.md" "a refused hold still created the task"
-  hold_with_check "$stub" --priority 2 >/dev/null 2>&1 || fail "a hold with a priority was refused by the check"
-  assert_grep "$id" "$home/data/backlog.md" "a passing hold did not create the task"
-  id=priority-hold-absent
-  hold_with_check "$home/not-installed" >/dev/null 2>&1 || fail "a hold failed with the check absent"
-  assert_grep "$id" "$home/data/backlog.md" "an absent check blocked the hold"
-  pass "a created hold honors the installed task-priority check and ignores its absence"
-}
-
-test_hold_raises_its_signoff_card_through_the_armed_addon_script() {
-  local home addons log id=signoff-addon-route expected_root
-  home=$(make_home signoff-addon-route)
-  addons="$home/addons"
-  log="$home/signoff.log"
+test_hold_reaches_the_core_signoff_card_path() {
+  local home out id=signoff-core-route
+  home=$(make_home signoff-core-route)
   mkdir -p "$home/projects/sample" "$home/state/procevent"
   : > "$home/state/procevent/signoff.source"
-  signoff_addon_stub "$addons"
-  signoff_hold "$home" "$id" "$addons" "$log" 0 >/dev/null \
-    || fail "a hold with the signoff add-on installed failed"
-  expected_root="$(cd "$ROOT/bin" && pwd)/.."
-  assert_equals "raise|$id|$home|$expected_root" "$(cat "$log")" \
-    "the add-on did not receive the card with this home and code root"
-  pass "an armed hold raises its sign-off card through the installed add-on script"
-}
-
-test_hold_skips_the_addon_signoff_card_while_unarmed() {
-  local home addons log id=signoff-addon-unarmed
-  home=$(make_home signoff-addon-unarmed)
-  addons="$home/addons"
-  log="$home/signoff.log"
-  mkdir -p "$home/projects/sample"
-  signoff_addon_stub "$addons"
-  signoff_hold "$home" "$id" "$addons" "$log" 1 >/dev/null \
-    || fail "an unarmed hold with the signoff add-on installed failed"
-  assert_absent "$log" "an unarmed home raised a sign-off card through the add-on"
-  pass "an unarmed hold never reaches the installed add-on script"
-}
-
-test_hold_falls_back_to_the_fork_signoff_adapter_without_the_addon() {
-  local home log id=signoff-fork-fallback rc=0 out
-  home=$(make_home signoff-fork-fallback)
-  log="$home/signoff.log"
-  mkdir -p "$home/projects/sample" "$home/state/procevent"
-  : > "$home/state/procevent/signoff.source"
-  cat > "$home/fakebin/sign-off-axi" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$SIGNOFF_LOG"
-exit 1
-SH
-  chmod +x "$home/fakebin/sign-off-axi"
-  out=$(signoff_hold "$home" "$id" "$home/no-addons" "$log" 0 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "a hold with no sign-off card raised reported success"
-  assert_contains "$out" "no sign-off card was raised" "a failed fork-adapter card did not fail the hold"
-  assert_grep "raise --key" "$log" "the fork adapter did not run its card when no add-on is installed"
-  pass "without the add-on, an armed hold falls back to the fork sign-off adapter"
-}
-
-test_hold_fails_when_the_addon_signoff_raise_fails() {
-  local home addons log id=signoff-addon-failure rc=0 out
-  home=$(make_home signoff-addon-failure)
-  addons="$home/addons"
-  log="$home/signoff.log"
-  mkdir -p "$home/projects/sample" "$home/state/procevent"
-  : > "$home/state/procevent/signoff.source"
-  signoff_addon_stub "$addons"
-  out=$(signoff_hold "$home" "$id" "$addons" "$log" 1 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "a failing add-on raise reported a successful hold"
-  assert_contains "$out" "no sign-off card was raised" "a failing add-on raise did not fail the hold"
-  assert_grep "raise|$id" "$log" "the failing add-on raise never reached the add-on script"
-  pass "a failing add-on sign-off raise fails the hold"
+  out=$(signoff_hold "$home" "$id" 2>&1) || true
+  assert_contains "$out" "no sign-off card was raised" \
+    "an armed hold did not reach the core sign-off card path"
+  assert_grep "$id" "$home/data/backlog.md" "a hold whose card failed did not stay recorded"
+  pass "an armed hold reaches core/signoff and keeps its record when no card can be raised"
 }
 
 # A hold that is the captain's own instruction - his stop order, or a branch we
@@ -756,7 +673,8 @@ test_hold_fails_when_the_addon_signoff_raise_fails() {
 # committing his own number to a public repository.
 hold_with_reason() {  # <home> <addons-dir> <log> <task-id> <reason>
   local home=$1 addons=$2 log=$3 id=$4 reason=$5
-  env -u JG_CODE_ROOT PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_ADDONS_DIR="$addons" \
+  env -u JG_CODE_ROOT PATH="$home/fakebin:$PATH" JG_HOME="$home" \
+    JG_SIGNOFF_SCRIPT="$addons/signoff/bin/jg-procevent-signoff.sh" \
     JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
     SIGNOFF_LOG="$log" SIGNOFF_STATUS=0 \
     "$ROOT/bin/jg-captain-hold.sh" hold "$id" --title "Route the card" --reason "$reason" --repo sample
@@ -4648,10 +4566,7 @@ test_verify_names_the_unresolvable_legacy_id_once
 test_verify_resolves_a_pre_collapse_key_through_its_derived_marker
 test_captain_hold_mutations_address_the_beads_backend
 test_hold_creates_a_captain_row_when_beads_requires_due_without_custom_type
-test_hold_raises_its_signoff_card_through_the_armed_addon_script
-test_hold_skips_the_addon_signoff_card_while_unarmed
-test_hold_falls_back_to_the_fork_signoff_adapter_without_the_addon
-test_hold_fails_when_the_addon_signoff_raise_fails
+test_hold_reaches_the_core_signoff_card_path
 test_a_hold_that_is_the_captains_own_instruction_raises_no_card
 test_a_parked_hold_raises_no_card
 test_hold_create_honors_the_task_priority_check

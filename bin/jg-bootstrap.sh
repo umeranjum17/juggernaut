@@ -215,8 +215,8 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 . "$SCRIPT_DIR/jg-config-inherit-lib.sh"
 # shellcheck source=bin/jg-squad-lead-nudge-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-squad-lead-nudge-lib.sh"
-# Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
-# config push or reread nudge. The shim answers not parked when the add-on is absent.
+# Parked-home guard (core/parked-homes): a parked home gets no
+# config push or reread nudge. The shim answers not parked when the feature is absent.
 # shellcheck source=bin/jg-parked-homes-lib.sh
 . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
 # shellcheck source=bin/jg-startup-memory-budget-lib.sh disable=SC1091
@@ -584,8 +584,8 @@ squad_lead_sync() {
   SQUAD_LEAD_RESPAWNED_IDS=${SQUAD_LEAD_RESPAWNED_IDS:-}
   while IFS='|' read -r id home _window _meta; do
     validate_squad_lead_home "$id" "$home" || continue
-    # Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
-    # inherited config push and no reread nudge. No-op without the add-on.
+    # Parked-home guard (core/parked-homes): a parked home gets no
+    # inherited config push and no reread nudge. No-op without the feature.
     jg_parked_skip_meta "$STATE/$id.meta" "$id" config-reread && continue
     home_real="$VALIDATED_HOME"
     case " $FF_SEEN_HOMES " in
@@ -726,8 +726,8 @@ squad_lead_sync() {
     parallel=1
   fi
   while IFS='|' read -r id _home _window meta; do
-    # Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
-    # remote inheritance push and no reread nudge. No-op without the add-on.
+    # Parked-home guard (core/parked-homes): a parked home gets no
+    # remote inheritance push and no reread nudge. No-op without the feature.
     jg_parked_skip_meta "$meta" "$id" sync && continue
     remote_host=$(jg_meta_get "$meta" remote_host)
     [ -n "$remote_host" ] || continue
@@ -776,9 +776,9 @@ squad_lead_liveness_sweep() {
     # Identity for the timing record is read here, in the loop, so the per-meta
     # body below keeps its single-exit-per-outcome shape.
     id=$(basename "$meta" .meta)
-    # Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
+    # Parked-home guard (core/parked-homes): a parked home gets no
     # liveness probe and no session-start relaunch - one line names the skip.
-    # No-op without the add-on checkout.
+    # No-op without the feature checkout.
     jg_parked_skip_meta "$meta" "$id" bootstrap-liveness && continue
     if squad_lead_dormant "$STATE" "$id"; then
       echo "SQUAD_LEAD_LIVENESS: squad_lead $id: skipped: dormant with no open work"

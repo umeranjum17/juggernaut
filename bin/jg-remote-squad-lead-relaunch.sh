@@ -68,8 +68,8 @@ REMOTE_HOST=$(jg_meta_get "$META" remote_host)
 [ -n "$REMOTE_HOST" ] \
   || die "task $ID is not a remotely placed squad_lead; use bin/jg-control.sh $ID relaunch instead"
 
-# Parked-home guard (juggernaut-addons/parked-homes): a parked squad_lead home
-# gets no relaunch, remote or local. The shim answers not parked when the add-on is absent.
+# Parked-home guard (core/parked-homes): a parked squad_lead home
+# gets no relaunch, remote or local. The shim answers not parked when the feature is absent.
 # shellcheck source=bin/jg-parked-homes-lib.sh
 . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
 jg_parked_refuse_meta "$META" "$ID" relaunch || exit 1

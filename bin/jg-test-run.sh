@@ -556,7 +556,6 @@ list_portable_serial() {
 portable_serial_weight_hints() {
   cat <<'EOF'
 tests/board-link.test.sh 128
-tests/jg-addon-trust.test.sh 138
 tests/jg-afk-inject-e2e.test.sh 42537
 tests/jg-agents-md-floor.test.sh 423
 tests/jg-agy-signals-live-e2e.test.sh 61
@@ -597,6 +596,8 @@ tests/jg-herdr-names.test.sh 1061
 tests/jg-herdr-version-floor-live-e2e.test.sh 61
 tests/jg-hold-reason-gate.test.sh 1608
 tests/jg-hometag-lead-label.test.sh 393
+tests/jg-retired-catalog-check.test.sh 387
+tests/jg-host-wiring.test.sh 817
 tests/jg-inbox.test.sh 8757
 tests/jg-launch-prompt-signals-live-e2e.test.sh 56
 tests/jg-lint-partitions.test.sh 4361
@@ -652,6 +653,7 @@ tests/jg-watcher-lock.test.sh 1059731
 tests/jg-worker-account-live-e2e.test.sh 70
 tests/juggernaut-axi-serve.test.sh 1635
 tests/merge-card-title.test.sh 701
+tests/merge-gate-one-entry.test.sh 2858
 EOF
 }
 

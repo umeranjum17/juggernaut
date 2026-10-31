@@ -606,8 +606,8 @@ if [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "$(jg_meta_get "$TARG
   TARGET_TASK_ID=$(jg_send_id_from_meta "$TARGET_META")
 fi
 
-# Parked-home guard (juggernaut-addons/parked-homes): a parked squad_lead home
-# gets no message, steer, answer or nudge; the shim answers "not parked" without the add-on.
+# Parked-home guard (core/parked-homes): a parked squad_lead home
+# gets no message, steer, answer or nudge; the shim answers "not parked" without the feature.
 # shellcheck source=bin/jg-parked-homes-lib.sh
 . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
 [ -z "$TARGET_META" ] || jg_parked_refuse_meta "$TARGET_META" "$TARGET_TASK_ID" send || exit 1

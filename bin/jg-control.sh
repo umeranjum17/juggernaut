@@ -217,20 +217,13 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 . "$SCRIPT_DIR/jg-composer-lib.sh"
 # shellcheck source=bin/jg-pr-lib.sh
 . "$SCRIPT_DIR/jg-pr-lib.sh"
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$SCRIPT_DIR/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-worker-account-lib.sh
 . "$SCRIPT_DIR/jg-worker-account-lib.sh"
-# Account-pool hook (addons/account-pool): a no-op when the add-on is absent.
-_jg_ap=$(jg_addon_path "${JG_HOME:-$SCRIPT_DIR/..}" account-pool/bin/jg-account-pool-lib.sh)
-if [ -r "$_jg_ap" ]; then
-  # shellcheck source=/dev/null
-  . "$_jg_ap" || { printf 'error: the account-pool add-on at %s failed to load; fix or remove it\n' "$_jg_ap" >&2; exit 1; }
-else
-  jg_account_hook() { :; }
-fi
+# Account pool (core/account-pool): the pool hook every launch and relaunch routes through.
+# shellcheck source=core/account-pool/bin/jg-account-pool-lib.sh
+. "$SCRIPT_DIR/../core/account-pool/bin/jg-account-pool-lib.sh" || { printf 'error: core/account-pool/bin/jg-account-pool-lib.sh failed to load\n' >&2; exit 1; }
 # shellcheck source=bin/jg-exclude-tools-lib.sh
 . "$SCRIPT_DIR/jg-exclude-tools-lib.sh"
 
@@ -1367,8 +1360,8 @@ case "$VERB" in
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
-    # Parked-home guard (juggernaut-addons/parked-homes): a parked squad_lead
-    # home gets no relaunch. The shim answers not parked when the add-on is absent.
+    # Parked-home guard (core/parked-homes): a parked squad_lead
+    # home gets no relaunch. The shim answers not parked when the feature is absent.
     # shellcheck source=bin/jg-parked-homes-lib.sh
     . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
     jg_parked_refuse_meta "$META" "$ID" relaunch || exit 1

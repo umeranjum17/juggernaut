@@ -14,7 +14,7 @@
 # or the data/ or config/ folder of this home, the task's recorded home, or a
 # local parent home. Every other prompt, including Claude, Pi, omp and Gemini
 # trust dialogs (jg_busy_launch_prompt_parked), is left unanswered and rides the
-# wait-timers escalation chain (addons/wait-timers/README.md).
+# wait-timers escalation chain (core/wait-timers/README.md).
 # config/prompt-approve-off turns approval off; rejection stays on.
 # Every approval is one JSON line in state/prompt-approvals.jsonl, which
 # bin/jg-fleet-snapshot.sh publishes and bin/jg-fleet-view.sh renders.

@@ -19,11 +19,9 @@
 # GitHub has no upload path for a PR body, so the images live on the board card.
 # The board is --board, else $JG_PROOF_BOARD, else the --board of config/post-merge.
 # find prints `mode:`, `receipt:` and `media:` lines. Exit 0 also when the board tools
-# or the merge-card add-on are absent (one line says proof was skipped).
+# or the merge-card feature are absent (one line says proof was skipped).
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$SCRIPT_DIR/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-board-link-lib.sh
 . "$SCRIPT_DIR/jg-board-link-lib.sh"
 
@@ -44,8 +42,8 @@ case $KIND in ''|ready|review|merged) ;; *) die "kind must be ready, review or m
 case $ID in ''|*[!A-Za-z0-9._-]*) die "bad task id" ;; esac
 [ -n "${JG_HOME:-}" ] || die "JG_HOME is not set"
 DIR=${JG_DATA_OVERRIDE:-$JG_HOME/data}/$ID
-MC=$SCRIPT_DIR/../addons/merge-card/merge-card
-[ -x "$MC" ] || skip "the merge-card add-on is not installed"
+MC=$SCRIPT_DIR/../core/merge-card/merge-card
+[ -x "$MC" ] || skip "the merge-card feature is not installed"
 command -v jq >/dev/null 2>&1 || skip "jq is not installed"
 if [ "$HEAD" = - ] && [ "$PR" != - ]; then
   HEAD=$(gh pr view "$PR" --json headRefOid --jq .headRefOid 2>/dev/null) || HEAD=-

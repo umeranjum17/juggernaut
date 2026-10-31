@@ -2,7 +2,7 @@
 # jg-ticket.sh - record one task's ticket truth on the fleet board now.
 #
 # The board is the sign-off board named by config/fleet-board, whose tickets the
-# tickets-sync add-on publishes from this home's backlog and lane records. This
+# tickets-sync feature publishes from this home's backlog and lane records. This
 # is the fork-side call the lifecycle makes, so a merge, a dispatch, a cleanup or
 # a release cut records what it knows at the moment it happens instead of leaning
 # on whoever remembers to write a status line before the next poll.
@@ -16,10 +16,10 @@
 #   --pr       the delivered PR's full URL; "" clears the linked PRs
 #   --release  this ticket's target release
 #
-# The writer is addons/tickets-sync/ticket.py, installed at
+# The writer is core/tickets-sync/ticket.py, installed at
 # ${XDG_DATA_HOME:-$HOME/.local/share}/jg-tickets-sync/tickets-sync/ticket.py
 # (JG_TICKETS_TICKET overrides the path).
-# When the add-on is not installed, or this home has no fleet board, this does
+# When the feature is not installed, or this home has no fleet board, this does
 # nothing and exits 0: the board is optional and the poll owns creating tickets.
 # A failure names its cause on stderr and exits 1, so callers guard the call and
 # a board problem never fails a merge, a spawn or a cleanup.
@@ -65,7 +65,7 @@ shift
 case "$TASK" in
   *[!A-Za-z0-9._-]*|'') echo "jg-ticket: invalid task id: $TASK" >&2; exit 2 ;;
 esac
-# The sync publishes main/<task> as `jg-<sha256 32>` (addons/tickets-sync/ticket.py
+# The sync publishes main/<task> as `jg-<sha256 32>` (core/tickets-sync/ticket.py
 # owns that rule); id prints it without touching the board.
 if [ "$TASK" = id ] && [ "$#" -eq 1 ]; then
   TASK=${1:-}

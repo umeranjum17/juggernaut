@@ -71,8 +71,6 @@
 # reconciled by the ordinary remote sync/update path before the transfer
 # succeeds; there is no separate allowlist version negotiation.
 #
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-startup-memory-budget-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-startup-memory-budget-lib.sh"
 # shellcheck source=bin/jg-role-lib.sh
@@ -88,7 +86,8 @@ JG_SHARED_CAPTAIN_MODE="444"
 # Extend here to inherit more of the primary's local config; override via the
 # environment only in tests. Items must not contain whitespace.
 JG_INHERITABLE_CONFIG="${JG_INHERITABLE_CONFIG:-crew-dispatch.json preferred-stack.json architecture.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode keep-ai-trailers supervision-host-off juggernaut-role lane-target}"
-_bi=$(jg_addon_path "${JG_HOME:-$(dirname "${BASH_SOURCE[0]}")/..}" brief-inherit/bin/jg-brief-inherit-lib.sh); [ ! -f "$_bi" ] || { . "$_bi" && jg_brief_inherit_config; }
+# shellcheck source=core/brief-inherit/bin/jg-brief-inherit-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../core/brief-inherit/bin" && pwd)/jg-brief-inherit-lib.sh" && jg_brief_inherit_config
 
 # juggernaut-role additionally carries a proof-of-state receipt: a scoped role
 # grant (or its recorded absence) authorizes a squad_lead home only while
