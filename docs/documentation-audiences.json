@@ -301,6 +301,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/prior-art/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/radio-silence/SKILL.md",
       "audience": "agent-runtime"
     },

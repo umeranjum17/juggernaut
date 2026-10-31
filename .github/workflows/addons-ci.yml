@@ -8,6 +8,17 @@ on:
 permissions:
   contents: read
 
+# Per-PR supersession: a new push to the same pull request replaces that PR's
+# in-flight run instead of leaving a superseded head holding one of the shared
+# runners until it finishes. The group is keyed on the workflow plus the pull
+# request number, so every run of one PR shares a group and a different PR
+# never does. Cancellation is limited to pull_request events, so if a push
+# trigger is ever added here a main run is still never cancelled mid-way. The
+# jobs a run performs are unchanged; only a superseded run stops early.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Pull requests only: these checks exist so a pull request can be concluded
 # (no-mistakes waits for registered checks on the PR head), and every change
 # reaches main through a pull request, so a separate push run on main would
@@ -238,6 +249,10 @@ jobs:
       # Fixture home, stub gh and receipts; no merge runs.
       - name: Owner-rules gate test
         run: bash owner-rules/tests/owner-rules-gate.test.sh
+      - name: Owner-rules gate repoint test
+        run: bash owner-rules/tests/gate-repoint.test.sh
+      - name: Merge-card evidence-root message test
+        run: bash merge-card/tests/dd-root-message.test.sh
       - name: Owner-rules design flag test
         run: bash owner-rules/tests/design-flag.test.sh
       - name: Pipeline route switch test

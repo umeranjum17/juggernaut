@@ -15,6 +15,11 @@
 # the upward write, so the mate can handle its own poll observation.
 # No new state file and no new transport are involved.
 #
+# The same operation carries the landed merge to this home's active version
+# branch through bin/jg-version-branch-sync.sh, opt-in through
+# config/version-branch, so the version branch a release builds from cannot stay
+# behind the default branch between merges.
+#
 # Normal operation deduplicates the task's latest canonical PR identity through
 # the merge-notification marker owned by bin/jg-pr-lib.sh. Main-home wake keys
 # also include that PR identity so distinct PRs for a reused task remain
@@ -122,6 +127,11 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
   # The ticket closes with the merge and carries the delivered PR, not the link
   # some earlier status line happened to mention.
   [ "$status" -ne 0 ] || JG_HOME=$home JG_STATE_OVERRIDE=$state "$_JG_MERGE_OUTCOME_LIB_DIR/jg-ticket.sh" "$id" --stage "done" --state "done" --pr "$JG_PR_URL" || true
+  # The landed merge reaches this home's active version branch here, so no home
+  # depends on an editable hook and no agent has to remember the carry. Off
+  # costs one file test; the pass never forces, never touches a dirty copy, and
+  # reports a version branch it cannot fast-forward instead of merging it.
+  [ ! -e "${JG_CONFIG_OVERRIDE:-$home/config}/version-branch" ] || [ "$status" -ne 0 ] || JG_HOME=$home JG_CONFIG_OVERRIDE="${JG_CONFIG_OVERRIDE:-$home/config}" "$_JG_MERGE_OUTCOME_LIB_DIR/jg-version-branch-sync.sh" run 2>&1 | sed 's/^/version branch: /' >&2 || true
   if [ "$status" -eq 0 ] && declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "${JG_CONFIG_OVERRIDE:-$home/config}" "$home" "$id" "$state/$id.meta" - "$JG_PR_URL" >&2; fi
   # The merge card carries the proof too: a no-op when the post hook filed it, else files it or says what is missing.
   if [ "$status" -eq 0 ] && { [ -e "${JG_CONFIG_OVERRIDE:-$home/config}/post-merge" ] || [ -n "${JG_PROOF_BOARD:-}" ]; }; then

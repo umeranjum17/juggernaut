@@ -1898,6 +1898,20 @@ esac
 # Reached only after the forge confirmed the merge landed: set -e exits on a
 # refused or failed merge above, and a queued forge merge exits without an
 # outcome while its existing poll remains armed.
+#
+# A landed merge leaves every copy that runs on this code on the old bytes until
+# somebody updates it, so start the guarded convergence pass here, detached.
+# bin/jg-fleet-autosync.sh owns the pass, and its armed drift check carries any
+# merge this start never made. Nothing about the merge depends on it finishing.
+autosync_dir="${JG_DATA_OVERRIDE:-$JG_HOME/data}/jg-fleet-autosync"
+if mkdir -p "$autosync_dir" 2>/dev/null; then
+  nohup env JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
+    JG_DATA_OVERRIDE="${JG_DATA_OVERRIDE:-$JG_HOME/data}" \
+    "$SCRIPT_DIR/jg-fleet-autosync.sh" run \
+    >> "$autosync_dir/merge.log" 2>&1 < /dev/null &
+else
+  printf 'actionable: merged %s but the fleet convergence pass could not be started; the drift check still carries it\n' "$URL" >&2
+fi
 outcome_rc=0
 jg_merge_outcome_report "$JG_HOME" "$STATE" "$ID" "$URL" self \
   "${JG_PR_MERGE_AUTHORITY:-}" || outcome_rc=$?

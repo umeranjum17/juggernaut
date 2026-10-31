@@ -144,6 +144,7 @@ Load `task-dispatch` at every intake: it owns project resolution, Squad Lead rou
 
 - A diagnostic request, report, recommendation, or implementation-ready finding is evidence, not authorization to change code.
 - Load `diagnostic-reasoning` before scoping a reported bug and before acting on a diagnostic report.
+- New or complex work starts from prior art: load `prior-art` before designing anything the project does not already contain, record the pick, its licence and the reasons in the task's prior-art section, and let `bin/jg-prior-art-gate.sh` refuse a brief without one; work that is neither new nor complex records `none needed` with the reason.
 - An owner correction is never a one-time fix: record it where section 9 requires, or the turn-end guard flags the turn ([`docs/turnend-guard.md`](docs/turnend-guard.md)).
 
 Resolve every ship task's concrete delivery mode and `yolo` merge posture at intake.
