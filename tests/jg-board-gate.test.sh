@@ -42,20 +42,36 @@ SH
   printf '%s\n' "$d"
 }
 
-run() {  # <case dir> <command...>
+with_env() {  # <case dir> <command...>
   local d=$1
   shift
   env PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" \
     SIGN_OFF_HOME="$d/so" SIGNOFF_LOG="$d/signoff.log" JG_BOARD_GATE_NOW="$NOW" \
-    JG_BOARD_GATE_REFIRE_SECS=0 "$@" 2>&1
+    JG_BOARD_GATE_REFIRE_SECS=0 "$@"
 }
 
-ask() {  # <case dir> [post flags...]
+run() { with_env "$@" 2>&1; }  # <case dir> <command...> -> both streams
+
+# `post` prints the card key alone on stdout and its own diagnostics, including
+# the card-rule measurement, on stderr. A key read from the merged streams is a
+# diagnostic line the moment the measurement has anything to say, so a key read
+# takes stdout alone and the refusal text keeps the merged form above.
+run_out() { with_env "$@" 2>/dev/null; }  # <case dir> <command...> -> stdout alone
+
+POST=(post --title "Rename the fleet word?" --ask-ref m1 --why "It reads oddly here."
+  --outcome yes="It is renamed." --outcome no="It stays." --recommend yes
+  --recommend-reason "It reads better." --default no)
+
+ask() {  # <case dir> [post flags...] -> both streams, for refusal text
   local d=$1
   shift
-  run "$d" "$CARD" post --title "Rename the fleet word?" --ask-ref m1 --why "It reads oddly here." \
-    --outcome yes="It is renamed." --outcome no="It stays." --recommend yes \
-    --recommend-reason "It reads better." --default no "$@"
+  run "$d" "$CARD" "${POST[@]}" "$@"
+}
+
+ask_key() {  # <case dir> [post flags...] -> the card key the post printed
+  local d=$1
+  shift
+  run_out "$d" "$CARD" "${POST[@]}" "$@"
 }
 
 add_card() {  # <case dir> <key> <detail> <filed-iso>
@@ -92,9 +108,8 @@ test_non_must_ask_is_refused_and_routed() {
 test_must_ask_is_posted_and_counted() {
   local d out key detail
   d=$(setup accept)
-  out=$(ask "$d" --must money) || fail "a must ask was refused: $out"
-  key=$(printf '%s\n' "$out" | sed -n '1p')
-  [ -n "$key" ] || fail "the post printed no card key: $out"
+  key=$(ask_key "$d" --must money) || fail "a must ask was refused: $(ask "$d" --must money)"
+  [ -n "$key" ] || fail "the post printed no card key"
   detail=$(jq -r --arg k "$key" '.items[] | select(.key == $k) | .detail' "$d/so/.sign-off/decisions.json")
   assert_equals "must: money" "$detail" "the card does not carry its must category"
   assert_equals "1" "$(run "$d" "$GATE" waiting)" "the must ask was not counted as waiting"
