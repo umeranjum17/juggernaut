@@ -46,8 +46,8 @@
 # run holds at most JOBS concurrent ShellCheck processes. Diagnostics replay
 # in stable shard/root order. JG_LINT_JOBS=1 changes concurrency, not diagnostics
 # or exit selection.
-# --partition 1of2/2of2 splits the entire canonical inventory across
-# two CI runners, each with those same concurrency-limited workers.
+# --partition <k>of<n> splits the entire canonical inventory across n CI
+# runners, each with those same concurrency-limited workers.
 # Partitions are complete, disjoint, and byte-weight balanced; --list-files
 # exposes their actual roots.
 # Partition mode starts with full source-aware analysis, never changed-only
@@ -107,7 +107,7 @@
 #   jg-lint.sh --fast [path]...       local lint with extended analysis disabled
 #   jg-lint.sh <path>...               lint explicit roots with the same config
 #   jg-lint.sh --jobs <1|2> [path]...  override concurrent worker count
-#   jg-lint.sh --partition <1of2|2of2> lint one canonical CI partition (see memory handling above)
+#   jg-lint.sh --partition <k>of<n>    lint one canonical CI partition (see memory handling above)
 #   jg-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
 #   jg-lint.sh --required-version      print the ShellCheck pin
 #   jg-lint.sh --list-files            print the file set that would be linted
@@ -832,17 +832,30 @@ esac
 case "$PARTITION" in
   '')
     if [ "$PARTITION_REQUESTED" -eq 1 ]; then
-      printf 'jg-lint.sh: --partition requires 1of2 or 2of2.\n' >&2
+      printf 'jg-lint.sh: --partition requires <k>of<n>, for example 1of4.\n' >&2
       exit 2
     fi
     ;;
-  1of2|2of2)
+  *of*)
+    partition_index=${PARTITION%%of*}
+    partition_count=${PARTITION##*of}
+    case "$partition_index:$partition_count" in
+      *[!0-9:]*|:*|*:)
+        printf 'jg-lint.sh: --partition must be <k>of<n>, got %s.\n' "$PARTITION" >&2
+        exit 2
+        ;;
+    esac
+    if [ "$partition_index" -lt 1 ] || [ "$partition_count" -lt 2 ] \
+      || [ "$partition_index" -gt "$partition_count" ]; then
+      printf 'jg-lint.sh: --partition needs 1 <= k <= n and n >= 2, got %s.\n' "$PARTITION" >&2
+      exit 2
+    fi
     if [ "$FAST" -eq 1 ] || [ "$#" -gt 0 ]; then
       printf 'jg-lint.sh: --partition requires full canonical lint; omit --fast and explicit paths.\n' >&2
       exit 2
     fi
     ;;
-  *) printf 'jg-lint.sh: --partition must be 1of2 or 2of2, got %s.\n' "$PARTITION" >&2; exit 2 ;;
+  *) printf 'jg-lint.sh: --partition must be <k>of<n>, got %s.\n' "$PARTITION" >&2; exit 2 ;;
 esac
 
 if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; }; then
@@ -948,8 +961,15 @@ if [ -n "$PARTITION" ]; then
   partition_weights=$(jg_lint_root_weights) || exit $?
   while IFS="$TAB" read -r index path; do
     PARTITION_ROOTS+=("$path")
-  done < <(printf '%s\n' "$partition_weights" | LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n | awk -F '\t' -v want="${PARTITION%%of*}" '
-    { shard=(load[2] < load[1]) ? 2 : 1; load[shard]+=$1; if (shard == want) print $2 "\t" $3 }
+  done < <(printf '%s\n' "$partition_weights" | LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n | awk -F '\t' \
+    -v want="$partition_index" -v bins="$partition_count" '
+    # Largest-first into the least-loaded partition keeps the n CI runners
+    # byte-weight balanced without changing which roots are linted. For two
+    # partitions this is exactly the older two-way rule.
+    { bin = 1
+      for (i = 2; i <= bins; i++) if (load[i] < load[bin]) bin = i
+      load[bin] += $1
+      if (bin == want) print $2 "\t" $3 }
   ' | LC_ALL=C sort -t "$TAB" -k1,1n)
   ROOTS=("${PARTITION_ROOTS[@]}")
 fi
@@ -1082,7 +1102,6 @@ PROGRESS=0
 if [ -n "$PARTITION" ]; then
   PROGRESS=1
 fi
-
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/jg-lint.XXXXXX") || exit 1
 ACTIVE_PIDS=()
 # shellcheck disable=SC2329 # Registered by the EXIT and signal traps below.

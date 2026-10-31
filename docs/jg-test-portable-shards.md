@@ -106,15 +106,16 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 
 ## Lint partitions and end-to-end latency
 
-`bin/jg-lint.sh` owns two canonical CI partitions, each attempting full source-aware ShellCheck analysis and running workflow validation and backend-purity checks.
+`bin/jg-lint.sh` owns four canonical CI partitions, each attempting full source-aware ShellCheck analysis and running workflow validation and backend-purity checks.
+Four rather than two keeps every lint job inside the Normal tier once the heaviest roots really follow their sources: each partition carries at most one of them and the four are byte-weight balanced.
 CI requires its per-root bounds, so an unenforceable deadline or address-space limit refuses lint rather than running uncapped; the script header owns the envelope, the per-root execution contract, and the measured allowance a root too heavy for the default envelope re-runs under.
-Its `--list-files` interface exposes partition membership; `tests/jg-lint-root-memory.test.sh` verifies that such a re-run keeps source following and that a root which exceeds even its allowance fails.
+Its `--list-files` interface exposes partition membership; `tests/jg-lint-root-memory.test.sh` verifies that such a re-run keeps source following and that a root which exceeds even its allowance fails, and `tests/jg-lint-partitions.test.sh` verifies the four partitions stay complete, disjoint, byte-weight balanced, and one heavy root each.
 The workflow uploads each partition's quiet telemetry plus its per-root lifecycle sidecar to distinguish analysis cost, memory use, and host contention.
 No fast mode, path skips, or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the watcher-lock floor alone exceeds that objective.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
-The layout uses twelve long-lived Linux jobs (six serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
+The layout uses fourteen long-lived Linux jobs (six serial, two parallel, Herdr, four lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
 

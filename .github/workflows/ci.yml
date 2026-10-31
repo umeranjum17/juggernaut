@@ -58,7 +58,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2]
+        # Four partitions, not two: once the two heaviest roots really follow
+        # their sources (bin/jg-lint.sh's measured allowance), a two-partition
+        # slice costs 27 minutes of root time and reaches this 30-minute bound,
+        # where the policy asks for a distribution fix rather than a longer
+        # timeout. Each partition carries at most one heavy root and the four
+        # are byte-weight balanced within a couple of KB.
+        partition: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v6
       - name: Install pinned ShellCheck
