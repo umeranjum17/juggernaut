@@ -320,7 +320,7 @@ family_for_basename() {
     jg-turnend-guard.test.sh|jg-wake-daemon-lifecycle-e2e.test.sh|\
     jg-mail.test.sh|jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|\
     jg-pi-wake-replay.test.sh|jg-wake-bus-parity.test.sh|\
-    jg-state-bus-parity.test.sh)
+    jg-state-bus-parity.test.sh|jg-reply-bus-parity.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
     jg-afk-inject-herdr-e2e.test.sh|jg-backend-herdr-presentation-e2e.test.sh|\
@@ -627,6 +627,7 @@ tests/jg-public-followup.test.sh 474556
 tests/jg-quota-array-dispatch-live-e2e.test.sh 54
 tests/jg-remote-reply.test.sh 240899
 tests/jg-remote-squad-lead-lifecycle-e2e.test.sh 567728
+tests/jg-reply-bus-parity.test.sh 2655
 tests/jg-rovo-signals-live-e2e.test.sh 57
 tests/jg-self-repo-role.test.sh 9033
 tests/jg-send-dormant-lead.test.sh 1692

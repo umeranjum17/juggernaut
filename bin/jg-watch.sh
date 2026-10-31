@@ -3907,6 +3907,11 @@ while :; do
   # repost after grace, and escalate once if the recovery turn is also missed.
   # No conversation scraping; unresolved records are never silently expired.
   jg_pending_reply_tick "$STATE" || true
+  # Migration step 5d shadow: the same waiters, timers and replies, mirrored to the
+  # bus as durable workflow events beside the records (docs/reply-shadow.md). Off
+  # costs one file test, and a mirror that cannot reach its bus can never fail or
+  # delay a reply, a repost or an escalation.
+  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
 
   # Endpoint liveness runs before queue observation: a positively dead or
   # missing squad_lead endpoint is relaunched here on a bounded cadence, which
