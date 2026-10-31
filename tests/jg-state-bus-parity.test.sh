@@ -138,11 +138,11 @@ test_a_watch_sees_the_claim_and_the_release() {
   claim_as main lane-w
   timeout 8 "$NATS_BIN" -s "$NATS_URL" kv watch JG_LEASES --updates > "$watchfile" 2>&1 &
   wpid=$!
-  sleep 1
+  sleep 0.7
   statebus sync >/dev/null 2>&1 || fail "the mirror failed while a watcher ran"
   rm -f "$STATE_DIR/.lease-lane-w" || fail "releasing the watched lease failed"
   statebus sync >/dev/null 2>&1 || fail "the mirror failed after the watched release"
-  sleep 1
+  sleep 0.7
   kill "$wpid" 2>/dev/null || true
   wait "$wpid" 2>/dev/null || true
   out=$(cat "$watchfile")
