@@ -1371,6 +1371,63 @@ test_ship_branch_prefix_defaults_to_legacy_fm() {
   pass "jg-brief.sh: --branch-prefix omitted defaults every ship mode to fm/<task-id>"
 }
 
+# A project that carries a version branch (release/c-<N>) is where new work
+# belongs, so a ship brief scaffolded with that project records the branch as its
+# base with no --base-branch flag, and the Definition of done targets it.
+# A project without one keeps the default-branch setup sentence, a mode that
+# publishes nothing keeps no base, and an explicit flag still wins.
+# bin/jg-version-branch-lib.sh owns which branch that is; bin/jg-spawn.sh
+# resolves the same default and refuses a brief that disagrees.
+test_base_branch_defaults_to_the_project_version_branch() {
+  local home proj brief
+  home="$TMP_ROOT/base-default-home"
+  mkdir -p "$home/config" "$home/data" && : > "$home/config/delivery-risk-loose"
+  proj="$TMP_ROOT/base-default-proj"
+  jg_git_init_commit "$proj"
+  git -C "$proj" branch -q release/c-3
+
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-base-default-v1 some-proj \
+    --mode direct-PR --project "$proj" >/dev/null 2>&1 \
+    || fail "a project with a version branch should scaffold"
+  brief="$home/data/brief-base-default-v1/brief.md"
+  # shellcheck source=bin/jg-dod-lib.sh
+  . "$ROOT/bin/jg-dod-lib.sh"
+  [ "$(jg_brief_base_branches "$brief")" = release/c-3 ] \
+    || fail "the brief did not default its base to the project's version branch"
+  # shellcheck disable=SC2016  # literal backticks in rendered prose must stay unexpanded
+  assert_grep 'against the base branch `release/c-3` (`--base release/c-3`)' "$brief" \
+    "the Definition of done did not target the version branch"
+
+  # An explicit base still wins over the project's version branch.
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-base-default-v2 some-proj \
+    --mode direct-PR --project "$proj" --base-branch feature/hub >/dev/null 2>&1 \
+    || fail "an explicit --base-branch should scaffold"
+  brief="$home/data/brief-base-default-v2/brief.md"
+  [ "$(jg_brief_base_branches "$brief")" = feature/hub ] \
+    || fail "an explicit --base-branch was overridden by the project's version branch"
+
+  # A mode that publishes nothing carries no base, on the same project.
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-base-default-v3 some-proj \
+    --mode local-only --project "$proj" >/dev/null 2>&1 \
+    || fail "local-only with a project directory should scaffold"
+  brief="$home/data/brief-base-default-v3/brief.md"
+  ! jg_brief_base_branches "$brief" >/dev/null \
+    || fail "a local-only brief recorded a base it cannot land"
+
+  # A project without a version branch keeps the default-branch setup.
+  proj="$TMP_ROOT/base-default-plain"
+  jg_git_init_commit "$proj"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-base-default-v4 some-proj \
+    --mode direct-PR --project "$proj" >/dev/null 2>&1 \
+    || fail "a project without a version branch should scaffold"
+  brief="$home/data/brief-base-default-v4/brief.md"
+  ! jg_brief_base_branches "$brief" >/dev/null \
+    || fail "a project without a version branch recorded a base"
+  assert_grep 'at a detached HEAD on a clean default branch.' "$brief" \
+    "a project without a version branch changed its default-branch setup line"
+  pass "jg-brief.sh: a project's version branch is the default base"
+}
+
 # (b) + (c) A configured override must replace "fm/" everywhere the branch name is
 # rendered - the branch-creation command, the never-push rule text, the
 # definition-of-done text, and the status-message text - never partially.
@@ -1772,6 +1829,7 @@ test_home_brief_include_is_appended_last
 test_brief_include_works_without_add_on
 
 test_base_branch_is_rendered_and_bounded
+test_base_branch_defaults_to_the_project_version_branch
 test_ship_branch_prefix_defaults_to_legacy_fm
 test_ship_branch_prefix_override_is_consistent_across_modes
 test_ship_branch_prefix_empty_override_yields_bare_task_id

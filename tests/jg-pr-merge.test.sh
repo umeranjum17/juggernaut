@@ -215,6 +215,10 @@ case "${1:-} ${2:-}" in
         cat "$JG_TEST_GH_VIEW_JSON"
         exit 0
         ;;
+      *baseRefName*)
+        printf '%s\t%s\n' "${JG_TEST_GH_BASE:-}" "${JG_TEST_GH_HEAD_REF:-}"
+        exit 0
+        ;;
     esac
     ;;
   "pr merge")
@@ -966,6 +970,70 @@ test_pr_check_from_status_records_only_the_ready_report() {
 # An open pull request says what it is waiting for from the moment it is
 # recorded ready, before anyone attempts a merge, so the wait is never only in
 # a private record (bin/jg-pr-lib.sh jg_pr_wait_status).
+# A feature pull request belongs on the project's current version branch
+# (release/c-<N>), never on the default branch: the default branch moves only
+# when a release lands on it, so a feature merged there lands outside the release
+# it belongs to. The release pull request itself, whose head is the version
+# branch, is the one allowed exception.
+# bin/jg-version-branch-lib.sh owns which branch that is; this pins what the
+# record-and-arm step does with it, including that a refusal records nothing.
+test_main_based_feature_pull_request_is_refused() {
+  local case_dir rc out err
+  case_dir=$(make_case version-branch-base)
+  add_gh_mocks "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-1 \
+    "$(git -C "$case_dir/project" rev-parse HEAD)"
+
+  set +e
+  env PATH="$case_dir/fakebin:$PATH" \
+    JG_ROOT_OVERRIDE="$ROOT" \
+    JG_HOME="$case_dir/home" \
+    JG_STATE_OVERRIDE="$case_dir/state" \
+    JG_TEST_GH_LOG="$case_dir/gh.log" \
+    JG_TEST_GH_BASE=main \
+    JG_TEST_GH_HEAD_REF=fm/task-x1 \
+    HOME="$case_dir/user-home" \
+    "$ROOT/bin/jg-pr-check.sh" task-x1 https://github.com/example/repo/pull/78 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  err=$(cat "$case_dir/stderr")
+  expect_code 1 "$rc" "a feature pull request based on the default branch must be refused"
+  assert_contains "$err" "release/c-1" "the refusal does not name the version branch to use"
+  assert_contains "$err" "targets the default branch main" "the refusal does not name the base it read"
+  assert_no_grep 'pr=' "$case_dir/state/task-x1.meta" \
+    "a refused pull request was recorded anyway"
+  [ ! -e "$case_dir/state/task-x1.check.sh" ] \
+    || fail "a refused pull request armed a merge poll"
+
+  # The release pull request has the version branch as its head, so the same
+  # base is allowed and the refusal stays silent.
+  case_dir=$(make_case version-branch-release)
+  add_gh_mocks "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-1 \
+    "$(git -C "$case_dir/project" rev-parse HEAD)"
+  set +e
+  env PATH="$case_dir/fakebin:$PATH" \
+    JG_ROOT_OVERRIDE="$ROOT" \
+    JG_HOME="$case_dir/home" \
+    JG_STATE_OVERRIDE="$case_dir/state" \
+    JG_TEST_GH_LOG="$case_dir/gh.log" \
+    JG_TEST_GH_BASE=main \
+    JG_TEST_GH_HEAD_REF=release/c-1 \
+    JG_TEST_GH_HEAD="$(git -C "$case_dir/wt" rev-parse HEAD)" \
+    HOME="$case_dir/user-home" \
+    "$ROOT/bin/jg-pr-check.sh" task-x1 https://github.com/example/repo/pull/79 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  out=$(cat "$case_dir/stderr")
+  assert_not_contains "$out" "targets the default branch" \
+    "the release pull request from the version branch was refused (exit $rc)"
+  pass "a feature pull request based on the default branch is refused; the release pull request is allowed"
+}
+
 test_pr_ready_publishes_the_wait() {
   local case_dir rc head
   head=5151515151515151515151515151515151515151
@@ -4867,5 +4935,6 @@ test_required_partial_reads_report_all_failures
 test_allow_red_refused_on_forgejo
 test_allow_missing_refused_on_forgejo
 test_pr_check_from_status_records_only_the_ready_report
+test_main_based_feature_pull_request_is_refused
 test_pr_ready_publishes_the_wait
 test_post_merge_cleanup_tears_down_once
