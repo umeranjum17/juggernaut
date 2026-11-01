@@ -18,10 +18,17 @@
 # A closed or merged pull request reports that terminal state and nothing else.
 # Unresolved review-thread state is out of this command's scope.
 #
-# Usage: jg-pr-state.sh <pr-url>
+# Usage: jg-pr-state.sh [--all] <pr-url>
 #   Prints one line per blocker it can see and nothing when it sees none.
 #   Blockers do not change the successful exit status; lookup or usage refusal
 #   exits non-zero.
+# --all widens the check read from the required contexts to every reported check
+# and prints each non-green one as `CHECK: <name> (<state>)`. It is what
+# bin/jg-dod-lib.sh reads to refuse a `done:` while the pull request still has a
+# red or unfinished check, so a lane fixes it or waits instead of reporting done
+# early; the default stays required-only, because that is what blocks a merge.
+# Advisory checks an ordinary run does not need are still omitted from the
+# default read, and a skipping or cancelled check is reported by neither.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -64,7 +71,13 @@ if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
   usage
   exit 0
 fi
-[ "$#" -eq 1 ] || die "usage: jg-pr-state.sh <pr-url>"
+[ "$#" -ge 1 ] || die "usage: jg-pr-state.sh [--all] <pr-url>"
+ALL=0
+case "${1:-}" in
+  --all) ALL=1; shift ;;
+  -*) die "unknown option: $1" ;;
+esac
+[ "$#" -eq 1 ] || die "usage: jg-pr-state.sh [--all] <pr-url>"
 command -v gh >/dev/null 2>&1 || die "gh is required"
 
 URL=$1
@@ -128,10 +141,19 @@ esac
 GH_STDERR=$(mktemp "${TMPDIR:-/tmp}/jg-pr-state.XXXXXX") \
   || die "could not create temporary file"
 trap 'rm -f "$GH_STDERR"' EXIT INT TERM
-if ! REQUIRED=$(gh pr checks "$URL" --required --json name,state,bucket --jq '
-  .[]
+if [ "$ALL" = 1 ]; then
+  CHECK_SCOPE=''
+  CHECK_JQ='.[] | select(.bucket == "fail" or .bucket == "pending") | "CHECK: \(.name) (\(.state))"'
+  CHECK_DIE="could not read checks for $URL"
+else
+  CHECK_SCOPE=--required
+  CHECK_JQ='.[]
   | select(.bucket != "pass" and .bucket != "skipping")
-  | "REQUIRED CHECK: \(.name) (\(.state))"' 2>"$GH_STDERR"); then
+  | "REQUIRED CHECK: \(.name) (\(.state))"'
+  CHECK_DIE="could not read required checks for $URL"
+fi
+# shellcheck disable=SC2086  # CHECK_SCOPE is the flag or nothing, never one word.
+if ! REQUIRED=$(gh pr checks "$URL" $CHECK_SCOPE --json name,state,bucket --jq "$CHECK_JQ" 2>"$GH_STDERR"); then
   # These two sentences are gh's own human-readable error text, verified against
   # gh 2.100.0 on 2026-09-12. gh reports "nothing reported" as an error rather
   # than as structured data, so matching its text is the only way to tell that
@@ -143,7 +165,7 @@ if ! REQUIRED=$(gh pr checks "$URL" --required --json name,state,bucket --jq '
     REQUIRED="CHECKS: no required check has reported; readiness unconfirmed"
   else
     cat "$GH_STDERR" >&2
-    die "could not read required checks for $URL"
+    die "$CHECK_DIE"
   fi
 fi
 [ -z "$REQUIRED" ] || printf '%s\n' "$REQUIRED"
