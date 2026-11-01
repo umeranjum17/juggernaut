@@ -325,6 +325,14 @@ jg_test_cleanup() {
 
 JG_TEST_BUS_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-bus.$$.XXXXXX") || return 1
 
+# The pending-reply producers publish every write (bin/jg-pending-reply-lib.sh),
+# and they resolve their server from the environment before the default address.
+# A suite that starts no bus of its own must therefore never reach the machine's:
+# this default refuses instantly, and jg_test_bus_start below points it at the
+# suite's own server.
+JG_REPLY_BUS_URL=${JG_REPLY_BUS_URL:-nats://127.0.0.1:1}
+export JG_REPLY_BUS_URL
+
 # jg_test_bus_start <dir>: start a server and export JG_KV_URL and JG_NATS_BIN
 # into the calling shell. Returns 1 when nats-server or the nats client is
 # absent. Call it directly, never in a command substitution: a subshell's exports
@@ -345,7 +353,8 @@ jg_test_bus_start() {  # <dir>
     if [ -n "$port" ]; then
       JG_NATS_BIN=$client
       JG_KV_URL="nats://127.0.0.1:$port"
-      export JG_NATS_BIN JG_KV_URL
+      JG_REPLY_BUS_URL=$JG_KV_URL
+      export JG_NATS_BIN JG_KV_URL JG_REPLY_BUS_URL
       return 0
     fi
     sleep 0.05

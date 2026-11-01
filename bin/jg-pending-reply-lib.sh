@@ -174,6 +174,36 @@ jg_pending_reply_path() {  # <state-dir> <corr_id>
   printf '%s/%s' "$(jg_pending_reply_dir "$1")" "$2"
 }
 
+# --- the event stream -------------------------------------------------------
+# The bus is the authority for a waiter's facts and the record file is its
+# projection (bin/jg-reply-bus.sh owns the stream). Every writer below publishes
+# once it has written, so a fact the record shows is a fact the stream holds, and
+# the fold can rebuild the record from the stream alone.
+#
+# A home whose bus is unreachable is never failed here: the publish skips, the
+# projection still serves the guard, and the next write to that waiter carries its
+# whole state to the bus again. Nothing is lost by a skipped publish except the
+# rebuild of a waiter that is never written again.
+jg_pending_reply_publish_events() {  # <record-path> [discard]
+  local rec=$1 flag="" bus at
+  [ -n "$rec" ] || return 0
+  [ "${2:-}" = discard ] && flag=--discard
+  bus="$_JG_PENDING_REPLY_LIB_DIR/jg-reply-bus.sh"
+  [ -x "$bus" ] || return 0
+  at=$(jg_pending_reply_now)
+  "$bus" publish "$rec" --at "$at" ${flag:+"$flag"} >/dev/null 2>&1 || true
+  return 0
+}
+
+# Drop the delivery marker and publish the record without it: the attempt it
+# recorded is either confirmed (the record holds delivered_epoch) or no longer
+# evidence of anything.
+_jg_pending_reply_clear_marker() {  # <state-dir> <corr_id>
+  local state=$1 corr=$2
+  rm -f -- "$(jg_pending_reply_delivery_confirmation_path "$state" "$corr")" 2>/dev/null || true
+  jg_pending_reply_publish_events "$(jg_pending_reply_path "$state" "$corr")"
+}
+
 # Privacy-safe correlation id: 16 lowercase hex chars (64 bits of entropy).
 jg_pending_reply_new_id() {
   local raw hex
@@ -292,7 +322,8 @@ jg_pending_reply_set() {  # <record-path> <key> <value>
     printf '%s\n' "$line" >> "$tmp" || return 1
   done < "$rec"
   printf '%s=%s\n' "$key" "$value" >> "$tmp" || return 1
-  mv -f "$tmp" "$rec"
+  mv -f "$tmp" "$rec" || return 1
+  jg_pending_reply_publish_events "$rec"
 }
 
 # Embed or replace a correlation token after the from-juggernaut marker.
@@ -380,6 +411,7 @@ grace_secs=$(jg_pending_reply_grace_secs)
 EOF
   chmod 600 "$tmp" 2>/dev/null || true
   mv -f "$tmp" "$rec" || return 1
+  jg_pending_reply_publish_events "$rec"
   printf '%s' "$corr"
 }
 
@@ -416,7 +448,8 @@ jg_pending_reply_write_delivery_confirmation() {  # <state-dir> <corr_id> <state
   tmp="$marker.tmp.$$"
   printf '%s=%s\n' "$delivery_state" "$value" > "$tmp" || return 1
   chmod 600 "$tmp" 2>/dev/null || true
-  mv -f "$tmp" "$marker"
+  mv -f "$tmp" "$marker" || return 1
+  jg_pending_reply_publish_events "$(jg_pending_reply_path "$pending_state" "$corr")"
 }
 
 jg_pending_reply_prepare_delivery() {  # <state-dir> <corr_id>
@@ -444,15 +477,14 @@ jg_pending_reply_confirm_delivery() {  # <state-dir> <corr_id>
 }
 
 _jg_pending_reply_confirm_delivery_locked() {  # <state-dir> <corr_id>
-  local state=$1 corr=$2 now marker
-  marker=$(jg_pending_reply_delivery_confirmation_path "$state" "$corr")
+  local state=$1 corr=$2 now
   if ! jg_pending_reply_prepare_delivery "$state" "$corr"; then
     return 1
   fi
   now=$(jg_pending_reply_now)
   jg_pending_reply_write_delivery_confirmation "$state" "$corr" confirmed "$now" || return 1
   if jg_pending_reply_mark_delivered "$state" "$corr" "$now"; then
-    rm -f "$marker" 2>/dev/null || true
+    _jg_pending_reply_clear_marker "$state" "$corr"
     return 0
   fi
   return 2
@@ -480,7 +512,7 @@ _jg_pending_reply_reconcile_delivery_locked() {  # <state-dir> <corr_id>
   marker=$(jg_pending_reply_delivery_confirmation_path "$state" "$corr")
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   if [ -n "$delivered" ]; then
-    rm -f "$marker" 2>/dev/null || true
+    _jg_pending_reply_clear_marker "$state" "$corr"
     return 0
   fi
   [ -f "$marker" ] || return 1
@@ -492,7 +524,7 @@ _jg_pending_reply_reconcile_delivery_locked() {  # <state-dir> <corr_id>
       epoch=$value
       case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
       jg_pending_reply_mark_delivered "$state" "$corr" "$epoch" || return 1
-      rm -f "$marker" 2>/dev/null || true
+      _jg_pending_reply_clear_marker "$state" "$corr"
       return 0
       ;;
     attempted)
@@ -573,7 +605,7 @@ _jg_pending_reply_reset_known_undelivered_locked() {  # <state-dir> <corr_id>
   case "$entry" in attempted=*) ;; *) return 1 ;; esac
   [ "$phase" = awaiting_report ] \
     || jg_pending_reply_set "$rec" phase awaiting_report || return 1
-  rm -f -- "$marker"
+  _jg_pending_reply_clear_marker "$state" "$corr"
 }
 
 # Drop an undelivered expectation after a failed send so transport failure does
@@ -585,8 +617,8 @@ jg_pending_reply_discard_undelivered() {  # <state-dir> <corr_id>
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   [ -z "$delivered" ] || return 1
   marker=$(jg_pending_reply_delivery_confirmation_path "$state" "$corr")
-  rm -f "$marker" 2>/dev/null || true
-  rm -f "$rec"
+  rm -f -- "$marker" "$rec" || return 1
+  jg_pending_reply_publish_events "$rec" discard
 }
 
 # 0 if a status line is a correlated acknowledgement for <corr_id>.
@@ -720,7 +752,7 @@ _jg_pending_reply_try_resolve_locked() {  # <state-dir> <corr_id> [status-file-o
   jg_pending_reply_set "$rec" phase resolved || return 1
   if [ -z "$delivered" ]; then
     jg_pending_reply_mark_delivered "$state" "$corr" "$now" || return 1
-    rm -f "$marker" 2>/dev/null || true
+    _jg_pending_reply_clear_marker "$state" "$corr"
   fi
   jg_pending_reply_set "$rec" resolved_epoch "$now" || return 1
   jg_pending_reply_set "$rec" resolved_via "$via" || return 1

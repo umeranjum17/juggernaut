@@ -3727,7 +3727,7 @@ resurface_after_downtime() {
 # skip this block and fall straight through.
 run_due_checks() {
   local c id out reason is_pr_poll provider url host path number custom_snapshot
-  local merge_authority merge_authority_record_identity merge_outcome_rc
+  local merge_authority merge_authority_record_identity merge_outcome_rc reply_log
   local rejected_checks contribution_check_output contribution_check_diagnostics contribution_check_line
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
     rejected_checks=
@@ -3939,16 +3939,20 @@ while :; do
   # repost after grace, and escalate once if the recovery turn is also missed.
   # No conversation scraping; unresolved records are never silently expired.
   jg_pending_reply_tick "$STATE" || true
-  # Migration step 5d shadow: the same waiters, timers and replies, mirrored to the
-  # bus as durable workflow events beside the records (docs/reply-shadow.md). Off
-  # costs one file test, and a mirror that cannot reach its bus can never fail or
-  # delay a reply, a repost or an escalation.
-  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
   # The same wait, decided by the workflow definition instead of by hand
-  # (bin/jg-reply-engine.sh): it folds the event log, records what it would do and
-  # acts on nothing. Off costs one file test, and an engine that cannot fold can
-  # never fail or delay a reply, a repost or an escalation.
-  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-engine.sh" tick >/dev/null 2>&1 || true
+  # (bin/jg-reply-engine.sh): it folds the pending-reply stream, records what it
+  # would do and acts on nothing. The producers publish to the bus themselves, so
+  # this reads the bus instead of mirroring the records. Off costs one file test,
+  # and an engine that cannot fold or cannot reach the bus can never fail or delay
+  # a reply, a repost or an escalation.
+  if [ -e "$CONFIG/reply-bus" ]; then
+    reply_log=$(mktemp "${TMPDIR:-/tmp}/jg-reply-bus-log.XXXXXX" 2>/dev/null) || reply_log=
+    if [ -n "$reply_log" ]; then
+      JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-bus.sh" log > "$reply_log" 2>/dev/null || true
+      JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_REPLY_BUS_LOG=$reply_log "$SCRIPT_DIR/jg-reply-engine.sh" tick >/dev/null 2>&1 || true
+      rm -f -- "$reply_log"
+    fi
+  fi
 
   # Endpoint liveness runs before queue observation: a positively dead or
   # missing squad_lead endpoint is relaunched here on a bounded cadence, which

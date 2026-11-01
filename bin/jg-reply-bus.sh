@@ -1,64 +1,80 @@
 #!/usr/bin/env bash
-# jg-reply-bus.sh - one pending reply as a Dapr workflow, in shadow: the wait for
-# the reply event or its timeout runs beside the file path, and the files stay
-# authoritative.
+# jg-reply-bus.sh - the pending-reply event stream on the home's JetStream bus:
+# the publish a producer makes, the fold that reads it back, and the projection
+# it writes.
 #
-# WHY THIS EXISTS (migration step 5d). A pending reply is a hand-rolled
-# wait-for-reply-or-timeout: a record file, a grace window measured from a turn's
-# completion, a busy/idle observation to find that completion, one recovery
-# repost with its own reconciliation ladder, a second grace window, and then one
-# escalation. The decided shape is a durable workflow: the waiter is an instance,
-# the reply is the event that resumes it, the timeout is a timer that survives a
-# restart, and the repost-then-escalate ladder is the workflow's own activity
-# loop. This step puts the same wait on the bus beside the record and proves the
-# event path reaches the record path's decision - the same reply settles the same
-# waiter, and the same timeout is bound to the same deadline. Nothing switches,
-# and this script writes nothing into the file path.
+# WHY THIS EXISTS (migration step 5d, the transport half). A pending reply was a
+# record file whose facts lived nowhere else: a create, a delivery attempt and
+# its confirmation, a turn's completion, a reply, a reset, a discard. Those
+# facts are events of one waiter now, published to the home's JetStream bus, and
+# the record file is their projection. Nothing keeps a second event log beside
+# the stream: the producers publish (bin/jg-pending-reply-lib.sh calls
+# `publish`), the fold reads the stream, and `project` rebuilds every record from
+# the stream alone.
 #
 # core/bus/workflows/pending-reply.json is the workflow definition: the instance
 # key, the events, the two stages with the anchor each timer measures from, the
 # activity each timeout runs and its retries, and the terminal states. That file,
 # not this script, decides the grace default, the subjects and the retention.
 #
-# docs/reply-shadow.md owns the event model, the parity contract, the measured
-# line count of each path and what a switch would remove.
+# docs/reply-shadow.md owns the event model, the projection contract, and what
+# the switch leaves to the next slice.
 #
-# CONTRACT (this header is the one owner of the shadow's shape here).
-#   config   a home turns the shadow on with config/reply-bus, which may also set
-#            `nats-url <url>`; JG_REPLY_BUS_URL overrides it. The workflow file may
-#            be overridden per home at config/bus/workflows/pending-reply.json.
+# CONTRACT (this header is the one owner of the transport's shape here).
+#   config   the server is `nats-url` in the home's config/reply-bus, then
+#            config/state-bus, then JG_REPLY_BUS_URL, then JG_KV_URL, then
+#            nats://127.0.0.1:4222; the client is JG_NATS_BIN, then `nats`. The
+#            workflow file may be overridden per home at
+#            config/bus/workflows/pending-reply.json.
+#   stream   JG_REPLY over jg.reply.>, file storage, retention from the
+#            definition. It is created on first use, so no separate step runs.
 #   events   one event per fact of one waiter, all on jg.reply.>:
-#              waiter  the instance exists: task and the grace it waits for
-#              timer   the timeout one stage is bound to: stage, anchor, grace
-#              fire    that timeout fired, at the epoch the record shows
-#              answer  the reply that settled the waiter: epoch and how it came
+#              waiter   the instance exists, and carries its record text
+#              timer    the timeout one stage is bound to: stage, anchor, grace
+#              fire     that timeout fired, at the epoch the record shows
+#              answer   the reply that settled the waiter: epoch and how it came
+#              discard  that waiter is gone: its record was dropped
 #            The message id is the fact's key plus a digest of its body, so a
 #            repeat publish is a server no-op and a changed fact supersedes the
-#            earlier one. The fold keeps the last event per key.
-#   rows     both paths produce the same canonical rows, one per consumer-visible
-#            fact, and parity compares them sorted:
+#            earlier one. The fold keeps the last event per key, in stream order,
+#            and an id whose last event is a discard stops counting.
+#   publish  one record's facts, read from the record file itself: what a producer
+#            calls once it has written the record. No bus behind it is a skip and
+#            never a failure, so a home without one still records.
+#   project  the fold, written back as the record files: the same keys in the same
+#            order the writers use, and the delivery marker the readers expect.
+#            This is what makes the stream the authority: destroy the records and
+#            rebuild them from the bus.
+#   log      the stream in the engine's log format, `<key>\t<seq>\t<json>`, so
+#            bin/jg-reply-engine.sh folds, decides and replays the bus itself.
+#   rows     the record files and the stream produce the same canonical rows, one
+#            per consumer-visible fact, and parity compares them sorted:
 #              reply <id> waiter <task> <grace>
 #              reply <id> timer  <stage> <deadline|none>
 #              reply <id> fire   <stage> <epoch>
 #              reply <id> answer <epoch> <via>
 #            The deadline is derived on each side from the anchor and the grace,
 #            so a mixed-up anchor, grace or unit shows up as a difference.
-#   write    nothing here writes to the file path: no record, no status line, no
-#            repost, no escalation. A missing client or server prints `skip: ...`
-#            and exits 0.
+#   write    publish writes to the bus and project writes the records; nothing
+#            here sends a repost, opens an escalation, or writes a status line.
+#            A missing client or server prints `skip: ...` and exits 0.
 #
 # Usage:
-#   jg-reply-bus.sh sync                        mirror this home's waiters as events
-#   jg-reply-bus.sh view [--since-hours N]      print the workflow rows as TSV
+#   jg-reply-bus.sh publish <record> [--at EPOCH]   publish one record's facts
+#   jg-reply-bus.sh publish <record> --discard      publish that it is gone
+#   jg-reply-bus.sh sync [--home DIR]               backfill every record's facts
+#   jg-reply-bus.sh project [--home DIR]            rebuild the records from the bus
+#   jg-reply-bus.sh log [--since-hours N]           print the stream as the engine's log
+#   jg-reply-bus.sh view [--since-hours N]          print the workflow rows as TSV
 #   jg-reply-bus.sh parity [--since-hours N] [--corrupt]
-#                                               replay both paths and compare them
+#                                                   compare the records with the bus
 #
-# Options: --home DIR (repeatable) resolves a home and its state directory and
-# never writes to it; --record-dir DIR keeps the shadow record outside the home;
-# --corrupt republishes one event with a tampered field, which parity must then
-# report as a difference, so a green run is never vacuous.
+# Options: --home DIR (repeatable) resolves a home and its state directory;
+# --at EPOCH pins the time a publish carries; --corrupt republishes one event
+# with a tampered field, which parity must then report as a difference, so a
+# green run is never vacuous.
 #
-# Env: JG_REPLY_BUS_URL, JG_NATS_BIN, JG_REPLY_BUS_SHADOW, JG_PENDING_REPLY_GRACE_SECS.
+# Env: JG_REPLY_BUS_URL, JG_NATS_BIN, JG_PENDING_REPLY_GRACE_SECS.
 set -u
 export LC_ALL=C
 
@@ -69,16 +85,18 @@ SINCE_HOURS=168
 CORRUPT=0
 CMD=
 HOMES=()
-RECORD_DIR=${JG_REPLY_BUS_RECORD_DIR:-}
-PUBLISH=0
+POS=
+AT=
+DISCARD=0
 
 config_get() { # <home-dir> <key> <default>
-  local var value
+  local var value file
   var="JG_REPLY_BUS_$(printf '%s' "$2" | tr 'a-z-' 'A-Z_')"
   value=$(eval "printf '%s' \"\${$var:-}\"")
-  if [ -z "$value" ] && [ -f "$1/config/reply-bus" ]; then
-    value=$(awk -v k="$2" '$1 == k { sub(/^[^ ]+[ \t]+/, ""); print; exit }' "$1/config/reply-bus" 2>/dev/null)
-  fi
+  for file in config/reply-bus config/state-bus; do
+    [ -z "$value" ] && [ -f "$1/$file" ] || continue
+    value=$(awk -v k="$2" '$1 == k { sub(/^[^ ]+[ \t]+/, ""); print; exit }' "$1/$file" 2>/dev/null)
+  done
   printf '%s\n' "${value:-$3}"
 }
 
@@ -117,17 +135,21 @@ home_keys() { # the home keys of this run, as a JSON array
     | jq -R -s -c 'split("\n") | map(select(length > 0))'
 }
 
-# --- the file path's facts ---------------------------------------------------
-# record_facts <state-dir> <since-epoch>: one line per fact the record path holds
-# for a waiter, read in a single pass over the record files. The names in the
-# right-hand columns are the workflow definition's, so the facts and the stages
-# cannot drift apart silently.
-record_facts() { # <state-dir> <since-epoch>
+# --- the record's facts -------------------------------------------------------
+# record_facts <state-dir> <since-epoch> [<record-file>...]: one line per fact the
+# record path holds for a waiter, read in a single pass over those record files
+# (the whole directory when none is named). The names in the right-hand columns
+# are the workflow definition's, so the facts and the stages cannot drift apart
+# silently.
+record_facts() { # <state-dir> <since-epoch> [<record-file>...]
   local st=$1 since=$2 dir
-  dir="$st/pending-replies"
-  [ -d "$dir" ] || return 0
-  set -- "$dir"/[0-9a-f]*
-  [ -e "$1" ] || return 0
+  shift 2
+  if [ "$#" -eq 0 ]; then
+    dir="$st/pending-replies"
+    [ -d "$dir" ] || return 0
+    set -- "$dir"/[0-9a-f]*
+    [ -e "$1" ] || return 0
+  fi
   awk -v key="$(home_key "$st")" -v stages="$STAGES" -v gdef="$GRACE_DEFAULT" \
     -v since="$since" '
     function reset() {
@@ -277,24 +299,23 @@ bus_publish() { # <subject> <message-id> <json>
   bus pub --jetstream -q -H "Nats-Msg-Id:$2" "$1" "$3" >/dev/null 2>&1
 }
 
-# record_file <state-dir>: the shadow record's path, one line per published fact.
-# It keeps a sync cheap and restartable, and it lives outside the home when a
-# replay must not write into a home it is only reading.
-record_file() { # <state-dir>
-  if [ -n "$RECORD_DIR" ]; then
-    mkdir -p "$RECORD_DIR" || return 1
-    printf '%s/%s.jsonl\n' "$RECORD_DIR" "$(home_key "$1" | tr ':' '_')"
-  else
-    mkdir -p "$1" || return 1
-    printf '%s/reply-bus.jsonl\n' "$1"
-  fi
+# subject_of <fact-key>: the subject a fact travels on, from the definition.
+subject_of() { # <key>
+  case "$1" in
+    waiter/*) printf '%s' "$SUBJECT_WAITER" ;;
+    timer/*) printf '%s' "$SUBJECT_TIMER" ;;
+    fire/*) printf '%s' "$SUBJECT_FIRE" ;;
+    answer/*) printf '%s' "$SUBJECT_ANSWER" ;;
+  esac
 }
 
-# facts_events <state-dir> <since-epoch>: the event document and its key for
-# every fact, as "key<TAB>json". Built in awk so a replay of thousands of
-# waiters costs one process, not one per fact.
-facts_events() { # <state-dir> <since-epoch>
-  record_facts "$1" "$2" | awk -F'\t' -v home="$(home_key "$1")" '
+# facts_events <state-dir> <since-epoch> [<record-file>...]: the event document
+# and its key for every fact, as "key<TAB>json". Built in awk so a backfill of
+# thousands of waiters costs one process, not one per fact.
+facts_events() { # <state-dir> <since-epoch> [<record-file>...]
+  local st=$1 since=$2
+  shift 2
+  record_facts "$st" "$since" "$@" | awk -F'\t' -v home="$(home_key "$st")" '
     function jsnum(v) { return (v ~ /^[0-9]+$/) ? v : "null" }
     $1 == "waiter" {
       printf "waiter/%s\t{\"v\":1,\"kind\":\"waiter\",\"id\":\"%s\",\"home\":\"%s\",\"task\":\"%s\",\"grace\":%s,\"at\":%s,\"state\":\"%s\",\"delivered\":%s,\"attempted\":%s}\n",
@@ -320,35 +341,33 @@ facts_events() { # <state-dir> <since-epoch>
   '
 }
 
-# mirror_home <state-dir>: publish the facts this home gained or changed. It
-# never touches the file path, and a publish that fails records nothing so the
-# next sync tries again.
-mirror_home() { # <state-dir>
-  local st=$1 record cand changed published=0 key json sha subject
-  [ -d "$st" ] || { printf 'mirror: no state directory at %s\n' "$st" >&2; return 1; }
-  record=$(record_file "$st") || return 1
-  [ "${PUBLISH:-0}" = 1 ] && bus_ensure_stream
-  cand=$(mktemp "${TMPDIR:-/tmp}/jg-reply-bus-cand.XXXXXX") || return 1
-  changed=$(mktemp "${TMPDIR:-/tmp}/jg-reply-bus-new.XXXXXX") || { rm -f -- "$cand"; return 1; }
-  facts_events "$st" "$SINCE" > "$cand"
-  awk -F'\t' 'NR == FNR { last[$1] = $3; next } last[$1] != $2' "$record" "$cand" > "$changed" 2>/dev/null \
-    || cp "$cand" "$changed"
-  while IFS=$'\t' read -r key json; do
+# publish_record <state-dir> <record-file>: publish every fact that record holds,
+# with the record's own text on its waiter event so the projection is exact. The
+# message id makes a repeated publish a no-op on the server, so a writer never has
+# to know what the bus already holds.
+publish_record() { # <state-dir> <record-file>
+  local st=$1 rec=$2 key json subject sha
+  [ -f "$rec" ] || return 0
+  facts_events "$st" 0 "$rec" | while IFS=$'\t' read -r key json; do
     [ -n "${key:-}" ] && [ -n "${json:-}" ] || continue
+    case "$key" in
+      waiter/*) json=$(printf '%s' "$json" | jq -c --rawfile record "$rec" '. + {record: $record}' 2>/dev/null) || continue ;;
+    esac
+    subject=$(subject_of "$key")
+    [ -n "$subject" ] || continue
     sha=$(printf '%s' "$json" | sha256_of)
-    # The log is the event store and is written first: a fact the engine folds is
-    # a fact this home holds, whether or not a bus ever answers. The bus is a
-    # transport for the same lines, so a missing server costs the replica, never
-    # the event.
-    printf '%s\t%s\t%s\n' "$key" "$sha" "$json" >> "$record" || continue
-    published=$((published + 1))
-    [ "$PUBLISH" = 1 ] || continue
-    case "$key" in waiter/*) subject=$SUBJECT_WAITER ;; timer/*) subject=$SUBJECT_TIMER ;;
-      fire/*) subject=$SUBJECT_FIRE ;; answer/*) subject=$SUBJECT_ANSWER ;; *) continue ;; esac
-    bus_publish "$subject" "$key/$sha" "$json" >/dev/null 2>&1 || true
-  done < "$changed"
-  rm -f -- "$cand" "$changed"
-  printf 'reply shadow mirror: published=%s home=%s\n' "$published" "$(dirname "$st")"
+    bus_publish "$subject" "$key/$sha" "$json" || true
+  done
+}
+
+# publish_discard <state-dir> <corr-id> <epoch>: the waiter is gone. The id is on
+# the event so the fold stops counting it, and the projection drops the file.
+publish_discard() { # <state-dir> <corr-id> <epoch>
+  local st=$1 corr=$2 at=$3 home json
+  home=$(home_key "$st")
+  json=$(jq -nc --arg id "$home/$corr" --arg home "$home" --argjson at "$at" \
+    '{v:1,kind:"discard",id:$id,home:$home,at:$at}') || return 1
+  bus_publish "$SUBJECT_DISCARD" "discard/$corr/$at" "$json"
 }
 
 # bus_dump <out-file> <since-epoch> <home-keys>: every message the stream holds
@@ -362,12 +381,13 @@ bus_dump() { # <out-file> <since-epoch> <home-keys-json>
   n=1
   while [ "$n" -le "$last" ]; do
     raw=$(bus stream get "$REPLY_STREAM" "$n" --json 2>/dev/null)
-    n=$((n + 1))
     body=$(printf '%s' "$raw" | jq -r '.data // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$body" ]; then
-      printf '%s' "$body" | jq -c --argjson since "$since" --argjson keys "$keys" \
-        'select(.at >= $since) | . as $e | select($keys | index($e.home) != null)' >> "$out" 2>/dev/null || true
+      printf '%s' "$body" | jq -c --argjson since "$since" --argjson keys "$keys" --argjson seq "$n" \
+        '. as $e | select(($e.at // 0) >= $since) | select($keys | index($e.home) != null) | . + {seq: $seq}' \
+        >> "$out" 2>/dev/null || true
     fi
+    n=$((n + 1))
   done
 }
 
@@ -378,8 +398,9 @@ bus_rows() { # <dump-file>
   jq -r -s '
     (reduce .[] as $e ({};
        .[($e.kind) + "/" + $e.id + (if $e.stage then "/" + $e.stage else "" end)] = $e)) as $fold
+    | (reduce .[] as $e ({}; if $e.kind == "discard" then .[$e.id] = true else . end)) as $dead
     | ($fold | [.[] | select(.kind == "waiter") | .id]) as $waiters
-    | $fold | [.[] | select(.id as $i | $waiters | index($i))]
+    | $fold | [.[] | select(.id as $i | $waiters | index($i)) | select($dead[.id] // false | not)]
     | .[]
     | if .kind == "waiter" then ["reply", .id, "waiter", .task, (.grace | tostring)]
       elif .kind == "timer" then
@@ -392,13 +413,105 @@ bus_rows() { # <dump-file>
 }
 
 # --- subcommands -------------------------------------------------------------
-# cmd_sync: mirror the facts of every named home into its event log, then onto
-# the bus when one answers. The bus is optional on purpose: the log is the store.
+# cmd_sync <state-dir>...: publish every fact every record of these homes holds.
+# The producers publish their own facts as they write, so this is the one-time
+# backfill a home runs once after the switch, and the repair after a lost stream.
 cmd_sync() {
-  local st
-  PUBLISH=0
-  if bus_gate >/dev/null 2>&1; then PUBLISH=1; fi
-  for st in "$@"; do mirror_home "$st" || return 1; done
+  local st dir rec n=0
+  bus_gate >/dev/null 2>&1 || return 0
+  bus_ensure_stream
+  for st in "$@"; do
+    dir="$st/pending-replies"
+    [ -d "$dir" ] || { printf 'sync: no record directory at %s\n' "$dir" >&2; continue; }
+    n=0
+    for rec in "$dir"/[0-9a-f]*; do
+      [ -f "$rec" ] || continue
+      publish_record "$st" "$rec"
+      n=$((n + 1))
+    done
+    printf 'reply bus backfill: records=%s home=%s\n' "$n" "$(dirname "$st")"
+  done
+}
+
+# cmd_publish <record>: one producer's write, as the events of that record.
+cmd_publish() { # <record-path>
+  local rec=$1 st at
+  [ -n "$rec" ] || return 2
+  st=$(dirname "$(dirname "$rec")")
+  at=${AT:-$(date +%s)}
+  bus_gate >/dev/null 2>&1 || return 0
+  bus_ensure_stream
+  if [ "$DISCARD" = 1 ]; then
+    publish_discard "$st" "$(basename "$rec")" "$at"
+    return 0
+  fi
+  publish_record "$st" "$rec"
+}
+
+# cmd_log: the stream in the engine's log format, so the fold, the decision and
+# the replay read the bus itself instead of a file beside it.
+cmd_log() {
+  local tmp
+  bus_gate >/dev/null 2>&1 || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jg-reply-bus-log.XXXXXX") || return 1
+  bus_dump "$tmp" "$SINCE" "$(home_keys)" || true
+  jq -r -s '
+    (reduce .[] as $e ({}; if $e.kind == "discard" then .[$e.id] = true else . end)) as $dead
+    | .[] | select(($dead[.id] // false) | not)
+    | [(.kind + "/" + .id + (if .stage then "/" + .stage else "" end)), (.seq | tostring),
+       (. | del(.seq) | tojson)]
+    | join("\t")' "$tmp" 2>/dev/null || true
+  rm -f -- "$tmp"
+}
+
+# cmd_project <state-dir>: the fold written back as the record files. This is the
+# projection: the writer's keys, the delivery marker the readers expect, and a
+# discarded waiter's files gone. Run it against a copy to prove the stream holds
+# everything the records do.
+cmd_project() { # <state-dir>
+  local st=$1 dir tmp corr dead b64 delivered attempted target
+  dir="$st/pending-replies"
+  bus_gate >/dev/null 2>&1 || return 0
+  mkdir -p "$dir" || return 1
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jg-reply-bus-project.XXXXXX") || return 1
+  bus_dump "$tmp" 0 "$(home_keys)" || true
+  jq -r -s '
+    sort_by(.seq)
+    | reduce .[] as $e ({};
+        .[$e.id] = ((.[$e.id] // {id: $e.id})
+          | if $e.kind == "discard" then .dead = true
+            elif $e.kind == "waiter" then .waiter = $e
+            else . end))
+    | [.[] | select(.waiter or .dead)] | .[]
+    | [ .id, (if .dead then "1" else "0" end), ((.waiter.record // "") | @base64),
+        ((.waiter.delivered // "-") | tostring), ((.waiter.attempted // "-") | tostring) ]
+    | @tsv' "$tmp" 2>/dev/null | while IFS=$'\t' read -r id dead b64 delivered attempted; do
+      # The event id is <home>/<corr>; the record's name is the corr alone.
+      corr=${id##*/}
+      case "$corr" in ''|*[!a-f0-9]*) continue ;; esac
+      target="$dir/$corr"
+      if [ "$dead" = 1 ] || [ -z "$b64" ]; then
+        rm -f -- "$target" "$dir/.delivery-confirmed-$corr"
+        continue
+      fi
+      if printf '%s' "$b64" | base64 -d > "$dir/.$corr.tmp.$$" 2>/dev/null \
+        && chmod 600 "$dir/.$corr.tmp.$$" 2>/dev/null; then
+        mv -f "$dir/.$corr.tmp.$$" "$target" || rm -f -- "$dir/.$corr.tmp.$$"
+      else
+        rm -f -- "$dir/.$corr.tmp.$$"
+        continue
+      fi
+      # The delivery marker is a fact of the same event: attempted and unconfirmed
+      # is a marker, and a confirmed delivery is the record's delivered_epoch.
+      if [ "$delivered" = - ] && [ "$attempted" != - ]; then
+        printf 'attempted=%s\n' "$attempted" > "$dir/.delivery.tmp.$$" \
+          && chmod 600 "$dir/.delivery.tmp.$$" 2>/dev/null \
+          && mv -f "$dir/.delivery.tmp.$$" "$dir/.delivery-confirmed-$corr"
+      else
+        rm -f -- "$dir/.delivery-confirmed-$corr"
+      fi
+    done
+  rm -f -- "$tmp"
 }
 
 cmd_view() {
@@ -430,7 +543,6 @@ cmd_parity() {
   bus_gate || return 0
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/jg-reply-bus-parity.XXXXXX") || return 1
   scan_window "$tmp/before"
-  cmd_sync "${HOMES[@]}" || true
   scan_window "$tmp/after"
   comm -12 "$tmp/before" "$tmp/after" > "$tmp/file"
   comm -3 "$tmp/before" "$tmp/after" | sed 's/^\t//' | LC_ALL=C sort -u > "$tmp/churn"
@@ -463,7 +575,7 @@ cmd_parity() {
         printf "%d %d %d %d %d\n", length(armed), fired + 0, max + 0, orphan + 0, early + 0
       }' "$tmp/file" 2>/dev/null
   )
-  printf 'reply shadow parity: homes=%s events_compared=%s differences=%s churned=%s timers_armed=%s timers_fired=%s max_lateness_s=%s fire_without_timer=%s fire_before_deadline=%s\n' \
+  printf 'reply bus parity: homes=%s events_compared=%s differences=%s churned=%s timers_armed=%s timers_fired=%s max_lateness_s=%s fire_without_timer=%s fire_before_deadline=%s\n' \
     "${#HOMES[@]}" "$compared" "${diffs:-0}" "$churned" "${timers_armed:-0}" \
     "${timers_fired:-0}" "${late_max:-0}" "${fire_without_timer:-0}" "${fire_early:-0}"
   rm -rf -- "$tmp"
@@ -511,24 +623,37 @@ while [ "$#" -gt 0 ]; do
       HOMES+=("$h")
       shift 2
       ;;
-    --record-dir)
-      [ -n "${2:-}" ] || { printf 'jg-reply-bus.sh: --record-dir needs a directory\n' >&2; exit 2; }
-      RECORD_DIR=$2
-      shift 2
-      ;;
     --since-hours)
       [ -n "${2:-}" ] || { printf 'jg-reply-bus.sh: --since-hours needs a count\n' >&2; exit 2; }
       SINCE_HOURS=$2
       shift 2
       ;;
+    --at)
+      [ -n "${2:-}" ] || { printf 'jg-reply-bus.sh: --at needs an epoch\n' >&2; exit 2; }
+      AT=$2
+      shift 2
+      ;;
+    --discard) DISCARD=1; shift ;;
     --corrupt) CORRUPT=1; shift ;;
-    sync|view|parity) CMD=$1; shift ;;
-    *) printf 'jg-reply-bus.sh: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+    -h|--help) sed -n '2,66p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    publish|sync|project|log|view|parity) CMD=$1; shift ;;
+    *)
+      [ -z "$POS" ] || { printf 'jg-reply-bus.sh: unexpected argument: %s\n' "$1" >&2; exit 2; }
+      POS=$1
+      shift
+      ;;
   esac
 done
 case "$SINCE_HOURS" in ''|*[!0-9]*) printf 'jg-reply-bus.sh: --since-hours must be a count\n' >&2; exit 2 ;; esac
+case "${AT:-}" in ''|*[!0-9]*) [ -z "${AT:-}" ] || { printf 'jg-reply-bus.sh: --at must be an epoch\n' >&2; exit 2; } ;; esac
 SINCE=$(( $(date +%s) - SINCE_HOURS * 3600 ))
-[ -n "$CMD" ] || { printf 'usage: jg-reply-bus.sh [--home DIR] sync|view|parity (see the header)\n' >&2; exit 2; }
+[ -n "$CMD" ] || { printf 'usage: jg-reply-bus.sh publish|sync|project|log|view|parity [--home DIR] (see the header)\n' >&2; exit 2; }
+# One record names its own home: the record path is <home>/state/pending-replies/<id>,
+# so a producer needs no other context to publish.
+if [ "$CMD" = publish ] && [ "${#HOMES[@]}" -eq 0 ]; then
+  [ -n "$POS" ] || { printf 'jg-reply-bus.sh: publish needs a record path\n' >&2; exit 2; }
+  HOMES=("$(dirname "$(dirname "$POS")")")
+fi
 if [ "${#HOMES[@]}" -eq 0 ]; then HOMES=("${JG_STATE_OVERRIDE:-${JG_HOME:-$ROOT}/state}"); fi
 for h in "${HOMES[@]}"; do
   [ -d "$h" ] || { printf 'jg-reply-bus.sh: no state directory at %s\n' "$h" >&2; exit 2; }
@@ -542,6 +667,7 @@ SUBJECT_WAITER=$(wf '.subjects.waiter' jg.reply.start)
 SUBJECT_TIMER=$(wf '.subjects.timer' jg.reply.timer)
 SUBJECT_FIRE=$(wf '.subjects.fire' jg.reply.fire)
 SUBJECT_ANSWER=$(wf '.subjects.answer' jg.reply.answer)
+SUBJECT_DISCARD=$(wf '.subjects.discard' jg.reply.discard)
 GRACE_DEFAULT=$(wf '.defaults.grace_secs' "${JG_PENDING_REPLY_GRACE_SECS:-120}")
 MAX_AGE=$(config_get "$HOME_DIR" max-age "$MAX_AGE")
 STAGES=$(jq -r '[.stages[] | [.name, .timer_anchor, .fire_epoch] | join("|")] | join(" ")' "$WORKFLOW" 2>/dev/null)
@@ -549,16 +675,11 @@ STAGES=$(jq -r '[.stages[] | [.name, .timer_anchor, .fire_epoch] | join("|")] | 
 BUS_URL=$(config_get "$HOME_DIR" nats-url "nats://127.0.0.1:4222")
 [ -n "${JG_REPLY_BUS_URL:-}" ] && BUS_URL=$JG_REPLY_BUS_URL
 
-# The mirror is opt-in: a home turns it on with config/reply-bus, or with
-# JG_REPLY_BUS_SHADOW=on for a run that must not write into that home.
-if [ "$CMD" = sync ] && [ ! -f "$HOME_DIR/config/reply-bus" ] \
-  && [ "$(config_get "$HOME_DIR" shadow off)" != on ]; then
-  printf 'skip: reply workflow shadow not enabled (config/reply-bus)\n'
-  exit 0
-fi
-
 case "$CMD" in
+  publish) cmd_publish "$POS" ;;
   sync) cmd_sync "${HOMES[@]}" ;;
+  project) for h in "${HOMES[@]}"; do cmd_project "$h"; done ;;
+  log) cmd_log ;;
   view) cmd_view ;;
   parity) cmd_parity ;;
 esac
