@@ -147,6 +147,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
 | `jg-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `jg-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |
+| `jg-wake-next.sh`        | Fetch the next wake and its acknowledgement token in one call: relay the drain's whole presentation, then print the ready-to-run `--ack-through` command |
 | `jg-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |
 | `jg-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `jg-path-lib.sh`         | Fork-free `dirname`/`basename` equivalents with no source-time side effects             |
