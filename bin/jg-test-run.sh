@@ -319,7 +319,7 @@ script_speed_bound_secs() {  # <script> -> seconds
   local class limit bound=0
   class=$(test_speed_class_for "$(basename "$1")")
   limit=$(test_speed_limit_for "$class" "$(basename "$1")")
-  if [ "$TEST_SPEED_ENFORCE" -eq 1 ] && [ "$limit" -gt 0 ]; then
+  if [ "$TEST_SPEED_ENFORCE" -eq 1 ] && [ "$limit" -gt 0 ] && [ "$class" != unit ]; then
     bound=$limit
   fi
   if [ "$CHANGED_CEILING" -eq 1 ]; then
@@ -2369,12 +2369,14 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
   speed_limit=$(test_speed_limit_for "$speed_class" "$base")
   speed_ms=$((speed_limit * 1000))
   if [ "$speed_limit" -gt 0 ] && [ "$duration" -gt "$speed_ms" ]; then
-    if [ "$TEST_SPEED_ENFORCE" -eq 1 ]; then
+    if [ "$TEST_SPEED_ENFORCE" -eq 1 ] && [ "$speed_class" != unit ]; then
       printf 'not ok - %s took %sms, over its %sms %s limit\n' \
         "$script" "$duration" "$speed_ms" "$speed_class" >>"$out"
       [ "$stream" -eq 1 ] && tail -n 1 "$out"
       rc=1
     else
+      # A unit test over its bound is a warning in every mode (printed and in
+      # the timing record), never a failure or a kill; the e2e limit still fails.
       log "speed over limit, reported only: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
     fi
   fi

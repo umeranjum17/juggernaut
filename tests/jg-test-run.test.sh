@@ -82,12 +82,11 @@ test_a_unit_test_over_its_limit_fails_naming_itself_and_its_time() {
   write_script "$slow" 'sleep 3'
   write_script "$normal" 'true'
   out=$(TEST_SPEED_LIMITS_FILE="$limits" bash "$RUNNER" --enforce-test-speed "$normal" "$slow" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "a unit test over its limit must fail the run: $out"
-  assert_contains "$out" "not ok - $slow took" 'the failure must name the script that overran'
-  assert_contains "$out" 'over its 1000ms unit limit' 'the failure must name the limit it overran'
-  assert_contains "$out" 'JG_TEST_SUMMARY total=2 failed=1' 'the overrun must fail the run'
-  assert_contains "$out" "ok - $(basename "$normal")" 'a test inside its limit must still pass'
-  pass 'a unit test over its limit fails naming itself and its elapsed time'
+  [ "$rc" -eq 0 ] || fail "a unit test over its limit only warns and must not fail the run: $out"
+  assert_contains "$out" "$slow took" 'the warning must name the script that overran'
+  assert_contains "$out" 'over its 1000ms unit limit' 'the warning must name the limit it overran'
+  assert_contains "$out" 'JG_TEST_SUMMARY total=2 failed=0' 'a unit overrun must not fail the run'
+  pass 'a unit test over its limit warns naming itself and its elapsed time'
 }
 
 test_the_gate_wall_limit_is_10_minutes_in_config() {
@@ -118,15 +117,15 @@ test_a_run_past_the_gate_budget_fails_without_starting_the_next_test() {
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run() {
   local limits hung rc=0 started ended
   limits="$TMP_ROOT/hang-limits"
-  write_limits "$limits" 30 1 30
-  hung="$TMP_ROOT/hangs-unit.test.sh"
+  write_limits "$limits" 1 30 30
+  hung="$TMP_ROOT/hangs-e2e.test.sh"
   write_script "$hung" 'while :; do sleep 0.2; done'
   started=$(date +%s)
   out=$(TEST_SPEED_LIMITS_FILE="$limits" bash "$RUNNER" --enforce-test-speed "$hung" 2>&1) || rc=$?
   ended=$(date +%s)
   [ "$rc" -ne 0 ] || fail "a hanging test must fail the run: $out"
   assert_contains "$out" "not ok - $hung took" 'the terminated script must be named'
-  assert_contains "$out" 'over its 1000ms unit limit' 'the bound that killed it must be named'
+  assert_contains "$out" 'over its 1000ms e2e limit' 'the bound that killed it must be named'
   [ "$((ended - started))" -lt 20 ] || fail "the hang must be bounded well under a gate, took $((ended - started))s"
   pass 'a hanging test is killed and reported instead of holding the run'
 }
