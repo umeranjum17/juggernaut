@@ -257,4 +257,78 @@ check "h: shim execs the check" "$(sed -n 2p "$FM/state/merge-on-green.check.sh"
 check "h: shim mode 0700" "$(stat -c %a "$FM/state/merge-on-green.check.sh")" 700
 check "h: installed script runs from the shim" "$(JG_CHECK_TIMEOUT=30 "$FM/state/merge-on-green.check.sh")" ""
 
-[ "$fails" -eq 0 ] && echo "PASS: merge-on-green e2e" || { echo "FAIL: $fails check(s)"; exit 1; }
+# (i) A home still running the retired add-on copy: install migrates it instead of installing beside it.
+OLD=$d/data/fm-merge-on-green
+mkdir -p "$OLD"
+printf '#!/bin/sh\n# retired add-on copy\n' > "$OLD/merge-on-green.sh"
+printf '#!/bin/sh\n# retired adapter\n' > "$OLD/checks-lint.sh"
+printf '#!/usr/bin/env python3\n# retired 1,000-line rule\n' > "$OLD/fm-checks-lint.sh"
+printf 'x: 1\n' > "$OLD/.done-done.yaml"
+for f in merge-on-green.sh checks-lint.sh jg-checks-lint.sh .done-done.yaml; do rm -f -- "$d/data/jg-merge-on-green/$f"; done
+printf '#!/usr/bin/env bash\nexec %q check %q\n' "$OLD/merge-on-green.sh" "$FM" > "$FM/state/merge-on-green.check.sh"
+chmod 700 "$FM/state/merge-on-green.check.sh"
+rm -f "$FM/reg-calls"
+out=$("$SRC/wiring.sh" "$FM" 2>&1) && rc=0 || rc=$?
+check "i: migration exits 0" "$rc" 0
+has "i: names the retired copy it replaced" "$out" "migrated the retired add-on copy at $OLD"
+check "i: the retired 1,000-line rule is gone" "$([ -e "$OLD/fm-checks-lint.sh" ] && echo present || echo gone)" gone
+check "i: the retired adapter is gone" "$([ -e "$OLD/checks-lint.sh" ] && echo present || echo gone)" gone
+check "i: the retired path redirects to the feature gate" "$(tail -n 1 "$OLD/merge-on-green.sh")" "exec $d/data/jg-merge-on-green/merge-on-green.sh \"\$@\""
+check "i: the home's shim now execs the feature gate" "$(sed -n 2p "$FM/state/merge-on-green.check.sh")" "exec $d/data/jg-merge-on-green/merge-on-green.sh check $FM"
+check "i: the retired path still runs the gate" "$(JG_CHECK_TIMEOUT=30 "$OLD/merge-on-green.sh" check "$FM")" ""
+check "i: the check was registered" "$(cat "$FM/reg-calls")" "register merge-on-green"
+before_retired=$(find "$OLD" -mindepth 1 | sort)
+out=$("$SRC/wiring.sh" "$FM" 2>&1) && rc=0 || rc=$?
+check "i: a re-run exits 0" "$rc" 0
+has "i: a re-run reports nothing changed" "$out" "already wired $FM (nothing changed)"
+check "i: a re-run leaves the retired redirect alone" "$(find "$OLD" -mindepth 1 | sort)" "$before_retired"
+
+# (j) A shim that execs some other gate: refused before the first write, nothing half-wired.
+FM2=$d/fm2
+mkdir -p "$FM2/state" "$FM2/bin" "$d/data2"
+cp "$FM/bin/jg-check-register.sh" "$FM2/bin/"
+printf '#!/usr/bin/env bash\nexec /opt/other/gate.sh check %q\n' "$FM2" > "$FM2/state/merge-on-green.check.sh"
+chmod 700 "$FM2/state/merge-on-green.check.sh"
+before2=$(find "$d/data2" -mindepth 1 | sort)
+out=$(XDG_DATA_HOME=$d/data2 "$SRC/wiring.sh" "$FM2" 2>&1) && rc=0 || rc=$?
+check "j: an unknown shim refuses" "$rc" 1
+has "j: the refusal names the shim it will not replace" "$out" "is not the merge gate this installer writes"
+check "j: the refusal wrote nothing" "$(find "$d/data2" -mindepth 1 | sort)" "$before2"
+check "j: the refusal left the shim alone" "$(sed -n 2p "$FM2/state/merge-on-green.check.sh")" "exec /opt/other/gate.sh check $FM2"
+check "j: the refusal did not register" "$([ -e "$FM2/reg-calls" ] && echo called || echo no)" no
+
+# (k) A retired directory holding something else: refused, never overwritten or half-replaced.
+FM3=$d/fm3
+mkdir -p "$FM3/state" "$FM3/bin" "$d/data3/fm-merge-on-green"
+cp "$FM/bin/jg-check-register.sh" "$FM3/bin/"
+printf '#!/bin/sh\n# somebody else gate\n' > "$d/data3/fm-merge-on-green/other-gate.sh"
+before3=$(find "$d/data3" -mindepth 1 | sort)
+out=$(XDG_DATA_HOME=$d/data3 "$SRC/wiring.sh" "$FM3" 2>&1) && rc=0 || rc=$?
+check "k: an unknown retired directory refuses" "$rc" 1
+has "k: the refusal names the retired copy it will not replace" "$out" "does not hold the retired add-on copy"
+check "k: the refusal wrote nothing" "$(find "$d/data3" -mindepth 1 | sort)" "$before3"
+check "k: the refusal left the home with no shim" "$([ -e "$FM3/state/merge-on-green.check.sh" ] && echo present || echo absent)" absent
+
+# (l) A home wired at another install path keeps that share: the installer follows the shim instead of
+# moving the home to XDG_DATA_HOME, and a shim that runs another home's gate is refused.
+FM4=$d/fm4
+OTHER=$d/other-share
+mkdir -p "$FM4/state" "$FM4/bin" "$OTHER/fm-merge-on-green"
+cp "$FM/bin/jg-check-register.sh" "$FM4/bin/"
+printf '#!/bin/sh\n# retired adapter\n' > "$OTHER/fm-merge-on-green/checks-lint.sh"
+printf '#!/usr/bin/env python3\n# retired rule\n' > "$OTHER/fm-merge-on-green/fm-checks-lint.sh"
+printf '#!/bin/sh\n# retired copy\n' > "$OTHER/fm-merge-on-green/merge-on-green.sh"
+printf '#!/usr/bin/env bash\nexec %q check %q\n' "$OTHER/fm-merge-on-green/merge-on-green.sh" "$FM4" > "$FM4/state/merge-on-green.check.sh"
+chmod 700 "$FM4/state/merge-on-green.check.sh"
+out=$(XDG_DATA_HOME=$d/data4 "$SRC/wiring.sh" "$FM4" 2>&1) && rc=0 || rc=$?
+check "l: install exits 0" "$rc" 0
+check "l: the gate lands in the share the shim names" "$([ -x "$OTHER/jg-merge-on-green/jg-checks-lint.sh" ] && echo yes)" yes
+check "l: XDG_DATA_HOME is untouched" "$(mkdir -p "$d/data4"; find "$d/data4" -mindepth 1 | sort)" ""
+check "l: the old copy in that share now redirects" "$(tail -n 1 "$OTHER/fm-merge-on-green/merge-on-green.sh")" "exec $OTHER/jg-merge-on-green/merge-on-green.sh \"\$@\""
+printf '#!/usr/bin/env bash\nexec %q check %q\n' "$OTHER/jg-merge-on-green/merge-on-green.sh" "$FM" > "$FM4/state/merge-on-green.check.sh"
+chmod 700 "$FM4/state/merge-on-green.check.sh"
+out=$(XDG_DATA_HOME=$d/data4 "$SRC/wiring.sh" "$FM4" 2>&1) && rc=0 || rc=$?
+check "l: a shim running another home's gate refuses" "$rc" 1
+has "l: the refusal names the home it runs for" "$out" "not for this home"
+
+if [ "$fails" -eq 0 ]; then echo "PASS: merge-on-green e2e"; else echo "FAIL: $fails check(s)"; exit 1; fi
