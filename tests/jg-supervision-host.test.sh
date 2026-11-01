@@ -1858,14 +1858,23 @@ quiet_pass_through_successor() {  # <home>
     || fail "fixture: could not acknowledge the successor downtime"
 }
 
+# The first park after a stop either resurfaces the recovery to main (wakes were
+# waiting) or, with nothing queued, settles it without a wake and parks on a live
+# watcher: defaults/wake-routing owns the choice (silent@queue-quiet, #409), so
+# the fixture follows whichever the queue's state calls for.
+park_settled() { host_exited "$1" || watcher_live "$1"; }
 park_after_stop() {  # <home>
   rm -f "$1/host.rc"
   : > "$1/park.go"
-  wait_until 150 host_exited "$1" || fail "the watcher's downtime resurface did not reach main: $(cat "$1/host.out")"
-  assert_re '^check: rearm-resurface' "$1/host.out" "fixture: the first close after the watcher stopped was not its resurface"
-  main_drain_and_ack "$1"
-  quiet_pass_through_successor "$1"
-  park_again "$1"
+  wait_until 150 park_settled "$1" || fail "the park after a stop neither resurfaced to main nor parked on a watcher: $(cat "$1/host.out")"
+  if host_exited "$1"; then
+    assert_re '^check: rearm-resurface' "$1/host.out" "fixture: the first close after the watcher stopped was not its resurface"
+    main_drain_and_ack "$1"
+    quiet_pass_through_successor "$1"
+    park_again "$1"
+  else
+    assert_no_re 'rearm-resurface' "$1/host.out" "fixture: a quiet park resurfaced to main"
+  fi
 }
 
 # Dialog counts as delivered only once the turn that carried it is accepted
