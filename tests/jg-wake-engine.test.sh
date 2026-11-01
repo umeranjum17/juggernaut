@@ -106,3 +106,9 @@ wait_field router delivered 1 || fail "the router never received the reply: $("$
 wait_field router failed 1 || fail "the unrouted reply was not counted: $("$BUS" probe router) $(cat "$DIR/router.log")"
 grep -q 'not routed to a lead' "$DIR/router.log" || fail "the router did not report the refusal: $(cat "$DIR/router.log")"
 pass "a captain reply reaches the router and is routed by the board's rule: $("$BUS" probe router)"
+
+# The reply shares the CAPTAIN stream with the events that go to ntfy; the delivery consumer leaves it
+# to the router instead of recording it as an undelivered captain event.
+"$BUS" deliver --once >/dev/null 2>&1 || fail "the delivery consumer did not drain the stream"
+[ ! -s "$HOME_DIR/state/captain-channel-undelivered.jsonl" ] || fail "a captain reply was recorded as undelivered: $(cat "$HOME_DIR/state/captain-channel-undelivered.jsonl")"
+pass "the delivery consumer leaves a captain reply to the router"
