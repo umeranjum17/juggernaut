@@ -16,6 +16,11 @@ This page owns how to run it, how to reverse it, and what its replay proves.
 | `daprd` (slim, no Docker) | [`core/bus/dapr/components/pubsub.yaml`](../core/bus/dapr/components/pubsub.yaml) | the transport binding over NATS |
 | `ntfy` | [`core/bus/ntfy.yml`](../core/bus/ntfy.yml) | the captain's iPad surface, on the local server |
 
+The server itself is not started by hand on a real home: a home installs it once
+as a systemd user service and `bin/jg-bootstrap.sh` keeps it up. [The message bus](bus-service.md)
+owns that install, the unit, and the CI lane that proves a home comes up with
+JetStream running.
+
 Every one of them is configured by file and none by code.
 The Dapr component decides what the bus really is, so swapping NATS for another broker is a component swap.
 A home overrides any of them under `config/bus/`.
