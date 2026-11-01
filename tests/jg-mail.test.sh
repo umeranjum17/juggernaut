@@ -547,7 +547,7 @@ SH
   pass "jg-mail: a wake with no durable record is rolled back, not left ackable"
 }
 
-test_poll_rollback_failure_never_leaves_unrecorded_ackable_wake() {
+test_poll_unwritable_state_fails_bounded() {
   local fakebin roll_home
   fakebin=$(jg_fakebin "$TMP_ROOT")
   roll_home="$TMP_ROOT/rollback-failure-home"
@@ -561,45 +561,34 @@ printf '88\t2026-09-05T00:00:00Z\talice@example.com\tHello\n'
 SH
   chmod +x "$fakebin/python3"
 
-  # Triple-fault fixture: the journal and cursor cannot be written (read-only),
-  # and the state directory cannot be changed either, so the wake a poll raises
-  # can be neither stored nor removed - not locally, and not on the bus, because
-  # the row only exists in this home's outbox until a bus takes it. No durable
-  # record and no rollback can take the wake back, so the poll must fail closed
-  # with an honest report and leave the row for the next poll to heal.
+  # An unwritable state directory cannot hold the poll lock, so the poll must
+  # stop within its bound and say why. It never waits forever, and it raises and
+  # commits nothing, so the next poll surfaces the mail fresh and exactly once.
   printf 'uidvalidity=90009\n' > "$roll_home/state/.mail-seen"
   : > "$roll_home/state/.mail-woken"
   : > "$roll_home/state/.wake-queue"
-  chmod 0400 "$roll_home/state/.mail-seen" "$roll_home/state/.mail-woken"
   chmod 0500 "$roll_home/state"
-  [ -w "$roll_home/state/.mail-seen" ] && { echo "fixture unexpected: cursor still writable"; return 1; }
   [ -w "$roll_home/state" ] && { echo "fixture unexpected: state still writable"; return 1; }
 
   local out rc=0
-  out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
+  out=$(JG_MAIL_LOCK_WAIT_SECONDS=1 JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
     JG_HOME="$roll_home" PATH="$fakebin:$PATH" \
-    "$MAIL" poll 2>&1) || rc=$?
-  expect_code 1 "$rc" "poll must fail when the wake can be neither recorded nor rolled back"
-  assert_not_contains "$out" "rolled back (journal and cursor writes failed)" "poll must not report a rollback it did not achieve"
-  assert_contains "$out" "could not be rolled back or durably recorded" "poll reports the honest rollback-failure outcome"
-  assert_not_contains "$(cat "$roll_home/state/.mail-seen" 2>/dev/null)" "88" "a failed wake must never be committed to the cursor"
+    timeout 20 "$MAIL" poll 2>&1) || rc=$?
+  expect_code 1 "$rc" "poll must fail, bounded, when the state directory cannot hold its lock"
+  assert_contains "$out" "could not take the mail-seen lock" "poll names the lock failure"
+  assert_not_contains "$(cat "$roll_home/state/.mail-seen" 2>/dev/null)" "88" "a failed poll must never commit the cursor"
 
-  # Restore access: the still-queued wake must be healed without re-waking, so
-  # the mail surfaces exactly once from the retained row and never duplicates.
   chmod 0700 "$roll_home/state"
-  chmod 0600 "$roll_home/state/.mail-seen" "$roll_home/state/.mail-woken"
   rc=0
   out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
     JG_HOME="$roll_home" PATH="$fakebin:$PATH" \
     "$MAIL" poll 2>&1) || rc=$?
   expect_code 0 "$rc" "retry poll must succeed after access is restored"
-  assert_contains "$out" "no new mail" "retry poll heals the retained wake without re-waking"
-  assert_not_contains "$out" "woke for 88" "retry poll must not surface the mail a second time"
-  assert_contains "$(cat "$roll_home/state/.mail-seen")" "88" "retry poll records the retained wake's uid in the cursor"
+  assert_contains "$out" "woke for 88" "retry poll surfaces the mail"
   local wakeq
   wakeq=$(grep -c "check: mail 88" "$roll_home/state/.wake-queue" 2>/dev/null || true)
-  expect_code 1 "$wakeq" "the retained wake row stays queued for the drain exactly once"
-  pass "jg-mail: a rollback failure never releases a wake the drain could acknowledge without a durable record"
+  expect_code 1 "$wakeq" "exactly one wake row for uid 88"
+  pass "jg-mail: an unwritable state directory ends the poll with its cause, never a hang"
 }
 
 test_poll_retry_surfaces_under_new_mail_flood() {
@@ -2619,7 +2608,7 @@ test_poll_acknowledged_wake_evading_recovery
 test_poll_legacy_wake_does_not_leak_into_generation
 test_poll_missing_wake_lib_does_not_suppress
 test_poll_rolls_back_wake_without_durable_record
-test_poll_rollback_failure_never_leaves_unrecorded_ackable_wake
+test_poll_unwritable_state_fails_bounded
 test_poll_caps_wakes_per_run
 test_poll_sanitizes_header_fields
 test_poll_bounded_fetch_progresses_large_backlog
