@@ -10,8 +10,8 @@
 # GitHub queue when the work itself is proven here. The suite is the one CI runs,
 # bin/jg-test-run.sh --all --gate followed by bin/jg-lint.sh, in the task's lane
 # worktree at the commit the pull request holds. The runner's --gate contract
-# bounds it: per-test speed limits enforced, and the whole gate held to the
-# configured budget from defaults/test-speed-limits.
+# bounds it: a test over its per-test speed limit is reported, and the whole gate
+# is held to the configured budget from defaults/test-speed-limits.
 #
 # The receipt is state/<task>.local-suite, a plain key=value record like every
 # other durable record in a home, so it needs no JSON reader. It names the tree

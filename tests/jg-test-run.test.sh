@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The runner's speed limits and its whole-gate budget are what stop one slow or
-# hung test from holding the pull-request gate, so each limit is proven here on
-# its own: the value it reads from config, the failure it produces naming the
-# test and its measured elapsed time, and the bound that kills a test which
-# would never finish.
+# The runner's speed limits report a slow test by name and its measured time and
+# never fail or kill it; its whole-gate budget and its per-script bound are what
+# stop one hung test from holding the pull-request gate. Each is proven here on
+# its own: the value it reads from config, the warning it produces, the budget
+# that stops the run, and the bound that kills a test which would never finish.
 # The cases drive the real bin/jg-test-run.sh over throwaway test scripts, so a
 # runner that printed the right words without failing, or failed without naming
 # the test, would fail them.
@@ -48,7 +48,7 @@ test_the_e2e_limit_is_60_seconds_in_config() {
   pass 'the shipped end-to-end limit is 60 seconds'
 }
 
-test_an_e2e_test_over_its_limit_fails_naming_itself_and_its_time() {
+test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time() {
   local limits slow normal out rc=0
   limits="$TMP_ROOT/e2e-limits"
   write_limits "$limits" 2 30 30
@@ -57,12 +57,12 @@ test_an_e2e_test_over_its_limit_fails_naming_itself_and_its_time() {
   write_script "$slow" 'sleep 4'
   write_script "$normal" 'true'
   out=$(TEST_SPEED_LIMITS_FILE="$limits" bash "$RUNNER" --enforce-test-speed "$normal" "$slow" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "an end-to-end test over its limit must fail the run: $out"
-  assert_contains "$out" "not ok - $slow took" 'the failure must name the script that overran'
-  assert_contains "$out" 'over its 2000ms e2e limit' 'the failure must name the limit it overran'
-  assert_contains "$out" 'JG_TEST_SUMMARY total=2 failed=1' 'the overrun must fail the run'
-  assert_contains "$out" "ok - $(basename "$normal")" 'a test inside its limit must still pass'
-  pass 'an end-to-end test over its limit fails naming itself and its elapsed time'
+  [ "$rc" -eq 0 ] || fail "an end-to-end test over its limit only warns and must not fail the run: $out"
+  assert_contains "$out" "$slow took" 'the warning must name the script that overran'
+  assert_contains "$out" 'over its 2000ms e2e limit' 'the warning must name the limit it overran'
+  assert_contains "$out" 'JG_TEST_SUMMARY total=2 failed=0' 'an e2e overrun must not fail the run'
+  assert_contains "$out" "ok - $(basename "$slow")" 'the overrunning test must be left to finish and report its own result'
+  pass 'an end-to-end test over its limit warns naming itself and its elapsed time'
 }
 
 test_the_unit_limit_is_5_seconds_in_config() {
@@ -73,7 +73,7 @@ test_the_unit_limit_is_5_seconds_in_config() {
   pass 'the shipped unit limit floor is 15 seconds'
 }
 
-test_a_unit_test_over_its_limit_fails_naming_itself_and_its_time() {
+test_a_unit_test_over_its_limit_warns_naming_itself_and_its_time() {
   local limits slow normal out rc=0
   limits="$TMP_ROOT/unit-limits"
   write_limits "$limits" 30 1 30
@@ -117,15 +117,14 @@ test_a_run_past_the_gate_budget_fails_without_starting_the_next_test() {
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run() {
   local limits hung rc=0 started ended
   limits="$TMP_ROOT/hang-limits"
-  write_limits "$limits" 1 30 30
+  write_limits "$limits" 30 30 30
   hung="$TMP_ROOT/hangs-e2e.test.sh"
   write_script "$hung" 'while :; do sleep 0.2; done'
   started=$(date +%s)
-  out=$(TEST_SPEED_LIMITS_FILE="$limits" bash "$RUNNER" --enforce-test-speed "$hung" 2>&1) || rc=$?
+  out=$(TEST_SPEED_LIMITS_FILE="$limits" bash "$RUNNER" --enforce-test-speed --per-script-timeout-secs 1 "$hung" 2>&1) || rc=$?
   ended=$(date +%s)
   [ "$rc" -ne 0 ] || fail "a hanging test must fail the run: $out"
-  assert_contains "$out" "not ok - $hung took" 'the terminated script must be named'
-  assert_contains "$out" 'over its 1000ms e2e limit' 'the bound that killed it must be named'
+  assert_contains "$out" "not ok - $hung exceeded the per-script bound of 1s" 'the terminated script and the bound that killed it must be named'
   [ "$((ended - started))" -lt 20 ] || fail "the hang must be bounded well under a gate, took $((ended - started))s"
   pass 'a hanging test is killed and reported instead of holding the run'
 }
@@ -155,9 +154,9 @@ test_a_weight_cap_defers_slow_suites_and_names_them() {
 }
 
 test_the_e2e_limit_is_60_seconds_in_config
-test_an_e2e_test_over_its_limit_fails_naming_itself_and_its_time
+test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time
 test_the_unit_limit_is_5_seconds_in_config
-test_a_unit_test_over_its_limit_fails_naming_itself_and_its_time
+test_a_unit_test_over_its_limit_warns_naming_itself_and_its_time
 test_the_gate_wall_limit_is_10_minutes_in_config
 test_a_run_past_the_gate_budget_fails_without_starting_the_next_test
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
