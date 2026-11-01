@@ -2,7 +2,7 @@
 # Each of the six escalation rules, firing and staying quiet, against the
 # definition's own numbers (nothing starts a service; state is a temp dir).
 set -u
-# shellcheck source=tests/lib.sh
+# shellcheck source=tests/lib.sh source-path=SCRIPTDIR/../../..
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/tests/lib.sh"
 
 OPTSH="$ROOT/core/escalation-optimize/bin/jg-escalation-optimize.sh"
