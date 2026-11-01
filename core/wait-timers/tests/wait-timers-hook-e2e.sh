@@ -23,7 +23,10 @@ trap cleanup EXIT
 export HOME=$d/user TMPDIR=$d/tmp
 mkdir -p "$HOME" "$TMPDIR" "$d/fork" "$d/addons"
 cp -a "$addons/." "$d/addons/"
-cp -a "$JG_TEST_FORK/bin" "$JG_TEST_FORK/tests" "$d/fork/"
+# The watcher loads this feature from its sibling core tree
+# (bin/jg-watch.sh: $SCRIPT_DIR/../core/wait-timers/bin/jg-wait-timers-lib.sh), so a
+# fixture of bin/ and tests/ alone carries no timer and arms nothing.
+cp -a "$JG_TEST_FORK/bin" "$JG_TEST_FORK/tests" "$JG_TEST_FORK/core" "$d/fork/"
 # Step B moved the journey into this feature; restore its test without changing
 # the post-step-B fork sources.
 cp "$addons/wait-timers/tests/jg-wait-timers.test.sh" "$d/fork/tests/"
@@ -33,12 +36,14 @@ cp "$addons/wait-timers/tests/jg-wait-timers.test.sh" "$d/fork/tests/"
   || { echo "FAIL: wait-timer journey with the feature present" >&2; tail -20 "$d/present.out" >&2; exit 1; }
 
 # Absent: a Main-owned overdue episode cannot enqueue its check wake without
-# the optional timer hook. Use the same durable episode shape as the real journey.
+# the optional timer hook. Use the same durable episode shape as the real journey,
+# in the bin/-only fixture the watcher's guarded load has to tolerate.
 ( set -e
-  JG_HOME="$d/fork" JG_ADDONS_DIR="$d/none"
-  mkdir -p "$d/fork/state"
-  printf 'blocked [key=wait]: external condition\\n' > "$d/fork/state/fixture.status"
-  lib="${JG_ADDONS_DIR:-$JG_HOME/projects/juggernaut-addons}/wait-timers/bin/jg-wait-timers-lib.sh"
+  nocore=$d/nocore
+  mkdir -p "$nocore/state"
+  cp -a "$JG_TEST_FORK/bin" "$nocore/"
+  printf 'blocked [key=wait]: external condition\\n' > "$nocore/state/fixture.status"
+  lib=$nocore/core/wait-timers/bin/jg-wait-timers-lib.sh
   task=fixture
   # shellcheck source=/dev/null
   [ ! -r "$lib" ] || . "$lib"
@@ -46,6 +51,6 @@ cp "$addons/wait-timers/tests/jg-wait-timers.test.sh" "$d/fork/tests/"
   if [ -n "$task" ] && declare -F jg_wait_timer_push_delivered >/dev/null; then jg_wait_timer_push_delivered "$task" window; fi
   ! declare -F jg_wait_timers_tick >/dev/null
   ! declare -F jg_wait_timer_push_delivered >/dev/null
-  [ ! -e "$d/fork/state/.waiting-timers/fixture" ] ) \
+  [ ! -e "$nocore/state/.waiting-timers/fixture" ] ) \
   || { echo "FAIL: absent feature must not escalate the wait" >&2; exit 1; }
 echo "ok: Main-owned escalation with feature; absent feature does not escalate"

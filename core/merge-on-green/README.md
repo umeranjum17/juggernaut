@@ -49,7 +49,14 @@ merge.
 
 ## Size rule
 
-The added non-generated lines of a PR must stay under 1,000; deleted lines, generated paths, the PR's
+The added non-generated lines of a PR are measured against a 1,000-line guidance, and the size is
+**advice, not a refusal** (captain, release c-1: the ceiling slowed work down). A run over the guidance
+prints one `checks-lint: advisory: <n> added non-generated lines ... is over the 1,000-line guidance`
+line and then checks the remaining rules, so only those can fail it. A home that wants the refusal back
+writes `refuse` in `config/checks-size`; an absent, empty or unrecognised value is advisory, the default.
+The pinned `done-done` lint hardcodes the same limit with no config key, so `checks-lint.sh` hands a
+size-only FAIL from it to this feature's lint, which owns the rule and the setting.
+Deleted lines, generated paths, the PR's
 merged-in upstream lines and a moved file's own lines do not count: the lines it still shares with the
 file it came from, and the path rewrites, in a move git resolves as a rename at 50% similarity or more
 (the pull-files API's `renamed` with its `previous_filename`, or a `moved-from:` body line naming the
@@ -57,7 +64,7 @@ source repo, same owner only); added lines past that similarity budget stay new 
 import is still measured: the file list comes from every page of the pull-files API (gh's `pr view` list
 stops at 100 files), the diff from the compare API (gh's
 `pr diff` refuses above 300 files) and, failing that, from a checkout holding both commits. When no diff
-is reachable the full file-list count stands, so an API failure can never turn a big PR into a PASS.
+is reachable the full file-list count stands, so an API failure can never lower the measured size.
 
 ## Install
 

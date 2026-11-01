@@ -104,20 +104,6 @@ jg_question_filed() {
   return 1
 }
 
-# Nag each distinct trailing question once: 0 the first time it is seen, 1 once
-# this home has already flagged it, so no harness can be wedged in a loop.
-jg_question_first_sighting() {  # <state-dir> <reply-text> [<record file name>]
-  local state=$1 stamp rec=${3:-.question-flagged}
-  [ -n "$state" ] || return 0
-  stamp=$(jg_question_tail "${2-}" | cksum | awk '{print $1 "-" $2}')
-  if [ -f "$state/$rec" ] && [ "$(head -1 "$state/$rec" 2>/dev/null)" = "$stamp" ]; then
-    return 1
-  fi
-  mkdir -p "$state" 2>/dev/null || return 0
-  printf '%s\n' "$stamp" > "$state/$rec" 2>/dev/null || true
-  return 0
-}
-
 # Print the last assistant text of a turn-end payload's transcript, if it has one.
 jg_question_reply_text() {  # <turn-end payload json>
   local path
@@ -179,20 +165,6 @@ jg_question_chat_answered_keys() {  # <turn-end payload json>
     [ -n "$key" ] || continue
     case "$prior" in *"$key"*) printf '%s\n' "$key" ;; esac
   done < <(jg_question_open_keys)
-  return 0
-}
-
-# Print the chat answer's words (the last human message), for the banner.
-jg_question_chat_words() {  # <turn-end payload json>
-  local path
-  path=$(printf '%s' "$1" | jq -r '.transcript_path // empty' 2>/dev/null) || return 0
-  [ -f "$path" ] || return 0
-  tail -n 400 "$path" 2>/dev/null | jq -Rrs '
-    split("\n") | map(fromjson? // empty) | map(select(type == "object" and (.type // .message.role) == "user"))
-    | map(if (.message.content? | type) == "string" then .message.content
-        elif (.message.content? | type) == "array" then ([.message.content[]? | select(type == "object" and .type == "text") | .text] | join("\n"))
-        else "" end)
-    | map(select(. != "" and .[0:1] != "\u2063")) | last // empty' 2>/dev/null
   return 0
 }
 

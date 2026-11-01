@@ -6,7 +6,10 @@
 # not n/a on a fix PR; evidence files exist, are non-empty, are newer than the lane's first launch
 # (data/<task>/ birth), and at least one has a hash no other PR used, and no two are identical. "evidence: not proven: <cause>"
 # passes (file the proof gap as a task). proof names the repo's verify-<app> skill (or "no verify skill" when
-# the repo has none); a real repro names systematic-debugging (captain 6 Oct). Bot PRs pass. 1,000+ added non-generated lines fail (deletions, moved lines and a fork PR's merged-in upstream lines do not count;
+# the repo has none); a real repro names systematic-debugging (captain 6 Oct). Bot PRs pass. 1,000+ added non-generated lines
+# are ADVICE, not a refusal (captain, release c-1: the ceiling slowed work down): the run prints the size and says it is over
+# the guidance, then checks the rest and exits on those rules alone. A home that wants the refusal back writes `refuse` in
+# config/checks-size; absent, empty or any other value is advisory (deletions, moved lines and a fork PR's merged-in upstream lines do not count;
 # a cross-repo move names its source in the PR body: "moved-from: <owner>/<repo>@<ref> <dst-prefix>=<src-prefix>", same owner only).
 # A file git resolves as a rename at 50% similarity or more (the pull-files API's renamed + previous_filename, or
 # that body mapping) is counted as moved: its added lines are excused up to the lines it still shares with its
@@ -31,6 +34,20 @@ home = os.environ['JG_HOME']; LOG = f'{home}/data/checks-gate.log'; HASHES = f'{
 GEN = re.compile(r'(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock|go\.sum|[^/]*\.lock)$'+ r'|(^|/)packages/accounts/src/pi/|(^|/)packages/accounts/src/routes\.json$|(^|/)vendor/|(^|/)dist/|(^|/)(LICENSE|LICENSES|NOTICE|COPYING)[^/]*$')  # third-party, legal text and committed build output (dist/) are not reviewable code
 
 task, ROOT = '', os.path.dirname(os.path.dirname(os.path.realpath(__file__)))  # task is set below
+SIZE_GUIDANCE = 1000  # the advisory added-line size; config/checks-size decides whether it can refuse
+def size_mode():
+    """config/checks-size: 'refuse' makes the guidance a refusal; absent, empty or unknown is advisory."""
+    p = f'{home}/config/checks-size'
+    try:
+        first = (open(p, errors='replace').read().split() or [''])[0].lower()
+    except OSError:
+        return 'advisory'
+    if first in ('', 'advisory'):
+        return 'advisory'
+    if first == 'refuse':
+        return 'refuse'
+    print(f'checks-lint: note: {p} holds {first!r}, not refuse: staying advisory (accepted: advisory, refuse)')
+    return 'advisory'
 
 def gh_api(*a):  # errors=replace: the move rule also fetches binary files, which must not crash the count
     return subprocess.run(['gh', 'api', *a], capture_output=True, text=True, errors='replace', timeout=60)
@@ -217,7 +234,7 @@ else:
         files = all_files(nwo) or files
     # Added lines only: deletions are cheap to review and 'delete before you add' must not be penalised.
     size = sum(f.get('additions', 0) for f in files if not GEN.search(f.get('path', '')))
-    if size >= 1000:  # moved lines are not new code (7 Oct, PR 18 helper move): an added line that matches a deleted one cancels
+    if size >= SIZE_GUIDANCE:  # moved lines are not new code (7 Oct, PR 18 helper move): an added line that matches a deleted one cancels
         meta = f'{home}/state/{task}.meta'
         wt = ([l[9:].strip() for l in open(meta) if l.startswith('worktree=')] or [''])[-1] if task and os.path.isfile(meta) else ''
         diff = pr_diff(nwo, pr.get('baseRefOid'), head, [d for d in (wt, os.getcwd()) if os.path.isdir(d)])
@@ -227,16 +244,21 @@ else:
             # Upstream catch-up (15 Oct, fork PR 74): lines the fork's parent repo already shipped are not authored
             # here, so subtract the upstream delta the PR merges in (PR base ... merged upstream tip). A plain fork PR
             # merges no new upstream commit, so its delta is empty. Any API failure keeps the full count.
-            p = gh_api(f'repos/{nwo[1]}', '--jq', '.parent | select(.) | .owner.login + ":" + .default_branch') if size >= 1000 and nwo else None
+            p = gh_api(f'repos/{nwo[1]}', '--jq', '.parent | select(.) | .owner.login + ":" + .default_branch') if size >= SIZE_GUIDANCE and nwo else None
             u = gh_api(f'repos/{nwo[1]}/compare/{p.stdout.strip()}...{head}', '--jq', '.merge_base_commit.sha') if p and p.returncode == 0 and p.stdout.strip() else None
             dl = gh_api('-H', 'Accept: application/vnd.github.diff', f'repos/{nwo[1]}/compare/{pr.get("baseRefOid")}...{u.stdout.strip()}') if u and u.returncode == 0 and u.stdout.strip() else None
             if dl and dl.returncode == 0: n -= net(diff_entries(dl.stdout)); size = sum(n.values())
             # Moved files (cross-repo move 16 Oct, features PR 9; rename with rewrites): cancel only the added lines
             # of the moved file itself, up to its similarity budget, so a path rewrite rides along with its file
             # and every authored line still counts.
-            pairs = moved_pairs(nwo, files, body, pr.get('baseRefOid'), head) if size >= 1000 else {}
+            pairs = moved_pairs(nwo, files, body, pr.get('baseRefOid'), head) if size >= SIZE_GUIDANCE else {}
             if pairs: size = sum(cancel_moved(n, ents, pairs).values())
-    if size >= 1000: done(False, f'{size} added non-generated lines (moved and upstream lines excluded): split it (limit 1000)', head)
+    if size >= SIZE_GUIDANCE:
+        why = f'{size} added non-generated lines (moved and upstream lines excluded)'
+        if size_mode() == 'refuse':
+            done(False, f'{why}: split it (limit {SIZE_GUIDANCE})', head)
+        print(f'checks-lint: advisory: {why} is over the {SIZE_GUIDANCE}-line guidance: a smaller slice lands faster')
+
 
 m = ([None] + list(re.finditer(r'^##\s*Checks\s*$(.*?)(?=^##\s|\Z)', body, re.M | re.S)))[-1]  # newest block: workers append, never replace
 if not m: done(False, 'no "## Checks" block', head)

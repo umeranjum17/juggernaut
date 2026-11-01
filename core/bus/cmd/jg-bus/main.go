@@ -136,6 +136,8 @@ func run(args []string) int {
 		return a.serve()
 	case "unit":
 		return a.unit()
+	case "accounts":
+		return a.accounts(rest)
 	case "ensure":
 		return a.ensure()
 	case "stop":

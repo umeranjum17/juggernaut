@@ -28,7 +28,7 @@
 #   <state>/<task>.inbox/NNN.msg, handled/NNN.msg   steer        unread|handled
 #   <state>/*.status                                status       -
 #   <state>/parent-replies.status                   parent-channel -
-#   <state>/pending-replies/<corr>                  reply        unread|handled
+#   <state>/reply-state.tsv#<corr>                  reply        unread|handled
 #   <state>/fleet-ledger.jsonl                      steer|status -
 #   <board>, <board>.answers.jsonl                  board-question|board-answer
 # A lead home is a home carrying a squad_lead identity marker; its parent
@@ -75,6 +75,8 @@ LOCKED=
 . "$SCRIPT_DIR/jg-classify-lib.sh"
 # shellcheck source=bin/jg-task-inbox-lib.sh
 . "$SCRIPT_DIR/jg-task-inbox-lib.sh"
+# shellcheck source=bin/jg-pending-reply-lib.sh
+. "$SCRIPT_DIR/jg-pending-reply-lib.sh"
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
@@ -314,28 +316,28 @@ cf_scan_inbox() {  # <home> <state> <lead-id>
 }
 
 cf_scan_pending() {  # <home> <state> <lead-id>
-  local home=$1 state=$2 lead=$3 f corr phase task summary ts bucket st
-  for f in "$state"/pending-replies/*; do
-    [ -f "$f" ] && [ ! -L "$f" ] || continue
-    corr=${f##*/}
-    case "$corr" in ''|.*) continue ;; esac
-    phase=$(sed -n 's/^phase=//p' "$f" 2>/dev/null | tail -1)
-    task=$(sed -n 's/^task_id=//p' "$f" 2>/dev/null | tail -1)
-    summary=$(sed -n 's/^request_summary=//p' "$f" 2>/dev/null | tail -1)
+  local home=$1 state=$2 lead=$3 corr phase task summary ts bucket st block
+  while IFS= read -r corr; do
+    [ -n "$corr" ] || continue
+    block=$(jg_pending_reply_record_text "$(jg_pending_reply_path "$state" "$corr")")
+    [ -n "$block" ] || continue
+    phase=$(sed -n 's/^phase=//p' <<<"$block" | tail -1)
+    task=$(sed -n 's/^task_id=//p' <<<"$block" | tail -1)
+    summary=$(sed -n 's/^request_summary=//p' <<<"$block" | tail -1)
     [ -n "$task" ] || task=$corr
     if [ "$phase" = resolved ]; then
       bucket=resolved st=handled
-      ts=$(sed -n 's/^resolved_epoch=//p' "$f" 2>/dev/null | tail -1)
+      ts=$(sed -n 's/^resolved_epoch=//p' <<<"$block" | tail -1)
     else
       bucket=open st=unread
-      ts=$(sed -n 's/^created_epoch=//p' "$f" 2>/dev/null | tail -1)
+      ts=$(sed -n 's/^created_epoch=//p' <<<"$block" | tail -1)
     fi
-    [ -n "${ts//[[:space:]]/}" ] || ts=$(cf_mtime "$f")
+    [ -n "${ts//[[:space:]]/}" ] || ts=$(cf_mtime "$(jg_pending_reply_cache "$state")")
     cf_has "done:pending:${home}:${corr}:${bucket}" && continue
     cf_emit "$ts" "$home" "$(cf_room "$state" "$task")" "$task" "$lead" \
       reply '' "$corr" "$st" "$summary"
     cf_defer "done:pending:${home}:${corr}:${bucket}" 1
-  done
+  done < <(jg_pending_reply_corrs "$state")
 }
 
 cf_scan_ledger() {  # <home> <state> <lead-id>

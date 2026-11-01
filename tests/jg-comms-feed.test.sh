@@ -15,7 +15,7 @@ PENDING_EPOCH=1793336520
 
 setup() {  # <name> -> echoes the case dir: one ship task w1 in a home of its own
   local d=$TMP_ROOT/$1
-  mkdir -p "$d/home/state/w1.inbox/handled" "$d/home/state/pending-replies" \
+  mkdir -p "$d/home/state/w1.inbox/handled" \
     "$d/so/.sign-off"
   printf '{"schema":2,"items":[]}\n' > "$d/so/.sign-off/decisions.json"
   : > "$d/so/.sign-off/decisions.answers.jsonl"
@@ -41,8 +41,8 @@ test_a_steer_and_its_reply_land_in_order_once_each() {
   printf 'at=%s\nfrom=main\n--\nMainNNN [key=fix-parser] Fix the parser and report.\n' \
     "$STEER_AT" > "$d/home/state/w1.inbox/001.msg"
   printf 'working [at=%s]: parser reproduced\n' "$REPLY_EPOCH" > "$d/home/state/w1.status"
-  printf 'phase=open\ntask_id=w1\ncreated_epoch=%s\nrequest_summary=which parser mode?\n' \
-    "$PENDING_EPOCH" > "$d/home/state/pending-replies/corr-1"
+  printf 'schema=jg-pending-reply.v1\ncorr_id=corr-1\nphase=open\ntask_id=w1\ncreated_epoch=%s\nrequest_summary=which parser mode?\n\n' \
+    "$PENDING_EPOCH" > "$d/home/state/reply-state.tsv"
   # The ledger is read last but carries the oldest exchange, so the feed is in
   # time order only if the pass sorts across sources.
   printf '{"event":"task.pr_ready","ts":1793330000,"task":"w1","kind":"ship","project":"demo","pr":"https://example.test/pr/1"}\n' \

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# E2E: the 1,000-line gate measures a PR past gh's 100-file view cap and its 300-file diff cap.
+# E2E: the 1,000-line size guidance measures a PR past gh's 100-file view cap and its 300-file diff cap,
+# advises on the size instead of refusing it (config/checks-size=refuse keeps the refusal).
 # gh pr view still lists only 100 files and gh pr diff still refuses >300 files here; the gate must read
 # every pull-files page and learn the diff from the compare API, never from a refusal (no network).
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
@@ -77,24 +78,41 @@ URL=https://github.com/owner/repo/pull/9
 run() { set +e; out=$(BIGPR_CASE=$1 "$LINT" "$URL" "$d/fm/data/evidence" 2>&1); rc=$?; set -e; }
 
 # 1. Compare and git both unavailable: every file page still counts (305 x 7 = 2,135; the truncated first
-#    page alone would be 700 and would wrongly pass).
+#    page alone would be 700 and would report the wrong size). Size is advice, so the run passes.
 run files
-[ "$rc" -ne 0 ] && [[ "$out" == *'2135 added non-generated lines'* ]] || { echo "FAIL file list past 100: rc=$rc ($out)"; exit 1; }
+[ "$rc" -eq 0 ] && [[ "$out" == *'2135 added non-generated lines'* ]] || { echo "FAIL file list past 100: rc=$rc ($out)"; exit 1; }
+[[ "$out" == *'checks-lint: advisory: 2135 added non-generated lines'*' is over the 1000-line guidance'* && "$out" == *'checks-lint: PASS:'* ]] \
+  || { echo "FAIL file list advisory: rc=$rc ($out)"; exit 1; }
+printf '%s\n' "$out" | grep -F 'checks-lint: advisory:'  # the gate's own line, quoted in the proof
 for page in 2 3 4; do grep -Fq "/files?per_page=100&page=$page" "$BIGPR_LOG" || { echo "FAIL page $page was never read"; exit 1; }; done
 grep -Fq 'pr diff' "$BIGPR_LOG" && { echo 'FAIL the 406-capped pr diff was still used'; exit 1; }
-echo 'PASS full file list past 100 keeps the count when no diff is reachable'
+echo 'PASS full file list past 100 keeps the count and only advises when no diff is reachable'
 
-# 2. Compare diff reachable: the size comes from it (1,500), not from the file list, and is refused.
+# 2. Compare diff reachable: the size comes from it (1,500), not from the file list. No config/checks-size
+#    exists here, so the advisory default applies: the run reports the size and passes.
+[ ! -e "$d/fm/config/checks-size" ] || { echo 'FAIL no config/checks-size: the advisory default is the fixture baseline'; exit 1; }
 : > "$BIGPR_LOG"
 run diff
-[ "$rc" -ne 0 ] && [[ "$out" == *'1500 added non-generated lines'* ]] || { echo "FAIL compare diff size: rc=$rc ($out)"; exit 1; }
+[ "$rc" -eq 0 ] && [[ "$out" == *'checks-lint: advisory: 1500 added non-generated lines'*' is over the 1000-line guidance'* ]] \
+  || { echo "FAIL compare diff size is not advisory by default: rc=$rc ($out)"; exit 1; }
+[[ "$out" == *'checks-lint: PASS:'* ]] || { echo "FAIL compare diff did not pass: rc=$rc ($out)"; exit 1; }
+printf '%s\n' "$out" | grep -F 'checks-lint: advisory:'  # the gate's own line, quoted in the proof
 grep -Fq 'compare/base1...head1' "$BIGPR_LOG" || { echo 'FAIL compare API was not asked for the diff'; exit 1; }
-echo 'PASS >300-file PR with 1,500 authored lines is refused'
+echo 'PASS >300-file PR with 1,500 authored lines passes and prints the advisory line (advisory default)'
 
 # 3. Same PR with the supported move exclusion: the 1,300 imported lines are the same file moved, the 200
 #    authored lines (199 in the diff plus the binary neighbour with no previous content) remain.
 export BIGPR_BODY=$d/body-move.txt
 run move
 [ "$rc" -eq 0 ] && [[ "$out" == *'checks-lint: PASS:'* ]] || { echo "FAIL moved-from exclusion: rc=$rc ($out)"; exit 1; }
-echo 'PASS moved-from byte match clears the import and keeps the 1,000-line rule'
-echo 'PASS: size gate measures a PR above the 100-file and 300-file API caps'
+[[ "$out" != *'checks-lint: advisory:'* ]] || { echo "FAIL 200 authored lines drew an advisory: ($out)"; exit 1; }
+echo 'PASS moved-from byte match clears the import and stays under the guidance'
+
+# 4. config/checks-size: refuse keeps the refusal for a home that wants it.
+export BIGPR_BODY=$d/body.txt
+mkdir -p "$d/fm/config" && printf 'refuse\n' > "$d/fm/config/checks-size"
+run diff
+[ "$rc" -ne 0 ] && [[ "$out" == *'checks-lint: FAIL: 1500 added non-generated lines'*'split it (limit 1000)'* ]] \
+  || { echo "FAIL config/checks-size=refuse: rc=$rc ($out)"; exit 1; }
+echo 'PASS config/checks-size=refuse makes the same PR a refusal'
+echo 'PASS: size is measured above the 100-file and 300-file API caps, advisory by default, a refusal on request'
