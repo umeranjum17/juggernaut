@@ -115,6 +115,15 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 # shellcheck source=bin/jg-agent-process-lib.sh
 . "$JG_BACKEND_HERDR_ROOT/bin/jg-agent-process-lib.sh"
 
+# The decisions this adapter used to make with awk, cksum and tr are
+# core/herdr's Go command (core/herdr/cmd/jg-herdr, its header owns the list), run through
+# bin/jg-herdr.sh, which builds it on first use. This adapter runs the `herdr` client and
+# keeps the function names its callers use; a reader that cannot run exits non-zero rather than
+# answering, so a missing build never reads as an empty herdr answer.
+jg_backend_herdr_go() {  # <jg-herdr command> [args...]
+  "$JG_BACKEND_HERDR_ROOT/bin/jg-herdr.sh" "$@"
+}
+
 JG_BACKEND_HERDR_MIN_PROTOCOL=14
 # events.subscribe (the native pane.agent_status_changed push stream) and its
 # subscription_event schema first shipped at protocol 16 (verified: herdr
@@ -187,19 +196,10 @@ JG_BACKEND_HERDR_PRESENTATION_CONFIG="herdr-presentation-spaces"
 # default rather than failing a spawn over a purely visual setting, so a typo is
 # visible instead of silently deciding anything.
 jg_backend_herdr_presentation_preference() {  # <config-dir>
-  local config_dir=${1:-} file value
+  local config_dir=${1:-} answer
   [ -n "$config_dir" ] || { printf 'default\n'; return 0; }
-  file="$config_dir/$JG_BACKEND_HERDR_PRESENTATION_CONFIG"
-  [ -f "$file" ] || { printf 'default\n'; return 0; }
-  value=$(tr -d '[:space:]' < "$file" 2>/dev/null | tr '[:upper:]' '[:lower:]') || value=""
-  case "$value" in
-    off) printf 'off\n' ;;
-    ''|on) printf 'on\n' ;;
-    *)
-      echo "warning: $file: unrecognized value \"$value\"; herdr presentation spaces fall back to the default (write \"off\" to opt out, \"on\" to force the projection on)" >&2
-      printf 'default\n'
-      ;;
-  esac
+  answer=$(jg_backend_herdr_go presentation-preference "$config_dir/$JG_BACKEND_HERDR_PRESENTATION_CONFIG") || answer=
+  printf '%s\n' "${answer:-default}"
 }
 
 # jg_backend_herdr_version_at_least <candidate> <floor>: numeric dotted-release
@@ -208,19 +208,11 @@ jg_backend_herdr_presentation_preference() {  # <config-dir>
 # a 0.8.0-preview build compares as 0.8.0 (it is built from the 0.8.0 line and
 # carries its fixes) while a 0.7.5-preview build compares as 0.7.5.
 jg_backend_herdr_version_at_least() {  # <candidate> <floor>
-  local candidate=${1:-} floor=${2:-} c f
-  candidate=${candidate%%[-+]*}
-  case "$candidate" in ''|*[!0-9.]*) return 2 ;; esac
-  while [ -n "$floor" ]; do
-    c=${candidate%%.*}
-    f=${floor%%.*}
-    [ -n "$c" ] || c=0
-    [ "$c" -gt "$f" ] 2>/dev/null && return 0
-    [ "$c" -lt "$f" ] 2>/dev/null && return 1
-    case "$candidate" in *.*) candidate=${candidate#*.} ;; *) candidate= ;; esac
-    case "$floor" in *.*) floor=${floor#*.} ;; *) floor= ;; esac
-  done
-  return 0
+  case "$(jg_backend_herdr_go version-at-least "${1:-}" "${2:-}")" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
 }
 
 # jg_backend_herdr_release_floor_verdict <protocol> <version>: the pure
@@ -233,19 +225,12 @@ jg_backend_herdr_version_at_least() {  # <candidate> <floor>
 # unparseable simply cannot carry a verdict; a readable protocol below the floor
 # is decisive on its own, and only losing BOTH signals reports indeterminate.
 jg_backend_herdr_release_floor_verdict() {  # <protocol> <version>
-  local protocol=${1:-} version=${2:-} protocol_known=0 version_status=0
-  case "$protocol" in
-    ''|*[!0-9]*) ;;
-    *)
-      protocol_known=1
-      [ "$protocol" -ge "$JG_BACKEND_HERDR_MIN_PRESENTATION_PROTOCOL" ] && return 0
-      ;;
+  case "$(jg_backend_herdr_go release-floor-verdict "${1:-}" "${2:-}" \
+    "$JG_BACKEND_HERDR_MIN_PRESENTATION_PROTOCOL" "$JG_BACKEND_HERDR_MIN_PRESENTATION_VERSION")" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) return 2 ;;
   esac
-  jg_backend_herdr_version_at_least "$version" "$JG_BACKEND_HERDR_MIN_PRESENTATION_VERSION" \
-    || version_status=$?
-  [ "$version_status" -eq 0 ] && return 0
-  { [ "$protocol_known" -eq 1 ] || [ "$version_status" -eq 1 ]; } && return 1
-  return 2
 }
 
 # jg_backend_herdr_presentation_release_supported: run the floor classifier
@@ -3417,31 +3402,15 @@ jg_backend_herdr_agent_identity_raw() {  # <session> <pane> -> <agent>\t<status>
 # and gains "-<4 hex>" of a checksum of the whole id, so two long ids that
 # share a prefix still get different names. Pure: no herdr call.
 jg_backend_herdr_agent_name_for() {  # <task-id> -> <agent-name>
-  local id=${1:-} name
-  [ -n "$id" ] || return 1
-  name=$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_\n-' '-')
-  case "$name" in
-    [a-z]*) ;;
-    *) name="t-$name" ;;
-  esac
-  [ "${#name}" -le 32 ] || name=$(jg_backend_herdr_agent_name_variant "$name" "$id")
-  printf '%s' "$name"
+  [ -n "${1:-}" ] || return 1
+  jg_backend_herdr_go agent-name-for "$1"
 }
 
 # jg_backend_herdr_agent_name_variant: <name> cut to 27 characters and made
 # distinct by "-<4 hex>" of a checksum of <salt>, so it stays within the
 # 32-character herdr limit.
 jg_backend_herdr_agent_name_variant() {  # <name> <salt> -> <name>
-  local name=${1:-} salt=${2:-} sum head
-  sum=$(printf '%s' "$salt" | cksum | awk '{ printf "%04x", $1 % 65536 }')
-  head=${name:0:27}
-  while :; do
-    case "$head" in
-      *[-_]) head=${head%?} ;;
-      *) break ;;
-    esac
-  done
-  printf '%s-%s' "$head" "$sum"
+  jg_backend_herdr_go agent-name-variant "${1:-}" "${2:-}"
 }
 
 # jg_backend_herdr_pin_agent_name: best-effort pin of a pane's agent display
@@ -4083,14 +4052,7 @@ JG_BACKEND_HERDR_SUBMIT_POLLS=${JG_BACKEND_HERDR_SUBMIT_POLLS:-6}
 JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP=${JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP:-0.6}
 
 jg_backend_herdr_submit_confirm_budget() {  # <caller-budget-seconds>
-  awk -v b="${1:-0}" -v m="$JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP" 'BEGIN {
-    b += 0
-    m += 0
-    if (b < 0) b = 0
-    if (m < 0) m = 0
-    if (m > b) b = m
-    printf "%.4f", b
-  }' 2>/dev/null || printf '%s' "${1:-0}"
+  jg_backend_herdr_go submit-confirm-budget "${1:-0}" "$JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP" || printf '%s' "${1:-0}"
 }
 
 jg_backend_herdr_wait_for_working() {  # <session> <pane_id> <budget-seconds> <polls>
