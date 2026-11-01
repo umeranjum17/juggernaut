@@ -152,6 +152,38 @@ test_withdraw() {
   ! drained | grep -F beta-two >/dev/null || fail "the drain presented a held item"
   pass "a stale ready-work row is withdrawn and the check never names a held item"
 }
+test_fleet_pause() {
+  local want='check: ready work waiting with no worker working: alpha-one - start each or record why it waits'
+  newhome sm-ready-pause
+  tasks add alpha-one "first ready item"
+  rm -f "$state/.last-ready-work-check"; wake "$want"; ack
+  # Main's fleet pause order in the home's data/: the lead-wake goes silent and
+  # the queued row is withdrawn instead of presented at the next drain.
+  printf '# Fleet pause for the Juggernaut migration - 31 Oct 2026\n\nStop new work.\n- Resume rule: Main sends an explicit resume order.\n' \
+    > "$dir/data/fleet-pause-2026-10-31.md"
+  cycle "a declared fleet pause still woke the lead"
+  ! grep -F "$(printf '\tcheck\t')" "$state/.wake-queue" >/dev/null 2>&1 || fail "a paused home kept a ready-work row queued"
+  ack_stopped_cycle "$state" >/dev/null 2>&1 || true
+  # A home's own paused-lane list is the same declaration.
+  printf '# Paused lanes for the Juggernaut-only push\n\nNo new work; nothing merged.\n' \
+    > "$dir/data/paused-for-juggernaut.md"
+  rm -f "$dir/data/fleet-pause-2026-10-31.md"
+  cycle "a home's own paused-lane list still woke the lead"
+  ack_stopped_cycle "$state" >/dev/null 2>&1 || true
+  # A record whose first line declares the lift is not a pause: the same ready set
+  # rings at once on the resume order.
+  printf '# Fleet pause - lifted 2026-10-03T16:54:36Z\n' > "$dir/data/fleet-pause-2026-10-31.md"
+  rm -f "$dir/data/paused-for-juggernaut.md"
+  rm -f "$state/.last-ready-work-check"; wake "$want"; ack
+  # The state marker core/fleet-stall reads silences it the same way.
+  : > "$state/.fleet-paused"; rm -f "$dir/data/fleet-pause-2026-10-31.md"
+  cycle "the fleet-paused marker still woke the lead"
+  ack_stopped_cycle "$state" >/dev/null 2>&1 || true
+  rm -f "$state/.fleet-paused"
+  rm -f "$state/.last-ready-work-check"; wake "$want"; ack
+  pass "a declared fleet pause silences the ready-work wake through every record, and the resume order rings the same set again"
+}
+
 test_full_idle() {
   local i
   newhome sm-full-idle
@@ -202,5 +234,6 @@ test_idle_lead
 test_lane_floor
 test_transient_empty
 test_withdraw
+test_fleet_pause
 test_full_idle
 test_drain_ring

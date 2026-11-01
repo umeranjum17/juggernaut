@@ -93,6 +93,28 @@ warn_invalid_lane_target_once() {
   triage_log "lane-target is not a positive integer; using the no-worker-working rule instead"
 }
 
+# A declared fleet pause silences ready-work intake until the resume order, and
+# nothing else: a signal, stale or blocker wake keeps firing for a paused home.
+# The records are the ones the fleet already keeps - state/.fleet-paused (the
+# marker core/fleet-stall/fleet-stall-check reads), data/fleet-pause*.md (the
+# order in the primary home) and data/paused-for-juggernaut.md (a home's own
+# paused-lane list) - so this reads a pause, it never declares one. Main clears a
+# pause by deleting its record, or by writing the lift into the first line:
+# an active pause note carries the words "resume rule" further down.
+fleet_paused() {
+  local rec heading
+  [ -f "$JG_HOME/state/.fleet-paused" ] && return 0
+  for rec in "$JG_HOME"/data/fleet-pause*.md "$JG_HOME/data/paused-for-juggernaut.md"; do
+    [ -f "$rec" ] || continue
+    heading=$(awk 'NF { print; exit }' "$rec" 2>/dev/null)
+    case $heading in
+      *[Ll]ift*|*[Rr]esum*|*[Uu]npaus*) continue ;;
+    esac
+    return 0
+  done
+  return 1
+}
+
 # 0 when this squad_lead home has ready work and sits below its lane floor (or, without
 # a usable target or at it, no worker is provably working). Sets READY_WORK_IDS/REASON.
 # A still-holding set re-raises after READY_WORK_RESURFACE_SECS, a new set at once; an
@@ -102,6 +124,13 @@ ready_work_waits_idle() {
   READY_WORK_IDS=
   READY_WORK_REASON=
   [ -f "$JG_HOME/.jg-squad-lead-home" ] && [ ! -L "$JG_HOME/.jg-squad-lead-home" ] || return 1
+  # Paused: withdraw the queued row so nothing is presented, and drop the
+  # resurface record so the same ready set rings at once when the pause lifts.
+  if fleet_paused; then
+    jg_wake_withdraw check ready-work || true
+    rm -f "$STATE/.ready-work-surfaced"
+    return 1
+  fi
   ready_out=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-tasks-axi.sh" ready 2>/dev/null)
   ready_rc=$?
   READY_WORK_IDS=$(printf '%s\n' "$ready_out" \
