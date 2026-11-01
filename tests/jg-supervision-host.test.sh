@@ -403,22 +403,27 @@ test_report_after_the_return_is_queued_for_main() {
 # --- dispatch entry -----------------------------------------------------------
 
 test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
-  local home state out rc
+  local home state out rc seq1 seq2
   home="$TMP_ROOT/dispatch"
   state="$home/state"
   mkdir -p "$state"
   printf 'project=demo\nwindow=jg-demo\n' > "$state/demo.meta"
   append_wake "$state" signal demo.status "signal: $state/demo.status"
   append_wake "$state" check merge "check: merge landed: fixture"
+  # A row's sequence number is the bus's: opaque and ordered, not 1 and 2. Read
+  # the two assigned to the rows so the scope is asserted exactly.
+  seq1=$(awk -F '\t' 'NR == 1 { print $2 }' "$state/.wake-queue")
+  seq2=$(awk -F '\t' 'NR == 2 { print $2 }' "$state/.wake-queue")
+  case "$seq1$seq2" in ''|*[!0-9]*) fail "the queue rows carried no sequence numbers: $(cat "$state/.wake-queue")" ;; esac
 
   out=$(JG_HOME="$home" node "$DISPATCH" scope)
   assert_contains "$out" "status=safe" "an attended scan with a resolvable row must be safe"
-  assert_contains "$out" "rows=1" "an attended scan must leave the check row to main"
+  assert_contains "$out" "rows=$seq1"$'\n' "an attended scan must claim the signal row alone and leave the check row to main"
   assert_contains "$out" "tasks=demo" "the signal row must resolve to its task"
   assert_contains "$out" "unscoped=0" "a task-local claim must be scoped"
 
   out=$(JG_HOME="$home" node "$DISPATCH" scope --afk)
-  assert_contains "$out" "rows=1 2" "an away scan must claim the check row too"
+  assert_contains "$out" "rows=$seq1 $seq2" "an away scan must claim the check row too"
   assert_contains "$out" "unscoped=1" "a claimed check row names no task, so the claim is unscoped"
 
   out=$(printf 'check: merge landed: fixture\n' | JG_HOME="$home" node "$DISPATCH" offer)
@@ -427,7 +432,7 @@ test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
   assert_contains "$out" "eligible=1" "an away check trigger must be the branch's"
   out=$(printf 'signal: %s\n' "$state/demo.status" | JG_HOME="$home" node "$DISPATCH" offer)
   assert_contains "$out" "eligible=1" "an attended signal trigger with a claimable row must be the branch's"
-  assert_contains "$out" "rows=1" "the offer must carry the scope it judged"
+  assert_contains "$out" "rows=$seq1" "the offer must carry the scope it judged"
 
   printf '[captain] keep it small\n[main] Will do.\n' > "$home/mirror"
   out=$(printf 'signal: demo.status\n' | JG_HOME="$home" node "$DISPATCH" wake-prompt --report 'the bin/jg-branch-report.sh command' --mirror-file "$home/mirror")

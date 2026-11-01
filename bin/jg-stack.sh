@@ -11,6 +11,8 @@
 #   nats     the JetStream server and its CAPTAIN stream
 #   dapr     the sidecar, which needs nats
 #   ntfy     the delivery server
+#   deliver  the CAPTAIN stream's consumer: reads each captain event off the stream and posts it
+#            to ntfy, writing state/captain-channel-delivered.jsonl (needs nats and ntfy)
 # Each service runs as a systemd user service (installed, enabled, started) when this account has a
 # user session whose unit directory is this HOME's; otherwise (CI, a container, a throwaway HOME) the
 # same argv is started detached from the home's state/bus directory by `jg-bus.sh serve`.
@@ -80,7 +82,7 @@ supervisor() {
 }
 
 unit_name() { case $1 in nats) echo "$PREFIX-bus.service" ;; *) echo "$PREFIX-$1.service" ;; esac; }
-bin_of() { case $1 in nats) echo nats-server ;; dapr) echo daprd ;; ntfy) echo ntfy ;; esac; }
+bin_of() { case $1 in nats|deliver) echo nats-server ;; dapr) echo daprd ;; ntfy) echo ntfy ;; esac; }
 
 # ensure_tool <tool>: at or above its pin, installed from the pinned release when not.
 ensure_tool() {
@@ -110,10 +112,10 @@ install_unit() {
 }
 
 report() {  # <part> <supervisor>
-  local part=$1 sup=$2 name pid=none enabled ver addr
+  local part=$1 sup=$2 name pid=none enabled ver addr=
   name=$(unit_name "$part")
   ver=$(bash "$BOOT" version "$(bin_of "$part")" 2>/dev/null) || ver=unknown
-  addr=$(listen_addr "$part")
+  [ "$part" = deliver ] || addr=$(listen_addr "$part")  # the consumer listens on nothing; its pid proves it
   if [ "$sup" = systemd ]; then
     enabled="$(systemctl --user is-enabled "$name" 2>/dev/null) ($name)"
     pid=$(systemctl --user show -p MainPID --value "$name" 2>/dev/null)
@@ -123,6 +125,10 @@ report() {  # <part> <supervisor>
   fi
   if [ -z "$pid" ] || [ "$pid" = 0 ] || ! kill -0 "$pid" 2>/dev/null; then
     fail "$part" "not running (pid ${pid:-none}), see $STATE/bus/$part.log" "$(blocks "$part")"
+  fi
+  if [ "$part" = deliver ]; then
+    printf '%-7s enabled %s, running pid %s, consuming %s\n' "$part" "$enabled" "$pid" "$("$BUS" config stream)"
+    return
   fi
   listening "$addr" || fail "$part" "running (pid $pid) but not listening on $addr" "$(blocks "$part")"
   printf '%-5s installed %s, enabled %s, running pid %s, listening %s\n' "$part" "$ver" "$enabled" "$pid" "$addr"
@@ -142,7 +148,7 @@ for t in nats-server nats daprd ntfy; do ensure_tool "$t"; done
 
 sup=$(supervisor)
 started=0
-for part in nats dapr ntfy; do
+for part in nats dapr ntfy deliver; do
   if [ "$mode" = up ]; then
     if [ "$sup" = systemd ]; then
       changed=0; install_unit "$part" && changed=1
@@ -160,7 +166,7 @@ for part in nats dapr ntfy; do
       "$BUS" serve >/dev/null 2>&1; started=1
     fi
   fi
-  [ "$mode" = status ] || wait_listening "$(listen_addr "$part")" || true
+  [ "$mode" = status ] || [ "$part" = deliver ] || wait_listening "$(listen_addr "$part")" || true
   report "$part" "$sup"
   if [ "$part" = nats ]; then
     [ "$mode" = status ] || "$BUS" bootstrap >/dev/null 2>&1

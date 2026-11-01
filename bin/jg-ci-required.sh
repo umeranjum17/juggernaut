@@ -14,6 +14,13 @@
 # absent or unknown event owes the full set, so a caller that forgets it gets
 # the slower verdict rather than the weaker one.
 #
+# Area suites: a pull request also owes the Bus service (JG_CI_BUS), Shell syntax
+# (JG_CI_SHELL) and Smoke plus Fast evals (JG_CI_EVALS) lanes when it touches
+# that area (bin/jg-ci-scope.sh). An area that is not touched may skip; a touched
+# area whose suite was skipped or did not report refuses. An absent or unknown
+# area verdict counts as touched, so a caller that forgets it gets the stricter
+# verdict.
+#
 # The heavy behaviour suite is .github/workflows/behavior.yml, which is nightly
 # and post-merge and never a pull request gate, so no verdict here names it.
 #
@@ -54,7 +61,7 @@ jg_ci_required_result() {
 jg_ci_required_main() {
   local want lane result bad=''
   case ${1:-} in
-    -h|--help) sed -n '2,8{s/^# \{0,1\}//;p;}' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-ci-required.sh"; return 0 ;;
+    -h|--help) sed -n '2,14{s/^# \{0,1\}//;p;}' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-ci-required.sh"; return 0 ;;
     '') ;;
     *) jg_ci_required_die "unknown argument $1" ;;
   esac
@@ -67,9 +74,25 @@ jg_ci_required_main() {
     *) jg_ci_required_die "the scope verdict is '${JG_CI_BEHAVIOR:-}', so CI cannot say which lanes this change needed" ;;
   esac
   case ${JG_CI_EVENT:-} in
-    pull_request) JG_CI_REQUIRED_LANES=$JG_CI_REQUIRED_LANES_PR ;;
+    pull_request)
+      JG_CI_REQUIRED_LANES=$JG_CI_REQUIRED_LANES_PR
+      # A touched area's lanes are needed; an untouched area's lanes may skip
+      # but must still not have failed.
+      JG_CI_SKIPOK_LANES=''
+      if [ "${JG_CI_BUS:-}" = false ]; then JG_CI_SKIPOK_LANES="$JG_CI_SKIPOK_LANES bus"
+      else JG_CI_REQUIRED_LANES="$JG_CI_REQUIRED_LANES bus"; fi
+      if [ "${JG_CI_SHELL:-}" = false ]; then JG_CI_SKIPOK_LANES="$JG_CI_SKIPOK_LANES syntax"
+      else JG_CI_REQUIRED_LANES="$JG_CI_REQUIRED_LANES syntax"; fi
+      if [ "${JG_CI_EVALS:-}" = false ]; then JG_CI_SKIPOK_LANES="$JG_CI_SKIPOK_LANES smoke evals"
+      else JG_CI_REQUIRED_LANES="$JG_CI_REQUIRED_LANES smoke evals"; fi
+      ;;
     *) JG_CI_REQUIRED_LANES=$JG_CI_REQUIRED_LANES_FULL ;;
   esac
+  # shellcheck disable=SC2086  # the lane list is a deliberate word split
+  for lane in ${JG_CI_SKIPOK_LANES:-}; do
+    result=$(jg_ci_required_result "$lane") || result=unreadable
+    case $result in failure|cancelled) bad="$bad $lane=$result" ;; esac
+  done
   # The scope verdict is always needed: without it no lane verdict counts.
   [ "$(jg_ci_required_result invariants)" = success ] || bad="$bad invariants=not-passed"
   # shellcheck disable=SC2086  # the lane list is a deliberate word split

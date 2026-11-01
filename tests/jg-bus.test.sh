@@ -84,7 +84,10 @@ class H(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(n).decode('utf-8', 'replace')
         with open(out, 'a') as f:
             f.write(json.dumps({'path': self.path, 'title': self.headers.get('Title'), 'body': body}) + '\n')
-        self.send_response(204)
+        # A sidecar that cannot take the event answers 503, so publish delivers it directly;
+        # only the pub/sub name `accepted` stands for a bus that took it onto the stream.
+        refused = self.path.startswith('/v1.0/publish/') and not self.path.startswith('/v1.0/publish/accepted/')
+        self.send_response(503 if refused else 204)
         self.end_headers()
     def log_message(self, *a):
         pass
@@ -219,6 +222,29 @@ printf 'set ntfy-relay on\n' >>"$d/home/config/captain-channel"
 : >"$SINK_OUT"
 run_quiet "$d" "$BUS" publish card k2 "A decision waits."
 assert_contains "$(requests)" '"path": "/relay/juggernaut-captain"' "relay on is the only thing that sends through the relay"
+
+# --- the CAPTAIN stream is the delivery path: the consumer delivers what the bus took -------
+d=$(setup stream)
+printf 'set dapr-http-url http://127.0.0.1:%s\nset dapr-pubsub accepted\nset ntfy-server http://127.0.0.1:%s\nset nats-url %s\n' \
+  "$PORT" "$PORT" "$JG_KV_URL" >"$d/home/config/captain-channel"
+"$NATS_BIN" -s "$JG_KV_URL" stream add --config "$ROOT/core/bus/stream.json" >/dev/null 2>&1 || fail "the test bus would not create the CAPTAIN stream"
+: >"$SINK_OUT"
+run_quiet "$d" "$BUS" publish card k-stream "The stream carries this one."
+assert_equals "0" "$(grep -c '"path": "/juggernaut-captain"' <<<"$(requests)" || true)" "an event the bus took is not also delivered directly"
+# The sidecar's job, done by hand: the event lands on the stream inside a CloudEvents envelope.
+events "$d" | jq -c '{data: (. | tojson), topic: .subject, type: "com.dapr.event.sent"}' |
+  "$NATS_BIN" -s "$JG_KV_URL" pub jg.captain.card --force-stdin >/dev/null 2>&1
+out=$(run "$d" "$BUS" deliver --once)
+assert_equals "" "$out" "the consumer drains the stream quietly"
+assert_contains "$(requests)" '"path": "/juggernaut-captain"' "the stream consumer delivered the event to the captain's topic"
+assert_contains "$(requests)" 'The stream carries this one.' "the delivery carries the captain's text"
+assert_equals "1" "$(wc -l <"$d/home/state/captain-channel-delivered.jsonl" | tr -d ' ')" "the delivery is recorded"
+assert_contains "$(cat "$d/home/state/captain-channel-delivered.jsonl")" '"key":"k-stream"' "the delivery record names the event"
+: >"$SINK_OUT"
+run_quiet "$d" "$BUS" deliver --once
+assert_equals "" "$(requests)" "a delivered event is acknowledged, so a second drain sends nothing"
+assert_equals "0" "$(cat "$d/home/state/captain-channel-undelivered.jsonl" 2>/dev/null | wc -l | tr -d ' ')" "nothing is undelivered"
+"$NATS_BIN" -s "$JG_KV_URL" stream rm CAPTAIN -f >/dev/null 2>&1
 
 # --- off, and an unreachable bus, both leave the emitter alone ----------------
 d=$(setup off)

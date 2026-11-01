@@ -1,18 +1,25 @@
-# Hard limits, in seconds, enforced by bin/jg-test-run.sh. `bin/jg-test-run.sh
+# Speed limits, in seconds, read by bin/jg-test-run.sh. `bin/jg-test-run.sh
 # --show-limits` prints the effective values.
 #
-# A test that runs over its limit fails and names itself, the time it measured,
-# and the limit. The class comes from the test's own name: anything ending
-# -e2e.test.sh is an end-to-end test, everything else is a unit or policy test.
-# Under enforcement the class limit is also that test's kill bound, so a hung or
-# overrunning test is terminated and reported rather than left holding the run.
+# A test that runs over its limit is REPORTED, never failed and never killed: the
+# run prints the test's name, the time it measured and the limit. The class comes
+# from the test's own name: anything ending -e2e.test.sh is an end-to-end test,
+# everything else is a unit or policy test. A limit is a signal to look at a slow
+# test, not a bound on a loaded runner (a real-Herdr script that ran 60.04 s was
+# killed at 60 s and hid what it still had to prove).
 #
-# The pull-request gate, bin/jg-local-suite.sh, passes --gate: it enforces the
-# per-test limits and applies gate_wall_seconds as its whole-run budget. The
-# nightly .github/workflows/behavior.yml passes --enforce-test-speed, and its own
-# job timeouts own that run's wall bound. A plain local run reports a breach
-# without refusing, because a local refusal would stop ordinary work until the
-# whole slow list empties while the two enforcing runs above already name it.
+# What bounds a hung test is a separate thing: the --changed ceiling, a caller's
+# --per-script-timeout-secs, and the pull-request gate's whole-run budget,
+# gate_wall_seconds, which bin/jg-local-suite.sh passes with --gate and which
+# stops the run before the next test starts.
 e2e_seconds=60
-unit_seconds=5
+# unit_seconds is the FLOOR of a unit test's bound. A test's own bound is
+# max(unit_seconds, 2 x its measured CI hint in bin/jg-test-run.sh); a test with
+# no hint gets the floor, so a new slow test is still caught.
+# Measured 2026-11-01: 5s was never a real limit. The old kill bound made every
+# test slower than 5s read as ~5.03s; 39 of 100 hinted unit
+# tests run over 5s and 25 over 15s (slowest jg-supervision-host 1162s,
+# jg-watcher-lock 1060s). Do not tighten the floor below the quick tests'
+# loaded runtime (~10s) without re-measuring.
+unit_seconds=15
 gate_wall_seconds=600

@@ -1246,6 +1246,47 @@ github_publish_wait() {  # <refusal-text> <fallback-line>
 # command substitution, so nothing it sets is silently lost, and its refusal
 # travels through a file for the same reason. Its exit status is unchanged, so
 # the caller still exits exactly where it did before.
+# The merge-gate evidence lint (core/merge-on-green/checks-lint.sh), found the way
+# the merge-on-green check finds it: the copy the home's installed check runs,
+# else this repository's own. JG_PR_MERGE_CHECKS_LINT overrides it (tests).
+resolve_merge_checks_lint() {
+  local shim=$STATE/merge-on-green.check.sh line target
+  if [ -n "${JG_PR_MERGE_CHECKS_LINT:-}" ]; then
+    printf '%s\n' "$JG_PR_MERGE_CHECKS_LINT"
+    return 0
+  fi
+  if [ -f "$shim" ] && [ ! -L "$shim" ]; then
+    line=$(sed -n 's/^exec \(.*\)$/\1/p' "$shim" | head -n 1)
+    target=${line% check *}
+    case $target in
+      */merge-on-green.sh)
+        if [ -x "${target%/merge-on-green.sh}/checks-lint.sh" ]; then
+          printf '%s\n' "${target%/merge-on-green.sh}/checks-lint.sh"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+  printf '%s\n' "$JG_ROOT/core/merge-on-green/checks-lint.sh"
+}
+
+# Prints the lint line; returns 0 only on a PASS verdict, so nothing is waived.
+run_merge_checks_lint() {
+  local lint out='' rc=0
+  lint=$(resolve_merge_checks_lint)
+  if [ ! -x "$lint" ]; then
+    printf 'error: merge refused: the evidence lint %s is not runnable\n' "$lint" >&2
+    return 1
+  fi
+  out=$(env JG_HOME="$JG_HOME" timeout "${JG_PR_MERGE_LINT_TIMEOUT:-300}" "$lint" "$URL" "$JG_HOME/data/$ID" 2>&1) || rc=$?
+  printf '%s\n' "$out"
+  if [ "$rc" -ne 0 ] || ! printf '%s\n' "$out" | grep -q 'PASS'; then
+    printf 'error: merge refused: the evidence lint did not pass (exit %s); fix what it names and run the merge again\n' "$rc" >&2
+    github_publish_wait "$out" 'evidence lint refused the merge'
+    return 1
+  fi
+}
+
 github_gate() {  # <fallback-line> <command...>
   local fallback=$1 out='' rc=0 gate_log
   shift
@@ -1804,6 +1845,11 @@ case "$PROVIDER" in
       exit 1
     fi
     if declare -F jg_dod_merge_gate >/dev/null; then github_gate 'proof or evidence gate refused the merge' jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$JG_PR_MERGE_HEAD" "$URL" || exit 1; fi
+    # The evidence lint runs here, in the merge's own call, so the lead no
+    # longer spends one model turn reading PASS and a second one merging. It is
+    # the lint the merge-on-green gate runs, over the same evidence folder
+    # (data/<task>); a FAIL refuses the merge with the lint's own message.
+    run_merge_checks_lint || exit 1
     # The away record is locked first, so this last presence and authority read
     # and the forge command below share one live-owner critical section.
     hold_away_record_for_merge || exit 1

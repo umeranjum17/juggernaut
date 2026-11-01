@@ -12,11 +12,13 @@
 # chat message (the visible summary bin/jg-branch-outcome.sh appends, layer
 # `message`) are the same two layers on two surfaces, so both read this file.
 #
-# The check is SHADOW-FIRST: it names the failing rule and writes one line to
+# The check is SHADOW-FIRST: it names the failing rule in one line appended to
 # $STATE/captain-card-shadow.log, and it refuses nothing. It measures the layer
-# and never gates the work. The banned words have one owner too, JG_ASK_JUNK_
-# PATTERNS in bin/jg-ask-gate-lib.sh: the same internal terms AGENTS.md section 9
-# keeps out of captain chat.
+# and never gates the work, so it never writes to stdout or stderr either: its
+# callers print a card key or an outcome sequence on those streams, and a
+# measurement that shares them breaks what the caller captures. The banned words
+# have one owner too, JG_ASK_JUNK_PATTERNS in bin/jg-ask-gate-lib.sh: the same
+# internal terms AGENTS.md section 9 keeps out of captain chat.
 #
 # Rules, one line each, the first failing one printed:
 #   1  no internal id, file path or jargon.
@@ -81,19 +83,19 @@ jg_captain_card_refusal() {  # <layer> <text> <options>
   return 0
 }
 
-# Shadow-first: log and print what this item would be refused for, and return 0
-# whatever the verdict so no caller ever blocks on it.
+# Shadow-first: log what this item would be refused for, and return 0 whatever
+# the verdict so no caller ever blocks on it. The log line is the whole
+# delivery: a caller prints its own result on stdout (a card key) and its own
+# problems on stderr, so a measurement notice on either stream would corrupt it.
 jg_captain_card_shadow() {  # <layer> <text> <options>
   local layer=${1-} text=${2-} options=${3-} refusal state line
   refusal=$(jg_captain_card_refusal "$layer" "$text" "$options") || true
   [ -n "$refusal" ] || return 0
   state=${JG_STATE_OVERRIDE:-${STATE:-${JG_HOME:-}/state}}
+  [ -n "$state" ] && [ -d "$state" ] || return 0
   line=$(printf '%s' "$text" | tr '\n\t' '  ' | cut -c1-160)
-  if [ -d "$state" ]; then
-    printf '%s layer=%s %s text="%s"\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$layer" "$refusal" "$line" \
-      >> "$state/$JG_CAPTAIN_CARD_SHADOW_LOG" 2>/dev/null || true
-  fi
-  printf 'shadow (would refuse): %s\n' "$refusal" >&2
+  printf '%s layer=%s %s text="%s"\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$layer" "$refusal" "$line" \
+    >> "$state/$JG_CAPTAIN_CARD_SHADOW_LOG" 2>/dev/null || true
   return 0
 }

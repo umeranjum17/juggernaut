@@ -1,0 +1,20 @@
+{
+  "schema": "juggernaut-rules/1",
+  "rules": [
+    {
+      "id": "example-proof-from-the-real-product",
+      "when": "You claim a change works.",
+      "use": { "text": "Attach a screen or a clip of the real product." },
+      "why": "A claim is not proof.",
+      "kind": "judgement"
+    },
+    {
+      "id": "example-merged-is-not-released",
+      "when": "You report a user-visible change as fixed.",
+      "use": { "text": "Name the released version that runs, or say it is merged but not released." },
+      "why": "A merge is not a release.",
+      "kind": "checkable",
+      "enforcedBy": "bin/jg-live-claim.sh"
+    }
+  ]
+}

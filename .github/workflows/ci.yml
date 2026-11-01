@@ -30,7 +30,10 @@ concurrency:
 # sharded changed-file lint (bin/jg-lint.sh --changed-base), and the
 # changed-file tests (bin/jg-test-run.sh --changed). Those finish in about two
 # minutes on a small change because they work on the files the change touches
-# rather than on the whole tree.
+# rather than on the whole tree. It also owes the Bus service, Shell syntax, and
+# Smoke plus Fast evals suites when it touches that suite's area (bin/jg-ci-scope.sh
+# owns the paths); an untouched area skips, and `CI required` refuses a touched
+# area whose suite was skipped or did not report.
 #
 # A push to main or to a release branch owes the FULL set: whole-tree lint on
 # the same shards, shell syntax, the smoke run, the fast evals, and the bus
@@ -74,6 +77,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       behavior: ${{ steps.scope.outputs.behavior }}
+      bus: ${{ steps.scope.outputs.bus }}
+      shell: ${{ steps.scope.outputs.shell }}
+      evals: ${{ steps.scope.outputs.evals }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -94,7 +100,7 @@ jobs:
             changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" || true)
             printf '%s\n' "$changed" | bin/jg-ci-scope.sh >>"$GITHUB_OUTPUT"
           else
-            echo behavior=true >>"$GITHUB_OUTPUT"
+            printf '%s\n' behavior=true bus=true shell=true evals=true >>"$GITHUB_OUTPUT"
           fi
       # The one lint a documentation-only change gets. ShellCheck is absent for
       # a cheap change: no cheap path is a shell or workflow file.
@@ -126,6 +132,13 @@ jobs:
           else
             bin/jg-retired-catalog-check.sh
           fi
+      - name: No committed binaries
+        run: |
+          set -eu
+          # The gate proves its own refusal on a planted file first, so a broken
+          # gate cannot pass the tree by matching nothing.
+          bin/jg-committed-binary-check.sh --self-test
+          bin/jg-committed-binary-check.sh
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu
@@ -209,9 +222,9 @@ jobs:
     name: Shell syntax
     runs-on: ubuntu-latest
     needs: invariants
-    # Post-merge lane: it left the required pull request set so the merge path
-    # stays under three minutes, and it runs on the push that follows a merge.
-    if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' }}
+    # Release gate on every push, and on a pull request only when the change
+    # touches this suite's area (bin/jg-ci-scope.sh), so the merge path stays fast.
+    if: ${{ needs.invariants.outputs.behavior == 'true' && (github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' || github.event_name == 'pull_request' && needs.invariants.outputs.shell == 'true') }}
     # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
     timeout-minutes: 5
     steps:
@@ -237,9 +250,9 @@ jobs:
     name: Smoke
     runs-on: ubuntu-latest
     needs: invariants
-    # Post-merge lane: it left the required pull request set so the merge path
-    # stays under three minutes, and it runs on the push that follows a merge.
-    if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' }}
+    # Release gate on every push, and on a pull request only when the change
+    # touches this suite's area (bin/jg-ci-scope.sh), so the merge path stays fast.
+    if: ${{ needs.invariants.outputs.behavior == 'true' && (github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' || github.event_name == 'pull_request' && needs.invariants.outputs.evals == 'true') }}
     # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
     timeout-minutes: 5
     steps:
@@ -259,9 +272,9 @@ jobs:
     name: Fast evals
     runs-on: ubuntu-latest
     needs: invariants
-    # Post-merge lane: it left the required pull request set so the merge path
-    # stays under three minutes, and it runs on the push that follows a merge.
-    if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' }}
+    # Release gate on every push, and on a pull request only when the change
+    # touches this suite's area (bin/jg-ci-scope.sh), so the merge path stays fast.
+    if: ${{ needs.invariants.outputs.behavior == 'true' && (github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' || github.event_name == 'pull_request' && needs.invariants.outputs.evals == 'true') }}
     # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
     timeout-minutes: 10
     steps:
@@ -283,9 +296,9 @@ jobs:
     name: Bus service
     runs-on: ubuntu-latest
     needs: invariants
-    # Post-merge lane: it left the required pull request set so the merge path
-    # stays under three minutes, and it runs on the push that follows a merge.
-    if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' }}
+    # Release gate on every push, and on a pull request only when the change
+    # touches this suite's area (bin/jg-ci-scope.sh), so the merge path stays fast.
+    if: ${{ needs.invariants.outputs.behavior == 'true' && (github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' || github.event_name == 'pull_request' && needs.invariants.outputs.bus == 'true') }}
     # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
     timeout-minutes: 10
     steps:
@@ -375,4 +388,7 @@ jobs:
           JG_CI_NEEDS: ${{ toJSON(needs) }}
           JG_CI_BEHAVIOR: ${{ needs.invariants.outputs.behavior }}
           JG_CI_EVENT: ${{ github.event_name }}
+          JG_CI_BUS: ${{ needs.invariants.outputs.bus }}
+          JG_CI_SHELL: ${{ needs.invariants.outputs.shell }}
+          JG_CI_EVALS: ${{ needs.invariants.outputs.evals }}
         run: bin/jg-ci-required.sh
