@@ -16,7 +16,7 @@
 # to the terminal or to private state, never into a tracked file.
 #
 # Sourced by bin/jg-question-card.sh, bin/jg-merge-outcome-lib.sh and the
-# merge-card add-on. No side effects on source.
+# merge-card feature. No side effects on source.
 
 jg_board_link() {  # <section> <key>
   local section=${1:-} key=${2:-} file url

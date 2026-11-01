@@ -1,0 +1,35 @@
+# Captain channel routing: where the bus is, what it carries, and how the captain
+# hears about it. bin/jg-bus.sh is the one reader; a home's config/captain-channel
+# overrides any single key here, and JG_CAPTAIN_CHANNEL overrides both files.
+#
+# The channel is LIVE: a captain-facing change of state is recorded, published and
+# delivered to his iPad by this path.
+#   mode          live    record, publish and deliver (the shipped value).
+#                 shadow  record and publish only, so nothing he sees changes.
+#                         This is the one-step reversal.
+#                 off     do nothing at all.
+#   The transport itself is not a key here: bin/jg-bus.sh publishes through the Dapr
+#   sidecar, and core/bus/dapr/components/pubsub.yaml picks what the bus really is.
+#   nats-url      the server core/bus/nats.conf starts; dapr-http-url/-ports are
+#                 the sidecar started beside it.
+#   stream        the JetStream stream core/bus/stream.json creates for subject-prefix.
+#                 The metric server stays off in this step (see jg-bus.sh serve): a
+#                 metrics port is shared machine surface and nothing scrapes it yet.
+#   ntfy-relay    the relay switch. off delivers only to ntfy-server, the local
+#                 server core/bus/ntfy.yml starts; on would send the same event
+#                 through ntfy-relay-server instead. The captain has not answered
+#                 the relay question, so this ships off and stays off until he does.
+set mode live
+set nats-url nats://127.0.0.1:4222
+set dapr-http-url http://127.0.0.1:3500
+set dapr-http-port 3500
+set dapr-grpc-port 50001
+set dapr-app-id juggernaut-bus
+set dapr-pubsub captain-channel
+set subject-prefix jg.captain
+set stream CAPTAIN
+set ntfy-server http://127.0.0.1:2586
+set ntfy-topic juggernaut-captain
+set ntfy-tag juggernaut
+set ntfy-relay off
+set ntfy-relay-server https://ntfy.sh

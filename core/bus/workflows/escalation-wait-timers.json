@@ -1,0 +1,100 @@
+{
+  "apiVersion": "juggernaut.dev/v1",
+  "kind": "WorkflowDefinition",
+  "metadata": {
+    "name": "escalation-wait-timers",
+    "migrationStep": "5c",
+    "half": "the wait timers: the owner alert and the pause cadence, the two timers that start a wait's clock",
+    "mode": "live",
+    "authoritative": "bin/jg-escalation-workflows.sh decides and delivers these rungs on every watcher poll; the escalation rung, the board card and the re-alert cadence are still core/wait-timers/bin/jg-wait-timers-lib.sh",
+    "reader": "bin/jg-escalation-workflows.sh is the one reader; a home may override this file at config/escalation-workflows.json or with JG_ESCALATION_WORKFLOW"
+  },
+  "spec": {
+    "version": 1,
+    "key": "waiting-timer-{home}-{task}-g{generation}-{source}",
+    "sources": [
+      {
+        "name": "herdr-blocked",
+        "facts": "agent-list",
+        "note": "a blocked Herdr agent, read from the runtime's agent list; a replay cannot see it, so parity rows never carry it"
+      },
+      {
+        "name": "prompt",
+        "facts": "wait-source",
+        "fresh": true
+      },
+      {
+        "name": "question",
+        "facts": "wait-source",
+        "fresh": true
+      },
+      {
+        "name": "quota",
+        "facts": "wait-source",
+        "fresh": true
+      },
+      {
+        "name": "errors",
+        "facts": "wait-source",
+        "fresh": true
+      },
+      {
+        "name": "silent",
+        "facts": "wait-source",
+        "fresh": true
+      },
+      {
+        "name": "supervision",
+        "facts": "wait-source",
+        "fresh": false
+      },
+      {
+        "name": "greenpr",
+        "facts": "wait-source",
+        "fresh": true
+      },
+      {
+        "name": "decision",
+        "facts": "status-open-decision"
+      },
+      {
+        "name": "pause",
+        "facts": "status-declared-wait",
+        "paused": true
+      }
+    ],
+    "timers": {
+      "owner": {
+        "seconds": 120,
+        "env": "JG_WAIT_ALERT_SECS"
+      },
+      "pause": {
+        "seconds": 14400,
+        "env": "JG_PAUSE_RESURFACE_SECS"
+      }
+    },
+    "rungs": {
+      "owner": {
+        "deliver": "wake"
+      }
+    },
+    "ladders": {
+      "wait": {
+        "rungs": [
+          {
+            "rung": "owner",
+            "timer": "owner"
+          }
+        ]
+      },
+      "pause": {
+        "rungs": [
+          {
+            "rung": "owner",
+            "timer": "pause"
+          }
+        ]
+      }
+    }
+  }
+}

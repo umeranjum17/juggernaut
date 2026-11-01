@@ -5,14 +5,12 @@ journeys:
   receipt-candidate-hook:
     command: bash journeys/receipt-candidate-hook.sh
   tickets-stage-publish:
-    command: bash addons/tickets-sync/run-stage-proof.sh
+    command: bash core/tickets-sync/run-stage-proof.sh
   tickets-writeback:
     command: bash journeys/tickets-writeback.sh
   ready-backlog-stall:
     command: bash journeys/ready-backlog-stall.sh
     timeout: 45m
-  fleet-report:
-    command: bash addons/fleet-report/run-proof.sh
   proof-attach:
     command: bash journeys/proof-attach.sh
   design-call-gate:
@@ -38,6 +36,70 @@ journeys:
     core: true
   tmp-sweep:
     command: bash journeys/tmp-sweep.sh
+
+  merge-card-pool-fallback:
+    command: bash core/merge-card/run-proof.sh
+  owner-rules-hierarchy:
+    command: bash core/owner-rules/run-hierarchy-proof.sh
+  owner-rules-publication:
+    command: bash core/owner-rules/run-proof.sh
+  key-in-env-alert-once:
+    command: bash core/key-in-env-check/run-proof.sh
+  fleet-pulse-chat-tsv-refresh:
+    command: bash core/fleet-pulse/tests/chat-tsv.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  fleet-pulse-newest-retro:
+    command: bash core/fleet-pulse/run-proof.sh
+  fleet-report:
+    command: bash core/fleet-report/run-proof.sh
+
+  limit-prompt-move:
+    command: bash core/limit-prompt-move/tests/limit-prompt-move-e2e.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  limit-prompt-move-live:
+    command: bash core/limit-prompt-move/run-live-proof.sh
+  quota-failover-screen-match:
+    command: bash core/quota-failover/run-proof.sh
+  quota-failover-live-route:
+    command: bash core/quota-failover/run-live-proof.sh
+  pipeline-route:
+    command: bash core/pipeline-quota-failover/run-proof.sh
+  pipeline-route-live:
+    command: bash core/pipeline-quota-failover/run-live-proof.sh
+  claude-accounts-quota:
+    command: bash core/claude-accounts/run-proof.sh
+  claude-accounts-pick:
+    command: bash core/claude-accounts/run-proof-pick.sh
+  claude-accounts-codex-rest:
+    command: bash core/claude-accounts/run-proof-codex-rest.sh
+  claude-accounts-timer:
+    command: bash core/claude-accounts/run-proof-timer.sh
+  receipts-pr-candidate:
+    command: bash core/receipts/run-proof.sh
+  lookout-adapter-live:
+    command: bash core/lookout-adapter/run-proof.sh
+  lookout-service-dry:
+    command: bash core/lookout-adapter/run-service-proof.sh
+  wait-timers-identity:
+    command: bash core/wait-timers/run-proof.sh
+  merge-card-real-board:
+    command: bash core/merge-card/tests/real-board.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  merge-card-clean-clone:
+    command: bash core/merge-card/run-clean-clone-proof.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  merge-card-retitle:
+    command: bash core/merge-card/run-retitle-proof.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  fleet-contract-check:
+    command: bash core/fleet-contract-check/run-proof.sh
+  pool-tool-account:
+    command: bash core/account-pool/run-tool-proof.sh
+  pool-helper:
+    command: bash core/account-pool/run-model-pool-proof.sh
+  quota-axi-pool:
+    command: bash core/quota-axi-pool/run-proof.sh
+  guards-pool-accounts:
+    command: bash core/read-guard/run-pool-proof.sh
+  kill-guard-device:
+    command: bash core/kill-guard/run-device-proof.sh
+  kill-guard-main-live:
+    command: node core/kill-guard/run-main-proof.mjs
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

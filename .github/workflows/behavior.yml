@@ -44,6 +44,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      # The guard host is Go: tests/jg-guard-host.test.sh, repo-guard's suite and the
+      # delete-guard suite build and run it, so the lane needs the pinned toolchain.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/guard-host/go.mod
+          cache: false
       - name: Install pinned ShellCheck
         run: |
           set -eu
@@ -83,6 +89,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      # The guard host is Go: tests/jg-guard-host.test.sh, repo-guard's suite and the
+      # delete-guard suite build and run it, so the lane needs the pinned toolchain.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/guard-host/go.mod
+          cache: false
       - name: Install pinned ShellCheck
         run: |
           set -eu
@@ -133,6 +145,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      # The guard host is Go: tests/jg-guard-host.test.sh, repo-guard's suite and the
+      # delete-guard suite build and run it, so the lane needs the pinned toolchain.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/guard-host/go.mod
+          cache: false
       - name: Install pinned ShellCheck
         run: |
           set -eu

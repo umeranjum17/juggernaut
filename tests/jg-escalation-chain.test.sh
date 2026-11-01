@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The stuck-worker escalation chain (addons/wait-timers/README.md): a stuck
+# The stuck-worker escalation chain (core/wait-timers/README.md): a stuck
 # operator goes to its owning lead, a stuck lead goes to Main, and only what
 # Main cannot settle becomes a board card; every rung fires again while the
 # wait stays open. Real watcher and drain cycles over a copy of this checkout's
-# bin/ and add-ons; only the terminal, the board, and the steer and interrupt
+# bin/ and features; only the terminal, the board, and the steer and interrupt
 # endpoints are recorders. One test per scenario row.
 set -eu
 
@@ -12,7 +12,7 @@ set -eu
 TMP_ROOT=$(jg_test_tmproot jg-escalation-chain)
 FORK="$TMP_ROOT/fork"
 mkdir -p "$FORK"
-cp -a "$ROOT/bin" "$ROOT/addons" "$FORK/"
+cp -a "$ROOT/bin" "$ROOT/core" "$FORK/"
 # The steer and interrupt endpoints record their calls in the calling home.
 for f in jg-send.sh jg-control.sh; do
   # shellcheck disable=SC2016 # the recorder expands its own arguments when run
@@ -87,7 +87,7 @@ cycle() {  # <home> [absent]
   mark="$h/tmp/cycle-mark"
   touch "$mark"
   env -u JG_TASK_ID JG_WATCH_HANDLING_SUCCESSOR="$successor" HOME="$h/home" TMPDIR="$h/tmp" PATH="$h/fakebin:$PATH" \
-    JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" JG_ADDONS_DIR="$FORK/addons" \
+    JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" \
     JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS="${LIVENESS:-99999999}" JG_BUSY_TURN_MAX_SECS=999999 JG_STALE_ESCALATE_SECS=999999 \
     JG_SQUAD_LEAD_WAKE_STALL_SECS=999999 JG_WAIT_ALERT_SECS=2 JG_WAIT_ESCALATE_SECS=4 JG_WAIT_CARD_SECS="${CARD_SECS:-6}" \
@@ -905,6 +905,37 @@ test_ready_work_wakes_the_primary_home_too() {
   pass "ready work with no worker working wakes the primary home, not only a lead, and a freed place re-raises it"
 }
 
+test_a_fleet_pause_silences_ready_work_but_not_a_blocker() {
+  local m before
+  m=$(home ready-pause)
+  mkdir -p "$m/data"
+  backlog "$m" add alpha "first item" --priority 1
+  cycle "$m"
+  grep -q '^check: ready work waiting with no worker working: alpha' "$m/events" \
+    || fail "an unpaused primary home got no ready-work wake: $(cat "$m/events")"
+  # Main declares the fleet pause in this home: ready-work intake goes silent.
+  printf '# Fleet pause for the Juggernaut migration - 31 Oct 2026\n\nStop new work.\n- Resume rule: Main sends an explicit resume order.\n' \
+    > "$m/data/fleet-pause-2026-10-31.md"
+  before=$(grep -c '^check: ready work waiting' "$m/events")
+  touch -d '-15 days' "$m/state/.last-ready-work-check"
+  cycle "$m"
+  [ "$(grep -c '^check: ready work waiting' "$m/events")" = "$before" ] \
+    || fail "a paused primary home raised the ready-work wake: $(cat "$m/events")"
+  # A worker's blocker is not ready-work intake, so the pause does not swallow it.
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nworktree=%s/gone\n' "$m" > "$m/state/w1.meta"
+  printf 'blocked [at=1]: the vendor key is missing\n' > "$m/state/w1.status"
+  PANES=1 cycle "$m"
+  grep -q '^signal:.*w1.status' "$m/events" || fail "a paused home swallowed a worker's blocker: $(cat "$m/events")"
+  # The resume order clears the record and the same ready set rings at once.
+  rm -f "$m/data/fleet-pause-2026-10-31.md" "$m/state/w1.meta" "$m/state/w1.status"
+  before=$(grep -c '^check: ready work waiting' "$m/events")
+  touch -d '-15 days' "$m/state/.last-ready-work-check"
+  cycle "$m"
+  [ "$(grep -c '^check: ready work waiting' "$m/events")" -gt "$before" ] \
+    || fail "the resume order did not re-raise the ready set: $(cat "$m/events")"
+  pass "a fleet pause silences ready-work intake in the primary home, leaves a real blocker wake alone, and the resume order rings the set again"
+}
+
 test_memory_refused_launch_reraises_when_admission_clears() {
   local m
   m=$(home admit-retry)
@@ -948,6 +979,7 @@ test_stalled_backlog_quiet_when_project_is_at_capacity
 test_ship_ready_line_goes_through_the_pr_check
 test_watcher_handoff_gap_is_not_a_dead_watcher
 test_ready_work_wakes_the_primary_home_too
+test_a_fleet_pause_silences_ready_work_but_not_a_blocker
 test_memory_refused_launch_reraises_when_admission_clears
 test_green_unmerged_pr_climbs_lead_main_and_the_board
 test_green_unmerged_pr_in_the_main_home_wakes_main_then_the_board

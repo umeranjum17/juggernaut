@@ -25,6 +25,12 @@ learn-from-mistakes learn-from-mistakes-axi@0.12.0
 done-done done-done-axi@0.6.18
 sign-off-axi sign-off-axi@0.7.0
 first-draft-axi first-draft-axi@0.3.0
+# The message bus every live path in the migration runs on: the JetStream server
+# and the client that creates a stream and reads its state. Both ship as release
+# archives, not npm packages, so the row is their exact version and
+# bin/jg-bootstrap.sh owns the install.
+nats-server 2.10.22
+nats 0.5.1
 # Lookout is the only supported fleet dashboard package.
 lookout-axi lookout-axi@0.1.0
 byokit-accounts @byokit/accounts@0.34.0

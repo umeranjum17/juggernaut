@@ -14,6 +14,8 @@ Start with the directory layout, then use the setting reference for the behavior
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
 | Release branch that follows main | [Version branch](#version-branch-configversion-branch) |
+| Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
+| Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) and [checks size rule](#checks-size-rule-configchecks-size) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## JG_HOME
@@ -169,14 +171,14 @@ This preference is local to each Juggernaut home and is not part of Squad Lead i
 
 A home can limit any provider to a list of allowed models, so an off-list pick is refused instead of launched.
 The list is one JSON file, `config/model-allow-list.json`, one key per provider: `{"codex": ["gpt-5.6-sol"], "ollama-cloud": ["deepseek-v4.1-flash"]}`.
-It is the same file the `model-gate` add-on reads, so a home that already limits Ollama keeps that limit here too.
+It is the same file `core/model-gate` reads, so a home that already limits Ollama keeps that limit here too.
 A provider the file does not name is not limited, so the file only ever constrains a limit the captain wrote down.
 The key is the segment before the `/` of a qualified model id (`openai-codex`, `ollama-cloud`), and the harness name for a bare model id, which is how the harnesses that take one name their family (`claude`, `codex`, `cursor`).
 A `<provider>/` prefix is stripped before matching, and a model matches a listed entry when it is that entry or a pinned tag of it, so a listed `deepseek-v4.1-flash` also allows `deepseek-v4.1-flash:1017`.
 A provider named with no models refuses every model of that provider.
 
 `bin/jg-spawn.sh` refuses an off-list model on every launch, before any endpoint, local copy, or task record exists, whichever source the model came from: a `--model` flag, a dispatch profile, or a `config/crew-harness` and `config/squad-lead-harness` token.
-An account-pool route is refused by the `model-gate` add-on against the same file.
+`core/model-gate` refuses an account-pool route against the same file.
 Every refusal is one line naming the provider, the model, the models it allows, and the command that allows it, and since a model can still start outside the launch gate, the fleet check reports any such model once, reading the launches this home actually made.
 
 ```sh
@@ -369,7 +371,7 @@ The running host reads both files at every wake, so an engine change or an opt-o
 The opt-out is inherited into Squad Lead homes: a primary that opts out also opts its Squad Leads out, and clearing it restores each mate's own host setting at its next spawn or convergence.
 The primary-authoritative propagation contract, including removal of a mate's local opt-out when the primary has none, is owned by [`squad-lead-provisioning`](../.agents/skills/squad-lead-provisioning/SKILL.md).
 `config/supervision-host` is local to each home and not inherited, because each home's engine and model are its own choice.
-While the home runs the host, main's lease-checked commands also take the per-task lease lock, so a claim by the host's engine cannot race a mutation main already started (`bin/jg-lease-lib.sh`).
+While the home runs the host, main's lease-checked commands read the task's lease from the home's key-value bus before they mutate it, so a claim by the host's engine is refused for as long as that lease is live (`bin/jg-lease-lib.sh`).
 
 ## Overwatch KPI (config/overwatch-kpi)
 
@@ -484,6 +486,22 @@ The carry is a push of the default branch's commit onto the version ref, with no
 A version branch holding its own commits is reported and left exactly as it is, because closing that gap needs a real merge toward the default branch, which is a human decision rather than something a post-merge pass may invent.
 A dirty copy is skipped and each path is named.
 One line per outcome prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
+
+## Fleet autosync (config/fleet-autosync-off)
+
+Every home that runs a merged change needs the new bytes, so a landed merge carries itself to `bin/jg-update.sh`, which fast-forwards this home and every live local Squad Lead home.
+This is ON by default: a fresh home has no setting to write, and Main's own home is covered even though it is a leased worktree on a detached HEAD, because the update advances an ancestor HEAD where it sits.
+Nothing is forced, merged, or stashed, so unlanded work stays put and a copy holding its own commits or tracked changes is skipped by name.
+
+A pass runs detached from the merge that started it.
+Two things keep it honest:
+
+- Squad Lead restarts run one at a time, because lifecycle control takes one home-wide lock that two relaunches cannot both hold.
+- Any copy still behind when the pass ends raises one check wake naming that copy, how far behind it is, and what stopped it, repeated only when the distance or the reason changes.
+
+The presence flag `config/fleet-autosync-off` turns the whole mechanism off for one home: no pass, no drift alarm, and the start a merge fires stands down without touching a copy, and it raises no wake while it is set.
+`bin/jg-fleet-autosync.sh off` writes the flag and `bin/jg-fleet-autosync.sh on` removes it.
+The drift check (`bin/jg-fleet-autosync.sh check`) is the backup path for a merge no merge record saw, and `digest` prints `<copy>: current` or `<copy>: <n> behind` for the session digest.
 
 ## Runtime backend (config/backend / JG_BACKEND)
 
@@ -611,21 +629,12 @@ Target detection uses `JG_SUPERVISOR_TARGET`, then `$TMUX_PANE`, then `"${HERDR_
 
 Selecting any other supervisor backend, including `zellij`, `orca`, or `cmux`, refuses at daemon startup instead of trying tmux injection primitives against a non-tmux pane.
 
-## Away-mode wedge alarm channels (config/wedge-alarm)
+## Away-mode wedge alert
 
-When away-mode injection wedges past `JG_MAX_DEFER_SECS`, the sub-supervisor raises a loud, rate-limited alarm.
-Beyond the durable `state/.subsuper-inject-wedged` marker and the tmux status-line flash, it attempts a configured backend-independent active alert that can reach the captain even when every pane and its backend status-line is unreadable.
-
-### Channels and overrides
-
-`config/wedge-alarm` (local, gitignored) lists channel directives, one per non-empty, non-comment line; every listed non-`off` channel fires, best-effort.
-`JG_WEDGE_ALARM_CHANNEL` overrides the file with a single directive.
-
-Directives are `off` (a position-independent kill switch that disables every active alert), `auto`/`default`, `osascript` (macOS Notification Center banner), `herdr` (herdr UI notification), and `command:<cmd>` (run `<cmd>` via `sh -c`, summary on `$1` and stdin).
-An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisely so a wedged away-mode primary is never silent, and it fires at most once per max-defer window after a genuine wedge.
-
-A missing or failing channel logs and falls through to the next, never crashing the daemon.
-See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
+When away-mode injection wedges past `JG_MAX_DEFER_SECS`, the sub-supervisor raises a loud, rate-limited alert so the stall never stays invisible.
+It goes to the captain by the one captain channel, `bin/jg-bus.sh publish alert away-mode-wedge`, and by nothing else: that path owns the record, the delivery to his iPad, the undelivered accounting and the `mode` switch ([`captain-channel.md`](captain-channel.md)), so there is no notifier to configure beside it and no `config/wedge-alarm` file.
+The alert fires at most once per max-defer window after a genuine wedge, and the durable `state/.subsuper-inject-wedged` marker and the tmux status-line flash stay exactly as they were: the marker is the record whether or not a delivery arrives.
+A bus that cannot be reached is logged by the channel and never crashes the daemon loop.
 
 ## Trace context propagation (config/trace-context / JG_TRACE_CONTEXT)
 
@@ -733,7 +742,7 @@ The flag is a home-local supervision-noise preference and is not inherited by Sq
 
 The watcher treats a worker or Squad Lead pane showing a permission or trust prompt as stuck at once.
 It approves only an OpenCode read it can prove is inside this fleet's own files, and rejects one that touches a secrets path (`.env`, `~/.config`, or a home's `data/` or `config/`), telling the worker why.
-Every other prompt wakes the owning home at once and then rides the stuck-worker escalation chain: owner, Main, then a board card from the main home only ([`addons/wait-timers/README.md`](../addons/wait-timers/README.md) owns the rungs).
+Every other prompt wakes the owning home at once and then rides the stuck-worker escalation chain: owner, Main, then a board card from the main home only ([`core/wait-timers/README.md`](../core/wait-timers/README.md) owns the rungs).
 While the same prompt stays on screen it is approved, rejected, or re-alerted again every 10 minutes (`JG_PROMPT_REALERT_SECS`), with no once-per-prompt latch.
 The optional local, gitignored `config/prompt-approve-off` presence flag turns approval off, so every prompt that is not rejected rides the chain.
 `bin/jg-prompt-gate-lib.sh` owns the roots and the records, and `bin/jg-prompt-gate.py` owns the matcher.
@@ -863,7 +872,7 @@ Unreadable `app.slice` pressure is reported as not judged: pressure then holds n
 It classifies measurable memory as `OK`, `WAIT` (new agents should wait), or `ALERT`, and names the largest consumers by owning task; unavailable measurements read `UNKNOWN`.
 These controls reduce risk but cannot guarantee avoidance of an out-of-memory kill:
 
-- When the host-memory add-on is installed, each watcher loads its `host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and supervises one independent sampler per home.
+- Each watcher loads the `core/host-memory/bin/jg-host-memory-lib.sh` lifecycle functions and supervises one independent sampler per home.
   The sampler records every 10 seconds by default (`JG_HOST_MEMORY_SECS`) into `state/host-memory.tsv`, even during slow recovery or custom checks.
   Lookout does not currently show host-memory readings.
   The home-scoped `state/.host-memory-sampler.pid` records PID and process identity; the watcher restarts a dead sampler and stops only the exact recorded PID after verifying its identity, script, home, and state.
@@ -881,7 +890,7 @@ These controls reduce risk but cannot guarantee avoidance of an out-of-memory ki
 - Local Squad Lead liveness recovery checks admission before consuming its retry budget or removing a dead endpoint, so memory deferral leaves recovery eligible when pressure eases.
   Memory deferral and a no-longer-relaunchable endpoint keep the watcher polling rather than failing supervision.
 
-`config/host-memory` is optional and read only when passed with `--config`, which the add-on sampler, `bin/jg-spawn.sh`, and `bin/jg-control.sh relaunch` always do; otherwise the helper uses its defaults.
+`config/host-memory` is optional and read only when passed with `--config`, which the memory sampler, `bin/jg-spawn.sh`, and `bin/jg-control.sh relaunch` always do; otherwise the helper uses its defaults.
 Each setting is `key=number`, blank lines and lines beginning with `#` are ignored, and a missing file or key keeps its default:
 
 | Key | Default | Meaning |
@@ -986,7 +995,7 @@ Its private worker config disables Claude Code imports (including the captain's 
 New harnesses get verified through a supervised trial task before joining the set.
 The verified adapter evidence - each harness's busy-state source, interrupt and exit behavior, skill-invocation syntax, and per-harness quirks - lives in the skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 
-The executable interrupt and exit mechanics live in [`bin/jg-control-lib.sh`](../bin/jg-control-lib.sh), and [`docs/agent-control.md`](agent-control.md) owns their lifecycle-control architecture.
+The interrupt, exit, resume, trust and pane mechanics live as data in `bin/harness-quirks/<harness>.json`, read by [`bin/jg-harness-quirks-lib.sh`](../bin/jg-harness-quirks-lib.sh) and owned by [`bin/jg-control-lib.sh`](../bin/jg-control-lib.sh); [`docs/agent-control.md`](agent-control.md) owns their lifecycle-control architecture.
 Launch mechanics, including the verified command templates, live in [`bin/jg-spawn.sh`](../bin/jg-spawn.sh).
 A Claude worker's launch brief is published as an operational record in the receiving home's state and delivered as a printable doorbell; if publication fails, the spawn reports the failure and launches nothing rather than sending a marker that Claude Code would strip.
 Other harnesses retain the typed operational-marker launch path.
@@ -1187,7 +1196,7 @@ Pins are not inherited into Squad Lead homes: a local Squad Lead agent launches 
 A remote Squad Lead is launched on its host from its own home's configuration, so create the file in that remote home.
 
 [`bin/jg-worker-account-lib.sh`](../bin/jg-worker-account-lib.sh) owns parsing, the sign-in check, and the full list of credentials a Claude launch unsets; [runtime backend verification](verification/runtime-backends.md#worker-account-pin-sign-in-check) records the check against the real runners.
-The worker account pool (`config/account-pool` and `relaunch --account`) is owned by the `account-pool` add-on, not this fork.
+The worker account pool (`config/account-pool` and `relaunch --account`) is owned by `core/account-pool`.
 
 ## Lane floor (config/lane-target)
 
@@ -1208,7 +1217,7 @@ The floor is a floor, not a cap: it never asks a home to stop working above its 
 A primary home also runs the fleet heartbeat (`bin/jg-fleet-heartbeat.sh`) by default: bootstrap arms it on every session start, and it wakes Main when any home turns GAP or STALLED.
 The optional local, gitignored presence flag `config/fleet-heartbeat-off` opts a home out, and bootstrap then leaves the check unarmed.
 
-If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`addons/wait-timers/README.md`](../addons/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
+If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`core/wait-timers/README.md`](../core/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
 
 ## Launch environment hook (config/launch-env-hook)
 
@@ -1216,7 +1225,7 @@ The optional local, gitignored `config/launch-env-hook` is an executable that ad
 When the file exists and is executable, the pane runs `config/launch-env-hook <out-file>` from the launch directory (the worktree for ship and Recon) right before the worker starts, then sources `<out-file>`, which must hold one plain `export` statement.
 It runs before the AI-trailer step in "Commit attribution", so `GIT_CONFIG_*` entries it appends after the inherited `GIT_CONFIG_COUNT` come before the trailer `core.hooksPath` entry.
 A nonzero exit, or an export the pane shell cannot source, stops the launch before the worker runs; an absent file changes nothing, and a present but non-executable file prints a warning at spawn and the launch proceeds without it.
-The hook's content is home-local policy, for example the `git-identity` add-on, which pins a lane's git identity and pre-push identity check; [`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the invocation mechanics.
+The hook's content is home-local policy, for example `core/git-identity`, which pins a lane's git identity and pre-push identity check; [`jg-spawn.sh --help`](../bin/jg-spawn.sh) owns the invocation mechanics.
 
 ## Home brief include (config/brief-include.md)
 
@@ -1230,10 +1239,18 @@ The text is static and never executed or expanded; Squad Lead charters never tak
 
 An executable `config/merge-gate` in a home is run before every landing - `bin/jg-pr-merge.sh` for a pull request and `bin/jg-merge-local.sh` for local-only work - with `<task-id> <worktree|-> <candidate-head> <pr-url|->`.
 A nonzero exit refuses that merge and prints the gate's own reason; an absent file changes nothing, and a present but non-executable one refuses the merge until it is fixed.
-`bin/jg-merge-gate-lib.sh` owns the hook, so the gate runs whether or not any add-on is installed; the merge-card add-on defines the same two hooks for homes that install it.
+`bin/jg-merge-gate-lib.sh` owns the hook, so the gate runs with nothing else wired; `core/merge-card` defines the same two hooks and is the version that runs.
 `config/post-merge` is the matching after-the-fact hook and never changes a merge's outcome.
+A home that wants the retired-catalog rule in its own gate adds one line to `config/merge-gate`: `bin/jg-retired-catalog-check.sh --base "${3:--}"` (or the whole-tree form with no `--base`), which refuses a landing that restores a path under the retired catalog directory (the check names it); the repo's own invariants job runs the same check on every pull request.
 The gate's content is home-local policy; `bin/jg-tool-wiring.sh` places done-done's gate only in a home that has none.
-Where the owner-guard and owner-rules add-ons are installed, their installers write one gate file holding both checks, and `addons/lib/merge-gate-lib.sh` owns that file, the steps it records, and the home's own gate kept at `config/merge-gate.pre-chain`.
+`core/owner-guard/wiring.sh` and `core/owner-rules/wiring.sh` write one gate file holding both checks, and `core/lib/merge-gate-lib.sh` owns that file, the steps it records, and the home's own gate kept at `config/merge-gate.pre-chain`.
+
+## Checks size rule (config/checks-size)
+
+The merge gate's checks lint measures a pull request's added non-generated lines against a 1,000-line guidance and treats that size as advice, never a refusal: a run over the guidance prints the size and says it is over the guidance, then checks the remaining rules and exits on those alone.
+A home that wants the refusal back writes `refuse` in the local, gitignored `config/checks-size`; an absent, empty or unrecognised value is `advisory`, the default, and `advisory` may also be written out.
+`core/merge-on-green/jg-checks-lint.sh` owns the rule and the setting, and `core/merge-on-green/checks-lint.sh` hands a size-only FAIL from the pinned `done-done` lint to it, because that CLI hardcodes the same limit with no config key.
+Worker briefs still tell a worker to prefer a small slice; that wording is instruction only and enforces nothing.
 
 ## Worker launch environment (config/launch-env-allowlist)
 
@@ -2307,7 +2324,7 @@ Never run the registered blocking source command directly in a conversational tu
 A long-polling external process is registered as a *source* through its adapter, whose header and `--help` own the commands and flags.
 `bin/jg-procevent.sh` owns the generic contract; built-in adapters retain their tracked `bin/jg-procevent-<adapter>.sh` commands, while an explicitly bound external adapter routes through the trusted host contract above.
 
-`bin/jg-procevent-signoff.sh` is the built-in adapter for captain answers on a sign-off board; its header and `addons/signoff/README.md` own the card, answer, read-mark, and delivery contract.
+`bin/jg-procevent-signoff.sh` is the built-in adapter for captain answers on a sign-off board; its header and `core/signoff/README.md` own the card, answer, read-mark, and delivery contract.
 A home opts in with `bin/jg-procevent-signoff.sh arm` and stays exactly as it was until it does.
 `bin/jg-procevent-when.sh`, `bin/jg-procevent-quota.sh`, and `bin/jg-procevent-remote-reply.sh` are the other built-in adapters, each owning its own lifecycle rules.
 
@@ -2332,7 +2349,7 @@ The `signoff` adapter (`bin/jg-procevent-signoff.sh`) connects captain holds to 
 Armed, it binds itself to the keyed-answer intake above and registers one source whose child waits in `sign-off-axi wait` without waking Juggernaut.
 Arming is per home: a Squad Lead home arms itself, and a hold recorded in a home that is not armed raises no card.
 An answer saved on the board for a task this home still holds for the captain is captured, woken as an ordinary `check` wake, and fed to `bin/jg-captain-hold.sh answers`, so the person never copies the answer across by hand.
-While armed, `bin/jg-captain-hold.sh hold` also raises a board card for that hold; when the `signoff` add-on is installed (resolved by `bin/jg-addons-dir-lib.sh`: `JG_ADDONS_DIR`, else the in-repo `addons/`, else the pre-fold clone at `projects/juggernaut-addons`), the card goes through that add-on's script instead of this adapter, and the card rules below describe this adapter. Its title is the reason's last `?` sentence, or its first sentence when it has no `?`, with leading `[tag]`, `Captain hold:`, `Captain:` and `Say yes or no:` prefixes dropped, cut to 12 words and ending in one `?` (built from the task title only when nothing remains); its why is the whole reason followed by `Answer yes or no. The hold stays open until you answer.`, the reason cut so the whole why stays within 200 characters; its outcomes are yes or no. A card that cannot be raised makes `hold` exit non-zero with the sign-off-axi error on stderr while the hold stays recorded; a task held again whose card is already answered reuses that card, a task held again with a changed question keeps its existing card and exits zero, and a dated deferral gets no card.
+While armed, `bin/jg-captain-hold.sh hold` also posts a board card for that hold. It goes through `core/signoff/bin/jg-procevent-signoff.sh` when that installed adapter authors the ask itself, and otherwise through `bin/jg-question-card.sh post`, the one card path; the card rules here are the hold's own words, and `bin/jg-captain-hold.sh` owns them (`raise_hold_card`). Its title is the reason's last `?` sentence, or its first sentence when it has no `?`, with leading `[tag]`, `Captain hold:`, `Captain:` and `Say yes or no:` prefixes dropped, cut to 12 words and ending in one `?` (built from the task title only when nothing remains); its why is the whole reason followed by `Answer yes or no. The hold stays open until you answer.`, the reason cut so the whole why stays within 200 characters; its outcomes are yes or no. A card that cannot be posted makes `hold` exit non-zero with the card path's error on stderr while the hold stays recorded; a task held again whose card is already answered reuses that card, a task held again with a changed question keeps its existing card and exits zero, and a dated deferral gets no card.
 Each hold occurrence gets its own card, so a task held again after an answered card gets a new live one.
 The adapter needs `sign-off-axi` on PATH: `arm` refuses without it, and the card attempt prints an install hint.
 Board keys carry a digest of this home's `JG_HOME` and the hold's stamp, so the machine's one shared board never delivers another home's answer or an earlier card's answer to this one.
@@ -2802,8 +2819,6 @@ JG_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=3        # fetch retries after jg-fleet-s
 JG_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds jg-fleet-sync.sh waits before each of those retries
 JG_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before jg-fleet-sync.sh treats a leftover packed-refs.lock as provably stale
 JG_FF_STALE_INDEX_LOCK_AGE_SECS=30       # min mtime age before the squad lead tracked-file fast-forward treats a leftover index.lock as provably stale
-JG_LEASE_COMMAND_LOCK_WAIT_SECS=20      # seconds one command waits for .jg-lease-command.lock before bin/jg-lease-lib.sh refuses with the holder's pid and task instead of blocking; past the wait the acquire sweeps provably abandoned lock scratch once and retries once; a value that is not a positive integer falls back to 20
-JG_LEASE_COMMAND_LOCK_MAX_AGE_SECS=300   # max seconds a live .jg-lease-command.lock holder may serialize lease commands before bin/jg-lease-lib.sh reclaims it during that wait; a holder inside the bound is never preempted and an unreadable age keeps the ordinary wait; non-numeric or zero values use 300
 JG_BUSY_REGEX=          # optional override for rendered delivery guards and Grok's isolated task-state fallback; converted worker state ignores it
 JG_COMPOSER_IDLE_RE=    # optional fleet-wide idle-placeholder regex override (bin/jg-composer-lib.sh); a match alone does not prove emptiness because shape-specific position and ANSI de-emphasis safety gates still apply
 JG_COMPOSER_CAPTURE_LINES=20   # fleet-wide bound for tail-capture composer reads; it no longer bounds the adapter composer state/content reads on tmux or herdr, which supply their bounded visible pane instead, while the cmux, orca, and Zellij adapters use this small window so stale scrollback banners stay out of the candidate set; it still bounds the shared inbox composer read (bin/jg-task-inbox-lib.sh) on every backend, and on herdr it also floors how many Ctrl+U presses a refused leftover may take
@@ -2820,9 +2835,6 @@ JG_SUPERVISOR_TARGET=              # optional supervisor pane target override; t
 JG_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
 JG_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
 JG_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables
-JG_WEDGE_ALARM_CHANNEL=            # override config/wedge-alarm with one active-alert directive for the wedge alarm; off|auto|osascript|herdr|command:<cmd>; absent = auto (macOS -> an OS notification)
-JG_WEDGE_ALARM_EXEC=              # notifier seam: route every channel (osascript, herdr, command:) through this command as `<cmd> <channel> <summary>`; "discard" fires nothing; unset in production; the daemon defaults it to "discard" when sourced so no test posts a real notification (docs/wedge-alarm.md)
-JG_WEDGE_ALARM_TIMEOUT_SECS=10    # maximum seconds for each osascript, herdr, override, or command: notifier before its watchdog terminates it and continues to the next channel; invalid or zero values use 10
 JG_INJECT_FAIL_SLEEP=30            # seconds to back off when the supervisor pane is unavailable
 JG_INJECT_CONFIRM_RETRIES=3        # daemon Enter-retry attempts after typing a digest once
 JG_INJECT_CONFIRM_SLEEP=0.5        # seconds between daemon submit checks

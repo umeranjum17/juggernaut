@@ -1,0 +1,20 @@
+# The captain channel's transport binding: a Dapr pub/sub component over the NATS
+# server core/bus/nats.conf starts, publishing into the JetStream stream
+# core/bus/stream.json creates. This file, not any code, decides what the bus is:
+# swapping NATS for another broker is a component swap here.
+# bin/jg-bus.sh publishes through the sidecar that loads this component, with
+# `natsURL` naming the same address as `nats-url` in defaults/captain-channel.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: captain-channel
+spec:
+  type: pubsub.jetstream
+  version: v1
+  metadata:
+    - name: natsURL
+      value: "nats://127.0.0.1:4222"
+    - name: streamName
+      value: CAPTAIN
+    - name: name
+      value: juggernaut

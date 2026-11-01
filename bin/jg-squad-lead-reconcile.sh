@@ -113,8 +113,8 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
-# Parked-home guard (juggernaut-addons/parked-homes): a parked home is never
-# reconciled. The shim answers not parked when the add-on is absent (stock behavior).
+# Parked-home guard (core/parked-homes): a parked home is never
+# reconciled. The shim answers not parked when the feature is absent (stock behavior).
 # shellcheck source=bin/jg-parked-homes-lib.sh
 . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
 
@@ -489,8 +489,8 @@ cmd_notify() {
   local id sampled_spawn_gen sampled_host expected_remote_host kind path last age now delivered_at reconcile_lock control_lock meta meta_lock did send_rc
   while IFS=$'\037' read -r id sampled_spawn_gen sampled_host kind; do
     [ -n "${id:-}" ] || continue
-    # Parked-home guard (juggernaut-addons/parked-homes): a parked home is
-    # never reconciled - no ask, no cooldown. No-op without the add-on.
+    # Parked-home guard (core/parked-homes): a parked home is
+    # never reconciled - no ask, no cooldown. No-op without the feature.
     jg_parked_skip_meta "$STATE/$id.meta" "$id" reconcile && continue
     path=$(nudge_path "$id")
     reconcile_lock="$STATE/.$id.reconcile.lock"

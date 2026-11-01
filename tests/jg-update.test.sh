@@ -3,9 +3,10 @@
 # juggernaut repo and every registered squad_lead home.
 #
 # The guarantees under test mirror jg-fleet-sync.sh and prime directive #3:
-#   - The running juggernaut repo (on its default branch) fast-forwards from
-#     origin; a leased squad_lead home (detached HEAD on the default branch)
-#     fast-forwards the same way.
+#   - The running juggernaut repo fast-forwards from origin on its default branch or
+#     on a detached HEAD at an ancestor of the target, which is the leased-worktree
+#     shape Main's own home runs in, so a leased home is never stranded by its shape;
+#     a leased squad_lead home (always detached) fast-forwards the same way.
 #   - A dirty, offline, wrong-branch, or genuinely unique diverged target is
 #     skipped and reported, never forced or stashed, so unlanded work survives.
 #     Divergence leaves a durable reconciliation record, while a clean local
@@ -529,20 +530,43 @@ test_juggernaut_wrong_branch_skipped() {
   pass "T9 juggernaut off its default branch is skipped, not forced"
 }
 
-test_juggernaut_detached_head_skipped() {
-  local w out before
+test_juggernaut_detached_head_advances() {
+  local w out
   w=$(new_world t10)
   bump_origin "$w" instr
+  # A leased home is a worktree left at a detached HEAD on the default branch tip,
+  # which is the shape Main runs in. It is this platform's ordinary home, not drift.
   git -C "$w/main" checkout -q --detach HEAD
-  before=$(git -C "$w/main" rev-parse HEAD)
 
   out=$(run_update "$w")
 
-  assert_contains "$out" "juggernaut: skipped: detached HEAD, expected main" "detached juggernaut skipped"
-  assert_contains "$out" "reread-juggernaut: no" "no reread when detached juggernaut was skipped"
+  assert_contains "$out" "juggernaut: updated " "a detached juggernaut home advances"
+  assert_contains "$out" "reread-juggernaut: yes" "its instruction change still asks for a reread"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(git -C "$w/main" rev-parse origin/main)" ] \
+    || fail "detached juggernaut HEAD not at origin/main"
+  git -C "$w/main" symbolic-ref -q HEAD >/dev/null \
+    && fail "the leased home was moved onto a branch"
+  pass "T10 a detached juggernaut home fast-forwards on its detached HEAD"
+}
+
+test_juggernaut_detached_head_with_unique_commit_skipped() {
+  local w out before
+  w=$(new_world t10b)
+  git -C "$w/main" checkout -q --detach HEAD
+  printf 'unlanded\n' > "$w/main/notes.txt"
+  git -C "$w/main" add -A
+  git -C "$w/main" commit -qm 'unique local work'
+  before=$(git -C "$w/main" rev-parse HEAD)
+  bump_origin "$w" instr
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "juggernaut: skipped: diverged from origin/main" \
+    "a detached home holding its own commit is skipped, never forced"
   [ "$(git -C "$w/main" rev-parse HEAD)" = "$before" ] \
-    || fail "detached juggernaut HEAD moved"
-  pass "T10 juggernaut detached HEAD is skipped"
+    || fail "skipped juggernaut HEAD moved"
+  assert_equals "unlanded" "$(cat "$w/main/notes.txt")" "the unlanded file survives"
+  pass "T10b a detached home with a unique commit stays put"
 }
 
 test_unsafe_squad_lead_home_skipped_before_git_update() {
@@ -617,7 +641,8 @@ test_already_current_squad_lead_still_restarts
 test_already_current_unprovable_mate_is_nudged
 test_registry_backstop_dedup_and_self_exclusion
 test_juggernaut_wrong_branch_skipped
-test_juggernaut_detached_head_skipped
+test_juggernaut_detached_head_advances
+test_juggernaut_detached_head_with_unique_commit_skipped
 test_unsafe_squad_lead_home_skipped_before_git_update
 test_primary_update_rebinds_local_watch
 

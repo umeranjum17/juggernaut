@@ -22,10 +22,9 @@
 #   jg-squad-lead-report.sh done abcdef0123456789 "audit clean"
 #   jg-squad-lead-report.sh --doc done abcdef0123456789 data/x/report.md "see report"
 #
-# An optional addons/status-wait-check add-on (resolved through bin/jg-addons-dir-lib.sh: the in-repo
-# addons/ first, then the pre-fold clone at <home>/projects/juggernaut-addons)
-# receives <verb> <note> before the append and owns the wait rules. Its output is shown and a nonzero
-# exit refuses the report with exit 2; an absent add-on is a no-op.
+# A report that names a wait is checked by core/status-wait-check: it receives
+# <verb> <note> before the append and owns the wait rules. Its output is shown
+# and a nonzero exit refuses the report with exit 2.
 # bin/jg-live-claim.sh then owns the fixed-means-live rule: a note that reports a
 # user-visible fix as done is written as `merged-not-released: ...` unless it
 # carries the released ref and where it is observable, or states the truth itself,
@@ -56,8 +55,6 @@ set -eu
 
 CALLER_JG_HOME=${JG_HOME:-}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$SCRIPT_DIR/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-pending-reply-lib.sh
 . "$SCRIPT_DIR/jg-pending-reply-lib.sh"
 # shellcheck source=bin/jg-parent-channel-lib.sh
@@ -68,7 +65,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 jg_squad_lead_report_status_blocked_wait() {  # <verb> <text>
   local hook
-  hook=$(jg_addon_path "$CALLER_JG_HOME" status-wait-check/status-wait-check)
+  hook=$SCRIPT_DIR/../core/status-wait-check/status-wait-check
   [ -x "$hook" ] || return 0
   local out rc=0
   out=$("$hook" "$1" "$2" 2>&1) || rc=$?

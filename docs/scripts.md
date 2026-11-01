@@ -24,20 +24,20 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-design-gate.sh`      | The no-model design gate: `size` applies the small-tweak rule (at most 40 changed UI lines, no new UI file), `handroll` writes the lead's or Main's approval that a small UI tweak needs to merge (the asking worker cannot write it), and `board` refuses a board post of design options unless the first-draft run record it names made or refined every one of them |
 | `jg-prior-art-gate.sh`  | The no-model prior-art gate: refuse a ship brief whose `# Prior art` section is missing, still holds the scaffold placeholder, or names a pick with no licence decision, so new or complex work starts from what already exists |
 | `jg-live-claim.sh`       | The no-model fixed-means-live rule: a report that a user-visible change is fixed or done carries the released ref and where it is observable, or is downgraded to `merged-not-released: ...` |
-| `jg-installed-drift.sh`  | The watcher check for the copies this fleet runs: for every installed copy under `$XDG_DATA_HOME/fm-*` and `$XDG_DATA_HOME/jg-*`, compare each file with its repo counterpart from `<copy>/.jg-origin` or `addons/<name>` and print one line per finding (`differ`, `missing`, or `unknown origin <copy>`), nothing when every copy matches, and exit 0 always; it never repairs or deletes a copy, and `arm` registers it as a watcher check |
+| `jg-installed-drift.sh`  | The watcher check for the copies this fleet runs: for every installed copy under `$XDG_DATA_HOME/fm-*` and `$XDG_DATA_HOME/jg-*`, compare each file with its repo counterpart from `<copy>/.jg-origin` or `core/<name>` and print one line per finding (`differ`, `missing`, or `unknown origin <copy>`), nothing when every copy matches, and exit 0 always; it never repairs or deletes a copy, and `arm` registers it as a watcher check |
 | `jg-running-products.sh` | Report whether each service this home runs is on the current release: read `config/running-products` (shipped as `defaults/running-products`), run each line's running and wanted version commands, print `<name>: current <v>` or `<name>: running <a>, wanted <b>`, and exit 1 when any is behind; `refresh` restarts every behind `auto` line with `systemctl --user restart <unit>` and re-reads its version, while a `manual` line is only reported and a service no line names is never touched |
 | `jg-licence-check.sh`    | The watcher check for dependency licences: read `config/licences-allowlist` (shipped as `defaults/licences-allowlist`), then `package.json` with `package-lock.json` and `requirements.txt` under the root, and print one line per dependency whose licence is outside the allowlist or unknown plus a summary count; a dependency with no declared licence is reported, never passed, and `arm` registers it as a watcher check |
-| `jg-flow.sh`             | Shim for the fleet-flow add-on: read fleet lifecycle and wait metrics as JSON ([reader reference](fleet-ledger.md#reading-lifecycle-metrics)) |
+| `jg-flow.sh`             | Shim for `core/fleet-flow`: read fleet lifecycle and wait metrics as JSON ([reader reference](fleet-ledger.md#reading-lifecycle-metrics)) |
 | `jg-task-outcome.sh`     | Append one durable per-task outcome row (models, timestamps, outcome, PR) at teardown ([per-model statistics](fleet-ledger.md#per-model-statistics)) |
-| `jg-model-stats.sh`      | Shim for the fleet-stats add-on: read per-model merge rate, time-to-merge, first-pass and rework statistics as JSON ([per-model statistics](fleet-ledger.md#per-model-statistics)) |
-| `jg-skill-stats.sh`      | Shim for the fleet-stats add-on: read per-skill fleet read counts as JSON ([skill statistics](fleet-ledger.md#skill-statistics)) |
-| `jg-ticket.sh`           | Record one task's ticket truth on the fleet board now: stage, state, delivered PR and target release ([tickets](../addons/tickets-sync/README.md#writing-a-ticket-at-the-moment-it-changes)) |
+| `jg-model-stats.sh`      | Shim for `core/fleet-stats`: read per-model merge rate, time-to-merge, first-pass and rework statistics as JSON ([per-model statistics](fleet-ledger.md#per-model-statistics)) |
+| `jg-skill-stats.sh`      | Shim for `core/fleet-stats`: read per-skill fleet read counts as JSON ([skill statistics](fleet-ledger.md#skill-statistics)) |
+| `jg-ticket.sh`           | Record one task's ticket truth on the fleet board now: stage, state, delivered PR and target release ([tickets](../core/tickets-sync/README.md#writing-a-ticket-at-the-moment-it-changes)) |
 | `jg-bearings-snapshot.sh` | Project the bounded remote-ledger fleet snapshot to compact TOON; `--include-prs` adds live GitHub enrichment |
 | `juggernaut-axi`          | Read-only fleet facts for external tools: `status`, `tickets`, `decisions`, and `messages` as TOON, plus the guarded writes `answer`, `message`, and `ticket` or `--json` (`juggernaut-axi.v1`) |
 | `jg-squad-lead-reconcile.sh` | Queue Bearings reconcile requests for later supervision delivery and ask each mismatched home through its durable inbox with a per-home cooldown |
 | `jg-update.sh`           | Guarded self-update of Juggernaut and local or remote Squad Lead homes, reconciling redundant divergence and classifying every live mate left on the target commit for restart or fallback nudge |
-| `jg-squad-lead-restart.sh` | Persist open conversational work, then restart eligible Squad Leads or report the fallback outcome |
-| `jg-fleet-autosync.sh`   | Carry a landed merge to this home and every live local Squad Lead home from the merge itself, alarm when a home stays more than two merges behind, and report each home's distance for the session digest |
+| `jg-squad-lead-restart.sh` | Persist open conversational work, then restart eligible Squad Leads one at a time or report the fallback outcome |
+| `jg-fleet-autosync.sh`   | Carry a landed merge to this home and every live local Squad Lead home from the merge itself, on by default with `config/fleet-autosync-off` as the documented switch, wake with the reason for every home it cannot move, alarm when a home stays more than two merges behind, and report each home's distance for the session digest |
 | `jg-version-branch-sync.sh` | Carry a merge that landed on the default branch to the active version branch `config/version-branch` names, run by the merge-outcome record itself: a fast-forward push only, a skip that names every path on a dirty copy, and a version branch it cannot fast-forward reported and left as it is |
 | `jg-squad-lead-restart-lib.sh` | Shared Squad Lead restart capability and persistence-request contract |
 | `jg-on.sh`               | Execute one tracked Juggernaut command in a configured remote Squad Lead home, using its job worker except for the doctor bootstrap |
@@ -47,6 +47,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-remote-doctor.sh`    | Check, and with `--fix` repair, one remote account's Squad Lead readiness (remote job worker, Herdr, Aqua launch agents, PATH, and required tools) |
 | [`jg-backlog-handoff.sh`](../bin/jg-backlog-handoff.sh) | Move queued backlog items into a Squad Lead home; its header owns route-specific wake outcomes and retries |
 | `jg-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
+| `jg-bus.sh`              | The captain channel's dispatcher: build the Go command at `core/bus/cmd/jg-bus` once into the home's state directory, then hand it every command. The command records, publishes and delivers each captain-facing event, replays what it sends against its own record, runs the NATS/JetStream, slim Dapr and local ntfy services from their files, starts or verifies the home's JetStream (`ensure`), prints its systemd user unit, and routes a captain reply by the board route in force ([channel](captain-channel.md), [bus](bus-service.md)) |
 | `jg-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
 | `jg-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto jg-captain-hold.sh |
 | `jg-owner-rules.sh`      | Seed, extend, and audit the shared owner-rules surface the session digest prints, refusing an entry with no owner words, no scope, or no enforcement point |
@@ -70,6 +71,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-test-isolation-proof.sh` | Concurrent isolation harness and portable candidate set owner |
 | `jg-ensure-agents-md.sh` | Manually initialize project agent-memory files (see the helper's header and help) |
 | `jg-guard.sh`            | Warn on primary-checkout tangles, main-session pending wakes, and unhealthy supervision |
+| `jg-guard-host.sh`       | Build and run the one guard host: the Rego rule decisions, the delete rule, and repo-guard's gh/gh-axi and pre-push modes (`core/guard-host/cmd/jg-guard-host`'s header owns the contract) |
 | `jg-primary-scope-lib.sh` | Shared marker-or-plain-checkout primary-home predicate for tracked hooks             |
 | `jg-session-lock-lib.sh` | Shared session-lock ownership from harness ancestry or a trusted Claude session id for jg-lock.sh and the Claude Stop auto-arm, plus the read-only lock inspection behind `jg-lock.sh status` and `jg-inbox.sh ready` |
 | `jg-claude-stop-autoarm.sh` | Claude Stop `asyncRewake` hook owning tokenless watcher continuity with single-flight exit-2 rewake (docs/watcher-continuity.md) |
@@ -113,12 +115,13 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-procevent-remote-reply.sh` | Relay the remote Squad Lead status stream through non-destructive process-event deltas |
 | `jg-procevent-quota.sh`  | Wake Juggernaut when tracked quota drops below a threshold, is exhausted, or cannot be polled |
 | `jg-procevent-when.sh`   | Fire a trust-bound deterministic action at most once when its registered condition holds, then wake with the outcome |
-| `jg-procevent-signoff.sh` | Bring sign-off board answers to captain holds as keyed answers, and raise a board card for each new hold once a home arms it (the signoff add-on raises it instead when installed) |
+| `jg-procevent-signoff.sh` | Bring sign-off board answers to captain holds as keyed answers once a home arms it; a hold's card is posted by `bin/jg-question-card.sh post` |
 | `jg-gate-refuse-lib.sh`  | Shared gate-context lifecycle boundary for real and lab homes                      |
-| `jg-addons-dir-lib.sh`   | Single owner of add-on resolution: `JG_ADDONS_DIR`, else the in-repo `addons/`, else the pre-fold `projects/juggernaut-addons` clone |
 | `jg-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
 | `jg-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
-| `jg-watch.sh`            | Singleton-safe watcher: absorb benign wakes, detect stalled local Squad Lead wake queues, hand recorded asks to the ask-default add-on when installed, and exit on actionable ones |
+| `jg-watch.sh`            | Singleton-safe watcher: absorb benign wakes, detect stalled local Squad Lead wake queues, hand recorded asks to `core/ask-default`, and exit on actionable ones |
+| `jg-retired-catalog-check.sh` | The gate that keeps the retired bolt-on catalog retired: refuse any new path under the retired directory in a change (`--base <ref>`) and any tracked one outside its named deferred images, and `--self-test` proves the refusal with a fixture file |
+| `jg-host-wiring.sh`      | The core's one host-wiring entry point: run every `core/<feature>/wiring.sh` step in its working order for one home, with `--dry-run`, `--list`, and `--unwire` for the steps that carry a teardown |
 | `jg-inactive-reconcile.sh` | Reconcile long-inactive direct operator terminal outcomes without forge access |
 | `jg-afk-contract.sh`     | Own the away-or-quiet record's posture, schema, entry, read-back, archive, and cross-subsystem authority lock |
 | `jg-afk-start.sh`        | Run the common sourceable away-mode daemon entry in the foreground                      |
@@ -154,8 +157,9 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-send.sh`             | Steer a task via a durable inbox record plus doorbell, or send a supported key or typed harness invocation through the recorded backend |
 | `jg-branch-prompt.sh`    | Emit the shared supervision branch's byte-stable system prompt ([pi-supervision-branch.md](pi-supervision-branch.md), [supervision-host.md](supervision-host.md)) |
 | `jg-branch-outcome.sh`   | Own the supervision branch's append-only outcome store, cursors, bounded status-coverage indexes, and session-start replay |
-| `jg-lease.sh`            | Claim, release, inspect, and sweep per-task supervision leases                       |
+| `jg-lease.sh`            | Claim, release, inspect, and sweep per-task supervision leases on the home's key-value bus |
 | `jg-lease-lib.sh`        | One owner of the supervision lease contract and the main-only role-partition guards  |
+| `jg-kv-lib.sh`           | One owner of the JetStream key-value client surface: server and client resolution, bucket creation, and the reads, writes, deletes, and revision a compare-and-set claim needs |
 | `jg-control.sh`          | Agent lifecycle control plane: allowlisted `interrupt`, `exit`, and transactional `relaunch` verbs for an exact task id ([agent-control.md](agent-control.md)) |
 | `jg-control-lib.sh`      | One executable owner of the control-plane verb allowlist, per-harness interrupt/exit mechanics, per-backend capability, and the endpoint-absence proof both `exit` and `relaunch` read |
 | `jg-busy-lib.sh`         | Single owner of the semantic busy-state contract: verdicts, source attribution, and per-harness sources |
@@ -201,6 +205,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-mail.sh`             | General-purpose mail plane: read unseen IMAP mail, send one SMTP message, or surface new mail as a `check` wake via `poll` (configuration in the home's gitignored `.env`) |
 | `jg-mail.py`             | The IMAP/SMTP engine behind `jg-mail.sh` |
 | `jg-board-answers.sh`    | Standing board-answer check: `arm` registers a watcher check that sends each routed answer straight to its lead's inbox (closing the lead's decision key, archiving the card once the lead acknowledges) and wakes Main only for unrouted answers; `route` records a card's owner |
+| `jg-board-asks.sh`       | Turn the feed a board rebuild just built into the feed that may be posted, keeping the card's detail field (its must category), dropping a key its owner dismissed, and dropping a key another home already has live |
 | `jg-mail-check.sh`       | Standing received-mail poll: `arm` registers a watcher check that runs `jg-mail.sh poll` on the watcher cadence (new mail still wakes via the poll; the check's own line also wakes unless the poll is a proven no-op), `disarm` removes it |
 | `jg-decisions-reconcile.sh` | Standing board reconcile on its own hourly interval: `arm` registers a watcher check that clears every open card a durable record already settles (a card built from a hold that is the captain's own instruction - parked work, his stop order, or a preserved branch - a recorded answer, a `resolved [key=...]` status line, the task's merged PR, or a task closed in the backlog), logs one line per cleared card with its evidence, and keeps every card whose record is missing or unreadable |
 | `jg-voice-relay.py`      | Hold the spoken conversation on this host, answer from the records, and hand real work to `jg-inbox.sh` ([voice-relay.md](voice-relay.md)) |

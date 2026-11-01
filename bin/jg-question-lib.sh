@@ -31,6 +31,25 @@ jg_question_board() {
 
 jg_question_signoff_available() { command -v sign-off-axi >/dev/null 2>&1; }
 
+# The board key a hold's card carries, and the one owner of its shape:
+# `jg-<tag>-<task-id>-<stamp>`. <tag> is a stable digest of JG_HOME, so the one
+# board every home on this machine shares never hands a home another home's
+# answer; <stamp> is that hold occurrence's identity in alphanumerics only, so a
+# newly held task gets a card of its own. bin/jg-captain-hold.sh builds the key
+# with these helpers and bin/jg-procevent-signoff.sh parses answers back with the
+# same two, so the builder and the reader cannot drift apart.
+jg_question_key_prefix() {
+  printf 'jg-%s-' "$(printf '%s' "${JG_HOME:-}" | cksum | awk '{printf "%08x", $1}')"
+}
+
+jg_question_key_stamp() {  # <hold identity>
+  printf '%s' "${1%%#*}" | tr -cd 'A-Za-z0-9'
+}
+
+jg_question_hold_card_key() {  # <task-id> <hold identity>
+  printf '%s%s-%s' "$(jg_question_key_prefix)" "$1" "$(jg_question_key_stamp "$2")"
+}
+
 # Print the key of every card still open on the board.
 jg_question_open_keys() {
   local board
@@ -83,20 +102,6 @@ jg_question_filed() {
     esac
   done < <(jg_question_open_keys)
   return 1
-}
-
-# Nag each distinct trailing question once: 0 the first time it is seen, 1 once
-# this home has already flagged it, so no harness can be wedged in a loop.
-jg_question_first_sighting() {  # <state-dir> <reply-text> [<record file name>]
-  local state=$1 stamp rec=${3:-.question-flagged}
-  [ -n "$state" ] || return 0
-  stamp=$(jg_question_tail "${2-}" | cksum | awk '{print $1 "-" $2}')
-  if [ -f "$state/$rec" ] && [ "$(head -1 "$state/$rec" 2>/dev/null)" = "$stamp" ]; then
-    return 1
-  fi
-  mkdir -p "$state" 2>/dev/null || return 0
-  printf '%s\n' "$stamp" > "$state/$rec" 2>/dev/null || true
-  return 0
 }
 
 # Print the last assistant text of a turn-end payload's transcript, if it has one.
@@ -160,20 +165,6 @@ jg_question_chat_answered_keys() {  # <turn-end payload json>
     [ -n "$key" ] || continue
     case "$prior" in *"$key"*) printf '%s\n' "$key" ;; esac
   done < <(jg_question_open_keys)
-  return 0
-}
-
-# Print the chat answer's words (the last human message), for the banner.
-jg_question_chat_words() {  # <turn-end payload json>
-  local path
-  path=$(printf '%s' "$1" | jq -r '.transcript_path // empty' 2>/dev/null) || return 0
-  [ -f "$path" ] || return 0
-  tail -n 400 "$path" 2>/dev/null | jq -Rrs '
-    split("\n") | map(fromjson? // empty) | map(select(type == "object" and (.type // .message.role) == "user"))
-    | map(if (.message.content? | type) == "string" then .message.content
-        elif (.message.content? | type) == "array" then ([.message.content[]? | select(type == "object" and .type == "text") | .text] | join("\n"))
-        else "" end)
-    | map(select(. != "" and .[0:1] != "\u2063")) | last // empty' 2>/dev/null
   return 0
 }
 

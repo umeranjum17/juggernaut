@@ -1670,9 +1670,19 @@ EOF
   JG_HOME="$home" "$ROOT/bin/jg-branch-outcome.sh" append \
     --task task-b --verdict captain --summary 'PR https://example.com/pr/b checks green' >/dev/null \
     || fail "could not seed the unread branch outcome"
-  printf 'branch\t999999\t123\n' > "$home/state/.lease-task-dead"
-  JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID=$$ "$ROOT/bin/jg-lease.sh" claim task-live --actor branch \
-    || fail "could not seed the live lease"
+  # The leases live on the key-value bus now, so the sweep this start runs can
+  # only be observed with one: the dead record must go and the live one must
+  # stay. Without a server or client the case keeps its branch-outcome half and
+  # says which half it skipped.
+  leases=skip
+  if jg_test_bus_start "$TMP_ROOT/lease-bus"; then
+    leases=on
+    JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID="$(dead_pid)" \
+      "$ROOT/bin/jg-lease.sh" claim task-dead --actor branch \
+      || fail "could not seed the dead lease"
+    JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID=$$ "$ROOT/bin/jg-lease.sh" claim task-live --actor branch \
+      || fail "could not seed the live lease"
+  fi
 
   out=$(run_pi_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_contains "$out" "BRANCH OUTCOMES (handled by the supervision branch, not yet seen by this session):" \
@@ -1682,8 +1692,12 @@ EOF
   assert_contains "$(JG_HOME="$home" "$ROOT/bin/jg-branch-outcome.sh" unread)" \
     "https://example.com/pr/b" "locked start marked the unrendered captain outcome read"
   [ "$(cat "$home/state/.branch-outcomes-cursor")" = 1 ] || fail "locked start advanced past the captain row"
-  [ ! -e "$home/state/.lease-task-dead" ] || fail "locked start left a provably dead lease in place"
-  [ -e "$home/state/.lease-task-live" ] || fail "locked start swept a live lease"
+  if [ "$leases" = on ]; then
+    JG_HOME="$home" "$ROOT/bin/jg-lease.sh" check task-dead >/dev/null 2>&1 \
+      && fail "locked start left a provably dead lease in place"
+    JG_HOME="$home" "$ROOT/bin/jg-lease.sh" check task-live >/dev/null 2>&1 \
+      || fail "locked start swept a live lease"
+  fi
 
   # Routine replay is one-shot, while the captain row remains held for Pi's
   # sequence-keyed visible-entry reconciliation.
@@ -1693,7 +1707,7 @@ EOF
   esac
   assert_contains "$(JG_HOME="$home" "$ROOT/bin/jg-branch-outcome.sh" unread)" \
     "https://example.com/pr/b" "second start consumed the captain row without a Pi entry"
-  pass "locked Pi session start replays leading routine outcomes, preserves the captain barrier, and sweeps only dead leases"
+  pass "locked Pi session start replays leading routine outcomes, preserves the captain barrier, and sweeps only dead leases ($([ "$leases" = on ] && echo "lease sweep proven" || echo "lease sweep skipped: no bus on this machine"))"
 }
 
 test_non_pi_session_start_leaves_branch_state_untouched() {
@@ -1712,13 +1726,22 @@ EOF
     --task task-b --verdict captain --summary 'unread Pi branch outcome' >/dev/null \
     || fail "could not seed the non-Pi unread branch outcome"
   rm -f "$home/state/.branch-outcomes-cursor"
-  printf 'branch\t999999\t123\n' > "$home/state/.lease-task-dead"
+  leases=skip
+  if jg_test_bus_start "$TMP_ROOT/lease-bus-non-pi"; then
+    leases=on
+    JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_LEASE_HOLDER_PID="$(dead_pid)" \
+      "$ROOT/bin/jg-lease.sh" claim task-dead --actor branch \
+      || fail "could not seed the dead lease"
+  fi
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   case "$out" in
     *"BRANCH OUTCOMES"*|*"unread Pi branch outcome"*) fail "non-Pi session replayed Pi branch outcomes" ;;
   esac
-  [ -e "$home/state/.lease-task-dead" ] || fail "non-Pi session swept a Pi branch lease"
+  if [ "$leases" = on ]; then
+    JG_HOME="$home" "$ROOT/bin/jg-lease.sh" check task-dead >/dev/null 2>&1 \
+      || fail "non-Pi session swept a Pi branch lease"
+  fi
   [ ! -e "$home/state/.branch-outcomes-cursor" ] || fail "non-Pi session marked a Pi branch outcome read"
   pass "non-Pi session start neither sweeps nor replays Pi branch state"
 }

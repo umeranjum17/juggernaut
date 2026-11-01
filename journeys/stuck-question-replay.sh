@@ -11,7 +11,7 @@ H=$T/home F=$T/fork
 export TMUX_TMPDIR=$T/tmux
 mkdir -p "$TMUX_TMPDIR" "$H/state" "$H/config" "$H/home" "$H/tmp" "$H/work" "$T/fakebin" "$F"
 trap 'tmux kill-server 2>/dev/null; rm -rf -- "$T"' EXIT
-cp -a "$REPO/bin" "$REPO/addons" "$F/"
+cp -a "$REPO/bin" "$REPO/core" "$F/"
 for f in jg-send.sh jg-control.sh; do
   # shellcheck disable=SC2016 # the recorder expands its own arguments when run
   printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" %s "$*" >> "$JG_HOME/sent"\n' "${f%.sh}" > "$F/bin/$f"
@@ -33,7 +33,7 @@ chmod +x "$T/fakebin/sign-off-axi"
 log() { printf '%s\n' "$*" | tee -a "$OUT/replay.txt"; }
 cycle() {
   env -u JG_TASK_ID HOME="$H/home" TMPDIR="$H/tmp" PATH="$T/fakebin:$PATH" JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" \
-    JG_CONFIG_OVERRIDE="$H/config" JG_ADDONS_DIR="$F/addons" JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 \
+    JG_CONFIG_OVERRIDE="$H/config" JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 \
     JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 JG_WAIT_ALERT_SECS=2 JG_WAIT_ESCALATE_SECS=4 JG_WAIT_CARD_SECS=6 \
     JG_PROMPT_REALERT_SECS=900 timeout 20 "$F/bin/jg-watch.sh" >> "$H/events" 2>> "$H/err"
   JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" "$F/bin/jg-wake-drain.sh" > /dev/null 2> "$H/ack"

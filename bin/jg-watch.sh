@@ -155,11 +155,11 @@
 #                          every JG_PROMPT_REALERT_SECS while it holds, and Main
 #                          posts a board card if it is still open
 #                          (ready_backlog_stall_state owns the condition;
-#                          addons/wait-timers/README.md owns the rungs)
+#                          core/wait-timers/README.md owns the rungs)
 #   check: ask-default safe default applied while the captain was unreachable: <ids> ...
-#                          the juggernaut-addons ask-default add-on, when installed,
+#                          the core ask-default feature,
 #                          applied the recorded safe default of each named ask
-#                          (ask_default_tick owns the hook; the add-on owns the
+#                          (ask_default_tick owns the hook; the feature owns the
 #                          decision and its applied.log record)
 # Local queue reminder semantics, including decision-signal normalization:
 # docs/watcher-continuity.md, "Durable queue and turn-end backstop".
@@ -203,7 +203,7 @@
 #   check: host memory ALERT: <summary>; largest: <owner> <size>, ...; <action>
 #                          durable sampler wake; docs/configuration.md "Host
 #                          memory guard" owns admission and alert behavior;
-#                          the host-memory add-on owns sampler lifecycle
+#                          the host-memory feature owns sampler lifecycle
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock. A live holder whose beacon is stale
@@ -308,21 +308,19 @@ WATCH_HOME_EXISTED=0
 . "$SCRIPT_DIR/jg-supervision-lib.sh"
 # shellcheck source=bin/jg-project-capacity-lib.sh
 . "$SCRIPT_DIR/jg-project-capacity-lib.sh"
-# Stale test-browser reaper and machine load alarm: on by default, no add-on to
+# Stale test-browser reaper and machine load alarm: on by default, no feature to
 # install, and it stops only a browser in a fleet temp or scratch profile root whose
 # owning worker is gone and whose age is past the limit.
 # shellcheck source=bin/jg-reaper-lib.sh
 . "$SCRIPT_DIR/jg-reaper-lib.sh"
-# Where this checkout's add-ons live (in-repo addons/ first, then the pre-fold clone).
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$SCRIPT_DIR/jg-addons-dir-lib.sh"
-# Optional alerts add-on: defines jg_model_outage_tick.
-_jg_alerts_lib=$(jg_addon_path "$JG_HOME" alerts/bin/jg-model-outage-lib.sh)
+# Where this checkout's features live (in-repo core/ first, then the pre-fold clone).
+# Optional alerts feature: defines jg_model_outage_tick.
+_jg_alerts_lib=$SCRIPT_DIR/../core/alerts/bin/jg-model-outage-lib.sh
 # shellcheck source=/dev/null
 [ ! -r "$_jg_alerts_lib" ] || . "$_jg_alerts_lib"
-# Parked-home reader (juggernaut-addons/parked-homes): the shared predicate
+# Parked-home reader (core/parked-homes): the shared predicate
 # every parked-home guard in the watcher calls. The shim answers not parked
-# when the add-on is absent (stock behavior).
+# when the feature is absent (stock behavior).
 # shellcheck source=bin/jg-parked-homes-lib.sh
 . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
 # shellcheck source=bin/jg-composer-lib.sh
@@ -344,7 +342,7 @@ _jg_alerts_lib=$(jg_addon_path "$JG_HOME" alerts/bin/jg-model-outage-lib.sh)
 # supervision recovers a positively dead or missing mate through the identical
 # guarded path. The watcher contributes only the cadence, the relaunch bound,
 # and wake emission (squad_lead_liveness_tick below).
-_jg_wait_timers_lib=$(jg_addon_path "$JG_HOME" wait-timers/bin/jg-wait-timers-lib.sh)
+_jg_wait_timers_lib=$SCRIPT_DIR/../core/wait-timers/bin/jg-wait-timers-lib.sh
 # shellcheck source=/dev/null # Analyzed separately as a canonical lint root.
 . "$SCRIPT_DIR/jg-squad-lead-liveness-lib.sh"
 # Dormant-lead record reader: this tick skips a lead bin/jg-squad-lead-dormant.sh stopped.
@@ -442,7 +440,7 @@ TURNEND_CHURN_ABSORB_SECS=${JG_TURNEND_CHURN_ABSORB_SECS:-900}  # longest a task
 # completion. The same classifier
 # (jg-classify-lib.sh) backs the away-mode daemon; while state/.afk exists the
 # daemon owns triage, so this watcher reverts to one-shot (enqueue + exit on every
-# wake) and never double-triages. The progress add-on still checks positive
+# wake) and never double-triages. The progress feature still checks positive
 # validation execution evidence before surfacing a stale pane.
 STALE_ESCALATE_SECS=${JG_STALE_ESCALATE_SECS:-240}  # idle secs before a provably-working stale escalates as a possible wedge
 # A busy pane is unconditional proof of liveness with no built-in duration bound,
@@ -697,9 +695,9 @@ inbox_steer_escalate_unavailable() {  # <window> <task> <record>
 # being healthy, while an unacknowledged instruction can still be a stuck steer.
 inbox_steer_check() {  # <window> <task>
   local w=$1 task=$2 action verb rec count tail40 reason='' ring_rc backend agent_state decision
-  # Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
+  # Parked-home guard (core/parked-homes): a parked home gets no
   # doorbell ring, re-ring or unread-instruction escalation. No-op without
-  # the add-on checkout.
+  # the feature checkout.
   jg_parked_skip_meta "$STATE/$task.meta" "$task" wake-doorbell && return 0
   action=$(jg_task_inbox_due_action "$STATE" "$task") || return 0
   verb=${action%% *}
@@ -1181,9 +1179,9 @@ squad_lead_wake_stall_tick() {
     task=${meta##*/}
     task=${task%.meta}
     case "$task" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
-    # Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
+    # Parked-home guard (core/parked-homes): a parked home gets no
     # drain ring and no wake-loop-stalled check; its stale episode markers are
-    # dropped so an unpark starts clean. No-op without the add-on checkout.
+    # dropped so an unpark starts clean. No-op without the feature checkout.
     jg_parked_skip_meta "$meta" "$task" watch-wake-stall && { rm -f "$STATE/.squad-lead-wake-stall-$task" "$STATE/.squad-lead-wake-progress-$task" "$STATE/.squad-lead-wake-ring-$task" 2>/dev/null || true; continue; }
     home=$(jg_meta_get "$meta" home)
     [ -n "$home" ] || continue
@@ -1283,8 +1281,8 @@ EOF
 # budget. The per-mate liveness lock serializes this tick against a concurrent
 # session-start sweep, so neither side can kill or re-probe an endpoint the
 # other is mid-relaunch on.
-jg_host_memory_lib=$(jg_addon_path "$JG_HOME" host-memory/bin/jg-host-memory-lib.sh)
-# shellcheck disable=SC1090,SC1091 # The optional add-on source is installed outside this repository.
+jg_host_memory_lib=$SCRIPT_DIR/../core/host-memory/bin/jg-host-memory-lib.sh
+# shellcheck disable=SC1090,SC1091 # The optional feature source is installed outside this repository.
 if [ -f "$jg_host_memory_lib" ]; then . "$jg_host_memory_lib"; fi
 
 # Publication and acknowledgement remain the sampler and drain's jobs. A
@@ -1423,9 +1421,9 @@ squad_lead_liveness_tick() {
       triage_log "squad_lead $id liveness skipped: dormant with no open work (bin/jg-squad-lead-dormant.sh)"
       continue
     fi
-    # Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
+    # Parked-home guard (core/parked-homes): a parked home gets no
     # liveness probe and no auto-relaunch - one triage line names the skip.
-    # No-op without the add-on checkout.
+    # No-op without the feature checkout.
     jg_parked_skip_meta "$meta" "$id" watch-liveness && { triage_log "squad_lead $id liveness skipped: its home is parked (config/parked-homes)"; continue; }
     jg_squad_lead_liveness_lock "$id" || continue
     jg_squad_lead_liveness_probe "$meta" "$id" poll
@@ -2337,7 +2335,7 @@ captain_call_stale_bound() {  # <window-key> <task>
 # Any prompt left unanswered wakes this home's supervisor once, at first sight,
 # and is recorded as a wait source (state/.wait-sources/<task>.prompt, touched
 # on every sighting) so the wait-timers chain owns every later rung: re-alerts,
-# Main, and the board card (addons/wait-timers/README.md).
+# Main, and the board card (core/wait-timers/README.md).
 # Returns 0 only after an answer was sent, so the caller skips the stale path
 # for that poll; a pane left on an unanswered prompt keeps the stale path.
 prompt_gate_check() {  # <window> <task> [tail40]
@@ -2959,12 +2957,12 @@ lane_target_value() {
 # Open lanes: every state/<task>.meta whose kind is ship (the default when a
 # meta omits it) or scout. A squad_lead endpoint's own meta (kind=squad_lead) is
 # not a lane of this home, so it never counts toward the floor.
-# Fork hook (thin layer over upstream): the fleet-flow add-on owns the rule that
+# Fork hook (thin layer over upstream): the fleet-flow feature owns the rule that
 # a lane parked on a stale external wait stops counting toward the cap, so when
 # its installed check is present its `counted` column is the open-lane number and
 # this home never re-derives it. Absent, erroring, timing out, or a malformed row
 # falls back to the meta count below, byte-for-byte upstream behaviour; the
-# counting rule stays in the add-on, not here.
+# counting rule stays in the feature, not here.
 open_lane_count() {
   local check counted meta kind count=0
   check=${XDG_DATA_HOME:-$HOME/.local/share}/jg-fleet-flow/jg-flow-check.sh
@@ -2996,6 +2994,23 @@ warn_invalid_lane_target_once() {
   triage_log "lane-target is not a positive integer; using the no-worker-working rule instead"
 }
 
+# Sourced-free copy of core/lead-wake/bin/jg-lead-wake-lib.sh's fleet_paused, which
+# owns the rule once step B replaces this ready-work decision: a declared fleet
+# pause silences ready-work intake until the resume order, and nothing else.
+fleet_paused() {
+  local rec heading
+  [ -f "$JG_HOME/state/.fleet-paused" ] && return 0
+  for rec in "$JG_HOME"/data/fleet-pause*.md "$JG_HOME/data/paused-for-juggernaut.md"; do
+    [ -f "$rec" ] || continue
+    heading=$(awk 'NF { print; exit }' "$rec" 2>/dev/null)
+    case $heading in
+      *[Ll]ift*|*[Rr]esum*|*[Uu]npaus*) continue ;;
+    esac
+    return 0
+  done
+  return 1
+}
+
 # Base-cadence idle-home check: 0 when this home (primary or squad_lead) has
 # dispatchable queued work and sits below its lane floor, so ready work is
 # started without anyone asking. With
@@ -3015,6 +3030,13 @@ ready_work_waits_idle() {
   local meta task target open now surfaced surfaced_at surfaced_ids ready_rc freed
   READY_WORK_IDS=
   READY_WORK_REASON=
+  # Paused: withdraw the queued row so nothing is presented, and drop the
+  # resurface record so the same ready set rings at once when the pause lifts.
+  if fleet_paused; then
+    jg_wake_withdraw check ready-work || true
+    rm -f "$STATE/.ready-work-surfaced"
+    return 1
+  fi
   READY_WORK_IDS=$(jg_ready_work_ids "$JG_HOME")
   ready_rc=$?
   if [ -z "$READY_WORK_IDS" ]; then
@@ -3086,7 +3108,7 @@ admission_retry_waits_memory() {
 }
 
 # The stalled-backlog condition the wait-timers chain escalates
-# (addons/wait-timers/README.md "Stalled ready backlog"): this squad_lead home
+# (core/wait-timers/README.md "Stalled ready backlog"): this squad_lead home
 # has a ready item that could start now, and either a free lane or no worker
 # provably working. A free lane is fewer open lanes than config/lane-target, or
 # than 4 without a usable one. A home at its floor is still stalled when no
@@ -3164,20 +3186,19 @@ record_ready_work_surfaced() {
   printf '%s\t%s\n' "$now" "$READY_WORK_IDS" > "$STATE/.ready-work-surfaced"
 }
 
-# Thin hook for the ask-default add-on, which owns every
+# Thin hook for the ask-default feature, which owns every
 # decision: for each ask it recorded that has not been defaulted yet, run
 # `ask-default decide` and let it apply the ask's safe default when the captain
-# is unreachable and the ask's clock has run out. Located like the other add-on
-# shims (JG_ADDONS_DIR, else the in-repo addons/, else the pre-fold clone at
-# $JG_HOME/projects/juggernaut-addons); with the
-# add-on absent this returns at once, writing nothing, and the loop is unchanged.
+# is unreachable and the ask's clock has run out. Located like the other feature
+# reads from `bin/../core/ask-default`; in a checkout copied from `bin/` alone the
+# feature is absent, so this returns at once, writing nothing, and the loop is unchanged.
 # Runs once per CHECK_INTERVAL. The probe reads the away record: the captain is
 # reachable unless an away record (never quiet mode's) exists. Held, waiting, and
 # reachable asks stay exactly as they are; a decide error is logged, never a wake.
 # Sets ASK_DEFAULT_REASON and returns 0 when at least one ask was just defaulted.
 ask_default_tick() {
   local tool rec id out rc ids='' probe
-  tool=$(jg_addon_path "$JG_HOME" ask-default/ask-default)
+  tool=$SCRIPT_DIR/../core/ask-default/ask-default
   [ -x "$tool" ] || return 1
   [ "$(age_of "$STATE/.last-ask-default-check")" -ge "$CHECK_INTERVAL" ] || return 1
   touch "$STATE/.last-ask-default-check"
@@ -3187,7 +3208,7 @@ ask_default_tick() {
   for rec in "$JG_HOME/data/ask-default/asks"/*; do
     [ -f "$rec" ] || continue
     id=${rec##*/}
-    # Skip the add-on's apply locks and its in-flight <id>.<pid> record staging.
+    # Skip the feature's apply locks and its in-flight <id>.<pid> record staging.
     case "$id" in
       *.lock) continue ;;
       *.*) case "${id##*.}" in *[!0-9]*) ;; *) [ ! -f "${rec%.*}" ] || continue ;; esac ;;
@@ -3839,6 +3860,11 @@ EOF
 }
 
 while :; do
+  # Each cycle starts with no routing verdict: a class gates only its own cycle.
+  # shellcheck disable=SC2034 # Read by wake() in the separately linted transition owner.
+  JG_WAKE_LAST=
+  # shellcheck disable=SC2034 # Read by wake() in the separately linted transition owner.
+  JG_WAKE_CYCLE_URGENT=
   # Home-gone exit: a deleted home, state directory, or code root means this
   # watcher's world is gone (a torn-down temporary home or a discarded
   # disposable checkout). Exit with a logged reason rather than writing state
@@ -3884,6 +3910,19 @@ while :; do
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-fleet-ledger.sh" capture || true
+  # The wake queue and the task inboxes run on the bus (docs/bus-live.md). A
+  # worker's acknowledgement of an inbox record is a `mv` into handled/, so this
+  # poll carries that move to the bus as the record's acknowledgement; a bus the
+  # poll cannot reach is silent and can never fail or delay a wake.
+  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>&1 || true
+  # Migration step 5e shadow: the same task leases and busy events, mirrored to
+  # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
+  # test, and a mirror that cannot reach its bus can never fail or delay a wake.
+  [ ! -e "$CONFIG/state-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-state-bus.sh" sync >/dev/null 2>&1 || true
+  # Migration step 5g shadow: the host and fleet numbers on Prometheus plus
+  # node_exporter, beside the shell collection (docs/metrics-shadow.md). Off costs
+  # one file test, and a shadow that cannot start can never fail or delay a wake.
+  [ ! -e "$CONFIG/metrics-shadow" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-metrics-shadow.sh" sync >/dev/null 2>&1 || true
 
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
     home_summary_refresh_detached
@@ -3901,6 +3940,16 @@ while :; do
   # repost after grace, and escalate once if the recovery turn is also missed.
   # No conversation scraping; unresolved records are never silently expired.
   jg_pending_reply_tick "$STATE" || true
+  # Migration step 5d shadow: the same waiters, timers and replies, mirrored to the
+  # bus as durable workflow events beside the records (docs/reply-shadow.md). Off
+  # costs one file test, and a mirror that cannot reach its bus can never fail or
+  # delay a reply, a repost or an escalation.
+  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
+  # The same wait, decided by the workflow definition instead of by hand
+  # (bin/jg-reply-engine.sh): it folds the event log, records what it would do and
+  # acts on nothing. Off costs one file test, and an engine that cannot fold can
+  # never fail or delay a reply, a repost or an escalation.
+  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-engine.sh" tick >/dev/null 2>&1 || true
 
   # Endpoint liveness runs before queue observation: a positively dead or
   # missing squad_lead endpoint is relaunched here on a bounded cadence, which
@@ -3971,12 +4020,16 @@ while :; do
     # home_summary_refresh_detached for why publication stays off the beacon's
     # path. Publication failure stays side-band.
     home_summary_refresh_detached
-    files=""
+    # A name of this batch's own, never the generic `files`: ShellCheck folds a
+    # sourced file's variables into this one analysis, so a library's own
+    # `local -a files` read this string as an array (SC2178/SC2128) although
+    # nothing here is one.
+    signal_files=""
     while IFS=$(printf '\t') read -r sf sig f; do
       [ -n "$sf" ] || continue
       # A batch left with no reportable path reports nothing at all.
       reportable_signal_path "$f" || continue
-      case " $files " in *" $f "*) ;; *) files="$files $f" ;; esac
+      case " $signal_files " in *" $f "*) ;; *) signal_files="$signal_files $f" ;; esac
     done <<EOF
 $pending
 EOF
@@ -3996,7 +4049,7 @@ EOF
 $pending
 EOF
     fi
-    reason="signal:$files"
+    reason="signal:$signal_files"
     # Triage: a signal is ACTIONABLE when any of these holds (cheapest first):
     #   - the away-mode daemon owns triage (afk) and wants every wake;
     #   - any status file gained a captain-relevant event since it was last
@@ -4022,8 +4075,8 @@ EOF
     # status span, and the capture only once the authoritative verdict comes up short.
     JG_SIGNAL_SURFACE_ENDPOINTS=''
     JG_SIGNAL_NEEDS_DECISION_FILES=''
-    # shellcheck disable=SC2086  # $files is a space-separated status-path list (ids carry no spaces)
-    signal_files_actionable $files
+    # shellcheck disable=SC2086  # $signal_files is a space-separated status-path list (ids carry no spaces)
+    signal_files_actionable $signal_files
     signal_actionable=$?
     # A decision-owned file's queued row payload is marked "needs-decision:"
     # instead of the ordinary "signal:" below (other files in the same batch
@@ -4037,13 +4090,13 @@ EOF
     # bin/jg-supervise-daemon.sh).
     # shellcheck disable=SC2086  # same space-separated status-path list
     if afk_present || [ "$signal_actionable" -eq 0 ] \
-      || { ! signal_crew_provably_working $files && ! signal_turnend_panes_churned $files; }; then
+      || { ! signal_crew_provably_working $signal_files && ! signal_turnend_panes_churned $signal_files; }; then
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         reportable_signal_path "$f" || continue
         ready_pr_record "$f"
         file_reason="$reason"
-        case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$files" ;; esac
+        case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$signal_files" ;; esac
         jg_wake_append signal "$(basename "$f")" "$file_reason" || exit 1
       done <<EOF
 $pending
@@ -4072,7 +4125,7 @@ EOF
       done <<EOF
 $JG_SIGNAL_SURFACE_ENDPOINTS
 EOF
-      [ -n "$files" ] || continue
+      [ -n "$signal_files" ] || continue
       signal_wake=$reason
     else
       while IFS=$(printf '\t') read -r sf sig f; do
@@ -4097,7 +4150,7 @@ EOF
         done <<EOF
 $pending
 EOF
-        [ -n "$files" ] || continue
+        [ -n "$signal_files" ] || continue
         signal_wake=$reason
       else
         triage_log "absorbed benign $reason"
@@ -4125,6 +4178,24 @@ EOF
   procevent_surface_queued
 
   if declare -F jg_wait_timers_tick >/dev/null; then jg_wait_timers_tick || { echo "watcher: waiting-state timer check failed" >&2; exit 1; }; fi
+  # Migration step 5c, live: the escalation workflow definition decides the owner
+  # rung and the pause cadence for every open episode and queues that wake
+  # (bin/jg-escalation-workflows.sh owns the contract). The ladder above keeps the
+  # rungs the definition does not carry yet. The tick prints the wake it already
+  # queued, so this cycle ends on it exactly as the ladder's own owner fire did;
+  # a tick that cannot read its definition reports it and leaves the poll running.
+  if escalation_reason=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" POLL="$POLL" \
+    "$SCRIPT_DIR/jg-escalation-workflows.sh" tick); then
+    # The tick queued this row in its own process, so a batch key this cycle
+    # appended earlier can never suppress the delivery of it.
+    if [ -n "$escalation_reason" ]; then
+      # shellcheck disable=SC2034 # Read by wake() in bin/jg-push-transition-lib.sh.
+      JG_WAKE_LAST=''
+      wake "$escalation_reason"
+    fi
+  else
+    echo "watcher: escalation workflow tick failed" >&2
+  fi
 
   host_memory_surface_queued
 
@@ -4399,7 +4470,7 @@ EOF
     fi
   fi
 
-  # Asks the ask-default add-on recorded are decided on the check cadence.
+  # Asks the ask-default feature recorded are decided on the check cadence.
   if ask_default_tick; then
     jg_wake_append check ask-default "$ASK_DEFAULT_REASON" || exit 1
     wake "$ASK_DEFAULT_REASON"
@@ -4443,6 +4514,9 @@ EOF
       triage_log "absorbed heartbeat (no captain-relevant change)"
     fi
   fi
+
+  # Re-delivering rows the ordinary scan already recorded is the resurface
+  # timer's job (own_queue_resurface), not a second wake path here.
 
   # Renew liveness only after a complete supervision scan. The predecessor's
   # beacon stays readable during handoff but keeps its original age while

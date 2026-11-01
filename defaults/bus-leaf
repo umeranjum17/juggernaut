@@ -1,0 +1,34 @@
+# The remote squad_lead leaf node: the two servers it needs, and the one event
+# row both paths carry. bin/jg-bus-leaf.sh reads it, a home's config/bus-leaf
+# overrides any single key here, and JG_BUS_LEAF_<KEY> overrides both.
+# docs/bus-leaf-shadow.md owns what this step proves and what it does not.
+#
+# The leaf is in SHADOW: this file starts nothing by itself, the SSH route keeps
+# carrying every real delivery, and `jg-bus-leaf.sh parity` is what compares the
+# two paths.
+#   subject          the one subject the leaf carries. Interest decides what
+#                    crosses the leaf connection, so an event nobody subscribes to
+#                    crosses nothing.
+#   leaf-name        this remote home's server name, so two leaves on one hub are
+#                    told apart in its logs.
+#   leaf-user/-pass  the identity a leaf must present. The shipped value is the
+#                    local-only placeholder; a home that leaves 127.0.0.1 sets a
+#                    real one in config/bus-leaf, next to its other private state.
+#   hub-leaf-listen  the home bus side's leaf listener, rendered into its config.
+#   hub-leaf-dial    what the remote home dials. It differs from the listener when
+#                    the bus listens on a loopback or wildcard address and the
+#                    remote home reaches it by another name.
+#   leaf-listen      the remote home's own server, which is where its lead's
+#                    clients read.
+#   url              the client address this side talks to as a client: the home
+#                    bus on the main home, and the leaf's own address in the remote
+#                    home's config/bus-leaf, because a client there reads its own
+#                    server.
+set subject jg.leaf
+set leaf-name remote-lead
+set leaf-user juggernaut-leaf
+set leaf-pass juggernaut-leaf
+set hub-leaf-listen 127.0.0.1:7422
+set hub-leaf-dial 127.0.0.1:7422
+set leaf-listen 127.0.0.1:4333
+set url nats://127.0.0.1:4222

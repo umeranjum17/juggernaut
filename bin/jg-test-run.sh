@@ -319,7 +319,14 @@ family_for_basename() {
       ;;
     jg-turnend-guard.test.sh|jg-wake-daemon-lifecycle-e2e.test.sh|\
     jg-mail.test.sh|jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|\
-    jg-pi-wake-replay.test.sh)
+    jg-pi-wake-replay.test.sh|jg-wake-bus-parity.test.sh|\
+    jg-state-bus-parity.test.sh|jg-lease-live.test.sh|jg-reply-bus-parity.test.sh|\
+    jg-reply-engine.test.sh|\
+    jg-metrics-shadow-parity.test.sh|\
+    jg-bus-service.test.sh|\
+    jg-wake-queue-live.test.sh|\
+    jg-bus-account-isolation.test.sh|\
+    jg-escalation-workflows.test.sh|jg-bus-leaf-parity.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
     jg-afk-inject-herdr-e2e.test.sh|jg-backend-herdr-presentation-e2e.test.sh|\
@@ -556,7 +563,6 @@ list_portable_serial() {
 portable_serial_weight_hints() {
   cat <<'EOF'
 tests/board-link.test.sh 128
-tests/jg-addon-trust.test.sh 138
 tests/jg-afk-inject-e2e.test.sh 42537
 tests/jg-agents-md-floor.test.sh 423
 tests/jg-agy-signals-live-e2e.test.sh 61
@@ -564,7 +570,10 @@ tests/jg-backend-tmux-smoke.test.sh 320
 tests/jg-backlog-handoff.test.sh 74166
 tests/jg-behavior-determinism.test.sh 34000
 tests/jg-board-answers.test.sh 2206
+tests/jg-board-asks.test.sh 860
 tests/jg-board-gate.test.sh 437
+tests/jg-bus-leaf-parity.test.sh 4245
+tests/jg-bus.test.sh 1541
 tests/jg-bootstrap.test.sh 83933
 tests/jg-browser-reaper.test.sh 8000
 tests/jg-calm-home-links.test.sh 381
@@ -583,6 +592,7 @@ tests/jg-design-gate-first-draft.test.sh 680
 tests/jg-design-gate.test.sh 467
 tests/jg-devin-signals-live-e2e.test.sh 65
 tests/jg-escalation-chain.test.sh 120130
+tests/jg-escalation-workflows.test.sh 4000
 tests/jg-fast-evals.test.sh 704
 tests/jg-fleet-heartbeat.test.sh 1186
 tests/jg-fleet-sync.test.sh 42151
@@ -590,17 +600,22 @@ tests/jg-flow.test.sh 919
 tests/jg-gate-refuse.test.sh 14876
 tests/jg-grok-continuity-live-e2e.test.sh 53
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 57
+tests/jg-harness-quirks.test.sh 321
 tests/jg-herdr-lead-label.test.sh 99
+tests/jg-guard-host.test.sh 829
 tests/jg-herdr-names.test.sh 1061
 tests/jg-herdr-version-floor-live-e2e.test.sh 61
 tests/jg-hold-reason-gate.test.sh 1608
 tests/jg-hometag-lead-label.test.sh 393
+tests/jg-retired-catalog-check.test.sh 387
+tests/jg-host-wiring.test.sh 817
 tests/jg-inbox.test.sh 8757
 tests/jg-launch-prompt-signals-live-e2e.test.sh 56
 tests/jg-lint-partitions.test.sh 4361
 tests/jg-lint-root-memory.test.sh 4747
 tests/jg-mail.test.sh 10524
 tests/jg-merge-gate-lib.test.sh 83
+tests/jg-metrics-shadow-parity.test.sh 9744
 tests/jg-muse-signals-live-e2e.test.sh 61
 tests/jg-omp-primary-live-e2e.test.sh 58
 tests/jg-on.test.sh 18857
@@ -623,6 +638,8 @@ tests/jg-public-followup.test.sh 474556
 tests/jg-quota-array-dispatch-live-e2e.test.sh 54
 tests/jg-remote-reply.test.sh 240899
 tests/jg-remote-squad-lead-lifecycle-e2e.test.sh 567728
+tests/jg-reply-bus-parity.test.sh 2655
+tests/jg-reply-engine.test.sh 900
 tests/jg-rovo-signals-live-e2e.test.sh 57
 tests/jg-self-repo-role.test.sh 9033
 tests/jg-send-dormant-lead.test.sh 1692
@@ -633,6 +650,11 @@ tests/jg-sessionstart-hook-live-e2e.test.sh 61
 tests/jg-ship-local.test.sh 521
 tests/jg-spawn-dispatch-profile.test.sh 506834
 tests/jg-squad-lead-dormant.test.sh 1091
+tests/jg-state-bus-parity.test.sh 6515
+tests/jg-lease-live.test.sh 4439
+tests/jg-bus-service.test.sh 3100
+tests/jg-wake-queue-live.test.sh 2600
+tests/jg-bus-account-isolation.test.sh 4200
 tests/jg-squad-lead-lifecycle-e2e.test.sh 15675
 tests/jg-supervision-host-live-e2e.test.sh 58
 tests/jg-supervision-host.test.sh 1162449
@@ -651,6 +673,7 @@ tests/jg-watcher-lock.test.sh 1059731
 tests/jg-worker-account-live-e2e.test.sh 70
 tests/juggernaut-axi-serve.test.sh 1635
 tests/merge-card-title.test.sh 701
+tests/merge-gate-one-entry.test.sh 2858
 EOF
 }
 
@@ -1229,8 +1252,9 @@ families_for_changed_path() {
       printf '%s\n' real-herdr-gated
       printf '%s\n' pure-contract-unit
       ;;
-    bin/jg-watch*|bin/jg-wake*|bin/jg-inactive-reconcile.sh|\
-    bin/jg-classify-lib.sh|bin/jg-daemon*|bin/jg-turnend-guard*|bin/jg-guard.sh)
+    bin/jg-watch*|bin/jg-wake*|bin/jg-escalation-workflows.sh|\
+    bin/jg-inactive-reconcile.sh|bin/jg-classify-lib.sh|bin/jg-daemon*|\
+    bin/jg-turnend-guard*|bin/jg-guard.sh)
       printf '%s\n' watcher-wake-lock
       ;;
     bin/jg-afk*)

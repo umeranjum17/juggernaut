@@ -217,6 +217,10 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
       "$id: brief missing nonterminal working:/setup-complete gate protection"
+    assert_grep "stage or commit your work and run the light gate locally over the files you changed, fixing every finding" "$brief" \
+      "$id: brief missing the light gate every PR opens behind"
+    assert_grep "needs that pull request's checks green" "$brief" \
+      "$id: brief missing the rule that a done line needs the PR's checks green"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
   pass "jg-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
@@ -1261,7 +1265,7 @@ test_home_brief_include_is_appended_last() {
   pass "jg-brief.sh: the home brief include lands last on ship and scout, verbatim, and fails closed"
 }
 
-# With the brief-inherit add-on uninstalled, the scaffold still succeeds and the
+# With the brief-inherit feature uninstalled, the scaffold still succeeds and the
 # home-local include lands last.
 test_brief_include_works_without_add_on() {
   local home addons brief last_heading
@@ -1271,13 +1275,13 @@ test_brief_include_works_without_add_on() {
   mkdir -p "$home/config" "$addons"
   printf '%s\n' 'Prefer small commits.' > "$home/config/brief-include.md"
   JG_HOME="$home" JG_ADDONS_DIR="$addons" "$ROOT/bin/jg-brief.sh" no-add-on some-proj --scout >/dev/null \
-    || fail "scout scaffold failed without the brief-inherit add-on"
+    || fail "scout scaffold failed without the brief-inherit feature"
   brief="$home/data/no-add-on/brief.md"
-  assert_grep 'Prefer small commits.' "$brief" "home-local include missing without the add-on"
+  assert_grep 'Prefer small commits.' "$brief" "home-local include missing without the feature"
   last_heading=$(grep '^# ' "$brief" | tail -n 1)
   [ "$last_heading" = '# Home brief additions' ] \
-    || fail "home-local include was not the last section without the add-on (got: $last_heading)"
-  pass "jg-brief.sh: with no brief-inherit add-on, the home-local include still lands last"
+    || fail "home-local include was not the last section without the feature (got: $last_heading)"
+  pass "jg-brief.sh: with no brief-inherit feature, the home-local include still lands last"
 }
 
 # --base-branch names the branch a task starts from and a ship's PR targets. It is

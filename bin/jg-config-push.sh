@@ -100,8 +100,8 @@ SQUAD_LEADS_MD="$(jg_compat_pick "$DATA/squad_leads.md")"
 . "$SCRIPT_DIR/jg-config-inherit-lib.sh"
 # shellcheck source=bin/jg-squad-lead-nudge-lib.sh
 . "$SCRIPT_DIR/jg-squad-lead-nudge-lib.sh"
-# Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
-# config push. The shim answers not parked when the add-on is absent (stock behavior).
+# Parked-home guard (core/parked-homes): a parked home gets no
+# config push. The shim answers not parked when the feature is absent (stock behavior).
 # shellcheck source=bin/jg-parked-homes-lib.sh
 . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
 
@@ -145,9 +145,9 @@ while IFS='|' read -r id home _window meta; do
     printf 'squad_lead %s: skipped - no home= in %s and no registry home\n' "$id" "$meta"
     continue
   fi
-  # Parked-home guard (juggernaut-addons/parked-homes): a parked home gets no
+  # Parked-home guard (core/parked-homes): a parked home gets no
   # config push and no reread nudge. One line names the skip. No-op without
-  # the add-on checkout.
+  # the feature checkout.
   jg_parked_skip_meta "$meta" "$id" config-push && continue
   remote_host=$(jg_meta_get "$meta" remote_host)
   if [ -n "$remote_host" ]; then

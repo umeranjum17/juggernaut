@@ -26,7 +26,6 @@ CANDIDATES=(
   tests/jg-board-gate.test.sh
   tests/jg-board-answers.test.sh
   tests/jg-squad-lead-dormant.test.sh
-  tests/jg-lease-command-lock.test.sh
 )
 
 run_once() {  # <script> <log> -> the script's exit code
