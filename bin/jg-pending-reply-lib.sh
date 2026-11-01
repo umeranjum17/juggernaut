@@ -258,6 +258,9 @@ jg_pending_reply_exists() {  # <pointer>
 jg_pending_reply_corrs() {  # <state-dir>
   local file
   file=$(jg_pending_reply_cache "$1")
+  # A home that updated still holds its waiters on the bus and not yet in the
+  # cache, so the first reader to ask rebuilds it: an upgrade drops no waiter.
+  [ -f "$file" ] || jg_pending_reply_state_sync "$1"
   [ -f "$file" ] || return 0
   awk -v RS='' '{
     n = split($0, L, "\n")
@@ -382,7 +385,10 @@ jg_pending_reply_state_sync() {  # <state-dir>
   file=$(jg_pending_reply_cache "$state")
   mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/jg-pending-reply-sync.XXXXXX" 2>/dev/null) || return 0
-  if "$_JG_PENDING_REPLY_LIB_DIR/jg-reply-bus.sh" --home "$(dirname "$state")" project "$tmp" >/dev/null 2>&1; then
+  # `project` makes its directory only once the bus has answered, so an
+  # unreachable bus leaves the cache alone instead of blanking it.
+  if "$_JG_PENDING_REPLY_LIB_DIR/jg-reply-bus.sh" --home "$(dirname "$state")" project "$tmp" >/dev/null 2>&1 \
+    && [ -d "$tmp/pending-replies" ]; then
     if { for corr in "$tmp/pending-replies"/[0-9a-f]*; do
            [ -f "$corr" ] || continue
            printf '%s\n\n' "$(cat "$corr")"
