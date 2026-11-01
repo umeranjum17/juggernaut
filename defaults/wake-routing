@@ -31,4 +31,8 @@ now      check   *board-gate.check.sh   *must ask waiting over 48h*
 batch    check   *board-gate.check.sh   *board ask*
 batch    check   *dpr-green*      *
 batch    check   post-merge-ci-*  *
+# SLO alerts carry their own urgency: a blocker and an escalation wake at once, the rest batch.
+now      check   slo-main-*       *
+now      check   slo-blocker-*    *
+batch    check   slo-*            *
 now      *       *                *

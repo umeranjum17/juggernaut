@@ -1,0 +1,22 @@
+{
+  "schema": "jg-slo-alerts.v1",
+  "mode": "live",
+  "prometheus-url": "",
+  "prometheus-timeout-seconds": 3,
+  "forge-interval-minutes": 10,
+  "eval-interval-seconds": 60,
+  "group-by": ["alertname", "owner"],
+  "repeat-interval-minutes": 60,
+  "digest-interval-minutes": 15,
+  "inhibit-rules": [
+    {"source": "pr-red", "target": "worker-idle", "equal": ["owner"]}
+  ],
+  "alerts": [
+    {"id": "pr-red", "summary": "a pull request is red with no new push", "metric": "jg_slo_pr_red_seconds",
+     "limit": 30, "limit-unit": "minutes", "for-minutes": 0, "urgency": "batch", "escalate-to-main-minutes": 90},
+    {"id": "done-merge", "summary": "a finished task is still unmerged", "metric": "jg_slo_done_unmerged_seconds",
+     "limit": 30, "limit-unit": "minutes", "for-minutes": 0, "urgency": "batch", "escalate-to-main-minutes": 90},
+    {"id": "worker-idle", "summary": "a worker has no commit and no status", "metric": "jg_slo_worker_idle_seconds",
+     "limit": 25, "limit-unit": "minutes", "for-minutes": 0, "urgency": "batch", "escalate-to-main-minutes": 60}
+  ]
+}
