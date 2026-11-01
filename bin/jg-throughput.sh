@@ -285,17 +285,22 @@ measure_one() {
     --argjson green "$green_at" --argjson merged "$merged_at" \
     --argjson queue "$queue_s" --argjson run "$run_s" \
     --arg task "${task:-}" '
-    def secs(a; b): if a == null or b == null or b < a then 0 else b - a end;
+    def clamp(x; lo; hi): if x < lo then lo elif x > hi then hi else x end;
+    def secs(a; b): if b <= a then 0 else b - a end;
     . as $p
     | ($green | if . == 0 then null else . end) as $g
+    | ($donets) as $a
+    | ($merged) as $d
+    | (clamp($lastc; $a; $d)) as $b
+    | (if $g == null then $b else clamp($g; $b; $d) end) as $c
     | { home: null, task: $task, repo: $p.repo, url: $p.url, pr: $p.number,
-        done_at: $donets, last_commit_at: $lastc, green_at: $g, merged_at: $merged,
-        rework_s: secs($donets; $lastc),
-        final_ci_s: (if $g == null then 0 else secs($lastc; $g) end),
+        done_at: $a, last_commit_at: $lastc, green_at: $g, merged_at: $d,
+        rework_s: secs($a; $b),
+        final_ci_s: secs($b; $c),
         queue_s: (if $g == null then 0 else $queue end),
         run_s: (if $g == null then 0 else $run end),
-        green_to_merged_s: (if $g == null then 0 else secs($g; $merged) end),
-        total_s: secs($donets; $merged) }
+        green_to_merged_s: (if $g == null then 0 else secs($c; $d) end),
+        total_s: secs($a; $d) }
     | .handoff_s = ([.total_s - .rework_s - .final_ci_s - .green_to_merged_s, 0] | max)'
 }
 

@@ -99,8 +99,13 @@ assert_equals 1200 "$(row 1 queue_s)" 'the job-hours of runner queue wait in the
 assert_equals 8400 "$(row 1 run_s)" 'the job runtime of the final CI'
 assert_equals 3600 "$(row 1 green_to_merged_s)" 'the wait from green to merged'
 assert_equals 0 "$(row 1 handoff_s)" 'a fully recorded wait has no handoff'
-# pr-2: done at the last commit, so no rework; every second is CI and pickup.
-assert_equals 0 "$(row 2 rework_s)" 'a done line at the final commit is no rework'
+# pr-2: the final commit predates the done line, so no rework; the CI window is
+# clamped to the wait, and the stages still sum to it.
+assert_equals 0 "$(row 2 rework_s)" 'a final commit before the done line is no rework'
+assert_equals 6600 "$(row 2 final_ci_s)" 'the final CI window is not clamped to the wait'
+assert_equals 7200 "$(row 2 total_s)" 'the wait is not measured from the done line to the merge'
+assert_equals 7200 "$(printf '%s' "$dataset" | jq -r '[.merges[] | select(.pr == 2) | .rework_s + .final_ci_s + .green_to_merged_s + .handoff_s][0]')" \
+  'the stages of a clamped merge do not sum to its wait'
 # pr-3: no run at all, so nothing is green and the whole wait is handoff.
 assert_equals null "$(row 3 green_at)" 'a pull request with no run must not claim a green time'
 assert_equals 7200 "$(row 3 handoff_s)" 'an unrecorded wait is handoff'

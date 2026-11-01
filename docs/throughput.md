@@ -25,6 +25,7 @@ A merge with no done line is counted as skipped, never measured from a guessed s
 ## The stages
 
 Every second between the done line and the merge lands in exactly one stage, so `rework + final CI + green-to-merged + handoff` is the whole wait.
+A final commit before the done line, or a green time after the merge, is clamped to the window rather than trusted as read.
 
 | Stage | From | To | What it means |
 | --- | --- | --- | --- |
@@ -32,7 +33,7 @@ Every second between the done line and the merge lands in exactly one stage, so 
 | `queue` | a job's creation | its start | the runner pool's wait, summed over the final commit's jobs |
 | `run` | a job's start | its completion | the CI runtime, summed the same way |
 | `green_to_merged` | the last green check | the merge | nobody picking the pull request up |
-| `handoff` | whatever is left | | time in which no record was running anything |
+| `handoff` | whatever is left | | time no measured phase accounts for, including a wait where no run was ever recorded |
 
 `queue` and `run` sit inside the final CI window by construction: they are measured as their own bottlenecks, so the stage sums overlap while the phase attribution does not.
 
