@@ -136,7 +136,7 @@ report() {  # <part> <supervisor>
     pid=$(cat "$STATE/bus/$part.pid" 2>/dev/null || echo none)
   fi
   if [ -z "$pid" ] || [ "$pid" = 0 ] || ! kill -0 "$pid" 2>/dev/null; then
-    fail "$part" "not running (pid ${pid:-none}), see $STATE/bus/$part.log" "$(blocks "$part")"
+    fail "$part" "not running (pid ${pid:-none}), see $STATE/bus/$part.log: $(tail -n 2 "$STATE/bus/$part.log" 2>/dev/null | tr '\n' ' ')" "$(blocks "$part")"
   fi
   if [ "$part" = deliver ]; then
     printf '%-7s enabled %s, running pid %s, consuming %s\n' "$part" "$enabled" "$pid" "$("$BUS" config stream)"
