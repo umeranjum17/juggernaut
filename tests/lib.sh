@@ -54,6 +54,14 @@ export JG_TEST_SEAM=1
 # A fixture binds no port and installs no service: bin/jg-stack.sh up is a no-op under this.
 # tests/jg-stack.test.sh unsets it, because starting the stack is what it proves.
 export JG_STACK_SKIP=1
+# A fixture never reaches the machine's real message bus: with no address set, the wake, key-value
+# and state paths fall back to nats://127.0.0.1:4222, which on a host running the bus is the real
+# server (accounts enforced, other homes' streams), so a test would publish into it or be refused by
+# it. Port 1 answers nothing, so those paths take their no-bus behaviour, as in CI. A test that runs
+# its own server sets these to that server's address (jg_test_bus_start does).
+export JG_KV_URL="${JG_KV_URL:-nats://127.0.0.1:1}"
+export JG_WAKE_BUS_URL="${JG_WAKE_BUS_URL:-nats://127.0.0.1:1}"
+export JG_STATE_BUS_URL="${JG_STATE_BUS_URL:-nats://127.0.0.1:1}"
 # A host-installed task-priority feature must not change what test fixtures can add.
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 

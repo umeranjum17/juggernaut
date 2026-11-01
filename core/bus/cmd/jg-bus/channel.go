@@ -297,6 +297,10 @@ func (a *app) status() int {
 		state := "down"
 		if pid, ok := a.runningPid(name); ok {
 			state = fmt.Sprintf("up (%d)", pid)
+		} else if name == "nats" && busListening(a.cfgOr("nats-url", "")) {
+			// The unit runs the server itself, so there is no pid file here; a server
+			// that answers is up whoever started it.
+			state = "up (systemd user service " + unitName() + ")"
 		}
 		fmt.Printf("%s: %s\n", name, state)
 	}
@@ -313,8 +317,23 @@ func (a *app) unit(args []string) int {
 	if len(args) > 0 {
 		part = args[0]
 	}
+	text, err := a.buildUnit(part)
+	if err != nil {
+		return die("%v", err)
+	}
+	fmt.Print(text)
+	return 0
+}
+
+// buildUnit returns the unit text for one part. For nats it first writes the machine's
+// server config and accounts: the config is ONE file with no `include` lines, because
+// nats-server resolves an include path against the config's own directory, so an
+// absolute one becomes state/bus/home/... and the server refuses to start. One merged
+// file is also what lets the JetStream budget be sized for the number of accounts
+// instead of staying below what those accounts reserve.
+func (a *app) buildUnit(part string) (string, error) {
 	if err := os.MkdirAll(a.runtime, 0o755); err != nil {
-		return die("cannot create %s", a.runtime)
+		return "", fmt.Errorf("cannot create %s", a.runtime)
 	}
 	quote := func(value string) string {
 		value = strings.ReplaceAll(value, `\`, `\\`)
@@ -331,26 +350,21 @@ func (a *app) unit(args []string) int {
 		if path, err := exec.LookPath("nats-server"); err == nil {
 			natsServer = path
 		}
-		// One server per machine: the unit runs the base config with this machine's
-		// per-home accounts included, so every home on the machine shares one
-		// JetStream and no account can reach another home's subjects.
-		base := a.busFile("nats.conf")
-		conf := filepath.Join(a.runtime, "bus.conf")
+		// One server per machine: the config carries this machine's per-home accounts, so
+		// every home on the machine shares one JetStream and no account can reach another
+		// home's subjects.
+		homes := a.machineHomes()
 		accounts := filepath.Join(a.runtime, "accounts.conf")
-		if err := a.unitAccounts(accounts); err != nil {
-			return die("cannot write %s: %v", accounts, err)
+		if err := a.unitAccounts(accounts, homes); err != nil {
+			return "", fmt.Errorf("cannot write %s: %v", accounts, err)
 		}
-		// nats resolves an include against the including file's directory even when the
-		// path is absolute, so both are written relative to it.
-		rel := func(target string) string {
-			if r, err := filepath.Rel(a.runtime, target); err == nil {
-				return r
-			}
-			return target
+		conf := filepath.Join(a.runtime, "bus.conf")
+		text, err := a.machineConfig(len(homes))
+		if err != nil {
+			return "", err
 		}
-		include := fmt.Sprintf("include %q\ninclude %q\n", rel(base), rel(accounts))
-		if err := os.WriteFile(conf, []byte(include), 0o600); err != nil {
-			return die("cannot write %s: %v", conf, err)
+		if err := os.WriteFile(conf, []byte(text), 0o600); err != nil {
+			return "", fmt.Errorf("cannot write %s: %v", conf, err)
 		}
 		fmt.Fprintf(&b, "Description=Juggernaut message bus for this machine (NATS JetStream, one account per home)\n")
 		fmt.Fprintf(&b, "After=network.target\n\n")
@@ -359,7 +373,7 @@ func (a *app) unit(args []string) int {
 	case "dapr":
 		path, err := exec.LookPath("daprd")
 		if err != nil {
-			return die("no daprd on PATH")
+			return "", fmt.Errorf("no daprd on PATH")
 		}
 		fmt.Fprintf(&b, "Description=Juggernaut message bus sidecar (Dapr over NATS)\n")
 		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
@@ -367,7 +381,7 @@ func (a *app) unit(args []string) int {
 	case "ntfy":
 		path, err := exec.LookPath("ntfy")
 		if err != nil {
-			return die("no ntfy on PATH")
+			return "", fmt.Errorf("no ntfy on PATH")
 		}
 		fmt.Fprintf(&b, "Description=Juggernaut captain channel delivery (ntfy, loopback)\n")
 		fmt.Fprintf(&b, "After=network.target\n\n")
@@ -375,7 +389,7 @@ func (a *app) unit(args []string) int {
 	case "deliver":
 		self, err := os.Executable()
 		if err != nil {
-			return die("cannot find the jg-bus binary: %v", err)
+			return "", fmt.Errorf("cannot find the jg-bus binary: %v", err)
 		}
 		fmt.Fprintf(&b, "Description=Juggernaut captain channel consumer (CAPTAIN stream to ntfy)\n")
 		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
@@ -383,11 +397,10 @@ func (a *app) unit(args []string) int {
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_BUS_ROOT="+a.root))
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_STATE_OVERRIDE="+a.state))
 	default:
-		return die("unit: unknown part %q (nats, dapr, ntfy, deliver)", part)
+		return "", fmt.Errorf("unit: unknown part %q (nats, dapr, ntfy, deliver)", part)
 	}
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
-	fmt.Print(b.String())
-	return 0
+	return b.String(), nil
 }
 
 // natsUnit is the name of the unit that runs the server, which the sidecar's unit
