@@ -1511,7 +1511,7 @@ families_for_changed_path() {
       ;;
     bin/jg-lint.sh|bin/jg-lint-workflows.sh|bin/jg-install-shellcheck.sh|\
     bin/jg-install-actionlint.sh|\
-    bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
+    bin/jg-committed-binary-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
     bin/jg-captain-hold.sh|bin/jg-hold-reason-lib.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
     bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-tasks-axi-lib.sh|\
     bin/jg-vendor-auth-probe.sh|\
