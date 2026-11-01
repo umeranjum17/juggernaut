@@ -212,8 +212,8 @@ jg_afk_contract_lock_path() {  # [state-dir]
 }
 
 # Lazily reach the lock primitive. bin/jg-wake-lib.sh is a canonical lint root
-# in its own right, so keep this an analysis boundary for the same reason
-# bin/jg-lease-lib.sh's jg_lease_lock_helpers does.
+# in its own right, so keep this an analysis boundary rather than having
+# ShellCheck walk that large graph from here.
 jg_afk_contract_lock_helpers() {
   command -v jg_lock_acquire_wait_bounded >/dev/null 2>&1 && return 0
   # shellcheck source=/dev/null

@@ -47,7 +47,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-remote-doctor.sh`    | Check, and with `--fix` repair, one remote account's Squad Lead readiness (remote job worker, Herdr, Aqua launch agents, PATH, and required tools) |
 | [`jg-backlog-handoff.sh`](../bin/jg-backlog-handoff.sh) | Move queued backlog items into a Squad Lead home; its header owns route-specific wake outcomes and retries |
 | `jg-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
-| `jg-bus.sh`              | The captain channel: tee each captain-facing event onto the bus and into its shadow record, run the NATS/JetStream, slim Dapr and local ntfy services from their files, and route a captain reply by the board route in force ([channel](captain-channel.md)) |
+| `jg-bus.sh`              | The captain channel: record, publish and deliver each captain-facing event to the captain, replay what it sends against its own record, run the NATS/JetStream, slim Dapr and local ntfy services from their files, and route a captain reply by the board route in force ([channel](captain-channel.md)) |
 | `jg-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
 | `jg-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto jg-captain-hold.sh |
 | `jg-owner-rules.sh`      | Seed, extend, and audit the shared owner-rules surface the session digest prints, refusing an entry with no owner words, no scope, or no enforcement point |
@@ -156,8 +156,9 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-send.sh`             | Steer a task via a durable inbox record plus doorbell, or send a supported key or typed harness invocation through the recorded backend |
 | `jg-branch-prompt.sh`    | Emit the shared supervision branch's byte-stable system prompt ([pi-supervision-branch.md](pi-supervision-branch.md), [supervision-host.md](supervision-host.md)) |
 | `jg-branch-outcome.sh`   | Own the supervision branch's append-only outcome store, cursors, bounded status-coverage indexes, and session-start replay |
-| `jg-lease.sh`            | Claim, release, inspect, and sweep per-task supervision leases                       |
+| `jg-lease.sh`            | Claim, release, inspect, and sweep per-task supervision leases on the home's key-value bus |
 | `jg-lease-lib.sh`        | One owner of the supervision lease contract and the main-only role-partition guards  |
+| `jg-kv-lib.sh`           | One owner of the JetStream key-value client surface: server and client resolution, bucket creation, and the reads, writes, deletes, and revision a compare-and-set claim needs |
 | `jg-control.sh`          | Agent lifecycle control plane: allowlisted `interrupt`, `exit`, and transactional `relaunch` verbs for an exact task id ([agent-control.md](agent-control.md)) |
 | `jg-control-lib.sh`      | One executable owner of the control-plane verb allowlist, per-harness interrupt/exit mechanics, per-backend capability, and the endpoint-absence proof both `exit` and `relaunch` read |
 | `jg-busy-lib.sh`         | Single owner of the semantic busy-state contract: verdicts, source attribution, and per-harness sources |

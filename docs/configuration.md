@@ -369,7 +369,7 @@ The running host reads both files at every wake, so an engine change or an opt-o
 The opt-out is inherited into Squad Lead homes: a primary that opts out also opts its Squad Leads out, and clearing it restores each mate's own host setting at its next spawn or convergence.
 The primary-authoritative propagation contract, including removal of a mate's local opt-out when the primary has none, is owned by [`squad-lead-provisioning`](../.agents/skills/squad-lead-provisioning/SKILL.md).
 `config/supervision-host` is local to each home and not inherited, because each home's engine and model are its own choice.
-While the home runs the host, main's lease-checked commands also take the per-task lease lock, so a claim by the host's engine cannot race a mutation main already started (`bin/jg-lease-lib.sh`).
+While the home runs the host, main's lease-checked commands read the task's lease from the home's key-value bus before they mutate it, so a claim by the host's engine is refused for as long as that lease is live (`bin/jg-lease-lib.sh`).
 
 ## Overwatch KPI (config/overwatch-kpi)
 
@@ -2803,8 +2803,6 @@ JG_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=3        # fetch retries after jg-fleet-s
 JG_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds jg-fleet-sync.sh waits before each of those retries
 JG_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before jg-fleet-sync.sh treats a leftover packed-refs.lock as provably stale
 JG_FF_STALE_INDEX_LOCK_AGE_SECS=30       # min mtime age before the squad lead tracked-file fast-forward treats a leftover index.lock as provably stale
-JG_LEASE_COMMAND_LOCK_WAIT_SECS=20      # seconds one command waits for .jg-lease-command.lock before bin/jg-lease-lib.sh refuses with the holder's pid and task instead of blocking; past the wait the acquire sweeps provably abandoned lock scratch once and retries once; a value that is not a positive integer falls back to 20
-JG_LEASE_COMMAND_LOCK_MAX_AGE_SECS=300   # max seconds a live .jg-lease-command.lock holder may serialize lease commands before bin/jg-lease-lib.sh reclaims it during that wait; a holder inside the bound is never preempted and an unreadable age keeps the ordinary wait; non-numeric or zero values use 300
 JG_BUSY_REGEX=          # optional override for rendered delivery guards and Grok's isolated task-state fallback; converted worker state ignores it
 JG_COMPOSER_IDLE_RE=    # optional fleet-wide idle-placeholder regex override (bin/jg-composer-lib.sh); a match alone does not prove emptiness because shape-specific position and ANSI de-emphasis safety gates still apply
 JG_COMPOSER_CAPTURE_LINES=20   # fleet-wide bound for tail-capture composer reads; it no longer bounds the adapter composer state/content reads on tmux or herdr, which supply their bounded visible pane instead, while the cmux, orca, and Zellij adapters use this small window so stale scrollback banners stay out of the candidate set; it still bounds the shared inbox composer read (bin/jg-task-inbox-lib.sh) on every backend, and on herdr it also floors how many Ctrl+U presses a refused leftover may take
