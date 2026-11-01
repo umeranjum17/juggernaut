@@ -18,7 +18,9 @@ package main
 //	                               key, payload. Nothing when there is none.
 //	jg-bus watcher rows            every unsettled row, in the order the read model lists them
 //	                               (state/.wake-queue); the parity replay compares this.
-//	jg-bus watcher replay <events.jsonl> [--home <key>]
+//	jg-bus watcher rebuild         forget the fold, the idle clock and the consumer, so the service
+//	                               replays the stream from the start on its next start.
+//	jg-bus watcher replay <events.jsonl> --home <key>
 //	                               fold recorded raise and acknowledgement events one by one and
 //	                               print, after each, the rows, the oldest row and the newest
 //	                               host-memory row as one JSON line; no server is read.
