@@ -1,0 +1,149 @@
+{
+  "apiVersion": "juggernaut.dev/v1",
+  "kind": "WorkflowDefinition",
+  "metadata": {
+    "name": "escalation-optimization",
+    "mode": "live",
+    "prior-art": "Prometheus Alertmanager (Apache-2.0): group_by/group_wait for coalescing, repeat_interval for back-off, inhibit_rules for actionability. Rule shapes only, no code.",
+    "reader": "core/escalation-optimize/bin/jg-escalation-optimize.sh is the one reader; a home may override this file at config/escalation-optimization.json or with JG_ESCALATION_OPT"
+  },
+  "spec": {
+    "classes": {
+      "urgent": {
+        "wakes": true,
+        "budget": false,
+        "note": "a stop-the-line event: wakes even when the receiver's budget is spent"
+      },
+      "now": {
+        "wakes": true,
+        "budget": true
+      },
+      "soon": {
+        "wakes": true,
+        "budget": true,
+        "overBudget": "batch",
+        "note": "wakes while the receiver has budget, rides the next batch after"
+      },
+      "batch": {
+        "wakes": false,
+        "coalesce": true
+      },
+      "digest": {
+        "wakes": false,
+        "coalesce": true,
+        "flushSeconds": 21600,
+        "note": "one digest wake per window"
+      },
+      "silent": {
+        "wakes": false,
+        "record": true
+      }
+    },
+    "priority": [
+      {
+        "class": "urgent",
+        "kind": "*",
+        "key": "*",
+        "payload": "*security*"
+      },
+      {
+        "class": "soon",
+        "kind": "check",
+        "key": "slo-*",
+        "payload": "*"
+      },
+      {
+        "class": "digest",
+        "kind": "check",
+        "key": "board-*",
+        "payload": "*"
+      }
+    ],
+    "budget": {
+      "perHour": 12,
+      "windowSeconds": 3600,
+      "targets": {
+        "main": 12,
+        "lead": 20,
+        "captain": 4
+      }
+    },
+    "targets": [
+      {
+        "key": "captain-*",
+        "target": "captain"
+      },
+      {
+        "key": "lead-*",
+        "target": "lead"
+      },
+      {
+        "key": "*",
+        "target": "main"
+      }
+    ],
+    "backoff": {
+      "baseSeconds": 120,
+      "factor": 2,
+      "capSeconds": 14400,
+      "resetOn": "payload-change"
+    },
+    "coalesce": {
+      "windowSeconds": 300,
+      "maxEvents": 10,
+      "groups": [
+        {
+          "name": "merged",
+          "key": "merged-*"
+        },
+        {
+          "name": "slo",
+          "key": "slo-*"
+        },
+        {
+          "name": "other",
+          "key": "*"
+        }
+      ]
+    },
+    "actionability": {
+      "note": "a hop that cannot act is never woken: nothing climbs past a fact below",
+      "blockers": [
+        {
+          "name": "paused-home",
+          "fact": "parked-home"
+        },
+        {
+          "name": "captain-hold",
+          "fact": "file",
+          "path": "{state}/{task}.captain-hold"
+        },
+        {
+          "name": "declared-wait",
+          "fact": "file",
+          "path": "{state}/{task}.declared-wait"
+        },
+        {
+          "name": "external-wait",
+          "fact": "file",
+          "path": "{state}/{task}.external-wait"
+        }
+      ]
+    },
+    "autoResolve": {
+      "note": "an open escalation records the fingerprint of the state it was raised about; when that fingerprint changes the escalation closes and its queued wake is withdrawn",
+      "fingerprint": "{state}/{task}.status"
+    },
+    "envelope": {
+      "required": [
+        "evidence",
+        "action"
+      ],
+      "enforce": true
+    },
+    "replay": {
+      "tokensPerWake": 4000,
+      "note": "estimate of the context a woken model re-reads per wake; measure it before trusting the saved-token figure"
+    }
+  }
+}

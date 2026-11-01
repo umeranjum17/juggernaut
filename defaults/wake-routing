@@ -13,6 +13,11 @@
 # `batch signal *.status working*`; any other event is matched against its payload. No
 # match means `now`, so a missing rule file hides nothing.
 set re-alert-minutes 30
+# A settled wake is recorded, never queued. Past this many settled wakes in one hour the
+# next ones ride the digest as `batch`, so a flood is never hidden. 0 turns the cap off.
+set silence-cap-per-hour 30
+# How long Main's own restart pass counts as the cause of a relaunch notice.
+set restart-pass-seconds 600
 
 # class  kind    key              payload
 now      *       *                needs-decision*
@@ -37,4 +42,15 @@ batch    check   post-merge-ci-*  *
 # reports any remainder rides the next digest instead of waking a model.
 batch    check   *tickets-stale.check.sh    *
 batch    check   *tickets-sync.check.sh     *
+# Wakes that need no model (a class may carry `@condition`; bin/jg-wake-lib.sh owns them):
+# a paused home answering a pause, the relaunch Main's own restart pass caused, a
+# timer on a paused home, and a re-arm that finds nothing waiting for a turn.
+silent@parked        signal  *.status         paused*
+silent@parked        check   *                *waiting-state*
+silent@restart-pass  check   squad-lead-relaunch-*   *auto-relaunched*
+silent@queue-quiet   check   rearm-resurface  *
+# A doorbell the watcher deferred because the worker's turn is still running lands by itself
+# when the turn ends; the watcher says so in its own words. A doorbell that is still
+# unhandled with an idle pane, or a dead endpoint, keeps the default and wakes a model.
+silent   stale   *                *unread juggernaut instruction*no interrupt is needed unless the worker is wedged*
 now      *       *                *

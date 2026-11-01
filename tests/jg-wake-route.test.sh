@@ -72,8 +72,42 @@ test_batch_is_gated_and_urgent_latches() (
   pass "batch rows are gated and an urgent row latches the cycle"
 )
 
+test_no_model_wakes() (
+  dir=$(make_case route-nomodel)
+  state="$dir/state"
+  mkdir -p "$dir/config" "$dir/homes/alpha" "$dir/homes/beta"
+  printf 'alpha\n' > "$dir/homes/alpha/.jg-squad-lead-home"
+  printf 'beta\n' > "$dir/homes/beta/.jg-squad-lead-home"
+  printf 'kind=squad_lead\nhome=%s\n' "$dir/homes/alpha" > "$state/alpha.meta"
+  printf 'kind=squad_lead\nhome=%s\n' "$dir/homes/beta" > "$state/beta.meta"
+  printf 'alpha\n' > "$dir/config/parked-homes"
+  cp "$ROOT/defaults/wake-routing" "$dir/config/wake-routing"
+  printf 'paused [at=1]: ack\n' | tee "$state/alpha.status" > "$state/beta.status"
+  assert_equals "$(route "$dir" "$state" signal alpha.status x)" silent "a paused home's pause acknowledgement is settled"
+  assert_equals "$(route "$dir" "$state" signal beta.status x)" now "a live home's pause still wakes"
+  assert_equals "$(route "$dir" "$state" check alpha-wait-owner 'check: waiting-state alpha (x)')" silent "a timer on a paused home is settled"
+  assert_equals "$(route "$dir" "$state" check beta-wait-owner 'check: waiting-state beta (x)')" now "a timer on a live home still wakes"
+  relaunch='check: squad_lead beta auto-relaunched after dead (pane)'
+  assert_equals "$(route "$dir" "$state" check squad-lead-relaunch-beta-9 "$relaunch")" now "a relaunch nobody asked for still wakes"
+  printf '%s\tbeta\n' "$(date +%s)" > "$state/.squad-lead-restart-pass"
+  assert_equals "$(route "$dir" "$state" check squad-lead-relaunch-beta-9 "$relaunch")" silent "a relaunch the restart pass caused is settled"
+  printf '%s\tbeta\n' "$(( $(date +%s) - 9999 ))" > "$state/.squad-lead-restart-pass"
+  assert_equals "$(route "$dir" "$state" check squad-lead-relaunch-beta-9 "$relaunch")" now "an old restart pass explains nothing"
+  assert_equals "$(route "$dir" "$state" check rearm-resurface 'check: rearm-resurface')" silent "a re-arm with nothing queued is settled"
+  append_wake "$state" signal beta.status 'signal: x'
+  assert_equals "$(route "$dir" "$state" check rearm-resurface 'check: rearm-resurface')" now "a re-arm with an urgent row queued still wakes"
+  assert_equals "$(route "$dir" "$state" stale w:1 "stale: w:1 (unread juggernaut instruction: /x/a.inbox/002.msg stays unhandled - busy; no doorbell was typed, and it lands as soon as that clears, so no interrupt is needed unless the worker is wedged)")" silent "a busy-deferred doorbell report is settled"
+  assert_equals "$(route "$dir" "$state" stale w:1 "stale: w:1 (unread juggernaut instruction: /x/a.inbox/002.msg still unhandled after 3 doorbell delivery attempts with an idle pane; inspect the worker)")" now "a doorbell stuck with an idle pane still wakes"
+  assert_equals "$(route "$dir" "$state" signal crew.turn-ended 'signal: crew.turn-ended')" batch "a stop-hook turn end is batched, never a turn of its own"
+  printf 'set silence-cap-per-hour 2\nsilent signal *.status paused*\nnow * * *\n' > "$dir/cap.routing"
+  for i in 1 2 3; do printf 'paused [at=1]: x\n' > "$state/a$i.status"; JG_WAKE_ROUTING="$dir/cap.routing" JG_HOME="$dir" append_wake "$state" signal "a$i.status" 'signal: x'; done
+  assert_equals "$(wc -l < "$state/.wake-silenced" | tr -d ' ')" 2 "the per-hour cap counts settled wakes"
+  pass "pause acks, relaunch notices, re-arms and timers on paused homes settle; a cap bounds them"
+)
+
 result=0
 test_classes || result=1
+test_no_model_wakes || result=1
 test_silent_is_recorded_not_queued || result=1
 test_batch_is_gated_and_urgent_latches || result=1
 exit "$result"

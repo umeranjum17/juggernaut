@@ -25,6 +25,8 @@ set -u
 . "$ROOT/bin/jg-role-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/jg-config-inherit-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/jg-version-branch-lib.sh"
 
 ROLE="$ROOT/bin/jg-role.sh"
 BRIEF="$ROOT/bin/jg-brief.sh"
@@ -531,10 +533,17 @@ printf '#!/bin/sh\nexit 1\n' > "$SPAWN_FAKEBIN/tmux"
 chmod +x "$SPAWN_FAKEBIN/tmux"
 
 write_ship_brief() {  # <home> <id> [<contract-extras>]
-  local home=$1 id=$2 extras=${3:-}
+  local home=$1 id=$2 extras=${3:-} base
   mkdir -p "$home/data/$id"
   {
-    printf 'You are a operator.\n\n# Task\n## Captain'\''s intent\nExercise the role gate.\n\n## Juggernaut spec\nVerify the boundary.\n\n# Definition of done\n'
+    printf 'You are a operator.\n\n# Task\n## Captain'\''s intent\nExercise the role gate.\n\n## Juggernaut spec\nVerify the boundary.\n\n'
+    # A scaffolded brief records the project's version branch as its base, and
+    # spawn refuses one that does not once the project carries a release/c-N ref
+    # (the repository under test does), so the fixture records it the same way.
+    if base=$(jg_current_version_branch "${BRIEF_PROJECT:-$ROOT}"); then
+      printf 'You are in a disposable git worktree of fixture, at a detached HEAD on a clean copy of its base branch.\nBase branch: %s\n\n' "$base"
+    fi
+    printf '# Definition of done\n'
     printf 'Delivery contract: mode=no-mistakes%s\nShip branch: fm/%s\n' "$extras" "$id"
   } > "$home/data/$id/brief.md"
 }
@@ -610,7 +619,7 @@ test_spawn_consent_agreement() {
   local proj="$TMP_ROOT/consent-foreign"
   git init -q "$proj" || fail "could not initialize foreign fixture"
   git -C "$proj" remote add origin https://github.com/someone/elseware.git
-  write_ship_brief "$home" spawn-consent-b4 " upstream-consent=$PUB_TARGET"
+  BRIEF_PROJECT=$proj write_ship_brief "$home" spawn-consent-b4 " upstream-consent=$PUB_TARGET"
   out=$(run_spawn "$home" spawn-consent-b4 "$proj" claude --mode no-mistakes --yolo off \
     --upstream-consent "$PUB_TARGET")
   assert_not_contains "$out" "spawn refused" "consent on an ordinary project must not be gated"
