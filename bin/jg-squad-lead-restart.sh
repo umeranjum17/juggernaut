@@ -27,7 +27,9 @@
 #      it: no memory, learnings, or captain-preference sweep, which would make
 #      every instruction update cost far more than the reload it is paying for.
 #      All requests go out before any restart, so a slow mate delays only its own
-#      restart instead of serializing the fleet behind it.
+#      restart instead of serializing the fleet behind it. Restarts themselves run
+#      one at a time: lifecycle control takes one home-wide lock (bin/jg-lease-lib.sh),
+#      so two relaunches in flight collide and one of them loses its restart.
 #   B. RESTART. Only after that mate's own correlated answer lands on the parent
 #      channel. The gate is that answer, never a wall clock, so a mate that is
 #      mid-turn queues the request behind that turn; the bound below exists to
@@ -69,6 +71,9 @@
 #   JG_SQUAD_LEAD_PERSIST_WAIT  seconds to wait for one mate's persist answer (900)
 #   JG_SQUAD_LEAD_IDLE_WAIT     seconds after that answer to wait for its composer to read empty (600)
 #   JG_SQUAD_LEAD_PERSIST_POLL  seconds between checks of the answer and the composer (5)
+#
+#   A restart is reported with the epoch it started and the epoch it finished, so a pass
+#   log shows for itself whether two restarts ever overlapped.
 #
 # Exit status: 0 every named mate restarted; 3 at least one was nudged or left
 # unreached and every mate was still accounted for; 1 the input itself is
@@ -223,9 +228,9 @@ restart_mate() {  # <array-index>
     ran_on=$(printf '%s\n' "$restart_out" | sed -n 's/^relaunched .* harness=\([^ ]*\).*/\1/p' | tail -1)
     [ -n "$ran_on" ] || ran_on=${HARNESS[i]}
     if [ "${PLACEMENT[i]}" = remote ]; then
-      printf 'restarted: %s on %s (%s)\n' "$id" "${HOST[i]}" "$ran_on"
+      printf 'restarted: %s on %s (%s) at %s\n' "$id" "${HOST[i]}" "$ran_on" "$(date +%s)"
     else
-      printf 'restarted: %s (%s)\n' "$id" "$ran_on"
+      printf 'restarted: %s (%s) at %s\n' "$id" "$ran_on" "$(date +%s)"
     fi
     return
   fi
@@ -259,14 +264,45 @@ persist_answered() {  # <array-index>
 }
 
 launch_restart() {  # <array-index>
+  # One restart at a time. bin/jg-control.sh takes a home-wide lease-command lock
+  # for lifecycle control, so two relaunches at once collide on it and one of them
+  # loses its restart. Every persist request is still sent before any restart, so a
+  # slow mate delays only its own turn in the queue, never the fleet's requests.
+  if [ "$restart_active_count" -gt 0 ]; then
+    PLAN[$1]=ready
+    restart_ready_count=$((restart_ready_count + 1))
+    return
+  fi
+  start_restart_worker "$1"
+}
+
+start_restart_worker() {  # <array-index>
   local i=$1 result tmp
   result="$RESULT_DIR/$i.result"
   tmp="$result.tmp"
+  # Print the start from this loop, not from the worker: the worker's own stdout is
+  # captured until it finishes, so a line printed there would land after the outcome.
+  printf 'restarting: %s at %s\n' "${IDS[$i]}" "$(date +%s)"
   ( trap - EXIT; restart_mate "$i" > "$tmp"; mv -f "$tmp" "$result" ) &
   RESTART_PID[i]=$!
   RESTART_RESULT[i]=$result
   PLAN[i]=restarting
   restart_active_count=$((restart_active_count + 1))
+}
+
+# Start the next queued restart once nothing else is restarting, so the queue drains
+# in argv order without ever putting two relaunches in flight.
+launch_next_ready() {
+  local i=0
+  [ "$restart_active_count" -eq 0 ] && [ "$restart_ready_count" -gt 0 ] || return 0
+  while [ "$i" -lt "${#IDS[@]}" ]; do
+    if [ "${PLAN[i]}" = ready ]; then
+      restart_ready_count=$((restart_ready_count - 1))
+      start_restart_worker "$i"
+      return 0
+    fi
+    i=$((i + 1))
+  done
 }
 
 harvest_restarts() {
@@ -388,6 +424,7 @@ RESULT_DIR=$(mktemp -d "$STATE/.squad-lead-restart.XXXXXX") || {
 trap 'rm -rf -- "$RESULT_DIR"' EXIT
 pending_count=0
 restart_active_count=0
+restart_ready_count=0
 i=0
 while [ "$i" -lt "${#IDS[@]}" ]; do
   if [ "${PLAN[i]}" = persisted-pending ]; then
@@ -399,7 +436,7 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
   i=$((i + 1))
 done
 
-while [ "$((pending_count + restart_active_count))" -gt 0 ]; do
+while [ "$((pending_count + restart_active_count + restart_ready_count))" -gt 0 ]; do
   now=$(date +%s)
   next_wait=$PERSIST_POLL
   # Resolve every arrived answer before processing any timeout. Delivery of a
@@ -457,7 +494,8 @@ while [ "$((pending_count + restart_active_count))" -gt 0 ]; do
     i=$((i + 1))
   done
   harvest_restarts
-  [ "$((pending_count + restart_active_count))" -eq 0 ] || sleep "$next_wait"
+  launch_next_ready
+  [ "$((pending_count + restart_active_count + restart_ready_count))" -eq 0 ] || sleep "$next_wait"
 done
 
 # --- summary ---------------------------------------------------------------
