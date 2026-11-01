@@ -458,7 +458,7 @@ live_apply() { # <stream> <file>
     body=$(printf '%s' "$raw" | jq -r '.data // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$body" ]; then
       printf '%s' "$body" | jq -c --argjson seq "$seq" --arg home "$(live_home_key)" \
-        'select(.home == $home) | . + {seq: $seq}' >> "$out" 2>/dev/null || true
+        'select(.home == $home) | . + {seq: (.rseq // $seq)}' >> "$out" 2>/dev/null || true
     fi
     seq=$((seq + 1))
   done
@@ -506,16 +506,24 @@ live_publish() { # <subject> <id> <json>
 # rest of the fleet reads. The replica holds only unsettled events, so a fold
 # stays small: an acknowledgement drops its raise with it.
 live_render() {
-  local model
-  bus_gate >/dev/null 2>&1 || return 0
+  local model have_bus=0
   mkdir -p "$STATE" || return 1
-  bus_ensure_streams || true
-  live_flush_outbox || true
+  if bus_gate >/dev/null 2>&1; then
+    have_bus=1
+    bus_ensure_streams || true
+    live_flush_outbox || true
+  fi
   model=$STATE/.wake-bus.fold.$$
   : > "$model" || return 1
   if [ -s "$LIVE_EVENTS" ]; then cat "$LIVE_EVENTS" >> "$model" || return 1; fi
-  live_apply "$WAKE_STREAM" "$model" || true
-  live_apply "$INBOX_STREAM" "$model" || true
+  # An event a failed publish still owes the bus is part of the read model: a home
+  # whose bus is down keeps queueing and keeps draining, and the outbox hands the
+  # event to the stream on the next render that can reach it.
+  if [ -s "$LIVE_OUTBOX" ]; then jq -c 'del(.subject) | .seq = (.rseq // 0)' "$LIVE_OUTBOX" >> "$model" 2>/dev/null || true; fi
+  if [ "$have_bus" = 1 ]; then
+    live_apply "$WAKE_STREAM" "$model" || true
+    live_apply "$INBOX_STREAM" "$model" || true
+  fi
   if ! jq -c -s 'reduce .[] as $e ({};
         if ($e.ack // false) then (if has($e.id) then .[$e.id].ack = true else . end)
         else .[$e.id] = $e end)
@@ -525,7 +533,7 @@ live_render() {
   fi
   mv -f "$model.keep" "$LIVE_EVENTS" || { rm -f -- "$model" "$model.keep"; return 1; }
   rm -f -- "$model"
-  jq -r 'select(.where == "queue") | [.at, .seq, .kind, .key, .payload] | @tsv' "$LIVE_EVENTS" 2>/dev/null \
+  jq -r 'select(.where == "queue") | [.at, (.seq // .rseq), .kind, .key, .payload] | @tsv' "$LIVE_EVENTS" 2>/dev/null \
     | LC_ALL=C sort -t "$(printf '\t')" -k2,2n > "$model.queue" || : > "$model.queue"
   chmod 0600 "$model.queue" 2>/dev/null || true
   _jg_atomic_replace "$model.queue" "$LIVE_QUEUE" || { rm -f -- "$model.queue"; return 1; }
@@ -536,14 +544,19 @@ live_render() {
 }
 
 live_raise() { # <kind> <key> <payload> <class>
-  local id at event
+  local id at rseq event
   at=$(date -u +%s)
   id="wake/$(live_home_key)/$at-$$-$RANDOM"
+  # The row's number is fixed here, before any publish: a home whose bus is not
+  # reachable still writes read-model rows, and the number must not change when
+  # the event later reaches the stream.
+  rseq=$(( at * 1000 + (RANDOM % 1000) ))
   event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --arg class "$4" --argjson at "$at" \
-    '{v:1,id:$id,home:$home,where:"queue",at:$at,kind:$kind,key:$key,payload:$payload,class:$class}') || return 1
+    --arg payload "$3" --arg class "$4" --argjson at "$at" --argjson rseq "$rseq" \
+    '{v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}') || return 1
   live_publish jg.wake.raise "$id" "$event" || return 1
   live_render
+  return 0
 }
 
 live_settle() { # <kind> <key> <payload>
@@ -551,17 +564,25 @@ live_settle() { # <kind> <key> <payload>
   at=$(date -u +%s)
   id="settled/$(live_home_key)/$at-$$-$RANDOM"
   event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --argjson at "$at" \
-    '{v:1,id:$id,home:$home,where:"settled",at:$at,kind:$kind,key:$key,payload:$payload,class:"silent"}') || return 1
+    --arg payload "$3" --argjson at "$at" --argjson rseq "$(( at * 1000 + (RANDOM % 1000) ))" \
+    '{v:1,id:$id,home:$home,where:"settled",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:"silent"}') || return 1
   live_publish jg.wake.settled "$id" "$event" || return 1
   live_render
 }
 
 live_ack() { # <id>...
-  local id at
+  local id at owed
   at=$(date -u +%s)
   for id in "$@"; do
     [ -n "$id" ] || continue
+    # An event the bus never received is acknowledged by dropping it here: there
+    # is nothing on the server to settle, and keeping it would resurrect the row.
+    if [ -s "$LIVE_OUTBOX" ] && jq -e --arg id "$id" 'select(.id == $id)' "$LIVE_OUTBOX" >/dev/null 2>&1; then
+      owed=$LIVE_OUTBOX.tmp.$$
+      jq -c --arg id "$id" 'select(.id != $id)' "$LIVE_OUTBOX" > "$owed" 2>/dev/null \
+        && mv -f "$owed" "$LIVE_OUTBOX" || rm -f -- "$owed"
+      continue
+    fi
     live_publish jg.wake.ack "$id/ack" \
       "$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --argjson at "$at" \
         '{v:1,id:$id,home:$home,ack:true,at:$at}')" || return 1
@@ -574,9 +595,8 @@ live_ack() { # <id>...
 # actor's grant - are named, so an acknowledgement can never consume a row it was
 # not handed.
 live_ids_through() { # <max-seq> [<seqs-file>]
-  jq -r --argjson max "$1" --arg file "${2:-}" '
-    select(.where == "queue" and (.seq <= $max))
-    | [.seq, .id] | @tsv' "$LIVE_EVENTS" 2>/dev/null \
+  live_events | jq -r --argjson max "$1" \
+    'select(.where == "queue" and ((.seq // .rseq) <= $max)) | [(.seq // .rseq), .id] | @tsv' 2>/dev/null \
     | if [ -n "${2:-}" ]; then awk -F '\t' -v f="$2" 'BEGIN { while ((getline l < f) > 0) keep[l + 0] = 1 } ($1 + 0) in keep { print $2 }'
       else awk -F '\t' '{ print $2 }'; fi
 }
@@ -601,8 +621,7 @@ live_inbox_raise() { # <task> <seq> <delivery> <body-sha>
 live_inbox_settle() {
   local task seq
   bus_gate >/dev/null 2>&1 || return 0
-  jq -r 'select((.ack // false) != true and .task != null) | [.task, .seq] | @tsv' \
-    "$LIVE_EVENTS" 2>/dev/null | while IFS=$'\t' read -r task seq; do
+  live_events | jq -r 'select((.ack // false) != true and .task != null) | [.task, .seq] | @tsv' 2>/dev/null | while IFS=$'\t' read -r task seq; do
       [ -n "${task:-}" ] || continue
       [ -e "$STATE/$task.inbox/$seq.msg" ] && continue
       printf 'inbox/%s/%s/%s\n' "$(live_home_key)" "$task" "$seq"
@@ -620,10 +639,19 @@ live_count() {
   awk -F '\t' 'END { print NR + 0 }' "$LIVE_QUEUE" 2>/dev/null
 }
 
+# live_events: every unsettled event this home knows, the replica plus anything a
+# failed publish still owes. A home with no reachable bus therefore queues, drains
+# and acknowledges exactly as it did on the file path, and the outbox hands the
+# events to the stream when the bus answers again.
+live_events() {
+  if [ -s "$LIVE_EVENTS" ]; then cat "$LIVE_EVENTS"; fi
+  if [ -s "$LIVE_OUTBOX" ]; then jq -c 'del(.subject) | .seq = (.rseq // 0)' "$LIVE_OUTBOX" 2>/dev/null || true; fi
+}
+
 # live_ids <kind> <key>: the queued, unsettled ids for exactly this kind and key.
 live_ids() {
-  jq -r --arg k "$1" --arg r "$2" 'select(.where == "queue" and .kind == $k and .key == $r) | .id' \
-    "$LIVE_EVENTS" 2>/dev/null | LC_ALL=C sort
+  live_events | jq -r --arg k "$1" --arg r "$2" \
+    'select(.where == "queue" and .kind == $k and .key == $r) | .id' 2>/dev/null | LC_ALL=C sort
 }
 
 # --- subcommands -------------------------------------------------------------
