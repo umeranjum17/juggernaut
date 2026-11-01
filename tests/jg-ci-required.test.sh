@@ -18,7 +18,8 @@ REQUIRED="$ROOT/bin/jg-ci-required.sh"
 # verdict <event> <behavior> <needs-json>: run the gate and keep its output and status.
 verdict() {  # <event> <behavior> <needs json>
   local event=$1 behavior=$2 needs=$3
-  OUT=$(JG_CI_EVENT="$event" JG_CI_NEEDS="$needs" JG_CI_BEHAVIOR="$behavior" bash "$REQUIRED" 2>&1)
+  OUT=$(JG_CI_BUS="${AREA_BUS-false}" JG_CI_SHELL="${AREA_SHELL-false}" JG_CI_EVALS="${AREA_EVALS-false}" \
+    JG_CI_EVENT="$event" JG_CI_NEEDS="$needs" JG_CI_BEHAVIOR="$behavior" bash "$REQUIRED" 2>&1)
   RC=$?
 }
 
@@ -104,6 +105,24 @@ test_an_unreadable_scope_refuses() {
   pass 'an unreadable scope refuses'
 }
 
+# A pull request that touches an area owes that area's suite; an untouched area may skip.
+test_a_touched_area_suite_must_run_on_a_pull_request() {
+  local needs='{"invariants":{"result":"success"},"lint":{"result":"success"},"tests":{"result":"success"},"bus":{"result":"skipped"},"syntax":{"result":"success"},"smoke":{"result":"success"},"evals":{"result":"success"}}'
+  AREA_BUS=true AREA_SHELL=true AREA_EVALS=true expect_verdict 1 pull_request true "$needs" \
+    'a skipped suite for a touched area must refuse'
+  assert_contains "$OUT" 'bus=skipped' 'the refusal must name the skipped area suite'
+  AREA_BUS=true AREA_SHELL=true AREA_EVALS=true expect_verdict 1 pull_request true "$(fast_lanes success)" \
+    'an area suite that did not report must refuse'
+  assert_contains "$OUT" 'bus=missing' 'the refusal must name the missing area suite'
+  AREA_BUS=false AREA_SHELL=true AREA_EVALS=true expect_verdict 0 pull_request true "$needs" \
+    'a skipped suite for an untouched area must pass'
+  AREA_BUS=false AREA_SHELL=false AREA_EVALS=false expect_verdict 1 pull_request true \
+    '{"invariants":{"result":"success"},"lint":{"result":"success"},"tests":{"result":"success"},"bus":{"result":"failure"}}' \
+    'a failed area suite must refuse even when the area is untouched'
+  pass 'a touched area suite must run on a pull request'
+}
+
+test_a_touched_area_suite_must_run_on_a_pull_request
 test_a_passing_fast_set_verifies_a_pull_request
 test_a_pull_request_does_not_wait_for_a_post_merge_lane
 test_a_push_owes_the_full_set
