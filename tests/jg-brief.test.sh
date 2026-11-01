@@ -217,6 +217,10 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
       "$id: brief missing nonterminal working:/setup-complete gate protection"
+    assert_grep "run the light gate locally over the files you changed and fix every finding" "$brief" \
+      "$id: brief missing the light gate every PR opens behind"
+    assert_grep "needs that pull request's checks green" "$brief" \
+      "$id: brief missing the rule that a done line needs the PR's checks green"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
   pass "jg-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"

@@ -55,6 +55,15 @@
 # also hold the result of a passed run. These live reads are the one check at the ready
 # decision; a later rebase or patch set on the server does not revoke an armed
 # task's done. Teardown's landed-work test remains the complete discard gate.
+# A ship `done:` naming a pull request is also refused while that pull request
+# still reports a red or unfinished check: jg_dod_pr_checks_clear names each such
+# check, plus the light gate to run locally, so the lane fixes the cause or waits
+# instead of reporting done early. It runs only once the claim would otherwise be
+# accepted, so an unpublished head is still refused for that reason first. The
+# read is one bounded jg-pr-state.sh call, and it refuses only a check it can
+# prove is failing or unfinished: an absent report, an unreadable forge, a
+# non-GitHub project, and a Gerrit change refuse nothing here, because the merge
+# gate still owns whether a merge may happen.
 # The block opens with the fixed machine-readable "Delivery contract: mode=<mode>"
 # line that bin/jg-spawn.sh checks a ship brief against; a forge=gerrit block
 # appends " forge=gerrit shape=squash" to that line and a forge=forgejo block
@@ -564,6 +573,9 @@ EOF
   if declare -F jg_receipts_brief >/dev/null; then jg_receipts_brief "$id"; fi
   printf '\n'
   cat <<'EOF'
+Before you push, open a pull request, or hand off to /no-mistakes, run the light gate locally over the files you changed and fix every finding, so the change arrives already clean: the project's lint for those files, then the tests for those files.
+A `done:` naming a pull request needs that pull request's checks green: while a check is red or still running, the done is refused by the check's own name with the command to run it locally, so fix the cause or wait rather than report done.
+
 A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from your report and the release record, and your lead or juggernaut applies it.
 EOF
 }
@@ -803,6 +815,47 @@ jg_dod_forge_pr_head_live() {  # <provider> <host> <path> <number> <url>
   jg_pr_head_valid "$JG_DOD_LIVE_HEAD"
 }
 
+# The light gate a refusal tells a worker to run. Juggernaut's own repository
+# records its entry points, so a refusal there names them; any other project gets
+# the rule in words, because one core gate cannot know another project's lint and
+# test commands.
+jg_dod_light_gate() {  # <worktree>
+  local wt=${1:-}
+  if [ -n "$wt" ] && [ -x "$wt/bin/jg-lint.sh" ] && [ -x "$wt/bin/jg-test-run.sh" ]; then
+    printf '%s\n' 'bin/jg-lint.sh --changed && bin/jg-test-run.sh --changed'
+    return 0
+  fi
+  printf '%s\n' "the project's lint over the files you changed, then the tests for those files"
+}
+
+# 0 when the pull request a done names reports no red or unfinished check, which
+# is what makes that done true rather than early. 1 when it does; stdout then
+# names every such check and the local light gate, and nothing else.
+# bin/jg-pr-state.sh, the one owner of the pull-request blocker read, supplies
+# them with --all. Only a `fail` or `pending` bucket refuses: a skipped check
+# reports success, and a cancelled run proves nothing either way because a push
+# cancels a superseded run that a green re-run replaces. An absent report, an
+# unreadable forge, an absent gh, and a project whose forge is not GitHub refuse
+# nothing, because absence proves nothing and the merge gate still owns the
+# merge. Callers pass the pull request's URL from the done note; local-only and a
+# done naming no pull request have none and pass straight through.
+jg_dod_pr_checks_clear() {  # <worktree> <pr-url>
+  local wt=$1 url=$2 reader out refused list
+  [ -n "$url" ] || return 0
+  jg_pr_url_parse "$url" || return 0
+  [ "$JG_PR_PROVIDER" = github ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  reader=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-pr-state.sh
+  [ -r "$reader" ] || return 0
+  out=$(jg_run_timed 30 bash "$reader" --all "$url" 2>/dev/null) || return 0
+  refused=$(printf '%s\n' "$out" | grep '^CHECK: ') || refused=''
+  [ -n "$refused" ] || return 0
+  list=$(printf '%s\n' "$refused" | sed 's/^CHECK: //' \
+    | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')
+  printf '%s\n' "the pull request's checks are not green: $list. Run the light gate locally ($(jg_dod_light_gate "$wt")), fix every finding, push, and report done again once every check is green"
+  return 1
+}
+
 # 0 when <line> is not a ship done: to gate, when it names the task's recorded
 # PR whose head the forge holds, when it names a Gerrit change whose current
 # patch set carries the worker copy's HEAD tree, when its named head - the
@@ -818,6 +871,10 @@ jg_dod_forge_pr_head_live() {  # <provider> <host> <path> <number> <url>
 # A validation result is not a final declaration: callers folding validation
 # readiness first require jg_dod_should_gate_ship_done. Legacy tasks use that
 # same mode-specific declaration and named-head proof, not a new opt-in marker.
+# A named head the gate would otherwise accept still needs the pull request's
+# checks clear: jg_dod_pr_checks_clear runs last, so a lane that reports done with
+# a red or still-running check is refused by that check's name and sent to the
+# light gate it should have run first.
 # Optional captured run output preserves an explicit unreturned-custody refusal
 # even when the declared head is already on the forge.
 # The optional trailing <forge-head> is the receipt candidate a caller chose; the
@@ -851,6 +908,7 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   fi
   if url=$(jg_dod_pr_url_from_done_note "$(status_line_note "$line")") \
     && jg_dod_recorded_pr_on_forge "$state" "$id" "$meta" "$mode" "$url"; then
+    jg_dod_pr_checks_clear "$wt" "$url" || return 1
     return 0
   fi
   if [ -z "$wt" ] || [ ! -d "$wt" ]; then
@@ -883,6 +941,7 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     return 1
   fi
   if jg_dod_named_head_reachable_outside_worktree "$wt" "$project" "$mode" "$sha"; then
+    jg_dod_pr_checks_clear "$wt" "${url:-}" || return 1
     return 0
   fi
   # A push can publish the head without leaving a remote-tracking ref in this
@@ -897,6 +956,7 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
       if [ -n "$url" ] && jg_pr_url_parse "$url" && [ "$JG_PR_PROVIDER" != gerrit ] \
         && jg_dod_forge_pr_head_live "$JG_PR_PROVIDER" "$JG_PR_HOST" "$JG_PR_PATH" "$JG_PR_NUMBER" "$url" \
         && [ "$JG_DOD_LIVE_HEAD" = "$sha" ]; then
+        jg_dod_pr_checks_clear "$wt" "$url" || return 1
         return 0
       fi
       ;;
