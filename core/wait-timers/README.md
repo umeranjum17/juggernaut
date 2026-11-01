@@ -159,6 +159,9 @@ An item whose project's declared capacity is already held cannot start now, so i
 | still nothing started | every `JG_PROMPT_REALERT_SECS` | both fire again |
 | still open | `JG_WAIT_CARD_SECS` after Main's watcher first saw the report | the stalled backlog is recorded for Main to decide, not posted: a lead's own park-or-retry call is never the captain's |
 
+A home with a pause record (`bin/jg-pause-lib.sh`, the one owner of that read) arms and escalates nothing: the same rule the ready-work check already honours for a declared pause.
+An episode reported before the pause is closed with `waiting-timer-cleared` and the record dropped, so the clock starts again and the backlog rings again once the pause lifts.
+
 - A start is a lane id that was not open before; it ends the episode and re-arms the clock.
 - The condition clearing (no startable ready item, a worker provably working at the floor, or a free lane gone) ends the episode, and a reported one is closed with `waiting-timer-cleared`.
 - An unreadable backlog leaves the episode untouched for that poll.

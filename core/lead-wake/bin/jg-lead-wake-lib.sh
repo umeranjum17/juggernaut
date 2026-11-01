@@ -69,25 +69,11 @@ warn_invalid_lane_target_once() {
 
 # A declared fleet pause silences ready-work intake until the resume order, and
 # nothing else: a signal, stale or blocker wake keeps firing for a paused home.
-# The records are the ones the fleet already keeps - state/.fleet-paused (the
-# marker core/fleet-stall/fleet-stall-check reads), data/fleet-pause*.md (the
-# order in the primary home) and data/paused-for-juggernaut.md (a home's own
-# paused-lane list) - so this reads a pause, it never declares one. Main clears a
-# pause by deleting its record, or by writing the lift into the first line:
-# an active pause note carries the words "resume rule" further down.
-fleet_paused() {
-  local rec heading
-  [ -f "$JG_HOME/state/.fleet-paused" ] && return 0
-  for rec in "$JG_HOME"/data/fleet-pause*.md "$JG_HOME/data/paused-for-juggernaut.md"; do
-    [ -f "$rec" ] || continue
-    heading=$(awk 'NF { print; exit }' "$rec" 2>/dev/null)
-    case $heading in
-      *[Ll]ift*|*[Rr]esum*|*[Uu]npaus*) continue ;;
-    esac
-    return 0
-  done
-  return 1
-}
+# bin/jg-pause-lib.sh owns the record read, shared with the watcher, the fleet
+# heartbeat and the wait-timers chain; this file only calls it.
+_LEAD_WAKE_PAUSE_LIB=${SCRIPT_DIR:-${JG_HOME:-}/bin}/jg-pause-lib.sh
+# shellcheck source=/dev/null # the fork's sibling library, not a path beside this file
+[ ! -r "$_LEAD_WAKE_PAUSE_LIB" ] || . "$_LEAD_WAKE_PAUSE_LIB"
 
 # 0 when this squad_lead home has ready work and sits below its lane floor (or, without
 # a usable target or at it, no worker is provably working). Sets READY_WORK_IDS/REASON.

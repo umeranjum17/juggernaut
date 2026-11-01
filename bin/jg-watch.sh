@@ -348,6 +348,11 @@ _jg_wait_timers_lib=$SCRIPT_DIR/../core/wait-timers/bin/jg-wait-timers-lib.sh
 # Dormant-lead record reader: this tick skips a lead bin/jg-squad-lead-dormant.sh stopped.
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
+# The declared fleet-pause record has one owner (bin/jg-pause-lib.sh), shared with
+# the fleet heartbeat and the wait-timers chain: a pause silences ready-work intake
+# and the timers intake climbs, and nothing else.
+# shellcheck source=bin/jg-pause-lib.sh
+. "$SCRIPT_DIR/jg-pause-lib.sh"
 # shellcheck source=/dev/null # Canonical lint root with its own parent-channel graph.
 [ ! -r "$_jg_wait_timers_lib" ] || . "$_jg_wait_timers_lib"
 
@@ -2992,23 +2997,6 @@ warn_invalid_lane_target_once() {
   [ "$(cat "$marker" 2>/dev/null)" = "$current" ] && return 0
   printf '%s' "$current" > "$marker" 2>/dev/null || true
   triage_log "lane-target is not a positive integer; using the no-worker-working rule instead"
-}
-
-# Sourced-free copy of core/lead-wake/bin/jg-lead-wake-lib.sh's fleet_paused, which
-# owns the rule once step B replaces this ready-work decision: a declared fleet
-# pause silences ready-work intake until the resume order, and nothing else.
-fleet_paused() {
-  local rec heading
-  [ -f "$JG_HOME/state/.fleet-paused" ] && return 0
-  for rec in "$JG_HOME"/data/fleet-pause*.md "$JG_HOME/data/paused-for-juggernaut.md"; do
-    [ -f "$rec" ] || continue
-    heading=$(awk 'NF { print; exit }' "$rec" 2>/dev/null)
-    case $heading in
-      *[Ll]ift*|*[Rr]esum*|*[Uu]npaus*) continue ;;
-    esac
-    return 0
-  done
-  return 1
 }
 
 # Base-cadence idle-home check: 0 when this home (primary or squad_lead) has

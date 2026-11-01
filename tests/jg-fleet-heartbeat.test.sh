@@ -77,6 +77,47 @@ test_an_open_wait_is_a_gap_and_filled_lanes_are_moving() {
   pass "an open wait is a gap and filled lanes are moving"
 }
 
+# A paused wait climbs nothing, so it is no gap, and a gap the home has anyway
+# names it as paused instead of folding it into the climbing count.
+test_a_paused_wait_is_named_as_paused_and_is_no_gap() {
+  local d out
+  d=$(setup paused)
+  mkdir -p "$d/main/state/.waiting-timers"
+  printf 'x\n' > "$d/main/state/.waiting-timers/ship-a"
+  lane "$d/main" ship-a 'paused [at=1]: waiting on the vendor until 2026-10-30T09:00Z'
+  out=$(hb "$d" rows)
+  assert_not_equals "$(verdict "$out" overwatch)" GAP "a paused wait must not be a gap"
+  assert_contains "$out" "1 paused wait(s)" "a paused wait must be named as paused"
+  assert_not_contains "$out" "open wait(s) climbing" "a paused wait must not be named as a climbing wait"
+  # The home's own pause record makes every wait in it a paused one, and the
+  # home itself no gap at all.
+  mkdir -p "$d/main/data"
+  printf '# Paused for the Juggernaut migration\n\nStop new work.\n- Resume rule: Main sends an explicit resume order.\n' \
+    > "$d/main/data/paused-for-juggernaut.md"
+  lane "$d/leads/gappy" g1 'blocked [at=1]: the vendor key is missing'
+  out=$(hb "$d" rows)
+  assert_equals "$(verdict "$out" overwatch)" PAUSED "a paused home is no gap"
+  assert_contains "$out" "paused by its own pause record" "a paused home must say why it is no gap"
+  # The resume order puts the home back on the ladder.
+  rm -f "$d/main/data/paused-for-juggernaut.md"
+  assert_not_equals PAUSED "$(verdict "$(hb "$d" rows)" overwatch)" \
+    "the removed pause record must take the home off the paused verdict"
+  # A blocker in a home that is not paused still climbs, and a gap that has one
+  # paused wait beside it prints both counts.
+  printf 'kind=ship\n' > "$d/leads/quiet/state/q2.meta"
+  printf 'blocked [at=1]: waiting on the vendor\n' > "$d/leads/quiet/state/q2.status"
+  printf 'kind=ship\n' > "$d/leads/quiet/state/q3.meta"
+  printf 'paused [at=1]: waiting on the vendor\n' > "$d/leads/quiet/state/q3.status"
+  mkdir -p "$d/leads/quiet/state/.waiting-timers"
+  printf 'x\n' > "$d/leads/quiet/state/.waiting-timers/q2"
+  printf 'x\n' > "$d/leads/quiet/state/.waiting-timers/q3"
+  out=$(hb "$d" rows)
+  assert_equals "$(verdict "$out" quiet)" GAP "a blocker wait in an unpaused home is still a gap"
+  assert_contains "$out" "1 open wait(s) climbing their ladder, 1 paused wait(s)" \
+    "a gap must count its climbing waits and name the paused one separately: $out"
+  pass "a paused wait is named as paused and is no gap"
+}
+
 test_check_wakes_on_a_gap_refires_and_reports_recovery_once() {
   local d out
   d=$(setup check)
@@ -138,5 +179,6 @@ test_check_names_a_finished_lane_nobody_closed
 
 test_rows_give_every_home_one_verdict
 test_an_open_wait_is_a_gap_and_filled_lanes_are_moving
+test_a_paused_wait_is_named_as_paused_and_is_no_gap
 test_check_wakes_on_a_gap_refires_and_reports_recovery_once
 test_arm_registers_a_check_the_watcher_trusts_only_on_a_primary_home
