@@ -139,9 +139,9 @@ func object(kv ...string) string {
 }
 
 func (a *app) wakeBus(args []string) int {
-	need := map[string]int{"raise": 5, "settle": 4, "deliver": 4}
+	need := map[string]int{"raise": 5, "settle": 4, "deliver": 4, "render": 1}
 	if len(args) == 0 || need[args[0]] == 0 || len(args)-1 < need[args[0]] {
-		return die("wake: usage: wake rows|render|raise|settle|deliver (wake.go, wakebus.go)")
+		return die("wake: usage: wake rows|render|raise|settle|deliver (wake.go, wakebus.go, wakerender.go)")
 	}
 	p := args[1:]
 	w := wakeBusEnv{p[0], os.Getenv("JG_HOME"), os.Getenv("JG_WAKE_HOME_KEY"), os.Getenv("JG_NATS_BIN"),
@@ -165,6 +165,8 @@ func (a *app) wakeBus(args []string) int {
 			"key", jqString(p[2]), "payload", jqString(p[3]), "class", jqString(class)))
 	case "deliver":
 		ok = w.deliver(p[1], p[2], p[3])
+	case "render":
+		return w.render()
 	}
 	if !ok {
 		return 1
