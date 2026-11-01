@@ -31,7 +31,6 @@ mkdir -p "$HOME" "$JG_HOME/config/bus/dapr/components"
 # The bare minimum PATH: no tool the install should provide may come from the host.
 PATH="$(dirname "$(command -v go)"):/usr/bin:/bin"; export PATH
 # Below the kernel's ephemeral range (32768+), so no outgoing connection can be sitting on a port a service binds.
-# Ports sit below the kernel's ephemeral range (32768+), so no outgoing connection can hold a port a service binds.
 free_port() { local p; for p in $(seq "$1" $(($1 + 90))); do (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null || { echo "$p"; return; }; done; }
 NATS=$(free_port 26100) DAPR=$(free_port 26200) GRPC=$(free_port 26300) NTFY=$(free_port 26400)
 cleanup() { "$ROOT/bin/jg-bus.sh" stop >/dev/null 2>&1; jg_test_cleanup; }
