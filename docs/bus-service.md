@@ -98,6 +98,6 @@ or the stream cannot merge green.
 
 No path switches. The bus exists, is installed, is started and is proven; the
 paths that will run their events on it switch one at a time, each with its own
-parity replay and its own deletion of the code it replaces. `docs/bus-shadow.md`
-holds the wake queue and inbox parity work, `docs/captain-channel.md` the captain
+parity replay and its own deletion of the code it replaces. `docs/bus-live.md`
+holds the wake queue and inbox switch, `docs/captain-channel.md` the captain
 channel.
