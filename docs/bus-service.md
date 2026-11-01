@@ -110,6 +110,36 @@ Dapr is installed and started by the stack as before. The engine and the router 
 it: they read the stream directly, which the existing decision allows because Dapr carries
 only the captain channel's publish path.
 
+## The wake watcher
+
+`jg-bus wake-watcher` (`core/bus/cmd/jg-bus/watcher.go`) is a third consumer: a durable pull
+consumer named `wake-watcher` on `jg.<account>.wake.>`, so it sees raises and acknowledgements
+in order. It folds them into the unsettled queue rows (`state/bus/wake-watcher.fold.json`),
+the same fold the render applies, and the watcher (`bin/jg-watch.sh`) asks it, through
+`jg-bus watcher oldest|latest|resurfaced`, for two things it used to read out of
+`state/.wake-queue` every poll: the oldest wake nobody handled and how long it has been the
+oldest (`own_queue_resurface`), and the newest host-memory wake (`host_memory_surface_queued`).
+The watcher no longer opens the queue file for either, and `state/.own-wake-progress` is gone.
+
+Two cases keep the answer honest when the fold is not the whole story. The events a home still
+owes the bus (`state/.wake-bus.outbox.jsonl`) are applied after the fold, as the render does, so
+a home whose bus is off or down keeps resurfacing what it queued. When the service is not
+running its fold is not trusted: the view is the render's own inputs (the replica
+`state/.wake-bus.events.jsonl`, then the owed events), the command says so on stderr, and the
+watcher writes one line to its triage log per change. Run `bin/jg-bus.sh watcher rebuild` and
+restart the service to replay the stream from the start.
+
+`bin/jg-bus.sh probe wake-watcher` shows the consumer's acknowledged counter; it rises with each
+real wake. `tests/jg-wake-watcher.test.sh` replays every recorded `JG_WAKE` event
+(`tests/fixtures/wake-recorded.jsonl`) through the Go fold and the shell reader it replaced and
+requires identical answers after each event, with a corrupted control that must fail, then proves
+the service, the counter and the watcher cycle on a throwaway server.
+
+What stays shell in `bin/jg-watch.sh` for now: everything that produces a wake by polling (status
+files, panes, pull requests, checks, steering inboxes, squad lead ticks), the reading of a squad
+lead's own queue file, and the print-and-exit wrapper every harness adapter waits on. Each is
+its own later slice.
+
 ## What CI proves
 
 `.github/workflows/ci.yml`'s `Bus service` lane also runs `tests/jg-stack.test.sh`: one command on a clean HOME brings every part up, a second run changes nothing, and a broken part stops the run with one line. It installs both tools through the

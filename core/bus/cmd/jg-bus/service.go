@@ -271,6 +271,7 @@ func (a *app) serve() int {
 	}
 	if self, err := os.Executable(); err == nil {
 		a.startOne(false, "wake-engine", self, "wake-engine")
+		a.startOne(false, "wake-watcher", self, "wake-watcher")
 		a.startOne(false, "router", self, "router")
 	}
 	if path, err := exec.LookPath("daprd"); err == nil {
@@ -291,7 +292,7 @@ func (a *app) serve() int {
 
 // stop stops the services this home started from their recorded pids.
 func (a *app) stop() int {
-	for _, name := range []string{"nats", "wake-engine", "router", "dapr", "ntfy", "deliver"} {
+	for _, name := range []string{"nats", "wake-engine", "wake-watcher", "router", "dapr", "ntfy", "deliver"} {
 		pidPath := filepath.Join(a.runtime, name+".pid")
 		data, err := os.ReadFile(pidPath)
 		if err != nil {

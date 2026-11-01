@@ -74,6 +74,7 @@ type part struct {
 	url    string
 	env    []string // NATS_USER and NATS_PASSWORD, so the secret is never in an argument list
 	handle func(body []byte) error
+	fresh  bool // the part holds no state of its own yet: its consumer replays the stream from the start
 }
 
 func (a *app) tallyPath(name string) string { return filepath.Join(a.runtime, name+".counts.json") }
@@ -158,7 +159,14 @@ func (a *app) routerPart() *part {
 // ensureConsumer creates the durable pull consumer when it is not there.
 func (p *part) ensureConsumer() error {
 	if _, _, err := p.nats("consumer", "info", p.stream, p.name); err == nil {
-		return nil
+		if !p.fresh {
+			return nil
+		}
+		// A consumer that has already acknowledged events no longer holds the state it kept, so a
+		// part that lost that state replays the stream from the start on a consumer of its own.
+		if _, errText, err := p.nats("consumer", "rm", "-f", p.stream, p.name); err != nil {
+			return fmt.Errorf("cannot reset consumer %s on %s: %s", p.name, p.stream, strings.TrimSpace(errText))
+		}
 	}
 	_, errText, err := p.nats("consumer", "add", p.stream, p.name, "--pull", "--filter", p.filter,
 		"--ack", "explicit", "--wait", "10s", "--deliver", "all", "--replay", "instant", "--defaults")
@@ -228,7 +236,7 @@ func (a *app) router() int { return a.serveConsumer(a.routerPart()) }
 func (a *app) probe(args []string) int {
 	names := args
 	if len(names) == 0 {
-		names = []string{"wake-engine", "router"}
+		names = []string{"wake-engine", "wake-watcher", "router"}
 	}
 	status := 0
 	for _, name := range names {
@@ -239,10 +247,15 @@ func (a *app) probe(args []string) int {
 			if p, err = a.wakePart(); err != nil {
 				return die("probe: %v", err)
 			}
+		case "wake-watcher":
+			var err error
+			if p, err = a.wakeWatcherPart(); err != nil {
+				return die("probe: %v", err)
+			}
 		case "router":
 			p = a.routerPart()
 		default:
-			return die("probe: unknown part %q (wake-engine, router)", name)
+			return die("probe: unknown part %q (wake-engine, wake-watcher, router)", name)
 		}
 		var consumer struct {
 			Delivered struct {

@@ -11,6 +11,8 @@
 #   nats     the JetStream server and its CAPTAIN stream
 #   wake-engine  the Go consumer that brings a home's wake read model up to date for every wake
 #            raised on the bus (core/bus/cmd/jg-bus/engine.go), which needs nats
+#   wake-watcher  the Go consumer that folds this home's wake events for the watcher's own-queue
+#            observation (core/bus/cmd/jg-bus/watcher.go), which needs nats
 #   router   the Go consumer that routes captain replies by the board's own route, which needs nats
 #   dapr     the sidecar, which needs nats
 #   ntfy     the delivery server
@@ -152,9 +154,9 @@ report() {  # <part> <supervisor>
   printf '%-5s installed %s, enabled %s, running pid %s, listening %s\n' "$part" "$ver" "$enabled" "$pid" "$addr"
 }
 
-consumer_part() { case $1 in wake-engine|router) return 0 ;; *) return 1 ;; esac; }
+consumer_part() { case $1 in wake-engine|wake-watcher|router) return 0 ;; *) return 1 ;; esac; }
 
-blocks() { case $1 in nats) echo "dapr, the stream and every live path" ;; wake-engine) echo "the wake read model fed by the bus" ;; router) echo "routing of the captain's replies" ;; dapr) echo "publishing through the sidecar" ;; *) echo "delivery to the captain" ;; esac; }
+blocks() { case $1 in nats) echo "dapr, the stream and every live path" ;; wake-engine) echo "the wake read model fed by the bus" ;; wake-watcher) echo "the watcher's own-queue observation" ;; router) echo "routing of the captain's replies" ;; dapr) echo "publishing through the sidecar" ;; *) echo "delivery to the captain" ;; esac; }
 
 mkdir -p "$STATE/bus" || fail state "cannot create $STATE/bus" "everything"
 
@@ -168,7 +170,7 @@ for t in nats-server nats daprd ntfy; do ensure_tool "$t"; done
 
 sup=$(supervisor)
 started=0
-for part in nats wake-engine router dapr ntfy deliver; do
+for part in nats wake-engine wake-watcher router dapr ntfy deliver; do
   if [ "$mode" = up ]; then
     if [ "$sup" = systemd ]; then
       changed=0; install_unit "$part" && changed=1
