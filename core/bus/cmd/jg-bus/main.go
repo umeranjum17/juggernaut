@@ -73,7 +73,7 @@
 //	         one line. What a bootstrap step and docs/bus-service.md run.
 //	unit     Print the systemd user service a home installs once for one part: nats
 //	         (the default) runs the server itself and creates the stream after it
-//	         starts; wake-engine and router run this command's own consumers; dapr and
+//	         starts; wake-engine, wake-watcher and router run this command's own consumers; dapr and
 //	         ntfy run their binary in the foreground.
 //	deliver  The CAPTAIN stream's consumer, and the one path that delivers a captain-bound
 //	         event the bus accepted to ntfy: a durable pull consumer (captain-ntfy) reads
@@ -81,7 +81,7 @@
 //	         state/captain-channel-delivered.jsonl with ntfy's own message id. `--once`
 //	         drains what waits and exits; otherwise it runs as the service (the `deliver`
 //	         unit). `publish` delivers directly only for an event the bus did not accept.
-//	serve    Start the services from their files (nats, wake-engine, router, dapr, ntfy, and the deliver consumer), every one of them read as config
+//	serve    Start the services from their files (nats, wake-engine, wake-watcher, router, dapr, ntfy, and the deliver consumer), every one of them read as config
 //	         and none re-implemented here: nats-server (core/bus/nats.conf), the
 //	         JetStream stream it carries (core/bus/stream.json), the slim Dapr runtime
 //	         over NATS (core/bus/dapr/components/pubsub.yaml) and ntfy
@@ -96,8 +96,9 @@
 //	jg-bus publish <kind> <key> <text> [--link <url>]
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus stream | serve | ensure | unit [nats|wake-engine|router|dapr|ntfy|deliver] | deliver [--once] | stop | status | bootstrap
-//	jg-bus wake-engine | router | probe [wake-engine|router]   (engine.go owns these three)
+//	jg-bus stream | serve | ensure | unit [nats|wake-engine|wake-watcher|router|dapr|ntfy|deliver] | deliver [--once] | stop | status | bootstrap
+//	jg-bus wake-engine | router | probe [wake-engine|wake-watcher|router]   (engine.go owns these)
+//	jg-bus wake-watcher | watcher oldest|resurfaced|latest|rows|replay|rebuild   (watcher.go owns these)
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
 // JG_CAPTAIN_CHANNEL.
@@ -154,6 +155,10 @@ func run(args []string) int {
 		return a.deliver(rest)
 	case "wake-engine":
 		return a.wakeEngine()
+	case "wake-watcher":
+		return a.wakeWatcher()
+	case "watcher":
+		return a.watcherCmd(rest)
 	case "router":
 		return a.router()
 	case "probe":

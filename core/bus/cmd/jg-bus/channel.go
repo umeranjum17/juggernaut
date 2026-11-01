@@ -361,14 +361,17 @@ func (a *app) unit(args []string) int {
 		fmt.Fprintf(&b, "After=network.target\n\n")
 		a.unitService(&b, quote, percent, fmt.Sprintf("%s -c %s", quote(natsServer), quote(conf)))
 		fmt.Fprintf(&b, "ExecStartPost=%s bootstrap\n", quote(filepath.Join(a.root, "bin", "jg-bus.sh")))
-	case "wake-engine", "router":
+	case "wake-engine", "wake-watcher", "router":
 		self, err := os.Executable()
 		if err != nil {
 			return die("cannot find this command: %v", err)
 		}
 		what := "wake engine (consumes this home's wakes and renders the read model)"
-		if part == "router" {
+		switch part {
+		case "router":
 			what = "reply router (routes captain replies by the board's own route)"
+		case "wake-watcher":
+			what = "wake watcher (folds this home's wake events for the watcher's own-queue observation)"
 		}
 		fmt.Fprintf(&b, "Description=Juggernaut %s\n", what)
 		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
@@ -401,7 +404,7 @@ func (a *app) unit(args []string) int {
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_BUS_ROOT="+a.root))
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_STATE_OVERRIDE="+a.state))
 	default:
-		return die("unit: unknown part %q (nats, wake-engine, router, dapr, ntfy, deliver)", part)
+		return die("unit: unknown part %q (nats, wake-engine, wake-watcher, router, dapr, ntfy, deliver)", part)
 	}
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	fmt.Print(b.String())
