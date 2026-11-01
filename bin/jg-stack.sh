@@ -9,6 +9,9 @@
 #   tools    nats-server, nats, daprd and ntfy at the versions toolchain.versions pins, installed
 #            user-local by bin/jg-bootstrap.sh, the one owner of how a release archive lands
 #   nats     the JetStream server and its CAPTAIN stream
+#   wake-engine  the Go consumer that brings a home's wake read model up to date for every wake
+#            raised on the bus (core/bus/cmd/jg-bus/engine.go), which needs nats
+#   router   the Go consumer that routes captain replies by the board's own route, which needs nats
 #   dapr     the sidecar, which needs nats
 #   ntfy     the delivery server
 #   deliver  the CAPTAIN stream's consumer: reads each captain event off the stream and posts it
@@ -19,7 +22,10 @@
 #
 # CONTRACT.
 #   report   one line per part: installed <version>, enabled <how>, running pid <n>, listening
-#            <address>. A second run prints the same lines and changes nothing.
+#            <address> (wake-engine and router: consuming <stream>/<consumer>, which is
+#            confirmed against the server). A second run prints the same lines and changes
+#            nothing. `bin/jg-bus.sh probe` prints their stream and consumer counts and handled
+#            counters.
 #   stop     the first part that cannot be made whole stops the run with exit 1 and ONE line,
 #            `STACK_FAILED: <part>: <what is missing>; blocks <what depends on it>`. No later part
 #            is attempted, so a half state is never reported as healthy.
@@ -70,6 +76,11 @@ wait_listening() {  # <addr>
   return 1
 }
 
+wait_consumer() {  # <part>: the service has created its consumer on the server
+  for _ in $(seq 1 150); do "$BUS" probe "$1" >/dev/null 2>&1 && return 0; sleep 0.2; done
+  return 1
+}
+
 # The user manager reads units from the account's own home, so a HOME that is not that home (a
 # throwaway one) cannot install a unit the manager will see.
 supervisor() {
@@ -114,8 +125,9 @@ install_unit() {
 report() {  # <part> <supervisor>
   local part=$1 sup=$2 name pid=none enabled ver addr=
   name=$(unit_name "$part")
-  ver=$(bash "$BOOT" version "$(bin_of "$part")" 2>/dev/null) || ver=unknown
-  [ "$part" = deliver ] || addr=$(listen_addr "$part")  # the consumer listens on nothing; its pid proves it
+  if consumer_part "$part"; then ver=jg-bus; else ver=$(bash "$BOOT" version "$(bin_of "$part")" 2>/dev/null) || ver=unknown; fi
+  # the consumers listen on nothing; their pid proves them
+  { consumer_part "$part" || [ "$part" = deliver ]; } || addr=$(listen_addr "$part")
   if [ "$sup" = systemd ]; then
     enabled="$(systemctl --user is-enabled "$name" 2>/dev/null) ($name)"
     pid=$(systemctl --user show -p MainPID --value "$name" 2>/dev/null)
@@ -124,17 +136,25 @@ report() {  # <part> <supervisor>
     pid=$(cat "$STATE/bus/$part.pid" 2>/dev/null || echo none)
   fi
   if [ -z "$pid" ] || [ "$pid" = 0 ] || ! kill -0 "$pid" 2>/dev/null; then
-    fail "$part" "not running (pid ${pid:-none}), see $STATE/bus/$part.log" "$(blocks "$part")"
+    fail "$part" "not running (pid ${pid:-none}), see $STATE/bus/$part.log: $(tail -n 2 "$STATE/bus/$part.log" 2>/dev/null | tr '\n' ' ')" "$(blocks "$part")"
   fi
   if [ "$part" = deliver ]; then
     printf '%-7s enabled %s, running pid %s, consuming %s\n' "$part" "$enabled" "$pid" "$("$BUS" config stream)"
+    return
+  fi
+  if consumer_part "$part"; then
+    line=$("$BUS" probe "$part" 2>/dev/null) || fail "$part" "running (pid $pid) but its consumer does not exist on the server, see $STATE/bus/$part.log" "$(blocks "$part")"
+    printf '%-11s installed %s, enabled %s, running pid %s, consuming %s\n' "$part" "$ver" "$enabled" "$pid" \
+      "$(printf '%s\n' "$line" | sed -n 's/.* stream=\([^ ]*\) .* consumer=\([^ ]*\) .*/\1\/\2/p')"
     return
   fi
   listening "$addr" || fail "$part" "running (pid $pid) but not listening on $addr" "$(blocks "$part")"
   printf '%-5s installed %s, enabled %s, running pid %s, listening %s\n' "$part" "$ver" "$enabled" "$pid" "$addr"
 }
 
-blocks() { case $1 in nats) echo "dapr, the stream and every live path" ;; dapr) echo "publishing through the sidecar" ;; *) echo "delivery to the captain" ;; esac; }
+consumer_part() { case $1 in wake-engine|router) return 0 ;; *) return 1 ;; esac; }
+
+blocks() { case $1 in nats) echo "dapr, the stream and every live path" ;; wake-engine) echo "the wake read model fed by the bus" ;; router) echo "routing of the captain's replies" ;; dapr) echo "publishing through the sidecar" ;; *) echo "delivery to the captain" ;; esac; }
 
 mkdir -p "$STATE/bus" || fail state "cannot create $STATE/bus" "everything"
 
@@ -148,13 +168,15 @@ for t in nats-server nats daprd ntfy; do ensure_tool "$t"; done
 
 sup=$(supervisor)
 started=0
-for part in nats dapr ntfy deliver; do
+for part in nats wake-engine router dapr ntfy deliver; do
   if [ "$mode" = up ]; then
     if [ "$sup" = systemd ]; then
       changed=0; install_unit "$part" && changed=1
       name=$(unit_name "$part")
       [ "$changed" = 0 ] || systemctl --user daemon-reload || fail "$part" "systemctl daemon-reload failed" "its service"
       systemctl --user enable "$name" >/dev/null 2>&1 || fail "$part" "cannot enable $name" "$(blocks "$part")"
+      # A consumer runs the built command, so a rebuilt one restarts it (its pid file is written at start).
+      if consumer_part "$part" && [ "$changed" = 0 ] && [ "$STATE/bin/jg-bus" -nt "$STATE/bus/$part.pid" ]; then changed=1; fi
       if [ "$changed" = 1 ] && systemctl --user is-active --quiet "$name"; then
         systemctl --user restart "$name" || fail "$part" "cannot restart $name" "$(blocks "$part")"
       else
@@ -166,7 +188,11 @@ for part in nats dapr ntfy deliver; do
       "$BUS" serve >/dev/null 2>&1; started=1
     fi
   fi
-  [ "$mode" = status ] || [ "$part" = deliver ] || wait_listening "$(listen_addr "$part")" || true
+  if consumer_part "$part"; then
+    [ "$mode" = status ] || wait_consumer "$part" || true
+  elif [ "$part" != deliver ]; then
+    [ "$mode" = status ] || wait_listening "$(listen_addr "$part")" || true
+  fi
   report "$part" "$sup"
   if [ "$part" = nats ]; then
     [ "$mode" = status ] || "$BUS" bootstrap >/dev/null 2>&1
