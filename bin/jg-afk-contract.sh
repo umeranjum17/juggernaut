@@ -297,17 +297,6 @@ jg_afk_contract_render_record() {  # <entered-iso> <entered-epoch> <confirmed-is
   fi
 }
 
-jg_afk_contract_write_atomic() {  # <path> (content on stdin)
-  local path=$1 pending
-  mkdir -p "$(dirname "$path")" || return 1
-  pending=$(mktemp "$(dirname "$path")/.afk-contract.pending.XXXXXX") || return 1
-  if ! cat > "$pending"; then
-    rm -f "$pending"
-    return 1
-  fi
-  mv "$pending" "$path" || { rm -f "$pending"; return 1; }
-}
-
 # --- record reading (the only parser) --------------------------------------
 
 jg_afk_contract_read_field() {  # <path> <name>

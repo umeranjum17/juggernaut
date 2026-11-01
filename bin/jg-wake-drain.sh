@@ -10,10 +10,11 @@
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
 # Every scratch file this script mints (.main-eligible-rows.tmp.*,
-# .wake-rows.consume.*, .wake-queue.retire.*, .wake-queue.ack.*,
-# .wake-queue.actor-view.*) is created and removed under the queue lock, so one
-# found while taking that lock was left by a drain that died mid-write; each
-# locked drain rotates such leftovers away before doing anything else.
+# .wake-rows.consume.*, .wake-queue.actor-view.*) is created and removed under the
+# queue lock, so one found while taking that lock was left by a drain that died
+# mid-write; each locked drain rotates such leftovers away before doing anything
+# else. The wake rows themselves are the bus's now (docs/bus-live.md), so no
+# scratch here holds a copy of the queue.
 # JG_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
@@ -107,8 +108,7 @@ rows_file_valid() { jg_wake_grant_rows_valid "$1"; }
 rotate_scratch_locked() {
   local scratch
   for scratch in "$STATE"/.main-eligible-rows.tmp.* "$STATE"/.wake-rows.consume.* \
-    "$STATE"/.wake-queue.retire.* "$STATE"/.wake-queue.ack.* "$STATE"/.wake-queue.actor-view.* \
-    "$STATE"/.wake-queue.withdraw.*; do
+    "$STATE"/.wake-queue.actor-view.*; do
     [ -e "$scratch" ] || [ -L "$scratch" ] || continue
     rm -f -- "$scratch"
   done
@@ -119,45 +119,6 @@ reclaim_stale_branch_grant_locked() {
   if ! jg_wake_branch_grant_live "$ELIGIBLE_ROWS_FILE" "$ELIGIBLE_OWNER_FILE"; then
     rm -f -- "$ELIGIBLE_ROWS_FILE" "$ELIGIBLE_OWNER_FILE"
   fi
-}
-
-# Retire rows no actor can ever consume. A claim, a presentation, and an
-# acknowledgement all require the five appended fields and a numeric sequence,
-# so a truncated or corrupted row is counted as queued while it can never be
-# presented and can never be named by an --ack-through cutoff: left alone it
-# wedges the queue for good. Main owns that repair - a branch grant can only
-# name sequences that were structurally valid when it was published - and it
-# runs under the queue lock, so no concurrent append is observed half-written.
-# A repair that cannot be written (state/ full, unwritable, unreadable) is
-# reported and never fatal: the usable rows are still presentable and
-# acknowledgeable, and failing the whole drain would strand them too.
-retire_unconsumable_rows_locked() {
-  local retired unusable queued kept
-  [ -f "$JG_WAKE_QUEUE" ] || return 0
-  if DRAIN_TMP=$(mktemp "$STATE/.wake-queue.retire.XXXXXX") \
-    && chmod 0600 "$DRAIN_TMP" \
-    && unusable=$(awk -F '\t' -v keep="$DRAIN_TMP" '
-      NF >= 5 && $2 ~ /^[0-9]+$/ { print > keep; next }
-      { shown++; if (shown <= 20) printf "wake drain:   %s\n", $0 }
-      END { if (shown > 20) printf "wake drain:   ... %d further unusable row(s) not shown\n", shown - 20 }
-    ' "$JG_WAKE_QUEUE"); then
-    queued=$(awk 'END { print NR }' "$JG_WAKE_QUEUE")
-    kept=$(awk 'END { print NR }' "$DRAIN_TMP")
-    retired=$(( queued - kept ))
-    if [ "$retired" -eq 0 ]; then
-      rm -f -- "$DRAIN_TMP"
-      DRAIN_TMP=
-      return 0
-    fi
-    if _jg_atomic_replace "$DRAIN_TMP" "$JG_WAKE_QUEUE"; then
-      DRAIN_TMP=
-      printf 'wake drain: retired %s unusable queue row(s) that carried no sequence to present or acknowledge:\n%s\n' \
-        "$retired" "$unusable" >&2
-      return 0
-    fi
-  fi
-  printf 'wake drain: unusable queue row(s) could not be retired (check that %s is readable and %s is writable); continuing with the rows that remain usable\n' \
-    "$JG_WAKE_QUEUE" "$STATE" >&2
 }
 
 # One bounded line naming the rows a live branch grant is holding, so a main
@@ -276,7 +237,8 @@ assert_watcher_liveness() {
 # The helper ignores non-presentation and legacy keys, so this is a narrow
 # receipt path rather than a second interpretation of general check wakes.
 inactive_outcome_fingerprints() { # <sequence> <key-prefix> [<rows-file>]
-  local cutoff=$1 prefix=$2 rows=${3:-} epoch seq kind key payload
+  # shellcheck disable=SC2034  # epoch and payload are read from each row, not used
+  local cutoff=$1 prefix=$2 rows=${3:-} epoch seq kind payload
   while IFS=$(printf '\t') read -r epoch seq kind key payload; do
     [ "$kind" = check ] || continue
     case "$seq" in ''|*[!0-9]*) continue ;; esac
@@ -864,7 +826,6 @@ fi
 DRAIN_LOCK_HELD=true
 rotate_scratch_locked
 reclaim_stale_branch_grant_locked || exit 1
-[ "$ACTOR" != main ] || retire_unconsumable_rows_locked
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
 
 if [ -n "$ACK_THROUGH" ]; then
@@ -912,33 +873,35 @@ if [ -n "$ACK_THROUGH" ]; then
   fi
   jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=true
-  DRAIN_TMP=$(mktemp "$STATE/.wake-queue.ack.XXXXXX") || exit 1
-  chmod 0600 "$DRAIN_TMP" || exit 1
+  # An acknowledgement is one event per row on the bus. Only rows at or below the
+  # cutoff AND named in this actor's own snapshot are acknowledged, so a row
+  # another actor owns - even one numbered below the cutoff - is never consumed.
   if [ "$ACTOR" = branch ]; then
     require_branch_eligible_rows || exit 1
-    # Delete a row only when its sequence is <= cutoff AND it is named in the
-    # extension's eligible snapshot; every other row - including one whose
-    # sequence is below cutoff but not in the snapshot - is kept untouched.
-    awk -F '\t' -v cutoff="$ACK_THROUGH" -v seqs="$ELIGIBLE_ROWS_FILE" '
-      BEGIN { while ((getline line < seqs) > 0) if (line ~ /^[0-9]+$/) keep[line] = 1 }
-      NF < 5 || $2 !~ /^[0-9]+$/ || $2 > cutoff || !($2 in keep) { print }
-    ' "$JG_WAKE_QUEUE" > "$DRAIN_TMP" || exit 1
+    ACK_ROWS_FILE=$ELIGIBLE_ROWS_FILE
     jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$ELIGIBLE_ROWS_FILE" || {
       echo "wake drain: squad_lead stall receipt could not be recorded safely" >&2
       exit 1
     }
   else
-    awk -F '\t' -v cutoff="$ACK_THROUGH" -v seqs="$MAIN_ROWS_FILE" '
-      BEGIN { while ((getline line < seqs) > 0) owned[line]=1 }
-      NF < 5 || $2 !~ /^[0-9]+$/ || $2 > cutoff || !($2 in owned) { print }
-    ' "$JG_WAKE_QUEUE" > "$DRAIN_TMP" || exit 1
+    ACK_ROWS_FILE=$MAIN_ROWS_FILE
     jg_wake_commit_squad_lead_stall_receipts_through "$ACK_THROUGH" "$MAIN_ROWS_FILE" || {
       echo "wake drain: squad_lead stall receipt could not be recorded safely" >&2
       exit 1
     }
   fi
-  ACK_REMOVED=$(( $(awk 'END { print NR }' "$JG_WAKE_QUEUE") - $(awk 'END { print NR }' "$DRAIN_TMP") ))
-  if [ ! -s "$DRAIN_TMP" ]; then
+  ACK_IDS=$(jg_wake_bus ids-through "$ACK_THROUGH" "$ACK_ROWS_FILE") || ACK_IDS=
+  ACK_REMOVED=0
+  if [ -n "$ACK_IDS" ]; then
+    ACK_REMOVED=$(printf '%s\n' "$ACK_IDS" | awk 'END { print NR }')
+    # shellcheck disable=SC2086  # one id per line, each one event id
+    jg_wake_bus ack $ACK_IDS || {
+      echo "wake drain: acknowledged wakes could not be consumed safely" >&2
+      exit 1
+    }
+  fi
+  ACK_QUEUE_LEFT=$(jg_wake_bus count 2>/dev/null || printf '0')
+  if [ "${ACK_QUEUE_LEFT:-0}" -eq 0 ]; then
     jg_recovery_marker_ack "$RECOVERY_MARKER" "$ACK_GENERATION"
     RECOVERY_ACK_STATUS=$?
     case "$RECOVERY_ACK_STATUS" in
@@ -956,11 +919,6 @@ if [ -n "$ACK_THROUGH" ]; then
       RECOVERY_ACK_MOVED=true
     fi
   fi
-  if ! _jg_atomic_replace "$DRAIN_TMP" "$JG_WAKE_QUEUE"; then
-    echo "wake drain: acknowledged wakes could not be consumed safely" >&2
-    exit 1
-  fi
-  DRAIN_TMP=
   if [ "$ACTOR" = branch ]; then
     consume_actor_rows_locked "$ELIGIBLE_ROWS_FILE" "$ACK_THROUGH" || exit 1
   else
@@ -992,6 +950,11 @@ if [ -n "$ACK_THROUGH" ]; then
   fi
   exit 0
 fi
+
+# The rows are the bus's now: bring the read model up to date before any actor
+# reads it. Rendering outside the queue lock is safe - the renderer replaces the
+# file atomically and nothing else writes it.
+jg_wake_bus render >/dev/null 2>&1 || true
 
 if [ ! -s "$JG_WAKE_QUEUE" ]; then
   : > "$JG_WAKE_QUEUE"

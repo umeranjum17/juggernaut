@@ -2538,10 +2538,6 @@ status_span_first_actionable() {  # <status-file> <start-offset>
   return "$rc"
 }
 
-status_span_has_actionable() {  # <status-file> <start-offset>
-  status_span_first_actionable_record "$1" "${2:-0}" > /dev/null
-}
-
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
 # from bin/jg-crew-state.sh's one authoritative current-state line
 # ("state: <s> · source: <src> · <detail>"). Prints exactly one token:
@@ -2584,13 +2580,6 @@ crew_absorb_class() {  # <id>
 # working/paused/none decision.
 crew_is_provably_working() {  # <id>
   [ "$(crew_absorb_class "$1")" = working ]
-}
-
-# 0 if crew <id>'s authoritative current state is a declared external-wait pause.
-# The stale path absorbs such a crew (on a long re-surface cadence) instead of
-# escalating a possible wedge.
-crew_is_paused() {  # <id>
-  [ "$(crew_absorb_class "$1")" = paused ]
 }
 
 # The one spelling of the verdict component that says a parked gate's answer is
