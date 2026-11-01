@@ -64,6 +64,14 @@ Losing all three is safe: the next render rebuilds them from the stream.
   `bin/jg-wake-bus.sh inbox-settle`: a record missing from its inbox is
   acknowledged, a record still there is left alone.
 
+## The one-step reversal
+
+`echo off > config/wake-bus` returns that home to the file behaviour on the spot:
+rows are held in the home's own outbox, nothing is published, and the read models
+are written from those rows exactly as before. Delete the file to go live again.
+No code is reverted, and the events an off home accumulated reach the bus on the
+first render after the file is gone.
+
 ## What was deleted with the old path
 
 - the append lock around an append (`JG_WAKE_QUEUE_LOCK` is still the drain's and

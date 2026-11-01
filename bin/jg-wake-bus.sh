@@ -423,6 +423,14 @@ LIVE_OUTBOX=$STATE/.wake-bus.outbox.jsonl      # events a failed publish still o
 
 live_home_key() { home_key "$STATE"; }
 
+# live_enabled: the one-step reversal. config/wake-bus carrying `off` returns the
+# home to the file behaviour on the spot - rows wait in this home's own outbox and
+# nothing is published - without reverting the change.
+live_enabled() {
+  [ -f "$HOME_DIR/config/wake-bus" ] || return 0
+  ! grep -qw off "$HOME_DIR/config/wake-bus" 2>/dev/null
+}
+
 # bus_pub_seq <subject> <message-id> <json>: publish, then print the sequence the
 # server stored it at, or 0 when it was not stored. The sequence is the row's
 # ordering number, so it comes from the server rather than from a counter a crash
@@ -494,6 +502,7 @@ live_outbox_add() { # <subject> <json>
 # live_publish <subject> <id> <json>: publish one event, or owe it in the outbox.
 live_publish() { # <subject> <id> <json>
   local seq
+  live_enabled || { live_outbox_add "$1" "$3"; return 0; }
   seq=$(bus_pub_seq "$1" "$2" "$3")
   if [ "${seq:-0}" -le 0 ]; then
     # The first raise on a fresh home arrives before the streams exist, and a
@@ -512,7 +521,7 @@ live_publish() { # <subject> <id> <json>
 live_render() {
   local model have_bus=0
   mkdir -p "$STATE" || return 1
-  if bus_gate >/dev/null 2>&1; then
+  if live_enabled && bus_gate >/dev/null 2>&1; then
     have_bus=1
     bus_ensure_streams || true
     live_flush_outbox || true
