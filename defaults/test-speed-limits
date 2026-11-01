@@ -1,17 +1,18 @@
-# Hard speed limits, in seconds, enforced by bin/jg-test-run.sh.
+# Hard limits, in seconds, enforced by bin/jg-test-run.sh. `bin/jg-test-run.sh
+# --show-limits` prints the effective values.
 #
-# A test that runs over its limit fails and names the time it measured. The
-# class comes from the test's own name: anything ending -e2e.test.sh is an
-# end-to-end test, everything else is a unit or policy test.
+# A test that runs over its limit fails and names itself, the time it measured,
+# and the limit. The class comes from the test's own name: anything ending
+# -e2e.test.sh is an end-to-end test, everything else is a unit or policy test.
+# Under enforcement the class limit is also that test's kill bound, so a hung or
+# overrunning test is terminated and reported rather than left holding the run.
 #
-# The nightly .github/workflows/behavior.yml enforces these. The pre-merge path
-# (bin/jg-local-suite.sh, and so bin/jg-ship-local.sh) only reports them, because
-# a pre-merge failure would refuse every merge until the whole slow list is
-# empty, which is the opposite of a fast merge.
-#
-# gate_wall_seconds and nightly_wall_seconds are whole-run budgets, passed to
-# the runner as --max-wall-ms.
+# The pull-request gate, bin/jg-local-suite.sh, passes --gate: it enforces the
+# per-test limits and applies gate_wall_seconds as its whole-run budget. The
+# nightly .github/workflows/behavior.yml passes --enforce-test-speed, and its own
+# job timeouts own that run's wall bound. A plain local run reports a breach
+# without refusing, because a local refusal would stop ordinary work until the
+# whole slow list empties while the two enforcing runs above already name it.
 e2e_seconds=60
 unit_seconds=5
 gate_wall_seconds=600
-nightly_wall_seconds=1800
