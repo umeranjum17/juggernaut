@@ -16,7 +16,10 @@ STATE_DIR=$TMP/state
 CONFIG_DIR=$TMP/config
 T0=1793500000
 mkdir -p "$IN" "$STATE_DIR" "$CONFIG_DIR"
-cp "$ROOT/defaults/throughput.json" "$CONFIG_DIR/throughput.json"
+# One day and a two-hour floor: the shipped seven days would put every fixture
+# stage under a rounding error, and this case is about the ranking, not the sizes.
+jq '. + {"window-days": 1, "min-hours-per-day": 2}' \
+  "$ROOT/defaults/throughput.json" >"$CONFIG_DIR/throughput.json"
 
 run() {
   JG_HOME="$TMP" JG_STATE_OVERRIDE="$STATE_DIR" JG_CONFIG_OVERRIDE="$CONFIG_DIR" \
@@ -25,7 +28,8 @@ run() {
 
 # --- fixtures ---------------------------------------------------------------
 # Three merged pull requests in one seven-day window, each with a known timeline:
-#   pr-1  done -> final commit  1 h  -> green 2 h -> merged 1 h   (queue 10 min, run 50 min)
+#   pr-1  done -> final commit  1 h  -> green 2 h -> merged 1 h
+#         (two jobs, each queued 10 min and running 30 min and 110 min)
 #   pr-2  done -> final commit  0    -> green 3 h -> merged 0.5 h (queue 1 h, run 2 h)
 #   pr-3  no run recorded at all, so nothing is green: the whole wait is handoff
 merged=$(( T0 - 86400 ))
@@ -49,8 +53,8 @@ cat >"$IN/runs.json" <<EOF
 ]
 EOF
 
-# pr-1's final CI: two jobs, one queued 10 min, run 50 min in total.
-# pr-2's final CI: two jobs, one queued 1 h, run 2 h in total.
+# pr-1's final CI: two jobs, each queued 10 min; their runtimes are 30 and 110 min.
+# pr-2's final CI: two jobs, each queued 1 h and running 110 min.
 cat >"$IN/jobs.json" <<EOF
 [
   {"repo": "o/r", "id": 11, "jobs": [
@@ -89,17 +93,17 @@ n=$(printf '%s' "$dataset" | jq -r '.merges | length')
 
 row() { printf '%s' "$dataset" | jq -r --argjson pr "$1" ".merges[] | select(.pr == \$pr) | .$2"; }
 # pr-1: done four hours before the merge, final commit one hour later.
-assert_equals "$(row 1 rework_s)" 3600 'rework for a pull request with one post-done commit'
-assert_equals "$(row 1 final_ci_s)" 7200 'the final CI window from the last commit to the last green job'
-assert_equals "$(row 1 queue_s)" 600 'the runner queue wait of the final CI'
-assert_equals "$(row 1 run_s)" 2400 'the CI runtime of the final CI'
-assert_equals "$(row 1 green_to_merged_s)" 3600 'the wait from green to merged'
-assert_equals "$(row 1 handoff_s)" 0 'a fully recorded wait has no handoff'
+assert_equals 3600 "$(row 1 rework_s)" 'rework for a pull request with one post-done commit'
+assert_equals 7200 "$(row 1 final_ci_s)" 'the final CI window from the last commit to the last green job'
+assert_equals 1200 "$(row 1 queue_s)" 'the job-hours of runner queue wait in the final CI'
+assert_equals 8400 "$(row 1 run_s)" 'the job runtime of the final CI'
+assert_equals 3600 "$(row 1 green_to_merged_s)" 'the wait from green to merged'
+assert_equals 0 "$(row 1 handoff_s)" 'a fully recorded wait has no handoff'
 # pr-2: done at the last commit, so no rework; every second is CI and pickup.
-assert_equals "$(row 2 rework_s)" 0 'a done line at the final commit is no rework'
+assert_equals 0 "$(row 2 rework_s)" 'a done line at the final commit is no rework'
 # pr-3: no run at all, so nothing is green and the whole wait is handoff.
-assert_equals "$(row 3 green_at)" null 'a pull request with no run must not claim a green time'
-assert_equals "$(row 3 handoff_s)" 7200 'an unrecorded wait is handoff'
+assert_equals null "$(row 3 green_at)" 'a pull request with no run must not claim a green time'
+assert_equals 7200 "$(row 3 handoff_s)" 'an unrecorded wait is handoff'
 pass 'measure attributes every second of the done-to-merged wait to one stage'
 
 # --- the window -------------------------------------------------------------
@@ -109,20 +113,25 @@ jq --arg old "$(iso $(( T0 - 30 * 86400 )))" \
          commits: [{oid: "sha9", committedDate: $old}]}]' \
   "$IN/prs.json" >"$TMP/prs-old.json" && mv "$TMP/prs-old.json" "$IN/prs.json"
 out=$(run measure --inputs "$IN") || fail "measure failed: $out"
-assert_equals "$(jq -r '.measured' "$out")" 3 'a merge outside the window was measured'
+assert_equals 3 "$(jq -r '.measured' "$out")" 'a merge outside the window was measured'
 pass 'a merge outside the window is not measured'
 
 # --- rank -------------------------------------------------------------------
 ranked=$(run rank --inputs "$IN" --json) || fail "rank failed: $ranked"
-assert_equals "$(printf '%s' "$ranked" | jq -r '.[0].stage')" handoff \
-  'the worst stage is not ranked first'
-assert_equals "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "rework") | .prs')" 1 \
+assert_equals run "$(printf '%s' "$ranked" | jq -r '.[0].stage')" \
+  'the stage losing the most hours is not ranked first'
+assert_equals 'run queue handoff green_to_merged rework' \
+  "$(printf '%s' "$ranked" | jq -r '[.[].stage] | join(" ")')" \
+  'the ranking is not ordered by hours lost'
+assert_equals 1 "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "rework") | .prs')" \
   'the rework stage does not count the one pull request that reworked'
-assert_equals "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "rework") | .ranked')" false \
+assert_equals false "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "rework") | .ranked')" \
   'a stage under the configured hours per day must not be ranked for a ticket'
-assert_equals "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "handoff") | .ranked')" true \
+assert_equals 1.0 "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "rework") | .hours')" \
+  'the rework stage does not carry the one hour it lost'
+assert_equals true "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "handoff") | .ranked')" \
   'a stage over the configured hours per day must be ranked'
-assert_equals "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "queue") | .fix' | grep -c .)" 1 \
+assert_equals 1 "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "queue") | .fix' | grep -c .)" \
   'every ranked stage must carry the fix its config names'
 pass 'rank orders the stages by hours lost and keeps the fixes in config'
 
@@ -135,7 +144,7 @@ d['min-hours-per-day'] = 100
 json.dump(d, open(p, 'w'), indent=2)
 PY
 ranked=$(run rank --inputs "$IN" --json) || fail "rank failed: $ranked"
-assert_equals "$(printf '%s' "$ranked" | jq -r '[.[] | select(.ranked)] | length')" 0 \
+assert_equals 0 "$(printf '%s' "$ranked" | jq -r '[.[] | select(.ranked)] | length')" \
   'a threshold moved up in config did not demote the stages'
 pass 'the threshold is config: a stage below it is measured and never ranked'
 

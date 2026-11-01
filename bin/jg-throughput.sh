@@ -236,16 +236,15 @@ forge_timings() {
   repo=$(printf '%s' "$pr" | jq -r '.repo')
   sha=$(printf '%s' "$pr" | jq -r '.commits[-1].oid // ""')
   [ -n "$sha" ] || return 0
-  jq -r -c --arg repo "$repo" --arg sha "$sha" '
-    . as $all
-    | [ $all[] | select(.repo == $repo and .head_sha == $sha and .conclusion == "success") | .id ] as $ids
-    | [ $all[] | select(.id as $i | $ids | index($i)) | .jobs[]
-        | select(.started_at != null) ]
-    | if length == 0 then empty
+  jq -r --slurpfile r "$runs" --arg repo "$repo" --arg sha "$sha" '
+    [ $r[0][] | select(.repo == $repo and .head_sha == $sha and .conclusion == "success") | .id ] as $ids
+    | [ .[] | select(.id as $i | $ids | index($i)) | .jobs[]
+        | select(.started_at != null) ] as $jobs
+    | if ($jobs | length) == 0 then empty
       else
-        (map(.completed_at | select(. != null) | fromdateiso8601) | if length == 0 then 0 else max end) as $green
-        | (map((.started_at | fromdateiso8601) - (.created_at | fromdateiso8601)) | add // 0) as $queue
-        | (map(select(.completed_at != null) | (.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601)) | add // 0) as $run
+        ($jobs | map(.completed_at | select(. != null) | fromdateiso8601) | if length == 0 then 0 else max end) as $green
+        | ($jobs | map((.started_at | fromdateiso8601) - (.created_at | fromdateiso8601)) | add // 0) as $queue
+        | ($jobs | map(select(.completed_at != null) | (.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601)) | add // 0) as $run
         | "\($green)\t\($queue)\t\($run)"
       end' "$jobs" 2>/dev/null | head -1
 }
@@ -296,7 +295,7 @@ measure_one() {
         queue_s: (if $g == null then 0 else $queue end),
         run_s: (if $g == null then 0 else $run end),
         green_to_merged_s: (if $g == null then 0 else secs($g; $merged) end),
-        total_s: secs($done; $merged) }
+        total_s: secs($donets; $merged) }
     | .handoff_s = ([.total_s - .rework_s - .final_ci_s - .green_to_merged_s, 0] | max)'
 }
 
@@ -313,20 +312,20 @@ cmd_rank() {
   done
   [ -f "$OUT/dataset.json" ] || cmd_measure >/dev/null || die 'no measurement to rank'
   local stage_rows
-  stage_rows=$(jq -r --argjson days "$(jq -r '.window.days' "$OUT/dataset.json")" '
+  stage_rows=$(jq -r '
     .merges as $m
     | ["rework", "queue", "run", "green_to_merged", "handoff"] as $stages
     | $stages[] as $s
     | ($s + "_s") as $field
     | [ $m[] | .[$field] // 0 ] as $v
     | select(($v | add // 0) > 0)
-    | [ $s, ($v | add // 0), (($v | add // 0) / 86400), ((($v | add // 0) / $days) | floor),
-        ($v | length), ($v | sort | if length == 0 then 0 else .[(length / 2 | floor)] end),
+    | [ $s, ($v | add // 0), ($v | map(select(. > 0)) | length),
+        ($v | sort | if length == 0 then 0 else .[(length / 2 | floor)] end),
         ($v | sort | if length == 0 then 0 else .[((length * 0.9) | floor) | if . >= length then length - 1 else . end] end) ]
     | @tsv' "$OUT/dataset.json" 2>/dev/null) || die 'the dataset could not be read'
   local id total_s prs median p90 label fix owner hours_per_day
   local out='[]'
-  while IFS=$'\t' read -r id total_s _per_day prs median p90; do
+  while IFS=$'\t' read -r id total_s prs median p90; do
     [ -n "$id" ] || continue
     read -r label fix owner <<EOF2
 $(jq -r --arg id "$id" '[.stages[] | select(.id == $id) | [.label, .fix, .owner]][0] // ["", "", ""] | @tsv' "$DEF")
