@@ -1,0 +1,31 @@
+# Dapr resiliency for the escalation workflow's rung delivery.
+#
+# The workflow's only fallible activity is delivering one rung (a wake, a parent
+# report, a board card). A provider hiccup must not lose a rung, and it must not
+# retry forever either: the next rung fires on its own timer, so a delivery that
+# cannot land inside the bound is dead-lettered rather than blocking the ladder.
+#
+# This is the file the stack report's "Dapr resiliency YAML for retries" row
+# names. Nothing loads it yet: no Dapr workflow worker exists in this step, so it
+# ships as the definition's other half, beside
+# core/workflows/escalation-wait-timers.json, ready for the worker's app id.
+apiVersion: dapr.io/v1alpha1
+kind: Resiliency
+metadata:
+  name: escalation-wait-timers
+scopes:
+  - escalation-wait-timers
+spec:
+  policies:
+    timeouts:
+      rung-delivery: 5s
+    retries:
+      rung-delivery:
+        policy: exponential
+        maxInterval: 20s
+        maxRetries: 2
+  targets:
+    apps:
+      escalation-wait-timers:
+        timeout: rung-delivery
+        retry: rung-delivery
