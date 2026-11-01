@@ -114,12 +114,13 @@ bin/jg-test-run.sh tests/<a>.test.sh tests/<b>.test.sh   # several subjects at o
 bin/jg-test-run.sh --family pure-contract-unit   # ordinary family-scoped local path (serial, timed)
 bin/jg-test-run.sh --changed   # normal changed-file-informed path with automatic bounded concurrency
 bin/jg-test-run.sh --changed --jobs 1   # explicit serial override
-bin/jg-test-run.sh --changed --max-wall-ms 300000   # same automatic path with a post-run five-minute result check
+bin/jg-test-run.sh --changed --max-wall-ms 300000   # same automatic path held to a five-minute budget: it stops starting tests once the budget is spent
 bin/jg-test-run.sh --proven-isolated --jobs 4   # explicit local parallel of the individually proven set
 bin/jg-test-run.sh --lane portable-serial   # portable serial remainder (watcher/AFK/tmux/stateful)
 bin/jg-test-run.sh --list-lanes   # discover exact lane names, including the current CI serial shards
 bin/jg-test-run.sh --check-coverage   # prove portable shards + serial + serial shards + Herdr equal the full inventory
 bin/jg-test-run.sh --all   # deliberate complete regression (optional local full walk; not no-mistakes Test)
+bin/jg-test-run.sh --show-limits   # print the per-test and whole-gate limits this runner reads from config
 bin/jg-test-isolation-proof.sh --list   # proven portable parallel candidate set
 bin/jg-test-isolation-proof.sh --jobs 4 --json /tmp/jg-isolation-proof.json   # re-run the portable candidate proof
 bin/jg-test-isolation-proof.sh --pool watcher-wake-lock --jobs 4   # re-run an admitted family proof
