@@ -31,8 +31,11 @@ the feature is absent.
 
 - `bin/jg-wait-timers-lib.sh` — the timer library the watcher sources once per
   poll: one durable episode per waiting lane under `state/.waiting-timers/`,
-  an owner recheck once the alert threshold matures, then escalation when the
-  owner has not cleared the wait. A blocked or needs-decision wake names its
+  an escalation to Main when the owner has not cleared the wait, the board
+  card, and the re-alert cadence. The owner recheck and the paused wait's
+  recheck are the escalation workflow definition's rungs
+  (`core/bus/workflows/escalation-wait-timers.json`, delivered by
+  `bin/jg-escalation-workflows.sh`). A blocked or needs-decision wake names its
   decision as `key=<key>` after the verb; paused waits carry none.
 - `tests/jg-wait-timers.test.sh` — the watcher/drain journey that proves the
   timers (owner alert, escalation, deduplication, resolution, re-arm).
@@ -53,15 +56,21 @@ provenance table now records history, not the current bytes.
   a wait source the watcher already woke the owner about (a permission prompt,
   a lead whose own supervision is down).
 - `jg_wait_timer_save <record> <signature> <since> <owner> <parent> <key>
-  <misses> [card] [last]`, `jg_wait_timer_report <status-line>`,
-  `jg_wait_timer_owner_delivered` — episode persistence, parent reporting,
-  and the post-wake hook the owner alert installs.
-- Environment: `JG_WAIT_ALERT_SECS` (default 120) for the owner rung,
-  `JG_WAIT_ESCALATE_SECS` (default 300) for Main's rung, `JG_WAIT_CARD_SECS`
-  (default 600, above the escalation threshold) for the board card, and
-  `JG_PROMPT_REALERT_SECS` (default 600) for how often a reached rung fires
-  again. A declared pause rechecks at the `JG_PAUSE_RESURFACE_SECS` cadence
-  instead and never escalates.
+  <misses> [card] [last]`, `jg_wait_timer_report <status-line>` — episode
+  persistence and parent reporting.
+- The owner rung and the pause cadence are not this library's any more.
+  The escalation workflow definition decides and delivers them
+  (bin/jg-escalation-workflows.sh, live on every poll) and stamps the episode's
+  owner time, which the escalation, the board card and the re-alert rungs below
+  read.
+  This library reads `JG_WAIT_ALERT_SECS` and `JG_PAUSE_RESURFACE_SECS` from
+  that definition (`bin/jg-escalation-workflows.sh timers`) rather than
+  defaulting them, so each number has one owner.
+- Environment: `JG_WAIT_ESCALATE_SECS` (default 300) for Main's rung,
+  `JG_WAIT_CARD_SECS` (default 600, above the escalation threshold) for the
+  board card, and `JG_PROMPT_REALERT_SECS` (default 600) for how often a
+  reached rung fires again. A declared pause rechecks at the
+  `JG_PAUSE_RESURFACE_SECS` cadence instead and never escalates.
 - Wait sources: the watcher writes `state/.wait-sources/<task>.prompt` for an
   unanswered permission prompt (rewritten on every sighting; a record older
   than three polls plus 30 seconds is ignored, so a prompt on a dead pane

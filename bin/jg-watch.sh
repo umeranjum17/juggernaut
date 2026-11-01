@@ -4173,11 +4173,24 @@ EOF
   procevent_surface_queued
 
   if declare -F jg_wait_timers_tick >/dev/null; then jg_wait_timers_tick || { echo "watcher: waiting-state timer check failed" >&2; exit 1; }; fi
-  # Migration step 5c shadow: the ladder that just ran stays authoritative, and
-  # the escalation workflow definition re-times the same open waits beside it
-  # (docs/escalation-workflows.md). Off costs one file test, and a shadow that
-  # cannot read its definition can never fail or delay a poll.
-  [ ! -e "$CONFIG/escalation-workflows" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-escalation-workflows.sh" tick >/dev/null 2>&1 || true
+  # Migration step 5c, live: the escalation workflow definition decides the owner
+  # rung and the pause cadence for every open episode and queues that wake
+  # (bin/jg-escalation-workflows.sh owns the contract). The ladder above keeps the
+  # rungs the definition does not carry yet. The tick prints the wake it already
+  # queued, so this cycle ends on it exactly as the ladder's own owner fire did;
+  # a tick that cannot read its definition reports it and leaves the poll running.
+  if escalation_reason=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" POLL="$POLL" \
+    "$SCRIPT_DIR/jg-escalation-workflows.sh" tick); then
+    # The tick queued this row in its own process, so a batch key this cycle
+    # appended earlier can never suppress the delivery of it.
+    if [ -n "$escalation_reason" ]; then
+      # shellcheck disable=SC2034 # Read by wake() in bin/jg-push-transition-lib.sh.
+      JG_WAKE_LAST=''
+      wake "$escalation_reason"
+    fi
+  else
+    echo "watcher: escalation workflow tick failed" >&2
+  fi
 
   host_memory_surface_queued
 
