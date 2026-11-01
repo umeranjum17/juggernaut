@@ -6,7 +6,7 @@
 # decision record (bin/jg-board-gate.sh route) that Main answers. sign-off-axi
 # owns the board and the leash setting (`leash:` in the config.yaml beside the
 # board: ask, matters its default, or act), so this file only reads it. Sourced
-# by bin/jg-question-card.sh, bin/jg-procevent-signoff.sh and bin/jg-captain-hold.sh.
+# by bin/jg-question-card.sh and bin/jg-captain-hold.sh.
 #
 # What a must is (2026-10-31): "When it matters" means money, security, a public
 # release, discarding unseen work, or a product call only he can make. Anything

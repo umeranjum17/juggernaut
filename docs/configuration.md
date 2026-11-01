@@ -628,21 +628,12 @@ Target detection uses `JG_SUPERVISOR_TARGET`, then `$TMUX_PANE`, then `"${HERDR_
 
 Selecting any other supervisor backend, including `zellij`, `orca`, or `cmux`, refuses at daemon startup instead of trying tmux injection primitives against a non-tmux pane.
 
-## Away-mode wedge alarm channels (config/wedge-alarm)
+## Away-mode wedge alert
 
-When away-mode injection wedges past `JG_MAX_DEFER_SECS`, the sub-supervisor raises a loud, rate-limited alarm.
-Beyond the durable `state/.subsuper-inject-wedged` marker and the tmux status-line flash, it attempts a configured backend-independent active alert that can reach the captain even when every pane and its backend status-line is unreadable.
-
-### Channels and overrides
-
-`config/wedge-alarm` (local, gitignored) lists channel directives, one per non-empty, non-comment line; every listed non-`off` channel fires, best-effort.
-`JG_WEDGE_ALARM_CHANNEL` overrides the file with a single directive.
-
-Directives are `off` (a position-independent kill switch that disables every active alert), `auto`/`default`, `osascript` (macOS Notification Center banner), `herdr` (herdr UI notification), and `command:<cmd>` (run `<cmd>` via `sh -c`, summary on `$1` and stdin).
-An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisely so a wedged away-mode primary is never silent, and it fires at most once per max-defer window after a genuine wedge.
-
-A missing or failing channel logs and falls through to the next, never crashing the daemon.
-See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
+When away-mode injection wedges past `JG_MAX_DEFER_SECS`, the sub-supervisor raises a loud, rate-limited alert so the stall never stays invisible.
+It goes to the captain by the one captain channel, `bin/jg-bus.sh publish alert away-mode-wedge`, and by nothing else: that path owns the record, the delivery to his iPad, the undelivered accounting and the `mode` switch ([`captain-channel.md`](captain-channel.md)), so there is no notifier to configure beside it and no `config/wedge-alarm` file.
+The alert fires at most once per max-defer window after a genuine wedge, and the durable `state/.subsuper-inject-wedged` marker and the tmux status-line flash stay exactly as they were: the marker is the record whether or not a delivery arrives.
+A bus that cannot be reached is logged by the channel and never crashes the daemon loop.
 
 ## Trace context propagation (config/trace-context / JG_TRACE_CONTEXT)
 
@@ -2350,7 +2341,7 @@ The `signoff` adapter (`bin/jg-procevent-signoff.sh`) connects captain holds to 
 Armed, it binds itself to the keyed-answer intake above and registers one source whose child waits in `sign-off-axi wait` without waking Juggernaut.
 Arming is per home: a Squad Lead home arms itself, and a hold recorded in a home that is not armed raises no card.
 An answer saved on the board for a task this home still holds for the captain is captured, woken as an ordinary `check` wake, and fed to `bin/jg-captain-hold.sh answers`, so the person never copies the answer across by hand.
-While armed, `bin/jg-captain-hold.sh hold` also raises a board card for that hold; it goes through `core/signoff/bin/jg-procevent-signoff.sh`, and the card rules below describe `bin/jg-procevent-signoff.sh`, the fallback for a home with no sign-off board. Its title is the reason's last `?` sentence, or its first sentence when it has no `?`, with leading `[tag]`, `Captain hold:`, `Captain:` and `Say yes or no:` prefixes dropped, cut to 12 words and ending in one `?` (built from the task title only when nothing remains); its why is the whole reason followed by `Answer yes or no. The hold stays open until you answer.`, the reason cut so the whole why stays within 200 characters; its outcomes are yes or no. A card that cannot be raised makes `hold` exit non-zero with the sign-off-axi error on stderr while the hold stays recorded; a task held again whose card is already answered reuses that card, a task held again with a changed question keeps its existing card and exits zero, and a dated deferral gets no card.
+While armed, `bin/jg-captain-hold.sh hold` also posts a board card for that hold. It goes through `core/signoff/bin/jg-procevent-signoff.sh` when that installed adapter authors the ask itself, and otherwise through `bin/jg-question-card.sh post`, the one card path; the card rules here are the hold's own words, and `bin/jg-captain-hold.sh` owns them (`raise_hold_card`). Its title is the reason's last `?` sentence, or its first sentence when it has no `?`, with leading `[tag]`, `Captain hold:`, `Captain:` and `Say yes or no:` prefixes dropped, cut to 12 words and ending in one `?` (built from the task title only when nothing remains); its why is the whole reason followed by `Answer yes or no. The hold stays open until you answer.`, the reason cut so the whole why stays within 200 characters; its outcomes are yes or no. A card that cannot be posted makes `hold` exit non-zero with the card path's error on stderr while the hold stays recorded; a task held again whose card is already answered reuses that card, a task held again with a changed question keeps its existing card and exits zero, and a dated deferral gets no card.
 Each hold occurrence gets its own card, so a task held again after an answered card gets a new live one.
 The adapter needs `sign-off-axi` on PATH: `arm` refuses without it, and the card attempt prints an install hint.
 Board keys carry a digest of this home's `JG_HOME` and the hold's stamp, so the machine's one shared board never delivers another home's answer or an earlier card's answer to this one.
@@ -2836,9 +2827,6 @@ JG_SUPERVISOR_TARGET=              # optional supervisor pane target override; t
 JG_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
 JG_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
 JG_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables
-JG_WEDGE_ALARM_CHANNEL=            # override config/wedge-alarm with one active-alert directive for the wedge alarm; off|auto|osascript|herdr|command:<cmd>; absent = auto (macOS -> an OS notification)
-JG_WEDGE_ALARM_EXEC=              # notifier seam: route every channel (osascript, herdr, command:) through this command as `<cmd> <channel> <summary>`; "discard" fires nothing; unset in production; the daemon defaults it to "discard" when sourced so no test posts a real notification (docs/wedge-alarm.md)
-JG_WEDGE_ALARM_TIMEOUT_SECS=10    # maximum seconds for each osascript, herdr, override, or command: notifier before its watchdog terminates it and continues to the next channel; invalid or zero values use 10
 JG_INJECT_FAIL_SLEEP=30            # seconds to back off when the supervisor pane is unavailable
 JG_INJECT_CONFIRM_RETRIES=3        # daemon Enter-retry attempts after typing a digest once
 JG_INJECT_CONFIRM_SLEEP=0.5        # seconds between daemon submit checks

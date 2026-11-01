@@ -2,7 +2,7 @@
 
 Audience: maintainer verification.
 
-This record supports current session-start, turn-end, watcher-continuity, supervision-host, and wedge-alarm guarantees.
+This record supports current session-start, turn-end, watcher-continuity, supervision-host, and wedge-alert guarantees.
 Operator behavior and active limits remain in the linked current guides.
 Task-specific chronology, temporary paths, run identifiers, and delivery transcripts remain in private reports or PR evidence.
 
@@ -846,38 +846,11 @@ tests/jg-afk-return.test.sh
 tests/jg-branch-supervision.test.sh
 ```
 
-## Wedge-alarm channels
+## Wedge alert
 
-The two real notification channels were bounded manually on 2026-07-10 on macOS 26.5.2 with Herdr 0.7.3.
-Automated suites never execute these real notification commands.
-
-Argv-safe Notification Center command:
-
-```sh
-/usr/bin/osascript \
-  -e 'on run argv' \
-  -e 'display notification (item 1 of argv) with title "JUGGERNAUT TEST - IGNORE" sound name "Basso"' \
-  -e 'end run' \
-  'JUGGERNAUT TEST - IGNORE (wedge-alarm channel verification)'
-```
-
-Observed output: no stdout, exit 0, and one banner with the supplied body.
-
-Herdr command:
-
-```sh
-herdr notification show 'JUGGERNAUT TEST - IGNORE' \
-  --body 'JUGGERNAUT TEST - IGNORE (wedge-alarm channel verification)' \
-  --sound request
-```
-
-Observed output:
-
-```json
-{"id":"cli:notification:show","result":{"reason":"shown","shown":true,"type":"notification_show"}}
-```
-
-The safe command-channel contract is covered without a notification by `tests/jg-daemon.test.sh`: the summary reaches both `$1` and stdin, every channel is process-group bounded, and a failed channel falls through.
+The max-defer wedge alert reaches the captain by the one captain channel, `bin/jg-bus.sh publish alert away-mode-wedge`, and no per-channel notifier exists beside it.
+The channels this section previously recorded (macOS Notification Center, herdr, a captain-supplied `command:`) are deleted with `config/wedge-alarm`: the slice that removed the duplicate notifier records its own dated proof, and [`captain-channel.md`](../captain-channel.md) owns how the surviving path runs, reverses and replays.
+`tests/jg-afk-inject-herdr-e2e.test.sh` Scenario D still proves the wedge itself end to end: the durable marker is written and the buffer is preserved while the daemon keeps running, and its channel config is `set mode off` so no test reaches a bus or the captain's iPad.
 
 ## Owner-correction capture at the turn boundary, 2026-10-30
 

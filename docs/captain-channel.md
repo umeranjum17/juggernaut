@@ -32,8 +32,8 @@ Delivery needs `ntfy` running; the record and the bus need their own services on
 
 ## The path
 
-The two paths that reach the captain's record today are the board (`bin/jg-question-card.sh post`) and the supervision branch's captain outcome (`bin/jg-branch-outcome.sh append`).
-Both now send their event through `bin/jg-bus.sh publish`.
+The three paths that reach the captain's record today are the board (`bin/jg-question-card.sh post`), the supervision branch's captain outcome (`bin/jg-branch-outcome.sh append`), and the away-mode wedge alert (`bin/jg-supervise-daemon.sh`, kind `alert`).
+All three send their event through `bin/jg-bus.sh publish`.
 A routine or silent outcome is not captain-facing, so it is not sent.
 
 Every event is written to `state/captain-channel.jsonl` **before** anything is published, so an unreachable bus or a stopped service loses nothing.
