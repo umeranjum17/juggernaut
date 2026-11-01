@@ -2,43 +2,23 @@
   "schema": "jg-throughput.v1",
   "window-days": 7,
   "min-hours-per-day": 1,
+  "max-filed": 3,
+  "refile-growth-hours": 1,
+  "refile-days": 7,
   "ledger": "",
   "outcomes": "",
   "prs": "",
   "runs": "",
   "stages": [
-    {
-      "id": "rework",
-      "label": "rework after done",
-      "owner": "core",
-      "fix": "done only when the final head's required checks are green, or a sealed local-suite receipt proves that head"
-    },
-    {
-      "id": "queue",
-      "label": "GitHub runner queue wait",
-      "owner": "core",
-      "fix": "a thin pull-request gate, so the account's runner pool stops saturating"
-    },
-    {
-      "id": "run",
-      "label": "CI run time",
-      "owner": "core",
-      "fix": "run the heavy suites nightly and the changed-file set on the pull request"
-    },
-    {
-      "id": "green_to_merged",
-      "label": "green to merged pickup",
-      "owner": "core",
-      "fix": "auto-merge on green once the required checks and the merge gate report"
-    },
-    {
-      "id": "handoff",
-      "label": "handoff with nothing recorded running",
-      "owner": "lead",
-      "fix": "wake on check completion instead of polling a paused worker"
-    }
-  ],
-  "max-filed": 3,
-  "refile-growth-hours": 1,
-  "refile-days": 7
+    {"id": "rework", "label": "rework after done", "owner": "core",
+     "fix": "done only when the final head's required checks are green, or a sealed local-suite receipt proves that head"},
+    {"id": "queue", "label": "GitHub runner queue wait", "owner": "core",
+     "fix": "a thin pull-request gate, so the account's runner pool stops saturating"},
+    {"id": "run", "label": "CI run time", "owner": "core",
+     "fix": "run the heavy suites nightly and the changed-file set on the pull request"},
+    {"id": "green_to_merged", "label": "green to merged pickup", "owner": "core",
+     "fix": "auto-merge on green once the required checks and the merge gate report"},
+    {"id": "handoff", "label": "handoff with nothing recorded running", "owner": "lead",
+     "fix": "wake on check completion instead of polling a paused worker"}
+  ]
 }
