@@ -66,7 +66,17 @@
 //	ensure   Start the server when it is not listening and create the stream, then say
 //	         one line. What a bootstrap step and docs/bus-service.md run.
 //	unit     Print the systemd user service a home installs once, which runs the server
-//	         itself and creates the stream after it starts.
+//	         itself and creates the stream after it starts. The config it runs is ONE
+//	         merged file (the base config in force plus this machine's accounts, no
+//	         includes), and its JetStream budget is the per-account reservation times the
+//	         number of accounts, because a global cap below that sum makes the server
+//	         refuse JetStream outright (10047).
+//	install-service
+//	         Make that service real: write the unit when it is missing or names another
+//	         home, reload systemd, enable it now, and verify. Without a user manager it
+//	         falls back to `ensure`. One line either way, and never a failed boot - this
+//	         is what bin/jg-bootstrap.sh and bin/jg-update.sh run so a release cannot go
+//	         live without its bus and a reboot brings it back.
 //	serve    Start the three services from their files, every one of them read as config
 //	         and none re-implemented here: nats-server (core/bus/nats.conf), the
 //	         JetStream stream it carries (core/bus/stream.json), the slim Dapr runtime
@@ -82,7 +92,7 @@
 //	jg-bus publish <kind> <key> <text> [--link <url>]
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus serve | ensure | unit | stop | status | bootstrap
+//	jg-bus serve | ensure | unit | install-service | stop | status | bootstrap
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
 // JG_CAPTAIN_CHANNEL.
@@ -136,6 +146,8 @@ func run(args []string) int {
 		return a.serve()
 	case "unit":
 		return a.unit()
+	case "install-service":
+		return a.installService()
 	case "accounts":
 		return a.accounts(rest)
 	case "ensure":

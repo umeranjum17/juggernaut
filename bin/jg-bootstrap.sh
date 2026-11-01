@@ -1517,22 +1517,33 @@ startup_memory_budget_setup() {
 # prints nothing once a home is complete. A successful first wiring prints what
 # it wrote, including sign-off's one-line arming reminder; arming itself stays
 # per home and is never done here.
-# bus_service: report whether this home's JetStream is running, and never start
-# it. The server is a systemd user service the home installs once (docs/bus-service.md
-# owns the steps), so systemd owns it across reboots and a bootstrap pass cannot
-# leave a daemon nobody supervises, write outside the home, or bind a port in a
-# test fixture. Local, read-only, and it never fails the boot.
+# bus_service: make this home's bus a running service, once. `bin/jg-bus.sh
+# install-service` owns how - write or refresh the unit, reload systemd, enable it now,
+# or fall back to a detached `ensure` where there is no user manager - so a home whose
+# code just arrived with the bus in it, or a machine that rebooted, has its server up
+# without anyone starting it by hand. It prints one line, and it never fails the boot:
+# a home whose bus cannot start still comes up, and the line names what to fix.
 bus_service() {
   command -v nats-server >/dev/null 2>&1 || return 0
-  command -v systemctl >/dev/null 2>&1 || return 0
-  # No user manager (CI, a container) means no unit to read: the lane that proves
-  # the server there is tests/jg-bus-service.test.sh, not this check.
-  systemctl --user show-environment >/dev/null 2>&1 || return 0
-  if systemctl --user is-active --quiet jg-bus.service; then
-    [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: bus: up, systemd user service jg-bus"
+  [ -x "$SCRIPT_DIR/jg-bus.sh" ] || return 0
+  # Nothing to start with: with no built command and no Go toolchain the bus cannot run
+  # on this host at all, and the bus command itself names that whenever it is run, so a
+  # boot says nothing here rather than a line nobody can act on.
+  if [ ! -x "${JG_BUS_BIN:-$STATE/bin/jg-bus}" ] && ! command -v "${JG_BUS_GO:-go}" >/dev/null 2>&1; then
     return 0
   fi
-  echo "MISSING: the message bus is not running, so no live path on this home can publish or consume (install: mkdir -p ~/.config/systemd/user && JG_HOME=$JG_HOME bin/jg-bus.sh unit > ~/.config/systemd/user/jg-bus.service && systemctl --user enable --now jg-bus)"
+  local out
+  out=$("$SCRIPT_DIR/jg-bus.sh" install-service 2>&1) || true
+  [ -n "$out" ] || return 0
+  # A healthy bus stays quiet here, as it always has; anything a first sight would act
+  # on - installed, restarted, or refused - is printed.
+  case "$out" in
+    "bus: up"*)
+      [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && echo "BOOTSTRAP_INFO: $out"
+      ;;
+    *) echo "$out" ;;
+  esac
+  return 0
 }
 
 companion_tool_wiring() {

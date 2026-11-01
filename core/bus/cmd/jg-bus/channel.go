@@ -255,6 +255,10 @@ func (a *app) status() int {
 		state := "down"
 		if pid, ok := a.runningPid(name); ok {
 			state = fmt.Sprintf("up (%d)", pid)
+		} else if name == "nats" && busListening(a.cfgOr("nats-url", "")) {
+			// The unit runs the server itself, so there is no pid file here; a server
+			// that answers is up whoever started it.
+			state = "up (systemd user service " + unitName() + ")"
 		}
 		fmt.Printf("%s: %s\n", name, state)
 	}
@@ -266,25 +270,43 @@ func (a *app) status() int {
 // itself (not `serve`, which only starts services and exits) and creates the stream
 // right after it starts.
 func (a *app) unit() int {
+	text, err := a.buildUnit()
+	if err != nil {
+		return die("%v", err)
+	}
+	fmt.Print(text)
+	return 0
+}
+
+// buildUnit writes the machine's server config and accounts, and returns the unit
+// text that runs them. The config is ONE file with no `include` lines: nats-server
+// resolves an include path against the config's own directory, so an absolute one
+// becomes state/bus/home/... and the server refuses to start. One merged file is also
+// what lets the JetStream budget be sized for the number of accounts instead of
+// staying below what those accounts reserve.
+func (a *app) buildUnit() (string, error) {
 	if err := os.MkdirAll(a.runtime, 0o755); err != nil {
-		return die("cannot create %s", a.runtime)
+		return "", fmt.Errorf("cannot create %s", a.runtime)
 	}
 	natsServer := "nats-server"
 	if path, err := exec.LookPath("nats-server"); err == nil {
 		natsServer = path
 	}
-	// One server per machine: the unit runs the base config with this machine's
-	// per-home accounts included, so every home on the machine shares one
-	// JetStream and no account can reach another home's subjects.
-	base := a.busFile("nats.conf")
-	conf := filepath.Join(a.runtime, "bus.conf")
+	// One server per machine: the config carries this machine's per-home accounts, so
+	// every home on the machine shares one JetStream and no account can reach another
+	// home's subjects.
+	homes := a.machineHomes()
 	accounts := filepath.Join(a.runtime, "accounts.conf")
-	if err := a.unitAccounts(accounts); err != nil {
-		return die("cannot write %s: %v", accounts, err)
+	if err := a.unitAccounts(accounts, homes); err != nil {
+		return "", fmt.Errorf("cannot write %s: %v", accounts, err)
 	}
-	include := fmt.Sprintf("include %q\ninclude %q\n", base, accounts)
-	if err := os.WriteFile(conf, []byte(include), 0o600); err != nil {
-		return die("cannot write %s: %v", conf, err)
+	conf := filepath.Join(a.runtime, "bus.conf")
+	text, err := a.machineConfig(len(homes))
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(conf, []byte(text), 0o600); err != nil {
+		return "", fmt.Errorf("cannot write %s: %v", conf, err)
 	}
 	quote := func(value string) string {
 		value = strings.ReplaceAll(value, `\`, `\\`)
@@ -308,6 +330,5 @@ func (a *app) unit() int {
 	fmt.Fprintf(&b, "RestartSec=5\n\n")
 	fmt.Fprintf(&b, "[Install]\n")
 	fmt.Fprintf(&b, "WantedBy=default.target\n")
-	fmt.Print(b.String())
-	return 0
+	return b.String(), nil
 }

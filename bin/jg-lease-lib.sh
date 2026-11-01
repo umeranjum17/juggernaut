@@ -51,12 +51,16 @@
 #     generation-activation cleanup; the supervision host also releases them
 #     after every engine turn), which also recovers a lease held by the live
 #     session but an abandoned branch conversation.
-#   - The store is required exactly where a lease decision is needed. A home in
-#     no supervision context, holding no lease, that runs no supervision host
-#     never asks the bus anything, so it behaves as before and needs no bus. A
-#     home that does need to decide refuses rather than guessing when the store
-#     cannot answer: a guard that cannot read the record would let two actors
-#     mutate one task at once, so it stops before anything is changed.
+#   - The store is asked only where a lease decision is needed. A home in no
+#     supervision context, holding no lease, that runs no supervision host never
+#     asks the bus anything, so it behaves as before and needs no bus. A home that
+#     does need to decide, in a session where the store cannot answer, continues on
+#     the file path and says so once, plainly: the durable files a steer or a launch
+#     writes are still the record, so one missing service costs the cross-actor lease
+#     and must never cost the fleet its steering (captain, live incident 2026-11-01:
+#     every steer and every lead restart was refused on a home whose server was not
+#     running). A store that answers still refuses the other actor's live lease, so
+#     the protection is unchanged whenever the bus is there.
 #   - The guard is a read, not a claim. It refuses while the other actor's lease
 #     is live and leaves no record behind, so a guarded action that is abandoned
 #     halfway leaves nothing to expire. What serializes a takeover is the claim's
@@ -126,6 +130,8 @@ JG_LEASE_REFUSE_EXIT=6
 JG_LEASE_LIB_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
 JG_LEASE_BUCKET=JG_LEASES
 JG_LEASE_WHY=
+# shellcheck disable=SC2034 # Read by jg_lease_degrade on a later call in this shell.
+JG_LEASE_DEGRADED=
 
 # jg_lease_kv_lib: source the client library once per shell.
 jg_lease_kv_lib() {
@@ -136,6 +142,7 @@ jg_lease_kv_lib() {
 
 # jg_lease_home: the home this shell resolves records against.
 jg_lease_home() {
+  # shellcheck disable=SC2153 # STATE is set by the script that sources this library
   printf '%s\n' "$(dirname "$STATE")"
 }
 
@@ -260,19 +267,33 @@ jg_lease_holder_pid() {
 }
 
 # jg_lease_unavailable <verb> <task>: the one refusal text for a store that
-# cannot answer, so every caller stops the same way instead of guessing.
+# cannot answer, for the diagnostic callers (bin/jg-lease.sh check and sweep) that
+# report state rather than mutate it.
 jg_lease_unavailable() { # <verb> <task>
   echo "error: $1 refused - no task-lease store answers at ${JG_KV_URL_RESOLVED:-the configured bus} (${JG_LEASE_WHY:-not reachable}). Nothing was changed. Start the home's bus with bin/jg-bus.sh serve, then retry." >&2
 }
 
-# jg_lease_claim <task> <actor>: take the lease. Returns 0 granted, 6 refused
-# (the other actor's live lease), 1 when the store cannot decide. A refresh of
-# the holder's own lease is a claim like any other, so a holder never has to
-# release first.
+# jg_lease_degrade <verb> <task>: say plainly that the store cannot answer and that
+# this action continues on the file path, once per shell so one command says it once.
+# This is the deliberate degradation the contract above owns: the durable files are
+# still written, and only the cross-actor lease is missing.
+jg_lease_degrade() { # <verb> <task>
+  [ -z "$JG_LEASE_DEGRADED" ] || return 0
+  # shellcheck disable=SC2034 # Read by a later call in the same shell.
+  JG_LEASE_DEGRADED=1
+  printf 'note: %s continues on the file path - no task-lease store answers at %s (%s), so the supervision lease cannot be read or written this time; nothing is blocked, and bin/jg-bus.sh install-service starts the bus\n' \
+    "$1" "${JG_KV_URL_RESOLVED:-the configured bus}" "${JG_LEASE_WHY:-not reachable}" >&2
+  return 0
+}
+
+# jg_lease_claim <task> <actor>: take the lease. Returns 0 granted, or granted on the
+# file path with one plain line when the store cannot answer, and 6 refused (the other
+# actor's live lease). A refresh of the holder's own lease is a claim like any other, so
+# a holder never has to release first.
 jg_lease_claim() { # <task> <actor>
   local task=$1 actor=$2 key line attempt value revision
   key=$(jg_lease_key "$task") || return 1
-  jg_lease_bucket_ready || { jg_lease_unavailable claim "$task"; return 1; }
+  jg_lease_bucket_ready || { jg_lease_degrade claim "$task"; return 0; }
   line=$(printf '%s\t%s\t%s' "$actor" "$(jg_lease_holder_pid)" "$(date +%s)")
   attempt=0
   while [ "$attempt" -lt 6 ]; do
@@ -302,7 +323,7 @@ jg_lease_claim() { # <task> <actor>
 jg_lease_release() { # <task> <actor>
   local task=$1 actor=$2 key
   key=$(jg_lease_key "$task") || return 1
-  jg_lease_bucket_ready || { jg_lease_unavailable release "$task"; return 1; }
+  jg_lease_bucket_ready || { jg_lease_degrade release "$task"; return 0; }
   jg_lease_read "$task" || return 0
   [ -z "$JG_LEASE_ACTOR" ] || [ "$JG_LEASE_ACTOR" = "$actor" ] || return 0
   jg_kv_del "$JG_LEASE_BUCKET" "$key"
@@ -313,7 +334,7 @@ jg_lease_release() { # <task> <actor>
 # is replaced, so a stale holder never outlives it.
 jg_lease_release_actor() { # <actor>
   local actor=$1 task key
-  jg_lease_bucket_ready || { jg_lease_unavailable "lease release" "$actor"; return 1; }
+  jg_lease_bucket_ready || { jg_lease_degrade "lease release" "$actor"; return 0; }
   for key in $(jg_kv_keys "$JG_LEASE_BUCKET" "lease/$(jg_kv_home_key "$STATE")/"); do
     [ -n "$key" ] || continue
     task=${key##*/}
@@ -337,8 +358,8 @@ jg_lease_clear_stale() { # <task>
 }
 
 # jg_lease_guard <task> <action-label>: refuse (exit JG_LEASE_REFUSE_EXIT) when
-# a live lease held by the OTHER actor exists for <task>, and refuse (exit 1)
-# when the store cannot answer. Engaged in a supervision context, in a home that
+# a live lease held by the OTHER actor exists for <task>, and continue with one plain
+# line when the store cannot answer. Engaged in a supervision context, in a home that
 # runs the supervision host, and otherwise by nothing at all - a home that never
 # runs a branch never reads the store.
 jg_lease_guard() {
@@ -352,11 +373,12 @@ jg_lease_guard() {
       ;;
   esac
   jg_lease_bucket_ready || {
-    # Refusing here is deliberate: a guard that cannot read the record would
-    # let two supervision actors mutate one task at once, so the caller stops
-    # before it changes anything.
-    jg_lease_unavailable "$action" "$task"
-    exit 1
+    # Continuing is deliberate: the record is unreachable, so the lease cannot be read
+    # and the guard falls back to the file path the fleet used before the bus, saying
+    # so once. A home whose server is down keeps steering (captain, live incident
+    # 2026-11-01); the cross-actor lease returns the moment the store answers.
+    jg_lease_degrade "$action" "$task"
+    return 0
   }
   if ! jg_lease_live "$task"; then
     jg_lease_clear_stale "$task" || return 1

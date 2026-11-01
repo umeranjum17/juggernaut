@@ -134,6 +134,24 @@ if [ "$FF_STATUS" = "updated" ]; then
   JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$SCRIPT_DIR/jg-procevent-when.sh" rebind-all || true
 fi
 
+# The bus is a SERVICE, not a process someone remembers to start: a release that lands
+# the bus code on a home - or lands on a home that never had it - otherwise goes live
+# with no message server, and every steer and lead restart is refused until somebody
+# starts one by hand, which a reboot then takes away again. So every pass asks the
+# updated home's own command to install or start it, and prints its one line. Best
+# effort: a home whose bus cannot start still finishes its update.
+ensure_bus_service() {  # <home>
+  local home=$1 out
+  [ -f "$home/bin/jg-bus.sh" ] || return 0
+  if out=$(JG_HOME="$home" JG_ROOT_OVERRIDE="$home" "$home/bin/jg-bus.sh" install-service 2>&1); then
+    [ -z "$out" ] || printf '%s\n' "$out"
+  else
+    echo "bus: could not start in $home: ${out:-unknown error}"
+  fi
+}
+
+ensure_bus_service "$JG_ROOT"
+
 # --- squad_leads -----------------------------------------------------------
 # Every live squad_lead this pass leaves on origin's tip is restarted, whether it
 # advanced or was already there. The header above owns why the git diff does not

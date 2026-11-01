@@ -64,6 +64,8 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-task-inbox-lib.sh
 . "$SCRIPT_DIR/jg-task-inbox-lib.sh"
+# shellcheck source=bin/jg-kv-lib.sh
+. "$SCRIPT_DIR/jg-kv-lib.sh"
 
 WAKE_STREAM=JG_WAKE
 INBOX_STREAM=JG_INBOX
@@ -96,7 +98,7 @@ config_get() { # <home-dir> <key> <default>
 
 bus() { # one client call against the bus; the server address is always explicit
   [ -n "${BUS_NATS:-}" ] || return 1
-  "$BUS_NATS" -s "$BUS_URL" --timeout 10s "$@"
+  jg_kv_run "$BUS_NATS" "$BUS_URL" "$HOME_DIR/state" "$@"
 }
 
 # bus_gate: resolve the client and prove the server answers, or say why not. It
