@@ -707,6 +707,7 @@ tests/jg-prompt-gate.test.sh 59264
 tests/jg-proof-attach.test.sh 1545
 tests/jg-public-followup.test.sh 474556
 tests/jg-quota-array-dispatch-live-e2e.test.sh 54
+tests/jg-release-readiness.test.sh 2264
 tests/jg-remote-reply.test.sh 240899
 tests/jg-remote-squad-lead-lifecycle-e2e.test.sh 567728
 tests/jg-rovo-signals-live-e2e.test.sh 57

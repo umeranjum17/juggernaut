@@ -6,8 +6,9 @@
 # WHY. The captain asked "migration done?" and, minutes later, "what is live on
 # our system?". Both answers sat in durable records and neither reached him on
 # its own: a big effort changes every hour and nothing he could read followed it.
-# So the effort records one batch-class captain outcome of four lines - done,
-# left, release blockers, what is live now - and this script pushes it.
+# So the effort records one batch-class captain outcome of five lines - done,
+# left, release blockers, release state, what is live now - and this script
+# pushes it.
 #
 # CONTRACT (this header is the one owner).
 #   record   $DATA/status-digest/records.jsonl, append-only, one JSON object per
@@ -36,6 +37,11 @@
 #                   began, because that record is what says work landed.
 #            Left   and Release blockers are the recorded words, since only the
 #                   lead knows them.
+#            Release is the one line bin/jg-release-readiness.sh `show` prints,
+#                   so the digest answers "did we make releases?" every time: a
+#                   ready release, one waiting to ship, one blocked and by what.
+#                   A home without that script, or a release it cannot describe,
+#                   carries the plain statement that no release is in progress.
 #            Live now the newest released ref in data/releases, or the plain
 #                   statement that no release is recorded yet, never a guess.
 #
@@ -99,7 +105,8 @@ merged_since() {  # <epoch>
 # Trim a trailing period, so a line does not end with two.
 clean() { printf '%s' "${1-}" | sed -e 's/[[:space:]]*$//' -e 's/\.$//'; }
 
-# Build the four lines into DONE, LEFT, BLOCKERS and LIVE, or die with no record.
+# Build the five lines into DONE, LEFT, BLOCKERS, RELEASE and LIVE, or die with no
+# record.
 render() {
   local rec start live merged leftw blockw unit=task
   [ -s "$REC" ] || die "no batch outcome is recorded yet: run record first"
@@ -112,13 +119,24 @@ render() {
   [ -n "$leftw" ] || leftw='not recorded'
   [ -n "$blockw" ] || blockw='none recorded'
   [ "$merged" = 1 ] || unit=tasks
+  RELEASE=$(release_line)
   DONE="Done: $(clean "$(printf '%s' "$rec" | jq -r '.milestone')"); $merged $unit merged since $(date -u -d "@$start" +%Y-%m-%d)"
   LEFT="Left: $leftw"
   BLOCKERS="Release blockers: $blockw"
   if [ -n "$live" ]; then LIVE="Live now: $live"; else LIVE='Live now: no release is recorded yet'; fi
 }
 
-digest_text() { printf '%s\n%s\n%s\n%s' "$DONE" "$LEFT" "$BLOCKERS" "$LIVE"; }
+# The release line, owned by bin/jg-release-readiness.sh so the two never drift.
+release_line() {
+  local line=''
+  if [ -x "$home/bin/jg-release-readiness.sh" ]; then
+    line=$("$home/bin/jg-release-readiness.sh" "$home" show --now "$now" 2>/dev/null | head -n 1)
+  fi
+  [ -n "$line" ] || line='Release: no release is in progress'
+  printf '%s\n' "$line"
+}
+
+digest_text() { printf '%s\n%s\n%s\n%s\n%s' "$DONE" "$LEFT" "$BLOCKERS" "$RELEASE" "$LIVE"; }
 
 # 'live' when the captain channel is live in this home, or nothing.
 channel_mode() {
@@ -140,9 +158,9 @@ preview_svg() {  # <done> <left> <live>
 
 # One self-contained page on the board's own forms: the answer, one picture, one
 # tap-through of the recorded milestones, and the detail folded.
-write_card() {  # <dir> <done> <left> <blockers> <live> <milestones-json>
+write_card() {  # <dir> <done> <left> <blockers> <release> <live> <milestones-json>
   local dir=$1 steps
-  steps=$(printf '%s' "$6" | jq -c 'if length == 0 then ["none recorded"] else . end')
+  steps=$(printf '%s' "$7" | jq -c 'if length == 0 then ["none recorded"] else . end')
   mkdir -p "$dir"
   {
     cat <<'HTML'
@@ -152,25 +170,25 @@ write_card() {  # <dir> <done> <left> <blockers> <live> <milestones-json>
 @media (prefers-color-scheme:dark){:root{color-scheme:dark light}body{background:Canvas;color:CanvasText}}</style>
 HTML
     printf '<h1>%s</h1>\n' "$(xml "$2")"
-    printf '<p>%s</p>\n<p>%s</p>\n<p>%s</p>\n' "$(xml "$3")" "$(xml "$4")" "$(xml "$5")"
+    printf '<p>%s</p>\n<p>%s</p>\n<p>%s</p>\n<p>%s</p>\n' "$(xml "$3")" "$(xml "$4")" "$(xml "$5")" "$(xml "$6")"
     preview_svg "$2" "$3" "$5"
     printf '<p class=sub>Tap through the milestones this batch recorded.</p>\n<p id=t></p><button id=b>Next milestone</button>\n'
-    printf '<details><summary>Details</summary><p>Done counts the merged tasks in the task outcome record since this batch began. Live now names the newest release in the release record, so no line here is a guess.</p></details>\n'
+    printf '<details><summary>Details</summary><p>Done counts the merged tasks in the task outcome record since this batch began. Release comes from the release readiness record, and Live now names the newest release in the release record, so no line here is a guess.</p></details>\n'
     printf '<script>var R=%s,i=0,t=document.getElementById("t");function d(){t.textContent=(i+1)+" of "+R.length+": "+R[i]}\ndocument.getElementById("b").onclick=function(){i=(i+1)%%R.length;d()};d()</script>\n' "$steps"
   } > "$dir/index.html"
   preview_svg "$2" "$3" "$5" > "$dir/preview.svg"
 }
 
 # Post the digest as the fleet board report card and replace the previous one.
-post_card() {  # <key> <done> <left> <blockers> <live>
+post_card() {  # <key> <done> <left> <blockers> <release> <live>
   local key=$1 board dir prev
   board=$(tr -d '\n' < "$CFG/fleet-board" 2>/dev/null || true)
   [ -n "$board" ] || die "no fleet board is named: config/fleet-board is missing or empty"
   dir=$(dirname "$board")/reports/$key
-  write_card "$dir" "$2" "$3" "$4" "$5" "$(jq -sc '[.[].milestone]' "$REC")"
+  write_card "$dir" "$2" "$3" "$4" "$5" "$6" "$(jq -sc '[.[].milestone]' "$REC")"
   "${JG_STATUS_DIGEST_POST:-sign-off-axi}" post "$board" --type report --purpose status \
     --project "${JG_STATUS_DIGEST_PROJECT:-Batch}" --filer "${JG_STATUS_DIGEST_FILER:-status-digest}" \
-    --key "$key" --title "$2" --about "$3 $4 $5" \
+    --key "$key" --title "$2" --about "$3 $4 $5 $6" \
     --view "reports/$key/index.html" --preview "reports/$key/preview.svg" >/dev/null \
     || die "the fleet board refused the digest card $key"
   prev=$(tail -n 1 "$PUSHES" 2>/dev/null | jq -r 'select(.via == "card") | .key // empty' 2>/dev/null || true)
@@ -205,7 +223,7 @@ push() {  # <milestone|cadence>
     "$home/bin/jg-bus.sh" publish digest "$key" "$text" >/dev/null || die "the captain channel refused the digest"
   else
     via=card
-    post_card "$key" "$DONE" "$LEFT" "$BLOCKERS" "$LIVE"
+    post_card "$key" "$DONE" "$LEFT" "$BLOCKERS" "$RELEASE" "$LIVE"
   fi
   mkdir -p "$DIR"
   jq -cn --argjson at "$now" --arg via "$via" --arg key "$key" --arg hash "$hash" --arg digest "$text" \
