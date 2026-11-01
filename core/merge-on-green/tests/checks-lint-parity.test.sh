@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# E2E: compare the pinned done-done adapter with the existing lint verdicts on size fixtures.
+# E2E: compare the pinned done-done adapter with the existing lint verdicts on size fixtures, and prove a
+# size-only FAIL from the pinned lint is handed to the feature lint, which advises on size instead of refusing.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -27,7 +28,8 @@ cat > "$d/bin/gh" <<'EOF'
 case "$1 $2" in
   'pr view'*)
     id=${3##*/}
-    printf '{"author":{"login":"umeranjum17"},"body":"## Checks\\noutcome: fixture\\nrepro: n/a: no bug\\nproof: no verify skill - bash fixture\\nevidence: not proven: fixture\\n","title":"feat: fixture","headRefOid":"head-%s","headRefName":"fixture/%s","baseRefOid":"base-%s"}\n' "$id" "$id" "$id"
+    n=10; [ "$id" != 1004 ] || n=1000  # the feature lint measures size from this list
+    printf '{"author":{"login":"umeranjum17"},"body":"## Checks\\noutcome: fixture\\nrepro: n/a: no bug\\nproof: no verify skill - bash fixture\\nevidence: not proven: fixture\\n","title":"feat: fixture","files":[{"path":"src/change.txt","additions":%s,"deletions":0}],"headRefOid":"head-%s","headRefName":"fixture/%s","baseRefOid":"base-%s"}\n' "$n" "$id" "$id" "$id"
     ;;
   'api -H'*)
     case "$*" in
@@ -51,7 +53,8 @@ case "$1 $2" in
     id=$(printf '%s' "$2" | sed -nE 's#^repos/owner/repo/pulls/([0-9]+)/files.*#\1#p')
     path=src/change.txt
     case "$id" in 1002) path=packages/accounts/src/pi/generated.ts ;; 1003) path=packages/accounts/src/routes.json ;; esac
-    printf '[{"filename":"%s","status":"added","additions":10,"deletions":0}]\n' "$path"
+    n=10; [ "$id" != 1004 ] || n=1000  # 1004 is the size fixture the feature lint measures from the file list
+    printf '[{"filename":"%s","status":"added","additions":%s,"deletions":0}]\n' "$path" "$n"
     ;;
   'api repos/owner/repo') : ;;
   *) echo "unexpected gh call: $*" >&2; exit 2 ;;
@@ -92,7 +95,19 @@ set +e
 fallback=$(JG_HOME="$d/jg-good" JG_DONE_DONE_BIN="$d/bin/old-done-done" "$ROOT/merge-on-green/checks-lint.sh" 'https://github.com/owner/repo/pull/1001' "$d/fm/data/evidence" 2>&1); fallback_rc=$?
 set -e
 [ "$fallback_rc" -eq 0 ] && [[ "$fallback" == *'checks-lint: PASS: fixture'* ]] || { echo "FAIL fallback: rc=$fallback_rc ($fallback)"; exit 1; }
-[ "$(wc -l < "$JG_MAIN_HOME/revocations")" -eq 1 ] && grep -q '^fixture|FAIL|' "$JG_MAIN_HOME/revocations" || { echo 'FAIL FAIL receipt'; exit 1; }
+# A size-only FAIL is handed to the feature lint, which owns config/checks-size, so the adapter publishes no
+# receipt of its own for it: a stale FAIL receipt must never refuse a landing the size rule only advises on.
+[ ! -e "$JG_MAIN_HOME/revocations" ] || { echo 'FAIL a size-only FAIL still published a receipt'; exit 1; }
+# The pinned lint alone refuses a 1,000-line PR: its limit has no config key. The adapter hands that size-only
+# FAIL to the real feature lint, which prints the advisory line and passes on the remaining rules.
+mkdir -p "$d/jg-big/state" "$d/jg-big/data"
+printf 'pr=https://github.com/owner/repo/pull/1004\n' > "$d/jg-big/state/fixture.meta"
+set +e
+big=$(JG_HOME="$d/jg-big" JG_LEGACY_CHECKS_LINT="$ROOT/merge-on-green/jg-checks-lint.sh" "$ROOT/merge-on-green/checks-lint.sh" 'https://github.com/owner/repo/pull/1004' "$d/fm/data/evidence" 2>&1); big_rc=$?
+set -e
+[ "$big_rc" -eq 0 ] && [[ "$big" == *'checks-lint: advisory: 1000 added non-generated lines'*' is over the 1000-line guidance'* ]] && [[ "$big" == *'checks-lint: PASS:'* ]] \
+  || { echo "FAIL size-only FAIL was not handed to the advisory rule: rc=$big_rc ($big)"; exit 1; }
+echo 'PASS a size-only FAIL from the pinned lint ends as an advisory line and a PASS'
 # A caller-relative evidence directory must survive the adapter's temporary cwd.
 printf 'evidence fixture\n' > "$d/cwd/data/evidence/result.txt"
 printf 'pr=https://github.com/owner/repo/pull/1001\n' > "$d/jg-good/state/fixture.meta"
@@ -102,4 +117,4 @@ set -e
 [ "$relative_rc" -eq 0 ] && [[ "$relative" == *'checks-lint: PASS: not-proven:'* ]] || { echo "FAIL relative evidence: rc=$relative_rc ($relative)"; exit 1; }
 grep -Fq "https://github.com/owner/repo/pull/1001|$d/cwd/data/evidence" "$DONE_DONE_ARGS_LOG" || { echo 'FAIL relative evidence was not made absolute'; exit 1; }
 grep -q '^fixture|PASS|' "$JG_MAIN_HOME/revocations" || { echo 'FAIL PASS receipt'; exit 1; }
-echo 'PASS: pinned done-done, relative evidence, generated exclusions, legacy fallback, and PASS/FAIL receipts'
+echo 'PASS: pinned done-done, a size-only FAIL advised not refused, relative evidence, generated exclusions, legacy fallback, and receipts'
