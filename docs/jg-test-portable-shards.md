@@ -30,6 +30,7 @@ The 2026-10-30 hints for the fourteen scripts that had none (the ones the covera
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
 The 2026-11-01 `tests/jg-pr-wait.test.sh` carries its provisional local measurement of 208 ms from `bash tests/jg-pr-wait.test.sh` on the Linux workspace host for the same reason, so the next CI refresh replaces it with an Ubuntu measurement.
 `tests/jg-board-gate.test.sh` (437 ms) and `tests/jg-test-run.test.sh` (7444 ms) postdate that refresh and carry provisional local measurements until the next CI refresh replaces them, so the no-hint coverage guard keeps its margin.
+The 2026-11-01 `tests/jg-status-digest.test.sh` carries its provisional local measurement of 1569 ms from `bash tests/jg-status-digest.test.sh` on the Linux workspace host, so the next CI refresh replaces it with an Ubuntu measurement.
 `tests/jg-wake-route.test.sh` (527 ms) and `tests/jg-ticket-writeback.test.sh` (4258 ms) carry the same kind of provisional local measurement from three `bash tests/<file>` runs on the Linux workspace host, so the coverage guard keeps its margin until the next CI refresh.
 `tests/jg-wake-next.test.sh` (2751 ms) and `tests/migration-card.test.sh` (1443 ms) arrived with the same merge that carried the release branch's own unmeasured share past the guard's bound, so they take the duration one `bin/jg-test-run.sh` run on the Linux workspace host measured for each.
 

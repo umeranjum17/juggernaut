@@ -722,6 +722,7 @@ tests/jg-squad-lead-dormant.test.sh 1091
 tests/jg-squad-lead-lifecycle-e2e.test.sh 15675
 tests/jg-supervision-host-live-e2e.test.sh 58
 tests/jg-supervision-host.test.sh 1162449
+tests/jg-status-digest.test.sh 1569
 tests/jg-tangle-guard.test.sh 12088
 tests/jg-tasks-axi.test.sh 42685
 tests/jg-teardown.test.sh 479995
