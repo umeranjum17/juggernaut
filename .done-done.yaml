@@ -110,6 +110,8 @@ journeys:
     command: bash core/kill-guard/run-device-proof.sh
   kill-guard-main-live:
     command: node core/kill-guard/run-main-proof.mjs
+  wake-bus-live:
+    command: bash journeys/wake-bus-live.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

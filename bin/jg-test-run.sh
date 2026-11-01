@@ -410,7 +410,7 @@ family_for_basename() {
       ;;
     jg-turnend-guard.test.sh|jg-wake-daemon-lifecycle-e2e.test.sh|\
     jg-mail.test.sh|jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|\
-    jg-wake-next.test.sh|jg-pi-wake-replay.test.sh|jg-wake-bus-parity.test.sh|\
+    jg-wake-next.test.sh|jg-pi-wake-replay.test.sh|\
     jg-state-bus-parity.test.sh|jg-lease-live.test.sh|jg-reply-bus-parity.test.sh|\
     jg-reply-engine.test.sh|\
     jg-metrics-shadow-parity.test.sh|\

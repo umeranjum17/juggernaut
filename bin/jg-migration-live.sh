@@ -199,7 +199,7 @@ probe_accounts() {
 
 # probe_queue <part-label> <stream> <switch-key>: the bus-backed path.
 probe_queue() {
-  local label=$1 stream=$2 key=$3 count
+  local label=$1 stream=$2 key=$3 count owed
   if grep -qw off "$CFG/$key" 2>/dev/null; then
     printf 'pending\tthe %s is on the files: config/%s says off\n' "$label" "$key"
     return 0
@@ -207,6 +207,12 @@ probe_queue() {
   count=$(stream_msgs "$(nats_url)" "$stream")
   if [ -z "$count" ]; then
     printf 'pending\tthe server carries no %s stream, so the %s is not on the bus\n' "$stream" "$label"
+    return 0
+  fi
+  owed=$(count_lines "$STATE/.wake-bus.outbox.jsonl")
+  if [ "${owed:-0}" -gt 0 ]; then
+    printf 'pending\t%s events wait in this home'"'"'s outbox because the server refuses them; %s records on %s\n' \
+      "$owed" "$count" "$stream"
     return 0
   fi
   printf 'live\tthe bus is the store, %s records on %s\n' "$count" "$stream"
