@@ -41,5 +41,5 @@ out=$(cat "$T/home/state/branch-outcomes.jsonl")
 assert_contains "$out" "a switch is live" "a switch milestone is a captain outcome"
 assert_contains "$out" "15000 lines deleted" "each 5,000 lines is a milestone"
 assert_equals 2 "$(printf "%s\n" "$out" | wc -l)" "a merge that crosses no milestone records no digest"
-assert_contains "$out" "Release blockers: none recorded" "the digest has its three lines"
+assert_contains "$out" "Release blockers: none recorded. Card: " "the digest ends with blockers and the card link"
 pass "migration card follows the merge path"

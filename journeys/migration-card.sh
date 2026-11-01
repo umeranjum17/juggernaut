@@ -41,7 +41,7 @@ grep -q '16,546 of 31,832' "$LOG" || fails=1
   echo "previous cards shown as replaced: $(grep -c 'discarded: Replaced by newer' "$LOG")"
   echo "current card title: $(grep 'card-live-3,waiting' "$LOG" | cut -d'"' -f2)"
   echo "captain digests recorded: $(grep -c '"verdict":"captain"' "$LOG")"
-  grep -o 'Migration milestone: [^\\]*' "$LOG" | sed 's/^/milestone: /'
+  jq -r '"digest (" + (.summary|split("\n")|length|tostring) + " lines): " + (.summary|gsub("\n";" | "))' "$JG_HOME/state/branch-outcomes.jsonl"
 } > "$T/result"
 cat "$T/result" >> "$LOG"
 jq -n --arg v "$(git -C "$REPO" rev-parse --short HEAD)" '{target: {version: $v}, start: "a board with no migration card posted yet and a release branch with 9,446 lines deleted", steps: ["merge three changes into the release branch, one after another", "read the board and the captain digests after each merge"], result: "each merge posted a fresh card with the running total against 31,832, the previous card shows as replaced, and a milestone recorded a three-line digest"}' > "$OUT/steps.json"

@@ -74,7 +74,7 @@ HTML
 milestone() {  # <kind> <done> <left> <blockers> <card-key>
   local link summary
   link=$(jg_board_link reports "$5" 2>/dev/null) || link="card $5"
-  summary=$(printf 'Migration milestone: %s\nDone: %s\nLeft: %s\nRelease blockers: %s\nCard: %s' "$1" "$2" "$3" "$4" "$link")
+  summary=$(printf 'Done (%s): %s\nLeft: %s\nRelease blockers: %s. Card: %s' "$1" "$2" "$3" "$4" "$link")
   "$SCRIPT_DIR/jg-branch-outcome.sh" append --task migration-card --verdict captain --summary "$summary" >/dev/null \
     || echo "jg-migration-card: captain outcome not recorded" >&2
 }
