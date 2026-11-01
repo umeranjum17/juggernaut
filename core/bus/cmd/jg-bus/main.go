@@ -64,6 +64,11 @@
 //	         the bus routes to the lead a board answer routes to. An unrouted card is
 //	         refused, exactly as today, and its answer stays with Main.
 //	stream   Exit 0 when the stream exists on the server, 1 when not; creates nothing.
+//	account  Print this home's bus account and its credentials file, tab separated.
+//	         The account is the home's unique id (its Squad Lead id, else a hash of its
+//	         absolute path), never its folder name. `accounts [home...]` prints the
+//	         server block for these homes, Main and every data/squad_leads.md entry;
+//	         two homes on one account name are refused with a line naming both.
 //	ensure   Start the server when it is not listening and create the stream, then say
 //	         one line. What a bootstrap step and docs/bus-service.md run.
 //	unit     Print the systemd user service a home installs once for one part: nats
@@ -140,6 +145,8 @@ func run(args []string) int {
 		return a.unit(rest)
 	case "accounts":
 		return a.accounts(rest)
+	case "account":
+		return a.account()
 	case "ensure":
 		return a.ensure()
 	case "stop":
