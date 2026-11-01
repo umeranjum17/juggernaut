@@ -14,8 +14,8 @@ d=$(mktemp -d)
 mkdir -p "$d/absent/state"
 (
   for _ in 1 2 3 4 5 6 7 8; do
-    mkdir -p "$d/absent/state" 2>/dev/null
-    : > "$d/absent/state/late" 2>/dev/null
+    mkdir -p "$d/absent/state" 2>/dev/null || true
+    ( : > "$d/absent/state/late" ) 2>/dev/null || true
     sleep 0.03
   done
 ) &
@@ -34,8 +34,8 @@ stop="$d.stop"
 : > "$stop"
 (
   while [ -e "$stop" ]; do
-    mkdir -p "$d/stuck" 2>/dev/null
-    : > "$d/stuck/late" 2>/dev/null
+    mkdir -p "$d/stuck" 2>/dev/null || true
+    ( : > "$d/stuck/late" ) 2>/dev/null || true
     sleep 0.01
   done
 ) &
