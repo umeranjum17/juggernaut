@@ -1191,7 +1191,7 @@ jg_recovery_marker_handover_snapshot() {  # <marker>
     JG_RECOVERY_HANDOVER_TOKEN=$JG_RECOVERY_MARKER_TOKEN
   fi
   # shellcheck disable=SC2034 # Read by callers after this function returns.
-  JG_RECOVERY_HANDOVER_SEQ=$(cat "$STATE/.wake-queue.seq" 2>/dev/null || true)
+  JG_RECOVERY_HANDOVER_SEQ=$(awk -F '\t' 'NF >= 5 { last = $2 } END { print last + 0 }' "$JG_WAKE_QUEUE" 2>/dev/null)
   jg_lock_release "$lock"
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
 }
@@ -1205,7 +1205,7 @@ _jg_recovery_marker_handover_restore() {
     jg_lock_release "$JG_WAKE_QUEUE_LOCK"
     return 1
   fi
-  if [ "$(cat "$STATE/.wake-queue.seq" 2>/dev/null || true)" = "$seq" ] \
+  if [ "$(awk -F '\t' 'NF >= 5 { last = $2 } END { print last + 0 }' "$JG_WAKE_QUEUE" 2>/dev/null)" = "$seq" ] \
     && jg_recovery_marker_read "$marker"; then
     case "$JG_RECOVERY_MARKER_TOKEN" in
       pending:downtime:*)
@@ -2440,12 +2440,19 @@ jg_wake_clean_field() {
   LC_ALL=C tr '\t\r\n' '   '
 }
 
+# jg_wake_bus <command...>: the live path, with this home and this state. The bus
+# is the store; bin/jg-wake-bus.sh is its one owner, and docs/bus-live.md is the
+# contract. Callers never spell the environment out themselves.
+jg_wake_bus() {
+  JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" \
+    "$JG_WAKE_LIB_DIR/jg-wake-bus.sh" "$@"
+}
+
+# The queue is the bus's: a raise publishes, a render writes the read model every
+# other reader still opens, and nothing here takes a lock because the server
+# serialises its own appends.
 jg_wake_append() {
-  local status=0
-  jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK"
-  jg_wake_append_locked "$@" || status=$?
-  jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-  return "$status"
+  jg_wake_append_locked "$@"
 }
 
 # --- wake urgency routing -----------------------------------------------------
@@ -2511,9 +2518,7 @@ _jg_wake_realert_record() {
 # _jg_wake_settled_locked <kind> <key> <payload>: the record-only class, readable with
 # bin/jg-wake.sh settled. It never reaches the queue.
 _jg_wake_settled_locked() {
-  local now
-  jg_epoch_seconds_to now
-  printf '%s\tsilent\t%s\t%s\t%s\n' "$now" "$1" "$2" "$3" >> "$STATE/.wake-settled"
+  jg_wake_bus settle "$1" "$2" "$3"
 }
 
 # jg_wake_append_locked <kind> <key> <payload>
@@ -2527,7 +2532,7 @@ _jg_wake_settled_locked() {
 # JG_WAKE_CYCLE_URGENT latches once any row this cycle was `now`.
 # shellcheck disable=SC2034 # JG_WAKE_LAST and JG_WAKE_CYCLE_URGENT are read by wake() in the separately linted transition owner.
 jg_wake_append_locked() {
-  local kind=$1 key=$2 payload=$3 clean_key clean_payload class epoch seq seq_file status=0
+  local kind=$1 key=$2 payload=$3 clean_key clean_payload class status=0
   case "$kind" in
     signal|stale|check|heartbeat) ;;
     *) printf 'jg_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
@@ -2552,26 +2557,13 @@ jg_wake_append_locked() {
     return 0
   fi
 
-  jg_epoch_seconds_to epoch
-  seq_file="$STATE/.wake-queue.seq"
-  _jg_recovery_marker_publish "$STATE/.watcher-down" downtime "" append || status=$?
-  if [ "$status" -eq 0 ]; then
-    seq=$(cat "$seq_file" 2>/dev/null || echo 0)
-    case "$seq" in
-      ''|*[!0-9]*) seq=0 ;;
-    esac
-    seq=$((seq + 1))
-    printf '%s\n' "$seq" > "$seq_file" || status=$?
-  fi
-  if [ "$status" -eq 0 ]; then
-    printf '%s\t%s\t%s\t%s\t%s\n' "$epoch" "$seq" "$kind" "$clean_key" "$clean_payload" >> "$JG_WAKE_QUEUE" || status=$?
-  fi
+  # The server assigns the row's sequence and keeps the event, so nothing here
+  # allocates a number, appends to a file, or arms a recovery marker for a queue
+  # whose consumer might be down.
+  jg_wake_bus raise "$kind" "$clean_key" "$clean_payload" "$class" || status=$?
   if [ "$status" -ne 0 ]; then
-    _jg_wake_append_recovery_restore_locked || true
     return "$status"
   fi
-  JG_WAKE_APPEND_RECOVERY_PREVIOUS_TOKEN=
-  JG_WAKE_APPEND_RECOVERY_PUBLISHED_TOKEN=
   JG_WAKE_LAST="$class:$clean_key"
   if [ "$class" = now ]; then
     JG_WAKE_CYCLE_URGENT=1
@@ -2621,38 +2613,18 @@ jg_wake_queued_keys_locked() {
 # its condition holds again, so no work is lost; a row another actor already
 # consumed is simply absent from the queue and removes nothing.
 jg_wake_withdraw() {
-  local kind=$1 key=$2 clean_key status=0 tmp
+  local kind=$1 key=$2 clean_key ids status=0
   case "$kind" in
     signal|stale|check|heartbeat) ;;
     *) printf 'jg_wake_withdraw: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
   esac
   clean_key=$(printf '%s' "$key" | jg_wake_clean_field)
-  jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK"
-  if [ ! -f "$JG_WAKE_QUEUE" ]; then
-    jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-    return 0
-  fi
-  # Nothing to do without a matching row, so an idle producer never rewrites the
-  # queue on a cadence.
-  if ! awk -F '\t' -v kind="$kind" -v key="$clean_key" \
-    'NF >= 5 && $3 == kind && $4 == key { found = 1 } END { exit(found ? 0 : 1) }' \
-    "$JG_WAKE_QUEUE"; then
-    jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-    return 0
-  fi
-  if tmp=$(mktemp "$STATE/.wake-queue.withdraw.XXXXXX") && chmod 0600 "$tmp"; then
-    if awk -F '\t' -v kind="$kind" -v key="$clean_key" \
-      '!(NF >= 5 && $3 == kind && $4 == key) { print }' "$JG_WAKE_QUEUE" > "$tmp" \
-      && _jg_atomic_replace "$tmp" "$JG_WAKE_QUEUE"; then
-      tmp=
-    else
-      status=1
-    fi
-  else
-    status=1
-  fi
-  [ -z "$tmp" ] || rm -f -- "$tmp"
-  jg_lock_release "$JG_WAKE_QUEUE_LOCK"
+  # An idle producer must not touch the bus on a cadence, so the ids are read
+  # first and nothing is published when no row matches.
+  ids=$(jg_wake_bus ids "$kind" "$clean_key" 2>/dev/null) || return 0
+  [ -n "$ids" ] || return 0
+  # shellcheck disable=SC2086  # the ids are one per line, and each is one event id
+  jg_wake_bus ack $ids || status=$?
   return "$status"
 }
 
