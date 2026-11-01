@@ -14,6 +14,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
 | Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
+| A release that pushes its own readiness | [Release readiness](#release-readiness-configrelease-readiness) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## JG_HOME
@@ -1232,7 +1233,18 @@ If ready work still waits on a free lane, or at the floor with no worker provabl
 The optional local, gitignored `config/status-digest` holds one line, `every-hours=<N>`: the fewest hours between two cadence pushes of the batch digest that [`bin/jg-status-digest.sh`](../bin/jg-status-digest.sh) builds from the effort, task outcome and release records.
 A milestone records its outcome and pushes at once, and a cadence push waits until the newest push is N hours old.
 An absent, malformed, or zero value falls back to 4 hours, and an unchanged digest is never pushed twice.
-The script's own header owns the four lines, the records it reads, and the delivery it chooses.
+The script's own header owns the five lines, the records it reads, and the delivery it chooses.
+Its release line is `bin/jg-release-readiness.sh` `show`, so the digest answers "did we make releases?" every time it is pushed.
+
+## Release readiness (config/release-readiness)
+
+A release that waits for someone to notice it does not ship, so [`bin/jg-release-readiness.sh`](../bin/jg-release-readiness.sh) pushes the release branch's own readiness on three paths this repository already owns.
+The optional local, gitignored `config/release-readiness` holds `key=value` lines, all optional: `wait-hours` (the limit in whole hours, default 24), `project-dir` (the checkout to measure, default the home, which is the self repository), `board` (a board file, else the one `sign-off-axi` walks), `filer` (default `release-readiness`), and `branch` (only for a checkout that carries no `release/c-<N>` ref).
+The release is ready when the version branch carries at least one change, no open pull request targets it, it carries the default branch, and the checks on its tip are green; a fact that cannot be read leaves it not ready with the reason named, so an unreadable check never produces a card.
+A ready release raises exactly one board question through [`bin/jg-question-card.sh`](../bin/jg-question-card.sh), carrying what ships, the measured numbers, the risks and one Approve, and the board holds one release card at a time: an unchanged release is never raised again and a changed one replaces the previous card.
+Past `wait-hours` with no answer, one `bin/jg-inbox.sh` note queues one check so the wait reaches the supervisor, and the same wait is never alerted twice.
+`bin/jg-status-digest.sh` prints the same state as its release line every time, so the captain digest always says whether a release is ready, waiting, or held and by what.
+A scheduled home check runs `tick`; its own header owns the verbs, the records and the exact rules.
 
 ## Launch environment hook (config/launch-env-hook)
 

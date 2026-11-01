@@ -2,7 +2,7 @@
 # tests/jg-status-digest.test.sh - the batch-class captain digest
 # (bin/jg-status-digest.sh).
 #
-# The rules under test: a recorded milestone pushes the four lines at once, a
+# The rules under test: a recorded milestone pushes the five lines at once, a
 # tick inside the configured window pushes nothing, a changed state after the
 # window pushes once, an unchanged digest is never pushed twice, and the digest
 # goes to the captain channel when it is live and to the fleet board report card
@@ -75,7 +75,7 @@ test_a_milestone_pushes_the_four_lines_once() {
   expect_code 0 "$RC" "an unchanged second milestone should still succeed"
   assert_contains "$OUT" "unchanged" "an unchanged digest is named as unchanged"
   assert_equals "$before" "$(deliveries "$home")" "an unchanged digest is never pushed twice"
-  pass "a milestone pushes the four lines once and an unchanged one is not pushed again"
+  pass "a milestone pushes the five lines once and an unchanged one is not pushed again"
 }
 
 test_the_cadence_window_is_honoured() {
@@ -133,7 +133,7 @@ SH
   before=$(deliveries "$home")
   assert_equals 0 "$before" "a live captain channel means no board card"
   assert_grep "publish digest status-digest-" "$BUS_LOG" "the digest is published to the captain channel"
-  assert_grep "Left: 2 items" "$BUS_LOG" "the channel event carries the four lines"
+  assert_grep "Left: 2 items" "$BUS_LOG" "the channel event carries the five lines"
   # A shadow channel is not live, so the card carries the digest again.
   rm -f "$BUS_LOG"
   export STUB_CHANNEL_MODE=shadow
@@ -171,9 +171,36 @@ test_tick_on_a_home_with_no_effort_is_silent() {
   pass "tick is silent and show refuses while no batch effort is recorded"
 }
 
+test_the_release_state_is_carried_every_time() {
+  local home before page
+  home=$(make_home releaseline)
+  mkdir -p "$home/bin"
+  cat > "$home/bin/jg-release-readiness.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'Release: ready to ship, 3 changes green, waiting 5 h for your approval\n'
+SH
+  chmod +x "$home/bin/jg-release-readiness.sh"
+  run "$home" record "the first slice landed" --left "3 items" --since 1799999000 --now 1800000000
+  expect_code 0 "$RC" "a home with a release owner pushes the digest"
+  assert_contains "$OUT" "Release: ready to ship, 3 changes green, waiting 5 h for your approval" \
+    "the digest carries the release state the release owner reports"
+  page=$(cat "$home"/board/reports/*/index.html)
+  assert_contains "$page" "Release: ready to ship, 3 changes green" "the card page carries it too"
+  # A home without the release owner still answers the question every time.
+  rm -f "$home/bin/jg-release-readiness.sh"
+  before=$(deliveries "$home")
+  run "$home" record "the second slice landed" --since 1799999000 --now 1800000200
+  expect_code 0 "$RC" "a digest without a release owner still pushes"
+  assert_contains "$OUT" "Release: no release is in progress" \
+    "a home with no release still says so, and never leaves the line out"
+  assert_equals "$((before + 1))" "$(deliveries "$home")" "the changed line is a changed digest"
+  pass "the digest carries the release state every time, from the release owner"
+}
+
 test_a_milestone_pushes_the_four_lines_once
 test_the_cadence_window_is_honoured
 test_a_missing_cadence_config_still_defaults
 test_a_live_captain_channel_takes_the_digest_instead_of_a_card
 test_a_home_with_no_board_is_told_so
 test_tick_on_a_home_with_no_effort_is_silent
+test_the_release_state_is_carried_every_time

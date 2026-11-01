@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # done-done journey: the batch digest, driven by the real script against real
-# records. A milestone pushes the four lines at once, a second run inside the
+# records. A milestone pushes the five lines at once, a second run inside the
 # configured window pushes nothing, a changed state past the window pushes once,
 # and a live captain channel takes the digest instead of a card.
 set -u
@@ -96,7 +96,7 @@ grep -q '^captain channel publish digest status-digest-' "$T/bus.log" || fail "t
 log "the live card count did not move: $(live_cards)"
 
 log ""
-log "RESULT: the milestone pushed the four lines once, the window held for 4 h, a changed state past the window pushed once and replaced the card, the same state was never pushed twice, and a live captain channel took the digest instead of a card."
+log "RESULT: the milestone pushed the five lines once, the window held for 4 h, a changed state past the window pushed once and replaced the card, the same state was never pushed twice, and a live captain channel took the digest instead of a card."
 jq -n '{target:{version:"bin/jg-status-digest.sh from this branch"},
   start:"a home with the task outcome and release records, config/status-digest at 4 h, and a real board",
   steps:["run the fixture table",
@@ -105,4 +105,4 @@ jq -n '{target:{version:"bin/jg-status-digest.sh from this branch"},
          "change the records, tick past the window and read the board",
          "tick again with the same state",
          "record with a live captain channel"],
-  result:"the milestone pushed the four lines once, the window held, the changed state pushed once and replaced the card, the same state was never pushed twice, and the live channel took the digest instead of a card"}' > "$OUT/steps.json"
+  result:"the milestone pushed the five lines once, the window held, the changed state pushed once and replaced the card, the same state was never pushed twice, and the live channel took the digest instead of a card"}' > "$OUT/steps.json"
