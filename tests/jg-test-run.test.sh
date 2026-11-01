@@ -144,6 +144,17 @@ test_a_test_within_its_limits_is_unaffected() {
   pass 'a test within its limits is unaffected'
 }
 
+test_a_weight_cap_defers_slow_suites_and_names_them() {
+  local out
+  out=$(bash "$RUNNER" --list --max-weight-ms 60000 tests/jg-teardown.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a capped list was refused: $out"
+  assert_contains "$out" 'deferred to the post-merge lane' 'a deferred suite must be named'
+  assert_contains "$out" 'tests/jg-ship-local.test.sh' 'a fast suite must stay selected'
+  case $(printf '%s\n' "$out" | grep -v deferred) in
+    *jg-teardown*) fail "the slow suite stayed in the capped selection: $out" ;;
+  esac
+  pass 'a weight cap defers slow suites and names them'
+}
+
 test_the_e2e_limit_is_60_seconds_in_config
 test_an_e2e_test_over_its_limit_fails_naming_itself_and_its_time
 test_the_unit_limit_is_5_seconds_in_config
@@ -152,5 +163,6 @@ test_the_gate_wall_limit_is_10_minutes_in_config
 test_a_run_past_the_gate_budget_fails_without_starting_the_next_test
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_test_within_its_limits_is_unaffected
+test_a_weight_cap_defers_slow_suites_and_names_them
 
 printf 'all %s\n' 'jg-test-run limit tests passed'
