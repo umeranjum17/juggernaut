@@ -36,6 +36,8 @@ journeys:
   model-gate-concurrent:
     command: bash journeys/model-gate-concurrent.sh
     core: true
+  worker-rules:
+    command: bash journeys/worker-rules.sh
   tmp-sweep:
     command: bash journeys/tmp-sweep.sh
 secrets:
