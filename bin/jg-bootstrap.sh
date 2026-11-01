@@ -862,6 +862,92 @@ squad_lead_handoff_detect() {
   done
 }
 
+# --- the message bus binaries --------------------------------------------------
+# The JetStream server and the client that drives its streams ship as release
+# archives, not npm packages, so this is the one owner of how they land: the
+# pinned version from toolchain.versions, the asset for this platform, into the
+# same user-local bin directory every other install uses.
+bus_release_platform() {
+  local os arch
+  case "$(uname -s)" in
+    Darwin) os=darwin ;;
+    Linux) os=linux ;;
+    *) return 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    arm64|aarch64) arch=arm64 ;;
+    *) return 1 ;;
+  esac
+  printf '%s %s\n' "$os" "$arch"
+}
+
+# bus_release_asset <tool>: the pinned asset's URL and the directory it unpacks into.
+bus_release_asset() {
+  local version platform os arch stem ext repo
+  version=$(jg_pin_version "$1") || return 1
+  platform=$(bus_release_platform) || return 1
+  os=${platform% *} arch=${platform#* }
+  case "$1" in
+    nats-server) repo=nats-io/nats-server; stem="nats-server-v$version-$os-$arch"; ext=tar.gz ;;
+    nats) repo=nats-io/natscli; stem="nats-$version-$os-$arch"; ext=zip ;;
+    *) return 1 ;;
+  esac
+  printf '%s %s.%s\n' \
+    "https://github.com/$repo/releases/download/v$version/$stem.$ext" "$stem" "$ext"
+}
+
+# The hint a missing-tool line prints: the same two steps the install runs.
+bus_install_hint() {  # <tool>
+  local asset url
+  asset=$(bus_release_asset "$1") || return 1
+  url=${asset% *}
+  echo "fetch $url into \$NPM_CONFIG_PREFIX/bin (or: bin/jg-bootstrap.sh install $1)"
+}
+
+# bus_tool_install <tool>: download the pinned archive and install the binary.
+bus_tool_install() {
+  local tool=$1 asset url stem ext dir dest tmp out
+  asset=$(bus_release_asset "$tool") || { echo "error: no pinned release for $tool" >&2; return 1; }
+  url=${asset% *}
+  stem=${asset#* }
+  case "$stem" in
+    *.tar.gz) ext=tar.gz; stem=${stem%.tar.gz} ;;
+    *.zip) ext=zip; stem=${stem%.zip} ;;
+    *) echo "error: unknown archive for $tool" >&2; return 1 ;;
+  esac
+  dir=${NPM_CONFIG_PREFIX:-$HOME/.local}/bin
+  dest=$dir/$tool
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/jg-bus-install.XXXXXX") || return 1
+  echo "fetching $url" >&2
+  if ! out=$(curl -fsSL --max-time 120 -o "$tmp/asset" "$url" 2>&1); then
+    rm -rf -- "$tmp"; echo "error: download failed: $out" >&2; return 1
+  fi
+  case "$ext" in
+    zip)
+      if command -v unzip >/dev/null 2>&1; then
+        out=$(unzip -q -o -d "$tmp" "$tmp/asset" 2>&1)
+      elif command -v python3 >/dev/null 2>&1; then
+        out=$(python3 -m zipfile -e "$tmp/asset" "$tmp" 2>&1)
+      else
+        out='no unzip or python3 to read a .zip archive'
+      fi
+      ;;
+    *) out=$(tar -xzf "$tmp/asset" -C "$tmp" 2>&1) ;;
+  esac
+  if [ -n "${out:-}" ] && [ ! -f "$tmp/$stem/$tool" ]; then
+    rm -rf -- "$tmp"; echo "error: unpack failed: $out" >&2; return 1
+  fi
+  if [ ! -f "$tmp/$stem/$tool" ]; then
+    rm -rf -- "$tmp"; echo "error: $tool is not in $url" >&2; return 1
+  fi
+  mkdir -p "$dir" || { rm -rf -- "$tmp"; return 1; }
+  chmod 0755 "$tmp/$stem/$tool" || { rm -rf -- "$tmp"; return 1; }
+  mv -f -- "$tmp/$stem/$tool" "$dest" || { rm -rf -- "$tmp"; return 1; }
+  rm -rf -- "$tmp"
+  printf '%s: %s\n' "$tool" "$("$dest" --version 2>&1 | head -n 1)"
+}
+
 install_cmd() {
   local spec
   case "$1" in
@@ -869,6 +955,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
+    nats-server|nats) bus_install_hint "$1" ;;
     learn-from-mistakes) echo "npm install -g $(jg_pin_npm learn-from-mistakes) && ln -sf learn-from-mistakes-axi \"\$(dirname \"\$(command -v learn-from-mistakes-axi)\")/learn-from-mistakes\"" ;;
     *)
       # Every npm tool installs the exact build its toolchain.versions row names, so this
@@ -904,7 +991,7 @@ missing_tool_diagnostic() {
 # jg_backend_required_tools (bin/jg-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi learn-from-mistakes done-done sign-off-axi"
+COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi learn-from-mistakes done-done sign-off-axi nats-server nats"
 BACKEND=$(jg_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(jg_backend_required_tools "$BACKEND"); then
@@ -929,6 +1016,8 @@ LEARN_FROM_MISTAKES_AXI_MIN=$(jg_pin_version learn-from-mistakes) || LEARN_FROM_
 # moves installation, detection and this diagnostic together.
 DONE_DONE_AXI_MIN=$(jg_pin_version done-done) || DONE_DONE_AXI_MIN=0.0.0
 SIGN_OFF_AXI_MIN=$(jg_pin_version sign-off-axi) || SIGN_OFF_AXI_MIN=0.0.0
+NATS_SERVER_MIN=$(jg_pin_version nats-server) || NATS_SERVER_MIN=0.0.0
+NATS_MIN=$(jg_pin_version nats) || NATS_MIN=0.0.0
 
 treehouse_supports_lease() {
   treehouse get --help 2>&1 | grep -Eq '(^|[^[:alnum:]_-])--lease([^[:alnum:]_-]|$)'
@@ -1428,6 +1517,24 @@ startup_memory_budget_setup() {
 # prints nothing once a home is complete. A successful first wiring prints what
 # it wrote, including sign-off's one-line arming reminder; arming itself stays
 # per home and is never done here.
+# bus_service: report whether this home's JetStream is running, and never start
+# it. The server is a systemd user service the home installs once (docs/bus-service.md
+# owns the steps), so systemd owns it across reboots and a bootstrap pass cannot
+# leave a daemon nobody supervises, write outside the home, or bind a port in a
+# test fixture. Local, read-only, and it never fails the boot.
+bus_service() {
+  command -v nats-server >/dev/null 2>&1 || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  # No user manager (CI, a container) means no unit to read: the lane that proves
+  # the server there is tests/jg-bus-service.test.sh, not this check.
+  systemctl --user show-environment >/dev/null 2>&1 || return 0
+  if systemctl --user is-active --quiet jg-bus.service; then
+    [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: bus: up, systemd user service jg-bus"
+    return 0
+  fi
+  echo "MISSING: the message bus is not running, so no live path on this home can publish or consume (install: mkdir -p ~/.config/systemd/user && JG_HOME=$JG_HOME bin/jg-bus.sh unit > ~/.config/systemd/user/jg-bus.service && systemctl --user enable --now jg-bus)"
+}
+
 companion_tool_wiring() {
   local tool out
   for tool in done-done sign-off; do
@@ -1454,6 +1561,15 @@ if [ "${1:-}" = "install" ]; then
   export NPM_CONFIG_PREFIX=${NPM_CONFIG_PREFIX:-$HOME/.local}
   export PATH=$NPM_CONFIG_PREFIX/bin:$PATH
   for t in "$@"; do
+    # The bus binaries are release archives with their own unpacking rules, so
+    # they install through the one function that owns those rules rather than
+    # through a command string.
+    case $t in
+      nats-server|nats)
+        bus_tool_install "$t" || { echo "error: installing $t failed" >&2; exit 1; }
+        continue
+        ;;
+    esac
     # Manual guidance is checked before the install command, because a tool with manual
     # instructions has no row in toolchain.versions: probing install_cmd first would surface
     # the pin table's refusal ahead of the guidance the user actually needs.
@@ -1521,6 +1637,7 @@ if [ "${JG_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase; then
   fi
   startup_memory_budget_setup
   companion_tool_wiring
+  bus_service
   if backlog_record_reconcile; then
     :
   else
@@ -1544,6 +1661,14 @@ detect_local_tools() {
   for t in $COMMON_TOOLS; do
     command -v "$t" >/dev/null || missing_tool_diagnostic "$t"
   done
+  # The bus binaries ship as release archives, so their row is an exact version
+  # rather than an npm build; a present but older binary is still a MISSING line.
+  if command -v nats-server >/dev/null 2>&1 && ! tool_version_at_least nats-server "$NATS_SERVER_MIN"; then
+    echo "MISSING: nats-server (install: $(install_cmd nats-server))"
+  fi
+  if command -v nats >/dev/null 2>&1 && ! tool_version_at_least nats "$NATS_MIN"; then
+    echo "MISSING: nats (install: $(install_cmd nats))"
+  fi
   # The treehouse lease-support upgrade check is only relevant when the resolved
   # backend actually requires treehouse (every backend except orca, which owns its
   # own worktrees); an orca home must not be told to upgrade a provider it never uses.

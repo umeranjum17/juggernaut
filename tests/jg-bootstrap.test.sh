@@ -54,6 +54,11 @@ just_below() { awk -F. '{ printf "%s.%s.%d", $1, $2, $3 - 1 }' <<<"$1"; }
 unset TMUX TMUX_PANE HERDR_ENV HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH \
   CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_SOCKET_PATH CMUX_TAB_ID CMUX_PANEL_ID 2>/dev/null || true
 
+# The pinned bus versions, read from the same table the product reads, so a bump
+# moves the fake tools with it.
+nats_server_pin() { jg_pin_version nats-server 2>/dev/null || printf '2.10.22\n'; }
+nats_pin() { jg_pin_version nats 2>/dev/null || printf '0.5.1\n'; }
+
 # A fake toolchain where every required tool is present and gh is authenticated.
 # treehouse's `get --help` advertises --lease only when JG_FAKE_TREEHOUSE_LEASE_HELP=1.
 make_fake_toolchain() {
@@ -110,6 +115,8 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/no-mistakes"
+  jg_fake_version_tool "$fakebin" nats-server JG_FAKE_NATS_SERVER_VERSION "$(nats_server_pin)"
+  jg_fake_version_tool "$fakebin" nats JG_FAKE_NATS_VERSION "$(nats_pin)"
   add_tasks_axi "$fakebin" "0.2.6"
   add_quota_axi "$fakebin"
   printf '%s\n' "$fakebin"

@@ -239,6 +239,35 @@ jobs:
       - name: Run the fast evals
         run: bin/jg-fast-evals.sh
 
+  # The bus lane: the pinned JetStream server and client install through this
+  # repository's own install path, and the test that proves a home comes up with
+  # JetStream running then runs for real instead of gate-skipping. It is the lane
+  # that stops every live path in the migration from depending on a server no
+  # install provides (docs/bus-service.md).
+  bus:
+    name: Bus service
+    runs-on: ubuntu-latest
+    needs: invariants
+    if: ${{ needs.invariants.outputs.behavior == 'true' && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
+    # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the pinned bus server and client
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          export PATH=$NPM_CONFIG_PREFIX/bin:$PATH
+          bin/jg-bootstrap.sh install nats-server nats
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      - name: Prove a home comes up with JetStream running
+        run: |
+          set -eu
+          nats-server --version
+          nats --version
+          tests/jg-bus-service.test.sh
+
   # The one required status check: it always reports, refusing a lane that did
   # not run.
   required:
@@ -246,7 +275,7 @@ jobs:
     runs-on: ubuntu-latest
     # Fast tier: the verdict is a few JSON reads.
     timeout-minutes: 5
-    needs: [invariants, lint, syntax, smoke, evals]
+    needs: [invariants, lint, syntax, smoke, evals, bus]
     if: ${{ always() && !github.event.pull_request.draft && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
     steps:
       - uses: actions/checkout@v6

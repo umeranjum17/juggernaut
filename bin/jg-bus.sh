@@ -61,6 +61,10 @@
 #            reply reaching the bus routes to the lead a board answer routes to.
 #            An unrouted card is refused, exactly as today, and its answer stays
 #            with Main.
+#   ensure   Start the server when it is not listening and create the stream,
+#            then say one line. What a bootstrap step and docs/bus-service.md run.
+#   unit     Print the systemd user service a home installs once, which runs the
+#            server itself and creates the stream after it starts.
 #   serve    Start the three services from their files, every one of them read
 #            as config and none re-implemented here: nats-server
 #            (core/bus/nats.conf), the JetStream stream it carries
@@ -76,7 +80,7 @@
 #   jg-bus.sh publish <kind> <key> <text> [--link <url>]
 #   jg-bus.sh parity [--record <file>] [--corrupt]
 #   jg-bus.sh reply [<event.json>]
-#   jg-bus.sh serve | stop | status | bootstrap
+#   jg-bus.sh serve | ensure | unit | stop | status | bootstrap
 set -u
 export LC_ALL=C
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -297,25 +301,74 @@ start_one() {  # <name> <command...>; CWD is the runtime dir
   say "$name: started ($pid), log $RUNTIME/$name.log"
 }
 
+# The JetStream stream, from its file. Needs the nats client; without it the
+# event record still holds every event, so this is a reported skip, not a stop.
+stream_name() {
+  sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/core/bus/stream.json" | head -1
+}
+
+# Create the stream from its file when it is not there; 0 when it is present.
+ensure_stream() {
+  local conf=$ROOT/core/bus/stream.json name
+  name=$(stream_name)
+  command -v nats >/dev/null 2>&1 || return 1
+  nats -s "$(cfg nats-url)" stream info "$name" >/dev/null 2>&1 && return 0
+  nats -s "$(cfg nats-url)" stream add --config "$conf" >"$RUNTIME/stream.log" 2>&1
+}
+
+# Is anything listening on the configured address? The redirection lives in a
+# subshell so a refused port is only a status and nothing is applied to this shell.
+bus_listening() {  # <nats-url>
+  local hostport=${1#*://}
+  ( : >"/dev/tcp/${hostport%%:*}/${hostport##*:}" ) 2>/dev/null
+}
+
+# wait_port: the same probe in a bounded loop, and the reason this file has no
+# `exec` redirection: one here silenced every later line the script printed.
 wait_port() {  # <host> <port>
-  local _
-  for _ in $(seq 100); do
-    (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null && { exec 3>&- 2>/dev/null; return 0; }
+  local tries=0
+  while [ "$tries" -lt 100 ]; do
+    if ( : >"/dev/tcp/$1/$2" ) 2>/dev/null; then return 0; fi
     sleep 0.1
+    tries=$((tries + 1))
   done
   return 1
 }
 
-# The JetStream stream, from its file. Needs the nats client; without it the
-# event record still holds every event, so this is a reported skip, not a stop.
 cmd_bootstrap() {
-  local conf=$ROOT/core/bus/stream.json name
-  name=$(sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$conf" | head -1)
+  local name
+  name=$(stream_name)
   if ! command -v nats >/dev/null 2>&1; then
     say "stream: not created, no nats client on PATH (the event record still holds every event)"
     return 0
   fi
-  nats -s "$(cfg nats-url)" stream add --config "$conf" >"$RUNTIME/stream.log" 2>&1 && say "stream: $name ready"
+  if ensure_stream; then say "stream: $name ready"; else say "stream: $name not created, see $RUNTIME/stream.log"; fi
+}
+
+# ensure: what a bootstrap step runs. Start the server when it is not listening,
+# create the stream when it is missing, and print one line either way. Idempotent,
+# and it starts nothing but the server - the sidecar and ntfy stay opt-in.
+cmd_ensure() {
+  local nats_url hostport
+  nats_url=$(cfg nats-url)
+  hostport=${nats_url#*://}
+  mkdir -p "$RUNTIME" || die "cannot create $RUNTIME"
+  if ! command -v nats-server >/dev/null 2>&1; then
+    say "bus: down, no nats-server on PATH"
+    return 0
+  fi
+  if ! bus_listening "$nats_url"; then
+    ( cd "$RUNTIME" && start_one nats nats-server -c "$(bus_file nats.conf)" ) >/dev/null 2>&1
+    if ! wait_port "${hostport%%:*}" "${hostport##*:}"; then
+      say "bus: down, the server did not listen on $nats_url; see $RUNTIME/nats.log"
+      return 0
+    fi
+  fi
+  if ensure_stream; then
+    say "bus: up $nats_url stream $(stream_name)"
+  else
+    say "bus: up $nats_url, stream $(stream_name) missing (no nats client, or the server refused; see $RUNTIME/stream.log)"
+  fi
 }
 
 cmd_serve() {
@@ -380,12 +433,52 @@ cmd_status() {
   done
 }
 
+# unit: the systemd user service a home installs once, so the server is up after
+# every boot and restart without anyone typing a command. It runs the server
+# itself (not `serve`, which only starts services and exits) and creates the
+# stream right after it starts. docs/bus-service.md owns the install steps.
+cmd_unit() {
+  local nats_server conf
+  # systemd refuses a WorkingDirectory that does not exist yet, and the store
+  # directory lives inside it, so the one place the unit needs is made first.
+  mkdir -p "$RUNTIME" || die "cannot create $RUNTIME"
+  nats_server=$(command -v nats-server 2>/dev/null || echo nats-server)
+  conf=$(bus_file nats.conf)
+  unit_quote() {
+    local value=$1
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//%/%%}
+    printf '"%s"' "$value"
+  }
+  cat <<EOF
+[Unit]
+Description=Juggernaut message bus for ${JG_HOME//%/%%} (NATS JetStream)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${RUNTIME//%/%%}
+Environment=$(unit_quote "JG_HOME=$JG_HOME")
+Environment=$(unit_quote "PATH=$PATH")
+ExecStart=$(unit_quote "$nats_server") -c $(unit_quote "$conf")
+ExecStartPost=$(unit_quote "$SCRIPT_DIR/jg-bus.sh") bootstrap
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
 case "${1:-status}" in
   config) shift; cmd_config "$@" ;;
   publish) shift; cmd_publish "$@" ;;
   parity) shift; cmd_parity "$@" ;;
   reply) shift; cmd_reply "$@" ;;
   serve) shift; cmd_serve "$@" ;;
+  unit) shift; cmd_unit "$@" ;;
+  ensure) shift; cmd_ensure "$@" ;;
   stop) shift; cmd_stop "$@" ;;
   bootstrap) shift; mkdir -p "$RUNTIME" && cd "$RUNTIME" && cmd_bootstrap "$@" ;;
   status) cmd_status ;;
