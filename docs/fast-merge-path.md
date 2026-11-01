@@ -21,9 +21,12 @@ them:
 `CI required` is still the one required status check, and `bin/jg-ci-required.sh`
 now holds two lane sets: the fast set for a `pull_request` event and the full set
 for a `push`.
-Every heavier suite left the pull request trigger and runs after the merge
-instead: shell syntax, the smoke run, the fast evals and the bus lane (in
-`ci.yml` on `push` to `main` or `release/**`), the behaviour suite
+Four area suites run on every `push` to `main` or `release/**` (the release gate),
+and on a pull request only when it touches their area (`bin/jg-ci-scope.sh` owns
+the paths): `Bus service` (core/bus, bus scripts, install, bootstrap), `Shell syntax`
+(any `.sh`), and `Smoke` plus `Fast evals` (bin/ or core/). An untouched area skips,
+and `CI required` refuses a touched area whose suite was skipped or did not report.
+The rest run after the merge instead: the behaviour suite
 (`behavior.yml`), and the core journeys (`core-suites.yml`).
 An unreadable diff still widens the pull request to the full set.
 

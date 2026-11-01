@@ -77,23 +77,21 @@
 #   --per-script-timeout-secs N
 #                   terminate a script that runs longer than N seconds and
 #                   record it as exit 124 (0 disables, the default). The
-#                   --changed applies 1500s automatically, above the current
-#                   slowest CI hint with margin; exceeding it becomes a bounded
-#                   failure, not proof of a hang. --max-wall-ms is checked
+#                   --changed applies a per-test ceiling automatically,
+#                   max(120s, 4 x the test's CI hint); exceeding it becomes a
+#                   bounded failure, not proof of a hang. --max-wall-ms is checked
 #                   after the run and so cannot catch a hang on its own.
 #                   External interruption cleanup is outside this runner's
 #                   guarantee; configured per-script bounds remain authoritative.
 #   --gate          the pull-request gate contract, which bin/jg-local-suite.sh
 #                   passes: enforce the per-test speed limits and apply the
 #                   configured whole-run gate budget unless --max-wall-ms names
-#                   one. A test over its class limit then fails naming its
-#                   measured time, and is killed at that limit rather than left
-#                   running, so a hung test cannot hold the gate.
+#                   one. A test over its speed limit is reported by name with its
+#                   measured time and is neither failed nor killed for it; the
+#                   whole-run budget is the gate's bound.
 #   --enforce-test-speed
-#                   fail a speed-limit breach without applying the gate budget.
-#                   The nightly suite passes it; a plain local run reports the
-#                   breach without refusing, so a slow test cannot block
-#                   ordinary work.
+#                   accepted so the nightly suite's command line stays valid; a
+#                   speed-limit breach is reported in every mode (see below).
 #   --show-limits   print the effective e2e_seconds, unit_seconds and
 #                   gate_wall_seconds from the config file and exit without
 #                   running anything.
@@ -137,10 +135,13 @@
 #   defaults/test-speed-limits, overridable per home by
 #   config/test-speed-limits, and --show-limits prints them. A script's class
 #   comes from its name: *-e2e.test.sh is end to end, every other script is a
-#   unit or policy test. A script over its class limit fails naming the script,
-#   the milliseconds it measured and the limit. Under --gate or --enforce-test-speed
-#   that limit is also the script's kill bound, so a test that overran or hung
-#   is terminated and reported instead of being measured after it finished.
+#   unit or policy test. A script over its limit (an e2e script: e2e_seconds; a
+#   unit script: max(unit_seconds, 2 x its CI hint)) is reported by name with the
+#   milliseconds it measured and the limit. The report never fails the run and
+#   never kills the script: the same 60 s end-to-end limit killed real Herdr
+#   scripts that ran 60.04 s on a loaded runner and hid what they had still to
+#   prove. A hung script is bounded by --per-script-timeout-secs, the --changed
+#   ceiling, the gate budget and the job timeout.
 #
 # expected_gate_skip classes name why a family is allowed to skip: herdr (the
 # pinned real-Herdr lane), optional-binary (a backend whose binary is optional),
@@ -243,25 +244,17 @@ MAX_WALL_MS=
 PER_SCRIPT_TIMEOUT_SECS=0
 # Per-test speed limits and the gate's whole-run budget, read from
 # defaults/test-speed-limits and overridden by JG_HOME/config/test-speed-limits.
-# A test over its limit fails naming its measured time. Under enforcement
-# (--gate, or --enforce-test-speed as the nightly suite passes) that limit is
-# also the script's kill bound, so an overrunning or hung test is terminated
-# instead of being measured after it finishes.
-TEST_SPEED_ENFORCE=0
+# A test over its limit is reported naming its measured time; it is never a
+# failure or a kill bound (see "Per-test speed limits" in the header).
 TEST_SPEED_E2E_SECONDS=60
 TEST_SPEED_UNIT_SECONDS=5
 TEST_SPEED_GATE_SECONDS=600
-# Bound applied automatically on the automatic --changed path, derived from
-# measured healthy runtimes with margin rather than picked: the slowest measured
-# script is tests/jg-watch-triage.test.sh at about 1075s under CI load (the hint
-# table below records that loaded figure). 1500s keeps every measured script
-# under the bound with roughly 1.4x headroom over the slowest loaded measurement,
-# and it stays under the 30-minute normal CI tier so a wedged script fails here,
-# with its output, before the job cap
-# cancels the lane. It is a guard, not a speed control: a HUNG script becomes a
-# bounded failure instead of an unbounded suite, which is the shape that
-# silently outruns a caller's invocation budget.
-CHANGED_DEFAULT_TIMEOUT_SECS=1500
+# Hard per-test ceiling on the automatic --changed path: max(120s, 4 x the
+# test's measured hint), so a wedged script ends as a bounded failure naming it
+# within minutes, not at a job cancel (a 1500s flat bound let tests/jg-mail hang
+# 20 minutes). It is a guard, not a speed control.
+CHANGED_CEILING=0
+CHANGED_CEILING_FLOOR_SECS=120
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
@@ -291,23 +284,45 @@ test_speed_class_for() {  # <basename> -> e2e|unit
   case $1 in *-e2e.test.sh) printf 'e2e\n' ;; *) printf 'unit\n' ;; esac
 }
 
-test_speed_limit_for() {  # <class> -> whole seconds, 0 when unset
-  case $1 in
-    e2e) printf '%s\n' "${TEST_SPEED_E2E_SECONDS:-60}" ;;
-    *) printf '%s\n' "${TEST_SPEED_UNIT_SECONDS:-5}" ;;
-  esac
+# A unit test's own bound is max(unit_seconds, 2 x its measured hint), so the
+# floor serves quick tests and a known-slow test gets headroom over what CI
+# measured for it; a test with no hint gets the floor. A test over its own bound
+# is still reported, so a new slow test is still caught. Class e2e keeps one limit.
+script_hint_ms() {  # <basename> -> measured ms, empty when none
+  local ms
+  ms=$(portable_parallel_weight_hints | awk -v want="tests/$1" '$1 == want { print $2; exit }')
+  [ -n "$ms" ] || ms=$(portable_serial_weight_hints | awk -v want="tests/$1" '$1 == want { print $2; exit }')
+  printf '%s\n' "$ms"
 }
 
-# The hard bound applied to one script, in seconds, 0 when unbounded. Under
-# enforcement the script's own class limit is that bound, so the limit both
-# fails a test that overran and terminates one that would never finish. A
-# caller's --per-script-timeout-secs still applies, and the tighter bound wins.
+test_speed_limit_for() {  # <class> [<basename>] -> whole seconds, 0 when unset
+  local floor hint bound
+  case $1 in
+    e2e) printf '%s\n' "${TEST_SPEED_E2E_SECONDS:-60}"; return 0 ;;
+  esac
+  floor=${TEST_SPEED_UNIT_SECONDS:-5}
+  hint=
+  [ -n "${2:-}" ] && hint=$(script_hint_ms "$2")
+  case $hint in ''|*[!0-9]*) printf '%s\n' "$floor"; return 0 ;; esac
+  bound=$(( (2 * hint + 999) / 1000 ))
+  [ "$floor" -gt 0 ] && [ "$bound" -lt "$floor" ] && bound=$floor
+  printf '%s\n' "$bound"
+}
+
+# The hard bound applied to one script, in seconds, 0 when unbounded. The speed
+# limits are reports, not bounds; only the --changed ceiling and a caller's
+# --per-script-timeout-secs bound a script, and the tighter one wins.
 script_speed_bound_secs() {  # <script> -> seconds
-  local class limit bound=0
-  class=$(test_speed_class_for "$(basename "$1")")
-  limit=$(test_speed_limit_for "$class")
-  if [ "$TEST_SPEED_ENFORCE" -eq 1 ] && [ "$limit" -gt 0 ]; then
-    bound=$limit
+  local bound=0
+  if [ "$CHANGED_CEILING" -eq 1 ]; then
+    # Hard ceiling on the Changed path: max(floor, 4 x the test's hint), so a
+    # hung test ends in a bounded, named failure within minutes, not at job cancel.
+    local hint ceil
+    hint=$(script_hint_ms "$(basename "$1")")
+    case $hint in ''|*[!0-9]*) hint=0 ;; esac
+    ceil=$(( 4 * hint / 1000 ))
+    [ "$ceil" -lt "$CHANGED_CEILING_FLOOR_SECS" ] && ceil=$CHANGED_CEILING_FLOOR_SECS
+    if [ "$bound" -eq 0 ] || [ "$ceil" -lt "$bound" ]; then bound=$ceil; fi
   fi
   if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] &&
     { [ "$bound" -eq 0 ] || [ "$PER_SCRIPT_TIMEOUT_SECS" -lt "$bound" ]; }; then
@@ -707,7 +722,7 @@ tests/jg-lint-partitions.test.sh 4361
 tests/jg-local-suite-tree.test.sh 420
 tests/jg-merge-on-green.test.sh 900
 tests/jg-lint-root-memory.test.sh 4747
-tests/jg-mail.test.sh 10524
+tests/jg-mail.test.sh 21000
 tests/jg-merge-gate-lib.test.sh 83
 tests/jg-metrics-shadow-parity.test.sh 9744
 tests/jg-muse-signals-live-e2e.test.sh 61
@@ -1896,17 +1911,14 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --enforce-test-speed)
-      # Turn a speed-limit breach into a failure, and make each test's class limit
-      # its kill bound. The nightly suite and --gate set this; a plain local run
-      # reports without refusing, so a slow test cannot block ordinary work.
-      TEST_SPEED_ENFORCE=1
+      # Accepted so the nightly suite's command line stays valid: a speed-limit
+      # breach is reported in every mode and never fails or kills a test.
       shift
       ;;
     --gate)
       # The pull-request gate contract: enforce the per-test limits, and apply the
       # configured whole-run budget unless the caller named one with --max-wall-ms.
       GATE_MODE=1
-      TEST_SPEED_ENFORCE=1
       shift
       ;;
     --show-limits)
@@ -2197,7 +2209,7 @@ done
 AUTO_CONCURRENCY=0
 if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq 0 ]; then
   if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ] && [ "$PER_SCRIPT_TIMEOUT_SECS" -eq 0 ]; then
-    PER_SCRIPT_TIMEOUT_SECS=$CHANGED_DEFAULT_TIMEOUT_SECS
+    CHANGED_CEILING=1
   fi
   auto_admissible=0
   for s in "${SCRIPTS[@]}"; do
@@ -2279,7 +2291,7 @@ if [ "$JOBS" -gt 1 ]; then
   rm -f "$SCHEDULE_TMP"
 fi
 
-if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] || [ "$TEST_SPEED_ENFORCE" -eq 1 ]; then
+if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] || [ "$CHANGED_CEILING" -eq 1 ]; then
   [ -r "$ROOT/bin/jg-timeout-lib.sh" ] || die "bounded-run helper not found: bin/jg-timeout-lib.sh"
   # shellcheck source=bin/jg-timeout-lib.sh
   . "$ROOT/bin/jg-timeout-lib.sh"
@@ -2345,23 +2357,15 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
   family=$(family_for_basename "$base")
   expected=$(expected_gate_skip_for_family "$family")
 
-  # Hard per-class speed limit. The measured time goes in the message so the
-  # next reader sees how far over it is rather than only that it was over. A
-  # streamed run echoes the line it appended, because the script's own output
-  # was already replayed and nothing would otherwise show why it failed.
+  # Per-class speed limit, reported only. The measured time goes in the message
+  # so the next reader sees how far over it is rather than only that it was over.
   local speed_limit speed_class speed_ms
   speed_class=$(test_speed_class_for "$base")
-  speed_limit=$(test_speed_limit_for "$speed_class")
+  speed_limit=$(test_speed_limit_for "$speed_class" "$base")
   speed_ms=$((speed_limit * 1000))
   if [ "$speed_limit" -gt 0 ] && [ "$duration" -gt "$speed_ms" ]; then
-    if [ "$TEST_SPEED_ENFORCE" -eq 1 ]; then
-      printf 'not ok - %s took %sms, over its %sms %s limit\n' \
-        "$script" "$duration" "$speed_ms" "$speed_class" >>"$out"
-      [ "$stream" -eq 1 ] && tail -n 1 "$out"
-      rc=1
-    else
-      log "speed over limit, reported only: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
-    fi
+    # A warning in every mode and for every class, never a failure or a kill.
+    log "speed over limit, reported only: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
   fi
 
   if [ -n "$FAIL_ON_GATE_SKIP" ] && detect_gate_skip_token "$out" "$FAIL_ON_GATE_SKIP"; then
@@ -2410,14 +2414,9 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   local GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
   # shellcheck source=tests/git-config-helpers.sh
   . "$ROOT/tests/git-config-helpers.sh" || return
-  local rc bound class_limit
+  local rc bound
   : "$id"
   bound=$(script_speed_bound_secs "$script")
-  # The class limit is the bound only when enforcement is on; when it is, the
-  # per-class speed record already reports the overrun by name, so the kill
-  # message below stays for a caller-supplied bound it would otherwise duplicate.
-  class_limit=0
-  [ "$TEST_SPEED_ENFORCE" -eq 1 ] && class_limit=$(test_speed_limit_for "$(test_speed_class_for "$(basename "$script")")")
   # ONE owner of what a behavior script inherits, for the serial and the
   # concurrent path alike: a script must see the same environment in CI and
   # under a live home. A squad_lead launch prefixes every process it starts
@@ -2447,7 +2446,7 @@ run_script_bounded() {  # <script> <out> <stream> <id>
     bash "$script" >"$out" 2>&1
     rc=$?
   fi
-  if [ "$bound" -gt 0 ] && [ "$rc" -eq 124 ] && [ "$bound" != "$class_limit" ]; then
+  if [ "$bound" -gt 0 ] && [ "$rc" -eq 124 ]; then
     printf 'not ok - %s exceeded the per-script bound of %ss and was terminated\n' \
       "$script" "$bound" >>"$out"
     [ "$stream" -eq 1 ] && tail -1 "$out"

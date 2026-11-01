@@ -74,7 +74,13 @@
 //	unit     Print the systemd user service a home installs once for one part: nats
 //	         (the default) runs the server itself and creates the stream after it
 //	         starts; dapr and ntfy run their binary in the foreground.
-//	serve    Start the three services from their files, every one of them read as config
+//	deliver  The CAPTAIN stream's consumer, and the one path that delivers a captain-bound
+//	         event the bus accepted to ntfy: a durable pull consumer (captain-ntfy) reads
+//	         each message, posts it to the captain's topic, and writes the delivery to
+//	         state/captain-channel-delivered.jsonl with ntfy's own message id. `--once`
+//	         drains what waits and exits; otherwise it runs as the service (the `deliver`
+//	         unit). `publish` delivers directly only for an event the bus did not accept.
+//	serve    Start the services from their files (nats, dapr, ntfy, and the deliver consumer), every one of them read as config
 //	         and none re-implemented here: nats-server (core/bus/nats.conf), the
 //	         JetStream stream it carries (core/bus/stream.json), the slim Dapr runtime
 //	         over NATS (core/bus/dapr/components/pubsub.yaml) and ntfy
@@ -89,7 +95,7 @@
 //	jg-bus publish <kind> <key> <text> [--link <url>]
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus stream | serve | ensure | unit [nats|dapr|ntfy] | stop | status | bootstrap
+//	jg-bus stream | serve | ensure | unit [nats|dapr|ntfy|deliver] | deliver [--once] | stop | status | bootstrap
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
 // JG_CAPTAIN_CHANNEL.
@@ -115,6 +121,7 @@ type app struct {
 	runtime     string
 	record      string
 	undelivered string
+	delivered   string
 	log         string
 	configFiles []string
 }
@@ -141,6 +148,8 @@ func run(args []string) int {
 		return a.reply(rest)
 	case "serve":
 		return a.serve()
+	case "deliver":
+		return a.deliver(rest)
 	case "unit":
 		return a.unit(rest)
 	case "accounts":
@@ -193,6 +202,7 @@ func resolve() *app {
 		runtime:     filepath.Join(state, "bus"),
 		record:      filepath.Join(state, "captain-channel.jsonl"),
 		undelivered: filepath.Join(state, "captain-channel-undelivered.jsonl"),
+		delivered:   filepath.Join(state, "captain-channel-delivered.jsonl"),
 		log:         filepath.Join(state, "captain-channel.log"),
 	}
 	files := []string{os.Getenv("JG_CAPTAIN_CHANNEL"), filepath.Join(home, "config", "captain-channel"),
