@@ -78,3 +78,4 @@ minute count, and a merge over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5)
 raises one alert naming the number.
 A five-minute path that silently takes eleven is the failure this row exists to
 make visible, so read the recorded minutes rather than any promise about them.
+proof
