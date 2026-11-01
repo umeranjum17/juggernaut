@@ -641,6 +641,7 @@ tests/jg-reply-engine.test.sh 900
 tests/jg-rovo-signals-live-e2e.test.sh 57
 tests/jg-self-repo-role.test.sh 9033
 tests/jg-slo-alerts.test.sh 1200
+tests/jg-throughput.test.sh 900
 tests/jg-send-dormant-lead.test.sh 1692
 tests/jg-send-inbox-doorbell-live-e2e.test.sh 55
 tests/jg-send-inbox.test.sh 51917

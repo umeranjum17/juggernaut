@@ -302,7 +302,7 @@ measure_one() {
 # --- rank -------------------------------------------------------------------
 # Hours per stage over the window, ranked by hours per day.
 cmd_rank() {
-  local json=0
+  local json=0 WIN_DAYS=7
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --inputs) INPUTS=$2; shift 2 ;;
@@ -311,6 +311,7 @@ cmd_rank() {
     esac
   done
   [ -f "$OUT/dataset.json" ] || cmd_measure >/dev/null || die 'no measurement to rank'
+  WIN_DAYS=$(jq -r '.window.days' "$OUT/dataset.json") || WIN_DAYS=7
   local stage_rows
   stage_rows=$(jq -r '
     .merges as $m
@@ -327,10 +328,9 @@ cmd_rank() {
   local out='[]'
   while IFS=$'\t' read -r id total_s prs median p90; do
     [ -n "$id" ] || continue
-    read -r label fix owner <<EOF2
-$(jq -r --arg id "$id" '[.stages[] | select(.id == $id) | [.label, .fix, .owner]][0] // ["", "", ""] | @tsv' "$DEF")
-EOF2
-    hours_per_day=$(awk -v s="$total_s" -v d="$(jq -r '.window.days' "$OUT/dataset.json")" 'BEGIN { printf "%.2f", (s / 86400) }')
+    IFS=$'\t' read -r label fix owner <<<"$(jq -r --arg id "$id" \
+      '[.stages[] | select(.id == $id) | [.label, .fix, .owner]][0] | @tsv' "$DEF" 2>/dev/null)"
+    hours_per_day=$(awk -v s="$total_s" -v d="$WIN_DAYS" 'BEGIN { printf "%.4f", (s / 3600 / d) }')
     out=$(printf '%s' "$out" | jq -c --arg id "$id" --arg label "${label:-$id}" \
       --arg fix "$fix" --arg owner "${owner:-core}" \
       --argjson hours "$(awk -v s="$total_s" 'BEGIN { printf "%.1f", s / 3600 }')" \

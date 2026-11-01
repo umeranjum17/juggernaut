@@ -129,7 +129,9 @@ assert_equals false "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "re
   'a stage under the configured hours per day must not be ranked for a ticket'
 assert_equals 1.0 "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "rework") | .hours')" \
   'the rework stage does not carry the one hour it lost'
-assert_equals true "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "handoff") | .ranked')" \
+assert_equals 2 "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "handoff") | .hours_per_day | round')" \
+  'the handoff stage is not the two hours a day it carries'
+assert_equals true "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "run") | .ranked')" \
   'a stage over the configured hours per day must be ranked'
 assert_equals 1 "$(printf '%s' "$ranked" | jq -r '.[] | select(.stage == "queue") | .fix' | grep -c .)" \
   'every ranked stage must carry the fix its config names'
