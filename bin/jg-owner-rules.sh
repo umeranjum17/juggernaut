@@ -36,6 +36,14 @@
 #         recorded in this surface, and words holding a line break (one entry is
 #         one line per field).
 #         --date defaults to today in UTC and must be YYYY-MM-DD.
+#         A recorded entry also files its enforcement ticket: a `[captain-ask]`
+#         backlog item carrying his words, the scope and the enforcement point,
+#         and saying what enforces the rule today or what still needs building,
+#         because a correction kept only in this file is enforced by nothing.
+#         The ticket id is derived from the words, so recording the same words
+#         again files nothing (and those words are refused above anyway).
+#         A ticket that cannot be filed is named on stderr and never loses the
+#         rule: the entry stays recorded and the exit status stays 0.
 # split   Report how the surface divides by kind: how many entries are owner, how
 #         many are product, and which carry no kind yet. --apply rewrites the
 #         surface to its owner entries only, so the product half can be filed as
@@ -144,6 +152,66 @@ require_repo_paths() {  # <enforcement point> -> refuse a named path that does n
   done
 }
 
+# shipped_enforcement <enforcement point>: 0 when the point names a file that
+# exists here (a script, a doc, AGENTS.md), which is the ticket's proof that
+# something already carries the rule. Any other point - a contract or a check
+# that has not been written yet - needs building.
+shipped_enforcement() {
+  local token path
+  for token in $(printf '%s' "$1" | tr ';,()' '    '); do
+    case "$token" in
+      ''|*://*) continue ;;
+    esac
+    path=${token%%#*}
+    case "$path" in
+      /*) ;;
+      *) path="$JG_ROOT/$path" ;;
+    esac
+    [ -e "$path" ] && return 0
+  done
+  return 1
+}
+
+# The enforcement ticket's id is derived from his words alone, so the same rule
+# can never file two tickets and re-recording cannot fork the board.
+rule_ticket_id() {
+  printf 'owner-rule-%s\n' "$(printf '%s' "$1" | cksum | awk '{ printf "%08x", $1 }')"
+}
+
+# file_enforcement_ticket <title> <words> <scope> <enforce> <date>
+# Files the ticket that turns a recorded rule into work: his words, the scope,
+# the enforcement point, and what still needs building when nothing enforces it
+# yet. A failure is reported and never fails the recording.
+file_enforcement_ticket() {
+  local title=$1 words=$2 scope=$3 enforce=$4 date=$5 id body enforce_line taxi out
+  taxi="$SCRIPT_DIR/jg-tasks-axi.sh"
+  id=$(rule_ticket_id "$words")
+  if [ ! -x "$taxi" ]; then
+    printf 'jg-owner-rules: rule recorded, no ticket filed: %s is missing beside this script\n' "$taxi" >&2
+    return 0
+  fi
+  if JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$taxi" show "$id" >/dev/null 2>&1; then
+    printf 'ticket: %s already filed\n' "$id"
+    return 0
+  fi
+  if shipped_enforcement "$enforce"; then
+    enforce_line="Enforcement today: $enforce already carries this rule. Prove it still does, and add the regression test that fails the day it stops."
+  else
+    enforce_line="Build it: no shipped check, script, or config default enforces this rule yet. Add one, then point the rule at it in data/owner-rules.md."
+  fi
+  body=$(printf '%s\nCaptain, %s: "%s"\nScope: %s\nEnforced by: %s\n%s\nDone when: data/owner-rules.md is enforced by %s, and one test fails when that enforcement is removed.' \
+    "$words" "$date" "$words" "$scope" "$enforce" "$enforce_line" "$enforce")
+  if out=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$taxi" add "$id" \
+    "[captain-ask] Enforce the owner rule: $title" --kind ship --body "$body" 2>&1); then
+    printf 'ticket: %s - the enforcement work is on the board\n' "$id"
+    return 0
+  fi
+  printf 'jg-owner-rules: rule recorded, no ticket filed: %s\n' "$(printf '%s' "$out" | head -1)" >&2
+  printf 'jg-owner-rules: file it by hand: %s add %s "[captain-ask] Enforce the owner rule: %s" --kind ship --body "<his words, the scope, the enforcement point, and what still needs building>"\n' \
+    "$taxi" "$id" "$title" >&2
+  return 0
+}
+
 words_already_recorded() {  # <normalized words>
   [ -f "$SURFACE" ] || return 1
   grep -Fq -- "$1" "$SURFACE"
@@ -214,6 +282,7 @@ cmd_add() {
     printf -- '- Owner'"'"'s words: "%s"\n' "$words"
   } >> "$SURFACE" || die "cannot write $SURFACE"
   printf 'recorded: %s\n' "$title"
+  file_enforcement_ticket "$title" "$words" "$scope" "$enforce" "$date"
 }
 
 # cmd_split - report the owner/product split, and write the owner half back with --apply.

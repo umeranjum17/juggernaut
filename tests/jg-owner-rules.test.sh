@@ -201,6 +201,45 @@ reply_payload() {  # <dir> <reply text>
   printf '{"session_id":"s","transcript_path":"%s/reply.jsonl"}' "$1"
 }
 
+test_add_files_its_own_enforcement_ticket() {
+  local home backlog out rc rows
+  home="$TMP_ROOT/ticket"
+  mkdir -p "$home/data"
+  jg_test_tasks_toml "$home/.tasks.toml"
+  backlog="$home/data/backlog.md"
+
+  out=$(JG_HOME="$home" JG_ROOT_OVERRIDE="$ROOT" "$RULES" add --kind owner \
+    --words "never forecast a date in a captain report" --scope "every captain-facing report" \
+    --enforce bin/jg-live-claim.sh --date 2026-11-01 2>&1) \
+    || fail "recording an owner rule with a shipped enforcement point failed: $out"
+  assert_contains "$out" 'ticket: owner-rule-' "the recorded rule did not name the ticket it filed"
+  assert_present "$backlog" "recording an owner rule filed no ticket"
+  assert_grep 'never forecast a date in a captain report' "$backlog" \
+    "the ticket lost his own words"
+  assert_grep 'Scope: every captain-facing report' "$backlog" "the ticket lost the scope"
+  assert_grep 'Enforced by: bin/jg-live-claim.sh' "$backlog" "the ticket lost the enforcement point"
+  assert_grep 'Enforcement today: bin/jg-live-claim.sh already carries this rule' "$backlog" \
+    "the ticket did not say what enforces the rule today"
+  assert_grep '[captain-ask] Enforce the owner rule: never forecast a date in a captain report' "$backlog" \
+    "the ticket is not an owner ask carrying the rule"
+
+  JG_HOME="$home" JG_ROOT_OVERRIDE="$ROOT" "$RULES" add --kind owner \
+    --words "never forecast a date in a captain report" --scope x --enforce bin/jg-live-claim.sh \
+    >/dev/null 2>&1
+  rc=$?
+  assert_not_equals 0 "$rc" "the same owner words were recorded twice"
+  rows=$(grep -c 'Enforce the owner rule:' "$backlog")
+  assert_equals 1 "$rows" "recording the same words again filed a second ticket"
+
+  out=$(JG_HOME="$home" JG_ROOT_OVERRIDE="$ROOT" "$RULES" add --kind owner \
+    --words "ask only when only I can decide" --scope "every escalation" \
+    --enforce "a digest rule nobody wrote yet" 2>&1) \
+    || fail "recording an owner rule with an unbuilt enforcement point failed: $out"
+  assert_grep 'Build it: no shipped check, script, or config default enforces this rule yet' "$backlog" \
+    "a rule nothing enforces yet did not say what still needs building"
+  pass "recording an owner rule files one ticket with his words, scope and enforcement point, and files nothing twice"
+}
+
 test_turn_boundary_prints_no_block_for_a_question() {
   local home payload board rc
   home="$TMP_ROOT/question"
@@ -247,4 +286,5 @@ test_the_surface_starts_empty_and_records_an_owner_entry
 test_add_asks_for_the_kind_and_refuses_a_product_rule
 test_split_reports_kinds_and_writes_the_owner_half_back
 test_audit_flags_a_correction_left_in_a_private_note
+test_add_files_its_own_enforcement_ticket
 test_turn_boundary_prints_no_block_for_a_question

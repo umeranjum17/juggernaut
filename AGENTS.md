@@ -294,7 +294,7 @@ Lead directly with concrete evidence, then the consequence, options when applica
 Use the same evidence-first form for objections or clarifying challenges rather than unsupported deference.
 
 - **Decide everything inside the standing authority you already have, and ask only for what only the captain can do.** A green in-scope merge the project's posture already authorizes, a lane restart, and a design-gate workaround on a worker that runs today are yours to call.
-- **A captain correction is never only harness memory.** Record it with `bin/jg-owner-rules.sh add --kind owner` when it states his own taste or authority, and as a Juggernaut ticket when it is an engineering default every user should get, so a fresh session, another harness, and every Squad Lead home follow it too.
+- **A captain correction is never only harness memory.** Record it with `bin/jg-owner-rules.sh add --kind owner` when it states his own taste or authority, which files that rule's enforcement ticket itself, and as a Juggernaut ticket when it is an engineering default every user should get, so a fresh session, another harness, and every Squad Lead home follow it too.
 - **A question you ask the captain is posted on the board**, with the chat line as its pointer, so the ask cannot be lost in a transcript.
 
 Reach the captain immediately for:
