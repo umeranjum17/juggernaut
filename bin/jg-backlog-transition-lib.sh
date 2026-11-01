@@ -479,6 +479,40 @@ jg_backlog_row_probe() {  # <data-dir> <id>
   return 0
 }
 
+# Write the ticket the moment a backlog row moves, so the board the captain reads
+# follows the work itself instead of waiting for the next tickets-sync poll.
+# bin/jg-ticket.sh owns the write: it takes this home's board, writes only fields
+# that differ, and is a silent no-op (exit 0) when this home has no board, so a
+# board problem never fails a transition. The mapping is the poll's own
+# (addons/tickets-sync/sync.py owns state, stage and progress), and `update` moves
+# no stage, so it writes nothing.
+# Usage: jg_backlog_ticket_note <data-dir> <verb> <id> [flag...]
+jg_backlog_ticket_note() {  # <data-dir> <verb> <id> [flag...]
+  local data=$1 verb=$2 id=$3 home tool pr='' reason=''
+  local -a args=()
+  shift 3
+  case "$verb" in
+    start) args=(--stage building --state 'in progress') ;;
+    done|close) args=(--stage "done" --state "done") ;;
+    reopen) args=(--stage queued --state queued) ;;
+    hold|park) args=(--state 'on hold') ;;
+    unhold) args=(--state queued) ;;
+    *) return 0 ;;
+  esac
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --pr ] && { [ "$verb" = "done" ] || [ "$verb" = "close" ]; }; then pr=${2-}; fi
+    if [ "$1" = --reason ] && { [ "$verb" = hold ] || [ "$verb" = park ]; }; then reason=${2-}; fi
+    shift
+  done
+  [ -z "$pr" ] || args+=(--pr "$pr")
+  [ -z "$reason" ] || args+=(--hold-reason "$reason")
+  home=${JG_HOME:-${data%/*}}
+  tool=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/jg-ticket.sh
+  [ -x "$tool" ] || return 0
+  JG_HOME=$home "$tool" "$id" "${args[@]}" >/dev/null 2>&1 || true
+  return 0
+}
+
 # Run one tasks-axi mutation against <home>'s backlog, capturing its first
 # output line in JG_BACKLOG_TRANSITION_ERROR on failure. The home boundary is
 # authorized through jg_backlog_source_present first; jg_backlog_tasks_axi owns
@@ -503,7 +537,7 @@ jg_backlog_mutate() {  # <data-dir> <verb> <id> [flag...]
     out=$(cd "$JG_BACKLOG_AXI_ROOT" 2>/dev/null && jg_tasks_axi "$verb" "$id" "$@" 2>&1)
   fi
   command_status=$?
-  [ "$command_status" -ne 0 ] || return 0
+  [ "$command_status" -ne 0 ] || { jg_backlog_ticket_note "$data" "$verb" "$id" "$@"; return 0; }
   JG_BACKLOG_TRANSITION_ERROR=$(printf '%s\n' "$out" | sed -n '1p')
   if [ -z "$JG_BACKLOG_TRANSITION_ERROR" ]; then
     if jg_tasks_axi_timeout_expired "$command_status" && [ -n "${JG_TASKS_AXI_TIMEOUT:-}" ]; then

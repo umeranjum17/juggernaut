@@ -13,7 +13,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), and [host memory guard](#host-memory-guard-confighost-memory) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
-| Release branch that follows main | [Version branch](#version-branch-configversion-branch) |
+| Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
 | Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
@@ -474,10 +474,22 @@ The brief records the reason on a `Delivery risk (no-mistakes): <reason>` line, 
 `--risk` is refused on a `--scout` brief and on a `--squad-lead` charter.
 The local presence flag `config/delivery-risk-loose` turns the question off for this home; an unlisted value is still refused.
 
-## Version branch (config/version-branch)
+## Migration card (config/migration-card)
 
-The optional local, gitignored `config/version-branch` names the long-lived release branch pull requests for the next release target, for example `release/c-1`.
-It holds the branch name and nothing else, and an absent or blank file means this home carries no version branch.
+The optional local `config/migration-card` holds `key=value` lines: `branch` (the release branch), `target` (lines to delete), `board` (a board file, else `JG_PROOF_BOARD`), `project`, `card` (the key now posted; the script rewrites it), `baseline-deleted`, `baseline-added` and `filer`.
+With it, `bin/jg-merge-outcome-lib.sh` runs `bin/jg-migration-card.sh merge` after each merge into `branch`; the script header owns the card, key and milestone rules.
+
+## Version branch (config/version-branch, release/c-<N>)
+
+A project's current version branch is its newest `release/c-<N>` branch, read from the project's own refs by `bin/jg-version-branch-lib.sh`.
+It belongs to the repository rather than to this home's config, so every home that clones the project resolves the same one with nothing to set, and a project with no such branch keeps the default branch exactly as before.
+The newest wins because a release cycle only moves forward: the previous cycle's branch stays behind, and a default that picked it would send new work to the branch a release already came from.
+With it, a ship task's copy starts from that branch and its pull request targets it: `bin/jg-spawn.sh` defaults `--base-branch` to it when no base is given, `bin/jg-brief.sh --project <dir>` records it in the brief as the base, and `bin/jg-pr-check.sh` refuses a feature pull request whose base is the default branch, naming the version branch to use.
+The one allowed exception is the release pull request itself, whose head is the version branch.
+
+The optional local, gitignored `config/version-branch` names the branch this home carries the default branch into, for example `release/c-1`.
+It holds the branch name and nothing else, and an absent or blank file means this home runs no carry.
+The file is what turns the carry on; which branch is current for spawn and pull requests is always read from the repository, so a stale value here never moves new work onto an older release branch.
 When it exists, `bin/jg-merge-outcome-lib.sh` runs `bin/jg-version-branch-sync.sh run` as part of recording a merge, so the branch moves with no human step and no home-owned hook to write.
 That pass covers a merge this home performed and a merge its poll detected, because both record through that one operation.
 
@@ -485,6 +497,11 @@ The carry is a push of the default branch's commit onto the version ref, with no
 A version branch holding its own commits is reported and left exactly as it is, because closing that gap needs a real merge toward the default branch, which is a human decision rather than something a post-merge pass may invent.
 A dirty copy is skipped and each path is named.
 One line per outcome prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
+
+The same record then runs `bin/jg-version-branch-sync.sh features <pr-url> <project-dir>`, which carries the version branch into every open feature pull request that targets it, but only when the merge just recorded was the release pull request (base the default branch, head the version branch).
+A feature branch carries its own commits, so the carry is a real merge commit built with git plumbing and pushed as an ordinary fast-forward of that branch; no working tree is touched and nothing is forced.
+A feature branch whose merge conflicts is reported and left exactly as it is, and a fork pull request is skipped because its branch is not in this repository.
+One line per branch prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
 
 ## Fleet autosync (config/fleet-autosync-off)
 
@@ -1217,6 +1234,13 @@ A primary home also runs the fleet heartbeat (`bin/jg-fleet-heartbeat.sh`) by de
 The optional local, gitignored presence flag `config/fleet-heartbeat-off` opts a home out, and bootstrap then leaves the check unarmed.
 
 If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`core/wait-timers/README.md`](../core/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
+
+## Batch digest cadence (config/status-digest)
+
+The optional local, gitignored `config/status-digest` holds one line, `every-hours=<N>`: the fewest hours between two cadence pushes of the batch digest that [`bin/jg-status-digest.sh`](../bin/jg-status-digest.sh) builds from the effort, task outcome and release records.
+A milestone records its outcome and pushes at once, and a cadence push waits until the newest push is N hours old.
+An absent, malformed, or zero value falls back to 4 hours, and an unchanged digest is never pushed twice.
+The script's own header owns the four lines, the records it reads, and the delivery it chooses.
 
 ## Launch environment hook (config/launch-env-hook)
 

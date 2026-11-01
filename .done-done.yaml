@@ -1,5 +1,7 @@
 app: juggernaut
 journeys:
+  migration-card:
+    command: bash journeys/migration-card.sh
   relaunch-model-refusal:
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   receipt-candidate-hook:
@@ -11,6 +13,10 @@ journeys:
   ready-backlog-stall:
     command: bash journeys/ready-backlog-stall.sh
     timeout: 45m
+  fleet-report:
+    command: bash core/fleet-report/run-proof.sh
+  status-digest:
+    command: bash journeys/status-digest.sh
   proof-attach:
     command: bash journeys/proof-attach.sh
   design-call-gate:
@@ -34,6 +40,8 @@ journeys:
   model-gate-concurrent:
     command: bash journeys/model-gate-concurrent.sh
     core: true
+  worker-rules:
+    command: bash journeys/worker-rules.sh
   tmp-sweep:
     command: bash journeys/tmp-sweep.sh
 

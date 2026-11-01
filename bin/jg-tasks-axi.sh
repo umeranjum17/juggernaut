@@ -419,4 +419,15 @@ case "${1:-}" in
     exit "$_jg_rc"
     ;;
 esac
-exec tasks-axi ${ARGS[@]+"${ARGS[@]}"}
+# A transition this command performs writes the ticket in the same breath, so the
+# board follows the work and never waits for the next tickets-sync poll; the verb
+# map and the writer are bin/jg-backlog-transition-lib.sh's own.
+_jg_status=0
+tasks-axi ${ARGS[@]+"${ARGS[@]}"} || _jg_status=$?
+[ "$_jg_status" -eq 0 ] || exit "$_jg_status"
+case "${ARGS[0]-}" in
+  done|close|start|reopen|hold|park|unhold)
+    jg_backlog_ticket_note "$DATA" "${ARGS[0]}" "${ARGS[1]-}" ${ARGS[@]+"${ARGS[@]:2}"}
+    ;;
+esac
+exit 0

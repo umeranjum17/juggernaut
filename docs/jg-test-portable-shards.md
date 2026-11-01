@@ -35,6 +35,11 @@ The session-start hint retains its pre-optimization maximum until CI measures th
 The switch that made the task leases live moved the lease cases out of that script and into `tests/jg-lease-live.test.sh`, whose hint is the slowest of three serial local runs against the same kind of throwaway server; the busy-only parity script now runs in about a fifth of its hint, which costs balance and never coverage.
 `tests/jg-board-asks.test.sh` (860 ms, the maximum of five local runs) postdates it too and carries a provisional measurement for the same reason.
 `tests/jg-bus-leaf-parity.test.sh` (4245 ms) postdates it as well, and its hint is the slower of two serial local runs against two throwaway servers and a leaf connection between them; it gate-skips the same way when `nats-server` or the `nats` client is absent, so this hint also over-states its CI cost until the lane installs them.
+`tests/jg-test-run.test.sh` (7444 ms) postdates that refresh too and carries a provisional local measurement until the next CI refresh replaces it, so the no-hint coverage guard keeps its margin.
+The 2026-11-01 `tests/jg-pr-wait.test.sh` carries its provisional local measurement of 208 ms from `bash tests/jg-pr-wait.test.sh` on the Linux workspace host for the same reason, so the next CI refresh replaces it with an Ubuntu measurement.
+The 2026-11-01 `tests/jg-status-digest.test.sh` carries its provisional local measurement of 1569 ms from `bash tests/jg-status-digest.test.sh` on the Linux workspace host, so the next CI refresh replaces it with an Ubuntu measurement.
+`tests/jg-wake-route.test.sh` (527 ms) and `tests/jg-ticket-writeback.test.sh` (4258 ms) carry the same kind of provisional local measurement from three `bash tests/<file>` runs on the Linux workspace host, so the coverage guard keeps its margin until the next CI refresh.
+`tests/jg-wake-next.test.sh` (2751 ms) and `tests/migration-card.test.sh` (1443 ms) arrived with the same merge that carried the release branch's own unmeasured share past the guard's bound, so they take the duration one `bin/jg-test-run.sh` run on the Linux workspace host measured for each.
 
 ## Parallel lanes
 

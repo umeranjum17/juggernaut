@@ -105,6 +105,15 @@
 # Definition of done then targets that branch with its pull request.
 # bin/jg-dod-lib.sh's jg_base_branch_valid owns which deliveries accept one.
 # Refused on --squad-lead.
+# Without the flag, a ship brief for a project that carries a version branch
+# records that branch as its base, so the default is where new work belongs
+# rather than the default branch. bin/jg-version-branch-lib.sh owns which branch
+# that is, and bin/jg-spawn.sh resolves the same default and refuses a brief
+# that disagrees.
+# The read happens only when --project names the project directory, because a
+# brief is scaffolded before any copy exists; a brief scaffolded without it
+# keeps the default-branch setup and is refused at spawn until the base is
+# passed.
 # --forge names the project's forge, defaults to none, and is orthogonal to --mode
 # exactly as the registry's `forge=` token is. It is the captain's confirmed
 # registry binding, read from data/projects.md at intake and passed here; this
@@ -132,6 +141,8 @@
 # does not authorize, before the contract exists. Pass it on every ship
 # scaffold so detection does not depend on the caller recognizing the repo;
 # bin/jg-spawn.sh repeats the check at launch regardless.
+# It is also what lets a ship brief default its base to the project's version
+# branch, so pass it whenever the project is known.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line, followed by " forge=gerrit shape=squash"
 # on Gerrit or " forge=forgejo" on Forgejo. bin/jg-spawn.sh reads that line and
@@ -229,6 +240,8 @@ esac
 . "$SCRIPT_DIR/jg-role-lib.sh"
 # shellcheck source=bin/jg-preferred-stack-lib.sh
 . "$SCRIPT_DIR/jg-preferred-stack-lib.sh"
+# shellcheck source=bin/jg-version-branch-lib.sh
+. "$SCRIPT_DIR/jg-version-branch-lib.sh"
 PAUSED_VERB=${JG_CLASSIFY_PAUSED_VERB:-$JG_CLASSIFY_PAUSED_VERB_DEFAULT}
 IFS= read -r -d '' OPERATOR_PAUSE_INSTRUCTIONS <<EOF || true
    Use \`$PAUSED_VERB: {why}\` - never \`blocked:\` - when deliberately waiting for work or an external condition expected to clear on its own, including your own validation round.
@@ -475,6 +488,17 @@ if [ "$BASE_BRANCH_SET" -eq 1 ]; then
     exit 1
   fi
   jg_base_branch_valid "$BASE_BRANCH" "$MODE" "$FORGE" "jg-brief.sh --base-branch" || exit 1
+fi
+# No --base-branch on a project that carries a version branch means the version
+# branch: the brief then records it, so the copy starts there and the Definition
+# of done targets it with the pull request instead of the default branch.
+# bin/jg-spawn.sh resolves the same default from the same project, and refuses a
+# brief that disagrees, so the two can never drift.
+# bin/jg-version-branch-lib.sh owns which branch that is, and a project without
+# one keeps the default-branch setup sentence and its --base-branch flag path.
+if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
+  && [ "$FORGE" = none ] && [ "$PROJECT_DIR_SET" -eq 1 ] && [ -n "$PROJECT_DIR" ]; then
+  BASE_BRANCH=$(jg_current_version_branch "$PROJECT_DIR") || BASE_BRANCH=
 fi
 if [ "$KIND" != ship ]; then
   [ "$UPSTREAM_CONSENT_SET" -eq 0 ] || {

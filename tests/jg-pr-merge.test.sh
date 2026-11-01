@@ -215,6 +215,10 @@ case "${1:-} ${2:-}" in
         cat "$JG_TEST_GH_VIEW_JSON"
         exit 0
         ;;
+      *baseRefName*)
+        printf '%s\t%s\n' "${JG_TEST_GH_BASE:-}" "${JG_TEST_GH_HEAD_REF:-}"
+        exit 0
+        ;;
     esac
     ;;
   "pr merge")
@@ -961,6 +965,108 @@ test_pr_check_from_status_records_only_the_ready_report() {
   out=$(from_status) || fail "from-status: a recorded PR must be a no-op: $out"
   [ -z "$out" ] || fail "from-status: an already recorded PR was recorded again: $out"
   pass "jg-pr-check --from-status records the mode's ready report once and ignores other lines"
+}
+
+# An open pull request says what it is waiting for from the moment it is
+# recorded ready, before anyone attempts a merge, so the wait is never only in
+# a private record (bin/jg-pr-lib.sh jg_pr_wait_status).
+# A feature pull request belongs on the project's current version branch
+# (release/c-<N>), never on the default branch: the default branch moves only
+# when a release lands on it, so a feature merged there lands outside the release
+# it belongs to. The release pull request itself, whose head is the version
+# branch, is the one allowed exception.
+# bin/jg-version-branch-lib.sh owns which branch that is; this pins what the
+# record-and-arm step does with it, including that a refusal records nothing.
+test_main_based_feature_pull_request_is_refused() {
+  local case_dir rc out err
+  case_dir=$(make_case version-branch-base)
+  add_gh_mocks "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-1 \
+    "$(git -C "$case_dir/project" rev-parse HEAD)"
+
+  set +e
+  env PATH="$case_dir/fakebin:$PATH" \
+    JG_ROOT_OVERRIDE="$ROOT" \
+    JG_HOME="$case_dir/home" \
+    JG_STATE_OVERRIDE="$case_dir/state" \
+    JG_TEST_GH_LOG="$case_dir/gh.log" \
+    JG_TEST_GH_BASE=main \
+    JG_TEST_GH_HEAD_REF=fm/task-x1 \
+    HOME="$case_dir/user-home" \
+    "$ROOT/bin/jg-pr-check.sh" task-x1 https://github.com/example/repo/pull/78 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  err=$(cat "$case_dir/stderr")
+  expect_code 1 "$rc" "a feature pull request based on the default branch must be refused"
+  assert_contains "$err" "release/c-1" "the refusal does not name the version branch to use"
+  assert_contains "$err" "targets the default branch main" "the refusal does not name the base it read"
+  assert_no_grep 'pr=' "$case_dir/state/task-x1.meta" \
+    "a refused pull request was recorded anyway"
+  [ ! -e "$case_dir/state/task-x1.check.sh" ] \
+    || fail "a refused pull request armed a merge poll"
+
+  # The release pull request has the version branch as its head, so the same
+  # base is allowed and the refusal stays silent.
+  case_dir=$(make_case version-branch-release)
+  add_gh_mocks "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-1 \
+    "$(git -C "$case_dir/project" rev-parse HEAD)"
+  set +e
+  env PATH="$case_dir/fakebin:$PATH" \
+    JG_ROOT_OVERRIDE="$ROOT" \
+    JG_HOME="$case_dir/home" \
+    JG_STATE_OVERRIDE="$case_dir/state" \
+    JG_TEST_GH_LOG="$case_dir/gh.log" \
+    JG_TEST_GH_BASE=main \
+    JG_TEST_GH_HEAD_REF=release/c-1 \
+    JG_TEST_GH_HEAD="$(git -C "$case_dir/wt" rev-parse HEAD)" \
+    HOME="$case_dir/user-home" \
+    "$ROOT/bin/jg-pr-check.sh" task-x1 https://github.com/example/repo/pull/79 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  out=$(cat "$case_dir/stderr")
+  assert_not_contains "$out" "targets the default branch" \
+    "the release pull request from the version branch was refused (exit $rc)"
+  pass "a feature pull request based on the default branch is refused; the release pull request is allowed"
+}
+
+test_pr_ready_publishes_the_wait() {
+  local case_dir rc head
+  head=5151515151515151515151515151515151515151
+  case_dir=$(make_case ready-wait-status)
+  add_gh_mocks "$case_dir" "$head"
+  : > "$case_dir/gh.log"
+
+  set +e
+  PATH="$case_dir/fakebin:$PATH" \
+    JG_ROOT_OVERRIDE="$ROOT" \
+    JG_HOME="$case_dir/home" \
+    JG_STATE_OVERRIDE="$case_dir/state" \
+    JG_TEST_GH_LOG="$case_dir/gh.log" \
+    JG_TEST_GH_HEAD="$case_dir/github-head" \
+    JG_TEST_GH_VIEW_JSON="$case_dir/github-view.json" \
+    HOME="$case_dir/user-home" \
+    "$ROOT/bin/jg-pr-check.sh" task-x1 https://github.com/example/repo/pull/77 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "ready-wait-status: recording a ready pull request should succeed"
+  assert_grep "pr=https://github.com/example/repo/pull/77" "$case_dir/state/task-x1.meta" \
+    "ready-wait-status: the pull request was not recorded"
+  assert_grep "api -X POST repos/example/repo/statuses/$head" "$case_dir/gh.log" \
+    "ready-wait-status: a ready pull request published no wait"
+  assert_grep 'state=pending' "$case_dir/gh.log" \
+    "ready-wait-status: the wait was not published as pending"
+  assert_grep 'context=juggernaut/waiting-for' "$case_dir/gh.log" \
+    "ready-wait-status: the wait used another context"
+  assert_grep 'description=merge gate: lead turn' "$case_dir/gh.log" \
+    "ready-wait-status: the wait did not say what the pull request waits for"
+  pass "a newly ready pull request publishes its wait"
 }
 
 # GitHub reports mergeable=UNKNOWN for a short while after a push or a base
@@ -3488,6 +3594,71 @@ test_check_runs_never_supersede_status_contexts() {
   pass "jg-pr-merge never lets a check run supersede a legacy status context"
 }
 
+# A pull request's one-line wait (bin/jg-pr-lib.sh JG_PR_WAIT_CONTEXT) is
+# pending exactly while the pull request waits, including while it waits for
+# this merge. Reading it as an unfinished check would let the description of a
+# wait refuse the merge it describes, which is the deadlock pull request 370
+# hit, so the rollup read ignores it and the merge path clears it to success
+# before merging instead of leaving it pending.
+test_waiting_for_status_does_not_block_its_own_merge() {
+  local case_dir rc head clear_line merge_line
+  head=f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0
+  case_dir=$(make_case github-wait-status)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" \
+    "$(status_context juggernaut/waiting-for PENDING)"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/370 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "github-wait-status: a pending waiting-for status must not block the merge"
+  assert_logged_gh_merge "$case_dir" 370 example/repo --squash
+  assert_grep "api -X POST repos/example/repo/statuses/$head" "$case_dir/gh.log" \
+    "github-wait-status: the waiting-for status was never published"
+  assert_grep 'description=merging now' "$case_dir/gh.log" \
+    "github-wait-status: the wait was not cleared before merging"
+  assert_grep 'description=merged' "$case_dir/gh.log" \
+    "github-wait-status: the merged pull request kept a wait line"
+  clear_line=$(grep -n -F 'description=merging now' "$case_dir/gh.log" | head -n 1 | cut -d: -f1)
+  merge_line=$(grep -n -F 'pr merge 370' "$case_dir/gh.log" | head -n 1 | cut -d: -f1)
+  if [ -z "$clear_line" ] || [ -z "$merge_line" ] || [ "$clear_line" -ge "$merge_line" ]; then
+    fail "github-wait-status: the wait must be cleared to success before the merge call"
+  fi
+  pass "a pending waiting-for status never blocks the merge it describes"
+}
+
+# The other half of the same contract: a pull request that is refused says why
+# on its own page, so nobody has to ask what it is waiting for.
+test_refused_merge_publishes_the_wait() {
+  local case_dir rc head
+  head=f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1
+  case_dir=$(make_case github-wait-published)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  write_github_red_json "$case_dir" "$head" Lint
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/371 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "github-wait-published: a red check must refuse"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "github-wait-published: a red check was merged"
+  assert_grep "api -X POST repos/example/repo/statuses/$head" "$case_dir/gh.log" \
+    "github-wait-published: the refusal published no wait status"
+  assert_grep 'state=pending' "$case_dir/gh.log" \
+    "github-wait-published: the wait was not published as pending"
+  assert_grep 'context=juggernaut/waiting-for' "$case_dir/gh.log" \
+    "github-wait-published: the wait used another context"
+  assert_grep "description=merge gate: check 'Lint' is not green" "$case_dir/gh.log" \
+    "github-wait-published: the wait did not name the refusing check"
+  pass "a refused merge publishes why the pull request is waiting"
+}
+
 # The inverse, and the one that matters most: a check whose current run failed is
 # still red however many earlier runs of it passed.
 test_current_failed_check_run_still_refuses() {
@@ -4725,6 +4896,8 @@ test_github_red_checks_refuse_and_allow_red_waives_named
 test_github_draft_or_unreadable_draft_state_refuses
 test_superseded_failed_check_run_no_longer_refuses
 test_check_runs_never_supersede_status_contexts
+test_waiting_for_status_does_not_block_its_own_merge
+test_refused_merge_publishes_the_wait
 test_current_failed_check_run_still_refuses
 test_late_finishing_old_success_does_not_hide_current_failure
 test_late_finishing_old_cancellation_is_superseded
@@ -4762,4 +4935,6 @@ test_required_partial_reads_report_all_failures
 test_allow_red_refused_on_forgejo
 test_allow_missing_refused_on_forgejo
 test_pr_check_from_status_records_only_the_ready_report
+test_main_based_feature_pull_request_is_refused
+test_pr_ready_publishes_the_wait
 test_post_merge_cleanup_tears_down_once

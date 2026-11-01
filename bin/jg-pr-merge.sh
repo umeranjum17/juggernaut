@@ -166,6 +166,15 @@
 # retains the lock until the accepted merge authority is persisted against the
 # still-matching task metadata.
 #
+# On GitHub this path also owns the pull request's one-line wait, the commit
+# status bin/jg-pr-lib.sh jg_pr_wait_status publishes as context
+# juggernaut/waiting-for. A refusal that names a reason publishes it as the wait,
+# success is published immediately before the merge so a pending status can
+# never be an unfinished check that blocks the merge it describes, and a proven
+# merge or queue entry republishes success. Publishing is best-effort
+# throughout: the wait line describes the gate and is never a condition of it.
+# github_checks_not_green owns why that context is excluded from the rollup read.
+#
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
 # URL, nor --sha or --match-head-commit because the head comes only from the
@@ -864,9 +873,18 @@ forgejo_default_merge_style() {
 # The reported name is also what --allow-red matches. An unnamed check run is
 # grouped alone and can neither supersede nor be superseded, because unrelated
 # unnamed checks must not be treated as one.
+#
+# One status context is not a check of the code and is not read here at all:
+# juggernaut/waiting-for, the one-line wait described on the pull request
+# (bin/jg-pr-lib.sh JG_PR_WAIT_CONTEXT). It is pending exactly while the pull
+# request is waiting, including the wait for this very merge, so counting it as
+# an unfinished check would let the description of a wait refuse the merge it
+# describes; that deadlock is why pull request 370 could not merge. The merge
+# path still publishes success on it immediately before merging, which is what
+# a repository that requires every check needs.
 github_checks_not_green() {
   local json=$1
-  printf '%s' "$json" | jq -r '
+  printf '%s' "$json" | jq -r --arg wait_context "$JG_PR_WAIT_CONTEXT" '
     def settled_at:
       if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
       then . else null end;
@@ -875,6 +893,7 @@ github_checks_not_green() {
         | to_entries[]
         | .key as $i
         | .value
+        | select(.__typename == "CheckRun" or (.context // "") != $wait_context)
         | if .__typename == "CheckRun" then
             {
               kind: "check_run",
@@ -1018,11 +1037,16 @@ github_required_checks_missing() {
 # Sets JG_PR_MERGE_HEAD to the verified head on success. Returns 3, rather than
 # the usual 1, when mergeable=UNKNOWN is the only failing condition, so the
 # caller can retry a still-computing mergeability read instead of refusing.
+# A refusal also leaves its own text in JG_PR_GITHUB_REFUSAL, because that text
+# is what the caller publishes as the pull request's wait.
+JG_PR_GITHUB_REFUSAL=
 github_verify_mergeable() {
   local json fields line red name covered missing unreported producers runs
   local total=0 named=0 refusals='' mergeable_refusal=''
   local local_suite_proven=false local_suite_proof='' local_suite_verify_rc=0
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
+
+  JG_PR_GITHUB_REFUSAL='could not read the GitHub pull request state before merging'
 
   if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
     || [ -z "$json" ]; then
@@ -1173,6 +1197,7 @@ EOF
   fi
 
   if [ -n "$refusals" ]; then
+    JG_PR_GITHUB_REFUSAL=$refusals
     printf 'error: refusing to merge %s\n' "$URL" >&2
     printf '%s' "$refusals" >&2
     [ -z "$uncovered" ] || printf 'error: these checks are not green: %s\n' "$uncovered" >&2
@@ -1189,6 +1214,50 @@ EOF
   JG_PR_MERGE_HEAD=$live_head
   JG_PR_GITHUB_BASE=$base
   JG_PR_GITHUB_LOCAL_SUITE=$local_suite_proven
+}
+
+# Publish the reason this merge is waiting, so the pull request page answers the
+# question a reader would otherwise have to ask. The first reason the refusal
+# named becomes the wait, one line and capped by bin/jg-pr-lib.sh
+# jg_pr_wait_status; a refusal that named no reason still records the caller's
+# fallback. A publish that fails is reported and never changes the refusal or
+# its status: the wait line is a description of the merge gate, never a
+# condition of it.
+github_publish_wait() {  # <refusal-text> <fallback-line>
+  local text=${1-} fallback=$2 line
+  # A refusal prints a headline first and its reasons as bullet lines, and the
+  # reason is the useful wait. Fall back to the headline without its "error:".
+  line=$(printf '%s\n' "$text" | sed -n 's/^[[:space:]]*-[[:space:]]*//p' | head -n 1)
+  if [ -z "$line" ]; then
+    line=$(printf '%s\n' "$text" | sed -n 's/^[[:space:]]*error:[[:space:]]*//p' | head -n 1)
+  fi
+  [ -n "$line" ] || line=$(printf '%s\n' "$text" | awk 'NF { print; exit }')
+  [ -n "$line" ] || line=$fallback
+  jg_pr_wait_status "$URL" pending "merge gate: $line" \
+    || printf 'warning: could not publish the waiting-for status on %s\n' "$URL" >&2
+}
+
+# Run one pre-merge gate, echo its refusal to stderr as its own caller did, and
+# publish the wait it named. The gate runs in this shell rather than in a
+# command substitution, so nothing it sets is silently lost, and its refusal
+# travels through a file for the same reason. Its exit status is unchanged, so
+# the caller still exits exactly where it did before.
+github_gate() {  # <fallback-line> <command...>
+  local fallback=$1 out='' rc=0 gate_log
+  shift
+  gate_log=$(mktemp "${TMPDIR:-/tmp}/jg-pr-merge-gate.XXXXXX" 2>/dev/null) || gate_log=
+  if [ -n "$gate_log" ]; then
+    # Both streams, because a gate's reason can arrive on either one and the
+    # caller used to send this call's whole output to stderr.
+    "$@" >"$gate_log" 2>&1 || rc=$?
+    out=$(cat "$gate_log" 2>/dev/null)
+    rm -f "$gate_log"
+  else
+    "$@" >&2 || rc=$?
+  fi
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  [ "$rc" -eq 0 ] || github_publish_wait "$out" "$fallback"
+  return "$rc"
 }
 
 # Read one live GitHub pull request view after gh returns. The selected
@@ -1724,10 +1793,13 @@ case "$PROVIDER" in
     if [ "$mergeable_status" -ne 0 ]; then
       if [ "$mergeable_status" -eq 3 ]; then
         printf 'error: mergeability for %s is still being computed by GitHub; retry shortly\n' "$URL" >&2
+        github_publish_wait '' 'mergeability still being computed'
+      else
+        github_publish_wait "$JG_PR_GITHUB_REFUSAL" 'merge gate refused the merge'
       fi
       exit 1
     fi
-    if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$JG_PR_MERGE_HEAD" "$URL" >&2 || exit 1; fi
+    if declare -F jg_dod_merge_gate >/dev/null; then github_gate 'proof or evidence gate refused the merge' jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$JG_PR_MERGE_HEAD" "$URL" || exit 1; fi
     # The away record is locked first, so this last presence and authority read
     # and the forge command below share one live-owner critical section.
     hold_away_record_for_merge || exit 1
@@ -1736,13 +1808,19 @@ case "$PROVIDER" in
     [ "$away_status" -eq 0 ] || exit "$away_status"
     refuse_github_queue_while_away || exit 2
     merge_status=0
-    if declare -F jg_dod_receipt_accept >/dev/null; then jg_dod_receipt_accept "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" >&2 || exit 1; fi
-    if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" >&2 || exit 1; fi
-    if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" >&2 || exit 1; fi
+    if declare -F jg_dod_receipt_accept >/dev/null; then github_gate 'receipt not accepted for this head' jg_dod_receipt_accept "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" || exit 1; fi
+    if declare -F jg_dod_design_gate >/dev/null; then github_gate 'design receipt missing' jg_dod_design_gate "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" || exit 1; fi
+    if declare -F jg_dod_demo_gate >/dev/null; then github_gate 'demo proof missing' jg_dod_demo_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$STATE" "$ID" "$META" "$JG_PR_MERGE_HEAD" || exit 1; fi
     if declare -F jg_dod_nav_gate >/dev/null; then
       nav_body=$(gh pr view "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" --json body -q .body 2>/dev/null) || nav_body=
-      jg_dod_nav_gate "$ID" "$META" "$nav_body" >&2 || exit 1
+      github_gate 'navigation proof missing' jg_dod_nav_gate "$ID" "$META" "$nav_body" || exit 1
     fi
+    # The wait is over the moment this merge is issued, so the status reads
+    # success before the merge rather than pending: a pending status is an
+    # unfinished check, and a repository that requires every check would refuse
+    # the merge it is describing. A publish that fails never stops the merge.
+    jg_pr_wait_status "$URL" success 'merging now' \
+      || printf 'warning: could not clear the waiting-for status on %s\n' "$URL" >&2
     merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
       --match-head-commit "$JG_PR_MERGE_HEAD" \
       "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
@@ -1765,15 +1843,24 @@ case "$PROVIDER" in
             "$URL" "$JG_PR_GITHUB_STATE" "$JG_PR_GITHUB_MERGED" "$JG_PR_GITHUB_QUEUED" >&2
         fi
       fi
+      # Nothing landed, so the success published just before the merge would
+      # otherwise leave an open pull request reading "merging now" for good.
+      github_publish_wait "$merge_output" 'merge command failed; re-read the pull request'
       exit "$merge_status"
     fi
     if ! github_read_outcome; then
+      # The merge is unproven, so the pull request still waits on something.
+      github_publish_wait "$merge_output" 'merge issued but not proven; re-read the pull request'
       github_report_forge_output "$merge_output"
       exit 1
     fi
     if [ "$JG_PR_GITHUB_MERGED" = true ]; then
       printf 'verified: %s is merged (state=%s, merged=%s, isInMergeQueue=%s)\n' \
         "$URL" "$JG_PR_GITHUB_STATE" "$JG_PR_GITHUB_MERGED" "$JG_PR_GITHUB_QUEUED"
+      # No wait is left behind on a merged pull request: the success status now
+      # reads merged rather than describing a wait that is over.
+      jg_pr_wait_status "$URL" success merged \
+        || printf 'warning: could not record the merged waiting-for status on %s\n' "$URL" >&2
       # This merge landed before GitHub finished, so its run result arrives as an
       # alarm and never as a gate: one detached watch files one fix item naming
       # the run id if that run goes red. A host that cannot start the watch says
@@ -1794,8 +1881,11 @@ case "$PROVIDER" in
     elif [ "$JG_PR_GITHUB_QUEUED" = true ]; then
       printf 'verified: %s is queued (state=%s, merged=%s, isInMergeQueue=%s)\n' \
         "$URL" "$JG_PR_GITHUB_STATE" "$JG_PR_GITHUB_MERGED" "$JG_PR_GITHUB_QUEUED"
+      jg_pr_wait_status "$URL" success 'queued in merge queue' \
+        || printf 'warning: could not record the queued waiting-for status on %s\n' "$URL" >&2
       exit 0
     else
+      github_publish_wait "$merge_output" 'merge issued but not proven; re-read the pull request'
       github_report_forge_output "$merge_output"
       github_report_unmerged_outcome
       exit 1
