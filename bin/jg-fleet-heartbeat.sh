@@ -10,11 +10,19 @@
 #
 # rows   Columns: home, verdict, working lanes, lane target (- when unset), ready
 #        backlog (? when the home summary is missing), open waits, beacon age in
-#        seconds (999999 when no watcher ever ran), why. The home is `overwatch` for this home and
-#        the registry id for a Squad Lead. Every field comes from records the
-#        home already writes; nothing is re-derived:
-#          working  state/<task>.meta of kind ship or scout whose last state
-#                   line is not paused, blocked, needs-decision, done or failed;
+#        seconds (999999 when no watcher ever ran), why, open lanes. The home is
+#        `overwatch` for this home and the registry id for a Squad Lead. Every
+#        field comes from records the home already writes; nothing is re-derived:
+#          working  a lane (state/<task>.meta of kind ship or scout) whose PANE
+#                   is busy right now, read from the semantic busy record
+#                   bin/jg-busy-lib.sh owns. A lane whose adapter reports no
+#                   trusted busy state falls back to its status log, and a lane
+#                   with no pane at all is not working. An old status line is
+#                   never evidence that a busy pane is idle: that misreading is
+#                   what made this count say "2 of 4" while seven panes worked.
+#          open     every lane of the home, busy or not, so working, open and
+#                   the target are three separate numbers and the count is
+#                   never capped by the target;
 #          target   config/lane-target (one positive integer);
 #          ready    ready_work in state/home-summary.json;
 #          waits    open wait-timer episodes in state/.waiting-timers/, each
@@ -26,7 +34,9 @@
 #                   older than JG_FLEET_HEARTBEAT_BEACON_SECS (default 900): no
 #                   supervision is moving this home;
 #          GAP      ready work with lanes free (working below the target, or
-#                   none working when no target is set), or an open wait;
+#                   none working when no target is set), or an open wait. A
+#                   busy pane is never a free lane, whatever its status log
+#                   last said;
 #          IDLE     no working lane and no ready work;
 #          MOVING   otherwise;
 #          DORMANT  stopped by bin/jg-squad-lead-dormant.sh with no open work;
@@ -59,6 +69,8 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
+# shellcheck source=bin/jg-busy-lib.sh
+. "$SCRIPT_DIR/jg-busy-lib.sh"
 STATE="$JG_HOME/state"
 BEACON_SECS=${JG_FLEET_HEARTBEAT_BEACON_SECS:-900}
 REFIRE_SECS=${JG_FLEET_HEARTBEAT_REFIRE_SECS:-600}
@@ -66,9 +78,35 @@ NOW=$(date +%s)
 
 die() { printf 'jg-fleet-heartbeat: %s\n' "$1" >&2; exit "${2:-1}"; }
 
+# lane_working <state-dir> <meta>: 0 when the lane's pane is busy right now.
+# The semantic busy record is the authority, because state/<id>.status is an
+# append-only event log and its last line is history, not current state: a busy
+# pane whose last wake-worthy line was "paused" is still working. A lane whose
+# adapter publishes no trusted busy state falls back to that log, and a lane that
+# publishes neither a pane reading nor a status line is not working.
+lane_working() {
+  local st=$1 meta=$2 task harness rec state source last
+  task=$(basename "${meta%.meta}")
+  harness=$(sed -n 's/^harness=//p' "$meta" 2>/dev/null | head -1)
+  rec=$(jg_busy_record_read "$st" "$task" 2>/dev/null) || rec=
+  if [ -n "$rec" ]; then
+    read -r state source _ <<<"$rec"
+    if jg_busy_source_trusted "${harness:-}" "$source" 2>/dev/null; then
+      [ "$state" = busy ]
+      return $?
+    fi
+  fi
+  last=$(grep -E '^(working|paused|blocked|needs-decision|done|failed)[ :[]' "${meta%.meta}.status" 2>/dev/null | tail -1)
+  case "$last" in
+    paused* | blocked* | needs-decision* | done* | failed*) return 1 ;;
+    '') return 1 ;;
+  esac
+  return 0
+}
+
 # home_row <id> <home-dir>: one TSV row.
 home_row() {
-  local id=$1 home=$2 st meta kind last working=0 target=- ready='?' waits=0 age why verdict
+  local id=$1 home=$2 st meta kind working=0 open=0 target=- ready='?' waits=0 age why verdict
   [ -d "$home" ] || { printf '%s\tSTALLED\t0\t-\t?\t0\t-\thome %s is not a directory\n' "$id" "$home"; return; }
   if [ "$id" != overwatch ] && squad_lead_dormant "$STATE" "$id"; then
     printf '%s\tDORMANT\t0\t-\t-\t0\t-\tno open work; stopped, wakes on routed work\n' "$id"
@@ -79,8 +117,9 @@ home_row() {
     [ -f "$meta" ] || continue
     kind=$(sed -n 's/^kind=//p' "$meta" | head -1)
     case "${kind:-ship}" in ship|scout) ;; *) continue ;; esac
-    last=$(grep -E '^(working|paused|blocked|needs-decision|done|failed)[ :[]' "${meta%.meta}.status" 2>/dev/null | tail -1)
-    case "$last" in paused*|blocked*|needs-decision*|done*|failed*) ;; *) working=$((working + 1)) ;; esac
+    open=$((open + 1))
+    lane_working "$st" "$meta" || continue
+    working=$((working + 1))
   done
   target=$(awk 'NF { print; exit }' "$home/config/lane-target" 2>/dev/null)
   case "$target" in ''|*[!0-9]*|0) target=- ;; esac
@@ -96,7 +135,7 @@ home_row() {
       [ "$age" -lt 999999 ] || why="work waits but no supervision has run"
     elif [ "$ready" != '?' ] && [ "$ready" -gt 0 ] \
       && { { [ "$target" = - ] && [ "$working" -eq 0 ]; } || { [ "$target" != - ] && [ "$working" -lt "$target" ]; }; }; then
-      verdict=GAP why="$ready ready, $working of ${target/-/?} lanes working"
+      verdict=GAP why="$ready ready, $working of $open lanes working (target ${target/-/?})"
     elif [ "$waits" -gt 0 ]; then
       verdict=GAP why="$waits open wait(s) climbing their ladder"
     else
@@ -107,7 +146,7 @@ home_row() {
   else
     verdict=IDLE why="no ready work and no working lane"
   fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$verdict" "$working" "$target" "$ready" "$waits" "$age" "$why"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$verdict" "$working" "$target" "$ready" "$waits" "$age" "$why" "$open"
 }
 
 cmd_rows() {

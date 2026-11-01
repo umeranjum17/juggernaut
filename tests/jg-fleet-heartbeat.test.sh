@@ -15,6 +15,21 @@ lane() {  # <home> <task> <last status line>
   printf '%s\n' "$3" > "$1/state/$2.status"
 }
 
+# pane <home> <task> <busy|idle>: the semantic busy record a live pane publishes,
+# with the harness that trusts it. A lane with no such record has no pane reading
+# and falls back to its status log.
+pane() {  # <home> <task> <busy|idle>
+  local gen="g$2.1"
+  printf 'harness=pi\nwindow=fake:%s\n' "$2" >> "$1/state/$2.meta"
+  printf '%s\n' "$gen" > "$1/state/$2.busy-gen"
+  printf 'v1 gen=%s seq=1 state=%s source=pi-ext event=agent-start ts=1\n' "$gen" "$3" \
+    > "$1/state/$2.busy-state"
+}
+
+row_field() {  # <rows> <home> <column>
+  printf '%s\n' "$1" | awk -F '\t' -v h="$2" -v c="$3" '$1 == h { print $c }'
+}
+
 home() {  # <dir> <ready> [target] -> a home whose watcher beat just now
   mkdir -p "$1/state" "$1/config"
   printf '{"ready_work":%s}\n' "$2" > "$1/state/home-summary.json"
@@ -58,7 +73,8 @@ test_rows_give_every_home_one_verdict() {
   assert_equals "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" 5 "one row per home: $out"
   assert_equals "$(verdict "$out" overwatch)" MOVING "a working lane with no ready work is moving"
   assert_equals "$(verdict "$out" gappy)" GAP "ready work with a free lane is a gap"
-  assert_contains "$out" "3 ready, 1 of 2 lanes working" "a paused lane must not count as working"
+  assert_contains "$out" "3 ready, 1 of 2 lanes working (target 2)" \
+    "a paused lane with no pane reading must not count as working"
   assert_equals "$(verdict "$out" quiet)" IDLE "a done lane and no ready work is idle"
   assert_equals "$(verdict "$out" dead)" STALLED "work with no supervision beat is stalled"
   assert_equals "$(verdict "$out" far)" UNREAD "a remote home is not read"
@@ -136,7 +152,49 @@ SH
 }
 test_check_names_a_finished_lane_nobody_closed
 
+# A lane's status log is an event log, so its last line is history: a pane that
+# is busy right now is working even when that line says it paused or finished.
+# The idle-lane alarm must not fire on a fleet whose panes are all busy.
+test_a_busy_pane_is_working_whatever_its_status_line_says() {
+  local d out
+  d=$(setup panes)
+  lane "$d/leads/gappy" g1 'paused [at=1]: waiting on CI'
+  lane "$d/leads/gappy" g2 'done [at=1]: PR https://example.test/pr/2'
+  pane "$d/leads/gappy" g1 busy
+  pane "$d/leads/gappy" g2 busy
+  out=$(hb "$d" rows)
+  assert_equals "$(verdict "$out" gappy)" MOVING \
+    "three ready items beside two busy panes must not raise the idle-lane alarm"
+  assert_contains "$out" "2 lanes working" \
+    "a busy pane must count as working whatever its last status line says"
+  assert_equals "$(row_field "$out" gappy 3)" 2 "working lanes"
+  assert_equals "$(row_field "$out" gappy 4)" 2 "the lane target stays its own number"
+  assert_equals "$(row_field "$out" gappy 9)" 2 "open lanes"
+  pass "a busy pane is working whatever its status line says"
+}
+
+# working, open and the target are three separate numbers, and no target caps the
+# count of working lanes: five busy panes on a home whose target is two report
+# five, not two.
+test_the_working_count_is_never_capped_by_the_target() {
+  local d out i
+  d=$(setup cap)
+  for i in 1 2 3 4 5; do
+    lane "$d/leads/gappy" "c$i" 'working [at=1]: building'
+    pane "$d/leads/gappy" "c$i" busy
+  done
+  pane "$d/leads/gappy" g1 busy
+  out=$(hb "$d" rows)
+  assert_equals "$(row_field "$out" gappy 3)" 6 "working lanes over the target"
+  assert_equals "$(row_field "$out" gappy 4)" 2 "the target is unchanged"
+  assert_equals "$(row_field "$out" gappy 9)" 7 "open lanes"
+  assert_equals "$(verdict "$out" gappy)" MOVING "lanes over the target are moving, never a gap"
+  pass "the working count is never capped by the target"
+}
+
 test_rows_give_every_home_one_verdict
 test_an_open_wait_is_a_gap_and_filled_lanes_are_moving
+test_a_busy_pane_is_working_whatever_its_status_line_says
+test_the_working_count_is_never_capped_by_the_target
 test_check_wakes_on_a_gap_refires_and_reports_recovery_once
 test_arm_registers_a_check_the_watcher_trusts_only_on_a_primary_home
