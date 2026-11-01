@@ -2726,16 +2726,6 @@ jg_wake_commit_squad_lead_stall_receipts_through() { # <cutoff> [<rows-file>]
   ' "$JG_WAKE_QUEUE" 2>/dev/null)
 }
 
-jg_wake_restore_queue() {
-  local drained=$1 restore
-  restore="$STATE/.wake-queue.restore.$(jg_current_pid)"
-  if [ -e "$JG_WAKE_QUEUE" ]; then
-    cat "$drained" "$JG_WAKE_QUEUE" > "$restore" && mv "$restore" "$JG_WAKE_QUEUE"
-  else
-    mv "$drained" "$JG_WAKE_QUEUE"
-  fi
-}
-
 # jg_wake_queue_prune_task <state> <task-id> [target]
 # Prune pending durable wakes for <task-id> and its recorded <target> from
 # the wake queue. Removes stale wakes for <target>, signal wakes for the task's
