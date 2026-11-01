@@ -18,6 +18,13 @@ BEARINGS="$ROOT/bin/jg-bearings-snapshot.sh"
 TMP_ROOT=$(jg_test_tmproot jg-captain-hold)
 TASKS_AXI_BIN=$(command -v tasks-axi || true)
 
+# The PR merge runs the merge-gate evidence lint itself (#424). These cases
+# prove the captain-hold authority record, not the evidence folder, so the lint
+# is a stub that passes; tests/jg-pr-merge.test.sh proves the lint refusal.
+PASS_LINT="$TMP_ROOT/pass-lint.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "checks-lint: PASS"' > "$PASS_LINT"
+chmod +x "$PASS_LINT"
+
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 
@@ -141,7 +148,8 @@ run_pr_merge() {  # <home> <id> <url>
   PATH="$home/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
     JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
     JG_CONFIG_OVERRIDE="$home/config" JG_TEST_GH_LOG="$home/gh.log" \
-    JG_TEST_GH_AXI_LOG="$home/gh-axi.log" "$ROOT/bin/jg-pr-merge.sh" "$@"
+    JG_TEST_GH_AXI_LOG="$home/gh-axi.log" JG_PR_MERGE_CHECKS_LINT="$PASS_LINT" \
+    "$ROOT/bin/jg-pr-merge.sh" "$@"
 }
 
 wait_for_test_file() {  # <path> <pid>
