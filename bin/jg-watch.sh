@@ -4192,6 +4192,23 @@ EOF
     echo "watcher: escalation workflow tick failed" >&2
   fi
 
+  # Migration step 5h, live: the SLO alerts. One tick evaluates the six configured
+  # rules against the sample set and queues every notification that is due
+  # (bin/jg-slo-alerts.sh owns the contract, the limits and the routing). A
+  # blocker prints its reason, so this cycle ends on it exactly as the ladder's
+  # own fire did; a batched alert only queues its row and rides the next wake. A
+  # tick that cannot read its definition reports it and leaves the poll running.
+  if slo_reason=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/jg-slo-alerts.sh" tick 2>/dev/null); then
+    if [ -n "$slo_reason" ]; then
+      # shellcheck disable=SC2034 # Read by wake() in bin/jg-push-transition-lib.sh.
+      JG_WAKE_LAST=''
+      wake "$slo_reason"
+    fi
+  else
+    echo "watcher: slo-alert tick failed" >&2
+  fi
+
   host_memory_surface_queued
 
   # The existing poll loop also owns the bounded inactive-outcome cadence.
