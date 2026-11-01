@@ -9,7 +9,8 @@
   "repeat-interval-minutes": 60,
   "digest-interval-minutes": 15,
   "inhibit-rules": [
-    {"source": "pr-red", "target": "worker-idle", "equal": ["owner"]}
+    {"source": "pr-red", "target": "worker-idle", "equal": ["owner"]},
+    {"source": "release-waiting", "target": "done-merge", "equal": ["owner"]}
   ],
   "alerts": [
     {"id": "pr-red", "summary": "a pull request is red with no new push", "metric": "jg_slo_pr_red_seconds",
@@ -17,6 +18,12 @@
     {"id": "done-merge", "summary": "a finished task is still unmerged", "metric": "jg_slo_done_unmerged_seconds",
      "limit": 30, "limit-unit": "minutes", "for-minutes": 0, "urgency": "batch", "escalate-to-main-minutes": 90},
     {"id": "worker-idle", "summary": "a worker has no commit and no status", "metric": "jg_slo_worker_idle_seconds",
-     "limit": 25, "limit-unit": "minutes", "for-minutes": 0, "urgency": "batch", "escalate-to-main-minutes": 60}
+     "limit": 25, "limit-unit": "minutes", "for-minutes": 0, "urgency": "batch", "escalate-to-main-minutes": 60},
+    {"id": "ready-work", "summary": "a free lane stands while ready work waits", "metric": "jg_slo_ready_work_items",
+     "limit": 1, "limit-unit": "items", "for-minutes": 5, "urgency": "batch", "escalate-to-main-minutes": 30},
+    {"id": "runner-queue", "summary": "the CI runner queue is full", "metric": "jg_slo_ci_queued",
+     "limit": 20, "limit-unit": "jobs", "for-minutes": 10, "urgency": "batch", "escalate-to-main-minutes": 60},
+    {"id": "release-waiting", "summary": "a release branch waits with every feature done", "metric": "jg_slo_release_waiting_seconds",
+     "limit": 60, "limit-unit": "minutes", "for-minutes": 0, "urgency": "blocker", "escalate-to-main-minutes": 30}
   ]
 }

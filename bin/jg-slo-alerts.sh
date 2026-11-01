@@ -11,7 +11,8 @@
 # inhibition. This step puts the config-driven rules in charge of those
 # conditions, reading Prometheus when a server answers and the fleet's own records
 # otherwise, so they are provable in a lab and work with no exporter.
-# This part carries the first three rules.
+# Part 1 carried the engine and the first three rules; this part adds the free
+# lane, the runner queue and the release branch.
 #
 # CONTRACT (this header is the one owner of the alerting shape).
 #   definition  defaults/slo-alerts.json, overridable per home at
@@ -140,6 +141,29 @@ owner_label() {
   fi
 }
 
+# The github.com repos this home's live work names, from the pull request a task
+# records and from its project's origin. Deduplicated, so one tick reads a repo
+# once.
+live_repos() {
+  local meta project url repo
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    url=$(grep -m1 '^pr=' "$meta" 2>/dev/null | cut -d= -f2-) || url=
+    case "$url" in
+      https://github.com/*/pull/*) url=${url#https://github.com/}; printf '%s\n' "${url%%/pull/*}" ;;
+    esac
+    project=$(grep -m1 '^project=' "$meta" 2>/dev/null | cut -d= -f2-) || project=
+    [ -n "$project" ] || continue
+    url=$(git -C "$project" config --get remote.origin.url 2>/dev/null) || continue
+    case "$url" in
+      https://github.com/*) repo=${url#https://github.com/} ;;
+      git@github.com:*) repo=${url#git@github.com:} ;;
+      *) continue ;;
+    esac
+    printf '%s\n' "${repo%.git}"
+  done | sort -u
+}
+
 forge_due() {
   local at
   at=$(cat "$ALERTS_DIR/.forge-at" 2>/dev/null) || at=0
@@ -254,15 +278,92 @@ pane_busy() {
   jg_busy_source_trusted "${harness:-}" "$source" 2>/dev/null
 }
 
+# 4. A free lane while ready work waits. Both halves are already recorded: the
+# ready-backlog reader is the supervision contract's own, and the lane count is
+# the ship-or-scout record the lane cap counts.
+collect_ready_work() {
+  local meta kind open=0 target ids n labels
+  target=$(cat "$CONFIG/lane-target" 2>/dev/null) || target=
+  case "$target" in '' | *[!0-9]* | 0*) return 0 ;; esac
+  ids=$(jg_ready_work_ids "$JG_HOME" 2>/dev/null) || ids=
+  [ -n "$ids" ] || return 0
+  n=$(printf '%s' "$ids" | wc -w | tr -d ' ')
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    kind=$(grep -m1 '^kind=' "$meta" 2>/dev/null | cut -d= -f2-) || kind=
+    case "${kind:-ship}" in ship | scout) open=$(( open + 1 )) ;; esac
+  done
+  [ "$open" -lt "$target" ] || return 0
+  labels=$(jq -cn --arg owner "$(owner_label)" '{owner: $owner}')
+  emit jg_slo_ready_work_items "$n" "$labels"
+}
+
+# 5. The CI runner queue. GitHub reports the count itself, so one small read per
+# repo answers it instead of a jobs sweep.
+collect_runner_queue() {
+  local repo total sum=0 found=0 labels
+  command -v gh >/dev/null 2>&1 || return 0
+  while IFS= read -r repo; do
+    [ -n "$repo" ] || continue
+    total=$(gh api "repos/$repo/actions/runs?status=queued&per_page=1" -q '.total_count' 2>/dev/null) || continue
+    case "$total" in '' | *[!0-9]*) continue ;; esac
+    found=1
+    sum=$(( sum + total ))
+  done <<EOF
+$(live_repos)
+EOF
+  [ "$found" -eq 1 ] || return 0
+  labels=$(jq -cn --arg owner "$(owner_label)" '{owner: $owner}')
+  emit jg_slo_ci_queued "$sum" "$labels"
+}
+
+# 6. A release branch waiting with every feature done. Every pull request into
+# the version branch is green and none is a draft, so nothing is left to build
+# and the branch only waits to be released. A pull request's own update time is
+# the clock: GitHub moves it on every push and every check result.
+collect_release_waiting() {
+  local branch repo rows count ready oldest labels
+  branch=$(cat "$CONFIG/version-branch" 2>/dev/null) || branch=
+  [ -n "$branch" ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  while IFS= read -r repo; do
+    [ -n "$repo" ] || continue
+    rows=$(gh pr list --repo "$repo" --base "$branch" --state open --limit 100 \
+      --json number,isDraft,statusCheckRollup,updatedAt 2>/dev/null) || continue
+    [ -n "$rows" ] || continue
+    count=$(printf '%s' "$rows" | jq -r 'length' 2>/dev/null) || continue
+    [ "${count:-0}" -gt 0 ] || continue
+    ready=$(printf '%s' "$rows" | jq -r '
+      [ .[] | select(.isDraft == false)
+        | select([ (.statusCheckRollup // [])[]
+            | select((.conclusion // .state) as $c
+                | ($c == "FAILURE" or $c == "TIMED_OUT" or $c == "CANCELLED"
+                   or $c == "ACTION_REQUIRED" or $c == "STARTUP_FAILURE"
+                   or $c == "PENDING" or $c == "IN_PROGRESS" or $c == "QUEUED" or $c == "EXPECTED"))
+          ] | length == 0) ]
+      | length' 2>/dev/null) || continue
+    [ "${ready:-0}" -eq "$count" ] || continue
+    oldest=$(printf '%s' "$rows" | jq -r '[ .[].updatedAt | fromdateiso8601 ] | min' 2>/dev/null) || continue
+    case "$oldest" in '' | *[!0-9]*) continue ;; esac
+    [ "$NOW" -ge "$oldest" ] || continue
+    labels=$(jq -cn --arg owner "$(owner_label)" --arg branch "$branch" --arg repo "$repo" \
+      '{owner: $owner, branch: $branch, repo: $repo}')
+    emit jg_slo_release_waiting_seconds "$(( NOW - oldest ))" "$labels"
+  done <<EOF
+$(live_repos)
+EOF
+  return 0
+}
+
 cmd_collect() {
   local out=$SAMPLES_FILE tmp=$SAMPLES_FILE.tmp.$$ forge=0
   mkdir -p "$ALERTS_DIR" 2>/dev/null || die "cannot create $ALERTS_DIR"
   load_fact_libs || die 'the fact libraries are not in this tree'
   : >"$tmp" || die "cannot write $tmp"
-  { collect_done_merge; collect_worker_idle; } >>"$tmp" || return 1
+  { collect_done_merge; collect_worker_idle; collect_ready_work; } >>"$tmp" || return 1
   if forge_due; then
     forge=1
-    collect_pr_red >>"$tmp" 2>/dev/null || true
+    { collect_pr_red; collect_runner_queue; collect_release_waiting; } >>"$tmp" 2>/dev/null || true
   fi
   mv -f "$tmp" "$out" || return 1
   [ "$forge" -eq 0 ] || forge_mark

@@ -50,11 +50,13 @@ set_limit() {  # <home> <rule> <limit>
 
 # --- the rules are data, and each limit is in config ------------------------
 out=$(run "$HOME_DIR" "$T0" "$SAMPLES" show) || fail "show failed: $out"
-for id in pr-red done-merge worker-idle; do
+for id in pr-red done-merge worker-idle ready-work runner-queue release-waiting; do
   assert_contains "$out" "$id" "show does not name the $id rule"
 done
 assert_contains "$out" 'jg_slo_pr_red_seconds > 30 minutes' 'show does not print the pr-red limit'
+assert_contains "$out" 'jg_slo_ci_queued > 20 jobs' 'show does not print the runner queue limit'
 assert_contains "$out" 'pr-red mutes worker-idle when owner' 'show does not print the inhibition in force'
+assert_contains "$out" 'release-waiting mutes done-merge when owner' 'show does not print the second inhibition'
 pass 'show prints the rules, every limit and the inhibition from config'
 
 # A limit moved in config moves the alert, with no code change: 600s is quiet at
@@ -78,6 +80,9 @@ case_table() {
 pr-red	jg_slo_pr_red_seconds	2400	1800	{"owner":"main","pr":"https://example.invalid/pull/2"}	0
 done-merge	jg_slo_done_unmerged_seconds	3600	1800	{"owner":"main","task":"lane","pr":"https://example.invalid/pull/3"}	0
 worker-idle	jg_slo_worker_idle_seconds	1800	1500	{"owner":"main","task":"lane"}	0
+ready-work	jg_slo_ready_work_items	3	1	{"owner":"main"}	5
+runner-queue	jg_slo_ci_queued	30	20	{"owner":"main"}	10
+release-waiting	jg_slo_release_waiting_seconds	7200	3600	{"owner":"main","branch":"release/c-1","repo":"umeranjum17/juggernaut"}	0
 EOF
 }
 
@@ -181,6 +186,23 @@ assert_equals "$(printf '%s\n' "$captain" | grep -c 'choke point')" 1 \
   'the digest did not stay one batched line for two alerts'
 pass 'Main hears only when the lead does not act, and the captain gets one digest line'
 
+# A blocker is the one urgency that skips the digest: it reaches the captain the
+# moment it fires, while the batch alert beside it waits for the digest.
+rm -rf "$LEAD_DIR/state/.slo-alerts" "$LEAD_DIR/state/.wake-queue"
+rm -f "$CAPTAIN"
+: >"$SAMPLES"
+sample jg_slo_release_waiting_seconds 7200 \
+  '{"owner":"lane-a","branch":"release/c-1","repo":"umeranjum17/juggernaut"}'
+sample jg_slo_pr_red_seconds 2400 '{"owner":"lane-a","pr":"https://example.invalid/pull/11"}'
+run "$LEAD_DIR" "$T0" "$SAMPLES" tick >/dev/null || fail 'blocker tick failed'
+assert_contains "$(cat "$LEAD_DIR/state/.wake-queue")" 'slo-blocker-release-waiting-' \
+  'the blocker did not queue its own owner wake'
+assert_contains "$(cat "$CAPTAIN" 2>/dev/null || true)" 'a release branch waits with every feature done' \
+  'the blocker did not reach the captain at once'
+assert_not_contains "$(cat "$CAPTAIN" 2>/dev/null || true)" 'a pull request is red' \
+  'a batch alert jumped the captain digest'
+pass 'a blocker reaches the captain at once and the batch alert waits'
+
 # --- off is the switch ------------------------------------------------------
 rm -rf "$LEAD_DIR/state/.slo-alerts" "$LEAD_DIR/state/.wake-queue"
 rm -f "$CAPTAIN"
@@ -196,7 +218,11 @@ pass 'mode off queues and publishes nothing'
 # records the fleet already writes. The forge reader is the one a lab must not
 # call, so the forge interval is held open.
 rm -rf "$HOME_DIR/state/.slo-alerts" "$HOME_DIR"/state/*
-mkdir -p "$HOME_DIR/state"
+mkdir -p "$HOME_DIR/state" "$HOME_DIR/data"
+jg_test_tasks_toml "$HOME_DIR/.tasks.toml"
+: >"$HOME_DIR/data/backlog.md"
+# Four lane slots, three lanes open: one free lane beside the ready item.
+printf '4\n' >"$HOME_DIR/config/lane-target"
 
 # A lane finished an hour ago and nothing merged it: the newest line is not a
 # merge, so the done-to-merged clock is running.
@@ -217,6 +243,21 @@ jg_write_meta "$HOME_DIR/state/lane-idle.meta" 'kind=ship' "worktree=$TMP/lane-i
 printf 'working [at=%s]: implementation\n' "$(( T0 - 1800 ))" >"$HOME_DIR/state/lane-idle.status"
 jg_touch_epoch "$(( T0 - 1800 ))" "$HOME_DIR/state/lane-idle.status"
 
+# A third lane whose status has not moved for an hour but whose pane is busy: the
+# idle-worker rule must leave it alone.
+jg_write_meta "$HOME_DIR/state/lane-busy.meta" 'kind=ship' 'harness=pi' "worktree=$TMP/lane-idle-copy" 'project=/nonexistent'
+printf 'working [at=%s]: implementation\n' "$(( T0 - 5400 ))" >"$HOME_DIR/state/lane-busy.status"
+jg_touch_epoch "$(( T0 - 5400 ))" "$HOME_DIR/state/lane-busy.status"
+printf 'glane-busy.1\n' >"$HOME_DIR/state/lane-busy.busy-gen"
+printf 'v1 gen=glane-busy.1 seq=3 state=busy source=pi-ext event=agent-start ts=1\n' \
+  >"$HOME_DIR/state/lane-busy.busy-state"
+
+# One ready item waiting beside the free lane.
+JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$HOME_DIR/state" JG_CONFIG_OVERRIDE="$HOME_DIR/config" \
+  "$ROOT/bin/jg-tasks-axi.sh" add ready-item '[feature] ready work' \
+  --body 'A ready item for the free-lane measurement.' >/dev/null 2>&1 \
+  || fail 'could not seed the ready backlog'
+
 # Hold the forge interval open, so no case reaches GitHub.
 mkdir -p "$HOME_DIR/state/.slo-alerts"
 printf '%s\n' "$T0" >"$HOME_DIR/state/.slo-alerts/.forge-at"
@@ -226,5 +267,9 @@ assert_contains "$collected" "$(printf 'jg_slo_done_unmerged_seconds\t3600')" \
   'the unmerged done task is not measured from its done line'
 assert_contains "$collected" "$(printf 'jg_slo_worker_idle_seconds\t1800')" \
   'the idle lane is not measured from the newer of its status and its commit'
+assert_contains "$collected" "$(printf 'jg_slo_ready_work_items\t1')" \
+  'a free lane beside one ready item is not measured'
 assert_not_contains "$collected" 'jg_slo_pr_red_seconds' 'the forge was read inside its interval'
+assert_not_contains "$collected" '"task":"lane-busy"' \
+  'a lane whose pane is busy is not idle, whatever its status line says'
 pass 'collect measures its numbers from the records that own them'
