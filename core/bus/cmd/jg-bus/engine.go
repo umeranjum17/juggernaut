@@ -168,6 +168,15 @@ func (p *part) ensureConsumer() error {
 	return nil
 }
 
+// fetchWait is how long one fetch waits for an event: 30s, or JG_BUS_FETCH_WAIT (a Go duration)
+// for a test that must cross many fetch cycles quickly.
+func fetchWait() string {
+	if v := os.Getenv("JG_BUS_FETCH_WAIT"); v != "" {
+		return v
+	}
+	return "30s"
+}
+
 // serveConsumer runs one part until it fails. Waiting for an event is the fetch's own blocking
 // wait, not a sleep.
 func (a *app) serveConsumer(p *part) int {
@@ -185,14 +194,21 @@ func (a *app) serveConsumer(p *part) int {
 	a.writeTally(p.name, t)
 	say("%s: consuming %s on %s as %s", p.name, p.filter, p.stream, p.name)
 	for {
-		body, errText, err := p.nats("consumer", "next", p.stream, p.name, "--count", "1", "--wait", "30s", "--raw")
+		body, errText, err := p.nats("consumer", "next", p.stream, p.name, "--count", "1", "--wait", fetchWait(), "--raw")
 		if err != nil {
 			// An expired fetch ends as "timeout" or, when the server's expiry notice arrives
-			// first, as a message with no reply to acknowledge. Neither is an event.
-			if strings.Contains(errText, "timeout") || strings.Contains(errText, "does not have a reply") {
+			// first, as a message with no reply to acknowledge. Neither is an event, unless the
+			// client printed a body before it failed to acknowledge: that is a real event whose
+			// acknowledgement is missing, so it is handled (the server redelivers it, and both
+			// handlers are idempotent) rather than dropped.
+			expired := strings.Contains(errText, "timeout") || strings.Contains(errText, "does not have a reply")
+			if expired && strings.TrimSpace(body) == "" {
 				continue
 			}
-			return die("%s: fetch failed: %s", p.name, strings.TrimSpace(errText))
+			if !expired {
+				return die("%s: fetch failed: %s", p.name, strings.TrimSpace(errText))
+			}
+			say("%s: handling an event the client could not acknowledge: %s", p.name, strings.TrimSpace(errText))
 		}
 		var ev struct {
 			ID string `json:"id"`
