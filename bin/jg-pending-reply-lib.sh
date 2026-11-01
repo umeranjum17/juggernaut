@@ -1667,19 +1667,6 @@ jg_pending_reply_tick() {  # <state-dir>
 
 
 # True when any open (non-resolved) pending reply exists for a task.
-jg_pending_reply_task_has_open() {  # <state-dir> <task_id>
-  local state=$1 task_id=$2 corr rec phase tid
-  while IFS= read -r corr; do
-    [ -n "$corr" ] || continue
-    rec=$(jg_pending_reply_path "$state" "$corr")
-    tid=$(jg_pending_reply_get "$rec" task_id)
-    [ "$tid" = "$task_id" ] || continue
-    phase=$(jg_pending_reply_get "$rec" phase)
-    [ "$phase" != resolved ] || continue
-    return 0
-  done < <(jg_pending_reply_corrs "$state")
-  return 1
-}
 
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
