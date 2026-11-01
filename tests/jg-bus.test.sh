@@ -191,8 +191,15 @@ line=$(run_quiet "$d" "$BUS" parity | head -1)
 assert_contains "$line" "events=2 instants=" "parity replays both recorded events, at their recorded instants"
 assert_contains "$line" "decisions=4 deliveries=2 differences=0" "parity finds zero differences between what is sent and what was recorded"
 out=$(run "$d" "$BUS" parity --corrupt; printf 'exit=%s' "$?")
-assert_contains "$out" "differences=4 (must be non-zero)" "a tampered replay reports a difference, so green is not vacuous"
+# The tampered replay alters every event recorded at the first instant, so the number of
+# differences follows how many of the two events the run recorded in one second: two when
+# they share it, fewer when the clock ticked between them. What must never happen is zero,
+# and the changed field must be named.
+tampered=$(sed -n 's/.*differences=\([0-9]*\) (must be non-zero).*/\1/p' <<<"$out")
+[ -n "$tampered" ] && [ "$tampered" -ge 2 ] || fail "a tampered replay must report at least one changed row, got: $out"
+assert_contains "$out" "corrupted on the new path" "the difference names the field the tampered replay changed"
 assert_contains "$out" "exit=0" "the tampered run succeeds by reporting its difference"
+pass "a tampered replay reports a difference, so green is not vacuous"
 
 # --- a captain outcome is teed, a routine one is not --------------------------
 d=$(setup outcome)
