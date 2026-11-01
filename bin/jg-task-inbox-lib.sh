@@ -259,7 +259,8 @@ jg_task_inbox_lock_acquire() {  # <lock-path>
 # Write one record into the next sequence slot: temp-write, then atomic
 # rename. Prints the record path. Caller must hold .seq.lock.
 _jg_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
-  local dir=$1 text=$2 delivery_mode=${3:-} seq tmp rec status=0
+  local dir=$1 text=$2 delivery_mode=${3:-} seq tmp rec status=0 task=${1##*/}
+  task=${task%.inbox}
   seq=$(jg_task_inbox_next_seq "$dir")
   rec="$dir/$seq.msg"
   tmp=$(mktemp "$dir/.staging.XXXXXX") || return 1
@@ -271,6 +272,14 @@ _jg_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
     printf '%s' "$text"
   } > "$tmp" && mv "$tmp" "$rec" || status=1
   [ "$status" -eq 0 ] || { rm -f "$tmp"; return 1; }
+  # The record is durable, so publish it: the bus is this path's store and the
+  # writer is the source, which is why nothing has to scan for it later
+  # (docs/bus-live.md). A bus that cannot be reached leaves the record in place
+  # and the renderer picks it up on its next pass, so a steer is never lost.
+  jg_wake_bus inbox-raise "$task" "$((10#${seq#0}))" \
+    "$([ "$delivery_mode" = fire-and-forget ] && printf 'fire-and-forget' || printf 'normal')" \
+    "$(printf '%s' "$text" | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | cut -d' ' -f1)" \
+    >/dev/null 2>&1 || true
   printf '%s' "$rec"
 }
 
