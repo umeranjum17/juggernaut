@@ -637,6 +637,7 @@ tests/jg-squad-lead-dormant.test.sh 1091
 tests/jg-squad-lead-lifecycle-e2e.test.sh 15675
 tests/jg-supervision-host-live-e2e.test.sh 58
 tests/jg-supervision-host.test.sh 1162449
+tests/jg-status-digest.test.sh 1569
 tests/jg-tangle-guard.test.sh 12088
 tests/jg-tasks-axi.test.sh 42685
 tests/jg-teardown.test.sh 479995
@@ -654,6 +655,7 @@ tests/jg-watch-handoff.test.sh 11741
 tests/jg-watcher-lock.test.sh 1059731
 tests/jg-worker-account-live-e2e.test.sh 70
 tests/juggernaut-axi-serve.test.sh 1635
+tests/migration-card.test.sh 1370
 tests/merge-card-title.test.sh 701
 EOF
 }
