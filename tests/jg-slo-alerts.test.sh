@@ -235,8 +235,8 @@ rm -rf "$HOME_DIR/state/.slo-alerts" "$HOME_DIR/state"/*
 mkdir -p "$HOME_DIR/data"
 jg_test_tasks_toml "$HOME_DIR/.tasks.toml"
 : >"$HOME_DIR/data/backlog.md"
-# Three lane slots, two lanes open: one free lane beside the ready item.
-printf '3\n' >"$HOME_DIR/config/lane-target"
+# Four lane slots, three lanes open: one free lane beside the ready item.
+printf '4\n' >"$HOME_DIR/config/lane-target"
 
 # A lane finished an hour ago and nothing merged it: the newest line is not a
 # merge, so the done-to-merged clock is running.
@@ -258,6 +258,17 @@ jg_write_meta "$HOME_DIR/state/lane-idle.meta" 'kind=ship' "worktree=$TMP/lane-i
 printf 'working [at=%s]: implementation\n' "$(( T0 - 1800 ))" >"$HOME_DIR/state/lane-idle.status"
 jg_touch_epoch "$(( T0 - 1800 ))" "$HOME_DIR/state/lane-idle.status"
 
+# A third lane whose status has not moved for an hour but whose pane is busy: the
+# idle-worker rule must leave it alone, because a busy pane is working whatever
+# its status log last said.
+jg_write_meta "$HOME_DIR/state/lane-busy.meta" 'kind=ship' 'harness=pi' "worktree=$TMP/lane-idle-copy" \
+  'project=/nonexistent'
+printf 'working [at=%s]: implementation\n' "$(( T0 - 5400 ))" >"$HOME_DIR/state/lane-busy.status"
+jg_touch_epoch "$(( T0 - 5400 ))" "$HOME_DIR/state/lane-busy.status"
+printf 'glane-busy.1\n' >"$HOME_DIR/state/lane-busy.busy-gen"
+printf 'v1 gen=glane-busy.1 seq=3 state=busy source=pi-ext event=agent-start ts=1\n' \
+  >"$HOME_DIR/state/lane-busy.busy-state"
+
 # A ready item and two free lanes: the ready-work number.
 JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$HOME_DIR/state" JG_CONFIG_OVERRIDE="$HOME_DIR/config" \
   "$ROOT/bin/jg-tasks-axi.sh" add ready-item '[feature] ready work' \
@@ -276,4 +287,6 @@ assert_contains "$collected" "$(printf 'jg_slo_worker_idle_seconds\t1800')" \
 assert_contains "$collected" "$(printf 'jg_slo_ready_work_items\t1')" \
   'a free lane beside one ready item is not measured'
 assert_not_contains "$collected" 'jg_slo_pr_red_seconds' 'the forge was read inside its interval'
+assert_not_contains "$collected" '"task":"lane-busy"' \
+  'a lane whose pane is busy is not idle, whatever its status line says'
 pass 'collect measures the six numbers from the records that own them'

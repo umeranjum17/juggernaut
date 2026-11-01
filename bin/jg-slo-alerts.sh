@@ -113,6 +113,8 @@ load_fact_libs() {
   . "$ROOT/bin/jg-supervision-lib.sh" || return 1
   # shellcheck source=/dev/null
   . "$ROOT/bin/jg-wake-lib.sh" || return 1
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/jg-busy-lib.sh" || return 1
   SLO_FACT_LIBS=1
   return 0
 }
@@ -241,13 +243,17 @@ collect_done_merge() {
 # 3. A worker with no commit and no status. The newer of the two is the lane's
 # last sign of life. A declared wait or pause is the worker doing the right thing,
 # so it is not an idle worker: bin/jg-classify-lib.sh owns that distinction and
-# this collector only reads its verdict.
+# this collector only reads its verdict. A lane whose PANE is busy is working
+# right now whatever its status log last said, so it is never idle: that misread
+# is what made the fleet's own idle-lane count false, and bin/jg-busy-lib.sh owns
+# the pane reading this collector uses.
 collect_worker_idle() {
   local meta task status decl status_age commit_age wt idle labels
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] && [ ! -L "$meta" ] || continue
     task=${meta##*/}
     task=${task%.meta}
+    pane_busy "$STATE" "$task" "$meta" && continue
     status=$STATE/$task.status
     if [ -f "$status" ] && [ ! -L "$status" ]; then
       decl=$(tail -n 1 "$status" 2>/dev/null) || decl=
@@ -272,6 +278,19 @@ collect_worker_idle() {
     emit jg_slo_worker_idle_seconds "$idle" "$labels"
   done
   return 0
+}
+
+# pane_busy <state-dir> <task> <meta>: 0 when the lane's own pane reports busy
+# through the semantic busy contract, with the harness that trusts that source.
+# Anything else - idle, missing, untrusted, unreadable - is not busy, so the lane
+# stays a candidate and the status-log reading decides.
+pane_busy() {
+  local state=$1 task=$2 meta=$3 rec pane source harness
+  harness=$(grep -m1 '^harness=' "$meta" 2>/dev/null | cut -d= -f2-) || harness=
+  rec=$(jg_busy_record_read "$state" "$task" 2>/dev/null) || return 1
+  read -r pane source _ <<<"$rec"
+  [ "$pane" = busy ] || return 1
+  jg_busy_source_trusted "${harness:-}" "$source" 2>/dev/null
 }
 
 # 4. A free lane while ready work waits. Both halves are already recorded: the

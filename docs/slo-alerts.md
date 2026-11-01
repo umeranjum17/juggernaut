@@ -15,11 +15,12 @@ A limit is a number in the unit a reviewer thinks in; the rule fires when the va
 | --- | --- | --- | --- | --- | --- |
 | `pr-red` | `jg_slo_pr_red_seconds` | 30 minutes | - | batch | the pull request's reported checks and the head that went red, one forge read per pull request |
 | `done-merge` | `jg_slo_done_unmerged_seconds` | 30 minutes | - | batch | the task's newest `done [at=...]` line while it is still in flight |
-| `worker-idle` | `jg_slo_worker_idle_seconds` | 25 minutes | - | batch | the newer of the lane's status file and its last commit |
+| `worker-idle` | `jg_slo_worker_idle_seconds` | 25 minutes | - | batch | the newer of the lane's status file and its last commit, skipped while the lane's own pane reports busy |
 | `ready-work` | `jg_slo_ready_work_items` | 1 item | 5 minutes | batch | the ready backlog beside the open lanes against the lane target |
 | `runner-queue` | `jg_slo_ci_queued` | 20 jobs | 10 minutes | batch | GitHub's own queued run count, one small read per repo |
 | `release-waiting` | `jg_slo_release_waiting_seconds` | 60 minutes | - | blocker | the version branch's open pull requests: all green, none a draft, oldest update time |
 
+Both lane rules read the same live pane state `bin/jg-fleet-heartbeat.sh` reads (`bin/jg-busy-lib.sh`'s semantic busy record), so a busy pane is working even when its status log is old.
 Two rules are inhibited, in Alertmanager's own sense: a red pull request mutes the idle-worker alert for the same owner, and a waiting release branch mutes the per-pull-request done-to-merged alert for the same owner.
 The alert that names the cause is the one that reaches a channel; the ones it explains stay quiet.
 
