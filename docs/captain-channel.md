@@ -3,7 +3,9 @@
 The captain reaches the fleet through one channel: events on a bus, delivered to his iPad, with his replies coming back as events routed to the lead that owns them.
 Migration step 5a built that channel in shadow, and this path is now **live**: a captain-facing change of state is recorded, published and delivered to him by this path.
 
-`bin/jg-bus.sh`'s header is the owner of the shape.
+The header of the Go command at [`core/bus/cmd/jg-bus`](../core/bus/cmd/jg-bus/main.go) is the owner of the shape.
+`bin/jg-bus.sh` is the dispatcher that builds that command once and runs it for the record, the publish, the delivery, the replay and the reply router, so every command below keeps its name.
+The three service commands it still runs below are the last shell in this file, and the service slice ports them next.
 This page owns how to run it, how to reverse it, and what its replay proves.
 
 ## What is running
