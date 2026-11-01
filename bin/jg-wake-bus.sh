@@ -234,8 +234,12 @@ home_keys() {
     | jq -R -s -c 'split("\n") | map(select(length > 0))'
 }
 
-# wake_go: the Go fold and read model, which jg-bus.sh builds into this home's state.
-wake_go() { JG_HOME=$HOME_DIR JG_STATE_OVERRIDE=${HOMES[0]} "$SCRIPT_DIR/jg-bus.sh" wake "$@"; }
+# wake_go: the Go fold, read model, raise and delivery, built by jg-bus.sh into this home's state.
+wake_go() {
+  JG_HOME=$HOME_DIR JG_STATE_OVERRIDE=${HOMES[0]} JG_WAKE_HOME_KEY=$(live_home_key) JG_WAKE_BUS_URL=$BUS_URL \
+    JG_NATS_BIN=${BUS_NATS:-} JG_BUS_SUBJECT_PREFIX=$SUBJECT_PREFIX JG_BUS_MAX_AGE=$BUS_MAX_AGE \
+    "$SCRIPT_DIR/jg-bus.sh" wake "$@"
+}
 
 # bus_rows <dump-file>: the same canonical rows the file path produces.
 bus_rows() { wake_go rows "$1"; }
@@ -482,27 +486,6 @@ live_flush_outbox() {
   mv -f "$keep" "$LIVE_OUTBOX" || { rm -f -- "$keep"; return 1; }
 }
 
-live_outbox_add() { # <subject> <json>
-  mkdir -p "$STATE" 2>/dev/null || return 1
-  jq -nc --arg subject "$1" --argjson event "$2" '{subject: $subject} + $event' >> "$LIVE_OUTBOX" 2>/dev/null
-}
-
-# live_publish <subject> <id> <json>: publish one event, or owe it in the outbox.
-live_publish() { # <subject> <id> <json>
-  local seq
-  live_enabled || { live_outbox_add "$1" "$3"; return 0; }
-  seq=$(bus_pub_seq "$1" "$2" "$3")
-  if [ "${seq:-0}" -le 0 ]; then
-    # The first raise on a fresh home arrives before the streams exist, and a
-    # subject no stream carries is refused; making them and retrying once keeps
-    # that first event instead of owing it.
-    bus_ensure_streams || true
-    seq=$(bus_pub_seq "$1" "$2" "$3")
-  fi
-  [ "${seq:-0}" -gt 0 ] && return 0
-  live_outbox_add "$1" "$3"
-}
-
 # live_render: bring the local replica up to date, then write the read models the
 # rest of the fleet reads. The replica holds only unsettled events, so a fold
 # stays small: an acknowledgement drops its raise with it.
@@ -530,32 +513,10 @@ live_render() {
   rm -f -- "$model"
 }
 
-live_raise() { # <kind> <key> <payload> <class>
-  local id at rseq event
-  at=$(date -u +%s)
-  id="wake/$(live_home_key)/$at-$$-$RANDOM"
-  # The row's number is fixed here, before any publish: a home whose bus is not
-  # reachable still writes read-model rows, and the number must not change when
-  # the event later reaches the stream.
-  rseq=$(( at * 1000 + (RANDOM % 1000) ))
-  event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --arg class "$4" --argjson at "$at" --argjson rseq "$rseq" \
-    '{v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}') || return 1
-  live_publish "$SUBJECT_PREFIX".wake.raise "$id" "$event" || return 1
-  live_render
-  return 0
-}
-
-live_settle() { # <kind> <key> <payload>
-  local id at event
-  at=$(date -u +%s)
-  id="settled/$(live_home_key)/$at-$$-$RANDOM"
-  event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --argjson at "$at" --argjson rseq "$(( at * 1000 + (RANDOM % 1000) ))" \
-    '{v:1,id:$id,home:$home,where:"settled",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:"silent"}') || return 1
-  live_publish "$SUBJECT_PREFIX".wake.settled "$id" "$event" || return 1
-  live_render
-}
+# A raise and a record-only wake are built and delivered by the Go command
+# (wakebus.go), which owes an event it cannot publish; the read model follows.
+live_raise() { wake_go raise "$STATE" "$@" || return 1; live_render; return 0; } # <kind> <key> <payload> <class>
+live_settle() { wake_go settle "$STATE" "$@" || return 1; live_render; } # <kind> <key> <payload>
 
 live_ack() { # <id>...
   local id at owed
@@ -573,7 +534,7 @@ live_ack() { # <id>...
       rm -f -- "$owed"
       return 1
     fi
-      live_publish "$SUBJECT_PREFIX".wake.ack "$id/ack" \
+    wake_go deliver "$STATE" "$SUBJECT_PREFIX".wake.ack "$id/ack" \
       "$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --argjson at "$at" \
         '{v:1,id:$id,home:$home,ack:true,at:$at}')" || return 1
   done
@@ -597,7 +558,7 @@ live_inbox_raise() { # <task> <seq> <delivery> <body-sha>
   local id at
   at=$(date -u +%s)
   id="inbox/$(live_home_key)/$1/$2"
-  live_publish "$SUBJECT_PREFIX".inbox.raise "$id" \
+  wake_go deliver "$STATE" "$SUBJECT_PREFIX".inbox.raise "$id" \
     "$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg task "$1" --argjson seq "$2" \
       --arg delivery "$3" --arg sha "$4" --argjson at "$at" \
       '{v:1,id:$id,home:$home,task:$task,seq:$seq,at:$at,delivery:$delivery,body_sha:$sha}')" || return 1
