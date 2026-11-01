@@ -8,9 +8,56 @@ Nothing switches here. Both paths run at once, the records stay authoritative, a
 
 - `core/bus/workflows/pending-reply.json` is the workflow definition, and it is the one owner of the model: the instance key, the four events, the two stages with the anchor each timer measures from, the activity each timeout runs with its retries, the terminal states, the subjects, the grace default and the retention. A home may override it at `config/bus/workflows/pending-reply.json`.
 - `bin/jg-reply-bus.sh sync` reads one home's records and publishes every fact it holds as an event on the `JG_REPLY` stream (`jg.reply.>`), file storage with `max_age` from the definition. A fact's message id is its key plus a digest of its body, so a repeat publish is a server no-op and a changed fact supersedes the earlier one.
-- A home turns the mirror on with `config/reply-bus`, and `bin/jg-watch.sh` then runs one `sync` per poll immediately after the pending-reply tick, so both paths really run at once. Off costs one file test.
+- A home turns the mirror on with `config/reply-bus`, and `bin/jg-watch.sh` then runs one `sync` per poll immediately after the pending-reply tick, followed by one `tick` of the engine, so both paths really run at once. Off costs one file test.
 - The mirror never becomes a dependency: a missing client, a missing server, or any transport failure prints `skip: ...` or is swallowed, and the record path behaves exactly as before.
 - `$STATE/reply-bus.jsonl` is the shadow record: one line per published fact, written after the publish. The record path is the durable record of the fact, so a publish that fails records nothing and the next sync tries again.
+
+## The engine, in shadow
+
+`bin/jg-reply-engine.sh` is the definition's engine. It folds the event log into
+one state per waiter, decides what the definition says each stage should do, and
+- in this step - only records the decision. It sends no repost, opens no
+escalation, closes nothing and writes no record; `bin/jg-pending-reply-lib.sh`
+stays the live path.
+
+- `docs` prints one tab-separated state line per waiter: the instance, its task
+  and grace, its delivery state and epochs, each stage's timer, what each fire
+  returned, and the answer.
+- `decide <log> <epoch>` prints the rows the definition says to take at one
+  instant: `arm <id> <stage> <deadline>`, `repost <id> <deadline>`,
+  `escalate <id> <reason> <deadline|->`, `answer <id> <epoch> <via>`. A decision is
+  bound to the deadline its timer derives, never to the instant a poll noticed it.
+- `tick` is the watcher's slot for it: fold, decide every waiter at one instant,
+  and append what it would do to `$STATE/reply-bus-decisions.jsonl`.
+- `replay [<log>] [--corrupt]` walks a recorded log instant by instant, compares
+  the decision at each instant with the decision the record path took from the
+  same facts, and names both rows when they disagree.
+
+The store is `$STATE/reply-bus.jsonl`, one event per line as
+`<key>\t<digest>\t<json>`, append-only, folded with the last event per key. It is
+an interim transport, never a second store: `event_stream` in
+`bin/jg-reply-engine.sh` is the single seam between the transport and the model,
+and its one line - today `cut -f3` over that file - becomes the JetStream
+subscription on the same subjects when a home runs a bus. The writer side makes
+the same promise: `bin/jg-reply-bus.sh` appends the event first and mirrors the
+identical line onto JetStream only when a server answers, so a missing bus costs
+the replica, never the event.
+
+Measured over the main home's recorded traffic (2,367 waiters created in the last
+168 hours), with the log built by mirroring those records:
+
+```text
+reply engine replay: recorded_events=9890 waiters=2367 replayed_instants=6104 decisions_compared=3265 differences=0 held_by_a_reply=33 activity_lateness_s=0..588 activities_over_poll_ceiling=0 escalations_without_a_timeout=4
+```
+
+`held_by_a_reply=33` is the one named asymmetry, not an unexplained difference:
+the record path resolved on its next poll before its deadline activity ran, while
+the engine decides at the deadline. Slice B makes the reply an event of its own,
+which settles the instance before that activity; until then the count is reported
+rather than hidden. `escalations_without_a_timeout=4` is the delivery-failure
+branch the record path models with no timer at all, and the engine decides it from
+the repost's own outcome. `--corrupt` moves every replayed grace by one second and
+reports 947 differences, so a green replay is never vacuous.
 
 ## The event model
 
@@ -117,4 +164,4 @@ bin/jg-reply-bus.sh "${args[@]}" --record-dir /tmp/reply-bus --since-hours 168 p
 
 ## Test
 
-`tests/jg-reply-bus-parity.test.sh` starts a throwaway server on a free port, writes the record side with the production writers (`jg_pending_reply_create`, `jg_pending_reply_send_recovery`, `jg_pending_reply_try_resolve`, `jg_pending_reply_maybe_escalate`), and proves the check in both directions: an answered waiter, an escalated one and an open one produce the same twelve rows on both paths with zero differences, and one corrupted event on the workflow path fails the same check. The test gate-skips when `nats-server` or the `nats` client is missing; set `JG_NATS_SERVER` and `JG_NATS_BIN` to pin them.
+`tests/jg-reply-bus-parity.test.sh` starts a throwaway server on a free port, writes the record side with the production writers (`jg_pending_reply_create`, `jg_pending_reply_send_recovery`, `jg_pending_reply_try_resolve`, `jg_pending_reply_maybe_escalate`), and proves the check in both directions: an answered waiter, an escalated one and an open one produce the same twelve rows on both paths with zero differences, and one corrupted event on the workflow path fails the same check. The test gate-skips when `nats-server` or the `nats` client is missing; set `JG_NATS_SERVER` and `JG_NATS_BIN` to pin them. `tests/jg-reply-engine.test.sh` needs no server at all: it writes the event log by hand and proves the fold, each decision branch, a shadow tick that acts on nothing, and a replay that is green on a faithful recording and not green when the replayed grace moves.

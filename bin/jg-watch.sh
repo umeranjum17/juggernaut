@@ -3920,6 +3920,11 @@ while :; do
   # costs one file test, and a mirror that cannot reach its bus can never fail or
   # delay a reply, a repost or an escalation.
   [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
+  # The same wait, decided by the workflow definition instead of by hand
+  # (bin/jg-reply-engine.sh): it folds the event log, records what it would do and
+  # acts on nothing. Off costs one file test, and an engine that cannot fold can
+  # never fail or delay a reply, a repost or an escalation.
+  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-engine.sh" tick >/dev/null 2>&1 || true
 
   # Endpoint liveness runs before queue observation: a positively dead or
   # missing squad_lead endpoint is relaunched here on a bounded cadence, which
