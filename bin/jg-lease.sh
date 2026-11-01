@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jg-lease.sh - claim, release, inspect, and sweep per-task supervision leases.
 #
-# The lease contract itself (file format, actors, staleness, guard semantics)
+# The lease contract itself (record format, actors, staleness, guard semantics)
 # is owned by bin/jg-lease-lib.sh; this is the command surface the two
 # supervision actors use around the overlap set (steering, stopping, cleanup,
 # backlog status, stuck-worker recovery). "backlog" is the reserved resource
@@ -13,29 +13,33 @@
 #       Take the lease for the calling actor. Idempotent for the holder (the
 #       claim refreshes its own lease). Refuses with exit 6 while the other
 #       actor holds a live lease. A stale lease (dead pid, or a torn record)
-#       is cleared and re-claimed.
+#       is taken over.
 #   jg-lease.sh release <task> [--actor main|branch]
 #       Drop the calling actor's lease. Releasing a lease the actor does not
 #       hold is a silent no-op, so a retry after a partial failure is safe.
 #       Naming the other actor is refused loudly.
 #   jg-lease.sh check <task>
 #       Print "<actor> <pid> <epoch> <live|stale>" for a held lease, or
-#       nothing (exit 1) when the task is unleased.
+#       nothing (exit 1) when the task is unleased. Exit 2 when the lease store
+#       cannot answer, so "no lease" is never confused with "could not ask".
 #   jg-lease.sh release-actor --actor main|branch
 #       Drop every lease the named actor holds; the Pi branch extension runs
 #       this at generation activation so a replaced branch conversation's
 #       leases never outlive it.
 #   jg-lease.sh sweep
-#       Remove every provably stale lease in this home, then clear this home's
-#       abandoned lease-command lock scratch (owner directories of dead holders,
-#       and a steal mutex no live section can still own), printing each path it
+#       Remove every provably stale lease of this home, printing each task it
 #       removed. Run at session start (a lease held by a dead actor is cleared at
-#       session start); safe to run any time - a live lease and a live lock
-#       holder are never touched.
+#       session start); safe to run any time - a live lease is never touched.
+#
+# The records live in the JetStream key-value bucket `JG_LEASES` and the bucket's
+# revision is the writer lock, so this script has no lock file, no temporary
+# file, and no lock scratch to sweep (bin/jg-lease-lib.sh owns the contract,
+# bin/jg-kv-lib.sh owns the client).
 #
 # The default actor is $JG_SUPERVISION_ACTOR (else main); when --actor is
 # supplied for a mutation, it must name that calling actor. Exit codes: 0 ok,
-# 1 check-miss, 2 usage, 6 refused (other actor holds or actor mismatch).
+# 1 check-miss or an unusable store, 2 usage, 6 refused (other actor holds or
+# actor mismatch).
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -66,13 +70,6 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 # shellcheck source=bin/jg-lease-lib.sh
 . "$SCRIPT_DIR/jg-lease-lib.sh"
-# shellcheck source=bin/jg-wake-lib.sh
-. "$SCRIPT_DIR/jg-wake-lib.sh"
-
-mkdir -p "$STATE"
-LEASE_COMMAND_LOCK="$STATE/.jg-lease-command.lock"
-jg_lease_command_lock_acquire "$LEASE_COMMAND_LOCK"
-trap 'jg_lock_release "$LEASE_COMMAND_LOCK"' EXIT
 
 usage() {
   echo "usage: jg-lease.sh claim|release <task> [--actor main|branch] | release-actor --actor main|branch | check <task> | sweep" >&2
@@ -127,63 +124,25 @@ case "$CMD" in
 esac
 
 case "$CMD" in
-  claim)
-    # Loud accidental-override guard: a claim naming the OTHER actor than the
-    # caller's own injected identity is a wiring mistake, never a role change.
-    # Release and bulk release enforce the same caller authorization below.
+  claim|release)
+    # Loud accidental-override guard: naming the OTHER actor than the caller's
+    # own injected identity is a wiring mistake, never a role change. Release
+    # and bulk release enforce the same caller authorization below.
     CALLER=$(jg_lease_actor) || exit "$JG_LEASE_REFUSE_EXIT"
     if [ "$ACTOR" != "$CALLER" ]; then
-      echo "error: claim refused - the $CALLER supervision actor cannot claim a lease as $ACTOR on '$TASK'" >&2
+      echo "error: $CMD refused - the $CALLER supervision actor cannot $CMD a lease as $ACTOR on '$TASK'" >&2
       exit "$JG_LEASE_REFUSE_EXIT"
     fi
-    LEASE=$(jg_lease_path "$TASK")
-    if jg_lease_live "$TASK" && [ "$JG_LEASE_ACTOR" != "$ACTOR" ]; then
-      echo "error: claim refused - task '$TASK' is leased to the $JG_LEASE_ACTOR supervision actor (state/.lease-$TASK)" >&2
-      exit "$JG_LEASE_REFUSE_EXIT"
-    fi
-    # The lease outlives this CLI call, so its liveness pid must be the
-    # long-lived supervising process: JG_LEASE_HOLDER_PID when the caller
-    # provides one (the Pi branch extension passes the session-lock holder),
-    # else the session-lock holder (state/.lock is the harness pid), else this
-    # shell; without a matching session lock the resulting lease is stale.
-    HOLDER_PID=${JG_LEASE_HOLDER_PID:-}
-    case "$HOLDER_PID" in *[!0-9]*) HOLDER_PID= ;; esac
-    if [ -z "$HOLDER_PID" ]; then
-      HOLDER_PID=$(head -n 1 "$STATE/.lock" 2>/dev/null | tr -cd '0-9' || true)
-    fi
-    [ -n "$HOLDER_PID" ] || HOLDER_PID=$$
-    TMP=$(mktemp "$STATE/.jg-lease-tmp.XXXXXX")
-    printf '%s\t%s\t%s\n' "$ACTOR" "$HOLDER_PID" "$(date +%s)" > "$TMP"
-    if [ -e "$LEASE" ]; then
-      # Same-actor refresh, or a stale/torn record: replace atomically.
-      mv -f -- "$TMP" "$LEASE"
-    elif ! ln -- "$TMP" "$LEASE" 2>/dev/null; then
-      # Lost the create race to the sibling actor; re-check who won.
-      rm -f -- "$TMP"
-      if jg_lease_live "$TASK" && [ "$JG_LEASE_ACTOR" != "$ACTOR" ]; then
-        echo "error: claim refused - task '$TASK' was just leased to the $JG_LEASE_ACTOR supervision actor" >&2
-        exit "$JG_LEASE_REFUSE_EXIT"
-      fi
-      TMP=$(mktemp "$STATE/.jg-lease-tmp.XXXXXX")
-      printf '%s\t%s\t%s\n' "$ACTOR" "$HOLDER_PID" "$(date +%s)" > "$TMP"
-      mv -f -- "$TMP" "$LEASE"
+    if [ "$CMD" = claim ]; then
+      jg_lease_claim "$TASK" "$ACTOR" || exit "$?"
     else
-      rm -f -- "$TMP"
-    fi
-    ;;
-  release)
-    CALLER=$(jg_lease_actor) || exit "$JG_LEASE_REFUSE_EXIT"
-    if [ "$ACTOR" != "$CALLER" ]; then
-      echo "error: release refused - the $CALLER supervision actor cannot release a lease as $ACTOR on '$TASK'" >&2
-      exit "$JG_LEASE_REFUSE_EXIT"
-    fi
-    if jg_lease_read "$TASK" && { [ "$JG_LEASE_ACTOR" = "$ACTOR" ] || [ -z "$JG_LEASE_ACTOR" ]; }; then
-      rm -f -- "$(jg_lease_path "$TASK")"
+      jg_lease_release "$TASK" "$ACTOR" || exit "$?"
     fi
     ;;
   check)
+    jg_lease_bucket_ready || { jg_lease_unavailable check "$TASK"; exit 2; }
     jg_lease_read "$TASK" || exit 1
-    if jg_lease_live "$TASK"; then LIVENESS=live; else LIVENESS=stale; fi
+    if jg_lease_record_live; then LIVENESS=live; else LIVENESS=stale; fi
     printf '%s %s %s %s\n' "${JG_LEASE_ACTOR:-unreadable}" "${JG_LEASE_PID:-0}" "${JG_LEASE_EPOCH:-0}" "$LIVENESS"
     ;;
   release-actor)
@@ -192,29 +151,20 @@ case "$CMD" in
       echo "error: release-actor refused - the $CALLER supervision actor cannot release leases as $ACTOR" >&2
       exit "$JG_LEASE_REFUSE_EXIT"
     fi
-    for LEASE in "$STATE"/.lease-*; do
-      [ -e "$LEASE" ] || continue
-      case "$LEASE" in *.lock) continue ;; esac
-      TASK=${LEASE##*/.lease-}
-      jg_lease_valid_id "$TASK" || continue
-      if jg_lease_read "$TASK" && [ "$JG_LEASE_ACTOR" = "$ACTOR" ]; then
-        rm -f -- "$LEASE"
-      fi
-    done
+    jg_lease_release_actor "$ACTOR" || exit "$?"
     ;;
   sweep)
-    for LEASE in "$STATE"/.lease-*; do
-      [ -e "$LEASE" ] || continue
-      case "$LEASE" in *.lock) continue ;; esac
-      TASK=${LEASE##*/.lease-}
+    jg_lease_bucket_ready || { jg_lease_unavailable sweep ""; exit 1; }
+    REMOVED=0
+    for KEY in $(jg_kv_keys "$JG_LEASE_BUCKET" "lease/$(jg_kv_home_key "$STATE")/"); do
+      [ -n "$KEY" ] || continue
+      TASK=${KEY##*/}
       jg_lease_valid_id "$TASK" || continue
-      jg_lease_clear_stale "$TASK"
+      jg_lease_live "$TASK" && continue
+      jg_kv_del "$JG_LEASE_BUCKET" "$KEY"
+      printf '%s\n' "$TASK"
+      REMOVED=$((REMOVED + 1))
     done
-    LOCK_SCRATCH_REMOVED=$(jg_lock_sweep_stale_scratch "$LEASE_COMMAND_LOCK")
-    if [ -n "$LOCK_SCRATCH_REMOVED" ]; then
-      printf '%s\n' "$LOCK_SCRATCH_REMOVED"
-    fi
-    printf 'lease-command lock scratch removed: %s\n' \
-      "$(printf '%s' "$LOCK_SCRATCH_REMOVED" | grep -c . || true)"
+    printf 'stale leases removed: %s\n' "$REMOVED"
     ;;
 esac

@@ -1,163 +1,106 @@
-# The task leases and busy events on the key-value bus, in shadow
+# The task leases, live, and the busy events, in shadow
 
-Migration step 5e.
-A task lease (`state/.lease-<task>`) says which supervision actor is changing a
-task right now, and a busy event (`state/<id>.busy-state` plus its
-`<id>.busy-gen` sidecar) says what the harness last reported about a worker.
-Both are small records with expiry semantics, and each costs a directory lock, a
-gen validation, an atomic replace and a sweep that clears the stale copies.
-The decided shape is a NATS JetStream key-value bucket: one key per record, its
-revision in place of the writer lock, its own delete in place of the stale sweep,
-and a watch in place of the poll.
-This step proves the bucket reproduces what the file path reports before anything
-switches.
+Migration step 5e, in two halves.
+A task lease says which supervision actor is changing a task right now, and a busy event says what the harness last reported about a worker.
+Both are small records with expiry semantics, and each used to cost a directory lock, a gen validation, an atomic replace, and a sweep that cleared what a dead session left behind.
+The decided shape is a NATS JetStream key-value bucket: one key per record, its revision in place of the writer lock, its own delete in place of the stale sweep, and a watch in place of the poll.
 
-Nothing switches here.
-Both paths run at once, the files stay authoritative, and `bin/jg-state-bus.sh`
-writes nothing into the file path.
+The leases have SWITCHED: the bucket is now the only record, and the file path that mirrored it is deleted.
+The busy events are still mirrored in shadow, with the files authoritative, until their own switch proves the same parity.
+The lease contract itself - record format, actors, staleness, guard semantics - is owned by `bin/jg-lease-lib.sh`; the client surface is owned by `bin/jg-kv-lib.sh`.
 
-## What runs
+## The lease path, live
 
-- `bin/jg-state-bus.sh sync` takes one snapshot of a home's file path and mirrors
-  every record it holds into two buckets, `JG_LEASES` and `JG_BUSY`, both file
-  storage with eight revisions kept per key so a watcher can see a record's last
-  transitions.
-- A home turns the mirror on with `config/state-bus`, the same way
-  `config/wake-bus` turns the wake mirror on, and `bin/jg-watch.sh` then runs one
-  `sync` per poll, so both paths really do run at once.
+- A lease is one key, `lease/<home>/<task>`, in the bucket `JG_LEASES`, and its value is the same `<actor>\t<pid>\t<epoch>` line the file path held.
+  `<home>` is the home directory's name plus the first eight hex digits of its path hash, so two homes that both run a task named `lane-a` never share a key.
+- The bucket's revision is the writer lock.
+  A first claim is a `create`, which the server refuses when the key already exists; a refresh of the holder's own lease, or a takeover of a stale one, is an `update` pinned to the revision just read.
+  A writer that loses that race re-reads the record, finds the winner's live lease, and refuses.
+- Expiry is unchanged: a lease is live while its recorded pid is alive and is the current session-lock holder.
+  There is no bucket TTL, because a TTL would age out a holder that still holds the task.
+- The store is required exactly where a lease decision is needed.
+  A home in no supervision context, holding no lease, that runs no supervision host never asks the bucket anything and needs no bus.
+  A home that does need to decide refuses rather than guessing: a guard that cannot read the record has not decided anything, so a steer, teardown, or lifecycle action stops with exit 1 and names the missing store, and `bin/jg-lease.sh check` exits 2 instead of reporting an empty task.
+- The guard is a read, and it leaves no record behind, so an abandoned guarded action leaves nothing to expire.
+  The home-local lock the file path held across a guarded mutation is gone; what serializes a takeover is the claim's compare-and-set.
+  One residual replaces the old one and is accepted at the same CONFUSED-AGENT-GRADE severity the lease header documents: between a guard's read and the caller's mutation, the other actor could claim the task, which the lock used to exclude.
+- A home that upgrades keeps the `.lease-*` files the old path left, and nothing reads or writes them any more; they are inert and safe to delete by hand.
+
+### The one-step reversal
+
+`git revert <the switch commit>` on `release/c-1` restores the file path exactly: this change adds no data format the old code cannot ignore and deletes no record.
+What a revert does not restore is the state of a lease that was live in the bucket at that instant: the file path starts empty, so for the length of that revert the other actor is not excluded by a lease the old code cannot see.
+Nothing else needs undoing, because nothing else switched.
+
+## What the switch removed
+
+Measured with `git diff --numstat` at the switch's head; nothing below is an estimate.
+The code and test lines are counted here, and the change's own PR body carries the whole-change count.
+
+| Where | Removed | Added | Net |
+| --- | --- | --- | --- |
+| `bin/jg-lease-lib.sh` | 217 | 217 | 0 |
+| `bin/jg-lease.sh` | 84 | 34 | -50 |
+| `bin/jg-state-bus.sh` | 312 | 87 | -225 |
+| `bin/jg-kv-lib.sh` (new) | 0 | 160 | +160 |
+| other `bin/` files | 3 | 4 | +1 |
+| **`bin/` total** | **616** | **502** | **-114** |
+| `tests/` | 344 | 308 | -36 |
+
+The groups that went with them: the lease-command lock and everything it needed - the bounded acquire, the stale-owner reclaim, the steal-mutex election, the scratch sweep, the owner-task record, the four bound readers, and the lazy lock-helper source; the guard's retained lock and its release body; `bin/jg-lease.sh`'s command lock and trap, its temp-file `ln`/`mv` claim, its file sweep and its lock-scratch report; and the lease half of the shadow, which is the lease snapshot, the lease rows, the replayed claims, the bucket-side claim, the lease restore, and the lease tamper.
+
+Two record readers stay either way and are deliberately not counted as removed: the lease reader with its liveness rule, which the guard and every caller still use, and the busy record's parse and gen check, which both paths of the busy half read a record with.
+
+Three things a deletion had to leave alone, and why:
+
+- `jg_lease_guard_release`, kept as a no-op because `bin/jg-send.sh`, `bin/jg-control.sh`, and `bin/jg-teardown.sh` still call it from their EXIT cleanup, and `bin/jg-teardown.sh` belongs to another switch in flight.
+  The last call site removes it.
+- `bin/jg-wake-lib.sh`'s lock-scratch sweep, which the deleted lease lock was the last caller of, because that library is being restructured by the same parallel switch.
+- The busy half of the shadow, which is not this path.
+
+## The parity replay that gated the switch
+
+`bin/jg-state-bus.sh parity` replayed recorded traffic over two real homes through both paths at the instant before the switch.
+Recorded evidence: 49 rows over 2 replayed instants - 46 busy rows, 1 lease row, and 2 replayed claim decisions on that lease (the holder's refresh granted, the other actor's claim refused `held-by-other`) - with **zero differences**.
+The same run with `--corrupt` reported 6 differences naming the lease and the flipped verdicts, so a green run is not vacuous.
+That artifact is private task evidence (`data/switch-leases-live/replay-recorded-traffic.txt`), not tracked here, because it names one captain's homes and their tasks.
+
+## The busy half, still in shadow
+
+- `bin/jg-state-bus.sh sync` takes one snapshot of a home's busy records and mirrors every record it holds into the bucket `JG_BUSY`, file storage with eight revisions kept per key so a watcher can see a record's last transitions.
+- A home turns the mirror on with `config/state-bus`, which may also set `nats-url <url>`; `bin/jg-watch.sh` then runs one `sync` per poll, so both paths really do run at once.
   Off costs one file test.
-- The mirror never becomes a dependency: a missing client, a missing server or any
-  transport failure prints `skip: ...` and the file path behaves exactly as
-  before.
-  `parity` is the opposite, because it is an explicit check: a bus it cannot reach
-  fails it rather than skipping it, so a run that did not happen is never readable
-  as a green one.
-- There is no shadow record file: the file path is the record, so a sync compares
-  the bucket against the snapshot and republishes only what changed.
-  A value that already matches is not written again, so a poll cannot flood a
-  watcher with unchanged records.
+- The mirror never becomes a dependency: a missing client, a missing server, or any transport failure prints `skip: ...` and the file path behaves exactly as before.
+  `parity` is the opposite, because it is an explicit check: a bus it cannot reach fails it rather than skipping it.
+- There is no shadow record file: the file path is the record, so a sync compares the bucket against the snapshot and republishes only what changed.
 
-## The key layout
+### The busy key layout
 
 | record | key | value |
 | --- | --- | --- |
-| a task lease | `lease/<home>/<task>` | the lease line unchanged: actor, pid, epoch |
 | a busy event | `busy/<home>/<task>` | the gen sidecar's line, then the record's line |
 
-`<home>` is the home directory's name plus the first eight hex digits of its path
-hash, because two homes can both run a task named `lane-a` and a KV key admits no
-colon.
-The values are the file path's own bytes and never a re-encoding, so "the same
-owner identity at the same instant" is a byte comparison and both sides are read
-by the same functions rather than by a second copy of the rules.
+The value is the file path's own bytes and never a re-encoding, so "the same record" is a byte comparison and both sides are read by the same functions.
 
-## The expiry rule
+### The busy parity contract
 
-The file path's expiry is not a clock.
-A lease expires when its recorded pid is dead or is no longer the session-lock
-holder, and a busy record expires when its gen no longer matches the armed gen.
-The mirror therefore expires nothing on its own: it carries the record and deletes
-the key when the file path deletes the record, so a release and an expiry arrive
-as the delete a watcher observes.
-A bucket TTL would be a different behaviour, because a live holder would age out
-while it still held the task.
-Reaching that behaviour needs a lease refresh the file path does not have, so it
-belongs to the switch and is named under what this step does not prove.
-
-## The parity contract
-
-`bin/jg-state-bus.sh parity` snapshots each home once and then replays that one
-instant through both paths.
-One instant is why there is no churn accounting: a release or an expiry that lands
-while the check runs cannot reach either side of the comparison.
+`bin/jg-state-bus.sh parity` snapshots each home once and then replays that one instant through both paths, so a retire that lands mid-run cannot be reported as a difference.
 Both sides produce the same canonical rows:
 
 ```
-lease <home> <task> <actor> <pid> <live|stale>
-busy  <home> <task> <gen> <state> <source> <event> <seq>
-busy  <home> <task> <gen> <reason>
-claim <home> <task> <claimant> granted <actor>
-claim <home> <task> <claimant> refused <reason>
+busy <home> <task> <gen> <state> <source> <event> <seq>
+busy <home> <task> <gen> <reason>
 ```
 
-So "the same holder for the same task at the same instant" is one `diff` over that
-list, and a difference names the record and the field that moved.
-A run that compared nothing is not a pass: an empty fleet must never be able to
-read a green parity as this switch's evidence, so `parity` reports its count and
-fails when the count is zero.
+So "the same record, gen, and sequence" is one `diff` over that list, and a difference names the record and the field that moved.
+A run that compared nothing is not a pass, so `parity` reports its count and fails when the count is zero.
+`--corrupt` rewrites one published record's state first, and the next `sync` mirrors the truth back over it.
 
-The `claim` rows are the replay.
-For every recorded lease, both supervision actors claim it in turn: the holder's
-own claim is a refresh and must be granted, and the other actor's claim must be
-refused while the record is live and granted once it has expired.
-The file side runs the shipped `bin/jg-lease.sh` against a copy of the state
-directory, so its refusal is the shipped one and its reason is that command's own
-exit code; the bus side is the bucket's claim, judged by the same expiry rule.
-The liveness context is the record's pid when that pid is alive and a definitely
-dead pid otherwise, because a recorded pid is a fact about the recording session
-rather than about the claim.
+### What the busy half does not prove
 
-`--corrupt` tampers with one published value first: a lease's actor is flipped,
-which moves its own row and the verdict of every claim replayed against it, and a
-busy record's state is rewritten when there is no lease to flip.
-The next `sync` mirrors the true value back over it, so a replay never leaves the
-shadow holding a lie.
-
-### What it does not prove
-
-- The bucket TTL, and with it a lease that ages out while its holder still lives.
-  That needs a refresh cadence the file path does not have, so the expiry here is
-  the file path's own liveness verdict and nothing more.
-- The busy record's own refusal. A busy event applied with a stale gen is refused
-  by `bin/jg-busy-event.sh`, and that path is not replayed: the replay compares the
-  record each path presents, not the write that would advance it.
-- `state/<id>.progress`, which is a touched marker rather than an event. A switch
-  folds it into the same key; here it is not mirrored and not compared.
-- A torn or foreign record. The `.lease-*` surface also holds other homes' index
-  files, and the lease reader's own validation is what keeps them out of both
-  paths rather than a name pattern.
-- Coordination across homes. A lease is home-local by contract, and so is this
-  mirror: two homes that run the same task get two keys, never one.
-
-## Measured
-
-Measured on the branch that added this, with `wc -l` and the function spans named
-here; nothing below is an estimate.
-
-Bus path, `bin/jg-state-bus.sh`: 500 lines.
-
-- 60 header and contract, including `set -u`.
-- 92 shared vocabulary: the client gate, the buckets, the key reads and writes,
-  the home key and the dead-pid helper.
-- 75 for the file path's instant: `snapshot_home` and `rows_of`.
-- 64 for the replayed claims: `claim_rows` and `kv_claim`.
-- 102 for the mirror: `restore_bus`, `sync_snapshot` and `corrupt_one`.
-- 68 for the two subcommands, and 39 for argument handling.
-
-Of those 500 lines, 119 exist only for the replay, in four functions:
-`claim_rows`, `kv_claim`, `corrupt_one` and `cmd_parity`.
-
-File path, the plumbing these two records cost today:
-
-- 118 lines of `bin/jg-lease-lib.sh`: the lease-command lock with its stale-owner
-  reclaim and its bounded wait (80), and `jg_lease_guard` with its release (38).
-- 160 lines of `bin/jg-lease.sh` below its 60-line header: claim, release, check,
-  the sweep, and the argument handling all five share.
-- 209 lines of `bin/jg-busy-event.sh` below its 62-line header: the incarnation
-  lock, the atomic record replace, and arm, apply, progress and retire.
-- 7 lines of `bin/jg-lease-lib.sh` for `jg_lease_clear_stale`.
-
-That is 494 file-path lines against 381 bus-path lines that a switch would carry,
-so the line win is about 110 and small.
-The mechanisms are the point: the lease-command lock, its steal mutex and its
-stale-owner reclaim; the atomic replace of the whole record on every write; the
-gen sidecar pair; and the sweep that clears what a dead session left.
-A watcher replaces the poll, and the server's revision replaces the lock.
-
-Two record readers stay either way, and are deliberately not counted as removed:
-`jg_lease_read` with `jg_lease_live` (31 lines) is the expiry rule this shadow
-reuses, and the busy record's parse and gen check (67 lines of
-`bin/jg-busy-lib.sh`) is what both paths read a record with.
+- The busy record's own refusal. A busy event applied with a stale gen is refused by `bin/jg-busy-event.sh`, and that path is not replayed: the replay compares the record each path presents, not the write that would advance it.
+- `state/<id>.progress`, which is a touched marker rather than an event. A switch folds it into the same key; here it is not mirrored and not compared.
+- Coordination across homes. A busy record is home-local by contract, and so is this mirror: two homes that run the same task get two keys, never one.
 
 ## Replaying a real fleet
 
@@ -167,22 +110,12 @@ bin/jg-state-bus.sh --home ~/firstmate parity
 bin/jg-state-bus.sh --home ~/firstmate parity --corrupt
 ```
 
-`JG_STATE_BUS_SHADOW=on` enables the mirror for a run without a `config/state-bus`
-file, and the parity commands write nothing into the home they read: the snapshot
-and the replay copies live under the temporary directory.
+`JG_STATE_BUS_SHADOW=on` enables the mirror for a run without a `config/state-bus` file, and the parity commands write nothing into the home they read: the snapshot copies live under the temporary directory.
 
-The two real homes on this machine, replayed together: 28 records mirrored (1
-lease, 27 busy records), 52 events compared including the replayed claims on that
-one lease, and zero differences.
-The same run with `--corrupt` reported six difference lines and named the task.
+## Tests
 
-## Test
+`tests/jg-lease-live.test.sh` proves the live path through the shipped commands against a throwaway JetStream server: a claim is live, the other actor's claim is refused with exit 6, a refresh is granted, a stale record is taken over, a release and `release-actor` drop exactly what they name, `sweep` removes only the stale records, a watcher sees the claim and the release, the guard refuses a steer through `bin/jg-send.sh`, and an unreachable store refuses instead of reading as an empty lease.
 
-`tests/jg-state-bus-parity.test.sh` starts a throwaway server on a free port,
-writes the file side with the production writers, and proves the check in both
-directions: parity is green with a count and zero differences, one tampered lease
-value fails it, one tampered busy value fails it and the next mirror heals it, a
-release reaches the bus as the delete a watcher observes, and a watcher sees the
-claim and the release itself.
-The test gate-skips when `nats-server` or the `nats` client is missing; set
-`JG_NATS_SERVER` and `JG_NATS_BIN` to pin them.
+`tests/jg-state-bus-parity.test.sh` starts a throwaway server, writes the file side with the production busy writer, and proves the busy parity in both directions: green with a count and zero differences, one tampered value failing it, the next mirror healing it, and a retire arriving as the delete a watcher observes.
+
+Both tests gate-skip when `nats-server` or the `nats` client is missing; set `JG_NATS_SERVER` and `JG_NATS_BIN` to pin them.

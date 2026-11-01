@@ -240,7 +240,7 @@ That work is tracked as follow-up `jg-pi-routine-delivery-idempotency-followup-r
 
 `bin/jg-lease-lib.sh` owns:
 
-- The per-task lease contract.
+- The per-task lease contract, whose record now lives in the home's key-value bus ([state-shadow.md](state-shadow.md)).
 - The posture-aware main-only role partition.
 - The deliberate CONFUSED-AGENT-GRADE threat model these guards target.
   That threat model was captain-decided; adversarial-grade separation is out of scope and tracked as follow-up design work.
@@ -251,7 +251,7 @@ The guards are wired into these scripts:
 
 | Scripts | Guard behavior |
 | --- | --- |
-| `jg-send.sh`, `jg-control.sh`, and `jg-teardown.sh` | Overlap, lease-checked, with claim serialization retained through the mutation. |
+| `jg-send.sh`, `jg-control.sh`, and `jg-teardown.sh` | Overlap, lease-checked: the other actor's live lease refuses the action before it changes anything. |
 | `jg-pr-merge.sh`, `jg-merge-local.sh`, `jg-spawn.sh`, `jg-send.sh --resolve-key` for a decision key, and `jg-teardown.sh` for a Squad Lead | Main-owned while attended; branch refused. |
 
 A relaunch through `jg-control` stays branch-legal recovery in both postures.

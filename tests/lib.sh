@@ -297,6 +297,7 @@ jg_test_remove_tree() {
 
 jg_test_cleanup() {
   local d
+  jg_test_reap_buses
   jg_test_reap_watchers
   jg_test_reap_procevent_homes
   for d in "${JG_TEST_CLEANUP_DIRS[@]:-}"; do
@@ -308,6 +309,58 @@ jg_test_cleanup() {
     done < "$JG_TEST_CLEANUP_REGISTRY"
     rm -f "$JG_TEST_CLEANUP_REGISTRY"
   fi
+}
+
+# --- throwaway key-value bus ------------------------------------------------
+#
+# The task leases live in a JetStream key-value bucket and the busy events are
+# mirrored into one in shadow, so the suites that exercise either start a server
+# of their own: a free port, a store inside this test's own temp dir, and no
+# contact with any real home's bus. The pid goes through a `$$`-keyed registry for
+# the same reason the watcher registry does, so a server never outlives its test.
+#
+# A suite whose subject needs the store calls jg_test_bus_start and treats a
+# non-zero return as "this machine has no server or client": CI installs
+# neither, so the case says it skipped instead of failing on a missing tool.
+
+JG_TEST_BUS_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-bus.$$.XXXXXX") || return 1
+
+# jg_test_bus_start <dir>: start a server and export JG_KV_URL and JG_NATS_BIN
+# into the calling shell. Returns 1 when nats-server or the nats client is
+# absent. Call it directly, never in a command substitution: a subshell's exports
+# die with it, so the caller would then talk to the default bus instead.
+jg_test_bus_start() {  # <dir>
+  local dir=$1 server client log port i
+  server=${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}
+  client=${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}
+  [ -n "$server" ] || return 1
+  [ -n "$client" ] || return 1
+  mkdir -p "$dir/store" || return 1
+  log=$dir/nats.log
+  "$server" -js -a 127.0.0.1 -p -1 -sd "$dir/store" >"$log" 2>&1 &
+  printf '%s\n' "$!" >> "$JG_TEST_BUS_REGISTRY"
+  # shellcheck disable=SC2034 # a bounded retry counter, never read.
+  for i in $(seq 1 200); do
+    port=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$log" 2>/dev/null | head -n 1)
+    if [ -n "$port" ]; then
+      JG_NATS_BIN=$client
+      JG_KV_URL="nats://127.0.0.1:$port"
+      export JG_NATS_BIN JG_KV_URL
+      return 0
+    fi
+    sleep 0.05
+  done
+  return 1
+}
+
+jg_test_reap_buses() {
+  local pid
+  [ -f "$JG_TEST_BUS_REGISTRY" ] || return 0
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    kill "$pid" 2>/dev/null || true
+  done < "$JG_TEST_BUS_REGISTRY"
+  rm -f "$JG_TEST_BUS_REGISTRY"
 }
 
 jg_test_tmproot() {
