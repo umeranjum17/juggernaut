@@ -41,8 +41,8 @@ publish heldone
 out=$(bash "$ROOT/bin/jg-tasks-axi.sh" start shipone 2>&1) || fail "start failed: $out"
 assert_equals 'in progress' "$(ticket_field "$(ticket_id shipone)" state)" 'start must mark the ticket in progress'
 assert_equals building "$(ticket_field "$(ticket_id shipone)" stage)" 'start must move the ticket to building'
-out=$(bash "$ROOT/bin/jg-tasks-axi.sh" done shipone --pr https://github.com/example/demo/pull/31 2>&1) || fail "done failed: $out"
-assert_equals done "$(ticket_field "$(ticket_id shipone)" state)" 'done must close the ticket'
+out=$(bash "$ROOT/bin/jg-tasks-axi.sh" "done" shipone --pr https://github.com/example/demo/pull/31 2>&1) || fail "done failed: $out"
+assert_equals "done" "$(ticket_field "$(ticket_id shipone)" state)" 'done must close the ticket'
 assert_equals 100 "$(ticket_field "$(ticket_id shipone)" progress)" 'done must record 100%'
 assert_equals 'https://github.com/example/demo/pull/31' "$(sign-off-axi ticket "$board" --id "$(ticket_id shipone)" --json | jq -r '.ticket.prs[0]')" 'done must link the delivered PR'
 pass 'a backlog start and done write the ticket with no poll'
@@ -65,7 +65,7 @@ bash -c '
   . "$1/bin/jg-tasks-axi-lib.sh"
   . "$1/bin/jg-backlog-transition-lib.sh"
   jg_backlog_ticket_note "$JG_HOME/data" unhold shiptwo
-' _ "$ROOT" 2>&1 >/dev/null || fail 'the release path failed'
+' _ "$ROOT" >/dev/null 2>&1 || fail 'the release path failed'
 assert_equals queued "$(ticket_field "$(ticket_id shiptwo)" state)" 'a release must return the ticket to queued'
 assert_equals false "$(ticket_field "$(ticket_id shiptwo)" hold)" 'a release must clear the hold'
 pass 'the lifecycle transition library writes its ticket state, hold and release'
@@ -98,8 +98,8 @@ pass 'a home with no board stays a silent no-op'
 publish merged
 url='https://github.com/example/demo/pull/33'
 out=$(bash -c '. "$1/bin/jg-merge-outcome-lib.sh"; jg_merge_outcome_report "$2" "$2/state" merged "$3" poll' _ "$ROOT" "$home" "$url" 2>&1) || fail "the merge path failed: $out"
-assert_equals done "$(ticket_field "$(ticket_id merged)" state)" 'the merge path must close the ticket'
-assert_equals done "$(ticket_field "$(ticket_id merged)" stage)" 'the merge path must move the ticket to done'
+assert_equals "done" "$(ticket_field "$(ticket_id merged)" state)" 'the merge path must close the ticket'
+assert_equals "done" "$(ticket_field "$(ticket_id merged)" stage)" 'the merge path must move the ticket to done'
 assert_equals "$url" "$(sign-off-axi ticket "$board" --id "$(ticket_id merged)" --json | jq -r '.ticket.prs[0]')" \
   'the merge path must link the delivered PR'
 pass 'the merge path closes the ticket with the delivered PR'
