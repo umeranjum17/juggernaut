@@ -1,0 +1,22 @@
+# Wake urgency routing: which events wake the model at once, and which wait for a
+# turn that happens anyway. bin/jg-wake-lib.sh reads it; a home's
+# config/wake-routing overrides this file and JG_WAKE_ROUTING overrides both.
+#   now     wakes on its own: a captain decision, security, a failed release, a
+#           stuck worker past its threshold, a finished task.
+#   batch   a durable row that does not wake on its own: it arrives with the next
+#           wake of any kind or with the queue-resurface cadence, so a routine
+#           event never costs a turn of its own and is never dropped.
+# A rule is `<class> <kind> <key-glob> <payload-glob>`; the first match wins. kind
+# is signal, stale, check, heartbeat, or `*`. A check row's key is its own
+# state/<id>.check.sh path. No match means `now`, so a missing rule file hides
+# nothing.
+# class  kind    key                        payload
+now      *       *                          needs-decision*
+now      *       *                          failed*
+now      *       *                          blocked*
+now      *       *                          done*
+# The tickets checks report board bookkeeping and never ask the captain anything:
+# a board row the work has already settled, or a pass summary, is not a decision.
+batch    check   *tickets-stale.check.sh    *
+batch    check   *tickets-sync.check.sh     *
+now      *       *                          *

@@ -2448,14 +2448,51 @@ jg_wake_append() {
   return "$status"
 }
 
+# --- wake urgency routing -----------------------------------------------------
+# One rule file gives every event a class: `now` wakes at once, and `batch` waits
+# for a turn that happens anyway. defaults/wake-routing owns the classes, the
+# rules and the rationale; a home's config/wake-routing or JG_WAKE_ROUTING
+# overrides it.
+jg_wake_routing_file() {
+  local file
+  for file in "${JG_WAKE_ROUTING:-}" "${JG_HOME:-$JG_WAKE_DEFAULT_ROOT}/config/wake-routing" \
+    "$JG_WAKE_DEFAULT_ROOT/defaults/wake-routing"; do
+    [ -n "$file" ] && [ -f "$file" ] && { printf '%s\n' "$file"; return 0; }
+  done
+  return 0
+}
+
+# jg_wake_route_class <kind> <key> <payload>: now or batch. The first matching
+# rule wins and no match answers `now`, so a missing rule file can never hide an
+# event.
+jg_wake_route_class() {
+  local kind=$1 key=$2 payload=$3 file class rkind rkey rpay
+  file=$(jg_wake_routing_file)
+  [ -n "$file" ] || { printf 'now\n'; return 0; }
+  while read -r class rkind rkey rpay; do
+    case "$class" in ''|'#'*) continue ;; esac
+    case "$rkind" in '*'|"$kind") ;; *) continue ;; esac
+    # shellcheck disable=SC2254  # the rule file's key and payload fields are globs
+    case "$key" in $rkey) ;; *) continue ;; esac
+    # shellcheck disable=SC2254
+    case "$payload" in $rpay) printf '%s\n' "$class"; return 0 ;; esac
+  done < "$file"
+  printf 'now\n'
+}
+
 # jg_wake_append_locked <kind> <key> <payload>
 # Locked core of jg_wake_append: appends the wake row under an already-held
 # JG_WAKE_QUEUE_LOCK. Callers that must commit another durable record atomically
 # with the append (holding this lock excludes the drain's acknowledgement, which
 # deletes consumed rows under the same lock) acquire the lock once, run this and
-# their own write, then release.
+# their own write, then release. The route class decides whether that row ends the
+# watcher cycle: `batch` is an ordinary row whose wake is gated, so it settles
+# with the next wake of any kind or with the queue-resurface cadence and costs no
+# turn of its own. JG_WAKE_LAST carries `<class>:<key>` to that gate, and
+# JG_WAKE_CYCLE_URGENT latches once any row this cycle was `now`.
+# shellcheck disable=SC2034 # JG_WAKE_LAST and JG_WAKE_CYCLE_URGENT are read by wake() in the separately linted transition owner.
 jg_wake_append_locked() {
-  local kind=$1 key=$2 payload=$3 clean_key clean_payload epoch seq seq_file status
+  local kind=$1 key=$2 payload=$3 clean_key clean_payload class epoch seq seq_file status
   local recovery_marker
   case "$kind" in
     signal|stale|check|heartbeat) ;;
@@ -2464,6 +2501,7 @@ jg_wake_append_locked() {
 
   clean_key=$(printf '%s' "$key" | jg_wake_clean_field)
   clean_payload=$(printf '%s' "$payload" | jg_wake_clean_field)
+  class=$(jg_wake_route_class "$kind" "$clean_key" "$clean_payload")
   epoch=$(date +%s)
   seq_file="$STATE/.wake-queue.seq"
   recovery_marker="$STATE/.watcher-down"
@@ -2483,19 +2521,21 @@ jg_wake_append_locked() {
   fi
   if [ "$status" -ne 0 ]; then
     _jg_wake_append_recovery_restore_locked || true
-  else
-    JG_WAKE_APPEND_RECOVERY_PREVIOUS_TOKEN=
-    JG_WAKE_APPEND_RECOVERY_PUBLISHED_TOKEN=
-    # #fleet: the same event, in plain words, on the fleet chat channel. This is
-    # the call site that already records the wake, so the channel needs no scan
-    # of its own; a chat problem can never fail a wake.
-    if [ -x "$JG_WAKE_LIB_DIR/jg-chat.sh" ]; then
-      JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
-        "$JG_WAKE_LIB_DIR/jg-chat.sh" note '#fleet' "${clean_key%.status}" - wake - \
-        "$kind: $clean_key $clean_payload" >/dev/null 2>&1 || true
-    fi
+    return "$status"
   fi
-  return "$status"
+  JG_WAKE_APPEND_RECOVERY_PREVIOUS_TOKEN=
+  JG_WAKE_APPEND_RECOVERY_PUBLISHED_TOKEN=
+  JG_WAKE_LAST="$class:$clean_key"
+  if [ "$class" = now ]; then JG_WAKE_CYCLE_URGENT=1; fi
+  # #fleet: the same event, in plain words, on the fleet chat channel. This is
+  # the call site that already records the wake, so the channel needs no scan
+  # of its own; a chat problem can never fail a wake.
+  if [ -x "$JG_WAKE_LIB_DIR/jg-chat.sh" ]; then
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
+      "$JG_WAKE_LIB_DIR/jg-chat.sh" note '#fleet' "${clean_key%.status}" - wake - \
+      "$kind: $clean_key $clean_payload" >/dev/null 2>&1 || true
+  fi
+  return 0
 }
 
 # jg_wake_queued_keys <kind>

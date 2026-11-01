@@ -3,24 +3,46 @@
 #
 # Usage:
 #   jg-owner-rules.sh init [--force]
-#   jg-owner-rules.sh add --words "<the owner's own words>" --scope <scope> \
-#     --enforce <where it is enforced> [--date YYYY-MM-DD] [--title <one line>]
+#   jg-owner-rules.sh add --kind owner --words "<the owner's own words>" \
+#     --scope <scope> --enforce <where it is enforced> [--date YYYY-MM-DD] [--title <one line>]
+#   jg-owner-rules.sh split [--surface <file>] [--apply]
 #   jg-owner-rules.sh audit [--fail] [--source <file-or-directory>]...
 #
 # The surface is $DATA/owner-rules.md: one entry per standing owner decision,
-# each carrying the owner's verbatim words, the date, the scope, and the code or
-# contract that enforces it. It is the only shared home for an owner correction.
-# bin/jg-session-start.sh prints it in every session's context digest, so every
-# worker in every project reads it; a correction that lives in one agent's
-# memory or notes instead is what `audit` exists to catch.
+# each carrying the owner's verbatim words, the date, the scope, the kind, and
+# the code or contract that enforces it. It is the only shared home for an owner
+# correction. bin/jg-session-start.sh prints it in every session's context
+# digest, so every worker in every project reads it; a correction that lives in
+# one agent's memory or notes instead is what `audit` exists to catch.
 #
-# init    Write the surface header and the standing decisions already given.
-#         Refuses to overwrite an existing surface unless --force is passed.
-# add     Append one entry. It refuses an entry that carries no owner words, no
-#         scope, or no enforcement point, an enforcement point that names a
-#         missing repository path, words already recorded in this surface, and
-#         words holding a line break (one entry is one line per field).
+# Every entry carries a kind on its `- Kind:` line:
+#   owner    the owner's own taste and authority, what only he decides: his
+#            voice, his device and account limits, his focus order, no forecast
+#            dates, the branch flow he chose, a design pick he must make.
+#   product  an engineering default that is the same for every user of
+#            Juggernaut: the delivery route, intake discipline, thin CI, the PR
+#            waiting-for status, escalation batching and backoff, choke-point
+#            alerts, prior art before new work.
+# A product rule is not an owner rule, because its fix belongs to the product:
+# AGENTS.md where an agent needs it always, a shipped default, a doc, or the
+# code that enforces it. `add` refuses one and names the ticket that carries it.
+#
+# init    Write the surface header. No entry is guessed: an entry is the owner's
+#         own call, so this file starts empty on purpose. Refuses to overwrite
+#         an existing surface unless --force is passed.
+# add     Append one entry of --kind owner. It refuses an entry with no kind, a
+#         product rule, no owner words, no scope, or no enforcement point, an
+#         enforcement point that names a missing repository path, words already
+#         recorded in this surface, and words holding a line break (one entry is
+#         one line per field).
 #         --date defaults to today in UTC and must be YYYY-MM-DD.
+# split   Report how the surface divides by kind: how many entries are owner, how
+#         many are product, and which carry no kind yet. --apply rewrites the
+#         surface to its owner entries only, so the product half can be filed as
+#         the ticket it needs. Each product entry is named with its enforcement
+#         point, in both modes. It refuses to apply while an entry has no kind.
+#         Exit status is 0 when every entry is classified, 1 when an entry still
+#         needs a kind, and 2 on a refusal or a usage error.
 # audit   Report every owner quote that a private memory, notes or agent-config
 #         file still holds and that this surface, the shared captain files, and
 #         the tracked code never carry: a rule enforced only in one agent's
@@ -37,6 +59,7 @@
 #
 # Entry format, machine-readable by this command and readable as prose:
 #   ## 2026-10-25 - Questions go on the board
+#   - Kind: owner
 #   - Scope: every captain-facing reply
 #   - Enforced by: bin/jg-turnend-guard.sh; bin/jg-question-card.sh
 #   - Owner's words: "..."
@@ -84,53 +107,10 @@ surface_header() {
 # Owner rules
 
 Standing decisions the owner gave the fleet, one entry each, in his own words.
+Every entry carries `- Kind: owner`: his own taste and authority, the thing only he decides.
+An engineering default any Juggernaut user should get is a product rule and never belongs here; it is a ticket and a change to what ships.
 This is the only shared home for an owner correction: workers read it with the session digest, and a rule kept in one agent's memory is not a rule.
-Write entries with `bin/jg-owner-rules.sh add`; find quotes still trapped in private notes with `bin/jg-owner-rules.sh audit`.
-EOF
-}
-
-seed_entries() {
-  cat <<'EOF'
-
-## 2026-10-25 - Corrections become rules, not one agent's memory
-- Scope: every owner correction, in every project
-- Enforced by: bin/jg-owner-rules.sh; bin/jg-session-start.sh
-- Owner's words: "also these corrections I make should be in juggernaut not just in your memory the whole system should understand these things"
-
-## 2026-10-30 - A correction leaves a rule or a ticket in the turn it lands
-- Scope: every owner correction, in every project
-- Enforced by: bin/jg-turnend-guard.sh; bin/jg-owner-correction.sh
-- Owner's words: "I don't want these feedbacks as one time fix this need to go into juggernaut as feedback so it doesn't repeat again"
-
-## 2026-10-25 - Questions go on the board
-- Scope: every captain-facing reply that asks him something
-- Enforced by: bin/jg-turnend-guard.sh; bin/jg-question-card.sh
-- Owner's words: "if you ask questions as well make sure they are posted, posting questions will be stricter way of working"
-
-## 2026-10-25 - A captain ask is top priority and is never dropped
-- Scope: intake, triage, and every plan change
-- Enforced by: bin/jg-tasks-axi.sh; bin/jg-captain-ask-lib.sh
-- Owner's words: "Going forward what ever I am asking is top top priority and has to be done side stuff that shows up and adds scope creep needs my approval nothing gets silently dropped or descoped without me knowing form what I had told"
-
-## 2026-10-25 - No added scope; new ideas go to a board card first
-- Scope: every task's brief and every review finding
-- Enforced by: bin/jg-brief.sh; bin/jg-dod-lib.sh
-- Owner's words: "Adding scope is a strict no no from now on if you need to add something I should know and should be presented as a plan / decision in sign off"
-
-## 2026-10-25 - A blocked-captain item waits; the work keeps moving
-- Scope: any item held for the owner
-- Enforced by: bin/jg-captain-hold.sh; .agents/skills/captain-hold-lifecycle/SKILL.md
-- Owner's words: "Agents management is under your responsibility ... things to keep moving is your responsibility if something is blocked on me keep it blocked move to something that is unblocked and wait on the blocked thing for me"
-
-## 2026-10-25 - Direct pull request with proof is the default route
-- Scope: routing every change to a delivery path
-- Enforced by: bin/jg-project-mode.sh; bin/jg-spawn.sh
-- Owner's words: "we are somehow abusing no mistakes ... most of it can go as a direct PR with the done-done check alone"
-
-## 2026-10-25 - Backlog intake is strict; every item carries its justification
-- Scope: filing work in any home
-- Enforced by: bin/jg-tasks-axi.sh
-- Owner's words: "pushing work into backlog be strict what sort of work it is and every thing should have justification not just busy work"
+Write entries with `bin/jg-owner-rules.sh add --kind owner`; `split` reports the split by kind and `audit` finds quotes still trapped in private notes.
 EOF
 }
 
@@ -141,7 +121,7 @@ cmd_init() {
   if [ -e "$SURFACE" ] && [ "$force" -eq 0 ]; then
     die "$SURFACE already exists; pass --force to rewrite it"
   fi
-  { surface_header; seed_entries; } > "$SURFACE" || die "cannot write $SURFACE"
+  surface_header > "$SURFACE" || die "cannot write $SURFACE"
   printf 'wrote %s\n' "$SURFACE"
 }
 
@@ -170,9 +150,10 @@ words_already_recorded() {  # <normalized words>
 }
 
 cmd_add() {
-  local words='' scope='' enforce='' date='' title=''
+  local words='' scope='' enforce='' date='' title='' kind=''
   while [ $# -gt 0 ]; do
     case "$1" in
+      --kind) shift; [ $# -gt 0 ] || die "--kind needs a value"; kind=$1 ;;
       --words) shift; [ $# -gt 0 ] || die "--words needs a value"; words=$1 ;;
       --scope) shift; [ $# -gt 0 ] || die "--scope needs a value"; scope=$1 ;;
       --enforce) shift; [ $# -gt 0 ] || die "--enforce needs a value"; enforce=$1 ;;
@@ -182,6 +163,17 @@ cmd_add() {
     esac
     shift
   done
+
+  kind=$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')
+  case "$kind" in
+    '')
+      die "refused: name the kind; this surface holds --kind owner entries only, and a product rule (an engineering default every Juggernaut user should get) is filed as a ticket with bin/jg-tasks-axi.sh add" ;;
+    owner) ;;
+    product)
+      die "refused: a product rule is not an owner rule; file it with bin/jg-tasks-axi.sh add and put the default where it ships - AGENTS.md, a shipped default, a doc, or the code that enforces it" ;;
+    *)
+      die "refused: --kind must be owner (got '$kind')" ;;
+  esac
 
   [ -n "$words" ] || die "refused: the entry needs the owner's own words (--words \"...\")"
   if [ "$(printf '%s' "$words" | wc -l | tr -d ' ')" -ne 0 ]; then
@@ -216,11 +208,99 @@ cmd_add() {
 
   {
     printf '\n## %s - %s\n' "$date" "$title"
+    printf -- '- Kind: %s\n' "$kind"
     printf -- '- Scope: %s\n' "$scope"
     printf -- '- Enforced by: %s\n' "$enforce"
     printf -- '- Owner'"'"'s words: "%s"\n' "$words"
   } >> "$SURFACE" || die "cannot write $SURFACE"
   printf 'recorded: %s\n' "$title"
+}
+
+# cmd_split - report the owner/product split, and write the owner half back with --apply.
+cmd_split() {
+  local surface='' apply=0 report owners products unknown tmp
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --surface) shift; [ $# -gt 0 ] || die "--surface needs a value"; surface=$1 ;;
+      --apply) apply=1 ;;
+      *) die "unknown argument: $1" ;;
+    esac
+    shift
+  done
+  [ -n "$surface" ] || surface=$SURFACE
+  [ -f "$surface" ] || die "no rules surface at $surface"
+
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/jg-owner-rules-split.XXXXXX") || die "cannot create a temporary directory"
+  # The path is this run's own mktemp directory, quoted above, so the trap sees one fixed value.
+  # shellcheck disable=SC2064
+  trap "rm -f -- '$tmp'/* 2>/dev/null; rmdir -- '$tmp' 2>/dev/null || true" EXIT
+
+  report=$(LC_ALL=C awk -v owner_out="$tmp/owner-rules.md" -v apply="$apply" '
+    function flush() {
+      if (block == "") return
+      total++
+      if (kind == "owner") {
+        owners++
+        if (apply) printf "%s", block > owner_out
+      } else if (kind == "product") {
+        products++
+        printf "product: %s%s\n", title, (enforce == "" ? "" : " [enforced by: " enforce "]")
+      } else {
+        unclassified++
+        printf "no kind: %s\n", title
+      }
+      block = ""
+    }
+    /^## / {
+      flush()
+      if (!started) { if (apply) printf "%s", header > owner_out; started = 1 }
+      title = $0
+      sub(/^## /, "", title)
+      block = $0 "\n"
+      kind = ""
+      enforce = ""
+      next
+    }
+    {
+      if (block == "") { header = header $0 "\n"; next }
+      block = block $0 "\n"
+      if (kind == "" && $0 ~ /^- Kind:/) {
+        kind = tolower($0)
+        sub(/^- kind:[ \t]*/, "", kind)
+        sub(/[ \t]+$/, "", kind)
+      }
+      if (enforce == "" && $0 ~ /^- Enforced by:/) {
+        enforce = $0
+        sub(/^- Enforced by:[ \t]*/, "", enforce)
+        sub(/[ \t]+$/, "", enforce)
+      }
+    }
+    END {
+      flush()
+      if (apply && !started) printf "%s", header > owner_out
+      printf "total: %d\n", total
+      printf "owners: %d\n", owners
+      printf "products: %d\n", products
+      printf "unclassified: %d\n", unclassified
+    }
+  ' "$surface") || die "cannot read $surface"
+
+  [ -z "$report" ] || printf '%s\n' "$report"
+  owners=$(printf '%s\n' "$report" | sed -n 's/^owners: //p')
+  products=$(printf '%s\n' "$report" | sed -n 's/^products: //p')
+  unknown=$(printf '%s\n' "$report" | sed -n 's/^unclassified: //p')
+
+  if [ "$apply" -eq 1 ]; then
+    [ "$unknown" -eq 0 ] \
+      || die "refused: $unknown entries carry no kind yet; add a '- Kind: owner' or '- Kind: product' line to each one first"
+    cat "$tmp/owner-rules.md" > "$surface" || die "cannot write $surface"
+    printf 'applied: %s keeps %s owner entries and drops %s product entries\n' "$surface" "$owners" "$products"
+    [ "$products" -eq 0 ] \
+      || printf 'file each product entry as a ticket with bin/jg-tasks-axi.sh add, and put the default where it ships\n'
+  fi
+
+  [ "$unknown" -eq 0 ] && return 0
+  return 1
 }
 
 normalize() { tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' ' ' | tr -s ' \n' ' '; }
@@ -301,7 +381,7 @@ cmd_audit() {
     finding=$(printf '%s' "$text" | normalize)
     grep -Fq -- "$finding" "$tmp/surface" && continue
     rc=1
-    printf 'private: %s:%s\n  words: "%s"\n  fix: bin/jg-owner-rules.sh add --words "%s" --scope <scope> --enforce <script or contract>\n' \
+    printf 'private: %s:%s\n  words: "%s"\n  fix: bin/jg-owner-rules.sh add --kind owner --words "%s" --scope <scope> --enforce <script or contract>\n' \
       "$file" "$line" "$text" "$text"
   done <<< "$quoted"
 
@@ -323,6 +403,7 @@ shift
 case "$cmd" in
   init) cmd_init "$@" ;;
   add) cmd_add "$@" ;;
+  split) cmd_split "$@" ;;
   audit) cmd_audit "$@" ;;
   -h|--help|help) usage ;;
   *) usage ;;

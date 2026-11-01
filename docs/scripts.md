@@ -39,6 +39,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-squad-lead-restart.sh` | Persist open conversational work, then restart eligible Squad Leads or report the fallback outcome |
 | `jg-fleet-autosync.sh`   | Carry a landed merge to this home and every live local Squad Lead home from the merge itself, alarm when a home stays more than two merges behind, and report each home's distance for the session digest |
 | `jg-version-branch-sync.sh` | Carry a merge that landed on the default branch to the active version branch `config/version-branch` names, run by the merge-outcome record itself: a fast-forward push only, a skip that names every path on a dirty copy, and a version branch it cannot fast-forward reported and left as it is |
+| `jg-migration-card.sh` | Keep the migration card current from the merge path (opt-in `config/migration-card`): each merge into the release branch posts a fresh card key with the step, lines removed and added, running total and what is left, dismisses the previous card, and a milestone records a three-line captain digest |
 | `jg-squad-lead-restart-lib.sh` | Shared Squad Lead restart capability and persistence-request contract |
 | `jg-on.sh`               | Execute one tracked Juggernaut command in a configured remote Squad Lead home, using its job worker except for the doctor bootstrap |
 | `jg-remote-job-lib.sh`   | Shared bounded remote job queue, worker readiness, LaunchAgent contract, and filesystem-composed PATH |
@@ -49,7 +50,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
 | `jg-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
 | `jg-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto jg-captain-hold.sh |
-| `jg-owner-rules.sh`      | Seed, extend, and audit the shared owner-rules surface the session digest prints, refusing an entry with no owner words, no scope, or no enforcement point |
+| `jg-owner-rules.sh`      | Extend, split, and audit the shared owner-rules surface the session digest prints: it appends a `- Kind: owner` entry and refuses a product rule with the ticket path, reports the owner/product split by kind and can write the owner half back, and refuses an entry with no owner words, no scope, or no enforcement point |
 | `jg-owner-correction.sh` | The owner-correction capture check the turn-end guard reads: is the recorded correction (the newest captain message tagged feedback or micromanagement) captured by an owner rule or an enforcement ticket |
 | `jg-question-card.sh`    | Post the board card for a question to the owner through sign-off-axi and print its key so the reply can cite it; `--route <lead>` names the lead that owns the answer |
 | `jg-proof-attach.sh`      | Find a task's done-done receipt and proof media, refuse a text-only card for UI or video work, and put the proof on the ready, review or merged board card and the PR body |
@@ -147,6 +148,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
 | `jg-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `jg-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |
+| `jg-wake-next.sh`        | Fetch the next wake and its acknowledgement token in one call: relay the drain's whole presentation, then print the ready-to-run `--ack-through` command |
 | `jg-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |
 | `jg-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `jg-path-lib.sh`         | Fork-free `dirname`/`basename` equivalents with no source-time side effects             |
@@ -167,6 +169,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-check-unregister.sh` | Retire a custom watcher check and its trust binding by validated task id            |
 | `jg-check-lib.sh`        | Validate custom-check registrations and prepare private execution snapshots          |
 | `jg-tokens-retro.sh` | Daily token retro watcher check: one `learn-from-mistakes-axi tokens retro` a day into `data/tokens-retro/`, reporting only a week-over-week change |
+| `jg-worker-rules.sh` | Show, render, measure, and check which part of the instruction surface each role reads, from `defaults/worker-rules.tsv` |
 | `jg-tool-update-check.sh` | Report watched tooling with an update available, and updates installed but left inert by PATH order |
 | `jg-startup-growth-check.sh` | Daily metadata-only growth check for startup memory and tracked startup/instruction surfaces |
 | `jg-pr-lib.sh`           | Own canonical task and PR validation plus private atomic PR-poll publication, merge-notification identity, and retirement |
