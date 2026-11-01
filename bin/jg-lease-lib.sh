@@ -142,6 +142,7 @@ jg_lease_kv_lib() {
 
 # jg_lease_home: the home this shell resolves records against.
 jg_lease_home() {
+  # shellcheck disable=SC2153 # STATE is set by the script that sources this library
   printf '%s\n' "$(dirname "$STATE")"
 }
 
