@@ -132,8 +132,16 @@ func run(args []string) int {
 		return a.parity(rest)
 	case "reply":
 		return a.reply(rest)
+	case "serve":
+		return a.serve()
 	case "unit":
 		return a.unit()
+	case "ensure":
+		return a.ensure()
+	case "stop":
+		return a.stop()
+	case "bootstrap":
+		return a.bootstrap()
 	case "status":
 		return a.status()
 	default:
