@@ -99,6 +99,12 @@ cycle() {  # <home> [absent]
   cat "$h/out" >> "$h/events"
   [ "${2:-}" != absent ] || return 0
   JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" "$FORK/bin/jg-wake-drain.sh" > "$h/drain" 2> "$h/ack"
+  # The wake queue is the delivery; the line the watcher prints is its doorbell.
+  # A cycle that is stopped between queueing a wake and printing it (the stop
+  # lands inside a scan on a loaded runner) still delivered it: Main's drain holds
+  # the row. Count every drained wake as delivered to Main, once.
+  awk -F '\t' 'NF >= 5 && $1 ~ /^[0-9]+$/ && $3 ~ /^(signal|stale|check|heartbeat)$/ { print $5 }' "$h/drain" \
+    | while IFS= read -r line; do grep -Fxq -- "$line" "$h/events" || printf '%s\n' "$line" >> "$h/events"; done
   seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9]*\) --recovery-generation .*/\1/p' "$h/ack")
   gen=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([^ ]*\)$/\1/p' "$h/ack")
   [ -z "$seq" ] || JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" "$FORK/bin/jg-wake-drain.sh" --ack-through "$seq" --recovery-generation "$gen" >/dev/null

@@ -1171,6 +1171,10 @@ make_primary_home() {  # <name>
   git init -q "$home"
   : > "$home/AGENTS.md"
   ln -s "$ROOT/bin" "$home/bin"
+  # The watcher's wait-timer tick reads the escalation workflow definition from
+  # core/ beside bin/ (bin/jg-escalation-workflows.sh roots itself at the home's
+  # own bin path); without it the tick fails and every watcher cycle exits.
+  ln -s "$ROOT/core" "$home/core"
   printf '%s\n' "$home"
 }
 
