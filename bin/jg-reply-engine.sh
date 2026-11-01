@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
 # jg-reply-engine.sh - one pending reply as a durable workflow instance, decided
-# from the event log: the fold, the decision, the shadow tick and the replay.
+# from the event stream: the fold, the decision, the shadow tick and the replay.
 #
 # WHY THIS EXISTS (migration step 5d, the decision half). A pending reply is
 # still a wait run by hand inside bin/jg-pending-reply-lib.sh over a per-waiter
 # record file. The decided shape is a durable workflow:
-# core/bus/workflows/pending-reply.json owns the instance key, the four events,
-# the two stages with the anchor each timer measures from, the activity each
-# timeout runs and its retries, and the terminal states. This script is that
-# definition's engine: it folds the event log into one state per waiter, decides
-# what the definition says that waiter's stage should do, and - in this step -
-# only records the decision. NOTHING ACTS YET: no repost is sent, no escalation
-# is opened, no record is written, and bin/jg-pending-reply-lib.sh stays the live
-# path. A later slice turns the decision into the actor and deletes the code it
-# replaces; docs/reply-shadow.md owns what is still shadow.
+# core/bus/workflows/pending-reply.json owns the instance key, the events, the
+# two stages with the anchor each timer measures from, the activity each timeout
+# runs and its retries, and the terminal states. This script is that definition's
+# engine: it folds the event stream into one state per waiter, decides what the
+# definition says that waiter's stage should do, and - in this step - only
+# records the decision. NOTHING ACTS YET: no repost is sent, no escalation is
+# opened, no record is written, and bin/jg-pending-reply-lib.sh stays the path
+# that acts. A later slice turns the decision into the actor and deletes the code
+# it replaces; docs/reply-shadow.md owns what is still shadow.
 #
 # CONTRACT (this header is the one owner of the engine's shape).
-#   store    $STATE/reply-bus.jsonl, the event log, one line per event as
-#            <key>\t<digest>\t<json>. It is append-only, and the fold keeps the
-#            last event per key, so a changed fact supersedes an earlier one and
-#            a repeat with the same digest is a no-op. The format is transport
-#            neutral on purpose: bin/jg-reply-bus.sh mirrors the same lines onto
-#            JetStream when a bus answers, so a bus-backed transport can feed
-#            this engine later without changing the model or this file.
+#   store    the pending-reply stream on the home's bus, which
+#            bin/jg-reply-bus.sh publishes and folds; its `log` command prints the
+#            stream in the one format this engine reads: one line per event as
+#            <key>\t<seq>\t<json>. The fold keeps the last event per key, so a
+#            changed fact supersedes the earlier one, and the log leaves out every
+#            waiter whose last event was a discard.
 #   events   waiter  the instance exists: task, grace, delivery state
 #                     (sent | attempted | confirmed | unknown) and its epochs
 #            timer   one stage's timeout: stage, anchor (or none), and whether
@@ -39,7 +38,8 @@
 #            instant a poll happened to notice it.
 #   tick     the watcher's poll slot: fold, decide every waiter at one instant,
 #            and append what it would do to $STATE/reply-bus-decisions.jsonl. It
-#            acts on nothing and always exits 0.
+#            acts on nothing and always exits 0. The watcher feeds it the stream
+#            dump (bin/jg-reply-bus.sh log) through JG_REPLY_BUS_LOG.
 #   replay   the same decision, walked over a recorded log: every instant the
 #            recorded facts imply is replayed, the decision at each instant is
 #            compared with the decision the record path took from those same
