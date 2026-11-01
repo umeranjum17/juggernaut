@@ -120,7 +120,7 @@ bin/jg-test-run.sh --lane portable-serial   # portable serial remainder (watcher
 bin/jg-test-run.sh --list-lanes   # discover exact lane names, including the current CI serial shards
 bin/jg-test-run.sh --check-coverage   # prove portable shards + serial + serial shards + Herdr equal the full inventory
 bin/jg-test-run.sh --all   # deliberate complete regression (optional local full walk; not no-mistakes Test)
-( cd core/bus && go vet ./... && go build ./... )   # build the Go commands' module; bin/jg-bus.sh does the same build on first use
+( cd core/bus && go vet ./... )   # vet the Go commands' module; bin/jg-bus.sh builds the command into the home's state directory on first use, never into the tree
 bin/jg-test-run.sh --show-limits   # print the per-test and whole-gate limits this runner reads from config
 bin/jg-test-isolation-proof.sh --list   # proven portable parallel candidate set
 bin/jg-test-isolation-proof.sh --jobs 4 --json /tmp/jg-isolation-proof.json   # re-run the portable candidate proof

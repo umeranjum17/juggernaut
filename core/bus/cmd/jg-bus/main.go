@@ -63,10 +63,17 @@
 //	         the same marked answer line and decision close it sends, so a reply reaching
 //	         the bus routes to the lead a board answer routes to. An unrouted card is
 //	         refused, exactly as today, and its answer stays with Main.
+//	stream   Exit 0 when the stream exists on the server, 1 when not; creates nothing.
+//	account  Print this home's bus account and its credentials file, tab separated.
+//	         The account is the home's unique id (its Squad Lead id, else a hash of its
+//	         absolute path), never its folder name. `accounts [home...]` prints the
+//	         server block for these homes, Main and every data/squad_leads.md entry;
+//	         two homes on one account name are refused with a line naming both.
 //	ensure   Start the server when it is not listening and create the stream, then say
 //	         one line. What a bootstrap step and docs/bus-service.md run.
-//	unit     Print the systemd user service a home installs once, which runs the server
-//	         itself and creates the stream after it starts.
+//	unit     Print the systemd user service a home installs once for one part: nats
+//	         (the default) runs the server itself and creates the stream after it
+//	         starts; dapr and ntfy run their binary in the foreground.
 //	serve    Start the three services from their files, every one of them read as config
 //	         and none re-implemented here: nats-server (core/bus/nats.conf), the
 //	         JetStream stream it carries (core/bus/stream.json), the slim Dapr runtime
@@ -82,7 +89,7 @@
 //	jg-bus publish <kind> <key> <text> [--link <url>]
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus serve | ensure | unit | stop | status | bootstrap
+//	jg-bus stream | serve | ensure | unit [nats|dapr|ntfy] | stop | status | bootstrap
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
 // JG_CAPTAIN_CHANNEL.
@@ -135,13 +142,17 @@ func run(args []string) int {
 	case "serve":
 		return a.serve()
 	case "unit":
-		return a.unit()
+		return a.unit(rest)
 	case "accounts":
 		return a.accounts(rest)
+	case "account":
+		return a.account()
 	case "ensure":
 		return a.ensure()
 	case "stop":
 		return a.stop()
+	case "stream":
+		return a.streamExists()
 	case "bootstrap":
 		return a.bootstrap()
 	case "status":

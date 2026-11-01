@@ -1512,7 +1512,7 @@ families_for_changed_path() {
       ;;
     bin/jg-lint.sh|bin/jg-lint-workflows.sh|bin/jg-install-shellcheck.sh|\
     bin/jg-install-actionlint.sh|\
-    bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
+    bin/jg-committed-binary-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
     bin/jg-captain-hold.sh|bin/jg-hold-reason-lib.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
     bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-tasks-axi-lib.sh|\
     bin/jg-vendor-auth-probe.sh|\
@@ -1583,6 +1583,13 @@ families_for_changed_path() {
       printf '%s\n' "__unmapped__:$path"
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
+      ;;
+    journeys/*)
+      # A done-done journey is owned by the test that names it: a direct
+      # reference is per-script evidence, so select that script, not its family.
+      scripts_for_test_reference "$path" \
+        || families_for_test_reference "$path" \
+        || printf '%s\n' "__unmapped__:$path"
       ;;
     core/*)
       # A core feature's own suites run in core-suites.yml on the push after the

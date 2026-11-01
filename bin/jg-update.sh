@@ -65,6 +65,8 @@
 # jg-procevent-when.sh rebind-all to republish those bindings against the new
 # bytes; a failure there is swallowed rather than failing the update.
 #
+# After the fast-forward it runs bin/jg-stack.sh up, so the release arrives with its services.
+#
 # Usage: jg-update.sh [--help]
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
@@ -132,6 +134,12 @@ if [ "$FF_STATUS" = "updated" ]; then
   # always where this very script file happens to live (JG_ROOT_OVERRIDE, as
   # this test suite uses to point jg-update.sh at a fixture checkout).
   JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$SCRIPT_DIR/jg-procevent-when.sh" rebind-all || true
+fi
+
+# The services come with the release: run the updated checkout's own install command so a
+# release never lands on a machine without them. A failure is reported, never fatal to the update.
+if [ "${JG_STACK_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-stack.sh" ]; then
+  JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-stack.sh" up || echo "stack: not whole after the update (see the STACK_FAILED line above)" >&2
 fi
 
 # --- squad_leads -----------------------------------------------------------
