@@ -99,6 +99,12 @@ cycle() {  # <home> [absent]
   cat "$h/out" >> "$h/events"
   [ "${2:-}" != absent ] || return 0
   JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" "$FORK/bin/jg-wake-drain.sh" > "$h/drain" 2> "$h/ack"
+  # The wake queue is the delivery; the line the watcher prints is its doorbell.
+  # A cycle that is stopped between queueing a wake and printing it (the stop
+  # lands inside a scan on a loaded runner) still delivered it: Main's drain holds
+  # the row. Count every drained wake as delivered to Main, once.
+  awk -F '\t' 'NF >= 5 && $1 ~ /^[0-9]+$/ && $3 ~ /^(signal|stale|check|heartbeat)$/ { print $5 }' "$h/drain" \
+    | while IFS= read -r line; do grep -Fxq -- "$line" "$h/events" || printf '%s\n' "$line" >> "$h/events"; done
   seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9]*\) --recovery-generation .*/\1/p' "$h/ack")
   gen=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([^ ]*\)$/\1/p' "$h/ack")
   [ -z "$seq" ] || JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" "$FORK/bin/jg-wake-drain.sh" --ack-through "$seq" --recovery-generation "$gen" >/dev/null
@@ -602,6 +608,46 @@ test_stalled_backlog_at_the_floor_with_no_worker_working_reaches_main_and_the_bo
   pass "an idle lead at its lane floor with no worker working is woken again, reported to Main, steered, recorded for Main, and cleared when it starts work"
 }
 
+test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts() {
+  local m l f before
+  m=$(home pause-main)
+  l=$(lead_home pause-lead "$m")
+  lead_meta "$m" lead1 1 "$l"
+  printf '2\n' > "$l/config/lane-target"
+  mkdir -p "$l/data"
+  backlog "$l" add alpha "first item" --priority 1
+  f="$m/state/lead1.status"
+  cycle "$l"
+  [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "ready work on a free lane armed no episode: $(cat "$l/err")"
+  backdate_backlog "$l" 1000
+  cycle "$l"
+  grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\].*: waiting-timer-backlog-overdue:' "$f" \
+    || fail "the unpaused home never reached Main: $(cat "$f") $(cat "$l/err")"
+  # Main pauses this home: the stalled backlog goes quiet and its open report closes.
+  printf '# Paused for the vendor migration\n\nStop new work.\n- Resume rule: Main sends an explicit resume order.\n' \
+    > "$l/data/paused-for-juggernaut.md"
+  cycle "$l"
+  grep -q '^resolved \[key=waiting-timer-.*-ready-backlog\].*waiting-timer-cleared: lead1 ready backlog: the home is paused' "$f" \
+    || fail "the pause left Main's report open: $(cat "$f")"
+  [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a paused home kept its backlog episode"
+  before=$(grep -c 'waiting-timer-backlog-overdue' "$f")
+  touch -d '-15 days' "$l/state/.last-ready-work-check"
+  cycle "$l"
+  cycle "$l"
+  [ "$(grep -c 'waiting-timer-backlog-overdue' "$f")" = "$before" ] \
+    || fail "a paused home escalated its backlog: $(cat "$f")"
+  [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a paused home armed a backlog episode again"
+  # The resume order puts the backlog back on its ladder.
+  rm -f "$l/data/paused-for-juggernaut.md"
+  cycle "$l"
+  [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "the removed pause record did not re-arm the backlog: $(cat "$l/err")"
+  backdate_backlog "$l" 1000
+  cycle "$l"
+  [ "$(grep -c 'waiting-timer-backlog-overdue' "$f")" -gt "$before" ] \
+    || fail "the resumed home never rang again: $(cat "$f")"
+  pass "a paused home arms and escalates no stalled backlog, closes the report it left open, and rings again when the record goes"
+}
+
 test_green_unmerged_pr_climbs_lead_main_and_the_board() {
   local m l f
   m=$(home green-main)
@@ -976,6 +1022,7 @@ test_stalled_backlog_quiet_when_work_starts_in_time
 test_stalled_backlog_quiet_without_a_free_lane_or_a_ready_item
 test_stalled_backlog_at_the_floor_with_no_worker_working_reaches_main_and_the_board
 test_stalled_backlog_quiet_when_project_is_at_capacity
+test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts
 test_ship_ready_line_goes_through_the_pr_check
 test_watcher_handoff_gap_is_not_a_dead_watcher
 test_ready_work_wakes_the_primary_home_too

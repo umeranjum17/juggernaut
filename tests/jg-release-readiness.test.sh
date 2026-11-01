@@ -83,7 +83,19 @@ SH
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$ALERT_LOG"
 SH
-  chmod +x "$w/bin/poster" "$w/bin/alert"
+  # The board reader keeps the real tool's shape for the one call the script
+  # makes: `list <board> --json` prints the board's decisions. The test owns the
+  # board file, so it no longer depends on sign-off-axi being installed (the
+  # Behavior job has none, and the script then reads "not waiting").
+  cat > "$w/bin/sign-off-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list) cat "$2" ;;
+  dismiss) ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$w/bin/poster" "$w/bin/alert" "$w/bin/sign-off-axi"
   printf '%s\n' "$w"
 }
 

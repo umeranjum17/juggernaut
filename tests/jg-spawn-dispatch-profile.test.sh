@@ -143,6 +143,17 @@ assert_meta_profile() {
   assert_grep "effort=$effort" "$meta" "meta missing effort=$effort"
 }
 
+# The provider-credential strip jg-spawn pins in front of every launch, which
+# docs/configuration.md owns and bin/jg-launch-env-lib.sh implements. It reads
+# the launching process's credential-shaped names, and a spawn inherits this
+# one, so the expected launch composes the same prefix. Empty on a host whose
+# shell carries no such name.
+launch_strip_prefix() {
+  # shellcheck source=bin/jg-launch-env-lib.sh
+  . "$ROOT/bin/jg-launch-env-lib.sh"
+  jg_launch_env_strip_prefix ""
+}
+
 test_no_profile_keeps_claude_profile_defaults() {
   local rec id out status expected launch
   id=profile-off-z1
@@ -577,7 +588,7 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   # The unverified-adapter escape hatch still follows the worker launch
   # environment contract in docs/configuration.md; only its required prefixes
   # may change the captain's own command.
-  [ "$launch" = "export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true; export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(jg_test_launch_git_prefix "$launch")custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+  [ "$launch" = "$(launch_strip_prefix)export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true; export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(jg_test_launch_git_prefix "$launch")custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
@@ -2052,7 +2063,7 @@ claude_expected_launch() {  # <launch> <home> <id> <permission-flag>
   [ "$(printf '%s' "$doorbell" | "$ROOT/bin/jg-operational-input.sh" doorbell-kind)" = launch-brief ] \
     || doorbell="not a launch-brief doorbell"
   quoted="'$(printf '%s' "$doorbell" | sed "s/'/'\\\\''/g")'"
-  printf '%s' "export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true; export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(jg_test_launch_git_prefix "$1")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false},\"enabledPlugins\":{\"ponytail@ponytail\":false}}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
+  printf '%s' "$(launch_strip_prefix)export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true; export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(jg_test_launch_git_prefix "$1")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false},\"enabledPlugins\":{\"ponytail@ponytail\":false}}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
 }
 
 test_claude_permission_mode_bypass_matches_absent_launch() {

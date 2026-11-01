@@ -92,12 +92,12 @@ func (a *app) noteFailure(what, why string) {
 	appendQuiet(a.log, fmt.Sprintf("%s failed: %s", what, detail(why)))
 }
 
-// post sends one body to one URL and reports a transport failure. It is the same curl
-// call this path has always made, so the timeout, the empty response sink and the rule
-// that an HTTP status is not a failure (no -f) are unchanged; the body goes in on
-// stdin, so a long event never reaches an argument list.
-func post(target, body string, headers map[string]string) (string, error) {
-	args := []string{"-sS", "-o", "/dev/null", "--max-time", "5", "-X", "POST", "--data-binary", "@-"}
+// post sends one body to one URL and returns the HTTP status and the response body. A
+// transport failure is the error; an HTTP status is the caller's to judge. It is the same
+// curl call this path has always made (timeout 5s), and the body goes in on stdin, so a
+// long event never reaches an argument list.
+func post(target, body string, headers map[string]string) (int, string, error) {
+	args := []string{"-sS", "--max-time", "5", "-X", "POST", "--data-binary", "@-", "-w", "\n%{http_code}"}
 	for k, v := range headers {
 		args = append(args, "-H", k+": "+v)
 	}
@@ -105,10 +105,47 @@ func post(target, body string, headers map[string]string) (string, error) {
 	cmd := exec.Command("curl", args...)
 	cmd.Stdin = strings.NewReader(body)
 	out, err := cmd.CombinedOutput()
+	text := strings.TrimRight(string(out), "\n")
 	if err != nil {
-		return strings.TrimSpace(string(out)), err
+		return 0, strings.TrimSpace(text), err
 	}
-	return "", nil
+	i := strings.LastIndexByte(text, '\n')
+	status := 0
+	fmt.Sscanf(text[i+1:], "%d", &status)
+	if i < 0 {
+		return status, "", nil
+	}
+	return status, text[:i], nil
+}
+
+// ok2xx reports an accepted HTTP status.
+func ok2xx(status int) bool { return status >= 200 && status < 300 }
+
+// deliverToNtfy sends one event to the captain's topic and returns ntfy's own answer (its
+// message id). It is the one delivery call: the consumer on the CAPTAIN stream makes it for
+// every event the bus accepted, and publish makes it only for an event the bus did not.
+func (a *app) deliverToNtfy(text string) (target, id string, err error) {
+	target = a.ntfyURL()
+	headers := map[string]string{"Title": clampChars(firstLine(text), 120),
+		"Tags": a.cfgOr("ntfy-tag", "")}
+	status, out, perr := post(target, text, headers)
+	if perr != nil {
+		return target, "", fmt.Errorf("%s", detail(out))
+	}
+	if !ok2xx(status) {
+		return target, "", fmt.Errorf("ntfy answered HTTP %d: %s", status, detail(out))
+	}
+	var reply struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal([]byte(out), &reply)
+	return target, reply.ID, nil
+}
+
+// noteUndelivered names a delivery that did not arrive, with its error.
+func (a *app) noteUndelivered(target, why, doc string) {
+	appendQuiet(a.undelivered, fmt.Sprintf(`{"at":%d,"target":%s,"error":%s,"event":%s}`,
+		time.Now().Unix(), toJSON(target), toJSON(detail(why)), doc))
 }
 
 // publish tees one captain-facing event. It never fails its emitter: both callers are
@@ -146,19 +183,24 @@ func (a *app) publish(args []string) int {
 	}
 	target := strings.TrimRight(a.cfgOr("dapr-http-url", ""), "/") +
 		"/v1.0/publish/" + a.cfgOr("dapr-pubsub", "") + "/" + subject
-	if out, err := post(target, doc, nil); err != nil {
+	status, out, err := post(target, doc, map[string]string{"Content-Type": "application/json"})
+	accepted := err == nil && ok2xx(status)
+	if !accepted {
+		if err == nil {
+			out = fmt.Sprintf("HTTP %d %s", status, out)
+		}
 		a.noteFailure("bus "+subject, out)
 	}
-	if mode != "live" {
+	if mode != "live" || accepted {
+		// Live and accepted: the event is on the CAPTAIN stream, and the stream's
+		// consumer (`jg-bus deliver`) is the one path that delivers it to ntfy.
 		return 0
 	}
-	delivery := a.ntfyURL()
-	headers := map[string]string{"Title": clampChars(firstLine(text), 120),
-		"Tags": a.cfgOr("ntfy-tag", "")}
-	if out, err := post(delivery, text, headers); err != nil {
-		a.noteFailure("ntfy", out)
-		appendQuiet(a.undelivered, fmt.Sprintf(`{"at":%d,"target":%s,"error":%s,"event":%s}`,
-			time.Now().Unix(), toJSON(delivery), toJSON(detail(out)), doc))
+	// The bus did not take the event, so no consumer will see it: deliver it directly
+	// rather than lose a captain-facing event.
+	if delivery, _, err := a.deliverToNtfy(text); err != nil {
+		a.noteFailure("ntfy", err.Error())
+		a.noteUndelivered(delivery, err.Error(), doc)
 	}
 	return 0
 }
@@ -251,7 +293,7 @@ func (a *app) status() int {
 	}
 	fmt.Printf("mode %s, relay %s, delivery %s\n", a.channelMode(), a.cfgOr("ntfy-relay", ""), target)
 	fmt.Printf("record %s: %d event(s), %d undelivered\n", a.record, countLines(a.record), countLines(a.undelivered))
-	for _, name := range []string{"nats", "dapr", "ntfy"} {
+	for _, name := range []string{"nats", "dapr", "ntfy", "deliver"} {
 		state := "down"
 		if pid, ok := a.runningPid(name); ok {
 			state = fmt.Sprintf("up (%d)", pid)
@@ -330,8 +372,18 @@ func (a *app) unit(args []string) int {
 		fmt.Fprintf(&b, "Description=Juggernaut captain channel delivery (ntfy, loopback)\n")
 		fmt.Fprintf(&b, "After=network.target\n\n")
 		a.unitService(&b, quote, percent, quoteAll(quote, a.ntfyArgv(path)))
+	case "deliver":
+		self, err := os.Executable()
+		if err != nil {
+			return die("cannot find the jg-bus binary: %v", err)
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut captain channel consumer (CAPTAIN stream to ntfy)\n")
+		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
+		a.unitService(&b, quote, percent, quoteAll(quote, []string{self, "deliver"}))
+		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_BUS_ROOT="+a.root))
+		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_STATE_OVERRIDE="+a.state))
 	default:
-		return die("unit: unknown part %q (nats, dapr, ntfy)", part)
+		return die("unit: unknown part %q (nats, dapr, ntfy, deliver)", part)
 	}
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	fmt.Print(b.String())

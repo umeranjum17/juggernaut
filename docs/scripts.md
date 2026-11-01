@@ -52,6 +52,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-remote-doctor.sh`    | Check, and with `--fix` repair, one remote account's Squad Lead readiness (remote job worker, Herdr, Aqua launch agents, PATH, and required tools) |
 | [`jg-backlog-handoff.sh`](../bin/jg-backlog-handoff.sh) | Move queued backlog items into a Squad Lead home; its header owns route-specific wake outcomes and retries |
 | `jg-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
+| `jg-captain-probe.sh`    | Live proof on this machine that a captain-bound event travels bus to ntfy: processes, `CAPTAIN` stream and consumer counts before and after one real event, the delivery record line and ntfy's own log line for it ([channel](captain-channel.md#delivery-bus-to-ntfy)) |
 | `jg-bus.sh`              | The captain channel's dispatcher: build the Go command at `core/bus/cmd/jg-bus` once into the home's state directory, then hand it every command. The command records, publishes and delivers each captain-facing event, replays what it sends against its own record, runs the NATS/JetStream, slim Dapr and local ntfy services from their files, starts or verifies the home's JetStream (`ensure`), prints its systemd user unit, and routes a captain reply by the board route in force ([channel](captain-channel.md), [bus](bus-service.md)) |
 | `jg-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
 | `jg-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto jg-captain-hold.sh |
@@ -126,6 +127,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
 | `jg-watch.sh`            | Singleton-safe watcher: absorb benign wakes, detect stalled local Squad Lead wake queues, hand recorded asks to `core/ask-default`, and exit on actionable ones |
 | `jg-retired-catalog-check.sh` | The gate that keeps the retired bolt-on catalog retired: refuse any new path under the retired directory in a change (`--base <ref>`) and any tracked one outside its named deferred images, and `--self-test` proves the refusal with a fixture file |
+| `jg-committed-binary-check.sh` | The gate that keeps compiled binaries out of the tree: refuse every tracked ELF, Mach-O or PE file with one line naming it, the `Repo invariants` CI job runs it before a merge, and `--self-test` proves the refusal with planted files |
 | `jg-host-wiring.sh`      | The core's one host-wiring entry point: run every `core/<feature>/wiring.sh` step in its working order for one home, with `--dry-run`, `--list`, and `--unwire` for the steps that carry a teardown |
 | `jg-inactive-reconcile.sh` | Reconcile long-inactive direct operator terminal outcomes without forge access |
 | `jg-afk-contract.sh`     | Own the away-or-quiet record's posture, schema, entry, read-back, archive, and cross-subsystem authority lock |
@@ -152,6 +154,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
 | `jg-project-capacity-lib.sh` | Per-project worker capacity: `config/project-capacity` parsing, what holds a place, and the spawn-time fit check ([configuration.md](configuration.md#project-capacity-configproject-capacity)) |
 | `jg-exclude-tools-lib.sh` | Parse `config/crew-exclude-tools` and check launch-time runtime support for worker tool exclusions ([configuration.md](configuration.md#worker-tool-exclusions-configcrew-exclude-tools)) |
+| `jg-launch-env-lib.sh`   | Single owner of the provider-credential shapes every launch strips from the worker environment, and of the `unset` prefix the pane runs ([configuration.md](configuration.md#provider-credentials-stripped-from-every-launch)) |
 | `jg-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
 | `jg-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `jg-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |

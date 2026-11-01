@@ -264,12 +264,15 @@ func (a *app) serve() int {
 	} else {
 		say("ntfy: not started, no ntfy on PATH")
 	}
+	if self, err := os.Executable(); err == nil {
+		a.startOne(false, "deliver", self, "deliver")
+	}
 	return 0
 }
 
 // stop stops the services this home started from their recorded pids.
 func (a *app) stop() int {
-	for _, name := range []string{"nats", "dapr", "ntfy"} {
+	for _, name := range []string{"nats", "dapr", "ntfy", "deliver"} {
 		pidPath := filepath.Join(a.runtime, name+".pid")
 		data, err := os.ReadFile(pidPath)
 		if err != nil {

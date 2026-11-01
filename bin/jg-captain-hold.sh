@@ -1208,7 +1208,9 @@ command_hold() {
         raise_hold_card "$id" "$(show_field_value "$show" title)" "$reason" "$card_close" "$must" \
           || { printf 'error: task %s is held, but no board card was posted for it\n' "$id" >&2; exit 1; }
       else
-        JG_HOME=$JG_HOME JG_CODE_ROOT=${JG_CODE_ROOT:-$SCRIPT_DIR/..} "$signoff_script" raise "$id" "$(show_field_value "$show" title)" "$reason" "$card_close" ${must:+--must "$must"} \
+        # The installed adapter takes exactly these four arguments and authors its
+        # own must class (core/signoff raise), so --must is never passed to it.
+        JG_HOME=$JG_HOME JG_CODE_ROOT=${JG_CODE_ROOT:-$SCRIPT_DIR/..} "$signoff_script" raise "$id" "$(show_field_value "$show" title)" "$reason" "$card_close" \
           || { printf 'error: task %s is held, but no sign-off card was raised for it\n' "$id" >&2; exit 1; }
       fi
     fi

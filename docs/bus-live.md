@@ -6,9 +6,9 @@ record-only file and a recovery marker for a queue whose consumer had died. This
 is the switch: the bus is the store, and one renderer writes the read model every
 other reader still opens.
 
-`docs/bus-shadow.md` is the step before this one - the mirror and the parity
-replay that proved the bus reproduces the file path's consumer result. That
-replay still runs and is still the evidence this switch rests on.
+The step before this one was a shadow mirror that published the file queue to the bus
+and compared both consumers' rows. It proved parity, and it is deleted with the file
+path it watched.
 
 ## What is authoritative now
 
@@ -26,6 +26,28 @@ Two things follow, and both are the point of the switch:
 - **An unacknowledged event stays on the server.** Nothing has to notice that a
   consumer died, so the queue's own append-recovery marker and the `.wake-settled`
   file are gone with the mechanisms they served.
+
+## One stream for every home
+
+The machine runs one JetStream. `JG_WAKE` carries each home's `jg.<home>.wake.>` and
+`JG_INBOX` each home's `jg.<home>.inbox.>`, so every home's events are accepted; a
+home reads only the events that name it. A wildcard over the home part is refused
+where the captain channel's `jg.captain.>` overlaps it, so each home adds its own
+subject. A stream an earlier build made for the first home alone
+refused every other home's publish, and each of those wakes waited in the home's
+outbox while the read model looked like a working queue. `bus_ensure_stream` adds the
+home's subject to such a stream in place and keeps its messages. An acknowledgement is published on
+the stream of the record it settles, and one flushed from the outbox keeps the
+`/ack` message id, so the server does not drop it as a duplicate of its raise.
+
+## Probe
+
+`bin/jg-wake-bus-probe.sh` is the measurement: it prints the processes that serve the
+bus, raises one real wake and one real steer through the production writers,
+withdraws and settles them, and prints the `JG_WAKE` and `JG_INBOX` message, sequence
+and consumer counts before and after, the outbox size, and the mtime of the old
+`.wake-queue.seq`. It exits 1 when a stream did not rise, the outbox grew, or
+anything wrote the file queue's sequence file.
 
 ## The read model
 

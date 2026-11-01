@@ -48,7 +48,7 @@ bin/jg-stack.sh status      # the same report, changing nothing
 
 On a fresh clone this one command brings the whole stack up: it builds the Go
 command, installs the four pinned tools, and installs, enables and starts the
-NATS unit, the Dapr sidecar and ntfy, then checks the stream. It prints one line
+NATS unit, the Dapr sidecar, ntfy and the `deliver` consumer that carries the `CAPTAIN` stream to ntfy, then checks the stream. It prints one line
 per part, for example `nats  installed 2.10.22, enabled enabled (jg-bus.service),
 running pid 123, listening 127.0.0.1:4222`, and a second run prints the same lines.
 The first part that cannot be made whole stops the run with one line,
@@ -57,7 +57,7 @@ The first part that cannot be made whole stops the run with one line,
 `bin/jg-bootstrap.sh` (every session start), `bin/jg-update.sh` (after the
 fast-forward) and `install.sh` all run it, so a release never lands without its
 services. Each service is a **systemd user service** (`jg-bus`, `jg-dapr`,
-`jg-ntfy`) when this account has a user session whose unit directory is this
+`jg-ntfy`, `jg-deliver`) when this account has a user session whose unit directory is this
 HOME's; otherwise (CI, a container, a throwaway HOME) the same commands start
 detached from the home's `state/bus` through `bin/jg-bus.sh serve`. The units
 come from `bin/jg-bus.sh unit [nats|dapr|ntfy]`. The NATS unit runs the server
@@ -98,6 +98,6 @@ or the stream cannot merge green.
 
 No path switches. The bus exists, is installed, is started and is proven; the
 paths that will run their events on it switch one at a time, each with its own
-parity replay and its own deletion of the code it replaces. `docs/bus-shadow.md`
-holds the wake queue and inbox parity work, `docs/captain-channel.md` the captain
+parity replay and its own deletion of the code it replaces. `docs/bus-live.md`
+holds the wake queue and inbox switch, `docs/captain-channel.md` the captain
 channel.
