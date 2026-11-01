@@ -39,6 +39,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-squad-lead-restart.sh` | Persist open conversational work, then restart eligible Squad Leads or report the fallback outcome |
 | `jg-fleet-autosync.sh`   | Carry a landed merge to this home and every live local Squad Lead home from the merge itself, alarm when a home stays more than two merges behind, and report each home's distance for the session digest |
 | `jg-version-branch-sync.sh` | Carry a merge that landed on the default branch to the active version branch `config/version-branch` names, run by the merge-outcome record itself: a fast-forward push only, a skip that names every path on a dirty copy, and a version branch it cannot fast-forward reported and left as it is |
+| `jg-migration-card.sh` | Keep the migration card current from the merge path (opt-in `config/migration-card`): each merge into the release branch posts a fresh card key with the step, lines removed and added, running total and what is left, dismisses the previous card, and a milestone records a three-line captain digest |
 | `jg-squad-lead-restart-lib.sh` | Shared Squad Lead restart capability and persistence-request contract |
 | `jg-on.sh`               | Execute one tracked Juggernaut command in a configured remote Squad Lead home, using its job worker except for the doctor bootstrap |
 | `jg-remote-job-lib.sh`   | Shared bounded remote job queue, worker readiness, LaunchAgent contract, and filesystem-composed PATH |

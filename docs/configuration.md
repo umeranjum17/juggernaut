@@ -473,6 +473,11 @@ The brief records the reason on a `Delivery risk (no-mistakes): <reason>` line, 
 `--risk` is refused on a `--scout` brief and on a `--squad-lead` charter.
 The local presence flag `config/delivery-risk-loose` turns the question off for this home; an unlisted value is still refused.
 
+## Migration card (config/migration-card)
+
+The optional local `config/migration-card` holds `key=value` lines: `branch` (the release branch), `target` (lines to delete), `board` (a board file, else `JG_PROOF_BOARD`), `project`, `card` (the key now posted; the script rewrites it), `baseline-deleted`, `baseline-added` and `filer`.
+With it, `bin/jg-merge-outcome-lib.sh` runs `bin/jg-migration-card.sh merge` after each merge into `branch`; the script header owns the card, key and milestone rules.
+
 ## Version branch (config/version-branch)
 
 The optional local, gitignored `config/version-branch` names the long-lived release branch pull requests for the next release target, for example `release/c-1`.
