@@ -68,7 +68,9 @@ wait_ready() {
 }
 start_engine() { "$BUS" wake-engine >> "$DIR/engine.log" 2>&1 & ENGINE_PID=$!; }
 
-"$BUS" bootstrap >/dev/null 2>&1; "$BUS" stream || fail "the captain stream was not created"
+# The account's JetStream can lag the server's ready line, so creating the stream is retried (bounded).
+for _ in $(seq 1 40); do "$BUS" bootstrap >/dev/null 2>&1; "$BUS" stream >/dev/null 2>&1 && break; sleep 0.25; done
+"$BUS" stream || fail "the captain stream was not created"
 start_engine
 "$BUS" router >> "$DIR/router.log" 2>&1 & ROUTER_PID=$!
 wait_ready wake-engine || fail "the wake engine never created its consumer: $(cat "$DIR/engine.log")"
