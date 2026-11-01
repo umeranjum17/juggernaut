@@ -239,9 +239,9 @@ SH
   corr=$(cut -d: -f2- "$home/state/.backlog-handoff-design.wake-pending")
   JG_PENDING_REPLY_NOW=9999999999 bash -c '
     . "$1"
-    jg_pending_reply_reconcile_delivery "$2" "$3"
-  ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$home/state" "$corr" \
-    || fail "concurrent watcher could not reconcile the durable enqueue"
+    jg_pending_reply_tick "$2"
+  ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$home/state" \
+    || fail "concurrent watcher could not act on the durable enqueue"
   phase=$(sed -n 's/^phase=//p' "$home/state/pending-replies/$corr")
   [ "$phase" = awaiting_report ] \
     || fail "advisory ring race changed the delivered expectation to $phase"
@@ -507,8 +507,9 @@ EOF
   cat > "$fakebin/mv" <<'SH'
 #!/usr/bin/env bash
 for arg in "$@"; do
-  if [ -f "$arg" ] && grep -q '^confirmed=' "$arg" 2>/dev/null; then
-    # Crash instead of publishing the confirmed record, and confirm the handoff
+  if [ -f "$arg" ] && grep -q '^delivered_epoch=[0-9]' "$arg" 2>/dev/null; then
+    # Crash instead of committing the confirmation record, leaving the attempt
+    # unresolved behind a wake that was already delivered, and confirm the handoff
     # is gone before returning so it cannot reach its later doorbell step.
     jg-crash-inject "$PPID" || exit 1
     exit 1
