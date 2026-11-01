@@ -7,6 +7,7 @@
   "eval-interval-seconds": 60,
   "group-by": ["alertname", "owner"],
   "repeat-interval-minutes": 60,
+  "digest-interval-minutes": 15,
   "inhibit-rules": [
     {"source": "pr-red", "target": "worker-idle", "equal": ["owner"]},
     {"source": "release-waiting", "target": "done-merge", "equal": ["owner"]}

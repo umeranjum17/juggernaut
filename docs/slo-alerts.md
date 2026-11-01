@@ -36,7 +36,7 @@ The owner is a label on every sample, so routing needs no second question.
 
 1. **The owning lead first, always.** One wake in the home that owns the lane.
 2. **Main only when the lead does not act.** Past `escalate-to-main-minutes` a Squad Lead home appends the escalation to the parent channel its charter names, and a Main home queues a second, louder row.
-3. **The captain channel as a digest.** A batch alert is appended to one digest and published as a single line per repeat interval; a blocker is published at once with its link.
+3. **The captain channel as a digest.** A batch alert is appended to one digest and published as a single line per digest interval (15 minutes by default); a blocker is published at once with its link.
 
 Urgency is the `blocker`/`batch` word the rule carries, and `defaults/wake-routing` decides the cost: `slo-blocker-*` wakes at once, `slo-main-*` wakes as an escalation, and `slo-*` is a batched row that rides the next wake of any kind.
 
@@ -50,7 +50,7 @@ bin/jg-slo-alerts.sh tick            # what the watcher runs: evaluate, queue, e
 ```
 
 `mode` is the one switch: `live` records, wakes and publishes, `shadow` records and prints what it would send, and `off` does nothing.
-The watcher runs one `tick` per poll, so a choke point raises its own alert on the cycle it becomes true.
+The watcher runs one `tick` per poll, and a tick evaluates at most once per `eval-interval-seconds`, so a 15-second poll does not pay a full evaluation every cycle and a limit measured in minutes loses nothing to that.
 
 State lives in `state/.slo-alerts/`: one record per instance (`inst-<rule>-<hash>`, carrying its phase, pending time, firing time, last send and escalation), the last sample set, the digest, and the forge interval stamp.
 

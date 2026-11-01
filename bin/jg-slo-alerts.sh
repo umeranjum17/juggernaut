@@ -579,6 +579,9 @@ captain_publish() {  # <key> <text> <link>
 }
 
 digest_append() {  # <alertname> <text>
+  # The window opens with the first batched alert, so a digest is never published
+  # the moment it is created just because no digest had been sent before.
+  [ -e "$ALERTS_DIR/.digest-at" ] || printf '%s\n' "$NOW" >"$ALERTS_DIR/.digest-at" 2>/dev/null || true
   printf '%s\t%s\t%s\n' "$NOW" "$1" "$2" >>"$DIGEST" 2>/dev/null || true
 }
 
@@ -589,7 +592,7 @@ digest_publish() {
   [ -s "$DIGEST" ] || return 0
   last=$(cat "$ALERTS_DIR/.digest-at" 2>/dev/null) || last=0
   case "$last" in '' | *[!0-9]*) last=0 ;; esac
-  [ "$(( NOW - last ))" -ge "$REPEAT" ] || return 0
+  [ "$(( NOW - last ))" -ge "$DIGEST_INTERVAL" ] || return 0
   n=$(wc -l <"$DIGEST" | tr -d ' ')
   text="$n choke point(s) waiting: $(cut -f2 "$DIGEST" | sort | uniq -c | awk '{printf "%s%s x%s", (n++ ? ", " : ""), $2, $1}')"
   captain_publish 'slo-digest' "$text" ''
@@ -607,7 +610,7 @@ escalate_to_main() {  # <alertname> <text>
       . "$ROOT/bin/jg-classify-lib.sh" || exit 1
       # shellcheck source=/dev/null
       . "$ROOT/bin/jg-parent-channel-lib.sh" || exit 1
-      jg_parent_channel_report "$home" "$state" "$1"
+      jg_parent_channel_report "$home" "$state" "$2"
     ) || rc=$?
     [ "$rc" -eq 0 ] || printf 'jg-slo-alerts: parent channel refused (%s)\n' "$rc" >&2
     return 0
@@ -759,6 +762,7 @@ main() {
   REPEAT=$(unit_secs "$(wf '.["repeat-interval-minutes"]')" minutes)
   FORGE_INTERVAL=$(wf '.["forge-interval-minutes"]') || FORGE_INTERVAL=10
   EVAL_INTERVAL=$(wf '.["eval-interval-seconds"]') || EVAL_INTERVAL=60
+  DIGEST_INTERVAL=$(unit_secs "$(wf '.["digest-interval-minutes"]')" minutes)
   PROM_URL=$(jq -r '.["prometheus-url"] // ""' "$DEF") || PROM_URL=''
   PROM_TIMEOUT=$(wf '.["prometheus-timeout-seconds"]') || PROM_TIMEOUT=3
   NOW=${JG_SLO_ALERTS_NOW:-$(date +%s)}
