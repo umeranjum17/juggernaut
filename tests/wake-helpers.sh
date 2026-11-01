@@ -139,11 +139,6 @@ prime_status_seen() {  # <state> <file>
   ' _ "$ROOT/bin/jg-wake-lib.sh" "$1" "$2"
 }
 
-# Print the generation from a recovery marker token of any status/kind.
-recovery_marker_generation() {  # <marker-file>
-  sed -n 's/^[^:]*:[^:]*:\(.*\)$/\1/p' "$1"
-}
-
 # Acknowledge a drain from its captured stderr (the WAKE_ACK_REQUIRED line).
 ack_drain_err() {  # <state> <stderr-file>
   local state=$1 err=$2 sequence generation
@@ -235,74 +230,6 @@ SH
   printf '%s\n' "$dir"
 }
 
-make_bordered_case() {
-  local name=$1 dir fakebin
-  dir="$TMP_ROOT/$name"; fakebin="$dir/fakebin"
-  mkdir -p "$dir/state" "$fakebin"
-  jg_test_track_watcher_state "$dir/state"
-  printf '╭─────╮\n│ >   │\n╰─────╯\n' > "$dir/composer"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-COMPOSER="${JG_FAKE_COMPOSER:?JG_FAKE_COMPOSER unset}"
-write_composer() {
-  text=$1
-  width=$((${#text} + 4))
-  border=
-  i=0
-  while [ "$i" -lt "$width" ]; do
-    border="${border}─"
-    i=$((i + 1))
-  done
-  printf '╭%s╮\n│ > %s │\n╰%s╯\n' "$border" "$text" "$border" > "$COMPOSER"
-}
-case "${1:-}" in
-  display-message)
-    print=0
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
-    for a in "$@"; do [ "$a" = "-p" ] && print=1; done
-    [ "$print" = 1 ] && printf 'fakepane\n'
-    exit 0 ;;
-  capture-pane) cat "$COMPOSER" 2>/dev/null; exit 0 ;;
-  list-windows) exit 0 ;;
-  send-keys)
-    shift
-    text=""; is_enter=0; lit=0
-    while [ "$#" -gt 0 ]; do
-      case "$1" in
-        -t) shift ;;
-        -l) lit=1 ;;
-        Enter) is_enter=1 ;;
-        *) [ "$lit" = 1 ] && text="$1" ;;
-      esac
-      shift
-    done
-    if [ "$is_enter" = 1 ]; then
-      if [ -n "${JG_FAKE_SWALLOW:-}" ] && [ -f "$JG_FAKE_SWALLOW" ]; then
-        [ "${JG_FAKE_PERSIST_SWALLOW:-0}" = 1 ] || rm -f "$JG_FAKE_SWALLOW"
-      else
-        [ -n "${JG_FAKE_SENT:-}" ] && printf '[ENTER]\n' >> "$JG_FAKE_SENT"
-        write_composer ""
-      fi
-    elif [ "$lit" = 1 ]; then
-      [ "${JG_FAKE_SEND_FAIL:-0}" = 1 ] && exit 1
-      # JG_FAKE_SEND_MAX_BYTES models a transport ceiling on one literal send.
-      if [ -n "${JG_FAKE_SEND_MAX_BYTES:-}" ] \
-        && [ "$(printf '%s' "$text" | LC_ALL=C wc -c | tr -d ' ')" -gt "$JG_FAKE_SEND_MAX_BYTES" ]; then
-        echo "command too long" >&2
-        exit 1
-      fi
-      [ -n "${JG_FAKE_SENT:-}" ] && printf '%s\n' "$text" >> "$JG_FAKE_SENT"
-      write_composer "$text"
-    fi
-    exit 0 ;;
-esac
-exit 1
-SH
-  chmod +x "$fakebin/tmux"
-  printf '%s\n' "$dir"
-}
-
 # Only pass a process owned by this test. A deadline must also bound cleanup:
 # TERM can be ignored or remain pending on a stopped child, so never follow it
 # with an unbounded wait. Keep process evidence before the final owned-PID kill.
@@ -340,14 +267,6 @@ is_live_non_zombie() {
     Z*) return 1 ;;
   esac
   return 0
-}
-
-hash_text() {
-  if command -v md5 >/dev/null 2>&1; then
-    printf '%s' "$1" | md5 -q
-  else
-    printf '%s' "$1" | md5sum | cut -d' ' -f1
-  fi
 }
 
 dead_pid() {

@@ -49,10 +49,6 @@ herdr_prepare_runtime() {
   jg_herdr_lab_runtime_env "$1"
 }
 
-herdr_refuse_if_default() { # <session>
-  jg_herdr_lab_refuse_if_default "$1"
-}
-
 herdr_safe_stop_and_delete() { # <session>
   env "${HERDR_TEST_FLEET_ENV[@]}" bash "$HERDR_TEST_SAFETY_DIR/bin/jg-herdr-lab.sh" teardown "$1"
 }

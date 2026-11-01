@@ -37,19 +37,6 @@ EOF
   printf '%s\n' "$home"
 }
 
-# The generic process-event runner, run against this suite's isolated home and
-# its own claim root, so a review armed here can never contend with a real one.
-run_procevent() {  # <home> <command args...>
-  local home=$1
-  shift
-  PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
-    JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
-    JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
-    JG_CONFIG_OVERRIDE="$home/config" \
-    JG_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
-    "$ROOT/bin/jg-procevent.sh" "$@"
-}
-
 run_bearings() {  # <home> [extra args]
   local home=$1
   shift
