@@ -6,6 +6,10 @@
 # T2 A copy holding a tracked change refuses and stays behind with its file intact;
 #    the drift alarm fires past two merges behind, never at two, and never twice for
 #    one distance.
+# T3 The off switch stands the pass and the drift alarm down, and `on` restores both,
+#    so a home that never writes the flag is on by default.
+# T4 A copy the pass cannot move wakes once, naming itself, its distance, and what
+#    stopped it, instead of failing silently in a detached pass log.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -50,6 +54,8 @@ merge_once() {
 digest() { JG_ROOT_OVERRIDE="$1/copy" JG_HOME="$1/home" "$AUTOSYNC" digest 2>&1; }
 pass_run() { JG_ROOT_OVERRIDE="$1/copy" JG_HOME="$1/home" "$AUTOSYNC" run 2>&1; }
 run_check() { JG_ROOT_OVERRIDE="$1/copy" JG_HOME="$1/home" JG_AUTOSYNC_ALARM_SECS="$2" "$AUTOSYNC" check 2>&1; }
+switch_verb() { JG_ROOT_OVERRIDE="$1/copy" JG_HOME="$1/home" "$AUTOSYNC" "$2" 2>&1; }
+wake_queue() { cat "$1/home/state/.wake-queue" 2>/dev/null; }
 
 test_behind_becomes_current() {
   local w out
@@ -92,5 +98,50 @@ test_tracked_change_and_alarm() {
   pass "T2 a tracked change refuses and the alarm fires past two behind"
 }
 
+test_off_switch_stands_down() {
+  local w out
+  w=$(new_world t3)
+  merge_once "$w"
+  merge_once "$w"
+  merge_once "$w"
+
+  out=$(switch_verb "$w" off)
+  assert_contains "$out" "off:" "the off switch reports itself"
+  [ -e "$w/home/config/fleet-autosync-off" ] || fail "the off switch was not recorded"
+  out=$(pass_run "$w")
+  assert_contains "$out" "standing down" "a pass stands down while the switch is set"
+  assert_equals "primary: 3 behind" "$(digest "$w")" "a stood-down pass moves nothing"
+  out=$(run_check "$w" 0)
+  assert_equals "" "$out" "the drift alarm stays silent while the switch is set"
+
+  switch_verb "$w" on >/dev/null
+  [ -e "$w/home/config/fleet-autosync-off" ] && fail "the off switch was not cleared"
+  out=$(run_check "$w" 0)
+  assert_contains "$out" "primary is 3 merges behind" "with the switch cleared the alarm is back"
+  pass "T3 the off switch stands the mechanism down and on restores it"
+}
+
+test_stale_home_wakes_once_with_its_reason() {
+  local w out
+  w=$(new_world t4)
+  printf 'unlanded\n' >> "$w/copy/bin/tool.sh"
+  merge_once "$w"
+  merge_once "$w"
+
+  pass_run "$w" >/dev/null
+  out=$(wake_queue "$w")
+  assert_contains "$out" "fleet-autosync-stale-primary" "a copy left behind is named"
+  assert_contains "$out" "left primary 2 behind: dirty working tree" \
+    "the wake says what stopped it"
+  local before
+  before=$(printf '%s\n' "$out" | grep -c fleet-autosync-stale || true)
+  pass_run "$w" >/dev/null
+  assert_equals "$before" "$(wake_queue "$w" | grep -c fleet-autosync-stale || true)" \
+    "the same distance and reason does not wake twice"
+  pass "T4 a copy the pass cannot move wakes once, naming itself and the reason"
+}
+
 test_behind_becomes_current
 test_tracked_change_and_alarm
+test_off_switch_stands_down
+test_stale_home_wakes_once_with_its_reason

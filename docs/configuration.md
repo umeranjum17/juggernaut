@@ -14,6 +14,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
 | Release branch that follows main | [Version branch](#version-branch-configversion-branch) |
+| Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## JG_HOME
@@ -484,6 +485,22 @@ The carry is a push of the default branch's commit onto the version ref, with no
 A version branch holding its own commits is reported and left exactly as it is, because closing that gap needs a real merge toward the default branch, which is a human decision rather than something a post-merge pass may invent.
 A dirty copy is skipped and each path is named.
 One line per outcome prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
+
+## Fleet autosync (config/fleet-autosync-off)
+
+Every home that runs a merged change needs the new bytes, so a landed merge carries itself to `bin/jg-update.sh`, which fast-forwards this home and every live local Squad Lead home.
+This is ON by default: a fresh home has no setting to write, and Main's own home is covered even though it is a leased worktree on a detached HEAD, because the update advances an ancestor HEAD where it sits.
+Nothing is forced, merged, or stashed, so unlanded work stays put and a copy holding its own commits or tracked changes is skipped by name.
+
+A pass runs detached from the merge that started it.
+Two things keep it honest:
+
+- Squad Lead restarts run one at a time, because lifecycle control takes one home-wide lock that two relaunches cannot both hold.
+- Any copy still behind when the pass ends raises one check wake naming that copy, how far behind it is, and what stopped it, repeated only when the distance or the reason changes.
+
+The presence flag `config/fleet-autosync-off` turns the whole mechanism off for one home: no pass, no drift alarm, and the start a merge fires stands down without touching a copy, and it raises no wake while it is set.
+`bin/jg-fleet-autosync.sh off` writes the flag and `bin/jg-fleet-autosync.sh on` removes it.
+The drift check (`bin/jg-fleet-autosync.sh check`) is the backup path for a merge no merge record saw, and `digest` prints `<copy>: current` or `<copy>: <n> behind` for the session digest.
 
 ## Runtime backend (config/backend / JG_BACKEND)
 
