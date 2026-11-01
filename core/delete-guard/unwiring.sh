@@ -39,6 +39,6 @@ for f in "$HOME/.pi/agent/extensions/jg-rm-guard.ts" "$HOME/.config/opencode/plu
 done
 if [ -e "$FMH/state/delete-guard.check-trust" ]; then echo "remove: $FMH/state/delete-guard.check-trust"; [ "$DRY" -eq 1 ] || rm -f -- "$FMH/state/delete-guard.check-trust"; fi
 if [ -x "$FMH/bin/jg-check-unregister.sh" ]; then [ "$DRY" -eq 1 ] || env -u JG_STATE_OVERRIDE JG_HOME="$FMH" "$FMH/bin/jg-check-unregister.sh" delete-guard; fi
-for f in guard.mjs check.sh home; do [ ! -e "$DEST/$f" ] || { echo "remove: $DEST/$f"; [ "$DRY" -eq 1 ] || rm -f -- "$DEST/$f"; }; done
+for f in guard.mjs check.sh home jg-guard-host; do [ ! -e "$DEST/$f" ] || { echo "remove: $DEST/$f"; [ "$DRY" -eq 1 ] || rm -f -- "$DEST/$f"; }; done
 [ "$DRY" -eq 1 ] || rmdir "$DEST" 2>/dev/null || true
 [ "$DRY" -eq 0 ] || echo "dry run: nothing written"
