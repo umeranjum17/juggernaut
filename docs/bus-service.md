@@ -26,28 +26,44 @@ user-local bin directory every other tool lands in (`~/.local/bin` by default).
 ## How a home starts it
 
 A home runs the bus as a **systemd user service**, so the server is up after a
-reboot and comes back if it dies:
+reboot and comes back if it dies. `bin/jg-bus.sh install-service` is the one
+command that makes that true, and it is what a release runs:
 
 ```sh
 export PATH=$HOME/.local/bin:$PATH           # where the install put both tools
-JG_HOME=<home> bin/jg-bus.sh unit > ~/.config/systemd/user/jg-bus.service
-systemctl --user daemon-reload
-systemctl --user enable --now jg-bus.service
-JG_HOME=<home> bin/jg-bus.sh status          # nats: up (<pid>)
-JG_HOME=<home> bin/jg-bus.sh ensure          # bus: up nats://127.0.0.1:4222 stream CAPTAIN
+JG_HOME=<home> bin/jg-bus.sh install-service  # write the unit if missing, reload, enable --now
+JG_HOME=<home> bin/jg-bus.sh status          # nats: up (systemd user service jg-bus.service)
 ```
 
-`bin/jg-bootstrap.sh` does the first three steps for the home it runs in, once,
-and then verifies the result with `ensure`:
-
-- with a systemd user session, it writes `jg-bus.service` for this home when the
-  unit is missing or names another home, reloads, and enables it;
+- with a systemd user session it writes `jg-bus.service` when the unit is missing
+  or names another home, reloads systemd, enables it now, and checks it is active;
 - without one (CI, a container, a stripped session) it falls back to
   `bin/jg-bus.sh ensure`, which starts the same server detached from the home's
   `state/bus` directory;
-- either way it prints one line: `BOOTSTRAP_INFO: bus: up <url> stream <name>`
-  when the bus answers, and a `MISSING:` line with the command to run when it
-  does not. A home whose bus is down still boots.
+- either way it prints exactly one line - `bus: up ...`, `bus: installed and
+  started ...`, or a `bus: cannot start ...` line naming what to fix - and it never
+  fails its caller, because a home whose bus cannot start still has to come up.
+
+`bin/jg-bootstrap.sh` runs it at every session start, so a home whose code just
+arrived with the bus in it, or a machine that rebooted, has its server up without
+anyone starting it by hand. `bin/jg-update.sh` runs it right after the primary
+home's fast-forward, so a release can never go live with no message server. `bin/jg-bus.sh
+unit` still prints the unit alone, for a hand install.
+
+One config file, sized for the machine. `bin/jg-bus.sh unit` writes
+`state/bus/bus.conf` as ONE file: the server config in force plus this machine's
+per-home accounts, with no `include` lines. nats-server resolves an include path
+against the config's own directory, so an absolute one lands at
+`state/bus/home/...` and the server refuses to start. The JetStream budget in that
+file is the per-account reservation times the number of accounts, because a global
+cap below the sum of the reservations makes the server refuse JetStream with
+`insufficient storage resources available (10047)`.
+
+Clients authenticate as their own home. The machine carries one account per home,
+so every client call - `bin/jg-kv-lib.sh`'s, and the wake and reply paths that share
+it - authenticates as the home that owns the state directory, with the name and the
+password in `state/bus/<account>.pass`. A client that connects as the empty user is
+refused, and that is what a release without this shipped.
 
 The unit runs the server itself, not `serve`: `serve` starts services and exits,
 which a unit would restart forever. `ExecStartPost` runs
