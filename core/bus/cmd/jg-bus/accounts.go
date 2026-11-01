@@ -28,21 +28,33 @@ func (a *app) accounts(args []string) int {
 		return die("cannot write %s: %v", sysCred, err)
 	}
 	var b strings.Builder
-	account := func(name, cred string) {
+	account := func(name, cred string, withStream bool) bool {
+		password, err := os.ReadFile(cred)
+		if err != nil {
+			die("cannot read %s: %v", cred, err)
+			return false
+		}
 		fmt.Fprintf(&b, "  %s {\n", name)
-		fmt.Fprintf(&b, "    jetstream: { max_mem: 64Mb, max_file: 512Mb }\n")
-		fmt.Fprintf(&b, "    users: [ { user: %s, password_file: %s } ]\n", name, cred)
+		if withStream {
+			fmt.Fprintf(&b, "    jetstream: { max_mem: 64Mb, max_file: 512Mb }\n")
+		}
+		fmt.Fprintf(&b, "    users: [ { user: %s, password: %q } ]\n", name, strings.TrimSpace(string(password)))
 		fmt.Fprintf(&b, "  }\n")
+		return true
 	}
 	fmt.Fprintf(&b, "system_account: SYS\n\naccounts {\n")
-	account("SYS", sysCred)
+	if !account("SYS", sysCred, false) {
+		return 1
+	}
 	for _, home := range homes {
 		name := homeAccount(filepath.Base(home))
 		cred := filepath.Join(a.runtime, name+".pass")
 		if err := writeCredential(cred); err != nil {
 			return die("cannot write %s: %v", cred, err)
 		}
-		account(name, cred)
+		if !account(name, cred, true) {
+			return 1
+		}
 	}
 	fmt.Fprintf(&b, "}\n")
 	fmt.Print(b.String())
