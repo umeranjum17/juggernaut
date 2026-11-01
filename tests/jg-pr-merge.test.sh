@@ -17,6 +17,12 @@ PR_MERGE="$ROOT/bin/jg-pr-merge.sh"
 TMP_ROOT=$(jg_test_tmproot jg-pr-merge-tests)
 BASE_PATH=$PATH
 
+# The evidence lint the merge now runs itself. The default always passes so the
+# older cases keep proving their own condition; the lint cases below swap it.
+PASS_LINT="$TMP_ROOT/pass-lint.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "checks-lint: PASS"' > "$PASS_LINT"
+chmod +x "$PASS_LINT"
+
 # The GitLab fixture. A placeholder host that resolves nowhere, and a namespace
 # deeper than one group, because a GitLab project has no owner/repository pair.
 MR_HOST=gitlab.example
@@ -692,6 +698,7 @@ run_pr_merge() {
   JG_TEST_AWAY_MUTATE_RC="$case_dir/away-mutate-rc" \
   JG_TEST_AWAY_WORDS_AT_MERGE="$case_dir/away-words-at-merge" \
   JG_TEST_REAL_MV="$REAL_MV" \
+  JG_PR_MERGE_CHECKS_LINT="${JG_PR_MERGE_CHECKS_LINT:-$PASS_LINT}" \
   JG_TEST_GLAB_LOG="$case_dir/glab.log" \
   JG_TEST_GLAB_JSON="$case_dir/mr.json" \
   JG_TEST_TEA_LOG="$case_dir/tea.log" \
@@ -819,6 +826,49 @@ GATE
   assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "merge-gate-refusal: the forge merged after the gate refused"
   pass "a home merge gate refuses an unproven merge with no feature installed"
+}
+
+# The merge runs the evidence lint in its own call: a FAIL refuses with the
+# lint's own message and the forge never merges; a PASS prints its line and
+# merges in the same call, over the evidence folder data/<task>.
+test_merge_runs_the_evidence_lint_itself() {
+  local case_dir rc lint
+  case_dir=$(make_case lint-fails)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 4343434343434343434343434343434343434343
+  : > "$case_dir/gh-axi.log"
+  lint="$case_dir/lint.sh"
+  cat > "$lint" <<'LINT'
+#!/usr/bin/env bash
+printf 'lint-args: %s %s\n' "$1" "$2" >> "$(dirname "$0")/lint.log"
+if [ -e "$(dirname "$0")/lint-fail" ]; then echo "checks-lint: FAIL: evidence file missing"; exit 1; fi
+echo "checks-lint: PASS"
+LINT
+  chmod +x "$lint"
+  : > "$case_dir/lint-fail"
+
+  set +e
+  JG_PR_MERGE_CHECKS_LINT=$lint run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "lint-fails: a failing evidence lint must refuse the merge"
+  assert_grep 'checks-lint: FAIL: evidence file missing' "$case_dir/stdout" \
+    "lint-fails: the lint's own message was not shown"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "lint-fails: the forge merged after the lint failed"
+
+  rm -f "$case_dir/lint-fail"
+  set +e
+  JG_PR_MERGE_CHECKS_LINT=$lint run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "lint-passes: a passing evidence lint must let the merge go in the same call"
+  assert_grep 'checks-lint: PASS' "$case_dir/stdout" "lint-passes: the lint line was not printed"
+  assert_grep "lint-args: https://github.com/example/repo/pull/31 $case_dir/home/data/task-x1" "$case_dir/lint.log" \
+    "lint-passes: the lint was not run over data/<task>"
+  assert_logged_gh_merge "$case_dir" 31 example/repo --squash
+  pass "jg-pr-merge runs the evidence lint itself: FAIL refuses, PASS merges in one call"
 }
 
 test_github_merged_outcome_is_verified() {
@@ -3251,6 +3301,7 @@ test_verified_merge_records_pr_and_head
 test_pr_metadata_is_recorded_before_the_forge_call
 test_merge_failure_propagates_after_recording
 test_merge_gate_refuses_without_the_merge_card_add_on
+test_merge_runs_the_evidence_lint_itself
 test_github_open_unqueued_outcome_refuses
 test_github_mergeable_unknown_retries_then_succeeds
 test_github_mergeable_unknown_exhausts_bound_and_reports_pending
