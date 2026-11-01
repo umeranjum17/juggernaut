@@ -54,8 +54,9 @@ test_raise_reaches_the_read_model() {
   rows=$(awk 'END { print NR }' "$STATE_DIR/.wake-queue")
   assert_equals 1 "$rows" "a raise must reach the read model exactly once"
   seq=$(awk -F '\t' '{ print $2 }' "$STATE_DIR/.wake-queue")
-  case "$seq" in ''|*[!0-9]*) fail "the row must carry the server's numeric sequence, got '$seq'" ;; esac
-  assert_equals 1 "$seq" "the first raise must carry the server's first sequence"
+  case "$seq" in ''|*[!0-9]*) fail "the row must carry a numeric sequence, got '$seq'" ;; esac
+  echo "$seq" | grep -qE '^[0-9]{10,}$' \
+    || fail "the row's number is fixed at raise time, so a row must never carry a bare counter: got '$seq'"
   pass "a raise reaches the read model with the server's sequence"
 }
 

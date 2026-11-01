@@ -441,7 +441,11 @@ live_cursor_get() { # <stream>
 live_cursor_set() { # <stream> <sequence>
   local tmp=$LIVE_CURSOR.tmp.$$ out
   out=$({ awk -v s="$1" '$1 != s' "$LIVE_CURSOR" 2>/dev/null; printf '%s\t%s\n' "$1" "$2"; })
-  printf '%s\n' "$out" > "$tmp" && mv -f "$tmp" "$LIVE_CURSOR" || { rm -f -- "$tmp"; return 1; }
+  if printf '%s\n' "$out" > "$tmp" && mv -f "$tmp" "$LIVE_CURSOR"; then
+    return 0
+  fi
+  rm -f -- "$tmp"
+  return 1
 }
 
 # live_apply <stream> <file>: append every message since the cursor that belongs
@@ -579,11 +583,14 @@ live_ack() { # <id>...
     # is nothing on the server to settle, and keeping it would resurrect the row.
     if [ -s "$LIVE_OUTBOX" ] && jq -e --arg id "$id" 'select(.id == $id)' "$LIVE_OUTBOX" >/dev/null 2>&1; then
       owed=$LIVE_OUTBOX.tmp.$$
-      jq -c --arg id "$id" 'select(.id != $id)' "$LIVE_OUTBOX" > "$owed" 2>/dev/null \
-        && mv -f "$owed" "$LIVE_OUTBOX" || rm -f -- "$owed"
-      continue
+      if jq -c --arg id "$id" 'select(.id != $id)' "$LIVE_OUTBOX" > "$owed" 2>/dev/null \
+        && mv -f "$owed" "$LIVE_OUTBOX"; then
+        continue
+      fi
+      rm -f -- "$owed"
+      return 1
     fi
-    live_publish jg.wake.ack "$id/ack" \
+      live_publish jg.wake.ack "$id/ack" \
       "$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --argjson at "$at" \
         '{v:1,id:$id,home:$home,ack:true,at:$at}')" || return 1
   done
