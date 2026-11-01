@@ -979,6 +979,11 @@ fi
 STACK_SECTION=$(jg_stack_section "$CONFIG" "$MEDIUM" "$PROJECT_DIR")
 STACK_BLOCK=
 [ -z "$STACK_SECTION" ] || STACK_BLOCK="$STACK_SECTION"$'\n'
+# The home's engineering rules (config/engineering-rules.json): a judgement rule
+# is advice the worker reads, a checkable rule prints as the check that decides it.
+RULES_SECTION=$(jg_rules_section "$CONFIG")
+RULES_BLOCK=
+[ -z "$RULES_SECTION" ] || RULES_BLOCK="$RULES_SECTION"$'\n'
 
 RULE1=$(jg_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 RISK_SECTION=
@@ -995,7 +1000,7 @@ You are a operator: an autonomous worker agent managed by juggernaut. Work on yo
 $TASK_SECTION
 $PRIOR_ART_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
-$STACK_BLOCK
+$STACK_BLOCK$RULES_BLOCK
 
 # Setup
 $SETUP_BASE
