@@ -3910,10 +3910,11 @@ while :; do
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-fleet-ledger.sh" capture || true
-  # Migration step 5b shadow: the same wakes and inbox records, mirrored to the bus
-  # beside the files (docs/bus-shadow.md). Off costs one file test, and a mirror
-  # that cannot reach its bus can never fail or delay a wake.
-  [ ! -e "$CONFIG/wake-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" sync >/dev/null 2>&1 || true
+  # The wake queue and the task inboxes run on the bus (docs/bus-live.md). A
+  # worker's acknowledgement of an inbox record is a `mv` into handled/, so this
+  # poll carries that move to the bus as the record's acknowledgement; a bus the
+  # poll cannot reach is silent and can never fail or delay a wake.
+  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>&1 || true
   # Migration step 5e shadow: the same task leases and busy events, mirrored to
   # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
   # test, and a mirror that cannot reach its bus can never fail or delay a wake.
@@ -4011,12 +4012,16 @@ while :; do
     # home_summary_refresh_detached for why publication stays off the beacon's
     # path. Publication failure stays side-band.
     home_summary_refresh_detached
-    files=""
+    # A name of this batch's own, never the generic `files`: ShellCheck folds a
+    # sourced file's variables into this one analysis, so a library's own
+    # `local -a files` read this string as an array (SC2178/SC2128) although
+    # nothing here is one.
+    signal_files=""
     while IFS=$(printf '\t') read -r sf sig f; do
       [ -n "$sf" ] || continue
       # A batch left with no reportable path reports nothing at all.
       reportable_signal_path "$f" || continue
-      case " $files " in *" $f "*) ;; *) files="$files $f" ;; esac
+      case " $signal_files " in *" $f "*) ;; *) signal_files="$signal_files $f" ;; esac
     done <<EOF
 $pending
 EOF
@@ -4036,7 +4041,7 @@ EOF
 $pending
 EOF
     fi
-    reason="signal:$files"
+    reason="signal:$signal_files"
     # Triage: a signal is ACTIONABLE when any of these holds (cheapest first):
     #   - the away-mode daemon owns triage (afk) and wants every wake;
     #   - any status file gained a captain-relevant event since it was last
@@ -4062,8 +4067,8 @@ EOF
     # status span, and the capture only once the authoritative verdict comes up short.
     JG_SIGNAL_SURFACE_ENDPOINTS=''
     JG_SIGNAL_NEEDS_DECISION_FILES=''
-    # shellcheck disable=SC2086  # $files is a space-separated status-path list (ids carry no spaces)
-    signal_files_actionable $files
+    # shellcheck disable=SC2086  # $signal_files is a space-separated status-path list (ids carry no spaces)
+    signal_files_actionable $signal_files
     signal_actionable=$?
     # A decision-owned file's queued row payload is marked "needs-decision:"
     # instead of the ordinary "signal:" below (other files in the same batch
@@ -4077,13 +4082,13 @@ EOF
     # bin/jg-supervise-daemon.sh).
     # shellcheck disable=SC2086  # same space-separated status-path list
     if afk_present || [ "$signal_actionable" -eq 0 ] \
-      || { ! signal_crew_provably_working $files && ! signal_turnend_panes_churned $files; }; then
+      || { ! signal_crew_provably_working $signal_files && ! signal_turnend_panes_churned $signal_files; }; then
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         reportable_signal_path "$f" || continue
         ready_pr_record "$f"
         file_reason="$reason"
-        case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$files" ;; esac
+        case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$signal_files" ;; esac
         jg_wake_append signal "$(basename "$f")" "$file_reason" || exit 1
       done <<EOF
 $pending
@@ -4112,7 +4117,7 @@ EOF
       done <<EOF
 $JG_SIGNAL_SURFACE_ENDPOINTS
 EOF
-      [ -n "$files" ] || continue
+      [ -n "$signal_files" ] || continue
       signal_wake=$reason
     else
       while IFS=$(printf '\t') read -r sf sig f; do
@@ -4137,7 +4142,7 @@ EOF
         done <<EOF
 $pending
 EOF
-        [ -n "$files" ] || continue
+        [ -n "$signal_files" ] || continue
         signal_wake=$reason
       else
         triage_log "absorbed benign $reason"

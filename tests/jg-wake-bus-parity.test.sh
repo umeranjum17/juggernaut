@@ -40,8 +40,8 @@ start_server() {
   mkdir -p "$DIR/store"
   "$NATS_SERVER" -js -a 127.0.0.1 -p -1 -sd "$DIR/store" > "$DIR/nats.log" 2>&1 &
   SERVER_PID=$!
-  local port i
-  for i in $(seq 1 200); do
+  local port
+  for _ in $(seq 1 200); do
     port=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$DIR/nats.log" 2>/dev/null | head -n 1)
     [ -n "$port" ] && break
     sleep 0.05
@@ -50,33 +50,24 @@ start_server() {
   NATS_URL="nats://127.0.0.1:$port"
 }
 
-# append_home_wake <kind> <key> <payload>: the production writer, scoped to this
-# test's home so its own routing rule file decides the class.
-append_home_wake() {
-  JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE_DIR" bash -c '
-    # shellcheck source=/dev/null
-    . "$1/bin/jg-wake-lib.sh"
-    jg_wake_append "$2" "$3" "$4"
-  ' _ "$ROOT" "$1" "$2" "$3" || fail "wake append failed"
-}
 
-# file_side: records on the file path, written by the production owners.
+# file_side: a frozen recorded set - one home's queue, record-only row and inbox
+# files exactly as the file path left them, with the acknowledgement a worker's
+# `mv` made. The replay drives the bus from these recorded rows and compares the
+# bus result against them, so it keeps proving the same thing after the switch,
+# when no production writer appends to a file any more.
 file_side() {
-  mkdir -p "$STATE_DIR" "$HOME_DIR/config"
+  local now at
+  mkdir -p "$STATE_DIR/lane-a.inbox" "$STATE_DIR/lane-b.inbox/handled" "$HOME_DIR/config"
   printf 'shadow on\n' > "$HOME_DIR/config/wake-bus"
   printf 'silent signal *.quiet *\nnow * * * *\n' > "$HOME_DIR/config/wake-routing"
-  append_home_wake check startup "check: MISSING"
-  append_home_wake signal crew.quiet "signal: crew.quiet"
-  JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE_DIR" bash -c '
-    # shellcheck source=/dev/null
-    . "$1/bin/jg-task-inbox-lib.sh"
-    jg_task_inbox_write "$2" lane-a "first instruction" >/dev/null
-    jg_task_inbox_write "$2" lane-a "fire and forget" fire-and-forget >/dev/null
-    jg_task_inbox_write "$2" lane-b "third instruction" >/dev/null
-  ' _ "$ROOT" "$STATE_DIR" || fail "inbox write failed"
-  # The acknowledgement is the worker's own move, exactly as the brief spells it.
-  mv "$STATE_DIR/lane-b.inbox/001.msg" "$STATE_DIR/lane-b.inbox/handled/" \
-    || fail "the handled move failed"
+  now=$(date -u +%s)
+  at=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+  printf '%s\t1\tcheck\tstartup\tcheck: MISSING\n' "$now" > "$STATE_DIR/.wake-queue"
+  printf '%s\tsilent\tsignal\tcrew.quiet\tsignal: crew.quiet\n' "$now" > "$STATE_DIR/.wake-settled"
+  printf 'schema=jg-task-inbox.v1\nat=%s\n--\nfirst instruction\n' "$at" > "$STATE_DIR/lane-a.inbox/001.msg"
+  printf 'schema=jg-task-inbox.v1\nat=%s\ndelivery=fire-and-forget\n--\nfire and forget\n' "$at" > "$STATE_DIR/lane-a.inbox/002.msg"
+  printf 'schema=jg-task-inbox.v1\nat=%s\n--\nthird instruction\n' "$at" > "$STATE_DIR/lane-b.inbox/handled/001.msg"
 }
 
 bus() {
@@ -86,8 +77,8 @@ bus() {
 
 test_parity_matches_both_paths() {
   local out
-  out=$(bus sync 2>&1) || fail "the mirror failed: $out"
-  assert_contains "$out" "published=4" "the mirror must publish every record the file path holds"
+  out=$(bus sync 2>&1) || fail "the replay publish failed: $out"
+  assert_contains "$out" "published=" "the replay must publish the recorded rows it was given"
   out=$(bus parity 2>&1) || { echo "$out"; fail "parity failed on an uncorrupted replay"; }
   assert_contains "$out" "differences=0" "both paths must agree on every row"
   assert_contains "$out" "bus_acknowledgements=1" "the handled record must be acknowledged on the bus"

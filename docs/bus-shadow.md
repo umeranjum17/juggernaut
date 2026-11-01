@@ -1,7 +1,9 @@
 # The wake queue and the task inboxes on the bus, in shadow
 
-Migration step 5b. The wake queue and the per-task steering inboxes are files with
-locks, drains, atomic rewrites and doorbells. The decided shape is NATS JetStream:
+Migration step 5b, and the step before the live switch: [the live path](bus-live.md)
+is what runs now, and the mirror and the replay below are what proved it first
+before anything switched. The wake queue and the per-task steering inboxes are
+files with locks, drains, atomic rewrites and doorbells. The decided shape is NATS JetStream:
 its sequence replaces the sequence file, its message-id dedupe replaces the
 re-enqueue dedupe, and its history keeps an event after its consumer is done with
 it. This step proves the bus reproduces the file path's consumer result before
