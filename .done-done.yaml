@@ -102,6 +102,8 @@ journeys:
     command: node core/kill-guard/run-main-proof.mjs
   escalation-optimize:
     command: bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  escalation-rules-live:
+    command: bash journeys/escalation-rules-live.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
