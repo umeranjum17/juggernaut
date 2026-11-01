@@ -180,7 +180,7 @@ resolved_index() {
 }
 
 # Task ids a card's durable records name, most specific first: an explicit
-# board route, a hold-card key (bin/jg-procevent-signoff.sh mints
+# board route, a hold-card key (bin/jg-question-lib.sh mints
 # `jg-<home-digest>-<task-id>-<stamp>`, so the id sits between two dashes), the
 # filer naming a task, and a task whose recorded pr= hashes to the card's merge
 # key. The longest id a hold key names wins, so `lane-d` beats `lane`.

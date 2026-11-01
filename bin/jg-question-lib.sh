@@ -31,6 +31,25 @@ jg_question_board() {
 
 jg_question_signoff_available() { command -v sign-off-axi >/dev/null 2>&1; }
 
+# The board key a hold's card carries, and the one owner of its shape:
+# `jg-<tag>-<task-id>-<stamp>`. <tag> is a stable digest of JG_HOME, so the one
+# board every home on this machine shares never hands a home another home's
+# answer; <stamp> is that hold occurrence's identity in alphanumerics only, so a
+# newly held task gets a card of its own. bin/jg-captain-hold.sh builds the key
+# with these helpers and bin/jg-procevent-signoff.sh parses answers back with the
+# same two, so the builder and the reader cannot drift apart.
+jg_question_key_prefix() {
+  printf 'jg-%s-' "$(printf '%s' "${JG_HOME:-}" | cksum | awk '{printf "%08x", $1}')"
+}
+
+jg_question_key_stamp() {  # <hold identity>
+  printf '%s' "${1%%#*}" | tr -cd 'A-Za-z0-9'
+}
+
+jg_question_hold_card_key() {  # <task-id> <hold identity>
+  printf '%s%s-%s' "$(jg_question_key_prefix)" "$1" "$(jg_question_key_stamp "$2")"
+}
+
 # Print the key of every card still open on the board.
 jg_question_open_keys() {
   local board

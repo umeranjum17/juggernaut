@@ -138,8 +138,8 @@ attempts one normal flush, which still requires an idle pane and an affirmativel
 The alarm is defense in depth rather than a substitute for keeping every genuinely idle supported composer injectable.
 If that submit cannot be confirmed, it raises a loud, rate-limited wedge alarm:
 an ERROR in the daemon log naming the last delivery failure, a durable
-`state/.subsuper-inject-wedged` marker (the return brief's health line carries it), a tmux status-line flash when applicable, and a configurable backend-independent active alert.
-`docs/wedge-alarm.md` owns the alert channel setup, and `docs/verification/supervision.md` "Wedge-alarm channels" owns active evidence.
+`state/.subsuper-inject-wedged` marker (the return brief's health line carries it), a tmux status-line flash when applicable, and the same alert to the captain by the one captain channel.
+`docs/captain-channel.md` owns that channel's setup, and `docs/verification/supervision.md` "Wedge alert" owns active evidence.
 So a guard false-positive becomes a visible stall, never an unbounded silent no-op.
 
 ### Submit model
@@ -216,7 +216,7 @@ The single-line format makes submission unambiguous across harnesses; the carrie
   normal flush, which still requires an idle pane and an affirmatively empty composer. If that
   cannot confirm a submit, it raises a loud, rate-limited wedge alarm: ERROR log,
   durable `state/.subsuper-inject-wedged` marker, a tmux status-line flash when
-  applicable, and a backend-independent active alert. A
+  applicable, and the alert to the captain by the one captain channel. A
   composer false-positive surfaces as a visible stall, never an unbounded silent
   no-op.
 - **Verified type-once submit model** - the digest is typed once (`send-keys -l`

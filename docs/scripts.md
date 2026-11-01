@@ -114,7 +114,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-procevent-remote-reply.sh` | Relay the remote Squad Lead status stream through non-destructive process-event deltas |
 | `jg-procevent-quota.sh`  | Wake Juggernaut when tracked quota drops below a threshold, is exhausted, or cannot be polled |
 | `jg-procevent-when.sh`   | Fire a trust-bound deterministic action at most once when its registered condition holds, then wake with the outcome |
-| `jg-procevent-signoff.sh` | Bring sign-off board answers to captain holds as keyed answers, and raise a board card for each new hold once a home arms it |
+| `jg-procevent-signoff.sh` | Bring sign-off board answers to captain holds as keyed answers once a home arms it; a hold's card is posted by `bin/jg-question-card.sh post` |
 | `jg-gate-refuse-lib.sh`  | Shared gate-context lifecycle boundary for real and lab homes                      |
 | `jg-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
 | `jg-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |

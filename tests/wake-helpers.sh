@@ -20,27 +20,17 @@ if [ -z "${JG_ROOT_OVERRIDE:-}" ]; then
   export JG_ROOT_OVERRIDE
 fi
 
-# Wedge-alarm notifier recorder (safety seam). The away-mode wedge alarm fires a
-# real OS-level desktop notification by default. Point its JG_WEDGE_ALARM_EXEC
-# seam at a recorder for every
-# daemon/wake suite, so no test - present or future - can post a real macOS,
-# herdr, or command: notification: it is impossible to forget, because sourcing this harness
-# installs it. The recorder is an on-disk script (a real daemon a test spawns
-# inherits the path and records too). It logs "<channel>\t<summary>" to
-# $JG_WEDGE_ALARM_LOG, which a test sets to its own file to assert on; unset means
-# /dev/null. JG_WEDGE_ALARM_FAIL=<channel> makes the recorder exit non-zero for
-# that channel, to exercise graceful degradation. Suites that do not source this
-# harness still cannot fire a real notification: the daemon defaults the seam to
-# "discard" whenever it is sourced (its library-mode guard).
-_jg_wedge_rec_dir=$(jg_test_tmproot jg-wedge-rec)
-cat > "$_jg_wedge_rec_dir/rec" <<'REC'
-#!/usr/bin/env bash
-printf '%s\t%s\n' "${1:-}" "${2:-}" >> "${JG_WEDGE_ALARM_LOG:-/dev/null}"
-case " ${JG_WEDGE_ALARM_FAIL:-} " in *" ${1:-} "*) exit 1 ;; esac
-exit 0
-REC
-chmod +x "$_jg_wedge_rec_dir/rec"
-export JG_WEDGE_ALARM_EXEC="$_jg_wedge_rec_dir/rec"
+# Captain-channel quiet seam. The away-mode wedge alert reaches the captain by
+# the one captain channel (bin/jg-bus.sh, docs/captain-channel.md), whose live
+# mode posts to a bus and an iPad that no test has business reaching. Point every
+# daemon and wake suite at a `mode off` channel config, so a sourced or spawned
+# daemon records and delivers nothing: it is impossible to forget, because
+# sourcing this harness installs it (an explicit JG_CAPTAIN_CHANNEL still wins).
+if [ -z "${JG_CAPTAIN_CHANNEL:-}" ]; then
+  _jg_channel_off=$(jg_test_tmproot jg-captain-channel-off)/off.conf
+  printf 'set mode off\n' > "$_jg_channel_off"
+  export JG_CAPTAIN_CHANNEL="$_jg_channel_off"
+fi
 
 # append_wake <state> <kind> <key> <payload>: append a wake record to the durable
 # queue in a subshell scoped to <state>, using the production wake library.

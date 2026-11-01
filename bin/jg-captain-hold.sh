@@ -65,10 +65,11 @@
 # --until`, so a "revisit later" answer is stored as a date instead of a live
 # card.
 # When this home has armed the sign-off adapter, an undated `hold` also
-# raises a sign-off board card keyed by this home's tag, the task id and the hold
-# stamp; that adapter owns the card (core/signoff/bin/jg-procevent-signoff.sh when
-# it is installed, else bin/jg-procevent-signoff.sh),
-# and a card it cannot raise fails the command (the hold stays recorded).
+# posts a sign-off board card keyed by this home's tag, the task id and the hold
+# stamp; the card goes through bin/jg-question-card.sh post, which owns what a
+# board card is, or through core/signoff/bin/jg-procevent-signoff.sh when that
+# installed adapter authors the ask itself,
+# and a card it cannot post or raise fails the command (the hold stays recorded).
 # A hold that is the captain's own instruction raises nothing at all: one whose
 # hold kind is `parked`, or whose reason names a stop order or a branch we
 # preserved instead of landing. Those records are his words, not a question back
@@ -289,6 +290,10 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-ask-gate-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-ask-gate-lib.sh"
+# The one owner of a hold card's board key (bin/jg-question-lib.sh).
+# shellcheck source=bin/jg-question-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/jg-question-lib.sh"
 
 PARENT_HOLD_PUBLISHED=0
 publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
@@ -300,6 +305,80 @@ publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
     0|1) PARENT_HOLD_PUBLISHED=1 ;;
     *) printf 'actionable: task %s is held for the captain in this home but that did not reach the parent channel (rc=%s)\n' "$id" "$rc" >&2 ;;
   esac
+}
+
+# --- the hold's board card ---------------------------------------------------
+# One posting path for a card: bin/jg-question-card.sh post. This holds the board
+# rules, the ask gate, the must category beside the board and the captain channel
+# event, so the words below are the hold's own and the posting is not.
+ANSWER_NOTE='Answer yes or no. The hold stays open until you answer.'
+
+# Card text per sign-off's question standard.
+strip_tags() {
+  local s=$1 prev=
+  while [ "$s" != "$prev" ]; do
+    prev=$s
+    s=$(printf '%s' "$s" | sed -E 's/^[[:space:]]*(\[[^]]*\]|[Cc][Aa][Pp][Tt][Aa][Ii][Nn] [Hh][Oo][Ll][Dd]:|[Cc][Aa][Pp][Tt][Aa][Ii][Nn]:|[Ss][Aa][Yy] [Yy][Ee][Ss] [Oo][Rr] [Nn][Oo]:)[[:space:]]*//')
+  done
+  printf '%s' "$s"
+}
+
+card_flat() {
+  printf '%s' "$1" | tr '\t\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
+card_title() {  # <reason>; prints the last question sentence, or the first sentence when it has none; empty when nothing is left
+  local flat head sentence
+  flat=$(card_flat "$1")
+  head=$(printf '%s' "$flat" | sed -nE 's/^(.*\?)( |$).*/\1/p')
+  if [ -n "$head" ]; then
+    sentence=$(printf '%s' "${head%\?}" | sed -E 's/^(.*(\. |\? ))?//')
+  else
+    sentence=$(printf '%s' "$flat" | sed -E 's/[.!] .*$//')
+  fi
+  title=$(strip_tags "$sentence" | sed -E 's/[[:space:].?!]+$//' | awk '{n = NF < 12 ? NF : 12; for (i = 1; i <= n; i++) printf "%s%s", $i, i < n ? " " : ""}')
+  [ -n "$title" ] && printf '%s?' "$title"
+  return 0
+}
+
+card_why() {  # <reason>
+  printf '%s %s' "$(card_flat "$1" | cut -c1-$((200 - ${#ANSWER_NOTE} - 1)))" "$ANSWER_NOTE"
+}
+
+built_title() {  # <task-title>
+  local words
+  words=$(strip_tags "$(card_flat "$1")" | tr -d '?' | awk '{n = NF < 6 ? NF : 6; for (i = 1; i <= n; i++) printf "%s%s", $i, i < n ? " " : ""}')
+  printf 'What is your call on %s?' "$words"
+}
+
+# Post the hold's card through the one card path. <must> is the board gate's
+# category (empty when the hold carries none). Returns nonzero when the card was
+# not posted, so the caller fails the command and the hold stays recorded.
+raise_hold_card() {  # <task-id> <task-title> <reason> <done|release> <must>
+  local id=$1 task_title=$2 reason=$3 close=$4 must=$5
+  local title key identity ticket='' out
+  title=$(card_title "$reason")
+  [ -n "$title" ] || title=$(built_title "$task_title")
+  identity=$("$SCRIPT_DIR/jg-captain-hold.sh" open "$id" --identity 2>/dev/null) || {
+    printf 'the hold identity of %s could not be read\n' "$id" >&2
+    return 1
+  }
+  key=$(jg_question_hold_card_key "$id" "$identity")
+  # Name the ticket the board shows, so the reason this hold records renders
+  # beside that ticket's On hold row (bin/jg-ticket.sh owns the ticket id).
+  ticket=$("$SCRIPT_DIR/jg-ticket.sh" id "$id" 2>/dev/null) || ticket=''
+  out=$("$SCRIPT_DIR/jg-question-card.sh" post \
+    --ask-ref "$id" --key "$key" --title "$title" --about "$reason" --why "$(card_why "$reason")" \
+    ${must:+--must "$must"} ${ticket:+--ticket "$ticket"} \
+    --outcome yes="Answer recorded: yes." \
+    --outcome no="Answer recorded: no." \
+    --recommend yes --recommend-reason "The hold records no recommendation." \
+    --default no --close "$close") || {
+    printf 'the board card was not posted for %s\n' "$id" >&2
+    return 1
+  }
+  printf 'board card %s posted for %s\n' "$out" "$id" >&2
+  return 0
 }
 
 CAPTAIN_META_LOCK=
@@ -1111,17 +1190,26 @@ command_hold() {
     || fail "task $id lost its hold-set stamp while being held"
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
   # Optional sign-off card, raised only while the sign-off adapter is armed here.
-  # core/signoff owns the card; this repo's own adapter
-  # bin/jg-procevent-signoff.sh. A created question closes on answer, held work is
-  # released; a dated deferral gets no live card, and a card failure exits nonzero
-  # (the hold stays recorded).
+  # core/signoff owns the card when it is installed and authors the ask itself;
+  # the answer-intake adapter this repo also ships (bin/jg-procevent-signoff.sh)
+  # carries no raise, so that case posts through bin/jg-question-card.sh post, the
+  # one card path. A created question closes on answer, held work is released; a
+  # dated deferral gets no live card, and a card failure exits nonzero (the hold
+  # stays recorded).
   if [ -z "$until" ]; then
     release_task_control_lock
   fi
   if [ -z "$until" ] && [ -z "$own_instruction" ]; then
     if [ -f "$STATE/procevent/signoff.source" ]; then
-      JG_HOME=$JG_HOME JG_CODE_ROOT=${JG_CODE_ROOT:-$SCRIPT_DIR/..} "$signoff_script" raise "$id" "$(show_field_value "$show" title)" "$reason" "$card_close" ${must:+--must "$must"} \
-        || { printf 'error: task %s is held, but no sign-off card was raised for it\n' "$id" >&2; exit 1; }
+      if [ "$signoff_script" = "$SCRIPT_DIR/jg-procevent-signoff.sh" ]; then
+        # That adapter carries the answer intake only, so the card goes through
+        # the one card path instead of a raise it no longer has.
+        raise_hold_card "$id" "$(show_field_value "$show" title)" "$reason" "$card_close" "$must" \
+          || { printf 'error: task %s is held, but no board card was posted for it\n' "$id" >&2; exit 1; }
+      else
+        JG_HOME=$JG_HOME JG_CODE_ROOT=${JG_CODE_ROOT:-$SCRIPT_DIR/..} "$signoff_script" raise "$id" "$(show_field_value "$show" title)" "$reason" "$card_close" ${must:+--must "$must"} \
+          || { printf 'error: task %s is held, but no sign-off card was raised for it\n' "$id" >&2; exit 1; }
+      fi
     fi
   fi
   printf '%s\n' "$id"
