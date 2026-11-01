@@ -227,6 +227,11 @@ func (a *app) reply(args []string) int {
 	if strings.TrimSpace(string(data)) == "" {
 		return die("no reply event on stdin")
 	}
+	return a.routeReply(data)
+}
+
+// routeReply routes one reply event's JSON; the CLI and the router service both end here.
+func (a *app) routeReply(data []byte) int {
 	var ev struct {
 		Key    string `json:"key"`
 		At     string `json:"at"`
@@ -245,7 +250,7 @@ func (a *app) reply(args []string) int {
 	}
 	cmd := exec.Command(filepath.Join(a.root, "bin", "jg-board-answers.sh"),
 		"route-answer", ev.Key, at, ev.Answer, ev.Label)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	cmd.Env = append(os.Environ(), "JG_HOME="+a.home, "JG_STATE_OVERRIDE="+a.state)
 	if err := cmd.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
@@ -356,6 +361,19 @@ func (a *app) unit(args []string) int {
 		fmt.Fprintf(&b, "After=network.target\n\n")
 		a.unitService(&b, quote, percent, fmt.Sprintf("%s -c %s", quote(natsServer), quote(conf)))
 		fmt.Fprintf(&b, "ExecStartPost=%s bootstrap\n", quote(filepath.Join(a.root, "bin", "jg-bus.sh")))
+	case "wake-engine", "router":
+		self, err := os.Executable()
+		if err != nil {
+			return die("cannot find this command: %v", err)
+		}
+		what := "wake engine (consumes this home's wakes and renders the read model)"
+		if part == "router" {
+			what = "reply router (routes captain replies by the board's own route)"
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut %s\n", what)
+		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
+		a.unitService(&b, quote, percent, quoteAll(quote, []string{self, part}))
+		fmt.Fprintf(&b, "Environment=%s\nEnvironment=%s\n", quote("JG_BUS_ROOT="+a.root), quote("JG_STATE_OVERRIDE="+a.state))
 	case "dapr":
 		path, err := exec.LookPath("daprd")
 		if err != nil {
@@ -383,7 +401,7 @@ func (a *app) unit(args []string) int {
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_BUS_ROOT="+a.root))
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_STATE_OVERRIDE="+a.state))
 	default:
-		return die("unit: unknown part %q (nats, dapr, ntfy, deliver)", part)
+		return die("unit: unknown part %q (nats, wake-engine, router, dapr, ntfy, deliver)", part)
 	}
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	fmt.Print(b.String())

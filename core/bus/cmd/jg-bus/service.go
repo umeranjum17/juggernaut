@@ -120,15 +120,30 @@ func (a *app) ensureStream() error {
 	return cmd.Run()
 }
 
+// login is this home's bus account and password, or nothing when no accounts server was
+// generated for it. The account is the home's unique id, the same one `account` prints.
+func (a *app) login() (string, string) {
+	named, code := a.accountNames(nil)
+	if code != 0 {
+		return "", ""
+	}
+	me := resolveHome(a.home)
+	for _, h := range named {
+		if h.path == me {
+			return h.name, strings.TrimSpace(readFileString(filepath.Join(a.runtime, h.name+".pass")))
+		}
+	}
+	return "", ""
+}
+
 // natsAuth is the client login for this home's account when the machine's accounts file
 // exists (the unit's server refuses an empty user), and nothing for a bare server.
 func (a *app) natsAuth() []string {
-	name := homeAccount(filepath.Base(a.home))
-	pass := strings.TrimSpace(readFileString(filepath.Join(a.runtime, name+".pass")))
+	user, pass := a.login()
 	if pass == "" {
 		return nil
 	}
-	return []string{"--user", name, "--password", pass}
+	return []string{"--user", user, "--password", pass}
 }
 
 // streamExists is the read-only check: 0 when the stream is on the server, else 1.
@@ -254,6 +269,10 @@ func (a *app) serve() int {
 	} else {
 		say("nats: not started, no nats-server on PATH")
 	}
+	if self, err := os.Executable(); err == nil {
+		a.startOne(false, "wake-engine", self, "wake-engine")
+		a.startOne(false, "router", self, "router")
+	}
 	if path, err := exec.LookPath("daprd"); err == nil {
 		a.startOne(false, "dapr", a.daprArgv(path)...)
 	} else {
@@ -272,7 +291,7 @@ func (a *app) serve() int {
 
 // stop stops the services this home started from their recorded pids.
 func (a *app) stop() int {
-	for _, name := range []string{"nats", "dapr", "ntfy", "deliver"} {
+	for _, name := range []string{"nats", "wake-engine", "router", "dapr", "ntfy", "deliver"} {
 		pidPath := filepath.Join(a.runtime, name+".pid")
 		data, err := os.ReadFile(pidPath)
 		if err != nil {
