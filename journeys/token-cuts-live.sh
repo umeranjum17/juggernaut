@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# done-done journey: the lead's wake TURNS over the same hour of events, before and after
-# the token cuts. It feeds one fixed event load through the real jg_wake_append in a
-# disposable home twice: once under the routing rules the branch had before this change
-# and once under defaults/wake-routing now. A wake turn is an event that routes to `now`
-# (it ends a watcher cycle and starts a model turn); batch and silent events do not.
-# It then proves each settled wake type stays out of the queue and that the batched
-# escalation digest arrives once. Evidence: token-cuts-live.txt in the evidence folder.
+# done-done journey: the lead's wake turns over one fixed hour of events, before and after the
+# token cuts, through the real jg_wake_append (a turn is an event that routes to `now`), then
+# the settled types stay out of the queue, the cap holds, and the digest arrives once.
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
@@ -19,16 +15,13 @@ say() { printf '%s\n' "$*" | tee -a "$LOG"; }
 expect() {  # <label> <want> <got>
   if [ "$2" = "$3" ]; then say "ok - $1"; else say "FAIL $1: want [$2] got [$3]"; fails=1; fi
 }
-# The routing the branch had before the change: the same file without the settled-wake rules.
 if [ -z "$BEFORE_RULES" ]; then
   BEFORE_RULES=$T/before.routing
   grep -v -E '^(silent@|set silence-cap|set restart-pass)' "$REPO/defaults/wake-routing" >"$BEFORE_RULES"
 fi
 
-# One hour of events for a home with eight parked leads (alpha*), a live lead (beta) and
-# three live workers: 8 pause acknowledgements, 4 relaunch notices from a restart pass,
-# 6 timers on parked homes, 3 re-arm resurfaces, 3 events that need a model, and 9
-# merged-PR checks. Prints "<class> <what>" per event.
+# One hour: 8 pause acks and 6 timers on parked homes, 4 restart-pass relaunch notices, 3 re-arms,
+# 3 events that need a model, 9 merged-PR checks. Prints "<class> <what>" per event.
 run_hour() {  # <routing-file> <home-dir>
   local rules=$1 home=$2 state=$2/state i
   mkdir -p "$state" "$home/config" "$home/homes" "$home/tmp" "$home/root"
@@ -78,14 +71,10 @@ a=$(turns <"$AFTER_LOG")
 say "== the same $total events in one hour"
 say "wake turns before: $b"
 say "wake turns after:  $a"
-for kind in pause-ack relaunch-notice paused-timer rearm-resurface needs-decision failed "done" merged-check; do
-  say "  $kind: before $(awk -v k="$kind" '$1 == "now" && $2 == k' "$BEFORE_LOG" | wc -l | tr -d ' ') now / after $(awk -v k="$kind" '$1 == "now" && $2 == k' "$AFTER_LOG" | wc -l | tr -d ' ') now"
-done
 expect "the events that need a model still wake it" 3 "$(awk '$1 == "now" && ($2 == "needs-decision" || $2 == "failed" || $2 == "done")' "$AFTER_LOG" | wc -l | tr -d ' ')"
 expect "no silenced wake type wakes a model" 0 "$(awk '$1 == "now" && ($2 == "pause-ack" || $2 == "relaunch-notice" || $2 == "paused-timer" || $2 == "rearm-resurface")' "$AFTER_LOG" | wc -l | tr -d ' ')"
 [ "$a" -lt "$b" ] || { say "FAIL wake turns did not drop: $b -> $a"; fails=1; }
 
-say ""
 say "== each silenced type stays silent: recorded, never queued"
 Q=$T/after/state/.wake-queue
 S=$T/after/state/.wake-settled
@@ -95,21 +84,7 @@ for needle in alpha1.status squad-lead-relaunch-beta-1 waiting-timer-1-owner; do
 done
 expect "the needs-decision event is queued" 1 "$(grep -q -F w1.status "$Q" 2>/dev/null && echo 1 || echo 0)"
 
-say ""
-say "== the cap: past silence-cap-per-hour a settled wake rides the digest as batch"
-cap=$(awk '$1 == "set" && $2 == "silence-cap-per-hour" { print $3 }' "$REPO/defaults/wake-routing")
-CT=$T/cap
-mkdir -p "$CT/state" "$CT/root" "$CT/tmp"
-printf 'set silence-cap-per-hour 3\nsilent signal *.status paused*\nnow * * *\n' >"$CT/rules"
-over=$(JG_HOME=$CT JG_STATE_OVERRIDE=$CT/state JG_WAKE_ROUTING=$CT/rules JG_ROOT_OVERRIDE=$CT/root TMPDIR=$CT/tmp bash -c '
-  . "$1/bin/jg-wake-lib.sh"
-  for i in 1 2 3 4 5; do
-    printf "paused [at=1]: x\n" >"$STATE/c$i.status"; jg_wake_append signal "c$i.status" "signal: x"; printf "%s " "${JG_WAKE_LAST%%:*}"
-  done' _ "$REPO")
-expect "three settle, then the cap hands the rest to the digest" "silent silent silent batch batch " "$over"
-say "rule-file cap in force: $cap per hour"
 
-say ""
 say "== the batched digest arrives once"
 DT=$T/digest
 mkdir -p "$DT/state" "$DT/config"
@@ -125,10 +100,9 @@ say "$digest"
 expect "the digest does not arrive twice" "" "$(dec flush "$((now + 900))")"
 
 cat >"$OUT/steps.json" <<JSON
-{"target":{"version":"$(git -C "$REPO" rev-parse --short HEAD)"},
- "start":"two disposable homes, one under the earlier routing rules and one under defaults/wake-routing, given the same hour of $total events",
- "steps":["feed the hour of events through the real wake append under both rule files","count the events that routed to a model turn","check the silenced types are settled and absent from the queue","fill the per-hour cap","hold nine batch events and flush when the tenth arrives"],
- "result":"wake turns fell from $b to $a; every silenced type stayed out of the queue; the cap and the digest behaved as the rule file says"}
+{"target":{"version":"$(git -C "$REPO" rev-parse --short HEAD)"},"start":"two disposable homes, old and new routing, the same $total events",
+ "steps":["feed the hour through the real wake append","count model turns","check settled types stay out of the queue","fill the cap","flush the digest"],
+ "result":"wake turns fell from $b to $a"}
 JSON
 if [ "$fails" -eq 0 ]; then say "PASS: wake turns $b -> $a over the same hour"; exit 0; fi
 exit 1

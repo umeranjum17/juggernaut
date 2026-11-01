@@ -2511,12 +2511,9 @@ _jg_wake_rule_set() {
   printf '%s\n' "$out"
 }
 
-# _jg_wake_cond <condition> <key> <payload>: the facts a `class@condition` rule names.
-#   parked        the event is about a lane of a parked home (config/parked-homes)
-#   restart-pass  the event is about a lead that Main's own restart pass just restarted
-#                 (bin/jg-squad-lead-restart.sh stamps state/.squad-lead-restart-pass;
-#                 `set restart-pass-seconds` is how long the stamp counts)
-#   queue-quiet   no queued row routes to `now`, so nothing is waiting on a turn
+# _jg_wake_cond <condition> <key> <payload>: the fact a `class@condition` rule names:
+# parked (a lane of a parked home), restart-pass (a lead the restart pass just restarted,
+# stamped in state/.squad-lead-restart-pass), queue-quiet (no queued row routes to `now`).
 _jg_wake_cond() {
   local cond=$1 key=$2 payload=$3 word prev='' secs now stamp id row_kind row_key row_pay
   case "$cond" in
@@ -2554,9 +2551,8 @@ _jg_wake_cond() {
   return 1
 }
 
-# _jg_wake_silence_charge: count one silenced event against `set silence-cap-per-hour`.
-# 0 while under the cap (or no cap is set); non-zero once the hour is spent, and the
-# caller then lets the event ride the next digest as `batch` so a flood is never hidden.
+# _jg_wake_silence_charge: count one settled event against `set silence-cap-per-hour`;
+# non-zero once the hour is spent, and the caller then sends it to the digest as `batch`.
 _jg_wake_silence_charge() {
   local cap now log="$STATE/.wake-silenced" used=0
   cap=$(_jg_wake_rule_set silence-cap-per-hour 0)

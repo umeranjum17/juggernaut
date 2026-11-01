@@ -16,11 +16,8 @@ before every owner wake, closes resolved escalations, and sends held rows as dig
 | 5 | Auto-resolve when the state the escalation was raised about changes | `autoResolve` | auto-resolve |
 | 6 | Every escalation carries `evidence=[...]` and `action=[...]` | `envelope` | envelope |
 
-Wakes that need no model are settled by `defaults/wake-routing`, not by this script: a class may carry
-`@condition` (`parked`, `restart-pass`, `queue-quiet`), and `set silence-cap-per-hour` hands the
-overflow to the digest. Coalesce flushes when `coalesce.windowSeconds` ends or `coalesce.maxEvents`
-rows are held. Run `bash journeys/token-cuts-live.sh` (done-done journey `token-cuts-live`) for the
-before/after wake-turn count.
+Wakes that need no model are settled by `defaults/wake-routing` (`class@condition`, `set silence-cap-per-hour`);
+coalesce also flushes at `coalesce.maxEvents` rows. `bash journeys/token-cuts-live.sh` counts wake turns before and after.
 
 Run the rule proof: `bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh`.
 Run the product proof, which drives `decide`, the live `bin/jg-escalation-workflows.sh tick`
