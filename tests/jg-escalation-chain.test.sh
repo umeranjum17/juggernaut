@@ -905,6 +905,37 @@ test_ready_work_wakes_the_primary_home_too() {
   pass "ready work with no worker working wakes the primary home, not only a lead, and a freed place re-raises it"
 }
 
+test_a_fleet_pause_silences_ready_work_but_not_a_blocker() {
+  local m before
+  m=$(home ready-pause)
+  mkdir -p "$m/data"
+  backlog "$m" add alpha "first item" --priority 1
+  cycle "$m"
+  grep -q '^check: ready work waiting with no worker working: alpha' "$m/events" \
+    || fail "an unpaused primary home got no ready-work wake: $(cat "$m/events")"
+  # Main declares the fleet pause in this home: ready-work intake goes silent.
+  printf '# Fleet pause for the Juggernaut migration - 31 Oct 2026\n\nStop new work.\n- Resume rule: Main sends an explicit resume order.\n' \
+    > "$m/data/fleet-pause-2026-10-31.md"
+  before=$(grep -c '^check: ready work waiting' "$m/events")
+  touch -d '-15 days' "$m/state/.last-ready-work-check"
+  cycle "$m"
+  [ "$(grep -c '^check: ready work waiting' "$m/events")" = "$before" ] \
+    || fail "a paused primary home raised the ready-work wake: $(cat "$m/events")"
+  # A worker's blocker is not ready-work intake, so the pause does not swallow it.
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nworktree=%s/gone\n' "$m" > "$m/state/w1.meta"
+  printf 'blocked [at=1]: the vendor key is missing\n' > "$m/state/w1.status"
+  PANES=1 cycle "$m"
+  grep -q '^signal:.*w1.status' "$m/events" || fail "a paused home swallowed a worker's blocker: $(cat "$m/events")"
+  # The resume order clears the record and the same ready set rings at once.
+  rm -f "$m/data/fleet-pause-2026-10-31.md" "$m/state/w1.meta" "$m/state/w1.status"
+  before=$(grep -c '^check: ready work waiting' "$m/events")
+  touch -d '-15 days' "$m/state/.last-ready-work-check"
+  cycle "$m"
+  [ "$(grep -c '^check: ready work waiting' "$m/events")" -gt "$before" ] \
+    || fail "the resume order did not re-raise the ready set: $(cat "$m/events")"
+  pass "a fleet pause silences ready-work intake in the primary home, leaves a real blocker wake alone, and the resume order rings the set again"
+}
+
 test_memory_refused_launch_reraises_when_admission_clears() {
   local m
   m=$(home admit-retry)
@@ -948,6 +979,7 @@ test_stalled_backlog_quiet_when_project_is_at_capacity
 test_ship_ready_line_goes_through_the_pr_check
 test_watcher_handoff_gap_is_not_a_dead_watcher
 test_ready_work_wakes_the_primary_home_too
+test_a_fleet_pause_silences_ready_work_but_not_a_blocker
 test_memory_refused_launch_reraises_when_admission_clears
 test_green_unmerged_pr_climbs_lead_main_and_the_board
 test_green_unmerged_pr_in_the_main_home_wakes_main_then_the_board

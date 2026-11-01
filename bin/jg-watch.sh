@@ -2994,6 +2994,23 @@ warn_invalid_lane_target_once() {
   triage_log "lane-target is not a positive integer; using the no-worker-working rule instead"
 }
 
+# Sourced-free copy of core/lead-wake/bin/jg-lead-wake-lib.sh's fleet_paused, which
+# owns the rule once step B replaces this ready-work decision: a declared fleet
+# pause silences ready-work intake until the resume order, and nothing else.
+fleet_paused() {
+  local rec heading
+  [ -f "$JG_HOME/state/.fleet-paused" ] && return 0
+  for rec in "$JG_HOME"/data/fleet-pause*.md "$JG_HOME/data/paused-for-juggernaut.md"; do
+    [ -f "$rec" ] || continue
+    heading=$(awk 'NF { print; exit }' "$rec" 2>/dev/null)
+    case $heading in
+      *[Ll]ift*|*[Rr]esum*|*[Uu]npaus*) continue ;;
+    esac
+    return 0
+  done
+  return 1
+}
+
 # Base-cadence idle-home check: 0 when this home (primary or squad_lead) has
 # dispatchable queued work and sits below its lane floor, so ready work is
 # started without anyone asking. With
@@ -3013,6 +3030,13 @@ ready_work_waits_idle() {
   local meta task target open now surfaced surfaced_at surfaced_ids ready_rc freed
   READY_WORK_IDS=
   READY_WORK_REASON=
+  # Paused: withdraw the queued row so nothing is presented, and drop the
+  # resurface record so the same ready set rings at once when the pause lifts.
+  if fleet_paused; then
+    jg_wake_withdraw check ready-work || true
+    rm -f "$STATE/.ready-work-surfaced"
+    return 1
+  fi
   READY_WORK_IDS=$(jg_ready_work_ids "$JG_HOME")
   ready_rc=$?
   if [ -z "$READY_WORK_IDS" ]; then
