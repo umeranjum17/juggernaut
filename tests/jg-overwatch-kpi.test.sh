@@ -69,6 +69,7 @@ test_a_doorbell_is_not_a_captain_message() {
   [ ! -e "$home/data/overwatch-kpi.jsonl" ] || fail "a reworded doorbell was counted as a captain message"
   # The steering-inbox doorbell, with and without its leading colon, for any inbox name.
   local steer
+  # shellcheck disable=SC2016 # the doorbell carries a literal $JG_TASK_INBOX
   for steer in ': Juggernaut instruction waiting: list "$JG_TASK_INBOX"/*.msg in your '"'"'a-b.inbox'"'"' steering inbox, read and act on each in numeric order, then mv each into its handled/.' \
     'Juggernaut instruction waiting: list "$JG_TASK_INBOX"/*.msg in your '"'"'other.inbox'"'"' steering inbox, read and act on each in numeric order, then mv each into its handled/.'; do
     submit "$home" "$steer"
