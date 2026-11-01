@@ -51,6 +51,9 @@ export JG_GATE_REFUSE_BYPASS=1
 # JG_TEST_HARNESS harness pin). Normal primary launches do not arm it, so a
 # leaked harness pin alone stays inert outside a suite.
 export JG_TEST_SEAM=1
+# A fixture binds no port and installs no service: bin/jg-stack.sh up is a no-op under this.
+# tests/jg-stack.test.sh unsets it, because starting the stack is what it proves.
+export JG_STACK_SKIP=1
 # A host-installed task-priority feature must not change what test fixtures can add.
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 

@@ -44,6 +44,41 @@ func (a *app) startOne(quiet bool, name string, argv ...string) {
 	}
 }
 
+// daprArgv and ntfyArgv are the one argv each service starts with, shared by `serve`
+// and the unit, so a detached start and a supervised one run the same command.
+func (a *app) daprArgv(path string) []string {
+	return []string{path,
+		"--app-id", a.cfgOr("dapr-app-id", ""),
+		"--dapr-http-port", a.cfgOr("dapr-http-port", ""),
+		"--dapr-grpc-port", a.cfgOr("dapr-grpc-port", ""),
+		"--enable-metrics=false",
+		"--resources-path", a.daprResources()}
+}
+
+// daprResources is the component directory the sidecar loads. The server refuses an empty
+// user once accounts exist, so when this home has credentials the component is copied into
+// the runtime directory with them in its address; otherwise the shipped directory is used.
+func (a *app) daprResources() string {
+	shipped := filepath.Dir(a.busFile("dapr/components/pubsub.yaml"))
+	auth := a.natsAuth()
+	if auth == nil {
+		return shipped
+	}
+	dir := filepath.Join(a.runtime, "dapr")
+	text := readFileString(filepath.Join(shipped, "pubsub.yaml"))
+	bare := strings.TrimPrefix(a.cfgOr("nats-url", ""), "nats://")
+	text = regexp.MustCompile(`(?m)^(\s*value:\s*)"nats://[^"]*"`).ReplaceAllString(text,
+		`${1}"nats://`+auth[1]+`:`+auth[3]+`@`+bare+`"`)
+	if os.MkdirAll(dir, 0o700) != nil || os.WriteFile(filepath.Join(dir, "pubsub.yaml"), []byte(text), 0o600) != nil {
+		return shipped
+	}
+	return dir
+}
+
+func (a *app) ntfyArgv(path string) []string {
+	return []string{path, "serve", "-c", a.busFile("ntfy.yml")}
+}
+
 // streamName is the JetStream stream the shipped config file names.
 func (a *app) streamName() string {
 	m := regexp.MustCompile(`"name"[ \t]*:[ \t]*"([^"]*)"`).FindStringSubmatch(readFileString(a.root + "/core/bus/stream.json"))
@@ -70,7 +105,8 @@ func (a *app) ensureStream() error {
 	}
 	url := a.cfgOr("nats-url", "")
 	name := a.streamName()
-	if err := exec.Command("nats", "-s", url, "stream", "info", name).Run(); err == nil {
+	auth := a.natsAuth()
+	if err := exec.Command("nats", append(auth, "-s", url, "stream", "info", name)...).Run(); err == nil {
 		return nil
 	}
 	logFile, err := os.Create(filepath.Join(a.runtime, "stream.log"))
@@ -78,10 +114,30 @@ func (a *app) ensureStream() error {
 		return err
 	}
 	defer logFile.Close()
-	cmd := exec.Command("nats", "-s", url, "stream", "add", "--config",
-		filepath.Join(a.root, "core", "bus", "stream.json"))
+	cmd := exec.Command("nats", append(auth, "-s", url, "stream", "add", "--config",
+		filepath.Join(a.root, "core", "bus", "stream.json"))...)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	return cmd.Run()
+}
+
+// natsAuth is the client login for this home's account when the machine's accounts file
+// exists (the unit's server refuses an empty user), and nothing for a bare server.
+func (a *app) natsAuth() []string {
+	name := homeAccount(filepath.Base(a.home))
+	pass := strings.TrimSpace(readFileString(filepath.Join(a.runtime, name+".pass")))
+	if pass == "" {
+		return nil
+	}
+	return []string{"--user", name, "--password", pass}
+}
+
+// streamExists is the read-only check: 0 when the stream is on the server, else 1.
+func (a *app) streamExists() int {
+	args := append(a.natsAuth(), "-s", a.cfgOr("nats-url", ""), "stream", "info", a.streamName())
+	if exec.Command("nats", args...).Run() != nil {
+		return 1
+	}
+	return 0
 }
 
 // busListening reports whether anything answers on the configured address, which is
@@ -133,6 +189,11 @@ func waitPort(url string) bool {
 // bootstrap creates the stream when it is missing and says one line either way.
 func (a *app) bootstrap() int {
 	name := a.streamName()
+	// The unit runs this right after it forks the server, so wait for the port first.
+	if !waitPort(a.cfgOr("nats-url", "")) {
+		say("stream: %s not created, the server is not listening on %s", name, a.cfgOr("nats-url", ""))
+		return 1
+	}
 	if _, err := exec.LookPath("nats"); err != nil {
 		say("stream: not created, no nats client on PATH (the event record still holds every event)")
 		return 0
@@ -194,18 +255,12 @@ func (a *app) serve() int {
 		say("nats: not started, no nats-server on PATH")
 	}
 	if path, err := exec.LookPath("daprd"); err == nil {
-		components := filepath.Dir(a.busFile("dapr/components/pubsub.yaml"))
-		a.startOne(false, "dapr", path,
-			"--app-id", a.cfgOr("dapr-app-id", ""),
-			"--dapr-http-port", a.cfgOr("dapr-http-port", ""),
-			"--dapr-grpc-port", a.cfgOr("dapr-grpc-port", ""),
-			"--enable-metrics=false",
-			"--resources-path", components)
+		a.startOne(false, "dapr", a.daprArgv(path)...)
 	} else {
 		say("dapr: not started, no daprd on PATH")
 	}
 	if path, err := exec.LookPath("ntfy"); err == nil {
-		a.startOne(false, "ntfy", path, "serve", "-c", a.busFile("ntfy.yml"))
+		a.startOne(false, "ntfy", a.ntfyArgv(path)...)
 	} else {
 		say("ntfy: not started, no ntfy on PATH")
 	}

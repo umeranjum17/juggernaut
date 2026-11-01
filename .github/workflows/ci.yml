@@ -282,6 +282,7 @@ jobs:
           nats-server --version
           nats --version
           tests/jg-bus-service.test.sh
+          tests/jg-stack.test.sh
       - name: Prove the captain channel's Go command at parity
         run: |
           set -eu
