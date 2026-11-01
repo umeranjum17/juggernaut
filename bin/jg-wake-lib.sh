@@ -2811,6 +2811,7 @@ jg_wake_branch_owner_matches() {  # <owner-file> [<pid>] [<generation>]
   IFS= read -r pid <&8 || { exec 8<&-; return 1; }
   IFS= read -r identity <&8 || { exec 8<&-; return 1; }
   IFS= read -r generation <&8 || { exec 8<&-; return 1; }
+  # shellcheck disable=SC2034  # read only to prove no fifth field follows
   if IFS= read -r extra <&8; then exec 8<&-; return 1; fi
   exec 8<&-
   [ "$version" = jg-branch-eligible-owner-v1 ] || return 1

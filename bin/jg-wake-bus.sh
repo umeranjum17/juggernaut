@@ -825,7 +825,9 @@ while [ "$#" -gt 0 ]; do
       CMD=ids; RAISE_KIND=$2; RAISE_KEY=$3; shift 3 ;;
     ids-through)
       [ "$#" -ge 2 ] || { printf 'jg-wake-bus.sh: ids-through needs <max-sequence> [<seqs-file>]\n' >&2; exit 2; }
-      CMD=ids-through; RAISE_KIND=$2; RAISE_KEY=${3:-}
+      CMD="ids-through"
+      RAISE_KIND=$2
+      RAISE_KEY=${3:-}
       if [ "$#" -ge 3 ]; then shift 3; else shift 2; fi ;;
     count) CMD=count; shift ;;
     inbox-raise)

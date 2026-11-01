@@ -40,8 +40,8 @@ start_server() {
   mkdir -p "$DIR/store"
   "$NATS_SERVER" -js -a 127.0.0.1 -p -1 -sd "$DIR/store" > "$DIR/nats.log" 2>&1 &
   SERVER_PID=$!
-  local port i
-  for i in $(seq 1 200); do
+  local port
+  for _ in $(seq 1 200); do
     port=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$DIR/nats.log" 2>/dev/null | head -n 1)
     [ -n "$port" ] && break
     sleep 0.05
