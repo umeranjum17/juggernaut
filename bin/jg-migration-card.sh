@@ -41,7 +41,7 @@ fmt() { printf '%s' "$1" | sed ':a;s/\([0-9]\)\([0-9]\{3\}\)\($\|,\)/\1,\2\3/;ta
 BRANCH=$(cfg branch) TARGET=$(cfg target) BOARD=$(cfg board) CARD=$(cfg card) FILER=$(cfg filer)
 BOARD=${BOARD:-${JG_PROOF_BOARD:-}}
 [ -n "$BRANCH" ] && [ -n "$TARGET" ] && [ -d "$(dirname "${BOARD:-/nonexistent}")" ] || die "config/migration-card needs branch, target and a board file in an existing folder"
-mkdir -p "$DIR"
+mkdir -p "$DIR" && touch "$LEDGER"
 
 # Totals: baseline plus every ledger row (deleted added).
 totals() { awk -F'\t' -v d="$(cfg baseline-deleted)" -v a="$(cfg baseline-added)" \

@@ -40,5 +40,6 @@ if grep -qE '#[0-9a-fA-F]{3,6}\b|rgb\(' "$page"; then fail "the page writes its 
 out=$(cat "$T/home/state/branch-outcomes.jsonl")
 assert_contains "$out" "a switch is live" "a switch milestone is a captain outcome"
 assert_contains "$out" "15000 lines deleted" "each 5,000 lines is a milestone"
+assert_equals 2 "$(printf "%s\n" "$out" | wc -l)" "a merge that crosses no milestone records no digest"
 assert_contains "$out" "Release blockers: none recorded" "the digest has its three lines"
 pass "migration card follows the merge path"
