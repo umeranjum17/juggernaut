@@ -16,7 +16,7 @@ them:
 - `Lint <n>` - the sharded lint over the files the change touched
   (`bin/jg-lint.sh --changed-base <base>`), not over the whole tree.
 - `Changed tests` - the suite scripts the change's paths map to
-  (`bin/jg-test-run.sh --changed --base <base> --exclude-family real-herdr-gated`).
+  (`bin/jg-test-run.sh --changed --base <base> --exclude-family real-herdr-gated --max-weight-ms 60000`): a suite whose recorded time is over a minute is named in the log and runs in the post-merge lane instead.
 
 `CI required` is still the one required status check, and `bin/jg-ci-required.sh`
 now holds two lane sets: the fast set for a `pull_request` event and the full set

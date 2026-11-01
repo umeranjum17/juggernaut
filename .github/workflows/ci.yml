@@ -356,7 +356,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         # The real-Herdr family needs a live herdr, so it runs in its own
         # post-merge lane instead of gate-skipping inside the fast set.
-        run: bin/jg-test-run.sh --changed --base "$BASE_SHA" --exclude-family real-herdr-gated
+        run: bin/jg-test-run.sh --changed --base "$BASE_SHA" --exclude-family real-herdr-gated --max-weight-ms 60000
 
   # The one required status check: it always reports, refusing a lane that did
   # not run.

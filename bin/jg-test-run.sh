@@ -47,6 +47,11 @@
 #                   drop scripts whose primary family matches <name> after selection
 #                   (repeatable; portable CI lanes exclude real-herdr-gated so the
 #                   dedicated required Herdr lane owns that coverage)
+#   --max-weight-ms <ms>
+#                   drop scripts whose recorded serial duration hint is over <ms>
+#                   after selection, and name each one on stderr. The pull request
+#                   fast set uses it so a slow suite runs in the post-merge lane
+#                   instead of holding the merge.
 #   --fail-on-gate-skip <token>
 #                   after each script, fail the run if any output line contains
 #                   "skip: <token>" (e.g. --fail-on-gate-skip 'herdr not found').
@@ -229,6 +234,7 @@ BASE_REF=origin/main
 JSON_PATH=
 SCRIPTS=()
 EXCLUDE_FAMILIES=()
+MAX_WEIGHT_MS=
 FAIL_ON_GATE_SKIP=
 JOBS=1
 JOBS_EXPLICIT=0
@@ -1702,6 +1708,21 @@ apply_exclude_families() {
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
 }
 
+apply_max_weight() {
+  local s ms
+  local -a kept=()
+  [ -n "$MAX_WEIGHT_MS" ] || return 0
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    ms=$(portable_parallel_weight_for "$s")
+    if [ "$ms" -gt "$MAX_WEIGHT_MS" ]; then
+      log "deferred to the post-merge lane (${ms}ms hint is over ${MAX_WEIGHT_MS}ms): $s"
+    else
+      kept+=("$s")
+    fi
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
 write_json_artifact() {
   local out=$1
   local started=$2
@@ -1933,6 +1954,12 @@ while [ "$#" -gt 0 ]; do
       EXCLUDE_FAMILIES+=("${1#--exclude-family=}")
       shift
       ;;
+    --max-weight-ms)
+      [ "$#" -gt 1 ] || die "--max-weight-ms requires a number"
+      case "$2" in ''|*[!0-9]*) die "--max-weight-ms requires a number" ;; esac
+      MAX_WEIGHT_MS=$2
+      shift 2
+      ;;
     --fail-on-gate-skip)
       [ "$#" -gt 1 ] || die "--fail-on-gate-skip requires a token (e.g. 'herdr not found')"
       FAIL_ON_GATE_SKIP=$2
@@ -2080,6 +2107,7 @@ case "${MODE:-}" in
 esac
 
 apply_exclude_families
+apply_max_weight
 if [ "${#EXCLUDE_FAMILIES[@]}" -gt 0 ]; then
   SELECTION_DESC="${SELECTION_DESC};exclude-family=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")"
 fi
