@@ -403,7 +403,7 @@ test_report_after_the_return_is_queued_for_main() {
 # --- dispatch entry -----------------------------------------------------------
 
 test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
-  local home state out rc seq1 seq2
+  local home state out rc seq1 seq2 seqs
   home="$TMP_ROOT/dispatch"
   state="$home/state"
   mkdir -p "$state"
@@ -412,8 +412,11 @@ test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
   append_wake "$state" check merge "check: merge landed: fixture"
   # A row's sequence number is the bus's: opaque and ordered, not 1 and 2. Read
   # the two assigned to the rows so the scope is asserted exactly.
-  seq1=$(awk -F '\t' 'NR == 1 { print $2 }' "$state/.wake-queue")
-  seq2=$(awk -F '\t' 'NR == 2 { print $2 }' "$state/.wake-queue")
+  # They are not ordered by the order the rows were appended in, so name each row by
+  # its kind, and read the away scan's expected order from the queue itself.
+  seq1=$(awk -F '\t' '$3 == "signal" { print $2 }' "$state/.wake-queue")
+  seq2=$(awk -F '\t' '$3 == "check" { print $2 }' "$state/.wake-queue")
+  seqs=$(awk -F '\t' '{ printf "%s%s", sep, $2; sep = " " }' "$state/.wake-queue")
   case "$seq1$seq2" in ''|*[!0-9]*) fail "the queue rows carried no sequence numbers: $(cat "$state/.wake-queue")" ;; esac
 
   out=$(JG_HOME="$home" node "$DISPATCH" scope)
@@ -423,7 +426,7 @@ test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
   assert_contains "$out" "unscoped=0" "a task-local claim must be scoped"
 
   out=$(JG_HOME="$home" node "$DISPATCH" scope --afk)
-  assert_contains "$out" "rows=$seq1 $seq2" "an away scan must claim the check row too"
+  assert_contains "$out" "rows=$seqs" "an away scan must claim the check row too"
   assert_contains "$out" "unscoped=1" "a claimed check row names no task, so the claim is unscoped"
 
   out=$(printf 'check: merge landed: fixture\n' | JG_HOME="$home" node "$DISPATCH" offer)
