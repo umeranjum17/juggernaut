@@ -1583,6 +1583,13 @@ families_for_changed_path() {
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
       ;;
+    journeys/*)
+      # A done-done journey is owned by the test that names it: a direct
+      # reference is per-script evidence, so select that script, not its family.
+      scripts_for_test_reference "$path" \
+        || families_for_test_reference "$path" \
+        || printf '%s\n' "__unmapped__:$path"
+      ;;
     core/*)
       # A core feature's own suites run in core-suites.yml on the push after the
       # merge; the fast set does not wait for them. A red post-merge run files a
