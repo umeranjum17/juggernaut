@@ -178,6 +178,8 @@ The path's worker, automated gates, and captain approval remain authoritative:
 
 Delivery mode and `yolo` are orthogonal.
 `yolo` governs merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, Overwatch merges green, in-scope work itself.
+`docs/fast-merge-path.md` owns the fast required set, the tree-keyed proof, and the recorded done-to-merged minutes; the only required checks are its fast set, and every heavier suite runs after the merge.
+`bin/jg-merge-on-green.sh sweep` merges a green pull request with no model turn under that `yolo` posture or a lead-recorded `bin/jg-merge-on-green.sh approve <id>`, raises one alert naming any gate refusal, and records each merge's minutes, alerting past five; a pull request still in flight carries one `bin/jg-pr-state.sh --waiting-for <url>` line in the captain-facing report.
 Never merge a red PR, or one with a required check that has not reported, under either setting unless a current explicit captain instruction names the GitHub check to waive; `bin/jg-pr-merge.sh`'s header owns the attended-only waiver mechanics and remaining guards.
 Destructive, irreversible, and security-sensitive merges still escalate.
 Without a current explicit captain instruction that states the concrete merge, the green default stands, and standing `yolo` cannot authorize a red merge; section 1 owns when such an instruction overrides a Juggernaut-written standing rule within its exact scope.

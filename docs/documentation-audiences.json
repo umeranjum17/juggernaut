@@ -460,6 +460,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/fast-merge-path.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/fleet-ledger.md",
       "audience": "operator-current"
     },

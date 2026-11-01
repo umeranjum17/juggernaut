@@ -230,6 +230,60 @@ has "m: plain PASS merges" "$out" "merged t12 https://github.com/ex/r/pull/12"
 check "m: merged once" "$(wc -l < "$STUB_DIR/merge-calls")" 7
 rm "$FM/state/t12.meta" "$FM/state/t12.run-receipt.json"
 
+# (n) the done-to-merged minutes are recorded for every merge, and a merge over the five-minute
+# target is called out in the wake line the lead relays. The forge's merge time comes from the gh
+# stub, so the number is the one the record holds rather than the moment the sweep ran.
+cat > "$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+# stub: only the mergedAt read matters here.
+case "$*" in *mergedAt*) printf '%s\n' "${STUB_MERGED_AT:-}" ;; esac
+exit 0
+EOF
+chmod +x "$STUB_DIR/gh"
+meta t13 on "$H1" s13
+now=$(date +%s)
+printf 'working [at=%s]: implementing\n' "$((now - 1200))" > "$FM/state/t13.status"
+printf 'done [at=%s]: PR https://github.com/ex/r/pull/13\n' "$((now - 780))" >> "$FM/state/t13.status"
+STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
+export STUB_MERGED_AT
+out=$(mog)
+check "n: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
+has "n: the line names the measured minutes" "$out" "it took 13m from its done line to merged"
+has "n: over the target raises the over-target alert" "$out" "over the 5-minute target"
+check "n: the row is recorded with the real gap" \
+  "$(awk -F '\t' '$1 == "t13" { print $3, $4, $5 }' "$FM/data/merge-latency.tsv")" \
+  "$((now - 780)) $now 13"
+check "n: the table has one header row" "$(sed -n 1p "$FM/data/merge-latency.tsv")" \
+  "$(printf 'task\tpr\tdone_epoch\tmerged_epoch\tminutes')"
+rm "$FM/state/t13.meta" "$FM/state/t13.run-receipt.json"
+
+# (o) a merge inside the target is recorded and reported without the over-target wording.
+meta t14 on "$H2" s14
+now=$(date +%s)
+printf 'done [at=%s]: PR https://github.com/ex/r/pull/14\n' "$((now - 120))" > "$FM/state/t14.status"
+STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
+export STUB_MERGED_AT
+out=$(mog)
+check "o: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
+has "o: the line names the fast minutes" "$out" "in 2m from its done line"
+check "o: no over-target wording inside the target" \
+  "$(printf '%s' "$out" | grep -c 'over the 5-minute target' || true)" 0
+rm "$FM/state/t14.meta" "$FM/state/t14.run-receipt.json"
+
+# (p) the captain's own recorded word is authority too: merge=approved with no yolo meta lands the
+# change, and merge=manual still holds it.
+meta t15 off "$H1" s15
+echo merge=approved >> "$FM/state/t15.meta"
+out=$(mog)
+has "p: recorded approval merges without yolo" "$out" "merged t15 https://github.com/ex/r/pull/15"
+rm "$FM/state/t15.meta" "$FM/state/t15.run-receipt.json"
+meta t16 off "$H1" s16
+echo merge=manual >> "$FM/state/t16.meta"
+check "p: merge=manual with no yolo stays silent" "$(mog)" ""
+check "p: merge=manual not merged" "$([ -e "$FM/data/jg-merge-on-green/t16.head" ] && echo attempted || echo never)" never
+rm "$FM/state/t16.meta" "$FM/state/t16.run-receipt.json"
+rm -f "$STUB_DIR/gh"
+
 # (g) install --dry-run lists the steps and writes nothing.
 cat > "$FM/bin/jg-check-register.sh" <<'EOF'
 #!/bin/sh

@@ -18,10 +18,19 @@
 # A closed or merged pull request reports that terminal state and nothing else.
 # Unresolved review-thread state is out of this command's scope.
 #
-# Usage: jg-pr-state.sh [--all] <pr-url>
+# Usage: jg-pr-state.sh [--all] [--waiting-for] <pr-url>
 #   Prints one line per blocker it can see and nothing when it sees none.
 #   Blockers do not change the successful exit status; lookup or usage refusal
 #   exits non-zero.
+# --waiting-for prints exactly one `juggernaut/waiting-for: <what>` line naming
+#   what the change is waiting on, and nothing when it is merged and nothing is
+#   waited on. It is the line a captain-facing report carries for a pull request
+#   still in flight, so a reader can tell a draft from conflicts from a red check
+#   from the one thing left, the merge call itself. The verdict comes from the
+#   same live reads as the blockers, in this order: a draft must be marked ready,
+#   conflicts must be reconciled, a required check must pass, a required check
+#   that has not reported must land, and otherwise the change waits only on the
+#   merge call, which the lead makes within one cycle by rule.
 # --all widens the check read from the required contexts to every reported check
 # and prints each non-green one as `CHECK: <name> (<state>)`. It is what
 # bin/jg-dod-lib.sh reads to refuse a `done:` while the pull request still has a
@@ -71,13 +80,18 @@ if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
   usage
   exit 0
 fi
-[ "$#" -ge 1 ] || die "usage: jg-pr-state.sh [--all] <pr-url>"
+[ "$#" -ge 1 ] || die "usage: jg-pr-state.sh [--all] [--waiting-for] <pr-url>"
 ALL=0
-case "${1:-}" in
-  --all) ALL=1; shift ;;
-  -*) die "unknown option: $1" ;;
-esac
-[ "$#" -eq 1 ] || die "usage: jg-pr-state.sh [--all] <pr-url>"
+WAITING=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --all) ALL=1; shift ;;
+    --waiting-for) WAITING=1; shift ;;
+    -*) die "unknown option: $1" ;;
+    *) break ;;
+  esac
+done
+[ "$#" -eq 1 ] || die "usage: jg-pr-state.sh [--all] [--waiting-for] <pr-url>"
 command -v gh >/dev/null 2>&1 || die "gh is required"
 
 URL=$1
@@ -123,18 +137,30 @@ EOF_CORE
   && [ -n "$MERGEABILITY" ] \
   || die "GitHub returned incomplete pull-request state for $URL"
 
+WAIT_DRAFT=
+WAIT_CONFLICT=
 if [ -n "$MERGED_AT" ]; then
-  printf 'STATE: merged at %s\n' "$MERGED_AT"
+  [ "$WAITING" = 1 ] || printf 'STATE: merged at %s\n' "$MERGED_AT"
   exit 0
 elif [ "$STATE" != open ]; then
-  printf 'STATE: %s\n' "$STATE"
+  if [ "$WAITING" = 1 ]; then
+    printf 'juggernaut/waiting-for: nothing; the change is %s\n' "$STATE"
+  else
+    printf 'STATE: %s\n' "$STATE"
+  fi
   exit 0
 fi
-[ "$DRAFT" = false ] || printf 'DRAFT: pull request is not ready for review\n'
+if [ "$DRAFT" != false ]; then
+  [ "$WAITING" = 1 ] || printf 'DRAFT: pull request is not ready for review\n'
+  WAIT_DRAFT='the pull request is a draft, so it needs to be marked ready for review'
+fi
 case "$MERGEABILITY" in
   mergeable) ;;
-  unknown) printf 'MERGEABILITY: unknown\n' ;;
-  conflicting) printf 'MERGEABILITY: conflicting\n' ;;
+  unknown) [ "$WAITING" = 1 ] || printf 'MERGEABILITY: unknown\n' ;;
+  conflicting)
+    [ "$WAITING" = 1 ] || printf 'MERGEABILITY: conflicting\n'
+    WAIT_CONFLICT='merge conflicts, which someone has to reconcile'
+    ;;
   *) die "GitHub returned invalid mergeability for $URL" ;;
 esac
 
@@ -167,6 +193,23 @@ if ! REQUIRED=$(gh pr checks "$URL" $CHECK_SCOPE --json name,state,bucket --jq "
     cat "$GH_STDERR" >&2
     die "$CHECK_DIE"
   fi
+fi
+if [ "$WAITING" = 1 ]; then
+  # One line, one named wait, highest priority first: the reasons the blockers
+  # name, reduced to the single one a captain-facing report can carry.
+  WAIT_REASON='the merge call: the required checks are green, and the lead merges within one cycle by rule'
+  case "$REQUIRED" in
+    *'REQUIRED CHECK:'*)
+      WAIT_CHECKS=$(printf '%s\n' "$REQUIRED" | sed -n 's/^REQUIRED CHECK: //p' | head -n 1)
+      WAIT_CHECKS=${WAIT_CHECKS%% (*}
+      WAIT_REASON="a required check is not passing: $WAIT_CHECKS"
+      ;;
+    *'CHECKS: '*) WAIT_REASON='the required checks have not reported yet' ;;
+  esac
+  [ -z "$WAIT_DRAFT" ] || WAIT_REASON=$WAIT_DRAFT
+  [ -z "$WAIT_CONFLICT" ] || WAIT_REASON=$WAIT_CONFLICT
+  printf 'juggernaut/waiting-for: %s\n' "$WAIT_REASON"
+  exit 0
 fi
 [ -z "$REQUIRED" ] || printf '%s\n' "$REQUIRED"
 

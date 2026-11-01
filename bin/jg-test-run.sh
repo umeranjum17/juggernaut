@@ -47,6 +47,11 @@
 #                   drop scripts whose primary family matches <name> after selection
 #                   (repeatable; portable CI lanes exclude real-herdr-gated so the
 #                   dedicated required Herdr lane owns that coverage)
+#   --max-weight-ms <ms>
+#                   drop scripts whose recorded serial duration hint is over <ms>
+#                   after selection, and name each one on stderr. The pull request
+#                   fast set uses it so a slow suite runs in the post-merge lane
+#                   instead of holding the merge.
 #   --fail-on-gate-skip <token>
 #                   after each script, fail the run if any output line contains
 #                   "skip: <token>" (e.g. --fail-on-gate-skip 'herdr not found').
@@ -229,6 +234,7 @@ BASE_REF=origin/main
 JSON_PATH=
 SCRIPTS=()
 EXCLUDE_FAMILIES=()
+MAX_WEIGHT_MS=
 FAIL_ON_GATE_SKIP=
 JOBS=1
 JOBS_EXPLICIT=0
@@ -449,7 +455,8 @@ family_for_basename() {
     jg-spawn-dispatch-profile.test.sh)
       printf '%s\n' backend-dispatch
       ;;
-    jg-pr-merge.test.sh|jg-teardown.test.sh|jg-x-mode.test.sh)
+    jg-pr-merge.test.sh|jg-local-suite-tree.test.sh|jg-merge-on-green.test.sh|\
+    jg-teardown.test.sh|jg-x-mode.test.sh)
       printf '%s\n' pr-forge
       ;;
     jg-afk-inject-e2e.test.sh|jg-supervision-host.test.sh)
@@ -697,6 +704,8 @@ tests/jg-host-wiring.test.sh 817
 tests/jg-inbox.test.sh 8757
 tests/jg-launch-prompt-signals-live-e2e.test.sh 56
 tests/jg-lint-partitions.test.sh 4361
+tests/jg-local-suite-tree.test.sh 420
+tests/jg-merge-on-green.test.sh 900
 tests/jg-lint-root-memory.test.sh 4747
 tests/jg-mail.test.sh 10524
 tests/jg-merge-gate-lib.test.sh 83
@@ -1455,7 +1464,7 @@ families_for_changed_path() {
       printf '%s\n' squad_lead
       printf '%s\n' watcher-wake-lock
       ;;
-    bin/jg-pr-*|bin/jg-merge-local.sh|bin/jg-teardown.sh|bin/jg-review-diff.sh|\
+    bin/jg-pr-*|bin/jg-merge-on-green.sh|bin/jg-merge-local.sh|bin/jg-teardown.sh|bin/jg-review-diff.sh|\
     bin/jg-x-*|bin/jg-check*|bin/jg-pipeline-spend.sh)
       printf '%s\n' pr-forge
       ;;
@@ -1529,7 +1538,7 @@ families_for_changed_path() {
     docs/jg-test-isolation-proof.json)
       printf '%s\n' pure-contract-unit
       ;;
-    .github/*|.gitattributes|.tasks.toml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
+    .github/*|.gitattributes|.done-done.yaml|.tasks.toml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
     docs/configuration.md|docs/supervision-protocols/*)
       printf '%s\n' pure-contract-unit
       ;;
@@ -1573,6 +1582,11 @@ families_for_changed_path() {
       printf '%s\n' "__unmapped__:$path"
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
+      ;;
+    core/*)
+      # A core feature's own suites run in core-suites.yml on the push after the
+      # merge; the fast set does not wait for them. A red post-merge run files a
+      # fix-forward item (bin/jg-post-merge-ci.sh).
       ;;
     *)
       if [ -e "$path" ]; then
@@ -1691,6 +1705,21 @@ apply_exclude_families() {
       fi
     done
     [ "$keep" -eq 1 ] && kept+=("$s")
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
+apply_max_weight() {
+  local s ms
+  local -a kept=()
+  [ -n "$MAX_WEIGHT_MS" ] || return 0
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    ms=$(portable_parallel_weight_for "$s")
+    if [ "$ms" -gt "$MAX_WEIGHT_MS" ]; then
+      log "deferred to the post-merge lane (${ms}ms hint is over ${MAX_WEIGHT_MS}ms): $s"
+    else
+      kept+=("$s")
+    fi
   done
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
 }
@@ -1926,6 +1955,12 @@ while [ "$#" -gt 0 ]; do
       EXCLUDE_FAMILIES+=("${1#--exclude-family=}")
       shift
       ;;
+    --max-weight-ms)
+      [ "$#" -gt 1 ] || die "--max-weight-ms requires a number"
+      case "$2" in ''|*[!0-9]*) die "--max-weight-ms requires a number" ;; esac
+      MAX_WEIGHT_MS=$2
+      shift 2
+      ;;
     --fail-on-gate-skip)
       [ "$#" -gt 1 ] || die "--fail-on-gate-skip requires a token (e.g. 'herdr not found')"
       FAIL_ON_GATE_SKIP=$2
@@ -2073,6 +2108,7 @@ case "${MODE:-}" in
 esac
 
 apply_exclude_families
+apply_max_weight
 if [ "${#EXCLUDE_FAMILIES[@]}" -gt 0 ]; then
   SELECTION_DESC="${SELECTION_DESC};exclude-family=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")"
 fi
