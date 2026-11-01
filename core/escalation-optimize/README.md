@@ -16,7 +16,10 @@ before every owner wake, closes resolved escalations, and sends held rows as dig
 | 5 | Auto-resolve when the state the escalation was raised about changes | `autoResolve` | auto-resolve |
 | 6 | Every escalation carries `evidence=[...]` and `action=[...]` | `envelope` | envelope |
 
-Run the proof: `bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh`.
+Run the rule proof: `bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh`.
+Run the product proof, which drives `decide`, the live `bin/jg-escalation-workflows.sh tick`
+and the real wake queue in a disposable home: `bash journeys/escalation-rules-live.sh`
+(done-done journey `escalation-rules-live`).
 Measure a recorded stream: `jg-escalation-optimize.sh replay <rows>` prints wakes
 avoided, tokens saved (a per-wake estimate, not a measurement) and the wait added.
 
