@@ -408,6 +408,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/migration-c.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/captain-hold-lifecycle.md",
       "audience": "maintainer-architecture"
     },
