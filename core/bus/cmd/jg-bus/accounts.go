@@ -48,7 +48,7 @@ func (a *app) accounts(args []string) int {
 		}
 		fmt.Fprintf(&b, "  %s {\n", name)
 		if withStream {
-			fmt.Fprintf(&b, "    jetstream: { max_mem: 64Mb, max_file: 512Mb }\n")
+			fmt.Fprintf(&b, "    jetstream: { max_mem: %dMb, max_file: %dMb }\n", accountMemStore, accountFileStore)
 		}
 		fmt.Fprintf(&b, "    users: [ { user: %s, password: %q } ]\n", name, strings.TrimSpace(string(password)))
 		fmt.Fprintf(&b, "  }\n")
@@ -207,22 +207,39 @@ func writeCredential(path string) error {
 	return os.WriteFile(path, []byte(base64.RawURLEncoding.EncodeToString(raw)+"\n"), 0o600)
 }
 
-// unitAccounts writes the machine's accounts file, which the unit's server config
-// includes. It covers every home that has a state directory beside this one, so
-// one unit serves the whole machine.
-func (a *app) unitAccounts(path string) error {
+// Reservation one home's account may use, in Mb. The machine-wide budget the merged
+// config carries is one of these per account, because a server whose global cap is
+// smaller than the sum of its account reservations refuses to start JetStream
+// ("insufficient storage resources available", 10047).
+const (
+	accountMemStore  = 64
+	accountFileStore = 512
+)
+
+// machineHomes: this home plus every sibling home that has a state directory, which
+// is the set one machine-wide server carries an account for.
+func (a *app) machineHomes() []string {
 	homes := []string{a.home}
-	if entries, err := os.ReadDir(filepath.Dir(a.home)); err == nil {
-		for _, entry := range entries {
-			sibling := filepath.Join(filepath.Dir(a.home), entry.Name())
-			if sibling == a.home {
-				continue
-			}
-			if st, err := os.Stat(filepath.Join(sibling, "state")); err == nil && st.IsDir() {
-				homes = append(homes, sibling)
-			}
+	entries, err := os.ReadDir(filepath.Dir(a.home))
+	if err != nil {
+		return homes
+	}
+	for _, entry := range entries {
+		sibling := filepath.Join(filepath.Dir(a.home), entry.Name())
+		if sibling == a.home {
+			continue
+		}
+		if st, err := os.Stat(filepath.Join(sibling, "state")); err == nil && st.IsDir() {
+			homes = append(homes, sibling)
 		}
 	}
+	return homes
+}
+
+// unitAccounts writes the machine's accounts file, which the unit's server config
+// carries. It covers every home that has a state directory beside this one, so one
+// unit serves the whole machine.
+func (a *app) unitAccounts(path string, homes []string) error {
 	out := captureStdout(func() int { return a.accounts(homes) })
 	if out == "" {
 		return fmt.Errorf("no accounts were produced")

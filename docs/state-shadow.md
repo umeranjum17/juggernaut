@@ -18,9 +18,11 @@ The lease contract itself - record format, actors, staleness, guard semantics - 
   A writer that loses that race re-reads the record, finds the winner's live lease, and refuses.
 - Expiry is unchanged: a lease is live while its recorded pid is alive and is the current session-lock holder.
   There is no bucket TTL, because a TTL would age out a holder that still holds the task.
-- The store is required exactly where a lease decision is needed.
+- The store is asked exactly where a lease decision is needed.
   A home in no supervision context, holding no lease, that runs no supervision host never asks the bucket anything and needs no bus.
-  A home that does need to decide refuses rather than guessing: a guard that cannot read the record has not decided anything, so a steer, teardown, or lifecycle action stops with exit 1 and names the missing store, and `bin/jg-lease.sh check` exits 2 instead of reporting an empty task.
+  A home that does need to decide, in a session where the store cannot answer, continues on the file path and says so once, plainly: the durable files a steer or a launch writes are still the record, so a missing server costs the cross-actor lease and never the fleet's steering (captain, live incident 2026-11-01: every steer and every lead restart was refused on a home whose message server was not running).
+  `bin/jg-lease.sh check` and `sweep` report state rather than mutate it, so they keep naming the missing store (`check` exits 2) instead of reporting an empty task.
+  The protection is unchanged whenever the bus answers.
 - The guard is a read, and it leaves no record behind, so an abandoned guarded action leaves nothing to expire.
   The home-local lock the file path held across a guarded mutation is gone; what serializes a takeover is the claim's compare-and-set.
   One residual replaces the old one and is accepted at the same CONFUSED-AGENT-GRADE severity the lease header documents: between a guard's read and the caller's mutation, the other actor could claim the task, which the lock used to exclude.

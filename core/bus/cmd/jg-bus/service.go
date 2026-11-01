@@ -12,6 +12,177 @@ import (
 	"time"
 )
 
+// natsCommand builds one client call against <url>. This home's own account
+// credentials go in the environment, never on the argument list, because the machine
+// runs one account per home and a client that connects as the empty user is refused
+// with an authorization violation.
+func (a *app) natsCommand(url string, rest ...string) *exec.Cmd {
+	cmd := exec.Command("nats", append([]string{"-s", url}, rest...)...)
+	if user, pass, ok := a.credentials(); ok {
+		cmd.Env = append(os.Environ(), "NATS_USER="+user, "NATS_PASSWORD="+pass)
+	}
+	return cmd
+}
+
+// credentials: this home's account name and the password the machine's accounts file
+// carries for it, from the credentials file bin/jg-bus.sh accounts writes beside it.
+func (a *app) credentials() (string, string, bool) {
+	name := homeAccount(filepath.Base(a.home))
+	data, err := os.ReadFile(filepath.Join(a.runtime, name+".pass"))
+	if err != nil {
+		return "", "", false
+	}
+	pass := strings.TrimSpace(string(data))
+	if pass == "" {
+		return "", "", false
+	}
+	return name, pass, true
+}
+
+// machineConfig renders the machine's one server config: the base config in force
+// with a JetStream budget sized for this many accounts, plus the accounts file. It is
+// a single file with no includes, which is what `unit` runs.
+func (a *app) machineConfig(homes int) (string, error) {
+	base := readFileString(a.busFile("nats.conf"))
+	if strings.TrimSpace(base) == "" {
+		return "", fmt.Errorf("no server config at %s", a.busFile("nats.conf"))
+	}
+	accounts := readFileString(filepath.Join(a.runtime, "accounts.conf"))
+	if strings.TrimSpace(accounts) == "" {
+		return "", fmt.Errorf("no accounts at %s", filepath.Join(a.runtime, "accounts.conf"))
+	}
+	header := "# Written by bin/jg-bus.sh unit: the server config in force plus this machine's\n" +
+		"# accounts, in one file. Regenerated on every run; edit the sources, not this.\n"
+	return header + withStoreCaps(base, homes) + "\n" + accounts, nil
+}
+
+// jetstreamBlock is the JetStream stanza of a server config.
+var jetstreamBlock = regexp.MustCompile(`(?s)jetstream[ \t]*\{.*?\}`)
+
+// withStoreCaps sizes the config's machine-wide JetStream budget for <homes> accounts,
+// keeping every other key the base wrote (store_dir above all). A global cap below the
+// sum of the account reservations makes the server refuse JetStream outright with
+// "insufficient storage resources available" (10047), which is what a hard-coded
+// 256Mb/64Mb did beside six accounts reserving 512Mb/64Mb each.
+func withStoreCaps(base string, homes int) string {
+	if homes < 1 {
+		homes = 1
+	}
+	mem := fmt.Sprintf("max_mem_store: %dMb", accountMemStore*homes)
+	file := fmt.Sprintf("max_file_store: %dMb", accountFileStore*homes)
+	loc := jetstreamBlock.FindStringIndex(base)
+	if loc == nil {
+		return base + fmt.Sprintf("\njetstream {\n  store_dir: \"./jetstream\"\n  %s\n  %s\n}\n", mem, file)
+	}
+	block := base[loc[0]:loc[1]]
+	for _, caps := range []struct {
+		re   *regexp.Regexp
+		line string
+	}{
+		{regexp.MustCompile(`(?m)^[ \t]*max_mem_store:.*$`), mem},
+		{regexp.MustCompile(`(?m)^[ \t]*max_file_store:.*$`), file},
+	} {
+		if caps.re.MatchString(block) {
+			block = caps.re.ReplaceAllLiteralString(block, "  "+caps.line)
+			continue
+		}
+		open := strings.Index(block, "{")
+		if open < 0 {
+			continue
+		}
+		block = block[:open+1] + "\n  " + caps.line + block[open+1:]
+	}
+	return base[:loc[0]] + block + base[loc[1]:]
+}
+
+// unitPath is where this home's systemd user service lives.
+func unitPath(name string) (string, bool) {
+	config := os.Getenv("XDG_CONFIG_HOME")
+	if config == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", false
+		}
+		config = filepath.Join(home, ".config")
+	}
+	return filepath.Join(config, "systemd", "user", name), true
+}
+
+// unitName is the unit this home installs. It is one per machine, so a test or a lab
+// home names its own rather than replacing the machine's live bus.
+func unitName() string {
+	if name := os.Getenv("JG_BUS_UNIT"); name != "" {
+		return name
+	}
+	return "jg-bus.service"
+}
+
+// haveUserManager: 0 when systemctl can reach a user manager, which is what makes a
+// unit the right owner of the server.
+func haveUserManager() bool {
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return false
+	}
+	return exec.Command("systemctl", "--user", "show-environment").Run() == nil
+}
+
+// installService makes this home's bus a running service, once: the unit is written
+// when it is missing or names another home, systemd is reloaded, and the unit is
+// enabled now, so the server comes back after a reboot instead of waiting for someone
+// to start it by hand. Without a user manager it falls back to `ensure`, which starts
+// the same server detached from the home's state directory. It says exactly one line
+// and never fails its caller: a home whose bus cannot start still has to come up.
+func (a *app) installService() int {
+	if _, err := exec.LookPath("nats-server"); err != nil {
+		say("bus: cannot start, no nats-server on PATH (install: bin/jg-bootstrap.sh install nats-server nats)")
+		return 0
+	}
+	if !haveUserManager() {
+		return a.ensure()
+	}
+	text, err := a.buildUnit("nats")
+	if err != nil {
+		say("bus: cannot start, %v", err)
+		return 0
+	}
+	name := unitName()
+	path, ok := unitPath(name)
+	if !ok {
+		say("bus: cannot start, no home directory for the systemd user unit")
+		return 0
+	}
+	installed := false
+	if current, err := os.ReadFile(path); err != nil || string(current) != text {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			say("bus: cannot start, %v", err)
+			return 0
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			say("bus: cannot start, %v", err)
+			return 0
+		}
+		if out, err := exec.Command("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
+			say("bus: cannot start, systemctl --user daemon-reload failed: %s", detail(string(out)))
+			return 0
+		}
+		installed = true
+	}
+	if out, err := exec.Command("systemctl", "--user", "enable", "--now", name).CombinedOutput(); err != nil {
+		say("bus: cannot start %s: %s", name, detail(string(out)))
+		return 0
+	}
+	if exec.Command("systemctl", "--user", "is-active", "--quiet", name).Run() != nil {
+		say("bus: %s did not stay active; see: systemctl --user status %s", name, name)
+		return 0
+	}
+	if installed {
+		say("bus: installed and started, systemd user service %s for %s (%s)", name, a.home, a.cfgOr("nats-url", ""))
+		return 0
+	}
+	say("bus: up, systemd user service %s for %s (%s)", name, a.home, a.cfgOr("nats-url", ""))
+	return 0
+}
+
 // startOne starts one service from its file, logs it beside its pid, and says so. A
 // service that is already running is left alone.
 func (a *app) startOne(quiet bool, name string, argv ...string) {
@@ -105,8 +276,7 @@ func (a *app) ensureStream() error {
 	}
 	url := a.cfgOr("nats-url", "")
 	name := a.streamName()
-	auth := a.natsAuth()
-	if err := exec.Command("nats", append(auth, "-s", url, "stream", "info", name)...).Run(); err == nil {
+	if a.natsCommand(url, "stream", "info", name).Run() == nil {
 		return nil
 	}
 	logFile, err := os.Create(filepath.Join(a.runtime, "stream.log"))
@@ -114,8 +284,8 @@ func (a *app) ensureStream() error {
 		return err
 	}
 	defer logFile.Close()
-	cmd := exec.Command("nats", append(auth, "-s", url, "stream", "add", "--config",
-		filepath.Join(a.root, "core", "bus", "stream.json"))...)
+	cmd := a.natsCommand(url, "stream", "add", "--config",
+		filepath.Join(a.root, "core", "bus", "stream.json"))
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	return cmd.Run()
 }
