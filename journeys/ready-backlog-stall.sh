@@ -17,7 +17,7 @@ FORK="$T/fork"
 M="$T/main"
 L="$T/lead"
 mkdir -p "$FORK"
-cp -a "$REPO/bin" "$REPO/addons" "$FORK/"
+cp -a "$REPO/bin" "$REPO/core" "$FORK/"
 for f in jg-send.sh jg-control.sh; do
   # shellcheck disable=SC2016 # the recorder expands its own arguments when run
   printf '#!/usr/bin/env bash\nprintf "%%s %%s %%s\\n" "$(date +%%s)" %s "$*" >> "$JG_HOME/sent"\n' "${f%.sh}" > "$FORK/bin/$f"
@@ -71,7 +71,7 @@ supervise() {  # <home> <label>
   local h=$1 label=$2 pid seq gen line
   while [ ! -e "$T/stop" ]; do
     env -i HOME="$h/home" TMPDIR="$h/tmp" PATH="$h/fakebin:$PATH" LANG=C.UTF-8 \
-      JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" JG_ADDONS_DIR="$FORK/addons" \
+      JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" \
       JG_SQUAD_LEAD_LIVENESS_SECS=99999999 JG_BUSY_TURN_MAX_SECS=999999 JG_STALE_ESCALATE_SECS=999999 \
       JG_SQUAD_LEAD_WAKE_STALL_SECS=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
       "$FORK/bin/jg-watch.sh" > "$h/out" 2>> "$h/err" &

@@ -312,7 +312,7 @@ mail_rollback_wake_locked() {
   # the uid surfaced without a wake. If the journal cannot be verified and
   # cleaned, fail the rollback so the row stays queued and is delivered -
   # never suppressed.
-  local wake_key=$1 generation=$2 id=$3 clean_key tmp jtmp
+  local wake_key=$1 generation=$2 id=$3 clean_key jtmp
   clean_key=$(printf '%s' "$wake_key" | jg_wake_clean_field)
   # Journal evidence: only when this uid has an entry must it be removed now.
   # When the journal is unwritable (the usual reason both records failed) no
@@ -331,21 +331,11 @@ mail_rollback_wake_locked() {
       return 1
     fi
   fi
-  # Queue row: remove it (required) so nothing ackable survives without a
-  # durable record.
-  tmp=$(mktemp "$JG_WAKE_QUEUE.rollback.XXXXXX") || return 1
-  if ! awk -F '\t' -v key="$clean_key" '
-    NF >= 5 && $3 == "check" && $4 == key { next }
-    { print }
-  ' "$JG_WAKE_QUEUE" > "$tmp"; then
-    rm -f -- "$tmp"
-    return 1
-  fi
-  chmod 0600 "$tmp" 2>/dev/null || true
-  if ! mv -f -- "$tmp" "$JG_WAKE_QUEUE"; then
-    rm -f -- "$tmp"
-    return 1
-  fi
+  # Queue row: acknowledge it on the bus (required) so nothing consumable
+  # survives without a durable record. The rows are the bus's now
+  # (docs/bus-live.md), so this is the same primitive a producer uses to
+  # withdraw a row whose condition no longer holds.
+  jg_wake_withdraw check "$clean_key" || return 1
   # Cursor record: best-effort; a surviving cursor line only means already
   # surfaced, which the heal tolerates.
   if grep -vx -e "$id" "$CURSOR" > "$CURSOR.tmp.$$" 2>/dev/null; then

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# shellcheck source=bin/jg-harness-quirks-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-harness-quirks-lib.sh"
+
 # jg-busy-lib.sh - the ONE owner of juggernaut's semantic busy-state contract.
 #
 # Design source: the captain-approved semantic busy-state redesign
@@ -231,24 +234,18 @@ jg_busy_current_gen() {  # <state-dir> <id>
 # record. Listing a source here without a writer that can clear it would seed a
 # busy record nothing could ever settle.
 jg_busy_sources_for_harness() {  # <harness>
-  local adapter=
+  local adapter
+  # Two adapters keep a runtime gate of their own: their semantic writers are
+  # only armed on a build Juggernaut has verified, and an unverified build must
+  # trust nothing. Everything else the table answers.
   case "${1:-}" in
-    claude*) adapter=claude-hook ;;
-    codex*)
-      jg_busy_codex_semantic_source || { printf ''; return 0; }
-      adapter='codex-hook codex-appserver'
-      ;;
-    opencode*) adapter=opencode-plugin ;;
-    gemini*) adapter=gemini-hook ;;
-    devin) adapter=devin-hook ;;
-    pi|pi-signed) adapter=pi-ext ;;
-    omp) adapter=omp-ext ;;
-    kimi*)
-      jg_busy_kimi_verified || { printf ''; return 0; }
-      adapter='kimi-wire kimi-hook'
-      ;;
-    *) printf ''; return 0 ;;
+    codex*) jg_busy_codex_semantic_source || { printf ''; return 0; } ;;
+    kimi*) jg_busy_kimi_verified || { printf ''; return 0; } ;;
   esac
+  # Stderr stays quiet here: this runs on every supervision poll, and an unknown
+  # harness is already reported where a human reads it.
+  adapter=$(jg_hq_value "${1:-}" busy_sources 2>/dev/null) || { printf ''; return 0; }
+  [ -n "$adapter" ] || { printf ''; return 0; }
   printf '%s jg-spawn jg-interrupt jg-recovery' "$adapter"
 }
 

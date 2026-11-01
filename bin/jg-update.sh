@@ -16,7 +16,10 @@
 # store, so a single fetch refreshes them all; standalone-clone homes are
 # fetched on their own. SquadLead homes are leased at a detached HEAD on the
 # default branch, so a fast-forward there advances HEAD only and never touches
-# any other worktree's checkout or the shared `main` branch.
+# any other worktree's checkout or the shared `main` branch. The primary home can
+# be leased the same way, so a detached HEAD at an ancestor of the target is
+# advanced rather than skipped, and a primary holding a unique commit is still
+# skipped.
 #
 # The fast-forward mechanics live in bin/jg-ff-lib.sh (base_mode "origin" here);
 # the same library drives local and remote parent-targeted squad_lead sync, so
@@ -110,7 +113,12 @@ fi
 # --- main juggernaut repo ---------------------------------------------------
 
 reread_juggernaut="no"
-ff_target "$JG_ROOT" "juggernaut" origin no no
+# A home whose code root is a leased worktree runs on a DETACHED HEAD at the default
+# branch tip; that is this platform's ordinary home shape, not drift, so the primary
+# takes the same allowance a Squad Lead home already takes. Nothing else relaxes: a
+# dirty tree, a named branch that is not the default, a fetch failure, and a unique
+# local commit are all still skipped, so nothing is forced, merged, or stashed.
+ff_target "$JG_ROOT" "juggernaut" origin yes no
 if [ "$FF_STATUS" = "updated" ]; then
   if [ -n "$FF_INSTR" ]; then
     reread_juggernaut="yes"

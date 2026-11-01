@@ -1,22 +1,40 @@
-# Wake urgency routing: which events wake the model at once, and which wait for a
-# turn that happens anyway. bin/jg-wake-lib.sh reads it; a home's
-# config/wake-routing overrides this file and JG_WAKE_ROUTING overrides both.
-#   now     wakes on its own: a captain decision, security, a failed release, a
-#           stuck worker past its threshold, a finished task.
-#   batch   a durable row that does not wake on its own: it arrives with the next
-#           wake of any kind or with the queue-resurface cadence, so a routine
-#           event never costs a turn of its own and is never dropped.
-# A rule is `<class> <kind> <key-glob> <payload-glob>`; the first match wins. kind
-# is signal, stale, check, heartbeat, or `*`. A check row's key is its own
-# state/<id>.check.sh path. No match means `now`, so a missing rule file hides
-# nothing.
-# class  kind    key                        payload
-now      *       *                          needs-decision*
-now      *       *                          failed*
-now      *       *                          blocked*
-now      *       *                          done*
+# Wake urgency routing: which events wake the model at once, which wait for the next
+# turn, and which are only recorded. bin/jg-wake-lib.sh reads it; config/wake-routing
+# overrides this file in a home and JG_WAKE_ROUTING overrides both.
+#   now     wakes on its own: a captain decision, security, a failed release, a stuck
+#           worker past its threshold, a finished task.
+#   batch   a durable row that does not wake on its own: it arrives with the next wake of
+#           any kind or with the watcher's resurface cadence, so routine events cost one
+#           turn between them and none is dropped.
+#   silent  recorded only; bin/jg-wake.sh settled reads it.
+# A rule is `<class> <kind> <key-glob> <payload-glob>`; the first match wins. kind is
+# signal, stale, check, heartbeat, or `*`. A `<task>.status` event is matched against the
+# newest line of its status file, so a home rule can hold a routine state word, e.g.
+# `batch signal *.status working*`; any other event is matched against its payload. No
+# match means `now`, so a missing rule file hides nothing.
+set re-alert-minutes 30
+
+# class  kind    key              payload
+now      *       *                needs-decision*
+now      *       *                failed*
+now      *       *                blocked*
+now      *       *                done*
+batch    signal  *.turn-ended     *
+batch    check   merged-*         *
+# A board ask that carries no must category is a rule failure, not an alarm: the
+# gate routes it to Overwatch and Main answers it there, so it rides the next
+# digest instead of waking a model of its own. The two board-gate reports that do
+# need a model keep the default: a merge with no proof, and a must ask waiting
+# over 48 hours.
+now      check   *board-gate.check.sh   *merge landed with no board Evidence card*
+now      check   *board-gate.check.sh   *must ask waiting over 48h*
+batch    check   *board-gate.check.sh   *board ask*
+batch    check   *dpr-green*      *
+batch    check   post-merge-ci-*  *
 # The tickets checks report board bookkeeping and never ask the captain anything:
 # a board row the work has already settled, or a pass summary, is not a decision.
+# bin/jg-ticket.sh writes the state where the work happens, so the check that
+# reports any remainder rides the next digest instead of waking a model.
 batch    check   *tickets-stale.check.sh    *
 batch    check   *tickets-sync.check.sh     *
-now      *       *                          *
+now      *       *                *

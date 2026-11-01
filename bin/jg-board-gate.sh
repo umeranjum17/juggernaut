@@ -19,8 +19,15 @@
 # decided  Replace that record's open line with Main's decision.
 # waiting  Print the count of waiting asks that carry a must category. It is the
 #          only waiting count this home owns: the gate keeps every non-must ask
-#          off the board, so the board's own waiting count is this one.
+#          off the board, so the board's own waiting count is this one. A key the
+#          board's dismissal record settles is not counted, and a card whose
+#          detail field lost its category to a rebuild is counted from the
+#          category's own record (bin/jg-board-record-lib.sh).
 # check    One no-model pass over the board, run as a watcher check:
+#          - a card the board's own records settle is left alone: a key its owner
+#            dismissed stays dismissed when a rebuild puts the card back, and a
+#            card keeps the must category it was filed with even after a rebuild
+#            dropped its detail field (bin/jg-board-record-lib.sh);
 #          - every open ask with no must category is recorded for Overwatch and
 #            dismissed from the captain's board, since it is not his to answer;
 #          - every must ask waiting over 48 hours is re-pinged once;
@@ -57,6 +64,8 @@ BOARD=${BOARD:-}
 . "$SCRIPT_DIR/jg-ask-gate-lib.sh"
 # shellcheck source=bin/jg-board-link-lib.sh
 . "$SCRIPT_DIR/jg-board-link-lib.sh"
+# shellcheck source=bin/jg-board-record-lib.sh
+. "$SCRIPT_DIR/jg-board-record-lib.sh"
 
 OPEN_ASKS='.decisions[]? | select((.dismissed // false) != true and .decided == null and ((.kind // .type // "decision") == "decision"))'
 
@@ -154,8 +163,18 @@ cmd_waiting() {
   board=$(board_file)
   [ -n "$board" ] || die 'no board to count; set SIGN_OFF_HOME, JG_PROOF_BOARD or config/post-merge --board'
   json=$(board_list "$board") || die "cannot read $board with sign-off-axi"
-  count=$(printf '%s' "$json" | jq -r "$OPEN_ASKS"' | (.detail // "")' 2>/dev/null \
-    | while IFS= read -r d; do jg_ask_card_category "$d"; done | sed '/^$/d' | wc -l | tr -d ' ')
+  count=$(printf '%s' "$json" | jq -r "$OPEN_ASKS"' | [(.key // ""), (.detail // "")] | join("\u001f")' 2>/dev/null \
+    | while IFS=$'\x1f' read -r key detail; do
+        [ -n "$key" ] || continue
+        # A card its owner dismissed is not waiting on anyone, however often a
+        # rebuild puts it back (bin/jg-board-record-lib.sh).
+        jg_board_dismissed "$board" "$key" && continue
+        # The category a card was filed with outlives a rebuild that dropped its
+        # detail field, so the count reads it from the record as well.
+        cat=$(jg_ask_card_category "$detail")
+        [ -n "$cat" ] || cat=$(jg_ask_card_category "$(jg_board_detail_of "$board" "$key")")
+        [ -z "$cat" ] || printf '%s\n' "$key"
+      done | wc -l | tr -d ' ')
   printf '%s\n' "${count:-0}"
 }
 
@@ -165,7 +184,12 @@ ask_sweep() {  # <board json> <board>
   printf '%s' "$1" | jq -r "$OPEN_ASKS"' | [(.key // ""), (.filed // ""), (.detail // ""), (.filer // ""), (.title // "")] | join("\u001f")' 2>/dev/null \
     | while IFS=$'\x1f' read -r key filed detail filer title; do
         [ -n "$key" ] || continue
+        # A dismissal is a record, not an absence: a card its owner dismissed
+        # and a rebuild put back has nobody waiting on it, so the gate neither
+        # routes it again nor re-pings it.
+        jg_board_dismissed "$2" "$key" && continue
         cat=$(jg_ask_card_category "$detail")
+        [ -n "$cat" ] || cat=$(jg_ask_card_category "$(jg_board_detail_of "$2" "$key")")
         if [ -z "$cat" ]; then
           refire_ok "unrouted-$key" || continue
           id=$(route_record "${title:-$key}" "$filer" "$key") || continue

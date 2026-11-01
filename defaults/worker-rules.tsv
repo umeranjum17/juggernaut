@@ -21,6 +21,7 @@ agents:14. Relay	overwatch
 agents:Captain instruction precedence	overwatch,squad_lead
 agents:Maintaining this file	overwatch,squad_lead,builder
 skill:juggernaut-coding-guidelines	builder,reviewer
+skill:done-done-verify-suites	builder,reviewer
 skill:prior-art	builder,scout
 skill:diagnostic-reasoning	builder,reviewer,scout,overwatch,squad_lead
 skill:captain-hold-lifecycle	scout,overwatch,squad_lead

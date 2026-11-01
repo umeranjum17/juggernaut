@@ -103,6 +103,15 @@ jobs:
             '@AGENTS.md' >"$tmp"
           cmp -s CLAUDE.md "$tmp" || { echo "::error::CLAUDE.md must be the canonical @AGENTS.md pointer"; exit 1; }
           [ "$(readlink .claude/skills)" = "../.agents/skills" ] || { echo "::error::.claude/skills must be a symlink to ../.agents/skills"; exit 1; }
+      - name: The retired catalog stays retired
+        run: |
+          set -eu
+          # A pull request is judged on the paths it adds; a main push re-checks the whole tree.
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            bin/jg-retired-catalog-check.sh --base "${{ github.event.pull_request.base.sha }}"
+          else
+            bin/jg-retired-catalog-check.sh
+          fi
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu
@@ -230,6 +239,54 @@ jobs:
       - name: Run the fast evals
         run: bin/jg-fast-evals.sh
 
+  # The bus lane: the pinned JetStream server and client install through this
+  # repository's own install path, and the test that proves a home comes up with
+  # JetStream running then runs for real instead of gate-skipping. It is the lane
+  # that stops every live path in the migration from depending on a server no
+  # install provides (docs/bus-service.md).
+  bus:
+    name: Bus service
+    runs-on: ubuntu-latest
+    needs: invariants
+    if: ${{ needs.invariants.outputs.behavior == 'true' && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
+    # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the pinned bus server and client
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          export PATH=$NPM_CONFIG_PREFIX/bin:$PATH
+          bin/jg-bootstrap.sh install nats-server nats
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          # The module is the one owner of the version this repo builds with.
+          go-version-file: core/bus/go.mod
+          cache: false
+      # The captain channel's command is Go, per the stack decision that new
+      # long-running parts are Go, and the shell is only its dispatcher. Build it
+      # here once and name it for the lane, so the behaviour test below proves the
+      # binary rather than a fallback.
+      - name: Build the captain channel command
+        run: |
+          set -eu
+          ( cd core/bus && go vet ./... && go build -o "$RUNNER_TEMP/bin/jg-bus" ./cmd/jg-bus )
+          echo "JG_BUS_BIN=$RUNNER_TEMP/bin/jg-bus" >> "$GITHUB_ENV"
+      - name: Prove a home comes up with JetStream running
+        run: |
+          set -eu
+          nats-server --version
+          nats --version
+          tests/jg-bus-service.test.sh
+      - name: Prove the captain channel's Go command at parity
+        run: |
+          set -eu
+          tests/jg-bus.test.sh
+
   # The one required status check: it always reports, refusing a lane that did
   # not run.
   required:
@@ -237,7 +294,7 @@ jobs:
     runs-on: ubuntu-latest
     # Fast tier: the verdict is a few JSON reads.
     timeout-minutes: 5
-    needs: [invariants, lint, syntax, smoke, evals]
+    needs: [invariants, lint, syntax, smoke, evals, bus]
     if: ${{ always() && !github.event.pull_request.draft && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
     steps:
       - uses: actions/checkout@v6

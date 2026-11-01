@@ -31,8 +31,6 @@
 # source beyond its sourced libraries.
 
 _JG_MERGE_OUTCOME_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$_JG_MERGE_OUTCOME_LIB_DIR/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-pr-lib.sh
 . "$_JG_MERGE_OUTCOME_LIB_DIR/jg-pr-lib.sh"
 # shellcheck source=bin/jg-parent-channel-lib.sh
@@ -158,11 +156,11 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
 }
 
 # Merge hooks owned by core (the same file bin/jg-dod-lib.sh sources), so
-# config/post-merge runs whether or not the merge-card add-on is installed.
+# config/post-merge runs whether or not the merge-card feature is installed.
 # shellcheck source=bin/jg-merge-gate-lib.sh
 . "$_JG_MERGE_OUTCOME_LIB_DIR/jg-merge-gate-lib.sh"
-# Optional merge-card add-on: defines the same two hooks for homes that install it.
-_jg_mo_hooks=$(jg_addon_path "${JG_HOME:-$_JG_MERGE_OUTCOME_LIB_DIR/..}" merge-card/bin/jg-merge-hooks-lib.sh)
+# Optional merge-card feature: defines the same two hooks for homes that install it.
+_jg_mo_hooks=$_JG_MERGE_OUTCOME_LIB_DIR/../core/merge-card/bin/jg-merge-hooks-lib.sh  # absent in a bin/-only fixture
 # shellcheck source=/dev/null
 [ ! -r "$_jg_mo_hooks" ] || . "$_jg_mo_hooks"
 

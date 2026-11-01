@@ -18,10 +18,10 @@ OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
 cd "$REPO" || exit 1
 failed=0
 
-# 1. The poll, the check and the reconcile, through the add-on's own suite on a
+# 1. The poll, the check and the reconcile, through the feature's own suite on a
 #    disposable fleet board: real tasks-axi, real sign-off-axi, no live board. The
 #    suite times a drifted reconcile and a settled one and prints both.
-JG_TEST_FORK=$REPO bash addons/tickets-sync/tests/sync.test.sh >"$OUT/tickets-sync-test.log" 2>&1 || failed=1
+JG_TEST_FORK=$REPO bash core/tickets-sync/tests/sync.test.sh >"$OUT/tickets-sync-test.log" 2>&1 || failed=1
 if grep -q '^PASS:' "$OUT/tickets-sync-test.log" && ! grep -q '^FAIL' "$OUT/tickets-sync-test.log"; then
   grep -E '^(PASS|reconcile):' "$OUT/tickets-sync-test.log" >"$OUT/tickets-sync-passed.log"
 else
@@ -61,7 +61,7 @@ def reconcile_times():
 
 times = reconcile_times()
 steps = [
-    "Run the add-on sync test so a ticket publishes its stage and last event from the lane, and the stale check names a ticket its work contradicts.",
+    "Run the feature sync test so a ticket publishes its stage and last event from the lane, and the stale check names a ticket its work contradicts.",
     f"Time a reconcile over a drifted disposable board and a settled one: {'; '.join(times) if times else 'no timing printed'}.",
     f"Move real backlog rows through the operator command and the lifecycle transition library: {passed('jg-ticket-writeback-test.log')} checks passed, covering start, done with a delivered PR, a hold with its reason, its release, and the merge path.",
     "Confirm a home with no fleet board writes nothing and still succeeds, so a board problem never fails a transition.",

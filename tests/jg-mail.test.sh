@@ -562,17 +562,18 @@ SH
   chmod +x "$fakebin/python3"
 
   # Triple-fault fixture: the journal and cursor cannot be written (read-only),
-  # and the queue file is write-only so the wake append succeeds but the
-  # rollback's awk rewrite cannot read the queue and must fail. No durable
-  # record and no queue rewrite can remove the wake row, so the poll must fail
-  # closed with an honest report and leave the row for the next poll to heal.
+  # and the state directory cannot be changed either, so the wake a poll raises
+  # can be neither stored nor removed - not locally, and not on the bus, because
+  # the row only exists in this home's outbox until a bus takes it. No durable
+  # record and no rollback can take the wake back, so the poll must fail closed
+  # with an honest report and leave the row for the next poll to heal.
   printf 'uidvalidity=90009\n' > "$roll_home/state/.mail-seen"
   : > "$roll_home/state/.mail-woken"
   : > "$roll_home/state/.wake-queue"
   chmod 0400 "$roll_home/state/.mail-seen" "$roll_home/state/.mail-woken"
-  chmod 0200 "$roll_home/state/.wake-queue"
+  chmod 0500 "$roll_home/state"
   [ -w "$roll_home/state/.mail-seen" ] && { echo "fixture unexpected: cursor still writable"; return 1; }
-  [ -w "$roll_home/state/.wake-queue" ] || { echo "fixture unexpected: queue not appendable"; return 1; }
+  [ -w "$roll_home/state" ] && { echo "fixture unexpected: state still writable"; return 1; }
 
   local out rc=0
   out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
@@ -585,8 +586,8 @@ SH
 
   # Restore access: the still-queued wake must be healed without re-waking, so
   # the mail surfaces exactly once from the retained row and never duplicates.
+  chmod 0700 "$roll_home/state"
   chmod 0600 "$roll_home/state/.mail-seen" "$roll_home/state/.mail-woken"
-  chmod 0644 "$roll_home/state/.wake-queue"
   rc=0
   out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
     JG_HOME="$roll_home" PATH="$fakebin:$PATH" \

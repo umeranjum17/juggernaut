@@ -73,7 +73,7 @@
 #     `update`/`edit` that would set one on a [captain-ask] row (or retitle a
 #     row to [captain-ask] with one): an owner ask is top priority. Such an add
 #     or retitle without --priority gets --priority 0 added;
-#   - `add` (or `create`) that the optional task-priority add-on check refuses,
+#   - `add` (or `create`) that the optional task-priority feature check refuses,
 #     e.g. no `--priority 0-3`; its message and exit status are returned and
 #     nothing runs. The check is ${XDG_DATA_HOME:-~/.local/share}/jg-task-priority/check.sh
 #     (JG_TASK_PRIORITY_CHECK overrides the path); when it is not installed this
@@ -360,7 +360,7 @@ captain_ask_first() {
   esac
 }
 # New and edited items: strict intake and owner asks first, then the optional
-# task-priority add-on (a new task must carry a priority; no-op when not installed).
+# task-priority feature (a new task must carry a priority; no-op when not installed).
 case "${1:-}" in
   add|create)
     item_args ${ARGS[@]+"${ARGS[@]}"}

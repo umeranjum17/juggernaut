@@ -120,6 +120,7 @@ bin/jg-test-run.sh --lane portable-serial   # portable serial remainder (watcher
 bin/jg-test-run.sh --list-lanes   # discover exact lane names, including the current CI serial shards
 bin/jg-test-run.sh --check-coverage   # prove portable shards + serial + serial shards + Herdr equal the full inventory
 bin/jg-test-run.sh --all   # deliberate complete regression (optional local full walk; not no-mistakes Test)
+( cd core/bus && go vet ./... && go build ./... )   # build the Go commands' module; bin/jg-bus.sh does the same build on first use
 bin/jg-test-run.sh --show-limits   # print the per-test and whole-gate limits this runner reads from config
 bin/jg-test-isolation-proof.sh --list   # proven portable parallel candidate set
 bin/jg-test-isolation-proof.sh --jobs 4 --json /tmp/jg-isolation-proof.json   # re-run the portable candidate proof
@@ -142,7 +143,7 @@ The pull request gate is thin: [`.github/workflows/ci.yml`](.github/workflows/ci
 A red heavy run is an alarm rather than a block: `bin/jg-post-merge-ci.sh` files one fix item naming the failing run, and `bin/jg-post-merge-ci.sh --main` does the same for the latest nightly run.
 A pull request head is proven locally by the sealed receipt from `bin/jg-local-suite.sh`, and `bin/jg-ship-local.sh <task> <PR URL>` pushes the lane, proves that exact head, merges through the guarded path and syncs every home, printing each stage's wall clock.
 Pushing a new head to a pull request cancels that pull request's still-running CI so only the current head is validated; pushes to `main` are never cancelled, and the workflow owns that contract and its rationale.
-Draft pull requests skip `CI` and `Add-ons CI` until they are marked ready for review, and a push to `main` runs only the repo invariants because the thin gate already ran.
+Draft pull requests skip `CI` and `Core suites` until they are marked ready for review, and a push to `main` runs only the repo invariants because the thin gate already ran.
 A fork can set the repository variable `JG_CI_SKIP_PUSH` to `1` to skip the push run of both workflows, and `JG_CI_SKIP_MACOS` to `1` to skip the stock macOS Bash job, without a tracked edit that drifts from upstream.
 Each skip is a job-level condition, so a skipped job reports success rather than leaving the pull request pending, and with neither variable set every job runs on upstream and on every fork exactly as before.
 `JG_CI_SKIP_MACOS` is currently set to `1` on `umeranjum17/juggernaut` because no macOS runner starts, so the stock macOS Bash job in `Behavior suite` is skipped.

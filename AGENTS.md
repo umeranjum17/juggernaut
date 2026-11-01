@@ -207,7 +207,7 @@ Relay may require that same live cycle with no fleet work.
 Do not substitute another harness's wait shape, use shell `&`, or create a second cycle when a healthy one already exists.
 For every actionable wake, follow the ordinary-wake continuation in the emitted protocol; use its repair action only when the live cycle is missing or failed.
 No turn ends blind while work is under way, including turns described as holding or waiting.
-A stuck worker escalates by itself, operator to its lead, lead to Main, and only what Main cannot settle to a board card, each hop re-firing while the wait stays open (`addons/wait-timers/README.md`), so on a stuck-worker wake unblock it or steer its owner rather than waiting for the captain.
+A stuck worker escalates by itself, operator to its lead, lead to Main, and only what Main cannot settle to a board card, each hop re-firing while the wait stays open (`core/wait-timers/README.md`), so on a stuck-worker wake unblock it or steer its owner rather than waiting for the captain.
 
 - At the start of every wake-handling turn, drain the durable wake queue before peeking, reading beyond the reason line, steering, or starting work.
 - Session start is the only exception because its one-shot digest already presented the queue while locked or deliberately left it untouched in lock-refused read-only mode.

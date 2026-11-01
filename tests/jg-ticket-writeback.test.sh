@@ -18,7 +18,7 @@ printf '{"schema":2,"items":[]}\n' > "$board"
 printf '%s\n' "$board" > "$home/config/fleet-board"
 printf '[markdown]\npath="data/backlog.md"\narchive="data/done-archive.md"\ndone_keep=10\n' > "$home/.tasks.toml"
 export JG_HOME="$home" HOME="$work/user" XDG_DATA_HOME="$work/xdg" SIGN_OFF_HOME="$work/signoff"
-export JG_TICKETS_TICKET="$ROOT/addons/tickets-sync/ticket.py"
+export JG_TICKETS_TICKET="$ROOT/core/tickets-sync/ticket.py"
 
 ticket_id() { printf 'jg-%s\n' "$(printf 'main/%s' "$1" | sha256sum | cut -c1-32)"; }
 ticket_field() {  # <id> <jq path>

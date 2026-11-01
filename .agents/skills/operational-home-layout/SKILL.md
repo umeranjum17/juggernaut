@@ -51,7 +51,6 @@ config/pipeline-spend  optional presence flag opting this home in to default-off
 config/turnend-churn-absorb  optional presence flag opting this home into the default-off absorb of bare turn-end wakes on pane churn; LOCAL, gitignored, and not inherited; see docs/configuration.md "Turn-end pane-churn absorb"
 config/wedge-defer-parked-gate  optional presence flag opting this home into the default-off deferral of a wedge escalation for a lane parked at a validation gate awaiting the supervisor's own still-open decision; LOCAL, gitignored, and not inherited; see docs/configuration.md "Parked-gate wait deferral"
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
-config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/jg-tool-update-check.sh; LOCAL, gitignored, Juggernaut-maintained but human-editable, and NOT inherited by squad lead homes; see docs/configuration.md "Watched tool updates"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
@@ -94,7 +93,6 @@ state/               runtime records and signals; gitignored
   branch-session/ .branch-session .branch-mirror-cursor  the branch's per-main-session conversations, the pointer to the current one, and the dialog-mirror cursor; extension-owned (docs/pi-supervision-branch.md)
   .branch-eligible-rows .branch-eligible-owner .main-eligible-rows  per-actor wake-row claims and branch-owner evidence; docs/watcher-continuity.md owns the acknowledgement contract
   .supervision-host*  supervision host process record, engine conversation, current turn scope and report receipts, and bounded ledger of every close and engine turn; bin/jg-supervision-host.sh owns them; never touch
-  .lease-<task>        per-task supervision lease naming which actor (main or branch) may change that task; bin/jg-lease-lib.sh owns the contract the guarded scripts enforce
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tokens-retro.check.sh  generated daily token retro check shim and its .check-trust binding; present only after bin/jg-tokens-retro.sh arm; reports land in data/tokens-retro/<YYYY-MM-DD>/
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/jg-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
@@ -103,7 +101,7 @@ state/               runtime records and signals; gitignored
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/jg-mail.sh (mail schema: docs/configuration.md "Mail plane")
   startup-growth.check.sh  generated daily startup-growth poll shim and its .check-trust binding; present only after bin/jg-startup-growth-check.sh arm; its record .startup-growth-check holds the daily gate, the per-file growth baselines, and the last reported finding set, so removing it re-baselines growth silently and repeats a standing finding such as a budget overrun once (docs/configuration.md "Daily startup growth check")
   pending-replies/   parent-owned squad lead pending-reply records (correlation id, delivery vs reply, recovery, escalation); jg-pending-reply-lib.sh
-  .waiting-timers/   one durable waiting-state episode per recorded task (first-observation time, owner and parent levels, native-admission key); the wait-timers add-on owns them
+  .waiting-timers/   one durable waiting-state episode per recorded task (first-observation time, owner and parent levels, native-admission key); the wait-timers feature owns them
   procevent/         registered process-to-event sources, one private record per canonical source id; written only by bin/jg-procevent.sh, and their presence alone keeps supervision required (`process-event-sources` skill)
   procevent-inbox/   private captured results and their durable handled-acknowledgement markers; source output lives here and never in an event line
   decision-bindings/ private records marking a captured-answer source as feeding the keyed-answer intake, with a legacy origin on pre-collapse records; written only by bin/jg-captain-hold.sh bind, dropped by unbind and by source retirement (`process-event-sources` and `captain-hold-lifecycle` skills; docs/captain-hold-lifecycle.md)
@@ -130,7 +128,7 @@ state/               runtime records and signals; gitignored
   .cursor-park-owner .cursor-park-owner.lock .turnend-cursor-blocks   Cursor stop-hook owner record, publication and commit lock, and bounded repair-nag budget; never touch
   .hash-* .count-* .stale-* .stale-since-* .churn-since-* .activity-* .paused-* .wedge-escalations-* .dead-reported-* .writing-* .waiting-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak .squad-lead-liveness-tick .squad-lead-liveness-*.lock* .pruned-panes .pruned-panes.next   watcher internals; never touch (clearing the bounded .pruned-panes key ledger re-opens the once-only vanished-pane notice)
   .squad-lead-relaunch-<id> .squad-lead-relaunch-bound-<id>   durable relaunch history and parked-bound state; never touch (bin/jg-squad-lead-liveness-lib.sh owns the ledger contract)
-  .model-outages/    watcher-owned OpenCode model-error scan records (per-lane, per-episode alert records); the alerts add-on owns them; never touch
+  .model-outages/    watcher-owned OpenCode model-error scan records (per-lane, per-episode alert records); the alerts feature owns them; never touch
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon; publication and freshness: docs/turnend-guard.md "Guard grace and the poll cadence"
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch

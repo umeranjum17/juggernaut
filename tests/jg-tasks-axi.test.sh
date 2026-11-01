@@ -13,7 +13,7 @@
 # reports any code-root copy that is not this home's own file while staying
 # silent for a link into the home, an absent copy, and the single-home layout.
 set -u
-# An installed task-priority add-on must not change unrelated cases.
+# An installed task-priority feature must not change unrelated cases.
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -433,7 +433,7 @@ test_rehold_answer_closes_as_the_new_hold() {
   pass "an answer under a new hold closes the call even when the same decision was released before"
 }
 
-# The optional task-priority add-on check refuses an add before tasks-axi runs; absent, it does nothing.
+# The optional task-priority feature check refuses an add before tasks-axi runs; absent, it does nothing.
 test_wrapper_runs_the_task_priority_check() {
   local dir stub rc
   dir=$(make_split priority-check)

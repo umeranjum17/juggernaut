@@ -62,10 +62,7 @@ jg_transition_field() {  # <record> <n>
 }
 
 jg_transition_pane_id()      { jg_transition_field "$1" 1; }
-jg_transition_workspace_id() { jg_transition_field "$1" 2; }
-jg_transition_from_status()  { jg_transition_field "$1" 3; }
 jg_transition_to_status()    { jg_transition_field "$1" 4; }
-jg_transition_agent()        { jg_transition_field "$1" 5; }
 
 # jg_transition_policy: THE single-owner status -> supervision-action table.
 # Given a normalized `to_status`, print exactly one action token:

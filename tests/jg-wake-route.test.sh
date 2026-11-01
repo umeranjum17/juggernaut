@@ -1,76 +1,79 @@
 #!/usr/bin/env bash
-# The wake urgency rules give a routine event a `batch` class: its durable row is
-# recorded and its wake does not end the watcher cycle, so the tickets checks
-# never cost a turn of their own. An unlisted event, and any event the rules do
-# not name, still wakes at once.
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# Wake urgency routing (docs/watcher-continuity.md "Wake urgency classes"): the rule file
+# assigns now, batch, or silent; a batched row cannot end the watcher cycle; and an urgent
+# row from the same event still latches it.
+set -u
 
-state=$(jg_test_tmproot jg-wake-route)/state
-mkdir -p "$state"
-export JG_HOME="${state%/state}" JG_STATE_OVERRIDE="$state"
+# shellcheck source=tests/wake-helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
+TMP_ROOT=$(jg_test_tmproot jg-wake-route)
 
-route_class() {  # <kind> <key> <payload>
-  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$state" bash -c '
-    . "$1/bin/jg-wake-lib.sh"
-    jg_wake_route_class "$2" "$3" "$4"
-  ' _ "$ROOT" "$1" "$2" "$3"
+route() {
+  JG_HOME="$1" JG_STATE_OVERRIDE="$2" bash -c '
+    . "$1/bin/jg-wake-lib.sh"; jg_wake_route_class "$2" "$3" "$4"' _ "$ROOT" "$3" "$4" "$5"
 }
 
-# 1. The rule file names the tickets checks, and nothing else on this branch.
-assert_equals batch "$(route_class check 'state/tickets-stale.check.sh' 'tickets-check: a row says queued')" \
-  'the tickets check must be classified batch'
-assert_equals batch "$(route_class check 'state/tickets-sync.check.sh' 'tickets-sync: 1 homes read; 2 tickets changed')" \
-  'the tickets poll summary must be classified batch'
-assert_equals now "$(route_class check 'state/some-other.check.sh' 'check: something to act on')" \
-  'an unlisted check must still wake at once'
-assert_equals now "$(route_class signal 'task.status' 'done [at=1]: PR https://example.test/pull/1')" \
-  'a finished task must still wake at once'
-assert_equals now "$(route_class check 'state/tickets-stale.check.sh' 'needs-decision: pick one')" \
-  'a decision line keeps its wake even from a batched check'
-pass 'the rules give the tickets checks batch and leave everything else now'
+test_classes() {
+  local home="$TMP_ROOT/classes" state="$TMP_ROOT/classes/state"
+  mkdir -p "$state"
+  assert_equals "$(route "$home" "$state" signal crew.turn-ended 'signal: x')" batch \
+    "a turn-end must be batched, not woken on"
+  assert_equals "$(route "$home" "$state" check startup 'check: MISSING')" now \
+    "a startup failure must wake at once"
+  assert_equals "$(route "$home" "$state" check "$state/board-gate.check.sh" \
+    "check: $state/board-gate.check.sh: board ask routed to Overwatch, not a must: ask-mac-screen-grant - Allow screen recording? (record owd-1)")" batch \
+    "a board ask without a must category must land in a digest, not wake a model"
+  assert_equals "$(route "$home" "$state" check "$state/board-gate.check.sh" \
+    "check: $state/board-gate.check.sh: merge landed with no board Evidence card: m1 https://example.test/o/r/pull/7")" now \
+    "a merge with no board proof must still wake at once"
+  assert_equals "$(route "$home" "$state" check "$state/tickets-stale.check.sh" \
+    'tickets-stale: jg-1 says queued')" batch \
+    "a staled tickets row is bookkeeping, not a decision"
+  assert_equals "$(route "$home" "$state" check "$state/tickets-sync.check.sh" \
+    'tickets-sync: 1 homes read; 2 tickets changed')" batch \
+    "a tickets poll summary must not wake a model"
+  printf 'working [at=1]: editing\n' > "$state/lane.status"
+  printf 'needs-decision [at=2]: pick one\n' > "$state/pick.status"
+  assert_equals "$(route "$home" "$state" signal pick.status "signal: x")" now \
+    "a captain decision must wake at once"
+  printf 'silent signal *.status working*\nnow * * *\n' > "$home.routing"
+  assert_equals "$(JG_WAKE_ROUTING="$home.routing" route "$home" "$state" signal lane.status x)" \
+    silent "a home rule must be able to record an event only"
+  assert_equals "$(route "$home" "$state" signal lane.status "signal: x")" now \
+    "a status line still wakes unless a home rule holds it"
+  pass "the rule file assigns now, batch, and silent"
+}
 
-# 2. The recorded row is durable either way; only the wake differs.
-JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$state" bash -c '
-  . "$1/bin/jg-wake-lib.sh"
-  jg_wake_append check "state/tickets-stale.check.sh" "tickets-check: 206 rows no home accounts for"
-  printf "%s\n" "$JG_WAKE_LAST"
-' _ "$ROOT" > "$state/last"
-assert_equals 'batch:state/tickets-stale.check.sh' "$(cat "$state/last")" 'the append must hand the batch verdict on'
-assert_contains "$(cat "$state/.wake-queue")" 'tickets-check: 206 rows' 'a batch event must still be a durable row'
-pass 'a batch event is recorded as an ordinary durable row'
+test_silent_is_recorded_not_queued() (
+  dir=$(make_case route-silent)
+  mkdir -p "$dir/config"
+  printf 'silent signal *.status working*\nnow * * *\n' > "$dir/config/wake-routing"
+  printf 'working [at=1]: editing\n' > "$dir/state/lane.status"
+  JG_HOME="$dir" append_wake "$dir/state" signal lane.status "signal: x"
+  [ ! -s "$dir/state/.wake-queue" ] || fail "a silent event reached the queue"
+  assert_grep "lane.status" "$dir/state/.wake-settled" "a silent event must stay readable"
+  pass "a home's silent rule records an event and never queues it"
+)
 
-# 3. The cycle gate: a batch reason returns to the cycle, an urgent one wakes.
-out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$state" bash -c '
-  . "$1/bin/jg-push-transition-lib.sh"
-  JG_WAKE_LAST="batch:state/tickets-stale.check.sh"
-  wake "check: state/tickets-stale.check.sh: tickets-check: 206 rows no home accounts for"
-  echo continued
-' _ "$ROOT" 2>&1)
-assert_equals continued "$out" 'a batch reason must not end the watcher cycle'
-out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$state" bash -c '
-  . "$1/bin/jg-push-transition-lib.sh"
-  JG_WAKE_LAST="now:state/some-other.check.sh"
-  wake "check: state/some-other.check.sh: something to act on"
-  echo continued
-' _ "$ROOT" 2>&1)
-assert_not_contains "$out" continued 'an urgent reason must end the watcher cycle'
-assert_contains "$out" 'something to act on' 'an urgent reason must still be delivered'
-# An urgent row from the same cycle keeps its wake: the latch beats a batch verdict.
-out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$state" bash -c '
-  . "$1/bin/jg-push-transition-lib.sh"
-  JG_WAKE_LAST="batch:state/tickets-stale.check.sh"
-  JG_WAKE_CYCLE_URGENT=1
-  wake "check: state/tickets-stale.check.sh: tickets-check: 206 rows no home accounts for"
-  echo continued
-' _ "$ROOT" 2>&1)
-assert_not_contains "$out" continued 'an urgent row must not be silenced by a batch one'
-pass 'a batch reason leaves the cycle and an urgent one ends it'
+test_batch_is_gated_and_urgent_latches() (
+  dir=$(make_case route-gate)
+  out=$(JG_STATE_OVERRIDE="$dir/state" bash -c '. "$1/bin/jg-wake-lib.sh"
+    jg_wake_append signal crew.turn-ended "signal: crew.turn-ended"
+    printf "batch=%s\n" "${JG_WAKE_LAST:-}"
+    printf "done [at=2]: done: finished\n" > "$STATE/pick.status"
+    jg_wake_append signal pick.status "signal: $STATE/pick.status"
+    printf "urgent=%s\n" "${JG_WAKE_CYCLE_URGENT:-}"' _ "$ROOT" 2>&1)
+  assert_contains "$out" "batch=batch:crew.turn-ended" "a batched row hands its class on"
+  assert_contains "$out" "urgent=1" "an urgent row must latch the cycle"
+  assert_contains "$(JG_STATE_OVERRIDE="$dir/state" bash -c '. "$1/bin/jg-push-transition-lib.sh"
+    JG_WAKE_LAST=batch:crew.turn-ended
+    wake "signal: crew.turn-ended" && echo gated' _ "$ROOT" 2>&1)" gated \
+    "a batched row must not end the watcher cycle"
+  pass "batch rows are gated and an urgent row latches the cycle"
+)
 
-# 4. A home rule overrides the shipped one, so a captain can hold or release a class.
-mkdir -p "$JG_HOME/config"
-printf 'now check *tickets-stale.check.sh *\nnow * * *\n' > "$JG_HOME/config/wake-routing"
-assert_equals now "$(route_class check 'state/tickets-stale.check.sh' 'tickets-check: x')" \
-  'a home rule must override the shipped batch rule'
-rm -f "$JG_HOME/config/wake-routing"
-pass 'a home routing file overrides the shipped rules'
+result=0
+test_classes || result=1
+test_silent_is_recorded_not_queued || result=1
+test_batch_is_gated_and_urgent_latches || result=1
+exit "$result"

@@ -16,10 +16,13 @@ DRAIN="$ROOT/bin/jg-wake-drain.sh"
 TMP_ROOT=$(jg_test_tmproot jg-wake-next-tests)
 
 # The presented row's identity with the arrival timestamp dropped, so two
-# separate queue fixtures carrying the same appended wake compare equal while a
-# wrong kind, key, payload, or sequence does not.
+# The presented row's wake identity, with the arrival timestamp and the state-local
+# sequence dropped, so two separate queue fixtures carrying the same appended wake
+# compare equal while a wrong kind, key, or payload does not. The sequence is
+# state-local (`bin/jg-wake-lib.sh` stamps one per queue), so it is not part of the
+# identity two fixtures can share.
 row_identity() {  # <file>
-  awk -F '\t' '$2 == "1" && $3 == "signal" && $4 == "task1" { print $2 "\t" $3 "\t" $4 "\t" $5 }' "$1"
+  awk -F '\t' '$3 == "signal" && $4 == "task1" { print $3 "\t" $4 "\t" $5 }' "$1"
 }
 
 # The --ack-through sequence a drain-style acknowledgement names, from either
@@ -80,8 +83,10 @@ test_single_call_returns_the_wake_the_drain_returns_and_retires_the_same_row() {
   new_ack=$(next_ack_command "$new_out")
   [ -n "$new_ack" ] || fail "the single call printed no acknowledgement command"
   new_seq=$(ack_sequence "$new_out")
-  [ "$new_seq" = "$old_seq" ] \
-    || fail "the single call named sequence '$new_seq' while the drain named '$old_seq'"
+  # The queue sequence is state-local (`bin/jg-wake-lib.sh` stamps one per queue), so two
+  # separate fixtures cannot share a number. What must hold is that the single call names
+  # a sequence at all, and that the token built from it retires the row it presented below.
+  [ -n "$new_seq" ] || fail "the single call named no sequence to acknowledge"
   ! grep -F 'WAKE_ACK_REQUIRED' "$new_out" "$new_err" >/dev/null \
     || fail "the single call still leaked the old acknowledgement line for the caller to parse"
 

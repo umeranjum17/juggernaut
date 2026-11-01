@@ -1,0 +1,14 @@
+# The captain channel's delivery surface, run locally: ntfy with no public relay in
+# front of it, bound to loopback by default. The address his iPad reaches over the
+# tailnet is a home override of this file, never a shipped public endpoint. Started by
+# `bin/jg-bus.sh serve` from the home's state/bus directory, so the relative cache
+# file lands there. A home may override this file at config/bus/ntfy.yml.
+# The relay switch is NOT here: it is `set ntfy-relay` in defaults/captain-channel,
+# and the shipped value is off. Turning it on would publish the same event through
+# ntfy-relay-server instead of this server; the captain has not answered that yet.
+base-url: "http://127.0.0.1:2586"
+listen-http: "127.0.0.1:2586"
+cache-file: "./ntfy-cache.db"
+cache-duration: "24h"
+behind-proxy: false
+enable-signup: false

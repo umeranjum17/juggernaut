@@ -35,7 +35,7 @@ else
 fi
 set -eu
 
-JG_CI_REQUIRED_LANES='lint syntax smoke evals'
+JG_CI_REQUIRED_LANES='lint syntax smoke evals bus'
 
 jg_ci_required_die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 

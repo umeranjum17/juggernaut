@@ -1,0 +1,42 @@
+{
+  "schema": "jg-workflow.v1",
+  "name": "pending-reply",
+  "version": 1,
+  "description": "One marked request to a squad_lead, as a durable wait: a reply event settles the waiter, and a timer per stage fires its activity. The record path owns the same wait today (bin/jg-pending-reply-lib.sh); docs/reply-shadow.md holds the parity between them.",
+  "instance": "corr_id",
+  "stream": {
+    "name": "JG_REPLY",
+    "subjects": "jg.reply.>",
+    "max_age": "168h"
+  },
+  "subjects": {
+    "waiter": "jg.reply.start",
+    "timer": "jg.reply.timer",
+    "fire": "jg.reply.fire",
+    "answer": "jg.reply.answer"
+  },
+  "defaults": {
+    "grace_secs": 120
+  },
+  "stages": [
+    {
+      "name": "request",
+      "wait_for": "reply",
+      "timer_anchor": "request_turn_completed_epoch",
+      "on_timeout": "repost",
+      "retries": 1,
+      "fire_epoch": "recovery_attempted_epoch",
+      "next": "recovery"
+    },
+    {
+      "name": "recovery",
+      "wait_for": "reply",
+      "timer_anchor": "recovery_turn_completed_epoch",
+      "on_timeout": "escalate",
+      "retries": 0,
+      "fire_epoch": "escalated_epoch",
+      "next": "escalated"
+    }
+  ],
+  "terminal": ["resolved", "escalated"]
+}

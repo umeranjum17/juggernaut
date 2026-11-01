@@ -754,15 +754,14 @@ jg_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/jg-project-capacity-lib.sh"
 # shellcheck source=bin/jg-worker-account-lib.sh
 . "$SCRIPT_DIR/jg-worker-account-lib.sh"
-# shellcheck source=bin/jg-addons-dir-lib.sh
-. "$SCRIPT_DIR/jg-addons-dir-lib.sh"
 # shellcheck source=bin/jg-model-allowlist.sh
 . "$SCRIPT_DIR/jg-model-allowlist.sh"
-# Account-pool hook (addons/account-pool): a no-op when the add-on is absent.
-_jg_ap=$(jg_addon_path "${JG_HOME:-$SCRIPT_DIR/..}" account-pool/bin/jg-account-pool-lib.sh)
+# Account pool (core/account-pool): the pool hook every launch and relaunch routes through, and a
+# no-op in a fixture checkout copied from bin/ alone, which carries no core/ tree.
+_jg_ap=$SCRIPT_DIR/../core/account-pool/bin/jg-account-pool-lib.sh
 if [ -r "$_jg_ap" ]; then
-  # shellcheck source=/dev/null
-  . "$_jg_ap" || { printf 'error: the account-pool add-on at %s failed to load; fix or remove it\n' "$_jg_ap" >&2; exit 1; }
+  # shellcheck source=core/account-pool/bin/jg-account-pool-lib.sh
+  . "$_jg_ap" || { printf 'error: %s failed to load\n' "$_jg_ap" >&2; exit 1; }
 else
   jg_account_hook() { :; }
 fi
@@ -6015,7 +6014,7 @@ fi
 # `config/launch-env-hook <out-file>` and sources the one export statement it
 # writes, the same shape as the trailer step above. Prepended after it, so it
 # runs first and the trailer hooks dir is appended after its GIT_CONFIG_*
-# entries. A failure stops the launch. The juggernaut-addons git-identity add-on
+# entries. A failure stops the launch. The core git-identity feature
 # pins the lane's git identity and pre-push check through it.
 if [ -f "$CONFIG/launch-env-hook" ] && [ -x "$CONFIG/launch-env-hook" ]; then
   LAUNCH_ENV_HOOK_FILE=$(shell_quote "$LAUNCH_DIR/launch-env.$SPAWN_GEN.sh")

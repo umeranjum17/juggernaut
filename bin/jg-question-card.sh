@@ -85,6 +85,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/jg-ask-gate-lib.sh"
 # shellcheck source=bin/jg-board-link-lib.sh
 . "$SCRIPT_DIR/jg-board-link-lib.sh"
+# shellcheck source=bin/jg-board-record-lib.sh
+. "$SCRIPT_DIR/jg-board-record-lib.sh"
 # shellcheck source=bin/jg-captain-card-lib.sh
 . "$SCRIPT_DIR/jg-captain-card-lib.sh"
 
@@ -140,14 +142,6 @@ split_board() {
     esac
     shift
   done
-}
-
-has_flag() {  # <flag>  -> 0 when the remaining arguments carry it
-  local want=$1 arg
-  for arg in ${ARGS[@]+"${ARGS[@]}"}; do
-    [ "$arg" = "$want" ] && return 0
-  done
-  return 1
 }
 
 set_detail() {  # <value>: keep exactly one --detail pair in ARGS
@@ -262,13 +256,31 @@ cmd_post() {
   key=$(comm -13 <(printf '%s\n' "$before" | sed '/^$/d' | LC_ALL=C sort) \
                 <(printf '%s\n' "$after" | sed '/^$/d' | LC_ALL=C sort) | head -1)
   if [ -z "$key" ]; then
-    key=$(printf '%s\n' "$after" | sed '/^$/d' | head -1)
+    # No new open key means sign-off kept a card that already exists under the
+    # key we asked for (the same question again, or its answer): that card is
+    # this post's card, so cite it instead of another open one.
+    key=$(flag_value --key)
+    [ -n "$key" ] || key=$(printf '%s\n' "$after" | sed '/^$/d' | head -1)
     [ -n "$key" ] || die "sign-off-axi accepted the card but the board shows no open card; run sign-off-axi status and report this"
   fi
   [ -z "$ROUTE" ] || "$SCRIPT_DIR/jg-board-answers.sh" route "$key" "$ROUTE" "$DECISION_KEY" >&2 \
     || die "the card $key is posted but its route to $ROUTE was not recorded; run jg-board-answers.sh route $key $ROUTE"
+  # The detail field is where the card's must category lives, and a rebuild of
+  # the feed writes its own detail. Record it beside the board as well, so the
+  # category outlives any rebuild (bin/jg-board-record-lib.sh).
+  detail=$(flag_value --detail)
+  if [ -n "$(jg_ask_card_category "$detail")" ]; then
+    board_now=${BOARD:-$(jg_question_board)}
+    [ -z "$board_now" ] \
+      || jg_board_detail_record "$board_now" "$key" "$detail" \
+      || printf 'jg-question-card: posted %s but could not record its detail beside the board\n' "$key" >&2
+  fi
   printf '%s\n' "$key"
   link=$(jg_board_link decide "$key") && printf 'link: %s\n' "$link" >&2
+  # The captain channel delivers this card to the captain by the new path
+  # (bin/jg-bus.sh): it records, publishes and delivers the event and changes
+  # nothing the board does.
+  "$SCRIPT_DIR/jg-bus.sh" publish card "$key" "$title" ${link:+--link "$link"} >/dev/null 2>&1 || true
   return 0
 }
 

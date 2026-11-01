@@ -95,7 +95,7 @@ assert_contains "$out" "receipt: 20261029T000000Z-01234567-ab" "find reports the
 pass "find lists evidence and recognizes screen: none"
 
 # verify-merge-card-posts-after-pr-239: the real post-merge hook path files a card with only JG_HOME set.
-printf '#!/bin/sh\nexec "%s/addons/merge-card/merge-card" post --board "%s/b.json" "$@"\n' "$ROOT" "$root" > "$home/config/post-merge"
+printf '#!/bin/sh\nexec "%s/core/merge-card/merge-card" post --board "%s/b.json" "$@"\n' "$ROOT" "$root" > "$home/config/post-merge"
 chmod +x "$home/config/post-merge"
 row hook t8 "" "$EMPTY"; printf 'screen: none\noutcome: Parser is faster\n' > "$home/data/t8/checks.md"; seal t8
 jg_dod_meta_value() { sed -n "s/^$2=//p" "$1" | tail -1; }

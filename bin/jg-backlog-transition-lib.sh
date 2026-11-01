@@ -484,7 +484,7 @@ jg_backlog_row_probe() {  # <data-dir> <id>
 # bin/jg-ticket.sh owns the write: it takes this home's board, writes only fields
 # that differ, and is a silent no-op (exit 0) when this home has no board, so a
 # board problem never fails a transition. The mapping is the poll's own
-# (addons/tickets-sync/sync.py owns state, stage and progress), and `update` moves
+# (core/tickets-sync/sync.py owns state, stage and progress), and `update` moves
 # no stage, so it writes nothing.
 # Usage: jg_backlog_ticket_note <data-dir> <verb> <id> [flag...]
 jg_backlog_ticket_note() {  # <data-dir> <verb> <id> [flag...]

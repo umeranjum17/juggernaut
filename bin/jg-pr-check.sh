@@ -4,7 +4,7 @@
 # Refuses when bin/jg-dod-lib.sh will not accept the named head as reachable
 # outside the worker's disposable copy; in no-mistakes mode a forge-reported
 # head is that named head and is already stored on the forge. The optional
-# receipts add-on picks the receipt candidate from the verified forge head and
+# receipts feature picks the receipt candidate from the verified forge head and
 # the gate receives it as a hook argument. The gate also reads a pull request's
 # live forge head itself when the worker copy holds no remote-tracking ref for
 # it, so a push that opened the PR from outside this copy's ref sync still
@@ -257,7 +257,7 @@ fi
 
 MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
 PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-# The optional receipts add-on chooses the receipt candidate from the worktree,
+# The optional receipts feature chooses the receipt candidate from the worktree,
 # pull request URL, mode, metadata path and verified forge head PR_HEAD (empty
 # when unverified); its output must be empty (no candidate) or exactly PR_HEAD, or
 # the check refuses.
@@ -272,11 +272,11 @@ if [ -z "$PR_HEAD" ] || ! jg_dod_forge_head_is_named_head "$MODE"; then
   RECEIPT_CANDIDATE=
   if declare -F jg_receipts_pr_candidate >/dev/null; then
     if ! RECEIPT_CANDIDATE=$(jg_receipts_pr_candidate "$WT" "$URL" "$MODE" "$META" "$PR_HEAD"); then
-      echo "error: receipts add-on hook jg_receipts_pr_candidate failed; no receipt candidate was chosen" >&2
+      echo "error: receipts feature hook jg_receipts_pr_candidate failed; no receipt candidate was chosen" >&2
       exit 1
     fi
     if [ -n "$RECEIPT_CANDIDATE" ] && [ "$RECEIPT_CANDIDATE" != "$PR_HEAD" ]; then
-      echo "error: receipts add-on hook jg_receipts_pr_candidate returned a candidate other than the verified pull request head; no receipt candidate was chosen" >&2
+      echo "error: receipts feature hook jg_receipts_pr_candidate returned a candidate other than the verified pull request head; no receipt candidate was chosen" >&2
       exit 1
     fi
   fi

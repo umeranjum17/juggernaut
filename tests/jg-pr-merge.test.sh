@@ -810,7 +810,7 @@ GATE
   set -e
 
   assert_absent "$case_dir/home/projects/juggernaut-addons" \
-    "merge-gate-refusal: the fixture holds the add-on, so this case proves nothing"
+    "merge-gate-refusal: the fixture holds the feature, so this case proves nothing"
   expect_code 1 "$rc" "merge-gate-refusal: an unproven merge must be refused"
   assert_grep 'done-done: no receipt' "$case_dir/stderr" \
     "merge-gate-refusal: the gate's own reason was not shown"
@@ -818,7 +818,7 @@ GATE
     "merge-gate-refusal: the refusal did not name the gate"
   assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "merge-gate-refusal: the forge merged after the gate refused"
-  pass "a home merge gate refuses an unproven merge with no add-on installed"
+  pass "a home merge gate refuses an unproven merge with no feature installed"
 }
 
 test_github_merged_outcome_is_verified() {

@@ -769,7 +769,7 @@ Protocol 16 can subscribe to `pane.agent_status_changed` over one bounded Unix-s
 `bin/jg-transition-lib.sh` owns the backend-neutral transition vocabulary and policy.
 The Herdr adapter subscribes before reconciling current levels, buffers edges during reconciliation, and returns fresh blocked transitions for this home's panes.
 
-The watcher maps the pane back to the task and skips these (the optional wait-timers add-on applies its own native-evidence admission and active-hold policy on top when installed):
+The watcher maps the pane back to the task and skips these (`core/wait-timers` applies its own native-evidence admission and active-hold policy on top):
 
 - Squad Lead endpoints.
 - Declared `paused:` waits, because the worker's declared wait already accounts for its quiet.
@@ -780,7 +780,7 @@ The watcher maps the pane back to the task and skips these (the optional wait-ti
 ### Polling fallback
 
 The push path only shortens latency.
-The optional `wait-timers` add-on owns the independent recorded-pane polling timers and owner routing.
+`core/wait-timers` owns the independent recorded-pane polling timers and owner routing.
 Polling runs every cycle and remains the permanent fallback when any of these is unavailable:
 
 - Protocol 16.
@@ -799,7 +799,7 @@ There is still one watcher process; the event reader is a bounded child of that 
 The away daemon supports tmux and Herdr supervisor panes only.
 It refuses Zellij, Orca, and cmux as supervisor backends rather than applying the wrong transport.
 For Herdr, target existence, native state, capture, composer state, and verified submit all route through the shared backend dispatcher and the explicit named-session CLI owner.
-The pane-independent max-defer alert is configured in [`wedge-alarm.md`](wedge-alarm.md).
+A max-defer wedge sends its alert to the captain by the one captain channel ([`captain-channel.md`](captain-channel.md)), so no per-backend notifier is configured.
 
 ### Where the daemon runs
 
