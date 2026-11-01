@@ -281,8 +281,9 @@ cmd_post() {
   fi
   printf '%s\n' "$key"
   link=$(jg_board_link decide "$key") && printf 'link: %s\n' "$link" >&2
-  # The captain channel tees this card onto the bus in shadow (bin/jg-bus.sh):
-  # it records and publishes the event and changes nothing the board does.
+  # The captain channel delivers this card to the captain by the new path
+  # (bin/jg-bus.sh): it records, publishes and delivers the event and changes
+  # nothing the board does.
   "$SCRIPT_DIR/jg-bus.sh" publish card "$key" "$title" ${link:+--link "$link"} >/dev/null 2>&1 || true
   return 0
 }

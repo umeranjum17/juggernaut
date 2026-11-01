@@ -2,7 +2,7 @@
 
 Date: 2026-11-01.
 Host: Linux (Omarchy), amd64.
-This record covers the mechanism in [`docs/captain-channel.md`](../captain-channel.md): the three local services started from the shipped files, the shadow tee, ntfy delivery with the relay off, and reply routing.
+This record covers the mechanism in [`docs/captain-channel.md`](../captain-channel.md): the three local services started from the shipped files, one event recorded, published and delivered to the captain, the switch between live and shadow, the replay over the record, the reply routing, and a live delivery that does not arrive.
 The commands below are the exact ones run, and the output lines are exact excerpts.
 
 ## Versions
@@ -27,7 +27,7 @@ dapr: started (4090688), log <home>/state/bus/dapr.log
 ntfy: started (4090693), log <home>/state/bus/ntfy.log
 ```
 
-The only home override in the proof was `set ntfy-deliver on`.
+The only home override in the proof was `set mode live`, which was then the switch a home had to set; `mode live` is the shipped value now, so the same run needs no mode override at all.
 The runtime files are `core/bus/nats.conf`, `core/bus/stream.json`, `core/bus/dapr/components/pubsub.yaml` and `core/bus/ntfy.yml`; the Dapr runtime starts with `--enable-metrics=false`, so it binds no shared metrics port.
 
 ## One event is recorded, published and delivered
@@ -71,7 +71,68 @@ jg-board-answers: refused: card unrouted-card is not routed to a lead, so its an
 exit: 3
 ```
 
+## The switch is live, and one line reverses it
+
+The mode is the shipped value, so a home with no mode key of its own is live:
+
+```sh
+bin/jg-bus.sh config mode
+```
+
+```text
+live
+```
+
+A card posted through `bin/jg-question-card.sh post` and a captain outcome appended through `bin/jg-branch-outcome.sh append` both arrived on the ntfy topic, with no mode key and no delivery key in the fixture home:
+
+```text
+{"path":"/juggernaut-captain","title":"Which key should the muxr use?"}
+{"path":"/juggernaut-captain","title":"The key is fixed and released in 0.4.1"}
+```
+
+With `set mode shadow` appended to `config/captain-channel`, the same publish is recorded and not delivered:
+
+```text
+shadow
+delivered to the captain's surface after the reversal: 0 request(s)
+```
+
+Deleting that one line restores delivery.
+
+## The replay over the record
+
+```sh
+bin/jg-bus.sh parity
+bin/jg-bus.sh parity --corrupt
+```
+
+```text
+captain channel parity: record=<home>/state/captain-channel.jsonl events=2 instants=1 decisions=4 deliveries=2 differences=0
+captain channel parity: mode live, so each event goes to http://127.0.0.1:36351/juggernaut-captain
+captain channel parity --corrupt: tampered with the replayed event at 1793493975 on the new path: events=2 instants=1 decisions=4 deliveries=2 differences=4 (must be non-zero)
+```
+
+## A live delivery that does not arrive
+
+With `set ntfy-server http://127.0.0.1:1`, a server that is not there:
+
+```sh
+bin/jg-bus.sh publish card k-lost "This one cannot arrive."
+bin/jg-bus.sh status
+```
+
+```text
+mode live, relay off, delivery http://127.0.0.1:1/juggernaut-captain
+record <home>/state/captain-channel.jsonl: 5 event(s), 1 undelivered
+```
+
+The undelivered record holds the event with its error:
+
+```text
+{"at":1793493976,"target":"http://127.0.0.1:1/juggernaut-captain","error":"curl: (7) Failed to connect to 127.0.0.1:1 ...","event":{"at":1793493976,"kind":"card","key":"k-lost",...}}
+```
+
 ## The portable proof
 
-`tests/jg-bus.test.sh` carries the same four claims without any of these binaries: it stands a local HTTP sink in for the Dapr sidecar and for ntfy, and it drives the real `bin/jg-question-card.sh post`, `bin/jg-branch-outcome.sh append` and `bin/jg-bus.sh reply` against a fixture home.
-`bin/jg-test-run.sh tests/jg-bus.test.sh` reported `exit=0 duration_ms=1457`.
+`tests/jg-bus.test.sh` carries the same claims without any of these binaries: it stands a local HTTP sink in for the Dapr sidecar and for ntfy, and it drives the real `bin/jg-question-card.sh post`, `bin/jg-branch-outcome.sh append` and `bin/jg-bus.sh reply` against a fixture home.
+It proves the shipped live mode, the one-line `mode shadow` reversal, a live delivery that is named in the undelivered record, the replay's zero-difference run and its tampered run, and the reply routing.

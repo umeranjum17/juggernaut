@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# tests/jg-bus.test.sh - the captain channel's shadow tee, proved end to end.
+# tests/jg-bus.test.sh - the captain channel, live, proved end to end.
 #
-# What it proves, in order: an event the fleet emits is recorded and published
-# while the path that emitted it does what it always did; ntfy delivery targets
-# the local server while the relay switch is off, and only the relay when it is
-# on; a reply event from the captain routes to the lead the board's own route
-# sends board answers to; and nothing about the shadow can fail its emitter -
-# with the bus unreachable the record still holds every event and the emitter
-# still exits 0. Skipped when python3 is absent, because the delivery proof needs
-# a local HTTP sink rather than a real ntfy.
+# What it proves, in order: an event the fleet emits is recorded, published and
+# delivered to the captain while the path that emitted it does what it always
+# did; the shipped mode is live, and `mode shadow` is the one line that reverses
+# it; ntfy delivery targets the local server while the relay switch is off, and
+# only the relay when it is on; a live delivery that does not arrive is named in
+# the undelivered record; the parity replay reports what is sent against every
+# recorded event with zero differences, and its tampered run reports a difference
+# so a green run is never vacuous; a reply event from the captain routes to the
+# lead the board's own route sends board answers to; and no failure of this path
+# can fail its emitter. Skipped when python3 is absent, because the delivery proof
+# needs a local HTTP sink rather than a real ntfy.
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -74,12 +77,12 @@ SH
   jg_write_squad_lead_meta "$d/home/state/muxr.meta" "$d/home" "sess:jg-muxr"
   printf 'needs-decision [key=put-the-key-into-muxr]: use the key?\n' >"$d/home/state/muxr.status"
   : >"$d/so/.sign-off/decisions.answers.jsonl"
-  # The one home override: point both surfaces at the sink and let ntfy deliver.
+  # The one home override: point both surfaces at the sink. The mode comes from
+  # the shipped defaults, so nothing here turns delivery on.
   cat >"$d/home/config/captain-channel" <<EOF
 set dapr-http-url http://127.0.0.1:$PORT
 set ntfy-server http://127.0.0.1:$PORT
 set ntfy-relay-server http://127.0.0.1:$PORT/relay
-set ntfy-deliver on
 EOF
   : >"$SINK_OUT"
   printf '%s\n' "$d"
@@ -107,6 +110,46 @@ assert_contains "$(requests)" 'Which key should the muxr use?' "the bus event ca
 assert_contains "$(requests)" '/juggernaut-captain' "ntfy delivered to the local topic"
 assert_equals "1" "$(jq -s 'length' "$d/so/.sign-off/decisions.json")" "the board gained exactly the one card, as before"
 
+# --- the shipped mode is live, so a home needs no delivery key at all ----------
+d=$(setup live-default)
+printf 'set dapr-http-url http://127.0.0.1:%s\nset ntfy-server http://127.0.0.1:%s\n' "$PORT" "$PORT" \
+  >"$d/home/config/captain-channel"
+: >"$SINK_OUT"
+run_quiet "$d" "$BUS" publish card k-live "A decision waits for you."
+assert_equals "live" "$(run_quiet "$d" "$BUS" config mode)" "the shipped mode is live"
+assert_contains "$(requests)" '"path": "/juggernaut-captain"' "a live event reaches the captain with no delivery key set"
+assert_equals "0" "$(cat "$d/home/state/captain-channel-undelivered.jsonl" 2>/dev/null | wc -l | tr -d ' ')" "nothing is undelivered when the delivery arrives"
+
+# --- one line reverses it, and off still means nothing at all -----------------
+d=$(setup reversed)
+printf 'set mode shadow\nset dapr-http-url http://127.0.0.1:%s\nset ntfy-server http://127.0.0.1:%s\n' "$PORT" "$PORT" \
+  >"$d/home/config/captain-channel"
+: >"$SINK_OUT"
+run_quiet "$d" "$BUS" publish card k-shadow "Recorded, not delivered."
+assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "the reversal still records the event"
+assert_equals "0" "$(grep -c '"path": "/juggernaut-captain"' <<<"$(requests)" || true)" "the reversal delivers nothing"
+assert_equals "0" "$(run_quiet "$d" "$BUS" parity | head -1 | sed -n 's/.* deliveries=\([0-9]*\).*/\1/p')" "shadow parity reports no delivery"
+assert_equals "0" "$(run_quiet "$d" "$BUS" parity | head -1 | sed -n 's/.* differences=\([0-9]*\)/\1/p')" "the reversal changes nothing that is sent"
+
+# --- a live delivery that does not arrive is named, never lost quietly -------
+d=$(setup undelivered)
+printf 'set dapr-http-url http://127.0.0.1:%s\nset ntfy-server http://127.0.0.1:1\n' "$PORT" \
+  >"$d/home/config/captain-channel"
+run_quiet "$d" "$BUS" publish card k-lost "This one does not arrive."
+assert_equals "1" "$(wc -l <"$d/home/state/captain-channel-undelivered.jsonl" | tr -d ' ')" "a failed live delivery is recorded as undelivered"
+assert_contains "$(run_quiet "$d" "$BUS" status)" "1 event(s), 1 undelivered" "status counts what did not arrive"
+
+# --- parity replays what is sent against every recorded event ----------------
+d=$(setup parity)
+run_quiet "$d" "$BUS" publish card k-parity "A decision waits for you." >/dev/null
+run_quiet "$d" "$BUS" publish outcome muxr "The key is fixed and released in 0.4.1" >/dev/null
+line=$(run_quiet "$d" "$BUS" parity | head -1)
+assert_contains "$line" "events=2 instants=" "parity replays both recorded events, at their recorded instants"
+assert_contains "$line" "decisions=4 deliveries=2 differences=0" "parity finds zero differences between what is sent and what was recorded"
+out=$(run "$d" "$BUS" parity --corrupt; printf 'exit=%s' "$?")
+assert_contains "$out" "differences=4 (must be non-zero)" "a tampered replay reports a difference, so green is not vacuous"
+assert_contains "$out" "exit=0" "the tampered run succeeds by reporting its difference"
+
 # --- a captain outcome is teed, a routine one is not --------------------------
 d=$(setup outcome)
 run_quiet "$d" "$OUTCOME" append --task muxr --verdict routine --summary "no change" >/dev/null
@@ -126,20 +169,20 @@ printf 'set ntfy-relay on\n' >>"$d/home/config/captain-channel"
 run_quiet "$d" "$BUS" publish card k2 "A decision waits."
 assert_contains "$(requests)" '"path": "/relay/juggernaut-captain"' "relay on is the only thing that sends through the relay"
 
-# --- shadow off, and an unreachable bus, both leave the emitter alone ---------
-d=$(setup shadow-off)
-printf 'set shadow off\n' >>"$d/home/config/captain-channel"
+# --- off, and an unreachable bus, both leave the emitter alone ----------------
+d=$(setup off)
+printf 'set mode off\n' >>"$d/home/config/captain-channel"
 : >"$SINK_OUT"
 run_quiet "$d" "$BUS" publish card k3 "Nobody sees this."
-assert_equals "0" "$(events "$d" | wc -l | tr -d ' ')" "shadow off records nothing"
-assert_equals "" "$(requests)" "shadow off publishes nothing"
+assert_equals "0" "$(events "$d" | wc -l | tr -d ' ')" "mode off records nothing"
+assert_equals "" "$(requests)" "mode off publishes nothing"
 
 d=$(setup dead-bus)
-printf 'set dapr-http-url http://127.0.0.1:1\nset ntfy-deliver off\n' >"$d/home/config/captain-channel"
+printf 'set dapr-http-url http://127.0.0.1:1\nset mode shadow\n' >"$d/home/config/captain-channel"
 out=$(run "$d" "$BUS" publish card k4 "Recorded even with no bus.")
 assert_equals "0" "$?" "an unreachable bus never fails the emitter"
 assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "the record holds the event the bus never saw"
-assert_grep "bus jg.captain.card failed" "$d/home/state/captain-channel.log" "the failure is logged once for the shadow run"
+assert_grep "bus jg.captain.card failed" "$d/home/state/captain-channel.log" "the failure is logged once"
 
 # --- a reply event routes to the lead the board's own route names -------------
 d=$(setup reply)
@@ -157,4 +200,4 @@ assert_contains "$out" "not routed to a lead" "an unrouted card's reply stays wi
 assert_contains "$out" "exit=3" "the unrouted reply is refused"
 assert_equals "muxr.inbox" "$(cd "$d/home/state" && for f in ./*.inbox; do printf '%s\n' "${f#./}"; done | paste -sd' ' -)" "the unrouted answer reached no lead"
 
-printf 'jg-bus: tee, local delivery with the relay off, and reply routing proved\n'
+printf 'jg-bus: live delivery, the one-line reversal, undelivered records, and parity proved\n'
