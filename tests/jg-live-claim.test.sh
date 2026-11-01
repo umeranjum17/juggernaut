@@ -6,6 +6,8 @@
 # release record alone.
 # The last two cases drive the real report helper so the rule is proven on a
 # path a lead actually reports through, not only on the check itself.
+# This is also the test that owns journeys/live-services.sh (the done-done journey runs this file),
+# so the changed-test map selects it for a change to that journey.
 set -u
 
 # shellcheck source=tests/lib.sh
