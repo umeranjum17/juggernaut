@@ -33,6 +33,7 @@ The session-start hint retains its pre-optimization maximum until CI measures th
 `tests/jg-metrics-shadow-parity.test.sh` (9744 ms) postdates it and carries its provisional local measurement: one serial run of the whole suite on the Linux workspace host against a real throwaway Prometheus and node_exporter, so CI gate-skips it until the lane installs both.
 `tests/jg-state-bus-parity.test.sh` (6515 ms) postdates it too, and its hint is the slowest of two serial local runs against a real throwaway JetStream server; CI gate-skips the script when `nats-server` is absent, so until the lane installs one this hint over-states its CI cost rather than under-stating it.
 `tests/jg-board-asks.test.sh` (860 ms, the maximum of five local runs) postdates it too and carries a provisional measurement for the same reason.
+`tests/jg-bus-leaf-parity.test.sh` (4245 ms) postdates it as well, and its hint is the slower of two serial local runs against two throwaway servers and a leaf connection between them; it gate-skips the same way when `nats-server` or the `nats` client is absent, so this hint also over-states its CI cost until the lane installs them.
 
 ## Parallel lanes
 
