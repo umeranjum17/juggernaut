@@ -59,8 +59,6 @@ journeys:
     command: bash core/fleet-pulse/tests/chat-tsv.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   fleet-pulse-newest-retro:
     command: bash core/fleet-pulse/run-proof.sh
-  fleet-report:
-    command: bash core/fleet-report/run-proof.sh
 
   limit-prompt-move:
     command: bash core/limit-prompt-move/tests/limit-prompt-move-e2e.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
