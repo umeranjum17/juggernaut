@@ -430,7 +430,7 @@ family_for_basename() {
     jg-reply-engine.test.sh|\
     jg-metrics-shadow-parity.test.sh|\
     jg-bus-service.test.sh|\
-    jg-wake-queue-live.test.sh|\
+    jg-wake-queue-live.test.sh|jg-wake-engine.test.sh|jg-wake-watcher.test.sh|\
     jg-bus-account-isolation.test.sh|\
     jg-escalation-workflows.test.sh|jg-bus-leaf-parity.test.sh)
       printf '%s\n' watcher-wake-lock
@@ -709,6 +709,7 @@ tests/jg-grok-continuity-live-e2e.test.sh 53
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 57
 tests/jg-harness-quirks.test.sh 321
 tests/jg-herdr-lead-label.test.sh 99
+tests/jg-classify-go.test.sh 3000
 tests/jg-guard-host.test.sh 829
 tests/jg-herdr-names.test.sh 1061
 tests/jg-herdr-version-floor-live-e2e.test.sh 61
@@ -765,6 +766,8 @@ tests/jg-state-bus-parity.test.sh 6515
 tests/jg-lease-live.test.sh 4439
 tests/jg-bus-service.test.sh 3100
 tests/jg-wake-queue-live.test.sh 2600
+tests/jg-wake-engine.test.sh 45000
+tests/jg-wake-watcher.test.sh 35000
 tests/jg-bus-account-isolation.test.sh 4200
 tests/jg-squad-lead-lifecycle-e2e.test.sh 15675
 tests/jg-supervision-host-live-e2e.test.sh 58

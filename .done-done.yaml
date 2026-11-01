@@ -2,6 +2,8 @@ app: juggernaut
 journeys:
   stack-install:
     command: bash journeys/stack-install.sh
+  wake-watcher:
+    command: bash journeys/wake-watcher.sh
   migration-card:
     command: bash journeys/migration-card.sh
   relaunch-model-refusal:
