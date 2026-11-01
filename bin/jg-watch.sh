@@ -3702,6 +3702,11 @@ resurface_after_downtime() {
   # The independent sampler can publish after the earlier queue scan, while
   # arm-check is deciding recovery. Preserve that queued alert's richer reason.
   host_memory_surface_queued
+  # defaults/wake-routing decides whether a resurface with nothing waiting costs a turn.
+  if [ "$(jg_wake_route_class check rearm-resurface 'check: rearm-resurface')" != now ]; then
+    triage_log "rearm-resurface settled without a wake (defaults/wake-routing)"
+    return 0
+  fi
   wake "check: rearm-resurface"
 }
 

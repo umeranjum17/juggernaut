@@ -214,6 +214,8 @@ report_unreached() {  # <id> <reason>
 restart_mate() {  # <array-index>
   local i=$1 id restart_out restart_rc restart_reason ran_on
   id=${IDS[$i]}
+  # The watcher's own relaunch notice for this restart is not news (defaults/wake-routing).
+  printf '%s\t%s\n' "$(date +%s)" "$id" >> "$STATE/.squad-lead-restart-pass" 2>/dev/null || true
   if [ "${PLACEMENT[i]}" = remote ]; then
     restart_out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
       "$SCRIPT_DIR/jg-remote-squad-lead-relaunch.sh" \

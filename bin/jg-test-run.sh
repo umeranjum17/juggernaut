@@ -783,6 +783,7 @@ tests/jg-turnend-guard.test.sh 42968
 tests/jg-update.test.sh 13448
 tests/jg-wake-daemon-lifecycle-e2e.test.sh 10177
 tests/jg-wake-route.test.sh 527
+tests/token-cuts-live.test.sh 9000
 tests/jg-wake-drain-open-decisions-cursor.test.sh 57982
 tests/jg-wake-next.test.sh 2751
 tests/jg-watch-handoff.test.sh 11741
