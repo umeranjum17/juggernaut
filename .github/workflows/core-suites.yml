@@ -46,6 +46,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+      # The guard host is Go: tests/jg-guard-host.test.sh, repo-guard's suite and the
+      # delete-guard suite build and run it, so the lane needs the pinned toolchain.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/guard-host/go.mod
+          cache: false
       - name: Install tasks-axi for fork lifecycle tests
         run: npm install --global tasks-axi
       - name: Wait-timers hook journey
