@@ -772,6 +772,7 @@ tests/jg-supervision-host.test.sh 1162449
 tests/jg-status-digest.test.sh 1569
 tests/jg-tangle-guard.test.sh 12088
 tests/jg-tasks-axi.test.sh 42685
+tests/jg-teardown-core.test.sh 3000
 tests/jg-teardown.test.sh 479995
 tests/jg-test-run.test.sh 7444
 tests/jg-ticket-key.test.sh 20000
