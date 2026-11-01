@@ -14,8 +14,8 @@
 # docs/bus-shadow.md owns the event model, the parity contract, the measured line
 # count of each path and what the switch would remove. This script is the one
 # owner of the shadow's mechanics: the file scan, the publish with its message-id
-# dedupe, the shadow record that keeps a sync cheap and restartable, and the fold
-# that turns the stream back into the rows a consumer sees.
+# dedupe and the shadow record that keeps a sync cheap and restartable; the fold
+# into the rows a consumer sees is the Go command's (core/bus/cmd/jg-bus/wake.go).
 #
 # CONTRACT (this header is the one owner of the bus' shape here).
 #   config   a home enables the mirror with config/wake-bus; the same file may
@@ -234,26 +234,11 @@ home_keys() {
     | jq -R -s -c 'split("\n") | map(select(length > 0))'
 }
 
-# bus_fold <dump-file>: one event per id - the last raise wins, so a corrected or
-# replayed event never counts twice, and an acknowledgement settles it.
-bus_fold() { # <dump-file>
-  jq -c -s '
-    (reduce .[] as $e ({};
-       if $e.ack then (if .[$e.id] then .[$e.id].ack = true else . end)
-       else .[$e.id] = $e end))
-    | [to_entries[] | .value] | sort_by((.at // 0), .id) | .[]' "$1" 2>/dev/null
-}
+# wake_go: the Go fold and read model, which jg-bus.sh builds into this home's state.
+wake_go() { JG_HOME=$HOME_DIR JG_STATE_OVERRIDE=${HOMES[0]} "$SCRIPT_DIR/jg-bus.sh" wake "$@"; }
 
 # bus_rows <dump-file>: the same canonical rows the file path produces.
-bus_rows() { # <dump-file>
-  bus_fold "$1" | jq -r '
-    if .where == "settled" then
-      ["wake", .id, "settled", .kind, .key, .payload, "silent"] | @tsv
-    elif .task then ["inbox", .id, (if .ack then "handled" else "pending" end), .delivery, .body_sha] | @tsv
-    elif .ack then empty
-    else ["wake", .id, "queue", .kind, .key, .payload, .class] | @tsv
-    end' 2>/dev/null | LC_ALL=C sort
-}
+bus_rows() { wake_go rows "$1"; }
 
 # --- the mirror --------------------------------------------------------------
 # record_file <state-dir>: the shadow record's path. It lives in the home's state
@@ -420,7 +405,6 @@ record_live() { # <record>
 # withdraw rewrite, the record-only file and the queue's own append-recovery
 # marker all go with the path they served. docs/bus-live.md owns the contract.
 LIVE_QUEUE=$STATE/.wake-queue                  # read model: queued rows, oldest first
-LIVE_SOLID=$STATE/.wake-settled                # read model: record-only rows, newest last
 LIVE_EVENTS=$STATE/.wake-bus.events.jsonl      # this home's unsettled events, with their sequence
 LIVE_CURSOR=$STATE/.wake-bus.cursor            # "<stream>\t<sequence>" already applied
 LIVE_OUTBOX=$STATE/.wake-bus.outbox.jsonl      # events a failed publish still owes the bus
@@ -541,23 +525,9 @@ live_render() {
     live_apply "$WAKE_STREAM" "$model" || true
     live_apply "$INBOX_STREAM" "$model" || true
   fi
-  if ! jq -c -s 'reduce .[] as $e ({};
-        if ($e.ack // false) then (if has($e.id) then .[$e.id].ack = true else . end)
-        else .[$e.id] = $e end)
-      | [to_entries[].value] | map(select((.ack // false) != true)) | .[]' "$model" > "$model.keep" 2>/dev/null; then
-    rm -f -- "$model" "$model.keep"
-    return 1
-  fi
-  mv -f "$model.keep" "$LIVE_EVENTS" || { rm -f -- "$model" "$model.keep"; return 1; }
+  # The replica keeps only unsettled events, and a model the fold cannot read changes nothing.
+  wake_go render "$STATE" "$model" || { rm -f -- "$model" "$model".*; return 1; }
   rm -f -- "$model"
-  jq -r 'select(.where == "queue") | [.at, (.seq // .rseq), .kind, .key, .payload] | @tsv' "$LIVE_EVENTS" 2>/dev/null \
-    | LC_ALL=C sort -t "$(printf '\t')" -k2,2n > "$model.queue" || : > "$model.queue"
-  chmod 0600 "$model.queue" 2>/dev/null || true
-  _jg_atomic_replace "$model.queue" "$LIVE_QUEUE" || { rm -f -- "$model.queue"; return 1; }
-  jq -r 'select(.where == "settled") | [.at, "silent", .kind, .key, .payload] | @tsv' "$LIVE_EVENTS" 2>/dev/null \
-    | LC_ALL=C sort -t "$(printf '\t')" -k1,1n > "$model.settled" || : > "$model.settled"
-  chmod 0600 "$model.settled" 2>/dev/null || true
-  _jg_atomic_replace "$model.settled" "$LIVE_SOLID" || { rm -f -- "$model.settled"; return 1; }
 }
 
 live_raise() { # <kind> <key> <payload> <class>

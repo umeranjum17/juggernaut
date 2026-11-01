@@ -83,6 +83,7 @@
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
 //	jg-bus serve | ensure | unit | stop | status | bootstrap
+//	jg-bus wake rows <dump> | wake render <state> <model>   (wake.go owns these)
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
 // JG_CAPTAIN_CHANNEL.
@@ -138,6 +139,8 @@ func run(args []string) int {
 		return a.unit()
 	case "accounts":
 		return a.accounts(rest)
+	case "wake":
+		return a.wake(rest)
 	case "ensure":
 		return a.ensure()
 	case "stop":
