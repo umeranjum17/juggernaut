@@ -49,4 +49,8 @@ silent@parked        signal  *.status         paused*
 silent@parked        check   *                *waiting-state*
 silent@restart-pass  check   squad-lead-relaunch-*   *auto-relaunched*
 silent@queue-quiet   check   rearm-resurface  *
+# A doorbell the watcher deferred because the worker's turn is still running lands by itself
+# when the turn ends; the watcher says so in its own words. A doorbell that is still
+# unhandled with an idle pane, or a dead endpoint, keeps the default and wakes a model.
+silent   stale   *                *unread juggernaut instruction*no interrupt is needed unless the worker is wedged*
 now      *       *                *

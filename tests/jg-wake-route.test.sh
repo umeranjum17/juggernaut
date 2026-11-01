@@ -97,6 +97,10 @@ test_no_model_wakes() (
   assert_equals "$(route "$dir" "$state" check rearm-resurface 'check: rearm-resurface')" silent "a re-arm with nothing queued is settled"
   append_wake "$state" signal beta.status 'signal: x'
   assert_equals "$(route "$dir" "$state" check rearm-resurface 'check: rearm-resurface')" now "a re-arm with an urgent row queued still wakes"
+  assert_equals "$(route "$dir" "$state" stale w:1 "stale: w:1 (unread juggernaut instruction: /x/a.inbox/002.msg stays unhandled - busy; no doorbell was typed, and it lands as soon as that clears, so no interrupt is needed unless the worker is wedged)")" silent "a busy-deferred doorbell report is settled"
+  assert_equals "$(route "$dir" "$state" stale w:1 "stale: w:1 (unread juggernaut instruction: /x/a.inbox/002.msg still unhandled after 3 doorbell delivery attempts with an idle pane; inspect the worker)")" now "a doorbell stuck with an idle pane still wakes"
+  assert_equals "$(route "$dir" "$state" stale w:1 "stale: w:1 (unread juggernaut instruction: /x/a.inbox/002.msg is unhandled and the worker's agent has exited, so the doorbell was not typed; recover the worker)")" now "a doorbell to a dead worker still wakes"
+  assert_equals "$(route "$dir" "$state" signal crew.turn-ended 'signal: crew.turn-ended')" batch "a stop-hook turn end is batched, never a turn of its own"
   printf 'set silence-cap-per-hour 2\nsilent signal *.status paused*\nnow * * *\n' > "$dir/cap.routing"
   for i in 1 2 3; do printf 'paused [at=1]: x\n' > "$state/a$i.status"; JG_WAKE_ROUTING="$dir/cap.routing" JG_HOME="$dir" append_wake "$state" signal "a$i.status" 'signal: x'; done
   assert_equals "$(wc -l < "$state/.wake-silenced" | tr -d ' ')" 2 "the per-hour cap counts settled wakes"
