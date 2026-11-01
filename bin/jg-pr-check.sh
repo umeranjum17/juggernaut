@@ -24,7 +24,11 @@
 # skips this refusal, because its own merge-time draft refusal is authoritative.
 # The recorded pr= also frees the task's place in a declared project capacity
 # (bin/jg-project-capacity-lib.sh), and a new review-ready PR moves the task's
-# ticket to the review stage (bin/jg-ticket.sh).
+# ticket to the review stage (bin/jg-ticket.sh). A newly recorded GitHub pull
+# request also says on its own page what it is waiting for, through the
+# juggernaut/waiting-for commit status bin/jg-pr-lib.sh jg_pr_wait_status
+# publishes; bin/jg-pr-merge.sh replaces that line when its gate names another
+# wait and clears it before merging.
 # --from-status is the watcher's call on every status change: it records the PR
 # named by the task's newest status line only when that line is the ship ready
 # report its mode gives (jg_dod_should_gate_ship_done) and that PR is not
@@ -332,6 +336,20 @@ case "$READY_RC" in
   0|1) ;;
   *) printf 'actionable: PR %s is registered but its ready line did not reach the parent channel (rc=%s)\n' "$URL" "$READY_RC" >&2 ;;
 esac
+# A newly ready pull request is waiting from this moment on, so it says what for
+# on its own page (bin/jg-pr-lib.sh jg_pr_wait_status). The merge path replaces
+# this line when its gate names a different wait and clears it before merging.
+# The merge-time re-record is not a new wait start, so it writes nothing. A
+# publish that fails is reported and never refuses the registration.
+if [ "${JG_PR_CHECK_MERGE:-}" != 1 ] && [ "$PROVIDER" = github ]; then
+  if [ "$PR_YOLO" = on ]; then
+    jg_pr_wait_status "$URL" pending 'merge gate: automatic merge when green' \
+      || printf 'warning: could not publish the waiting-for status on %s\n' "$URL" >&2
+  else
+    jg_pr_wait_status "$URL" pending 'merge gate: lead turn' \
+      || printf 'warning: could not publish the waiting-for status on %s\n' "$URL" >&2
+  fi
+fi
 # A new review-ready PR moves the ticket to review; the merge-time re-record does not.
 [ "${JG_PR_CHECK_MERGE:-}" = 1 ] \
   || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$ID" --stage review --pr "$URL" >/dev/null || true

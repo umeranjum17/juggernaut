@@ -181,6 +181,7 @@ Destructive, irreversible, and security-sensitive merges still escalate.
 Without a current explicit captain instruction that states the concrete merge, the green default stands, and standing `yolo` cannot authorize a red merge; section 1 owns when such an instruction overrides a Juggernaut-written standing rule within its exact scope.
 Load `ask-user-authority` and `validation-supervision` before deciding or answering any ask-user finding; the implementation worker never answers its own finding.
 Use `bin/jg-pr-merge.sh` for every task PR merge so merge metadata is recorded and an unproved merge is refused instead of reported as landed, and use `bin/jg-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
+An open PR states its wait on its own page; that path and `bin/jg-pr-wait.sh` own the status.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
 
 ### Validate
