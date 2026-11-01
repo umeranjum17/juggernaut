@@ -321,6 +321,7 @@ family_for_basename() {
     jg-mail.test.sh|jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|\
     jg-pi-wake-replay.test.sh|jg-wake-bus-parity.test.sh|\
     jg-state-bus-parity.test.sh|jg-lease-live.test.sh|jg-reply-bus-parity.test.sh|\
+    jg-reply-engine.test.sh|\
     jg-metrics-shadow-parity.test.sh|\
     jg-escalation-workflows.test.sh|jg-bus-leaf-parity.test.sh)
       printf '%s\n' watcher-wake-lock
@@ -635,6 +636,7 @@ tests/jg-quota-array-dispatch-live-e2e.test.sh 54
 tests/jg-remote-reply.test.sh 240899
 tests/jg-remote-squad-lead-lifecycle-e2e.test.sh 567728
 tests/jg-reply-bus-parity.test.sh 2655
+tests/jg-reply-engine.test.sh 900
 tests/jg-rovo-signals-live-e2e.test.sh 57
 tests/jg-self-repo-role.test.sh 9033
 tests/jg-send-dormant-lead.test.sh 1692

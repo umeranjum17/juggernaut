@@ -70,6 +70,7 @@ CORRUPT=0
 CMD=
 HOMES=()
 RECORD_DIR=${JG_REPLY_BUS_RECORD_DIR:-}
+PUBLISH=0
 
 config_get() { # <home-dir> <key> <default>
   local var value
@@ -132,6 +133,8 @@ record_facts() { # <state-dir> <since-epoch>
     function reset() {
       corr = ""; task = ""; phase = ""; created = ""; reqc = ""; recova = ""
       recovc = ""; resolved = ""; via = ""; escalated = ""; grace = ""
+      delivered = ""; attempted = ""; recov_out = ""; turn_seen = ""; recov_seen = ""
+      file = ""
     }
     function val(name) {
       if (name == "request_turn_completed_epoch") return reqc
@@ -140,20 +143,69 @@ record_facts() { # <state-dir> <since-epoch>
       if (name == "escalated_epoch") return escalated
       return ""
     }
-    function emit(  n, i, f, anc, fire, g, st) {
+    # seen(name): whether the turn of that stage was observed busy before it completed.
+    function seen(name) {
+      if (name == "request_turn_completed_epoch") return (turn_seen == "1" ? 1 : 0)
+      if (name == "recovery_turn_completed_epoch") return (recov_seen == "1" ? 1 : 0)
+      return 0
+    }
+    # outcome(name): what the activity of that stage returned, in the own
+    # vocabulary of the definition, so the engine never has to guess between a
+    # fire and its result.
+    function outcome(name) {
+      if (name == "request_turn_completed_epoch") {
+        if (recov_out != "") return recov_out
+        if (recova != "") return "sending"
+        return "-"
+      }
+      if (name == "recovery_turn_completed_epoch") {
+        if (escalated == "") return "-"
+        # The recorded phase has moved on to escalated or resolved by the time a
+        # record is read, so the escalation kind is read from the outcome that
+        # opened it, not from the phase it left behind.
+        if (recov_out == "failed" || recov_out == "unknown") return "recovery-delivery"
+        if (delivered == "") return "delivery-unknown"
+        return "missed"
+      }
+      return "-"
+    }
+    # dvstate(): the delivery state of the waiter as one word.
+    function dvstate() {
+      if (delivered != "") return "confirmed"
+      if (phase == "delivery_unknown") return "unknown"
+      if (attempted != "") return "attempted"
+      return "sent"
+    }
+    function emit(  n, i, f, anc, fire, g, st, marker, line, rc) {
       if (corr == "" || created == "") return
       if (created + 0 < since) return
       g = grace
       if (g !~ /^[0-9]+$/) g = gdef
-      printf "waiter\t%s/%s\t%s\t%s\t%s\n", key, corr, task, g, created
+      # The delivery sidecar is the one fact the record file does not carry: it
+      # says a delivery was attempted, which is what ages into an unknown one.
+      attempted = ""
+      if (file != "" && delivered == "") {
+        marker = file
+        sub(/\/[^\/]*$/, "", marker)
+        marker = marker "/.delivery-confirmed-" corr
+        while ((rc = (getline line < marker)) > 0) {
+          if (line ~ /^attempted=/) attempted = substr(line, 11)
+        }
+        close(marker)
+      }
+      printf "waiter\t%s/%s\t%s\t%s\t%s\t%s\t%s\t%s\n", \
+        key, corr, task, g, created, dvstate(), (delivered == "" ? "-" : delivered), \
+        (attempted == "" ? "-" : attempted)
       n = split(stages, S, " ")
       for (i = 1; i <= n; i++) {
         split(S[i], f, "|")
         anc = val(f[2])
         if (anc !~ /^[0-9]+$/) anc = "-"
-        printf "timer\t%s/%s\t%s\t%s\t%s\t%s\n", key, corr, f[1], anc, g, created
+        printf "timer\t%s/%s\t%s\t%s\t%s\t%s\t%s\n", key, corr, f[1], anc, g, created, seen(f[2])
         fire = val(f[3])
-        if (fire ~ /^[0-9]+$/) printf "fire\t%s/%s\t%s\t%s\t%s\n", key, corr, f[1], fire, created
+        if (fire ~ /^[0-9]+$/) {
+          printf "fire\t%s/%s\t%s\t%s\t%s\t%s\n", key, corr, f[1], fire, created, outcome(f[2])
+        }
       }
       if (phase == "resolved" && resolved ~ /^[0-9]+$/) {
         st = via
@@ -173,6 +225,11 @@ record_facts() { # <state-dir> <since-epoch>
     /^resolved_via=/ { via = substr($0, 14) }
     /^escalated_epoch=/ { escalated = substr($0, 17) }
     /^grace_secs=/ { grace = substr($0, 12) }
+    /^delivered_epoch=/ { delivered = substr($0, 17) }
+    /^recovery_delivery_outcome=/ { recov_out = substr($0, 27) }
+    /^turn_seen_busy=/ { turn_seen = substr($0, 16) }
+    /^recovery_turn_seen_busy=/ { recov_seen = substr($0, 25) }
+    /^corr_id=/ { file = FILENAME }
     END { if (NR > 0) emit() }
   ' "$@" 2>/dev/null || true
 }
@@ -238,19 +295,23 @@ record_file() { # <state-dir>
 # waiters costs one process, not one per fact.
 facts_events() { # <state-dir> <since-epoch>
   record_facts "$1" "$2" | awk -F'\t' -v home="$(home_key "$1")" '
+    function jsnum(v) { return (v ~ /^[0-9]+$/) ? v : "null" }
     $1 == "waiter" {
-      printf "waiter/%s\t{\"v\":1,\"kind\":\"waiter\",\"id\":\"%s\",\"home\":\"%s\",\"task\":\"%s\",\"grace\":%s,\"at\":%s}\n",
-        $2, $2, home, $3, $4, $5
+      printf "waiter/%s\t{\"v\":1,\"kind\":\"waiter\",\"id\":\"%s\",\"home\":\"%s\",\"task\":\"%s\",\"grace\":%s,\"at\":%s,\"state\":\"%s\",\"delivered\":%s,\"attempted\":%s}\n",
+        $2, $2, home, $3, $4, $5, $6, jsnum($7), jsnum($8)
     }
     $1 == "timer" {
       anchor = "null"
       if ($4 ~ /^[0-9]+$/) anchor = $4
-      printf "timer/%s/%s\t{\"v\":1,\"kind\":\"timer\",\"id\":\"%s\",\"home\":\"%s\",\"stage\":\"%s\",\"anchor\":%s,\"grace\":%s,\"at\":%s}\n",
-        $2, $3, $2, home, $3, anchor, $5, $6
+      printf "timer/%s/%s\t{\"v\":1,\"kind\":\"timer\",\"id\":\"%s\",\"home\":\"%s\",\"stage\":\"%s\",\"anchor\":%s,\"grace\":%s,\"at\":%s,\"seen\":%s}\n",
+        $2, $3, $2, home, $3, anchor, $5, $6, ($7 == "1" ? "true" : "false")
     }
     $1 == "fire" {
-      printf "fire/%s/%s\t{\"v\":1,\"kind\":\"fire\",\"id\":\"%s\",\"home\":\"%s\",\"stage\":\"%s\",\"epoch\":%s,\"at\":%s}\n",
-        $2, $3, $2, home, $3, $4, $5
+      extra = ""
+      if ($3 == "request") extra = sprintf(",\"outcome\":\"%s\"", $6)
+      else extra = sprintf(",\"reason\":\"%s\"", $6)
+      printf "fire/%s/%s\t{\"v\":1,\"kind\":\"fire\",\"id\":\"%s\",\"home\":\"%s\",\"stage\":\"%s\",\"epoch\":%s,\"at\":%s%s}\n",
+        $2, $3, $2, home, $3, $4, $5, extra
     }
     $1 == "answer" {
       printf "answer/%s\t{\"v\":1,\"kind\":\"answer\",\"id\":\"%s\",\"home\":\"%s\",\"epoch\":%s,\"via\":\"%s\",\"at\":%s}\n",
@@ -266,7 +327,7 @@ mirror_home() { # <state-dir>
   local st=$1 record cand changed published=0 key json sha subject
   [ -d "$st" ] || { printf 'mirror: no state directory at %s\n' "$st" >&2; return 1; }
   record=$(record_file "$st") || return 1
-  bus_ensure_stream
+  [ "${PUBLISH:-0}" = 1 ] && bus_ensure_stream
   cand=$(mktemp "${TMPDIR:-/tmp}/jg-reply-bus-cand.XXXXXX") || return 1
   changed=$(mktemp "${TMPDIR:-/tmp}/jg-reply-bus-new.XXXXXX") || { rm -f -- "$cand"; return 1; }
   facts_events "$st" "$SINCE" > "$cand"
@@ -275,11 +336,16 @@ mirror_home() { # <state-dir>
   while IFS=$'\t' read -r key json; do
     [ -n "${key:-}" ] && [ -n "${json:-}" ] || continue
     sha=$(printf '%s' "$json" | sha256_of)
+    # The log is the event store and is written first: a fact the engine folds is
+    # a fact this home holds, whether or not a bus ever answers. The bus is a
+    # transport for the same lines, so a missing server costs the replica, never
+    # the event.
+    printf '%s\t%s\t%s\n' "$key" "$sha" "$json" >> "$record" || continue
+    published=$((published + 1))
+    [ "$PUBLISH" = 1 ] || continue
     case "$key" in waiter/*) subject=$SUBJECT_WAITER ;; timer/*) subject=$SUBJECT_TIMER ;;
       fire/*) subject=$SUBJECT_FIRE ;; answer/*) subject=$SUBJECT_ANSWER ;; *) continue ;; esac
-    bus_publish "$subject" "$key/$sha" "$json" || continue
-    printf '%s\t%s\t%s\n' "$key" "$sha" "$json" >> "$record"
-    published=$((published + 1))
+    bus_publish "$subject" "$key/$sha" "$json" >/dev/null 2>&1 || true
   done < "$changed"
   rm -f -- "$cand" "$changed"
   printf 'reply shadow mirror: published=%s home=%s\n' "$published" "$(dirname "$st")"
@@ -326,9 +392,12 @@ bus_rows() { # <dump-file>
 }
 
 # --- subcommands -------------------------------------------------------------
+# cmd_sync: mirror the facts of every named home into its event log, then onto
+# the bus when one answers. The bus is optional on purpose: the log is the store.
 cmd_sync() {
   local st
-  bus_gate || return 0
+  PUBLISH=0
+  if bus_gate >/dev/null 2>&1; then PUBLISH=1; fi
   for st in "$@"; do mirror_home "$st" || return 1; done
 }
 
