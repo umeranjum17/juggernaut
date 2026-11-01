@@ -1215,6 +1215,13 @@ The optional local, gitignored presence flag `config/fleet-heartbeat-off` opts a
 
 If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`addons/wait-timers/README.md`](../addons/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
 
+## Batch digest cadence (config/status-digest)
+
+The optional local, gitignored `config/status-digest` holds one line, `every-hours=<N>`: the fewest hours between two cadence pushes of the batch digest that [`bin/jg-status-digest.sh`](../bin/jg-status-digest.sh) builds from the effort, task outcome and release records.
+A milestone records its outcome and pushes at once, and a cadence push waits until the newest push is N hours old.
+An absent, malformed, or zero value falls back to 4 hours, and an unchanged digest is never pushed twice.
+The script's own header owns the four lines, the records it reads, and the delivery it chooses.
+
 ## Launch environment hook (config/launch-env-hook)
 
 The optional local, gitignored `config/launch-env-hook` is an executable that adds environment to every local launch: ship, Recon, Squad Lead, and relaunch.
