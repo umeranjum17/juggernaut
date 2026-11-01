@@ -22,12 +22,12 @@
 # state/<task_id>.status onto the parent channel is a repair of the
 # JG_HOME-relative mixup, not acknowledgement of an arbitrary mate-home file.
 #
-# Record location (parent JG_HOME):
-#   state/pending-replies/<corr_id>
+# Record location (parent JG_HOME): one derived cache, rebuilt from the home's bus:
+#   state/reply-state.tsv#<corr_id>
 # One more durable input, owned by bin/jg-procevent-remote-reply.sh and read
 # here: state/remote-replies/<task_id>.caught-up, the remote reply mirror's
 # watermark (see the remote reply-channel freshness section below).
-# Each record is a key=value file owned by this library. Schema:
+# Each waiter is a key=value block owned by this library. Schema:
 #   schema=jg-pending-reply.v1
 #   corr_id=                privacy-safe correlation token
 #   task_id=                squad_lead task id in the parent home
@@ -114,7 +114,6 @@
 #                                 completion for the recovery repost, and from
 #                                 the recovery turn's completion for the
 #                                 missed-report escalation - never from delivery
-#   JG_PENDING_REPLY_DIR_OVERRIDE override the pending-replies directory (tests)
 #   JG_PENDING_REPLY_SEND_HOOK    optional command template for recovery delivery
 #                                 (tests); receives task_id and full message as args
 #   JG_PENDING_REPLY_NOW          optional fixed epoch for deterministic tests
@@ -160,38 +159,267 @@ jg_pending_reply_grace_secs() {
   printf '%s' "$g"
 }
 
-# Directory holding durable pending-reply records for <state-dir>.
-jg_pending_reply_dir() {  # <state-dir>
-  local state=$1
-  if [ -n "${JG_PENDING_REPLY_DIR_OVERRIDE:-}" ]; then
-    printf '%s' "$JG_PENDING_REPLY_DIR_OVERRIDE"
-    return 0
-  fi
-  printf '%s/pending-replies' "$state"
+# --- one derived state cache, never a store of its own ----------------------
+# A waiter's facts are events on the bus (bin/jg-reply-bus.sh). What the readers
+# see is ONE derived file, state/reply-state.tsv: the record text blocks of every
+# waiter still on the stream, separated by a blank line, in the writers' own keys
+# and order. It is rebuilt from the stream alone by `jg_pending_reply_state_sync`,
+# which is `jg-reply-bus.sh project` into a scratch directory, so the file is a
+# function of the events and can never disagree with them.
+#
+# There is no per-waiter record file and no second format to keep in step: a block
+# IS the record text the bus event carries.
+#
+# A waiter is addressed by a pointer, "<state>/reply-state.tsv#<corr_id>", so a
+# caller that used to hold a record path holds the same identity and the read and
+# write helpers keep the shape they always had.
+
+# jg_pending_reply_cache <state-dir>: the cache file this home's waiters live in.
+jg_pending_reply_cache() {  # <state-dir>
+  printf '%s/reply-state.tsv' "$1"
 }
 
+# jg_pending_reply_path <state-dir> <corr_id>: the pointer a caller holds.
 jg_pending_reply_path() {  # <state-dir> <corr_id>
-  printf '%s/%s' "$(jg_pending_reply_dir "$1")" "$2"
+  printf '%s#%s' "$(jg_pending_reply_cache "$1")" "$2"
+}
+
+# _jg_pending_reply_split <pointer>: file and corr of a pointer, or fail when it
+# is not a pointer at all.
+_jg_pending_reply_split() {  # <pointer>
+  local pointer=$1
+  JG_PENDING_REPLY_CACHE_FILE=${pointer%%#*}
+  JG_PENDING_REPLY_CACHE_CORR=${pointer##*#}
+  [ -n "$JG_PENDING_REPLY_CACHE_CORR" ] || return 1
+  [ "$JG_PENDING_REPLY_CACHE_CORR" != "$pointer" ] || return 1
+  return 0
+}
+
+# _jg_pending_reply_cache_lock <state-dir>: serialise the cache's read-modify-write.
+# One lock for the whole file, not one per waiter: it orders file rewrites, and it
+# is the only lock this path keeps.
+_jg_pending_reply_cache_lock() {  # <state-dir>
+  local lock
+  lock="$(jg_pending_reply_cache "$1").lock"
+  # Deliberately undirected: bin/jg-wake-lib.sh is expanded once at the resolve
+  # site; a directed source here would re-expand its whole transitive graph.
+  . "$_JG_PENDING_REPLY_LIB_DIR/jg-wake-lib.sh"
+  jg_lock_acquire_wait "$lock"
+}
+
+_jg_pending_reply_cache_unlock() {  # <state-dir>
+  jg_lock_release "$(jg_pending_reply_cache "$1").lock"
+}
+
+# _jg_pending_reply_block_awk <corr> <awk body>: run one block-scoped read over the
+# cache. RS='' makes each blank-line-separated block one record.
+_jg_pending_reply_block_awk() {  # <pointer> <awk-program> [awk-args...]
+  local pointer=$1 program=$2 file
+  shift 2
+  _jg_pending_reply_split "$pointer" || return 0
+  file=$JG_PENDING_REPLY_CACHE_FILE
+  [ -f "$file" ] || return 0
+  awk -v RS='' -v corr="$JG_PENDING_REPLY_CACHE_CORR" "$@" "$program" "$file" 2>/dev/null
+}
+
+# A block belongs to <corr> when one of its lines is exactly corr_id=<corr>. The
+# test is shared by every read and write so they can never disagree about which
+# block is the waiter.
+# shellcheck disable=SC2016 # awk code, not shell expansion.
+_JG_PENDING_REPLY_BLOCK_OF='{
+  n = split($0, L, "\n"); mine = 0
+  for (i = 1; i <= n; i++) if (L[i] == "corr_id=" corr) mine = 1
+}'
+
+# jg_pending_reply_get <pointer> <key>: the waiter's current value for one key.
+jg_pending_reply_get() {  # <pointer> <key>
+  local pointer=$1 key=$2
+  _jg_pending_reply_block_awk "$pointer" "$_JG_PENDING_REPLY_BLOCK_OF"'
+    mine {
+      for (i = 1; i <= n; i++) {
+        p = index(L[i], "=")
+        if (p && substr(L[i], 1, p - 1) == key) v = substr(L[i], p + 1)
+      }
+      printf "%s", v
+    }' -v key="$key" || true
+}
+
+# jg_pending_reply_exists <pointer>: 0 when the waiter has a block.
+jg_pending_reply_exists() {  # <pointer>
+  _jg_pending_reply_block_awk "$1" "$_JG_PENDING_REPLY_BLOCK_OF"'
+    mine { found = 1; exit }
+    END { exit !found }'
+}
+
+# jg_pending_reply_corrs <state-dir>: every waiter's corr_id, for the callers that
+# used to list a directory of record files and now read the one cache.
+jg_pending_reply_corrs() {  # <state-dir>
+  local file
+  file=$(jg_pending_reply_cache "$1")
+  [ -f "$file" ] || return 0
+  awk -v RS='' '{
+    n = split($0, L, "\n")
+    for (i = 1; i <= n; i++) if (index(L[i], "corr_id=") == 1) { print substr(L[i], 9); next }
+  }' "$file" 2>/dev/null
+}
+
+# jg_pending_reply_record_text <pointer>: the waiter's block, exactly as the
+# writers' record text, which is what the bus event carries and what the fold
+# reads back.
+jg_pending_reply_record_text() {  # <pointer>
+  _jg_pending_reply_block_awk "$1" "$_JG_PENDING_REPLY_BLOCK_OF"'
+    mine { printf "%s\n", $0; exit }'
+}
+
+# jg_pending_reply_block_write <state-dir> <text>: insert one record block. The
+# blocks are kept in corr_id order, which is the order the fold writes them in, so
+# a live create and a rebuild from the stream produce the same bytes.
+jg_pending_reply_block_write() {  # <state-dir> <text>
+  local state=$1 text=$2 file corr tmp
+  file=$(jg_pending_reply_cache "$state")
+  [ -n "$text" ] || return 1
+  corr=$(printf '%s\n' "$text" | sed -n 's/^corr_id=//p' | head -1)
+  [ -n "$corr" ] || return 1
+  mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
+  _jg_pending_reply_cache_lock "$state"
+  tmp="$file.tmp.$$"
+  if { [ -f "$file" ] && cat "$file"; } | awk -v RS='' -v corr="$corr" -v new="$text" '
+    {
+      n = split($0, L, "\n"); mine = ""
+      for (i = 1; i <= n; i++) if (index(L[i], "corr_id=") == 1) mine = substr(L[i], 9)
+      if (!placed && mine > corr) { printf "%s\n\n", new; placed = 1 }
+      printf "%s\n\n", $0
+    }
+    END { if (!placed) printf "%s\n\n", new }' > "$tmp"; then
+    chmod 600 "$tmp" 2>/dev/null || true
+    if mv -f "$tmp" "$file"; then
+      _jg_pending_reply_cache_unlock "$state"
+      return 0
+    fi
+    rm -f -- "$tmp"
+  else
+    rm -f -- "$tmp"
+  fi
+  _jg_pending_reply_cache_unlock "$state"
+  return 1
+}
+
+# jg_pending_reply_set <pointer> <key> <value>: one key of one waiter, then the
+# event that carries it. The block is rewritten under the cache lock and published
+# after the write, so the cache never shows a fact the stream does not hold.
+jg_pending_reply_set() {  # <pointer> <key> <value>
+  local pointer=$1 key=$2 value=$3 file corr dir tmp
+  _jg_pending_reply_split "$pointer" || return 1
+  file=$JG_PENDING_REPLY_CACHE_FILE
+  corr=$JG_PENDING_REPLY_CACHE_CORR
+  dir=$(dirname "$file")
+  [ -f "$file" ] || return 1
+  _jg_pending_reply_cache_lock "$dir"
+  tmp="$file.tmp.$$"
+  if ! awk -v RS='' -v corr="$corr" -v key="$key" -v value="$value" '
+    {
+      n = split($0, L, "\n"); mine = 0
+      for (i = 1; i <= n; i++) if (L[i] == "corr_id=" corr) mine = 1
+      if (!mine) { printf "%s\n\n", $0; next }
+      seen = 1; hit = 0; o = ""
+      for (i = 1; i <= n; i++) {
+        p = index(L[i], "=")
+        if (p && substr(L[i], 1, p - 1) == key) { L[i] = key "=" value; hit = 1 }
+      }
+      if (!hit) L[++n] = key "=" value
+      for (i = 1; i <= n; i++) o = o L[i] "\n"
+      printf "%s\n", o
+    }
+    END { exit !seen }' "$file" > "$tmp"; then
+    rm -f -- "$tmp"
+    _jg_pending_reply_cache_unlock "$dir"
+    return 1
+  fi
+  chmod 600 "$tmp" 2>/dev/null || true
+  if ! mv -f "$tmp" "$file"; then
+    rm -f -- "$tmp"
+    _jg_pending_reply_cache_unlock "$dir"
+    return 1
+  fi
+  _jg_pending_reply_cache_unlock "$dir"
+  jg_pending_reply_publish_events "$pointer"
+}
+
+# jg_pending_reply_discard <pointer>: the waiter is gone. The discard event is the
+# fact; the block leaves the cache with it.
+jg_pending_reply_discard() {  # <pointer>
+  local pointer=$1 file corr dir tmp
+  _jg_pending_reply_split "$pointer" || return 0
+  file=$JG_PENDING_REPLY_CACHE_FILE
+  corr=$JG_PENDING_REPLY_CACHE_CORR
+  dir=$(dirname "$file")
+  jg_pending_reply_publish_events "$pointer" discard
+  [ -f "$file" ] || return 0
+  _jg_pending_reply_cache_lock "$dir"
+  tmp="$file.tmp.$$"
+  if awk -v RS='' -v corr="$corr" '
+    {
+      n = split($0, L, "\n")
+      for (i = 1; i <= n; i++) if (L[i] == "corr_id=" corr) next
+      printf "%s\n\n", $0
+    }' "$file" > "$tmp"; then
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$file" || rm -f -- "$tmp"
+  else
+    rm -f -- "$tmp"
+  fi
+  _jg_pending_reply_cache_unlock "$dir"
+  return 0
+}
+
+# jg_pending_reply_state_sync <state-dir>: rebuild the cache from the stream. This
+# is the fold: the cache is a function of the events and nothing else, because the
+# blocks are the same record text `jg-reply-bus.sh project` derives from the bus.
+jg_pending_reply_state_sync() {  # <state-dir>
+  local state=$1 tmp corr file
+  file=$(jg_pending_reply_cache "$state")
+  mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/jg-pending-reply-sync.XXXXXX" 2>/dev/null) || return 0
+  if "$_JG_PENDING_REPLY_LIB_DIR/jg-reply-bus.sh" --home "$(dirname "$state")" project "$tmp" >/dev/null 2>&1; then
+    if { for corr in "$tmp/pending-replies"/[0-9a-f]*; do
+           [ -f "$corr" ] || continue
+           printf '%s\n\n' "$(cat "$corr")"
+         done; } > "$file.tmp.$$" 2>/dev/null; then
+      chmod 600 "$file.tmp.$$" 2>/dev/null || true
+      mv -f "$file.tmp.$$" "$file" || rm -f -- "$file.tmp.$$"
+    else
+      rm -f -- "$file.tmp.$$"
+    fi
+  fi
+  rm -rf -- "$tmp"
+  return 0
 }
 
 # --- the event stream -------------------------------------------------------
-# The bus is the authority for a waiter's facts and the record file is its
-# projection (bin/jg-reply-bus.sh owns the stream). Every writer below publishes
-# once it has written, so a fact the record shows is a fact the stream holds, and
-# the fold can rebuild the record from the stream alone.
+# The bus is the authority. Every writer below publishes the event that records
+# what it just wrote, so a fact the cache shows is a fact the stream holds.
 #
-# A home whose bus is unreachable is never failed here: the publish skips, the
-# projection still serves the guard, and the next write to that waiter carries its
-# whole state to the bus again. Nothing is lost by a skipped publish except the
-# rebuild of a waiter that is never written again.
-jg_pending_reply_publish_events() {  # <record-path> [discard]
-  local rec=$1 flag="" bus at
-  [ -n "$rec" ] || return 0
+# A home whose bus is unreachable is never failed here: the publish skips and the
+# cache still serves the guard.
+jg_pending_reply_publish_events() {  # <pointer> [discard]
+  local pointer=$1 flag="" bus at text tmp
+  [ -n "$pointer" ] || return 0
   [ "${2:-}" = discard ] && flag=--discard
   bus="$_JG_PENDING_REPLY_LIB_DIR/jg-reply-bus.sh"
   [ -x "$bus" ] || return 0
   at=$(jg_pending_reply_now)
-  "$bus" publish "$rec" --at "$at" ${flag:+"$flag"} >/dev/null 2>&1 || true
+  if [ -n "$flag" ]; then
+    "$bus" --home "$(dirname "${pointer%%#*}")/.." publish "$pointer" --at "$at" --discard >/dev/null 2>&1 || true
+    return 0
+  fi
+  # The event carries the record text, so the publish path stays the one that
+  # already validates and derives facts from a record.
+  text=$(jg_pending_reply_record_text "$pointer")
+  [ -n "$text" ] || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jg-pending-reply-publish.XXXXXX" 2>/dev/null) || return 0
+  printf '%s\n' "$text" > "$tmp" || { rm -f -- "$tmp"; return 0; }
+  "$bus" --home "$(dirname "${pointer%%#*}")/.." publish "$tmp" --at "$at" >/dev/null 2>&1 || true
+  rm -f -- "$tmp"
   return 0
 }
 
@@ -245,12 +473,6 @@ jg_pending_reply_summarize() {  # <text>
   printf '%s' "$cleaned"
 }
 
-jg_pending_reply_get() {  # <record-path> <key>
-  local rec=$1 key=$2
-  [ -f "$rec" ] || return 0
-  grep "^${key}=" "$rec" 2>/dev/null | tail -1 | cut -d= -f2- || true
-}
-
 jg_pending_reply_sighting_encode() {  # <path> <line-number>
   local path=$1 line_no=$2 encoded
   case "$line_no" in ''|*[!0-9]*) return 1 ;; esac
@@ -282,7 +504,7 @@ jg_pending_reply_corr_reusable() {  # <state-dir> <corr_id> <task_id>
   local state=$1 corr=$2 task_id=$3 rec phase delivered
   printf '%s' "$corr" | grep -Eq '^[A-Fa-f0-9]{16}$' || return 1
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   [ "$(jg_pending_reply_get "$rec" task_id)" = "$task_id" ] || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   case "$phase" in
@@ -298,24 +520,12 @@ jg_pending_reply_corr_reusable() {  # <state-dir> <corr_id> <task_id>
   return 1
 }
 
-# Rewrite one key in a pending-reply record atomically. Other keys preserved.
-jg_pending_reply_set() {  # <record-path> <key> <value>
-  local rec=$1 key=$2 value=$3 dir base tmp line
-  [ -f "$rec" ] || return 1
-  dir=$(dirname "$rec")
-  base=$(basename "$rec")
-  tmp="$dir/.${base}.tmp.$$"
-  : > "$tmp" || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      "${key}="*) continue ;;
-    esac
-    printf '%s\n' "$line" >> "$tmp" || return 1
-  done < "$rec"
-  printf '%s=%s\n' "$key" "$value" >> "$tmp" || return 1
-  mv -f "$tmp" "$rec" || return 1
-  jg_pending_reply_publish_events "$rec"
-}
+# jg_pending_reply_set <pointer> <key> <value>: one key of one waiter, then the
+# event that carries it. The row is rewritten under the cache lock and published
+# after the write, so the cache never shows a fact the stream does not hold.
+
+# jg_pending_reply_discard <pointer>: the waiter is gone. The discard event is the
+# fact; the row leaves the cache with it.
 
 # Embed or replace a correlation token after the from-juggernaut marker.
 # Idempotent for the same corr; replaces a different leading corr token.
@@ -344,19 +554,22 @@ jg_pending_reply_embed_corr() {  # <message> <corr_id> <result-var>
 # Does not deliver anything. Fails if parent paths cannot be prepared.
 jg_pending_reply_create() {  # <parent-home> <state-dir> <task_id> <request-text>
   local parent_home=$1 state=$2 task_id=$3 request_text=$4
-  local dir rec corr now summary status_path tmp
+  local file corr now summary status_path pointer text
   [ -n "$parent_home" ] && [ -n "$state" ] && [ -n "$task_id" ] || return 2
-  dir=$(jg_pending_reply_dir "$state")
-  mkdir -p "$dir" || return 1
-  chmod 700 "$dir" 2>/dev/null || true
+  file=$(jg_pending_reply_cache "$state")
+  mkdir -p "$(dirname "$file")" || return 1
+  chmod 700 "$(dirname "$file")" 2>/dev/null || true
+  # A cache that is absent while the stream holds waiters is rebuilt first, so an
+  # updating home never loses the waiters it already had.
+  [ -f "$file" ] || jg_pending_reply_state_sync "$state"
   corr=$(jg_pending_reply_new_id)
   [ "${#corr}" -eq 16 ] || return 1
-  rec=$(jg_pending_reply_path "$state" "$corr")
+  pointer=$(jg_pending_reply_path "$state" "$corr")
   # Extremely unlikely collision; regenerate once.
-  if [ -e "$rec" ]; then
+  if jg_pending_reply_exists "$pointer"; then
     corr=$(jg_pending_reply_new_id)
-    rec=$(jg_pending_reply_path "$state" "$corr")
-    [ ! -e "$rec" ] || return 1
+    pointer=$(jg_pending_reply_path "$state" "$corr")
+    jg_pending_reply_exists "$pointer" && return 1
   fi
   now=$(jg_pending_reply_now)
   summary=$(jg_pending_reply_summarize "$request_text")
@@ -370,40 +583,37 @@ jg_pending_reply_create() {  # <parent-home> <state-dir> <task_id> <request-text
     /*) ;;
     *) parent_home=$(cd "$parent_home" 2>/dev/null && pwd) || parent_home=$1 ;;
   esac
-  tmp="$dir/.${corr}.tmp.$$"
-  cat > "$tmp" <<EOF
-schema=$JG_PENDING_REPLY_SCHEMA
-corr_id=$corr
-task_id=$task_id
-parent_home=$parent_home
-parent_status=$status_path
-parent_status_scan_signature=
-request_summary=$summary
-created_epoch=$now
-delivered_epoch=
-delivery_attempted_epoch=
-phase=awaiting_report
-turn_seen_busy=0
-request_turn_completed_epoch=
-recovery_attempted_epoch=
-recovery_sender_pid=
-recovery_sender_identity=
-recovery_sent_epoch=
-recovery_delivery_outcome=
-recovery_turn_seen_busy=0
-recovery_turn_completed_epoch=
-escalated_epoch=
-resolved_epoch=
-resolved_via=
-wrong_home_hits=0
-wrong_home_first_sighting=
-wrong_home_sightings=
-wrong_home_scan_signature=
-grace_secs=$(jg_pending_reply_grace_secs)
-EOF
-  chmod 600 "$tmp" 2>/dev/null || true
-  mv -f "$tmp" "$rec" || return 1
-  jg_pending_reply_publish_events "$rec"
+  printf -v text '%s\n' \
+    "schema=$JG_PENDING_REPLY_SCHEMA" \
+    "corr_id=$corr" \
+    "task_id=$task_id" \
+    "parent_home=$parent_home" \
+    "parent_status=$status_path" \
+    "parent_status_scan_signature=" \
+    "request_summary=$summary" \
+    "created_epoch=$now" \
+    "delivered_epoch=" \
+    "delivery_attempted_epoch=" \
+    "phase=awaiting_report" \
+    "turn_seen_busy=0" \
+    "request_turn_completed_epoch=" \
+    "recovery_attempted_epoch=" \
+    "recovery_sender_pid=" \
+    "recovery_sender_identity=" \
+    "recovery_sent_epoch=" \
+    "recovery_delivery_outcome=" \
+    "recovery_turn_seen_busy=0" \
+    "recovery_turn_completed_epoch=" \
+    "escalated_epoch=" \
+    "resolved_epoch=" \
+    "resolved_via=" \
+    "wrong_home_hits=0" \
+    "wrong_home_first_sighting=" \
+    "wrong_home_sightings=" \
+    "wrong_home_scan_signature=" \
+    "grace_secs=$(jg_pending_reply_grace_secs)"
+  jg_pending_reply_block_write "$state" "$text" || return 1
+  jg_pending_reply_publish_events "$pointer"
   printf '%s' "$corr"
 }
 
@@ -411,7 +621,7 @@ EOF
 jg_pending_reply_mark_delivered() {  # <state-dir> <corr_id> [confirmed-epoch]
   local state=$1 corr=$2 confirmed_epoch=${3-} rec phase delivered now
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   case "$phase" in
     awaiting_report|delivery_unknown|recovery_sending|recovery_sent|escalated|resolved) ;;
@@ -438,7 +648,7 @@ jg_pending_reply_mark_delivered() {  # <state-dir> <corr_id> [confirmed-epoch]
 jg_pending_reply_mark_delivery_attempted() {  # <state-dir> <corr_id> [epoch]
   local state=$1 corr=$2 rec delivered attempted now
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   [ -z "$delivered" ] || return 0
   attempted=$(jg_pending_reply_get "$rec" delivery_attempted_epoch)
@@ -450,7 +660,7 @@ jg_pending_reply_mark_delivery_attempted() {  # <state-dir> <corr_id> [epoch]
 jg_pending_reply_clear_delivery_attempt() {  # <state-dir> <corr_id>
   local state=$1 corr=$2 rec attempted
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   attempted=$(jg_pending_reply_get "$rec" delivery_attempted_epoch)
   [ -n "$attempted" ] || return 0
   jg_pending_reply_set "$rec" delivery_attempted_epoch ""
@@ -473,7 +683,7 @@ jg_pending_reply_confirm_delivery() {  # <state-dir> <corr_id>
 jg_pending_reply_mark_delivery_unknown() {  # <state-dir> <corr_id>
   local state=$1 corr=$2 rec phase
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   case "$phase" in awaiting_report|delivery_unknown) ;;
     *) return 1 ;;
@@ -486,7 +696,7 @@ jg_pending_reply_mark_delivery_unknown() {  # <state-dir> <corr_id>
 jg_pending_reply_delivery_attempt_unresolved() {  # <state-dir> <corr_id>
   local state=$1 corr=$2 rec delivered attempted
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   [ -z "$delivered" ] || return 1
   attempted=$(jg_pending_reply_get "$rec" delivery_attempted_epoch)
@@ -499,7 +709,7 @@ jg_pending_reply_delivery_attempt_unresolved() {  # <state-dir> <corr_id>
 jg_pending_reply_reset_known_undelivered() {  # <state-dir> <corr_id>
   local state=$1 corr=$2 rec delivered phase attempted
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   [ -z "$delivered" ] || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
@@ -517,11 +727,10 @@ jg_pending_reply_reset_known_undelivered() {  # <state-dir> <corr_id>
 jg_pending_reply_discard_undelivered() {  # <state-dir> <corr_id>
   local state=$1 corr=$2 rec delivered
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 0
+  jg_pending_reply_exists "$rec" || return 0
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   [ -z "$delivered" ] || return 1
-  rm -f -- "$rec" || return 1
-  jg_pending_reply_publish_events "$rec" discard
+  jg_pending_reply_discard "$rec"
 }
 
 # 0 if a status line is a correlated acknowledgement for <corr_id>.
@@ -598,7 +807,7 @@ jg_pending_reply_try_resolve() {  # <state-dir> <corr_id> [status-file-override]
   local state=$1 corr=$2 status_override=${3-}
   local rec phase delivered attempted status_file line via now
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   if [ "$phase" = resolved ]; then
     jg_pending_reply_close_escalation "$state" "$corr" || true
@@ -639,7 +848,7 @@ jg_pending_reply_observe_busy() {  # <state-dir> <corr_id> <busy_state>
   local state=$1 corr=$2 busy_state=$3
   local rec phase delivered now seen completed field_seen field_completed
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   case "$phase" in
     awaiting_report|recovery_sent) ;;
@@ -759,7 +968,7 @@ jg_pending_reply_mark_turn_completed() {  # <state-dir> <corr_id> [which: reques
   local state=$1 corr=$2 which=${3:-request}
   local rec phase field now
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   case "$which" in
     request) field=request_turn_completed_epoch ;;
@@ -863,7 +1072,7 @@ jg_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   local rec phase completed delivered attempted grace now age task_id msg parent_home send_status=0
   local sender_pid sender_identity status_file
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   [ "$phase" = awaiting_report ] || return 1
   attempted=$(jg_pending_reply_get "$rec" recovery_attempted_epoch)
@@ -950,7 +1159,7 @@ jg_pending_reply_sender_alive() {  # <record-path>
 jg_pending_reply_finish_recovery() {  # <state-dir> <corr_id> <confirmed|failed>
   local state=$1 corr=$2 outcome=$3 rec phase now sent
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   [ "$phase" = recovery_sending ] || return 1
   jg_pending_reply_set "$rec" recovery_delivery_outcome "$outcome" || return 1
@@ -972,7 +1181,7 @@ jg_pending_reply_finish_recovery() {  # <state-dir> <corr_id> <confirmed|failed>
 jg_pending_reply_reconcile_recovery() {  # <state-dir> <corr_id>
   local state=$1 corr=$2 rec phase attempted outcome
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   case "$phase" in awaiting_report|recovery_sending) ;; *) return 1 ;; esac
   attempted=$(jg_pending_reply_get "$rec" recovery_attempted_epoch)
@@ -1078,7 +1287,7 @@ jg_pending_reply_close_escalation() {  # <state-dir> <corr_id>
   local state=$1 corr=$2 rec escalated closed parent_status escalation key note
   local open_line open_key open_note now close_line close_rc _task _via
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   [ "$(jg_pending_reply_get "$rec" phase)" = resolved ] || return 0
   escalated=$(jg_pending_reply_get "$rec" escalated_epoch)
   [ -n "$escalated" ] || return 0
@@ -1125,7 +1334,7 @@ jg_pending_reply_maybe_escalate() {  # <state-dir> <corr_id>
   local rec phase completed now payload parent_status line kind first display
   local delivered task_id meta sm_home remote_host grace age key new_episode
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   phase=$(jg_pending_reply_get "$rec" phase)
   case "$phase" in
     recovery_sent)
@@ -1208,7 +1417,7 @@ jg_pending_reply_detect_wrong_home() {  # <state-dir> <corr_id> <squad-lead-home
   local rec delivered hits first sightings snapshot previous status_file line line_no sighting_base sighting_id phase changed=0
   local remote_parent_channel=0
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   [ -n "$sm_home" ] && [ -d "$sm_home" ] || return 0
   phase=$(jg_pending_reply_get "$rec" phase)
   [ "$phase" != resolved ] || return 0
@@ -1273,7 +1482,7 @@ jg_pending_reply_restatement_copy_same_basename() {  # <state-dir> <corr_id> <sq
   local state=$1 corr=$2 sm_home=$3
   local rec task_id parent_status stranded line
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 1
+  jg_pending_reply_exists "$rec" || return 1
   [ -n "$sm_home" ] && [ -d "$sm_home" ] || return 1
   task_id=$(jg_pending_reply_get "$rec" task_id)
   parent_status=$(jg_pending_reply_get "$rec" parent_status)
@@ -1307,7 +1516,7 @@ jg_pending_reply_observe_and_resolve() {  # <state-dir> <corr_id>
   local state=$1 corr=$2
   local rec task_id phase meta backend target label sm_home harness remote_host observation busy
   rec=$(jg_pending_reply_path "$state" "$corr")
-  [ -f "$rec" ] || return 0
+  jg_pending_reply_exists "$rec" || return 0
   task_id=$(jg_pending_reply_get "$rec" task_id)
   # Parked-home guard (core/parked-homes): a parked home gets no recovery resend
   # and no missed-report escalation. No-op without the feature checkout.
@@ -1378,23 +1587,27 @@ jg_pending_reply_observe_and_resolve() {  # <state-dir> <corr_id>
 }
 
 # jg_pending_reply_decisions <state-dir>: the engine's decision rows for every
-# waiter this home holds, one per line as "<id>\t<row>". The docs are read from
-# the records the observation just wrote, so the record is the projection of the
-# same facts the engine would fold from the stream.
+# waiter this home holds, one per line as "<id>\t<row>". The docs are built from
+# the same record text the stream carries, so the engine folds the facts the cache
+# shows and nothing else.
 jg_pending_reply_decisions() {  # <state-dir>
-  local state=$1 dir rec docs
-  local -a recs=()
-  dir=$(jg_pending_reply_dir "$state")
-  [ -d "$dir" ] || return 0
-  for rec in "$dir"/*; do
-    [ -f "$rec" ] || continue
-    case "${rec##*/}" in .*) continue ;; esac
-    recs+=("$rec")
-  done
-  [ "${#recs[@]}" -gt 0 ] || return 0
-  docs=$("$_JG_PENDING_REPLY_LIB_DIR/jg-reply-bus.sh" \
-    --home "$(dirname "$state")" docs ${recs[@]+"${recs[@]}"} 2>/dev/null) || return 0
-  [ -n "$docs" ] || return 0
+  local state=$1 recs_dir corr block docs
+  local -a files=()
+  [ -s "$(jg_pending_reply_cache "$state")" ] || return 0
+  recs_dir=$(mktemp -d "${TMPDIR:-/tmp}/jg-pending-reply-docs.XXXXXX" 2>/dev/null) || return 0
+  while IFS= read -r corr; do
+    [ -n "$corr" ] || continue
+    block=$(jg_pending_reply_record_text "$(jg_pending_reply_path "$state" "$corr")")
+    [ -n "$block" ] || continue
+    printf '%s\n' "$block" > "$recs_dir/$corr" || continue
+    files+=("$recs_dir/$corr")
+  done < <(jg_pending_reply_corrs "$state")
+  if [ "${#files[@]}" -gt 0 ]; then
+    docs=$("$_JG_PENDING_REPLY_LIB_DIR/jg-reply-bus.sh" \
+      --home "$(dirname "$state")" docs ${files[@]+"${files[@]}"} 2>/dev/null) || docs=
+  fi
+  rm -rf -- "$recs_dir"
+  [ -n "${docs:-}" ] || return 0
   # One clock for the observation and the decision: the library's own, which a
   # test or a replay pins with JG_PENDING_REPLY_NOW.
   printf '%s\n' "$docs" | "$_JG_PENDING_REPLY_LIB_DIR/jg-reply-engine.sh" \
@@ -1435,33 +1648,28 @@ jg_pending_reply_act_on_decisions() {  # <state-dir>
 # then let the engine decide and act on each. Prints the rows acted on, one
 # "<epoch>\t<row>" per line, so the caller can keep the decision trace.
 jg_pending_reply_tick() {  # <state-dir>
-  local state=$1 dir rec corr
-  dir=$(jg_pending_reply_dir "$state")
-  [ -d "$dir" ] || return 0
-  for rec in "$dir"/*; do
-    [ -f "$rec" ] || continue
-    case "${rec##*/}" in .*) continue ;; esac
-    corr=$(jg_pending_reply_get "$rec" corr_id)
-    [ -n "$corr" ] || corr=${rec##*/}
+  local state=$1 corr
+  while IFS= read -r corr; do
+    [ -n "$corr" ] || continue
     jg_pending_reply_observe_and_resolve "$state" "$corr" || true
-  done
+  done < <(jg_pending_reply_corrs "$state")
   jg_pending_reply_act_on_decisions "$state"
   return 0
 }
 
+
 # True when any open (non-resolved) pending reply exists for a task.
 jg_pending_reply_task_has_open() {  # <state-dir> <task_id>
-  local state=$1 task_id=$2 dir rec phase tid
-  dir=$(jg_pending_reply_dir "$state")
-  [ -d "$dir" ] || return 1
-  for rec in "$dir"/*; do
-    [ -f "$rec" ] || continue
+  local state=$1 task_id=$2 corr rec phase tid
+  while IFS= read -r corr; do
+    [ -n "$corr" ] || continue
+    rec=$(jg_pending_reply_path "$state" "$corr")
     tid=$(jg_pending_reply_get "$rec" task_id)
     [ "$tid" = "$task_id" ] || continue
     phase=$(jg_pending_reply_get "$rec" phase)
     [ "$phase" != resolved ] || continue
     return 0
-  done
+  done < <(jg_pending_reply_corrs "$state")
   return 1
 }
 

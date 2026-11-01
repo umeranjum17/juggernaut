@@ -3164,8 +3164,8 @@ claude_add_dirs_flag() {  # <kind> <state-dir> <data-dir> <code-root> <task-id>
   state_real=$(cd "$state_dir" && pwd -P) || return 1
   case "$kind" in
   squad_lead)
-    mkdir -p "$state_real/$id.inbox/handled" "$state_real/pending-replies" || return 1
-    dirs=("$state_real/$id.inbox" "$state_real/pending-replies")
+    mkdir -p "$state_real/$id.inbox/handled" || return 1
+    dirs=("$state_real/$id.inbox")
     ;;
   *)
     data_real=$(cd "$data_dir" && pwd -P) || return 1
@@ -3182,7 +3182,7 @@ claude_add_dirs_flag() {  # <kind> <state-dir> <data-dir> <code-root> <task-id>
 }
 
 # OpenCode asks before reading outside its cwd, and a squad_lead's steering
-# inbox, the parent's pending-replies, and the parent's tracked tooling (the
+# inbox and the parent's tracked tooling (the
 # bin/ scripts it sources, docs/, .agents/skills/) live in the PARENT home. The
 # launch-time OPENCODE_CONFIG_CONTENT grant above is an env var, so a lead
 # restarted by hand (OpenCode's exit banner prints a bare `opencode --session`)
@@ -3202,8 +3202,8 @@ opencode_lead_grant_write() {  # <lead-home> <parent-state-dir> <task-id> <paren
   local home=$1 state_dir=$2 id=$3 code_root=$4 state_real root_real d allow='' deny=''
   state_real=$(cd "$state_dir" && pwd -P) || return 1
   root_real=$(cd "$code_root" && pwd -P) || return 1
-  mkdir -p "$state_real/$id.inbox/handled" "$state_real/pending-replies" "$home/.opencode" || return 1
-  allow="\"$(json_escape "$state_real/$id.inbox/**")\":\"allow\",\"$(json_escape "$state_real/pending-replies/**")\":\"allow\""
+  mkdir -p "$state_real/$id.inbox/handled" "$home/.opencode" || return 1
+  allow="\"$(json_escape "$state_real/$id.inbox/**")\":\"allow\""
   for d in bin docs .agents/skills; do
     allow="$allow,\"$(json_escape "$root_real/$d/**")\":\"allow\""
     deny="${deny:+$deny,}\"$(json_escape "*/${root_real##*/}/$d/**")\":\"deny\""

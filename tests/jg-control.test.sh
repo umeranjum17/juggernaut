@@ -1138,7 +1138,7 @@ test_squad_lead_control_command_carries_no_marker() {
   case "$typed" in
     *corr=*) fail "a control command must never carry a pending-reply correlation id" ;;
   esac
-  [ -z "$(find "$home/state/pending-replies" -type f 2>/dev/null | head -n 1)" ] \
+  [ ! -e "$home/state/reply-state.tsv" ] \
     || fail "a control command must not open a pending-reply expectation"
   pass "jg-control: a lifecycle command to a squad_lead is unmarked and opens no reply expectation"
 }

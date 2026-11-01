@@ -421,7 +421,7 @@ receiver_wake_mark() { # <squad-lead-id> <prepared|pending> [batch-id]
       corr=${value#*:}
       corr=${corr%%:*}
       rec=$(jg_pending_reply_path "$STATE" "$corr")
-      [ -f "$rec" ] && [ ! -L "$rec" ] &&
+      jg_pending_reply_exists "$rec" &&
         [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ]
       return $?
       ;;
@@ -505,7 +505,7 @@ receiver_wake_pending_valid() { # <squad-lead-id>
   case "$value" in pending:*) corr=${value#pending:} ;; *) return 1 ;; esac
   printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || return 1
   rec=$(jg_pending_reply_path "$STATE" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] &&
+  jg_pending_reply_exists "$rec" &&
     [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ] || return 1
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   [ -z "$delivered" ] || return 1
@@ -519,7 +519,7 @@ receiver_wake_pending_delivered_valid() { # <squad-lead-id>
   case "$value" in pending:*) corr=${value#pending:} ;; *) return 1 ;; esac
   printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || return 1
   rec=$(jg_pending_reply_path "$STATE" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] &&
+  jg_pending_reply_exists "$rec" &&
     [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ] &&
     [ -n "$(jg_pending_reply_get "$rec" delivered_epoch)" ]
 }
@@ -532,7 +532,7 @@ receiver_wake_confirmed_valid() { # <squad-lead-id>
   case "$value" in confirmed:*) corr=${value#confirmed:} ;; *) return 1 ;; esac
   printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || return 1
   rec=$(jg_pending_reply_path "$STATE" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] &&
+  jg_pending_reply_exists "$rec" &&
     [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ] &&
     [ -n "$(jg_pending_reply_get "$rec" delivered_epoch)" ]
 }
@@ -618,7 +618,7 @@ wake_pending_squad_lead_receiver() { # <squad-lead-id> [retain-confirmed]
     ;;
   esac
   rec=$(jg_pending_reply_path "$STATE" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] &&
+  jg_pending_reply_exists "$rec" &&
     [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ] || return 1
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   if [ -z "$delivered" ]; then

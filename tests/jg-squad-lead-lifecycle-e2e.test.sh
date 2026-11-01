@@ -221,54 +221,61 @@ phase_recovery() {
 }
 
 phase_teardown() {
-  local teardown_out corr rec leftover leftover_rec other_corr
+  local teardown_out corr rec leftover leftover_rec other_corr cache
   corr=$(JG_HOME="$HOME_DIR" bash -c '
     . "$1"
     jg_pending_reply_create "$2" "$2/state" design "New routed work is in your backlog."
   ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$HOME_DIR") \
     || fail "could not seed receiver wake retirement state"
-  rec="$HOME_DIR/state/pending-replies/$corr"
+  cache="$HOME_DIR/state/reply-state.tsv"
+  rec=$(JG_HOME="$HOME_DIR" bash -c '
+    . "$1"
+    jg_pending_reply_path "$2/state" "$3"
+  ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$HOME_DIR" "$corr")
   leftover=$(JG_HOME="$HOME_DIR" bash -c '
     . "$1"
     jg_pending_reply_create "$2" "$2/state" design "Earlier routed ask that already resolved."
   ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$HOME_DIR") \
     || fail "could not seed leftover resolved pending-reply"
-  leftover_rec="$HOME_DIR/state/pending-replies/$leftover"
+  leftover_rec=$(JG_HOME="$HOME_DIR" bash -c '
+    . "$1"
+    jg_pending_reply_path "$2/state" "$3"
+  ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$HOME_DIR" "$leftover")
   # Settle every parent pending-reply for this mate (earlier send/handoff
-  # phases leave open records) so non-forced retirement mirrors a clean
+  # phases leave open waiters) so non-forced retirement mirrors a clean
   # captain-approved close rather than hitting the unresolved-reply refuse.
   JG_HOME="$HOME_DIR" bash -c '
     . "$1"
     state="$2/state"
-    for rec in "$state/pending-replies"/*; do
-      [ -f "$rec" ] || continue
-      [ "$(jg_pending_reply_get "$rec" task_id)" = design ] || continue
-      jg_pending_reply_set "$rec" phase resolved
-      jg_pending_reply_set "$rec" delivered_epoch 1
+    for c in $(jg_pending_reply_corrs "$state"); do
+      p=$(jg_pending_reply_path "$state" "$c")
+      [ "$(jg_pending_reply_get "$p" task_id)" = design ] || continue
+      jg_pending_reply_set "$p" phase resolved
+      jg_pending_reply_set "$p" delivered_epoch 1
     done
   ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$HOME_DIR" \
     || fail "could not settle pending-replies before retirement"
+  # A symlinked cache is refused: retirement never writes through a link.
   mkdir -p "$TMP_ROOT/external-pending"
-  printf 'task_id=design\nphase=resolved\n' > "$TMP_ROOT/external-pending/escape"
-  mv "$HOME_DIR/state/pending-replies" "$HOME_DIR/state/pending-replies.safe"
-  ln -s "$TMP_ROOT/external-pending" "$HOME_DIR/state/pending-replies"
+  printf 'schema=x\ncorr_id=escape\n\n' > "$TMP_ROOT/external-pending/escape"
+  mv "$cache" "$cache.safe"
+  ln -s "$TMP_ROOT/external-pending/escape" "$cache"
   if PATH="$FAKEBIN:$PATH" JG_HOME="$HOME_DIR" JG_FAKE_TMUX_LOG="$LOG" JG_FAKE_TMUX_CAPTURE="$PANE" \
     "$ROOT/bin/jg-teardown.sh" design >/dev/null 2>&1; then
-    fail "local retirement accepted a symlinked pending-replies directory"
+    fail "local retirement accepted a symlinked pending-reply cache"
   fi
-  assert_present "$SUB" "unsafe pending-replies retirement removed the squad_lead home"
-  assert_present "$HOME_DIR/state/design.meta" "unsafe pending-replies retirement removed parent metadata"
+  assert_present "$SUB" "unsafe pending-reply cache retirement removed the squad_lead home"
+  assert_present "$HOME_DIR/state/design.meta" "unsafe pending-reply cache retirement removed parent metadata"
   assert_grep '- design ' "$HOME_DIR/data/squad_leads.md" \
-    "unsafe pending-replies retirement removed the registry route"
+    "unsafe pending-reply cache retirement removed the registry route"
   assert_present "$TMP_ROOT/external-pending/escape" \
-    "unsafe local retirement removed an external pending reply"
-  rm -f "$HOME_DIR/state/pending-replies"
-  mv "$HOME_DIR/state/pending-replies.safe" "$HOME_DIR/state/pending-replies"
-  mkdir -p "$HOME_DIR/state/pending-replies/.delivery-confirmed-.."
+    "unsafe local retirement wrote through the pending-reply cache link"
+  rm -f "$cache"
+  mv "$cache.safe" "$cache"
+  # A block whose corr_id is a traversal is refused before any cleanup runs.
   mkdir -p "$TMP_ROOT/escape"
   touch "$TMP_ROOT/escape/pwned"
-  printf 'task_id=design\nphase=resolved\ncorr_id=../../../../../escape/pwned\n' \
-    > "$HOME_DIR/state/pending-replies/aaaaaaaaaaaaaaaa"
+  printf 'schema=x\ncorr_id=../../../../../escape/pwned\ntask_id=design\nphase=resolved\n\n' >> "$cache"
   if PATH="$FAKEBIN:$PATH" JG_HOME="$HOME_DIR" JG_FAKE_TMUX_LOG="$LOG" JG_FAKE_TMUX_CAPTURE="$PANE" \
     "$ROOT/bin/jg-teardown.sh" design >/dev/null 2>&1; then
     fail "local retirement accepted a pending-reply with unsafe corr_id"
@@ -278,30 +285,15 @@ phase_teardown() {
   assert_grep '- design ' "$HOME_DIR/data/squad_leads.md" \
     "unsafe corr_id retirement removed the registry route"
   assert_present "$TMP_ROOT/escape/pwned" \
-    "unsafe corr_id cleanup deleted outside pending-replies"
-  rm -rf "$HOME_DIR/state/pending-replies/.delivery-confirmed-.."
-  rm -f "$HOME_DIR/state/pending-replies/aaaaaaaaaaaaaaaa"
+    "unsafe corr_id cleanup deleted outside the pending-reply cache"
+  awk -v RS='' '{
+    n = split($0, L, "\n"); keep = 1
+    for (i = 1; i <= n; i++) if (index(L[i], "corr_id=") == 1 && substr(L[i], 9) !~ /^[a-f0-9]+$/) keep = 0
+    if (keep) printf "%s\n\n", $0
+  }' "$cache" > "$cache.clean" && mv "$cache.clean" "$cache"
+  # Another task's block is not this task's to retire.
   other_corr=bbbbbbbbbbbbbbbb
-  printf 'task_id=other\nphase=resolved\ncorr_id=%s\n' "$other_corr" \
-    > "$HOME_DIR/state/pending-replies/$other_corr"
-  : > "$HOME_DIR/state/pending-replies/.delivery-confirmed-$other_corr"
-  printf 'task_id=design\nphase=resolved\ncorr_id=%s\n' "$other_corr" \
-    > "$HOME_DIR/state/pending-replies/aaaaaaaaaaaaaaaa"
-  if PATH="$FAKEBIN:$PATH" JG_HOME="$HOME_DIR" JG_FAKE_TMUX_LOG="$LOG" JG_FAKE_TMUX_CAPTURE="$PANE" \
-    "$ROOT/bin/jg-teardown.sh" design >/dev/null 2>&1; then
-    fail "local retirement accepted a pending-reply with mismatched corr_id"
-  fi
-  assert_present "$SUB" "mismatched corr_id retirement removed the squad_lead home"
-  assert_present "$HOME_DIR/state/design.meta" "mismatched corr_id retirement removed parent metadata"
-  assert_grep '- design ' "$HOME_DIR/data/squad_leads.md" \
-    "mismatched corr_id retirement removed the registry route"
-  assert_present "$HOME_DIR/state/pending-replies/$other_corr" \
-    "mismatched corr_id cleanup deleted another task's pending reply"
-  assert_present "$HOME_DIR/state/pending-replies/.delivery-confirmed-$other_corr" \
-    "mismatched corr_id cleanup deleted another task's delivery confirmation"
-  rm -f "$HOME_DIR/state/pending-replies/aaaaaaaaaaaaaaaa" \
-    "$HOME_DIR/state/pending-replies/$other_corr" \
-    "$HOME_DIR/state/pending-replies/.delivery-confirmed-$other_corr"
+  printf 'schema=x\ncorr_id=%s\ntask_id=other\nphase=resolved\n\n' "$other_corr" >> "$cache"
   printf 'confirmed:%s\n' "$corr" > "$HOME_DIR/state/.backlog-handoff-design.wake-pending"
   printf '%s\tattempt\n' "$(date +%s)" > "$HOME_DIR/state/.squad-lead-relaunch-design"
   printf '%s\tdead\n' "$(date +%s)" > "$HOME_DIR/state/.squad-lead-relaunch-bound-design"
@@ -315,7 +307,9 @@ phase_teardown() {
   assert_absent "$HOME_DIR/state/design.meta" "teardown did not clear the parent meta"
   assert_absent "$HOME_DIR/state/.backlog-handoff-design.wake-pending" \
     "teardown left receiver wake state that could poison a replacement route"
-  assert_absent "$rec" "teardown left the retired receiver wake correlation"
+  JG_HOME="$HOME_DIR" bash -c '. "$1"; jg_pending_reply_exists "$2"' \
+    _ "$ROOT/bin/jg-pending-reply-lib.sh" "$rec" \
+    && fail "teardown left the retired receiver wake correlation"
   assert_absent "$HOME_DIR/state/.squad-lead-relaunch-design" \
     "teardown left the relaunch ledger a same-id replacement would inherit"
   assert_absent "$HOME_DIR/state/.squad-lead-relaunch-bound-design" \
@@ -323,6 +317,8 @@ phase_teardown() {
   assert_absent "$HOME_DIR/state/.squad-lead-liveness-design.lock" \
     "teardown left the liveness lock it took to retire relaunch state"
   assert_absent "$leftover_rec" "teardown left a resolved pending-reply for the retired squad_lead"
+  grep -q "corr_id=$other_corr" "$cache" \
+    || fail "teardown deleted another task's pending reply"
   assert_no_grep '- design ' "$HOME_DIR/data/squad_leads.md" "teardown did not remove the registry route"
   # The parent's source projects are untouched (no write through a parent home).
   assert_present "$HOME_DIR/projects/alpha" "teardown disturbed a parent project"

@@ -9,13 +9,18 @@ event that resumes it, the timeout is a timer that survives a restart, and the
 repost-then-escalate ladder is the workflow's own activity loop.
 
 The switch has landed. A waiter's facts are events on this home's JetStream bus,
-every writer publishes them as it writes, and the record file is their projection
-- the same keys in the same order every reader already opens. The workflow
-definition decides, and its engine acts on that decision: one recovery repost, one
-escalation, one unknown-delivery mark, the escalation close. The hand-rolled poll
-that used to do this - the delivery-marker ladder, its reconciliation, the phase
-walk in `tick_one` and the selection pass - is deleted. The record file itself
-stays for one more slice, because it is still every reader's interface.
+and every writer publishes them as it writes. The workflow definition decides, and
+its engine acts on that decision: one recovery repost, one escalation, one
+unknown-delivery mark, the escalation close. The hand-rolled poll that used to do
+this - the delivery-marker ladder, its reconciliation, the phase walk in
+`tick_one` and the selection pass - is deleted.
+
+There is no per-waiter record file any more. Every reader's view of the waiters is
+ONE derived cache, `state/reply-state.tsv`: the record text of each waiter still on
+the stream, separated by a blank line, in the writers' own keys and order. The
+cache is never authored - it is the fold, and `bin/jg-reply-bus.sh project` is how
+it is rebuilt from the bus alone. Destroy the cache and the next rebuild is
+byte-identical.
 
 ## What runs
 
@@ -24,19 +29,19 @@ stays for one more slice, because it is still every reader's interface.
   with the anchor each timer measures from, the activity each timeout runs with
   its retries, the terminal states, the subjects, the grace default and the
   retention. A home may override it at `config/bus/workflows/pending-reply.json`.
-- Every writer of `state/pending-replies/<corr>` publishes through
-  `bin/jg-pending-reply-lib.sh`: the creation, the delivery attempt and its
-  confirmation or its unknown aging, the undelivered reset, the discard, each
-  turn's completion, and the reply. One publish carries every fact that record
-  holds, so a writer never has to know what the bus already has; the message id
-  is the fact's key plus a digest of its body, so a repeat is a server no-op and
-  a changed fact supersedes the earlier one.
+- Every writer of a waiter publishes through `bin/jg-pending-reply-lib.sh`: the
+  creation, the delivery attempt and its confirmation or its unknown aging, the
+  undelivered reset, the discard, each turn's completion, and the reply. One
+  publish carries every fact that waiter holds, so a writer never has to know what
+  the bus already has; the message id is the fact's key plus a digest of its body,
+  so a repeat is a server no-op and a changed fact supersedes the earlier one.
 - A fact is published only when a bus answers. A home with no bus keeps
   recording and keeps serving the guard: the publish skips, and the next write to
   that waiter carries its whole state to the bus again.
-- `bin/jg-reply-bus.sh project` writes the fold back as the record files. That is
-  what makes the stream the authority: destroy the records and rebuild them from
-  the bus, byte for byte, marker included.
+- `bin/jg-reply-bus.sh project [<state-dir>]` writes the fold back as record files
+  under that state directory. That is what makes the stream the authority and what
+  `bin/jg-pending-reply-lib.sh` calls to rebuild `state/reply-state.tsv` as one
+  cache: destroy the cache and rebuild it from the bus, byte for byte.
 - `bin/jg-reply-bus.sh log` prints the stream in the engine's log format, so the
   engine folds, decides and replays the bus itself instead of a file beside it.
 - `bin/jg-watch.sh` runs `bin/jg-reply-engine.sh tick --act` once per poll: the
@@ -45,23 +50,28 @@ stays for one more slice, because it is still every reader's interface.
 
 ## The projection
 
-The record stays exactly what it was, because every reader and every test reads
-it as it did: `schema`, `corr_id`, `task_id`, `parent_home`, `parent_status`, the
-scan signature, the summary, the epochs, the phase, the wrong-home sightings and
-the grace. The writer's own bytes are carried on the `waiter` event's `record`
+A waiter's block stays exactly what the record was, because every reader reads the
+same keys it did: `schema`, `corr_id`, `task_id`, `parent_home`, `parent_status`,
+the scan signature, the summary, the epochs, the phase, the wrong-home sightings
+and the grace. The writer's own bytes are carried on the `waiter` event's `record`
 field, so the projection is a byte copy and not a re-encoding someone has to keep
 in step with the writer.
 
-The delivery attempt is the record's own `delivery_attempted_epoch`; there is no
+A waiter is addressed by a pointer, `<state>/reply-state.tsv#<corr_id>`, so a
+caller that used to hold a record path holds the same identity. The blocks are kept
+in `corr_id` order, which is the order the fold writes them in, so a live writer
+and a rebuild produce the same bytes.
+
+The delivery attempt is the waiter's own `delivery_attempted_epoch`; there is no
 separate marker file any more. An attempt that never confirms is what the engine
 ages into an unknown delivery, and a confirmation clears the attempt and sets
-`delivered_epoch`. A `discard` removes the record and stops the id counting in
-every fold, so a discarded request cannot come back on the next projection.
+`delivered_epoch`. A `discard` removes the block and stops the id counting in every
+fold, so a discarded request cannot come back on the next projection.
 
-When the bus cannot be reached, the projection is still written and the guard
-still works; what a skipped publish costs is the rebuild of a waiter that is
-never written again. That is the honest reading of a transport that is optional
-per write and authoritative per stream.
+When the bus cannot be reached, the cache is still written and the guard still
+works; what a skipped publish costs is the rebuild of a waiter that is never
+written again. That is the honest reading of a transport that is optional per
+write and authoritative per stream.
 
 ## The engine
 
@@ -119,8 +129,8 @@ the record from drifting apart silently.
 
 ## The consistency contract
 
-`bin/jg-reply-bus.sh parity [--since-hours N]` reads the record files and the
-stream and compares the consumer result row by row:
+`bin/jg-reply-bus.sh parity [--since-hours N]` reads the waiters' facts from the
+cache and from the stream and compares the consumer result row by row:
 
 ```
 reply <id> waiter <task> <grace>
@@ -176,10 +186,10 @@ through the delivery-failure branch: a repost that could not be delivered
 escalates with no timer at all, which the engine models as a failed activity.
 
 One waiter then went round the whole way: created, delivered, its turn completed
-and its reply found by the writers, published as its facts, its record files
-destroyed, rebuilt from the stream alone, and compared byte for byte - identical.
-A discarded waiter left the same way: zero rows in the stream view, its record
-gone from the projection after the rebuild.
+and its reply found by the writers, published as its facts, the cache destroyed,
+rebuilt from the stream alone, and compared byte for byte - identical. A discarded
+waiter left the same way: zero rows in the stream view, its block gone from the
+cache after the rebuild.
 
 ## Measured lines each side
 
@@ -250,8 +260,9 @@ on this machine.
 
 ## What it does not prove
 
-It does not delete the record file: every reader still opens it, so the projection
-stays until the next slice points them at the stream.
+It does not run the durable runtime as a second authority: the cache is a
+projection, so a home whose bus is unreachable serves the guard from the cache and
+its next write republishes the whole waiter.
 
 It does not run the durable runtime. This replay executes the workflow's model in
 the fold over the stream; the runtime that hosts the timer across a restart (the
@@ -276,8 +287,9 @@ bin/jg-reply-engine.sh replay /tmp/reply-bus.jsonl
 ```
 
 `sync` writes nothing but events, so a fleet-wide backfill never changes a home's
-records. `project` does write records, so run it against one home at a time and
-only when you mean to rebuild them.
+cache. `project` writes record files under the state directory it is given, and
+`bin/jg-pending-reply-lib.sh` runs it into a scratch directory to rebuild the
+cache, so run it against one home at a time and only when you mean to rebuild.
 
 ## Test
 

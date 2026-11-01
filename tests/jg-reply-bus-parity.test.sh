@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The pending-reply event stream on the bus (docs/reply-shadow.md): the
-# production writers publish their facts, the record files are the projection of
-# those events, and a deliberately corrupted event must make the check fail, so a
-# green parity run is never vacuous.
+# production writers publish their facts, state/reply-state.tsv is the cache the
+# fold rebuilds from those events, and a deliberately corrupted event must make the
+# check fail, so a green parity run is never vacuous.
 #
 # The test runs a throwaway nats-server on a random port, writes with the
 # production writers (jg_pending_reply_create and the recovery, resolve and
@@ -97,13 +97,13 @@ HOOK
     JG_PENDING_REPLY_NOW=$((base + 130)) jg_pending_reply_send_recovery "$state" "$c_b" || exit 2
     jg_pending_reply_set "$rec" recovery_turn_completed_epoch $((base + 140)) || exit 2
     JG_PENDING_REPLY_NOW=$((base + 270)) jg_pending_reply_maybe_escalate "$state" "$c_b" || exit 2
-    grep -q "^phase=escalated$" "$rec" || exit 2
+    [ "$(jg_pending_reply_get "$rec" phase)" = escalated ] || exit 2
     # A fourth waiter, dropped undelivered: it must leave the stream view as well
     # as the record path, or a discarded request would come back on the next
     # projection.
     c_d=$(jg_pending_reply_create "$JG_HOME" "$state" lane-d "drop this one") || exit 2
     jg_pending_reply_discard_undelivered "$state" "$c_d" || exit 2
-    [ ! -e "$state/pending-replies/$c_d" ] || exit 2
+    jg_pending_reply_exists "$(jg_pending_reply_path "$state" "$c_d")" && exit 2
     printf "%s %s %s %s\n" "$c_a" "$c_b" "$c_c" "$c_d" > "$4"
   ' _ "$ROOT" "$STATE_DIR" "$base" "$DIR/corr" || fail "the record-side fixture could not be built"
 }
@@ -125,15 +125,19 @@ test_the_writers_published_and_kept_no_log() {
 }
 
 test_the_projection_rebuilds_from_the_bus() {
-  local out saved="$DIR/saved"
-  mkdir -p "$saved" || fail "the projection check needs a copy of the records"
-  cp -a "$STATE_DIR/pending-replies/." "$saved/" || fail "the records could not be copied"
-  rm -rf "$STATE_DIR/pending-replies" || fail "the records could not be cleared"
-  mkdir -p "$STATE_DIR/pending-replies" || fail "the record directory could not be recreated"
-  reply_bus project >/dev/null 2>&1 || fail "the projection from the bus failed"
-  out=$(diff -r "$saved" "$STATE_DIR/pending-replies" 2>&1) \
-    || fail "the records rebuilt from the bus differ from the records written: $out"
-  pass "the record files are exactly the projection of the stream"
+  local out saved="$DIR/saved.tsv"
+  cp "$STATE_DIR/reply-state.tsv" "$saved" || fail "the cache could not be copied"
+  rm -f "$STATE_DIR/reply-state.tsv" || fail "the cache could not be cleared"
+  out=$(
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/jg-pending-reply-lib.sh"
+    JG_REPLY_BUS_URL="$NATS_URL" JG_NATS_BIN="$NATS_BIN" \
+      jg_pending_reply_state_sync "$STATE_DIR"
+  ) || fail "the rebuild from the bus failed: $out"
+  [ -f "$STATE_DIR/reply-state.tsv" ] || fail "the rebuild from the bus wrote no cache"
+  out=$(diff -u "$saved" "$STATE_DIR/reply-state.tsv" 2>&1) \
+    || fail "the cache rebuilt from the bus differs from the cache written: $out"
+  pass "the cache is exactly the fold of the stream"
 }
 
 test_parity_matches_both_paths() {

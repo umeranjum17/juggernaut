@@ -7,7 +7,7 @@
 # bin/jg-prompt-gate.py owns the matcher. It approves only an OpenCode read
 # whose resolved path is inside this fleet's own roots, the ones
 # jg_prompt_gate_verdict passes below: the task's steering inbox, its own
-# state/<id>.<ext> files, state/pending-replies, its recorded worktree and home,
+# state/<id>.<ext> files, the pending-reply cache, its recorded worktree and home,
 # the home and state/ folders themselves (not what is below them), and the
 # home's read-only tooling (bin/, docs/, .agents/skills/, AGENTS.md).
 # It rejects any OpenCode dialog naming a secrets path: a .env file, ~/.config,
@@ -50,7 +50,7 @@ jg_prompt_gate_verdict() {  # <harness> <home> <state> <config> <task> <meta>
       done
       out=$(printf '%s\n' "$buf" | python3 "$_jg_prompt_gate_dir/jg-prompt-gate.py" "$harness" "${secrets[@]}" \
         --dir "inbox=$state/$task.inbox" --state-files "state=$state/$task" \
-        --dir "pending-replies=$state/pending-replies" \
+        --file "pending-replies=$state/reply-state.tsv" \
         ${wt:+--dir "worktree=$wt"} ${lead:+--dir "lead-home=$lead"} \
         --file "home-dir=$home" --file "state-dir=$state" \
         --dir "tooling=$home/bin" --dir "tooling=$home/docs" \
