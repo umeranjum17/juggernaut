@@ -82,6 +82,11 @@ jg_backend_source herdr || fail "jg_backend_source herdr failed"
 jg_backend_herdr_version_check || fail "version_check failed against the real installed herdr"
 
 STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/jg-afk-herdr-e2e.XXXXXX")
+# Scenario D sends the wedge alert to the captain channel; point that path at a
+# `mode off` config so the proof stays offline instead of posting to a bus and an
+# iPad no test may reach (docs/captain-channel.md owns the switch).
+CHANNEL_OFF="$STATE_DIR/captain-channel-off"
+printf 'set mode off\n' > "$CHANNEL_OFF"
 mkdir -p "$STATE_DIR"
 LOG_FILE="$STATE_DIR/submitted.log"
 : > "$LOG_FILE"
@@ -501,6 +506,7 @@ test_scenario_d_max_defer() {
   JG_HEARTBEAT=999999 \
   JG_CHECK_INTERVAL=999999 \
   JG_MAX_DEFER_SECS=3 \
+  JG_CAPTAIN_CHANNEL="$CHANNEL_OFF" \
   JG_INJECT_CONFIRM_SLEEP=0.3 \
   JG_INJECT_CONFIRM_RETRIES=2 \
   JG_STALE_ESCALATE_SECS=999999 \

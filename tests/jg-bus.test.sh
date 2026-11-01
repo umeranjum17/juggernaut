@@ -261,4 +261,24 @@ assert_contains "$out" "exit=2" "a command that can neither run nor build refuse
 out=$(env JG_HOME="$d/home" JG_BUS_BIN="$d/missing" JG_BUS_GO="$d/no-go" "$BUS" publish card k-tee "text" 2>&1; printf 'exit=%s' "$?")
 assert_contains "$out" "exit=0" "publish still exits 0, so no emitter is broken by a missing command"
 
+# --- the away-mode wedge alert arrives by this path, and only this path -------
+# The daemon has no notifier of its own: a max-defer wedge sends one alert
+# event here, so the record, the delivery and the undelivered accounting are all
+# the channel's (bin/jg-supervise-daemon.sh wedge_alarm_notify).
+d=$(setup wedge)
+: >"$SINK_OUT"
+JG_HOME="$d/home" JG_STATE_OVERRIDE="$d/home/state" JG_SUPERVISOR_BACKEND=tmux \
+  JG_SUPERVISOR_TARGET=nonexistent:0 LOG="$d/home/state/.supervise-daemon.log" \
+  bash -c '. "$1"; inject_wedge_alarm "$2" 601; inject_wedge_alarm "$2" 601' \
+  _ "$ROOT/bin/jg-supervise-daemon.sh" "$d/home/state"
+assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "the same wedge window twice sends one alert event"
+assert_contains "$(events "$d")" '"kind":"alert"' "the alert event names its kind"
+assert_contains "$(events "$d")" '"key":"away-mode-wedge"' "the alert event carries the wedge key"
+assert_contains "$(events "$d")" 'away-mode escalations WEDGED 601s undelivered' "the alert text is the one the daemon always sent"
+assert_equals "1" "$(grep -c '"path": "/juggernaut-captain"' <<<"$(requests)" || true)" "the alert reached the captain once, by this path"
+assert_equals "1" "$(grep -c '"path": "/v1.0/publish/captain-channel/jg.captain.alert"' <<<"$(requests)" || true)" "the alert was published to the bus once"
+assert_grep "away-mode escalation undelivered 601s" "$d/home/state/.supervise-daemon.log" "the daemon still logs the wedge it reported"
+[ -s "$d/home/state/.subsuper-inject-wedged" ] || fail "the durable wedge marker was not written"
+pass "the away-mode wedge alert reaches the captain by this one path, once per window"
+
 printf 'jg-bus: live delivery, the one-line reversal, undelivered records, and parity proved\n'

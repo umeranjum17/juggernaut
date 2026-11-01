@@ -799,7 +799,7 @@ There is still one watcher process; the event reader is a bounded child of that 
 The away daemon supports tmux and Herdr supervisor panes only.
 It refuses Zellij, Orca, and cmux as supervisor backends rather than applying the wrong transport.
 For Herdr, target existence, native state, capture, composer state, and verified submit all route through the shared backend dispatcher and the explicit named-session CLI owner.
-The pane-independent max-defer alert is configured in [`wedge-alarm.md`](wedge-alarm.md).
+A max-defer wedge sends its alert to the captain by the one captain channel ([`captain-channel.md`](captain-channel.md)), so no per-backend notifier is configured.
 
 ### Where the daemon runs
 

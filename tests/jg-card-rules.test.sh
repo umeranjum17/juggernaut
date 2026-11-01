@@ -32,20 +32,31 @@ case "$cmd" in
       case "$1" in --key) key=$2; shift ;; --title) title=$2; shift ;; esac
       shift
     done
-    jq --arg k "${key:-card}" --arg t "$title" \
+    key=${key:-card}
+    # Raising the same card again is a no-op that reports it, as sign-off-axi
+    # does: the board keeps the one item and no new key appears.
+    if jq -e --arg k "$key" '[.items[]? | select(.key == $k)] | length > 0' "$board" >/dev/null 2>&1; then
+      printf 'board: %s\nraised: %s is already on the board\n' "$board" "$key"
+      exit 0
+    fi
+    jq --arg k "$key" --arg t "$title" \
       '.items += [{key: $k, kind: "decision", title: $t}]' "$board" > "$board.t" && mv "$board.t" "$board"
-    printf '%s\n' "${key:-card}" ;;
+    printf '%s\n' "$key" ;;
 esac
 SH
   chmod +x "$d/fakebin/sign-off-axi"
   printf 'leash: matters\n' > "$d/so/.sign-off/config.yaml"
+  printf 'set mode off\n' > "$d/channel-off"
   printf '%s\n' "$d"
 }
 
 run() {  # <case dir> <command...>
   local d=$1
   shift
+  # The card path also sends its event to the captain channel. Keep that path off
+  # the network here: this suite proves the card rules, not the delivery.
   env PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" \
+    JG_CAPTAIN_CHANNEL="$d/channel-off" \
     SIGN_OFF_HOME="$d/so" SIGNOFF_LOG="$d/signoff.log" "$@" 2>&1
 }
 
@@ -63,6 +74,25 @@ refused_by() {  # <case dir> <output> <rule> -> the first stderr line names that
   first=$(printf '%s\n' "$out" | head -1)
   assert_contains "$first" "refused: rule $rule" "the refusal did not name rule $rule"
   assert_equals "0" "$(raised "$d")" "a card the rules refuse still reached the captain's board"
+}
+
+# Posting under a key the board already carries cites THAT card. The hold posts
+# its card with a stable key (bin/jg-question-lib.sh jg_question_hold_card_key),
+# and re-holding the same task asks for the same key, so the key the poster
+# prints has to be the hold's own card and never another open one.
+test_a_repeat_post_under_its_key_cites_that_card() {
+  local d out other our
+  d=$(setup repeat-key)
+  other='jg-test-other-card-aaaa'
+  our='jg-test-proof-hold-bbbb'
+  out=$(post "$d" --key "$other" --title "Rename the launch word?" | tail -1)
+  assert_equals "$other" "$out" "the first card did not print its own key"
+  out=$(post "$d" --key "$our" --title "Ship the new sign-in screen this week?" | tail -1)
+  assert_equals "$our" "$out" "the hold's card did not print its own key"
+  out=$(post "$d" --key "$our" --title "Ship the new sign-in screen this week?" | tail -1)
+  assert_equals "$our" "$out" "a repeat post under the hold's key cited another open card"
+  assert_equals "2" "$(raised "$d")" "the repeat post put a second card on the board"
+  pass "a repeat post under its own key cites that card, never another open one"
 }
 
 test_rule1_a_captain_stop_order_is_never_a_card() {
@@ -126,3 +156,4 @@ test_rule1_a_captain_stop_order_is_never_a_card
 test_rule2_a_stuck_worker_is_never_a_card
 test_rule3_a_card_is_one_plain_question_with_two_clear_options
 test_rule4_a_refused_card_names_its_rule_in_one_line
+test_a_repeat_post_under_its_key_cites_that_card
