@@ -31,4 +31,10 @@ now      check   *board-gate.check.sh   *must ask waiting over 48h*
 batch    check   *board-gate.check.sh   *board ask*
 batch    check   *dpr-green*      *
 batch    check   post-merge-ci-*  *
+# The tickets checks report board bookkeeping and never ask the captain anything:
+# a board row the work has already settled, or a pass summary, is not a decision.
+# bin/jg-ticket.sh writes the state where the work happens, so the check that
+# reports any remainder rides the next digest instead of waking a model.
+batch    check   *tickets-stale.check.sh    *
+batch    check   *tickets-sync.check.sh     *
 now      *       *                *

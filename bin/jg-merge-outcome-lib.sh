@@ -64,7 +64,7 @@ JG_MERGE_OUTCOME_ALREADY_RECORDED=false
 # than treat it as success: the merge landed and the record did not.
 jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [authority]
   local home=$1 state=$2 id=$3 url=$4 origin=$5
-  local authority=${6-} suffix='' card_link
+  local authority=${6-} suffix='' card_link project_dir=''
   local self_rc=0 destination='' line lock status=0
   local provider host path number
   # shellcheck disable=SC2034 # Sourced wake helpers consume these scoped globals.
@@ -130,6 +130,23 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
   # costs one file test; the pass never forces, never touches a dirty copy, and
   # reports a version branch it cannot fast-forward instead of merging it.
   [ ! -e "${JG_CONFIG_OVERRIDE:-$home/config}/version-branch" ] || [ "$status" -ne 0 ] || JG_HOME=$home JG_CONFIG_OVERRIDE="${JG_CONFIG_OVERRIDE:-$home/config}" "$_JG_MERGE_OUTCOME_LIB_DIR/jg-version-branch-sync.sh" run 2>&1 | sed 's/^/version branch: /' >&2 || true
+  # A release merge carries the version branch back into every open feature pull
+  # request that targets it, so no feature branch keeps running the gate the
+  # release replaced. bin/jg-version-branch-sync.sh owns the pass, stays silent
+  # for every merge that was not the release pull request, and takes the task's
+  # own project clone so a project's version branch is the one carried.
+  # A release merge carries the version branch back into every open feature pull
+  # request that targets it, so no feature branch keeps running the gate the
+  # release replaced. bin/jg-version-branch-sync.sh owns the pass, stays silent
+  # for every merge that was not the release pull request, and takes the task's
+  # own project clone so a project's version branch is the one carried.
+  if [ "$status" -eq 0 ] && [ -e "${JG_CONFIG_OVERRIDE:-$home/config}/version-branch" ]; then
+    project_dir=$(grep '^project=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2-) || project_dir=''
+    JG_HOME=$home JG_CONFIG_OVERRIDE="${JG_CONFIG_OVERRIDE:-$home/config}" \
+      "$_JG_MERGE_OUTCOME_LIB_DIR/jg-version-branch-sync.sh" features "$JG_PR_URL" "${project_dir:-$home}" 2>&1 | sed 's/^/features: /' >&2 || true
+  fi
+  # The migration card follows every merge into its release branch (opt-in config/migration-card).
+  [ ! -e "${JG_CONFIG_OVERRIDE:-$home/config}/migration-card" ] || [ "$status" -ne 0 ] || JG_HOME=$home JG_CONFIG_OVERRIDE="${JG_CONFIG_OVERRIDE:-$home/config}" "$_JG_MERGE_OUTCOME_LIB_DIR/jg-migration-card.sh" merge "$JG_PR_URL" 2>&1 | sed 's/^/migration card: /' >&2 || true
   if [ "$status" -eq 0 ] && declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "${JG_CONFIG_OVERRIDE:-$home/config}" "$home" "$id" "$state/$id.meta" - "$JG_PR_URL" >&2; fi
   # The merge card carries the proof too: a no-op when the post hook filed it, else files it or says what is missing.
   if [ "$status" -eq 0 ] && { [ -e "${JG_CONFIG_OVERRIDE:-$home/config}/post-merge" ] || [ -n "${JG_PROOF_BOARD:-}" ]; }; then

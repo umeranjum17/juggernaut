@@ -99,7 +99,10 @@ def progress(source, item, row, cache, run):
     match = PR.fullmatch(link)
     if match and not done:
         old = cache.get(link, {})
-        if not old.get('merged') and time.time() - old.get('at', 0) >= 300:
+        # A merged or closed PR never reopens, so a read that proved one is kept and the sync stops re-asking GitHub for
+        # a row it can no longer learn anything about; only an open PR is re-read on the five-minute refresh.
+        settled = old.get('merged') or old.get('state') == 'closed'
+        if not settled and time.time() - old.get('at', 0) >= 300:
             result = run(['gh-axi', 'api', f'repos/{match[1]}/pulls/{match[2]}', '--jq', '{merged,state,draft}'])
             values = dict(re.findall(r'^(merged|state|draft): (\S+)$', result, re.M))
             if set(values) != {'merged', 'state', 'draft'}:
