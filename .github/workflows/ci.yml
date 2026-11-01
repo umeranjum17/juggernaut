@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Post-merge CI: a merge into main or into a release branch runs the full
+    # lane set here, after the merge instead of in front of it.
+    branches: [main, 'release/**']
   # Any base branch rather than only main, so a pull request stacked on another
   # feature branch is verified too instead of reporting no checks at all.
   pull_request:
@@ -21,13 +23,25 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# This workflow is the pull request backstop, and it stays thin on purpose.
-# It runs lint, shell syntax, a smoke run and the fast evals, so a whole run
-# finishes in a few minutes instead of the half hour or more the behaviour suite
-# took.
-# The heavy behaviour suite is not a gate on a pull request any more:
-# .github/workflows/behavior.yml runs it nightly and after every main push, and
-# bin/jg-post-merge-ci.sh files exactly one fix item when that run goes red.
+# This workflow has two lane sets, and which one a run owes is the whole
+# difference between a merge that finishes in minutes and one that waits.
+#
+# A pull request owes the FAST required set only: the repo invariants, the
+# sharded changed-file lint (bin/jg-lint.sh --changed-base), and the
+# changed-file tests (bin/jg-test-run.sh --changed). Those finish in about two
+# minutes on a small change because they work on the files the change touches
+# rather than on the whole tree.
+#
+# A push to main or to a release branch owes the FULL set: whole-tree lint on
+# the same shards, shell syntax, the smoke run, the fast evals, and the bus
+# lane. That is the post-merge run, so it can take the minutes the merge no
+# longer spends.
+#
+# The heavy behaviour suite is not a gate at all: .github/workflows/behavior.yml
+# runs it nightly and after every push, and bin/jg-post-merge-ci.sh files
+# exactly one fix-forward item and wakes that item's owner when it goes red.
+# Nothing is ever reverted: a red main is fixed by a follow-up change that moves
+# forward, because a revert costs more time than the follow-up it replaces.
 # Proof that a pull request head is good is the sealed local suite receipt from
 # bin/jg-local-suite.sh, and bin/jg-ship-local.sh is the one command that pushes,
 # proves, merges and syncs in that order.
@@ -73,14 +87,14 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           set -eu
-          # An unreadable diff keeps the full suite. A main push runs only
-          # the invariants: every change already passed the full suite on its
-          # pull request, so main repeats just the cheap repo-wide checks.
+          # An unreadable diff keeps the full suite. A main or release push runs
+          # the full set: that run is the post-merge CI, so it repeats what the
+          # pull request did not wait for.
           if [ "$EVENT_NAME" = pull_request ]; then
             changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" || true)
             printf '%s\n' "$changed" | bin/jg-ci-scope.sh >>"$GITHUB_OUTPUT"
           else
-            echo behavior=false >>"$GITHUB_OUTPUT"
+            echo behavior=true >>"$GITHUB_OUTPUT"
           fi
       # The one lint a documentation-only change gets. ShellCheck is absent for
       # a cheap change: no cheap path is a shell or workflow file.
@@ -127,14 +141,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: invariants
     if: ${{ needs.invariants.outputs.behavior == 'true' && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
-    # Normal tier (see the timeout policy in docs/jg-test-portable-shards.md).
-    timeout-minutes: 30
+    # The pull request path lints only the files the change touched, so it is
+    # seconds; the post-merge push path lints the whole tree on the same shards
+    # and is the run that may take the minutes.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         partition: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The changed-file lint diffs against the pull request's base commit.
+          fetch-depth: 0
       - name: Install pinned ShellCheck
         run: |
           set -eu
@@ -157,12 +176,22 @@ jobs:
           # Four partitions put the inventory on four runners, which is the only
           # lever that shortens the job: ShellCheck time is what the partition
           # carries, and bin/jg-lint.sh refuses more than two workers per root set.
+          # On a pull request the partition carries only the changed roots, so the
+          # same four shards finish the fast set.
           JG_LINT_JOBS: '2'
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/jg-lint"
-          bin/jg-lint.sh --partition "${{ matrix.partition }}of${{ strategy.job-total }}" \
-            --telemetry "$RUNNER_TEMP/jg-lint/partition-${{ matrix.partition }}.tsv"
+          if [ "$EVENT_NAME" = pull_request ]; then
+            bin/jg-lint.sh --changed-base "$BASE_SHA" \
+              --partition "${{ matrix.partition }}of${{ strategy.job-total }}" \
+              --telemetry "$RUNNER_TEMP/jg-lint/partition-${{ matrix.partition }}.tsv"
+          else
+            bin/jg-lint.sh --partition "${{ matrix.partition }}of${{ strategy.job-total }}" \
+              --telemetry "$RUNNER_TEMP/jg-lint/partition-${{ matrix.partition }}.tsv"
+          fi
       - name: Upload lint telemetry
         if: always()
         uses: actions/upload-artifact@v4
@@ -180,7 +209,9 @@ jobs:
     name: Shell syntax
     runs-on: ubuntu-latest
     needs: invariants
-    if: ${{ needs.invariants.outputs.behavior == 'true' && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
+    # Post-merge lane: it left the required pull request set so the merge path
+    # stays under three minutes, and it runs on the push that follows a merge.
+    if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' }}
     # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
     timeout-minutes: 5
     steps:
@@ -206,7 +237,9 @@ jobs:
     name: Smoke
     runs-on: ubuntu-latest
     needs: invariants
-    if: ${{ needs.invariants.outputs.behavior == 'true' && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
+    # Post-merge lane: it left the required pull request set so the merge path
+    # stays under three minutes, and it runs on the push that follows a merge.
+    if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' }}
     # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
     timeout-minutes: 5
     steps:
@@ -226,7 +259,9 @@ jobs:
     name: Fast evals
     runs-on: ubuntu-latest
     needs: invariants
-    if: ${{ needs.invariants.outputs.behavior == 'true' && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
+    # Post-merge lane: it left the required pull request set so the merge path
+    # stays under three minutes, and it runs on the push that follows a merge.
+    if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' }}
     # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
     timeout-minutes: 10
     steps:
@@ -248,7 +283,9 @@ jobs:
     name: Bus service
     runs-on: ubuntu-latest
     needs: invariants
-    if: ${{ needs.invariants.outputs.behavior == 'true' && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
+    # Post-merge lane: it left the required pull request set so the merge path
+    # stays under three minutes, and it runs on the push that follows a merge.
+    if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'push' && vars.JG_CI_SKIP_PUSH != '1' }}
     # Fast tier (see the timeout policy in docs/jg-test-portable-shards.md).
     timeout-minutes: 10
     steps:
@@ -287,6 +324,40 @@ jobs:
           set -eu
           tests/jg-bus.test.sh
 
+  # The changed-file tests: the suite scripts this change's paths map to, on the
+  # pull request, and nothing else. They are the second half of the fast required
+  # set; the whole suite on main and release branches is
+  # .github/workflows/behavior.yml, which runs post-merge.
+  tests:
+    name: Changed tests
+    runs-on: ubuntu-latest
+    needs: invariants
+    if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'pull_request' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # --changed diffs against the pull request's base commit.
+          fetch-depth: 0
+      - name: Install pinned ShellCheck
+        run: |
+          set -eu
+          bin/jg-install-shellcheck.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Install pinned actionlint
+        run: |
+          set -eu
+          bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Install tasks-axi
+        run: npm install -g tasks-axi
+      - name: Run the tests this change's paths map to
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        # The real-Herdr family needs a live herdr, so it runs in its own
+        # post-merge lane instead of gate-skipping inside the fast set.
+        run: bin/jg-test-run.sh --changed --base "$BASE_SHA" --exclude-family real-herdr-gated
+
   # The one required status check: it always reports, refusing a lane that did
   # not run.
   required:
@@ -294,7 +365,7 @@ jobs:
     runs-on: ubuntu-latest
     # Fast tier: the verdict is a few JSON reads.
     timeout-minutes: 5
-    needs: [invariants, lint, syntax, smoke, evals, bus]
+    needs: [invariants, lint, syntax, smoke, evals, bus, tests]
     if: ${{ always() && !github.event.pull_request.draft && !(github.event_name == 'push' && vars.JG_CI_SKIP_PUSH == '1') }}
     steps:
       - uses: actions/checkout@v6
@@ -302,4 +373,5 @@ jobs:
         env:
           JG_CI_NEEDS: ${{ toJSON(needs) }}
           JG_CI_BEHAVIOR: ${{ needs.invariants.outputs.behavior }}
+          JG_CI_EVENT: ${{ github.event_name }}
         run: bin/jg-ci-required.sh

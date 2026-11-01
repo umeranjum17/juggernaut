@@ -43,8 +43,11 @@
 # exception; every other unreadable required source refuses.
 # Every failing condition is reported, not just the first.
 # One substitution outranks that check reading: a sealed local suite receipt
-# from bin/jg-local-suite.sh that proves this exact head with exit 0. When it
-# verifies, the pull request still has to be open, not a draft, mergeable and
+# from bin/jg-local-suite.sh that proves this live head's tree with exit 0. The
+# proof is keyed to the tree, not the head, so a body edit, a re-push of
+# identical content, or a squash of the same change keeps it valid and never
+# forces a re-seal. When it verifies, the pull request still has to be open,
+# not a draft, mergeable and
 # conflict-free - mergeability is not a queue wait - but the check rollup and the
 # required-check set are not consulted at all, because the same suite already ran
 # here at that commit. A receipt that exists and does not prove this head, whether
@@ -1066,12 +1069,13 @@ FIELDS
     echo "error: could not read the GitHub pull request head commit before merging" >&2
     return 1
   fi
-  # Proof before queue: a sealed local suite receipt naming this exact live head
-  # stands in for the forge's check queue, which is the wait this proof replaces.
-  # The receipt is bound to the head read just above, so a push that moved the
-  # head leaves it unusable, and a receipt that exists but does not prove this
-  # head refuses by name instead of quietly turning back into a CI wait.
-  local_suite_proof=$("$SCRIPT_DIR/jg-local-suite.sh" verify "$STATE" "$ID" "$live_head" 2>&1) \
+  # Proof before queue: a sealed local suite receipt proving this live head's
+  # tree stands in for the forge's check queue, which is the wait this proof
+  # replaces. The receipt is keyed to the tree, so the same files under another
+  # commit stay proven and only a change to the files the suite read needs a new
+  # run; a receipt that exists but does not prove this tree refuses by name
+  # instead of quietly turning back into a CI wait.
+  local_suite_proof=$("$SCRIPT_DIR/jg-local-suite.sh" verify "$STATE" "$ID" "$live_head" "$PR_OWNER" "$PR_REPO" 2>&1) \
     || local_suite_verify_rc=$?
   case "$local_suite_verify_rc" in
     0) local_suite_proven=true ;;

@@ -12,7 +12,8 @@ on:
     # 03:17 UTC: a nightly hour that no other scheduled job in this repository uses.
     - cron: '17 3 * * *'
   push:
-    branches: [main]
+    # The full behaviour suite follows a merge into main or a release branch.
+    branches: [main, 'release/**']
   workflow_dispatch:
 
 permissions:

@@ -364,7 +364,8 @@ family_for_basename() {
     jg-spawn-dispatch-profile.test.sh)
       printf '%s\n' backend-dispatch
       ;;
-    jg-pr-merge.test.sh|jg-teardown.test.sh|jg-x-mode.test.sh)
+    jg-pr-merge.test.sh|jg-local-suite-tree.test.sh|jg-merge-on-green.test.sh|\
+    jg-teardown.test.sh|jg-x-mode.test.sh)
       printf '%s\n' pr-forge
       ;;
     jg-afk-inject-e2e.test.sh|jg-supervision-host.test.sh)
@@ -612,6 +613,8 @@ tests/jg-host-wiring.test.sh 817
 tests/jg-inbox.test.sh 8757
 tests/jg-launch-prompt-signals-live-e2e.test.sh 56
 tests/jg-lint-partitions.test.sh 4361
+tests/jg-local-suite-tree.test.sh 420
+tests/jg-merge-on-green.test.sh 900
 tests/jg-lint-root-memory.test.sh 4747
 tests/jg-mail.test.sh 10524
 tests/jg-merge-gate-lib.test.sh 83
@@ -1360,7 +1363,7 @@ families_for_changed_path() {
       printf '%s\n' squad_lead
       printf '%s\n' watcher-wake-lock
       ;;
-    bin/jg-pr-*|bin/jg-merge-local.sh|bin/jg-teardown.sh|bin/jg-review-diff.sh|\
+    bin/jg-pr-*|bin/jg-merge-on-green.sh|bin/jg-merge-local.sh|bin/jg-teardown.sh|bin/jg-review-diff.sh|\
     bin/jg-x-*|bin/jg-check*|bin/jg-pipeline-spend.sh)
       printf '%s\n' pr-forge
       ;;

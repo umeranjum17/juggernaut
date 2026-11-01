@@ -3717,6 +3717,24 @@ resurface_after_downtime() {
   wake "check: rearm-resurface"
 }
 
+# merge-on-green: the deterministic merge watcher. bin/jg-merge-on-green.sh owns
+# the decision and the alerts; this cycle only pays for one sweep on its own
+# short cadence, deliberately faster than CHECK_INTERVAL because the whole point
+# is that a green required set does not wait for a five-minute check tick. A
+# sweep that fails is absorbed here: its own alerts are the report, and a merge
+# that did not happen is the state the next sweep reads again.
+run_merge_on_green() {
+  local interval data
+  [ -f "$SCRIPT_DIR/jg-merge-on-green.sh" ] && [ ! -L "$SCRIPT_DIR/jg-merge-on-green.sh" ] || return 0
+  interval=${JG_MERGE_ON_GREEN_INTERVAL:-20}
+  case "$interval" in ''|*[!0-9]*) interval=20 ;; esac
+  [ "$(age_of "$STATE/.last-merge-on-green")" -ge "$interval" ] || return 0
+  touch "$STATE/.last-merge-on-green" 2>/dev/null || true
+  data=${JG_DATA_OVERRIDE:-$JG_HOME/data}
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data" \
+    "$SCRIPT_DIR/jg-merge-on-green.sh" sweep >/dev/null 2>&1 || true
+}
+
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
 # Time-based via .last-check mtime so the cadence survives watcher restarts.
 # A due check runs on every cycle that reaches it, including a cycle whose
@@ -4166,6 +4184,7 @@ EOF
     "$SCRIPT_DIR/jg-comms-feed.sh" sync >/dev/null 2>&1 || true
   fi
 
+  run_merge_on_green
   run_due_checks
   if [ -n "$signal_wake" ]; then
     wake "$signal_wake"

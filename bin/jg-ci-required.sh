@@ -6,12 +6,19 @@
 # change needs the lanes deliberately skipped. Anything else refuses, so a path
 # filter can never become a silent skip.
 #
-# The lanes are the thin pull request set only. The heavy behaviour suite is
-# .github/workflows/behavior.yml, which is nightly and post-merge and never a
-# pull request gate, so no verdict here names it.
+# JG_CI_EVENT says which lane set this run owes, and it is the whole reason the
+# merge path is fast: a pull request owes only the fast set, the sharded
+# changed-file lint and the changed-file tests, so its required check finishes
+# in minutes. A push to main or a release branch runs after the merge and owes
+# the full set, including the lanes a pull request no longer waits for. An
+# absent or unknown event owes the full set, so a caller that forgets it gets
+# the slower verdict rather than the weaker one.
+#
+# The heavy behaviour suite is .github/workflows/behavior.yml, which is nightly
+# and post-merge and never a pull request gate, so no verdict here names it.
 #
 #   JG_CI_NEEDS='{"invariants":{"result":"success"},...}' JG_CI_BEHAVIOR=true \
-#     bin/jg-ci-required.sh
+#     JG_CI_EVENT=pull_request bin/jg-ci-required.sh
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -35,7 +42,8 @@ else
 fi
 set -eu
 
-JG_CI_REQUIRED_LANES='lint syntax smoke evals bus'
+JG_CI_REQUIRED_LANES_PR='lint tests'
+JG_CI_REQUIRED_LANES_FULL='lint syntax smoke evals bus'
 
 jg_ci_required_die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
@@ -57,6 +65,10 @@ jg_ci_required_main() {
     true) want=success ;;
     false) want=skipped ;;
     *) jg_ci_required_die "the scope verdict is '${JG_CI_BEHAVIOR:-}', so CI cannot say which lanes this change needed" ;;
+  esac
+  case ${JG_CI_EVENT:-} in
+    pull_request) JG_CI_REQUIRED_LANES=$JG_CI_REQUIRED_LANES_PR ;;
+    *) JG_CI_REQUIRED_LANES=$JG_CI_REQUIRED_LANES_FULL ;;
   esac
   # The scope verdict is always needed: without it no lane verdict counts.
   [ "$(jg_ci_required_result invariants)" = success ] || bad="$bad invariants=not-passed"
