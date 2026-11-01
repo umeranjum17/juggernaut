@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # The guard host, proved end to end: repo-guard, the first Rego rule, refuses a gh/gh-axi write to a
-# repository off the allow list and never resolves a fork clone's parent; a new guard is one .rego file
-# under policy/guard/ with every core file byte-identical; OPA is the engine and the Go host is the one
-# command that asks it.
+# repository off the allow list and never resolves a fork clone's parent; the delete rule refuses a
+# recursive delete of a home folder; a new guard is one .rego file under policy/guard/ with every core
+# file byte-identical; OPA is the engine and the Go host is the one command that asks it.
 # Usage: tests/jg-guard-host.test.sh
-# shellcheck disable=SC2016 # the single-quoted cases are literal commands, never expanded here
+# shellcheck disable=SC2016 # the delete cases are literal commands, never expanded here
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 d=$(mktemp -d "${TMPDIR:-/tmp}/jg-guard-host.XXXXXX")
@@ -31,6 +31,12 @@ hook() {
   printf '%s|%s' "$rc" "$out"
 }
 verdict() { local s; s=$(hook "$@"); printf '%s' "${s%%|*}"; }
+# del <dir> <command>: the delete guard's own hook entry, printed "<exit>|<output>"
+del() {
+  local out rc
+  out=$(jq -Rn --arg c "$2" --arg d "$1" '{tool_input:{command:$c},cwd:$d}' | "$HOST" delete --runtime claude 2>&1) && rc=0 || rc=$?
+  printf '%s|%s' "$rc" "$out"
+}
 
 # OPA is the engine this rule needs and Go builds the host: with either absent the whole test
 # skips, not asserts.
@@ -63,6 +69,14 @@ for command in 'gh pr comment 1 --body b -R them/juggernaut' 'gh-axi issue creat
 done
 check "GH_REPO resolves the target like --repo" "$(verdict "$clone" 'gh-axi pr create' GH_REPO=them/juggernaut)" 2
 check "a write with no resolvable repository is refused" "$(verdict "$d" 'gh-axi pr create')" 2
+
+# --- the delete rule, in the same host ---
+out=$(del "$clone" 'rm -rf "$HOME"')
+check "a recursive delete of the home folder is refused" "${out%%|*}" 2
+has "the delete refusal names the delete guard" "${out#*|}" 'BLOCKED by the fleet delete guard'
+check "a recursive delete of a project folder passes" "$(del "$clone" 'rm -rf ./build')" '0|'
+check "a recursive delete of a fresh mktemp folder passes" "$(del "$clone" 'd=$(mktemp -d); rm -rf "$d"')" '0|'
+check "a recursive delete of a variable set earlier is refused" "$(printf '%s' "$(del "$clone" 'rm -rf "$T"')" | cut -d'|' -f1)" 2
 
 # --- a new guard is one .rego file, with no core change ---
 mkdir -p "$d/feature/bin" "$d/feature/core/guard-host" "$d/feature/policy"
