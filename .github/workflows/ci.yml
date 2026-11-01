@@ -261,12 +261,31 @@ jobs:
           export PATH=$NPM_CONFIG_PREFIX/bin:$PATH
           bin/jg-bootstrap.sh install nats-server nats
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          # The module is the one owner of the version this repo builds with.
+          go-version-file: core/bus/go.mod
+          cache: false
+      # The captain channel's command is Go, per the stack decision that new
+      # long-running parts are Go, and the shell is only its dispatcher. Build it
+      # here once and name it for the lane, so the behaviour test below proves the
+      # binary rather than a fallback.
+      - name: Build the captain channel command
+        run: |
+          set -eu
+          ( cd core/bus && go vet ./... && go build -o "$RUNNER_TEMP/bin/jg-bus" ./cmd/jg-bus )
+          echo "JG_BUS_BIN=$RUNNER_TEMP/bin/jg-bus" >> "$GITHUB_ENV"
       - name: Prove a home comes up with JetStream running
         run: |
           set -eu
           nats-server --version
           nats --version
           tests/jg-bus-service.test.sh
+      - name: Prove the captain channel's Go command at parity
+        run: |
+          set -eu
+          tests/jg-bus.test.sh
 
   # The one required status check: it always reports, refusing a lane that did
   # not run.

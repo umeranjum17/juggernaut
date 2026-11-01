@@ -11,21 +11,65 @@
 # so a green run is never vacuous; a reply event from the captain routes to the
 # lead the board's own route sends board answers to; and no failure of this path
 # can fail its emitter. Skipped when python3 is absent, because the delivery proof
-# needs a local HTTP sink rather than a real ntfy.
+# needs a local HTTP sink rather than a real ntfy, and skipped when the Go toolchain or
+# the two bus binaries are absent, because the command is Go and the reply leg settles a
+# task lease on a bus of its own.
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 command -v python3 >/dev/null 2>&1 || { printf 'skip: no python3; the local delivery sink needs it\n'; exit 0; }
 
+# The command is Go now, per the stack decision that new long-running parts are Go, so
+# this test builds the command at this head and runs the real dispatcher in front of
+# it: every assertion below drives the Go binary, and no shell fallback can make it pass.
+# A caller that already built the binary (CI does, once per lane) names it in JG_BUS_BIN
+# and the build is skipped.
+NATS_SERVER=${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}
+NATS_BIN=${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}
+[ -n "$NATS_SERVER" ] && [ -n "$NATS_BIN" ] || {
+  printf 'skip: nats-server and nats are needed for the reply leg, which settles a task lease on the bus\n'
+  exit 0
+}
+
 TMP_ROOT=$(jg_test_tmproot jg-bus)
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
+if [ -z "${JG_BUS_BIN:-}" ] || [ ! -x "${JG_BUS_BIN:-}" ]; then
+  command -v go >/dev/null 2>&1 || { printf 'skip: no go toolchain to build the bus command\n'; exit 0; }
+  ( cd "$ROOT/core/bus" && go build -o "$TMP_ROOT/bin/jg-bus" ./cmd/jg-bus ) ||
+    fail "the bus command did not build"
+  JG_BUS_BIN=$TMP_ROOT/bin/jg-bus
+fi
+# The dispatcher must hand every command to that binary, so it is named for the run.
+export JG_BUS_BIN
 BUS="$ROOT/bin/jg-bus.sh"
 CARD="$ROOT/bin/jg-question-card.sh"
 OUTCOME="$ROOT/bin/jg-branch-outcome.sh"
 SINK_OUT=$TMP_ROOT/requests.jsonl
 SINK_PID=
-cleanup_sink() { [ -z "$SINK_PID" ] || kill "$SINK_PID" 2>/dev/null; }
+BUS_PID=
+cleanup_sink() {
+  [ -z "$SINK_PID" ] || kill "$SINK_PID" 2>/dev/null
+  [ -z "$BUS_PID" ] || kill "$BUS_PID" 2>/dev/null
+}
 trap cleanup_sink EXIT
+
+# start_bus: the reply leg settles a task lease on the home's bus, so the test runs
+# its own JetStream server on a free port and points the lease store at it, instead
+# of assuming a bus this machine happens to have.
+start_bus() {
+  local store=$TMP_ROOT/bus-store log=$TMP_ROOT/bus.log port
+  mkdir -p "$store"
+  "$NATS_SERVER" -js -a 127.0.0.1 -p -1 -sd "$store" >"$log" 2>&1 &
+  BUS_PID=$!
+  for _ in $(seq 200); do
+    port=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$log" 2>/dev/null | head -n 1)
+    [ -n "$port" ] && break
+    sleep 0.05
+  done
+  [ -n "${port:-}" ] || fail "the test bus never reported a listen port"
+  export JG_KV_URL="nats://127.0.0.1:$port"
+}
+start_bus
 
 # The sink stands in for the Dapr sidecar and for ntfy: it records the path,
 # title and body of every POST so the test can see where each event went.
@@ -147,8 +191,15 @@ line=$(run_quiet "$d" "$BUS" parity | head -1)
 assert_contains "$line" "events=2 instants=" "parity replays both recorded events, at their recorded instants"
 assert_contains "$line" "decisions=4 deliveries=2 differences=0" "parity finds zero differences between what is sent and what was recorded"
 out=$(run "$d" "$BUS" parity --corrupt; printf 'exit=%s' "$?")
-assert_contains "$out" "differences=4 (must be non-zero)" "a tampered replay reports a difference, so green is not vacuous"
+# The tampered replay alters every event recorded at the first instant, so the number of
+# differences follows how many of the two events the run recorded in one second: two when
+# they share it, fewer when the clock ticked between them. What must never happen is zero,
+# and the changed field must be named.
+tampered=$(sed -n 's/.*differences=\([0-9]*\) (must be non-zero).*/\1/p' <<<"$out")
+[ -n "$tampered" ] && [ "$tampered" -ge 2 ] || fail "a tampered replay must report at least one changed row, got: $out"
+assert_contains "$out" "corrupted on the new path" "the difference names the field the tampered replay changed"
 assert_contains "$out" "exit=0" "the tampered run succeeds by reporting its difference"
+pass "a tampered replay reports a difference, so green is not vacuous"
 
 # --- a captain outcome is teed, a routine one is not --------------------------
 d=$(setup outcome)
@@ -199,6 +250,16 @@ out=$(printf '{"key":"not-routed","at":"2026-11-01T00:00:00Z","answer":"yes"}\n'
 assert_contains "$out" "not routed to a lead" "an unrouted card's reply stays with Main, as today"
 assert_contains "$out" "exit=3" "the unrouted reply is refused"
 assert_equals "muxr.inbox" "$(cd "$d/home/state" && for f in ./*.inbox; do printf '%s\n' "${f#./}"; done | paste -sd' ' -)" "the unrouted answer reached no lead"
+
+# --- the dispatcher hands every command to the Go binary, and a build failure
+# --- never breaks an emitter
+
+d=$(setup dispatch)
+assert_equals "live" "$(run_quiet "$d" "$BUS" config mode)" "the dispatcher runs the built Go command"
+out=$(env JG_HOME="$d/home" JG_BUS_BIN="$d/missing" JG_BUS_GO="$d/no-go" "$BUS" config mode 2>&1; printf 'exit=%s' "$?")
+assert_contains "$out" "exit=2" "a command that can neither run nor build refuses instead of pretending"
+out=$(env JG_HOME="$d/home" JG_BUS_BIN="$d/missing" JG_BUS_GO="$d/no-go" "$BUS" publish card k-tee "text" 2>&1; printf 'exit=%s' "$?")
+assert_contains "$out" "exit=0" "publish still exits 0, so no emitter is broken by a missing command"
 
 # --- the away-mode wedge alert arrives by this path, and only this path -------
 # The daemon has no notifier of its own: a max-defer wedge sends one alert
