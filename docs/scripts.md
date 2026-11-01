@@ -47,7 +47,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-remote-doctor.sh`    | Check, and with `--fix` repair, one remote account's Squad Lead readiness (remote job worker, Herdr, Aqua launch agents, PATH, and required tools) |
 | [`jg-backlog-handoff.sh`](../bin/jg-backlog-handoff.sh) | Move queued backlog items into a Squad Lead home; its header owns route-specific wake outcomes and retries |
 | `jg-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
-| `jg-bus.sh`              | The captain channel: record, publish and deliver each captain-facing event to the captain, replay what it sends against its own record, run the NATS/JetStream, slim Dapr and local ntfy services from their files, start or verify the home's JetStream (`ensure`), print its systemd user unit, and route a captain reply by the board route in force ([channel](captain-channel.md), [bus](bus-service.md)) |
+| `jg-bus.sh`              | The captain channel's dispatcher: build the Go command at `core/bus/cmd/jg-bus` once into the home's state directory, then hand it every command. The command records, publishes and delivers each captain-facing event, replays what it sends against its own record, runs the NATS/JetStream, slim Dapr and local ntfy services from their files, starts or verifies the home's JetStream (`ensure`), prints its systemd user unit, and routes a captain reply by the board route in force ([channel](captain-channel.md), [bus](bus-service.md)) |
 | `jg-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
 | `jg-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto jg-captain-hold.sh |
 | `jg-owner-rules.sh`      | Seed, extend, and audit the shared owner-rules surface the session digest prints, refusing an entry with no owner words, no scope, or no enforcement point |
@@ -71,6 +71,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-test-isolation-proof.sh` | Concurrent isolation harness and portable candidate set owner |
 | `jg-ensure-agents-md.sh` | Manually initialize project agent-memory files (see the helper's header and help) |
 | `jg-guard.sh`            | Warn on primary-checkout tangles, main-session pending wakes, and unhealthy supervision |
+| `jg-guard-host.sh`       | Build and run the one guard host: the Rego rule decisions, the delete rule, and repo-guard's gh/gh-axi and pre-push modes (`core/guard-host/cmd/jg-guard-host`'s header owns the contract) |
 | `jg-primary-scope-lib.sh` | Shared marker-or-plain-checkout primary-home predicate for tracked hooks             |
 | `jg-session-lock-lib.sh` | Shared session-lock ownership from harness ancestry or a trusted Claude session id for jg-lock.sh and the Claude Stop auto-arm, plus the read-only lock inspection behind `jg-lock.sh status` and `jg-inbox.sh ready` |
 | `jg-claude-stop-autoarm.sh` | Claude Stop `asyncRewake` hook owning tokenless watcher continuity with single-flight exit-2 rewake (docs/watcher-continuity.md) |
@@ -114,7 +115,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-procevent-remote-reply.sh` | Relay the remote Squad Lead status stream through non-destructive process-event deltas |
 | `jg-procevent-quota.sh`  | Wake Juggernaut when tracked quota drops below a threshold, is exhausted, or cannot be polled |
 | `jg-procevent-when.sh`   | Fire a trust-bound deterministic action at most once when its registered condition holds, then wake with the outcome |
-| `jg-procevent-signoff.sh` | Bring sign-off board answers to captain holds as keyed answers, and raise a board card for each new hold once a home arms it |
+| `jg-procevent-signoff.sh` | Bring sign-off board answers to captain holds as keyed answers once a home arms it; a hold's card is posted by `bin/jg-question-card.sh post` |
 | `jg-gate-refuse-lib.sh`  | Shared gate-context lifecycle boundary for real and lab homes                      |
 | `jg-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
 | `jg-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |

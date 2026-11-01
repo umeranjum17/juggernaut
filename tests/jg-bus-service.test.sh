@@ -23,6 +23,14 @@ if [ -z "$NATS_BIN" ]; then
   exit 0
 fi
 
+# The command is Go, per the stack decision that new long-running parts are Go, and
+# bin/jg-bus.sh builds it on first use, so a host with no toolchain and no binary built
+# for it cannot run this proof.
+if [ -z "${JG_BUS_BIN:-}" ] && ! command -v go >/dev/null 2>&1; then
+  echo "skip: no go toolchain to build the bus command (set JG_BUS_BIN)"
+  exit 0
+fi
+
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 HOME_DIR=$(jg_test_tmproot jg-bus-service)
 STATE_DIR="$HOME_DIR/state"

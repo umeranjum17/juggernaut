@@ -3,7 +3,8 @@
 The captain reaches the fleet through one channel: events on a bus, delivered to his iPad, with his replies coming back as events routed to the lead that owns them.
 Migration step 5a built that channel in shadow, and this path is now **live**: a captain-facing change of state is recorded, published and delivered to him by this path.
 
-`bin/jg-bus.sh`'s header is the owner of the shape.
+The header of the Go command at [`core/bus/cmd/jg-bus`](../core/bus/cmd/jg-bus/main.go) is the owner of the shape.
+`bin/jg-bus.sh` is the dispatcher that builds that command once and runs it, so every command below keeps its name and this file holds no behaviour of its own.
 This page owns how to run it, how to reverse it, and what its replay proves.
 
 ## What is running
@@ -32,8 +33,8 @@ Delivery needs `ntfy` running; the record and the bus need their own services on
 
 ## The path
 
-The two paths that reach the captain's record today are the board (`bin/jg-question-card.sh post`) and the supervision branch's captain outcome (`bin/jg-branch-outcome.sh append`).
-Both now send their event through `bin/jg-bus.sh publish`.
+The three paths that reach the captain's record today are the board (`bin/jg-question-card.sh post`), the supervision branch's captain outcome (`bin/jg-branch-outcome.sh append`), and the away-mode wedge alert (`bin/jg-supervise-daemon.sh`, kind `alert`).
+All three send their event through `bin/jg-bus.sh publish`.
 A routine or silent outcome is not captain-facing, so it is not sent.
 
 Every event is written to `state/captain-channel.jsonl` **before** anything is published, so an unreachable bus or a stopped service loses nothing.

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Install repo-guard: the gh and gh-axi shims that refuse a write to a repository outside allowed-repos, and the git pre-push extension that refuses a push to one. Idempotent.
+# The guard itself is the Go guard host at core/guard-host, built here into the install dir so the installed copy needs no toolchain later; installing needs go on PATH (or JG_GUARD_HOST_GO).
 # Usage: wiring.sh [--dry-run | --uninstall]
 # The allow-list is ${XDG_DATA_HOME:-~/.local/share}/jg-repo-guard/allowed-repos: copied once and never overwritten, so an extended list survives a rerun.
 # An installed gh or gh-axi is usually a symlink into a package, so its real binary runs in place from a recorded path; only the PATH entry becomes the shim, and --uninstall puts it back.
@@ -73,7 +74,14 @@ if [ "$DRY" = 1 ]; then
   echo "would write: $GUARD, $ALLOW, $HOOK"; echo 'dry run: nothing written'
   exit 0
 fi
-install -m 755 "$SRC/repo-guard" "$GUARD"
+# The guard itself is the Go guard host, built here so the installed copy needs no toolchain
+# later. A build failure refuses loudly: a guard that cannot run must never be installed.
+GO=${JG_GUARD_HOST_GO:-go}
+command -v "$GO" >/dev/null 2>&1 || { echo "repo-guard: refused: no Go toolchain on PATH (set JG_GUARD_HOST_GO, or install go); nothing installed. This refusal is final." >&2; exit 1; }
+GUARD_TMP=$GUARD.tmp.$$
+trap 'rm -f -- "$GUARD_TMP"' EXIT
+( cd "$SRC/../guard-host" && "$GO" build -o "$GUARD_TMP" ./cmd/jg-guard-host ) || { echo "repo-guard: refused: the guard host did not build; nothing installed" >&2; exit 1; }
+install -m 755 "$GUARD_TMP" "$GUARD"
 [ -f "$ALLOW" ] || install -m 644 "$SRC/allowed-repos" "$ALLOW"
 printf '#!/usr/bin/env bash\nexec %q pre-push "$@"\n' "$GUARD" >"$HOOK"
 chmod 755 "$HOOK"

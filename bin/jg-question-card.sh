@@ -144,14 +144,6 @@ split_board() {
   done
 }
 
-has_flag() {  # <flag>  -> 0 when the remaining arguments carry it
-  local want=$1 arg
-  for arg in ${ARGS[@]+"${ARGS[@]}"}; do
-    [ "$arg" = "$want" ] && return 0
-  done
-  return 1
-}
-
 set_detail() {  # <value>: keep exactly one --detail pair in ARGS
   local out=() i=0
   while [ "$i" -lt "${#ARGS[@]}" ]; do
@@ -264,7 +256,11 @@ cmd_post() {
   key=$(comm -13 <(printf '%s\n' "$before" | sed '/^$/d' | LC_ALL=C sort) \
                 <(printf '%s\n' "$after" | sed '/^$/d' | LC_ALL=C sort) | head -1)
   if [ -z "$key" ]; then
-    key=$(printf '%s\n' "$after" | sed '/^$/d' | head -1)
+    # No new open key means sign-off kept a card that already exists under the
+    # key we asked for (the same question again, or its answer): that card is
+    # this post's card, so cite it instead of another open one.
+    key=$(flag_value --key)
+    [ -n "$key" ] || key=$(printf '%s\n' "$after" | sed '/^$/d' | head -1)
     [ -n "$key" ] || die "sign-off-axi accepted the card but the board shows no open card; run sign-off-axi status and report this"
   fi
   [ -z "$ROUTE" ] || "$SCRIPT_DIR/jg-board-answers.sh" route "$key" "$ROUTE" "$DECISION_KEY" >&2 \

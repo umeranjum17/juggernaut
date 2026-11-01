@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Install or update the fleet delete guard for this user and register its watcher check in one juggernaut home.
+# The decision is the Go guard host at core/guard-host, built here into the install dir; installing needs go on PATH (or JG_GUARD_HOST_GO). guard.mjs is only the JavaScript entry its pi and OpenCode adapters import.
 # Idempotent: rerun it to update. Usage: wiring.sh [--dry-run] <jg-home>
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
@@ -55,7 +56,13 @@ hook() {
 
 cp "$SRC/guard.mjs" "$TMP/guard.mjs"
 printf '%s\n' "$FMH" > "$TMP/home"
-for f in guard.mjs home; do put "$DEST/$f" "$TMP/$f"; done
+# The decision is the Go guard host's, built here so the installed guard needs no toolchain
+# later. A build failure refuses loudly: a guard that cannot run must never be installed.
+GO=${JG_GUARD_HOST_GO:-go}
+command -v "$GO" >/dev/null 2>&1 || { echo "delete-guard: refused: no Go toolchain on PATH (set JG_GUARD_HOST_GO, or install go); nothing installed. This refusal is final." >&2; exit 1; }
+( cd "$SRC/../guard-host" && "$GO" build -o "$TMP/jg-guard-host" ./cmd/jg-guard-host ) || { echo "delete-guard: refused: the guard host did not build; nothing installed" >&2; exit 1; }
+for f in guard.mjs home jg-guard-host; do put "$DEST/$f" "$TMP/$f"; done
+[ "$DRY" -eq 1 ] || chmod 755 "$DEST/jg-guard-host"
 put "$DEST/check.sh" "$SRC/check.sh"
 [ "$DRY" -eq 1 ] || chmod 755 "$DEST/check.sh"
 

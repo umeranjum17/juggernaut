@@ -25,7 +25,6 @@
   ],
   "readmeSetupTargets": [
     "docs/configuration.md",
-    "docs/wedge-alarm.md",
     "docs/tmux-backend.md",
     "docs/herdr-backend.md",
     "docs/zellij-backend.md",
@@ -72,10 +71,6 @@
     },
     {
       "source": "docs/watcher-continuity.md",
-      "target": "docs/verification/supervision.md"
-    },
-    {
-      "source": "docs/wedge-alarm.md",
       "target": "docs/verification/supervision.md"
     },
     {
@@ -437,10 +432,6 @@
       "audience": "operator-example"
     },
     {
-      "path": "docs/examples/wedge-alarm",
-      "audience": "operator-example"
-    },
-    {
       "path": "docs/jg-test-isolation-proof.md",
       "audience": "maintainer-verification"
     },
@@ -642,10 +633,6 @@
     },
     {
       "path": "docs/watcher-continuity.md",
-      "audience": "operator-current"
-    },
-    {
-      "path": "docs/wedge-alarm.md",
       "audience": "operator-current"
     },
     {
