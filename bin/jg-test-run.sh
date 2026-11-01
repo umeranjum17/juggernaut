@@ -1531,7 +1531,7 @@ families_for_changed_path() {
     docs/jg-test-isolation-proof.json)
       printf '%s\n' pure-contract-unit
       ;;
-    .github/*|.gitattributes|.tasks.toml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
+    .github/*|.gitattributes|.done-done.yaml|.tasks.toml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
     docs/configuration.md|docs/supervision-protocols/*)
       printf '%s\n' pure-contract-unit
       ;;
@@ -1575,6 +1575,11 @@ families_for_changed_path() {
       printf '%s\n' "__unmapped__:$path"
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
+      ;;
+    core/*)
+      # A core feature's own suites run in core-suites.yml on the push after the
+      # merge; the fast set does not wait for them. A red post-merge run files a
+      # fix-forward item (bin/jg-post-merge-ci.sh).
       ;;
     *)
       if [ -e "$path" ]; then
