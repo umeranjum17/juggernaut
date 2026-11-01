@@ -109,6 +109,16 @@ triage_log() {
 # Exit after reporting one actionable wake. Tests override this callback.
 wake() {
   local output_status=0
+  # A reason that describes only the event this cycle classed `batch` is already
+  # recorded, so it does not leave the cycle; the next drain or the queue-resurface
+  # cadence delivers it. An urgent row from the same event latches
+  # JG_WAKE_CYCLE_URGENT (bin/jg-wake-lib.sh) and always wakes.
+  if [ -z "${JG_WAKE_CYCLE_URGENT:-}" ]; then
+    case "${JG_WAKE_LAST:-}" in
+      ''|now:*) ;;
+      ?*:*) case "$1" in *"${JG_WAKE_LAST#*:}"*) return 0 ;; esac ;;
+    esac
+  fi
   case "$1" in
     heartbeat*) echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak" ;;
     *) echo 0 > "$STATE/.heartbeat-streak" ;;

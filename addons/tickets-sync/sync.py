@@ -6,6 +6,7 @@ disagrees with its PR and backlog item, plus every board ticket no home's work
 accounts for; the watcher check whose stdout wakes Main runs it.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime as dt
 import fcntl
 import hashlib
@@ -212,6 +213,9 @@ def sync():
             seen.add(tid)
             if options.check:
                 if options.cleanup: return
+                # A row whose work another ticket already covers is left alone on purpose (the board keeps one open
+                # ticket per piece of work), so its missing state is not a disagreement to report.
+                if any(o != tid for o in tracked.get(work_key(desired), [])): return
                 # A leaf's state is the one its PR and backlog item derive; a grouping row's is its own.
                 if 'stage' in desired and (existing.get(tid, {}).get('state') or '') != desired['state']:
                     board_state = existing.get(tid, {}).get('state') or 'no state'
@@ -288,20 +292,48 @@ def sync():
             tasks = {r['id']: r for r in archived + tasks}
             full_file = state / f'{name}-full.json'
             full_cache = json.loads(full_file.read_text()) if full_file.exists() else {}
+            def source_of(item):
+                return Path(root) / file if item in backlog_ids else archive
+            def full_record(item):
+                return run(reader + ['show', item, '--full'], env) if item in backlog_ids else run(['tasks-axi', 'show', item, '--full', '--file', str(archive_copy)], env, state)
+            def full_fields(text):
+                return {k: json.loads(v) if v.startswith('"') else v for k, v in re.findall(r'^  (title|body): (.*)$', text, re.M)}
+            # Only a row the list truncated needs its full record, and only when the pass can use one: the row it will
+            # publish, a row another row names as its parent, or a request row whose words the ancestry inference reads.
+            # A row the pass skips publishes nothing, so reading its whole body would only spend a subprocess. The cache
+            # is keyed by source revision, so a row already read from an unchanged file needs nothing either.
+            named = set()
+            for r in tasks.values():
+                parent = re.search(r'^\s*parent:\s*(\S+)', r.get('body', ''), re.M | re.I)
+                if parent and parent[1] != 'upkeep': named.add(parent[1])
+            def unneeded(item, r):
+                if item in named or '[captain-ask]' in r['title'] and not re.search(r'^\s*parent:', r.get('body', ''), re.M | re.I):
+                    return False
+                return r['state'] == 'done' and r.get('closed', '-') < cutoff \
+                    and ticket_id(name, r['id']) not in ledger and ticket_id(name, r['id']) not in existing
+            pending = []
             for item, r in tasks.items():
-                if '\n... (truncated, ' not in r['title'] + r.get('body', ''): continue
-                path = Path(root) / file if item in backlog_ids else archive
-                stamp = str(path.stat().st_mtime_ns)
-                cached = full_cache.setdefault(str(path), {})
+                if '\n... (truncated, ' not in r['title'] + r.get('body', '') or unneeded(item, r): continue
+                cached = full_cache.setdefault(str(source_of(item)), {})
+                stamp = str(source_of(item).stat().st_mtime_ns)
                 if cached.get('stamp') != stamp: cached.clear(); cached.update(stamp=stamp, rows={})
-                if item not in cached['rows']:
+                if item not in cached['rows']: pending.append(item)
+            # Those reads are independent of each other, so the pass runs them side by side: a whole backfill lands in
+            # one wake instead of a budget's worth per check. The budget still bounds a large home, and whatever the
+            # cache already holds is saved before the pass stops.
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = {pool.submit(full_record, item): item for item in pending}
+                for future in as_completed(futures):
+                    item = futures[future]
+                    full_cache[str(source_of(item))]['rows'][item] = full_fields(future.result())
                     if not options.reconcile and time.monotonic() - started > budget:
+                        for other in futures: other.cancel()
                         save(full_file, full_cache); save(cursor, dict(home=name))
                         note('tickets-sync: reading full request context; continuing next check')
                         return
-                    full = run(reader + ['show', item, '--full'], env) if item in backlog_ids else run(['tasks-axi', 'show', item, '--full', '--file', str(archive_copy)], env, state)
-                    cached['rows'][item] = {k: json.loads(v) if v.startswith('"') else v for k, v in re.findall(r'^  (title|body): (.*)$', full, re.M)}
-                r.update(cached['rows'][item])
+            for item, r in tasks.items():
+                cached = full_cache.get(str(source_of(item)))
+                if cached and item in cached['rows']: r.update(cached['rows'][item])
             save(full_file, full_cache)
             if options.close and name == options.close.partition('/')[0]:
                 if options.close.partition('/')[2] not in tasks: raise RuntimeError('--close item not found: ' + options.close)
