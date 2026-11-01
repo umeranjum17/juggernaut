@@ -216,9 +216,11 @@ _jg_pending_reply_cache_unlock() {  # <state-dir>
 _jg_pending_reply_block_awk() {  # <pointer> <awk-program> [awk-args...]
   local pointer=$1 program=$2 file
   shift 2
-  _jg_pending_reply_split "$pointer" || return 0
+  # A pointer that names no waiter, or a cache that is not there, answers "no" and
+  # never "yes": a caller must not read an absent block as a present one.
+  _jg_pending_reply_split "$pointer" || return 1
   file=$JG_PENDING_REPLY_CACHE_FILE
-  [ -f "$file" ] || return 0
+  [ -f "$file" ] || return 1
   awk -v RS='' -v corr="$JG_PENDING_REPLY_CACHE_CORR" "$@" "$program" "$file" 2>/dev/null
 }
 
