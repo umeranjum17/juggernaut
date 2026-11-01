@@ -84,6 +84,18 @@ case "$out" in *'evidence=['*'action=['*) ;; *) fail "digest carries no evidence
 [ -z "$(opt flush "$((T + 800))")" ] || fail 'a flushed group woke again'
 pass 'coalesce: three events become one wake with a one-line digest, quiet before the window'
 
+# 3. coalesce by count: maxEvents rows flush before the window ends
+new_case coalesce-count
+max=$(jq -r .spec.coalesce.maxEvents "$ROOT/core/bus/workflows/escalation-optimization.json")
+i=1
+while [ "$i" -lt "$max" ]; do decide check "merged-$i" "pr$i $OK" '' "$((T + i))" >/dev/null; i=$((i + 1)); done
+[ -z "$(opt flush "$((T + 20))")" ] || fail 'a group flushed one row short of maxEvents'
+decide check "merged-$max" "pr$max $OK" '' "$((T + 21))" >/dev/null
+out=$(opt flush "$((T + 22))")
+[ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 1 ] || fail "maxEvents did not flush exactly one digest: $out"
+case "$out" in *"$max events: ${max}x merged"*) ;; *) fail "count digest does not name $max events: $out" ;; esac
+pass 'coalesce: maxEvents rows flush one digest before the window ends'
+
 # 4. actionability
 new_case actionability
 printf 'x\n' >"$CASE/state/t1.captain-hold"

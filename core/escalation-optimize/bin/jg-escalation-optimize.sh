@@ -15,7 +15,8 @@
 #                    capped; a changed payload resets the count.
 #   1 budget         at most N wakes per hour per receiving target; urgent ignores it.
 #   3 coalesce       batch/digest events wait in a pending group; flush emits ONE wake
-#                    per group with a one-line digest of every event in it.
+#                    per group with a one-line digest of every event in it, when the
+#                    window ends or maxEvents rows are held, whichever comes first.
 #   5 auto-resolve   an open escalation records the fingerprint of the state it was
 #                    raised about; resolve closes it (and withdraws its queued wake)
 #                    when that fingerprint changes.
@@ -202,7 +203,7 @@ cmd_decide() {  # <kind> <key> <payload> [task] [now]
 }
 
 cmd_flush() {  # [now] [--force]
-  local now='' force='' a g oldest class win digest first rows
+  local now='' force='' a g oldest class win digest first rows max
   for a in "$@"; do
     case "$a" in --force) force=1 ;; *) now=$a ;; esac
   done
@@ -213,7 +214,9 @@ cmd_flush() {  # [now] [--force]
     IFS=$'\t' read -r oldest class _ <"$g"
     win=$(wf '.spec.coalesce.windowSeconds')
     [ "$class" != digest ] || win=$(class_field digest flushSeconds)
-    [ -n "$force" ] || [ "$now" -ge "$((oldest + win))" ] || continue
+    max=$(wf '.spec.coalesce.maxEvents // 0')
+    [ -n "$force" ] || [ "$now" -ge "$((oldest + win))" ] \
+      || { [ "$max" -gt 0 ] && [ "$(wc -l <"$g" | tr -d ' ')" -ge "$max" ]; } || continue
     digest=$(awk -F '\t' '{ k = $3; sub(/-[^-]*$/, "", k); n[k]++; t++ } END { s = ""; for (k in n) s = s (s ? ", " : "") n[k] "x " k; print t " events: " s }' "$g")
     first=$(awk -F '\t' 'NR == 1 { print $4 }' "$g" | sed 's/ *evidence=\[.*//' | cut -c1-100)
     rows=$(wc -l <"$g" | tr -d ' ')

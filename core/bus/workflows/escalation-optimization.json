@@ -90,6 +90,7 @@
     },
     "coalesce": {
       "windowSeconds": 300,
+      "maxEvents": 10,
       "groups": [
         {
           "name": "merged",
