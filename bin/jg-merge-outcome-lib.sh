@@ -132,6 +132,8 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
   # costs one file test; the pass never forces, never touches a dirty copy, and
   # reports a version branch it cannot fast-forward instead of merging it.
   [ ! -e "${JG_CONFIG_OVERRIDE:-$home/config}/version-branch" ] || [ "$status" -ne 0 ] || JG_HOME=$home JG_CONFIG_OVERRIDE="${JG_CONFIG_OVERRIDE:-$home/config}" "$_JG_MERGE_OUTCOME_LIB_DIR/jg-version-branch-sync.sh" run 2>&1 | sed 's/^/version branch: /' >&2 || true
+  # The migration card follows every merge into its release branch (opt-in config/migration-card).
+  [ ! -e "${JG_CONFIG_OVERRIDE:-$home/config}/migration-card" ] || [ "$status" -ne 0 ] || JG_HOME=$home JG_CONFIG_OVERRIDE="${JG_CONFIG_OVERRIDE:-$home/config}" "$_JG_MERGE_OUTCOME_LIB_DIR/jg-migration-card.sh" merge "$JG_PR_URL" 2>&1 | sed 's/^/migration card: /' >&2 || true
   if [ "$status" -eq 0 ] && declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "${JG_CONFIG_OVERRIDE:-$home/config}" "$home" "$id" "$state/$id.meta" - "$JG_PR_URL" >&2; fi
   # The merge card carries the proof too: a no-op when the post hook filed it, else files it or says what is missing.
   if [ "$status" -eq 0 ] && { [ -e "${JG_CONFIG_OVERRIDE:-$home/config}/post-merge" ] || [ -n "${JG_PROOF_BOARD:-}" ]; }; then
