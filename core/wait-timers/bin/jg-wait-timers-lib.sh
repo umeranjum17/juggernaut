@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Waiting-state timers, called once per jg-watch.sh poll, independent of pane
 # churn, busy proofs, and stale/wedge suppression. This is the stuck-worker
-# escalation chain; addons/wait-timers/README.md owns its rungs, thresholds and
-# record format.
+# escalation chain; core/wait-timers/README.md owns its rungs, thresholds and
+# record format. The owner alert and the pause cadence are no longer here: the
+# escalation workflow definition decides and delivers those two rungs
+# (bin/jg-escalation-workflows.sh, live), and this file keeps the rungs the
+# definition does not carry yet - the escalation to Main, the board card and the
+# re-alert cadence - riding the owner time the definition stamps.
 # Each recorded task owns one durable episode under state/.waiting-timers/.
 # The effective declaration is, first to last: admitted Herdr agent.list
 # blocked (recorded panes only, Cursor excluded), an unanswered permission
@@ -65,11 +69,6 @@ jg_wait_timer_report() {  # <status-line>
     echo "waiting timers: parent channel publication failed (code $rc; inspect identity/binding or destination permissions)" >&2
     return 1
   }
-}
-
-jg_wait_timer_owner_delivered() {
-  [ "$1" -eq 0 ] || return 0
-  jg_wait_timer_save "$JG_WAIT_OWNER_RECORD" "$JG_WAIT_OWNER_SIGNATURE" "$JG_WAIT_OWNER_SINCE" "$(date +%s)" 0 "$JG_WAIT_OWNER_KEY" 0
 }
 
 # An immediate native push wake already told the owner about this blocked pane,
@@ -395,14 +394,31 @@ jg_wait_timers_green_pr() {  # <now>
   return 0
 }
 
+jg_wait_timers_definition_timers() {
+  "$_JG_WAIT_TIMER_DIR/jg-escalation-workflows.sh" timers 2>/dev/null
+}
+
 jg_wait_timers_tick() {
-  local alert=${JG_WAIT_ALERT_SECS:-120} escalate=${JG_WAIT_ESCALATE_SECS:-300} card_secs=${JG_WAIT_CARD_SECS:-600}
+  local escalate=${JG_WAIT_ESCALATE_SECS:-300} card_secs=${JG_WAIT_CARD_SECS:-600}
   local interval=${JG_PROMPT_REALERT_SECS:-600}
-  local paused_alert=${JG_PAUSE_RESURFACE_SECS:-$JG_PAUSE_RESURFACE_SECS_DEFAULT}
+  # The owner alert and the pause cadence are the escalation workflow
+  # definition's timers, and the owner rung itself is delivered there
+  # (bin/jg-escalation-workflows.sh, live on every poll). The two numbers are
+  # read from it because the rungs this library still owns measure their offsets
+  # from the owner alert: the escalation runs <escalate> seconds from the
+  # episode's start and a declared pause rechecks at the pause cadence. Neither
+  # number is written down again here.
+  local alert paused_alert numbers
+  numbers=$(jg_wait_timers_definition_timers) || {
+    echo "waiting timers: the escalation workflow definition is unreadable" >&2
+    return 1
+  }
+  alert=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "owner" { print $2 }')
+  paused_alert=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "pause" { print $2 }')
   local meta task backend window session native sessions='|' blocked='|' unknown='|' rows actor=Main lead=''
   local dir="$STATE/.waiting-timers" now record declaration verb signature old since owner parent key misses age reason until bound rc
-  local pause_key threshold dkey src source card last wsrc fresh session_id fired every level pending=''
-  for native in "$alert" "$escalate" "$card_secs" "$interval"; do
+  local pause_key dkey src source card last wsrc fresh session_id fired every level pending=''
+  for native in "$alert" "$paused_alert" "$escalate" "$card_secs" "$interval"; do
     case "$native" in ''|*[!0-9]*|0* ) echo "waiting timers: thresholds must be positive decimal seconds" >&2; return 1 ;; esac
     [ "${#native}" -le 9 ] || { echo "waiting timers: threshold exceeds nine digits" >&2; return 1; }
   done
@@ -594,21 +610,12 @@ EOF
     # never the blocked/decision owner-alert threshold, and it never escalates.
     # Every report prints the exact unresolved source, not just the episode.
     source=$(printf '%s' "$declaration" | tr '\t\n' '  ' | cut -c1-160)
-    threshold=$alert every=$interval
-    if status_is_paused "$declaration"; then threshold=$paused_alert every=$paused_alert; fi
-    if [ "$age" -ge "$threshold" ] && [ "$owner" -eq 0 ]; then
-      reason="check: waiting-state $task ($verb, observed ${age}s, level=owner; $actor must recheck and unblock) id=$key source=[$source]"
-      if ! jg_wake_queued_keys check | grep -Fx "$key-owner" >/dev/null; then
-        jg_wake_append check "$key-owner" "$reason" || return 1
-      fi
-      JG_WAIT_OWNER_RECORD=$record
-      JG_WAIT_OWNER_SIGNATURE=$signature
-      JG_WAIT_OWNER_SINCE=$since
-      JG_WAIT_OWNER_KEY=$key
-      # shellcheck disable=SC2034 # Consumed by wake() in jg-push-transition-lib.sh.
-      JG_WAKE_POST_OUTPUT_ACTION=jg_wait_timer_owner_delivered
-      wake "$reason"
-    fi
+    # The owner rung and the pause cadence are not here: the escalation workflow
+    # definition delivers them and stamps the episode's owner time. What follows
+    # still owns the escalation, the board card and the re-alert cadence, and
+    # rides the owner stamp the definition wrote.
+    every=$interval
+    if status_is_paused "$declaration"; then every=$paused_alert; fi
     [ "$owner" -gt 1 ] || continue
     if ! status_is_paused "$declaration" && [ "$parent" -eq 0 ] \
       && [ "$((now - owner))" -ge "$((escalate - alert))" ] && [ "$age" -ge "$escalate" ]; then

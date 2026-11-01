@@ -5,8 +5,8 @@
     "name": "escalation-wait-timers",
     "migrationStep": "5c",
     "half": "the wait timers: the owner alert and the pause cadence, the two timers that start a wait's clock",
-    "mode": "shadow",
-    "authoritative": "bin/jg-watch.sh and core/wait-timers/bin/jg-wait-timers-lib.sh keep deciding; this definition only runs beside them",
+    "mode": "live",
+    "authoritative": "bin/jg-escalation-workflows.sh decides and delivers these rungs on every watcher poll; the escalation rung, the board card and the re-alert cadence are still core/wait-timers/bin/jg-wait-timers-lib.sh",
     "reader": "bin/jg-escalation-workflows.sh is the one reader; a home may override this file at config/escalation-workflows.json or with JG_ESCALATION_WORKFLOW"
   },
   "spec": {
