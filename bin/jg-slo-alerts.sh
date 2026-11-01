@@ -417,7 +417,12 @@ evaluate_notify() {  # <cand-file> <firing-table>
       esc_due=0
       [ "$(( NOW - sent ))" -ge "$REPEAT" ] && send_due=1
       [ "$escalated" -eq 0 ] && [ "$(( NOW - firing_at ))" -ge "$escalate" ] && esc_due=1
-      if [ "$send_due" -eq 1 ] && inhibited "$id" "$labels" "$firing"; then send_due=0; fi
+      # Inhibition mutes the instance entirely: an alert that may not notify may
+      # not escalate either, or the muted alert would still reach Main.
+      if { [ "$send_due" -eq 1 ] || [ "$esc_due" -eq 1 ]; } && inhibited "$id" "$labels" "$firing"; then
+        send_due=0
+        esc_due=0
+      fi
       [ "$send_due" -eq 1 ] || [ "$esc_due" -eq 1 ] || continue
       waited=$(( NOW - firing_at ))
       link=$(printf '%s' "$labels" | jq -r '[.[] | strings | select(startswith("https://"))][0] // ""' 2>/dev/null) || link=

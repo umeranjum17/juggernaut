@@ -143,6 +143,11 @@ out=$(run "$HOME_DIR" "$T0" "$SAMPLES" eval) || fail 'inhibition eval failed'
 assert_contains "$out" '"alertname":"pr-red"' 'the source alert did not fire, so nothing is inhibited'
 assert_not_contains "$out" '"task":"lane-a"' 'the red pull request did not mute the same owner idle worker'
 assert_contains "$out" '"task":"lane-b"' 'inhibition reached another owner lane'
+# A muted instance may not escalate either, or the alert the source explains
+# would still reach Main an hour later.
+out=$(run "$HOME_DIR" "$(( T0 + 61 * 60 ))" "$SAMPLES" eval) || fail 'inhibition eval failed'
+assert_not_contains "$out" '"task":"lane-a"' 'the muted idle worker escalated to Main'
+assert_contains "$out" '"task":"lane-b"' 'the other owner idle worker stopped escalating'
 pass 'inhibition mutes the target for the same owner and no other'
 
 # --- routing: lead first, Main only when the lead does not act, one digest ---
