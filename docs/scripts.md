@@ -126,6 +126,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
 | `jg-watch.sh`            | Singleton-safe watcher: absorb benign wakes, detect stalled local Squad Lead wake queues, hand recorded asks to `core/ask-default`, and exit on actionable ones |
 | `jg-retired-catalog-check.sh` | The gate that keeps the retired bolt-on catalog retired: refuse any new path under the retired directory in a change (`--base <ref>`) and any tracked one outside its named deferred images, and `--self-test` proves the refusal with a fixture file |
+| `jg-committed-binary-check.sh` | The gate that keeps compiled binaries out of the tree: refuse every tracked ELF, Mach-O or PE file with one line naming it, the `Repo invariants` CI job runs it before a merge, and `--self-test` proves the refusal with planted files |
 | `jg-host-wiring.sh`      | The core's one host-wiring entry point: run every `core/<feature>/wiring.sh` step in its working order for one home, with `--dry-run`, `--list`, and `--unwire` for the steps that carry a teardown |
 | `jg-inactive-reconcile.sh` | Reconcile long-inactive direct operator terminal outcomes without forge access |
 | `jg-afk-contract.sh`     | Own the away-or-quiet record's posture, schema, entry, read-back, archive, and cross-subsystem authority lock |

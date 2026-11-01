@@ -126,6 +126,13 @@ jobs:
           else
             bin/jg-retired-catalog-check.sh
           fi
+      - name: No committed binaries
+        run: |
+          set -eu
+          # The gate proves its own refusal on a planted file first, so a broken
+          # gate cannot pass the tree by matching nothing.
+          bin/jg-committed-binary-check.sh --self-test
+          bin/jg-committed-binary-check.sh
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu

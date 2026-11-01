@@ -14,3 +14,8 @@ config/
 .tools/
 .opencode/opencode.json
 .lavish/
+
+# Build output: bin/jg-bus.sh builds the bus command into the home's state
+# directory, so a jg-bus executable in the tree is always an accident.
+core/bus/jg-bus
+core/bus/cmd/jg-bus/jg-bus
