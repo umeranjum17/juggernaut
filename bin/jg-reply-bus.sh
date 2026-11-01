@@ -41,10 +41,10 @@
 #   publish  one record's facts, read from the record file itself: what a producer
 #            calls once it has written the record. No bus behind it is a skip and
 #            never a failure, so a home without one still records.
-#   project  the fold, written back as the record files: the same keys in the same
-#            order the writers use, and the delivery marker the readers expect.
-#            This is what makes the stream the authority: destroy the records and
-#            rebuild them from the bus.
+#   project  the fold, written back as record files under <state-dir>: the same
+#            keys in the same order the writers use. With no <state-dir> it writes
+#            beside the home's own state, which is how the cache is rebuilt from
+#            the bus alone: destroy the cache and rebuild it.
 #   log      the stream in the engine's log format, `<key>\t<seq>\t<json>`, so
 #            bin/jg-reply-engine.sh folds, decides and replays the bus itself.
 #   rows     the record files and the stream produce the same canonical rows, one
@@ -143,13 +143,23 @@ home_keys() { # the home keys of this run, as a JSON array
 # are the workflow definition's, so the facts and the stages cannot drift apart
 # silently.
 record_facts() { # <state-dir> <since-epoch> [<record-file>...]
-  local st=$1 since=$2 dir
+  local st=$1 since=$2 dir cache tmpd=''
   shift 2
   if [ "$#" -eq 0 ]; then
-    dir="$st/pending-replies"
-    [ -d "$dir" ] || return 0
-    set -- "$dir"/[0-9a-f]*
-    [ -e "$1" ] || return 0
+    cache="$st/reply-state.tsv"
+    if [ -f "$cache" ]; then
+      # The cache is the readers' view of the stream: lay its blocks out as one
+      # file each so this fold reads the same records the writers wrote.
+      tmpd=$(mktemp -d "${TMPDIR:-/tmp}/jg-reply-bus-cache.XXXXXX") || return 0
+      cache_blocks "$st" "$tmpd" || { rm -rf -- "$tmpd"; return 0; }
+      set -- "$tmpd"/*
+      [ -e "$1" ] || { rm -rf -- "$tmpd"; return 0; }
+    else
+      dir="$st/pending-replies"
+      [ -d "$dir" ] || return 0
+      set -- "$dir"/[0-9a-f]*
+      [ -e "$1" ] || return 0
+    fi
   fi
   awk -v key="$(home_key "$st")" -v stages="$STAGES" -v gdef="$GRACE_DEFAULT" \
     -v since="$since" '
@@ -248,6 +258,24 @@ record_facts() { # <state-dir> <since-epoch> [<record-file>...]
     /^corr_id=/ { file = FILENAME }
     END { if (NR > 0) emit() }
   ' "$@" 2>/dev/null || true
+  [ -z "$tmpd" ] || rm -rf -- "$tmpd"
+}
+
+# cache_blocks <state-dir> <out-dir>: one file per waiter block of the cache, named
+# by its corr_id, so every fold here reads the cache as if it were record files.
+cache_blocks() { # <state-dir> <out-dir>
+  local cache="$1/reply-state.tsv" out=$2
+  [ -f "$cache" ] || return 0
+  mkdir -p "$out" || return 1
+  awk -v RS='' -v out="$out" '
+    {
+      n = split($0, L, "\n"); corr = ""
+      for (i = 1; i <= n; i++) if (index(L[i], "corr_id=") == 1) corr = substr(L[i], 9)
+      if (corr == "") next
+      f = out "/" corr
+      printf "%s\n", $0 > f
+      close(f)
+    }' "$cache"
 }
 
 # facts_rows <state-dir> <since-epoch>: the record path's decision rows.
@@ -434,7 +462,9 @@ cmd_sync() {
 cmd_docs() { # <record-file>...
   local st
   [ "$#" -gt 0 ] || return 0
-  st=$(dirname "$(dirname "$1")")
+  # An explicit --home wins: a caller that holds the record text in a scratch file
+  # still folds it under its own home's key.
+  st=${HOMES[0]:-$(dirname "$(dirname "$1")")}
   record_facts "$st" 0 "$@" | awk -F'\t' '
     function d(v, fallback) { return (v == "" ? fallback : v) }
     function flush() {
@@ -457,15 +487,19 @@ cmd_docs() { # <record-file>...
 }
 
 # cmd_publish <record>: one producer's write, as the events of that record.
-cmd_publish() { # <record-path>
-  local rec=$1 st at
+cmd_publish() { # <record-path|pointer|corr-id>
+  local rec=$1 st at corr
   [ -n "$rec" ] || return 2
-  st=$(dirname "$(dirname "$rec")")
+  # An explicit --home wins: a producer that carries its waiter's record text in a
+  # scratch file still publishes into its own home's stream.
+  st=${HOMES[0]:-$(dirname "$(dirname "$rec")")}
   at=${AT:-$(date +%s)}
   bus_gate >/dev/null 2>&1 || return 0
   bus_ensure_stream
   if [ "$DISCARD" = 1 ]; then
-    publish_discard "$st" "$(basename "$rec")" "$at"
+    corr=${rec##*#}
+    corr=${corr##*/}
+    publish_discard "$st" "$corr" "$at"
     return 0
   fi
   publish_record "$st" "$rec"
@@ -671,8 +705,8 @@ case "$SINCE_HOURS" in ''|*[!0-9]*) printf 'jg-reply-bus.sh: --since-hours must 
 case "${AT:-}" in ''|*[!0-9]*) [ -z "${AT:-}" ] || { printf 'jg-reply-bus.sh: --at must be an epoch\n' >&2; exit 2; } ;; esac
 SINCE=$(( $(date +%s) - SINCE_HOURS * 3600 ))
 [ -n "$CMD" ] || { printf 'usage: jg-reply-bus.sh publish|sync|project|log|view|parity [--home DIR] (see the header)\n' >&2; exit 2; }
-# One record names its own home: the record path is <home>/state/pending-replies/<id>,
-# so a producer needs no other context to publish.
+# A producer normally names its own home with --home; only a bare `publish
+# <record-path>` falls back to deriving it from <home>/state/pending-replies/<id>.
 if [ "$CMD" = publish ] && [ "${#HOMES[@]}" -eq 0 ]; then
   [ -n "$POS" ] || { printf 'jg-reply-bus.sh: publish needs a record path\n' >&2; exit 2; }
   HOMES=("$(dirname "$(dirname "$POS")")")
@@ -701,7 +735,13 @@ BUS_URL=$(config_get "$HOME_DIR" nats-url "nats://127.0.0.1:4222")
 case "$CMD" in
   publish) cmd_publish "$POS" ;;
   sync) cmd_sync "${HOMES[@]}" ;;
-  project) for h in "${HOMES[@]}"; do cmd_project "$h"; done ;;
+  project)
+    if [ "${#POSITIONAL[@]}" -gt 0 ]; then
+      for h in "${POSITIONAL[@]}"; do cmd_project "$h"; done
+    else
+      for h in "${HOMES[@]}"; do cmd_project "$h"; done
+    fi
+    ;;
   log) cmd_log ;;
   docs) cmd_docs ${POSITIONAL[@]+"${POSITIONAL[@]}"} ;;
   view) cmd_view ;;

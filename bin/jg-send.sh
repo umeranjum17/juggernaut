@@ -106,7 +106,8 @@
 #
 # Parent-owned pending-reply expectation: every newly marked squad_lead request
 # except an explicit --fire-and-forget delivery receives a privacy-safe
-# correlation id and a durable parent record under state/pending-replies/ before
+# correlation id and a durable parent record on the reply bus (the
+# state/reply-state.tsv cache is its projection) before
 # delivery (bin/jg-pending-reply-lib.sh). Delivery
 # success and reply success are separate facts: delivery never resolves the
 # expectation. On the inbox plane the durable enqueue IS delivery to the task's

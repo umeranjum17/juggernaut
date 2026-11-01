@@ -211,7 +211,7 @@ test_claude_squad_lead_launch_brief_publishes_into_its_own_home() {
   status=$?
   expect_code 0 "$status" "squad_lead claude spawn for the doorbell check should succeed"$'\n'"$out"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "--add-dir '$(cd "$HOME_DIR/state" && pwd -P)/pending-replies'" "squad_lead claude launch must grant the parent's pending-replies"
+  assert_not_contains "$launch" "pending-replies" "a squad_lead claude launch must not grant a directory the cache replaced"
   doorbell=$(claude_launch_brief_arg "$launch")
   [ "$(printf '%s' "$doorbell" | "$ROOT/bin/jg-operational-input.sh" doorbell-kind)" = launch-brief ] \
     || fail "the squad_lead record does not hold a launch-brief envelope: $doorbell"
@@ -840,8 +840,9 @@ test_cursor_failed_catalog_probe_does_not_block_spawn() {
 
 # A hand-restarted OpenCode lead loses the launch env, so the squad_lead spawn
 # also writes the exact-path external_directory grant where OpenCode reads it
-# from the lead's cwd; it names the lead's inbox, pending-replies, and the
-# parent's read-only bin/, docs/ and .agents/skills/ only.
+# from the lead's cwd; it names the lead's inbox and the parent's read-only
+# bin/, docs/ and .agents/skills/ only. The pending-reply cache is one file in
+# state/, which the grant deliberately never covers (watcher internals live there).
 test_opencode_squad_lead_writes_exact_channel_grant() {
   local rec id sm out status cfg state_real root_real
   id="opencode-lead-grant-z2"
@@ -860,7 +861,7 @@ test_opencode_squad_lead_writes_exact_channel_grant() {
     "$(python3 -c '
 import json,os,sys
 st,i,rt=sys.argv[1:4]
-ext={st+"/"+i+".inbox/**":"allow",st+"/pending-replies/**":"allow"}
+ext={st+"/"+i+".inbox/**":"allow"}
 edit={}
 for d in ("bin","docs",".agents/skills"):
     ext[rt+"/"+d+"/**"]="allow"

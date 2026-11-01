@@ -8,6 +8,8 @@ set -u
 
 # shellcheck source=tests/squad-lead-helpers.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/squad-lead-helpers.sh"
+# shellcheck source=bin/jg-pending-reply-lib.sh disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/../bin/jg-pending-reply-lib.sh"
 
 # The move is delegated to `tasks-axi mv`, so this suite exercises the real
 # binary. Skip cleanly when it is absent (matching the backend smoke suites).
@@ -128,8 +130,8 @@ EOF
   assert_contains "$out" "receiver was not woken" "missing receiver failure was not observable"
   assert_grep 'retry-item' "$sub/data/backlog.md" "failed wake lost the durably handed-off item"
   corr=$(cut -d: -f2- "$home/state/.backlog-handoff-design.wake-pending")
-  assert_absent "$home/state/pending-replies/.delivery-confirmed-$corr" \
-    "missing endpoint was recorded as an attempted delivery"
+  [ -z "$(jg_pending_reply_get "$(jg_pending_reply_path "$home/state" "$corr")" delivery_attempted_epoch)" ] \
+    || fail "missing endpoint was recorded as an attempted delivery"
 
   cat > "$home/state/design.meta" <<EOF
 window=juggernaut:jg-design
@@ -183,9 +185,15 @@ SH
     'New routed work is in your backlog.' "failed doorbell lost the durable receiver instruction"
   rec_count=$(inbox_record_count "$home/state" design)
   [ "$rec_count" -eq 1 ] || fail "failed doorbell produced $rec_count inbox records"
-  corr=$(grep -l '^task_id=design$' "$home/state/pending-replies"/* 2>/dev/null | head -n 1)
+  corr=
+  for candidate in $(jg_pending_reply_corrs "$home/state"); do
+    if [ "$(jg_pending_reply_get "$(jg_pending_reply_path "$home/state" "$candidate")" task_id)" = design ]; then
+      corr=$candidate
+      break
+    fi
+  done
   [ -n "$corr" ] || fail "durable receiver instruction lost its reply expectation"
-  [ -n "$(grep '^delivered_epoch=' "$corr" | cut -d= -f2-)" ] \
+  [ -n "$(jg_pending_reply_get "$(jg_pending_reply_path "$home/state" "$corr")" delivered_epoch)" ] \
     || fail "durable enqueue was not recorded as delivered"
 
   JG_HOME="$home" "$ROOT/bin/jg-backlog-handoff.sh" design known-fail \
@@ -242,13 +250,13 @@ SH
     jg_pending_reply_tick "$2"
   ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$home/state" \
     || fail "concurrent watcher could not act on the durable enqueue"
-  phase=$(sed -n 's/^phase=//p' "$home/state/pending-replies/$corr")
+  phase=$(jg_pending_reply_get "$(jg_pending_reply_path "$home/state" "$corr")" phase)
   [ "$phase" = awaiting_report ] \
     || fail "advisory ring race changed the delivered expectation to $phase"
   touch "$TMP_ROOT/reconcile-race.release"
   wait "$handoff" || fail "failed advisory ring negated the durable enqueue"
-  assert_absent "$home/state/pending-replies/.delivery-confirmed-$corr" \
-    "delivered enqueue retained a recovery marker"
+  [ -z "$(jg_pending_reply_get "$(jg_pending_reply_path "$home/state" "$corr")" recovery_attempted_epoch)" ] \
+    || fail "delivered enqueue retained a recovery marker"
   [ "$(inbox_record_count "$home/state" design)" -eq 1 ] \
     || fail "advisory ring race did not retain exactly one inbox record"
 
@@ -680,6 +688,7 @@ test_local_teardown_preserves_wake_when_home_removal_fails() {
   local fakebin rm_bin="$TMP_ROOT/teardown-home-fail-rm" real_rm corr rc=0 marker rec fail_home
   local marker_before="$TMP_ROOT/teardown-home-fail-marker.before"
   local rec_before="$TMP_ROOT/teardown-home-fail-record.before"
+  local rec_after="$TMP_ROOT/teardown-home-fail-record.after" candidate
   setup_homes "$home" "$sub"
   printf 'project=%s\n' "$ROOT" >> "$home/state/design.meta"
   mkdir -p "$sub/data" "$rm_bin"
@@ -690,10 +699,10 @@ test_local_teardown_preserves_wake_when_home_removal_fails() {
   ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$home") \
     || fail "could not seed teardown wake state"
   marker="$home/state/.backlog-handoff-design.wake-pending"
-  rec="$home/state/pending-replies/$corr"
+  rec=$(jg_pending_reply_path "$home/state" "$corr")
   printf 'pending:%s\n' "$corr" > "$marker"
   cp -p -- "$marker" "$marker_before"
-  cp -p -- "$rec" "$rec_before"
+  jg_pending_reply_record_text "$rec" > "$rec_before"
   real_rm=$(command -v rm)
   fail_home=$(cd "$sub" && pwd -P)
   cat > "$rm_bin/rm" <<'SH'
@@ -720,7 +729,8 @@ SH
   assert_grep 'still-routed' "$sub/data/backlog.md" "failed teardown lost routed backlog work"
   cmp -s "$marker_before" "$marker" \
     || fail "failed home removal changed the pending wake marker"
-  cmp -s "$rec_before" "$rec" \
+  jg_pending_reply_record_text "$rec" > "$rec_after"
+  cmp -s "$rec_before" "$rec_after" \
     || fail "failed home removal changed the pending wake correlation"
   assert_present "$home/state/design.meta" "failed teardown removed route metadata"
   assert_grep '- design ' "$home/data/squad_leads.md" "failed teardown removed the registry route"
@@ -733,7 +743,7 @@ SH
     || fail "teardown retry did not retire the preserved wake: $(cat "$TMP_ROOT/teardown-home-retry.out")"
   assert_absent "$sub" "teardown retry left the receiver home"
   assert_absent "$marker" "teardown retry left the pending wake marker"
-  assert_absent "$rec" "teardown retry left the pending wake correlation"
+  jg_pending_reply_exists "$rec" && fail "teardown retry left the pending wake correlation"
   assert_no_grep '- design ' "$home/data/squad_leads.md" "teardown retry left the registry route"
   pass "failed local home removal preserves its wake and a retry retires both"
 }
