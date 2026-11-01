@@ -1,6 +1,6 @@
 {
   "name": "CAPTAIN",
-  "description": "Every captain-facing event the fleet published, in order, kept a week.",
+  "description": "Every captain-facing event this home published, in order, kept a week. The subjects carry the home prefix jg.<home>.: bin/jg-bus.sh and bin/jg-wake-bus.sh name the concrete stream for the home they run in, and core/bus/accounts.conf keeps each home on its own account.",
   "subjects": ["jg.captain.>"],
   "retention": "limits",
   "storage": "file",

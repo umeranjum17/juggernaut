@@ -3910,10 +3910,11 @@ while :; do
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-fleet-ledger.sh" capture || true
-  # Migration step 5b shadow: the same wakes and inbox records, mirrored to the bus
-  # beside the files (docs/bus-shadow.md). Off costs one file test, and a mirror
-  # that cannot reach its bus can never fail or delay a wake.
-  [ ! -e "$CONFIG/wake-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" sync >/dev/null 2>&1 || true
+  # The wake queue and the task inboxes run on the bus (docs/bus-live.md). A
+  # worker's acknowledgement of an inbox record is a `mv` into handled/, so this
+  # poll carries that move to the bus as the record's acknowledgement; a bus the
+  # poll cannot reach is silent and can never fail or delay a wake.
+  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>&1 || true
   # Migration step 5e shadow: the same task leases and busy events, mirrored to
   # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
   # test, and a mirror that cannot reach its bus can never fail or delay a wake.
