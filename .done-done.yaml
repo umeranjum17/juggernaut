@@ -1,5 +1,7 @@
 app: juggernaut
 journeys:
+  migration-card:
+    command: bash tests/migration-card.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   relaunch-model-refusal:
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   receipt-candidate-hook:
