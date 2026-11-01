@@ -167,6 +167,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-check-unregister.sh` | Retire a custom watcher check and its trust binding by validated task id            |
 | `jg-check-lib.sh`        | Validate custom-check registrations and prepare private execution snapshots          |
 | `jg-tokens-retro.sh` | Daily token retro watcher check: one `learn-from-mistakes-axi tokens retro` a day into `data/tokens-retro/`, reporting only a week-over-week change |
+| `jg-worker-rules.sh` | Show, render, measure, and check which part of the instruction surface each role reads, from `defaults/worker-rules.tsv` |
 | `jg-tool-update-check.sh` | Report watched tooling with an update available, and updates installed but left inert by PATH order |
 | `jg-startup-growth-check.sh` | Daily metadata-only growth check for startup memory and tracked startup/instruction surfaces |
 | `jg-pr-lib.sh`           | Own canonical task and PR validation plus private atomic PR-poll publication, merge-notification identity, and retirement |

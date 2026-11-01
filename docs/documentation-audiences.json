@@ -369,6 +369,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": "defaults/worker-rules.tsv",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "docs/agent-control.md",
       "audience": "maintainer-architecture"
     },

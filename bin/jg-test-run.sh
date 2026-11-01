@@ -643,6 +643,7 @@ tests/jg-teardown.test.sh 479995
 tests/jg-ticket-key.test.sh 20000
 tests/jg-tmp-sweep.test.sh 14071
 tests/jg-tokens-retro.test.sh 407
+tests/jg-worker-rules.test.sh 2000
 tests/jg-turnend-guard.test.sh 42968
 tests/jg-update.test.sh 13448
 tests/jg-wake-daemon-lifecycle-e2e.test.sh 10177

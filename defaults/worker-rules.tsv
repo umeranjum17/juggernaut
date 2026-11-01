@@ -1,0 +1,29 @@
+# defaults/worker-rules.tsv - who reads which part of the instruction surface.
+# Owner: bin/jg-worker-rules.sh. One row per part: <part><TAB><roles>.
+# A part is a section of AGENTS.md or a group of skills; the file that supplies it stays
+# the only source of its text. Roles: overwatch squad_lead builder reviewer scout, or all.
+# `check` refuses a section or skill that no row names, or that two rows name.
+agents-preamble	all
+agents:1. Identity and prime directives	overwatch,squad_lead
+agents:2. Layout and state	overwatch,squad_lead
+agents:3. Session start (run once at every session start)	overwatch,squad_lead
+agents:4. Harness and runtime dispatch	overwatch,squad_lead
+agents:5. Recovery	overwatch,squad_lead
+agents:6. Project and knowledge management	overwatch,squad_lead
+agents:7. Task lifecycle	overwatch,squad_lead
+agents:8. Supervision protocol	overwatch,squad_lead
+agents:9. Escalation and captain etiquette	overwatch,squad_lead
+agents:10. Backlog contract	overwatch,squad_lead
+agents:11. Operator briefs	overwatch,squad_lead
+agents:12. Self-update	overwatch
+agents:13. Agent-only reference skills	overwatch,squad_lead
+agents:14. Relay	overwatch
+agents:Captain instruction precedence	overwatch,squad_lead
+agents:Maintaining this file	overwatch,squad_lead,builder
+skill:juggernaut-coding-guidelines	builder,reviewer
+skill:prior-art	builder,scout
+skill:diagnostic-reasoning	builder,reviewer,scout,overwatch,squad_lead
+skill:captain-hold-lifecycle	scout,overwatch,squad_lead
+skill:afk ahoy bearings debrief intel quiet stow radio-silence updatejuggernaut resupply sitrep watchover	overwatch,squad_lead
+skill:agent-skill-trigger-index ask-user-authority away-quiet-supervision bootstrap-diagnostics decision-hold-lifecycle fleet-records harness-adapters operational-home-layout process-event-sources project-management quota-array-dispatch relay-respond session-start-recovery ship-landing squad-lead-provisioning stuck-operator-recovery task-dispatch validation-supervision watchover-supervision scout-completion juggernaut-self-repo	overwatch,squad_lead
+skill:firstmate-codexapp firstmate-coding-guidelines firstmate-orca firstmate-self-repo fmx-respond juggernaut-codexapp juggernaut-orca secondmate-provisioning stuck-crewmate-recovery updatefirstmate	overwatch,squad_lead
