@@ -21,6 +21,7 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 export JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}
 STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 BUS="$SCRIPT_DIR/jg-bus.sh"
+export PATH=${NPM_CONFIG_PREFIX:-$HOME/.local}/bin:$PATH  # where bin/jg-stack.sh installs nats
 RECORD=$STATE/captain-channel-delivered.jsonl
 WAIT=${JG_PROBE_WAIT:-20}
 command -v jq >/dev/null 2>&1 || { echo "probe: needs jq"; exit 1; }
