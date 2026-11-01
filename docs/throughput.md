@@ -4,8 +4,7 @@ A merged pull request spends most of its life between the worker's done line and
 The one-off [measurement that found this](../../BACKLOG.md) lived in discarded scratch scripts, so nobody could re-measure it.
 `bin/jg-throughput.sh` is that method as code: it attributes every second of the wait to one stage and ranks the stages by hours lost per day, so the worst bottleneck is the first line a reader sees.
 
-This is part A of the analysis: the measurement and the ranking.
-Part B files the ticket per ranked stage, posts the captain digest and opens the lead tickets.
+`propose` is the proposal path: one ticket per ranked stage, carrying its measured saving and the fix the config names.
 
 ## Sources
 
@@ -52,7 +51,12 @@ bin/jg-throughput.sh fetch                 # the two forge dumps into state/.thr
 bin/jg-throughput.sh measure               # one record per merged pull request
 bin/jg-throughput.sh rank [--json]         # the stages by hours lost
 bin/jg-throughput.sh show                  # the ranking for a reader
+bin/jg-throughput.sh propose [--dry-run]   # one ticket per ranked stage, and one captain line
 ```
+
+`propose` files the top `max-filed` ranked stages, never more than once: a stage already filed is left alone until its hours grow by `refile-growth-hours` or `refile-days` pass, and a refresh updates the same item instead of filing a second one.
+A ticket carries its measured saving, its owner and the fix the config names, so a reader can act on it without re-measuring.
+One captain line per run names what was measured and what was filed; a run of stages never becomes a run of messages.
 
 Every threshold, every stage and every proposed fix is `defaults/throughput.json`, which a home overrides at `config/throughput.json`.
 
@@ -64,4 +68,4 @@ Every threshold, every stage and every proposed fix is `defaults/throughput.json
 
 - It does not guess a done line. A pull request whose done line was lost at cleanup is counted as skipped and reported as such.
 - It does not detect a rebase loop on its own: that needs the pull request's force-push timeline, which this part does not fetch, so such rework falls under the same rework stage.
-- It does not file anything. Part B owns the ticket, the captain digest and the lead tickets.
+- It does not open the ticket on a lead's backlog. A stage whose owner is a lead is filed in this home's backlog and named in the captain line; routing it into a lead's own home is the parent channel's job.

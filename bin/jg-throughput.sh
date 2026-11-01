@@ -33,12 +33,20 @@
 #               never becomes a ticket.
 #   window      The last window-days days, ending at the newest merged record the
 #               inputs hold, so a replayed dump always measures the same window.
+#   propose     One ticket per ranked stage, carrying its measured saving and the
+#               fix the config names. The top max-filed stages only, and a stage
+#               already filed is left alone until its hours grow by
+#               refile-growth-hours or refile-days pass, so a re-measure never
+#               files the same bottleneck twice. Every run publishes ONE captain
+#               line naming what was measured and filed, never one line per stage.
+#               --dry-run names the tickets it would file and files nothing.
 #
 # Usage:
 #   jg-throughput.sh fetch [--since <YYYY-MM-DD>]
 #   jg-throughput.sh measure [--inputs <dir>] [--at <epoch>]
 #   jg-throughput.sh rank [--inputs <dir>] [--json]
 #   jg-throughput.sh show [--inputs <dir>]
+#   jg-throughput.sh propose [--inputs <dir>] [--dry-run]
 #
 # Environment: JG_HOME, JG_ROOT_OVERRIDE, JG_STATE_OVERRIDE, JG_CONFIG_OVERRIDE,
 # JG_THROUGHPUT (the definition), JG_THROUGHPUT_NOW (a pinned clock).
@@ -365,6 +373,91 @@ cmd_show() {
     (.[] | "  \(if .ranked then "*" else " " end) \(.label): \(.hours) h, \(.hours_per_day) h/day over \(.prs) pull request(s), median \(.median_s)s, p90 \(.p90_s)s -> \(.fix) [owner: \(.owner)]")' <<<"$json"
 }
 
+# --- propose ----------------------------------------------------------------
+# One ticket per ranked stage, with its measured saving, and one captain line per
+# run. A stage already filed is left alone until its hours grow or the window of
+# silence passes, so a re-measure never files the same bottleneck twice.
+cmd_propose() {
+  local dry=0 ranked n worst filed='' text id hours label stage owner
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --inputs) INPUTS=$2; shift 2 ;;
+      --dry-run) dry=1; shift ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  ranked=$(cmd_rank "$@" --json) || return 1
+  mkdir -p "$OUT/filed" 2>/dev/null || die "cannot create $OUT/filed"
+  n=$(printf '%s' "$ranked" | jq -r --argjson max "$(wf '.["max-filed"]')" \
+    '[.[] | select(.ranked)][0:$max] | length')
+  [ "$n" -gt 0 ] || { printf 'propose: nothing is over the threshold\n'; return 0; }
+  while IFS=$'\t' read -r stage label hours owner; do
+    [ -n "$stage" ] || continue
+    id="throughput-$stage"
+    if filed_recently "$stage" "$hours"; then
+      printf 'skip: %s was filed inside its window at the same size\n' "$id"
+      continue
+    fi
+    if [ "$dry" -eq 1 ]; then
+      printf 'would file: %s - %s h/day, owner %s\n' "$id" "$hours" "$owner"
+      continue
+    fi
+    file_ticket "$id" "$label" "$hours" "$stage" "$owner" || return 1
+    printf '%s\t%s\n' "$(date +%s)" "$hours" >"$OUT/filed/$stage"
+    filed="$filed $id"
+  done <<EOF
+$(printf '%s' "$ranked" | jq -r --argjson max "$(wf '.["max-filed"]')" \
+  '[.[] | select(.ranked)][0:$max][] | [.stage, .label, (.hours_per_day | tostring), .owner] | @tsv')
+EOF
+  worst=$(printf '%s' "$ranked" | jq -r '[.[] | select(.ranked)][0] | "\(.label) at \(.hours_per_day) h/day"')
+  text="throughput: $n ranked bottleneck(s); worst $worst$( [ -n "$filed" ] && printf '; filed:%s' "$filed")"
+  if [ "$dry" -eq 0 ]; then
+    captain_line "$text"
+  else
+    printf 'would publish: %s\n' "$text"
+  fi
+}
+
+# filed_recently <stage> <hours-per-day>
+filed_recently() {
+  local rec=$OUT/filed/$1 at hours now age
+  [ -f "$rec" ] || return 1
+  IFS=$'\t' read -r at hours <"$rec" || return 1
+  case "$at" in '' | *[!0-9]*) return 1 ;; esac
+  case "$hours" in '' | *[!0-9.]*) return 1 ;; esac
+  now=${JG_THROUGHPUT_NOW:-$(date +%s)}
+  age=$(( now - at ))
+  [ "$age" -lt "$(( $(wf '.["refile-days"]') * 86400 ))" ] || return 1
+  awk -v now="$2" -v was="$hours" -v grow="$(wf '.["refile-growth-hours"]')" \
+    'BEGIN { exit ((now - was) < grow) ? 0 : 1 }'
+}
+
+# file_ticket <id> <label> <hours-per-day> <stage> <owner>
+file_ticket() {
+  local id=$1 label=$2 hours=$3 stage=$4 owner=$5 body
+  body="$label costs $hours hours a day, measured by bin/jg-throughput.sh over the last $(wf '.["window-days"]') day(s).
+Owner: $owner.
+Fix: $(jq -r --arg id "$stage" '[.stages[] | select(.id == $id) | .fix][0] // ""' "$DEF")"
+  # A stage's ticket id is stable, so a re-measure updates the same item rather
+  # than filing a second one; a home with no such item gets a new one.
+  if JG_HOME="$JG_HOME" "$ROOT/bin/jg-tasks-axi.sh" show "$id" >/dev/null 2>&1; then
+    JG_HOME="$JG_HOME" "$ROOT/bin/jg-tasks-axi.sh" update "$id" \
+      --title "[feature] $label: $hours h/day" --body "$body" >/dev/null 2>&1 \
+      || { printf 'propose: could not update %s\n' "$id" >&2; return 1; }
+    printf 'updated: %s - %s h/day\n' "$id" "$hours"
+    return 0
+  fi
+  JG_HOME="$JG_HOME" "$ROOT/bin/jg-tasks-axi.sh" add "$id" "[feature] $label: $hours h/day" --body "$body" \
+    >/dev/null 2>&1 || { printf 'propose: could not file %s\n' "$id" >&2; return 1; }
+  printf 'filed: %s - %s h/day\n' "$id" "$hours"
+}
+
+captain_line() {  # <text>
+  local bus=${JG_THROUGHPUT_BUS:-$ROOT/bin/jg-bus.sh}
+  [ -x "$bus" ] || return 0
+  "$bus" publish alert throughput "$1" >/dev/null 2>&1 || true
+}
+
 main() {
   local cmd=${1:-}
   shift 2>/dev/null || true
@@ -376,7 +469,8 @@ main() {
     measure) cmd_measure "$@" ;;
     rank) cmd_rank "$@" ;;
     show) cmd_show "$@" ;;
-    *) die 'usage: jg-throughput.sh fetch | measure | rank [--json] | show' ;;
+    propose) cmd_propose "$@" ;;
+    *) die 'usage: jg-throughput.sh fetch | measure | rank [--json] | show | propose [--dry-run]' ;;
   esac
 }
 

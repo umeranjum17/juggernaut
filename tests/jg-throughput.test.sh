@@ -160,3 +160,57 @@ out=$(run show --inputs "$IN") || fail "show failed: $out"
 assert_contains "$out" 'handoff with nothing recorded running' 'show does not name the worst stage'
 assert_contains "$out" '[owner: lead]' 'show does not name the stage owner'
 pass 'show prints the ranking with each stage fix and owner'
+
+# --- propose: one ticket per ranked bottleneck, filed once --------------------
+# The captain asked for the bottleneck to be proposed by itself: one ticket per
+# ranked stage carrying its measured saving, and one line to the captain per run.
+mkdir -p "$TMP/data" "$TMP/config"
+jg_test_tasks_toml "$TMP/.tasks.toml"
+: >"$TMP/data/backlog.md"
+jq '. + {"window-days": 1, "min-hours-per-day": 2, "max-filed": 2}' \
+  "$ROOT/defaults/throughput.json" >"$CONFIG_DIR/throughput.json"
+cat >"$TMP/bus" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${JG_TEST_CAPTAIN_LOG:?}"
+SH
+chmod +x "$TMP/bus"
+export JG_TEST_CAPTAIN_LOG=$TMP/captain.log
+CAPTAIN=$TMP/captain.log
+: >"$CAPTAIN"
+
+out=$(run measure --inputs "$IN") || fail "measure failed: $out"
+out=$(JG_THROUGHPUT_BUS="$TMP/bus" run propose --inputs "$IN" --dry-run) || fail "propose failed: $out"
+assert_contains "$out" 'would file: throughput-run' 'the worst ranked stage is not proposed'
+assert_absent "$TMP/state/.throughput/filed/run" 'a dry run recorded a filing'
+assert_absent "$TMP/data/backlog.md.filed" 'a dry run wrote to the backlog'
+
+out=$(JG_THROUGHPUT_BUS="$TMP/bus" run propose --inputs "$IN") || fail "propose failed: $out"
+assert_contains "$out" 'filed: throughput-run' 'the worst ranked stage was not filed'
+assert_contains "$(cat "$TMP/data/backlog.md")" 'throughput-run' 'the ticket is not in the backlog'
+assert_contains "$(cat "$TMP/data/backlog.md")" '2.3333 hours a day' \
+  'the ticket does not carry the measured saving'
+assert_equals 2 "$(grep -c '^- \[ \] throughput-' "$TMP/data/backlog.md")" \
+  'the top-max-filed limit did not hold'
+assert_contains "$(cat "$CAPTAIN")" 'throughput: 2 ranked bottleneck(s)' \
+  'the captain was not told what was measured'
+assert_equals 1 "$(wc -l <"$CAPTAIN" | tr -d ' ')" 'the captain got one line per stage instead of one per run'
+pass 'propose files one ticket per ranked bottleneck and one captain line per run'
+
+# A second run inside the window files nothing: the same bottleneck is not
+# proposed twice, and a grown measurement does propose it again.
+out=$(JG_THROUGHPUT_BUS="$TMP/bus" run propose --inputs "$IN") || fail "propose failed: $out"
+assert_contains "$out" 'skip: throughput-run' 'the same bottleneck was filed twice'
+assert_equals 2 "$(grep -c '^- \[ \] throughput-' "$TMP/data/backlog.md")" \
+  'a second run added a duplicate ticket'
+# Inside the window but grown by more than the configured growth: the same item
+# is updated, never filed a second time.
+printf '%s\t%s\n' "$T0" 1.0 >"$TMP/state/.throughput/filed/run"
+out=$(JG_THROUGHPUT_BUS="$TMP/bus" run propose --inputs "$IN") || fail "propose failed: $out"
+assert_contains "$out" 'updated: throughput-run' 'a bottleneck that grew inside the window was not refreshed'
+assert_equals 2 "$(grep -c '^- \[ \] throughput-' "$TMP/data/backlog.md")" \
+  'a refreshed bottleneck filed a second ticket'
+# Past the refile window the same size is refreshed too.
+printf '%s\t%s\n' "$(( T0 - 30 * 86400 ))" 6.0 >"$TMP/state/.throughput/filed/run"
+out=$(JG_THROUGHPUT_BUS="$TMP/bus" run propose --inputs "$IN") || fail "propose failed: $out"
+assert_contains "$out" 'updated: throughput-run' 'a stale filing was never refreshed'
+pass 'a filed bottleneck is left alone until its window or its hours move'
