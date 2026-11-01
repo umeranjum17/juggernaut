@@ -156,8 +156,9 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-send.sh`             | Steer a task via a durable inbox record plus doorbell, or send a supported key or typed harness invocation through the recorded backend |
 | `jg-branch-prompt.sh`    | Emit the shared supervision branch's byte-stable system prompt ([pi-supervision-branch.md](pi-supervision-branch.md), [supervision-host.md](supervision-host.md)) |
 | `jg-branch-outcome.sh`   | Own the supervision branch's append-only outcome store, cursors, bounded status-coverage indexes, and session-start replay |
-| `jg-lease.sh`            | Claim, release, inspect, and sweep per-task supervision leases                       |
+| `jg-lease.sh`            | Claim, release, inspect, and sweep per-task supervision leases on the home's key-value bus |
 | `jg-lease-lib.sh`        | One owner of the supervision lease contract and the main-only role-partition guards  |
+| `jg-kv-lib.sh`           | One owner of the JetStream key-value client surface: server and client resolution, bucket creation, and the reads, writes, deletes, and revision a compare-and-set claim needs |
 | `jg-control.sh`          | Agent lifecycle control plane: allowlisted `interrupt`, `exit`, and transactional `relaunch` verbs for an exact task id ([agent-control.md](agent-control.md)) |
 | `jg-control-lib.sh`      | One executable owner of the control-plane verb allowlist, per-harness interrupt/exit mechanics, per-backend capability, and the endpoint-absence proof both `exit` and `relaunch` read |
 | `jg-busy-lib.sh`         | Single owner of the semantic busy-state contract: verdicts, source attribution, and per-harness sources |
