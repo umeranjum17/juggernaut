@@ -67,8 +67,12 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 
 WAKE_STREAM=JG_WAKE
 INBOX_STREAM=JG_INBOX
-WAKE_SUBJECT='jg.wake.>'
-INBOX_SUBJECT='jg.inbox.>'
+# One subject prefix per home on the machine's one server: jg.<home>.> owns the
+# wakes, the inboxes and the captain channel of exactly one home, and the account
+# that carries them can publish nowhere else (core/bus/accounts.conf).
+SUBJECT_PREFIX=${JG_BUS_SUBJECT_PREFIX:-}
+WAKE_SUBJECT=''
+INBOX_SUBJECT=''
 BUS_MAX_AGE=${JG_BUS_MAX_AGE:-168h}
 RECORD_DIR=${JG_WAKE_BUS_RECORD_DIR:-}
 SINCE_HOURS=24
@@ -567,7 +571,7 @@ live_raise() { # <kind> <key> <payload> <class>
   event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
     --arg payload "$3" --arg class "$4" --argjson at "$at" --argjson rseq "$rseq" \
     '{v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}') || return 1
-  live_publish jg.wake.raise "$id" "$event" || return 1
+  live_publish "$SUBJECT_PREFIX".wake.raise "$id" "$event" || return 1
   live_render
   return 0
 }
@@ -579,7 +583,7 @@ live_settle() { # <kind> <key> <payload>
   event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
     --arg payload "$3" --argjson at "$at" --argjson rseq "$(( at * 1000 + (RANDOM % 1000) ))" \
     '{v:1,id:$id,home:$home,where:"settled",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:"silent"}') || return 1
-  live_publish jg.wake.settled "$id" "$event" || return 1
+  live_publish "$SUBJECT_PREFIX".wake.settled "$id" "$event" || return 1
   live_render
 }
 
@@ -599,7 +603,7 @@ live_ack() { # <id>...
       rm -f -- "$owed"
       return 1
     fi
-      live_publish jg.wake.ack "$id/ack" \
+      live_publish "$SUBJECT_PREFIX".wake.ack "$id/ack" \
       "$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --argjson at "$at" \
         '{v:1,id:$id,home:$home,ack:true,at:$at}')" || return 1
   done
@@ -623,7 +627,7 @@ live_inbox_raise() { # <task> <seq> <delivery> <body-sha>
   local id at
   at=$(date -u +%s)
   id="inbox/$(live_home_key)/$1/$2"
-  live_publish jg.inbox.raise "$id" \
+  live_publish "$SUBJECT_PREFIX".inbox.raise "$id" \
     "$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg task "$1" --argjson seq "$2" \
       --arg delivery "$3" --arg sha "$4" --argjson at "$at" \
       '{v:1,id:$id,home:$home,task:$task,seq:$seq,at:$at,delivery:$delivery,body_sha:$sha}')" || return 1
@@ -846,6 +850,12 @@ for h in "${HOMES[@]}"; do
 done
 HOME_DIR=$(dirname "${HOMES[0]}")
 BUS_URL=$(config_get "$HOME_DIR" nats-url "nats://127.0.0.1:4222")
+# jg.<home>.>: the one prefix this home may publish or read on the machine server.
+if [ -z "$SUBJECT_PREFIX" ]; then
+  SUBJECT_PREFIX="jg.$(basename "$HOME_DIR" | tr -c 'A-Za-z0-9_.-' '_')"
+fi
+WAKE_SUBJECT="$SUBJECT_PREFIX.wake.>"
+INBOX_SUBJECT="$SUBJECT_PREFIX.inbox.>"
 [ -n "${JG_WAKE_BUS_URL:-}" ] && BUS_URL=$JG_WAKE_BUS_URL
 # Resolved once, before any command runs: the live raise and its render must not
 # depend on a gate that prints its own skip lines into a producer's output.
