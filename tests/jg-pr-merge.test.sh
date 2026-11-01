@@ -856,6 +856,7 @@ LINT
   assert_grep 'checks-lint: FAIL: evidence file missing' "$case_dir/stdout" \
     "lint-fails: the lint's own message was not shown"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "lint-fails: the forge merged after the lint failed"
+  printf 'lint FAIL run (exit %s): %s | %s\n' "$rc" "$(cat "$case_dir/stdout")" "$(grep 'merge refused' "$case_dir/stderr")"
 
   rm -f "$case_dir/lint-fail"
   set +e
@@ -868,6 +869,7 @@ LINT
   assert_grep "lint-args: https://github.com/example/repo/pull/31 $case_dir/home/data/task-x1" "$case_dir/lint.log" \
     "lint-passes: the lint was not run over data/<task>"
   assert_logged_gh_merge "$case_dir" 31 example/repo --squash
+  printf 'lint PASS run (exit %s): %s | forge call: %s\n' "$rc" "$(cat "$case_dir/stdout")" "$(grep 'pr merge' "$case_dir/gh.log")"
   pass "jg-pr-merge runs the evidence lint itself: FAIL refuses, PASS merges in one call"
 }
 
