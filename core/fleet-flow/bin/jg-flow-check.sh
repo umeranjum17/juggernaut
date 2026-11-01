@@ -232,7 +232,7 @@ for L in lanes:
             stat = subprocess.run(['git', '-C', wt, 'diff', '--shortstat', base, head], capture_output=True, text=True, timeout=3).stdout if base else ''
             cache[k] = sum(int(n) for n in re.findall(r'(\d+) insertion', stat))
         if cache[k] >= 1000:
-            out.append((f'split {L["t"]}', None, f'{L["t"]} worker {cache[k]} added lines: split before review (limit 1000)'))
+            out.append((f'split {L["t"]}', None, f'{L["t"]} worker {cache[k]} added lines: over the 1000-line guidance, so prefer a smaller slice (advice only, never a refusal)'))
     except Exception:
         pass
 try:

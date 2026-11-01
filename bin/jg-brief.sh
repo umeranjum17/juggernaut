@@ -984,6 +984,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 # Rules
 $RULE1
+   Prefer a small slice: keep the change as small as the work allows, because a smaller change is faster to review and land. This is guidance only - the change size is never a refusal.
 2. Keep project edits inside this worktree; keep proof and scratch output outside it, under \`$DATA/$ID/\` or a temporary directory.
    Outside the worktree, write only that task material and the status and steering-inbox records authorized below.
    Register disposable temporary directories outside the Juggernaut home, repository, state and data directories with \`JG_HOME='$JG_HOME' JG_STATE_OVERRIDE='$STATE' JG_DATA_OVERRIDE='$DATA' '$JG_ROOT/bin/jg-scratch.sh' register $ID <dir>\` so cleanup reaps them; keep retained evidence under \`$DATA/$ID/\` unregistered.

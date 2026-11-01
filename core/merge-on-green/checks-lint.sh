@@ -2,6 +2,9 @@
 # Run done-done's pinned merge-gate lint, or the Juggernaut lint when the pinned CLI is unavailable or the PR
 # has more than one page (100 files) of changes for done-done's truncated file list to measure.
 # Usage: JG_HOME=<home> checks-lint.sh <PR URL | report file> <evidence folder>
+# A size-only FAIL from the pinned lint is handed to the feature lint instead: done-done hardcodes its 1,000-line
+# limit with no config key, while the feature lint owns the size rule and config/checks-size, where the rule is
+# advisory by default (captain, release c-1) and a refusal only when a home asks for one.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -103,6 +106,11 @@ why=$(printf '%s' "$row" | cut -f5-)
 [ "$logged_src" = "$source" ] || { echo "checks-lint: FAIL: done-done produced no matching lint record: $out"; exit 1; }
 mkdir -p "$JG_HOME/data"
 printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$source" "$head" "$verdict" "$why" >> "$JG_HOME/data/checks-gate.log"
+# Size is advice unless config/checks-size says refuse: re-run the feature lint, which prints the size and its
+# advisory line, checks the remaining rules, and exits on those alone. Its row is newer, so it is this head's verdict.
+if [ "$rc" -ne 0 ] && printf '%s' "$why" | grep -Eq '^[0-9]+ added non-generated lines \(moved lines excluded\): split it \(limit [0-9]+\)$'; then
+  exec "$LEGACY" "$source" "$evidence"
+fi
 receipt_verdict=FAIL
 [ "$rc" -ne 0 ] || receipt_verdict=PASS
 if [ "$rc" -eq 0 ]; then
