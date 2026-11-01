@@ -822,7 +822,7 @@ jg_dod_forge_pr_head_live() {  # <provider> <host> <path> <number> <url>
 jg_dod_light_gate() {  # <worktree>
   local wt=${1:-}
   if [ -n "$wt" ] && [ -x "$wt/bin/jg-lint.sh" ] && [ -x "$wt/bin/jg-test-run.sh" ]; then
-    printf '%s\n' 'bin/jg-lint.sh --changed && bin/jg-test-run.sh --changed'
+    printf '%s\n' 'bin/jg-lint.sh <the files you changed> && bin/jg-test-run.sh <the tests for those files>'
     return 0
   fi
   printf '%s\n' "the project's lint over the files you changed, then the tests for those files"

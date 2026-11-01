@@ -118,7 +118,7 @@ test_red_check_refuses_the_done_by_name() {
   assert_contains "$out" "Lint (FAILURE)" "the refusal must name the exact check"
   assert_not_contains "$out" "CI required" "a passing check is not named"
   # shellcheck disable=SC2016 # The command is literal refusal text.
-  assert_contains "$out" 'bin/jg-lint.sh --changed && bin/jg-test-run.sh --changed' \
+  assert_contains "$out" 'bin/jg-lint.sh <the files you changed> && bin/jg-test-run.sh <the tests for those files>' \
     "the refusal must name the light gate to run locally"
   pass "a done with a red check is refused, naming the check and the light gate"
 }
@@ -173,6 +173,7 @@ test_local_only_done_makes_no_forge_read() {
     --source claude-hook --event stop
   : > "$d/gh.log"
   JG_FAKE_GH_LOG="$d/gh.log"
+  export JG_FAKE_GH_LOG
   out=$(lane_status "$d")
   [ ! -s "$d/gh.log" ] || fail "a local-only done read the forge: $(cat "$d/gh.log")"
   assert_contains "$out" "state: done" "a local-only done has no pull request to read"
