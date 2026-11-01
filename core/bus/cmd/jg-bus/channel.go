@@ -273,7 +273,19 @@ func (a *app) unit() int {
 	if path, err := exec.LookPath("nats-server"); err == nil {
 		natsServer = path
 	}
-	conf := a.busFile("nats.conf")
+	// One server per machine: the unit runs the base config with this machine's
+	// per-home accounts included, so every home on the machine shares one
+	// JetStream and no account can reach another home's subjects.
+	base := a.busFile("nats.conf")
+	conf := filepath.Join(a.runtime, "bus.conf")
+	accounts := filepath.Join(a.runtime, "accounts.conf")
+	if err := a.unitAccounts(accounts); err != nil {
+		return die("cannot write %s: %v", accounts, err)
+	}
+	include := fmt.Sprintf("include %q\ninclude %q\n", base, accounts)
+	if err := os.WriteFile(conf, []byte(include), 0o600); err != nil {
+		return die("cannot write %s: %v", conf, err)
+	}
 	quote := func(value string) string {
 		value = strings.ReplaceAll(value, `\`, `\\`)
 		value = strings.ReplaceAll(value, `"`, `\"`)
@@ -283,7 +295,7 @@ func (a *app) unit() int {
 	percent := func(value string) string { return strings.ReplaceAll(value, "%", "%%") }
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\n")
-	fmt.Fprintf(&b, "Description=Juggernaut message bus for %s (NATS JetStream)\n", percent(a.home))
+	fmt.Fprintf(&b, "Description=Juggernaut message bus for this machine (NATS JetStream, one account per home)\n")
 	fmt.Fprintf(&b, "After=network.target\n\n")
 	fmt.Fprintf(&b, "[Service]\n")
 	fmt.Fprintf(&b, "Type=simple\n")

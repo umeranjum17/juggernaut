@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -77,4 +78,52 @@ func writeCredential(path string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(base64.RawURLEncoding.EncodeToString(raw)+"\n"), 0o600)
+}
+
+// unitAccounts writes the machine's accounts file, which the unit's server config
+// includes. It covers every home that has a state directory beside this one, so
+// one unit serves the whole machine.
+func (a *app) unitAccounts(path string) error {
+	homes := []string{a.home}
+	if entries, err := os.ReadDir(filepath.Dir(a.home)); err == nil {
+		for _, entry := range entries {
+			sibling := filepath.Join(filepath.Dir(a.home), entry.Name())
+			if sibling == a.home {
+				continue
+			}
+			if st, err := os.Stat(filepath.Join(sibling, "state")); err == nil && st.IsDir() {
+				homes = append(homes, sibling)
+			}
+		}
+	}
+	out := captureStdout(func() int { return a.accounts(homes) })
+	if out == "" {
+		return fmt.Errorf("no accounts were produced")
+	}
+	return os.WriteFile(path, []byte(out), 0o600)
+}
+
+// captureStdout runs one command with stdout captured, so its text can be written
+// to a file instead of a terminal.
+func captureStdout(run func() int) string {
+	old := os.Stdout
+	read, write, err := os.Pipe()
+	if err != nil {
+		return ""
+	}
+	os.Stdout = write
+	done := make(chan string)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = buf.ReadFrom(read)
+		done <- buf.String()
+	}()
+	code := run()
+	os.Stdout = old
+	_ = write.Close()
+	text := <-done
+	if code != 0 {
+		return ""
+	}
+	return text
 }
