@@ -620,7 +620,6 @@ wake_pending_squad_lead_receiver() { # <squad-lead-id> [retain-confirmed]
   rec=$(jg_pending_reply_path "$STATE" "$corr")
   [ -f "$rec" ] && [ ! -L "$rec" ] &&
     [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ] || return 1
-  jg_pending_reply_reconcile_delivery "$STATE" "$corr" >/dev/null 2>&1 || true
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   if [ -z "$delivered" ]; then
     jg_pending_reply_corr_reusable "$STATE" "$corr" "$id" || {

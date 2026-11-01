@@ -8,12 +8,14 @@ decided shape is a durable workflow: the waiter is an instance, the reply is the
 event that resumes it, the timeout is a timer that survives a restart, and the
 repost-then-escalate ladder is the workflow's own activity loop.
 
-This step is the transport half of that switch. A waiter's facts are events on
-this home's JetStream bus, every writer publishes them as it writes, and the
-record file is their projection - the same keys in the same order every reader
-already opens. Nothing keeps a second event log beside the stream. The engine
-still only decides: it acts on no decision, and the next slice turns the decision
-into the actor and deletes the record machinery it replaces.
+The switch has landed. A waiter's facts are events on this home's JetStream bus,
+every writer publishes them as it writes, and the record file is their projection
+- the same keys in the same order every reader already opens. The workflow
+definition decides, and its engine acts on that decision: one recovery repost, one
+escalation, one unknown-delivery mark, the escalation close. The hand-rolled poll
+that used to do this - the delivery-marker ladder, its reconciliation, the phase
+walk in `tick_one` and the selection pass - is deleted. The record file itself
+stays for one more slice, because it is still every reader's interface.
 
 ## What runs
 
@@ -37,8 +39,9 @@ into the actor and deletes the record machinery it replaces.
   the bus, byte for byte, marker included.
 - `bin/jg-reply-bus.sh log` prints the stream in the engine's log format, so the
   engine folds, decides and replays the bus itself instead of a file beside it.
-- `bin/jg-watch.sh` runs one engine `tick` per poll over that dump when a home
-  carries `config/reply-bus`. Off costs one file test.
+- `bin/jg-watch.sh` runs `bin/jg-reply-engine.sh tick --act` once per poll: the
+  engine decides, the library acts, and the decisions it acted on are appended to
+  `$STATE/reply-bus-decisions.jsonl` as the trace.
 
 ## The projection
 
@@ -49,11 +52,11 @@ the grace. The writer's own bytes are carried on the `waiter` event's `record`
 field, so the projection is a byte copy and not a re-encoding someone has to keep
 in step with the writer.
 
-The delivery marker (`state/pending-replies/.delivery-confirmed-<corr>`) is
-projected from the same event: an attempted and unconfirmed delivery is a marker
-holding its epoch, and a confirmed one is the record's `delivered_epoch`. A
-`discard` removes both files and stops the id counting in every fold, so a
-discarded request cannot come back on the next projection.
+The delivery attempt is the record's own `delivery_attempted_epoch`; there is no
+separate marker file any more. An attempt that never confirms is what the engine
+ages into an unknown delivery, and a confirmation clears the attempt and sets
+`delivered_epoch`. A `discard` removes the record and stops the id counting in
+every fold, so a discarded request cannot come back on the next projection.
 
 When the bus cannot be reached, the projection is still written and the guard
 still works; what a skipped publish costs is the rebuild of a waiter that is
@@ -62,11 +65,11 @@ per write and authoritative per stream.
 
 ## The engine
 
-`bin/jg-reply-engine.sh` is the definition's engine. It folds the event log into
-one state per waiter, decides what the definition says each stage should do, and
-- in this step - only records the decision. It sends no repost, opens no
-escalation, closes nothing and writes no record; `bin/jg-pending-reply-lib.sh`
-stays the path that acts.
+`bin/jg-reply-engine.sh` is the definition's engine. It decides what the
+definition says each stage should do, and - in `tick --act` - it performs that
+decision through `bin/jg-pending-reply-lib.sh`: one recovery repost, one
+escalation, one unknown-delivery mark, the escalation close. It never invents an
+action: every row it acts on is a row the definition took.
 
 - `docs` prints one tab-separated state line per waiter: the instance, its task
   and grace, its delivery state and epochs, each stage's timer, what each fire
@@ -75,9 +78,15 @@ stays the path that acts.
   instant: `arm <id> <stage> <deadline>`, `repost <id> <deadline>`,
   `escalate <id> <reason> <deadline|->`, `answer <id> <epoch> <via>`. A decision is
   bound to the deadline its timer derives, never to the instant a poll noticed it.
-- `tick` is the watcher's slot for it: fold, decide every waiter at one instant,
-  and append what it would do to `$STATE/reply-bus-decisions.jsonl`. The watcher
-  feeds it `bin/jg-reply-bus.sh log`.
+- `tick` records what the definition would do at one instant, and does nothing.
+  `tick --act` is the live slot: for every waiter it first observes and resolves -
+  the correlated reply line, the mate-home repairs, the endpoint's busy/idle turn
+  completion - then asks for the decision from the record that observation just
+  wrote, so an armed timer and its repost land in the same poll. The rows it acts
+  on are appended to `$STATE/reply-bus-decisions.jsonl`.
+- `decide-stdin [<epoch>]` is how the library asks for that decision: doc lines in,
+  decision rows out, one instant. `bin/jg-reply-bus.sh docs <record>` prints the
+  doc line for a record, in the same field order `docs` prints for a log.
 - `replay [<log>] [--corrupt]` walks a recorded log instant by instant, compares
   the decision at each instant with the decision the record path took from the
   same facts, and names both rows when they disagree.
@@ -177,56 +186,52 @@ gone from the projection after the rebuild.
 Measured with `wc -l` and the function spans of each file; nothing below is an
 estimate.
 
-The workflow path, `bin/jg-reply-bus.sh` at 685 lines plus the 43-line
-definition, 728 lines:
+The workflow path, `bin/jg-reply-bus.sh` at 709 lines, `bin/jg-reply-engine.sh` at
+508, plus the 43-line definition, 1,260 lines:
 
-- 268 for the transport, in 17 functions: the definition and config readers, the
-  record scan, the fact-to-event builders, the publish and the discard, and the
-  backfill.
-- 199 for the fold and the commands that prove it, in 9 functions: the stream
-  dump, the fold, the projection, the log, the record rows, the two scans and the
-  churn, the compare and `--corrupt`.
-- 218 for the contract header, the argument handling and the config resolution.
+- 268 for the transport in `bin/jg-reply-bus.sh`, in 18 functions: the definition
+  and config readers, the record scan, the fact-to-event builders, the publish and
+  the discard, the doc line a decision is taken from, and the backfill.
+- 199 for the fold and the commands that prove it, in 9 functions: the stream dump,
+  the fold, the projection, the log, the record rows, the two scans and the churn,
+  the compare and `--corrupt`.
+- 218 for that file's contract header, argument handling and config resolution.
+- 349 for the engine's own body, in 18 functions: its fold, the decision, the
+  acting tick, the shadow tick and the replay.
+- 226 for the engine's contract header and argument handling.
 
-The record path, the wait and timeout machinery a workflow replaces inside
-`bin/jg-pending-reply-lib.sh` (1,754 lines total), 1,047 lines:
+`bin/jg-pending-reply-lib.sh` is 1,489 lines now, and what it still holds is the
+part the next slice cannot do without: the correlation identity, the status-line
+resolve with its document/`via` classification, the recovery message and its
+transport, the escalation payload and the line and close lifecycle, wrong-home
+detection, the remote watermark, the parked-home gate, the endpoint observation
+that finds a turn completion, and the one record write seam every writer publishes
+through.
 
-- 52 for the record's own location, clock and read/write (`now`, `grace_secs`,
-  `dir`, `path`, `get`, `set`) and the publish that rides on every write.
-- 181 for the delivery-evidence ladder: the confirmation marker, delivery
-  confirmation and reconciliation, the unknown and failed branches, and the
-  undelivered reset.
-- 125 for finding the reply: the status-line scan, its signature cache, the
-  `via` classification and the idempotent resolve under its lock.
-- 116 for finding the turn completion that starts the timer: the busy/idle
-  observation, its fallback, the backend observation mapping and the explicit
-  completion marker.
-- 141 for the recovery repost: the send under the lock, the sender identity, the
-  finish and the reconciliation.
-- 226 for the escalation: the payload, the durable decision line, opening and
-  closing that decision, and the eligibility ladder.
-- 212 for the poll: the per-record tick, the selection pass and the home-wide
-  tick.
+What this slice deleted, and the mechanisms it deleted with them:
 
-That is 1,047 record-path lines against 728 workflow-path lines, so the remaining
-slice removes that machinery and these mechanisms with it:
+- the delivery-confirmation marker file and its ladder: nine functions, the
+  prepare/confirm/reconcile/reset/unknown paths, and the aging that turned an
+  attempt into an unknown delivery. The attempt is one record fact now
+  (`delivery_attempted_epoch`), and the definition decides the unknown delivery
+  from it;
+- the poll's hand-written decision walk: `jg_pending_reply_tick_one`, the
+  selection pass, the delivery reconciliation each of them called, and the phase
+  ladder in `jg_pending_reply_tick`;
+- the parent-status scan cache: the resolve scans the line on every poll, and a
+  resolve is idempotent, so there is nothing to invalidate;
+- every per-correlation lock: `try_resolve`, `confirm_delivery`,
+  `reconcile_delivery`, `reset_known_undelivered`, `maybe_escalate`,
+  `close_escalation`, `send_recovery`, and teardown's retire. One acting tick per
+  home is the only writer of these records, and the reply is read immediately
+  before any action, so the lock serialised a single writer against itself;
+- teardown's pending-reply retirement: the record and marker pair became one
+  published `discard` plus the record's removal, and the handoff-wake retire keeps
+  its staged rollback with nothing left to stage but the record and its marker.
 
-- the record file as the workflow's own state, and the lock that serialises a
-  resolve against an escalation;
-- the grace arithmetic and the busy/idle observation that finds the anchor;
-- the delivery-confirmation marker and its reconciliation ladder;
-- the poll loop, because a reply event resumes the instance instead of a tick
-  noticing it;
-- and the projection itself, because the engine can read the stream.
-
-The 163 lines that create and identify a request (`new_id`, `corr_token`,
-`extract_corr`, `text_has_corr`, `summarize`, `embed_corr`, `create`, the sighting
-encoding) stay: they are the correlation identity the switch still needs. So do
-the remote-channel watermark (38), the recovery message text (9), and the
-wrong-home detection (83). Callers of the removed functions - `bin/jg-send.sh`,
-`bin/jg-backlog-handoff.sh`, `bin/jg-teardown.sh`, `bin/jg-squad-lead-restart.sh`,
-`bin/jg-procevent-remote-reply.sh` - are not counted here; their lines move when
-the rest of the switch lands, not before.
+`bin/jg-send.sh` lost the two-branch delivery-commit message (there is no
+recoverable marker to fall back to, so a lost commit is one degraded condition),
+and `bin/jg-reply-engine.sh` gained the acting tick and `decide-stdin`.
 
 ## The upgrade, and what it costs
 
@@ -245,9 +250,8 @@ on this machine.
 
 ## What it does not prove
 
-It does not act. The engine still sends no repost and opens no escalation; the
-record path is what does, and the slice that deletes it is the one that has to
-carry the acting.
+It does not delete the record file: every reader still opens it, so the projection
+stays until the next slice points them at the stream.
 
 It does not run the durable runtime. This replay executes the workflow's model in
 the fold over the stream; the runtime that hosts the timer across a restart (the

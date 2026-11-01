@@ -376,8 +376,8 @@ set -u
 source_arg=${@: -2:1}
 target_arg=${@: -1}
 if [ "${JG_FAIL_DELIVERY_CONFIRM:-0}" = 1 ] \
-  && grep -q '^confirmed=' "$source_arg" 2>/dev/null; then
-  # Simulate losing both the delivery commit and its prepared recovery marker.
+  && grep -q '^delivered_epoch=[0-9]' "$source_arg" 2>/dev/null; then
+  # Simulate losing the delivery commit itself, after the durable record landed.
   rm -f "$target_arg"
   exit 1
 fi
@@ -387,8 +387,8 @@ SH
 
   run_send "$dir" "$err" JG_FAIL_DELIVERY_CONFIRM=1 -- domain "durable once"
   rc=$?
-  # The durable record IS the delivery: even with the commit AND its recovery
-  # marker both lost, the steer was delivered, so jg-send must not signal a
+  # The durable record IS the delivery: even with the delivery commit lost, the
+  # steer was delivered, so jg-send must not signal a
   # status that invites a resend (a nonzero would make automated callers
   # enqueue the same instruction again under a new sequence). The degradation
   # surfaces as its own distinct do-not-resend condition instead.

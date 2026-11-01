@@ -86,6 +86,7 @@ CORRUPT=0
 CMD=
 HOMES=()
 POS=
+POSITIONAL=()
 AT=
 DISCARD=0
 
@@ -154,8 +155,8 @@ record_facts() { # <state-dir> <since-epoch> [<record-file>...]
     -v since="$since" '
     function reset() {
       corr = ""; task = ""; phase = ""; created = ""; reqc = ""; recova = ""
-      recovc = ""; resolved = ""; via = ""; escalated = ""; grace = ""
-      delivered = ""; attempted = ""; recov_out = ""; turn_seen = ""; recov_seen = ""
+      recovc = ""; resolved = ""; via = ""; escalated = ""; grace = ""; attempted_epoch = ""
+      delivered = ""; attempted_epoch = ""; recov_out = ""; turn_seen = ""; recov_seen = ""
       file = ""
     }
     function val(name) {
@@ -203,18 +204,10 @@ record_facts() { # <state-dir> <since-epoch> [<record-file>...]
       if (created + 0 < since) return
       g = grace
       if (g !~ /^[0-9]+$/) g = gdef
-      # The delivery sidecar is the one fact the record file does not carry: it
-      # says a delivery was attempted, which is what ages into an unknown one.
+      # A delivery attempt is the record own fact, and it is what ages into an
+      # unknown one. A confirmed delivery supersedes it.
       attempted = ""
-      if (file != "" && delivered == "") {
-        marker = file
-        sub(/\/[^\/]*$/, "", marker)
-        marker = marker "/.delivery-confirmed-" corr
-        while ((rc = (getline line < marker)) > 0) {
-          if (line ~ /^attempted=/) attempted = substr(line, 11)
-        }
-        close(marker)
-      }
+      if (delivered == "") attempted = attempted_epoch
       printf "waiter\t%s/%s\t%s\t%s\t%s\t%s\t%s\t%s\n", \
         key, corr, task, g, created, dvstate(), (delivered == "" ? "-" : delivered), \
         (attempted == "" ? "-" : attempted)
@@ -248,6 +241,7 @@ record_facts() { # <state-dir> <since-epoch> [<record-file>...]
     /^escalated_epoch=/ { escalated = substr($0, 17) }
     /^grace_secs=/ { grace = substr($0, 12) }
     /^delivered_epoch=/ { delivered = substr($0, 17) }
+    /^delivery_attempted_epoch=/ { attempted_epoch = substr($0, 26) }
     /^recovery_delivery_outcome=/ { recov_out = substr($0, 27) }
     /^turn_seen_busy=/ { turn_seen = substr($0, 16) }
     /^recovery_turn_seen_busy=/ { recov_seen = substr($0, 25) }
@@ -431,6 +425,35 @@ cmd_sync() {
     done
     printf 'reply bus backfill: records=%s home=%s\n' "$n" "$(dirname "$st")"
   done
+}
+
+# cmd_docs <record>...: the engine's own doc line for each of those records, in the
+# field order docs_jq prints. The acting tick folds the stream once, then asks for
+# the doc of a record it has just observed, so a turn completion lands in the same
+# poll that decides the repost.
+cmd_docs() { # <record-file>...
+  local st
+  [ "$#" -gt 0 ] || return 0
+  st=$(dirname "$(dirname "$1")")
+  record_facts "$st" 0 "$@" | awk -F'\t' '
+    function d(v, fallback) { return (v == "" ? fallback : v) }
+    function flush() {
+      if (id == "") return
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+        id, d(task, "-"), d(grace, 120), d(at, "-"), d(state, "sent"),
+        d(delivered, "-"), d(attempted, "-"), d(ar, "-"), d(sr, 0), d(fr, "-"),
+        d(ou, "-"), d(av, "-"), d(sv, 0), d(fv, "-"), d(rv, "-"), d(an, "-"), d(via, "-")
+      id = ""
+    }
+    $1 == "waiter" { flush(); id = $2; task = $3; grace = $4; at = $5; state = $6
+      delivered = $7; attempted = $8; next }
+    $1 == "timer" && $3 == "request" { ar = $4; sr = $7; next }
+    $1 == "timer" && $3 == "recovery" { av = $4; sv = $7; next }
+    $1 == "fire" && $3 == "request" { fr = $4; ou = $6; next }
+    $1 == "fire" && $3 == "recovery" { fv = $4; rv = $6; next }
+    $1 == "answer" { an = $3; via = $4; next }
+    END { flush() }
+  '
 }
 
 # cmd_publish <record>: one producer's write, as the events of that record.
@@ -636,14 +659,14 @@ while [ "$#" -gt 0 ]; do
     --discard) DISCARD=1; shift ;;
     --corrupt) CORRUPT=1; shift ;;
     -h|--help) sed -n '2,66p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    publish|sync|project|log|view|parity) CMD=$1; shift ;;
+    publish|sync|project|log|view|parity|docs) CMD=$1; shift ;;
     *)
-      [ -z "$POS" ] || { printf 'jg-reply-bus.sh: unexpected argument: %s\n' "$1" >&2; exit 2; }
-      POS=$1
+      POSITIONAL+=("$1")
       shift
       ;;
   esac
 done
+POS=${POSITIONAL[0]:-}
 case "$SINCE_HOURS" in ''|*[!0-9]*) printf 'jg-reply-bus.sh: --since-hours must be a count\n' >&2; exit 2 ;; esac
 case "${AT:-}" in ''|*[!0-9]*) [ -z "${AT:-}" ] || { printf 'jg-reply-bus.sh: --at must be an epoch\n' >&2; exit 2; } ;; esac
 SINCE=$(( $(date +%s) - SINCE_HOURS * 3600 ))
@@ -680,6 +703,7 @@ case "$CMD" in
   sync) cmd_sync "${HOMES[@]}" ;;
   project) for h in "${HOMES[@]}"; do cmd_project "$h"; done ;;
   log) cmd_log ;;
+  docs) cmd_docs ${POSITIONAL[@]+"${POSITIONAL[@]}"} ;;
   view) cmd_view ;;
   parity) cmd_parity ;;
 esac

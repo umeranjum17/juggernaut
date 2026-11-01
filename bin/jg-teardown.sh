@@ -172,8 +172,8 @@
 # state is retired with the home, and local removal failure restores that state
 # before preserving the route for retry. After a successful local or remote
 # squad_lead retirement, every parent pending-reply record for that id (resolved
-# leftovers included) and its delivery confirmation is removed so retired mates
-# cannot leave durable reply expectations behind. Non-forced retirement refuses
+# leftovers included) is discarded - published as a discard event, then removed -
+# so retired mates cannot leave durable reply expectations behind. Non-forced retirement refuses
 # while any of those records is still unresolved. Teardown then discards child
 # work, kills child runtime endpoints, and removes the retired home. Removing a
 # leased home releases its durable treehouse lease so the pool slot is freed,
@@ -505,10 +505,6 @@ teardown_release_locks() {
     jg_lock_release "${DESCENDANT_LOCK_PATHS[$i]}" || true
   done
   DESCENDANT_LOCK_PATHS=()
-  if [ -n "${HANDOFF_WAKE_RETIRE_LOCK:-}" ]; then
-    jg_lock_release "$HANDOFF_WAKE_RETIRE_LOCK" || true
-    HANDOFF_WAKE_RETIRE_LOCK=
-  fi
   if [ -n "${LOCAL_HANDOFF_LOCK:-}" ]; then
     jg_lock_release "$LOCAL_HANDOFF_LOCK" || true
     LOCAL_HANDOFF_LOCK=
@@ -699,11 +695,10 @@ LOCAL_REGISTRY_LOCK=
 HANDOFF_WAKE_RETIRE_MARKER=
 HANDOFF_WAKE_RETIRE_VALUE=
 HANDOFF_WAKE_RETIRE_CORR=
-HANDOFF_WAKE_RETIRE_LOCK=
 HANDOFF_WAKE_RETIRE_STAGE=
 
 handoff_wake_retire_validate() {
-  local marker="$STATE/.backlog-handoff-$ID.wake-pending" value corr rec confirmation
+  local marker="$STATE/.backlog-handoff-$ID.wake-pending" value corr rec
   HANDOFF_WAKE_RETIRE_MARKER=
   HANDOFF_WAKE_RETIRE_VALUE=
   HANDOFF_WAKE_RETIRE_CORR=
@@ -744,13 +739,6 @@ handoff_wake_retire_validate() {
         return 1
       }
     fi
-    confirmation=$(jg_pending_reply_delivery_confirmation_path "$STATE" "$corr")
-    if [ -e "$confirmation" ] || [ -L "$confirmation" ]; then
-      [ -f "$confirmation" ] && [ ! -L "$confirmation" ] || {
-        echo "REFUSED: receiver wake delivery state for squad_lead $ID is unsafe" >&2
-        return 1
-      }
-    fi
     HANDOFF_WAKE_RETIRE_CORR=$corr
   fi
   HANDOFF_WAKE_RETIRE_MARKER=$marker
@@ -758,43 +746,39 @@ handoff_wake_retire_validate() {
 }
 
 handoff_wake_retire() {
-  local marker=$HANDOFF_WAKE_RETIRE_MARKER corr=$HANDOFF_WAKE_RETIRE_CORR lock rec confirmation rc=0
+  local marker=$HANDOFF_WAKE_RETIRE_MARKER corr=$HANDOFF_WAKE_RETIRE_CORR rec rc=0
   [ -n "$marker" ] || return 0
   [ -f "$marker" ] && [ ! -L "$marker" ] \
     && [ "$(cat "$marker" 2>/dev/null || true)" = "$HANDOFF_WAKE_RETIRE_VALUE" ] || return 1
   if [ -n "$corr" ]; then
-    lock="$STATE/.pending-reply-$corr.lock"
-    jg_lock_acquire_wait "$lock" || return 1
     rec=$(jg_pending_reply_path "$STATE" "$corr")
-    confirmation=$(jg_pending_reply_delivery_confirmation_path "$STATE" "$corr")
     if { [ ! -e "$rec" ] && [ ! -L "$rec" ]; } \
       || { [ -f "$rec" ] && [ ! -L "$rec" ] \
         && [ "$(jg_pending_reply_get "$rec" task_id)" = "$ID" ]; }; then
-      rm -f -- "$confirmation" "$rec" "$marker" || rc=$?
+      # The discard is the fact: the stream stops counting the waiter, and removing
+      # the projecton beside it is the same retirement the record path wrote before.
+      jg_pending_reply_publish_events "$rec" discard
+      rm -f -- "$rec" "$marker" || rc=$?
     else
       rc=1
     fi
-    jg_lock_release "$lock"
     return "$rc"
   fi
   rm -f -- "$marker"
 }
 
 handoff_wake_retire_stage_restore() {
-  local stage=$HANDOFF_WAKE_RETIRE_STAGE marker rec confirmation name destination
+  local stage=$HANDOFF_WAKE_RETIRE_STAGE marker rec name destination
   [ -n "$stage" ] || return 0
   marker="$STATE/.backlog-handoff-$ID.wake-pending"
   rec=
-  confirmation=
   if [ -n "$HANDOFF_WAKE_RETIRE_CORR" ]; then
     rec=$(jg_pending_reply_path "$STATE" "$HANDOFF_WAKE_RETIRE_CORR")
-    confirmation=$(jg_pending_reply_delivery_confirmation_path "$STATE" "$HANDOFF_WAKE_RETIRE_CORR")
   fi
-  for name in record confirmation marker; do
+  for name in record marker; do
     [ -e "$stage/$name" ] || continue
     case "$name" in
       record) destination=$rec ;;
-      confirmation) destination=$confirmation ;;
       marker) destination=$marker ;;
     esac
     [ -n "$destination" ] && [ ! -e "$destination" ] && [ ! -L "$destination" ] \
@@ -802,10 +786,6 @@ handoff_wake_retire_stage_restore() {
   done
   rm -f -- "$stage/corr" || return 1
   rmdir -- "$stage" || return 1
-  if [ -n "$HANDOFF_WAKE_RETIRE_LOCK" ]; then
-    jg_lock_release "$HANDOFF_WAKE_RETIRE_LOCK" || return 1
-    HANDOFF_WAKE_RETIRE_LOCK=
-  fi
   HANDOFF_WAKE_RETIRE_STAGE=
 }
 
@@ -816,10 +796,6 @@ handoff_wake_retire_stage_commit() {
   [ ! -e "$retired" ] && [ ! -L "$retired" ] || return 1
   mv -- "$stage" "$retired" || return 1
   HANDOFF_WAKE_RETIRE_STAGE=
-  if [ -n "$HANDOFF_WAKE_RETIRE_LOCK" ]; then
-    jg_lock_release "$HANDOFF_WAKE_RETIRE_LOCK" || return 1
-    HANDOFF_WAKE_RETIRE_LOCK=
-  fi
   rm -rf -- "$retired" || echo "warning: retired receiver wake state remains at $retired" >&2
 }
 
@@ -845,7 +821,7 @@ handoff_wake_retire_stage_recover() {
     return 1
   }
   local staged
-  for staged in "$stage/marker" "$stage/record" "$stage/confirmation"; do
+  for staged in "$stage/marker" "$stage/record"; do
     [ ! -e "$staged" ] && [ ! -L "$staged" ] && continue
     [ -f "$staged" ] && [ ! -L "$staged" ] || {
       echo "REFUSED: receiver wake retirement state for squad_lead $ID is unsafe" >&2
@@ -854,10 +830,6 @@ handoff_wake_retire_stage_recover() {
   done
   HANDOFF_WAKE_RETIRE_CORR=$corr
   HANDOFF_WAKE_RETIRE_STAGE=$stage
-  if [ -n "$corr" ]; then
-    HANDOFF_WAKE_RETIRE_LOCK="$STATE/.pending-reply-$corr.lock"
-    jg_lock_acquire_wait "$HANDOFF_WAKE_RETIRE_LOCK" || return 1
-  fi
   if [ -e "$home" ] || [ -L "$home" ]; then
     handoff_wake_retire_stage_restore
   else
@@ -867,26 +839,15 @@ handoff_wake_retire_stage_recover() {
 
 handoff_wake_retire_stage() {
   local stage="$STATE/.backlog-handoff-$ID.wake-retiring" marker=$HANDOFF_WAKE_RETIRE_MARKER
-  local corr=$HANDOFF_WAKE_RETIRE_CORR rec confirmation
+  local corr=$HANDOFF_WAKE_RETIRE_CORR rec
   [ -n "$marker" ] || return 0
   [ ! -e "$stage" ] && [ ! -L "$stage" ] || return 1
   (umask 077; mkdir -- "$stage") || return 1
   HANDOFF_WAKE_RETIRE_STAGE=$stage
   printf '%s\n' "$corr" > "$stage/corr" || { handoff_wake_retire_stage_restore || true; return 1; }
   if [ -n "$corr" ]; then
-    HANDOFF_WAKE_RETIRE_LOCK="$STATE/.pending-reply-$corr.lock"
-    jg_lock_acquire_wait "$HANDOFF_WAKE_RETIRE_LOCK" || {
-      HANDOFF_WAKE_RETIRE_LOCK=
-      handoff_wake_retire_stage_restore || true
-      return 1
-    }
     rec=$(jg_pending_reply_path "$STATE" "$corr")
-    confirmation=$(jg_pending_reply_delivery_confirmation_path "$STATE" "$corr")
     if [ -e "$rec" ] && ! mv -- "$rec" "$stage/record"; then
-      handoff_wake_retire_stage_restore || true
-      return 1
-    fi
-    if [ -e "$confirmation" ] && ! mv -- "$confirmation" "$stage/confirmation"; then
       handoff_wake_retire_stage_restore || true
       return 1
     fi
@@ -987,9 +948,9 @@ remote_recovery_paths_validate() {
   pending_replies_recovery_validate "$mode" || return 1
 }
 
-# Remove every parent pending-reply record for $ID, plus its delivery
-# confirmation when present. Shared by local and remote squad_lead retirement
-# after the home/route is safely gone.
+# Remove every parent pending-reply record for $ID, publishing the discard that
+# takes it out of the stream's count first. Shared by local and remote squad_lead
+# retirement after the home/route is safely gone.
 pending_replies_cleanup_for_task() {
   local pending_dir=$1 expected_real=${2-} rec base corr task_id
   [ -d "$pending_dir" ] || return 0
@@ -1007,7 +968,8 @@ pending_replies_cleanup_for_task() {
       printf '%s' "$base" | grep -Eq '^[a-f0-9]{16}$' || exit 1
       corr=$(jg_meta_get "$rec" corr_id)
       [ -z "$corr" ] || [ "$corr" = "$base" ] || exit 1
-      rm -f -- "./.delivery-confirmed-$base" "$rec" || exit 1
+      jg_pending_reply_publish_events "$pending_dir/$base" discard
+      rm -f -- "$rec" || exit 1
     done
   )
 }
