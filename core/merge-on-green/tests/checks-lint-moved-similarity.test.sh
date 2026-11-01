@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # E2E: a file git resolves as a rename at 50% similarity or more counts as moved, not added, so a
-# history-preserving import lands; added lines past that similarity budget still count as new code
+# history-preserving import lands; added lines past that similarity budget still count as new code, which
+# is advice unless config/checks-size asks for the refusal
 # (no network: stub gh answers the PR, its pages, its diff and the moved file's previous content).
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
@@ -23,7 +24,7 @@ printf '%s\n' '## Checks' 'outcome: move fixture' 'repro: n/a: no bug' 'proof: n
 
 cat > "$d/bin/gh" <<'EOF'
 #!/usr/bin/env python3
-# Stub gh: one PR per case, each at or over the 1,000-line limit.
+# Stub gh: one PR per case, each at or over the 1,000-line guidance.
 import json, os, re, sys
 a = sys.argv[1:]
 case = os.environ['CASE']
@@ -99,18 +100,21 @@ run moved "$d/body-move.txt"
 [ "$rc" -eq 0 ] && [[ "$out" == *'checks-lint: PASS:'* ]] || { echo "FAIL moved with rewrites: rc=$rc ($out)"; exit 1; }
 echo 'PASS a moved file with rewritten paths is not counted as new code'
 
-# 2. Lines beyond the budget still count: 60 rewritten + 950 authored = 1,010.
+# 2. Lines beyond the budget still count: 60 rewritten + 950 authored = 1,010, which is over the guidance
+#    and therefore advised, not refused.
 run grown "$d/body-move.txt"
-[ "$rc" -ne 0 ] && [[ "$out" == *'1010 added non-generated lines'* ]] || { echo "FAIL over-budget rewrite: rc=$rc ($out)"; exit 1; }
-echo 'PASS added lines past the similarity budget still count as new code'
+[ "$rc" -eq 0 ] && [[ "$out" == *'1010 added non-generated lines'*' is over the 1000-line guidance'* ]] \
+  || { echo "FAIL over-budget rewrite: rc=$rc ($out)"; exit 1; }
+echo 'PASS added lines past the similarity budget are counted and advised, not refused'
 
-# 3. Below the 50% threshold nothing is moved: 400 rewritten + 950 authored = 1,350.
+# 3. Below the 50% threshold nothing is moved: 400 rewritten + 950 authored = 1,350, also advised.
 run rewritten "$d/body-move.txt"
-[ "$rc" -ne 0 ] && [[ "$out" == *'1350 added non-generated lines'* ]] || { echo "FAIL rewrite below threshold: rc=$rc ($out)"; exit 1; }
-echo 'PASS a rewrite below 50% similarity counts in full'
+[ "$rc" -eq 0 ] && [[ "$out" == *'1350 added non-generated lines'*' is over the 1000-line guidance'* ]] \
+  || { echo "FAIL rewrite below threshold: rc=$rc ($out)"; exit 1; }
+echo 'PASS a rewrite below 50% similarity is counted in full and advised'
 
 # 4. Same repo: the API rename with previous_filename resolves the previous content too (1,300 -> 940).
 run renamed "$d/body.txt"
 [ "$rc" -eq 0 ] && [[ "$out" == *'checks-lint: PASS:'* ]] || { echo "FAIL renamed file: rc=$rc ($out)"; exit 1; }
 echo 'PASS the pull-files rename with previous_filename counts as moved'
-echo 'PASS: moved-with-rewrites counts as moved and genuinely new lines still fail the gate'
+echo 'PASS: moved-with-rewrites counts as moved and genuinely new lines are counted and advised'
