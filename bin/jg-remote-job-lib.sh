@@ -122,11 +122,6 @@ JG_REMOTE_JOB_EXIT=
 JG_REMOTE_JOB_ERROR=
 JG_REMOTE_JOB_REPAIRED=0
 
-jg_remote_job_die() {
-  printf 'error: %s\n' "$1" >&2
-  return 1
-}
-
 jg_remote_job_safe_id() {
   case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
 }
@@ -1146,14 +1141,6 @@ jg_remote_job_worker_identity_matches() { # <remote-root> <account-home>
   fi
   expected=$(jg_remote_job_code_identity "$root" "$account_home") || return 1
   [ "$actual" = "$expected" ]
-}
-
-jg_remote_job_worker_alive() { # <account-home>
-  local account_home=$1 pid
-  jg_remote_job_prepare_state "$account_home" || return 1
-  pid=$(cat "$(jg_remote_job_worker_pid_path)" 2>/dev/null || true)
-  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  kill -0 "$pid" 2>/dev/null
 }
 
 jg_remote_job_probe() { # <account-home>; require a fresh heartbeat outside an active job

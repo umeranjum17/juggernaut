@@ -118,7 +118,8 @@ out=$(fork jg-send.sh jg-home-b "hello parked mate" 2>&1)
 is "parked steer is refused" "$?" "1"
 has "parked steer names the parked rule" <(printf "%s" "$out") "parked"
 [ -d "$P/state/home-b.inbox" ] && no "parked steer wrote no inbox record" || ok "parked steer wrote no inbox record"
-lp=$(find "$P/state/pending-replies" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+lp=$(awk -v RS='' 'NF { n++ } END { print n + 0 }' "$P/state/reply-state.tsv" 2>/dev/null || true)
+lp=${lp:-0}
 is "parked steer created no pending-reply expectation" "$lp" "0"
 
 out=$(fork jg-send.sh jg-home-a "hello mate" 2>&1)
@@ -189,11 +190,11 @@ if grep -q "home-b" "$P/state/recovery-hook.log" 2>/dev/null; then
 else
   ok "parked record got no recovery resend"
 fi
-recs=$(find "$P/state/pending-replies" -maxdepth 1 -type f 2>/dev/null)
 skipped=1
-for r in $recs; do
-  grep -q '^task_id=home-b' "$r" 2>/dev/null || continue
-  [ -n "$(sed -n 's/^recovery_attempted_epoch=//p' "$r")" ] && skipped=0
+for corr in $(bash -c '. "$1/bin/jg-pending-reply-lib.sh"; jg_pending_reply_corrs "$2"' _ "$FM" "$P/state"); do
+  ptr="$(bash -c '. "$1/bin/jg-pending-reply-lib.sh"; jg_pending_reply_path "$2" "$3"' _ "$FM" "$P/state" "$corr")"
+  [ "$(bash -c '. "$1/bin/jg-pending-reply-lib.sh"; jg_pending_reply_get "$2" task_id' _ "$FM" "$ptr")" = home-b ] || continue
+  [ -n "$(bash -c '. "$1/bin/jg-pending-reply-lib.sh"; jg_pending_reply_get "$2" recovery_attempted_epoch' _ "$FM" "$ptr")" ] && skipped=0
 done
 is "parked record keeps its phase (no recovery attempt recorded)" "$skipped" "1"
 

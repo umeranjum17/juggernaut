@@ -40,8 +40,7 @@
 # id. A still-unconfirmed reply-bearing request keeps its reply expectation
 # preserved for the record that may have landed.
 # Pending-reply bookkeeping trouble after a durable enqueue NEVER exits
-# nonzero: with the recovery marker stored the watcher reconciles it silently,
-# and with both the commit and the marker lost the send prints a distinct
+# nonzero: a delivery commit that fails after the durable record prints a distinct
 # "reply-tracking-degraded (steer delivered, do not resend)" warning instead,
 # because a resend-inviting status there would duplicate a delivered
 # instruction. There is no delivered-unconfirmed
@@ -107,16 +106,16 @@
 #
 # Parent-owned pending-reply expectation: every newly marked squad_lead request
 # except an explicit --fire-and-forget delivery receives a privacy-safe
-# correlation id and a durable parent record under state/pending-replies/ before
+# correlation id and a durable parent record on the reply bus (the
+# state/reply-state.tsv cache is its projection) before
 # delivery (bin/jg-pending-reply-lib.sh). Delivery
 # success and reply success are separate facts: delivery never resolves the
 # expectation. On the inbox plane the durable enqueue IS delivery to the task's
 # record, so the expectation is marked delivered at enqueue time; when that
-# bookkeeping commit fails after its durable recovery marker is stored, the
-# send remains successful and watcher reconciliation owns the repair, and when
-# the commit and marker are BOTH lost the send still remains successful with a
-# reply-tracking-degraded warning naming the expectation an operator must
-# inspect (it can no longer reconcile or escalate on its own). Only a
+# bookkeeping commit fails after the durable record, the send still remains
+# successful with a reply-tracking-degraded warning naming the expectation an
+# operator must inspect (the attempt fact it kept can age into an unknown
+# delivery instead of a confirmation). Only a
 # failed enqueue discards the expectation. On the typed plane an unconfirmed submit (exit 3) keeps
 # it armed rather than dropping it, and only a proven send failure discards it.
 # Set JG_PENDING_REPLY_EXISTING_CORR=<id> when re-sending a recovery request
@@ -932,7 +931,7 @@ else
         exit 1
       fi
     fi
-    if ! jg_pending_reply_prepare_delivery "$STATE" "$PENDING_REPLY_CORR"; then
+    if ! jg_pending_reply_mark_delivery_attempted "$STATE" "$PENDING_REPLY_CORR"; then
       [ "$PENDING_REPLY_CREATED" != 1 ] ||
         jg_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       echo "error: failed to durably prepare pending-reply delivery for $TARGET_TASK_ID" >&2
@@ -1067,12 +1066,11 @@ else
       if jg_pending_reply_confirm_delivery "$STATE" "$PENDING_REPLY_CORR"; then
         :
       else
-        delivery_commit_status=$?
-        if [ "$delivery_commit_status" = 2 ]; then
-          echo "notice: the steer was durably recorded in the remote inbox, but its pending-reply delivery commit failed; a durable recovery marker was stored and the watcher will reconcile it. Do not resend." >&2
-        else
-          echo "warning: reply-tracking-degraded (steer delivered, do not resend): the steer was durably recorded in the remote inbox, but its pending-reply delivery commit and recovery marker both failed, so the reply expectation for this request may not reconcile on its own. Inspect $STATE." >&2
-        fi
+        # The durable inbox record is what delivers the steer, so the send still
+        # SUCCEEDED: a nonzero here would read as undelivered to every automated
+        # caller and invite a duplicate enqueue. Surface the degradation as its
+        # own distinct, non-resend-inviting condition instead.
+        echo "warning: reply-tracking-degraded (steer delivered, do not resend): the steer was durably recorded in the remote inbox, but its pending-reply delivery commit failed, so the reply expectation for this request may not reconcile on its own. Inspect $STATE." >&2
       fi
     fi
     if [ -n "$RESOLVE_KEYS" ]; then
@@ -1139,20 +1137,13 @@ else
       if jg_pending_reply_confirm_delivery "$STATE" "$PENDING_REPLY_CORR"; then
         :
       else
-        delivery_commit_status=$?
-        if [ "$delivery_commit_status" = 2 ]; then
-          echo "notice: the steer was recorded at $INBOX_RECORD, but its pending-reply delivery commit failed; a durable recovery marker was stored and the watcher will reconcile it. Do not resend." >&2
-        else
-          # Both the commit and its recovery marker failed. The durable inbox
-          # record is what delivers the steer, so the send still SUCCEEDED:
-          # a nonzero here would read as undelivered to every automated caller
-          # and invite a duplicate enqueue - the exact defect this plane
-          # removes. Surface the degradation as its own distinct,
-          # non-resend-inviting condition instead: reply tracking for this
-          # request may not resolve or escalate on its own until an operator
-          # inspects it.
-          echo "warning: reply-tracking-degraded (steer delivered, do not resend): the steer was durably recorded at $INBOX_RECORD, but its pending-reply delivery commit and recovery marker both failed, so the reply expectation for this request may not reconcile on its own. Inspect $STATE." >&2
-        fi
+        # The durable inbox record is what delivers the steer, so the send still
+        # SUCCEEDED: a nonzero here would read as undelivered to every automated
+        # caller and invite a duplicate enqueue - the exact defect this plane
+        # removes. Surface the degradation as its own distinct,
+        # non-resend-inviting condition: reply tracking for this request may not
+        # resolve or escalate on its own until an operator inspects it.
+        echo "warning: reply-tracking-degraded (steer delivered, do not resend): the steer was durably recorded at $INBOX_RECORD, but its pending-reply delivery commit failed, so the reply expectation for this request may not reconcile on its own. Inspect $STATE." >&2
       fi
     fi
     # The answer is durably sent: close each answered decision at enqueue time
@@ -1279,12 +1270,7 @@ else
     if jg_pending_reply_confirm_delivery "$STATE" "$PENDING_REPLY_CORR"; then
       :
     else
-      delivery_commit_status=$?
-      if [ "$delivery_commit_status" = 2 ]; then
-        echo "error: text was delivered to $T, but its pending-reply delivery commit failed; a durable recovery marker was stored and the watcher will reconcile it. Do not resend." >&2
-      else
-        echo "error: text was delivered to $T, but its pending-reply delivery commit and recovery marker both failed. Do not resend; inspect $STATE manually." >&2
-      fi
+      echo "error: text was delivered to $T, but its pending-reply delivery commit failed. Do not resend; inspect $STATE manually." >&2
       exit 1
     fi
   fi

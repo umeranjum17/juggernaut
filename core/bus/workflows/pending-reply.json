@@ -2,7 +2,7 @@
   "schema": "jg-workflow.v1",
   "name": "pending-reply",
   "version": 1,
-  "description": "One marked request to a squad_lead, as a durable wait: a reply event settles the waiter, and a timer per stage fires its activity. The record path owns the same wait today (bin/jg-pending-reply-lib.sh); docs/reply-shadow.md holds the parity between them.",
+  "description": "One marked request to a squad_lead, as a durable wait: a reply event settles the waiter, and a timer per stage fires its activity. The events live on this home's JetStream stream and the record file is their projection (bin/jg-reply-bus.sh); docs/reply-shadow.md holds the model.",
   "instance": "corr_id",
   "stream": {
     "name": "JG_REPLY",
@@ -13,7 +13,8 @@
     "waiter": "jg.reply.start",
     "timer": "jg.reply.timer",
     "fire": "jg.reply.fire",
-    "answer": "jg.reply.answer"
+    "answer": "jg.reply.answer",
+    "discard": "jg.reply.discard"
   },
   "defaults": {
     "grace_secs": 120

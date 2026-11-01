@@ -14,8 +14,9 @@ TMP_ROOT=$(jg_test_tmproot jg-prompt-gate)
 F="$TMP_ROOT/fleet"
 SIDE='                                        LSP'
 
-mkdir -p "$F/state/task1.inbox" "$F/state/pending-replies" "$F/bin" "$F/data" "$F/config" "$F/projects" "$F/.agents/skills/s" "$F/wt/src" "$F/wt/.docker" \
+mkdir -p "$F/state/task1.inbox" "$F/bin" "$F/data" "$F/config" "$F/projects" "$F/.agents/skills/s" "$F/wt/src" "$F/wt/.docker" \
   "$TMP_ROOT/fleet-evil/bin" "$TMP_ROOT/outside" "$TMP_ROOT/fle et/bin" "$TMP_ROOT/user/.config/gh"
+printf 'schema=jg-pending-reply.v1\ncorr_id=0123456789abcdef\n\n' > "$F/state/reply-state.tsv"
 for f in state/task1.inbox/001.msg state/task1.inbox/.env state/task1.status state/task1x.status \
   state/other.status bin/a.sh AGENTS.md data/x config/y projects/p .agents/skills/s/SKILL.md wt/src/a.js wt/.npmrc wt/id_rsa \
   wt/.docker/config.json wt/config.api_key wt/.env.local wt/src/environment.ts; do : > "$F/$f"; done
@@ -52,7 +53,7 @@ screen() {  # <pending-tool> <target> <dir> [pattern] [extra-turn-lines]
 }
 
 ROOTS=(--dir "inbox=$F/state/task1.inbox" --state-files "state=$F/state/task1"
-  --dir "pending-replies=$F/state/pending-replies" --dir "tooling=$F/bin" --file "tooling=$F/AGENTS.md"
+  --file "pending-replies=$F/state/reply-state.tsv" --dir "tooling=$F/bin" --file "tooling=$F/AGENTS.md"
   --dir "tooling=$F/.agents/skills" --dir "worktree=$F/wt" --file "home-dir=$F" --file "state-dir=$F/state"
   --secret "$F/data" --secret "$F/config" --secret "$TMP_ROOT/user/.config")
 READ=$'\342\240\264 Read'
@@ -70,7 +71,7 @@ case_is() {  # <name> <expected verdict> <expected second field substring> <scre
 test_allowed_reads_are_approved() {
   case_is "inbox message, wrapped" approve inbox "$(screen "$READ" "$F/state/|task1.inbox/001.msg" "$F/state/|task1.inbox")"
   case_is "own status file" approve state "$(screen "$READ" "$F/state/task1.status" "$F/state")"
-  case_is "pending-replies directory" approve pending-replies "$(screen "$READ" "$F/state/pending-replies" "$F/state/pending-replies")"
+  case_is "pending-replies cache" approve pending-replies "$(screen "$READ" "$F/state/reply-state.tsv" "$F/state")"
   case_is "home tooling" approve tooling "$(screen "$READ" "$F/bin/a.sh" "$F/bin")"
   case_is "home AGENTS.md" approve tooling "$(screen "$READ" "$F/AGENTS.md" "$F")"
   case_is "the home folder itself" approve home-dir "$(screen "$READ" "$F" "$F")"

@@ -355,10 +355,10 @@ test_squad_lead_marker_and_enqueue_delivery() {
   esac
   corr=$(printf '%s' "$body" | grep -oE 'corr=[a-f0-9]{16}' | head -1 | cut -d= -f2)
   [ -n "$corr" ] || fail "no corr token in the recorded body"
-  pr_rec="$dir/home/state/pending-replies/$corr"
-  [ -f "$pr_rec" ] || fail "no pending-reply expectation was recorded at $pr_rec"
-  delivered=$(grep '^delivered_epoch=' "$pr_rec" | cut -d= -f2)
-  [ -n "$delivered" ] || fail "enqueue IS delivery: delivered_epoch should be set at enqueue time:"$'\n'"$(cat "$pr_rec")"
+  pr_rec=$(jg_pending_reply_path "$dir/home/state" "$corr")
+  jg_pending_reply_exists "$pr_rec" || fail "no pending-reply expectation was recorded for $corr"
+  delivered=$(jg_pending_reply_get "$pr_rec" delivered_epoch)
+  [ -n "$delivered" ] || fail "enqueue IS delivery: delivered_epoch should be set at enqueue time:"$'\n'"$(jg_pending_reply_record_text "$pr_rec")"
   case "$(cat "$dir/send.log")" in
   *"summarize fleet health"*) fail "the marked payload was typed" ;;
   esac
@@ -376,8 +376,8 @@ set -u
 source_arg=${@: -2:1}
 target_arg=${@: -1}
 if [ "${JG_FAIL_DELIVERY_CONFIRM:-0}" = 1 ] \
-  && grep -q '^confirmed=' "$source_arg" 2>/dev/null; then
-  # Simulate losing both the delivery commit and its prepared recovery marker.
+  && grep -q '^delivered_epoch=[0-9]' "$source_arg" 2>/dev/null; then
+  # Simulate losing the delivery commit itself, after the durable record landed.
   rm -f "$target_arg"
   exit 1
 fi
@@ -387,8 +387,8 @@ SH
 
   run_send "$dir" "$err" JG_FAIL_DELIVERY_CONFIRM=1 -- domain "durable once"
   rc=$?
-  # The durable record IS the delivery: even with the commit AND its recovery
-  # marker both lost, the steer was delivered, so jg-send must not signal a
+  # The durable record IS the delivery: even with the delivery commit lost, the
+  # steer was delivered, so jg-send must not signal a
   # status that invites a resend (a nonzero would make automated callers
   # enqueue the same instruction again under a new sequence). The degradation
   # surfaces as its own distinct do-not-resend condition instead.
@@ -456,7 +456,7 @@ test_unwritable_inbox_fails_loudly() {
   assert_contains "$(cat "$err")" "inbox record could not be written" \
     "the failure should name the unwritable inbox"
   [ ! -s "$dir/send.log" ] || fail "a failed enqueue still typed something:"$'\n'"$(cat "$dir/send.log")"
-  [ -z "$(find "$dir/home/state/pending-replies" -type f -not -name '.*' 2>/dev/null)" ] ||
+  [ -z "$(jg_pending_reply_corrs "$dir/home/state")" ] ||
     fail "a failed enqueue should discard the just-created pending-reply expectation"
   pass "jg-send inbox: an unwritable record is a loud local failure that leaves no false expectation"
 }
@@ -475,7 +475,7 @@ test_empty_message_refused() {
   assert_contains "$(cat "$err")" "nonempty message" \
     "the empty-message refusal should be explicit"
   [ ! -d "$dir/home/state/domain.inbox" ] || fail "an empty steer still wrote an inbox record"
-  [ -z "$(find "$dir/home/state/pending-replies" -type f -not -name '.*' 2>/dev/null)" ] ||
+  [ -z "$(jg_pending_reply_corrs "$dir/home/state")" ] ||
     fail "an empty steer still minted a pending-reply expectation"
   [ ! -s "$dir/send.log" ] || fail "an empty steer still typed something:"$'\n'"$(cat "$dir/send.log")"
 

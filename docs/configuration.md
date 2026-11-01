@@ -15,6 +15,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
 | Release branch that follows main | [Version branch](#version-branch-configversion-branch) |
 | Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
+| Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) and [checks size rule](#checks-size-rule-configchecks-size) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## JG_HOME
@@ -94,7 +95,7 @@ Each effective `JG_HOME` contains private operational directories.
 - Private Squad Lead config-reread generations with their retry and quarantine state.
 - Per-task steering-inbox records under `state/<id>.inbox/` (`bin/jg-task-inbox-lib.sh`).
 - Per-task scratch-directory records under `state/<id>.scratch` ([`bin/jg-scratch.sh`](../bin/jg-scratch.sh) owns registration and validation; [`bin/jg-teardown.sh`](../bin/jg-teardown.sh) owns cleanup).
-- Parent-owned Squad Lead pending-reply records under `state/pending-replies/` (`bin/jg-pending-reply-lib.sh`).
+- Parent-owned Squad Lead pending-reply waiters in one derived cache, `state/reply-state.tsv`, rebuilt from the home's bus by `bin/jg-reply-bus.sh project` (`bin/jg-pending-reply-lib.sh`).
 - [Host memory guard records](#host-memory-guard-confighost-memory).
 
 `config/` holds local gitignored operating choices, including explicit extension bindings under `config/extensions.d/`.
@@ -1244,6 +1245,13 @@ A home that wants the retired-catalog rule in its own gate adds one line to `con
 The gate's content is home-local policy; `bin/jg-tool-wiring.sh` places done-done's gate only in a home that has none.
 `core/owner-guard/wiring.sh` and `core/owner-rules/wiring.sh` write one gate file holding both checks, and `core/lib/merge-gate-lib.sh` owns that file, the steps it records, and the home's own gate kept at `config/merge-gate.pre-chain`.
 
+## Checks size rule (config/checks-size)
+
+The merge gate's checks lint measures a pull request's added non-generated lines against a 1,000-line guidance and treats that size as advice, never a refusal: a run over the guidance prints the size and says it is over the guidance, then checks the remaining rules and exits on those alone.
+A home that wants the refusal back writes `refuse` in the local, gitignored `config/checks-size`; an absent, empty or unrecognised value is `advisory`, the default, and `advisory` may also be written out.
+`core/merge-on-green/jg-checks-lint.sh` owns the rule and the setting, and `core/merge-on-green/checks-lint.sh` hands a size-only FAIL from the pinned `done-done` lint to it, because that CLI hardcodes the same limit with no config key.
+Worker briefs still tell a worker to prefer a small slice; that wording is instruction only and enforces nothing.
+
 ## Worker launch environment (config/launch-env-allowlist)
 
 The optional local, gitignored `config/launch-env-allowlist` limits the ambient environment passed to newly launched workers, Recon missions, and Squad Leads, including relaunches.
@@ -1495,7 +1503,7 @@ This single-provider table is separate from the frozen legacy mapping used by `j
 - Codex `max` is valid when the profile selects `gpt-5.6-luna`, whose installed catalog entry supports that reasoning level.
 - An omitted model or effort means the selected harness uses its own default for that axis.
 - Juggernaut's OpenCode ship, Recon, Squad Lead, and relaunch commands pre-approve tool permissions and external-directory access, including steering inboxes outside the worktree and unrelated scratch paths such as `/tmp`; the grant is not a task-path allowlist or a worktree isolation boundary.
-  A Squad Lead launch also writes `.opencode/opencode.json` in the lead's own home with a persistent `external_directory` allow for exactly its steering inbox and the parent's `pending-replies` directory, so a lead restarted by hand with a bare `opencode --session` keeps access; restart through `bin/jg-control.sh <task-id> relaunch` instead.
+  A Squad Lead launch also writes `.opencode/opencode.json` in the lead's own home with a persistent `external_directory` allow for exactly its steering inbox, so a lead restarted by hand with a bare `opencode --session` keeps access; the parent's pending-reply cache is one file inside `state/`, which the grant never covers, so it is not included; restart through `bin/jg-control.sh <task-id> relaunch` instead.
   The same file also lets the lead read the parent home's `bin/`, `docs/`, and `.agents/skills/` and denies OpenCode's edit tool there.
   That read-only limit is partial: the shell is not sandboxed, so a command can still write to those directories.
   This adds no new trust, because leads already append to the parent home through the shell for status lines.

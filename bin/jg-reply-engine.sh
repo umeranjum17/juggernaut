@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
 # jg-reply-engine.sh - one pending reply as a durable workflow instance, decided
-# from the event log: the fold, the decision, the shadow tick and the replay.
+# from the event stream: the fold, the decision, the shadow tick and the replay.
 #
 # WHY THIS EXISTS (migration step 5d, the decision half). A pending reply is
 # still a wait run by hand inside bin/jg-pending-reply-lib.sh over a per-waiter
 # record file. The decided shape is a durable workflow:
-# core/bus/workflows/pending-reply.json owns the instance key, the four events,
-# the two stages with the anchor each timer measures from, the activity each
-# timeout runs and its retries, and the terminal states. This script is that
-# definition's engine: it folds the event log into one state per waiter, decides
-# what the definition says that waiter's stage should do, and - in this step -
-# only records the decision. NOTHING ACTS YET: no repost is sent, no escalation
-# is opened, no record is written, and bin/jg-pending-reply-lib.sh stays the live
-# path. A later slice turns the decision into the actor and deletes the code it
-# replaces; docs/reply-shadow.md owns what is still shadow.
+# core/bus/workflows/pending-reply.json owns the instance key, the events, the
+# two stages with the anchor each timer measures from, the activity each timeout
+# runs and its retries, and the terminal states. This script is that definition's
+# engine: it folds the event stream into one state per waiter, decides what the
+# definition says that waiter's stage should do, and - in this step - only
+# records the decision. NOTHING ACTS YET: no repost is sent, no escalation is
+# opened, no record is written, and bin/jg-pending-reply-lib.sh stays the path
+# that acts. A later slice turns the decision into the actor and deletes the code
+# it replaces; docs/reply-shadow.md owns what is still shadow.
 #
 # CONTRACT (this header is the one owner of the engine's shape).
-#   store    $STATE/reply-bus.jsonl, the event log, one line per event as
-#            <key>\t<digest>\t<json>. It is append-only, and the fold keeps the
-#            last event per key, so a changed fact supersedes an earlier one and
-#            a repeat with the same digest is a no-op. The format is transport
-#            neutral on purpose: bin/jg-reply-bus.sh mirrors the same lines onto
-#            JetStream when a bus answers, so a bus-backed transport can feed
-#            this engine later without changing the model or this file.
+#   store    the pending-reply stream on the home's bus, which
+#            bin/jg-reply-bus.sh publishes and folds; its `log` command prints the
+#            stream in the one format this engine reads: one line per event as
+#            <key>\t<seq>\t<json>. The fold keeps the last event per key, so a
+#            changed fact supersedes the earlier one, and the log leaves out every
+#            waiter whose last event was a discard.
 #   events   waiter  the instance exists: task, grace, delivery state
 #                     (sent | attempted | confirmed | unknown) and its epochs
 #            timer   one stage's timeout: stage, anchor (or none), and whether
@@ -39,7 +38,8 @@
 #            instant a poll happened to notice it.
 #   tick     the watcher's poll slot: fold, decide every waiter at one instant,
 #            and append what it would do to $STATE/reply-bus-decisions.jsonl. It
-#            acts on nothing and always exits 0.
+#            acts on nothing and always exits 0. The watcher feeds it the stream
+#            dump (bin/jg-reply-bus.sh log) through JG_REPLY_BUS_LOG.
 #   replay   the same decision, walked over a recorded log: every instant the
 #            recorded facts imply is replayed, the decision at each instant is
 #            compared with the decision the record path took from those same
@@ -221,6 +221,18 @@ decide_one() { # <doc-line> <epoch>
   return 0
 }
 
+# cmd_decide_docs [<epoch>]: the definition's decision for doc lines on stdin, one
+# row per line, at one instant. The acting tick calls it with the docs of the
+# records its own observation just wrote, so a turn completion and the repost it
+# arms are decided in the same poll.
+cmd_decide_docs() { # [<epoch>]
+  local at=${1:-$(now_epoch)} doc
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    decide_one "$doc" "$at"
+  done
+}
+
 cmd_decide_log() { # <log> <epoch>
   local log=$1 at=$2 doc
   [ -s "$log" ] || return 0
@@ -251,6 +263,27 @@ cmd_tick() {
     done < <(decide_one "$doc" "$at")
   done < <(cmd_docs "$LOG_FILE")
   printf 'reply engine shadow: waiters=%s decisions=%s at=%s\n' "$waiters" "$decisions" "$at"
+  return 0
+}
+
+# --- the acting tick ---------------------------------------------------------
+# The watcher's live slot: decide, and act through bin/jg-pending-reply-lib.sh - one
+# recovery repost, one escalation, one unknown-delivery mark, the escalation close.
+# The library owns the observations and the actions; this file owns the decision, so
+# nothing acts on a rule the definition did not take.
+cmd_tick_act() {
+  local rows at
+  at=$(now_epoch)
+  ACT_LIB=$SCRIPT_DIR/jg-pending-reply-lib.sh
+  [ -r "$ACT_LIB" ] || die "no pending-reply library at $ACT_LIB"
+  # shellcheck source=bin/jg-pending-reply-lib.sh
+  . "$ACT_LIB"
+  mkdir -p "$(dirname "$DECISIONS")" 2>/dev/null || true
+  rows=$(JG_REPLY_ENGINE_NOW=$at JG_PENDING_REPLY_NOW=$at jg_pending_reply_tick "$STATE" 2>/dev/null) || rows=
+  [ -n "$rows" ] || { printf 'reply engine act: decisions=0 at=%s\n' "$at"; return 0; }
+  printf '%s\n' "$rows" >> "$DECISIONS" 2>/dev/null || true
+  printf 'reply engine act: decisions=%s at=%s\n' \
+    "$(printf '%s\n' "$rows" | awk 'END { print NR + 0 }')" "$at"
   return 0
 }
 
@@ -449,10 +482,14 @@ CMD=
 LOG_ARG=
 NUM_ARG=
 CORRUPT=0
+ACT=0
+ACT_LIB=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     tick|docs|replay) CMD=$1; shift ;;
     decide) CMD=decide; shift ;;
+    decide-stdin) CMD=decide-stdin; shift ;;
+    --act) ACT=1; shift ;;
     --corrupt) CORRUPT=1; shift ;;
     -h|--help) sed -n '2,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)
@@ -463,8 +500,9 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$CMD" ] || die "usage: jg-reply-engine.sh tick | docs [<log>] | decide <log> <epoch> | replay [<log>] [--corrupt]"
 case "$CMD" in
-  tick) cmd_tick ;;
+  tick) if [ "$ACT" = 1 ]; then cmd_tick_act; else cmd_tick; fi ;;
   docs) cmd_docs "$LOG_ARG" ;;
   decide) cmd_decide_log "${LOG_ARG:-$LOG_FILE}" "${NUM_ARG:-$(now_epoch)}" ;;
+  decide-stdin) cmd_decide_docs "$LOG_ARG" ;;
   replay) cmd_replay "${LOG_ARG:-$LOG_FILE}" "$CORRUPT" ;;
 esac

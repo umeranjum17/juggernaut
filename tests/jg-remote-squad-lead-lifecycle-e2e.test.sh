@@ -1035,7 +1035,8 @@ assert_grep 'Juggernaut instruction waiting' "$HERDR_LOG" "the remote doorbell n
 CORR=$(newest_remote_inbox_corr)
 [ -n "$CORR" ] || fail "remote send did not carry a correlation token"
 assert_grep "JG_PENDING_REPLY_EXISTING_CORR=$CORR" "$TMP_ROOT/send.err" "ambiguous remote send did not print its correlation-reusing command"
-phase=$(grep '^phase=' "$PARENT/state/pending-replies/$CORR" | cut -d= -f2-)
+phase=$(JG_HOME="$PARENT" bash -c '. "$1"; jg_pending_reply_get "$(jg_pending_reply_path "$2/state" "$3")" phase' \
+  _ "$ROOT/bin/jg-pending-reply-lib.sh" "$PARENT" "$CORR")
 [ "$phase" = delivery_unknown ] || fail "ambiguous remote send did not preserve its pending expectation"
 printf 'done [corr=%s]: remote build passed\n' "$CORR" >> "$REMOTE_HOME/state/parent-replies.status"
 SID='remote-reply-ios'
@@ -1045,7 +1046,8 @@ RESULT="$PARENT/state/procevent-inbox/$SID.1.result"
 remote_env "$ROOT/bin/jg-procevent-remote-reply.sh" handle ios 1 "$RESULT" >/dev/null \
   || fail "remote reply ingest failed"
 assert_grep "done [corr=$CORR]: remote build passed" "$PARENT/state/ios.status" "correlated remote reply did not reach the parent status channel"
-phase=$(grep '^phase=' "$PARENT/state/pending-replies/$CORR" | cut -d= -f2-)
+phase=$(JG_HOME="$PARENT" bash -c '. "$1"; jg_pending_reply_get "$(jg_pending_reply_path "$2/state" "$3")" phase' \
+  _ "$ROOT/bin/jg-pending-reply-lib.sh" "$PARENT" "$CORR")
 [ "$phase" = resolved ] || fail "correlated remote reply did not resolve the parent expectation"
 pass "marked send and routed reply complete through the existing parent correlation owner"
 rm -f "$PARENT/state/.wake-queue"
@@ -1150,11 +1152,14 @@ pass "remote inherited config retains and retries a failed live reread nudge"
 
 resolve_ios_pending() {
   local pending_record pending_corr pending_result pending_seq before_results now_results pending_seen
-  for pending_record in "$PARENT/state/pending-replies"/*; do
-    [ -f "$pending_record" ] || continue
-    [ "$(grep '^task_id=' "$pending_record" | cut -d= -f2-)" = ios ] || continue
-    [ "$(grep '^phase=' "$pending_record" | cut -d= -f2-)" != resolved ] || continue
-    pending_corr=$(basename "$pending_record")
+  for pending_corr in $(JG_HOME="$PARENT" bash -c '. "$1"; jg_pending_reply_corrs "$2/state"' \
+    _ "$ROOT/bin/jg-pending-reply-lib.sh" "$PARENT"); do
+    pending_record=$(JG_HOME="$PARENT" bash -c '. "$1"; jg_pending_reply_path "$2/state" "$3"' \
+      _ "$ROOT/bin/jg-pending-reply-lib.sh" "$PARENT" "$pending_corr")
+    [ "$(JG_HOME="$PARENT" bash -c '. "$1"; jg_pending_reply_get "$2" task_id' \
+      _ "$ROOT/bin/jg-pending-reply-lib.sh" "$pending_record")" = ios ] || continue
+    [ "$(JG_HOME="$PARENT" bash -c '. "$1"; jg_pending_reply_get "$2" phase' \
+      _ "$ROOT/bin/jg-pending-reply-lib.sh" "$pending_record")" != resolved ] || continue
     before_results=$(find "$PARENT/state/procevent-inbox" -name "$SID.*.result" 2>/dev/null | wc -l | tr -d ' ')
     printf 'done [corr=%s]: concurrent inherited data re-read\n' "$pending_corr" \
       >> "$REMOTE_HOME/state/parent-replies.status"
@@ -1499,21 +1504,22 @@ assert_present "$REMOTE_HOME" "unsafe backlog outbox retirement removed the remo
 rm -f "$PARENT/data/handoff/ios.outbox.md"
 mkdir -p "$TMP_ROOT/external-pending"
 printf 'task_id=ios\nphase=resolved\n' > "$TMP_ROOT/external-pending/escape"
-mv "$PARENT/state/pending-replies" "$PARENT/state/pending-replies.safe"
-ln -s "$TMP_ROOT/external-pending" "$PARENT/state/pending-replies"
+mv "$PARENT/state/reply-state.tsv" "$PARENT/state/reply-state.tsv.safe"
+ln -s "$TMP_ROOT/external-pending/escape" "$PARENT/state/reply-state.tsv"
 if remote_env "$ROOT/bin/jg-teardown.sh" ios >/dev/null 2>&1; then
-  fail "remote retirement accepted a symlinked pending-replies directory"
+  fail "remote retirement accepted a symlinked pending-reply cache"
 fi
-assert_present "$REMOTE_HOME" "unsafe pending-replies retirement removed the remote home"
-assert_present "$TMP_ROOT/external-pending/escape" "unsafe retirement removed an external pending reply"
-rm -f "$PARENT/state/pending-replies"
-mv "$PARENT/state/pending-replies.safe" "$PARENT/state/pending-replies"
+assert_present "$REMOTE_HOME" "unsafe pending-reply cache retirement removed the remote home"
+assert_present "$TMP_ROOT/external-pending/escape" "unsafe retirement wrote through the pending-reply cache link"
+rm -f "$PARENT/state/reply-state.tsv"
+mv "$PARENT/state/reply-state.tsv.safe" "$PARENT/state/reply-state.tsv"
 retired_wake_corr=$(JG_HOME="$PARENT" bash -c '
   . "$1"
   jg_pending_reply_create "$2" "$2/state" ios "New routed work is in your backlog."
 ' _ "$ROOT/bin/jg-pending-reply-lib.sh" "$PARENT") \
   || fail "could not seed remote receiver wake retirement state"
-retired_wake_rec="$PARENT/state/pending-replies/$retired_wake_corr"
+retired_wake_rec=$(JG_HOME="$PARENT" bash -c '. "$1"; jg_pending_reply_path "$2/state" "$3"' \
+  _ "$ROOT/bin/jg-pending-reply-lib.sh" "$PARENT" "$retired_wake_corr")
 JG_HOME="$PARENT" bash -c '
   . "$1"
   jg_pending_reply_set "$2" phase resolved

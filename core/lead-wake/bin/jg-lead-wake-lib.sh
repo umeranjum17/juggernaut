@@ -22,35 +22,9 @@ unset _jg_old _jg_new 2>/dev/null || true
 READY_WORK_RESURFACE_SECS=${JG_READY_WORK_RESURFACE_SECS:-1800}
 case "$READY_WORK_RESURFACE_SECS" in ''|*[!0-9]*|0) READY_WORK_RESURFACE_SECS=1800 ;; esac
 
-# Remove every queued row for exactly <kind>/<key> under the append lock; idempotent,
-# a no-op without a match. Stale scratch is swept under the same lock.
-jg_wake_withdraw() {  # <kind> <key>
-  local kind=$1 key=$2 clean_key status=0 tmp
-  case "$kind" in
-    signal|stale|check|heartbeat) ;;
-    *) printf 'jg_wake_withdraw: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
-  esac
-  clean_key=$(printf '%s' "$key" | jg_wake_clean_field)
-  jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK"
-  rm -f -- "$STATE"/.wake-queue.withdraw.* 2>/dev/null || true
-  if [ -f "$JG_WAKE_QUEUE" ] && awk -F '\t' -v kind="$kind" -v key="$clean_key" \
-    'NF >= 5 && $3 == kind && $4 == key { found = 1 } END { exit(found ? 0 : 1) }' "$JG_WAKE_QUEUE"; then
-    if tmp=$(mktemp "$STATE/.wake-queue.withdraw.XXXXXX") && chmod 0600 "$tmp"; then
-      if awk -F '\t' -v kind="$kind" -v key="$clean_key" \
-        '!(NF >= 5 && $3 == kind && $4 == key) { print }' "$JG_WAKE_QUEUE" > "$tmp" \
-        && _jg_atomic_replace "$tmp" "$JG_WAKE_QUEUE"; then
-        tmp=
-      else
-        status=1
-      fi
-    else
-      status=1
-    fi
-    [ -z "$tmp" ] || rm -f -- "$tmp"
-  fi
-  jg_lock_release "$JG_WAKE_QUEUE_LOCK"
-  return "$status"
-}
+# The queue's own primitives come from the wake library: jg_wake_withdraw is one
+# owner there, and the copy this file used to carry rewrote the queue file, which
+# the bus now writes (docs/bus-live.md).
 
 # config/lane-target: one positive integer; returns 0 and prints it only for that.
 lane_target_value() {

@@ -189,17 +189,6 @@ jg_pf_tasks_axi_home_id() {  # <home-id>
   esac
 }
 
-jg_pf_own_home_id() {  # <home-id>
-  case "${1-}" in
-    "$JG_PF_SQUAD_LEAD_HOME_PREFIX"*) printf '%s%s\n' "$JG_PF_SQUAD_LEAD_HOME_PREFIX_ALT" "${1#"$JG_PF_SQUAD_LEAD_HOME_PREFIX"}" ;;
-    *) printf '%s\n' "${1-}" ;;
-  esac
-}
-
-jg_pf_squad_lead_home_id() {  # <stable-id>
-  printf '%s%s\n' "$JG_PF_SQUAD_LEAD_HOME_PREFIX" "${1-}"
-}
-
 # jg_pf_home_id_valid <home_id>: tasks-axi accepts "main" or a squad-lead home id.
 # Validate the same shape here so a malformed source home is refused before it
 # reaches a filename or a CLI call.

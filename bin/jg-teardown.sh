@@ -172,8 +172,8 @@
 # state is retired with the home, and local removal failure restores that state
 # before preserving the route for retry. After a successful local or remote
 # squad_lead retirement, every parent pending-reply record for that id (resolved
-# leftovers included) and its delivery confirmation is removed so retired mates
-# cannot leave durable reply expectations behind. Non-forced retirement refuses
+# leftovers included) is discarded - published as a discard event, then removed -
+# so retired mates cannot leave durable reply expectations behind. Non-forced retirement refuses
 # while any of those records is still unresolved. Teardown then discards child
 # work, kills child runtime endpoints, and removes the retired home. Removing a
 # leased home releases its durable treehouse lease so the pool slot is freed,
@@ -505,10 +505,6 @@ teardown_release_locks() {
     jg_lock_release "${DESCENDANT_LOCK_PATHS[$i]}" || true
   done
   DESCENDANT_LOCK_PATHS=()
-  if [ -n "${HANDOFF_WAKE_RETIRE_LOCK:-}" ]; then
-    jg_lock_release "$HANDOFF_WAKE_RETIRE_LOCK" || true
-    HANDOFF_WAKE_RETIRE_LOCK=
-  fi
   if [ -n "${LOCAL_HANDOFF_LOCK:-}" ]; then
     jg_lock_release "$LOCAL_HANDOFF_LOCK" || true
     LOCAL_HANDOFF_LOCK=
@@ -699,11 +695,10 @@ LOCAL_REGISTRY_LOCK=
 HANDOFF_WAKE_RETIRE_MARKER=
 HANDOFF_WAKE_RETIRE_VALUE=
 HANDOFF_WAKE_RETIRE_CORR=
-HANDOFF_WAKE_RETIRE_LOCK=
 HANDOFF_WAKE_RETIRE_STAGE=
 
 handoff_wake_retire_validate() {
-  local marker="$STATE/.backlog-handoff-$ID.wake-pending" value corr rec confirmation
+  local marker="$STATE/.backlog-handoff-$ID.wake-pending" value corr rec
   HANDOFF_WAKE_RETIRE_MARKER=
   HANDOFF_WAKE_RETIRE_VALUE=
   HANDOFF_WAKE_RETIRE_CORR=
@@ -737,17 +732,9 @@ handoff_wake_retire_validate() {
   esac
   if [ -n "$corr" ]; then
     rec=$(jg_pending_reply_path "$STATE" "$corr")
-    if [ -e "$rec" ] || [ -L "$rec" ]; then
-      [ -f "$rec" ] && [ ! -L "$rec" ] \
-        && [ "$(jg_pending_reply_get "$rec" task_id)" = "$ID" ] || {
+    if jg_pending_reply_exists "$rec"; then
+      [ "$(jg_pending_reply_get "$rec" task_id)" = "$ID" ] || {
         echo "REFUSED: receiver wake correlation for squad_lead $ID is unsafe or belongs to another task" >&2
-        return 1
-      }
-    fi
-    confirmation=$(jg_pending_reply_delivery_confirmation_path "$STATE" "$corr")
-    if [ -e "$confirmation" ] || [ -L "$confirmation" ]; then
-      [ -f "$confirmation" ] && [ ! -L "$confirmation" ] || {
-        echo "REFUSED: receiver wake delivery state for squad_lead $ID is unsafe" >&2
         return 1
       }
     fi
@@ -758,54 +745,35 @@ handoff_wake_retire_validate() {
 }
 
 handoff_wake_retire() {
-  local marker=$HANDOFF_WAKE_RETIRE_MARKER corr=$HANDOFF_WAKE_RETIRE_CORR lock rec confirmation rc=0
+  local marker=$HANDOFF_WAKE_RETIRE_MARKER corr=$HANDOFF_WAKE_RETIRE_CORR rec rc=0
   [ -n "$marker" ] || return 0
   [ -f "$marker" ] && [ ! -L "$marker" ] \
     && [ "$(cat "$marker" 2>/dev/null || true)" = "$HANDOFF_WAKE_RETIRE_VALUE" ] || return 1
   if [ -n "$corr" ]; then
-    lock="$STATE/.pending-reply-$corr.lock"
-    jg_lock_acquire_wait "$lock" || return 1
     rec=$(jg_pending_reply_path "$STATE" "$corr")
-    confirmation=$(jg_pending_reply_delivery_confirmation_path "$STATE" "$corr")
-    if { [ ! -e "$rec" ] && [ ! -L "$rec" ]; } \
-      || { [ -f "$rec" ] && [ ! -L "$rec" ] \
-        && [ "$(jg_pending_reply_get "$rec" task_id)" = "$ID" ]; }; then
-      rm -f -- "$confirmation" "$rec" "$marker" || rc=$?
-    else
+    if jg_pending_reply_exists "$rec" && [ "$(jg_pending_reply_get "$rec" task_id)" != "$ID" ]; then
       rc=1
+    else
+      # The discard is the fact: the stream stops counting the waiter, and the
+      # marker is the only file left to retire beside it.
+      jg_pending_reply_discard "$rec"
+      rm -f -- "$marker" || rc=$?
     fi
-    jg_lock_release "$lock"
     return "$rc"
   fi
   rm -f -- "$marker"
 }
 
 handoff_wake_retire_stage_restore() {
-  local stage=$HANDOFF_WAKE_RETIRE_STAGE marker rec confirmation name destination
+  local stage=$HANDOFF_WAKE_RETIRE_STAGE marker
   [ -n "$stage" ] || return 0
   marker="$STATE/.backlog-handoff-$ID.wake-pending"
-  rec=
-  confirmation=
-  if [ -n "$HANDOFF_WAKE_RETIRE_CORR" ]; then
-    rec=$(jg_pending_reply_path "$STATE" "$HANDOFF_WAKE_RETIRE_CORR")
-    confirmation=$(jg_pending_reply_delivery_confirmation_path "$STATE" "$HANDOFF_WAKE_RETIRE_CORR")
+  if [ -e "$stage/marker" ]; then
+    [ ! -e "$marker" ] && [ ! -L "$marker" ] \
+      && mv -- "$stage/marker" "$marker" || return 1
   fi
-  for name in record confirmation marker; do
-    [ -e "$stage/$name" ] || continue
-    case "$name" in
-      record) destination=$rec ;;
-      confirmation) destination=$confirmation ;;
-      marker) destination=$marker ;;
-    esac
-    [ -n "$destination" ] && [ ! -e "$destination" ] && [ ! -L "$destination" ] \
-      && mv -- "$stage/$name" "$destination" || return 1
-  done
   rm -f -- "$stage/corr" || return 1
   rmdir -- "$stage" || return 1
-  if [ -n "$HANDOFF_WAKE_RETIRE_LOCK" ]; then
-    jg_lock_release "$HANDOFF_WAKE_RETIRE_LOCK" || return 1
-    HANDOFF_WAKE_RETIRE_LOCK=
-  fi
   HANDOFF_WAKE_RETIRE_STAGE=
 }
 
@@ -816,15 +784,11 @@ handoff_wake_retire_stage_commit() {
   [ ! -e "$retired" ] && [ ! -L "$retired" ] || return 1
   mv -- "$stage" "$retired" || return 1
   HANDOFF_WAKE_RETIRE_STAGE=
-  if [ -n "$HANDOFF_WAKE_RETIRE_LOCK" ]; then
-    jg_lock_release "$HANDOFF_WAKE_RETIRE_LOCK" || return 1
-    HANDOFF_WAKE_RETIRE_LOCK=
-  fi
   rm -rf -- "$retired" || echo "warning: retired receiver wake state remains at $retired" >&2
 }
 
 handoff_wake_retire_stage_recover() {
-  local home=$1 stage="$STATE/.backlog-handoff-$ID.wake-retiring" corr
+  local home=$1 stage="$STATE/.backlog-handoff-$ID.wake-retiring" corr staged
   [ -e "$stage" ] || [ -L "$stage" ] || return 0
   [ -d "$stage" ] && [ ! -L "$stage" ] || {
     echo "REFUSED: receiver wake retirement state for squad_lead $ID is unsafe" >&2
@@ -844,20 +808,15 @@ handoff_wake_retire_stage_recover() {
     echo "REFUSED: receiver wake retirement correlation for squad_lead $ID is invalid" >&2
     return 1
   }
-  local staged
-  for staged in "$stage/marker" "$stage/record" "$stage/confirmation"; do
-    [ ! -e "$staged" ] && [ ! -L "$staged" ] && continue
+  staged="$stage/marker"
+  if [ -e "$staged" ] || [ -L "$staged" ]; then
     [ -f "$staged" ] && [ ! -L "$staged" ] || {
       echo "REFUSED: receiver wake retirement state for squad_lead $ID is unsafe" >&2
       return 1
     }
-  done
+  fi
   HANDOFF_WAKE_RETIRE_CORR=$corr
   HANDOFF_WAKE_RETIRE_STAGE=$stage
-  if [ -n "$corr" ]; then
-    HANDOFF_WAKE_RETIRE_LOCK="$STATE/.pending-reply-$corr.lock"
-    jg_lock_acquire_wait "$HANDOFF_WAKE_RETIRE_LOCK" || return 1
-  fi
   if [ -e "$home" ] || [ -L "$home" ]; then
     handoff_wake_retire_stage_restore
   else
@@ -867,30 +826,12 @@ handoff_wake_retire_stage_recover() {
 
 handoff_wake_retire_stage() {
   local stage="$STATE/.backlog-handoff-$ID.wake-retiring" marker=$HANDOFF_WAKE_RETIRE_MARKER
-  local corr=$HANDOFF_WAKE_RETIRE_CORR rec confirmation
+  local corr=$HANDOFF_WAKE_RETIRE_CORR
   [ -n "$marker" ] || return 0
   [ ! -e "$stage" ] && [ ! -L "$stage" ] || return 1
   (umask 077; mkdir -- "$stage") || return 1
   HANDOFF_WAKE_RETIRE_STAGE=$stage
   printf '%s\n' "$corr" > "$stage/corr" || { handoff_wake_retire_stage_restore || true; return 1; }
-  if [ -n "$corr" ]; then
-    HANDOFF_WAKE_RETIRE_LOCK="$STATE/.pending-reply-$corr.lock"
-    jg_lock_acquire_wait "$HANDOFF_WAKE_RETIRE_LOCK" || {
-      HANDOFF_WAKE_RETIRE_LOCK=
-      handoff_wake_retire_stage_restore || true
-      return 1
-    }
-    rec=$(jg_pending_reply_path "$STATE" "$corr")
-    confirmation=$(jg_pending_reply_delivery_confirmation_path "$STATE" "$corr")
-    if [ -e "$rec" ] && ! mv -- "$rec" "$stage/record"; then
-      handoff_wake_retire_stage_restore || true
-      return 1
-    fi
-    if [ -e "$confirmation" ] && ! mv -- "$confirmation" "$stage/confirmation"; then
-      handoff_wake_retire_stage_restore || true
-      return 1
-    fi
-  fi
   if ! mv -- "$marker" "$stage/marker"; then
     handoff_wake_retire_stage_restore || true
     return 1
@@ -912,42 +853,33 @@ remote_teardown_locks_release() {
   fi
 }
 
-# Validate $STATE/pending-replies for local and remote squad_lead retirement:
-# refuse a symlinked directory, any non-regular entry, and any entry whose
-# basename is not a 16-hex correlation id or whose corr_id disagrees with that
-# basename; pin the realpath so later cleanup cannot follow a swapped link
-# target or a crafted confirmation path.
+# Validate the pending-reply cache for local and remote squad_lead retirement:
+# refuse a symlinked or non-regular cache file, and refuse any block whose corr_id
+# is not a 16-hex correlation id; pin the realpath so later cleanup cannot follow
+# a swapped link target. The blocks are the stream's own record text, so a fact
+# the stream does not hold cannot appear here.
 pending_replies_recovery_validate() {
-  local mode=${1:-initial} pending_dir real rec base corr
-  pending_dir="$STATE/pending-replies"
-  if [ -e "$pending_dir" ] || [ -L "$pending_dir" ]; then
-    [ -d "$pending_dir" ] && [ ! -L "$pending_dir" ] \
-      || { echo "REFUSED: pending-replies recovery directory is unsafe" >&2; return 1; }
-    real=$(CDPATH='' cd -- "$pending_dir" 2>/dev/null && pwd -P) || return 1
+  local mode=${1:-initial} cache real corr bad=0
+  cache=$(jg_pending_reply_cache "$STATE")
+  if [ -e "$cache" ] || [ -L "$cache" ]; then
+    [ -f "$cache" ] && [ ! -L "$cache" ] \
+      || { echo "REFUSED: pending-reply cache is unsafe" >&2; return 1; }
+    real=$(CDPATH='' cd -- "$(dirname "$cache")" 2>/dev/null && pwd -P) || return 1
+    real="$real/${cache##*/}"
     if [ "$mode" = initial ]; then
       PENDING_REPLIES_DIR_PRESENT=1
       PENDING_REPLIES_DIR_REAL=$real
     elif [ "$PENDING_REPLIES_DIR_PRESENT" -ne 1 ] || [ "$PENDING_REPLIES_DIR_REAL" != "$real" ]; then
-      echo "REFUSED: pending-replies recovery directory changed during retirement" >&2
+      echo "REFUSED: pending-reply cache changed during retirement" >&2
       return 1
     fi
-    for rec in "$pending_dir"/*; do
-      [ -e "$rec" ] || [ -L "$rec" ] || continue
-      [ -f "$rec" ] && [ ! -L "$rec" ] \
-        || { echo "REFUSED: pending-replies contains an unsafe recovery entry" >&2; return 1; }
-      base=$(basename "$rec")
-      printf '%s' "$base" | grep -Eq '^[a-f0-9]{16}$' \
-        || { echo "REFUSED: pending-replies contains an unsafe recovery entry" >&2; return 1; }
-      corr=$(jg_meta_get "$rec" corr_id)
-      if [ -n "$corr" ]; then
-        printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' \
-          || { echo "REFUSED: pending-replies contains an unsafe recovery entry" >&2; return 1; }
-        [ "$corr" = "$base" ] \
-          || { echo "REFUSED: pending-replies contains an unsafe recovery entry" >&2; return 1; }
-      fi
-    done
+    while IFS= read -r corr; do
+      printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || bad=1
+    done < <(jg_pending_reply_corrs "$STATE")
+    [ "$bad" -eq 0 ] \
+      || { echo "REFUSED: pending-reply cache contains an unsafe correlation id" >&2; return 1; }
   elif [ "$mode" != initial ] && [ "$PENDING_REPLIES_DIR_PRESENT" -ne 0 ]; then
-    echo "REFUSED: pending-replies recovery directory changed during retirement" >&2
+    echo "REFUSED: pending-reply cache changed during retirement" >&2
     return 1
   fi
 }
@@ -987,51 +919,46 @@ remote_recovery_paths_validate() {
   pending_replies_recovery_validate "$mode" || return 1
 }
 
-# Remove every parent pending-reply record for $ID, plus its delivery
-# confirmation when present. Shared by local and remote squad_lead retirement
-# after the home/route is safely gone.
+# Remove every parent pending-reply waiter for $ID, publishing the discard that
+# takes it out of the stream's count first. Shared by local and remote squad_lead
+# retirement after the home/route is safely gone.
 pending_replies_cleanup_for_task() {
-  local pending_dir=$1 expected_real=${2-} rec base corr task_id
-  [ -d "$pending_dir" ] || return 0
-  (
-    CDPATH='' cd -- "$pending_dir" 2>/dev/null || exit 1
-    if [ -n "$expected_real" ]; then
-      [ "$(pwd -P)" = "$expected_real" ] || exit 1
-    fi
-    for rec in ./*; do
-      [ -e "$rec" ] || [ -L "$rec" ] || continue
-      [ -f "$rec" ] && [ ! -L "$rec" ] || exit 1
-      task_id=$(jg_meta_get "$rec" task_id)
-      [ "$task_id" = "$ID" ] || continue
-      base=${rec#./}
-      printf '%s' "$base" | grep -Eq '^[a-f0-9]{16}$' || exit 1
-      corr=$(jg_meta_get "$rec" corr_id)
-      [ -z "$corr" ] || [ "$corr" = "$base" ] || exit 1
-      rm -f -- "./.delivery-confirmed-$base" "$rec" || exit 1
-    done
-  )
+  local expected_real=${1-} corr rec task_id cache
+  cache=$(jg_pending_reply_cache "$STATE")
+  [ -f "$cache" ] || return 0
+  [ -f "$cache" ] && [ ! -L "$cache" ] || return 1
+  if [ -n "$expected_real" ]; then
+    [ "$(CDPATH='' cd -- "$(dirname "$cache")" 2>/dev/null && pwd -P)/${cache##*/}" = "$expected_real" ] || return 1
+  fi
+  while IFS= read -r corr; do
+    printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || exit 1
+    rec=$(jg_pending_reply_path "$STATE" "$corr")
+    task_id=$(jg_pending_reply_get "$rec" task_id)
+    [ "$task_id" = "$ID" ] || continue
+    jg_pending_reply_discard "$rec"
+  done < <(jg_pending_reply_corrs "$STATE")
 }
 
 remote_pending_replies_cleanup() {
   [ "$PENDING_REPLIES_DIR_PRESENT" -eq 1 ] || return 0
-  pending_replies_cleanup_for_task "$STATE/pending-replies" "$PENDING_REPLIES_DIR_REAL"
+  pending_replies_cleanup_for_task "$PENDING_REPLIES_DIR_REAL"
 }
 
 # Refuse non-forced squad_lead retirement while any parent pending-reply for
 # this id is still unresolved (local and remote share the gate).
 squad_lead_unresolved_pending_replies_refuse() {
-  local rec task_id phase
-  [ -d "$STATE/pending-replies" ] || return 0
-  for rec in "$STATE/pending-replies"/*; do
-    [ -f "$rec" ] || continue
-    task_id=$(jg_meta_get "$rec" task_id)
+  local corr rec task_id phase
+  [ -s "$(jg_pending_reply_cache "$STATE")" ] || return 0
+  while IFS= read -r corr; do
+    rec=$(jg_pending_reply_path "$STATE" "$corr")
+    task_id=$(jg_pending_reply_get "$rec" task_id)
     [ "$task_id" = "$ID" ] || continue
-    phase=$(jg_meta_get "$rec" phase)
+    phase=$(jg_pending_reply_get "$rec" phase)
     [ "$phase" = resolved ] || {
       echo "REFUSED: squad_lead $ID still has an unresolved routed reply" >&2
       return 1
     }
-  done
+  done < <(jg_pending_reply_corrs "$STATE")
   return 0
 }
 
@@ -1412,16 +1339,6 @@ require_orca_worktree_id() {
     return 1
   fi
   printf '%s\n' "$id"
-}
-
-require_orca_terminal() {
-  local meta=$1 terminal
-  terminal=$(meta_value "$meta" terminal)
-  if [ -z "$terminal" ]; then
-    echo "error: missing terminal in $meta; cannot close Orca terminal" >&2
-    return 1
-  fi
-  printf '%s\n' "$terminal"
 }
 
 if [ "$BACKEND" = orca ] && [ "$KIND" != squad_lead ]; then
@@ -3943,7 +3860,7 @@ if [ "$KIND" = squad_lead ]; then
   handoff_wake_retire_stage_commit \
     || { echo "error: receiver wake cleanup failed; preserving the squad_lead route for retry" >&2; exit 1; }
   if [ "$PENDING_REPLIES_DIR_PRESENT" -eq 1 ]; then
-    pending_replies_cleanup_for_task "$STATE/pending-replies" "$PENDING_REPLIES_DIR_REAL" \
+    pending_replies_cleanup_for_task "$PENDING_REPLIES_DIR_REAL" \
       || { echo "error: local pending-reply cleanup failed; preserving the squad_lead route for retry" >&2; exit 1; }
   fi
   remove_squad_lead_registry_entry "$ID"

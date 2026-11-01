@@ -421,7 +421,7 @@ receiver_wake_mark() { # <squad-lead-id> <prepared|pending> [batch-id]
       corr=${value#*:}
       corr=${corr%%:*}
       rec=$(jg_pending_reply_path "$STATE" "$corr")
-      [ -f "$rec" ] && [ ! -L "$rec" ] &&
+      jg_pending_reply_exists "$rec" &&
         [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ]
       return $?
       ;;
@@ -483,21 +483,6 @@ receiver_wake_promote_prepared() { # <squad-lead-id> <batch-id>
   receiver_wake_state_write "$id" "pending:$corr"
 }
 
-receiver_wake_discard_pending() { # <squad-lead-id>
-  local id=$1 marker="$STATE/.backlog-handoff-$1.wake-pending" value corr
-  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
-  value=$(cat "$marker" 2>/dev/null || true)
-  case "$value" in
-  pending:*)
-    corr=${value#pending:}
-    jg_pending_reply_discard_undelivered "$STATE" "$corr" || return 1
-    ;;
-  pending) ;;
-  *) return 1 ;;
-  esac
-  rm -f -- "$marker"
-}
-
 receiver_wake_pending_valid() { # <squad-lead-id>
   local id=$1 marker="$STATE/.backlog-handoff-$1.wake-pending" value corr rec delivered
   [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
@@ -505,7 +490,7 @@ receiver_wake_pending_valid() { # <squad-lead-id>
   case "$value" in pending:*) corr=${value#pending:} ;; *) return 1 ;; esac
   printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || return 1
   rec=$(jg_pending_reply_path "$STATE" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] &&
+  jg_pending_reply_exists "$rec" &&
     [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ] || return 1
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   [ -z "$delivered" ] || return 1
@@ -519,7 +504,7 @@ receiver_wake_pending_delivered_valid() { # <squad-lead-id>
   case "$value" in pending:*) corr=${value#pending:} ;; *) return 1 ;; esac
   printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || return 1
   rec=$(jg_pending_reply_path "$STATE" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] &&
+  jg_pending_reply_exists "$rec" &&
     [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ] &&
     [ -n "$(jg_pending_reply_get "$rec" delivered_epoch)" ]
 }
@@ -532,7 +517,7 @@ receiver_wake_confirmed_valid() { # <squad-lead-id>
   case "$value" in confirmed:*) corr=${value#confirmed:} ;; *) return 1 ;; esac
   printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || return 1
   rec=$(jg_pending_reply_path "$STATE" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] &&
+  jg_pending_reply_exists "$rec" &&
     [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ] &&
     [ -n "$(jg_pending_reply_get "$rec" delivered_epoch)" ]
 }
@@ -618,9 +603,8 @@ wake_pending_squad_lead_receiver() { # <squad-lead-id> [retain-confirmed]
     ;;
   esac
   rec=$(jg_pending_reply_path "$STATE" "$corr")
-  [ -f "$rec" ] && [ ! -L "$rec" ] &&
+  jg_pending_reply_exists "$rec" &&
     [ "$(jg_pending_reply_get "$rec" task_id)" = "$id" ] || return 1
-  jg_pending_reply_reconcile_delivery "$STATE" "$corr" >/dev/null 2>&1 || true
   delivered=$(jg_pending_reply_get "$rec" delivered_epoch)
   if [ -z "$delivered" ]; then
     jg_pending_reply_corr_reusable "$STATE" "$corr" "$id" || {

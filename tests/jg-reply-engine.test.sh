@@ -111,7 +111,7 @@ NOW=1140 engine tick >/dev/null
 assert_contains "$(cat "$STATE_DIR/reply-bus-decisions.jsonl")" "$(printf '1140\trepost\tt1\t1140')" \
   "the shadow tick records the decision it would take"
 assert_absent "$STATE_DIR/t1.status" "the shadow tick writes no status line"
-assert_absent "$STATE_DIR/pending-replies/t1" "the shadow tick writes no record"
+assert_absent "$STATE_DIR/reply-state.tsv" "the shadow tick writes no cache block"
 for entry in "$STATE_DIR"/*; do
   case "${entry##*/}" in
     reply-bus-decisions.jsonl) ;;
