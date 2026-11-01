@@ -152,49 +152,11 @@ SH
   printf '%s\n' "$fakebin"
 }
 
-# A fake no-mistakes that records each "<pwd>\t<verb>" call to
-# JG_FAKE_NO_MISTAKES_LOG and fails for the project named JG_FAKE_NO_MISTAKES_FAIL_PROJECT.
-make_recording_no_mistakes() {
-  local dir=$1 fakebin
-  fakebin=$(jg_fakebin "$dir")
-  cat > "$fakebin/no-mistakes" <<'SH'
-#!/usr/bin/env bash
-set -eu
-printf '%s\t%s\n' "$PWD" "${1:-}" >> "$JG_FAKE_NO_MISTAKES_LOG"
-if [ "$(basename "$PWD")" = "${JG_FAKE_NO_MISTAKES_FAIL_PROJECT:-}" ]; then
-  exit 1
-fi
-case "${1:-}" in
-  init) touch .no-mistakes-init ;;
-  doctor) touch .no-mistakes-doctor ;;
-  *) exit 2 ;;
-esac
-SH
-  chmod +x "$fakebin/no-mistakes"
-  printf '%s\n' "$fakebin"
-}
-
 # Make a directory look like a minimal juggernaut home (AGENTS.md + bin/).
 mark_juggernaut_home() {
   local home=$1
   mkdir -p "$home/bin"
   printf '# Juggernaut\n' > "$home/AGENTS.md"
-}
-
-# A juggernaut home that is also a real git repo (so it can host detached
-# worktrees for teardown/lease tests).
-make_juggernaut_git_root() {
-  local home=$1
-  mkdir -p "$home/bin"
-  printf '# Juggernaut\n' > "$home/AGENTS.md"
-  cat > "$home/bin/jg-guard.sh" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$home/bin/jg-guard.sh"
-  git -C "$home" init -q
-  git -C "$home" add AGENTS.md bin/jg-guard.sh
-  git -C "$home" -c user.name='Juggernaut Tests' -c user.email='tests@example.invalid' commit -qm initial
 }
 
 # Scaffold a filled squad_lead charter brief under <home>/data/<id>/brief.md.
@@ -213,15 +175,3 @@ seed_squad_lead_home_marker() {
   printf '%s\n' "$id" > "$home/.jg-squad-lead-home"
 }
 
-# Wait up to <limit> 0.1s ticks while <pid> stays alive. Returns 1 if it dies.
-wait_live() {
-  local pid=$1 limit=${2:-30} i=0
-  while [ "$i" -lt "$limit" ]; do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      return 1
-    fi
-    sleep 0.1
-    i=$((i + 1))
-  done
-  return 0
-}

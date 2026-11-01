@@ -80,14 +80,7 @@ pe_register() {  # <home> <adapter> <source-id> -- <argv>...
   pe "$home" register "$adapter" "$id" "$@"
 }
 new_home() { mkdir -p "$1/state"; }
-# A worker-owned board can only be armed for a task whose endpoint metadata the
-# runner can ring, so every fixture worker needs the same durable record a real
-# spawn leaves behind.
-new_task_endpoint() {  # <home> <task-id>
-  mkdir -p "$1/state"
-  printf 'window=fmtest:jg-%s\nworktree=%s/worktree-%s\nproject=fmtest\n' "$2" "$1" "$2" \
-    > "$1/state/$2.meta"
-}
+
 wake_payloads() { awk -F '\t' '{print $5}' "$1/state/.wake-queue" 2>/dev/null; }
 
 # The wake queue is a durable tab-separated record juggernaut consumes:
@@ -148,23 +141,6 @@ count_results() {  # <home> <source-id>
 wait_for() {  # <file> [tries]
   local f=$1 n=${2:-100}
   for _ in $(seq 1 "$n"); do [ -s "$f" ] && return 0; sleep 0.1; done
-  return 1
-}
-
-# Arm now starts the listener, so a later start would poll again. Wait for the
-# capture that listener is already producing, and for its runner to release the
-# claim: the result lands before the runner publishes and exits, and a retire or
-# re-arm in that gap meets a live claim the synchronous start never left behind.
-wait_capture() {  # <home> <source-id> [tries]
-  local home=$1 id=$2 n=${3:-100}
-  local _
-  for _ in $(seq 1 "$n"); do
-    if first_result "$home" "$id" >/dev/null 2>&1 \
-      && [ ! -e "$JG_PROCEVENT_CLAIM_ROOT/$id.claim" ]; then
-      return 0
-    fi
-    sleep 0.1
-  done
   return 1
 }
 
