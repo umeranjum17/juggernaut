@@ -24,6 +24,7 @@
 #   jg-test-run.sh --concurrent-safe-family-jobs-max <name>
 #   jg-test-run.sh --list-lanes
 #   jg-test-run.sh --check-coverage
+#   jg-test-run.sh --show-limits
 #
 # Aggregation (no suite execution):
 #   jg-test-run.sh --aggregate-json <out.json> <lane.json> [more lane.json...]
@@ -77,12 +78,27 @@
 #                   after the run and so cannot catch a hang on its own.
 #                   External interruption cleanup is outside this runner's
 #                   guarantee; configured per-script bounds remain authoritative.
+#   --gate          the pull-request gate contract, which bin/jg-local-suite.sh
+#                   passes: enforce the per-test speed limits and apply the
+#                   configured whole-run gate budget unless --max-wall-ms names
+#                   one. A test over its class limit then fails naming its
+#                   measured time, and is killed at that limit rather than left
+#                   running, so a hung test cannot hold the gate.
+#   --enforce-test-speed
+#                   fail a speed-limit breach without applying the gate budget.
+#                   The nightly suite passes it; a plain local run reports the
+#                   breach without refusing, so a slow test cannot block
+#                   ordinary work.
+#   --show-limits   print the effective e2e_seconds, unit_seconds and
+#                   gate_wall_seconds from the config file and exit without
+#                   running anything.
 #   --max-wall-ms N fail the run when its measured invocation wall clock exceeds
-#                   N milliseconds, including an empty selection. It is
-#                   evaluated after selection and suite execution and cannot
-#                   interrupt a running script; per-script hangs are
-#                   bounded by --per-script-timeout-secs. Pathological output
-#                   sinks that block finalization are explicitly out of scope.
+#                   N milliseconds, including an empty selection, and stop
+#                   starting scripts once the budget is spent so the overshoot
+#                   stays under one per-script bound. It cannot interrupt a
+#                   script already running; those are bounded by the per-script
+#                   bound above. Pathological output sinks that block
+#                   finalization are explicitly out of scope.
 #   -h, --help      print this header
 #
 # Per-script machine-parseable markers (stdout):
@@ -110,6 +126,16 @@
 # violates its isolation check. Other gate skips (first meaningful line
 # matching ^skip:) remain successful and are counted as skipped_gate; each one
 # is logged with its reason and recorded in the timing artifact.
+#
+# Per-test speed limits:
+#   e2e_seconds, unit_seconds and gate_wall_seconds live in
+#   defaults/test-speed-limits, overridable per home by
+#   config/test-speed-limits, and --show-limits prints them. A script's class
+#   comes from its name: *-e2e.test.sh is end to end, every other script is a
+#   unit or policy test. A script over its class limit fails naming the script,
+#   the milliseconds it measured and the limit. Under --gate or --enforce-test-speed
+#   that limit is also the script's kill bound, so a test that overran or hung
+#   is terminated and reported instead of being measured after it finished.
 #
 # expected_gate_skip classes name why a family is allowed to skip: herdr (the
 # pinned real-Herdr lane), optional-binary (a backend whose binary is optional),
@@ -190,6 +216,8 @@ cd "$ROOT" || exit 1
 MODE=
 LIST_ONLY=0
 LIST_SCHEDULED=0
+SHOW_LIMITS=0
+GATE_MODE=0
 LIST_FAMILIES=0
 LIST_CONCURRENT_SAFE_FAMILIES=0
 LIST_LANES=0
@@ -207,13 +235,16 @@ JOBS_EXPLICIT=0
 JOBS_MAX=8
 MAX_WALL_MS=
 PER_SCRIPT_TIMEOUT_SECS=0
-# Per-test speed limits, read from defaults/test-speed-limits and overridden by
-# JG_HOME/config/test-speed-limits. The nightly enforces them; the pre-merge
-# path only reports, because a pre-merge failure would refuse every merge until
-# the slow list empties. A test over its limit fails naming its measured time.
+# Per-test speed limits and the gate's whole-run budget, read from
+# defaults/test-speed-limits and overridden by JG_HOME/config/test-speed-limits.
+# A test over its limit fails naming its measured time. Under enforcement
+# (--gate, or --enforce-test-speed as the nightly suite passes) that limit is
+# also the script's kill bound, so an overrunning or hung test is terminated
+# instead of being measured after it finishes.
 TEST_SPEED_ENFORCE=0
 TEST_SPEED_E2E_SECONDS=60
 TEST_SPEED_UNIT_SECONDS=5
+TEST_SPEED_GATE_SECONDS=600
 # Bound applied automatically on the automatic --changed path, derived from
 # measured healthy runtimes with margin rather than picked: the slowest measured
 # script is tests/jg-watch-triage.test.sh at about 1075s under CI load (the hint
@@ -246,6 +277,60 @@ PORTABLE_SERIAL_MAX_WEIGHT_MS=1200000
 # leaves room for newly added tests while making a stale hint table fail loudly
 # instead of silently. docs/jg-test-portable-shards.md owns the refresh.
 PORTABLE_SERIAL_MAX_UNHINTED_PERCENT=15
+
+# A test's class comes from its own name, which is what the shipped config file
+# documents: anything ending -e2e.test.sh is an end-to-end test, every other
+# script is a unit or policy test.
+test_speed_class_for() {  # <basename> -> e2e|unit
+  case $1 in *-e2e.test.sh) printf 'e2e\n' ;; *) printf 'unit\n' ;; esac
+}
+
+test_speed_limit_for() {  # <class> -> whole seconds, 0 when unset
+  case $1 in
+    e2e) printf '%s\n' "${TEST_SPEED_E2E_SECONDS:-60}" ;;
+    *) printf '%s\n' "${TEST_SPEED_UNIT_SECONDS:-5}" ;;
+  esac
+}
+
+# The hard bound applied to one script, in seconds, 0 when unbounded. Under
+# enforcement the script's own class limit is that bound, so the limit both
+# fails a test that overran and terminates one that would never finish. A
+# caller's --per-script-timeout-secs still applies, and the tighter bound wins.
+script_speed_bound_secs() {  # <script> -> seconds
+  local class limit bound=0
+  class=$(test_speed_class_for "$(basename "$1")")
+  limit=$(test_speed_limit_for "$class")
+  if [ "$TEST_SPEED_ENFORCE" -eq 1 ] && [ "$limit" -gt 0 ]; then
+    bound=$limit
+  fi
+  if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] &&
+    { [ "$bound" -eq 0 ] || [ "$PER_SCRIPT_TIMEOUT_SECS" -lt "$bound" ]; }; then
+    bound=$PER_SCRIPT_TIMEOUT_SECS
+  fi
+  printf '%s\n' "$bound"
+}
+
+# Read the limits once. A home's config file wins over the shipped default, so a
+# captain can loosen one limit without editing tracked material.
+load_test_speed_limits() {
+  local f v
+  for f in "${TEST_SPEED_LIMITS_FILE:-}" "${JG_HOME:-}/config/test-speed-limits" \
+           "$ROOT/defaults/test-speed-limits"; do
+    [ -n "$f" ] && [ -r "$f" ] || continue
+    v=$(sed -n 's/^e2e_seconds=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_E2E_SECONDS=$v ;; esac
+    v=$(sed -n 's/^unit_seconds=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_UNIT_SECONDS=$v ;; esac
+    v=$(sed -n 's/^gate_wall_seconds=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_GATE_SECONDS=$v ;; esac
+    return 0
+  done
+  return 0
+}
+
+# Shipped defaults, overridden by the home's config file; see
+# defaults/test-speed-limits.
+load_test_speed_limits
 
 usage() {
   awk '
@@ -1741,9 +1826,21 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --enforce-test-speed)
-      # Turn a speed-limit breach into a failure. The nightly sets this; the
-      # pre-merge path deliberately does not, so it reports without refusing.
+      # Turn a speed-limit breach into a failure, and make each test's class limit
+      # its kill bound. The nightly suite and --gate set this; a plain local run
+      # reports without refusing, so a slow test cannot block ordinary work.
       TEST_SPEED_ENFORCE=1
+      shift
+      ;;
+    --gate)
+      # The pull-request gate contract: enforce the per-test limits, and apply the
+      # configured whole-run budget unless the caller named one with --max-wall-ms.
+      GATE_MODE=1
+      TEST_SPEED_ENFORCE=1
+      shift
+      ;;
+    --show-limits)
+      SHOW_LIMITS=1
       shift
       ;;
     --list)
@@ -1833,6 +1930,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$SHOW_LIMITS" -eq 1 ]; then
+  printf 'e2e_seconds=%s\n' "$TEST_SPEED_E2E_SECONDS"
+  printf 'unit_seconds=%s\n' "$TEST_SPEED_UNIT_SECONDS"
+  printf 'gate_wall_seconds=%s\n' "$TEST_SPEED_GATE_SECONDS"
+  exit 0
+fi
+
 if [ "$LIST_FAMILIES" -eq 1 ]; then
   list_known_families
   exit 0
@@ -1884,12 +1988,18 @@ case "$PER_SCRIPT_TIMEOUT_SECS" in
   ''|*[!0-9]*) die "--per-script-timeout-secs requires a whole number of seconds (0 disables)" ;;
 esac
 
+# --gate owns the whole-run budget unless the caller named one, so the gate's
+# 10-minute bound lives in one config file rather than at every call site.
+if [ "$GATE_MODE" -eq 1 ] && [ -z "$MAX_WALL_MS" ] && [ "$TEST_SPEED_GATE_SECONDS" -gt 0 ]; then
+  MAX_WALL_MS=$((TEST_SPEED_GATE_SECONDS * 1000))
+fi
+
 # Refuse before any suite is selected or run. The inspection modes execute
-# nothing: --list-families, --list-concurrent-safe-families, --list-lanes,
-# --check-coverage, --concurrent-safe-family-jobs-max and --aggregate-json have
-# already exited above, and --list/--list-scheduled print their selection and
-# exit below. An unset MODE still falls through to the usage error, so a caller
-# who named no selection mode is told that rather than this.
+# nothing: --show-limits, --list-families, --list-concurrent-safe-families,
+# --list-lanes, --check-coverage, --concurrent-safe-family-jobs-max and
+# --aggregate-json have already exited above, and --list/--list-scheduled print
+# their selection and exit below. An unset MODE still falls through to the usage
+# error, so a caller who named no selection mode is told that rather than this.
 if [ -n "${MODE:-}" ] && [ "$LIST_ONLY" -eq 0 ] && [ "$LIST_SCHEDULED" -eq 0 ]; then
   refuse_primary_checkout_for_task
 fi
@@ -2092,8 +2202,8 @@ if [ "$JOBS" -gt 1 ]; then
   rm -f "$SCHEDULE_TMP"
 fi
 
-if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
-  [ -r "$ROOT/bin/jg-timeout-lib.sh" ] || die "per-script timeout helper not found: bin/jg-timeout-lib.sh"
+if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] || [ "$TEST_SPEED_ENFORCE" -eq 1 ]; then
+  [ -r "$ROOT/bin/jg-timeout-lib.sh" ] || die "bounded-run helper not found: bin/jg-timeout-lib.sh"
   # shellcheck source=bin/jg-timeout-lib.sh
   . "$ROOT/bin/jg-timeout-lib.sh"
 fi
@@ -2151,54 +2261,26 @@ family_bump() {
   mv "$tmp" "$FAMILIES_TSV"
 }
 
-test_speed_class_for() {  # <basename> -> e2e|unit
-  case $1 in *-e2e.test.sh) printf 'e2e\n' ;; *) printf 'unit\n' ;; esac
-}
-
-test_speed_limit_for() {  # <class> -> whole seconds, 0 when unset
-  case $1 in
-    e2e) printf '%s\n' "${TEST_SPEED_E2E_SECONDS:-60}" ;;
-    *) printf '%s\n' "${TEST_SPEED_UNIT_SECONDS:-5}" ;;
-  esac
-}
-
-# Read the limits once. A home's config file wins over the shipped default, so a
-# captain can loosen one class without editing tracked material.
-load_test_speed_limits() {
-  local f v
-  for f in "${TEST_SPEED_LIMITS_FILE:-}" "${JG_HOME:-}/config/test-speed-limits" \
-           "$ROOT/defaults/test-speed-limits"; do
-    [ -n "$f" ] && [ -r "$f" ] || continue
-    v=$(sed -n 's/^e2e_seconds=//p' "$f" | tail -n 1)
-    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_E2E_SECONDS=$v ;; esac
-    v=$(sed -n 's/^unit_seconds=//p' "$f" | tail -n 1)
-    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_UNIT_SECONDS=$v ;; esac
-    return 0
-  done
-  return 0
-}
-
-# Shipped defaults, overridden by the home's config file; see defaults/test-speed-limits.
-load_test_speed_limits
-
-record_script_result() {
-  local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5
+record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
+  local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5 stream=${6:-0}
   local base family expected gate_skip gate_reason fail_delta
   base=$(basename "$script")
   family=$(family_for_basename "$base")
   expected=$(expected_gate_skip_for_family "$family")
 
   # Hard per-class speed limit. The measured time goes in the message so the
-  # next reader sees how far over it is rather than only that it was over.
+  # next reader sees how far over it is rather than only that it was over. A
+  # streamed run echoes the line it appended, because the script's own output
+  # was already replayed and nothing would otherwise show why it failed.
   local speed_limit speed_class speed_ms
   speed_class=$(test_speed_class_for "$base")
   speed_limit=$(test_speed_limit_for "$speed_class")
   speed_ms=$((speed_limit * 1000))
   if [ "$speed_limit" -gt 0 ] && [ "$duration" -gt "$speed_ms" ]; then
     if [ "$TEST_SPEED_ENFORCE" -eq 1 ]; then
-      printf 'not ok - %s took %ss, over its %ss %s limit\n' \
-        "$script" "$(( (duration + 999) / 1000 ))" "$speed_limit" "$speed_class" >>"$out"
-      log "speed limit: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
+      printf 'not ok - %s took %sms, over its %sms %s limit\n' \
+        "$script" "$duration" "$speed_ms" "$speed_class" >>"$out"
+      [ "$stream" -eq 1 ] && tail -n 1 "$out"
       rc=1
     else
       log "speed over limit, reported only: $script took ${duration}ms, over its ${speed_ms}ms $speed_class limit"
@@ -2238,10 +2320,11 @@ record_script_result() {
 }
 
 # Run <script>, capturing output to <out>. <stream> 1 also echoes it live.
-# <id> only has to be unique within this run. When PER_SCRIPT_TIMEOUT_SECS is
-# positive, a script that outruns it is terminated and reported as exit 124: a
-# hung script must become a bounded failure rather than an unbounded suite,
-# because an unbounded suite is what silently outruns its caller's budget.
+# <id> only has to be unique within this run. The script runs under the bound
+# script_speed_bound_secs names, and a script that outruns it is terminated and
+# reported as exit 124: a hung or overrunning script must become a bounded
+# failure rather than an unbounded suite, because an unbounded suite is what
+# silently outruns its caller's budget.
 run_script_bounded() {  # <script> <out> <stream> <id>
   local script=$1 out=$2 stream=$3 id=$4
   # Declaring the variables local first keeps the helper's export scoped to this
@@ -2250,8 +2333,14 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   local GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
   # shellcheck source=tests/git-config-helpers.sh
   . "$ROOT/tests/git-config-helpers.sh" || return
-  local rc
+  local rc bound class_limit
   : "$id"
+  bound=$(script_speed_bound_secs "$script")
+  # The class limit is the bound only when enforcement is on; when it is, the
+  # per-class speed record already reports the overrun by name, so the kill
+  # message below stays for a caller-supplied bound it would otherwise duplicate.
+  class_limit=0
+  [ "$TEST_SPEED_ENFORCE" -eq 1 ] && class_limit=$(test_speed_limit_for "$(test_speed_class_for "$(basename "$script")")")
   # ONE owner of what a behavior script inherits, for the serial and the
   # concurrent path alike: a script must see the same environment in CI and
   # under a live home. A squad_lead launch prefixes every process it starts
@@ -2264,26 +2353,26 @@ run_script_bounded() {  # <script> <out> <stream> <id>
     JG_PUBLIC_FOLLOWUP_PRIMARY_HOME 2>/dev/null || true
   set +e
   if [ "$stream" -eq 1 ]; then
-    if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
+    if [ "$bound" -gt 0 ]; then
       # Expansion is intentionally deferred to the child bash passed to -c.
       # shellcheck disable=SC2016
-      jg_run_timed "$PER_SCRIPT_TIMEOUT_SECS" bash -c \
+      jg_run_timed "$bound" bash -c \
         'bash "$1" 2>&1 | tee "$2"; exit "${PIPESTATUS[0]}"' _ "$script" "$out"
       rc=$?
     else
       bash "$script" 2>&1 | tee "$out"
       rc=${PIPESTATUS[0]}
     fi
-  elif [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
-    jg_run_timed "$PER_SCRIPT_TIMEOUT_SECS" bash "$script" >"$out" 2>&1
+  elif [ "$bound" -gt 0 ]; then
+    jg_run_timed "$bound" bash "$script" >"$out" 2>&1
     rc=$?
   else
     bash "$script" >"$out" 2>&1
     rc=$?
   fi
-  if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] && [ "$rc" -eq 124 ]; then
+  if [ "$bound" -gt 0 ] && [ "$rc" -eq 124 ] && [ "$bound" != "$class_limit" ]; then
     printf 'not ok - %s exceeded the per-script bound of %ss and was terminated\n' \
-      "$script" "$PER_SCRIPT_TIMEOUT_SECS" >>"$out"
+      "$script" "$bound" >>"$out"
     [ "$stream" -eq 1 ] && tail -1 "$out"
   fi
   return "$rc"
@@ -2315,11 +2404,29 @@ run_one_serial() {
   if [ "$duration" -lt 0 ]; then
     duration=0
   fi
-  record_script_result "$script" "$rc" "$duration" "$out" "$end_iso"
+  record_script_result "$script" "$rc" "$duration" "$out" "$end_iso" 1
+}
+
+# A wall budget is a bound on the whole invocation, so work the budget can no
+# longer cover is refused instead of started: the run stops, names the first
+# script it did not reach, and fails. Only MAX_WALL_MS enables this. A single
+# script's own bound is script_speed_bound_secs, so the overshoot is one bound
+# at most, never an unbounded tail.
+wall_budget_spent() {  # <next-script> -> 0 when the run must stop here
+  local next=$1 elapsed
+  [ -n "$MAX_WALL_MS" ] || return 1
+  elapsed=$(( $(now_ms) - RUN_STARTED_MS ))
+  [ "$elapsed" -ge "$MAX_WALL_MS" ] || return 1
+  log "wall budget spent: ${elapsed}ms of ${MAX_WALL_MS}ms before $next; that script and the rest were not run"
+  printf 'not ok - %s was not run: the wall budget of %sms was already spent at %sms\n' \
+    "$next" "$MAX_WALL_MS" "$elapsed"
+  AGG_RC=1
+  return 0
 }
 
 if [ "$JOBS" -eq 1 ]; then
   for script in "${SCRIPTS[@]}"; do
+    wall_budget_spent "$script" && break
     run_one_serial "$script"
   done
 else
@@ -2369,7 +2476,7 @@ else
           ;;
       esac
     fi
-    record_script_result "$script" "$rc" "$duration" "$out" "$end_iso"
+    record_script_result "$script" "$rc" "$duration" "$out" "$end_iso" 0
   }
 
   worker_pid_is_running() {
@@ -2404,6 +2511,14 @@ else
         wait_one_completed_job_worker
       done
       continue
+    fi
+    if wall_budget_spent "$script"; then
+      # Everything already running still finishes and is recorded; no new work
+      # starts, and the tail below stays unstarted for the same reason.
+      while [ "$active_workers" -gt 0 ]; do
+        wait_one_completed_job_worker
+      done
+      break
     fi
     while [ "$active_workers" -ge "$JOBS" ]; do
       wait_one_completed_job_worker
@@ -2448,6 +2563,7 @@ else
   done
   # Unproven remainder, after every concurrent worker has finished.
   for script in "${SERIAL_TAIL_SCRIPTS[@]+"${SERIAL_TAIL_SCRIPTS[@]}"}"; do
+    wall_budget_spent "$script" && break
     run_one_serial "$script"
   done
 fi
