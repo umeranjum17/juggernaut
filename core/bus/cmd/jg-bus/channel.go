@@ -261,30 +261,18 @@ func (a *app) status() int {
 	return 0
 }
 
-// unit prints the systemd user service a home installs once, so the server is up
-// after every boot and restart without anyone typing a command. It runs the server
-// itself (not `serve`, which only starts services and exits) and creates the stream
-// right after it starts.
-func (a *app) unit() int {
+// unit prints the systemd user service for one part of the stack a home installs once,
+// so it is up after every boot and restart without anyone typing a command: `nats`
+// (the default) runs the server itself, not `serve`, which only starts services and
+// exits, and creates the stream right after it starts; `dapr` and `ntfy` run their
+// own binary in the foreground, the same argv `serve` starts them with.
+func (a *app) unit(args []string) int {
+	part := "nats"
+	if len(args) > 0 {
+		part = args[0]
+	}
 	if err := os.MkdirAll(a.runtime, 0o755); err != nil {
 		return die("cannot create %s", a.runtime)
-	}
-	natsServer := "nats-server"
-	if path, err := exec.LookPath("nats-server"); err == nil {
-		natsServer = path
-	}
-	// One server per machine: the unit runs the base config with this machine's
-	// per-home accounts included, so every home on the machine shares one
-	// JetStream and no account can reach another home's subjects.
-	base := a.busFile("nats.conf")
-	conf := filepath.Join(a.runtime, "bus.conf")
-	accounts := filepath.Join(a.runtime, "accounts.conf")
-	if err := a.unitAccounts(accounts); err != nil {
-		return die("cannot write %s: %v", accounts, err)
-	}
-	include := fmt.Sprintf("include %q\ninclude %q\n", base, accounts)
-	if err := os.WriteFile(conf, []byte(include), 0o600); err != nil {
-		return die("cannot write %s: %v", conf, err)
 	}
 	quote := func(value string) string {
 		value = strings.ReplaceAll(value, `\`, `\\`)
@@ -295,19 +283,84 @@ func (a *app) unit() int {
 	percent := func(value string) string { return strings.ReplaceAll(value, "%", "%%") }
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\n")
-	fmt.Fprintf(&b, "Description=Juggernaut message bus for this machine (NATS JetStream, one account per home)\n")
-	fmt.Fprintf(&b, "After=network.target\n\n")
-	fmt.Fprintf(&b, "[Service]\n")
-	fmt.Fprintf(&b, "Type=simple\n")
-	fmt.Fprintf(&b, "WorkingDirectory=%s\n", percent(a.runtime))
-	fmt.Fprintf(&b, "Environment=%s\n", quote("JG_HOME="+a.home))
-	fmt.Fprintf(&b, "Environment=%s\n", quote("PATH="+os.Getenv("PATH")))
-	fmt.Fprintf(&b, "ExecStart=%s -c %s\n", quote(natsServer), quote(conf))
-	fmt.Fprintf(&b, "ExecStartPost=%s bootstrap\n", quote(filepath.Join(a.root, "bin", "jg-bus.sh")))
-	fmt.Fprintf(&b, "Restart=always\n")
-	fmt.Fprintf(&b, "RestartSec=5\n\n")
-	fmt.Fprintf(&b, "[Install]\n")
-	fmt.Fprintf(&b, "WantedBy=default.target\n")
+	switch part {
+	case "nats":
+		natsServer := "nats-server"
+		if path, err := exec.LookPath("nats-server"); err == nil {
+			natsServer = path
+		}
+		// One server per machine: the unit runs the base config with this machine's
+		// per-home accounts included, so every home on the machine shares one
+		// JetStream and no account can reach another home's subjects.
+		base := a.busFile("nats.conf")
+		conf := filepath.Join(a.runtime, "bus.conf")
+		accounts := filepath.Join(a.runtime, "accounts.conf")
+		if err := a.unitAccounts(accounts); err != nil {
+			return die("cannot write %s: %v", accounts, err)
+		}
+		// nats resolves an include against the including file's directory even when the
+		// path is absolute, so both are written relative to it.
+		rel := func(target string) string {
+			if r, err := filepath.Rel(a.runtime, target); err == nil {
+				return r
+			}
+			return target
+		}
+		include := fmt.Sprintf("include %q\ninclude %q\n", rel(base), rel(accounts))
+		if err := os.WriteFile(conf, []byte(include), 0o600); err != nil {
+			return die("cannot write %s: %v", conf, err)
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut message bus for this machine (NATS JetStream, one account per home)\n")
+		fmt.Fprintf(&b, "After=network.target\n\n")
+		a.unitService(&b, quote, percent, fmt.Sprintf("%s -c %s", quote(natsServer), quote(conf)))
+		fmt.Fprintf(&b, "ExecStartPost=%s bootstrap\n", quote(filepath.Join(a.root, "bin", "jg-bus.sh")))
+	case "dapr":
+		path, err := exec.LookPath("daprd")
+		if err != nil {
+			return die("no daprd on PATH")
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut message bus sidecar (Dapr over NATS)\n")
+		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
+		a.unitService(&b, quote, percent, quoteAll(quote, a.daprArgv(path)))
+	case "ntfy":
+		path, err := exec.LookPath("ntfy")
+		if err != nil {
+			return die("no ntfy on PATH")
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut captain channel delivery (ntfy, loopback)\n")
+		fmt.Fprintf(&b, "After=network.target\n\n")
+		a.unitService(&b, quote, percent, quoteAll(quote, a.ntfyArgv(path)))
+	default:
+		return die("unit: unknown part %q (nats, dapr, ntfy)", part)
+	}
+	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	fmt.Print(b.String())
 	return 0
+}
+
+// natsUnit is the name of the unit that runs the server, which the sidecar's unit
+// requires; JG_STACK_UNIT_PREFIX is how a second stack on one machine stays apart.
+func natsUnit() string {
+	prefix := os.Getenv("JG_STACK_UNIT_PREFIX")
+	if prefix == "" {
+		prefix = "jg"
+	}
+	return prefix + "-bus.service"
+}
+
+// unitService writes the [Service] lines every part shares, ending at its ExecStart.
+func (a *app) unitService(b *strings.Builder, quote, percent func(string) string, execStart string) {
+	fmt.Fprintf(b, "[Service]\nType=simple\n")
+	fmt.Fprintf(b, "WorkingDirectory=%s\n", percent(a.runtime))
+	fmt.Fprintf(b, "Environment=%s\n", quote("JG_HOME="+a.home))
+	fmt.Fprintf(b, "Environment=%s\n", quote("PATH="+os.Getenv("PATH")))
+	fmt.Fprintf(b, "ExecStart=%s\n", execStart)
+}
+
+func quoteAll(quote func(string) string, argv []string) string {
+	out := make([]string, len(argv))
+	for i, v := range argv {
+		out[i] = quote(v)
+	}
+	return strings.Join(out, " ")
 }

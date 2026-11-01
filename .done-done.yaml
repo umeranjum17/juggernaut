@@ -1,5 +1,7 @@
 app: juggernaut
 journeys:
+  stack-install:
+    command: bash journeys/stack-install.sh
   migration-card:
     command: bash journeys/migration-card.sh
   relaunch-model-refusal:

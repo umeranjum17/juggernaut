@@ -891,6 +891,10 @@ bus_release_asset() {
   case "$1" in
     nats-server) repo=nats-io/nats-server; stem="nats-server-v$version-$os-$arch"; ext=tar.gz ;;
     nats) repo=nats-io/natscli; stem="nats-$version-$os-$arch"; ext=zip ;;
+    # The sidecar's archive holds the binary at its root (an empty directory name).
+    daprd) printf 'https://github.com/dapr/dapr/releases/download/v%s/daprd_%s_%s.tar.gz .tar.gz\n' \
+      "$version" "$os" "$arch"; return 0 ;;
+    ntfy) repo=binwiederhier/ntfy; stem="ntfy_${version}_${os}_$arch"; ext=tar.gz ;;
     *) return 1 ;;
   esac
   printf '%s %s.%s\n' \
@@ -955,7 +959,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
-    nats-server|nats) bus_install_hint "$1" ;;
+    nats-server|nats|daprd|ntfy) bus_install_hint "$1" ;;
     learn-from-mistakes) echo "npm install -g $(jg_pin_npm learn-from-mistakes) && ln -sf learn-from-mistakes-axi \"\$(dirname \"\$(command -v learn-from-mistakes-axi)\")/learn-from-mistakes\"" ;;
     *)
       # Every npm tool installs the exact build its toolchain.versions row names, so this
@@ -1517,22 +1521,19 @@ startup_memory_budget_setup() {
 # prints nothing once a home is complete. A successful first wiring prints what
 # it wrote, including sign-off's one-line arming reminder; arming itself stays
 # per home and is never done here.
-# bus_service: report whether this home's JetStream is running, and never start
-# it. The server is a systemd user service the home installs once (docs/bus-service.md
-# owns the steps), so systemd owns it across reboots and a bootstrap pass cannot
-# leave a daemon nobody supervises, write outside the home, or bind a port in a
-# test fixture. Local, read-only, and it never fails the boot.
+# bus_service: run the one install command (bin/jg-stack.sh), which installs, enables and
+# starts the message bus, the sidecar and ntfy and reports each part. Its first failure is one
+# MISSING line, and it never fails the boot. It talks to the network (pinned releases), so it
+# belongs to the network half of a split run; JG_STACK_SKIP=1 turns it off for a fixture.
 bus_service() {
-  command -v nats-server >/dev/null 2>&1 || return 0
-  command -v systemctl >/dev/null 2>&1 || return 0
-  # No user manager (CI, a container) means no unit to read: the lane that proves
-  # the server there is tests/jg-bus-service.test.sh, not this check.
-  systemctl --user show-environment >/dev/null 2>&1 || return 0
-  if systemctl --user is-active --quiet jg-bus.service; then
-    [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: bus: up, systemd user service jg-bus"
+  local out
+  network_phase || return 0
+  [ "${JG_STACK_SKIP:-0}" != 1 ] || return 0
+  if out=$("$SCRIPT_DIR/jg-stack.sh" up 2>&1); then
+    [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: $(printf '%s\n' "$out" | tail -n 1)"
     return 0
   fi
-  echo "MISSING: the message bus is not running, so no live path on this home can publish or consume (install: mkdir -p ~/.config/systemd/user && JG_HOME=$JG_HOME bin/jg-bus.sh unit > ~/.config/systemd/user/jg-bus.service && systemctl --user enable --now jg-bus)"
+  echo "MISSING: $(printf '%s\n' "$out" | grep '^STACK_FAILED:' | head -n 1 | sed 's/^STACK_FAILED: //') (fix, then run: bin/jg-stack.sh up)"
 }
 
 companion_tool_wiring() {
@@ -1565,7 +1566,7 @@ if [ "${1:-}" = "install" ]; then
     # they install through the one function that owns those rules rather than
     # through a command string.
     case $t in
-      nats-server|nats)
+      nats-server|nats|daprd|ntfy)
         bus_tool_install "$t" || { echo "error: installing $t failed" >&2; exit 1; }
         continue
         ;;
