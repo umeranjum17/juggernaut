@@ -9,13 +9,14 @@ This page owns how to run it, how to reverse it, and what its replay proves.
 
 ## What is running
 
-`bin/jg-bus.sh serve` starts three services from their files, from the home's `state/bus/` directory so no runtime file lands in the repository.
+`bin/jg-bus.sh serve` starts these services from their files, from the home's `state/bus/` directory so no runtime file lands in the repository.
 
 | Service | File | Role |
 | --- | --- | --- |
 | `nats-server` with JetStream | [`core/bus/nats.conf`](../core/bus/nats.conf) | messages, history, a week of them |
 | `daprd` (slim, no Docker) | [`core/bus/dapr/components/pubsub.yaml`](../core/bus/dapr/components/pubsub.yaml) | the transport binding over NATS |
 | `ntfy` | [`core/bus/ntfy.yml`](../core/bus/ntfy.yml) | the captain's iPad surface, on the local server |
+| `jg-bus deliver` | the `captain-ntfy` durable consumer on the `CAPTAIN` stream | reads each captain event off the stream and posts it to ntfy |
 
 The server itself is not started by hand on a real home: a home installs it once
 as a systemd user service and `bin/jg-bootstrap.sh` keeps it up. [The message bus](bus-service.md)
@@ -27,9 +28,9 @@ The Dapr component decides what the bus really is, so swapping NATS for another 
 A home overrides any of them under `config/bus/`.
 
 `bin/jg-bus.sh status` reports the mode, the delivery target, how many events the record holds, how many did not arrive, and which services are up.
-`bin/jg-bus.sh stop` stops the three.
+`bin/jg-bus.sh stop` stops them.
 The metric server stays off: a metrics port is shared machine surface and nothing scrapes it yet.
-Delivery needs `ntfy` running; the record and the bus need their own services only.
+Delivery needs `ntfy` and the `deliver` consumer running; the record and the bus need their own services only.
 
 ## The path
 
@@ -42,6 +43,19 @@ A transport failure is logged once to `state/captain-channel.log` and the emitte
 
 A live delivery that does not arrive is appended to `state/captain-channel-undelivered.jsonl` with its error, and `status` counts them, so a missing notification is named instead of lost.
 Nothing retries on its own: the record holds the event and that file names the one that did not arrive.
+
+## Delivery: bus to ntfy
+
+The `CAPTAIN` stream is the delivery path.
+`publish` records the event, then publishes it through the sidecar onto the stream.
+When the sidecar accepts it (HTTP 2xx), the `captain-ntfy` consumer (`bin/jg-bus.sh deliver`, the `jg-deliver` unit) reads it off the stream, posts it to the captain's own topic, and writes one line to `state/captain-channel-delivered.jsonl`: the subject, the event key and ntfy's own message id.
+ntfy logs the same id as `Received message` (`state/bus/ntfy.log`, or the unit's journal), so the stream, the record and ntfy's log name one event.
+The consumer starts at the first message, so an event published while it was down is delivered when it returns.
+When the sidecar does not accept the event, no consumer will ever see it, so `publish` delivers it directly and names a failure in the undelivered record as before.
+So one event is never delivered twice, and none is dropped.
+
+`bin/jg-captain-probe.sh` is the live proof on a machine: it prints the stack's processes, the stream and consumer counts, publishes one real event to the captain's own topic, prints the counts again, then the delivery record line and ntfy's own log line for that message id.
+It waits by blocking on the delivery record and exits non-zero unless the stream count rose and both records name the event.
 
 ## The mode switch and its one-step reversal
 
