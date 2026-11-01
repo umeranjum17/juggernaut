@@ -736,10 +736,12 @@ tests/jg-update.test.sh 13448
 tests/jg-wake-daemon-lifecycle-e2e.test.sh 10177
 tests/jg-wake-route.test.sh 527
 tests/jg-wake-drain-open-decisions-cursor.test.sh 57982
+tests/jg-wake-next.test.sh 2751
 tests/jg-watch-handoff.test.sh 11741
 tests/jg-watcher-lock.test.sh 1059731
 tests/jg-worker-account-live-e2e.test.sh 70
 tests/juggernaut-axi-serve.test.sh 1635
+tests/migration-card.test.sh 1443
 tests/merge-card-title.test.sh 701
 EOF
 }
