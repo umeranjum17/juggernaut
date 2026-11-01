@@ -10,7 +10,9 @@
 #
 # rows   Columns: home, verdict, working lanes, lane target (- when unset), ready
 #        backlog (? when the home summary is missing), open waits, beacon age in
-#        seconds (999999 when no watcher ever ran), why. The home is `overwatch` for this home and
+#        seconds (999999 when no watcher ever ran), why, peak (bin/jg-peak-gate.sh's
+#        peak-price sentence for that home, `-` for a home that is not read). The
+#        home is `overwatch` for this home and
 #        the registry id for a Squad Lead. Every field comes from records the
 #        home already writes; nothing is re-derived:
 #          working  state/<task>.meta of kind ship or scout whose last state
@@ -68,10 +70,10 @@ die() { printf 'jg-fleet-heartbeat: %s\n' "$1" >&2; exit "${2:-1}"; }
 
 # home_row <id> <home-dir>: one TSV row.
 home_row() {
-  local id=$1 home=$2 st meta kind last working=0 target=- ready='?' waits=0 age why verdict
-  [ -d "$home" ] || { printf '%s\tSTALLED\t0\t-\t?\t0\t-\thome %s is not a directory\n' "$id" "$home"; return; }
+  local id=$1 home=$2 st meta kind last working=0 target=- ready='?' waits=0 age why verdict peak
+  [ -d "$home" ] || { printf '%s\tSTALLED\t0\t-\t?\t0\t-\thome %s is not a directory\t-\n' "$id" "$home"; return; }
   if [ "$id" != overwatch ] && squad_lead_dormant "$STATE" "$id"; then
-    printf '%s\tDORMANT\t0\t-\t-\t0\t-\tno open work; stopped, wakes on routed work\n' "$id"
+    printf '%s\tDORMANT\t0\t-\t-\t0\t-\tno open work; stopped, wakes on routed work\t-\n' "$id"
     return
   fi
   st=$home/state
@@ -107,7 +109,11 @@ home_row() {
   else
     verdict=IDLE why="no ready work and no working lane"
   fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$verdict" "$working" "$target" "$ready" "$waits" "$age" "$why"
+  peak=$(JG_HOME="$home" JG_STATE_OVERRIDE="$st" JG_CONFIG_OVERRIDE="$home/config" \
+    "$SCRIPT_DIR/jg-peak-gate.sh" status 2>/dev/null) || peak=
+  [ -n "$peak" ] || peak='?'
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$id" "$verdict" "$working" "$target" "$ready" "$waits" "$age" "$why" "$peak"
 }
 
 cmd_rows() {
@@ -162,11 +168,11 @@ check_open_lanes() {  # <home-label> <home-dir>
 }
 
 cmd_check() {
-  local dir=$STATE/.fleet-heartbeat rows id verdict working target ready waits age why rec old since fired reg line
+  local dir=$STATE/.fleet-heartbeat rows id verdict working target ready waits age why peak rec old since fired reg line
   DIR=$dir
   mkdir -p "$dir" || die "cannot write $dir"
   rows=$(cmd_rows)
-  while IFS=$'\t' read -r id verdict working target ready waits age why; do
+  while IFS=$'\t' read -r id verdict working target ready waits age why peak; do
     [ -n "$id" ] || continue
     rec=$dir/$id old='' since=$NOW fired=0
     [ ! -f "$rec" ] || IFS=$'\t' read -r old since fired < "$rec"
