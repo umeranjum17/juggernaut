@@ -1,5 +1,7 @@
 app: juggernaut
 journeys:
+  live-services:
+    command: bash journeys/live-services.sh
   stack-install:
     command: bash journeys/stack-install.sh
   migration-card:
