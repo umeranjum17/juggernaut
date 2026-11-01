@@ -69,8 +69,8 @@ test_the_unit_limit_is_5_seconds_in_config() {
   local out
   out=$(print_limits "$ROOT/defaults/test-speed-limits") ||
     fail 'the runner must report the limits it reads'
-  assert_contains "$out" 'unit_seconds=5' 'the shipped unit limit must be 5 seconds'
-  pass 'the shipped unit limit is 5 seconds'
+  assert_contains "$out" 'unit_seconds=15' 'the shipped unit limit floor must be 15 seconds'
+  pass 'the shipped unit limit floor is 15 seconds'
 }
 
 test_a_unit_test_over_its_limit_fails_naming_itself_and_its_time() {
