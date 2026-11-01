@@ -3,10 +3,14 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -15,10 +19,18 @@ import (
 // jg.<home>.> prefix. No home exports or imports anything, so an account can
 // publish and read only its own subjects, and a home that is not listed here has
 // no way onto the server at all. core/bus/accounts.conf documents the shape.
+//
+// The account is named after the home's unique id and never after its folder:
+// every Squad Lead home folder can share one basename, so a basename names no
+// home. Main and every other home take home-<12 hex of the sha256 of the home's
+// resolved absolute path>; a registered Squad Lead takes its registry id. The set
+// is the homes named on the command line (this home when none) plus Main and every
+// entry in data/squad_leads.md. Two homes that land on one account name are
+// refused with one line naming both.
 func (a *app) accounts(args []string) int {
-	homes := args
-	if len(homes) == 0 {
-		homes = []string{a.home}
+	named, code := a.accountNames(args)
+	if code != 0 {
+		return code
 	}
 	if err := os.MkdirAll(a.runtime, 0o755); err != nil {
 		return die("cannot create %s", a.runtime)
@@ -46,9 +58,10 @@ func (a *app) accounts(args []string) int {
 	if !account("SYS", sysCred, false) {
 		return 1
 	}
-	for _, home := range homes {
-		name := homeAccount(filepath.Base(home))
+	for _, h := range named {
+		name := h.name
 		cred := filepath.Join(a.runtime, name+".pass")
+		migrateBasenameCredential(a.runtime, name, h.path, named)
 		if err := writeCredential(cred); err != nil {
 			return die("cannot write %s: %v", cred, err)
 		}
@@ -59,6 +72,108 @@ func (a *app) accounts(args []string) int {
 	fmt.Fprintf(&b, "}\n")
 	fmt.Print(b.String())
 	return 0
+}
+
+// busHome is one home on the server: its resolved path and its account name.
+type busHome struct{ path, name string }
+
+// registryHomeRe anchors on the structured suffix of a data/squad_leads.md line,
+// the same one bin/jg-squad-lead-registry-lib.sh parses.
+var registryHomeRe = regexp.MustCompile(`^- ([A-Za-z0-9._-]+) - .+ \((?:host:[^;)]*;\s*root:[^;)]*;\s*)?home:\s*([^;)]*);\s*scope:.*;\s*projects:[^;)]*;\s*added\s+\d{4}-\d{2}-\d{2}\)\s*$`)
+
+// resolveHome makes a home path absolute and symlink-free, so one home has one
+// name however it was spelled.
+func resolveHome(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	return filepath.Clean(path)
+}
+
+// registeredHomes reads Main's Squad Lead registry: resolved home path -> id.
+func (a *app) registeredHomes() map[string]string {
+	data := os.Getenv("JG_DATA_OVERRIDE")
+	if data == "" {
+		data = filepath.Join(a.home, "data")
+	}
+	raw, err := os.ReadFile(filepath.Join(data, "squad_leads.md"))
+	if err != nil {
+		raw, _ = os.ReadFile(filepath.Join(data, "secondmates.md"))
+	}
+	out := map[string]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if m := registryHomeRe.FindStringSubmatch(line); m != nil && strings.TrimSpace(m[2]) != "" {
+			out[resolveHome(strings.TrimSpace(m[2]))] = m[1]
+		}
+	}
+	return out
+}
+
+// homeID is a home's unique id: its registered Squad Lead id, else a stable hash
+// of its resolved absolute path.
+func homeID(path string, registered map[string]string) string {
+	if id, ok := registered[path]; ok {
+		return id
+	}
+	sum := sha256.Sum256([]byte(path))
+	return "home-" + hex.EncodeToString(sum[:])[:12]
+}
+
+// accountNames lists every home that gets an account, sorted by account name, and
+// refuses a name two homes share.
+func (a *app) accountNames(args []string) ([]busHome, int) {
+	registered := a.registeredHomes()
+	paths := map[string]bool{}
+	for _, p := range append(append([]string{}, args...), a.home) {
+		paths[resolveHome(p)] = true
+	}
+	for p := range registered {
+		paths[p] = true
+	}
+	var out []busHome
+	byName := map[string]string{"SYS": "the system account"}
+	for p := range paths {
+		out = append(out, busHome{p, homeAccount(homeID(p, registered))})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].path < out[j].path })
+	for _, h := range out {
+		if other, ok := byName[h.name]; ok {
+			return nil, die("homes %s and %s both map to bus account %q; rename one Squad Lead id", other, h.path, h.name)
+		}
+		byName[h.name] = h.path
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out, 0
+}
+
+// migrateBasenameCredential moves an install made before accounts were named by
+// home id: its <folder>.pass becomes the new account's credentials, once, and only
+// when no other home shares that folder name (a shared name never named one home,
+// so its password is not any home's to inherit).
+func migrateBasenameCredential(runtime, name, path string, all []busHome) {
+	newCred := filepath.Join(runtime, name+".pass")
+	if _, err := os.Stat(newCred); err == nil {
+		return
+	}
+	base := homeAccount(filepath.Base(path))
+	oldCred := filepath.Join(runtime, base+".pass")
+	if base == name {
+		return
+	}
+	for _, h := range all {
+		if h.path != path && homeAccount(filepath.Base(h.path)) == base {
+			return
+		}
+	}
+	raw, err := os.ReadFile(oldCred)
+	if err != nil || os.WriteFile(newCred, raw, 0o600) != nil {
+		return
+	}
+	_ = os.Remove(oldCred)
+	fmt.Fprintf(os.Stderr, "jg-bus: bus account %q migrated to %q for %s (re-run `jg-bus.sh unit` and restart jg-bus.service)\n", base, name, path)
 }
 
 // homeAccount: the account name for a home, which is also its subject prefix
@@ -138,4 +253,21 @@ func captureStdout(run func() int) string {
 		return ""
 	}
 	return text
+}
+
+// account prints this home's account name, which is also its user and the middle of
+// its jg.<name>.> prefix, then its credentials file, so a client connects as itself.
+func (a *app) account() int {
+	named, code := a.accountNames(nil)
+	if code != 0 {
+		return code
+	}
+	me := resolveHome(a.home)
+	for _, h := range named {
+		if h.path == me {
+			fmt.Printf("%s\t%s\n", h.name, filepath.Join(a.runtime, h.name+".pass"))
+			return 0
+		}
+	}
+	return die("no account for %s", me)
 }
