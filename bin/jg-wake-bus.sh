@@ -362,7 +362,7 @@ mirror_home() { # <state-dir> <max-age>
     [ -z "$state" ] || continue
     row=$(awk -F '\t' -v id="$id" '$2 == id' "$rows")
     [ -n "$row" ] || continue
-    case "$id" in wake/*) subject=jg.wake.raise ;; *) subject=jg.inbox.raise ;; esac
+    case "$id" in wake/*) subject="$SUBJECT_PREFIX.wake.raise" ;; *) subject="$SUBJECT_PREFIX.inbox.raise" ;; esac
     publish_event "$record" live "$id" "$subject" "$(row_event "$st" "$row")" || return 1
     published=$((published + 1))
   done <<EOF
@@ -376,7 +376,7 @@ EOF
   gone=$(record_live "$record" | grep -vxF -f <(printf '%s\n' "$live_file") 2>/dev/null || true)
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    case "$id" in wake/*) subject=jg.wake.ack ;; *) subject=jg.inbox.ack ;; esac
+    case "$id" in wake/*) subject="$SUBJECT_PREFIX.wake.ack" ;; *) subject="$SUBJECT_PREFIX.inbox.ack" ;; esac
     publish_event "$record" acked "$id" "$subject" \
       "$(ack_event "$st" "$id" "$(record_epoch_of "$record" "$id")")" || return 1
     acked=$((acked + 1))
@@ -392,8 +392,8 @@ EOF
     [ -z "$state" ] || continue
     row=$(awk -F '\t' -v id="$id" '$2 == id' "$rows")
     [ -n "$row" ] || continue
-    publish_event "$record" live "$id" jg.inbox.raise "$(row_event "$st" "$row")" || return 1
-    publish_event "$record" acked "$id" jg.inbox.ack \
+    publish_event "$record" live "$id" "$SUBJECT_PREFIX.inbox.raise" "$(row_event "$st" "$row")" || return 1
+    publish_event "$record" acked "$id" "$SUBJECT_PREFIX.inbox.ack" \
       "$(ack_event "$st" "$id" "$(record_epoch_of "$record" "$id")")" || return 1
     acked=$((acked + 1))
   done <<EOF
