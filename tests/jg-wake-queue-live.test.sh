@@ -151,6 +151,17 @@ test_an_acknowledgement_owed_by_the_outbox_still_settles() {
   pass "an acknowledgement flushed from the outbox settles its row"
 }
 
+# The done-done journey (journeys/wake-bus-live.sh) is this suite's whole-path proof: its own
+# throwaway server, two homes, and the probe that must PASS in each.
+test_the_journey_proves_the_probe_in_two_homes() {
+  local out
+  mkdir -p "$DIR/evidence"
+  out=$(DONE_DONE_EVIDENCE_ROOT="$DIR/evidence" RUN_ID=journey bash "$ROOT/journeys/wake-bus-live.sh" 2>&1) \
+    || fail "the journey failed: $out"
+  assert_contains "$out" "journey rc=0" "the journey must end clean"
+  pass "the journey proves the probe in two homes"
+}
+
 result=0
 test_raise_reaches_the_read_model || result=1
 test_acknowledgement_removes_the_row_everywhere || result=1
@@ -160,4 +171,5 @@ test_inbox_is_raised_at_the_writer_and_acknowledged_on_the_move || result=1
 test_a_second_home_reaches_the_same_stream || result=1
 test_an_inbox_acknowledgement_lands_on_the_inbox_stream || result=1
 test_an_acknowledgement_owed_by_the_outbox_still_settles || result=1
+test_the_journey_proves_the_probe_in_two_homes || result=1
 exit "$result"
