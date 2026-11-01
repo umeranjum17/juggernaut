@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Shadow comparison for the fleet delete guard: replay every recorded decision through the shell guard and the
-// OPA policy side by side and append one line per record to <home>/state/opa-shadow.log. Nothing is enforced
-// from OPA: this file asks guard.mjs's pure decider and the policy the same question about the same recorded
-// command, and it never calls guard(), so no block is logged and no wake is queued.
+// Shadow comparison for the fleet delete guard: replay every recorded decision through the guard host's
+// decider and the OPA policy side by side and append one line per record to <home>/state/opa-shadow.log. Nothing
+// is enforced from OPA: this file asks the guard host and the policy the same question about the same recorded
+// command, and it never logs a block or queues a wake.
 //
 // Usage: node opa-shadow.mjs <jg-home> [--opa <path>] [--expect <known-gaps-file>]. OPA comes from --opa, then
 // $OPA, then PATH. --expect is the per-rule replay eval: it exits 1 when a scored decision differs from a record
@@ -13,9 +13,8 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFil
 import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { blockedDelete } from "./guard.mjs";
-
 const HERE = dirname(fileURLToPath(import.meta.url));
+const HOST = process.env.JG_GUARD_HOST_BIN || join(HERE, "..", "..", "bin", "jg-guard-host.sh");
 const POLICY = join(HERE, "policies", "recursive-delete.rego");
 const QUERY = "data.juggernaut.guards.delete.decision";
 
@@ -42,6 +41,15 @@ process.on("exit", () => rmSync(tmp, { recursive: true, force: true }));
 const homes = join(tmp, "homes.json");
 writeFileSync(homes, JSON.stringify({ homes: [...new Set([userInfo().homedir, homedir()].map((h) => h.replace(/\/+$/, "")))] }));
 
+// hostDecision is the guard host's own answer for one command: allow or block.
+function hostDecision(command) {
+	const r = spawnSync(HOST, ["decide", command], { encoding: "utf8" });
+	if (r.status !== 0) throw new Error(`guard host decide failed: ${(r.stderr || r.error?.message || "").trim()}`);
+	const verdict = (r.stdout || "").trim();
+	if (verdict !== "allow" && verdict !== "block") throw new Error(`guard host answered ${JSON.stringify(verdict)}`);
+	return verdict;
+}
+
 function opaDecision(command) {
 	const input = join(tmp, "input.json");
 	writeFileSync(input, JSON.stringify({ command }));
@@ -67,7 +75,7 @@ rows.forEach((line, i) => {
 		// An unreadable record is still one record: both deciders see an empty command and agree on it.
 	}
 	const command = String(row.command ?? "");
-	const shell = blockedDelete(command) === null ? "allow" : "block";
+	const shell = hostDecision(command);
 	const t0 = process.hrtime.bigint();
 	const policy = opaDecision(command);
 	nanos += Number(process.hrtime.bigint() - t0);
