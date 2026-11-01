@@ -6,6 +6,9 @@
 # It uses a throwaway HOME (so every tool installs fresh from its pinned release), its own
 # ports and its own store, never this machine's real bus. It skips when the pinned releases
 # cannot be reached or there is no Go toolchain to build the command; the CI bus lane has both.
+#
+# This is also the test that owns journeys/stack-install.sh (the done-done journey runs this file),
+# so the changed-test map selects it for a change to that journey.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -15,6 +18,11 @@ command -v go >/dev/null 2>&1 || { echo "skip: no go toolchain to build the bus 
 curl -fsSI --max-time 15 https://github.com >/dev/null 2>&1 || { echo "skip: the pinned releases cannot be reached"; exit 0; }
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# The command this test runs is the one docs/bus-service.md tells a home to run.
+grep -Fq 'bin/jg-stack.sh up ' "$ROOT/docs/bus-service.md" || fail "docs/bus-service.md no longer documents bin/jg-stack.sh up"
+pass "stack: the documented one-install command is bin/jg-stack.sh up"
+
 T=$(jg_test_tmproot jg-stack)
 export HOME="$T/home" JG_HOME="$T/jg" JG_STACK_SUPERVISOR=detached
 unset JG_STACK_SKIP JG_BUS_BIN JG_STATE_OVERRIDE JG_STATE JG_ROOT_OVERRIDE NPM_CONFIG_PREFIX XDG_CONFIG_HOME
@@ -36,6 +44,8 @@ sed "s/4222/$NATS/" "$ROOT/core/bus/dapr/components/pubsub.yaml" > "$JG_HOME/con
 
 first=$("$ROOT/bin/jg-stack.sh" up 2>&1); rc=$?
 [ "$rc" = 0 ] || fail "the first run exited $rc: $first"
+printf '%s\n' "$first" | grep -q '^jg-bus built, state ' || fail "the Go command was not reported built: $first"
+[ -s "$ROOT/core/bus/accounts.conf" ] || fail "the accounts file is missing"
 for part in nats dapr ntfy; do
   printf '%s\n' "$first" | grep -Eq "^$part +installed [0-9.]+, enabled .*, running pid [0-9]+, listening 127.0.0.1:" \
     || fail "$part was not reported installed, enabled, running with a pid and listening: $first"
