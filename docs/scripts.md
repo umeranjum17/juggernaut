@@ -71,7 +71,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-test-isolation-proof.sh` | Concurrent isolation harness and portable candidate set owner |
 | `jg-ensure-agents-md.sh` | Manually initialize project agent-memory files (see the helper's header and help) |
 | `jg-guard.sh`            | Warn on primary-checkout tangles, main-session pending wakes, and unhealthy supervision |
-| `jg-guard-host.sh`       | Build and run the one guard host: the Rego rule decisions and repo-guard's gh/gh-axi and pre-push modes (`core/guard-host/cmd/jg-guard-host`'s header owns the contract) |
+| `jg-guard-host.sh`       | Build and run the one guard host: the Rego rule decisions, the delete rule, and repo-guard's gh/gh-axi and pre-push modes (`core/guard-host/cmd/jg-guard-host`'s header owns the contract) |
 | `jg-primary-scope-lib.sh` | Shared marker-or-plain-checkout primary-home predicate for tracked hooks             |
 | `jg-session-lock-lib.sh` | Shared session-lock ownership from harness ancestry or a trusted Claude session id for jg-lock.sh and the Claude Stop auto-arm, plus the read-only lock inspection behind `jg-lock.sh status` and `jg-inbox.sh ready` |
 | `jg-claude-stop-autoarm.sh` | Claude Stop `asyncRewake` hook owning tokenless watcher continuity with single-flight exit-2 rewake (docs/watcher-continuity.md) |

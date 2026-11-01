@@ -13,6 +13,8 @@ LOG=${1:-$ADDON/tests/fixtures/delete-guard-opa-shadow.log}
 
 T=$(mktemp -d)
 trap 'rm -rf -- "$T"' EXIT
+# The guard host builds into a state dir: keep that out of the checkout under test.
+export JG_STATE_OVERRIDE=$T/state
 mkdir -p "$T/home/state"
 cp "$LOG" "$T/home/state/delete-guard.log"
 fails=0
@@ -40,7 +42,7 @@ after=$(sha256sum "$T/home/state/delete-guard.log" | cut -d' ' -f1)
 [ ! -e "$T/home/state/.wake-queue" ] && ok "no wake queued" || no "the runner queued a wake"
 
 # And the guard's own decider still answers the same way after the shadow run.
-verdict() { node --input-type=module -e "import { blockedDelete } from '$ADDON/guard.mjs'; process.stdout.write(blockedDelete(process.argv[1]) === null ? 'allow' : 'block')" "$1"; }
+verdict() { "$ADDON/../../bin/jg-guard-host.sh" decide "$1"; }
 [ "$(verdict 'rm -rf "$HOME"')" = block ] && [ "$(verdict 'rm -rf ./build')" = allow ] \
   && ok "guard still decides the same before and after" || no "guard behaviour changed"
 
