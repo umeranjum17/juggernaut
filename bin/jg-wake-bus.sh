@@ -23,9 +23,14 @@
 # Usage: jg-wake-bus.sh raise <kind> <key> <payload> <class> | settle <kind> <key> <payload>
 #        | ack <id>... | ids <kind> <key> | ids-through <max-seq> [<seqs-file>] | count
 #        | inbox-raise <task> <seq> <delivery> <body-sha> | inbox-settle | render
+#        | endpoint
 #   bin/jg-wake-bus-probe.sh measures the whole path on this machine.
+#   endpoint prints "<server url> <wake stream> <raise subject> <account user> <password file>",
+#   tab separated: where the wake engine service (core/bus/cmd/jg-bus/engine.go) consumes from.
 #
 # Env: JG_WAKE_BUS_URL, JG_NATS_BIN, JG_BUS_MAX_AGE.
+# Login: when state/bus/accounts.conf exists (the machine server holds one account per home), the
+# script connects as this home's account, `bin/jg-bus.sh account`, and publishes on jg.<account>.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
@@ -418,6 +423,7 @@ while [ "$#" -gt 0 ]; do
       ACK_IDS=("$@") || true
       set -- ;;
     render) CMD=render; shift ;;
+    endpoint) CMD=endpoint; shift ;;
     *) printf 'jg-wake-bus.sh: unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -427,7 +433,29 @@ for h in "${HOMES[@]}"; do
   [ -d "$h" ] || { printf 'jg-wake-bus.sh: no state directory at %s\n' "$h" >&2; exit 2; }
 done
 HOME_DIR=$(dirname "${HOMES[0]}")
-BUS_URL=$(config_get "$HOME_DIR" nats-url "nats://127.0.0.1:4222")
+# The server address defaults to the one the stack runs the bus on (the captain channel's nats-url,
+# a home's config/captain-channel over defaults/captain-channel), so a home that moved its server
+# does not have the wake bus and the engine reading a different one.
+channel_url=''
+for channel_file in "$HOME_DIR/config/captain-channel" "$SCRIPT_DIR/../defaults/captain-channel"; do
+  [ -f "$channel_file" ] || continue
+  channel_url=$(awk '$1 == "set" && $2 == "nats-url" { print $3; exit }' "$channel_file" 2>/dev/null)
+  [ -z "$channel_url" ] || break
+done
+BUS_URL=$(config_get "$HOME_DIR" nats-url "${channel_url:-nats://127.0.0.1:4222}")
+# When this home has an accounts server (bin/jg-bus.sh generated state/bus/accounts.conf), it logs in
+# as its own account, named by the home's unique id, and uses that account's prefix; a bare server
+# (a test, a detached stack) takes the folder-name prefix and no login.
+ACCOUNT_PASS_FILE=''
+if [ -f "${HOMES[0]}/bus/accounts.conf" ]; then
+  if acct=$(JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="${HOMES[0]}" "$SCRIPT_DIR/jg-bus.sh" account 2>/dev/null); then
+    NATS_USER=${acct%%$'\t'*}
+    ACCOUNT_PASS_FILE=${acct#*$'\t'}
+    NATS_PASSWORD=$(cat "$ACCOUNT_PASS_FILE" 2>/dev/null) || NATS_PASSWORD=''
+    export NATS_USER NATS_PASSWORD
+    [ -n "$SUBJECT_PREFIX" ] || SUBJECT_PREFIX=jg.$NATS_USER
+  fi
+fi
 # jg.<home>.>: the one prefix this home may publish or read on the machine server.
 if [ -z "$SUBJECT_PREFIX" ]; then
   SUBJECT_PREFIX="jg.$(basename "$HOME_DIR" | tr -c 'A-Za-z0-9_.-' '_')"
@@ -447,4 +475,5 @@ case "$CMD" in
   inbox-raise) live_inbox_raise "$INBOX_TASK" "$INBOX_SEQ" "$INBOX_DELIVERY" "$INBOX_SHA" ;;
   inbox-settle) live_inbox_settle ;;
   render) live_render ;;
+  endpoint) printf '%s\t%s\t%s\t%s\t%s\n' "$BUS_URL" "$WAKE_STREAM" "$SUBJECT_PREFIX.wake.raise" "${NATS_USER:-}" "${ACCOUNT_PASS_FILE:-}" ;;
 esac
