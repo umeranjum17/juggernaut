@@ -10,8 +10,8 @@ def drop(text, name):
     assert m, name
     return text[:m.start()] + text[m.end():]
 src = '[ ! -r "${JG_ADDONS_DIR:-$JG_HOME/projects/juggernaut-addons}/lead-wake/bin/jg-lead-wake-lib.sh" ] || . "${JG_ADDONS_DIR:-$JG_HOME/projects/juggernaut-addons}/lead-wake/bin/jg-lead-wake-lib.sh"\n'
-p = bin_ / 'jg-wake-lib.sh'
-p.write_text(drop(p.read_text(), 'jg_wake_withdraw'))
+# jg_wake_withdraw belongs to the core wake library now (the lead-wake library's
+# copy was deleted when the queue moved onto the bus), so the copy stays.
 p = bin_ / 'jg-wake-drain.sh'
 t = p.read_text().replace(' \\\n    "$STATE"/.wake-queue.withdraw.*; do', '; do'); p.write_text(t)
 p = bin_ / 'jg-watch.sh'
