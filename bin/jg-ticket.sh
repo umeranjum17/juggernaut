@@ -7,7 +7,7 @@
 # a release cut records what it knows at the moment it happens instead of leaning
 # on whoever remembers to write a status line before the next poll.
 #
-# Usage: jg-ticket.sh <task-id> [--stage WORD] [--state WORD] [--pr URL] [--release TEXT]
+# Usage: jg-ticket.sh <task-id> [--stage WORD] [--state WORD] [--pr URL] [--release TEXT] [--hold-reason TEXT]
 #        jg-ticket.sh id <task-id>
 #   id         Print the ticket id this home's sync publishes for a task, so a
 #              card can name its ticket (--ticket) and the board shows it there.
@@ -15,6 +15,8 @@
 #   --state    queued | "in progress" | "on hold" | done   (done also sets 100%)
 #   --pr       the delivered PR's full URL; "" clears the linked PRs
 #   --release  this ticket's target release
+#   --hold-reason  why an "on hold" state waits; the board refuses a hold with none,
+#              so a state of "on hold" without one writes nothing
 #
 # The writer is addons/tickets-sync/ticket.py, installed at
 # ${XDG_DATA_HOME:-$HOME/.local/share}/jg-tickets-sync/tickets-sync/ticket.py
@@ -76,7 +78,7 @@ if [ "$TASK" = id ] && [ "$#" -eq 1 ]; then
   exit 0
 fi
 [ "$#" -eq 0 ] || case "$1" in
-  --stage|--state|--pr|--release) ;;
+  --stage|--state|--pr|--release|--hold-reason) ;;
   *) usage >&2; exit 2 ;;
 esac
 

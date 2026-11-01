@@ -1104,6 +1104,7 @@ command_hold() {
     fi
     fail "could not hold task $id for the captain"
   fi
+  jg_backlog_ticket_note "$DATA" hold "$id" --reason "$stored_reason"
   task_show "$id" || fail "task $id disappeared while holding it"
   show=$TASK_SHOW_OUTPUT
   hold_kind=$(show_field_value "$show" hold_kind)
@@ -1192,10 +1193,11 @@ apply_pending_retained_artifact() {  # <task-id>
 
 close_answered() {  # <task-id> <release-0-or-1>
   if [ "$2" = 1 ]; then
-    tasks_axi unhold "$1" >/dev/null
+    tasks_axi unhold "$1" >/dev/null && jg_backlog_ticket_note "$DATA" unhold "$1"
   else
     apply_pending_retained_artifact "$1" || return 1
-    tasks_axi "done" "$1" "${RETAINED_CLOSE_ARGS[@]+"${RETAINED_CLOSE_ARGS[@]}"}" >/dev/null
+    tasks_axi "done" "$1" "${RETAINED_CLOSE_ARGS[@]+"${RETAINED_CLOSE_ARGS[@]}"}" >/dev/null \
+      && jg_backlog_ticket_note "$DATA" "done" "$1" "${RETAINED_CLOSE_ARGS[@]+"${RETAINED_CLOSE_ARGS[@]}"}"
   fi
 }
 

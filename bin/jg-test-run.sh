@@ -641,11 +641,13 @@ tests/jg-tangle-guard.test.sh 12088
 tests/jg-tasks-axi.test.sh 42685
 tests/jg-teardown.test.sh 479995
 tests/jg-ticket-key.test.sh 20000
+tests/jg-ticket-writeback.test.sh 4258
 tests/jg-tmp-sweep.test.sh 14071
 tests/jg-tokens-retro.test.sh 407
 tests/jg-turnend-guard.test.sh 42968
 tests/jg-update.test.sh 13448
 tests/jg-wake-daemon-lifecycle-e2e.test.sh 10177
+tests/jg-wake-route.test.sh 527
 tests/jg-wake-drain-open-decisions-cursor.test.sh 57982
 tests/jg-watch-handoff.test.sh 11741
 tests/jg-watcher-lock.test.sh 1059731
