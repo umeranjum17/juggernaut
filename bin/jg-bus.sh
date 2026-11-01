@@ -80,7 +80,7 @@
 #   jg-bus.sh publish <kind> <key> <text> [--link <url>]
 #   jg-bus.sh parity [--record <file>] [--corrupt]
 #   jg-bus.sh reply [<event.json>]
-#   jg-bus.sh serve | ensure | unit | stop | status | bootstrap
+#   jg-bus.sh serve | ensure | unit | accounts | stop | status | bootstrap
 set -u
 export LC_ALL=C
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -433,6 +433,26 @@ cmd_status() {
   done
 }
 
+# accounts: the per-home account blocks for this machine's one server. Every home
+# gets its own account, its own user, its own credentials and its own
+# jg.<home>.> prefix, so a home can never read another home's subjects. Written
+# as a file the server includes, never as a runtime rule in this script.
+cmd_accounts() {  # <home-dir>...
+  local home name cred block
+  printf 'system_account: SYS\n\n'
+  printf 'accounts {\n'
+  printf '  SYS { users: [ { user: sys, password_file: %s } ] }\n' "$(cd "$RUNTIME" && pwd)/sys.pass"
+  for home in "$@"; do
+    name=$(basename "$home")
+    cred="$RUNTIME/$name.pass"
+    [ -f "$cred" ] || printf '%s\n' "$(head -c 24 /dev/urandom | base64 | tr -d '/+=' )" > "$cred"
+    chmod 0600 "$cred" 2>/dev/null || true
+    printf '  %s {\n    jetstream: { max_mem: 64Mb, max_file: 512Mb }\n    users: [ { user: %s, password_file: %s } ]\n  }\n' \
+      "$name" "$name" "$cred"
+  done
+  printf '}\n'
+}
+
 # unit: the systemd user service a home installs once, so the server is up after
 # every boot and restart without anyone typing a command. It runs the server
 # itself (not `serve`, which only starts services and exits) and creates the
@@ -476,6 +496,7 @@ case "${1:-status}" in
   publish) shift; cmd_publish "$@" ;;
   parity) shift; cmd_parity "$@" ;;
   reply) shift; cmd_reply "$@" ;;
+  accounts) shift; mkdir -p "$RUNTIME" && cmd_accounts "$@" ;;
   serve) shift; cmd_serve "$@" ;;
   unit) shift; cmd_unit "$@" ;;
   ensure) shift; cmd_ensure "$@" ;;
