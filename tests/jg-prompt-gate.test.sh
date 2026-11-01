@@ -197,12 +197,16 @@ test_prompt_still_up_is_acted_on_every_interval() {
     done
   }
 
+  # An identical urgent wake inside the re-alert window is downgraded to batch
+  # (jg_wake_append_locked), so Main is woken once at first sight and every
+  # later rung is the wait-timers chain's check wake, as for any other prompt.
   show "$TMP_ROOT/approvable.txt"
-  watch_until "$TMP_ROOT/a.out" "stale: $w (permission prompt" 3
+  watch_until "$TMP_ROOT/a.out" "check: waiting-state lead1 (prompt, .*level=owner; still open" 3
   approvals=$(grep -c '"root":"inbox"' "$lab/state/prompt-approvals.jsonl" 2>/dev/null || true)
   wakes=$(grep -c "stale: $w (permission prompt: .*not answered: inbox; the approval sent under a minute ago did not take" "$TMP_ROOT/a.out" || true)
-  [ "${approvals:-0}" -ge 3 ] && [ "$wakes" -ge 3 ] \
-    || fail "an approvable prompt left on screen was not re-approved and re-alerted each interval (approvals=$approvals wakes=$wakes): $(cat "$TMP_ROOT/a.out")"
+  n=$(grep -c "check: waiting-state lead1 (prompt, .*level=owner; still open.* source=\[prompt: Access external directory $lab/state/lead1.inbox" "$TMP_ROOT/a.out" || true)
+  [ "${approvals:-0}" -ge 3 ] && [ "$wakes" -eq 1 ] && [ "$n" -ge 2 ] \
+    || fail "an approvable prompt left on screen was not re-approved every interval, woken once, and re-alerted by the chain (approvals=$approvals wakes=$wakes re-alerts=$n): $(cat "$TMP_ROOT/a.out")"
 
   show "$TMP_ROOT/secret.txt"
   watch_until "$TMP_ROOT/s.out" "stale: $w (permission prompt" 1
