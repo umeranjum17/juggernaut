@@ -7,6 +7,7 @@ description: Verify Juggernaut core changes through their executable integration
 
 ## Feature map
 
+- Status classifier (Go): run `bash tests/jg-classify-go.test.sh` (or `done-done run -- bash tests/jg-classify-go.test.sh` with the suite's log written into `$DONE_DONE_EVIDENCE_ROOT`); it sources `bin/jg-classify-lib.sh`, which forwards to `core/classify`, and proves captain relevance, declared waits, paused-until, the latest-event read, and that a classifier that cannot run exits 2 rather than answering. For a port or change of the grammar, replay the previous reader against the Go command over a home's recorded status lines (`core/classify/README.md` names the replay and its control run); a lab drain of a copied real status file shows `bin/jg-wake-drain.sh` classifying through the Go path.
 - Merge-card judge routing: run `bash merge-card/tests/merge-card-e2e.sh` for explicit non-Claude routes, fresh Claude picks, dry-pool Sol then listed Command Code DeepSeek fallback, quota skips and unchanged global config; run `done-done run merge-card-pool-fallback` for the public check commands against isolated pool/judge boundaries, with one transcript and steps.json (no hosted inference).
 
 - README hero: run `LOOKOUT_URL=http://<host>:4390 done-done run readme-hero` (preferred: already-running Lookout with live history) or `JG_HOME=<Juggernaut home> LOOKOUT_DIR=<lookout clone> done-done run readme-hero` to capture Lookout Overview at 390 and 1280 in light and dark. Refuses Sample fleet and empty lane history; needs real history and merges in the fleet document.
