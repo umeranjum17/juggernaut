@@ -47,6 +47,16 @@ gate commands start only before 80% of the bound, a merge only when it fits insi
 so the watcher's kill can at worst cut a gate command (harmlessly retried next sweep), never a
 merge.
 
+## Proof line
+
+The `## Checks` block's `proof:` line names the verify skill of the repository under test — the clone
+the pull request belongs to, taken from the lane's recorded worktree, else this home's clone of that
+repository — and never from the folder the lint happens to run in, because a caller's own skill list
+says nothing about someone else's pull request. A repository that has a verify skill (hand-written
+`verify-<app>` or one done-done wrote as `done-done-verify-<app>`) needs that skill named, and the
+phrase `no verify skill` is refused there; a repository without one passes the phrase. When neither
+clone is on disk the lint cannot judge the repository, so both forms are accepted rather than guessed.
+
 ## Size rule
 
 The added non-generated lines of a PR are measured against a 1,000-line guidance, and the size is
