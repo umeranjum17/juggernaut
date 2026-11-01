@@ -1,9 +1,8 @@
 package main
 
 // The wake engine's fold and read model (docs/bus-live.md), ported from
-// bin/jg-wake-bus.sh with identical behaviour. That script still owns the
-// transport - every client call, the cursor and the outbox - and the mirror's
-// file scan, and hands the events it gathered to these commands:
+// bin/jg-wake-bus.sh with identical behaviour. The render (wakerender.go) and the
+// mirror's replay hand the events they gathered to these commands:
 //
 //	wake rows <dump>             the replay's canonical consumer rows, sorted
 //	wake render <state> <model>  fold the model into the replica and both read models
