@@ -23,6 +23,16 @@
 #           branch (parity), and the checks on its tip are green. A fact that
 #           cannot be read leaves the release not ready with the reason named,
 #           so an unreadable check never produces a release card.
+#   counts  Every line count printed here is `git diff --shortstat <default>
+#           <version>` over the whole tree after fetching both refs, and that
+#           command sits beside the number. The forge's compare list stops at
+#           300 files, so summing it undercounts a bigger release and once
+#           reported a net removal for a release that only added lines.
+#   state   The card and the digest line carry the live state beside the
+#           numbers: the release pull request, the checks on its head, the smoke
+#           job's result there, whether it is merged, and which registered homes
+#           carry the merge commit. A home whose checkout cannot be read counts
+#           as not checked, never as current.
 #   records $DATA/release-readiness/state.jsonl  one row per changed measurement:
 #           {at,state,changes,open,behind,ci,lines,files,version,default}. The
 #           wait is measured from the first row of the current contiguous run of
@@ -54,6 +64,8 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/jg-version-branch-lib.sh
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
+# shellcheck source=bin/jg-squad-lead-registry-lib.sh
+. "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
 # shellcheck source=bin/jg-tangle-lib.sh
 . "$SCRIPT_DIR/jg-tangle-lib.sh"
 # shellcheck source=bin/jg-pr-lib.sh
@@ -85,26 +97,130 @@ ref_of() {  # <dir> <branch>
   return 1
 }
 
-# green, red, pending or unknown for the checks on one commit.
-checks_state() {  # <slug> <sha>
-  local out
+# "<state> <smoke>" for the checks on one commit: the state of all of them, and
+# the smoke job's own result. The smoke job boots a home, so its own result is
+# what says the release still starts after it ships; no smoke job is reported on
+# its own rather than assumed to have passed.
+checks_read() {  # <slug> <sha>
+  local out state smoke
   out=$(gh_call api "repos/$1/commits/$2/check-runs?per_page=100" \
-    --jq '[.check_runs[] | (.status + " " + (.conclusion // ""))] | join(",")' 2>/dev/null) || out=''
+    --jq '[.check_runs[] | (.status + " " + (.conclusion // "") + " @" + .name)] | join(",")' 2>/dev/null) || out=''
   # No checks at all is not green: nothing has confirmed the release.
-  [ -n "$out" ] || { printf 'unknown\n'; return 0; }
-  if printf '%s' "$out" | grep -qE '(queued|in_progress)'; then printf 'pending\n'; return 0; fi
-  if printf '%s' "$out" | grep -qE 'completed (failure|timed_out|cancelled|action_required|startup_failure)'; then
-    printf 'red\n'
-    return 0
+  [ -n "$out" ] || { printf 'unknown unread\n'; return 0; }
+  if printf '%s' "$out" | grep -qE '(queued|in_progress) '; then state=pending
+  elif printf '%s' "$out" | grep -qE 'completed (failure|timed_out|cancelled|action_required|startup_failure) '; then state=red
+  else state=green
   fi
-  printf 'green\n'
+  # The smoke job's own conclusion, "running" while it has not concluded, and
+  # nothing at all when this head carries no smoke job.
+  smoke=$(printf '%s' "$out" | tr ',' '\n' | awk '/@[[:space:]]*[Ss]moke$/ {
+    if ($1 == "completed") c = $2
+    else if ($1 ~ /^(queued|in_progress)$/) c = "running"
+  } END { print c }')
+  case $smoke in
+    success) smoke=passed ;;
+    running) ;;
+    '') smoke=none ;;
+    *) smoke=failed ;;
+  esac
+  printf '%s %s\n' "$state" "$smoke"
+}
+
+# Fetch both sides of a comparison, so a count is measured against what the
+# remote holds now. Best effort: a clone whose origin is unreachable keeps its
+# local refs, and the printed command then names the refs it used.
+refresh_refs() {  # <dir> <branch>...
+  local dir=$1 b
+  shift
+  for b in "$@"; do
+    git -C "$dir" fetch --quiet --no-tags origin "+refs/heads/$b:refs/remotes/origin/$b" >/dev/null 2>&1 || true
+  done
+}
+
+# The release pull request: the one whose head is the version branch and whose
+# base is the default branch. Prints "number<TAB>url<TAB>state<TAB>head<TAB>merge"
+# or nothing.
+release_pr() {  # <slug> <default> <version>
+  gh_call api "repos/$1/pulls?state=all&base=$2&per_page=100" \
+    --jq "[.[] | select(.head.ref == \"$3\")] | if length == 0 then empty else (sort_by(.number) | last) | [(.number|tostring), .html_url, (if .merged_at then \"merged\" else .state end), .head.sha, (.merge_commit_sha // \"\")] | @tsv end" \
+    2>/dev/null || true
+}
+
+# This home and every local registered Squad Lead home, which is the set of
+# homes a release can reach from here.
+squad_lead_local_homes() {
+  local line
+  [ -f "$DATA/squad_leads.md" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in '- '*) ;; *) continue ;; esac
+    squad_lead_registry_parse_line "$line" || continue
+    [ "$SQUAD_LEAD_REGISTRY_REMOTE" = 1 ] && continue
+    printf '%s\n' "$SQUAD_LEAD_REGISTRY_HOME"
+  done < "$DATA/squad_leads.md"
+}
+
+# Which of those homes already carry <commit>. A checkout that cannot be read,
+# or that does not even hold the commit, is counted as not checked rather than
+# assumed current.
+homes_words() {  # <commit>
+  local commit=$1 h up=0 known=0 skip=0
+  for h in "$home" $(squad_lead_local_homes); do
+    if ! git -C "$h" rev-parse --git-dir >/dev/null 2>&1 \
+      || ! git -C "$h" cat-file -e "$commit^{commit}" >/dev/null 2>&1; then
+      skip=$((skip + 1))
+      continue
+    fi
+    known=$((known + 1))
+    git -C "$h" merge-base --is-ancestor "$commit" HEAD >/dev/null 2>&1 && up=$((up + 1))
+  done
+  [ "$known" -gt 0 ] || { printf 'no home can be read\n'; return 0; }
+  if [ "$skip" -gt 0 ]; then
+    printf '%s of %s homes updated, %s not checked\n' "$up" "$known" "$skip"
+  else
+    printf '%s of %s homes updated\n' "$up" "$known"
+  fi
+}
+
+# The numbers, and the command that measured them, in one phrase.
+lines_words() { printf '%s lines across %s by %s\n' "$LINES" "$(count_word "$FILES" file)" "$COUNT_CMD"; }
+
+# The live release state: its pull request, the checks, the smoke result, whether
+# it is merged, and which homes already carry it.
+state_words() {
+  local pr checks smoke merged
+  case $PR_STATE in
+    merged) pr="the release pull request is merged at $PR_URL" ;;
+    open) pr="the release pull request is open at $PR_URL" ;;
+    closed) pr="the release pull request was closed unmerged at $PR_URL" ;;
+    *) pr='no release pull request yet' ;;
+  esac
+  case $CI in green) checks='checks green' ;; red) checks='checks red' ;; pending) checks='checks still running' ;; *) checks='checks cannot be read' ;; esac
+  case $SMOKE in passed) smoke='smoke passed' ;; failed) smoke='smoke failed' ;; running) smoke='smoke still running' ;; *) smoke='smoke not reported' ;; esac
+  if [ "$PR_STATE" = merged ]; then merged=${HOMES_WORDS:-the merge commit cannot be read yet}
+  else merged='not merged so no home has it yet'
+  fi
+  printf '%s, %s, %s, %s\n' "$pr" "$checks" "$smoke" "$merged"
+}
+
+# The whole tree between two commits, by git, and the command that says so. A
+# sum of the forge's compare list is never a count here: that list stops at 300
+# files and once reported a net removal for a release that only added lines.
+measure_tree() {  # <dir> <base-ref> <head-ref> <base-label> <head-label>
+  local stat add del
+  COUNT_CMD=$(printf 'git diff --shortstat %s %s' "$4" "$5")
+  stat=$(git -C "$1" diff --shortstat "$2" "$3" 2>/dev/null) || stat=''
+  add=$(printf '%s' "$stat" | sed -n 's/.* \([0-9][0-9]*\) insertion.*/\1/p')
+  del=$(printf '%s' "$stat" | sed -n 's/.* \([0-9][0-9]*\) deletion.*/\1/p')
+  LINES="+${add:-0}/-${del:-0}"
+  FILES=$(git -C "$1" diff --name-only "$2" "$3" 2>/dev/null | wc -l | tr -d ' ')
 }
 
 # Fill the measurement globals from the project checkout and the provider.
 measure() {
-  local dir version default vref dref stat add del
-  STATE_W=none CHANGES=0 OPEN=0 BEHIND=0 CI=green LINES='+0/-0' FILES=0
-  VERSION='' DEFAULT='' SLUG=''
+  local dir version default vref dref out pr
+  STATE_W=none CHANGES=0 OPEN=0 BEHIND=0 CI=green SMOKE=none LINES='+0/-0' FILES=0
+  VERSION='' DEFAULT='' SLUG='' COUNT_CMD='' PR_STATE='' PR_URL='' PR_SHA='' PR_MERGE=''
+  HOMES_WORDS=''
   dir=$(cfg project-dir)
   dir=${dir:-$home}
   case $dir in /*) ;; *) dir=$home/$dir ;; esac
@@ -112,23 +228,25 @@ measure() {
   git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
   version=$(jg_current_version_branch "$dir") || version=$(cfg branch)
   [ -n "$version" ] || return 0
+  # The version names both a ref and a provider query, so a spelling that is not
+  # a plain branch name is refused rather than pasted into either.
+  case $version in *[!A-Za-z0-9._/-]*) return 0 ;; esac
   VERSION=$version
   NAME=$(printf '%s' "$version" | tr '/' '-')
   default=$(jg_default_branch "$dir") || default=main
   DEFAULT=$default
+  # Both sides are fetched first: a count measured against a ref the remote has
+  # moved past is as wrong as a truncated one.
+  refresh_refs "$dir" "$default" "$version"
   vref=$(ref_of "$dir" "$version") || return 0
   dref=$(ref_of "$dir" "$default") || return 0
   CHANGES=$(git -C "$dir" rev-list --count "$dref..$vref" 2>/dev/null) || CHANGES=0
   BEHIND=$(git -C "$dir" rev-list --count "$vref..$dref" 2>/dev/null) || BEHIND=0
-  stat=$(git -C "$dir" diff --shortstat "$dref...$vref" 2>/dev/null) || stat=''
-  add=$(printf '%s' "$stat" | sed -n 's/.* \([0-9][0-9]*\) insertion.*/\1/p')
-  del=$(printf '%s' "$stat" | sed -n 's/.* \([0-9][0-9]*\) deletion.*/\1/p')
-  LINES="+${add:-0}/-${del:-0}"
-  FILES=$(git -C "$dir" diff --name-only "$dref...$vref" 2>/dev/null | wc -l | tr -d ' ')
-  [ "$CHANGES" -gt 0 ] || { STATE_W=empty; return 0; }
+  measure_tree "$dir" "$dref" "$vref" "$default" "$version"
   jg_pr_repo_from_git_url "$(git -C "$dir" remote get-url origin 2>/dev/null)" || SLUG=
   SLUG=${JG_PR_GIT_REPO:-}
   if [ -z "$SLUG" ] || ! command -v gh >/dev/null 2>&1; then
+    [ "$CHANGES" -gt 0 ] || { STATE_W=empty; return 0; }
     STATE_W=unknown
     CI=unknown
     OPEN=-1
@@ -136,9 +254,25 @@ measure() {
   fi
   OPEN=$(gh_call api "repos/$SLUG/pulls?state=open&base=$version&per_page=100" --jq 'length' 2>/dev/null) \
     || OPEN=-1
-  CI=$(checks_state "$SLUG" "$(git -C "$dir" rev-parse "$vref")")
+  pr=$(release_pr "$SLUG" "$default" "$version")
+  if [ -n "$pr" ]; then
+    IFS=$'\t' read -r _ PR_URL PR_STATE PR_SHA PR_MERGE <<<"$pr"
+  fi
+  read -r CI SMOKE <<<"$(checks_read "$SLUG" "${PR_SHA:-$(git -C "$dir" rev-parse "$vref")}")"
+  if [ "$PR_STATE" = merged ] && [ -n "$PR_MERGE" ] \
+    && git -C "$dir" cat-file -e "$PR_MERGE^{commit}" 2>/dev/null; then
+    # What shipped is the merge itself, so the shipped line counts the change the
+    # merge carried rather than the empty remainder of its branch.
+    HOMES_WORDS=$(homes_words "$PR_MERGE")
+    CHANGES=$(git -C "$dir" rev-list --count --no-merges "$PR_MERGE^1..$PR_MERGE" 2>/dev/null) || CHANGES=0
+    measure_tree "$dir" "$PR_MERGE^1" "$PR_MERGE" "$PR_MERGE^1" "$PR_MERGE"
+  fi
   if [ "$OPEN" -lt 0 ] || [ "$CI" = unknown ]; then
     STATE_W=unknown
+  elif [ "$PR_STATE" = merged ]; then
+    STATE_W=merged
+  elif [ "$CHANGES" -eq 0 ]; then
+    STATE_W=empty
   elif [ "$OPEN" -gt 0 ]; then
     STATE_W=open
   elif [ "$BEHIND" -gt 0 ]; then
@@ -166,6 +300,8 @@ card_why() {
 card_detail() {
   printf 'Ships: %s, %s lines across %s.\n' \
     "$(changes_word "$CHANGES")" "$LINES" "$(count_word "$FILES" file)"
+  printf 'Counted by: %s\n' "$COUNT_CMD"
+  printf 'State: %s.\n' "$(state_words)"
   printf 'Everything it changes: %s\n' "$(record_url)"
   printf 'Risks: all of it goes live at once, and none of it has run in production yet.\n'
 }
@@ -284,10 +420,11 @@ tick() {
   measure
   [ "$STATE_W" = none ] || record_state
   SINCE=$(state_since "$STATE_W")
-  if [ "$STATE_W" != ready ]; then
-    printf 'not ready: %s\n' "$STATE_W"
-    return 0
-  fi
+  case $STATE_W in
+    ready) ;;
+    merged) printf 'shipped: the release is merged\n'; return 0 ;;
+    *) printf 'not ready: %s\n' "$STATE_W"; return 0 ;;
+  esac
   hash=$(card_hash)
   # One key per card text: an unchanged card keeps its key and is never raised
   # twice, while a changed one is a new card that replaces the last.
@@ -311,23 +448,27 @@ tick() {
 }
 
 show() {
-  local hours
+  local hours detail
   measure
+  # The numbers and the live state, carried by every line that has them, so the
+  # digest answers "are we live yet?" every time it is pushed.
+  detail="$(lines_words); $(state_words)"
   case $STATE_W in
     none) line='Release: no release is in progress' ;;
     empty) line='Release: nothing is waiting to ship in the next release' ;;
-    unknown) line='Release: the next release cannot be checked right now' ;;
-    open) line="Release: not ready, $(changes_word "$OPEN") still open" ;;
-    behind) line="Release: not ready, $(changes_word "$BEHIND") of the live version are not in it" ;;
-    red) line='Release: not ready, the checks on it are red' ;;
-    pending) line='Release: not ready, the checks on it are still running' ;;
+    unknown) line="Release: the next release cannot be checked right now; $detail" ;;
+    open) line="Release: not ready, $(changes_word "$OPEN") still open; $detail" ;;
+    behind) line="Release: not ready, $(changes_word "$BEHIND") of the live version are not in it; $detail" ;;
+    red) line="Release: not ready, the checks on it are red; $detail" ;;
+    pending) line="Release: not ready, the checks on it are still running; $detail" ;;
+    merged) line="Release: shipped, $(changes_word "$CHANGES"); $detail" ;;
     ready)
       SINCE=$(state_since ready)
       hours=$(( (now - SINCE) / 3600 ))
       if [ "$hours" -ge 1 ]; then
-        line="Release: ready to ship, $(changes_word "$CHANGES") green, waiting $hours h for your approval"
+        line="Release: ready to ship, $(changes_word "$CHANGES") green, waiting $hours h for your approval; $detail"
       else
-        line="Release: ready to ship, $(changes_word "$CHANGES") green, waiting for your approval"
+        line="Release: ready to ship, $(changes_word "$CHANGES") green, waiting for your approval; $detail"
       fi
       ;;
     *) line='Release: no release is in progress' ;;
@@ -364,8 +505,9 @@ CARDS=$DIR/cards.jsonl
 ALERTS=$DIR/alerts.jsonl
 cfg() { sed -n "s/^$1=//p" "$CFG/release-readiness" 2>/dev/null | tail -n 1; }
 
-STATE_W=none CHANGES=0 OPEN=0 BEHIND=0 CI=green LINES='+0/-0' FILES=0
+STATE_W=none CHANGES=0 OPEN=0 BEHIND=0 CI=green SMOKE=none LINES='+0/-0' FILES=0
 VERSION='' DEFAULT='' SLUG='' PROJECT='' SINCE=0 NAME='' line=''
+COUNT_CMD='' PR_STATE='' PR_URL='' PR_SHA='' PR_MERGE='' HOMES_WORDS=''
 
 case $verb in
   tick) tick ;;

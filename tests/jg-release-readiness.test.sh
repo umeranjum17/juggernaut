@@ -57,13 +57,15 @@ new_world() {  # <name> [wait-hours] -> prints the world directory
     > "$w/home/config/release-readiness"
   printf '{"schema":1,"decisions":[]}\n' > "$w/board.json"
 
-  # The provider facts: how many pull requests still target the release, and what
-  # the checks on its tip say.
+  # The provider facts: how many pull requests still target the release, what the
+  # checks on its head say, and the release pull request itself (none yet).
   printf '0\n' > "$w/gh-open"
-  printf 'completed success,completed success\n' > "$w/gh-checks"
+  printf 'completed success @Smoke,completed success @Build\n' > "$w/gh-checks"
+  : > "$w/gh-pr"
   cat > "$w/bin/gh" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
+  *state=all*) cat "$GH_PR" ;;
   */pulls\?*) cat "$GH_OPEN" ;;
   */check-runs*) cat "$GH_CHECKS" ;;
   *) exit 1 ;;
@@ -89,8 +91,8 @@ SH
 run() {  # <world> <verb> <now>
   local w=$1
   POST_LOG=$w/posted.log ALERT_LOG=$w/alerted.log
-  GH_OPEN=$w/gh-open GH_CHECKS=$w/gh-checks
-  export POST_LOG ALERT_LOG GH_OPEN GH_CHECKS PATH="$w/bin:$PATH"
+  GH_OPEN=$w/gh-open GH_CHECKS=$w/gh-checks GH_PR=$w/gh-pr
+  export POST_LOG ALERT_LOG GH_OPEN GH_CHECKS GH_PR PATH="$w/bin:$PATH"
   OUT=$(JG_RELEASE_CARD_POST=$w/bin/poster JG_RELEASE_ALERT_NOTE=$w/bin/alert \
     bash "$RR" "$w/home" "$2" --now "$3" 2>&1)
   RC=$?
@@ -123,6 +125,16 @@ test_a_finished_release_raises_one_card_with_numbers_and_risks() {
   run "$w" show 1800000000
   assert_contains "$OUT" "Release: ready to ship, 2 changes green, waiting for your approval" \
     "the digest line says the release is ready"
+  # The number is git's own, and the command that measured it is beside it.
+  assert_grep 'Counted by: git diff --shortstat main release/c-2' "$w/posted.log" \
+    "the card prints the command that produced the number"
+  assert_grep 'Ships: 2 changes, +2/-0 lines across 1 file.' "$w/posted.log" \
+    "the lines are measured over the whole tree by git"
+  assert_contains "$OUT" '+2/-0 lines across 1 file by git diff --shortstat main release/c-2' \
+    "the digest line carries the number and its command"
+  # The live state: the pull request, the checks, the smoke job and the merge.
+  assert_contains "$OUT" 'no release pull request yet, checks green, smoke passed, not merged so no home has it yet' \
+    "the digest line carries the live release state"
   pass "a finished release raises one card with its changes, numbers, risks and one Approve"
 }
 
@@ -184,22 +196,75 @@ test_a_release_that_does_not_carry_the_live_version_is_held() {
 test_a_red_or_running_or_unreadable_check_holds_the_release() {
   local w
   w=$(new_world checks)
-  printf 'completed failure,completed success\n' > "$w/gh-checks"
+  printf 'completed failure @Smoke,completed success @Build\n' > "$w/gh-checks"
   run "$w" tick 1800000000
   assert_equals 0 "$(posts "$w")" "a red check raises no card"
   run "$w" show 1800000000
   assert_contains "$OUT" "the checks on it are red" "the digest line says the check is red"
-  printf 'in_progress ,completed success\n' > "$w/gh-checks"
+  assert_contains "$OUT" 'smoke failed' "a failed smoke job is named as failed"
+  printf 'in_progress  @Smoke,completed success @Build\n' > "$w/gh-checks"
   run "$w" tick 1800000000
   assert_equals 0 "$(posts "$w")" "a running check raises no card"
   run "$w" show 1800000000
   assert_contains "$OUT" "the checks on it are still running" "the digest line says the check is running"
+  assert_contains "$OUT" 'smoke still running' "a running smoke job is named as running"
+  # A head with no smoke job at all is reported as such, never assumed passed.
+  printf 'completed success @Build\n' > "$w/gh-checks"
+  run "$w" show 1800000000
+  assert_contains "$OUT" 'smoke not reported' "a head with no smoke job says so"
   printf '\n' > "$w/gh-checks"
   run "$w" tick 1800000000
   assert_equals 0 "$(posts "$w")" "no check at all raises no card"
   run "$w" show 1800000000
   assert_contains "$OUT" "cannot be checked right now" "an unreadable check is named, never assumed green"
   pass "a red, running or unreadable check holds the release instead of shipping it"
+}
+
+# The count comes from the refs the remote holds now, not stale local refs.
+test_the_count_is_fetched_before_it_is_measured() {
+  local w
+  w=$(new_world fetched)
+  # This world's origin is the bare repository, so the fetch can reach it.
+  git -C "$w/copy" remote set-url origin "file://$w/origin.git"
+  git -C "$w/seed" checkout -q release/c-2
+  printf 'feature three\n' >> "$w/seed/one.txt"
+  git -C "$w/seed" commit -qam 'Add a third feature (#13)'
+  git -C "$w/seed" push -q origin release/c-2
+  run "$w" tick 1800000000
+  assert_equals '+3/-0' "$(field "$w" .lines)" \
+    "the lines come from the fetched release branch, not a stale local ref"
+  pass "the count is measured after both refs are fetched"
+}
+
+# The release state follows the pull request: none, open, then merged.
+test_the_release_state_follows_the_pull_request() {
+  local w sha merge
+  w=$(new_world state)
+  sha=$(git -C "$w/seed" rev-parse release/c-2)
+  printf '12\thttps://github.com/acme/thing/pull/12\topen\t%s\t\n' "$sha" > "$w/gh-pr"
+  run "$w" show 1800000000
+  assert_contains "$OUT" 'the release pull request is open at https://github.com/acme/thing/pull/12' \
+    "an open release pull request is named with its address"
+  assert_contains "$OUT" 'not merged so no home has it yet' "an unmerged release reaches no home"
+  # The pull request merges: every readable home carrying the merge is counted.
+  git -C "$w/seed" checkout -q main
+  git -C "$w/seed" merge -q --no-ff release/c-2 -m 'Merge the release (#12)'
+  git -C "$w/seed" push -q origin main
+  merge=$(git -C "$w/seed" rev-parse HEAD)
+  git -C "$w/copy" fetch -q forge main:refs/remotes/origin/main
+  printf '12\thttps://github.com/acme/thing/pull/12\tmerged\t%s\t%s\n' "$sha" "$merge" > "$w/gh-pr"
+  printf -- '- sq1 - Example domain. (home: %s; scope: everything; projects: none; added 2026-01-01)\n' \
+    "$w/seed" > "$w/home/data/squad_leads.md"
+  run "$w" show 1800000000
+  assert_contains "$OUT" 'Release: shipped' "a merged release says it shipped"
+  assert_contains "$OUT" 'the release pull request is merged at https://github.com/acme/thing/pull/12' \
+    "the merge state is read from the pull request"
+  assert_contains "$OUT" '1 of 1 homes updated, 1 not checked' \
+    "the homes that carry the merge commit are counted, and an unreadable one is not assumed"
+  run "$w" tick 1800000000
+  assert_contains "$OUT" 'shipped: the release is merged' "a shipped release raises no card"
+  assert_equals 0 "$(posts "$w")" "nothing asks for approval after the release landed"
+  pass "the release state follows the pull request from open to merged, with the homes that carry it"
 }
 
 test_a_changed_release_replaces_its_card() {
@@ -259,6 +324,8 @@ test_a_second_run_inside_the_wait_resends_nothing
 test_an_open_feature_holds_the_release
 test_a_release_that_does_not_carry_the_live_version_is_held
 test_a_red_or_running_or_unreadable_check_holds_the_release
+test_the_count_is_fetched_before_it_is_measured
+test_the_release_state_follows_the_pull_request
 test_a_changed_release_replaces_its_card
 test_a_card_already_waiting_is_not_raised_again
 test_a_home_with_no_release_branch_says_so
