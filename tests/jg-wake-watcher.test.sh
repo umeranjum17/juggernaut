@@ -5,7 +5,7 @@
 #
 # Two proofs:
 #
-#   replay   Every event recorded on this machine's JG_WAKE stream (tests/fixtures/wake-recorded.jsonl:
+#   replay   Every event recorded on this machine's JG_WAKE stream (tests/fixtures/wake-recorded/events.jsonl:
 #            205 raises and 36 acknowledgements from 30 homes) is folded one event at a time by the
 #            Go command and by the shell reader it replaced - the render's jq fold, the sorted read
 #            model, squad_lead_oldest_queue_row's awk and the host-memory awk, quoted below - and
@@ -17,6 +17,9 @@
 #            oldest` answers from the fold and matches state/.wake-queue, an acknowledgement removes
 #            the row, a restart handles what arrived while down, and the real watcher cycle
 #            re-delivers a stalled row through the service. It gate-skips without the server and client.
+#
+# This is also the test that owns journeys/wake-watcher.sh (the done-done journey runs this file),
+# so the changed-test map selects it for a change to that journey.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -26,7 +29,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 command -v go >/dev/null 2>&1 || [ -n "${JG_BUS_BIN:-}" ] || { echo "skip: no Go toolchain to build the bus command"; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo "skip: jq is needed for the shell reference"; exit 0; }
 DIR=$(jg_test_tmproot jg-wake-watcher)
-CORPUS="$ROOT/tests/fixtures/wake-recorded.jsonl"
+CORPUS="$ROOT/tests/fixtures/wake-recorded/events.jsonl"
 TAB=$(printf '\t')
 
 # ---- replay -------------------------------------------------------------------------------
