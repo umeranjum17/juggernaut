@@ -144,14 +144,6 @@ split_board() {
   done
 }
 
-has_flag() {  # <flag>  -> 0 when the remaining arguments carry it
-  local want=$1 arg
-  for arg in ${ARGS[@]+"${ARGS[@]}"}; do
-    [ "$arg" = "$want" ] && return 0
-  done
-  return 1
-}
-
 set_detail() {  # <value>: keep exactly one --detail pair in ARGS
   local out=() i=0
   while [ "$i" -lt "${#ARGS[@]}" ]; do
