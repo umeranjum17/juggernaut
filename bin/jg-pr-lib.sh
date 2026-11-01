@@ -341,6 +341,43 @@ jg_pr_head_valid() {
   [[ "$head" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
 }
 
+# The context name of the commit status that tells a reader what a pull request
+# is waiting for, so the question "what is this pull request waiting for?" is
+# answered on the pull request itself. It is ONE status carrying ONE short plain
+# line in its description; the newest status for the context is the current one.
+JG_PR_WAIT_CONTEXT=juggernaut/waiting-for
+
+# Publish the wait, or clear it, as that status on the pull request's current
+# head. "pending" means a wait is in progress and "success" means there is no
+# wait, so the merge path publishes success before merging and after a proven
+# merge rather than leaving pending behind. Only a GitHub pull request carries
+# commit statuses; every other provider returns 0 having published nothing, so
+# no caller has to branch on provider. The description is one line capped at
+# GitHub's 140-character limit. A publish failure returns nonzero and the caller
+# decides whether that is fatal: a pull request must never fail to merge because
+# its wait line could not be written.
+jg_pr_wait_status() {  # <pr-url> <pending|success> <line>
+  local url=${1-} state=${2-} line=${3-} head owner repo
+  jg_pr_url_parse "$url" || return 1
+  [ "$JG_PR_PROVIDER" = github ] || return 0
+  case "$state" in
+    pending | success) ;;
+    *) return 1 ;;
+  esac
+  owner=$JG_PR_OWNER
+  repo=$JG_PR_REPO
+  line=$(printf '%s' "$line" | tr '\n\t' '  ' | sed 's/  */ /g; s/^ //; s/ $//' | cut -c1-140)
+  [ -n "$line" ] || return 1
+  command -v gh >/dev/null 2>&1 || return 1
+  head=$(gh pr view "$url" --repo "$owner/$repo" --json headRefOid -q .headRefOid 2>/dev/null) || return 1
+  jg_pr_head_valid "$head" || return 1
+  gh api -X POST "repos/$owner/$repo/statuses/$head" \
+    -f state="$state" \
+    -f context="$JG_PR_WAIT_CONTEXT" \
+    -f description="$line" \
+    -f target_url="$url" >/dev/null 2>&1
+}
+
 # The one reading of a GitHub pull request's draft state. Prints "true" or
 # "false" for a boolean isDraft and nothing for anything else, so a caller can
 # tell a positive draft from an unreadable payload. bin/jg-pr-merge.sh refuses

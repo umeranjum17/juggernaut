@@ -26,6 +26,12 @@ test_classes() {
   assert_equals "$(route "$home" "$state" check "$state/board-gate.check.sh" \
     "check: $state/board-gate.check.sh: merge landed with no board Evidence card: m1 https://example.test/o/r/pull/7")" now \
     "a merge with no board proof must still wake at once"
+  assert_equals "$(route "$home" "$state" check "$state/tickets-stale.check.sh" \
+    'tickets-stale: jg-1 says queued')" batch \
+    "a staled tickets row is bookkeeping, not a decision"
+  assert_equals "$(route "$home" "$state" check "$state/tickets-sync.check.sh" \
+    'tickets-sync: 1 homes read; 2 tickets changed')" batch \
+    "a tickets poll summary must not wake a model"
   printf 'working [at=1]: editing\n' > "$state/lane.status"
   printf 'needs-decision [at=2]: pick one\n' > "$state/pick.status"
   assert_equals "$(route "$home" "$state" signal pick.status "signal: x")" now \

@@ -8,8 +8,10 @@
 #
 # This is slice 1 of the captain's local-proof merge: a merge stops waiting for a
 # GitHub queue when the work itself is proven here. The suite is the one CI runs,
-# bin/jg-test-run.sh --all followed by bin/jg-lint.sh, in the task's lane worktree
-# at the commit the pull request holds.
+# bin/jg-test-run.sh --all --gate followed by bin/jg-lint.sh, in the task's lane
+# worktree at the commit the pull request holds. The runner's --gate contract
+# bounds it: per-test speed limits enforced, and the whole gate held to the
+# configured budget from defaults/test-speed-limits.
 #
 # The receipt is state/<task>.local-suite, a plain key=value record like every
 # other durable record in a home, so it needs no JSON reader. It names the tree
@@ -221,7 +223,10 @@ SHARDS=1
 RC=0
 (
   cd "$WORKTREE"
-  "$WORKTREE/bin/jg-test-run.sh" --all --json "$JSON"
+  # --gate is the gate contract this receipt stands for: the per-test speed
+  # limits enforced, and the whole gate bounded by the configured budget, so a
+  # hung or overrunning test fails the receipt instead of holding the gate.
+  "$WORKTREE/bin/jg-test-run.sh" --all --gate --json "$JSON"
   "$WORKTREE/bin/jg-lint.sh"
 ) >"$LOG" 2>&1 || RC=$?
 ENDED=$(date +%s)

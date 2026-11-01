@@ -860,7 +860,7 @@ The flag's command lines for that case:
 
 ```text
 ●  HE CORRECTED THE FLEET, AND NOTHING CAPTURED IT
-●    <repo>/bin/jg-owner-rules.sh add --words "<his exact words>" --scope "<where it applies>" --enforce "<script or contract that enforces it>"
+●    <repo>/bin/jg-owner-rules.sh add --kind owner --words "<his exact words>" --scope "<where it applies>" --enforce "<script or contract that enforces it>"
 ●    <repo>/bin/jg-tasks-axi.sh add <id> "[feature] <what changes>" --body "<summary of what changes and why>"
 ```
 

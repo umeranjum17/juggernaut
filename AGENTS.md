@@ -65,7 +65,7 @@ Load `fleet-records` before routing durable knowledge, editing a backlog item or
 Load `operational-home-layout` when locating, interpreting, or changing Juggernaut home, config, data, state, project, or generated runtime paths.
 
 A `state/<id>.status` line is a wake event, not current-state truth; `bin/jg-crew-state.sh` owns current-state reconciliation.
-Treat `data/captain.md` as the domain-local record of captain preferences, optional `data/captain-shared.md` as the main-authoritative shared captain-preference file for Squad Lead inheritance, `data/owner-rules.md` as the shared owner-rules surface the session digest prints (one entry per standing owner decision, in his words, with its enforcement point; `bin/jg-owner-rules.sh add` writes one and `audit` finds a quote still trapped in a private note), and `data/learnings.md` as curated home-local knowledge, regardless of harness memory, except for a knowledge class that a home-declared external memory tier (`fleet-records`) owns.
+Treat `data/captain.md` as the domain-local record of captain preferences, optional `data/captain-shared.md` as the main-authoritative shared captain-preference file for Squad Lead inheritance, `data/owner-rules.md` as the shared owner-rules surface the session digest prints (one `- Kind: owner` entry per standing decision only he can take, in his words, with its enforcement point; an engineering default every Juggernaut user should get is a ticket, never an entry here, and `bin/jg-owner-rules.sh add` refuses it; `split` reports the split by kind and `audit` finds a quote still trapped in a private note), and `data/learnings.md` as curated home-local knowledge, regardless of harness memory, except for a knowledge class that a home-declared external memory tier (`fleet-records`) owns.
 
 ## 3. Session start (run once at every session start)
 
@@ -143,9 +143,11 @@ The delivery lifecycle is an always-loaded operational contract; referenced scri
 Load `task-dispatch` at every intake: it owns project resolution, Squad Lead routing, Ship and Recon classification, delivery flags, and dispatch concurrency.
 
 - A diagnostic request, report, recommendation, or implementation-ready finding is evidence, not authorization to change code.
+- A captain ask outranks side work: what it needs is never silently dropped or descoped, and a scope change to it needs his word.
+- A new idea, or scope discovered mid-task, becomes a board card first; adding it to the work in flight needs his approval.
 - Load `diagnostic-reasoning` before scoping a reported bug and before acting on a diagnostic report.
 - New or complex work starts from prior art: load `prior-art` before designing anything the project does not already contain, record the pick, its licence and the reasons in the task's prior-art section, and let `bin/jg-prior-art-gate.sh` refuse a brief without one; work that is neither new nor complex records `none needed` with the reason.
-- An owner correction is never a one-time fix: the turn that follows one must leave an owner rule (`bin/jg-owner-rules.sh add`) or an enforcement ticket, and the turn-end guard flags it otherwise ([`docs/turnend-guard.md`](docs/turnend-guard.md)).
+- An owner correction is never a one-time fix: record it where section 9 requires, or the turn-end guard flags the turn ([`docs/turnend-guard.md`](docs/turnend-guard.md)).
 
 Resolve every ship task's concrete delivery mode and `yolo` merge posture at intake.
 A current explicit captain instruction wins; otherwise the project's registry entry is the captain's standing posture, and dropping below its rigor needs a reason you can state.
@@ -183,6 +185,7 @@ Destructive, irreversible, and security-sensitive merges still escalate.
 Without a current explicit captain instruction that states the concrete merge, the green default stands, and standing `yolo` cannot authorize a red merge; section 1 owns when such an instruction overrides a Juggernaut-written standing rule within its exact scope.
 Load `ask-user-authority` and `validation-supervision` before deciding or answering any ask-user finding; the implementation worker never answers its own finding.
 Use `bin/jg-pr-merge.sh` for every task PR merge so merge metadata is recorded and an unproved merge is refused instead of reported as landed, and use `bin/jg-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
+An open PR states its wait on its own page; that path and `bin/jg-pr-wait.sh` own the status.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
 
 ### Validate
@@ -255,6 +258,8 @@ Load `stuck-operator-recovery` after a stale wake, looping pane, repeated confus
 ## 9. Escalation and captain etiquette
 
 - **Talk in outcomes, not mechanics.**
+- **Judge the fleet by released user outcomes with proof on the board, not by merged pull request counts.**
+- **Never forecast a date.** Report measured history: what landed, how long it took, and the released version and where it runs that hard rule 5 requires. A quota reset is a reason to wait, not a schedule.
 - **Captain-facing chat uses ASD-STE100 Simplified Technical English by default.** This is the standing default for every captain-facing message, not a per-project, per-captain, or opt-in setting.
 - Write short active sentences, with one instruction or fact per sentence, and use approved simple words.
 - Use a list when a paragraph would carry two or more items.
@@ -290,6 +295,10 @@ Every escalation must stand alone and remain concise.
 Lead directly with concrete evidence, then the consequence, options when applicable, and a recommendation.
 Use the same evidence-first form for objections or clarifying challenges rather than unsupported deference.
 
+- **Decide everything inside the standing authority you already have, and ask only for what only the captain can do.** A green in-scope merge the project's posture already authorizes, a lane restart, and a design-gate workaround on a worker that runs today are yours to call.
+- **A captain correction is never only harness memory.** Record it with `bin/jg-owner-rules.sh add --kind owner` when it states his own taste or authority, which files that rule's enforcement ticket itself, and as a Juggernaut ticket when it is an engineering default every user should get, so a fresh session, another harness, and every Squad Lead home follow it too.
+- **A question you ask the captain is posted on the board**, with the chat line as its pointer, so the ask cannot be lost in a transcript.
+
 Reach the captain immediately for:
 
 - Work ready for their review, with the PR's recorded URL.
@@ -297,7 +306,7 @@ Reach the captain immediately for:
 - Gate findings that `ask-user-authority` escalates.
 - A real blocker or failure after the relevant playbook is exhausted.
 - Anything destructive, irreversible, or security-sensitive.
-- A needed credential or login.
+- A needed sign-in, spend, or account action.
 
 - In a Squad Lead home, reaching the captain means appending the outcome to the parent channel your charter names; a captain-facing sentence in that home's chat has not been sent, and [`docs/squad-lead-parent-channel.md`](docs/squad-lead-parent-channel.md) owns which outcomes the home's own scripts deliver there without you.
 - Do not surface automatic fixes, retries, routine progress, or internal supervision mechanics.
@@ -324,6 +333,7 @@ They also show the default sentence shape: short, active, one fact per sentence.
 Load `fleet-records` before adding, editing, handing off, or closing a backlog item or task note; it owns the backlog schema pointers, gate mechanics, and note hygiene.
 
 A decision is simply a task held for the captain: create the task with `bin/jg-tasks-axi.sh add` when needed, then always hold it through `bin/jg-captain-hold.sh hold <id> --reason "<reason>"`, with `--until <date>` when the captain defers it.
+A held item never stops the fleet: keep it held and dispatch everything it does not block.
 Captain calls discovered by investigations or visual reviews follow `captain-hold-lifecycle`, which owns their completion gate and recorded-answer rules.
 Re-evaluate queued work after every teardown and heartbeat, and also after a recorded PR-ready handoff when `config/project-capacity` caps that project, dispatching items only when dependencies, time gates, and project capacity have cleared.
 

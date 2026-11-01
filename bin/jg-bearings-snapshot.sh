@@ -123,6 +123,9 @@ FLEET="$SCRIPT_DIR/jg-fleet-snapshot.sh"
 # shellcheck source=bin/jg-landed-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-landed-lib.sh"  # JG_LANDED_JQ_DEFS: the shared landed selector
+# shellcheck source=bin/jg-pr-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/jg-pr-lib.sh"  # JG_PR_WAIT_CONTEXT: the waiting-for status context
 # shellcheck source=bin/jg-toon-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-toon-lib.sh"
@@ -327,7 +330,7 @@ EOF
         --json number,title,url,headRefName,reviewDecision,mergeable,statusCheckRollup 2>/dev/null) \
         || { nwarn=$((nwarn + 1)); continue; }
       [ -n "$out" ] || out='[]'
-      repo_result=$(printf '%s' "$out" | jq --arg repo "$repo" --argjson limit "$JG_BEARINGS_PR_LIMIT" --slurpfile tasks "$tasks_file" '
+      repo_result=$(printf '%s' "$out" | jq --arg repo "$repo" --argjson limit "$JG_BEARINGS_PR_LIMIT" --arg wait_context "$JG_PR_WAIT_CONTEXT" --slurpfile tasks "$tasks_file" '
         ($tasks[0] // []) as $all_tasks
         | def task_for_branch($ref):
             ( [ $all_tasks[] | select((.branch // ("fm/" + .id)) == $ref) | .id ] | .[0] )
@@ -340,7 +343,11 @@ EOF
           review:(.reviewDecision // "none"),
           mergeable:(.mergeable // "UNKNOWN"),
           checks:(
-            (.statusCheckRollup // []) as $c
+            # The waiting-for status describes a wait rather than checking the
+            # code, so it is not a check and must not make a pull request read
+            # "pending" here (bin/jg-pr-lib.sh owns the context name).
+            [(.statusCheckRollup // [])[]
+              | select(.__typename == "CheckRun" or (.context // "") != $wait_context)] as $c
             | if ($c|length) == 0 then "none"
               elif any($c[]; (.conclusion // .state // "") as $s | ($s=="FAILURE" or $s=="ERROR" or $s=="TIMED_OUT" or $s=="CANCELLED" or $s=="ACTION_REQUIRED")) then "failing"
               elif any($c[]; ((.status // "") != "COMPLETED") and ((.state // "") != "SUCCESS")) then "pending"
