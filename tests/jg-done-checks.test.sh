@@ -5,8 +5,8 @@
 # names the light gate to run locally, the same lane is accepted once every check
 # is green, and a pull request that has reported nothing yet keeps today's
 # behavior because absence proves nothing (the merge gate still owns the merge).
-# The lane status cases run bin/jg-crew-state.sh, the executable a supervisor
-# reads, so a refusal is proven where it lands.
+# The cases run bin/jg-crew-state.sh, the executable a supervisor reads, so a
+# refusal is proven where it lands.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -20,9 +20,8 @@ PR=https://github.com/o/r/pull/7
 # A lane: a real git worktree whose HEAD is already on origin/main (so the
 # named-head gate is satisfied and only the check read is under test), a meta
 # record, and a status log.
-make_lane() {  # <name> [<extra meta lines...>] -> echoes the case dir
-  local name=$1 d
-  shift
+make_lane() {  # <name> -> echoes the case dir
+  local name=$1 d gen
   d="$TMP_ROOT/$name"
   mkdir -p "$d/state" "$d/wt"
   git -C "$d/wt" init -q
@@ -32,11 +31,11 @@ make_lane() {  # <name> [<extra meta lines...>] -> echoes the case dir
   # worker in a Juggernaut copy would really run.
   mkdir -p "$d/wt/bin"
   cp "$ROOT/bin/jg-lint.sh" "$ROOT/bin/jg-test-run.sh" "$d/wt/bin/"
-  jg_write_meta "$d/state/t.meta" "window=fm:jg-t" "worktree=$d/wt" "kind=ship" "mode=direct-PR" "project=some-proj" "harness=claude" "$@"
+  jg_write_meta "$d/state/t.meta" "window=fm:jg-t" "worktree=$d/wt" "kind=ship" \
+    "mode=direct-PR" "project=some-proj" "harness=claude"
   printf 'done: PR %s\n' "$PR" > "$d/state/t.status"
   # A semantic idle record: the busy contract is authoritative over the pane, so
   # the lane reads idle from its own lifecycle record rather than a rendered tail.
-  local gen
   gen=$("$ROOT/bin/jg-busy-event.sh" arm "$d/state" t)
   "$ROOT/bin/jg-busy-event.sh" apply "$d/state" t idle --gen "$gen" \
     --source claude-hook --event stop
@@ -44,10 +43,11 @@ make_lane() {  # <name> [<extra meta lines...>] -> echoes the case dir
 }
 
 # A `gh` serving the two reads the done gate makes: the pull-request record
-# bin/jg-pr-state.sh parses, and its checks list. JG_FAKE_PR_CHECKS is the JSON
-# array gh reports; empty means gh's own "no checks reported" error, which is the
-# sentence bin/jg-pr-state.sh matches to tell absence from a failed lookup.
-make_fakebin() {  # <case-dir> -> echoes fakebin
+# bin/jg-pr-state.sh parses, and its checks list. JG_FAKE_CHECKS_FILE holds the
+# JSON array gh reports; an empty or absent file is gh's own "no checks reported"
+# error, the sentence bin/jg-pr-state.sh matches to tell absence from a failed
+# lookup.
+make_fakebin() {  # <case-dir>
   local fb="$1/fakebin"
   mkdir -p "$fb"
   cat > "$fb/gh" <<'SH'
@@ -68,11 +68,11 @@ case "${1:-} ${2:-}" in
       [ "$prev" = --jq ] && prog=$arg
       prev=$arg
     done
-    if [ -z "${JG_FAKE_PR_CHECKS:-}" ]; then
+    if [ ! -s "${JG_FAKE_CHECKS_FILE:-}" ]; then
       printf "no checks reported on the 'x' branch\n" >&2
       exit 1
     fi
-    printf '%s' "$JG_FAKE_PR_CHECKS" | jq -r "$prog"
+    jq -r "$prog" < "$JG_FAKE_CHECKS_FILE"
     exit 0 ;;
 esac
 exit 1
@@ -94,26 +94,31 @@ esac
 exit 0
 SH
   chmod +x "$fb/gh" "$fb/no-mistakes" "$fb/tmux"
-  printf '%s\n' "$fb"
+}
+
+# The checks gh reports for the lane, written where the fake gh reads them.
+lane_checks() {  # <case-dir> <json>
+  printf '%s\n' "$2" > "$1/checks.json"
 }
 
 lane_status() {  # <case-dir> -> the one current-state line
   PATH="$1/fakebin:$PATH" JG_STATE_OVERRIDE="$1/state" \
     JG_FAKE_PR_HEAD="$(git -C "$1/wt" rev-parse HEAD)" \
+    JG_FAKE_CHECKS_FILE="$1/checks.json" \
     "$CREW_STATE" t
 }
 
 test_red_check_refuses_the_done_by_name() {
   local d out
   d=$(make_lane red)
-  make_fakebin "$d" >/dev/null
-  JG_FAKE_PR_CHECKS='[{"name":"CI required","state":"SUCCESS","bucket":"pass"},{"name":"Lint","state":"FAILURE","bucket":"fail"}]'
-  export JG_FAKE_PR_CHECKS
+  make_fakebin "$d"
+  lane_checks "$d" '[{"name":"CI required","state":"SUCCESS","bucket":"pass"},{"name":"Lint","state":"FAILURE","bucket":"fail"}]'
   out=$(lane_status "$d")
   assert_contains "$out" "state: blocked" "a red check must refuse the done"
   assert_contains "$out" "Lint (FAILURE)" "the refusal must name the exact check"
   assert_not_contains "$out" "CI required" "a passing check is not named"
-  assert_contains "$out" "bin/jg-lint.sh --changed && bin/jg-test-run.sh --changed" \
+  # shellcheck disable=SC2016 # The command is literal refusal text.
+  assert_contains "$out" 'bin/jg-lint.sh --changed && bin/jg-test-run.sh --changed' \
     "the refusal must name the light gate to run locally"
   pass "a done with a red check is refused, naming the check and the light gate"
 }
@@ -121,15 +126,13 @@ test_red_check_refuses_the_done_by_name() {
 test_running_check_refuses_and_green_accepts_the_same_lane() {
   local d out
   d=$(make_lane running)
-  make_fakebin "$d" >/dev/null
-  JG_FAKE_PR_CHECKS='[{"name":"Lint 1","state":"IN_PROGRESS","bucket":"pending"},{"name":"Lint 2","state":"QUEUED","bucket":"pending"}]'
-  export JG_FAKE_PR_CHECKS
+  make_fakebin "$d"
+  lane_checks "$d" '[{"name":"Lint 1","state":"IN_PROGRESS","bucket":"pending"},{"name":"Lint 2","state":"QUEUED","bucket":"pending"}]'
   out=$(lane_status "$d")
   assert_contains "$out" "state: blocked" "an unfinished check must refuse the done"
   assert_contains "$out" "Lint 1 (IN_PROGRESS), Lint 2 (QUEUED)" \
     "the refusal must name every unfinished check"
-  JG_FAKE_PR_CHECKS='[{"name":"Lint 1","state":"SUCCESS","bucket":"pass"},{"name":"Lint 2","state":"SUCCESS","bucket":"pass"}]'
-  export JG_FAKE_PR_CHECKS
+  lane_checks "$d" '[{"name":"Lint 1","state":"SUCCESS","bucket":"pass"},{"name":"Lint 2","state":"SUCCESS","bucket":"pass"}]'
   out=$(lane_status "$d")
   assert_contains "$out" "state: done" "the same lane is accepted once every check is green"
   assert_not_contains "$out" "blocked" "a green lane is not refused"
@@ -139,9 +142,8 @@ test_running_check_refuses_and_green_accepts_the_same_lane() {
 test_skipped_and_cancelled_checks_do_not_refuse() {
   local d out
   d=$(make_lane skipped)
-  make_fakebin "$d" >/dev/null
-  JG_FAKE_PR_CHECKS='[{"name":"Shell syntax","state":"SUCCESS","bucket":"pass"},{"name":"Core suites","state":"SKIPPED","bucket":"skipping"},{"name":"Lint","state":"CANCELLED","bucket":"cancel"}]'
-  export JG_FAKE_PR_CHECKS
+  make_fakebin "$d"
+  lane_checks "$d" '[{"name":"Shell syntax","state":"SUCCESS","bucket":"pass"},{"name":"Core suites","state":"SKIPPED","bucket":"skipping"},{"name":"Lint","state":"CANCELLED","bucket":"cancel"}]'
   out=$(lane_status "$d")
   assert_contains "$out" "state: done" \
     "a skipped check and a superseded cancelled run must not refuse the done"
@@ -151,9 +153,8 @@ test_skipped_and_cancelled_checks_do_not_refuse() {
 test_no_reported_check_keeps_the_previous_acceptance() {
   local d out
   d=$(make_lane noreport)
-  make_fakebin "$d" >/dev/null
-  JG_FAKE_PR_CHECKS=''
-  export JG_FAKE_PR_CHECKS
+  make_fakebin "$d"
+  : > "$d/checks.json"
   out=$(lane_status "$d")
   assert_contains "$out" "state: done" \
     "a pull request that has reported no check yet is not refused here"
@@ -161,18 +162,20 @@ test_no_reported_check_keeps_the_previous_acceptance() {
 }
 
 test_local_only_done_makes_no_forge_read() {
-  local d out
+  local d out gen
   d=$(make_lane local)
-  make_fakebin "$d" >/dev/null
-  jg_write_meta "$d/state/t.meta" "window=fm:jg-t" "worktree=$d/wt" "kind=ship" "mode=local-only" \
-    "project=some-proj" "harness=claude"
+  make_fakebin "$d"
+  jg_write_meta "$d/state/t.meta" "window=fm:jg-t" "worktree=$d/wt" "kind=ship" \
+    "mode=local-only" "project=some-proj" "harness=claude"
   printf 'done: ready in branch fm/t\n' > "$d/state/t.status"
+  gen=$("$ROOT/bin/jg-busy-event.sh" arm "$d/state" t)
+  "$ROOT/bin/jg-busy-event.sh" apply "$d/state" t idle --gen "$gen" \
+    --source claude-hook --event stop
   : > "$d/gh.log"
   JG_FAKE_GH_LOG="$d/gh.log"
-  export JG_FAKE_GH_LOG
   out=$(lane_status "$d")
-  assert_contains "$out" "state: done" "a local-only done has no pull request to read"
   [ ! -s "$d/gh.log" ] || fail "a local-only done read the forge: $(cat "$d/gh.log")"
+  assert_contains "$out" "state: done" "a local-only done has no pull request to read"
   pass "a local-only done never reads a forge check"
 }
 

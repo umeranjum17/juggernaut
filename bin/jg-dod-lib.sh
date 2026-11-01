@@ -573,7 +573,7 @@ EOF
   if declare -F jg_receipts_brief >/dev/null; then jg_receipts_brief "$id"; fi
   printf '\n'
   cat <<'EOF'
-Before you push, open a pull request, or hand off to /no-mistakes, run the light gate locally over the files you changed and fix every finding, so the change arrives already clean: the project's lint for those files, then the tests for those files.
+Before you push, open a pull request, or hand off to /no-mistakes, stage or commit your work and run the light gate locally over the files you changed, fixing every finding, so the change arrives already clean: the project's lint for those files, then the tests for those files.
 A `done:` naming a pull request needs that pull request's checks green: while a check is red or still running, the done is refused by the check's own name with the command to run it locally, so fix the cause or wait rather than report done.
 
 A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from your report and the release record, and your lead or juggernaut applies it.
