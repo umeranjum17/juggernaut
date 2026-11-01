@@ -67,6 +67,22 @@ func (e wakeEvent) marshal() string {
 	return "{" + strings.Join(cells, ",") + "}"
 }
 
+// readObject reads the keys of one object whose opening brace was just read.
+func readObject(dec *json.Decoder) (wakeEvent, bool) {
+	var e wakeEvent
+	for dec.More() {
+		var raw json.RawMessage
+		var c bytes.Buffer
+		key, err := dec.Token()
+		if err != nil || dec.Decode(&raw) != nil || json.Compact(&c, raw) != nil {
+			return nil, false
+		}
+		e = e.set(key.(string), c.String())
+	}
+	_, err := dec.Token()
+	return e, err == nil
+}
+
 // foldFile reads a stream of JSON objects and folds it to one event per id, in
 // first-seen order. Like jq, it fails on the first value it cannot read and on an
 // event whose id is not a string.
@@ -86,18 +102,9 @@ func foldFile(path string) ([]wakeEvent, bool) {
 		if d, ok := tok.(json.Delim); err != nil || !ok || d != '{' {
 			return nil, false
 		}
-		var e wakeEvent
-		for dec.More() {
-			var raw json.RawMessage
-			var c bytes.Buffer
-			key, err := dec.Token()
-			if err != nil || dec.Decode(&raw) != nil || json.Compact(&c, raw) != nil {
-				return nil, false
-			}
-			e = e.set(key.(string), c.String())
-		}
+		e, ok := readObject(dec)
 		var id string
-		if _, err := dec.Token(); err != nil || json.Unmarshal([]byte(e.get("id")), &id) != nil {
+		if !ok || json.Unmarshal([]byte(e.get("id")), &id) != nil {
 			return nil, false
 		}
 		_, seen := byID[id]
@@ -189,7 +196,7 @@ func (a *app) wake(args []string) int {
 	case len(args) == 3 && args[0] == "render":
 		return wakeRender(args[1], args[2])
 	}
-	return die("wake: usage: wake rows <dump> | wake render <state> <model>")
+	return a.wakeBus(args)
 }
 
 // wakeRows is the replay's side of parity: the bus's canonical consumer rows, in
