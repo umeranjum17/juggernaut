@@ -505,7 +505,12 @@ mail_poll() {
   # shellcheck source=bin/jg-wake-lib.sh
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR/jg-wake-lib.sh"
-  jg_lock_acquire_wait "$STATE_DIR/.mail-seen.lock"
+  # Bounded: a state directory that cannot hold the lock (or a holder that never
+  # lets go) must end the poll with its cause, never spin the caller forever.
+  if ! jg_lock_acquire_wait_max "$STATE_DIR/.mail-seen.lock" "${JG_MAIL_LOCK_WAIT_SECONDS:-60}"; then
+    echo "jg-mail: could not take the mail-seen lock in $STATE_DIR within ${JG_MAIL_LOCK_WAIT_SECONDS:-60}s (state directory unwritable or lock held); nothing was polled" >&2
+    return 1
+  fi
   if ! list="$(run_py poll_list)"; then
     # The poll engine already printed its cause on stderr; just release the
     # lock and fail instead of letting set -e abort the whole script with the

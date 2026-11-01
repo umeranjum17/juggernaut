@@ -14,5 +14,13 @@
 # without refusing, because a local refusal would stop ordinary work until the
 # whole slow list empties while the two enforcing runs above already name it.
 e2e_seconds=60
-unit_seconds=5
+# unit_seconds is the FLOOR of a unit test's bound. A test's own bound is
+# max(unit_seconds, 2 x its measured CI hint in bin/jg-test-run.sh); a test with
+# no hint gets the floor, so a new slow test is still caught.
+# Measured 2026-11-01: 5s was never a real limit. Under enforcement it is the
+# kill bound, so every test slower than 5s read as ~5.03s; 39 of 100 hinted unit
+# tests run over 5s and 25 over 15s (slowest jg-supervision-host 1162s,
+# jg-watcher-lock 1060s). Do not tighten the floor below the quick tests'
+# loaded runtime (~10s) without re-measuring.
+unit_seconds=15
 gate_wall_seconds=600
