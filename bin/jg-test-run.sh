@@ -766,6 +766,7 @@ tests/jg-watcher-lock.test.sh 1059731
 tests/jg-worker-account-live-e2e.test.sh 70
 tests/juggernaut-axi-serve.test.sh 1635
 tests/migration-card.test.sh 1443
+tests/migration-card-live.test.sh 5200
 tests/merge-card-title.test.sh 701
 tests/merge-gate-one-entry.test.sh 2858
 EOF
