@@ -2,6 +2,7 @@
 # One server, one account per home: home B must not read home A. The accounts come
 # from the Go bus command, which is the only owner of that file.
 set -u
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SRV=${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}
@@ -10,7 +11,12 @@ CLI=${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}
 [ -n "$CLI" ] || { echo "skip: nats client not found"; exit 0; }
 D=$(jg_test_tmproot jg-bus-isolation); A="$D/homeA"; B="$D/homeB"
 mkdir -p "$A/state" "$B/state" "$D/store"
-export JG_BUS_GO=${JG_BUS_GO:-go}
+# The bus command is Go; without a toolchain there is nothing to prove here.
+if [ -z "${JG_BUS_GO:-}" ]; then
+  JG_BUS_GO=$(command -v go 2>/dev/null || true)
+  [ -n "$JG_BUS_GO" ] || { echo "skip: no Go toolchain (set JG_BUS_GO)"; exit 0; }
+fi
+export JG_BUS_GO
 JG_HOME="$A" JG_STATE_OVERRIDE="$A/state" timeout 240 bash "$ROOT/bin/jg-bus.sh" accounts "$A" "$B" > "$D/accounts.conf" 2>/dev/null \
   || fail "the bus command did not produce the accounts file"
 grep -q 'system_account' "$D/accounts.conf" || fail "no system account"

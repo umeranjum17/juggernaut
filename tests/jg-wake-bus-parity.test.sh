@@ -50,15 +50,6 @@ start_server() {
   NATS_URL="nats://127.0.0.1:$port"
 }
 
-# append_home_wake <kind> <key> <payload>: the production writer, scoped to this
-# test's home so its own routing rule file decides the class.
-append_home_wake() {
-  JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE_DIR" bash -c '
-    # shellcheck source=/dev/null
-    . "$1/bin/jg-wake-lib.sh"
-    jg_wake_append "$2" "$3" "$4"
-  ' _ "$ROOT" "$1" "$2" "$3" || fail "wake append failed"
-}
 
 # file_side: a frozen recorded set - one home's queue, record-only row and inbox
 # files exactly as the file path left them, with the acknowledgement a worker's
