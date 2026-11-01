@@ -6,6 +6,8 @@
 # release record alone.
 # The last two cases drive the real report helper so the rule is proven on a
 # path a lead actually reports through, not only on the check itself.
+# This is also the test that owns journeys/live-services.sh (the done-done journey runs this file),
+# so the changed-test map selects it for a change to that journey.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -15,6 +17,15 @@ set -u
 CHECK="$ROOT/bin/jg-live-claim.sh"
 REPORT="$ROOT/bin/jg-squad-lead-report.sh"
 TMP_ROOT=$(jg_test_tmproot jg-live-claim)
+
+# Fake service probes: every required service up, unless a case removes one.
+PROBES="$TMP_ROOT/probes"
+mkdir -p "$PROBES"
+for svc in nats dapr ntfy deliver; do
+  printf '#!/bin/sh\necho "pid 4242"\n' > "$PROBES/$svc"; chmod +x "$PROBES/$svc"
+done
+export JG_LIVE_SERVICES_PROBES="$PROBES"
+LIVE_SERVICES="$ROOT/bin/jg-live-services.sh"
 
 # One home with an optional release record; every case reads its own.
 home() {  # <name> [<release-record line>...]
@@ -127,7 +138,29 @@ test_the_lead_report_path_keeps_a_live_claim() {
   pass 'the lead report path keeps a live claim'
 }
 
+test_a_down_service_refuses_the_live_claim() {
+  local dir claim='Fixed it; live: v1.2.3 @ https://app.test' out rc=0
+  dir=$(home down-service 'v1.2.3 2026-11-01T09:00Z app.test')
+  mv "$PROBES/dapr" "$PROBES/dapr.off"; rm -f "$PROBES/ntfy"
+  out=$(bash "$LIVE_SERVICES" 2>&1) || rc=$?
+  [ "$rc" -eq 1 ] || fail "the service check must exit 1 with services down, got $rc"
+  assert_contains "$out" 'UP nats pid 4242' 'a running service prints its pid'
+  assert_contains "$out" 'DOWN dapr' 'a stopped service is named'
+  assert_contains "$out" 'LIVE_SERVICES: DOWN dapr ntfy' 'the verdict lists every down service'
+  assert_contains "$out" 'NOT-IN-DESIGN wake-engine' 'the output says which services are not part of the design'
+  assert_contains "$out" 'NOT-IN-DESIGN router' 'the router is named as not in the design'
+  verdict "$dir" 'done' "$claim"
+  [ "$RC" -eq 3 ] || fail "a recorded release with services down must not stand, got $RC"
+  assert_equals "merged-not-released: $claim" "$OUT" 'the claim is rewritten as merged-not-released'
+  assert_contains "$ERR" 'LIVE_SERVICES: DOWN dapr ntfy' 'the refusal names the down services'
+  mv "$PROBES/dapr.off" "$PROBES/dapr"; printf '#!/bin/sh\necho "pid 4242"\n' > "$PROBES/ntfy"; chmod +x "$PROBES/ntfy"
+  verdict "$dir" 'done' "$claim"
+  [ "$RC" -eq 0 ] || fail "with every service up the live claim must stand, got $RC: $ERR"
+  pass 'a live claim is refused while a required service is down and stands when all run'
+}
+
 test_a_merged_only_fix_is_downgraded
+test_a_down_service_refuses_the_live_claim
 test_an_unknown_release_state_downgrades
 test_a_released_fix_with_an_observation_point_passes
 test_a_recorded_commit_prefix_passes

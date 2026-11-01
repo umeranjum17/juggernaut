@@ -140,6 +140,8 @@ fi
 # release never lands on a machine without them. A failure is reported, never fatal to the update.
 if [ "${JG_STACK_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-stack.sh" ]; then
   JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-stack.sh" up || echo "stack: not whole after the update (see the STACK_FAILED line above)" >&2
+  # Prove it after the release: one line per service, and the verdict a live claim reads.
+  [ ! -x "$JG_ROOT/bin/jg-live-services.sh" ] || JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-live-services.sh" || true
 fi
 
 # --- squad_leads -----------------------------------------------------------
