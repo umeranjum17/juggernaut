@@ -5,6 +5,13 @@
 # jg_pr_head_valid). Absent feature = kun behavior (callers guard with declare -F).
 # bin/jg-run-receipt.sh in this feature is the publisher.
 
+# Where the publisher lives: next to this library, or under $JG_CORE_DIR/receipts/bin when a caller names another core tree.
+_JG_RECEIPTS_BIN=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+jg_receipts_tool() {
+  if [ -n "${JG_CORE_DIR:-}" ]; then printf '%s/receipts/bin/jg-run-receipt.sh\n' "$JG_CORE_DIR"
+  else printf '%s/jg-run-receipt.sh\n' "$_JG_RECEIPTS_BIN"; fi
+}
+
 # Completion receipts are task-owned state/<id>.run-receipt.json records.
 # schema=1 binds task, mode, spawn_gen and exact candidate head to PASS or FAIL,
 # with a nonempty evidence body (commands, outcomes and relevant limitations).
@@ -81,7 +88,7 @@ jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
   fi
   if [ ! -e "$receipt" ] && [ ! -L "$receipt" ]; then
     [ "$required" != 1 ] && return 0
-    echo "completion receipt missing for $id: publish one with: JG_HOME=${JG_HOME:-${JG_ROOT:-}} ${JG_ADDONS_DIR:-${JG_HOME:-${JG_ROOT:-}}/projects/juggernaut-addons}/receipts/bin/jg-run-receipt.sh $id PASS <evidence-file>"
+    echo "completion receipt missing for $id: publish one with: JG_HOME=${JG_HOME:-${JG_ROOT:-}} $(jg_receipts_tool) $id PASS <evidence-file>"
     return 1
   fi
   mode=$(jg_dod_meta_value "$meta" mode)
@@ -100,7 +107,7 @@ jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
       return 0
     fi
   fi
-  echo "completion receipt refused for $id: FAIL, mismatched candidate/incarnation, malformed or absent evidence; publish one for this head with: JG_HOME=${JG_HOME:-${JG_ROOT:-}}${pr:+ JG_RECEIPT_PR=$pr} ${JG_ADDONS_DIR:-${JG_HOME:-${JG_ROOT:-}}/projects/juggernaut-addons}/receipts/bin/jg-run-receipt.sh $id PASS <evidence-file>"
+  echo "completion receipt refused for $id: FAIL, mismatched candidate/incarnation, malformed or absent evidence; publish one for this head with: JG_HOME=${JG_HOME:-${JG_ROOT:-}}${pr:+ JG_RECEIPT_PR=$pr} $(jg_receipts_tool) $id PASS <evidence-file>"
   return 1
 }
 
@@ -109,7 +116,7 @@ jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
 jg_receipts_brief() {  # <id>
   local receipt_home_q receipt_tool_q
   receipt_home_q=$(printf '%q' "${JG_HOME:-${JG_ROOT:-}}")
-  receipt_tool_q=$(printf '%q' "${JG_ADDONS_DIR:-${JG_HOME:-${JG_ROOT:-}}/projects/juggernaut-addons}/receipts/bin/jg-run-receipt.sh")
+  receipt_tool_q=$(printf '%q' "$(jg_receipts_tool)")
   cat <<EOF
 Completion receipt: required
 Before the final ready report (after validation in no-mistakes mode), write a nonempty evidence file containing commands run, results and limitations, then run \`JG_HOME=$receipt_home_q $receipt_tool_q $1 PASS <evidence-file>\` from the clean candidate checkout.
