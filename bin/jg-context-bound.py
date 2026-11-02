@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 """Bound Main's context at wake time without losing the record (docs/context-bound.md).
 
-The bound is the harness's auto-compaction, set by the tracked project settings. This tool measures
-a session with the token audit's counter and, after a compaction, prints the captain's own words
-verbatim, because a compaction summary paraphrases them.
-
-  turns <transcript>      one JSON line per turn, then a summary line
-  emit [--state DIR]      SessionStart(compact) payload on stdin: history path + captain's words
+  turns <transcript>      one JSON line per turn (the token audit's counter), then a summary line
+  emit [--state DIR]      SessionStart(compact) payload on stdin: history path + captain's words verbatim
   settings [--window N]   a lab --settings file with the shipped bound;  find <session-id>: its transcript
-
-A call's context is uncached + cache write + cache read input; a turn is the calls after a typed user record.
 """
 import argparse
 import json
