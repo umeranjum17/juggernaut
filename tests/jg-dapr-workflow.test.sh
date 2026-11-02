@@ -122,9 +122,9 @@ while IFS=$'\t' read -r scen task key payload envs; do
   case "$scen" in '' | '#'*) continue ;; esac
   # shellcheck disable=SC2086
   env $envs bash "$WF" start wait "$task" "$key" "$payload" >/dev/null 2>&1 || fail "start of recorded wait $task failed"
-done <"$ROOT/tests/fixtures/escalation-waits.tsv"
+done <"$ROOT/tests/fixtures/escalation-waits/waits.tsv"
 printf 'working [at=2]: the lane answered\n' >>"$STATE/resolve-a.status"
-rkey() { awk -F'\t' -v t="$1" '$2 == t { print $3 }' "$ROOT/tests/fixtures/escalation-waits.tsv"; }
+rkey() { awk -F'\t' -v t="$1" '$2 == t { print $3 }' "$ROOT/tests/fixtures/escalation-waits/waits.tsv"; }
 owner_rows() { grep -c -- "$(rkey "$1")-owner" "$STATE/.wake-queue" 2>/dev/null || true; }
 
 # priority + budget: a silent wait wakes nobody; of three ordinary waits on a 2-per-hour lane two
