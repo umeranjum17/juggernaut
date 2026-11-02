@@ -16,10 +16,11 @@ d=$(mktemp -d "${TMPDIR:-/tmp}/receipt-cases.XXXXXX") || exit 1
 trap 'rm -rf -- "$d"' EXIT
 export HOME=$d/home TMPDIR=$d JG_HOME=$d/jg JG_CORE_DIR=$ROOT/core
 mkdir -p "$HOME" "$JG_HOME/state"
-# shellcheck source=bin/jg-dod-lib.sh
+# shellcheck disable=SC1091  # $ROOT resolves at run time; the library is not beside this file
 . "$ROOT/bin/jg-dod-lib.sh"
 # The forge read behind "the lane's next PR" is the one fact the acceptance cannot gather offline: each case says what it answers.
 NEXT=no
+# shellcheck disable=SC2317,SC2329  # the acceptance calls this through the library
 jg_receipts_next_pr_of_lane_ok() { [ "$NEXT" = yes ]; }
 st=$JG_HOME/state head=$(printf 'c%.0s' {1..40}) pr=https://github.com/o/r/pull/1 pr2=https://github.com/o/r/pull/2
 good() { # <field=value>... overrides: the receipt of task t that the acceptance accepts at $head
@@ -70,10 +71,10 @@ cases=(
   "a symlinked receipt refuses when optional~~link~$head~no"
 )
 run_case() { # <name> <meta> <receipt> <head> <next>
-  local name=$1 meta=$2 receipt=$3 cand=$4 next=$5 out rc tmp
+  local name=$1 meta=$2 receipt=$3 cand=$4 next=$5 out rc
   rm -f "$st"/t.*
   printf 'mode=direct-PR\nspawn_gen=1\n' > "$st/t.meta"
-  [ -z "$meta" ] || printf "$meta\n" >> "$st/t.meta"
+  [ -z "$meta" ] || printf '%b\n' "$meta" >> "$st/t.meta"
   case $receipt in
     absent) ;;
     link) good > "$d/target.json"; ln -s "$d/target.json" "$st/t.run-receipt.json" ;;

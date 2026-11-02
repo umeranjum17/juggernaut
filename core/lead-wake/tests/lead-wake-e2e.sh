@@ -35,12 +35,15 @@ cleanup() {
 trap cleanup EXIT
 export HOME=$d/user XDG_CONFIG_HOME=$d/xdg-config XDG_DATA_HOME=$d/xdg-data TMPDIR=$d/tmp
 mkdir -p "$HOME" "$TMPDIR" "$d/fork" "$d/fakebin" "$d/empty"
-# The fork checkout carries the escalation ladder definition its watcher reads
-# from its own core tree ($ROOT/core/bus/workflows). Without it every tick dies
-# and writes that failure to stderr, which the absent-feature case below reads.
+# The fork checkout carries what its watcher reads and builds from its own core
+# tree: the escalation ladder definition ($ROOT/core/bus/workflows) and the Go
+# command behind bin/jg-bus.sh, which the wake-queue observation builds on first
+# use inside the home's state directory. Without them every tick dies and writes
+# that failure to stderr, which the absent-feature case below reads.
 mkdir -p "$d/fork/core/bus"
 cp -a "$JG_TEST_FORK/bin" "$JG_TEST_FORK/tests" "$d/fork/"
-cp -a "$JG_TEST_FORK/core/bus/workflows" "$d/fork/core/bus/"
+cp -a "$JG_TEST_FORK/core/bus/." "$d/fork/core/bus/"
+rm -f -- "$d/fork/core/bus/jg-bus"
 python3 "$addons/lead-wake/tests/stage-step-b.py" "$d/fork/bin"
 cp "$addons/lead-wake/tests/jg-lead-wake.test.sh" "$addons/lead-wake/tests/lead-wake-harness.sh" "$d/fork/tests/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$d/fakebin/tmux"

@@ -17,6 +17,29 @@
 //	  server-running                           running, stopped or unknown
 //	  workspace-presence <id>                  dead, present or unknown
 //	  pane-presence <pane-id>                  dead, present or unknown
+//	checks           the adapter's `jq -e` programs: stdin is one `herdr` answer, stdout is what
+//	                 jq -r printed, and the exit status is jq -e's (0 the last output was true or
+//	                 a value, 1 false or null, 4 no output, 5 an error), so `if ! ... check` is
+//	                 false for anything but a proved answer
+//	  check is-array <.a.b.c>                  the value is an array
+//	  check session-socket <session>           the socket path of the one running session
+//	  check focus-tab-is <tab>                 exactly one focused tab, and it is <tab>
+//	  check tab-binds <tab> <workspace>        `tab get` names the tab and its workspace
+//	  check pane-binds <pane> <tab> <workspace>   `pane get` names the pane, tab and workspace
+//	  check pane-info-matches|agent-info-matches <pane> <workspace> <tab> <cwd>
+//	                                           a pane or agent answer with no agent registered
+//	  check workspace-unique <workspace>       the workspace is listed exactly once
+//	  check sole-tab <tab> | sole-tab-labelled <tab> <label>
+//	  check sole-pane <pane> | sole-pane-in-tab <pane> <tab>
+//	                                           the list holds exactly that one entry
+//	  check shape-tabs <task-tab> <seeded-tab> | shape-panes <pane> <tab>
+//	  check move-schema                        the api schema offers workspace.move
+//	  check move-verify <ws> <focused> <order-json> | restore-verify <order-json> <focused>
+//	  check order-verify <created> <parent> <parent-ws> <index-json>
+//	  check process-info-pane <pane>           the process-info answer is for that pane
+//	  check process-field shell-pid|foreground-pgid|count|first-pid|first-name|first-argv0
+//	  check parent-workspace <label> <legacy-label>   the one workspace's id
+//	  check live-binding <token> <ws> <parent-ws> <parent-label> <legacy-label> <ws-label>
 //	decisions        arguments in, an answer out
 //	  version-at-least <candidate> <floor>                  0 at or above, 1 below, 2 unparseable
 //	  release-floor-verdict <proto> <ver> <min-proto> <min-ver>
@@ -29,8 +52,7 @@
 // A decision prints its answer, not an exit code, because exit 2 belongs to bin/jg-herdr.sh
 // when this command cannot run at all; a caller reads an empty answer as "indeterminate".
 //
-// This is slice one of the adapter port: the answer readers and the decisions above. The
-// lifecycle, presentation-journal and send paths stay in shell until their slices.
+// The lifecycle, presentation-journal and send paths stay in shell until their slices.
 package main
 
 import (
@@ -39,7 +61,7 @@ import (
 	"os"
 )
 
-const usage = "usage: jg-herdr.sh field|select|workspace-ids|live-tabs|agent-identity|client-status|server-running|workspace-presence|pane-presence|version-at-least|release-floor-verdict|presentation-preference|agent-name-for|agent-name-variant|submit-confirm-budget [args]\n"
+const usage = "usage: jg-herdr.sh check|field|select|workspace-ids|live-tabs|agent-identity|client-status|server-running|workspace-presence|pane-presence|version-at-least|release-floor-verdict|presentation-preference|agent-name-for|agent-name-variant|submit-confirm-budget [args]\n"
 
 func die(code int, format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "jg-herdr: "+format+"\n", a...)
@@ -82,6 +104,19 @@ func main() {
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "check":
+		need(rest, 1, cmd)
+		c, ok := checks[rest[0]]
+		if !ok || len(rest)-1 != c.args {
+			die(2, "check %s: unknown, or needs %d argument(s)", rest[0], c.args)
+		}
+		for _, i := range c.jsonArgs {
+			if _, err := argJSON(rest[1+i]); err != nil {
+				fmt.Fprintf(os.Stderr, "jg-herdr: error: %v\n", err)
+				os.Exit(exitFailed)
+			}
+		}
+		os.Exit(evalE(os.Stdin, c.make(rest[1:]), func(s string) { fmt.Println(s) }))
 	case "field":
 		need(rest, 1, cmd)
 		var def *string

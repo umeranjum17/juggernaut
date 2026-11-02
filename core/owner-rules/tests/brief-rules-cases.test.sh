@@ -107,9 +107,11 @@ run_case() { # <id> <kind> <include>
 got=$d/got.jsonl
 ids=$(sed -n 's/^- \[.\] \([^ ]*\) - .*/\1/p' "$d/data/backlog.md")
 for id in $ids absent-item; do for kind in ship scout; do run_case "$id" "$kind" ''; done; done > "$got"
-run_case design-req ship 'Earlier include' >> "$got"
-run_case design-none ship 'Earlier include' >> "$got"
-run_case no-ask squad_lead '' >> "$got"
+{
+  run_case design-req ship 'Earlier include'
+  run_case design-none ship 'Earlier include'
+  run_case no-ask squad_lead ''
+} >> "$got"
 if [ -n "${RECORD:-}" ]; then cp "$got" "$CASES"; printf 'recorded %s cases\n' "$(wc -l < "$got")"; exit 0; fi
 n=$(wc -l < "$CASES") fails=0
 [ "$n" -gt 0 ] && [ "$(wc -l < "$got")" -eq "$n" ] || { echo "FAIL: case count differs from the recording"; exit 1; }

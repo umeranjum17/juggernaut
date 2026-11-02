@@ -34,7 +34,7 @@ chmod +x "$work/bin/gh" "$work/bin/sign-off-axi"
 # case_line <none> <run> <canary> <waiver> <sig> <lint> <board> <writer> <pr>
 case_line() { printf 'none=%s run=%s canary=%s waiver=%s sig=%s lint=%s board=%s writer=%s pr=%s\n' "$@"; }
 gen_cases() {
-  local base=(0 ok absent none valid pass card ok url) i v n r c w s
+  local base=(0 ok absent none valid pass card ok url) i v n r c s
   case_line "${base[@]}"
   local dims=("0 1" "ok absent other dirty" "absent other listed" "none future past junk" "valid none bad stale" "pass none fail other" "card unset unreadable empty wrong" "ok fail" "url local")
   for i in 0 1 2 3 4 5 6 7 8; do
@@ -50,7 +50,7 @@ gen_cases() {
   done; done; done
 }
 setup_and_run() { # <case line>: build the home, run the gate, print "rc=<n>" then the normalized output
-  local line=$1 k v home b
+  local line=$1 v home b
   declare -A d=()
   for kv in $line; do d[${kv%%=*}]=${kv#*=}; done
   home=$work/home; rm -rf -- "$home" "$work/body" "$work/board.json" "$work/signoff-fail"
@@ -94,7 +94,7 @@ setup_and_run() { # <case line>: build the home, run the gate, print "rc=<n>" th
   esac
   [ "${d[writer]}" = ok ] || : > "$work/signoff-fail"
   local out rc
-  out=$(env -u JG_FLEET_BOARD ${b:+JG_FLEET_BOARD=$b} SIGNOFF_FAIL="$work/signoff-fail" PATH="$work/bin:$PATH" JG_HOME=$home "$GATE" lane - "$head" "$url" 2>&1; printf 'rc=%s' "$?")
+  out=$(env -u JG_FLEET_BOARD ${b:+JG_FLEET_BOARD=$b} SIGNOFF_FAIL="$work/signoff-fail" PATH="$work/bin:$PATH" JG_HOME="$home" "$GATE" lane - "$head" "$url" 2>&1; printf 'rc=%s' "$?")
   rc=${out##*rc=}; out=${out%rc=*}
   out=${out//"$work"/<W>}; out=${out//"$head"/<H>}; out=${out//"$ROOT"/<ROOT>}
   jq -cn --arg case "$line" --argjson rc "$rc" --arg out "$out" '{case: $case, rc: $rc, out: $out}'

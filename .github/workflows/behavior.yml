@@ -66,6 +66,15 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
+      # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
+      # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
+      - name: Install the pinned OPA
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install opa
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Run portable parallel shard 1
         run: |
           set -eu
@@ -111,6 +120,15 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
+      # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
+      # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
+      - name: Install the pinned OPA
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install opa
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Run portable parallel shard 2
         run: |
           set -eu
@@ -141,7 +159,7 @@ jobs:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -175,6 +193,15 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
+      # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
+      # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
+      - name: Install the pinned OPA
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install opa
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
           # job-total rather than a literal, so shrinking or growing the matrix
