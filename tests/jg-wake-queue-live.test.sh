@@ -71,6 +71,31 @@ test_acknowledgement_removes_the_row_everywhere() {
   pass "an acknowledgement removes the row from the bus and the read model"
 }
 
+# The live probe: one real wake, end to end, through the Go path. A raise lands on the bus and in
+# the read model, and the library's readers - core/wake/cmd/jg-wake-core, through
+# bin/jg-wake-core.sh - name its key, its number and its row; the withdraw takes it away and the
+# same readers see nothing. That is the whole turn a supervisor takes on a wake, answered in Go.
+test_one_real_wake_reads_end_to_end_through_the_go_path() {
+  local seq
+  bus raise check go-probe "check: read me through the Go path" now \
+    || fail "the raise did not publish"
+  seq=$(awk -F '\t' '$4 == "go-probe" { print $2 }' "$STATE_DIR/.wake-queue")
+  case "$seq" in ''|*[!0-9]*) fail "the raised row must carry the server's number, got '$seq'" ;; esac
+  assert_equals "go-probe" "$(jg_wake_queued_keys check | grep -Fx go-probe)" \
+    "the Go reader must name the queued key"
+  assert_equals "$seq" "$(jg_wake_rows_queued "$seq")" \
+    "the Go reader must name the row's own number"
+  assert_equals "go-probe" "$(jg_wake_print_deduped "$STATE_DIR/.wake-queue" | awk -F '\t' '$4 == "go-probe" { print $4 }')" \
+    "the Go dedupe must present the row once"
+  assert_equals 1 "$(jg_wake_actor_pending_count main)" "Main must count the one queued row"
+  jg_wake_withdraw check go-probe || fail "the withdraw failed"
+  assert_equals "" "$(jg_wake_queued_keys check | grep -Fx go-probe || true)" \
+    "a withdrawn row must leave the Go readers"
+  assert_equals 0 "$(jg_wake_actor_pending_count main)" \
+    "Main must count no row once the wake is withdrawn"
+  pass "one real wake is raised, read and withdrawn through the Go path"
+}
+
 test_record_only_row_lands_in_the_record_model() {
   bus settle heartbeat crew "all quiet" || fail "the record-only event did not publish"
   assert_contains "$(cat "$STATE_DIR/.wake-settled")" "heartbeat" \
@@ -250,6 +275,7 @@ test_the_kill_journey_delivers_each_wake_once() {
 result=0
 test_raise_reaches_the_read_model || result=1
 test_acknowledgement_removes_the_row_everywhere || result=1
+test_one_real_wake_reads_end_to_end_through_the_go_path || result=1
 test_record_only_row_lands_in_the_record_model || result=1
 test_withdraw_takes_only_its_own_row || result=1
 test_inbox_is_raised_at_the_writer_and_acknowledged_on_the_move || result=1

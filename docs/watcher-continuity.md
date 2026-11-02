@@ -322,7 +322,7 @@ Acknowledgement invocations and every other mutation-critical queue-lock acquire
 
 Because the main drain's exclusion makes branch-granted rows invisible to main, `bin/jg-guard.sh`'s queued-wake warning counts only the rows the calling actor can itself present or retire.
 So an actor is never sent to a drain that provably has nothing for it.
-`bin/jg-wake-lib.sh` owns that per-actor count (`jg_wake_actor_pending_count`) alongside the grant row-list and owner-record reads that the drain and `bin/jg-wake-grant.sh` share.
+`bin/jg-wake-lib.sh` owns that per-actor count (`jg_wake_actor_pending_count`) alongside the grant row-list and owner-record reads that the drain and `bin/jg-wake-grant.sh` share, and asks the Go command `core/wake/cmd/jg-wake-core` for the count itself.
 
 A row a live grant reserves is therefore never counted as drainable for main.
 Rather than going silent about a visibly non-empty queue, the guard prints a distinct advisory.
