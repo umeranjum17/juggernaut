@@ -84,8 +84,12 @@ provenance table now records history, not the current bytes.
   is not running. A wait source outranks an open decision and a pause.
   The watcher also writes `<task>.question` (a picker or question dialog on
   screen, for any harness, whatever status the terminal shows),
-  `<task>.quota` (a provider rate-limit or usage-limit banner in the last
-  twelve lines), `<task>.errors` (one provider or API error line, such as an
+  `<task>.quota` (a provider rate-limit or usage-limit banner as the bottom of
+  the visible screen: the banner and the prompt or status line under it. Text
+  higher up is transcript, and a transcript can hold a sentence a test printed,
+  so it never raises this source; nor does it for a lane whose own status line
+  says done or failed, because a finished lane declares no wait),
+  `<task>.errors` (one provider or API error line, such as an
   unknown user, a bad key or an unknown model, repeated three or more times in
   the pane: a runtime that fails every turn keeps changing the pane, so neither
   silence nor quota sees it) and `<task>.silent` (no status line, no native progress and no
