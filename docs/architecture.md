@@ -453,12 +453,10 @@ Before the worktree is returned, teardown concludes the task's own no-mistakes r
 The bolt-on catalog was a second product: a directory beside the core, one installer per feature, and a
 separate repository. The features live in the core tree now (`core/<feature>/`), wired
 by the core's own `bin/jg-host-wiring.sh`, and `bin/jg-retired-catalog-check.sh` is the gate that keeps
-them there: it refuses any path a change adds under the retired directory and any tracked one outside a named,
-shrinking deferred list, and the repo invariants job in `.github/workflows/ci.yml` runs it on every pull
-request, so restoring the catalog fails the merge instead of quietly reopening the pattern.
-The deferred list holds exactly the catalog's images - the ten `tickets-sync` project images slice B of
-the fold moves and the two catalog logos it deletes; it may only shrink, and that slice deletes it with
-the move. `--self-test` proves the refusal against a
+them there: it refuses any path a change adds under the retired directory and every tracked one, and the
+repo invariants job in `.github/workflows/ci.yml` runs it on every pull request, so restoring the catalog
+fails the merge instead of quietly reopening the pattern.
+`--self-test` proves the refusal against a
 fixture file, and `docs/configuration.md#home-merge-gate-configmerge-gate` owns how a home can run the
 same check inside its own merge gate.
 

@@ -21,14 +21,6 @@
 set -eu
 
 RETIRED=(addons)
-# The catalog's ten project images now live in `core/tickets-sync/icons`, so the only tracked paths
-# still under the retired root are its two catalog logos, which the same fold deletes rather than
-# keeps. This list may only shrink, and deleting the logos deletes it. Nothing outside it may appear
-# under a retired root.
-DEFERRED=(
-  addons/docs/media/logo-dark.svg
-  addons/docs/media/logo-light.svg
-)
 ROOT='' base='' self_test=0
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -41,9 +33,8 @@ while [ "$#" -gt 0 ]; do
 done
 ROOT=${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}
 
-retired_path() {  # retired_path <path>: 0 when <path> sits under a retired root and is not deferred
-  local p=${1#./} r d
-  for d in "${DEFERRED[@]}"; do [ "$p" = "$d" ] && return 1; done
+retired_path() {  # retired_path <path>: 0 when <path> sits under a retired root
+  local p=${1#./} r
   for r in "${RETIRED[@]}"; do
     case $p in "$r" | "$r"/*) return 0 ;; esac
   done
