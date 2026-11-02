@@ -1,0 +1,22 @@
+{
+  "schema": "jg-preference/1",
+  "block": "rules",
+  "about": "Owner-rule clauses: the machine form of a rule, matched by bin/jg-clause.sh at its decision point. Add one with bin/jg-owner-rules.sh add --point --when --then.",
+  "clauses": [
+    {
+      "id": "sol-hard-only",
+      "point": "route-select",
+      "when": {"only": "hard", "hard": false},
+      "then": "skip",
+      "reason": "a route kept for hard steps only is not used when the request is not a hard step"
+    },
+    {
+      "id": "no-deepseek-at-peak",
+      "point": "route-select",
+      "when": {"model": "*deepseek*", "peak": true},
+      "then": "skip",
+      "reason": "owner rule: avoid DeepSeek during peak hours (weekdays 12:00-18:00 UTC)",
+      "rule": "owner-rule-3262dff8"
+    }
+  ]
+}

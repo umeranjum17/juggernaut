@@ -64,6 +64,7 @@ run() { # verb json -> sets out/rc; network blocked via empty SSL and no net hel
   local verb=$1 json=$2
   out=$(printf '%s' "$json" | env -i PATH="$w/bin:/usr/bin:/bin" HOME="$w" TMPDIR="$w" \
     JG_HOME="$w/home" JG_CLAUDE_ACCOUNTS_REGISTRY="$w/registry.json" \
+    JG_CLAUSE_NOW="${JG_CLAUSE_NOW:-1793538000}" \
     JG_MODEL_POOL_FLOOR=15 JG_ACCOUNT_POOL_REST_FLOOR=15 JG_CLAUDE_ACCOUNTS_LOW=5 \
     JG_CLAUDE_ACCOUNTS_FRESH=999999 \
     "$helper" "$verb" --json 2>"$w/err"); rc=$?
