@@ -1547,7 +1547,7 @@ families_for_changed_path() {
       printf '%s\n' live-harness-optin
       ;;
     bin/jg-bearings-snapshot.sh|bin/jg-fleet-snapshot.sh|bin/jg-fleet-view.sh|bin/jg-contributions.sh|bin/jg-contributions.jq|\
-    bin/jg-home-summary-refresh.sh)
+    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh)
       ;;
     bin/jg-install-herdr.sh|bin/jg-install-treehouse.sh|bin/jg-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
