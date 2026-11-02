@@ -171,13 +171,13 @@ SHIM
 # kill_a_render_at <pattern> <hang-at>: raise one wake while the <hang-at>th client call
 # naming <pattern> parks, then kill that raise. The wake is already stored on the bus.
 kill_a_render_at() {
-  local d=$DIR/kill pid i
+  local d=$DIR/kill pid
   mkdir -p "$d"; rm -f "$d/reached" "$d/count"
   kill_shim "$d"
   printf '%s' "$1" > "$d/pattern"; printf '%s' "$2" > "$d/hang-at"
   JG_NATS_BIN="$d/nats-shim" setsid "$ROOT/bin/jg-wake-bus.sh" raise check "$3" "check: $3" now >/dev/null 2>&1 &
   pid=$!
-  for i in $(seq 200); do [ -e "$d/reached" ] && break; sleep 0.05; done
+  for _ in $(seq 200); do [ -e "$d/reached" ] && break; sleep 0.05; done
   [ -e "$d/reached" ] || fail "the render never reached the call it was to be killed at ($1)"
   kill -9 -- "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
