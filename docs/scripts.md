@@ -75,8 +75,8 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-herdr-ci-cleanup.sh` | Snapshot and tear down only job-owned `jg-lab-*` sessions in the Herdr CI lane       |
 | `jg-test-run.sh`         | Behavior-test runner: selection, portable lanes, bounded concurrency, budgets, coverage guard, timing/JSON; refuses to execute in the repository primary checkout when `JG_TASK_ID` marks a task worker |
 | `jg-fast-evals.sh`       | Run the deterministic fast behaviour evals the thin pull request gate owns (a home boots, a brief carries its isolation assertion, a ticket round-trips, a fix claim without a release is downgraded); `--smoke` runs the boot eval alone |
-| `jg-ci-area-reads.sh`    | Run an area suite's command on a copy of the tracked files, trace which files it read, and fail naming any file `jg-ci-scope.sh` would not send to that area, so a change to it cannot skip the suite green |
 | `jg-test-isolation-proof.sh` | Concurrent isolation harness and portable candidate set owner |
+| `jg-ci-area-reads.sh`    | Run an area suite's command on a copy of the tracked files, trace which files it read, and fail naming any file `jg-ci-scope.sh` would not send to that area, so a change to it cannot skip the suite green |
 | `jg-ensure-agents-md.sh` | Manually initialize project agent-memory files (see the helper's header and help) |
 | `jg-guard.sh`            | Warn on primary-checkout tangles, main-session pending wakes, and unhealthy supervision |
 | `jg-guard-host.sh`       | Build and run the one guard host: the Rego rule decisions, the delete rule, and repo-guard's gh/gh-axi and pre-push modes (`core/guard-host/cmd/jg-guard-host`'s header owns the contract) |
