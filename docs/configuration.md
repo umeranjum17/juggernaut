@@ -1435,6 +1435,8 @@ None of it is inherited into Squad Lead homes, so each home chooses for itself.
   Claude Code saves a longer Bash output to a file and shows the model a preview; its default is 30000.
   The file is absent by default, so the cap is a one-home trial; delete the file to end it.
 - **Daily token retro:** `bin/jg-tokens-retro.sh arm` registers a watcher check that runs `learn-from-mistakes-axi tokens retro --since 1d` once a day into `data/tokens-retro/<YYYY-MM-DD>/` and raises a `check:` notification only when tokens per day moved by 20% or more against the report from seven days earlier (`JG_TOKENS_RETRO_CHANGE_PCT`).
+  Bootstrap arms it on every primary home; `config/token-saver-off` opts out.
+  Each day also adds one row to `data/tokens-retro/per-call.tsv` (tokens per model call, instruction floor, share of calls above 200k, the commit the home runs); `bin/jg-tokens-retro.sh show` prints it.
   The retro reads the local session stores and makes no model calls.
   `bin/jg-tokens-retro.sh disarm` removes the check and keeps the reports.
 

@@ -1924,6 +1924,13 @@ if [ "${JG_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-board-gate.sh" arm >/dev/null 2>&1 \
       || echo "MISSING: the board gate could not be armed; non-must asks stay on the board and merges go unproven"
   fi
+  # The daily token meter (tokens per call, instruction floor): armed here so
+  # it records without anyone asking; config/token-saver-off opts out.
+  if local_phase && [ ! -e "$(jg_compat_marker "$JG_HOME")" ] && [ ! -e "$CONFIG/token-saver-off" ] \
+    && [ "$STATE" = "$JG_HOME/state" ] && [ -d "$STATE" ] && [ ! -e "$STATE/tokens-retro.check.sh" ]; then
+    JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-tokens-retro.sh" arm >/dev/null 2>&1 \
+      || echo "MISSING: the daily token meter could not be armed; tokens per call go unrecorded"
+  fi
   if [ -n "$fleet_sync_pid" ]; then
     wait "$fleet_sync_pid" || true
     cat "$fleet_sync_out"
