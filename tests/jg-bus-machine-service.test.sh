@@ -13,6 +13,9 @@
 # Everything runs in a lab: its own free random port, its own store directory, a fake
 # systemctl that stands in for the user manager, and a unit name of its own. It never
 # touches port 4222, the machine's service or the machine's state/bus files.
+#
+# This is also the test that owns journeys/bus-machine-service.sh (the done-done journey runs this
+# file), so the changed-test map selects it for a change to that journey.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -103,6 +106,10 @@ bus() { local h=$1; shift; JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_DATA_OVE
 # --- 1. two homes, one server ------------------------------------------------------
 H1="$D/homes/one"; H2="$D/homes/two"; H3="$D/homes/three"
 make_home "$H1"; make_home "$H2"
+# A generated password may begin with a dash (base64url does that one time in 64); a client
+# that passes it as a separate argument reads it as a flag. Home two's starts with one.
+IFS=$'\t' read -r name2 cred2 < <(bus "$H2" account)
+mkdir -p "$(dirname "$cred2")"; printf -- '-dash-first-password-for-%s\n' "$name2" > "$cred2"; chmod 600 "$cred2"
 
 out1=$(bus "$H1" install-service 2>&1)
 assert_contains "$out1" "bus: installed and started" "the first home must install and start the service: $out1"

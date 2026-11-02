@@ -358,15 +358,15 @@ func (a *app) daprArgv(path string) []string {
 // the runtime directory with them in its address; otherwise the shipped directory is used.
 func (a *app) daprResources() string {
 	shipped := filepath.Dir(a.busFile("dapr/components/pubsub.yaml"))
-	auth := a.natsAuth()
-	if auth == nil {
+	user, pass, ok := a.credentials()
+	if !ok {
 		return shipped
 	}
 	dir := filepath.Join(a.runtime, "dapr")
 	text := readFileString(filepath.Join(shipped, "pubsub.yaml"))
 	bare := strings.TrimPrefix(a.cfgOr("nats-url", ""), "nats://")
 	text = regexp.MustCompile(`(?m)^(\s*value:\s*)"nats://[^"]*"`).ReplaceAllString(text,
-		`${1}"nats://`+auth[1]+`:`+auth[3]+`@`+bare+`"`)
+		`${1}"nats://`+user+`:`+pass+`@`+bare+`"`)
 	if os.MkdirAll(dir, 0o700) != nil || os.WriteFile(filepath.Join(dir, "pubsub.yaml"), []byte(text), 0o600) != nil {
 		return shipped
 	}
@@ -424,7 +424,8 @@ func (a *app) natsAuth() []string {
 	if !ok {
 		return nil
 	}
-	return []string{"--user", name, "--password", pass}
+	// The `=` form keeps a password that begins with a dash from being read as a flag.
+	return []string{"--user=" + name, "--password=" + pass}
 }
 
 // streamExists is the read-only check: 0 when the stream is on the server, else 1.
