@@ -26,6 +26,10 @@
 # T11 A ship brief scaffolded with a project directory records that project's
 #    version branch as its base, and the spawn with no --base-branch lands the
 #    copy there; a brief that records no base is refused by name.
+# T12 A feature pull request that already carries a sealed proof at its head
+#    keeps that head, because the carry would void the proof, its receipt and its
+#    card; a branch whose proof names another head is still carried, so the
+#    release branch still reaches the work in flight.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -188,9 +192,10 @@ release_lands() {  # <world> <file>
   git -C "$w/copy" fetch -q --prune origin
 }
 
-# The features pass makes exactly two forge reads: the merged pull request's base
-# and head, and the open pull requests that target the version branch. Each case
-# writes both answers to files, so no test reaches the network.
+# The features pass makes three forge reads: the merged pull request's base and
+# head, the open pull requests that target the version branch, and the body of
+# each branch it would carry. Each case writes the answers to files, so no test
+# reaches the network.
 make_features_gh() {  # <dir>
   local dir=$1
   mkdir -p "$dir"
@@ -198,7 +203,14 @@ make_features_gh() {  # <dir>
 #!/usr/bin/env bash
 set -u
 case "${1:-} ${2:-}" in
-  "pr view") cat "$FAKE_GH_VIEW"; exit 0 ;;
+  "pr view")
+    case " $* " in
+      *" --json body "*)
+        file=$FAKE_GH_BODIES/${3:-}
+        [ -f "$file" ] && cat "$file" || printf '\n'
+        exit 0 ;;
+    esac
+    cat "$FAKE_GH_VIEW"; exit 0 ;;
   "pr list") cat "$FAKE_GH_LIST"; exit 0 ;;
 esac
 exit 1
@@ -210,7 +222,7 @@ SH
 features_run() {  # <world> <view-file> <list-file> [<repo-dir>]
   local w=$1 view=$2 list=$3 repo=${4:-}
   [ -n "$repo" ] || repo=$w/copy
-  PATH="$w/fake:$PATH" FAKE_GH_VIEW=$view FAKE_GH_LIST=$list \
+  PATH="$w/fake:$PATH" FAKE_GH_VIEW=$view FAKE_GH_LIST=$list FAKE_GH_BODIES=$w/bodies \
     JG_HOME="$w/home" "$SYNC" features https://github.com/o/r/pull/1 "$repo" 2>&1
 }
 
@@ -366,6 +378,41 @@ test_spawn_and_brief_default_to_the_version_branch() {
   pass "T11 the spawn and the brief default to the project's version branch"
 }
 
+test_sealed_feature_branch_keeps_its_head() {
+  local w out sealed_before open_before release_tip
+  w=$(new_world t12)
+  make_features_gh "$w/fake" >/dev/null
+  add_feature_branch "$w" fm/sealed sealed.txt
+  add_feature_branch "$w" fm/open open.txt
+  sealed_before=$(remote_tip "$w" fm/sealed)
+  open_before=$(remote_tip "$w" fm/open)
+  release_lands "$w" release.txt
+  release_tip=$(git -C "$w/seed" rev-parse release/c-1)
+  printf 'main\trelease/c-1\n' > "$w/view"
+  printf '7\tfm/sealed\tfalse\n8\tfm/open\tfalse\n' > "$w/list"
+  # Both pull requests carry a proof block, in the shape bin/jg-proof-attach.sh
+  # writes it. fm/sealed's receipt names its own head; fm/open's names another
+  # commit, so only the first is proof for a head the carry would move.
+  mkdir -p "$w/bodies"
+  printf '<!-- jg-proof -->\n## Proof\nmode: text (ready)\nreceipt: 20261101T120000Z-%s-1a2b3c\n\n<!-- /jg-proof -->\n' \
+    "${sealed_before:0:8}" > "$w/bodies/7"
+  printf '<!-- jg-proof -->\n## Proof\nmode: text (ready)\nreceipt: 20261101T120500Z-deadbeef-4d5e6f\n\n<!-- /jg-proof -->\n' \
+    > "$w/bodies/8"
+
+  out=$(features_run "$w" "$w/view" "$w/list")
+  assert_contains "$out" "fm/sealed: skipped: its proof is sealed at ${sealed_before:0:8}" \
+    "a pull request proved at its head is not rewritten"
+  assert_equals "$sealed_before" "$(remote_tip "$w" fm/sealed)" \
+    "the sealed branch keeps the head its proof was sealed at"
+  assert_contains "$out" "fm/open: updated " \
+    "a branch whose proof names another head is still carried"
+  [ "$open_before" != "$(remote_tip "$w" fm/open)" ] \
+    || fail "the branch with no proof at its head did not move"
+  git -C "$w/origin.git" merge-base --is-ancestor "$release_tip" fm/open \
+    || fail "the release branch did not reach the branch with no proof at its head"
+  pass "T12 a sealed pull request keeps its head and an unsealed branch is still carried"
+}
+
 test_behind_is_carried_forward
 test_diverged_is_reported_not_forced
 test_dirty_copy_is_skipped
@@ -377,4 +424,5 @@ test_non_release_merge_is_silent
 test_conflicting_feature_branch_is_left_alone
 test_recorded_release_merge_runs_the_features_pass
 test_spawn_and_brief_default_to_the_version_branch
+test_sealed_feature_branch_keeps_its_head
 echo "all jg-version-branch-sync tests passed"
