@@ -2,7 +2,7 @@
 # juggernaut-axi - bounded, read-only fleet facts for external tools (AXI style).
 #
 # The approved design (data/juggernaut-axi/report.md), read-only commands so far:
-# `status`, `tickets`, `decisions`, and `messages` (a task's steering-inbox records),
+# `status`, `lanes`, `wakes`, `tickets`, `decisions`, and `messages` (a task's steering-inbox records),
 # plus the three writes `answer`, `message`, and `ticket`, each delegated to an existing
 # guarded path (jg-captain-hold.sh, jg-send.sh, jg-tasks-axi.sh); it never closes tasks
 # or writes state itself, and a result claims only what the durable record confirms. Like bin/jg-bearings-snapshot.sh it projects the canonical JSON model
@@ -10,6 +10,12 @@
 # output boundary (bin/jg-toon-lib.sh); `--json` prints the same model.
 # Output contract: `juggernaut-axi.v1`; consumers ignore unknown fields.
 # It never writes state, never reads task transcripts, and states every omission.
+# Conventions follow tasks-axi: `count: N of M total`, tabular rows, a plain-words empty
+# state, cut text that names its full length (`--full` lifts it), `--fields` for extra
+# columns, `--limit`, a trailing help[] of next steps, and `<command> --help`.
+# `lanes` projects jg-fleet-snapshot.sh --json; `wakes` opens the bus read model
+# (state/.wake-queue, state/.wake-settled) as it is and never renders, acknowledges, or
+# calls the bus, so its age is stated and nothing it does moves a wake.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,8 +26,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-task-inbox-lib.sh"
 
-VERSION=0.1.0
+VERSION=0.2.0
 TICKETS_MAX=100
+LANES_FIELDS="harness backend branch mode yolo pr age_seconds detail endpoint freshness"
 MESSAGE_BYTES=8192
 HOME_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 STATE=${JG_STATE_OVERRIDE:-${JG_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}/state}
@@ -33,6 +40,10 @@ usage: juggernaut-axi <command> [--json]
 
 commands:
   status                 bounded current fleet projection
+  lanes [--state <s>] [--kind <k>] [--project <name>] [--limit <n>] [--fields <a,b>] [--full]
+                         one row per worker lane (default 50, at most 100)
+  wakes [--kind <k>] [--limit <n>] [--full]
+                         queued wakes from the bus read model, oldest first
   tickets [--state <queued|in_flight|done>] [--repo <name>] [--limit <n>]
                          bounded backlog rows (default 50, at most 100)
   decisions              open captain holds (read-only; answering is a later slice)
@@ -60,6 +71,39 @@ USAGE
 
 die() { echo "juggernaut-axi: $*" >&2; exit 2; }
 
+# Per-command help in tasks-axi's shape: usage, flags, examples.
+verb_help() {
+  case "$1" in
+    lanes) cat <<'HELP'
+usage: juggernaut-axi lanes [flags]
+flags:
+  --state <s>, --kind <k>, --project <name>, --limit <n> (default 50, at most 100), --full
+  --fields <a,b,c>  (extra: harness, backend, branch, mode, yolo, pr, age_seconds, detail, endpoint, freshness)
+examples:
+  juggernaut-axi lanes --state working
+  juggernaut-axi lanes --project juggernaut --fields branch,pr
+HELP
+    ;;
+    wakes) cat <<'HELP'
+usage: juggernaut-axi wakes [flags]
+flags:
+  --kind <signal|stale|check|heartbeat>, --limit <n> (default 50, at most 100), --full
+examples:
+  juggernaut-axi wakes
+  juggernaut-axi wakes --kind stale --full
+HELP
+    ;;
+    *) usage ;;
+  esac
+}
+
+# TOON-only presentation, tasks-axi style: "count: N of M total" and a plain-words empty list.
+# shellcheck disable=SC2016
+TOON_PREP='
+  (if .view == "lanes" and (.lanes | length) == 0 then .lanes = "0 lanes match these filters"
+   elif .view == "wakes" and (.wakes | length) == 0 then .wakes = "0 wakes queued" else . end)
+  | if has("total") then .count = "\(.count) of \(.total) total" | del(.total) else . end'
+
 jq_or_die() {  # <what> <jq args...> - reads the model on stdin
   local what=$1; shift
   jq "$@" || { echo "juggernaut-axi: $what projection failed" >&2; exit 1; }
@@ -68,12 +112,108 @@ jq_or_die() {  # <what> <jq args...> - reads the model on stdin
 cmd_status() {
   local snap
   snap=$("$SCRIPT_DIR/jg-bearings-snapshot.sh" --json) || { echo "juggernaut-axi: fleet snapshot failed" >&2; exit 1; }
-  printf '%s\n' "$snap" | jq_or_die status '{
+  printf '%s\n' "$snap" | jq_or_die status --argjson wakes "$(wake_rows | grep -c . || true)" '{
     schema: "juggernaut-axi.v1", view: "status", home, generated,
     counts: {in_flight: (.in_flight | length), decisions_open: (.decisions_open | length),
-             squad_leads: (.squad_leads | length), gates: (.gates | length)},
+             squad_leads: (.squad_leads | length), gates: (.gates | length), wakes_queued: $wakes,
+             lanes_by_state: (reduce .in_flight[] as $r ({}; .[$r.state] += 1))},
     in_flight: [.in_flight[] | {id, kind, state, repo, name, doing}],
-    omitted: .omitted}'
+    omitted: .omitted,
+    help: ["Run `juggernaut-axi lanes` for one row per worker lane",
+           "Run `juggernaut-axi wakes` for the queued wakes",
+           "Run `juggernaut-axi decisions` for the open captain holds"]}'
+}
+
+wake_rows() {  # the queued rows of the bus read model, oldest first; nothing when it is absent
+  [ -f "$STATE/.wake-queue" ] || return 0
+  awk -F '\t' 'NF >= 5' "$STATE/.wake-queue"
+}
+
+limit_arg() {  # <value> -> the value capped at TICKETS_MAX, or exit 2
+  case "$1" in ''|*[!0-9]*|0) die "--limit must be a positive integer" ;; esac
+  [ "$1" -le "$TICKETS_MAX" ] && printf '%s' "$1" || printf '%s' "$TICKETS_MAX"
+}
+
+cmd_lanes() {
+  local state="" kind="" project="" limit=50 fields="" full=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --state) [ $# -ge 2 ] || die "--state needs a value"; state=$2; shift ;;
+      --kind) [ $# -ge 2 ] || die "--kind needs a value"; kind=$2; shift ;;
+      --project) [ $# -ge 2 ] || die "--project needs a value"; project=$2; shift ;;
+      --limit) [ $# -ge 2 ] || die "--limit needs a value"; limit=$(limit_arg "$2") || exit $?; shift ;;
+      --fields) [ $# -ge 2 ] || die "--fields needs a value"; fields=$2; shift ;;
+      --full) full=true ;;
+      *) die "unknown lanes argument: $1" ;;
+    esac
+    shift
+  done
+  local f
+  for f in ${fields//,/ }; do
+    case " $LANES_FIELDS " in *" $f "*) ;; *) die "unknown --fields name: $f (extra: ${LANES_FIELDS// /, })" ;; esac
+  done
+  local snap
+  snap=$("$SCRIPT_DIR/jg-fleet-snapshot.sh" --json) || { echo "juggernaut-axi: fleet snapshot failed" >&2; exit 1; }
+  printf '%s\n' "$snap" | jq_or_die lanes --arg state "$state" --arg kind "$kind" --arg project "$project" \
+    --argjson limit "$limit" --arg fields "$fields" --argjson full "$full" '
+    def dash: if . == null or . == "" then "-" else . end;
+    def cut: tostring | length as $n
+      | if ($full | not) and $n > 100 then .[:100] + "... (truncated, \($n) chars total - use --full)" else . end;
+    def cell($name): {
+      harness: (.harness // "-"), backend: (.backend // "-"), branch: (.branch // "-"),
+      mode: (.mode // "-"), yolo: (.yolo // "-"), pr: (.pr.url // "-"),
+      age_seconds: (.paths.status_log.last_event.age_seconds // "-"),
+      detail: ((.current_state.detail // "-") | cut), endpoint: (.endpoint.status // "-"),
+      freshness: (.current_state.freshness // "-")}[$name];
+    ($fields | split(",") | map(select(. != ""))) as $extra
+    | [.tasks[] | select($state == "" or .current_state.state == $state)
+                | select($kind == "" or .kind == $kind)
+                | select($project == "" or ((.project // "") | split("/") | last) == $project)] as $all
+    | {schema: "juggernaut-axi.v1", view: "lanes", home: (.jg_home | split("/") | .[-2:] | join("/")), generated,
+       count: ($all[:$limit] | length), total: ($all | length),
+       lanes: [$all[:$limit][] | . as $t
+         | {id, kind, state: (.current_state.state // "unknown"),
+            reported: (.paths.status_log.last_event.state | dash),
+            project: ((.project // "-") | split("/") | last),
+            note: ((.paths.status_log.last_event.note | dash) | cut)}
+         + ([$extra[] | . as $n | {key: $n, value: ($t | cell($n))}] | from_entries)],
+       omitted: (if ($all | length) > $limit then [{surface: "lanes beyond limit", count: (($all | length) - $limit), reveal: "--limit <n> (at most 100)"}] else [] end),
+       help: ["Run `juggernaut-axi lanes --fields harness,branch,pr` for more columns",
+              "Run `juggernaut-axi messages <id>` for a lane'"'"'s steering records"]}'
+}
+
+cmd_wakes() {
+  local kind="" limit=50 full=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --kind) [ $# -ge 2 ] || die "--kind needs a value"; kind=$2; shift ;;
+      --limit) [ $# -ge 2 ] || die "--limit needs a value"; limit=$(limit_arg "$2") || exit $?; shift ;;
+      --full) full=true ;;
+      *) die "unknown wakes argument: $1" ;;
+    esac
+    shift
+  done
+  case "$kind" in ''|signal|stale|check|heartbeat) ;; *) die "--kind must be signal, stale, check, or heartbeat" ;; esac
+  local age="null" settled=0 mt
+  if mt=$(stat -c %Y "$STATE/.wake-queue" 2>/dev/null || stat -f %m "$STATE/.wake-queue" 2>/dev/null); then
+    age=$(( $(date +%s) - mt ))
+  fi
+  [ -f "$STATE/.wake-settled" ] && settled=$(grep -c . "$STATE/.wake-settled" || true)
+  wake_rows | jq_or_die wakes -R -s --arg kind "$kind" --argjson limit "$limit" --argjson full "$full" \
+    --argjson age "$age" --argjson settled "$settled" '
+    def cut: length as $n
+      | if ($full | not) and $n > 160 then .[:160] + "... (truncated, \($n) chars total - use --full)" else . end;
+    [split("\n")[] | select(. != "") | split("\t")
+      | {seq: (.[1] | tonumber? // .[1]), at: (.[0] | tonumber? // 0 | todate), kind: .[2], key: .[3], payload: (.[4:] | join(" ") | cut)}
+      | select($kind == "" or .kind == $kind)] as $all
+    | {schema: "juggernaut-axi.v1", view: "wakes", source: "bus read model (state/.wake-queue), not the live bus", queued: ($all | length),
+       count: ($all[:$limit] | length), total: ($all | length),
+       kinds: ($all | group_by(.kind) | map({kind: .[0].kind, count: length})),
+       wakes: $all[:$limit],
+       settled_recorded: $settled, read_model_age_seconds: $age,
+       omitted: (if ($all | length) > $limit then [{surface: "wakes beyond limit", count: (($all | length) - $limit), reveal: "--limit <n> (at most 100)"}] else [] end),
+       help: ["Run `juggernaut-axi lanes` for the workers these wakes come from",
+              "A wake leaves the queue only when the supervising session acknowledges it"]}'
 }
 
 cmd_tickets() {
@@ -234,12 +374,15 @@ for a in "$@"; do
   case "$a" in --json) FORMAT=json ;; *) ARGS+=("$a") ;; esac
 done
 case "$CMD" in
-  status|tickets|decisions|messages|answer|message|ticket) ;;
+  status|lanes|wakes|tickets|decisions|messages|answer|message|ticket) ;;
   *) die "unknown command: $CMD (try --help)" ;;
 esac
+for a in "${ARGS[@]+"${ARGS[@]}"}"; do
+  case "$a" in -h|--help) verb_help "$CMD"; exit 0 ;; esac
+done
 MODEL=$("cmd_$CMD" "${ARGS[@]+"${ARGS[@]}"}") || exit $?
 if [ "$FORMAT" = json ]; then
   printf '%s\n' "$MODEL"
 else
-  printf '%s\n' "$MODEL" | jq -r "$JG_TOON_JQ" || { echo "juggernaut-axi: TOON rendering failed" >&2; exit 1; }
+  printf '%s\n' "$MODEL" | jq -c "$TOON_PREP" | jq -r "$JG_TOON_JQ" || { echo "juggernaut-axi: TOON rendering failed" >&2; exit 1; }
 fi
