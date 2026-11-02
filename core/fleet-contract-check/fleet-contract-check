@@ -9,7 +9,7 @@ set -u
 
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 MAIN=${JG_MAIN_HOME:-${JG_HOME:-$HOME/juggernaut}}
-ADDONS=${JG_ADDONS_DIR:-$SRC}
+CORE=${JG_CORE_DIR:-$SRC}
 d=$(mktemp -d) || exit 2
 trap 'rm -rf -- "$d"' EXIT
 mkdir -p "$d/home" "$d/fm/config" "$d/fm/data" "$d/fm/state" "$d/ev" "$d/stub" || exit 2
@@ -38,13 +38,13 @@ check_owner_guard() {
 # The installed feature lint against a minimal passing report: a lint that cannot run fails here.
 check_checks_lint() {
   printf '## Checks\noutcome: fixture\nrepro: n/a: no bug\nproof: no verify skill - bash fixture.sh\nevidence: not proven: fixture\n' > "$d/report.md"
-  out=$(sandbox "$ADDONS/merge-on-green/checks-lint.sh" "$d/report.md" "$d/ev" 2>&1) || { printf '%s' "${out:0:300}"; return 1; }
+  out=$(sandbox "$CORE/merge-on-green/checks-lint.sh" "$d/report.md" "$d/ev" 2>&1) || { printf '%s' "${out:0:300}"; return 1; }
 }
 
 # Installs the candidate limit-prompt-move into a scratch install root with its install.sh and runs the installed quota
 # mover on a fixture home that has no core jg-account-pool-lib.sh: a package that leaves out a library it loads fails here.
 check_limit_prompt_move() {
-  out=$(sandbox bash "$ADDONS/limit-prompt-move/tests/limit-prompt-move-e2e.sh" --installed 2>&1) || { printf '%s' "$(tail -n 2 <<<"$out" | cut -c1-300 | tr '\n' ' ')"; return 1; }
+  out=$(sandbox bash "$CORE/limit-prompt-move/tests/limit-prompt-move-e2e.sh" --installed 2>&1) || { printf '%s' "$(tail -n 2 <<<"$out" | cut -c1-300 | tr '\n' ' ')"; return 1; }
 }
 
 all=(dispatch-resolve owner-guard checks-lint limit-prompt-move)

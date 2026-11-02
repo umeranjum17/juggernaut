@@ -122,7 +122,7 @@ fi
 for meta in "$JG_HOME"/state/*.meta; do
   [ -f "$meta" ] && grep -Fxq "pr=$source" "$meta" || continue
   task=${meta##*/}; task=${task%.meta}
-  helper=${JG_ADDONS_DIR:-$(cd "$SRC/.." && pwd -P)}/receipts/bin/jg-run-receipt.sh
+  helper=${JG_CORE_DIR:-$(cd "$SRC/.." && pwd -P)}/receipts/bin/jg-run-receipt.sh
   if [ -x "$helper" ]; then
     report=$(mktemp) || exit 1
     printf 'checks-lint %s %s head %s: %s\n' "$receipt_verdict" "$source" "$head" "${why:-$out}" > "$report"

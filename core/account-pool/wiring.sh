@@ -15,12 +15,11 @@ set -u
 home=${1:-${JG_HOME:-}}
 [ -n "$home" ] && [ -d "$home" ] || { echo "account-pool install: usage: wiring.sh <jg-home>" >&2; exit 1; }
 lib=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bin/jg-account-pool-lib.sh
-addons=${JG_ADDONS_DIR:-$home/projects/juggernaut-addons}
 status=0
-if [ -f "$addons/account-pool/bin/jg-account-pool-lib.sh" ]; then
-  cmp -s "$addons/account-pool/bin/jg-account-pool-lib.sh" "$lib" && echo "feature checkout: $addons (lib matches)" || echo "feature checkout: $addons (lib DIFFERS from this checkout)"
+if [ -f "$lib" ]; then
+  echo "account-pool lib: $lib"
 else
-  echo "MISSING: feature checkout at $addons/account-pool (set JG_ADDONS_DIR)"; status=1
+  echo "MISSING: account-pool lib at $lib"; status=1
 fi
 for f in jg-spawn.sh jg-control.sh; do
   grep -q 'jg_account_hook' "$home/bin/$f" 2>/dev/null && echo "fork hook: bin/$f calls jg_account_hook" || { echo "MISSING: jg_account_hook lines in $home/bin/$f"; status=1; }

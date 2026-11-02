@@ -69,8 +69,7 @@ model_pool=${PI_QUOTA_FAILOVER_MODEL_POOL:-}
 if [ -z "$model_pool" ]; then
   for cand in \
     "$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/account-pool/bin/jg-model-pool" \
-    "${JG_ADDONS_DIR:+$JG_ADDONS_DIR/account-pool/bin/jg-model-pool}" \
-    "${JG_HOME:+$JG_HOME/projects/juggernaut-addons/account-pool/bin/jg-model-pool}"; do
+    "${JG_CORE_DIR:+$JG_CORE_DIR/account-pool/bin/jg-model-pool}"; do
     [ -n "${cand:-}" ] && [ -x "$cand" ] && { model_pool=$cand; break; }
   done
 fi
