@@ -317,6 +317,15 @@ func (a *app) unit(args []string) int {
 	if len(args) > 0 {
 		part = args[0]
 	}
+	// A home that does not own the machine's unit gets the installed unit back, byte for
+	// byte, so a caller that writes what it is given (bin/jg-stack.sh up) changes nothing;
+	// its account is added to the owner's shared accounts file on the way.
+	if owner, foreign := a.foreignOwner(); foreign && part == "nats" {
+		a.joinMachine(owner, say)
+		path, _ := unitPath(unitName())
+		fmt.Print(readFileString(path))
+		return 0
+	}
 	text, err := a.buildUnit(part)
 	if err != nil {
 		return die("%v", err)
@@ -353,9 +362,9 @@ func (a *app) buildUnit(part string) (string, error) {
 		// One server per machine: the config carries this machine's per-home accounts, so
 		// every home on the machine shares one JetStream and no account can reach another
 		// home's subjects.
-		homes := a.machineHomes()
+		var err error
 		accounts := filepath.Join(a.runtime, "accounts.conf")
-		if err := a.unitAccounts(accounts, homes); err != nil {
+		if a.accountsChanged, err = a.writeAccounts(a.machineHomes()); err != nil {
 			return "", fmt.Errorf("cannot write %s: %v", accounts, err)
 		}
 		conf := filepath.Join(a.runtime, "bus.conf")
@@ -363,7 +372,7 @@ func (a *app) buildUnit(part string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(conf, []byte(text), 0o600); err != nil {
+		if a.confChanged, err = writeIfChanged(conf, text); err != nil {
 			return "", fmt.Errorf("cannot write %s: %v", conf, err)
 		}
 		fmt.Fprintf(&b, "Description=Juggernaut message bus for this machine (NATS JetStream, one account per home)\n")

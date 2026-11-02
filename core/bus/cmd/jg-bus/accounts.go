@@ -98,10 +98,7 @@ func resolveHome(path string) string {
 
 // registeredHomes reads Main's Squad Lead registry: resolved home path -> id.
 func (a *app) registeredHomes() map[string]string {
-	data := os.Getenv("JG_DATA_OVERRIDE")
-	if data == "" {
-		data = filepath.Join(a.home, "data")
-	}
+	data := a.data
 	raw, err := os.ReadFile(filepath.Join(data, "squad_leads.md"))
 	if err != nil {
 		raw, _ = os.ReadFile(filepath.Join(data, "secondmates.md"))
@@ -221,12 +218,18 @@ const (
 	// limitsHeadroom is the number of accounts' worth of budget kept above what the
 	// accounts file reserves, so adding one home does not need a server restart to fit.
 	limitsHeadroom = 1
+	// limitsStep rounds the budget up to whole steps of reservations, so a home can join
+	// a running server by reload while the caps (which a reload cannot change) hold.
+	limitsStep = 8
 )
 
 // machineHomes: this home plus every sibling home that has a state directory, which
 // is the set one machine-wide server carries an account for.
 func (a *app) machineHomes() []string {
 	homes := []string{a.home}
+	for home := range a.registeredStates() {
+		homes = append(homes, home)
+	}
 	entries, err := os.ReadDir(filepath.Dir(a.home))
 	if err != nil {
 		return homes
@@ -243,15 +246,28 @@ func (a *app) machineHomes() []string {
 	return homes
 }
 
-// unitAccounts writes the machine's accounts file, which the unit's server config
-// carries. It covers every home that has a state directory beside this one, so one
-// unit serves the whole machine.
-func (a *app) unitAccounts(path string, homes []string) error {
+// writeAccounts writes the machine's accounts file, which the server config includes. It
+// covers every home that has a state directory beside this one and every registered
+// home, so one unit serves the whole machine. It rewrites the file only when its content
+// changed, and says whether it did.
+func (a *app) writeAccounts(homes []string) (bool, error) {
 	out := captureStdout(func() int { return a.accounts(homes) })
 	if out == "" {
-		return fmt.Errorf("no accounts were produced")
+		return false, fmt.Errorf("no accounts were produced")
 	}
-	return os.WriteFile(path, []byte(out), 0o600)
+	return writeIfChanged(filepath.Join(a.runtime, "accounts.conf"), out)
+}
+
+// writeIfChanged replaces a private file atomically, and only when its text differs.
+func writeIfChanged(path, text string) (bool, error) {
+	if readFileString(path) == text {
+		return false, nil
+	}
+	tmp := path + ".new"
+	if err := os.WriteFile(tmp, []byte(text), 0o600); err != nil {
+		return false, err
+	}
+	return true, os.Rename(tmp, path)
 }
 
 // captureStdout runs one command with stdout captured, so its text can be written
@@ -308,6 +324,9 @@ func (a *app) credentialPath(h busHome) string {
 	file := h.name + ".pass"
 	if h.path == resolveHome(a.home) {
 		return filepath.Join(a.runtime, file)
+	}
+	if state, ok := a.registeredStates()[h.path]; ok {
+		return filepath.Join(state, "bus", file)
 	}
 	if st, err := os.Stat(filepath.Join(h.path, "state")); err == nil && st.IsDir() {
 		return filepath.Join(h.path, "state", "bus", file)

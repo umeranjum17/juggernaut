@@ -85,8 +85,10 @@
 //	         drains what waits and exits; otherwise it runs as the service (the `deliver`
 //	         unit). `publish` delivers directly only for an event the bus did not accept.
 //	install-service
-//	         Make that service real: write the unit when it is missing or names another
-//	         home, reload systemd, enable it now, and verify. Without a user manager it
+//	         Make that service real: write the unit when it is missing, reload systemd, enable
+//	         it now, and verify. Only the unit's owner (the home it names) does that; any
+//	         other home adds its account to the owner's shared accounts, has the server
+//	         reload them, and leaves the unit and the server config untouched. Without a user manager it
 //	         falls back to `ensure`. One line either way, and never a failed boot - this
 //	         is what bin/jg-bootstrap.sh and bin/jg-update.sh run so a release cannot go
 //	         live without its bus and a reboot brings it back.
@@ -134,6 +136,10 @@ type app struct {
 	delivered   string
 	log         string
 	configFiles []string
+	// set by buildUnit for the nats part: what it just rewrote.
+	accountsChanged, confChanged bool
+	// data is the home's data directory, which holds the Squad Lead registry.
+	data string
 }
 
 func main() {
@@ -219,14 +225,24 @@ func resolve() *app {
 		delivered:   filepath.Join(state, "captain-channel-delivered.jsonl"),
 		log:         filepath.Join(state, "captain-channel.log"),
 	}
-	files := []string{os.Getenv("JG_CAPTAIN_CHANNEL"), filepath.Join(home, "config", "captain-channel"),
-		filepath.Join(root, "defaults", "captain-channel")}
-	for _, f := range files {
-		if f != "" {
-			a.configFiles = append(a.configFiles, f)
-		}
+	a.configFiles = configFilesFor(home, root)
+	a.data = os.Getenv("JG_DATA_OVERRIDE")
+	if a.data == "" {
+		a.data = filepath.Join(home, "data")
 	}
 	return a
+}
+
+// configFilesFor lists the captain-channel config files in force for one home.
+func configFilesFor(home, root string) []string {
+	var out []string
+	for _, f := range []string{os.Getenv("JG_CAPTAIN_CHANNEL"), filepath.Join(home, "config", "captain-channel"),
+		filepath.Join(root, "defaults", "captain-channel")} {
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // die reports a refusal and returns the exit status the shell used.
