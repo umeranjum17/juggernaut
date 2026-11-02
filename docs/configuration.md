@@ -503,6 +503,7 @@ One line per outcome prints beside the merge record: `<branch>: updated <before>
 The same record then runs `bin/jg-version-branch-sync.sh features <pr-url> <project-dir>`, which carries the version branch into every open feature pull request that targets it, but only when the merge just recorded was the release pull request (base the default branch, head the version branch).
 A feature branch carries its own commits, so the carry is a real merge commit built with git plumbing and pushed as an ordinary fast-forward of that branch; no working tree is touched and nothing is forced.
 A feature branch whose merge conflicts is reported and left exactly as it is, and a fork pull request is skipped because its branch is not in this repository.
+A pull request that already carries a sealed proof at its head is skipped for the same reason and left exactly as it is, because the carry moves that head and every proof, receipt and card bound to it goes stale and the change has to be proved again from scratch; a branch with no proof at its head is still carried, so the release branch keeps reaching the work in flight.
 One line per branch prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
 
 ## Fleet autosync (config/fleet-autosync-off)
