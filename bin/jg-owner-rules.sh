@@ -5,6 +5,8 @@
 #   jg-owner-rules.sh init [--force]
 #   jg-owner-rules.sh add --kind owner --words "<the owner's own words>" \
 #     --scope <scope> --enforce <where it is enforced> [--date YYYY-MM-DD] [--title <one line>]
+#   jg-owner-rules.sh add --kind owner --words "<his words>" --scope <scope> \
+#     --point <decision point> --when '<fact=value ...>' --then <action> [--reason <why>]
 #   jg-owner-rules.sh split [--surface <file>] [--apply]
 #   jg-owner-rules.sh audit [--fail] [--source <file-or-directory>]...
 #
@@ -44,6 +46,10 @@
 #         again files nothing (and those words are refused above anyway).
 #         A ticket that cannot be filed is named on stderr and never loses the
 #         rule: the entry stays recorded and the exit status stays 0.
+#         --point/--when/--then write the rule's machine clause in the same command (no code): the clause
+#         joins the rules block (config/preferences/rules.json, bin/jg-pref.sh), the evaluator
+#         bin/jg-clause.sh matches it at the next decision at that point, and --enforce defaults to it.
+#         A clause the schema refuses (unknown point, fact or action) records nothing.
 # split   Report how the surface divides by kind: how many entries are owner, how
 #         many are product, and which carry no kind yet. --apply rewrites the
 #         surface to its owner entries only, so the product half can be filed as
@@ -84,7 +90,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -218,7 +223,7 @@ words_already_recorded() {  # <normalized words>
 }
 
 cmd_add() {
-  local words='' scope='' enforce='' date='' title='' kind=''
+  local words='' scope='' enforce='' date='' title='' kind='' point='' when='' then='' reason=''
   while [ $# -gt 0 ]; do
     case "$1" in
       --kind) shift; [ $# -gt 0 ] || die "--kind needs a value"; kind=$1 ;;
@@ -227,10 +232,18 @@ cmd_add() {
       --enforce) shift; [ $# -gt 0 ] || die "--enforce needs a value"; enforce=$1 ;;
       --date) shift; [ $# -gt 0 ] || die "--date needs a value"; date=$1 ;;
       --title) shift; [ $# -gt 0 ] || die "--title needs a value"; title=$1 ;;
+      --point) shift; [ $# -gt 0 ] || die "--point needs a value"; point=$1 ;;
+      --when) shift; [ $# -gt 0 ] || die "--when needs a value"; when=$1 ;;
+      --then) shift; [ $# -gt 0 ] || die "--then needs a value"; then=$1 ;;
+      --reason) shift; [ $# -gt 0 ] || die "--reason needs a value"; reason=$1 ;;
       *) die "unknown argument: $1" ;;
     esac
     shift
   done
+  if [ -n "$point$when$then" ]; then
+    [ -n "$point" ] && [ -n "$when" ] && [ -n "$then" ] || die "refused: a clause needs all of --point, --when and --then"
+    [ -n "$enforce" ] || enforce="bin/jg-clause.sh; defaults/preferences/rules.json"
+  fi
 
   kind=$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')
   case "$kind" in
@@ -273,6 +286,13 @@ cmd_add() {
   mkdir -p "$DATA" || die "cannot create $DATA"
   [ -f "$SURFACE" ] || { surface_header > "$SURFACE" || die "cannot write $SURFACE"; }
   words_already_recorded "$words" && die "refused: these words are already recorded in $SURFACE"
+
+  if [ -n "$point" ]; then
+    # shellcheck source=bin/jg-clause.sh
+    . "$SCRIPT_DIR/jg-clause.sh"
+    jg_clause_add "$point" "$when" "$then" "${reason:-$title}" "$(rule_ticket_id "$words")" "$(rule_ticket_id "$words")" || die "refused: the clause was not accepted, so nothing was recorded"
+    printf 'clause: %s enforced at %s\n' "$(rule_ticket_id "$words")" "$point"
+  fi
 
   {
     printf '\n## %s - %s\n' "$date" "$title"

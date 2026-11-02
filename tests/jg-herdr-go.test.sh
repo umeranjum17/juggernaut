@@ -76,24 +76,24 @@ check "a malformed status reads unknown" "$(jg_backend_herdr_server_running_stat
 # The `jq -e` programs: a proved answer exits 0, and everything else - a false answer (1), no
 # output (4), an unreadable answer or a bad argument (5) - exits non-zero, so a caller that asks
 # `if ! ... check` refuses on anything it cannot prove.
-verdict() { local want=$1 doc=$2; shift 2; printf '%s' "$doc" | "$ROOT/bin/jg-herdr.sh" check "$@" >/dev/null 2>&1; printf '%s' "$?"; }
+verdict() { local doc=$1; shift; printf '%s' "$doc" | "$ROOT/bin/jg-herdr.sh" check "$@" >/dev/null 2>&1; printf '%s' "$?"; }
 tab='{"result":{"tab":{"tab_id":"w1:t1","workspace_id":"w1"}}}'
-check "a tab that names itself and its workspace is proved" "$(verdict '' "$tab" tab-binds w1:t1 w1)" 0
-check "a tab in another workspace is false" "$(verdict '' "$tab" tab-binds w1:t1 w2)" 1
-check "an empty answer proves nothing" "$(verdict '' '' tab-binds w1:t1 w1)" 4
-check "an unreadable answer is an error, never a proof" "$(verdict '' 'not json' tab-binds w1:t1 w1)" 5
-check "the last of several answers decides, as jq -e decides" "$(verdict '' "$tab"'{"result":{"tab":{}}}' tab-binds w1:t1 w1)" 1
-check "a bad JSON argument is refused before any answer is read" "$(verdict '' '' order-verify w3 juggernaut w1 'not json')" 5
-check "an unknown check exits 2" "$(verdict '' '' no-such-check)" 2
-check "a check with the wrong argument count exits 2" "$(verdict '' '' tab-binds w1:t1)" 2
-check "one focused tab, the named one, is proved" "$(verdict '' '{"result":{"tabs":[{"tab_id":"a","focused":true},{"tab_id":"b"}]}}' focus-tab-is a)" 0
-check "two focused tabs prove nothing" "$(verdict '' '{"result":{"tabs":[{"tab_id":"a","focused":true},{"tab_id":"b","focused":true}]}}' focus-tab-is a)" 1
+check "a tab that names itself and its workspace is proved" "$(verdict "$tab" tab-binds w1:t1 w1)" 0
+check "a tab in another workspace is false" "$(verdict "$tab" tab-binds w1:t1 w2)" 1
+check "an empty answer proves nothing" "$(verdict '' tab-binds w1:t1 w1)" 4
+check "an unreadable answer is an error, never a proof" "$(verdict 'not json' tab-binds w1:t1 w1)" 5
+check "the last of several answers decides, as jq -e decides" "$(verdict "$tab"'{"result":{"tab":{}}}' tab-binds w1:t1 w1)" 1
+check "a bad JSON argument is refused before any answer is read" "$(verdict '' order-verify w3 juggernaut w1 'not json')" 5
+check "an unknown check exits 2" "$(verdict '' no-such-check)" 2
+check "a check with the wrong argument count exits 2" "$(verdict '' tab-binds w1:t1)" 2
+check "one focused tab, the named one, is proved" "$(verdict '{"result":{"tabs":[{"tab_id":"a","focused":true},{"tab_id":"b"}]}}' focus-tab-is a)" 0
+check "two focused tabs prove nothing" "$(verdict '{"result":{"tabs":[{"tab_id":"a","focused":true},{"tab_id":"b","focused":true}]}}' focus-tab-is a)" 1
 list='{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","focused":true},{"workspace_id":"w3"},{"workspace_id":"w2"}]}}'
-check "a move to the end is proved against the order before and the focus" "$(verdict '' "$list" move-verify w2 w1 '["w1","w2","w3"]')" 0
-check "a move that left the order alone is false" "$(verdict '' "$list" move-verify w3 w1 '["w1","w2","w3"]')" 1
-check "a rollback is proved against the recorded order" "$(verdict '' "$list" restore-verify '["w1","w3","w2"]' w1)" 0
-check "the child sits right after its parent: ordering is proved" "$(verdict '' '{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut"},{"workspace_id":"w3"},{"workspace_id":"w2"}]}}' order-verify w3 juggernaut '' 1)" 0
-check "a process-info shell pid below 2 is no value" "$(verdict '' '{"result":{"process_info":{"shell_pid":1}}}' process-field shell-pid)" 4
+check "a move to the end is proved against the order before and the focus" "$(verdict "$list" move-verify w2 w1 '["w1","w2","w3"]')" 0
+check "a move that left the order alone is false" "$(verdict "$list" move-verify w3 w1 '["w1","w2","w3"]')" 1
+check "a rollback is proved against the recorded order" "$(verdict "$list" restore-verify '["w1","w3","w2"]' w1)" 0
+check "the child sits right after its parent: ordering is proved" "$(verdict '{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut"},{"workspace_id":"w3"},{"workspace_id":"w2"}]}}' order-verify w3 juggernaut '' 1)" 0
+check "a process-info shell pid below 2 is no value" "$(verdict '{"result":{"process_info":{"shell_pid":1}}}' process-field shell-pid)" 4
 check "a process-info pid is floored like jq prints it" "$(printf '{"result":{"process_info":{"shell_pid":4242.9}}}' | "$ROOT/bin/jg-herdr.sh" check process-field shell-pid)" 4242
 check "the first process name is its string" "$(printf '{"result":{"process_info":{"foreground_processes":[{"name":"bash"}]}}}' | "$ROOT/bin/jg-herdr.sh" check process-field first-name)" bash
 check "argv0 falls to the first argv entry" "$(printf '{"result":{"process_info":{"foreground_processes":[{"argv":["zsh","-l"]}]}}}' | "$ROOT/bin/jg-herdr.sh" check process-field first-argv0)" zsh

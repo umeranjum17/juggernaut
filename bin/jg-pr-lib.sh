@@ -1247,10 +1247,11 @@ FIELDS
   # Consumed by bin/jg-crew-state.sh passed_pr_detail.
   # shellcheck disable=SC2034
   JG_PR_RECORD_STATE=$state
-  # Consumed by bin/jg-crew-state.sh passed_pr_detail and bin/jg-teardown.sh.
+  # Consumed by bin/jg-crew-state.sh passed_pr_detail.
   # shellcheck disable=SC2034
   JG_PR_RECORD_MERGED=$merged
-  # Consumed by bin/jg-teardown.sh pr_is_merged.
+  # Consumed by bin/jg-dod-lib.sh's Forgejo live-head read. The shell teardown test
+  # that also read it is gone: core/teardown asks the forge for its own answer.
   # shellcheck disable=SC2034
   JG_PR_RECORD_HEAD=$head
 }
@@ -1620,7 +1621,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }

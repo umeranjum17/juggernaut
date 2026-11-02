@@ -201,7 +201,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -433,7 +432,9 @@ family_for_basename() {
       ;;
     jg-turnend-guard.test.sh|jg-wake-daemon-lifecycle-e2e.test.sh|\
     jg-mail.test.sh|jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|\
+    jg-watch-inventory.test.sh|\
     jg-wake-next.test.sh|jg-pi-wake-replay.test.sh|\
+    jg-wake-core.test.sh|\
     jg-state-bus-parity.test.sh|jg-lease-live.test.sh|jg-reply-bus-parity.test.sh|\
     jg-reply-engine.test.sh|\
     jg-metrics-shadow-parity.test.sh|\
@@ -697,6 +698,7 @@ tests/jg-chat-answer-card.test.sh 1030
 tests/jg-ci-required.test.sh 122
 tests/jg-ci-scope.test.sh 700
 tests/jg-claude-stop-autoarm-live-e2e.test.sh 58
+tests/jg-clause.test.sh 4000
 tests/jg-codex-continuity-live-e2e.test.sh 57
 tests/jg-codex-hook-layer-live-e2e.test.sh 68
 tests/jg-comms-feed.test.sh 518
@@ -803,11 +805,12 @@ tests/jg-worker-rules.test.sh 2000
 tests/jg-turnend-guard.test.sh 42968
 tests/jg-update.test.sh 13448
 tests/jg-wake-daemon-lifecycle-e2e.test.sh 10177
-tests/jg-wake-core.test.sh 4000
+tests/jg-wake-core.test.sh 6000
 tests/jg-wake-route.test.sh 527
 tests/token-cuts-live.test.sh 9000
 tests/jg-wake-drain-open-decisions-cursor.test.sh 57982
 tests/jg-wake-next.test.sh 2751
+tests/jg-watch-inventory.test.sh 12000
 tests/jg-watch-handoff.test.sh 11741
 tests/jg-watcher-lock.test.sh 1059731
 tests/jg-worker-account-live-e2e.test.sh 70
@@ -1545,7 +1548,7 @@ families_for_changed_path() {
       printf '%s\n' live-harness-optin
       ;;
     bin/jg-bearings-snapshot.sh|bin/jg-fleet-snapshot.sh|bin/jg-fleet-view.sh|bin/jg-contributions.sh|bin/jg-contributions.jq|\
-    bin/jg-home-summary-refresh.sh)
+    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh)
       ;;
     bin/jg-install-herdr.sh|bin/jg-install-treehouse.sh|bin/jg-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit

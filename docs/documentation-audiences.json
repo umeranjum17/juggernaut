@@ -1006,6 +1006,10 @@
     {
       "path": "core/wait-timers/README.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "core/watch/README.md",
+      "audience": "maintainer-architecture"
     }
   ]
 }

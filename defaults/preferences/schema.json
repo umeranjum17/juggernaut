@@ -1,0 +1,31 @@
+{
+  "schema": "jg-preference-schema/1",
+  "about": "The one schema every preference block and every owner-rule clause follows. Decision points and their standard facts are declared here as data; bin/jg-clause.sh is the one evaluator over them. A rule that needs a fact no point gathers is the only case for code: add the fact to the point once, never a per-rule script.",
+  "block": {
+    "required": ["schema", "block", "about"],
+    "optional": ["values", "valueTypes", "clauses"],
+    "valueTypeKinds": ["string", "number", "boolean", "range", "list"]
+  },
+  "standardFacts": {
+    "utcHour": "number",
+    "weekday": "number",
+    "peak": "boolean"
+  },
+  "points": {
+    "route-select": {
+      "wired": true,
+      "about": "jg-model-pool walks its route chain; a skipped route falls through to the next entry.",
+      "facts": {"route": "string", "provider": "string", "harness": "string", "model": "string", "billing": "string", "only": "string", "hard": "boolean", "project": "string"},
+      "actions": ["skip", "deny", "warn"]
+    },
+    "spawn": {"wired": false, "about": "before bin/jg-spawn.sh starts a worker.", "facts": {"harness": "string", "model": "string", "kind": "string", "project": "string"}, "actions": ["deny", "warn"]},
+    "merge": {"wired": false, "about": "before a task PR merges.", "facts": {"project": "string", "mode": "string", "yolo": "boolean"}, "actions": ["deny", "warn"]},
+    "wake-route": {"wired": false, "about": "when a wake is routed to Main.", "facts": {"type": "string", "source": "string"}, "actions": ["batch", "warn"]},
+    "captain-message": {"wired": false, "about": "before a message reaches the captain.", "facts": {"channel": "string"}, "actions": ["deny", "warn"]}
+  },
+  "clause": {
+    "required": ["id", "point", "when", "then"],
+    "optional": ["reason", "rule"],
+    "whenForms": "scalar equals; array is any-of; string with * is a glob; \"a-b\" against a number is an inclusive range; true/false against a boolean"
+  }
+}

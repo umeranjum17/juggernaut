@@ -21,9 +21,11 @@ type intake struct {
 	kindSet                                        bool
 	harness, model, effort, backend, mode, yolo    string
 	branchPrefix, baseBranch, consent, traceparent string
+	redFixOf                                       string
 	harnessSet, modelSet, effortSet, backendSet    bool
 	modeSet, yoloSet, branchPrefixSet              bool
 	baseBranchSet, consentSet, traceparentSet      bool
+	redFixOfSet                                    bool
 	relaunch, herdrResumeLockWait                  bool
 	pos                                            []string
 }
@@ -36,7 +38,7 @@ func b2i(b bool) string {
 }
 
 // valueFlags are the flags that take a value, as `--flag value` or `--flag=value`.
-var valueFlags = []string{"harness", "model", "effort", "backend", "mode", "yolo", "branch-prefix", "base-branch", "upstream-consent", "traceparent"}
+var valueFlags = []string{"harness", "model", "effort", "backend", "mode", "yolo", "branch-prefix", "base-branch", "red-fix-of", "upstream-consent", "traceparent"}
 
 // set records one value flag, the shell's `case "$want_value"`.
 func (t *intake) set(name, v string) {
@@ -57,6 +59,8 @@ func (t *intake) set(name, v string) {
 		t.branchPrefix, t.branchPrefixSet = v, true
 	case "base-branch":
 		t.baseBranch, t.baseBranchSet = v, true
+	case "red-fix-of":
+		t.redFixOf, t.redFixOfSet = v, true
 	case "upstream-consent":
 		t.consent, t.consentSet = v, true
 	case "traceparent":
@@ -123,6 +127,7 @@ func parseIntake(args []string) (*intake, error) {
 		{t.backendSet, t.backend, "error: --backend requires a non-empty value"},
 		{t.modeSet, t.mode, "error: --mode requires a non-empty value"},
 		{t.yoloSet, t.yolo, "error: --yolo requires a non-empty value"},
+		{t.redFixOfSet, t.redFixOf, "error: --red-fix-of requires a non-empty branch name"},
 		{t.consentSet, t.consent, "error: --upstream-consent requires a non-empty <host>/<owner>/<repo> value"},
 		{t.traceparentSet, t.traceparent, "error: --traceparent requires a non-empty value"},
 	} {
@@ -198,6 +203,7 @@ func (t *intake) refusal() string {
 			{t.yoloSet, "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it"},
 			{t.branchPrefixSet, "error: --relaunch reuses the task's recorded ship branch; --branch-prefix cannot override it"},
 			{t.baseBranchSet, "error: --relaunch reuses the task's recorded base branch; --base-branch cannot override it"},
+			{t.redFixOfSet, "error: --relaunch reuses the task's recorded red-fix declaration; --red-fix-of cannot override it"},
 			{t.consentSet, "error: --relaunch reuses the task's recorded upstream consent; --upstream-consent cannot override it"},
 		} {
 			if c.set {
@@ -243,6 +249,8 @@ func (t *intake) refusal() string {
 		return "error: --branch-prefix applies only to ship spawns; a scout makes no branch and a squad_lead records no ship branch"
 	case t.kind == "squad_lead" && t.baseBranchSet:
 		return "error: --base-branch applies only to ship and scout spawns; a squad_lead charter has no task base"
+	case t.redFixOfSet:
+		return "error: --red-fix-of applies only to ship spawns; a scout and a squad_lead land no change on a release branch"
 	case t.consentSet:
 		return "error: --upstream-consent applies only to ship spawns; a scout publishes nothing and a squad_lead records no delivery contract"
 	}
@@ -271,6 +279,8 @@ func (t *intake) shellCode(refusal string) string {
 	line("BRANCH_PREFIX_SET", b2i(t.branchPrefixSet))
 	line("BASE_BRANCH", t.baseBranch)
 	line("BASE_BRANCH_SET", b2i(t.baseBranchSet))
+	line("RED_FIX_OF", t.redFixOf)
+	line("RED_FIX_OF_SET", b2i(t.redFixOfSet))
 	line("UPSTREAM_CONSENT", t.consent)
 	line("UPSTREAM_CONSENT_SET", b2i(t.consentSet))
 	line("TRACEPARENT_ARG", t.traceparent)

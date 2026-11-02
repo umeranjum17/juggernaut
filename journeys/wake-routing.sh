@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# done-done journey: wake urgency routing runs in Go. The suite builds the command through
+# done-done journey: wake urgency routing runs in Go. The routing suite builds the command through
 # bin/jg-wake-core.sh and requires the class the shell rule reader gave every distinct event recorded
 # on a real JG_WAKE stream, the pattern grammar, the status-file rule, the queue-quiet bound, the
 # re-alert dedupe, and `now` for every event where the command cannot run; tests/jg-wake-route.test.sh
@@ -8,7 +8,7 @@
 set -u
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 out=${DONE_DONE_EVIDENCE_ROOT:?}/${RUN_ID:-run}.log
-{ bash "$root/tests/jg-wake-core.test.sh" && bash "$root/tests/jg-wake-route.test.sh"; } > "$out" 2>&1
+{ bash "$root/tests/jg-wake-router.test.sh" && bash "$root/tests/jg-wake-route.test.sh"; } > "$out" 2>&1
 rc=$?
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON

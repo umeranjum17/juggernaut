@@ -201,9 +201,14 @@ def publish(ok, why):
             return
     with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as t:
         t.write(f'checks-lint {"PASS" if ok else "FAIL"} {src} head {head}: {why}\n')
+    # The receipt must name the pull request this run judged; passing it is more reliable than the publisher's own
+    # lookup, which cannot resolve a branch from a detached candidate tree.
+    penv = {**os.environ, 'JG_HOME': home}
+    if re.match(r'https?://', src):
+        penv['JG_RECEIPT_PR'] = src
     try:
         r = subprocess.run([next((c for c in (f"{os.environ.get('JG_CORE_DIR') or ROOT}/receipts/bin/jg-run-receipt.sh", f"{home}/core/receipts/bin/jg-run-receipt.sh") if os.access(c, os.X_OK)), f"{ROOT}/receipts/bin/jg-run-receipt.sh"), task, 'PASS' if ok else 'FAIL', t.name, repo],
-                           env={**os.environ, 'JG_HOME': home}, capture_output=True, text=True, timeout=60)
+                           env=penv, capture_output=True, text=True, timeout=60)
         if r.returncode == 0:
             superseded = isinstance(prior, dict) and prior.get('verdict') == 'FAIL'
             print('checks-lint: receipt PASS published' + (', superseding the earlier FAIL receipt' if superseded else '')

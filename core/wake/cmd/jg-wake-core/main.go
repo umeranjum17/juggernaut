@@ -1,7 +1,28 @@
 // jg-wake-core is the Go half of the wake library: the decisions bin/jg-wake-lib.sh used to make in
-// shell, answered here so one implementation owns them. This slice owns wake urgency routing, the
-// rule file (defaults/wake-routing, a home's config/wake-routing, or JG_WAKE_ROUTING) that gives
-// every event the class now, batch or silent.
+// shell, answered here so one implementation owns them.
+//
+// The read model of the wake queue - what a queued row is, which rows an actor could act on, and
+// which of a list of sequence numbers are still queued. Every command reads the rendered rows and
+// never the bus: the store and its fold stay with bin/jg-wake-bus.sh and core/bus.
+//
+//	jg-wake-core [flags] dedupe <rows-file>
+//	    the rows file with one row per event: a repeated kind/key is one row and the newest line
+//	    wins, every heartbeat is one row, and the rows keep the order they first appeared in. This
+//	    is what the drain and the watcher present, so a row delivered again never reads as two.
+//	jg-wake-core [flags] keys <kind>
+//	    the distinct keys queued for that kind, oldest first.
+//	jg-wake-core [flags] queued <seq>...
+//	    which of those sequence numbers are still queued, one per line. Exit 2 when the read model
+//	    exists but cannot be read, so a caller never reads a broken queue as an empty one.
+//	jg-wake-core [flags] count
+//	    how many queued rows the actor could act on right now: Main owns every row a live branch
+//	    grant does not reserve, and the branch owns exactly the rows its grant names. A row that
+//	    is not a well-formed queue row is Main's, because nobody else can retire it.
+//	jg-wake-core [flags] grant-valid <rows-file>
+//	    exit 0 when the file is a non-empty list of distinct sequence numbers, and 1 otherwise.
+//
+// Wake urgency routing - the rule file (defaults/wake-routing, a home's config/wake-routing, or
+// JG_WAKE_ROUTING) that gives every event the class now, batch or silent.
 //
 //	jg-wake-core [flags] route <kind> <key> <payload>
 //	    print the event's class. The first matching rule wins and no match prints `now`, so a
@@ -19,31 +40,39 @@
 //	jg-wake-core [flags] routing-file
 //	    print the rule file in force, nothing when there is none.
 //
-// Flags give the home the shell library resolved: --state, --home, --root (the checkout holding
-// defaults/), --queue (state/.wake-queue), --routing (JG_WAKE_ROUTING), --config (JG_CONFIG_OVERRIDE)
-// and --now (epoch seconds, for a replay). Nothing here reads the environment.
-//
-// Exit 0 with the answer on stdout, 2 for a request that is not valid.
+// Flags give a call the home and the queue the shell library resolved. The queue read model takes
+// --queue (state/.wake-queue), --actor (main or branch) and --grant (the branch grant's row
+// snapshot). The router takes --state, --home, --root (the checkout holding defaults/), --queue,
+// --routing (JG_WAKE_ROUTING), --config (JG_CONFIG_OVERRIDE) and --now (epoch seconds, for a
+// replay). Nothing here reads the environment. A missing queue file answers "no rows", which is
+// what the file behaviour did.
 package main
 
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
 )
 
-func main() { os.Exit(run(os.Args[1:])) }
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
-func run(args []string) int {
-	fs := flag.NewFlagSet("jg-wake-core", flag.ContinueOnError)
+func run(args []string, out, errw io.Writer) int {
 	var e env
 	var now int64
+	fs := flag.NewFlagSet("jg-wake-core", flag.ContinueOnError)
+	fs.SetOutput(errw)
+	fs.StringVar(&e.queue, "queue", "", "the read model of the queue (state/.wake-queue)")
+	fs.StringVar(&e.actor, "actor", "main", "who is asking: main or branch")
+	fs.StringVar(&e.grant, "grant", "", "the branch grant's row snapshot, when one is live")
 	fs.StringVar(&e.state, "state", "", "state directory")
 	fs.StringVar(&e.home, "home", "", "home directory")
 	fs.StringVar(&e.defaultRoot, "root", "", "checkout holding defaults/")
-	fs.StringVar(&e.queue, "queue", "", "wake queue read model")
 	fs.StringVar(&e.routing, "routing", "", "override rule file")
 	fs.StringVar(&e.configDir, "config", "", "config directory override")
+	fs.StringVar(&e.libDir, "lib", "", "the bin/ holding jg-watch.sh")
+	fs.StringVar(&e.procRoot, "proc", "", "procfs root, else /proc")
 	fs.Int64Var(&now, "now", 0, "epoch seconds (replay)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -53,31 +82,86 @@ func run(args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: jg-wake-core [flags] route|classify|realert <kind> <key> <payload> | routing-file")
+		fmt.Fprintln(errw, "usage: jg-wake-core [--queue FILE] [--actor main|branch] [--grant FILE] dedupe <rows-file> | keys <kind> | queued <seq>... | count | grant-valid <rows-file> | route|classify|realert <kind> <key> <payload> | routing-file")
 		return 2
 	}
 	cmd, rest := rest[0], rest[1:]
 	switch cmd {
-	case "route", "classify", "realert":
-		if len(rest) != 3 {
-			fmt.Fprintf(os.Stderr, "jg-wake-core: %s takes <kind> <key> <payload>\n", cmd)
+	case "dedupe":
+		return one(rest, errw, "dedupe", "a rows file", func(a string) int { return e.dedupe(a, out, errw) })
+	case "keys":
+		return one(rest, errw, "keys", "a wake kind", func(a string) int { return e.keys(a, out, errw) })
+	case "queued":
+		return e.queued(rest, out, errw)
+	case "count":
+		return none(rest, errw, "count", func() int { return e.count(out, errw) })
+	case "grant-valid":
+		return one(rest, errw, "grant-valid", "a rows file", e.grantValid)
+	case "route", "classify":
+		return e.routeCommand(cmd, rest, out, errw)
+	case "routing-files":
+		return none(rest, errw, "routing-files", func() int {
+			for _, f := range e.routingFiles() {
+				fmt.Fprintln(out, f)
+			}
+			return 0
+		})
+	case "routing-file":
+		return none(rest, errw, "routing-file", func() int {
+			if f := e.routingFile(); f != "" {
+				fmt.Fprintln(out, f)
+			}
+			return 0
+		})
+	case "rule-set":
+		if len(rest) != 2 {
+			fmt.Fprintln(errw, "jg-wake-core: rule-set takes <name> <default>")
 			return 2
 		}
-		switch cmd {
-		case "route":
-			fmt.Println(e.route(rest[0], rest[1], rest[2], 0))
-		case "classify":
-			fmt.Println(e.classify(rest[0], rest[1], rest[2]))
-		default:
-			e.realertRecord(rest[0], rest[1], rest[2])
+		def, err := strconv.ParseInt(rest[1], 10, 64)
+		if err != nil {
+			def = 0
 		}
-	case "routing-file":
-		if f := e.routingFile(); f != "" {
-			fmt.Println(f)
-		}
-	default:
-		fmt.Fprintf(os.Stderr, "jg-wake-core: unknown command %q\n", cmd)
+		fmt.Fprintln(out, e.ruleSet(rest[0], def))
+		return 0
+	case "realert-record", "realert":
+		return e.routeCommand("realert-record", rest, out, errw)
+	}
+	fmt.Fprintf(errw, "jg-wake-core: unknown command %q\n", cmd)
+	return 2
+}
+
+// routeCommand answers the urgency commands, each of which takes <kind> <key> <payload>.
+func (e env) routeCommand(cmd string, rest []string, out, errw io.Writer) int {
+	if len(rest) != 3 {
+		fmt.Fprintf(errw, "jg-wake-core: %s takes <kind> <key> <payload>\n", cmd)
 		return 2
 	}
+	switch cmd {
+	case "route":
+		fmt.Fprintln(out, e.route(rest[0], rest[1], rest[2], 0))
+	case "classify":
+		fmt.Fprintln(out, e.classify(rest[0], rest[1], rest[2]))
+	default:
+		e.realertRecord(rest[0], rest[1], rest[2])
+	}
 	return 0
+}
+
+// one runs a command that takes exactly one argument.
+func one(rest []string, errw io.Writer, cmd, what string, run func(string) int) int {
+	if len(rest) != 1 {
+		fmt.Fprintf(errw, "jg-wake-core: %s takes %s\n", cmd, what)
+		return 2
+	}
+	return run(rest[0])
+}
+
+// none runs a command that takes no argument.
+func none(rest []string, errw io.Writer, cmd string, run func() int) int {
+	if len(rest) != 0 {
+		fmt.Fprintf(errw, "jg-wake-core: %s takes no argument\n", cmd)
+		return 2
+	}
+	return run()
 }

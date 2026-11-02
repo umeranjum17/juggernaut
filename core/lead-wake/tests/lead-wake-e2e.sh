@@ -38,11 +38,17 @@ mkdir -p "$HOME" "$TMPDIR" "$d/fork" "$d/fakebin" "$d/empty"
 # The fork checkout carries what its watcher reads and builds from its own core
 # tree: the escalation ladder definition ($ROOT/core/bus/workflows) and the Go
 # command behind bin/jg-bus.sh, which the wake-queue observation builds on first
-# use inside the home's state directory. Without them every tick dies and writes
-# that failure to stderr, which the absent-feature case below reads.
-mkdir -p "$d/fork/core/bus"
+# use inside the home's state directory, plus the Go window inventory behind
+# bin/jg-watch-core.sh, which every watcher cycle reads, plus the Go wake-queue
+# reader behind bin/jg-wake-core.sh, which the drain and the watcher ask what is
+# queued. Without them every tick
+# dies and writes that failure to stderr, which the absent-feature case below
+# reads.
+mkdir -p "$d/fork/core/bus" "$d/fork/core/watch" "$d/fork/core/wake"
 cp -a "$JG_TEST_FORK/bin" "$JG_TEST_FORK/tests" "$d/fork/"
 cp -a "$JG_TEST_FORK/core/bus/." "$d/fork/core/bus/"
+cp -a "$JG_TEST_FORK/core/watch/." "$d/fork/core/watch/"
+cp -a "$JG_TEST_FORK/core/wake/." "$d/fork/core/wake/"
 rm -f -- "$d/fork/core/bus/jg-bus"
 python3 "$addons/lead-wake/tests/stage-step-b.py" "$d/fork/bin"
 cp "$addons/lead-wake/tests/jg-lead-wake.test.sh" "$addons/lead-wake/tests/lead-wake-harness.sh" "$d/fork/tests/"

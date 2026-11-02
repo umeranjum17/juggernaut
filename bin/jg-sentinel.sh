@@ -109,7 +109,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -499,6 +498,14 @@ tick() {
   age=$(( $(date +%s) - ${last:-0} ))
   [ "${woken_beat:-}" != "${beat:-none}" ] || [ "$age" -ge "$REWAKE" ] || return "$rc"
   body="Supervision is needed but the watcher beacon is $JG_SUP_BEACON_DESC old and no turn is running, so nothing is watching the fleet. Run bin/jg-session-start.sh if this session was resumed, reconcile, then end the turn so supervision re-arms."
+  # defaults/wake-routing decides whether this doorbell costs a turn: it settles while a
+  # live watcher holds the lock, and it is recorded and counted like any settled wake.
+  if [ "$(jg_wake_route_class check sentinel-beacon-old "$body")" != now ]; then
+    jg_wake_settle check sentinel-beacon-old "$body" || true
+    say "primary: beacon doorbell settled without a wake (defaults/wake-routing)"
+    printf '%s %s\n' "$(date +%s)" "${beat:-none}" >"$STATE/.sentinel-wake-last"
+    return "$rc"
+  fi
   wake_primary "$body" && printf '%s %s\n' "$(date +%s)" "${beat:-none}" >"$STATE/.sentinel-wake-last"
   return "$rc"
 }

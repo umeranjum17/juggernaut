@@ -6,10 +6,14 @@
 # header is the one owner of that contract. bin/jg-classify-lib.sh keeps the function names the
 # watcher, the daemon and the drain call and forwards each to this dispatcher; the shell reader
 # those functions held is deleted, so this file adds no behaviour. The binary is built on first
-# use inside the home's own state directory, never into the repository.
+# use into the user's cache, keyed by this checkout, never into the repository and never into a
+# home: a reader such as jg-flow scans other homes and must leave every one of them byte for byte
+# as it found it (core/fleet-flow/tests/jg-flow.test.sh asserts that).
 #
 # CONTRACT.
-#   binary  JG_CLASSIFY_BIN when set, else $STATE/bin/jg-classify. It is rebuilt when it is
+#   binary  JG_CLASSIFY_BIN when set, else
+#           ${XDG_CACHE_HOME:-$HOME/.cache}/jg-classify/<checkout-key>/jg-classify, beside
+#           jg-metrics-shadow's cache and outside every Juggernaut home. It is rebuilt when it is
 #           missing or older than a source file, and the build lands under a temporary name so
 #           a partial binary is never executed.
 #   go      JG_CLASSIFY_GO when set, else `go` on PATH.
@@ -25,7 +29,11 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$ROOT}}
 STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 SOURCE_DIR=$ROOT/core/classify
-BIN=${JG_CLASSIFY_BIN:-$STATE/bin/jg-classify}
+CACHE=${XDG_CACHE_HOME:-${HOME:-$STATE}/.cache}/jg-classify
+# One binary per checkout: sibling worktrees share the cache, and a binary built from another
+# checkout's sources must never answer this one's call.
+CACHE_KEY=$(printf '%s\n' "$ROOT" | cksum | cut -d' ' -f1)
+BIN=${JG_CLASSIFY_BIN:-$CACHE/$CACHE_KEY/jg-classify}
 GO=${JG_CLASSIFY_GO:-go}
 
 # stale: 0 when the binary is absent or older than any source file.

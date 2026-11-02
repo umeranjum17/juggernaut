@@ -39,12 +39,37 @@ jg_current_version_branch() {  # <repo-dir>
       }'
 }
 
-# 0 when <branch> is the project's current version branch, so a caller can allow
-# the one pull request that is expected to target the default branch - the
-# release pull request, which has the version branch as its head.
-jg_version_branch_is_current() {  # <repo-dir> <branch>
-  local current
-  [ -n "${2-}" ] || return 1
-  current=$(jg_current_version_branch "$1") || return 1
-  [ "$2" = "$current" ]
+# A release branch the captain has frozen takes no new work.
+# The freeze is one fact in one place: the optional local, gitignored
+# config/version-branch-frozen beside config/version-branch, one branch name per
+# line (blank lines and # comments ignored). Every consumer reads that file
+# through the two functions below, so the scaffold, the spawn and the pull
+# request check can never disagree about what is frozen.
+# The single exception is work declared as a fix to the frozen release's own red
+# checks: --red-fix-of <branch> on bin/jg-brief.sh and bin/jg-spawn.sh, recorded
+# as red_fix_of=<branch> in the task record. It frees only the branch it names.
+
+# Print each frozen branch, one per line; nothing when the file is absent.
+jg_frozen_branches() {  # <config-dir>
+  local file=${1:-}/version-branch-frozen
+  [ -f "$file" ] || return 0
+  awk '{ sub(/#.*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if (length($0)) print }' "$file"
+}
+
+# Return 1 with one line on stderr when <base> is frozen and <red-fix-of> does
+# not name it; return 0 otherwise. The line names the frozen branch and the
+# allowed alternative: the project's current version branch when it differs from
+# the frozen one, else the red-fix declaration.
+jg_frozen_base_refusal() {  # <config-dir> <project-dir> <base> <red-fix-of> <caller>
+  local config=$1 project=$2 base=$3 red=${4:-} caller=$5 alt
+  [ -n "$base" ] || return 0
+  jg_frozen_branches "$config" | grep -qxF -- "$base" || return 0
+  [ "$red" != "$base" ] || return 0
+  alt=$(jg_current_version_branch "$project" 2>/dev/null) || alt=
+  if [ -n "$alt" ] && [ "$alt" != "$base" ]; then
+    echo "error: $caller: $base is frozen and takes no new work; target $alt instead, or declare a fix to $base's own red checks with --red-fix-of $base" >&2
+  else
+    echo "error: $caller: $base is frozen and takes no new work; target the next release branch instead, or declare a fix to $base's own red checks with --red-fix-of $base" >&2
+  fi
+  return 1
 }

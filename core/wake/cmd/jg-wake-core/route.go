@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -15,8 +19,12 @@ type env struct {
 	home        string // JG_HOME
 	defaultRoot string // the checkout holding defaults/wake-routing
 	queue       string // the read model, state/.wake-queue
+	actor       string // who is asking: main or branch
+	grant       string // the branch grant's row snapshot, when one is live
 	routing     string // JG_WAKE_ROUTING, an override rule file
 	configDir   string // JG_CONFIG_OVERRIDE, else <home>/config
+	libDir      string // JG_WAKE_LIB_DIR, the bin/ holding jg-watch.sh
+	procRoot    string // JG_PROC_ROOT_OVERRIDE, else /proc
 	now         func() int64
 }
 
@@ -83,14 +91,54 @@ func splitFields(line string, n int) []string {
 	return out
 }
 
-// routingFile is jg_wake_routing_file: the first existing of JG_WAKE_ROUTING, the home's own
-// config/wake-routing, and the checkout's defaults/wake-routing. Empty when there is none.
-func (e env) routingFile() string {
-	for _, f := range []string{e.routing, filepath.Join(e.homeOrRoot(), "config", "wake-routing"),
-		filepath.Join(e.defaultRoot, "defaults", "wake-routing")} {
-		if f != "" && isFile(f) {
-			return f
+// routingFiles is jg_wake_routing_files: the rule files in force, in priority order. A JG_WAKE_ROUTING
+// override replaces both; otherwise the home's own config/wake-routing comes first and the checkout's
+// defaults/wake-routing falls through behind it, so what the home does not name is the shared file's.
+func (e env) routingFiles() []string {
+	if e.routing != "" {
+		if isFile(e.routing) {
+			return []string{e.routing}
 		}
+		return nil
+	}
+	def := filepath.Join(e.defaultRoot, "defaults", "wake-routing")
+	var out []string
+	if home := filepath.Join(e.homeOrRoot(), "config", "wake-routing"); isFile(home) && !sameFile(home, def) {
+		out = append(out, home)
+	}
+	if isFile(def) {
+		out = append(out, def)
+	}
+	return out
+}
+
+// sameFile is `[ a -ef b ]`: both paths name one inode.
+func sameFile(a, b string) bool {
+	x, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	y, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(x, y)
+}
+
+// ruleLines is _jg_wake_rules: every rule line of every file, in priority order, so the first
+// match wins across the files and a home rule layers over the shared one.
+func (e env) ruleLines() []string {
+	var out []string
+	for _, f := range e.routingFiles() {
+		out = append(out, readLines(f)...)
+	}
+	return out
+}
+
+// routingFile is the file a caller reads for the rules in force, for the messages that name it.
+func (e env) routingFile() string {
+	if files := e.routingFiles(); len(files) > 0 {
+		return files[0]
 	}
 	return ""
 }
@@ -102,31 +150,27 @@ func (e env) homeOrRoot() string {
 	return e.defaultRoot
 }
 
-// ruleSet is _jg_wake_rule_set: the last `set <name> <digits>` of the rule file, else def.
+// ruleSet is _jg_wake_rule_set: the first `set <name> <digits>` in priority order, else def, so a
+// home's value overrides the shared one.
 func (e env) ruleSet(name string, def int64) int64 {
-	file := e.routingFile()
-	if file == "" {
-		return def
-	}
-	out := def
-	for _, line := range readLines(file) {
+	for _, line := range e.ruleLines() {
 		f := splitFields(line, 4)
 		if f[0] != "set" || f[1] != name || f[2] == "" || strings.Trim(f[2], "0123456789") != "" {
 			continue
 		}
 		if n, err := strconv.ParseInt(f[2], 10, 64); err == nil {
-			out = n
+			return n
 		}
 	}
-	return out
+	return def
 }
 
 // route is jg_wake_route_class: now, batch or silent. The first matching rule wins and no match
 // answers `now`, so a missing rule file can never hide an event. A status-file event is matched
 // against the newest line of its status file, so a rule can name the state word.
 func (e env) route(kind, key, payload string, depth int) string {
-	file := e.routingFile()
-	if file == "" {
+	lines := e.ruleLines()
+	if len(lines) == 0 {
 		return "now"
 	}
 	if strings.HasSuffix(key, ".status") {
@@ -136,7 +180,7 @@ func (e env) route(kind, key, payload string, depth int) string {
 			}
 		}
 	}
-	for _, rule := range readLines(file) {
+	for _, rule := range lines {
 		f := splitFields(rule, 4)
 		class, rkind, rkey, rpay := f[0], f[1], f[2], f[3]
 		if class == "" || strings.HasPrefix(class, "#") || class == "set" {
@@ -225,8 +269,106 @@ func (e env) cond(cond, key, payload string, depth int) bool {
 			}
 		}
 		return true
+	case "watcher-alive":
+		// A live watcher holds this home's watcher lock, so an old beacon is its predecessor's and
+		// nothing is left unwatched.
+		pid := wholeFile(filepath.Join(e.state, ".watch.lock", "pid"))
+		return e.pidAlive(pid) && e.watcherLockMatches(pid)
 	}
 	return false
+}
+
+// wholeFile is `$(cat path)`: the file's text without one trailing newline, empty when unreadable.
+func wholeFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(string(data), "\n")
+}
+
+func numeric(s string) bool { return s != "" && strings.Trim(s, "0123456789") == "" }
+
+// pidAlive is jg_pid_alive: a numeric pid the kernel still reports.
+func (e env) pidAlive(pid string) bool {
+	if !numeric(pid) {
+		return false
+	}
+	if e.procRoot != "" {
+		if _, err := os.Stat(filepath.Join(e.procRoot, pid)); err == nil {
+			return true
+		}
+	}
+	p, err := os.FindProcess(atoi(pid))
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
+}
+
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+// identOf is jg_pid_identity: what makes a pid the same process. Linux starttime with the whole
+// cmdline keeps PID reuse a mismatch; where /proc is absent the ps line stands in, pinned to one
+// locale and a command column that is never cut, because the value is written by one shell and
+// re-read by another.
+func (e env) identOf(pid string) (string, bool) {
+	if !numeric(pid) {
+		return "", false
+	}
+	root := e.procRoot
+	if root == "" {
+		root = "/proc"
+	}
+	data, err := os.ReadFile(filepath.Join(root, pid, "stat"))
+	if err == nil {
+		cmd, cerr := os.ReadFile(filepath.Join(root, pid, "cmdline"))
+		if cerr == nil && len(cmd) > 0 {
+			// After the final comm delimiter, index 19 is proc stat field 22 (starttime).
+			if i := strings.LastIndexByte(string(data), ')'); i >= 0 {
+				fields := strings.Fields(string(data)[i+1:])
+				if len(fields) >= 20 && numeric(fields[19]) {
+					key := "proc-starttime"
+					if runtime.GOOS == "linux" {
+						key = "linux-starttime"
+					}
+					return key + "=" + fields[19] + " cmdline-hex=" + hex.EncodeToString(cmd), true
+				}
+			}
+		}
+	}
+	command := exec.Command("ps", "-p", pid, "-o", "lstart=", "-o", "command=")
+	command.Env = append(os.Environ(), "COLUMNS=10000", "LC_ALL=C")
+	out, err := command.Output()
+	if err != nil {
+		return "", false
+	}
+	line := strings.TrimLeft(strings.TrimRight(string(out), "\n"), " \t")
+	if strings.TrimSpace(line) == "" {
+		return "", false
+	}
+	return line, true
+}
+
+// watcherLockMatches is jg_watcher_lock_matches_pid: the lock names this home and this checkout's
+// watcher, and the pid's recorded identity still describes that process.
+func (e env) watcherLockMatches(pid string) bool {
+	lock := filepath.Join(e.state, ".watch.lock")
+	if wholeFile(filepath.Join(lock, "jg-home")) != e.home || e.libDir == "" {
+		return false
+	}
+	if wholeFile(filepath.Join(lock, "watcher-path")) != filepath.Join(e.libDir, "jg-watch.sh") {
+		return false
+	}
+	recorded := wholeFile(filepath.Join(lock, "pid-identity"))
+	if recorded == "" {
+		return false
+	}
+	current, ok := e.identOf(pid)
+	return ok && current == recorded
 }
 
 // restartPass: the lead id was restarted by Main's own pass within restart-pass-seconds.
@@ -360,15 +502,34 @@ func appendLine(path, line string) {
 	f.WriteString(line + "\n")
 }
 
-// classify is the class jg_wake_append_locked gives an event before it raises or settles it: the
-// rule file's class, then a delivered `now` event repeated inside the re-alert window drops to
-// `batch`, and a `silent` event past the hourly cap drops to `batch`. key and payload are already
-// cleaned of tabs and newlines.
+// cleanField is jg_wake_clean_field: the field characters a row cannot carry become spaces.
+func cleanField(s string) string {
+	return strings.NewReplacer("\t", " ", "\r", " ", "\n", " ").Replace(s)
+}
+
+// identity is _jg_wake_identity: what makes an event the same event again. A status row's payload
+// lists files only, so its identity is the newest status line: the same line delivered twice is one
+// fact, and a new line is a new event.
+func (e env) identity(key, payload string) string {
+	if strings.HasSuffix(key, ".status") {
+		if p := filepath.Join(e.state, key); isFile(p) && !isLink(p) {
+			if line := lastLine(p); line != "" {
+				return cleanField(line)
+			}
+		}
+	}
+	return payload
+}
+
+// classify is the class jg_wake_append_locked gives an event before it raises or settles it: the rule
+// file's class, then a delivered `now` event repeated inside the re-alert window drops to `batch`, and
+// a `silent` event past the hourly cap drops to `batch`. key and payload are already cleaned.
 func (e env) classify(kind, key, payload string) string {
 	class := e.route(kind, key, payload, 0)
-	if !strings.HasSuffix(key, ".status") && class == "now" {
+	if class == "now" {
+		ident := e.identity(key, payload)
 		if data, err := os.ReadFile(filepath.Join(e.state, ".wake-realert")); err == nil && len(data) > 0 &&
-			bytes.Contains(data, []byte("\t"+kind+"\t"+key+"\t"+payload)) {
+			bytes.Contains(data, []byte("\t"+kind+"\t"+key+"\t"+ident)) {
 			class = "batch"
 		}
 	}
@@ -378,34 +539,16 @@ func (e env) classify(kind, key, payload string) string {
 	return class
 }
 
-// realertRecord is _jg_wake_realert_record: remember a delivered `now` event for the rule file's
+// realertRecord is _jg_wake_realert_record: remember a delivered event for the rule file's
 // re-alert-minutes only, so the same unchanged event cannot wake again inside that window.
 func (e env) realertRecord(kind, key, payload string) {
-	window := int64(30)
-	if file := e.routingFile(); file != "" {
-		for _, line := range readLines(file) {
-			f := splitFields(line, 4)
-			if f[0] == "set" && f[1] == "re-alert-minutes" && f[2] != "" && strings.Trim(f[2], "0123456789") == "" {
-				if n, err := strconv.ParseInt(f[2], 10, 64); err == nil {
-					window = n
-				}
-			}
-		}
-	}
+	window := e.ruleSet("re-alert-minutes", 30)
 	if window <= 0 {
 		return
 	}
 	cutoff := e.epoch() - window*60
 	rules := filepath.Join(e.state, ".wake-realert")
-	f, err := os.OpenFile(rules, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	_, werr := f.WriteString(strconv.FormatInt(cutoff+window*60, 10) + "\t" + kind + "\t" + key + "\t" + payload + "\n")
-	f.Close()
-	if werr != nil {
-		return
-	}
+	appendLine(rules, strconv.FormatInt(cutoff+window*60, 10)+"\t"+kind+"\t"+key+"\t"+e.identity(key, payload))
 	data, err := os.ReadFile(rules)
 	if err != nil {
 		return

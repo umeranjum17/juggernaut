@@ -97,7 +97,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -416,6 +415,7 @@ case "${1:-}" in
     tasks-axi ${ARGS[@]+"${ARGS[@]}"}
     _jg_rc=$?
     [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true
+    [ "$_jg_rc" -ne 0 ] || jg_backlog_ticket_publish "$DATA" add "${ARGS[1]-}"
     exit "$_jg_rc"
     ;;
 esac
