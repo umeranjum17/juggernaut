@@ -102,6 +102,41 @@ test_predicate_first_scan_watcher_is_fresh() {
   pass "jg_supervision_status: live first-scan watcher fresh; stalled or dead unhealthy"
 }
 
+test_predicate_first_scan_with_predecessor_beacon_is_fresh() {
+  local dir="$TMP_ROOT/pred-first-scan-old-beat" state sleeper identity
+  state="$dir/state"
+  mkdir -p "$state"
+  : > "$state/t.meta"
+  sleep 300 &
+  sleeper=$!
+  identity=$(bash -c '. "$1"; jg_pid_identity "$2"' _ "$ROOT/bin/jg-wake-lib.sh" "$sleeper")
+  mkdir -p "$state/.watch.lock"
+  printf '%s\n' "$sleeper" > "$state/.watch.lock/pid"
+  printf '%s\n' "$ROOT" > "$state/.watch.lock/jg-home"
+  printf '%s\n' "$ROOT/bin/jg-watch.sh" > "$state/.watch.lock/watcher-path"
+  printf '%s\n' "$identity" > "$state/.watch.lock/pid-identity"
+  # The predecessor's cycle ended on a wake and left its beacon behind; a long
+  # handling turn then aged it past the grace before this watcher claimed the lock.
+  touch -d '400 seconds ago' "$state/.last-watcher-beat"
+  # shellcheck disable=SC2016 # expands inside the probe shell, not here
+  local probe='. "$1/bin/jg-wake-lib.sh"; . "$1/bin/jg-supervision-lib.sh"; jg_supervision_status "$2" 300; echo "$JG_SUP_WATCHER_FRESH $JG_SUP_BEACON_DESC"'
+  local live own_stale stalled dead
+  live=$(JG_HOME="$ROOT" bash -c "$probe" _ "$ROOT" "$state")
+  # The same stale beacon written by this holder's own slow cycle is not a first scan.
+  touch -d '500 seconds ago' "$state/.watch.lock/pid"
+  own_stale=$(JG_HOME="$ROOT" bash -c "$probe" _ "$ROOT" "$state")
+  touch "$state/.watch.lock/pid"
+  stalled=$(JG_HOME="$ROOT" JG_WATCHER_STALL_BOUND=0 bash -c "$probe" _ "$ROOT" "$state")
+  kill "$sleeper" 2>/dev/null
+  wait "$sleeper" 2>/dev/null
+  dead=$(JG_HOME="$ROOT" bash -c "$probe" _ "$ROOT" "$state")
+  case "$live" in "true starting"*) ;; *) fail "live first-scan watcher over a predecessor beacon read: $live" ;; esac
+  case "$own_stale" in "false "*) ;; *) fail "holder with its own stale beacon read: $own_stale" ;; esac
+  case "$stalled" in "false "*) ;; *) fail "stalled first-scan watcher over a predecessor beacon read: $stalled" ;; esac
+  case "$dead" in "false "*) ;; *) fail "dead first-scan watcher over a predecessor beacon read: $dead" ;; esac
+  pass "jg_supervision_status: live first-scan watcher over a predecessor's stale beacon is fresh; own-stale, stalled or dead is unhealthy"
+}
+
 test_predicate_queue_pending_flag() {
   local state="$TMP_ROOT/pred-queue/state"
   mkdir -p "$state"
@@ -2360,6 +2395,7 @@ test_predicate_unhealthy_no_beacon
 test_predicate_unhealthy_stale_beacon
 test_predicate_healthy_fresh_beacon
 test_predicate_first_scan_watcher_is_fresh
+test_predicate_first_scan_with_predecessor_beacon_is_fresh
 test_predicate_queue_pending_flag
 test_predicate_x_mode_needs_supervision
 test_predicate_source_needs_supervision

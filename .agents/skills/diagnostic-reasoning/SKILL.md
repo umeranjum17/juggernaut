@@ -51,3 +51,31 @@ Before acting on the report, verify that its claimed cause explains the end-user
 If a load-bearing element is missing, route a focused follow-up investigation instead of treating confidence or implementation detail as proof.
 A diagnosis or implementation-ready recommendation is evidence, not authorization to change code.
 Implementation still requires the captain's request or another existing lifecycle authority, and the reproduction should become the regression test when a fix is authorized.
+
+## Vet a measured number before reporting it
+
+Apply this to every timing, cost, count, or rate you are about to report or act on, such as merge minutes, quota use, or a test duration.
+A number is a claim, so answer these before it leaves your hands:
+
+- What exactly was measured, and over which start and end points?
+- How many runs back it, and how far apart are the best and worst?
+- Was the machine otherwise idle, or did other lanes share it?
+- What is the baseline, measured the same way on the same inputs?
+- Does the number include setup, cache warm-up, or waiting that the reader will not expect?
+- Could a different explanation produce the same figure?
+- Can the reader repeat it with the command you used?
+
+Report the number with its run count and conditions, or label it unverified.
+One run is an anecdote, not a rate.
+
+## After two failed fixes, test the premise
+
+Two fixes that failed for different reasons often share one belief you never checked.
+Before a third attempt, stop and write that belief as one plain sentence, for example "the file is read before the lock is taken".
+List the fixes that depend on it, then design the smallest check that could prove it false.
+Run that check first.
+If the premise is false, discard the fixes built on it and restart from what the check showed.
+If it holds, say so, and look for a second shared belief before you try again.
+The fix budget in the brief still applies: a premise check does not reset the count.
+
+Premise habit adapted from pstack, MIT licence, by Lauren Tan (github.com/backnotprop/pstack).

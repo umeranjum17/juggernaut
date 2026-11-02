@@ -40,6 +40,32 @@ print_limits() {
   TEST_SPEED_LIMITS_FILE=$1 bash "$RUNNER" --show-limits 2>/dev/null
 }
 
+test_shards_split_a_selection_without_losing_or_repeating_a_script() {
+  local scripts k out all seen rc=0
+  scripts="tests/jg-ship-local.test.sh tests/jg-pr-wait.test.sh tests/jg-brief.test.sh tests/jg-send-inbox.test.sh tests/jg-prompt-gate.test.sh tests/jg-owner-rules.test.sh tests/jg-mail.test.sh"
+  # shellcheck disable=SC2086  # the script list is a deliberate word split
+  all=$(bash "$RUNNER" --list $scripts | LC_ALL=C sort)
+  seen=
+  for k in 1 2 3; do
+    # shellcheck disable=SC2086
+    out=$(bash "$RUNNER" --list --shard "${k}of3" $scripts) || fail "shard ${k}of3 was refused: $out"
+    # shellcheck disable=SC2086
+    [ "$out" = "$(bash "$RUNNER" --list --shard "${k}of3" $scripts)" ] || fail "shard ${k}of3 is not the same on a second run"
+    seen=$(printf '%s\n%s\n' "$seen" "$out")
+  done
+  assert_equals "$all" "$(printf '%s\n' "$seen" | sed '/^$/d' | LC_ALL=C sort)" \
+    'the shards together must be exactly the selection, each script once'
+  out=$(bash "$RUNNER" --shard 3of3 tests/jg-pr-wait.test.sh 2>&1) || rc=$?
+  assert_equals 0 "$rc" "a shard with nothing in it must pass: $out"
+  assert_contains "$out" 'nothing to run' 'an empty shard must say it ran nothing'
+  for k in 0of3 4of3 1of0 abc 2of; do
+    rc=0
+    bash "$RUNNER" --list --shard "$k" tests/jg-pr-wait.test.sh >/dev/null 2>&1 || rc=$?
+    [ "$rc" -ne 0 ] || fail "the shard spec '$k' was accepted"
+  done
+  pass 'shards split a selection into disjoint parts that together are the whole of it, and bad specs are refused'
+}
+
 test_the_e2e_limit_is_60_seconds_in_config() {
   local out
   out=$(print_limits "$ROOT/defaults/test-speed-limits") ||
@@ -153,6 +179,7 @@ test_a_weight_cap_defers_slow_suites_and_names_them() {
   pass 'a weight cap defers slow suites and names them'
 }
 
+test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
 test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time
 test_the_unit_limit_is_5_seconds_in_config
