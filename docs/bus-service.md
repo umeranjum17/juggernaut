@@ -111,11 +111,16 @@ check-limits <config>` runs the same check on any file.
 Clients authenticate as their own home. The machine carries one account per home,
 so every client call - `bin/jg-kv-lib.sh`'s, and the wake and reply paths that share
 it - authenticates as the home that owns the state directory, with the name and the
-password in `state/bus/<account>.pass`. The name and that path come from ONE function
-(`bin/jg-bus.sh account`), the one the accounts file is written from, and the stream
-client, the sidecar login and `bin/jg-kv-lib.sh` all ask it, so the account scheme cannot
-change on the server and miss a client (the #415 rename did, and every client was
-refused). Each home keeps its password in its own `state/bus`, and the generator
+password in `state/bus/<account>.pass`. `bin/jg-bus.sh login` is the one answer they ask
+for, and it answers only when the machine's accounts file really holds that home's
+account, so a client connects as nobody on a server that runs no accounts and is never
+refused as a user the server does not know. The name itself comes from ONE registry: the
+bus owner's `data/squad_leads.md`, the registry its accounts file is generated from, read
+by the server block and by every client alike. A home that keeps no registry of its own
+therefore names itself exactly as the server recorded it; read from its own empty one it
+named itself `home-<hash of its path>`, which the server refused on every call
+(Authorization Violation), and that is how a registered home was locked out of the
+machine's own bus. Each home keeps its password in its own `state/bus`, and the generator
 writes a sibling home's account from that home's file. A client that connects as the
 empty user is refused.
 
@@ -141,11 +146,12 @@ service was down is delivered when it returns:
 | `jg-wake-engine` | the wake raises of this home on `JG_WAKE` (the endpoint `bin/jg-wake-bus.sh endpoint` names) | runs the render, so `state/.wake-queue` holds the wake without a caller running a render |
 | `jg-router` | `<subject-prefix>.reply` on `CAPTAIN` (`jg.captain.reply`), body `{"key","at","answer"[,"label"]}` | routes the reply by `jg-bus reply`'s rule, the board's own route |
 
-Both log in as the home's own account (`bin/jg-bus.sh account`) when the home has an accounts
-server, and `bin/jg-wake-bus.sh` does the same, publishing on `jg.<account>.wake.raise`; a bare
-server (a test, a detached stack) takes no login. Before this, the client logged in under the
-folder name the account no longer carries, so on the unit's server the stack stopped at the
-CAPTAIN stream and the wake bus could not publish.
+Both log in as the home's own account (`bin/jg-bus.sh login`) when the machine's accounts file
+holds it, and `bin/jg-wake-bus.sh` does the same, publishing on `jg.<account>.wake.raise`; a bare
+server (a test, a detached stack) takes no login. Before this, the wake client decided from its
+own leftover `state/bus/accounts.conf` and the other consumers named the home from a registry of
+their own, so on the unit's server the name presented and the name recorded could differ and the
+bus could not publish.
 
 A failure other than "nothing arrived" ends the process with its reason, and the unit's
 `Restart=always` brings it back; both units require the NATS unit. The stack restarts a

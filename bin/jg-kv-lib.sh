@@ -15,9 +15,10 @@
 #   auth     the machine runs one account per home, so a client that connects as the
 #            empty user is refused. jg_kv_run authenticates every call as the home that
 #            owns the state directory, with the name and the credentials file that
-#            `bin/jg-bus.sh account` prints - the same function core/bus/cmd/jg-bus
-#            writes the machine's accounts file from (<state>/bus/<account>.pass). A machine with no such file
-#            (an unauthenticated single-home server) is called without credentials.
+#            `bin/jg-bus.sh login` prints - the one function core/bus/cmd/jg-bus writes the
+#            machine's accounts file from, answering only when that file holds the account
+#            (<state>/bus/<account>.pass). A machine with no accounts, or a home that has not
+#            joined one, gets no credentials at all.
 #   gate     jg_kv_ready fails, printing the reason into JG_KV_WHY, when either
 #            the client or the server is missing. It never decides whether that
 #            is a skip or a refusal: the shadow mirror skips, a live lease
@@ -76,17 +77,19 @@ jg_kv_resolve() { # <home-dir>
 
 # jg_kv_login <state-dir>: this home's account name and its credentials file, tab
 # separated, asked of the one function that also writes the server's accounts block
-# (bin/jg-bus.sh account), so the name and the password can never drift from what the
-# server loaded. A machine where that command cannot answer (no Go toolchain and no
-# built command) keeps no credentials for this home, which is how an unauthenticated
-# server is called without them. The answer is kept for the rest of the shell.
+# (bin/jg-bus.sh login), so the name and the password can never drift from what the
+# server loaded, and answered only when that block really holds this home's account. A
+# machine where that command cannot answer (no Go toolchain and no built command, no
+# accounts, or this home has not joined) keeps no credentials for this home, which is how
+# an unauthenticated server is called without them. The answer is kept for the rest of
+# the shell.
 JG_KV_LOGIN_STATE=
 JG_KV_LOGIN=
 jg_kv_login() { # <state-dir>
   local state=$1 bus
   if [ "$JG_KV_LOGIN_STATE" != "$state" ]; then
     bus=${BASH_SOURCE[0]%/*}/jg-bus.sh
-    JG_KV_LOGIN=$(JG_HOME=$(dirname -- "$state") JG_STATE_OVERRIDE=$state "$bus" account 2>/dev/null) || JG_KV_LOGIN=
+    JG_KV_LOGIN=$(JG_HOME=$(dirname -- "$state") JG_STATE_OVERRIDE=$state "$bus" login 2>/dev/null) || JG_KV_LOGIN=
     JG_KV_LOGIN_STATE=$state
   fi
   [ -n "$JG_KV_LOGIN" ] && printf '%s\n' "$JG_KV_LOGIN"
