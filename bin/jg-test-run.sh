@@ -718,6 +718,7 @@ tests/jg-grok-continuity-live-e2e.test.sh 53
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 57
 tests/jg-harness-quirks.test.sh 321
 tests/jg-herdr-lead-label.test.sh 99
+tests/jg-classify-go.test.sh 3000
 tests/jg-herdr-go.test.sh 3000
 tests/jg-guard-host.test.sh 829
 tests/jg-herdr-names.test.sh 1061
@@ -2388,6 +2389,17 @@ cleanup_run() {
 }
 
 trap cleanup_run EXIT
+
+# Build the status classifier once for the whole run. Its launcher builds on first use into the
+# calling home's state directory, and every test makes a fresh state directory, so without this
+# each watcher test would pay a cold Go build inside its own timing window. A run that sets
+# JG_CLASSIFY_BIN itself, or has no Go toolchain, keeps the launcher's own behaviour.
+if [ -z "${JG_CLASSIFY_BIN:-}" ] && command -v "${JG_CLASSIFY_GO:-go}" >/dev/null 2>&1; then
+  if JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify" "$ROOT/bin/jg-classify.sh" is-terminal x >/dev/null 2>&1 \
+    || [ -x "$RUN_TMP/classify/jg-classify" ]; then
+    export JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify"
+  fi
+fi
 
 RUN_ID="jg-test-run-${RUN_STARTED_MS}-$$"
 TOTAL=0
