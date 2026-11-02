@@ -12,6 +12,8 @@ unset _jg_old _jg_new 2>/dev/null || true
 set -eu
 if ! command -v sign-off-axi >/dev/null 2>&1; then echo 'SKIP gate contract: sign-off-axi is not installed'; exit 0; fi
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/policy-test-env.sh
+. "$here/../../lib/policy-test-env.sh"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 home=$work/home

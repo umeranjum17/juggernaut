@@ -12,6 +12,8 @@ unset _jg_old _jg_new 2>/dev/null || true
 # in the home or the main home). The feature publisher is a recording stub; the old paths are tripwires that fail the run.
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+# shellcheck source=lib/policy-test-env.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../lib/policy-test-env.sh"
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
 export HOME=$d/home XDG_DATA_HOME=$d/xdg TMPDIR=$d JG_HOME=$d/fm JG_MAIN_HOME=$d/main JG_ADDONS_DIR=$d/addons CALLS=$d

@@ -12,6 +12,8 @@ unset _jg_old _jg_new 2>/dev/null || true
 
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+# shellcheck source=lib/policy-test-env.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../lib/policy-test-env.sh"
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
 mkdir -p "$d/bin" "$d/home" "$d/data" "$d/fm/state" "$d/fm/data/evidence" "$d/addons/receipts/bin" "$d/main" "$d/cwd/data/evidence"

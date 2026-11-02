@@ -119,17 +119,24 @@ rm -f -- "$payload"
 # Lint: the newest checks-gate row for this PR url at this head, from checks-lint (read, never rerun), must be a
 # `pass`: a later fail takes the verdict back, and a `card` row is not a verdict. A local merge's rows
 # name the report file and carry head `-`, so they match on the task's own folder instead.
-awk -F'\t' -v pr="$4" -v head="$3" -v task="$1" '
-  $4 == "card" { next }
-  pr != "-" { if ($2 == pr && $3 == head) f = ($4 == "pass"); next }
-  $3 == head || ($3 == "-" && $2 !~ /^https?:/ && $2 ~ ("/" task "/[^/]*$")) { f = ($4 == "pass") }
-  END { exit !f }' "$JG_HOME/data/checks-gate.log" 2>/dev/null || {
-  src=$4; [ "$4" != - ] || src="<report file>"
+# policy/gate/lint_row.rego decides; the log is only read into its fact document here, and an evaluator that
+# cannot run refuses like a missing pass does.
+guard_host=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)/bin/jg-guard-host.sh
+lint_log=$JG_HOME/data/checks-gate.log
+[ -r "$lint_log" ] || lint_log=/dev/null
+src=$4; [ "$4" != - ] || src="<report file>"
+if ! lint_verdict=$(jq -Rn --arg pr "$4" --arg head "$3" --arg task "$1" \
+  '{pr: $pr, head: $head, task: $task, rows: [inputs | split("\t") | select(length >= 4) | {src: .[1], head: .[2], verdict: .[3]}]}' \
+  "$lint_log" | "$guard_host" eval gate.lint_row 2>&1); then
+  echo "owner-rules: cannot evaluate the checks-lint rule for $src at $3: ${lint_verdict:-no answer}"
+  exit 1
+fi
+if [ "$(jq -r '.ok' <<<"$lint_verdict" 2>/dev/null)" != true ]; then
   lint=${JG_CHECKS_LINT:-${XDG_DATA_HOME:-$HOME/.local/share}/jg-merge-on-green/checks-lint.sh}
   [ -x "$lint" ] || lint=${JG_MAIN_HOME:-$HOME/juggernaut}/config/jg-checks-lint.sh
   echo "owner-rules: no checks-lint PASS for $src at $3; run JG_HOME=$JG_HOME $lint $src $JG_HOME/data/$1 then merge again"
   exit 1
-}
+fi
 # Local merges retain the existing receipt/lint behavior; only PRs have board keys.
 [ "$4" != - ] || exit 0
 # Canary config lists exact JG_HOME paths; without it every home keeps today's gate behavior.

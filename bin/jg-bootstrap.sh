@@ -895,6 +895,11 @@ bus_release_asset() {
     daprd) printf 'https://github.com/dapr/dapr/releases/download/v%s/daprd_%s_%s.tar.gz .tar.gz\n' \
       "$version" "$os" "$arch"; return 0 ;;
     ntfy) repo=binwiederhier/ntfy; stem="ntfy_${version}_${os}_$arch"; ext=tar.gz ;;
+    # The policy engine ships as one bare binary, not an archive; the second field "-.bin" says so.
+    opa)
+      stem="opa_${os}_$arch"
+      { [ "$os" = darwin ] && [ "$arch" = amd64 ]; } || stem=${stem}_static
+      printf 'https://github.com/open-policy-agent/opa/releases/download/v%s/%s -.bin\n' "$version" "$stem"; return 0 ;;
     *) return 1 ;;
   esac
   printf '%s %s.%s\n' \
@@ -916,6 +921,7 @@ bus_tool_install() {
   url=${asset% *}
   stem=${asset#* }
   case "$stem" in
+    -.bin) ext=bin; stem= ;;
     *.tar.gz) ext=tar.gz; stem=${stem%.tar.gz} ;;
     *.zip) ext=zip; stem=${stem%.zip} ;;
     *) echo "error: unknown archive for $tool" >&2; return 1 ;;
@@ -928,6 +934,7 @@ bus_tool_install() {
     rm -rf -- "$tmp"; echo "error: download failed: $out" >&2; return 1
   fi
   case "$ext" in
+    bin) out= ;;
     zip)
       if command -v unzip >/dev/null 2>&1; then
         out=$(unzip -q -o -d "$tmp" "$tmp/asset" 2>&1)
@@ -939,6 +946,10 @@ bus_tool_install() {
       ;;
     *) out=$(tar -xzf "$tmp/asset" -C "$tmp" 2>&1) ;;
   esac
+  [ "$ext" != bin ] || { mkdir -p "$dir" && chmod 0755 "$tmp/asset" && mv -f -- "$tmp/asset" "$dest"; } || { rm -rf -- "$tmp"; return 1; }
+  if [ "$ext" = bin ]; then
+    rm -rf -- "$tmp"; printf '%s: %s\n' "$tool" "$("$dest" version 2>&1 | head -n 1)"; return 0
+  fi
   if [ -n "${out:-}" ] && [ ! -f "$tmp/$stem/$tool" ]; then
     rm -rf -- "$tmp"; echo "error: unpack failed: $out" >&2; return 1
   fi
@@ -959,7 +970,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
-    nats-server|nats|daprd|ntfy) bus_install_hint "$1" ;;
+    nats-server|nats|daprd|ntfy|opa) bus_install_hint "$1" ;;
     learn-from-mistakes) echo "npm install -g $(jg_pin_npm learn-from-mistakes) && ln -sf learn-from-mistakes-axi \"\$(dirname \"\$(command -v learn-from-mistakes-axi)\")/learn-from-mistakes\"" ;;
     *)
       # Every npm tool installs the exact build its toolchain.versions row names, so this
@@ -995,7 +1006,7 @@ missing_tool_diagnostic() {
 # jg_backend_required_tools (bin/jg-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi learn-from-mistakes done-done sign-off-axi nats-server nats"
+COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi learn-from-mistakes done-done sign-off-axi nats-server nats opa"
 BACKEND=$(jg_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(jg_backend_required_tools "$BACKEND"); then
@@ -1566,7 +1577,7 @@ if [ "${1:-}" = "install" ]; then
     # they install through the one function that owns those rules rather than
     # through a command string.
     case $t in
-      nats-server|nats|daprd|ntfy)
+      nats-server|nats|daprd|ntfy|opa)
         bus_tool_install "$t" || { echo "error: installing $t failed" >&2; exit 1; }
         continue
         ;;

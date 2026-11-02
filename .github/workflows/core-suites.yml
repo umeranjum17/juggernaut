@@ -52,6 +52,15 @@ jobs:
         with:
           go-version-file: core/guard-host/go.mod
           cache: false
+      # The merge gate's rules are Rego (policy/gate/): the lint and the owner-rules gate ask the guard
+      # host, which runs OPA at the version toolchain.versions pins.
+      - name: Install the pinned OPA
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          ../bin/jg-bootstrap.sh install opa
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi for fork lifecycle tests
         run: npm install --global tasks-axi
       - name: Wait-timers hook journey
@@ -246,6 +255,14 @@ jobs:
       - name: Checks lint moved-similarity test
         run: bash merge-on-green/tests/checks-lint-moved-similarity.test.sh
 
+      # The merge gate's Rego rules: their own contract tests, then the recorded decisions through the real lint
+      # and the real owner-rules fact gathering.
+      - name: Merge-gate policy contract tests
+        run: opa test ../policy
+      - name: Checks lint recorded-decision cases
+        run: bash merge-on-green/tests/checks-lint-cases.test.sh
+      - name: Owner-rules lint-row recorded decisions
+        run: bash owner-rules/tests/lint-row-recorded.test.sh
       - name: No old receipt path test
         run: bash merge-on-green/tests/no-old-receipt-path.test.sh
       # Fixture home and gate logs; no merge runs.
