@@ -134,9 +134,83 @@ test_live_lane_replays() (
   pass "a live task with a missing status still replays its $kind alarm"
 )
 
+# A --take-over successor starts over the predecessor's beacon and runs a first
+# scan longer than the grace. Its beacon must keep advancing through that scan,
+# and a watcher killed afterwards must still raise the alarm exactly once.
+test_takeover_first_scan() (
+  local dir state arm1='' arm2='' i n p out max=0 age marks banners warnings
+  dir=$(make_case takeover)
+  state="$dir/state"
+  export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
+    JG_CHECK_INTERVAL=0 JG_HEARTBEAT=999999 JG_GUARD_GRACE=3 JG_SUPERVISION_MODEL=persistent
+  export PATH="$dir/fakebin:$PATH"
+  # shellcheck source=bin/jg-wake-lib.sh
+  . "$ROOT/bin/jg-wake-lib.sh"
+  trap 'for p in $arm1 $arm2; do kill "$p" 2>/dev/null; done; kill "$(cat "$state/.watch.lock/pid" 2>/dev/null)" 2>/dev/null; wait 2>/dev/null || true' EXIT
+  printf 'project=x\nkind=ship\n' > "$state/lane.meta"
+  # Five one-second checks make a scan of about five seconds, longer than the
+  # three-second grace, with a finished unit every second.
+  for n in 1 2 3 4 5; do
+    cat > "$state/slow$n.check.sh" <<SH
+#!/usr/bin/env bash
+sleep 1
+printf x >> "$dir/units"
+SH
+    chmod 0700 "$state/slow$n.check.sh"
+    "$ROOT/bin/jg-check-register.sh" "slow$n" >/dev/null || fail "could not register slow$n"
+  done
+  "$ROOT/bin/jg-watch-arm.sh" > "$dir/arm1.out" 2>&1 &
+  arm1=$!
+  for ((i=0; i<300; i++)); do
+    grep -q '^watcher: started' "$dir/arm1.out" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q '^watcher: started' "$dir/arm1.out" || fail "first arm never started: $(cat "$dir/arm1.out")"
+  # A whole first scan has finished, so the predecessor's beacon is on disk.
+  for ((i=0; i<300; i++)); do [ "$(wc -c < "$dir/units" 2>/dev/null || echo 0)" -ge 5 ] && break; sleep 0.1; done
+  : > "$dir/units"
+  "$ROOT/bin/jg-watch-arm.sh" --take-over "$arm1" > "$dir/arm2.out" 2>&1 &
+  arm2=$!
+  for ((i=0; i<300; i++)); do
+    grep -q '^watcher: started' "$dir/arm2.out" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q '^watcher: started' "$dir/arm2.out" || fail "take-over never started: $(cat "$dir/arm2.out")"
+  # Sample the beacon across more than one grace of the successor's first scan.
+  marks=0
+  for ((i=0; i<45; i++)); do
+    age=$(jg_path_age "$state/.last-watcher-beat")
+    [ "$age" -le "$max" ] || max=$age
+    if [ "$(wc -c < "$dir/units" 2>/dev/null || echo 0)" -ge 1 ]; then marks=$((marks + 1)); fi
+    healthy "$dir" || [ "$(wc -c < "$dir/units" 2>/dev/null || echo 0)" -lt 1 ] \
+      || fail "take-over successor read DOWN mid first scan (beacon ${age}s, grace 3s)"
+    sleep 0.1
+  done
+  [ "$marks" -ge 20 ] || fail "fixture: the first scan did not run past the grace window ($marks samples)"
+  echo "# beacon age peaked at ${max}s through the first scan (grace 3s)"
+  [ "$max" -lt 3 ] || fail "beacon aged to ${max}s through the take-over's first scan"
+  banners=$("$ROOT/bin/jg-guard.sh" 2>&1 >/dev/null | grep -c 'WATCHER DOWN')
+  [ "$banners" -eq 0 ] || fail "guard alarmed on a live take-over successor"
+
+  # The other direction: a killed watcher is still a real alarm, raised once.
+  kill -KILL "$arm2" "$(cat "$state/.watch.lock/pid")" "$arm1" 2>/dev/null
+  arm1='' arm2=''
+  sleep 4
+  banners=0 warnings=0
+  for n in 1 2 3; do
+    out=$("$ROOT/bin/jg-guard.sh" 2>&1 >/dev/null)
+    banners=$((banners + $(printf '%s\n' "$out" | grep -c 'WATCHER DOWN')))
+    warnings=$((warnings + $(printf '%s\n' "$out" | grep -c 'watcher still down')))
+  done
+  [ "$banners" -eq 1 ] || fail "killed watcher raised $banners full alarms across three checks, wanted 1"
+  [ "$warnings" -eq 2 ] || fail "killed watcher repeats were not the one-line reminder ($warnings)"
+  pass "take-over first scan keeps its beacon fresh; a killed watcher alarms once"
+)
+
 result=0
 test_handoff || result=1
 test_cleaned_lane || result=1
 test_live_lane_replays signal || result=1
 test_live_lane_replays stale || result=1
+test_takeover_first_scan || result=1
 exit "$result"
