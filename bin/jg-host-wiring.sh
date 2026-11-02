@@ -60,7 +60,7 @@ plan=(
   pipeline-literal-delete:plain
   pipeline-quota-failover:plain
   route-change:plain
-  account-pool:verify
+  account-pool:home
   claude-accounts:home-nodry
   quota-axi-pool:plain
   git-identity:home

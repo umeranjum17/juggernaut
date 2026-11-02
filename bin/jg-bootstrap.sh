@@ -894,6 +894,9 @@ bus_release_asset() {
     # The sidecar's archive holds the binary at its root (an empty directory name).
     daprd) printf 'https://github.com/dapr/dapr/releases/download/v%s/daprd_%s_%s.tar.gz .tar.gz\n' \
       "$version" "$os" "$arch"; return 0 ;;
+    # The workflow engine's timer service; its archive holds a binary named `scheduler`.
+    dapr-scheduler) printf 'https://github.com/dapr/dapr/releases/download/v%s/scheduler_%s_%s.tar.gz .tar.gz\n' \
+      "$version" "$os" "$arch"; return 0 ;;
     ntfy) repo=binwiederhier/ntfy; stem="ntfy_${version}_${os}_$arch"; ext=tar.gz ;;
     # The policy engine ships as one bare binary, not an archive; the second field "-.bin" says so.
     opa)
@@ -916,7 +919,8 @@ bus_install_hint() {  # <tool>
 
 # bus_tool_install <tool>: download the pinned archive and install the binary.
 bus_tool_install() {
-  local tool=$1 asset url stem ext dir dest tmp out
+  local tool=$1 asset url stem ext dir dest tmp out member=$1
+  [ "$tool" != dapr-scheduler ] || member=scheduler
   asset=$(bus_release_asset "$tool") || { echo "error: no pinned release for $tool" >&2; return 1; }
   url=${asset% *}
   stem=${asset#* }
@@ -950,16 +954,22 @@ bus_tool_install() {
   if [ "$ext" = bin ]; then
     rm -rf -- "$tmp"; printf '%s: %s\n' "$tool" "$("$dest" version 2>&1 | head -n 1)"; return 0
   fi
-  if [ -n "${out:-}" ] && [ ! -f "$tmp/$stem/$tool" ]; then
+  if [ -n "${out:-}" ] && [ ! -f "$tmp/$stem/$member" ]; then
     rm -rf -- "$tmp"; echo "error: unpack failed: $out" >&2; return 1
   fi
-  if [ ! -f "$tmp/$stem/$tool" ]; then
+  if [ ! -f "$tmp/$stem/$member" ]; then
     rm -rf -- "$tmp"; echo "error: $tool is not in $url" >&2; return 1
   fi
   mkdir -p "$dir" || { rm -rf -- "$tmp"; return 1; }
-  chmod 0755 "$tmp/$stem/$tool" || { rm -rf -- "$tmp"; return 1; }
-  mv -f -- "$tmp/$stem/$tool" "$dest" || { rm -rf -- "$tmp"; return 1; }
+  chmod 0755 "$tmp/$stem/$member" || { rm -rf -- "$tmp"; return 1; }
+  mv -f -- "$tmp/$stem/$member" "$dest" || { rm -rf -- "$tmp"; return 1; }
   rm -rf -- "$tmp"
+  # The scheduler has no version flag, so the pin it was installed at is its version.
+  if [ "$tool" = dapr-scheduler ]; then
+    jg_pin_version "$tool" >"$dest.version" || return 1
+    printf '%s: %s\n' "$tool" "$(cat "$dest.version")"
+    return 0
+  fi
   printf '%s: %s\n' "$tool" "$("$dest" --version 2>&1 | head -n 1)"
 }
 
@@ -970,7 +980,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
-    nats-server|nats|daprd|ntfy|opa) bus_install_hint "$1" ;;
+    nats-server|nats|daprd|dapr-scheduler|ntfy|opa) bus_install_hint "$1" ;;
     learn-from-mistakes) echo "npm install -g $(jg_pin_npm learn-from-mistakes) && ln -sf learn-from-mistakes-axi \"\$(dirname \"\$(command -v learn-from-mistakes-axi)\")/learn-from-mistakes\"" ;;
     *)
       # Every npm tool installs the exact build its toolchain.versions row names, so this
@@ -1045,7 +1055,11 @@ treehouse_supports_lease() {
 tool_version_parts() {  # <tool>
   local tool=$1 output parts major minor patch extra
   command -v "$tool" >/dev/null 2>&1 || return 1
-  output=$("$tool" --version 2>/dev/null) || return 1
+  if [ "$tool" = dapr-scheduler ]; then
+    output=$(cat "$(command -v "$tool").version" 2>/dev/null) || return 1
+  else
+    output=$("$tool" --version 2>/dev/null) || return 1
+  fi
   parts=$(printf '%s\n' "$output" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
   IFS=' ' read -r major minor patch extra <<< "$parts"
   [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
@@ -1577,7 +1591,7 @@ if [ "${1:-}" = "install" ]; then
     # they install through the one function that owns those rules rather than
     # through a command string.
     case $t in
-      nats-server|nats|daprd|ntfy|opa)
+      nats-server|nats|daprd|dapr-scheduler|ntfy|opa)
         bus_tool_install "$t" || { echo "error: installing $t failed" >&2; exit 1; }
         continue
         ;;

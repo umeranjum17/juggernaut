@@ -475,6 +475,7 @@ family_for_basename() {
       printf '%s\n' live-harness-optin
       ;;
     jg-backend-tmux-smoke.test.sh|jg-control.test.sh|jg-send-inbox.test.sh|\
+    jg-doorbell-missing-record.test.sh|\
     jg-spawn-dispatch-profile.test.sh)
       printf '%s\n' backend-dispatch
       ;;
@@ -703,10 +704,12 @@ tests/jg-compat-old-records.test.sh 2167
 tests/jg-composer-matrix-live-e2e.test.sh 59
 tests/jg-control.test.sh 91759
 tests/jg-cursor-primary-live-e2e.test.sh 57
+tests/jg-dapr-workflow.test.sh 150
 tests/jg-decisions-reconcile.test.sh 3240
 tests/jg-design-gate-first-draft.test.sh 680
 tests/jg-design-gate.test.sh 467
 tests/jg-devin-signals-live-e2e.test.sh 65
+tests/jg-doorbell-missing-record.test.sh 5000
 tests/jg-escalation-chain.test.sh 120130
 tests/jg-escalation-workflows.test.sh 4000
 tests/jg-fast-evals.test.sh 704
@@ -718,6 +721,7 @@ tests/jg-grok-continuity-live-e2e.test.sh 53
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 57
 tests/jg-harness-quirks.test.sh 321
 tests/jg-herdr-lead-label.test.sh 99
+tests/jg-classify-go.test.sh 3000
 tests/jg-herdr-go.test.sh 3000
 tests/jg-guard-host.test.sh 829
 tests/jg-herdr-names.test.sh 1061
@@ -2389,6 +2393,17 @@ cleanup_run() {
 
 trap cleanup_run EXIT
 
+# Build the status classifier once for the whole run. Its launcher builds on first use into the
+# calling home's state directory, and every test makes a fresh state directory, so without this
+# each watcher test would pay a cold Go build inside its own timing window. A run that sets
+# JG_CLASSIFY_BIN itself, or has no Go toolchain, keeps the launcher's own behaviour.
+if [ -z "${JG_CLASSIFY_BIN:-}" ] && command -v "${JG_CLASSIFY_GO:-go}" >/dev/null 2>&1; then
+  if JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify" "$ROOT/bin/jg-classify.sh" is-terminal x >/dev/null 2>&1 \
+    || [ -x "$RUN_TMP/classify/jg-classify" ]; then
+    export JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify"
+  fi
+fi
+
 RUN_ID="jg-test-run-${RUN_STARTED_MS}-$$"
 TOTAL=0
 FAILED=0
@@ -2503,6 +2518,12 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   unset JG_HOME JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_ROOT_OVERRIDE \
     JG_PROJECTS_OVERRIDE JG_CONFIG_OVERRIDE JG_BACKEND \
     JG_PUBLIC_FOLLOWUP_PRIMARY_HOME 2>/dev/null || true
+  # A script never records its fixture homes in a real machine's bus registry: the
+  # owner home's state/bus/homes must stay byte for byte as Main left it, so each script
+  # names a registry file of its own under this run's temp tree.
+  local JG_BUS_HOMES
+  JG_BUS_HOMES="$RUN_TMP/bus-homes.$$"
+  export JG_BUS_HOMES
   set +e
   if [ "$stream" -eq 1 ]; then
     if [ "$bound" -gt 0 ]; then

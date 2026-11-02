@@ -43,8 +43,8 @@ run show || fail "show failed: $(cat "$OUT")"
 grep -q 'ladder wait:' "$OUT" || fail "show does not print the wait ladder: $(cat "$OUT")"
 grep -qE 'owner +\+120s' "$OUT" || fail "show does not print the owner rung at its timer: $(cat "$OUT")"
 grep -qE 'owner +\+14400s' "$OUT" || fail "show does not print the pause cadence: $(cat "$OUT")"
-grep -qE 're-alert +not in this definition' "$OUT" \
-  || fail "show does not say the re-alert cadence is not this definition's: $(cat "$OUT")"
+grep -qE 'escalate +\+300s +to Main' "$OUT" || fail "show does not print the escalation rung to Main: $(cat "$OUT")"
+grep -qE 're-alert +every 600s' "$OUT" || fail "show does not print the wait ladder's re-alert cadence: $(cat "$OUT")"
 pass "show prints the definition in force"
 
 # The ladder reads the two numbers it still measures from, so neither is written

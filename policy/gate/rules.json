@@ -30,6 +30,36 @@
       ],
       "no_value": "-",
       "url_pattern": "^https?:"
+    },
+    "owner_proof": {
+      "no_value": "-",
+      "waiver_pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z$",
+      "card_kind": "evidence",
+      "card_key_suffix_separator": "-"
+    },
+    "brief_rules": {
+      "skip_kinds": [
+        "squad_lead"
+      ],
+      "parent_exempt_kinds": [
+        "scout"
+      ],
+      "ask_prefix": "[captain-ask]",
+      "order_pattern": "(^|[^[:alnum:]])Main[0-9]+",
+      "upkeep_parent": "upkeep",
+      "parent_line_pattern": "^[[:space:]]*parent:",
+      "parent_value_pattern": "^[[:space:]]*parent:[[:space:]]*(.*?)[[:space:]]*$",
+      "design_line_pattern": "(?i)^[[:space:]]*(design|desing|desgin|designs|design[ _-]discovery)[[:space:]]*:",
+      "design_exact_pattern": "^[[:space:]]*design:[[:space:]]*(required|none)[[:space:]]*$",
+      "design_required_pattern": "^[[:space:]]*design:[[:space:]]*required[[:space:]]*$",
+      "design_like_pattern": "(?i)\\b(redesign|landing page|new screen|mock-?up|prototype|first draft)\\b",
+      "design_required_line": "Design discovery: required"
+    },
+    "receipt": {
+      "required": "1",
+      "schema": 1,
+      "pass_verdict": "PASS",
+      "nonblank_pattern": "[^[:space:]]"
     }
   }
 }

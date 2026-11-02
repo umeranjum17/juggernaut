@@ -73,6 +73,12 @@ case $- in *u*) _jg_classify_nounset=on ;; *) _jg_classify_nounset=off ;; esac
 [ "$_jg_classify_nounset" = on ] || set +u
 unset _jg_classify_nounset
 
+# Forward one status-classifier call to the Go command (bin/jg-classify.sh). The tests answer by
+# exit status (0 yes, 1 no, 2 the classifier could not run); the reads print their result.
+_jg_classify_go() {
+  "$_JG_CLASSIFY_LIB_DIR/jg-classify.sh" "$@"
+}
+
 # Captain-relevant status verbs. A status line carrying any of these is work
 # juggernaut must see. Lines without these verbs are no-verb signals: the watcher
 # absorbs them only with positive provably-working evidence, while the daemon uses
@@ -90,7 +96,7 @@ unset _jg_classify_nounset
 # declaration cannot disappear behind an earlier recognized line. Continuation
 # prose is not a prefix and stays off that path. Recognized verbs keep the
 # classification below.
-JG_CLASSIFY_CAPTAIN_RE_DEFAULT='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
+# The default set itself is owned by the Go command (core/classify/cmd/jg-classify/classify.go).
 
 # The declared-wait verb. A crew (or juggernaut steering it) appends
 #   paused: <reason>
@@ -128,15 +134,7 @@ JG_PAUSE_RESURFACE_SECS_DEFAULT=14400
 # (bin/jg-afk-contract.sh). Prints epoch seconds; returns 1 on any other shape
 # so a malformed time is refused rather than read as "now".
 jg_utc_iso_to_epoch() {  # <timestamp>
-  local ts=$1
-  case "$ts" in
-    [0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]Z) ts="${ts%Z}:00Z" ;;
-    [0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z) ;;
-    *) return 1 ;;
-  esac
-  date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" +%s 2>/dev/null \
-    || date -u -d "$ts" +%s 2>/dev/null \
-    || return 1
+  _jg_classify_go utc-epoch "${1-}"
 }
 
 # The resolution verb and durable-backlog-transfer verb that CLOSE a keyed
@@ -146,11 +144,7 @@ jg_utc_iso_to_epoch() {  # <timestamp>
 JG_CLASSIFY_RESOLVE_VERB_DEFAULT='resolved'
 JG_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT='captain-held'
 
-# How many trailing lines the latest-event read parses before it widens to the
-# whole file. A status record and its continuation prose sit within a few lines
-# of the log's end, so this bounds the watcher's per-poll read on a long-lived
-# log while a log whose tail holds no event still gets a full pass.
-JG_CLASSIFY_EVENT_WINDOW_LINES=200
+# JG_CLASSIFY_EVENT_WINDOW_LINES (default 200) bounds the latest-event read; the Go command reads it.
 
 # Return the last recognized status event, ignoring continuation prose and blanks
 # (empty if missing/blank), and with <previous-event-var> the event before it.
@@ -159,39 +153,17 @@ JG_CLASSIFY_EVENT_WINDOW_LINES=200
 # always reads the whole file, since a bounded window cannot bound two events.
 # This is an event read; status_current_line below reconciles open decisions.
 last_status_line() {  # <status-file> [<previous-event-var>]
-  local f=$1 scan=''
-  [ -f "$f" ] && [ -r "$f" ] || return 0
-  if [ "$#" -gt 1 ]; then
-    scan=$(_jg_status_event_scan < "$f") || :
-  elif ! scan=$(tail -n "$JG_CLASSIFY_EVENT_WINDOW_LINES" "$f" 2>/dev/null | _jg_status_event_scan); then
-    scan=$(_jg_status_event_scan < "$f") || :
-  fi
-  [ "$#" -lt 2 ] || printf -v "$2" '%s' "${scan%%$'\n'*}"
-  printf '%s\n' "${scan##*$'\n'}"
+  [ "$#" -gt 1 ] || { _jg_classify_go last-line "${1-}"; return; }
+  [ -f "$1" ] && [ -r "$1" ] || return 0
+  printf -v "$2" '%s' "$(_jg_classify_go last-line --previous "$1")"
+  _jg_classify_go last-line "$1"
 }
 
 # 0 when <verb> is exactly one recognized status verb, with no leftover token.
-_jg_status_verb_recognized() {  # <verb>
-  case "$1" in
-    working|needs-decision|blocked|done|failed|note|\
-    "${JG_CLASSIFY_PAUSED_VERB:-$JG_CLASSIFY_PAUSED_VERB_DEFAULT}"|\
-    "${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}"|\
-    "${JG_CLASSIFY_CAPTAIN_HELD_VERB:-$JG_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}")
-      return 0
-      ;;
-  esac
-  return 1
-}
 
 # 0 when <word> is a correlation-token attempt the strict parser did not accept.
 # A well-formed token is stripped before this sees the verb, so only a missing
 # or mismatched token remains here.
-_jg_status_corr_attempt() {  # <word>
-  case "$1" in
-    corr|corr=*) return 0 ;;
-  esac
-  return 1
-}
 
 # 0 when <line> declares a status prefix that did not parse as a recognized verb.
 # An unknown lowercase word (parked:, holding:) is one shape. A recognized verb
@@ -200,38 +172,6 @@ _jg_status_corr_attempt() {  # <word>
 # become the verb the token failed to separate. Continuation prose is not a
 # prefix, including a sentence that merely starts with a known verb, a label
 # such as Reason: or e.g.:, a URL, or a clock time such as 10:30.
-status_prefix_unrecognized() {  # <status-line>
-  local line verb first rest word
-  _jg_status_unstamped "$1" line
-  case "$line" in *:*) ;; *) return 1 ;; esac
-  case "${line#*:}" in ''|[[:space:]]*) ;; *) return 1 ;; esac
-  status_line_verb "$line" verb
-  [ -n "$verb" ] || return 1
-  _jg_status_verb_recognized "$verb" && return 1
-  first=${verb%%[[:space:]]*}
-  rest=${verb#"$first"}
-  rest=${rest#"${rest%%[![:space:]]*}"}
-  if [ -z "$rest" ]; then
-    case "$first" in [[:lower:]]*) ;; *) return 1 ;; esac
-    case "$first" in *[![:lower:]-]*) return 1 ;; esac
-    return 0
-  fi
-  if _jg_status_corr_attempt "$first"; then
-    word=${rest%%[[:space:]]*}
-    _jg_status_verb_recognized "$word" || return 1
-    rest=${rest#"$word"}
-    rest=${rest#"${rest%%[![:space:]]*}"}
-  else
-    _jg_status_verb_recognized "$first" || return 1
-  fi
-  while [ -n "$rest" ]; do
-    word=${rest%%[[:space:]]*}
-    _jg_status_corr_attempt "$word" || return 1
-    rest=${rest#"$word"}
-    rest=${rest#"${rest%%[![:space:]]*}"}
-  done
-  return 0
-}
 
 # Print "<previous event>\n<latest event>" for the status lines on stdin, and
 # return 1 when the stream holds no event at all, so a caller reading a bounded
@@ -242,50 +182,17 @@ status_prefix_unrecognized() {  # <status-line>
 # it, so continuation prose that merely mentions one cannot hide a declaration.
 # An unrecognized status prefix is an event too, so that declaration is the
 # latest line instead of disappearing behind an earlier recognized one.
-_jg_status_event_scan() {
-  local line last='' prev='' fallback='' legacy_re
-  legacy_re="^[[:space:]]*(${JG_CAPTAIN_RE:-$JG_CLASSIFY_CAPTAIN_RE_DEFAULT})"
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in *[![:space:]]*) fallback=$line ;; *) continue ;; esac
-    _jg_status_line_is_event "$line" "$legacy_re" && { prev=$last; last=$line; }
-  done
-  printf '%s\n%s\n' "$prev" "${last:-$fallback}"
-  [ -n "$last" ]
-}
 
 # 0 when a nonblank <line> is a recognized status event for the scan above.
-_jg_status_line_is_event() {  # <line> <legacy-captain-re>
-  local verb unstamped
-  case "$1" in *:*) status_line_verb "$1" verb ;; *) verb='' ;; esac
-  _jg_status_verb_recognized "$verb" && return 0
-  # Unrecognized verb-shaped prefixes (parked:, holding:, bad corr tokens) stay
-  # events so a bad declaration cannot vanish behind an earlier recognized line.
-  status_prefix_unrecognized "$1" && return 0
-  _jg_status_unstamped "$1" unstamped
-  _jg_classify_matches "$unstamped" "$2"
-}
 
 # 0 when <line> matches the extended regex <pattern> case-insensitively, leaving
 # the caller's nocasematch setting untouched.
-_jg_classify_matches() {  # <line> <pattern>
-  local matched=1 restore_case=0
-  shopt -q nocasematch || { shopt -s nocasematch; restore_case=1; }
-  [[ "$1" =~ $2 ]] && matched=0
-  [ "$restore_case" -eq 0 ] || shopt -u nocasematch
-  return "$matched"
-}
 
 # 0 if the given (last) status line's leading verb is a real terminal captain verb
 # (done, needs-decision, blocked, failed). Free-text tokens alone never count here;
 # callers that need legacy free-text matching use status_is_captain_relevant.
 status_is_terminal_verb() {
-  local line=$1 verb
-  [ -n "$line" ] || return 1
-  verb=$(status_line_verb "$line")
-  case "$verb" in
-    done|needs-decision|blocked|failed) return 0 ;;
-    *) return 1 ;;
-  esac
+  _jg_classify_go is-terminal "${1-}"
 }
 
 # 0 if the given (last) status line matches a captain-relevant verb.
@@ -298,25 +205,7 @@ status_is_terminal_verb() {
 # keeps matching a stamped event however the worker spelled the stamp; other
 # metadata and note text remain intact, as do the stored and surfaced event bytes.
 status_is_captain_relevant() {
-  local line=$1 verb unstamped
-  [ -n "$line" ] || return 1
-  status_line_verb "$line" verb
-  case "$verb" in
-    working|resolved|captain-held|"${JG_CLASSIFY_PAUSED_VERB:-$JG_CLASSIFY_PAUSED_VERB_DEFAULT}")
-      return 1
-      ;;
-  esac
-  # An unrecognized prefix is surfaced as itself. The check sits after the
-  # recognized nonterminal verbs, so working, paused, resolved, and captain-held
-  # keep their existing non-relevant classification.
-  status_prefix_unrecognized "$line" && return 0
-  if [ -z "${JG_CAPTAIN_RE+x}" ]; then
-    case "$verb" in
-      done|needs-decision|blocked|failed) return 0 ;;
-    esac
-  fi
-  _jg_status_unstamped "$line" unstamped
-  _jg_classify_matches "$unstamped" "${JG_CAPTAIN_RE:-$JG_CLASSIFY_CAPTAIN_RE_DEFAULT}"
+  _jg_classify_go is-relevant "${1-}"
 }
 
 # 0 if a status line's leading verb is the pause verb (paused: <reason>). A pure
@@ -324,10 +213,7 @@ status_is_captain_relevant() {
 # it already read without a jg-crew-state.sh call. Matches only the verb before the
 # first colon, so a reason mentioning "paused" elsewhere does not false-match.
 status_is_paused() {  # <status-line>
-  local line=$1 verb
-  [ -n "$line" ] || return 1
-  verb=$(status_line_verb "$line")
-  [ "$verb" = "${JG_CLASSIFY_PAUSED_VERB:-$JG_CLASSIFY_PAUSED_VERB_DEFAULT}" ]
+  _jg_classify_go is-paused "${1-}"
 }
 
 # 0 if a status line's leading verb is the verified captain-held transfer verb.
@@ -337,10 +223,7 @@ status_is_paused() {  # <status-line>
 # names an external dependency for a hold points the captain away from the fact
 # that they are the one who can clear it.
 status_is_captain_held() {  # <status-line>
-  local line=$1 verb
-  [ -n "$line" ] || return 1
-  status_line_verb "$line" verb
-  [ "$verb" = "${JG_CLASSIFY_CAPTAIN_HELD_VERB:-$JG_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}" ]
+  _jg_classify_go is-held "${1-}"
 }
 
 # 0 if a status line declares either an external-wait pause or a verified
@@ -351,8 +234,7 @@ status_is_captain_held() {  # <status-line>
 # once pause_state_class has admitted the wait (jg-watch.sh owns which liveness
 # evidence each kind of crew must supply for that).
 status_is_paused_or_captain_held() {  # <status-line>
-  local line=$1
-  status_is_paused "$line" || status_is_captain_held "$line"
+  _jg_classify_go is-paused-or-held "${1-}"
 }
 
 # The status line that holds a crew in a declared wait, or nothing when it is in
@@ -366,54 +248,13 @@ status_is_paused_or_captain_held() {  # <status-line>
 # latest event. Bounded like last_status_line: only a tail window made wholly of
 # resolved events widens the read to the whole file.
 status_declared_wait_line() {  # <status-file>
-  local f=$1 last verb resolve legacy_re
-  last=$(last_status_line "$f")
-  if status_is_paused_or_captain_held "$last"; then
-    printf '%s\n' "$last"
-    return 0
-  fi
-  resolve=${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}
-  status_line_verb "$last" verb
-  [ "$verb" = "$resolve" ] || return 0
-  legacy_re="^[[:space:]]*(${JG_CAPTAIN_RE:-$JG_CLASSIFY_CAPTAIN_RE_DEFAULT})"
-  tail -n "$JG_CLASSIFY_EVENT_WINDOW_LINES" "$f" 2>/dev/null \
-    | _jg_status_declared_wait_scan "$resolve" "$legacy_re" \
-    || _jg_status_declared_wait_scan "$resolve" "$legacy_re" < "$f" || :
+  _jg_classify_go declared-wait "${1-}"
 }
 
 # Walk the status lines on stdin back from the newest event past resolved lines
 # to the first other event, and print it when it is a pause none of those
 # resolved lines share a phase key with. Returns 1 when every event is a
 # resolved line, so a caller reading a bounded window knows to widen it.
-_jg_status_declared_wait_scan() {  # <resolve-verb> <legacy-captain-re>
-  local resolve=$1 legacy_re=$2 line verb key keys=$'\n' i=0
-  local -a lines=()
-  while IFS= read -r line || [ -n "$line" ]; do
-    lines[i]=$line
-    i=$((i + 1))
-  done
-  while [ "$i" -gt 0 ]; do
-    i=$((i - 1))
-    line=${lines[i]}
-    case "$line" in *[![:space:]]*) ;; *) continue ;; esac
-    _jg_status_line_is_event "$line" "$legacy_re" || continue
-    status_line_verb "$line" verb
-    case "$verb" in
-      "$resolve") ;;
-      "${JG_CLASSIFY_PAUSED_VERB:-$JG_CLASSIFY_PAUSED_VERB_DEFAULT}") ;;
-      *) return 0 ;;
-    esac
-    key=$(_jg_decision_key "$line" "$_JG_CLASSIFY_KEYLESS_PHASE") || key=
-    if [ "$verb" = "$resolve" ]; then
-      keys="$keys$key"$'\n'
-      continue
-    fi
-    case "$keys" in *$'\n'"$key"$'\n'*) return 0 ;; esac
-    printf '%s\n' "$line"
-    return 0
-  done
-  return 1
-}
 
 # A condition-aware declared wait: a `paused:` line may say WHEN it expects to
 # clear with `until <YYYY-MM-DDTHH:MM[:SS]Z>` anywhere in its text (UTC only, so
@@ -423,13 +264,7 @@ _jg_status_declared_wait_scan() {  # <resolve-verb> <legacy-captain-re>
 # or the time is malformed, so a bad token falls back to the cadence rather than
 # silencing the wait.
 status_paused_until() {  # <status-line> -> epoch on stdout
-  local line=$1 token
-  status_is_paused "$line" || return 1
-  token=$(printf '%s' "$line" \
-    | sed -n 's/.*[[:space:]][Uu][Nn][Tt][Ii][Ll][[:space:]]\{1,\}\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]Z\).*/\1/p; s/.*[[:space:]][Uu][Nn][Tt][Ii][Ll][[:space:]]\{1,\}\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\).*/\1/p' \
-    | head -1)
-  [ -n "$token" ] || return 1
-  jg_utc_iso_to_epoch "$token"
+  _jg_classify_go paused-until "${1-}"
 }
 
 # --- optional event emission time -------------------------------------------

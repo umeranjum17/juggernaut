@@ -75,100 +75,95 @@ if [ "$mode" = sign ]; then
   exit 0
 fi
 what=$pr; [ "$pr" != - ] || what="local merge $head"
-none=0
-"$mc" screen-none "$1" "$4" && none=1
-# The top line: a screen-free merge is on the text-only card path, and no capture is asked for.
-[ "$none" -eq 0 ] || echo "owner-rules: $what declares screen: none, so it takes the text-only Evidence card path; no capture is needed"
-# canary_enforced: 0 when this home is in the canary rollout (or no canary file exists) and no active UTC waiver
-# covers it. The screen-free receipt refusal honors it; the other refusals are not canary-gated.
-canary_enforced() {
-  local canary=$JG_HOME/config/owner-rules-canary waiver=$JG_HOME/config/owner-rules-canary-waiver expires
-  [ ! -r "$canary" ] || grep -Fqx -- "$JG_HOME" "$canary" || return 1
-  if [ -r "$waiver" ]; then
-    IFS= read -r expires < "$waiver"
-    if [[ $expires =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z$ ]] && [[ $(date -u +%Y-%m-%dT%H:%MZ) < $expires ]]; then return 1; fi
-  fi
-  return 0
-}
-# The receipt is a sealed clean done-done run at the merge head; a screen-free merge needs it for its text card too.
-if [ "$3" != - ] && ! "$mc" receipt "$1" "$3"; then
-  # A screen-free merge keeps today's skip on a home the canary has not reached yet.
-  if [ "$none" -eq 0 ] || canary_enforced; then
-    if [ "$2" = - ]; then
-      echo "owner-rules: no passed-proof receipt for $what: seal a clean done-done run at $3 with: done-done run -- <the command that proves it> in the copy at $3"
-    else
-      echo "owner-rules: no passed-proof receipt for $what: seal a clean done-done run at $3 with: cd '$2' && done-done run -- <the command that proves it>"
-    fi
-    exit 1
-  fi
-fi
-# The signature is local authorization for this exact task, PR scope, head, and receipt contents.
-receipt=$(proof_receipt) || receipt=''
-if [ -z "$receipt" ] || [ ! -f "$pub" ] || [ -L "$pub" ] || [ ! -f "$signature" ] || [ -L "$signature" ]; then
-  echo "owner-rules: no valid local proof signature for $what at $head; sign only after the passed-proof recipe succeeds: JG_HOME=$JG_HOME $script sign $id $head $pr"
-  exit 1
-fi
-payload=$(mktemp "${TMPDIR:-/tmp}/owner-proof-payload.XXXXXX") || exit 1
-proof_payload "$receipt" > "$payload" || { rm -f -- "$payload"; exit 1; }
-if ! openssl pkeyutl -verify -rawin -pubin -inkey "$pub" -in "$payload" -sigfile "$signature" >/dev/null 2>&1; then
-  rm -f -- "$payload"
-  echo "owner-rules: local proof signature is invalid for $what at $head; re-run the passed-proof recipe and sign the exact receipt"
-  exit 1
-fi
-rm -f -- "$payload"
-# Lint: the newest checks-gate row for this PR url at this head, from checks-lint (read, never rerun), must be a
-# `pass`: a later fail takes the verdict back, and a `card` row is not a verdict. A local merge's rows
-# name the report file and carry head `-`, so they match on the task's own folder instead.
-# policy/gate/lint_row.rego decides; the log is only read into its fact document here, and an evaluator that
-# cannot run refuses like a missing pass does.
+# The order of refusals is policy/gate/owner_proof.rego (the checks-lint rule is policy/gate/lint_row.rego): this
+# gathers the facts, asks the one evaluator, and prints the message for the reason it gives. An evaluator that
+# cannot run refuses like a missing proof does.
 guard_host=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)/bin/jg-guard-host.sh
+none=false
+"$mc" screen-none "$1" "$4" && none=true
+# The top line: a screen-free merge is on the text-only card path, and no capture is asked for.
+[ "$none" = false ] || echo "owner-rules: $what declares screen: none, so it takes the text-only Evidence card path; no capture is needed"
+receipt_ok=false
+"$mc" receipt "$1" "$3" && receipt_ok=true
+# The signature is local authorization for this exact task, PR scope, head, and receipt contents.
+sig=missing
+receipt=$(proof_receipt) || receipt=''
+if [ -n "$receipt" ] && [ -f "$pub" ] && [ ! -L "$pub" ] && [ -f "$signature" ] && [ ! -L "$signature" ]; then
+  payload=$(mktemp "${TMPDIR:-/tmp}/owner-proof-payload.XXXXXX") || exit 1
+  proof_payload "$receipt" > "$payload" || { rm -f -- "$payload"; exit 1; }
+  sig=invalid
+  ! openssl pkeyutl -verify -rawin -pubin -inkey "$pub" -in "$payload" -sigfile "$signature" >/dev/null 2>&1 || sig=valid
+  rm -f -- "$payload"
+fi
+# Lint: the newest checks-gate row for this PR url at this head, from checks-lint (read, never rerun). A local
+# merge's rows name the report file and carry head `-`, so they match on the task's own folder instead.
 lint_log=$JG_HOME/data/checks-gate.log
 [ -r "$lint_log" ] || lint_log=/dev/null
 src=$4; [ "$4" != - ] || src="<report file>"
-if ! lint_verdict=$(jq -Rn --arg pr "$4" --arg head "$3" --arg task "$1" \
+lint=error
+if lint_verdict=$(jq -Rn --arg pr "$4" --arg head "$3" --arg task "$1" \
   '{pr: $pr, head: $head, task: $task, rows: [inputs | split("\t") | select(length >= 4) | {src: .[1], head: .[2], verdict: .[3]}]}' \
   "$lint_log" | "$guard_host" eval gate.lint_row 2>&1); then
-  echo "owner-rules: cannot evaluate the checks-lint rule for $src at $3: ${lint_verdict:-no answer}"
-  exit 1
+  lint=fail
+  [ "$(jq -r '.ok' <<<"$lint_verdict" 2>/dev/null)" != true ] || lint=pass
 fi
-if [ "$(jq -r '.ok' <<<"$lint_verdict" 2>/dev/null)" != true ]; then
-  lint=${JG_CHECKS_LINT:-${XDG_DATA_HOME:-$HOME/.local/share}/jg-merge-on-green/checks-lint.sh}
-  [ -x "$lint" ] || lint=${JG_MAIN_HOME:-$HOME/juggernaut}/config/jg-checks-lint.sh
-  echo "owner-rules: no checks-lint PASS for $src at $3; run JG_HOME=$JG_HOME $lint $src $JG_HOME/data/$1 then merge again"
-  exit 1
-fi
-# Local merges retain the existing receipt/lint behavior; only PRs have board keys.
-[ "$4" != - ] || exit 0
 # Canary config lists exact JG_HOME paths; without it every home keeps today's gate behavior.
-canary_enforced || exit 0
-board=${JG_FLEET_BOARD:-}
-if [ -z "$board" ] && [ -r "$JG_HOME/config/fleet-board" ]; then
-  IFS= read -r board < "$JG_HOME/config/fleet-board"
-fi
+canary=$JG_HOME/config/owner-rules-canary waiver=''
+canary_readable=false canary_listed=false
+if [ -r "$canary" ]; then canary_readable=true; ! grep -Fqx -- "$JG_HOME" "$canary" || canary_listed=true; fi
+[ ! -r "$JG_HOME/config/owner-rules-canary-waiver" ] || IFS= read -r waiver < "$JG_HOME/config/owner-rules-canary-waiver"
+# Only PRs have board keys: where the fleet board is, whether it holds an items list, and the card's key.
+board=${JG_FLEET_BOARD:-} board_state=ok items='[]'
 main_home=${JG_MAIN_HOME:-$HOME/juggernaut}
-if [ -z "$board" ] && [ -r "$main_home/config/fleet-board" ]; then
-  IFS= read -r board < "$main_home/config/fleet-board"
-fi
-if [ -z "$board" ]; then
-  echo "owner-rules: fleet board is not configured for $what (set JG_FLEET_BOARD, or write its path with: echo <board.json> > $JG_HOME/config/fleet-board; the main home's $main_home/config/fleet-board is the fallback)"
-  exit 1
-fi
-if [ ! -r "$board" ] || ! jq -e '.items | type == "array"' "$board" >/dev/null 2>&1; then
-  echo "owner-rules: cannot read fleet board $board for $what: set JG_FLEET_BOARD or $JG_HOME/config/fleet-board to a board.json holding {\"items\": [...]}"
-  exit 1
-fi
+if [ -z "$board" ] && [ -r "$JG_HOME/config/fleet-board" ]; then IFS= read -r board < "$JG_HOME/config/fleet-board"; fi
+if [ -z "$board" ] && [ -r "$main_home/config/fleet-board" ]; then IFS= read -r board < "$main_home/config/fleet-board"; fi
+read_board() {
+  if [ -z "$board" ]; then board_state="unset"
+  elif [ ! -r "$board" ] || ! jq -e '.items | type == "array"' "$board" >/dev/null 2>&1; then board_state=unreadable
+  else items=$(jq -c '.items' "$board"); fi
+}
 key=merge-$(printf '%s' "${4#*://}" | sed 's|^[^/]*/||' | tr -c 'A-Za-z0-9._-' -)
 key=${key:0:128}
-if jq -e --arg k "$key" --arg h "$3" 'any(.items[]?; (.key == $k or (.key | startswith($k + "-"))) and .kind == "evidence" and ((.run.commit? // .evidence.commit?) == $h) and ((.run.commit? == null) or .run.commit == $h) and ((.evidence.commit? == null) or .evidence.commit == $h))' "$board" >/dev/null; then
-  exit 0
-fi
-if [ "$none" -eq 1 ] && "$mc" receipt "$1" "$3"; then
-  timeout 15 "$mc" post --board "$board" "$1" "$2" "$3" "$4" || {
-    rc=$?
-    echo "owner-rules: could not post the text-only Evidence card for $what (merge-card exit $rc); its own line above names the step it needs"
+decide() { # <posted: true|false>: the policy's answer for the facts above
+  jq -nc --arg pr "$pr" --arg head "$head" --argjson none "$none" --argjson receipt_ok "$receipt_ok" --arg sig "$sig" --arg lint "$lint" \
+    --argjson readable "$canary_readable" --argjson listed "$canary_listed" --arg waiver "$waiver" --arg now "$(date -u +%Y-%m-%dT%H:%MZ)" \
+    --arg board "$board_state" --argjson items "$items" --arg key "$key" --argjson posted "$1" \
+    '{pr: $pr, head: $head, none: $none, receipt_ok: $receipt_ok, signature: $sig, lint: $lint, canary: {readable: $readable, listed: $listed},
+      waiver: $waiver, now: $now, board: $board, items: $items, key: $key, posted: $posted}' | "$guard_host" eval gate.owner_proof
+}
+read_board
+posted=false
+while :; do
+  if ! verdict=$(decide $posted 2>&1); then
+    echo "owner-rules: cannot evaluate the merge gate for $what at $3: ${verdict:-no answer}"
     exit 1
-  }
-  jq -e --arg k "$key" --arg h "$3" 'any(.items[]?; (.key == $k or (.key | startswith($k + "-"))) and .kind == "evidence" and ((.run.commit? // .evidence.commit?) == $h) and ((.run.commit? == null) or .run.commit == $h) and ((.evidence.commit? == null) or .evidence.commit == $h))' "$board" >/dev/null && exit 0
-fi
-echo "owner-rules: no passed-proof Evidence card for $what; post it with: JG_HOME=$JG_HOME $mc post --board $board $1 $2 $3 $4"
-exit 1
+  fi
+  [ "$(jq -r '.ok' <<<"$verdict")" != true ] || exit 0
+  case $(jq -r '.why' <<<"$verdict") in
+    no_receipt)
+      if [ "$2" = - ]; then
+        echo "owner-rules: no passed-proof receipt for $what: seal a clean done-done run at $3 with: done-done run -- <the command that proves it> in the copy at $3"
+      else
+        echo "owner-rules: no passed-proof receipt for $what: seal a clean done-done run at $3 with: cd '$2' && done-done run -- <the command that proves it>"
+      fi ;;
+    no_signature) echo "owner-rules: no valid local proof signature for $what at $head; sign only after the passed-proof recipe succeeds: JG_HOME=$JG_HOME $script sign $id $head $pr" ;;
+    bad_signature) echo "owner-rules: local proof signature is invalid for $what at $head; re-run the passed-proof recipe and sign the exact receipt" ;;
+    lint_error) echo "owner-rules: cannot evaluate the checks-lint rule for $src at $3: ${lint_verdict:-no answer}" ;;
+    no_lint)
+      lint=${JG_CHECKS_LINT:-${XDG_DATA_HOME:-$HOME/.local/share}/jg-merge-on-green/checks-lint.sh}
+      [ -x "$lint" ] || lint=${JG_MAIN_HOME:-$HOME/juggernaut}/config/jg-checks-lint.sh
+      echo "owner-rules: no checks-lint PASS for $src at $3; run JG_HOME=$JG_HOME $lint $src $JG_HOME/data/$1 then merge again" ;;
+    no_board_config) echo "owner-rules: fleet board is not configured for $what (set JG_FLEET_BOARD, or write its path with: echo <board.json> > $JG_HOME/config/fleet-board; the main home's $main_home/config/fleet-board is the fallback)" ;;
+    bad_board) echo "owner-rules: cannot read fleet board $board for $what: set JG_FLEET_BOARD or $JG_HOME/config/fleet-board to a board.json holding {\"items\": [...]}" ;;
+    post_card)
+      timeout 15 "$mc" post --board "$board" "$1" "$2" "$3" "$4" || {
+        rc=$?
+        echo "owner-rules: could not post the text-only Evidence card for $what (merge-card exit $rc); its own line above names the step it needs"
+        exit 1
+      }
+      posted=true; read_board
+      continue ;;
+    *) echo "owner-rules: no passed-proof Evidence card for $what; post it with: JG_HOME=$JG_HOME $mc post --board $board $1 $2 $3 $4" ;;
+  esac
+  exit 1
+done

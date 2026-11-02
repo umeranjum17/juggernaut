@@ -8,7 +8,7 @@ for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
 done
 unset _jg_old _jg_new 2>/dev/null || true
 # E2E: both lint entry points publish the completion receipt through the receipts feature's publisher
-# ($JG_ADDONS_DIR/receipts/bin/jg-run-receipt.sh) and never through the old juggernaut publisher (bin/jg-run-receipt.sh
+# ($JG_CORE_DIR/receipts/bin/jg-run-receipt.sh) and never through the old juggernaut publisher (bin/jg-run-receipt.sh
 # in the home or the main home). The feature publisher is a recording stub; the old paths are tripwires that fail the run.
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
@@ -16,13 +16,13 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 . "$(dirname "${BASH_SOURCE[0]}")/../../lib/policy-test-env.sh"
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
-export HOME=$d/home XDG_DATA_HOME=$d/xdg TMPDIR=$d JG_HOME=$d/fm JG_MAIN_HOME=$d/main JG_ADDONS_DIR=$d/addons CALLS=$d
-mkdir -p "$HOME" "$XDG_DATA_HOME" "$d/bin" "$JG_HOME"/{bin,state,data/lane-x/evidence} "$JG_MAIN_HOME/bin" "$HOME/juggernaut/bin" "$JG_ADDONS_DIR/receipts/bin" "$d/wt"
+export HOME=$d/home XDG_DATA_HOME=$d/xdg TMPDIR=$d JG_HOME=$d/fm JG_MAIN_HOME=$d/main JG_CORE_DIR=$d/addons CALLS=$d
+mkdir -p "$HOME" "$XDG_DATA_HOME" "$d/bin" "$JG_HOME"/{bin,state,data/lane-x/evidence} "$JG_MAIN_HOME/bin" "$HOME/juggernaut/bin" "$JG_CORE_DIR/receipts/bin" "$d/wt"
 fails=0
 ok() { printf 'ok - %s\n' "$1"; }
 bad() { printf 'not ok - %s\n' "$1"; fails=$((fails + 1)); }
 
-cat > "$JG_ADDONS_DIR/receipts/bin/jg-run-receipt.sh" <<'STUB'
+cat > "$JG_CORE_DIR/receipts/bin/jg-run-receipt.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s|%s\n' "$1" "$2" >> "$CALLS/feature-calls"
 STUB
@@ -40,7 +40,7 @@ case "$1" in
           printf 't\t%s\thead1\tpass\tok\n' "$2" >> "$DONE_DONE_HOME/lint.log"; fi ;;
 esac
 STUB
-chmod +x "$JG_ADDONS_DIR/receipts/bin/jg-run-receipt.sh" "$JG_HOME/bin/jg-run-receipt.sh" "$JG_MAIN_HOME/bin/jg-run-receipt.sh" "$HOME/juggernaut/bin/jg-run-receipt.sh" "$d/bin/done-done"
+chmod +x "$JG_CORE_DIR/receipts/bin/jg-run-receipt.sh" "$JG_HOME/bin/jg-run-receipt.sh" "$JG_MAIN_HOME/bin/jg-run-receipt.sh" "$HOME/juggernaut/bin/jg-run-receipt.sh" "$d/bin/done-done"
 printf 'mode=direct-PR\nspawn_gen=1\nworktree=%s\n' "$d/wt" > "$JG_HOME/state/lane-x.meta"
 git -C "$d/wt" init -q .
 git -C "$d/wt" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init

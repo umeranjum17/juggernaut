@@ -5,8 +5,8 @@
 #      JG_QUOTA_AXI_POOL_DEPTH (set by this wrapper for the call it delegates; above 0 means go upstream).
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-addons=$(cd "$here/../.." && pwd)
-model_pool=${JG_MODEL_POOL:-${JG_ADDONS_DIR:-$addons}/account-pool/bin/jg-model-pool}
+core_dir=$(cd "$here/../.." && pwd)
+model_pool=${JG_MODEL_POOL:-${JG_CORE_DIR:-$core_dir}/account-pool/bin/jg-model-pool}
 upstream_file=${JG_QUOTA_AXI_POOL_UPSTREAM:-${XDG_DATA_HOME:-$HOME/.local/share}/jg-quota-axi-pool/upstream}
 
 find_upstream() {
@@ -35,15 +35,69 @@ upstream=$(find_upstream) || { echo "quota-axi-pool: upstream quota-axi not foun
 # Claude accounts reader, an older installed copy, anything else - gets a reading instead of a loop.
 depth=${JG_QUOTA_AXI_POOL_DEPTH:-0}
 case "$depth" in '' | *[!0-9]*) depth=0 ;; esac
+# Command Code's key lives in the fleet's own file ($JG_HOME/config/commandcode-api-key) and upstream quota-axi reads
+# it only from the COMMANDCODE_API_KEY environment, so without this it reports auth_required while the key works. The
+# key is read into the child's environment: never printed, never copied, never logged.
+cc_key=${JG_QUOTA_AXI_POOL_COMMANDCODE_KEY:-${JG_HOME:+$JG_HOME/config/commandcode-api-key}}
+if [ -n "${cc_key:-}" ] && [ -r "$cc_key" ] && [ -z "${COMMANDCODE_API_KEY:-}" ]; then
+  IFS= read -r COMMANDCODE_API_KEY <"$cc_key" || true
+  COMMANDCODE_API_KEY=${COMMANDCODE_API_KEY%$'\r'}
+  [ -z "$COMMANDCODE_API_KEY" ] || export COMMANDCODE_API_KEY
+fi
 pool_config=${JG_HOME:+$JG_HOME/config/account-pool}
 if [ "$passthru" = 1 ] || [ -z "${JG_HOME:-}" ] || [ "$depth" -gt 0 ]; then
   exec "$upstream" "$@"
 fi
+# ollama-cloud has no upstream provider row at all, and the shared route chain leads with it: report its credit here from
+# the same balance read model-gate uses, reused for JG_QUOTA_AXI_POOL_OLLAMA_SECONDS (default 60). A read that fails
+# adds no row, so a provider the fleet cannot read is never reported as healthy or as empty.
+ollama_row() {
+  local home_state key cache bal secs
+  home_state=${JG_STATE_OVERRIDE:-${JG_HOME}/state}
+  key=${OLLAMA_API_KEY_FILE:-$HOME/.config/ollama-cloud/api_key}
+  cache=$home_state/.quota-axi-pool-ollama.json
+  secs=${JG_QUOTA_AXI_POOL_OLLAMA_SECONDS:-60}
+  if [ -r "$cache" ] && [ $(( $(date +%s) - $(stat -c %Y -- "$cache" 2>/dev/null || echo 0) )) -lt "$secs" ]; then
+    cat -- "$cache"
+    return 0
+  fi
+  [ -r "$key" ] || return 1
+  bal=$(curl -sS --max-time 10 --fail -H "Authorization: Bearer $(cat -- "$key")" https://ollama.com/api/balance 2>/dev/null) || return 1
+  mkdir -p -- "$home_state" 2>/dev/null || true
+  jq -cn --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson b "$bal" '
+    def n: if type == "number" then . else 0 end;
+    (($b.included.balance_usd // 0) | n) as $i
+    | (($b.purchased.balance_usd // 0) | n) as $p
+    | (($b.included.allowance_usd // 0) | n) as $a
+    | ($i + $p) as $left
+    | (if $a > 0 then [100 * $i / $a, 100] | min elif $left > 0 then 100 else 0 end) as $pct
+    | {provider:"ollama-cloud",
+       state:{status:"fresh",stale:false,refreshedAt:$at},
+       windows:[{id:"credit",label:"credit",kind:"credit",percentRemaining:$pct}
+                + (if $b.included.period.until then {resetsAt:$b.included.period.until} else {} end)],
+       credits:({remaining:$left,unit:"usd"} + (if $a > 0 then {allowance:$a} else {} end)),
+       quotaSemantics:{status:"known",effectiveAvailability:[{
+         scope:"all_models",status:"known",effectivePercentRemaining:$pct,boundedBy:["credit"],
+         runway:(if $pct <= 0 then {status:"exhausted_now"} else {status:"through_reset"} end),
+         selection:{status:"known",spendPriority:($pct / 100)}}]},
+       pool:{id:"ollama-cloud",source:"ollama-balance"}}' >"$cache" 2>/dev/null || return 1
+  cat -- "$cache"
+}
+
+# The allow-list names the providers this home runs (model-gate's one list), so a home that does not run Ollama gets no
+# Ollama row. Prints the row, or null.
+ollama_maybe() {
+  if jq -e 'type == "object" and has("ollama-cloud")' "${JG_MODEL_GATE_LIST:-$JG_HOME/config/model-allow-list.json}" >/dev/null 2>&1; then
+    ollama_row 2>/dev/null && return 0
+  fi
+  echo null
+}
+
 # --json: every registered Claude and Codex account from the one quota view (claude-accounts/bin/jg-quota-view),
 # not the ambient login alone. Per provider with registered workers: accountKey default = the worker with the most
 # room (an exhausted one when none has any), accountKey <id> = each worker, accountKey main = Main's own reserved
 # login. A provider with no registered workers keeps the upstream row as its default.
-quota_view=${JG_QUOTA_VIEW:-${JG_ADDONS_DIR:-$addons}/claude-accounts/bin/jg-quota-view}
+quota_view=${JG_QUOTA_VIEW:-${JG_CORE_DIR:-$core_dir}/claude-accounts/bin/jg-quota-view}
 if [ "$want_json" = 1 ] && [ -x "$quota_view" ]; then
   view=$("$quota_view" 2>/dev/null) || view=''
   if jq -e '[.providers[]? | .workers[]?, (.reserved // empty)] | length > 0' <<<"${view:-}" >/dev/null 2>&1; then
@@ -68,7 +122,9 @@ if [ "$want_json" = 1 ] && [ -x "$quota_view" ]; then
              | ([$v.workers[] | select(.left != null)] | sort_by(-.left) | first) as $top
              | (if $top != null then qrow($p; "default"; $top; false) else empty end),
                ($v.workers[] | qrow($p; .id; .; false)),
-               ($v.reserved | select(. != null) | qrow($p; "main"; .; true))])' <<<"$base"
+               ($v.reserved | select(. != null) | qrow($p; "main"; .; true))])' <<<"$base" \
+      | jq -c --argjson ol "$(ollama_maybe)" '
+          if $ol == null then . else .providers = ([.providers[] | select(.provider != "ollama-cloud")] + [$ol + {accountKey: "default"}]) end'
     exit 0
   fi
 fi
@@ -136,4 +192,7 @@ else
       } end
     end' "$reading")
 fi
-jq -c --argjson row "$claude_row" '.providers=(( [.providers[]?|select(.provider!="claude")] )+[$row])' <<<"$base"
+ollama_json=$(ollama_maybe)
+jq -c --argjson row "$claude_row" --argjson ol "${ollama_json:-null}" '
+  .providers = (([.providers[]? | select(.provider != "claude" and .provider != "ollama-cloud")] + [$row]
+    + (if $ol == null then [] else [$ol] end)))' <<<"$base"

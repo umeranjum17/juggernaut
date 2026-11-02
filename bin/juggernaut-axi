@@ -2,7 +2,7 @@
 # juggernaut-axi - bounded, read-only fleet facts for external tools (AXI style).
 #
 # The approved design (data/juggernaut-axi/report.md), read-only commands so far:
-# `status`, `lanes`, `wakes`, `tickets`, `decisions`, and `messages` (a task's steering-inbox records),
+# `status`, `lanes`, `wakes`, `tickets`, `tasks` (list, show, ready), `holds`, `pr`, `decisions`, `messages`,
 # plus the three writes `answer`, `message`, and `ticket`, each delegated to an existing
 # guarded path (jg-captain-hold.sh, jg-send.sh, jg-tasks-axi.sh); it never closes tasks
 # or writes state itself, and a result claims only what the durable record confirms. Like bin/jg-bearings-snapshot.sh it projects the canonical JSON model
@@ -16,6 +16,10 @@
 # `lanes` projects jg-fleet-snapshot.sh --json; `wakes` opens the bus read model
 # (state/.wake-queue, state/.wake-settled) as it is and never renders, acknowledges, or
 # calls the bus, so its age is stated and nothing it does moves a wake.
+# `tasks` and `holds` project the backlog records of the same fleet snapshot (no new store):
+# `tasks ready` is queued work with no unresolved blocker and no hold, as `tasks-axi ready` is.
+# `pr <url>` runs bin/jg-pr-state.sh (read-only) for the blockers it can see and the one thing
+# the change waits for; an empty blocker list is not a readiness verdict, and the output says so.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,9 +30,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-task-inbox-lib.sh"
 
-VERSION=0.2.0
+VERSION=0.3.0
 TICKETS_MAX=100
 LANES_FIELDS="harness backend branch mode yolo pr age_seconds detail endpoint freshness"
+TASKS_FIELDS="priority since blocked_by hold_kind hold_reason hold_until pr links"
 MESSAGE_BYTES=8192
 HOME_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 STATE=${JG_STATE_OVERRIDE:-${JG_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}/state}
@@ -44,6 +49,18 @@ commands:
                          one row per worker lane (default 50, at most 100)
   wakes [--kind <k>] [--limit <n>] [--full]
                          queued wakes from the bus read model, oldest first
+  tasks [list] [--state <queued|in_flight|done|held>] [--repo <name>] [--kind <k>] [--blocked]
+        [--limit <n>] [--fields <a,b>] [--full]
+                         backlog rows in tasks-axi's shape (default 50, at most 100)
+  tasks show <id> [--full]
+                         one task with its hold, blockers, links, and notes
+  tasks ready [--repo <name>] [--limit <n>] [--full]
+                         queued work with no unresolved blocker and no hold
+  holds [--kind <captain|future|parked|external>] [--bucket <live|dated|aged|blocked>]
+        [--limit <n>] [--full]
+                         every held task, with its hold kind, reason, and age
+  pr <github-pr-url>     the blockers one pull request shows now, and what it waits for
+                         (read-only; asks GitHub at the time you run it)
   tickets [--state <queued|in_flight|done>] [--repo <name>] [--limit <n>]
                          bounded backlog rows (default 50, at most 100)
   decisions              open captain holds (read-only; answering is a later slice)
@@ -93,6 +110,33 @@ examples:
   juggernaut-axi wakes --kind stale --full
 HELP
     ;;
+    tasks) cat <<'HELP'
+usage: juggernaut-axi tasks [list] [flags]
+       juggernaut-axi tasks show <id> [--full]
+       juggernaut-axi tasks ready [--repo <name>] [--limit <n>] [--full]
+flags (list):
+  --state <queued|in_flight|done|held>, --repo <name>, --kind <name>, --blocked
+  --limit <n> (default 50, at most 100), --full
+  --fields <a,b,c>  (extra: priority, since, blocked_by, hold_kind, hold_reason, hold_until, pr, links)
+examples:
+  juggernaut-axi tasks --state queued --repo juggernaut
+  juggernaut-axi tasks show some-task-id --full
+  juggernaut-axi tasks ready
+HELP
+    ;;
+    holds) cat <<'HELP'
+usage: juggernaut-axi holds [flags]
+flags:
+  --kind <captain|future|parked|external>, --bucket <live|dated|aged|blocked> (captain holds only)
+  --limit <n> (default 50, at most 100), --full
+example: juggernaut-axi holds --kind captain
+HELP
+    ;;
+    pr) cat <<'HELP'
+usage: juggernaut-axi pr <https://github.com/owner/repo/pull/N>
+Reads GitHub now. No blocker listed does not mean ready: an unreported required check is not listed.
+HELP
+    ;;
     *) usage ;;
   esac
 }
@@ -101,7 +145,12 @@ HELP
 # shellcheck disable=SC2016
 TOON_PREP='
   (if .view == "lanes" and (.lanes | length) == 0 then .lanes = "0 lanes match these filters"
-   elif .view == "wakes" and (.wakes | length) == 0 then .wakes = "0 wakes queued" else . end)
+   elif .view == "wakes" and (.wakes | length) == 0 then .wakes = "0 wakes queued"
+   elif .view == "tasks" and (.tasks | length) == 0 then .tasks = "0 tasks match these filters"
+   elif .view == "ready" and (.ready | length) == 0 then .ready = "0 tasks are ready"
+   elif .view == "holds" and (.holds | length) == 0 then .holds = "0 holds match these filters"
+   elif .view == "pr" and (.blockers | length) == 0 then .blockers = "0 blockers reported"
+   else . end)
   | if has("total") then .count = "\(.count) of \(.total) total" | del(.total) else . end'
 
 jq_or_die() {  # <what> <jq args...> - reads the model on stdin
@@ -241,6 +290,161 @@ cmd_tickets() {
        omitted: (if ($all | length) > $limit then [{surface: "tickets beyond limit", count: (($all | length) - $limit), reveal: "--limit <n> (at most 100)"}] else [] end)}'
 }
 
+backlog_snapshot() {  # prints the fleet snapshot JSON, or exits 1 naming the failure
+  "$SCRIPT_DIR/jg-fleet-snapshot.sh" --json || { echo "juggernaut-axi: fleet snapshot failed" >&2; exit 1; }
+}
+
+# jq helpers shared by the backlog views: the cut that names the full length, and task-id shape.
+# shellcheck disable=SC2016
+TASK_JQ_DEFS='
+  def dash: if . == null or . == "" then "-" else . end;
+  def cut($n): tostring | length as $len
+    | if ($full | not) and $len > $n then .[:$n] + "... (truncated, \($len) chars total - use --full)" else . end;
+  def blocked: (.unresolved_blocker_ids | length) > 0;
+  def held: .hold_kind != null;
+  def cell($name): {
+    priority: (.priority | dash), since: (.since | dash), blocked_by: ((.unresolved_blocker_ids | join(" ")) | dash),
+    hold_kind: (.hold_kind | dash), hold_reason: ((.hold_reason | dash) | cut(100)), hold_until: (.hold_until | dash),
+    pr: (.pr_url | dash), links: (((.links // []) | join(" ")) | dash)}[$name];
+'
+
+cmd_tasks() {
+  local sub=list
+  case "${1:-}" in list|show|ready) sub=$1; shift ;; esac
+  "cmd_tasks_$sub" "$@"
+}
+
+cmd_tasks_list() {
+  local state="" repo="" kind="" blocked=false limit=50 fields="" full=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --state) [ $# -ge 2 ] || die "--state needs a value"; state=$2; shift ;;
+      --repo) [ $# -ge 2 ] || die "--repo needs a value"; repo=$2; shift ;;
+      --kind) [ $# -ge 2 ] || die "--kind needs a value"; kind=$2; shift ;;
+      --blocked) blocked=true ;;
+      --limit) [ $# -ge 2 ] || die "--limit needs a value"; limit=$(limit_arg "$2") || exit $?; shift ;;
+      --fields) [ $# -ge 2 ] || die "--fields needs a value"; fields=$2; shift ;;
+      --full) full=true ;;
+      *) die "unknown tasks argument: $1" ;;
+    esac
+    shift
+  done
+  case "$state" in ''|queued|in_flight|done|held) ;; *) die "--state must be queued, in_flight, done, or held" ;; esac
+  local f
+  for f in ${fields//,/ }; do
+    case " $TASKS_FIELDS " in *" $f "*) ;; *) die "unknown --fields name: $f (extra: ${TASKS_FIELDS// /, })" ;; esac
+  done
+  backlog_snapshot | jq_or_die tasks --arg state "$state" --arg repo "$repo" --arg kind "$kind" --argjson blocked "$blocked" \
+    --argjson limit "$limit" --arg fields "$fields" --argjson full "$full" "$TASK_JQ_DEFS"'
+    ($fields | split(",") | map(select(. != ""))) as $extra
+    | [.backlog.records[] | select(.structured)
+       | select($state == "" or (if $state == "held" then held else .state == $state end))
+       | select($repo == "" or .repo == $repo) | select($kind == "" or .kind == $kind)
+       | select(($blocked | not) or blocked)] as $all
+    | {schema: "juggernaut-axi.v1", view: "tasks", home: (.jg_home | split("/") | .[-2:] | join("/")), generated,
+       count: ($all[:$limit] | length), total: ($all | length),
+       tasks: [$all[:$limit][] | . as $t
+         | {id, state, kind, repo: (.repo | dash), title: (.title | cut(90))}
+         + ([$extra[] | . as $n | {key: $n, value: ($t | cell($n))}] | from_entries)],
+       omitted: (if ($all | length) > $limit then [{surface: "tasks beyond limit", count: (($all | length) - $limit), reveal: "--limit <n> (at most 100)"}] else [] end),
+       help: ["Run `juggernaut-axi tasks show <id>` for one task in full",
+              "Run `juggernaut-axi tasks ready` to see unblocked queued work"]}'
+}
+
+cmd_tasks_show() {
+  local id="" full=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --full) full=true ;;
+      -*) die "unknown tasks show argument: $1" ;;
+      *) [ -z "$id" ] || die "tasks show takes one task id"; id=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$id" ] || die "tasks show needs a task id"
+  known_task_id "$id"
+  local snap
+  snap=$(backlog_snapshot) || exit $?
+  printf '%s\n' "$snap" | jq -e --arg id "$id" '[.backlog.records[] | select(.structured and .id == $id)] | length > 0' >/dev/null \
+    || die "unknown task: $id"
+  printf '%s\n' "$snap" | jq_or_die "tasks show" --arg id "$id" --argjson full "$full" "$TASK_JQ_DEFS"'
+    ([.backlog.records[] | select(.structured and .id == $id)] | first) as $t
+    | {schema: "juggernaut-axi.v1", view: "task", home: (.jg_home | split("/") | .[-2:] | join("/")), generated,
+       task: ($t | {id, title, state, blocked: (if blocked then "yes" else "no" end),
+                    blocked_by: ((.unresolved_blocker_ids | join(" ")) | dash),
+                    held: (if held then "yes" else "no" end),
+                    hold_kind: (.hold_kind | dash), hold_bucket: (.hold_bucket | dash), hold_reason: (.hold_reason | dash),
+                    hold_until: (.hold_until | dash), kind, repo: (.repo | dash), priority: (.priority | dash),
+                    since: (.since | dash), pr: (.pr_url | dash), links: (((.links // []) | join(" ")) | dash),
+                    body: (((.body_lines // []) | join("\n")) | dash | cut(500))}),
+       help: ["Run `juggernaut-axi tasks ready` to see unblocked queued work"]}'
+}
+
+cmd_tasks_ready() {
+  local repo="" limit=50 full=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) [ $# -ge 2 ] || die "--repo needs a value"; repo=$2; shift ;;
+      --limit) [ $# -ge 2 ] || die "--limit needs a value"; limit=$(limit_arg "$2") || exit $?; shift ;;
+      --full) full=true ;;
+      *) die "unknown tasks ready argument: $1" ;;
+    esac
+    shift
+  done
+  backlog_snapshot | jq_or_die "tasks ready" --arg repo "$repo" --argjson limit "$limit" --argjson full "$full" "$TASK_JQ_DEFS"'
+    [.backlog.records[] | select(.structured and .state == "queued" and (blocked | not) and (held | not))
+     | select($repo == "" or .repo == $repo)] as $all
+    | {schema: "juggernaut-axi.v1", view: "ready", home: (.jg_home | split("/") | .[-2:] | join("/")), generated,
+       count: ($all[:$limit] | length), total: ($all | length),
+       ready: [$all[:$limit][] | {id, state, kind, repo: (.repo | dash), title: (.title | cut(90))}],
+       omitted: (if ($all | length) > $limit then [{surface: "ready tasks beyond limit", count: (($all | length) - $limit), reveal: "--limit <n> (at most 100)"}] else [] end),
+       help: ["Run `juggernaut-axi tasks show <id>` for one task in full"]}'
+}
+
+cmd_holds() {
+  local kind="" bucket="" limit=50 full=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --kind) [ $# -ge 2 ] || die "--kind needs a value"; kind=$2; shift ;;
+      --bucket) [ $# -ge 2 ] || die "--bucket needs a value"; bucket=$2; shift ;;
+      --limit) [ $# -ge 2 ] || die "--limit needs a value"; limit=$(limit_arg "$2") || exit $?; shift ;;
+      --full) full=true ;;
+      *) die "unknown holds argument: $1" ;;
+    esac
+    shift
+  done
+  case "$kind" in ''|captain|future|parked|external) ;; *) die "--kind must be captain, future, parked, or external" ;; esac
+  case "$bucket" in ''|live|dated|aged|blocked) ;; *) die "--bucket must be live, dated, aged, or blocked" ;; esac
+  backlog_snapshot | jq_or_die holds --arg kind "$kind" --arg bucket "$bucket" --argjson limit "$limit" --argjson full "$full" "$TASK_JQ_DEFS"'
+    [.backlog.records[] | select(.structured and held and .state != "done")
+     | select($kind == "" or .hold_kind == $kind) | select($bucket == "" or .hold_bucket == $bucket)] as $all
+    | {schema: "juggernaut-axi.v1", view: "holds", home: (.jg_home | split("/") | .[-2:] | join("/")), generated,
+       count: ($all[:$limit] | length), total: ($all | length),
+       kinds: ($all | group_by(.hold_kind) | map({kind: .[0].hold_kind, count: length})),
+       holds: [$all[:$limit][] | {id, kind: .hold_kind, bucket: (.hold_bucket | dash), age_days: (.hold_age_days // "-"),
+                                  until: (.hold_until | dash), reason: ((.hold_reason | dash) | cut(100))}],
+       omitted: (if ($all | length) > $limit then [{surface: "holds beyond limit", count: (($all | length) - $limit), reveal: "--limit <n> (at most 100)"}] else [] end),
+       help: ["Run `juggernaut-axi tasks show <id>` for a held task in full",
+              "Only a captain hold in the live bucket waits on the captain now"]}'
+}
+
+cmd_pr() {
+  [ $# -eq 1 ] || die "pr takes one GitHub pull-request URL"
+  case "$1" in https://github.com/*/*/pull/[0-9]*) ;; *) die "pr needs a GitHub pull-request URL" ;; esac
+  case "$1" in *[[:space:]]*|*[!A-Za-z0-9._/:-]*) die "pr needs a GitHub pull-request URL" ;; esac
+  local url=$1 blockers wait
+  blockers=$("$SCRIPT_DIR/jg-pr-state.sh" "$url") || { echo "juggernaut-axi: could not read $url" >&2; exit 1; }
+  wait=$("$SCRIPT_DIR/jg-pr-state.sh" --waiting-for "$url") || { echo "juggernaut-axi: could not read $url" >&2; exit 1; }
+  jq -n --arg url "$url" --arg blockers "$blockers" --arg wait "$wait" '
+    {schema: "juggernaut-axi.v1", view: "pr", url: $url,
+     waiting_for: ($wait | sub("^juggernaut/waiting-for: "; "") | if . == "" then "nothing" else . end),
+     count: ($blockers | split("\n") | map(select(. != "")) | length),
+     blockers: [$blockers | split("\n")[] | select(. != "") | (capture("^(?<kind>[^:]+): (?<detail>.*)$") // {kind: "NOTE", detail: .})],
+     note: "No blocker listed is not a readiness verdict: a required check that has not reported cannot be listed.",
+     help: ["Run `juggernaut-axi tasks show <id>` for the task this pull request serves"]}' \
+    || { echo "juggernaut-axi: pr result unreadable" >&2; exit 1; }
+}
+
 cmd_decisions() {
   local snap
   snap=$("$SCRIPT_DIR/jg-bearings-snapshot.sh" --json) || { echo "juggernaut-axi: fleet snapshot failed" >&2; exit 1; }
@@ -374,7 +578,7 @@ for a in "$@"; do
   case "$a" in --json) FORMAT=json ;; *) ARGS+=("$a") ;; esac
 done
 case "$CMD" in
-  status|lanes|wakes|tickets|decisions|messages|answer|message|ticket) ;;
+  status|lanes|wakes|tickets|tasks|holds|pr|decisions|messages|answer|message|ticket) ;;
   *) die "unknown command: $CMD (try --help)" ;;
 esac
 for a in "${ARGS[@]+"${ARGS[@]}"}"; do

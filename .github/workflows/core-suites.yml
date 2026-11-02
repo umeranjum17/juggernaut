@@ -263,6 +263,12 @@ jobs:
         run: bash merge-on-green/tests/checks-lint-cases.test.sh
       - name: Owner-rules lint-row recorded decisions
         run: bash owner-rules/tests/lint-row-recorded.test.sh
+      - name: Owner-rules gate recorded decisions
+        run: bash owner-rules/tests/gate-matrix.test.sh
+      - name: Owner-rules brief-rule recorded decisions
+        run: bash owner-rules/tests/brief-rules-cases.test.sh
+      - name: Completion-receipt acceptance recorded decisions
+        run: bash receipts/tests/receipt-accept-cases.test.sh
       - name: No old receipt path test
         run: bash merge-on-green/tests/no-old-receipt-path.test.sh
       # Fixture home and gate logs; no merge runs.

@@ -136,6 +136,8 @@ jg_test_launch_git_prefix() {  # <launch>
 jg_test_launch_command() {  # <launch>
   local command=$1 end=' || return 1 2>/dev/null || exit 1; '
   case "$command" in *"$end"*) command=${command#*"$end"} ;; esac
+  # The credential strip is a pane-side loop that ends with this statement.
+  case "$command" in *"; unset jg_n; "*) command=${command#*"; unset jg_n; "} ;; esac
   while [[ "$command" == *\;* ]]; do
     case "$command" in
     export\ *\;* | unset\ *\;* | :) command=${command#*; } ;;
@@ -195,6 +197,13 @@ jg_test_tmpdir() {
 }
 
 JG_TEST_TMPDIR=$(jg_test_tmpdir) || return 1
+
+# A fixture never joins a real machine's bus: bin/jg-bus.sh records membership in the
+# owner's state/bus/homes, and 452 temp and worktree fixture homes had reached a real
+# owner's list before this file named a list of its own. JG_BUS_HOMES is that list, so
+# every suite's registrations land in this run's temp tree. A case that proves the
+# refusal unsets it deliberately.
+export JG_BUS_HOMES="${JG_BUS_HOMES:-$JG_TEST_TMPDIR/jg-bus-homes.$$}"
 
 JG_TEST_CLEANUP_DIRS=()
 JG_TEST_CLEANUP_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-cleanup.$$.XXXXXX") || return 1

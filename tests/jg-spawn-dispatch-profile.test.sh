@@ -144,14 +144,12 @@ assert_meta_profile() {
 }
 
 # The provider-credential strip jg-spawn pins in front of every launch, which
-# docs/configuration.md owns and bin/jg-launch-env-lib.sh implements. It reads
+# docs/configuration.md owns and the spawn core's launch-env-strip implements. It reads
 # the launching process's credential-shaped names, and a spawn inherits this
 # one, so the expected launch composes the same prefix. Empty on a host whose
 # shell carries no such name.
 launch_strip_prefix() {
-  # shellcheck source=bin/jg-launch-env-lib.sh
-  . "$ROOT/bin/jg-launch-env-lib.sh"
-  jg_launch_env_strip_prefix ""
+  "$ROOT/bin/jg-spawn-core.sh" launch-env-strip ""
 }
 
 test_no_profile_keeps_claude_profile_defaults() {
@@ -1314,18 +1312,22 @@ test_pi_tui_mode_probe_is_safe_for_old_and_new_pi() {
 }
 
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
-  local rec id out status
+  local rec id out status core_go
   id=profile-pi-signed-missing-z8c
   rec=$(make_spawn_case profile-pi-signed-missing pi-signed "$id")
   read_case_record "$rec"
   rm -f "$FAKEBIN_DIR/pi-signed"
   : > "$LAUNCH_LOG"
+  # The restricted PATH below has no Go on it, and the spawn now reads its arguments through the Go
+  # core before it looks for the executable, so the core is built with the toolchain found here.
+  core_go=$(command -v go)
 
   out=$(JG_ROOT_OVERRIDE='' JG_HOME="$HOME_DIR" \
     JG_STATE_OVERRIDE="$HOME_DIR/state" JG_DATA_OVERRIDE="$HOME_DIR/data" \
     JG_PROJECTS_OVERRIDE="$HOME_DIR/projects" JG_CONFIG_OVERRIDE="$HOME_DIR/config" \
     JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
     JG_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+    JG_SPAWN_CORE_GO="$core_go" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1)
   status=$?
   expect_code 1 "$status" "a missing pi-signed executable should refuse the spawn"
@@ -1714,6 +1716,7 @@ test_launch_environment_allowlist() {
   local setting rec id out status probe result expected launch value pane_shell pane_path
   # shellcheck disable=SC2016
   value='synthetic value; $(touch SHOULD_NOT_EXIST) `false` "quoted"'
+  unset OPENROUTER_API_KEY JG_TEST_REFRESH_TOKEN
   for setting in absent missing-config enabled empty; do
     id="env-$setting"
     rec=$(make_spawn_case "$id" codex "$id")
@@ -1729,6 +1732,7 @@ test_launch_environment_allowlist() {
 printf '%s\n' "${JG_TEST_AMBIENT_SENTINEL-unset}" "${JG_TEST_ALLOWED-unset}" \
   "${JG_TEST_EMPTY-unset}" "${JG_TEST_UNSET-unset}" "$HOME" "$PATH" "$TERM" "$TMUX" "$GOTMPDIR"
 printf 'hooksPath=%s\n' "$(git config --get core.hooksPath || :)"
+printf '%s\n' "${OPENROUTER_API_KEY-unset}" "${JG_TEST_REFRESH_TOKEN-unset}"
 SH
     out=$(JG_TEST_AMBIENT_SENTINEL=synthetic-unrelated \
       run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
@@ -1745,6 +1749,7 @@ SH
       result=$(env -i HOME="$HOME_DIR/user-home" PATH=/usr/bin:/bin TERM=xterm \
       TMUX=synthetic-pane GOTMPDIR=/synthetic/gotmp \
       JG_TEST_AMBIENT_SENTINEL=synthetic-unrelated JG_TEST_ALLOWED="$value" JG_TEST_EMPTY='' \
+      OPENROUTER_API_KEY=synthetic-credential JG_TEST_REFRESH_TOKEN=synthetic-credential \
       "$pane_shell" -c "$launch") || fail "allowlist=$setting emitted launch failed in $pane_shell"
       case "$setting" in
         absent|missing-config) expected=$(printf '%s\n' synthetic-unrelated "$value" '' unset) ;;
@@ -1754,6 +1759,10 @@ SH
       expected="$expected"$'\n'"$HOME_DIR/user-home"$'\n'"$pane_path"$'\nxterm\nsynthetic-pane\n/synthetic/gotmp'
       # The strip-hook entry must also survive the env -i boundary.
       expected="$expected"$'\n'"hooksPath=$(cd "$HOME_DIR/state" && pwd -P)/$id.git-hooks"
+      # A credential only the pane holds - the launching process never had it,
+      # as with a herdr server environment or a shell profile - must not
+      # reach the worker on any launch path.
+      expected="$expected"$'\nunset\nunset'
       [ "$result" = "$expected" ] || fail "allowlist=$setting worker environment mismatch: $result"
     done
     pass "allowlist=$setting preserves the operational floor and filters only when opted in"
@@ -2047,7 +2056,7 @@ claude_launch_brief_arg() {  # <launch>
 
 # The --add-dir segment every Claude worker launch now carries between the
 # permission flag and --settings, real-path resolved the way the spawn's
-# claude_add_dirs_flag resolves it. Prints a trailing space so callers can
+# the spawn core's claude-add-dirs resolves it. Prints a trailing space so callers can
 # drop it straight into an expected command.
 claude_worker_add_dirs() {  # <home> <id>
   local state_real data_real root_real
