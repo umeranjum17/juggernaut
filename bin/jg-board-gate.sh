@@ -33,9 +33,14 @@
 #          - every must ask waiting over 48 hours is re-pinged once;
 #          - every merge recorded in the last 30 minutes with no live board
 #            Evidence card for its PR reports here.
-#          Each line wakes Main, the board's owner. A routed ask leaves the
-#          board, so it never reports twice; a re-ping and a healthy board are
-#          silent after the first pass.
+#          Each line wakes Main, the board's owner. The set of offending keys is
+#          recorded beside the gate (state/.board-gate/unrouted.set) and the pass
+#          alerts once for it: the same unchanged set stays silent, and only an
+#          addition, a removal or an edit to it alerts again, so a card the board
+#          refuses to remove cannot wake Main every cycle. A card is routed once,
+#          however many passes see it. A re-ping and a healthy board are silent
+#          after the first pass. A report card is not an ask (its kind is not a
+#          decision), so the gate ignores it.
 # arm      Write state/board-gate.check.sh and bind it with jg-check-register.sh;
 #          bin/jg-bootstrap.sh arms it on a primary home. disarm retires it.
 # Environment: JG_HOME, JG_STATE_OVERRIDE and JG_DATA_OVERRIDE as in other bin/
@@ -95,7 +100,7 @@ first_time() {  # <tag>: 0 the first pass that sees it, then 1
 }
 
 refire_ok() {  # <tag>: 0 when this tag may report now, and records the report
-  local f=$GATE_DIR/$1 fired=0
+  local f=$GATE_DIR/${1//\//_} fired=0
   mkdir -p "$GATE_DIR" 2>/dev/null || return 1
   [ ! -f "$f" ] || fired=$(sed -n 's/^fired=//p' "$f" | tail -1)
   case "$fired" in ''|*[!0-9]*) fired=0 ;; esac
@@ -163,7 +168,7 @@ cmd_waiting() {
   board=$(board_file)
   [ -n "$board" ] || die 'no board to count; set SIGN_OFF_HOME, JG_PROOF_BOARD or config/post-merge --board'
   json=$(board_list "$board") || die "cannot read $board with sign-off-axi"
-  count=$(printf '%s' "$json" | jq -r "$OPEN_ASKS"' | [(.key // ""), (.detail // "")] | join("\u001f")' 2>/dev/null \
+  count=$(printf '%s' "$json" | jq -r "$OPEN_ASKS"' | [(.key // ""), (.detail // "")] | map(gsub("[\\n\\r\\t]"; " ")) | join("\u001f")' 2>/dev/null \
     | while IFS=$'\x1f' read -r key detail; do
         [ -n "$key" ] || continue
         # A card its owner dismissed is not waiting on anyone, however often a
@@ -178,10 +183,42 @@ cmd_waiting() {
   printf '%s\n' "${count:-0}"
 }
 
+# The record a card key already has, else nothing: the gate routes one card once,
+# so a pass that cannot remove the card does not append the same ask again.
+routed_id() {  # <card key>
+  [ -f "$RECORDS" ] || return 0
+  awk -v ref="- Ask ref: $(clean_line "$1")" '
+    /^## / { id = substr($0, 4) }
+    $0 == ref { print id; exit }' "$RECORDS" 2>/dev/null
+}
+
+# Alert once for one set of offending keys: the set this pass alerted on is a
+# record beside the gate, so the same unchanged set stays silent until an
+# addition, a removal or an edit changes it. This is the shape the wake classes
+# use for a repeated event (bin/jg-wake-lib.sh _jg_wake_realert_record): the
+# event's own identity is recorded where it was delivered, and an unchanged one
+# cannot be delivered again.
+alert_key_set() {  # <keys file> <buffered lines file>
+  local keys=$1 lines=$2 rec=$GATE_DIR/unrouted.set new old
+  new=$(sort -u "$keys" 2>/dev/null)
+  old=$(cat "$rec" 2>/dev/null)
+  [ "$new" != "$old" ] || return 0
+  cat "$lines"
+  if [ -n "$new" ]; then printf '%s\n' "$new" > "$rec.tmp"; else : > "$rec.tmp"; fi \
+    && mv -f -- "$rec.tmp" "$rec" 2>/dev/null
+  rm -f -- "$rec.tmp" 2>/dev/null || true
+  return 0
+}
+
 # Route one ask off the board, or re-ping one must ask.
 ask_sweep() {  # <board json> <board>
   local key filed detail filer title cat epoch id
-  printf '%s' "$1" | jq -r "$OPEN_ASKS"' | [(.key // ""), (.filed // ""), (.detail // ""), (.filer // ""), (.title // "")] | join("\u001f")' 2>/dev/null \
+  local lines=$GATE_DIR/.unrouted.lines keys=$GATE_DIR/.unrouted.keys
+  mkdir -p "$GATE_DIR" 2>/dev/null || return 0
+  : > "$lines" && : > "$keys" || return 0
+  # A detail field can hold line breaks, and a bare join would then read each of
+  # its lines as another ask: the fields are flattened before they are joined.
+  printf '%s' "$1" | jq -r "$OPEN_ASKS"' | [(.key // ""), (.filed // ""), (.detail // ""), (.filer // ""), (.title // "")] | map(gsub("[\\n\\r\\t]"; " ")) | join("\u001f")' 2>/dev/null \
     | while IFS=$'\x1f' read -r key filed detail filer title; do
         [ -n "$key" ] || continue
         # A dismissal is a record, not an absence: a card its owner dismissed
@@ -191,12 +228,15 @@ ask_sweep() {  # <board json> <board>
         cat=$(jg_ask_card_category "$detail")
         [ -n "$cat" ] || cat=$(jg_ask_card_category "$(jg_board_detail_of "$2" "$key")")
         if [ -z "$cat" ]; then
-          refire_ok "unrouted-$key" || continue
-          id=$(route_record "${title:-$key}" "$filer" "$key") || continue
-          if sign-off-axi dismiss "$key" "$2" --reason "routed to Overwatch: no must category" >/dev/null 2>&1; then
-            printf 'board ask routed to Overwatch, not a must: %s - %s (record %s)\n' "$key" "$title" "$id"
+          id=$(routed_id "$key")
+          [ -n "$id" ] || id=$(route_record "${title:-$key}" "$filer" "$key") || continue
+          printf '%s\n' "$key" >> "$keys"
+          # sign-off-axi takes one of its three own reasons, so a card that is
+          # not the captain's to answer leaves the board as not relevant.
+          if sign-off-axi dismiss "$key" "$2" --reason not-relevant >/dev/null 2>&1; then
+            printf 'board ask routed to Overwatch, not a must: %s - %s (record %s)\n' "$key" "$title" "$id" >> "$lines"
           else
-            printf 'board ask has no must category and could not be dismissed: %s - %s (record %s)\n' "$key" "$title" "$id"
+            printf 'board ask has no must category and could not be dismissed: %s - %s (record %s)\n' "$key" "$title" "$id" >> "$lines"
           fi
           continue
         fi
@@ -211,6 +251,8 @@ ask_sweep() {  # <board json> <board>
         first_time "pinged-$key" || continue
         printf 'must ask waiting over 48h: %s - %s (%s)\n' "$key" "$title" "$cat"
       done
+  alert_key_set "$keys" "$lines"
+  rm -f -- "$lines" "$keys" 2>/dev/null || true
 }
 
 has_evidence() {  # <board json> <merge key> <pr url>
