@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # A launch never carries a provider credential it was not allowed to carry.
-# The real builder (bin/jg-launch-env-lib.sh, called by bin/jg-spawn.sh) is run
-# here in a subshell with planted synthetic names: the credential name must be
-# gone, an allowlisted credential must survive, and a non-credential name that
-# merely contains KEY must survive. The names exist only in the pane, never in
-# the process that builds the launch. Only names are used; the values are
-# synthetic and are never asserted on.
+# The real builder (the spawn core's launch-env-strip, called by bin/jg-spawn.sh)
+# runs here. The strip runs inside the destination pane, so the planted names
+# exist only in the shell that runs the emitted prefix, never in the process
+# that builds it - that is the whole point of the pane-side loop. Only names are
+# used; the values are synthetic and are never asserted on.
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source=bin/jg-launch-env-lib.sh
-. "$ROOT/bin/jg-launch-env-lib.sh"
+# jg_launch_env_strip_prefix <allowlist-names>: the statement a launch pins in front.
+jg_launch_env_strip_prefix() { "$ROOT/bin/jg-spawn-core.sh" launch-env-strip "$1"; }
 
 # print_set <shell> <prefix>: run the emitted prefix in a fresh shell that holds
 # the synthetic names, then report which of them are still set.
@@ -30,13 +29,9 @@ print_set() {
     done'
 }
 
-# The builder runs in a process that holds none of the planted names, as the
-# spawner does: the pane, not the spawner, is where they exist.
-# shellcheck disable=SC2016  # the inner shell expands these
-prefix=$(env -i PATH=/usr/bin:/bin bash -c '. "$1"; jg_launch_env_strip_prefix ""' _ "$ROOT/bin/jg-launch-env-lib.sh") ||
-  fail "the builder failed with no allowlist"
+prefix=$(jg_launch_env_strip_prefix "") || fail "the builder failed with no allowlist"
 assert_contains "$prefix" "unset" "the builder emitted no unset statement"
-pass "the builder emits a pane-side strip that needs no name from the spawner"
+assert_not_contains "$prefix" "OPENROUTER_API_KEY" "the builder named a variable from the spawner"
 
 for pane_shell in /bin/sh /bin/bash /bin/zsh; do
   [ -x "$pane_shell" ] || continue
@@ -50,9 +45,14 @@ for pane_shell in /bin/sh /bin/bash /bin/zsh; do
 done
 
 # An allowlisted credential is the one a launch is explicitly permitted to
-# carry, so the builder must leave it alone.
+# carry, so the pane-side strip must leave it alone.
 prefix=$(jg_launch_env_strip_prefix $'JG_TEST_ALLOWED_API_KEY\n') || fail "the builder failed with an allowlist"
 out=$(print_set /bin/sh "$prefix") || fail "the prefix failed with an allowlist"
 assert_contains "$out" "JG_TEST_ALLOWED_API_KEY=set" "an allowlisted credential did not reach the worker"
 assert_contains "$out" "OPENROUTER_API_KEY=unset" "an unlisted credential reached the worker"
 pass "an allowlisted credential survives and an unlisted one does not"
+
+# The strip only holds if the launch path actually applies it.
+grep -q 'jg-spawn-core.sh" launch-env-strip' "$ROOT/bin/jg-spawn.sh" ||
+  fail "bin/jg-spawn.sh does not apply the launch-environment strip"
+pass "bin/jg-spawn.sh applies the builder to every launch"
