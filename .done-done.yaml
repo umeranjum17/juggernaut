@@ -58,6 +58,8 @@ journeys:
     command: bash journeys/worker-rules.sh
   tmp-sweep:
     command: bash journeys/tmp-sweep.sh
+  wake-routing:
+    command: bash journeys/wake-routing.sh
 
   merge-card-pool-fallback:
     command: bash core/merge-card/run-proof.sh

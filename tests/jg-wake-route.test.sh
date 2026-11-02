@@ -193,8 +193,22 @@ test_repeat_and_override() (
   ladder="check: x/fleet-heartbeat.check.sh: fleet heartbeat: a GAP for 0s - 1 open wait(s) climbing their ladder"
   assert_equals "$(route "$dir" "$state" check x/fleet-heartbeat.check.sh "$ladder")" now "a home rule wins over the shared file"
   assert_equals "$(route "$dir" "$state" check x/fleet-heartbeat.check.sh "check: x: fleet heartbeat: a MOVING again")" batch "what the home does not name falls through to the shared file"
+  # A `set` is read from the same layered files as the rules: the shared window lets a repeat ride
+  # the digest, and a home's zero window makes the same line wake again.
+  repeat_class() {  # <status-key>
+    JG_STATE_OVERRIDE="$state" JG_HOME="$dir" bash -c '. "$1/bin/jg-wake-lib.sh"
+      for _i in 1 2; do
+        jg_wake_append signal "$2" "signal: $2"
+        printf "%s," "$JG_WAKE_LAST"
+      done' _ "$ROOT" "$1"
+  }
+  printf 'done [at=3]: PR https://x/pull/2 ready\n' > "$state/window-30.status"
+  assert_equals "$(repeat_class window-30.status)" "now:window-30.status,batch:window-30.status," \
+    "the shared re-alert window lets the same outcome line ride the digest"
   printf 'set re-alert-minutes 0\n' > "$dir/config/wake-routing"
-  assert_equals "$(JG_HOME="$dir" bash -c '. "$1/bin/jg-wake-lib.sh"; _jg_wake_rule_set re-alert-minutes 30' _ "$ROOT")" 0 "a home value wins over the shared set"
+  printf 'done [at=4]: PR https://x/pull/3 ready\n' > "$state/window-0.status"
+  assert_equals "$(repeat_class window-0.status)" "now:window-0.status,now:window-0.status," \
+    "a home set value wins over the shared file's"
   pass "a repeated outcome line batches, and a home file layers over the shared file"
 )
 
