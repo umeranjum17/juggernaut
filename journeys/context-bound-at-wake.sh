@@ -77,7 +77,7 @@ check "the compaction is logged" test -s "$T/state/context-bound.log"
 
 say "== the real session-start hook prints the same after a compact, and nothing extra at startup"
 H=$T/home; mkdir -p "$H/state"; git -C "$H" init -q; cp -R "$REPO/bin" "$H/bin"; echo home >"$H/AGENTS.md"
-printf '#!/usr/bin/env bash\necho "DIGEST $*"\n' >"$H/bin/jg-session-start.sh"
+printf '#!/usr/bin/env bash\necho "DIGEST $*"\n' >"$H/bin/jg-session-start.sh"; chmod +x "$H/bin/jg-session-start.sh"
 hook() { printf '{"source":"%s","transcript_path":"%s"}' "$1" "$AT" | JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" bash "$H/bin/jg-sessionstart-run.sh" 2>&1; }
 check "compact prints the digest, then the captain's note 9 verbatim" bash -c '[[ $1 == DIGEST* && $1 == *"$2"* ]]' _ "$(hook compact)" "the vault word for note 9 is $(vault 9)"
 check "startup prints only the digest" bash -c '[[ $1 != *VAULT-* ]]' _ "$(hook startup)"
