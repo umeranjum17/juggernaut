@@ -16,6 +16,8 @@ unset _jg_old _jg_new 2>/dev/null || true
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 LINT=$ROOT/merge-on-green/jg-checks-lint.sh
+# shellcheck source=lib/policy-test-env.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../lib/policy-test-env.sh"
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
 mkdir -p "$d/fm/state" "$d/fm/data/lane-alpha" "$d/fm/data/lane-beta" "$d/bin"

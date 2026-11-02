@@ -40,6 +40,9 @@ The five goals, scored together:
 1. The watcher settles routine wakes without a model turn, with now, batch, and silent levels, and `wake next` as one call.
 2. Harness quirk tables become data plus Rego.
 3. The guard host moves into the core with the OPA engine, and repo-guard is the first Rego rule.
+   The merge gate's yes/no checks follow as JSON data plus Rego under `policy/gate/`, evaluated by the guard host's `eval` door.
+   The lint gathers facts and the policy decides, so a changed threshold is an edit to `policy/gate/rules.json`.
+   Each shell check leaves in the same change that proves the policy gives its recorded decisions.
 4. Shared libraries replace the copied blocks.
 5. The plumbing swap to NATS, Dapr, and ntfy runs in shadow first, one path at a time. One shared NATS server runs per machine, with one account, one `jg.<home>.>` subject prefix, and its own streams per home. A remote machine joins through a leaf node.
 6. The add-on concept ends: every add-on is folded into the core or deleted where the migration replaces it, and a merge check refuses new files under `addons/`.

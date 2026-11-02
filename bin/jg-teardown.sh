@@ -1385,10 +1385,6 @@ elif [ "$FORCE" != "--force" ] && jg_pf_relay_active "$JG_HOME"; then
   PUBLIC_FOLLOWUP_RELAY_ACTIVE=1
 fi
 
-default_branch() {
-  "$SCRIPT_DIR/jg-teardown-core.sh" default-branch --project "$PROJ"
-}
-
 meta_value() {
   local meta=$1 key=$2
   jg_meta_get "$meta" "$key"
@@ -1486,41 +1482,6 @@ remove_pr_poll_artifacts() {
   rm -f "$state_dir/$id.check.sh" "$state_dir/$id.pr-poll" \
     "$state_dir/$id.pr-poll-registration" "$state_dir/$id.pr-poll-retirement" \
     "$state_dir/$id.merge-authority" "$state_dir/$id.check-trust" || return 1
-}
-
-# The landed-work test is Go (core/teardown, run through bin/jg-teardown-core.sh): this function
-# only gathers the facts the command cannot read from the worktree - the recorded PR, its base
-# branch and the forge identity jg_pr_url_parse derives from the PR URL - and relays its answer.
-# A check that cannot run is a refusal, never a landing. LANDING_GAP is the reason the refusal
-# prints; PR_URL is filled in when the forge resolved a merged PR the record did not carry.
-LANDING_GAP=
-work_is_landed() {
-  local branch=$1 out rc=0 line login
-  local args=(landed --worktree "$WT" --branch "$branch" --project "$PROJ")
-  [ -z "$PR_URL" ] || args+=(--pr-url "$PR_URL")
-  [ -z "$BASE_BRANCH" ] || args+=(--base-branch "$BASE_BRANCH")
-  if [ -n "$PR_URL" ]; then
-    ! jg_dod_pr_outside_origin "$WT" "$PR_URL" || args+=(--pr-outside-origin)
-    if jg_pr_url_parse "$PR_URL" && [ "$JG_PR_PROVIDER" = forgejo ]; then
-      args+=(--forgejo-host "$JG_PR_HOST" --forgejo-path "$JG_PR_PATH" --forgejo-number "$JG_PR_NUMBER")
-      ! login=$(jg_pr_forgejo_login "$JG_PR_HOST") || args+=(--forgejo-login "$login")
-    fi
-  fi
-  out=$("$SCRIPT_DIR/jg-teardown-core.sh" "${args[@]}") || rc=$?
-  while IFS= read -r line; do
-    case "$line" in
-      gap=*) LANDING_GAP=${line#gap=} ;;
-      pr_url=*) [ -n "$PR_URL" ] || PR_URL=${line#pr_url=} ;;
-    esac
-  done <<EOF_OUT
-$out
-EOF_OUT
-  case "$rc" in
-    0) return 0 ;;
-    1) return 1 ;;
-  esac
-  LANDING_GAP="the landed-work check could not run (exit $rc)"
-  return 1
 }
 
 # The completion links this teardown already holds locally. A scout's
@@ -1654,14 +1615,6 @@ worktree_git_lock_path() {
 # Teardown passes the worktree dir as the companion directory and its own
 # STALE_WORKTREE_LOCK_AGE_SECS threshold.
 
-worktree_safety_blocked_by_lock() {
-  local reason=$1 lock
-  lock=$(worktree_git_lock_path "$WT") || lock=""
-  [ -n "$lock" ] && [ -e "$lock" ] || return 1
-  echo "teardown: cannot inspect worktree $WT for $reason while git lock $lock is present; checking whether the lock is stale" >&2
-  return 0
-}
-
 cleanup_stale_lock_for_safety_check() {
   local dir=$1 lock
   lock=$(worktree_git_lock_path "$dir") || lock=""
@@ -1763,23 +1716,6 @@ teardown_treehouse_return() {
   return 1
 }
 
-report_worktree_dirt() {
-  # Use the same porcelain snapshot and exemptions as the refusal predicate.
-  printf '%s\n' "$1" | awk '
-    /^\?\? / { if (++untracked <= 10) paths = paths "  " substr($0, 4) "\n"; next }
-    NF { tracked = 1 }
-    END {
-      if (tracked) print "uncommitted changes present (includes tracked edits)"
-      else print "uncommitted changes present (untracked-only leftovers)"
-      if (untracked) {
-        print "untracked paths (up to 10):"
-        printf "%s", paths
-        if (untracked > 10) print "  ... additional untracked paths omitted"
-      }
-    }
-  ' >&2
-}
-
 # Scratch and --force copies are scrubbed before Treehouse return. See the
 # script header for why `git clean -fd` is not enough and why a dirty return
 # is not reported as clean.
@@ -1811,72 +1747,47 @@ teardown_note_dirty_return() {
   printf '%s\n' "$residue" | sed 's/^/  /' >&2
 }
 
+# The worktree safety test is Go (core/teardown `safety`, through bin/jg-teardown-core.sh): nothing
+# uncommitted, and nothing unpushed that the forge or the default branch has not absorbed. This
+# function keeps the policy that decides whether to ask (a --force, a scout or a Squad Lead is never
+# asked) and gathers the facts the command cannot read from the worktree: the recorded PR, its base
+# branch, and the forge identity jg_pr_url_parse derives from the PR URL. The command prints every
+# refusal itself. It exits 3 when a git index lock stopped a read, and a command that cannot run
+# refuses: a check that cannot run is never a pass. PR_URL is filled in when the forge resolved a
+# merged PR the record did not carry; the branch it read is kept so a later call, after the branch
+# is detached, still asks about the branch the work was done on.
 validate_worktree_teardown_safety() {
-  local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
+  local out rc=0 line login
   [ -d "$WT" ] || return 0
   [ "$FORCE" != "--force" ] || return 0
   case "$KIND" in
     squad_lead|scout) return 0 ;;
   esac
-
-  if ! dirty_raw=$(git -C "$WT" status --porcelain 2>/dev/null); then
-    if worktree_safety_blocked_by_lock "uncommitted changes"; then
-      return "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED"
-    fi
-    echo "REFUSED: cannot inspect worktree $WT for uncommitted changes." >&2
-    echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
-    return 1
-  fi
-  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.jg-(grok|kimi)-turnend$)' || true)
-
-  if ! unpushed_raw=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null); then
-    if worktree_safety_blocked_by_lock "commits not on a remote"; then
-      return "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED"
-    fi
-    echo "REFUSED: cannot inspect worktree $WT for commits not on a remote." >&2
-    echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
-    return 1
-  fi
-  unpushed=$(printf '%s\n' "$unpushed_raw" | head -5)
-
-  if [ -n "$unpushed" ] && [ "$MODE" = local-only ]; then
-    DEFAULT=$(default_branch) || { echo "REFUSED: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master." >&2; return 1; }
-    if ! unmerged_raw=$(git -C "$WT" log --oneline HEAD --not "$DEFAULT" -- 2>/dev/null); then
-      if worktree_safety_blocked_by_lock "commits not on $DEFAULT"; then
-        return "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED"
-      fi
-      echo "REFUSED: cannot inspect worktree $WT for commits not on $DEFAULT." >&2
-      echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
-      return 1
-    fi
-    unmerged=$(printf '%s\n' "$unmerged_raw" | head -5)
-    if [ -n "$dirty" ] || [ -n "$unmerged" ]; then
-      echo "REFUSED: local-only worktree $WT has work not yet merged into $DEFAULT and not on any remote." >&2
-      [ -n "$dirty" ] && report_worktree_dirt "$dirty"
-      [ -n "$unmerged" ] && printf 'commits not yet on %s:\n%s\n' "$DEFAULT" "$unmerged" >&2
-      echo "Merge the branch into local $DEFAULT first (bin/jg-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force." >&2
-      return 1
-    fi
-  elif [ -n "$dirty" ]; then
-    echo "REFUSED: worktree $WT has uncommitted changes." >&2
-    report_worktree_dirt "$dirty"
-    echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
-    return 1
-  elif [ "$MODE" != local-only ]; then
-    # A pushed branch is not a landing: the forge must prove the merge.
-    branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
-    if [ -z "$branch" ]; then
-      branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
-      TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
-    fi
-    if ! work_is_landed "$branch"; then
-      echo "REFUSED: worktree $WT has no merge proved on the forge: $LANDING_GAP." >&2
-      [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed" >&2
-      echo "A pushed branch, a done or merged status line, a pipeline state, or a summary is a claim, not proof." >&2
-      echo "Check the PR on the forge and re-run once it shows merged at a head containing this copy's HEAD, or get the captain's explicit OK to discard, then --force." >&2
-      return 1
+  local args=(safety --worktree "$WT" --project "$PROJ" --mode "$MODE")
+  [ -z "${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}" ] || args+=(--cached-branch "$TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY")
+  [ -z "$PR_URL" ] || args+=(--pr-url "$PR_URL")
+  [ -z "$BASE_BRANCH" ] || args+=(--base-branch "$BASE_BRANCH")
+  if [ -n "$PR_URL" ]; then
+    ! jg_dod_pr_outside_origin "$WT" "$PR_URL" || args+=(--pr-outside-origin)
+    if jg_pr_url_parse "$PR_URL" && [ "$JG_PR_PROVIDER" = forgejo ]; then
+      args+=(--forgejo-host "$JG_PR_HOST" --forgejo-path "$JG_PR_PATH" --forgejo-number "$JG_PR_NUMBER")
+      ! login=$(jg_pr_forgejo_login "$JG_PR_HOST") || args+=(--forgejo-login "$login")
     fi
   fi
+  out=$("$SCRIPT_DIR/jg-teardown-core.sh" "${args[@]}") || rc=$?
+  while IFS= read -r line; do
+    case "$line" in
+      branch=*) TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=${line#branch=} ;;
+      pr_url=*) [ -n "$PR_URL" ] || PR_URL=${line#pr_url=} ;;
+    esac
+  done <<EOF_OUT
+$out
+EOF_OUT
+  case "$rc" in
+    0|1|"$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED") return "$rc" ;;
+  esac
+  echo "REFUSED: the worktree safety check for $WT could not run (exit $rc)." >&2
+  return 1
 }
 
 # Fix 1 (see script header): does the active-or-most-recent no-mistakes run in
