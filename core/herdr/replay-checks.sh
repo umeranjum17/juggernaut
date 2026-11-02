@@ -230,7 +230,7 @@ TUPLES[live-binding]=$(printf "%s${US}%s${US}%s${US}%s${US}%s${US}%s\n" \
   AAAAAAAAAAAAAAAAAAAAAA w9 w1 juggernaut '' 'x' \
   '' w3 w1 juggernaut '' '' \
   AAAAAAAAAAAAAAAAAAAAAA w3 w9 juggernaut '' '└ task-a · p:AAAAAAAAAAAAAAAAAAAAAA')
-TUPLES[pane-info-matches]=$(printf "%s${US}%s${US}%s${US}%s\n" w1:p1 w1 w1:t1 /wt  w1:p1 w1 w1:t1 '/x y'  w1:p2 w1 w1:t1 /wt  w1:p1 w2 w1:t1 /wt  '' '' '' '')
+TUPLES[pane-info-matches]=$(printf "%s${US}%s${US}%s${US}%s\n" w1:p1 w1 w1:t1 /tmp  w1:p1 w1 w1:t1 /wt  w1:p1 w1 w1:t1 '/x y'  w1:p2 w1 w1:t1 /wt  w1:p1 w2 w1:t1 /wt  '' '' '' '')
 TUPLES[agent-info-matches]=${TUPLES[pane-info-matches]}
 
 # The oracle name and the Go check name differ only in that a check also has variants run on

@@ -409,12 +409,16 @@ fi
 JG_ROOT_OVERRIDE=$work/old bash "$work/driver.sh" "$work/old/bin/backends/herdr.sh" "$side_old" || { echo "replay: base adapter run failed" >&2; exit 2; }
 bash "$work/driver.sh" "$ROOT/bin/backends/herdr.sh" "$side_new" || { echo "replay: ported adapter run failed" >&2; exit 2; }
 
+# The program-level half: the base adapter's jq -e programs against the Go checks.
+checks_rc=0
+bash "$ROOT/core/herdr/replay-checks.sh" "$REC" "$syn" "$CONTROL" || checks_rc=1
+
 total=$(wc -l < "$side_old" | tr -d ' ')
 # The answers themselves, for a reader who wants to see what was compared (REPLAY_KEEP=<dir>).
 [ -z "${REPLAY_KEEP:-}" ] || cp "$side_old" "$REPLAY_KEEP/replay-answers.txt"
 if diff -u "$side_old" "$side_new" > "$work/diff.txt"; then
   printf 'replay: %s calls (%s with output), 0 differences\n' "$total" "$(grep -vc " rc=[0-9]* ''$" "$side_old")"
-  exit 0
+  exit "$checks_rc"
 fi
 diffs=$(grep -c '^-[0-9]' "$work/diff.txt")
 cat "$work/diff.txt"
