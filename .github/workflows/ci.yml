@@ -85,6 +85,9 @@ jobs:
         with:
           # The scope step diffs against the pull request's base commit.
           fetch-depth: 0
+          # Blobless: every commit and tree for the diff, no file contents until
+          # they are read. The history is 107 MB with them and 6.5 MB without.
+          filter: blob:none
       - name: Classify the changed paths
         id: scope
         env:
@@ -167,6 +170,9 @@ jobs:
         with:
           # The changed-file lint diffs against the pull request's base commit.
           fetch-depth: 0
+          # Blobless: every commit and tree for the diff, no file contents until
+          # they are read. The history is 107 MB with them and 6.5 MB without.
+          filter: blob:none
       - name: Install pinned ShellCheck
         run: |
           set -eu
@@ -354,6 +360,9 @@ jobs:
         with:
           # --changed diffs against the pull request's base commit.
           fetch-depth: 0
+          # Blobless: every commit and tree for the diff, no file contents until
+          # they are read. The history is 107 MB with them and 6.5 MB without.
+          filter: blob:none
       - name: Install pinned ShellCheck
         run: |
           set -eu
