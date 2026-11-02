@@ -985,6 +985,18 @@ test_a_fleet_pause_silences_ready_work_but_not_a_blocker() {
   cycle "$m"
   grep -q '^check: ready work waiting with no worker working: alpha' "$m/events" \
     || fail "an unpaused primary home got no ready-work wake: $(cat "$m/events")"
+  # A lane list parked under the home's own old pause record name is not a pause
+  # declaration (bin/jg-pause-lib.sh), so ready-work intake still rings and the
+  # live work keeps its alarm.
+  printf '# Paused lanes for the Juggernaut-only push\n\nNo new work; nothing merged.\n- beta: parked\n' \
+    > "$m/data/paused-for-juggernaut.md"
+  before=$(grep -c '^check: ready work waiting' "$m/events")
+  backlog "$m" add beta "second item" --priority 2
+  touch -d '-15 days' "$m/state/.last-ready-work-check"
+  cycle "$m"
+  [ "$(grep -c '^check: ready work waiting' "$m/events")" -gt "$before" ] \
+    || fail "a lane list under a pause record's name silenced ready-work intake: $(cat "$m/events")"
+  rm -f "$m/data/paused-for-juggernaut.md"
   # Main declares the fleet pause in this home: ready-work intake goes silent.
   printf '# Fleet pause for the Juggernaut migration - 31 Oct 2026\n\nStop new work.\n- Resume rule: Main sends an explicit resume order.\n' \
     > "$m/data/fleet-pause-2026-10-31.md"

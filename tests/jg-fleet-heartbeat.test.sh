@@ -118,6 +118,54 @@ test_a_paused_wait_is_named_as_paused_and_is_no_gap() {
   pass "a paused wait is named as paused and is no gap"
 }
 
+# A report or a lane list parked under a pause record's name must never pause a
+# home: a record is a pause only when its content declares one. The home keeps
+# its ordinary verdict and its alarm, and the heartbeat says out loud which
+# file it refused and that file's first line.
+test_a_lane_list_never_pauses_a_home_and_is_named() {
+  local d out
+  d=$(setup pause-report)
+  printf '2\n' > "$d/main/config/lane-target"
+  printf '# Paused lanes for the Juggernaut-only push\n\nNo new work; nothing merged.\n- alpha: parked\n' \
+    > "$d/main/data/paused-for-juggernaut.md"
+  out=$(hb "$d" rows)
+  assert_equals "$(verdict "$out" overwatch)" MOVING \
+    "a lane list under a pause record's name must not pause the home"
+  assert_contains "$out" \
+    "data/paused-for-juggernaut.md is not a pause declaration (first line: # Paused lanes for the Juggernaut-only push), so this home is not paused" \
+    "the heartbeat must name the refused file and its first line"
+  # Live work keeps its alarm: ready work with a free lane still turns GAP.
+  printf '{"ready_work":2}\n' > "$d/main/state/home-summary.json"
+  out=$(hb "$d" check)
+  assert_contains "$out" "overwatch GAP" \
+    "live work beside a refused pause record must still raise its alarm"
+  assert_contains "$out" "data/paused-for-juggernaut.md is not a pause declaration" \
+    "the alarm must name the refused record"
+  # A genuine pause order under the home's own new record name still silences it.
+  rm -f "$d/main/data/paused-for-juggernaut.md"
+  printf '# Paused for the vendor migration\n\nStop new work.\n- Resume rule: Main sends an explicit resume order.\n' \
+    > "$d/main/data/.jg-pause-order.md"
+  out=$(hb "$d" rows)
+  assert_equals "$(verdict "$out" overwatch)" PAUSED \
+    "a genuine pause order under data/.jg-pause-order.md must still pause the home"
+  assert_not_contains "$out" "is not a pause declaration" \
+    "a genuine pause order must not be named as refused"
+  # A genuine pause already declared under the old name still holds.
+  mv "$d/main/data/.jg-pause-order.md" "$d/main/data/paused-for-juggernaut.md"
+  assert_equals "$(verdict "$(hb "$d" rows)" overwatch)" PAUSED \
+    "a genuine pause already declared under the old record name must still hold"
+  # A record whose first line declares the lift is a declared end, not a refused file.
+  printf '# Fleet pause - lifted 2026-10-03T16:54:36Z\n\n- Resume rule: Main lifted it.\n' \
+    > "$d/main/data/fleet-pause-2026-11-02.md"
+  rm -f "$d/main/data/paused-for-juggernaut.md"
+  out=$(hb "$d" rows)
+  assert_not_equals PAUSED "$(verdict "$out" overwatch)" \
+    "a record whose first line declares the lift must take the home off the paused verdict"
+  assert_not_contains "$out" "is not a pause declaration" \
+    "a declared lift is an end, not a refused report"
+  pass "a lane list never pauses a home and is named, and a genuine pause still holds"
+}
+
 test_check_wakes_on_a_gap_refires_and_reports_recovery_once() {
   local d out
   d=$(setup check)
@@ -180,5 +228,6 @@ test_check_names_a_finished_lane_nobody_closed
 test_rows_give_every_home_one_verdict
 test_an_open_wait_is_a_gap_and_filled_lanes_are_moving
 test_a_paused_wait_is_named_as_paused_and_is_no_gap
+test_a_lane_list_never_pauses_a_home_and_is_named
 test_check_wakes_on_a_gap_refires_and_reports_recovery_once
 test_arm_registers_a_check_the_watcher_trusts_only_on_a_primary_home

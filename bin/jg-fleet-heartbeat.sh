@@ -41,6 +41,10 @@
 #                   ready count and its waits are named in the why. A dead
 #                   supervision beat is still STALLED, because a paused home
 #                   still needs a live watcher to lift its own pause.
+#        A pause record whose content is a report or a lane list rather than a
+#        pause declaration is refused by bin/jg-pause-lib.sh, so the home stays
+#        on its ordinary verdict and the why says which file was refused and
+#        its first line. Nobody else's file pauses a home in silence.
 #        A remote Squad Lead is UNREAD, and a registered home that is not a
 #        directory is STALLED.
 # check  Prints one line per home that turns GAP or STALLED, again every
@@ -94,7 +98,7 @@ wait_is_paused() {  # <state-dir> <task>
 
 # home_row <id> <home-dir>: one TSV row.
 home_row() {
-  local id=$1 home=$2 st meta kind last working=0 target=- ready='?' waits=0 paused_waits=0 paused=0 age why verdict
+  local id=$1 home=$2 st meta kind last working=0 target=- ready='?' waits=0 paused_waits=0 paused=0 age why verdict note refused=''
   [ -d "$home" ] || { printf '%s\tSTALLED\t0\t-\t?\t0\t-\thome %s is not a directory\n' "$id" "$home"; return; }
   if [ "$id" != overwatch ] && squad_lead_dormant "$STATE" "$id"; then
     printf '%s\tDORMANT\t0\t-\t-\t0\t-\tno open work; stopped, wakes on routed work\n' "$id"
@@ -102,6 +106,12 @@ home_row() {
   fi
   st=$home/state
   fleet_paused "$home" && paused=1
+  while IFS= read -r note; do
+    [ -n "$note" ] || continue
+    refused=${refused:+$refused; }$note
+  done <<EOF
+$(fleet_pause_refused_records "$home")
+EOF
   for meta in "$st"/*.meta; do
     [ -f "$meta" ] || continue
     kind=$(sed -n 's/^kind=//p' "$meta" | head -1)
@@ -151,6 +161,7 @@ home_row() {
   elif [ "$paused_waits" -gt 0 ] && [ "$verdict" != STALLED ]; then
     why="$why, $paused_waits paused wait(s)"
   fi
+  [ -z "$refused" ] || why="$why, $refused"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$verdict" "$working" "$target" "$ready" "$waits" "$age" "$why"
 }
 
