@@ -47,6 +47,9 @@ test_a_hidden_change_to_a_suite_dependency_is_not_skippable() {
     [ "$RC" -ne 0 ] || fail "$row: the run went green with the suite skipped: $OUT"
   done <<'ROWS'
 bus toolchain.versions
+bus .github/workflows/ci.yml
+evals .github/workflows/ci.yml
+shell .github/workflows/ci.yml
 bus bin/jg-stack.sh
 bus bin/jg-kv-lib.sh
 bus docs/bus-service.md

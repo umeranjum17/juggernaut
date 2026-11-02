@@ -69,6 +69,8 @@ jg_ci_scope_cheap_path() {
 jg_ci_scope_bus_path() {
   case $1 in
     core/*|bin/*|defaults/*|install.sh|toolchain.versions) return 0 ;;
+    # The workflow that defines a lane is part of the lane: a change to it must run it.
+    .github/*) return 0 ;;
     docs/bus-service.md) return 0 ;;
     # The helpers and the four suites the Bus service lane runs.
     tests/lib.sh|tests/git-config-helpers.sh) return 0 ;;
@@ -76,8 +78,8 @@ jg_ci_scope_bus_path() {
   esac
   return 1
 }
-jg_ci_scope_shell_path() { case $1 in *.sh) return 0 ;; esac; return 1; }
-jg_ci_scope_evals_path() { case $1 in bin/*|core/*|toolchain.versions) return 0 ;; esac; return 1; }
+jg_ci_scope_shell_path() { case $1 in *.sh|.github/*) return 0 ;; esac; return 1; }
+jg_ci_scope_evals_path() { case $1 in bin/*|core/*|toolchain.versions|.github/*) return 0 ;; esac; return 1; }
 
 jg_ci_scope_main() {
   local seen=false cheap=true bus=false shell=false evals=false path line
