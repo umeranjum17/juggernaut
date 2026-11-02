@@ -415,6 +415,7 @@ case "${1:-}" in
     tasks-axi ${ARGS[@]+"${ARGS[@]}"}
     _jg_rc=$?
     [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true
+    [ "$_jg_rc" -ne 0 ] || jg_backlog_ticket_publish "$DATA" add "${ARGS[1]-}"
     exit "$_jg_rc"
     ;;
 esac
