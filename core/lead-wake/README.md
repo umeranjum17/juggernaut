@@ -6,7 +6,7 @@ The lead-wake policy of the fork watcher as an optional feature (fork exit 8: st
 - Below the floor: `check: ready work waiting with free lane slots (<open>/<target> open): <ids> - ...`; at or above it, or without a usable target: `check: ready work waiting with no worker working: <ids> - ...`.
 - The same set re-raises every `JG_READY_WORK_RESURFACE_SECS` (1800), a new set at once, at the base `JG_HEARTBEAT` without idle backoff. An empty set on a good read withdraws the queued row and keeps the resurface record.
 - A declared fleet pause silences the wake until the resume order, and nothing else: a signal, stale or blocker wake still fires.
-  `bin/jg-pause-lib.sh` owns the record read (`state/.fleet-paused`, `data/fleet-pause*.md`, `data/paused-for-juggernaut.md`), so this reads a pause and never declares one.
+  `bin/jg-pause-lib.sh` owns the record read (`state/.fleet-paused`, `data/fleet-pause*.md`, `data/.jg-pause-order.md`, and the old `data/paused-for-juggernaut.md`), so this reads a pause and never declares one. A record only counts when its content declares a pause; a report or lane list under a pause record's name is refused and named by the heartbeat instead.
   While paused the queued row is withdrawn and the resurface record dropped, so the same set rings at once when the pause lifts.
 - A stalled lead's drain ring (`squad_lead_ring_to_drain`) names the frozen row and its acknowledgement: `Wake row <seq> is still queued in this home. Run bin/jg-wake-drain.sh ... run the exact WAKE_ACK_REQUIRED command it prints ...`. The lib redefines Kun's function after it, so Kun's two-argument call needs no hook line; the row is the oldest actionable one in the mate's queue.
 
