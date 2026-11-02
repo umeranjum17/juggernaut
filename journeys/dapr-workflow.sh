@@ -9,7 +9,7 @@ cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "a throwaway home with free ports, a private tool prefix and no service installed",
- "steps": ["run bin/jg-dapr-workflow.sh up", "start a wait episode with a 2s owner timer and a 4s escalation timer", "read the episode until both rungs fired and read the wake queue", "clear a second episode before its timer", "run bin/jg-dapr-workflow.sh install against a stub service manager"],
- "result": "the owner rung fires no earlier than 2s and the escalation to Main no earlier than 4s, each queued as one wake; the cleared episode completes and delivers nothing; the install writes the detached argv as units and refuses another home's units"}
+ "steps": ["run bin/jg-dapr-workflow.sh up", "start a wait episode with a 2s owner timer and a 4s escalation timer", "read the episode until both rungs fired and read the wake queue", "clear a second episode before its timer", "play ten recorded waits against rules with small numbers and read the wake queue and each episode's status", "run bin/jg-dapr-workflow.sh install against a stub service manager"],
+ "result": "the owner rung fires no earlier than 2s and the escalation to Main no earlier than 4s, each queued as one wake; the cleared episode completes and delivers nothing; a silent wait wakes nobody, 2 of 3 waits wake on a budget of 2 while the security wait still wakes, three grouped waits leave as one digest, re-alert gaps double up to the cap, and a wait whose lane answered itself closes with no wake; the install writes the detached argv as units and refuses another home's units"}
 JSON
 exit "$rc"
