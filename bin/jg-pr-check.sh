@@ -26,6 +26,9 @@
 # branch is the release pull request from the version branch into it.
 # bin/jg-version-branch-lib.sh owns which branch that is, the refusal names it,
 # and a project with no version branch is unchanged.
+# While config/frozen-release names a release branch that is shipping, that branch
+# is also accepted as the release pull request's head even when a newer
+# release/c-<N> exists; an absent, malformed, or unknown marker changes nothing.
 # An unreadable base does not refuse.
 # A pull request whose base is a frozen release branch (config/version-branch-frozen)
 # is refused too, unless the task declared a fix to that release's own red checks.
@@ -221,6 +224,9 @@ jg_pr_check_version_branch_base() {  # <meta> <url>
   [ -n "$base" ] && [ -n "$head_ref" ] || return 0
   [ "$base" = "$default" ] || return 0
   [ "$head_ref" != "$version" ] || return 0
+  # The release in flight (config/frozen-release) is also a release head, even
+  # when a newer release branch exists.
+  [ "$head_ref" != "$(jg_release_in_flight_branch "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" 2>/dev/null)" ] || return 0
   echo "error: $url targets the default branch $base, but this project's current version branch is $version" >&2
   echo "  a feature pull request targets $version; only the release pull request from $version into $base may target $base" >&2
   echo "  change this pull request's base to $version (gh-axi pr edit <number> --base $version), then arm again" >&2

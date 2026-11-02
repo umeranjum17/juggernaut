@@ -158,7 +158,37 @@ mkmeta retarget-c 'red_fix_of=release/c-4'
 out=$(pr_check retarget-c release/c-4 https://github.com/example/repo/pull/43)
 case "$out" in *"is frozen"*) fail "a declared red-fix pull request was refused as frozen: $out" ;; esac
 
+# 5. The release in flight is the release pull request even with a newer branch.
+# config/frozen-release names release/c-4 while it ships; release/c-5 is the
+# highest-numbered branch. The c-4 -> main pull request is accepted, a feature
+# pull request to main is still refused, and with the marker cleared c-5 is
+# current again (so c-4 -> main is refused). An unreadable marker changes nothing.
+printf 'release/c-4\n' > "$H/config/frozen-release"
+mkmeta rel-a
+out=$(env_run JG_TEST_GH_BASE=main JG_TEST_GH_HEAD_REF=release/c-4 "$REPO/bin/jg-pr-check.sh" rel-a https://github.com/example/repo/pull/51 2>&1)
+case "$out" in *"targets the default branch"*) fail "the release in flight (c-4 to main) was refused with the marker set: $out" ;; esac
+log "marker=release/c-4, release/c-5 present: release pull request c-4 -> main accepted"
+mkmeta rel-b
+out=$(env_run JG_TEST_GH_BASE=main JG_TEST_GH_HEAD_REF=fm/feature "$REPO/bin/jg-pr-check.sh" rel-b https://github.com/example/repo/pull/52 2>&1); rc=$?
+[ "$rc" -ne 0 ] || fail "a feature pull request to main was accepted with the marker set"
+case "$out" in *"targets the default branch"*) ;; *) fail "the feature refusal changed: $out" ;; esac
+log "marker=release/c-4: feature pull request -> main still refused"
+: > "$H/config/frozen-release"
+mkmeta rel-c
+out=$(env_run JG_TEST_GH_BASE=main JG_TEST_GH_HEAD_REF=release/c-4 "$REPO/bin/jg-pr-check.sh" rel-c https://github.com/example/repo/pull/53 2>&1); rc=$?
+[ "$rc" -ne 0 ] || fail "an empty marker still admitted c-4 -> main"
+mkmeta rel-d
+out=$(env_run JG_TEST_GH_BASE=main JG_TEST_GH_HEAD_REF=release/c-5 "$REPO/bin/jg-pr-check.sh" rel-d https://github.com/example/repo/pull/54 2>&1)
+case "$out" in *"targets the default branch"*) fail "with the marker cleared c-5 is not current again: $out" ;; esac
+log "marker cleared: release/c-5 is current again (c-5 -> main accepted, c-4 -> main refused)"
+printf 'release/c-9\n' > "$H/config/frozen-release"
+mkmeta rel-e
+out=$(env_run JG_TEST_GH_BASE=main JG_TEST_GH_HEAD_REF=release/c-9 "$REPO/bin/jg-pr-check.sh" rel-e https://github.com/example/repo/pull/55 2>&1); rc=$?
+[ "$rc" -ne 0 ] || fail "a marker naming a branch the project lacks was trusted"
+log "marker names an unknown branch: falls back to the highest-numbered rule"
+rm -f "$H/config/frozen-release"
+
 cat > "$OUT/steps.json" <<'JSON'
-{"target":{"version":"jg-brief.sh, jg-spawn.sh, jg-pr-check.sh"},"start":"a fixture project with release/c-4 frozen in config/version-branch-frozen and release/c-5 current","steps":["scaffold and spawn onto release/c-4: refused with one line naming it and release/c-5, no record or window","scaffold and spawn onto release/c-5: reaches the window step","scaffold and spawn onto release/c-4 with --red-fix-of release/c-4: reaches the window step; without it, refused","arm a pull request based on release/c-4: refused; on release/c-5 or with red_fix_of: not refused"],"result":"a frozen release branch is refused at the brief, the spawn and the pull request check unless the work is declared a fix to its own red checks"}
+{"target":{"version":"jg-brief.sh, jg-spawn.sh, jg-pr-check.sh"},"start":"a fixture project with release/c-4 frozen in config/version-branch-frozen and release/c-5 current","steps":["scaffold and spawn onto release/c-4: refused with one line naming it and release/c-5, no record or window","scaffold and spawn onto release/c-5: reaches the window step","scaffold and spawn onto release/c-4 with --red-fix-of release/c-4: reaches the window step; without it, refused","arm a pull request based on release/c-4: refused; on release/c-5 or with red_fix_of: not refused","with config/frozen-release set to release/c-4 and release/c-5 present: c-4 to main accepted, a feature pull request to main refused; marker cleared: c-5 current again; unknown marker ignored"],"result":"a frozen release branch is refused at the brief, the spawn and the pull request check unless the work is declared a fix to its own red checks"}
 JSON
 log "PASS: a frozen release branch is refused at brief, spawn and pull request unless declared a red-fix"

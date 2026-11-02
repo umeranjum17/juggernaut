@@ -39,6 +39,27 @@ jg_current_version_branch() {  # <repo-dir>
       }'
 }
 
+# The release already in flight: the one branch config/frozen-release names while
+# it ships. It is the release pull request's head even when a higher-numbered
+# release/c-<N> has since been opened, so the guard that admits the one pull
+# request allowed to target the default branch honours it (bin/jg-pr-check.sh).
+# Prints the branch; exit 1 with nothing when the marker is absent, unreadable,
+# not exactly one release/c-<N> name, or names a branch the project does not
+# carry, so every doubtful marker falls back to the highest-numbered rule above.
+jg_release_in_flight_branch() {  # <config-dir> <repo-dir>
+  local file=${1:-}/frozen-release dir=${2:-} name n
+  [ -f "$file" ] && [ -r "$file" ] || return 1
+  name=$(awk '{ sub(/#.*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if (length($0)) print }' "$file" 2>/dev/null) || return 1
+  [ -n "$name" ] && [ "$(printf '%s\n' "$name" | wc -l)" -eq 1 ] || return 1
+  case "$name" in release/c-[0-9]*) ;; *) return 1 ;; esac
+  n=${name#release/c-}
+  case "$n" in *[!0-9]*) return 1 ;; esac
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
+  git -C "$dir" for-each-ref --format='%(refname)' refs/remotes refs/heads 2>/dev/null \
+    | grep -Eq "^refs/(remotes/[^/]+/|heads/)$name\$" || return 1
+  printf '%s\n' "$name"
+}
+
 # A release branch the captain has frozen takes no new work.
 # The freeze is one fact in one place: the optional local, gitignored
 # config/version-branch-frozen beside config/version-branch, one branch name per

@@ -513,6 +513,7 @@ The optional local, gitignored `config/version-branch-frozen` lists release bran
 The one exception is a fix to that release's own red checks: pass `--red-fix-of <branch>` to the brief and to the spawn, with `<branch>` also the `--base-branch`.
 The spawn records `red_fix_of=<branch>` in the task record, which a relaunch and the pull request check read; it frees only the branch it names.
 The merge gate and the release process are unchanged.
+`config/frozen-release` (optional, one `release/c-<N>` name) names the release being shipped: `bin/jg-pr-check.sh` then accepts that branch as the head of the one pull request allowed to target the default branch even when a higher-numbered release branch exists, and every other refusal is unchanged; clear the file once the release merges. An absent, malformed, or unknown marker falls back to the highest-numbered branch.
 `journeys/frozen-release-base.sh` drives all of it.
 
 ## Fleet autosync (config/fleet-autosync-off)
