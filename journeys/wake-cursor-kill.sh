@@ -59,5 +59,11 @@ chmod +x "$T/shim"
   "$BUS" render; once ord1; once ord2; once ord3
   echo "journey rc=$rc"
 } > "$LOG" 2>&1
+cat > "$OUT/steps.json" <<JSON
+{"target": {"version": "jg-wake-bus.sh at $(git -C "$REPO" rev-parse --short HEAD)"},
+ "start": "a throwaway home and JetStream server with one wake already delivered",
+ "steps": ["raise a wake whose render is parked after reading the wake stream", "kill that render with kill -9", "restart the reader with a render", "render again and raise one more wake", "raise three wakes in an ordinary run and render"],
+ "result": "every wake, including the one whose render was killed, appears in the queue exactly once: no gap and no repeat (journey rc=$rc)"}
+JSON
 cat "$LOG"
 exit "$rc"
