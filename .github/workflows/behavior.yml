@@ -61,6 +61,15 @@ jobs:
           set -eu
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # The completion receipt and the merge gate are Rego (policy/): the guard host asks OPA, so
+      # without the pinned binary every check that needs a judgement refuses instead of judging.
+      - name: Install the pinned OPA
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install opa
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi
         run: |
           set -eu
@@ -106,6 +115,15 @@ jobs:
           set -eu
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # The completion receipt and the merge gate are Rego (policy/): the guard host asks OPA, so
+      # without the pinned binary every check that needs a judgement refuses instead of judging.
+      - name: Install the pinned OPA
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install opa
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi
         run: |
           set -eu
@@ -162,6 +180,15 @@ jobs:
           set -eu
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # The completion receipt and the merge gate are Rego (policy/): the guard host asks OPA, so
+      # without the pinned binary every check that needs a judgement refuses instead of judging.
+      - name: Install the pinned OPA
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install opa
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Require tmux for e2e tests
         run: |
           set -eu
