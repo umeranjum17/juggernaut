@@ -65,6 +65,27 @@ itself, not `serve`, which starts services and exits; `ExecStartPost` runs
 `bin/jg-bus.sh bootstrap`, which waits for the port and creates the stream from
 `core/bus/stream.json`.
 
+`bin/jg-bus.sh install-service` is the bus alone: it writes `jg-bus.service` when missing
+or naming another home, reloads systemd, enables it now, and falls back to `ensure` without a
+user session. It prints one line, `bus: up ...`, `bus: installed and started ...` or a
+`bus: cannot start ...` line, and never fails its caller. `bin/jg-update.sh` runs it when the
+stack run is skipped, so a release never goes live with no message server.
+
+One config file, sized for the machine. `bin/jg-bus.sh unit` writes
+`state/bus/bus.conf` as ONE file: the server config in force plus this machine's
+per-home accounts, with no `include` lines. nats-server resolves an include path
+against the config's own directory, so an absolute one lands at
+`state/bus/home/...` and the server refuses to start. The JetStream budget in that
+file is the per-account reservation times the number of accounts, because a global
+cap below the sum of the reservations makes the server refuse JetStream with
+`insufficient storage resources available (10047)`.
+
+Clients authenticate as their own home. The machine carries one account per home,
+so every client call - `bin/jg-kv-lib.sh`'s, and the wake and reply paths that share
+it - authenticates as the home that owns the state directory, with the name and the
+password in `state/bus/<account>.pass`. A client that connects as the empty user is
+refused, and that is what a release without this shipped.
+
 Three config faults made the first unit fail on a real machine and are fixed:
 includes were absolute (nats resolves them against the including file), the
 server store caps sat below the per-account reservations (so the server refused

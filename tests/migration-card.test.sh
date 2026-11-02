@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # The merge path keeps the migration card current: a fresh key per merge, the
 # previous card dismissed, a captain digest on a milestone, no repeat for a PR.
+#
+# This is also the test that owns journeys/migration-card.sh (the done-done journey drives the same
+# merge path), so the changed-test map selects it for a change to that journey.
 set -u
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
