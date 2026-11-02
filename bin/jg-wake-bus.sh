@@ -156,7 +156,7 @@ bus_pub_seq() { # <subject> <message-id> <json>
 }
 
 live_cursor_get() { # <stream>
-  awk -v s="$1" '$1 == s { print $2; found = 1 } END { if (!found) print 0 }' "$LIVE_CURSOR" 2>/dev/null
+  awk -v s="$1" '$1 == s && $2 ~ /^[0-9]+$/ { print $2; found = 1 } END { if (!found) print 0 }' "$LIVE_CURSOR" 2>/dev/null
 }
 
 live_cursor_set() { # <stream> <sequence>
@@ -170,7 +170,13 @@ live_cursor_set() { # <stream> <sequence>
 }
 
 # live_apply <stream> <file>: append every message since the cursor that belongs
-# to this home, each carrying the sequence it was stored at.
+# to this home, each carrying the sequence it was stored at. It never moves the
+# cursor: it records the position it read to in LIVE_PENDING, and live_render
+# commits that only after the replica holding those messages is durable. A render
+# killed before the commit leaves the old cursor, so the next render re-reads the
+# same messages (the fold keys on the event id, so a re-read changes nothing); a
+# cursor moved first would skip them for good.
+LIVE_PENDING=()
 live_apply() { # <stream> <file>
   local stream=$1 out=$2 from seq last raw body
   from=$(( $(live_cursor_get "$stream") + 1 ))
@@ -187,7 +193,7 @@ live_apply() { # <stream> <file>
     fi
     seq=$((seq + 1))
   done
-  live_cursor_set "$stream" "$last"
+  LIVE_PENDING+=("$stream $last")
 }
 
 # live_flush_outbox: publish what an earlier failed publish still owes, and keep
@@ -236,7 +242,8 @@ live_publish() { # <subject> <id> <json>
 # rest of the fleet reads. The replica holds only unsettled events, so a fold
 # stays small: an acknowledgement drops its raise with it.
 live_render() {
-  local model have_bus=0
+  local model have_bus=0 pending
+  LIVE_PENDING=()
   mkdir -p "$STATE" || return 1
   if live_enabled && bus_gate >/dev/null 2>&1; then
     have_bus=1
@@ -263,6 +270,12 @@ live_render() {
   fi
   mv -f "$model.keep" "$LIVE_EVENTS" || { rm -f -- "$model" "$model.keep"; return 1; }
   rm -f -- "$model"
+  # The replica now holds everything read, so the cursor may pass it. Each step is
+  # one rename(2): a kill leaves the previous file or the new one, never a torn one.
+  for pending in ${LIVE_PENDING[@]+"${LIVE_PENDING[@]}"}; do
+    # shellcheck disable=SC2086  # "<stream> <sequence>", split on purpose
+    live_cursor_set $pending || return 1
+  done
   jq -r 'select(.where == "queue") | [.at, (.seq // .rseq), .kind, .key, .payload] | @tsv' "$LIVE_EVENTS" 2>/dev/null \
     | LC_ALL=C sort -t "$(printf '\t')" -k2,2n > "$model.queue" || : > "$model.queue"
   chmod 0600 "$model.queue" 2>/dev/null || true
