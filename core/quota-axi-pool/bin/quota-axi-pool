@@ -5,8 +5,8 @@
 #      JG_QUOTA_AXI_POOL_DEPTH (set by this wrapper for the call it delegates; above 0 means go upstream).
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-addons=$(cd "$here/../.." && pwd)
-model_pool=${JG_MODEL_POOL:-${JG_ADDONS_DIR:-$addons}/account-pool/bin/jg-model-pool}
+core_dir=$(cd "$here/../.." && pwd)
+model_pool=${JG_MODEL_POOL:-${JG_CORE_DIR:-$core_dir}/account-pool/bin/jg-model-pool}
 upstream_file=${JG_QUOTA_AXI_POOL_UPSTREAM:-${XDG_DATA_HOME:-$HOME/.local/share}/jg-quota-axi-pool/upstream}
 
 find_upstream() {
@@ -43,7 +43,7 @@ fi
 # not the ambient login alone. Per provider with registered workers: accountKey default = the worker with the most
 # room (an exhausted one when none has any), accountKey <id> = each worker, accountKey main = Main's own reserved
 # login. A provider with no registered workers keeps the upstream row as its default.
-quota_view=${JG_QUOTA_VIEW:-${JG_ADDONS_DIR:-$addons}/claude-accounts/bin/jg-quota-view}
+quota_view=${JG_QUOTA_VIEW:-${JG_CORE_DIR:-$core_dir}/claude-accounts/bin/jg-quota-view}
 if [ "$want_json" = 1 ] && [ -x "$quota_view" ]; then
   view=$("$quota_view" 2>/dev/null) || view=''
   if jq -e '[.providers[]? | .workers[]?, (.reserved // empty)] | length > 0' <<<"${view:-}" >/dev/null 2>&1; then

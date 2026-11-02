@@ -24,7 +24,7 @@
 # missing evidence/ prefix) fails naming the exact line and the name to write instead.
 # One gh call per run (plus one per 100 files past the 100-file view cap, the compare/upstream diffs and one or two per moved file). Each run appends a row to $JG_HOME/data/checks-gate.log, and the newest row for a head is
 # that head's verdict (readers take the last row, never any older pass). A run for a task of this home also publishes its own verdict
-# as the task's completion receipt (receipts/bin/jg-run-receipt.sh in juggernaut-addons), so a lane that fixes its evidence and re-lints
+# as the task's completion receipt (core/receipts/bin/jg-run-receipt.sh), so a lane that fixes its evidence and re-lints
 # to PASS republishes PASS over its earlier FAIL for the same candidate with no hand-posted record; bin/jg-pr-merge.sh and
 # jg-merge-local.sh read that receipt (bin/jg-dod-lib.sh jg_dod_receipt_accept), so a still-failing head keeps refusing. Rows are never removed.
 import os, re, sys, json, time, hashlib, subprocess, tempfile
@@ -202,7 +202,7 @@ def publish(ok, why):
     with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as t:
         t.write(f'checks-lint {"PASS" if ok else "FAIL"} {src} head {head}: {why}\n')
     try:
-        r = subprocess.run([f"{os.environ.get('JG_ADDONS_DIR') or ROOT}/receipts/bin/jg-run-receipt.sh", task, 'PASS' if ok else 'FAIL', t.name, repo],
+        r = subprocess.run([next((c for c in (f"{os.environ.get('JG_CORE_DIR') or ROOT}/receipts/bin/jg-run-receipt.sh", f"{home}/core/receipts/bin/jg-run-receipt.sh") if os.access(c, os.X_OK)), f"{ROOT}/receipts/bin/jg-run-receipt.sh"), task, 'PASS' if ok else 'FAIL', t.name, repo],
                            env={**os.environ, 'JG_HOME': home}, capture_output=True, text=True, timeout=60)
         if r.returncode == 0:
             superseded = isinstance(prior, dict) and prior.get('verdict') == 'FAIL'

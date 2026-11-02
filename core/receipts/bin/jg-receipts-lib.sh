@@ -72,11 +72,11 @@ jg_receipts_next_pr_of_lane_ok() {  # <state> <id> <meta-pr> <receipt-pr>
 _JG_RECEIPTS_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 
 # The receipt publisher a refusal tells a worker to run. It lives in this checkout's
-# core/receipts/bin; JG_ADDONS_DIR overrides the publisher only
+# core/receipts/bin; JG_CORE_DIR overrides the publisher only
 # when it really holds one, so a stale value never prints a path that does not exist.
 jg_receipts_tool() {
-  local over=${JG_ADDONS_DIR:-}/receipts/bin/jg-run-receipt.sh
-  if [ -n "${JG_ADDONS_DIR:-}" ] && [ -x "$over" ]; then printf '%s\n' "$over"; else printf '%s\n' "$_JG_RECEIPTS_LIB_DIR/jg-run-receipt.sh"; fi
+  local over=${JG_CORE_DIR:-}/receipts/bin/jg-run-receipt.sh
+  if [ -n "${JG_CORE_DIR:-}" ] && [ -x "$over" ]; then printf '%s\n' "$over"; else printf '%s\n' "$_JG_RECEIPTS_LIB_DIR/jg-run-receipt.sh"; fi
 }
 
 jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>

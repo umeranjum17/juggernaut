@@ -42,7 +42,7 @@ rc=0; out=$(run dispatch-resolve) || rc=$?
 # A candidate package that omits the library the installed mover loads fails the check, without a core library to fall back on.
 cp -R "$ROOT" "$d/addons"
 sed -i '/account-pool-lib.sh/d' "$d/addons/limit-prompt-move/wiring.sh"
-rc=0; out=$(JG_ADDONS_DIR=$d/addons run limit-prompt-move) || rc=$?
+rc=0; out=$(JG_CORE_DIR=$d/addons run limit-prompt-move) || rc=$?
 [ "$rc" -eq 1 ] && grep -q '^FAIL limit-prompt-move: ' <<<"$out" || { echo "FAIL package missing the pool lib: rc=$rc $out"; exit 1; }
 
 rc=0; out=$(run no-such-caller) || rc=$?

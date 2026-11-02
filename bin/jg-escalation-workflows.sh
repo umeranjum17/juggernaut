@@ -35,6 +35,10 @@
 #   timers      Print <timer> <seconds> for every timer the definition carries. The
 #               ladder reads the two numbers it still measures its own rungs from
 #               here, so neither number exists a second time in shell code.
+#   deliver     deliver <rung> <task> <key> <class> <actor>: queue one rung's wake under
+#               <key>-<rung> (a rung already queued is not queued twice) and print it. This is
+#               the delivery command core/escalation-workflow's Dapr activity runs, so the
+#               workflow's rungs and the shell tick's rung use one wake line shape.
 #   tick        The live rung. Once per watcher poll, for every open episode the
 #               ladder recorded, deliver the rungs this definition says are due and
 #               none it does not: queue the wake under <key>-owner, stamp the
@@ -52,6 +56,7 @@
 #   jg-escalation-workflows.sh show
 #   jg-escalation-workflows.sh timers
 #   jg-escalation-workflows.sh tick
+#   jg-escalation-workflows.sh deliver <rung> <task> <key> <class> <actor>
 set -u
 export LC_ALL=C
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -326,6 +331,18 @@ DIGEST_END
   return 0
 }
 
+cmd_deliver() {  # <rung> <task> <key> <class> [actor]
+  local rung=${1:-} task=${2:-} key=${3:-} class=${4:-} actor=${5:-} reason
+  [ -n "$rung" ] && [ -n "$task" ] && [ -n "$key" ] && [ -n "$class" ] \
+    || die 'usage: jg-escalation-workflows.sh deliver <rung> <task> <key> <class> <actor>'
+  reason=$(printf 'check: waiting-state %s (%s, level=%s; %s must recheck and unblock) id=%s source=[dapr-workflow]' \
+    "$task" "$class" "$rung" "${actor:-$(actor_text)}" "$key")
+  if ! jg_wake_queued_keys check | grep -Fx "$key-$rung" >/dev/null; then
+    jg_wake_append check "$key-$rung" "$reason" || return 1
+  fi
+  printf '%s\n' "$reason"
+}
+
 # The fact layer, shared with the ladder code: the same hash, status-fold and
 # metadata readers decide what a lane's wait is.
 load_fact_libs() {
@@ -370,7 +387,11 @@ main() {
       load_fact_libs || die 'the ladder fact libraries are not in this tree'
       cmd_tick "$@"
       ;;
-    *) die 'usage: jg-escalation-workflows.sh show | timers | tick' ;;
+    deliver)
+      load_fact_libs || die 'the ladder fact libraries are not in this tree'
+      cmd_deliver "$@"
+      ;;
+    *) die 'usage: jg-escalation-workflows.sh show | timers | tick | deliver' ;;
   esac
 }
 
