@@ -5,8 +5,9 @@
 #
 # Two proofs:
 #
-#   replay   Every event recorded on this machine's JG_WAKE stream (tests/fixtures/wake-recorded/events.jsonl:
-#            205 raises and 36 acknowledgements from 30 homes) is folded one event at a time by the
+#   replay   Events recorded on this machine's JG_WAKE stream (tests/fixtures/wake-recorded/events.jsonl: 123
+#            events of 52 homes, one or more of every shape the stream held in the 241-event export;
+#            JG_WAKE_REPLAY_CORPUS names a larger export, and the full 241 events replay clean) are folded one event at a time by the
 #            Go command and by the shell reader it replaced - the render's jq fold, the sorted read
 #            model, squad_lead_oldest_queue_row's awk and the host-memory awk, quoted below - and
 #            after every event of a home the rows, the oldest row and the newest host-memory row
@@ -29,7 +30,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 command -v go >/dev/null 2>&1 || [ -n "${JG_BUS_BIN:-}" ] || { echo "skip: no Go toolchain to build the bus command"; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo "skip: jq is needed for the shell reference"; exit 0; }
 DIR=$(jg_test_tmproot jg-wake-watcher)
-CORPUS="$ROOT/tests/fixtures/wake-recorded/events.jsonl"
+CORPUS=${JG_WAKE_REPLAY_CORPUS:-$ROOT/tests/fixtures/wake-recorded/events.jsonl}
 TAB=$(printf '\t')
 
 # ---- replay -------------------------------------------------------------------------------
