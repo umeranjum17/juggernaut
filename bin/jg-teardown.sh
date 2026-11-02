@@ -43,6 +43,8 @@
 # lift the deferral (it authorizes discarding unlanded WORK, never the
 # captain's question), and bin/jg-captain-hold.sh answer stays the only act
 # that closes the call.
+# The landed-work test below is Go (core/teardown, through bin/jg-teardown-core.sh); the rules
+# in this header are the ones that command keeps, and a test that cannot run refuses.
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
 # hard-resets/removes the worktree, kills its processes, and closes its backlog
 # item. For a PR-delivered ship task (every mode but local-only) work has landed
@@ -1384,19 +1386,7 @@ elif [ "$FORCE" != "--force" ] && jg_pf_relay_active "$JG_HOME"; then
 fi
 
 default_branch() {
-  local ref branch
-  ref=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  if [ -n "$ref" ]; then
-    echo "${ref#origin/}"
-    return 0
-  fi
-  for branch in main master; do
-    if git -C "$PROJ" show-ref --verify --quiet "refs/heads/$branch"; then
-      echo "$branch"
-      return 0
-    fi
-  done
-  return 1
+  "$SCRIPT_DIR/jg-teardown-core.sh" default-branch --project "$PROJ"
 }
 
 meta_value() {
@@ -1498,243 +1488,38 @@ remove_pr_poll_artifacts() {
     "$state_dir/$id.merge-authority" "$state_dir/$id.check-trust" || return 1
 }
 
-# Resolve the PR number for a worktree branch via gh-axi. Echoes the number on a
-# single match and returns 0; returns 1 when the forge reports no match and 3 when
-# the lookup fails or its answer is unrecognized, so the caller can tell "no PR"
-# from "forge unreadable".
-pr_number_from_branch() {
-  local branch=$1 out n
-  [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
-  out=$( cd "$WT" && gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null ) || return 3
-  n=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\),.*/\1/p' | head -1)
-  if [ -z "$n" ]; then
-    printf '%s\n' "$out" | grep -q '^count: 0' && return 1
-    return 3
-  fi
-  printf '%s' "$n"
-}
-
-pr_number_from_target() {
-  local target=$1 n
-  case "$target" in
-    '' ) return 1 ;;
-    *"/pull/"*)
-      n=${target##*/pull/}
-      n=${n%%[!0-9]*}
-      ;;
-    *"/pulls/"*)  # Forgejo addresses pulls as /pulls/<n> and serves refs/pull/<n>/head.
-      n=${target##*/pulls/}
-      n=${n%%[!0-9]*}
-      ;;
-    [0-9]*)
-      n=${target%%[!0-9]*}
-      ;;
-    *) return 1 ;;
-  esac
-  [ -n "$n" ] || return 1
-  printf '%s' "$n"
-}
-
-ensure_commit_object() {
-  local target=$1 commit=$2 n
-  git -C "$WT" cat-file -e "$commit^{commit}" 2>/dev/null && return 0
-  n=$(pr_number_from_target "$target") || return 1
-  git -C "$WT" remote get-url origin >/dev/null 2>&1 || return 1
-  git -C "$WT" fetch --quiet origin "refs/pull/$n/head" >/dev/null 2>&1 || return 1
-  git -C "$WT" cat-file -e "$commit^{commit}" 2>/dev/null
-}
-
-patch_id_for_commit() {
-  local commit=$1
-  git -C "$WT" show --pretty=medium --no-ext-diff "$commit" 2>/dev/null \
-    | git patch-id --stable 2>/dev/null \
-    | awk 'NR == 1 { print $1 }'
-}
-
-unpushed_patches_are_in_pr_head() {
-  local pr_head=$1 current base pr_patch_ids commit patch_id unpushed
-  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
-  base=$(git -C "$WT" merge-base "$current" "$pr_head" 2>/dev/null) || return 1
-  pr_patch_ids=$(
-    git -C "$WT" log --format=%H "$base..$pr_head" -- 2>/dev/null \
-      | while IFS= read -r commit; do
-          patch_id_for_commit "$commit"
-        done \
-      | sed '/^$/d' \
-      | sort -u
-  ) || return 1
-  [ -n "$pr_patch_ids" ] || return 1
-  unpushed=$(git -C "$WT" log --format=%H HEAD --not --remotes -- 2>/dev/null) || return 1
-  [ -n "$unpushed" ] || return 1
-  while IFS= read -r commit; do
-    [ -n "$commit" ] || continue
-    patch_id=$(patch_id_for_commit "$commit") || return 1
-    [ -n "$patch_id" ] || return 1
-    printf '%s\n' "$pr_patch_ids" | grep -qxF "$patch_id" || return 1
-  done <<EOF
-$unpushed
-EOF
-}
-
-# Is the worktree's PR merged for local work contained in that PR? Resolves the
-# PR from the recorded pr= URL first, then from the branch name, and asks the
-# forge for both the PR state and head: a recorded Forgejo URL is read through
-# tea (jg_pr_forgejo_read_record), and everything else through GitHub.
-# Returns 0 when proved, 2 when the forge reports
-# the PR open or closed (decisive: no fallback can stand in for that merge), 3 when
-# a GitHub forge cannot be read (only this exact HEAD on origin's default branch can
-# stand in), and 1 when inconclusive - no PR found, an unreadable non-GitHub forge,
-# or a merged head that does not contain the current work - so the caller falls
-# back to the content check.
-# Every non-zero return names the gap in LANDING_GAP for the refusal.
+# The landed-work test is Go (core/teardown, run through bin/jg-teardown-core.sh): this function
+# only gathers the facts the command cannot read from the worktree - the recorded PR, its base
+# branch and the forge identity jg_pr_url_parse derives from the PR URL - and relays its answer.
+# A check that cannot run is a refusal, never a landing. LANDING_GAP is the reason the refusal
+# prints; PR_URL is filled in when the forge resolved a merged PR the record did not carry.
 LANDING_GAP=
-# Must gh be able to read this task's forge? The host of the recorded PR URL, or
-# the origin's host when no PR URL with a host is recorded, decides: any host naming
-# github (github.com, an SSH alias such as github-work) counts as GitHub. Another
-# host (Gerrit, GitLab) or a local path, which no forge serves, falls back to the
-# content check, as before.
-forge_host() {  # <url>
-  local host
-  case "$1" in
-    *://*) host=${1#*://}; host=${host%%/*} ;;
-    /*|.*) return 0 ;;
-    *:*) host=${1%%:*} ;;
-    *) return 0 ;;
-  esac
-  host=${host##*@}
-  printf '%s' "${host%%:*}"
-}
-
-forge_is_github() {
-  local host
-  host=$(forge_host "$PR_URL")
-  [ -n "$host" ] || host=$(forge_host "$(git -C "$WT" remote get-url origin 2>/dev/null || true)")
-  case "$host" in
-    *github*) return 0 ;;
-  esac
-  return 1
-}
-
-pr_is_merged() {
-  local branch=$1 target view state remainder head resolved_url current landed=0 rc=0
-  # A cross-repo lane's recorded PR lives outside this copy's origin repository,
-  # so its head cannot be fetched here; prove this copy against its own
-  # branch's same-repo PR instead, or else the caller's origin content check.
-  if [ -n "$PR_URL" ] && ! jg_dod_pr_outside_origin "$WT" "$PR_URL"; then
-    target=$PR_URL
-  else
-    target=$(pr_number_from_branch "$branch") || rc=$?
-    if [ "$rc" -ne 0 ]; then
-      LANDING_GAP="no PR was found on the forge for branch $branch"
-      [ "$rc" = 3 ] || return 1
-      LANDING_GAP="the forge could not be read to find the PR for branch $branch"
-      forge_is_github && return 3
-      return 1
-    fi
-  fi
-  [ -n "$target" ] || return 1
-  if jg_pr_url_parse "$target" && [ "$JG_PR_PROVIDER" = forgejo ]; then
-    LANDING_GAP="the forge could not be read for PR $target"
-    jg_pr_forgejo_read_record "$JG_PR_HOST" "$JG_PR_PATH" "$JG_PR_NUMBER" || return 1
-    if [ "$JG_PR_RECORD_MERGED" != true ]; then
-      LANDING_GAP="the forge reports PR ${JG_PR_URL:-$target} as ${JG_PR_RECORD_STATE:-unknown}, not merged"
-      return 2
-    fi
-    head=$JG_PR_RECORD_HEAD
-    LANDING_GAP="the forge reports PR ${JG_PR_URL:-$target} merged, but its head ${head:-<none>} is not a usable commit"
-    jg_pr_head_valid "$head" || return 1
-    resolved_url=$JG_PR_URL
-    LANDING_GAP="the forge reports PR ${resolved_url:-$target} merged, but its head ${head:-<none>} could not be fetched to check it holds this copy's work"
-  else
-    LANDING_GAP="the forge could not be read for PR $target"
-    view=$(cd "$WT" && gh pr view "$target" --json state,headRefOid,url -q '.state + "\t" + .headRefOid + "\t" + .url' 2>/dev/null) || view=
-    state=${view%%$'\t'*}
-    remainder=${view#*$'\t'}
-    head=${remainder%%$'\t'*}
-    resolved_url=${remainder#*$'\t'}
-    if [ -z "$view" ] || [ "$state" = "$view" ] || [ "$head" = "$remainder" ] || [ -z "$state" ]; then
-      forge_is_github && return 3
-      return 1
-    fi
-    case "$state" in
-      MERGED|merged) ;;
-      *)
-        LANDING_GAP="the forge reports PR ${resolved_url:-$target} as $state, not merged"
-        return 2
-        ;;
-    esac
-    LANDING_GAP="the forge reports PR ${resolved_url:-$target} merged, but its head ${head:-<none>} could not be fetched to check it holds this copy's work"
-  fi
-  [ -n "$head" ] || return 1
-  ensure_commit_object "$target" "$head" || return 1
-  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
-  if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
-    landed=1
-  elif unpushed_patches_are_in_pr_head "$head"; then
-    landed=1
-  fi
-  LANDING_GAP="the forge reports PR ${resolved_url:-$target} merged at head $head, which does not contain this copy's HEAD $current"
-  [ "$landed" = 1 ] || return 1
-  if [ -z "$PR_URL" ]; then
-    LANDING_GAP="the forge reported no URL for merged PR $target"
-    [ -n "$resolved_url" ] || return 1
-    PR_URL=$resolved_url
-  fi
-  return 0
-}
-
-# Is the branch's content already present in the up-to-date default branch? Fetches
-# first, then 3-way merges the default branch with HEAD: when HEAD introduces nothing
-# the default branch does not already contain (e.g. its change landed via squash) the
-# merged tree equals the default branch's tree. This isolates branch-only changes, so
-# unrelated commits the default branch gained past the merge-base do not count as
-# "added". Returns non-zero when inconclusive (no default ref, a failed fetch, or a
-# merge conflict), so the caller refuses rather than guesses, and names that gap in
-# CONTENT_GAP. With "exact", only HEAD itself reachable from origin's freshly
-# fetched branch counts, never a matching tree.
-CONTENT_GAP=
-content_in_default() {
-  local exact=${1:-} name=${BASE_BRANCH:-} ref default_tree merged_tree
-  CONTENT_GAP="the default branch could not be determined"
-  [ -n "$name" ] || name=$(default_branch) || return 1
-  if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
-    CONTENT_GAP="origin's $name could not be fetched"
-    git -C "$WT" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
-    ref="refs/remotes/origin/$name"
-  elif [ -z "$exact" ] && git -C "$WT" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
-    ref="refs/heads/$name"
-  else
-    CONTENT_GAP="there is no origin remote to check $name against"
-    return 1
-  fi
-  if [ -n "$exact" ]; then
-    CONTENT_GAP="this copy's HEAD is not on origin/$name"
-    git -C "$WT" merge-base --is-ancestor HEAD "$ref" 2>/dev/null
-    return
-  fi
-  CONTENT_GAP="this copy's content is not in ${ref#refs/remotes/}"
-  default_tree=$(git -C "$WT" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
-  [ -n "$default_tree" ] || return 1
-  merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || return 1
-  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
-  [ "$merged_tree" = "$default_tree" ]
-}
-
-# Has the worktree's committed work actually LANDED? True when a merged PR proves
-# the current local work is contained in the PR head, OR - unless the forge reports
-# the PR open or closed - the default branch already holds it: this exact HEAD when
-# GitHub cannot be read, else its content (the no-PR and non-GitHub fallback).
-# False leaves the reason in LANDING_GAP.
 work_is_landed() {
-  local branch=$1 rc=0 exact=
-  pr_is_merged "$branch" || rc=$?
+  local branch=$1 out rc=0 line login
+  local args=(landed --worktree "$WT" --branch "$branch" --project "$PROJ")
+  [ -z "$PR_URL" ] || args+=(--pr-url "$PR_URL")
+  [ -z "$BASE_BRANCH" ] || args+=(--base-branch "$BASE_BRANCH")
+  if [ -n "$PR_URL" ]; then
+    ! jg_dod_pr_outside_origin "$WT" "$PR_URL" || args+=(--pr-outside-origin)
+    if jg_pr_url_parse "$PR_URL" && [ "$JG_PR_PROVIDER" = forgejo ]; then
+      args+=(--forgejo-host "$JG_PR_HOST" --forgejo-path "$JG_PR_PATH" --forgejo-number "$JG_PR_NUMBER")
+      ! login=$(jg_pr_forgejo_login "$JG_PR_HOST") || args+=(--forgejo-login "$login")
+    fi
+  fi
+  out=$("$SCRIPT_DIR/jg-teardown-core.sh" "${args[@]}") || rc=$?
+  while IFS= read -r line; do
+    case "$line" in
+      gap=*) LANDING_GAP=${line#gap=} ;;
+      pr_url=*) [ -n "$PR_URL" ] || PR_URL=${line#pr_url=} ;;
+    esac
+  done <<EOF_OUT
+$out
+EOF_OUT
   case "$rc" in
     0) return 0 ;;
-    2) return 1 ;;
-    3) exact=exact ;;
+    1) return 1 ;;
   esac
-  content_in_default "$exact" && return 0
-  LANDING_GAP="$LANDING_GAP; and $CONTENT_GAP"
+  LANDING_GAP="the landed-work check could not run (exit $rc)"
   return 1
 }
 

@@ -709,6 +709,7 @@ tests/jg-grok-continuity-live-e2e.test.sh 53
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 57
 tests/jg-harness-quirks.test.sh 321
 tests/jg-herdr-lead-label.test.sh 99
+tests/jg-herdr-go.test.sh 3000
 tests/jg-guard-host.test.sh 829
 tests/jg-herdr-names.test.sh 1061
 tests/jg-herdr-version-floor-live-e2e.test.sh 61
@@ -759,6 +760,7 @@ tests/jg-send-inbox.test.sh 51917
 tests/jg-session-start.test.sh 347046
 tests/jg-sessionstart-hook-live-e2e.test.sh 61
 tests/jg-ship-local.test.sh 521
+tests/jg-spawn-core.test.sh 3000
 tests/jg-spawn-dispatch-profile.test.sh 506834
 tests/jg-squad-lead-dormant.test.sh 1091
 tests/jg-state-bus-parity.test.sh 6515
@@ -772,6 +774,7 @@ tests/jg-supervision-host.test.sh 1162449
 tests/jg-status-digest.test.sh 1569
 tests/jg-tangle-guard.test.sh 12088
 tests/jg-tasks-axi.test.sh 42685
+tests/jg-teardown-core.test.sh 3000
 tests/jg-teardown.test.sh 479995
 tests/jg-test-run.test.sh 7444
 tests/jg-ticket-key.test.sh 20000
