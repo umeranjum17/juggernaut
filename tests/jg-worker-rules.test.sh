@@ -2,6 +2,9 @@
 # The role-scoped instruction surface: the shipped map covers every AGENTS.md section
 # and skill once, a builder and a scout read fewer bytes than the whole surface, and
 # check refuses a map that drops a section, names one twice, or names an unknown role.
+#
+# This is also the test that owns journeys/worker-rules.sh (the done-done journey drives the same script),
+# so the changed-test map selects it for a change to that journey.
 set -eu
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

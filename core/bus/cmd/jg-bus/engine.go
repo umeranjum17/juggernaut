@@ -143,7 +143,7 @@ func (a *app) wakePart() (*part, error) {
 
 func (a *app) routerPart() *part {
 	var env []string
-	if user, pass := a.login(); pass != "" {
+	if user, pass, ok := a.credentials(); ok {
 		env = []string{"NATS_USER=" + user, "NATS_PASSWORD=" + pass}
 	}
 	return &part{name: "router", url: a.cfgOr("nats-url", ""), stream: a.streamName(),

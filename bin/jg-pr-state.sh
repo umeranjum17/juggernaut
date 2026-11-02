@@ -36,6 +36,8 @@
 # bin/jg-dod-lib.sh reads to refuse a `done:` while the pull request still has a
 # red or unfinished check, so a lane fixes it or waits instead of reporting done
 # early; the default stays required-only, because that is what blocks a merge.
+# The juggernaut/waiting-for status (bin/jg-pr-lib.sh JG_PR_WAIT_CONTEXT) is never
+# reported: it is pending while the pull request waits for its own merge.
 # Advisory checks an ordinary run does not need are still omitted from the
 # default read, and a skipping or cancelled check is reported by neither.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
@@ -169,7 +171,13 @@ GH_STDERR=$(mktemp "${TMPDIR:-/tmp}/jg-pr-state.XXXXXX") \
 trap 'rm -f "$GH_STDERR"' EXIT INT TERM
 if [ "$ALL" = 1 ]; then
   CHECK_SCOPE=''
-  CHECK_JQ='.[] | select(.bucket == "fail" or .bucket == "pending") | "CHECK: \(.name) (\(.state))"'
+  # juggernaut/waiting-for is the one-line wait this repo publishes on the pull
+  # request (JG_PR_WAIT_CONTEXT), pending exactly while the PR waits for this
+  # very merge; counting it would refuse the merge it describes.
+  CHECK_JQ='.[]
+  | select(.name != "'"$JG_PR_WAIT_CONTEXT"'")
+  | select(.bucket == "fail" or .bucket == "pending")
+  | "CHECK: \(.name) (\(.state))"'
   CHECK_DIE="could not read checks for $URL"
 else
   CHECK_SCOPE=--required

@@ -150,6 +150,25 @@ test_skipped_and_cancelled_checks_do_not_refuse() {
   pass "a skipping or cancelled check does not refuse a done"
 }
 
+test_pending_waiting_for_status_does_not_refuse_but_real_checks_do() {
+  local d out
+  d=$(make_lane waitctx)
+  make_fakebin "$d"
+  lane_checks "$d" '[{"name":"CI required","state":"SUCCESS","bucket":"pass"},{"name":"juggernaut/waiting-for","state":"PENDING","bucket":"pending"}]'
+  out=$(lane_status "$d")
+  assert_contains "$out" "state: done" \
+    "a pending juggernaut/waiting-for status must not refuse a green pull request"
+  lane_checks "$d" '[{"name":"juggernaut/waiting-for","state":"PENDING","bucket":"pending"},{"name":"Lint","state":"IN_PROGRESS","bucket":"pending"}]'
+  out=$(lane_status "$d")
+  assert_contains "$out" "state: blocked" "a real pending check still refuses beside the wait status"
+  assert_contains "$out" "Lint (IN_PROGRESS)" "the real check is named"
+  assert_not_contains "$out" "waiting-for" "the wait status is never named as a failing check"
+  lane_checks "$d" '[{"name":"juggernaut/waiting-for","state":"PENDING","bucket":"pending"},{"name":"Lint","state":"FAILURE","bucket":"fail"}]'
+  out=$(lane_status "$d")
+  assert_contains "$out" "Lint (FAILURE)" "a real red check still refuses beside the wait status"
+  pass "the pending waiting-for status is ignored while real pending and red checks still refuse"
+}
+
 test_no_reported_check_keeps_the_previous_acceptance() {
   local d out
   d=$(make_lane noreport)
@@ -183,6 +202,7 @@ test_local_only_done_makes_no_forge_read() {
 test_red_check_refuses_the_done_by_name
 test_running_check_refuses_and_green_accepts_the_same_lane
 test_skipped_and_cancelled_checks_do_not_refuse
+test_pending_waiting_for_status_does_not_refuse_but_real_checks_do
 test_no_reported_check_keeps_the_previous_acceptance
 test_local_only_done_makes_no_forge_read
 

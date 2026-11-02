@@ -12,6 +12,12 @@
 #   server   JG_KV_URL, else JG_STATE_BUS_URL, else the `nats-url` key of the
 #            home's config/state-bus, else nats://127.0.0.1:4222.
 #   client   JG_NATS_BIN when set, else `nats` on PATH.
+#   auth     the machine runs one account per home, so a client that connects as the
+#            empty user is refused. jg_kv_run authenticates every call as the home that
+#            owns the state directory, with the name and the credentials file that
+#            `bin/jg-bus.sh account` prints - the same function core/bus/cmd/jg-bus
+#            writes the machine's accounts file from (<state>/bus/<account>.pass). A machine with no such file
+#            (an unauthenticated single-home server) is called without credentials.
 #   gate     jg_kv_ready fails, printing the reason into JG_KV_WHY, when either
 #            the client or the server is missing. It never decides whether that
 #            is a skip or a refusal: the shadow mirror skips, a live lease
@@ -34,6 +40,7 @@ JG_KV_WHY=
 JG_KV_READY=
 JG_KV_URL_RESOLVED=
 JG_KV_CLIENT=
+JG_KV_STATE=
 
 # jg_kv_home_url <home-dir>: the server address in force for one home.
 jg_kv_home_url() { # <home-dir>
@@ -60,13 +67,51 @@ jg_kv_resolve() { # <home-dir>
       JG_KV_CLIENT=$(command -v nats 2>/dev/null || true)
     fi
   fi
+  if [ -z "$JG_KV_STATE" ]; then
+    JG_KV_STATE=${JG_STATE_OVERRIDE:-$home/state}
+  fi
   [ -n "$JG_KV_CLIENT" ] || { JG_KV_WHY="no nats client found (set JG_NATS_BIN)"; return 1; }
   return 0
 }
 
+# jg_kv_login <state-dir>: this home's account name and its credentials file, tab
+# separated, asked of the one function that also writes the server's accounts block
+# (bin/jg-bus.sh account), so the name and the password can never drift from what the
+# server loaded. A machine where that command cannot answer (no Go toolchain and no
+# built command) keeps no credentials for this home, which is how an unauthenticated
+# server is called without them. The answer is kept for the rest of the shell.
+JG_KV_LOGIN_STATE=
+JG_KV_LOGIN=
+jg_kv_login() { # <state-dir>
+  local state=$1 bus
+  if [ "$JG_KV_LOGIN_STATE" != "$state" ]; then
+    bus=${BASH_SOURCE[0]%/*}/jg-bus.sh
+    JG_KV_LOGIN=$(JG_HOME=$(dirname -- "$state") JG_STATE_OVERRIDE=$state "$bus" account 2>/dev/null) || JG_KV_LOGIN=
+    JG_KV_LOGIN_STATE=$state
+  fi
+  [ -n "$JG_KV_LOGIN" ] && printf '%s\n' "$JG_KV_LOGIN"
+}
+
+# jg_kv_run <client> <url> <state-dir> [args...]: one client call, authenticated as the
+# home that owns <state-dir> when the machine keeps credentials for it. The password
+# travels in NATS_PASSWORD, never on the argument list, so it never shows in `ps`.
+jg_kv_run() { # <client> <url> <state-dir> [args...]
+  local client=$1 url=$2 state=$3 login account cred pass
+  shift 3
+  if login=$(jg_kv_login "$state"); then
+    account=${login%%$'\t'*}
+    cred=${login#*$'\t'}
+    if [ -s "$cred" ] && pass=$(tr -d '\n' < "$cred"); then
+      NATS_USER=$account NATS_PASSWORD=$pass "$client" -s "$url" --timeout 10s "$@"
+      return
+    fi
+  fi
+  "$client" -s "$url" --timeout 10s "$@"
+}
+
 # jg_kv_call <args...>: one client call, with the server named explicitly.
 jg_kv_call() {
-  "$JG_KV_CLIENT" -s "$JG_KV_URL_RESOLVED" --timeout 10s "$@"
+  jg_kv_run "$JG_KV_CLIENT" "$JG_KV_URL_RESOLVED" "$JG_KV_STATE" "$@"
 }
 
 # jg_kv_ready <home-dir>: 0 iff a client is present and its server answers, so a

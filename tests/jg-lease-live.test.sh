@@ -153,21 +153,24 @@ test_the_guard_refuses_a_steer_while_the_other_actor_holds_the_task() {
   pass "the guard refuses a steer through the shipped send while the other actor holds the task"
 }
 
-test_an_unreachable_store_refuses_instead_of_passing() {
+test_an_unreachable_store_degrades_the_steer_and_never_blocks_it() {
   local out status=0 dead_url="nats://127.0.0.1:1"
   JG_LEASE_HOLDER_PID="$DEAD_PID" lease branch claim t9 --actor branch >/dev/null \
-    || fail "could not seed the record the guard must not excuse"
+    || fail "could not seed the record the guard cannot read"
   out=$(env PATH="$DIR/fakebin:$PATH" \
     JG_ROOT_OVERRIDE="$HOME_DIR" JG_HOME="$HOME_DIR" \
     JG_SUPERVISION_ACTOR=main JG_SEND_SETTLE=0 JG_KV_URL="$dead_url" \
     "$SEND" t1 "proceed" 2>&1 >/dev/null) || status=$?
-  [ "$status" -eq 1 ] || fail "a guard that cannot read the store must refuse with exit 1, got $status: $out"
-  assert_contains "$out" "no task-lease store answers" "the refusal must name the missing store"
+  [ "$status" -eq 0 ] || fail "a steer must land on the file path while the store cannot answer, got $status: $out"
+  assert_contains "$out" "no task-lease store answers" "the plain line must name the missing store"
+  assert_contains "$out" "continues on the file path" "the plain line must say the action continues"
+  [ "$(printf '%s\n' "$out" | grep -c 'continues on the file path')" -eq 1 ] \
+    || fail "the degradation must be said once per command, not once per guarded action: $out"
   out=$(JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE_DIR" JG_KV_URL="$dead_url" bash "$LEASE" check t9 2>&1) \
     || status=$?
-  [ "$status" -eq 2 ] || fail "check must exit 2 when the store cannot answer, got $status: $out"
+  [ "$status" -eq 2 ] || fail "check must still exit 2 when the store cannot answer, got $status: $out"
   assert_contains "$out" "no task-lease store answers" "check must name the missing store rather than reporting an empty task"
-  pass "an unreachable store refuses the mutation and never reads as an empty lease"
+  pass "an unreachable store degrades the steer to the file path, says so once, and never blocks it"
 }
 
 make_home
@@ -178,5 +181,5 @@ test_release_and_the_two_bulk_paths || result=1
 test_sweep_removes_only_the_stale_records || result=1
 test_a_watcher_sees_the_claim_and_the_release || result=1
 test_the_guard_refuses_a_steer_while_the_other_actor_holds_the_task || result=1
-test_an_unreachable_store_refuses_instead_of_passing || result=1
+test_an_unreachable_store_degrades_the_steer_and_never_blocks_it || result=1
 exit "$result"
