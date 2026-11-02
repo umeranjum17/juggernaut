@@ -52,9 +52,10 @@ exits 2, so a broken reader is never read as an empty queue.
 
 The routing replay runs `jg_wake_route_class` and `jg_wake_append_locked` from the base commit's shell
 and from the port over the same cases: every raise of the 241 events recorded on a real `JG_WAKE`
-stream plus the shapes that stream lacks, in 24 scenarios (the default rules, 13 generated rule
-files covering the pattern grammar, parked homes, restart passes and queue states, a missing rule
-file, an override file). A difference in any class fails the replay; a control run with one
+stream plus the shapes that stream lacks, in 27 scenarios (the default rules, 14 generated rule
+files covering the pattern grammar, parked homes, restart passes and queue states, a rule file that
+matches nothing with and without the shared defaults behind it, a missing rule file, an override
+file). A difference in any class fails the replay; a control run with one
 corrupted answer must fail it. `tests/fixtures/wake-recorded/route-classes.tsv` keeps the classes
 the shell gave the distinct recorded events, and `tests/jg-wake-core.test.sh` checks the port
 against them. `tests/jg-wake-route.test.sh` drives the classes through the library's own entry

@@ -126,11 +126,16 @@ func sameFile(a, b string) bool {
 }
 
 // ruleLines is _jg_wake_rules: every rule line of every file, in priority order, so the first
-// match wins across the files and a home rule layers over the shared one.
+// match wins across the files and a home rule layers over the shared one. The shell cats each file
+// and adds a newline, so a rule file whose last line has no newline still contributes that line.
 func (e env) ruleLines() []string {
 	var out []string
 	for _, f := range e.routingFiles() {
-		out = append(out, readLines(f)...)
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		out = append(out, completeLines(string(data)+"\n")...)
 	}
 	return out
 }
@@ -512,9 +517,15 @@ func cleanField(s string) string {
 // fact, and a new line is a new event.
 func (e env) identity(key, payload string) string {
 	if strings.HasSuffix(key, ".status") {
+		// tail -n 1 keeps the line's newline, and cleaning turns it into a trailing space.
 		if p := filepath.Join(e.state, key); isFile(p) && !isLink(p) {
-			if line := lastLine(p); line != "" {
-				return cleanField(line)
+			if data, err := os.ReadFile(p); err == nil && len(data) > 0 {
+				if line := lastLine(p); line != "" {
+					if strings.HasSuffix(string(data), "\n") {
+						return cleanField(line + "\n")
+					}
+					return cleanField(line)
+				}
 			}
 		}
 	}

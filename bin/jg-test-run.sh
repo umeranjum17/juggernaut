@@ -434,7 +434,7 @@ family_for_basename() {
     jg-mail.test.sh|jg-watcher-lock.test.sh|jg-watch-handoff.test.sh|\
     jg-watch-inventory.test.sh|\
     jg-wake-next.test.sh|jg-pi-wake-replay.test.sh|\
-    jg-wake-core.test.sh|\
+    jg-wake-core.test.sh|jg-wake-router.test.sh|\
     jg-state-bus-parity.test.sh|jg-lease-live.test.sh|jg-reply-bus-parity.test.sh|\
     jg-reply-engine.test.sh|\
     jg-metrics-shadow-parity.test.sh|\
@@ -806,6 +806,7 @@ tests/jg-turnend-guard.test.sh 42968
 tests/jg-update.test.sh 13448
 tests/jg-wake-daemon-lifecycle-e2e.test.sh 10177
 tests/jg-wake-core.test.sh 6000
+tests/jg-wake-router.test.sh 6000
 tests/jg-wake-route.test.sh 527
 tests/token-cuts-live.test.sh 9000
 tests/jg-wake-drain-open-decisions-cursor.test.sh 57982
