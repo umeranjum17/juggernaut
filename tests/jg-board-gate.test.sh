@@ -40,6 +40,7 @@ case "$cmd" in
     esac
     case " ${SIGNOFF_DISMISS_FAILS:-} " in *" $key "*) exit 3 ;; esac
     printf 'dismiss %s\n' "$key" >> "$SIGNOFF_LOG"
+    printf 'reason %s %s\n' "$key" "$reason" >> "$SIGNOFF_LOG"
     jq --arg k "$key" '.items = [.items[] | if .key == $k then . + {dismissed: true} else . end]' "$board" > "$board.t" && mv "$board.t" "$board" ;;
   raise)
     key='' title='' detail=''
@@ -269,7 +270,31 @@ test_check_reads_one_ask_from_a_many_line_detail() {
   pass "one card is one ask, however many lines its detail holds"
 }
 
+test_dismiss_sends_a_fitting_reason_and_odd_titles_make_valid_tags() {
+  local d out board tags id
+  d=$(setup reasons)
+  board=$d/so/.sign-off/decisions.json
+  jq --arg o "$(iso_ago 7200)" --arg n "$(iso_ago 3600)" '.items += [
+    {key: "plain", kind: "decision", title: "Plain ask", detail: "", filer: "a1", filed: $o},
+    {key: "old-dup", kind: "decision", title: "Same ask", detail: "", filer: "a2", filed: $o},
+    {key: "new-dup", kind: "decision", title: "Same ask", detail: "", filer: "a2", filed: $n},
+    {key: "answered", kind: "decision", title: "Answered ask", detail: "", filer: "a3", filed: $o}]' "$board" > "$board.t" && mv "$board.t" "$board"
+  add_card "$d" "Which door? a/b" "must: security" "$(iso_ago 200000)"
+  id=$(with_env "$d" "$GATE" route --title "Answered ask" --ref answered | sed -n 's/^overwatch: \([^ ]*\) .*/\1/p')
+  with_env "$d" "$GATE" decided "$id" --words "use the side door" >/dev/null
+  out=$(run "$d" "$GATE" check)
+  assert_grep "reason plain not-relevant" "$d/signoff.log" "an unremarkable ask did not leave as not-relevant"
+  assert_grep "reason old-dup replaced" "$d/signoff.log" "an ask a newer one replaced did not leave as replaced"
+  assert_grep "reason answered done-elsewhere" "$d/signoff.log" "an ask Main answered did not leave as done-elsewhere"
+  assert_equals "1" "$(open_cards "$d")" "a non-must ask stayed on the board"
+  assert_contains "$out" "must ask waiting over 48h: Which door? a/b" "the odd-titled must ask was not re-pinged"
+  tags=$(ls "$d/home/state/.board-gate")
+  case "$tags" in *pinged-which-door-a-b-*) ;; *) fail "the odd key did not produce a slugged tag file: $tags" ;; esac
+  pass "a dismissal sends one of the three reasons it fits, and an odd title makes a valid tag file"
+}
+
 test_non_must_ask_is_refused_and_routed
+test_dismiss_sends_a_fitting_reason_and_odd_titles_make_valid_tags
 test_must_ask_is_posted_and_counted
 test_check_re_pings_an_old_must_ask_once
 test_check_moves_an_unclassified_ask_to_overwatch

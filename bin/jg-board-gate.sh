@@ -92,15 +92,26 @@ board_list() {  # <board file>
 
 mtime_of() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
+# A tag names a file, and its text can hold any character a title or key does,
+# so the file name is a lowercase slug of it with a fixed cap, plus the text's
+# checksum so two tags that slug the same stay two files.
+tag_file() {  # <tag> -> the path of this tag's record
+  local slug
+  slug=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | tr -s '-' | cut -c1-48)
+  printf '%s/%s-%s\n' "$GATE_DIR" "${slug#-}" "$(printf '%s' "$1" | cksum | awk '{printf "%08x", $1}')"
+}
+
 first_time() {  # <tag>: 0 the first pass that sees it, then 1
-  local f=$GATE_DIR/$1
+  local f
+  f=$(tag_file "$1")
   [ ! -e "$f" ] || return 1
   mkdir -p "$GATE_DIR" 2>/dev/null && : > "$f" 2>/dev/null || return 1
   return 0
 }
 
 refire_ok() {  # <tag>: 0 when this tag may report now, and records the report
-  local f=$GATE_DIR/${1//\//_} fired=0
+  local f fired=0
+  f=$(tag_file "$1")
   mkdir -p "$GATE_DIR" 2>/dev/null || return 1
   [ ! -f "$f" ] || fired=$(sed -n 's/^fired=//p' "$f" | tail -1)
   case "$fired" in ''|*[!0-9]*) fired=0 ;; esac
@@ -210,6 +221,23 @@ alert_key_set() {  # <keys file> <buffered lines file>
   return 0
 }
 
+# The one of sign-off-axi's three dismiss reasons that fits what the gate knows
+# of a card: a newer open card from the same filer with the same title replaced
+# it, an Overwatch record Main already decided answered it elsewhere, else it is
+# not relevant. No other value is ever sent.
+dismiss_reason() {  # <board json> <key> <filer> <title> <filed> <record id>
+  local newer
+  newer=$(printf '%s' "$1" | jq -r --arg k "$2" --arg f "$3" --arg t "$4" --arg at "$5" "$OPEN_ASKS"' | select((.key // "") != $k and (.filer // "") == $f and (.title // "") == $t and (.filed // "") > $at) | .key' 2>/dev/null | head -n 1)
+  if [ -n "$newer" ]; then printf 'replaced\n'; return 0; fi
+  if [ -f "$RECORDS" ] && awk -v id="$6" '
+      /^## / { on = ($0 == "## " id) }
+      on && /^- Main decided:/ && $0 !~ /^- Main decided: open/ { found = 1 }
+      END { exit !found }' "$RECORDS"; then
+    printf 'done-elsewhere\n'; return 0
+  fi
+  printf 'not-relevant\n'
+}
+
 # Route one ask off the board, or re-ping one must ask.
 ask_sweep() {  # <board json> <board>
   local key filed detail filer title cat epoch id
@@ -232,8 +260,8 @@ ask_sweep() {  # <board json> <board>
           [ -n "$id" ] || id=$(route_record "${title:-$key}" "$filer" "$key") || continue
           printf '%s\n' "$key" >> "$keys"
           # sign-off-axi takes one of its three own reasons, so a card that is
-          # not the captain's to answer leaves the board as not relevant.
-          if sign-off-axi dismiss "$key" "$2" --reason not-relevant >/dev/null 2>&1; then
+          # not the captain's to answer leaves the board with the one that fits.
+          if sign-off-axi dismiss "$key" "$2" --reason "$(dismiss_reason "$1" "$key" "$filer" "$title" "$filed" "$id")" >/dev/null 2>&1; then
             printf 'board ask routed to Overwatch, not a must: %s - %s (record %s)\n' "$key" "$title" "$id" >> "$lines"
           else
             printf 'board ask has no must category and could not be dismissed: %s - %s (record %s)\n' "$key" "$title" "$id" >> "$lines"
