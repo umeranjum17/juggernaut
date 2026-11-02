@@ -734,6 +734,7 @@ tests/jg-merge-on-green.test.sh 900
 tests/jg-lint-root-memory.test.sh 4747
 tests/jg-mail.test.sh 21000
 tests/jg-merge-gate-lib.test.sh 83
+tests/jg-merge-gate-policy.test.sh 15000
 tests/jg-metrics-shadow-parity.test.sh 9744
 tests/jg-muse-signals-live-e2e.test.sh 61
 tests/jg-omp-primary-live-e2e.test.sh 58
