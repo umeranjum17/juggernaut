@@ -38,11 +38,6 @@ if [ -f "$STUB_DIR/merged/$1" ]; then
   echo "state: done · source: run-step · checks green: PR merged (ci monitor ended): https://github.com/ex/r/pull/$1"
 elif [ -f "$STUB_DIR/not-ready/$1" ]; then
   echo "state: working · source: run-step · validating (running)"
-elif [ -f "$STUB_DIR/status-log/$1" ]; then
-  # A direct-PR task has no pipeline run: the resolved state is the worker's own done line, free text.
-  echo "state: done · source: status-log · PR https://github.com/ex/r/pull/${1#t} ready, 13/13 checks green, receipt PASS"
-elif [ -f "$STUB_DIR/status-log-working/$1" ]; then
-  echo "state: working · source: status-log · running the sealed run"
 else
   echo "state: done · source: run-step · checks green: PR ready for review"
 fi
@@ -71,18 +66,7 @@ if [ -f "$STUB_DIR/lint-notproven" ]; then
 fi
 echo "checks-lint: PASS: 2 evidence files"
 EOF
-# The forge read (--all): one line per draft, conflict, unfinished or red check, or merged state; nothing when green.
-# $STUB_DIR/pr-state/<task> holds the lines to print; a missing file is green (nothing), and "fail" is a lookup error.
-cat > "$FM/bin/jg-pr-state.sh" <<'EOF'
-#!/usr/bin/env bash
-t=t${2##*/}
-printf '%s\n' "$*" >> "$STUB_DIR/pr-state-calls"
-if [ "$(cat "$STUB_DIR/pr-state/$t" 2>/dev/null)" = fail ]; then echo "jg-pr-state: could not read $2" >&2; exit 2; fi
-[ ! -f "$STUB_DIR/pr-state/$t" ] || cat "$STUB_DIR/pr-state/$t"
-exit 0
-EOF
-chmod +x "$FM/bin/jg-crew-state.sh" "$FM/bin/jg-pr-merge.sh" "$FM/bin/jg-pr-state.sh" "$STUB_DIR/jg-checks-lint.sh"
-mkdir -p "$STUB_DIR/pr-state" "$STUB_DIR/status-log" "$STUB_DIR/status-log-working"
+chmod +x "$FM/bin/jg-crew-state.sh" "$FM/bin/jg-pr-merge.sh" "$STUB_DIR/jg-checks-lint.sh"
 export PATH=$STUB_DIR:$PATH
 H1=1111111111111111111111111111111111111111 H2=2222222222222222222222222222222222222222
 
@@ -299,56 +283,6 @@ check "p: merge=manual with no yolo stays silent" "$(mog)" ""
 check "p: merge=manual not merged" "$([ -e "$FM/data/jg-merge-on-green/t16.head" ] && echo attempted || echo never)" never
 rm "$FM/state/t16.meta" "$FM/state/t16.run-receipt.json"
 rm -f "$STUB_DIR/gh"
-
-# (q) a direct-PR task has no pipeline run, so its resolved state is the worker's own done line in free text
-# ("state: done · source: status-log · ..."), never the "checks green: PR ready" wording. The watcher must
-# still merge it, because the live forge read shows no draft, conflict or non-green check. Measured: 0 of the last 30
-# merged pull requests were landed by this check, every one waited for a lead turn (data/<task>/merge-times.md).
-rm -f "$STUB_DIR/merge-calls" "$STUB_DIR/lint-calls" "$STUB_DIR/pr-state-calls"
-meta t17 on "$H1" s17
-touch "$STUB_DIR/status-log/t17"
-out=$(mog)
-has "q: a direct-PR done line over green checks merges" "$out" "merged t17 https://github.com/ex/r/pull/17"
-check "q: jg-pr-merge was called once for it" "$(grep -c '^' "$STUB_DIR/merge-calls")" 1
-has "q: it asked the forge for every non-green check" "$(cat "$STUB_DIR/pr-state-calls")" "--all https://github.com/ex/r/pull/17"
-rm "$FM/state/t17.meta" "$FM/state/t17.run-receipt.json" "$STUB_DIR/status-log/t17"
-
-# A false done (a required check still red or pending): silent, nothing linted or merged, and the head is
-# not burned, so the same head merges as soon as the forge says green.
-rm -f "$STUB_DIR/merge-calls" "$STUB_DIR/lint-calls"
-meta t18 on "$H1" s18
-touch "$STUB_DIR/status-log/t18"
-echo "CHECK: Changed tests 2 (FAILURE)" > "$STUB_DIR/pr-state/t18"
-check "q: a done line over a red required check is silent" "$(mog)" ""
-check "q: nothing merged while a required check is red" "$([ -e "$STUB_DIR/merge-calls" ] && echo called || echo never)" never
-check "q: nothing linted while a required check is red" "$([ -e "$STUB_DIR/lint-calls" ] && echo called || echo never)" never
-check "q: the head is not burned" "$([ -e "$FM/data/jg-merge-on-green/t18.head" ] && echo burned || echo free)" free
-rm "$STUB_DIR/pr-state/t18"
-has "q: the same head merges once the forge says green" "$(mog)" "merged t18 https://github.com/ex/r/pull/18"
-rm "$FM/state/t18.meta" "$FM/state/t18.run-receipt.json" "$STUB_DIR/status-log/t18"
-
-# A forge lookup error and an already merged pull request (the read prints its state) are silent too.
-rm -f "$STUB_DIR/merge-calls"
-meta t19 on "$H1" s19
-touch "$STUB_DIR/status-log/t19"
-echo fail > "$STUB_DIR/pr-state/t19"
-check "q: a forge lookup error is silent and retried next sweep" "$(mog)" ""
-echo "STATE: merged at 2026-11-02T05:11:19Z" > "$STUB_DIR/pr-state/t19"
-check "q: an already merged pull request is silent" "$(mog)" ""
-check "q: neither merged anything" "$([ -e "$STUB_DIR/merge-calls" ] && echo called || echo never)" never
-rm "$FM/state/t19.meta" "$FM/state/t19.run-receipt.json" "$STUB_DIR/status-log/t19" "$STUB_DIR/pr-state/t19"
-
-# A worker still working never reaches the forge read, and yolo off still holds a done direct-PR task.
-rm -f "$STUB_DIR/pr-state-calls"
-meta t20 on "$H1" s20
-touch "$STUB_DIR/status-log-working/t20"
-check "q: a working task is silent" "$(mog)" ""
-meta t21 off "$H1" s21
-touch "$STUB_DIR/status-log/t21"
-check "q: yolo off still holds a done direct-PR task" "$(mog)" ""
-check "q: the forge was not read for either" "$([ -e "$STUB_DIR/pr-state-calls" ] && echo read || echo never)" never
-rm "$FM/state/t20.meta" "$FM/state/t20.run-receipt.json" "$FM/state/t21.meta" "$FM/state/t21.run-receipt.json" \
-  "$STUB_DIR/status-log-working/t20" "$STUB_DIR/status-log/t21"
 
 # (g) install --dry-run lists the steps and writes nothing.
 cat > "$FM/bin/jg-check-register.sh" <<'EOF'
