@@ -66,11 +66,32 @@ if [ "$VERDICT" = PASS ] && [ -n "$(git -C "$REPO" status --porcelain)" ]; then
 fi
 GEN=$JG_BACKLOG_META_SPAWN_GEN
 # The receipt names the pull request it covers (the URL carries the repository);
-# acceptance compares it with the pr= the merge path recorded. JG_RECEIPT_PR
-# overrides the lookup of the candidate branch's open PR.
-PR_URL=${JG_RECEIPT_PR:-}
+# acceptance compares it with the pr= the merge path recorded and refuses a
+# mismatch, so a blank pr is not a harmless default.
+# JG_RECEIPT_PR is read from this script's own environment, where an exported
+# value and a one-shot command prefix (`JG_RECEIPT_PR=<url> jg-run-receipt.sh`)
+# are the same thing; a value set but blank means a pull request was meant to be
+# named and went missing, which is refused below instead of recorded empty.
+# When the environment names nothing the pull request is read from the forge in
+# the order that survives each caller: the candidate's open pull request, the
+# open pull request of the task's recorded branch (a disposable worktree sits on
+# a detached HEAD, where `gh pr view` cannot resolve a branch), then the pr= the
+# task record already holds (the value acceptance compares against).
+trim() { local v=${1-}; v=${v#"${v%%[![:space:]]*}"}; printf '%s' "${v%"${v##*[![:space:]]}"}"; }
+pr_was_set=false
+[ -z "${JG_RECEIPT_PR+x}" ] || pr_was_set=true
+PR_URL=$(trim "${JG_RECEIPT_PR-}")
 if [ -z "$PR_URL" ] && command -v gh >/dev/null; then
-  PR_URL=$(cd "$REPO" && gh pr view --json url --jq .url 2>/dev/null) || PR_URL=
+  PR_URL=$(trim "$(cd "$REPO" && gh pr view --json url --jq .url 2>/dev/null || true)")
+  BRANCH=$(trim "$(jg_dod_meta_value "$META" branch)")
+  if [ -z "$PR_URL" ] && [ -n "$BRANCH" ]; then
+    PR_URL=$(trim "$(cd "$REPO" && gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url' 2>/dev/null || true)")
+  fi
+fi
+[ -n "$PR_URL" ] || PR_URL=$(trim "$(jg_dod_meta_value "$META" pr)")
+if [ -z "$PR_URL" ] && [ "$pr_was_set" = true ]; then
+  echo 'error: no pull request to record: JG_RECEIPT_PR is set but names none, and no pull request could be read for this candidate; set JG_RECEIPT_PR=<PR url>, or leave it unset and publish from the branch whose open pull request gh can read' >&2
+  exit 1
 fi
 umask 077
 TMP=$(mktemp "$STATE/.$ID.run-receipt.XXXXXX")
