@@ -21,23 +21,13 @@
 set -eu
 
 RETIRED=(addons)
-# Slice B of the one-repo fold is deferred: the catalog's images are design surface, so they stay under
-# the retired directory until that slice moves the ten project images and deletes the two catalog logos.
-# This list may only shrink, and slice B deletes it with that move. Nothing outside it may appear under
-# a retired root.
+# The catalog's ten project images now live in `core/tickets-sync/icons`, so the only tracked paths
+# still under the retired root are its two catalog logos, which the same fold deletes rather than
+# keeps. This list may only shrink, and deleting the logos deletes it. Nothing outside it may appear
+# under a retired root.
 DEFERRED=(
   addons/docs/media/logo-dark.svg
   addons/docs/media/logo-light.svg
-  addons/tickets-sync/icons/byokit.svg
-  addons/tickets-sync/icons/desklink.svg
-  addons/tickets-sync/icons/done-done.svg
-  addons/tickets-sync/icons/first-draft.svg
-  addons/tickets-sync/icons/herdr-runtime.svg
-  addons/tickets-sync/icons/juggernaut-addons.svg
-  addons/tickets-sync/icons/juggernaut.svg
-  addons/tickets-sync/icons/learn-from-mistakes.svg
-  addons/tickets-sync/icons/muxr-cloud.svg
-  addons/tickets-sync/icons/sign-off.svg
 )
 ROOT='' base='' self_test=0
 while [ "$#" -gt 0 ]; do
