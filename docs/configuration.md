@@ -1292,6 +1292,15 @@ A home that wants the refusal back writes `refuse` in the local, gitignored `con
 `core/merge-on-green/wiring.sh <jg-home>` is how a home gets this rule: it installs the feature's copy, and a home still running the retired install of the gate has that copy's refusing rule file removed and its `merge-on-green.sh` left as one redirect to the installed gate.
 Worker briefs still tell a worker to prefer a small slice; that wording is instruction only and enforces nothing.
 
+## Open pull request cap (config/open-pr-cap)
+
+The merge-on-green check counts open pull requests for every repository a task's recorded pull request names.
+A repository over the cap raises one alert naming the repository, the count and the cap.
+The local, gitignored `config/open-pr-cap` holds one whole number; an absent, empty, zero or unrecognised value is 8, the default.
+The alert repeats only when the count changes, and a repository back under the cap forgets it.
+A red pull request never holds a green one: each merges on its own checks.
+`core/merge-on-green/merge-on-green.sh` owns the count and the alert.
+
 ## Worker launch environment (config/launch-env-allowlist)
 
 The optional local, gitignored `config/launch-env-allowlist` limits the ambient environment passed to newly launched workers, Recon missions, and Squad Leads, including relaunches.

@@ -42,21 +42,27 @@ quietly turning back into a CI wait.
 
 ## 3. Green means merged, with no model turn in between
 
-`bin/jg-merge-on-green.sh sweep` is the deterministic watcher.
-`bin/jg-watch.sh` runs it every `JG_MERGE_ON_GREEN_INTERVAL` seconds (default
-20), so a green required set is acted on in seconds rather than on the next
-supervision cycle.
-For every task with a recorded `pr=`, it asks `bin/jg-pr-state.sh --waiting-for`
-what the change is waiting on:
+`core/merge-on-green/merge-on-green.sh check <home>` is the deterministic watcher check,
+installed once per home by `core/merge-on-green/wiring.sh` and run by the watcher with
+no model turn in between, so a green required set is acted on in seconds rather than
+on the next supervision cycle.
+For every task with a recorded `pr=` and `pr_head=`, it reads the task's resolved state
+(`bin/jg-crew-state.sh`):
 
 - a draft, conflicts, a red required check, or a required check that has not
   reported is an ordinary wait: nothing runs and nothing is raised;
-- the merge call is acted on, but only under authority the sweep can name: the
-  project's registered `+yolo` posture, or `bin/jg-merge-on-green.sh approve
-  <task-id>`, which the lead records after the captain says to land that pull
-  request;
+- each pull request is judged on its own checks alone, so a green pull request into
+  a release branch merges even while another pull request into the same branch is
+  red, and the release runs its checks on whatever head is current;
+- the merge call is acted on, but only under authority the check can name: the
+  task's `yolo=on`, or `merge=approved` in its record, which the lead writes after
+  the captain says to land that pull request;
 - a refused merge raises exactly one alert per task and head, naming the gate's
   own refusal text, and never touches the pull request.
+
+Open pull requests are counted per repository as well.
+Over `config/open-pr-cap` (a whole number, default 8) the check raises one alert naming the repository, the count and the cap.
+The alert repeats only when the count changes, and a repository back under the cap forgets it.
 
 A pull request still in flight carries one `juggernaut/waiting-for: <what>` line
 in the captain-facing report, taken from `bin/jg-pr-state.sh --waiting-for`.
@@ -70,11 +76,10 @@ Nothing is reverted, and no other merge waits on it.
 
 ## 5. The number
 
-Every merge the sweep lands appends one row to `data/merge-latency.tsv`: the
+Every merge the check lands appends one row to `data/merge-latency.tsv`: the
 task, the pull request, the `done` epoch, the merge epoch, and the whole minutes
 between them.
-`bin/jg-merge-on-green.sh latency` prints the rows with the worst and median
-minute count, and a merge over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5)
+A merge over `JG_MERGE_LATENCY_LIMIT_MINUTES` (default 5)
 raises one alert naming the number.
 A five-minute path that silently takes eleven is the failure this row exists to
 make visible, so read the recorded minutes rather than any promise about them.
