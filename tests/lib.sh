@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # tests/lib.sh - shared primitives for juggernaut behavior tests.
+# measurement edit (wide)
 #
 # Source this from a test file:
 #   # shellcheck source=tests/lib.sh
