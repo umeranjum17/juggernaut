@@ -38,13 +38,3 @@ jg_current_version_branch() {  # <repo-dir>
         print name
       }'
 }
-
-# 0 when <branch> is the project's current version branch, so a caller can allow
-# the one pull request that is expected to target the default branch - the
-# release pull request, which has the version branch as its head.
-jg_version_branch_is_current() {  # <repo-dir> <branch>
-  local current
-  [ -n "${2-}" ] || return 1
-  current=$(jg_current_version_branch "$1") || return 1
-  [ "$2" = "$current" ]
-}
