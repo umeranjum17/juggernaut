@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The herdr adapter's decisions, proved end to end through the adapter the
+# The herdr adapter's decisions and answer readers, proved end to end through the adapter the
 # fleet sources: bin/backends/herdr.sh forwards each call to core/herdr's Go command, built on
 # first use. The expected answers are the shell adapter's, pinned by the parity replay over
 # recorded herdr answers (core/herdr/README.md); this suite keeps the shapes that replay found
-# interesting.
+# interesting, with canned answers standing in for the `herdr` client.
 # Usage: tests/jg-herdr-go.test.sh
 set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -49,10 +49,35 @@ sum=$(printf '%s' "$long" | cksum | awk '{ printf "%04x", $1 % 65536 }')
 check "a long id is cut to 27 and carries its cksum" "$(jg_backend_herdr_agent_name_for "$long")" "${long:0:27}-$sum"
 check "an empty id has no name" "$(rc jg_backend_herdr_agent_name_for '')" 1
 
+# Answers: canned herdr JSON through the readers the adapter used to feed to jq.
+canned() { printf '%s' "$1"; }
+jg_backend_herdr_cli() { canned "$R_ANSWER"; }
+R_ANSWER='{"id":"x","result":{"pane":{"pane_id":"w1:p2"}}}'
+check "a pane that names itself is present" "$(jg_backend_herdr_pane_presence_state s w1:p2)" present
+check "a pane that names another is unknown" "$(jg_backend_herdr_pane_presence_state s w1:p3)" unknown
+R_ANSWER='{"error":{"code":"pane_not_found","message":"gone"}}'
+check "pane_not_found is dead" "$(jg_backend_herdr_pane_presence_state s w1:p2)" dead
+R_ANSWER='{"error":{"code":"server_not_running"}}'
+check "any other error is unknown, never dead" "$(jg_backend_herdr_pane_presence_state s w1:p2)" unknown
+R_ANSWER='{"result":{"workspaces":[{"workspace_id":"w1","label":"juggernaut"},{"workspace_id":"w2","label":"juggernaut"}]}}'
+check "a workspace listed once is present, twice-labelled ones are both found" "$(jg_backend_herdr_workspace_presence_state s w1)|$(JG_HOME=$lab jg_backend_herdr_workspace_find_all s | tr '\n' ,)" "present|w1,w2,"
+check "an absent workspace is dead" "$(jg_backend_herdr_workspace_presence_state s w9)" dead
+R_ANSWER='not json'
+check "an unreadable list is unknown, never dead" "$(jg_backend_herdr_workspace_presence_state s w1)" unknown
+R_ANSWER='{"result":{"agent":{"agent":"claude","agent_status":"working"}}}'
+check "agent identity is agent and status, tab separated" "$(jg_backend_herdr_agent_identity_raw s w1:p2)" "$(printf 'claude\tworking')"
+R_ANSWER='{"result":{"agent":{"agent":"pi","agent_session":{"kind":"path","value":"rel/path"}}}}'
+check "a relative session path is not a resumable reference" "$(rc jg_backend_herdr_pane_agent_session_ref s w1:p2)" 1
+R_ANSWER='{"server":{"running":false}}'
+check "a stopped server reads stopped" "$(jg_backend_herdr_server_running_state s)" stopped
+R_ANSWER='{"server":"down"}'
+check "a malformed status reads unknown" "$(jg_backend_herdr_server_running_state s)" unknown
+
 # The dispatcher never turns a core that cannot run into an answer.
-out=$(JG_HERDR_BIN=$lab/none/jg-herdr JG_HERDR_GO=$lab/no-such-go "$ROOT/bin/jg-herdr.sh" version-at-least 1 1 </dev/null 2>/dev/null; echo "rc=$?")
+out=$(JG_HERDR_BIN=$lab/none/jg-herdr JG_HERDR_GO=$lab/no-such-go "$ROOT/bin/jg-herdr.sh" field .a </dev/null 2>/dev/null; echo "rc=$?")
 check "no binary and no toolchain exits 2 with nothing on stdout" "$out" "rc=2"
 check "an unknown command exits 2" "$("$ROOT/bin/jg-herdr.sh" nonsense >/dev/null 2>&1; echo $?)" 2
+check "a jq-style failure exits 5 after the lines it printed" "$(printf '{"a":"x"}{"a":1}\n"s"' | "$ROOT/bin/jg-herdr.sh" field .a 2>/dev/null | tr '\n' ,; echo "${PIPESTATUS[1]}")" "x,1,5"
 
 [ "$fails" -eq 0 ] || { printf '%d check(s) failed\n' "$fails"; exit 1; }
 printf 'all jg-herdr-go tests passed\n'
