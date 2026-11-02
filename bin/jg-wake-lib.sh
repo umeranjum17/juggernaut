@@ -2683,6 +2683,15 @@ jg_wake_append_locked() {
   return 0
 }
 
+# --- the queue read model ----------------------------------------------------
+# What a queued row is, and the questions every reader below asks of the render,
+# is owned by core/wake/cmd/jg-wake-core and answered through bin/jg-wake-core.sh,
+# built on first use. The awk bodies these functions held are deleted, so one
+# implementation owns the row grammar instead of a copy per reader.
+_jg_wake_core() {
+  "$JG_WAKE_LIB_DIR/jg-wake-core.sh" "$@"
+}
+
 # jg_wake_queued_keys <kind>
 # Print the distinct keys currently queued for <kind>, oldest first. Read under
 # the append lock so a concurrent append is never observed half-written. The
@@ -2701,9 +2710,7 @@ jg_wake_queued_keys() {
 }
 
 jg_wake_queued_keys_locked() {
-  local kind=$1
-  awk -F '\t' -v kind="$kind" 'NF >= 5 && $3 == kind && !seen[$4]++ { print $4 }' \
-    "$JG_WAKE_QUEUE" 2>/dev/null || true
+  _jg_wake_core --queue "$JG_WAKE_QUEUE" keys "$1" 2>/dev/null || true
 }
 
 # jg_wake_withdraw <kind> <key>
@@ -2857,26 +2864,11 @@ jg_wake_queue_prune_task() {  # <state> <task-id> [target]
   jg_lock_release "$lock"
 }
 
+# Print a rows file as one row per event: a repeated kind and key is the same fact
+# delivered again and the newest line wins, every heartbeat is one row, and the
+# rows keep the order they first appeared in.
 jg_wake_print_deduped() {
-  local file=$1
-  awk -F '\t' '
-    NF >= 5 {
-      dedupe = $3 SUBSEP $4
-      if ($3 == "heartbeat") {
-        dedupe = "heartbeat"
-      }
-      if (!(dedupe in seen)) {
-        order[++count] = dedupe
-        seen[dedupe] = 1
-      }
-      line[dedupe] = $0
-    }
-    END {
-      for (i = 1; i <= count; i++) {
-        print line[order[i]]
-      }
-    }
-  ' "$file"
+  _jg_wake_core --queue "$JG_WAKE_QUEUE" dedupe "$1"
 }
 
 # --- branch grant evidence and per-actor pending rows ------------------------
@@ -2888,7 +2880,8 @@ jg_wake_print_deduped() {
 
 # 0 when <rows-file> is a non-empty list of distinct sequence numbers.
 jg_wake_grant_rows_valid() {  # <rows-file>
-  [ -s "$1" ] && awk 'BEGIN { ok=1 } !/^[0-9]+$/ || seen[$0]++ { ok=0 } END { exit !ok }' "$1"
+  [ -s "$1" ] || return 1
+  _jg_wake_core grant-valid "$1"
 }
 
 # 0 when <owner-file> holds the supported record, names a live process whose
@@ -2938,24 +2931,14 @@ jg_wake_actor_pending_count() {  # <actor> [<rows-file> <owner-file>]
   fi
   if [ "$actor" = branch ]; then
     [ -n "$grant" ] || { printf '0\n'; return 0; }
-    count=$(awk -F '\t' -v seqs="$grant" '
-      BEGIN { while ((getline line < seqs) > 0) keep[line] = 1 }
-      NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 in keep) { n++ }
-      END { print n + 0 }
-    ' "$JG_WAKE_QUEUE") || count=''
-  else
-    count=$(awk -F '\t' -v seqs="$grant" '
-      BEGIN { if (seqs != "") while ((getline line < seqs) > 0) reserved[line] = 1 }
-      NF < 5 || $2 !~ /^[0-9]+$/ { n++; next }
-      !($2 in reserved) { n++ }
-      END { print n + 0 }
-    ' "$JG_WAKE_QUEUE") || count=''
   fi
+  count=$(_jg_wake_core --queue "$JG_WAKE_QUEUE" --actor "$actor" --grant "$grant" count) || count=''
   # A queue that exists but cannot be counted (unreadable file, unreadable
   # state/) is not evidence of an empty queue: report a pending row so callers
   # still raise the alarm on a queue nobody can prove is drained. A failed count
-  # is decided by awk's exit status, not by what it printed, because an awk that
-  # reaches END after failing to open the queue would otherwise report 0 rows.
+  # is decided by the command's exit status, not by what it printed, because a
+  # reader that reaches its answer after failing to open the queue would
+  # otherwise report 0 rows.
   case "$count" in ''|*[!0-9]*) count=1 ;; esac
   printf '%s\n' "$count"
 }
@@ -2966,10 +2949,7 @@ jg_wake_actor_pending_count() {  # <actor> [<rows-file> <owner-file>]
 # Fails when the queue exists but cannot be read.
 jg_wake_rows_queued() {  # <seq>...
   [ -f "$JG_WAKE_QUEUE" ] || return 0
-  awk -F '\t' -v seqs="$*" '
-    BEGIN { n = split(seqs, list, " "); for (i = 1; i <= n; i++) want[list[i]] = 1 }
-    NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 in want) { print $2 }
-  ' "$JG_WAKE_QUEUE"
+  _jg_wake_core --queue "$JG_WAKE_QUEUE" queued "$@"
 }
 
 # --- signal announcement signatures -----------------------------------------

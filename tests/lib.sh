@@ -121,6 +121,19 @@ TOML
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The wake library's queue readers (core/wake, through bin/jg-wake-core.sh) are built on first use.
+# Every fixture home sets its own XDG_CACHE_HOME, so each would compile the command again, and a
+# watcher or drain cycle that makes the first call would spend its own bound on the compile. Build
+# it once per source tree here, before any cycle starts, and hand every suite the same binary.
+# Without a Go toolchain nothing is set, and a reader that cannot run exits 2 rather than guessing.
+if [ -z "${JG_WAKE_CORE_BIN:-}" ] && command -v "${JG_WAKE_CORE_GO:-go}" >/dev/null 2>&1; then
+  _jg_wake_core_dir="${TMPDIR:-/tmp}/jg-test-wake-core-$(id -u)-$(printf '%s' "$ROOT" | cksum | cut -d' ' -f1)"
+  mkdir -p "$_jg_wake_core_dir" 2>/dev/null \
+    && JG_WAKE_CORE_BIN="$_jg_wake_core_dir/jg-wake-core" \
+      "$ROOT/bin/jg-wake-core.sh" dedupe /dev/null >/dev/null 2>&1 \
+    && export JG_WAKE_CORE_BIN="$_jg_wake_core_dir/jg-wake-core"
+  unset _jg_wake_core_dir
+fi
 
 # --- reporters --------------------------------------------------------------
 

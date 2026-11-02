@@ -1,0 +1,106 @@
+1793536078	1793536078940	check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one - start the top ready item now, or record why it waits
+1793540409	1793540409585	check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one beta-two - start the top ready item now, or record why it waits
+1793540414	1793540414557	check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one - start the top ready item now, or record why it waits
+1793547627	1793547627599	check	jg-bus-probe	check: bus probe
+1793547655	1793547655141	signal	task1	watcher fired
+1793547658	1793547658181	signal	task1	watcher fired
+1793547672	1793547672216	check	mail:80008/33	check: mail 33 - mail from alice@example.com - Hello
+1793547676	1793547676479	check	mail:90009/66	check: mail 66 - mail from  - no subject
+1793547678	1793547678945	check	mail:90009/alice@example.com	check: mail alice@example.com - mail from  - no subject
+1793547678	1793547678965	check	mail:90009/66	check: mail 66 - mail from  - no subject
+1793548075	1793548075049	signal	lane.status	signal: /tmp/jg-test-run.ZGUoYr/w3/tmp/jg-watch-handoff.Yg2tVU/handoff/state/lane.status
+1793548076	1793548076051	signal	task-w1.status	signal: /tmp/jg-test-run.ZGUoYr/w5/tmp/jg-wake-daemon-e2e.Hv8Omw/wd-lifecycle/state/task-w1.status
+1793548077	1793548077520	stale	crew:gone	stale: crew:gone
+1793548079	1793548079172	signal	lane.status	signal: /tmp/jg-test-run.ZGUoYr/w3/tmp/jg-watch-handoff.Yg2tVU/cleaned/state/lane.status
+1793548080	1793548080684	signal	task-w1.status	signal: /tmp/jg-test-run.ZGUoYr/w5/tmp/jg-wake-daemon-e2e.Hv8Omw/wd-lifecycle/state/task-w1.status
+1793548085	1793548085473	signal	crew.remote	signal: crew.remote
+1793548085	1793548085773	signal	lane-b.status	signal: lane-b finished
+1793548088	1793548088408	signal	crew.remote	signal: crew.remote
+1793548088	1793548088866	signal	lane.status	signal: lane.status
+1793548089	1793548089228	signal	lane-b.status	signal: lane-b finished
+1793548091	1793548091392	stale	crew:live	stale: crew:live
+1793548092	1793548092221	signal	crew.remote	signal: crew.remote
+1793548093	1793548093589	signal	lane-b.status	signal: lane-b finished
+1793548095	1793548095412	check	waiting-timer-home-lane-g1793547195-wait-owner	check: waiting-state lane (blocked key=wait, observed 900s, level=owner; Main must recheck and unblock) id=waiting-timer-home-lane-g1793547195-wait source=[blocked [key=wait]: external condition]
+1793548095	1793548095662	signal	crew.remote	signal: crew.remote
+1793548096	1793548096714	signal	lane-b.status	signal: lane-b finished
+1793548098	1793548098299	signal	task1	watcher fired
+1793548098	1793548098366	check	waiting-timer-home-paused-g1793528095-default-owner	check: waiting-state paused (paused, observed 20003s, level=owner; Main must recheck and unblock) id=waiting-timer-home-paused-g1793528095-default source=[paused [at=1793528095]: waiting on the pipeline run]
+1793548100	1793548100081	check	waiting-timer-home-blocked-g1793547195-herdr-blocked-owner	check: waiting-state blocked (herdr-blocked, observed 905s, level=owner; Main must recheck and unblock) id=waiting-timer-home-blocked-g1793547195-herdr-blocked source=[herdr-blocked]
+1793548103	1793548103341	check	waiting-timer-home-lane-g1793547195-wait-owner	check: waiting-state lane (blocked key=wait, observed 908s, level=owner; owning lead must recheck and unblock) id=waiting-timer-home-lane-g1793547195-wait source=[blocked [key=wait]: external condition]
+1793548106	1793548106442	signal	task1	watcher fired
+1793548154	1793548154242	check	mail:10001/42	check: mail 42 - mail from alice@example.com - Hello
+1793548157	1793548157196	check	mail:40004/77	check: mail 77 - mail from bob@example.com - Again
+1793548157	1793548157317	check	mail:30003/77	check: mail 77 - mail from alice@example.com - Hello
+1793548157	1793548157680	check	mail:60006/99	check: mail 99 - mail from alice@example.com - Hello
+1793548160	1793548160480	check	mail:50005/88	check: mail 88 - mail from alice@example.com - Hello
+1793548161	1793548161540	check	mail:70007/55	check: mail 55 - mail from alice@example.com - Hello
+1793548163	1793548163965	check	mail:90009/42	check: mail 42 - mail from alice@example.com - Hello
+1793548177	1793548177057	check	mail:90009/92	check: mail 92 - mail from alice@example.com - M
+1793548177	1793548177214	check	mail:90009/94	check: mail 94 - mail from alice@example.com - M
+1793548177	1793548177714	check	mail:90009/91	check: mail 91 - mail from alice@example.com - M
+1793548177	1793548177981	check	mail:90009/93	check: mail 93 - mail from alice@example.com - M
+1793548178	1793548178269	check	mail:90009/95	check: mail 95 - mail from alice@example.com - M
+1793548182	1793548182493	check	mail:90009/78	check: mail 78 - mail from from@x - Hello
+1793548188	1793548188397	check	mail:90009/7	check: mail 7 - mail from from@x - new mail
+1793548241	1793548241829	check	mail:10001/42	check: mail 42 - mail from alice@example.com - Hello
+1793548244	1793548244321	check	mail:30003/77	check: mail 77 - mail from alice@example.com - Hello
+1793548245	1793548245209	check	mail:40004/77	check: mail 77 - mail from bob@example.com - Again
+1793548245	1793548245258	check	mail:60006/99	check: mail 99 - mail from alice@example.com - Hello
+1793548248	1793548248634	check	mail:50005/88	check: mail 88 - mail from alice@example.com - Hello
+1793548249	1793548249671	check	mail:70007/55	check: mail 55 - mail from alice@example.com - Hello
+1793548252	1793548252790	check	mail:90009/42	check: mail 42 - mail from alice@example.com - Hello
+1793548267	1793548267059	check	mail:90009/94	check: mail 94 - mail from alice@example.com - M
+1793548267	1793548267287	check	mail:90009/92	check: mail 92 - mail from alice@example.com - M
+1793548267	1793548267536	check	mail:90009/91	check: mail 91 - mail from alice@example.com - M
+1793548267	1793548267627	check	mail:90009/93	check: mail 93 - mail from alice@example.com - M
+1793548268	1793548268444	check	mail:90009/95	check: mail 95 - mail from alice@example.com - M
+1793548272	1793548272532	check	mail:90009/78	check: mail 78 - mail from from@x - Hello
+1793548279	1793548279160	check	mail:90009/7	check: mail 7 - mail from from@x - new mail
+1793549441	1793549441985	signal	lane.status	signal: /tmp/jg-test-run.Qxb9Tp/w8/tmp/jg-watch-handoff.teKb2W/handoff/state/lane.status
+1793549444	1793549444004	check	mail:10001/42	check: mail 42 - mail from alice@example.com - Hello
+1793549445	1793549445169	stale	crew:gone	stale: crew:gone
+1793549447	1793549447212	check	mail:30003/77	check: mail 77 - mail from alice@example.com - Hello
+1793549448	1793549448085	check	mail:60006/99	check: mail 99 - mail from alice@example.com - Hello
+1793549448	1793549448134	check	mail:40004/77	check: mail 77 - mail from bob@example.com - Again
+1793549449	1793549449787	signal	lane.status	signal: /tmp/jg-test-run.Qxb9Tp/w8/tmp/jg-watch-handoff.teKb2W/cleaned/state/lane.status
+1793549452	1793549452350	check	mail:50005/88	check: mail 88 - mail from alice@example.com - Hello
+1793549453	1793549453571	check	mail:70007/55	check: mail 55 - mail from alice@example.com - Hello
+1793549457	1793549457738	check	mail:90009/42	check: mail 42 - mail from alice@example.com - Hello
+1793549458	1793549458201	signal	lane.status	signal: lane.status
+1793549463	1793549463956	stale	crew:live	stale: crew:live
+1793549470	1793549470014	signal	task-w1.status	signal: /tmp/jg-test-run.Qxb9Tp/w10/tmp/jg-wake-daemon-e2e.4pYwI0/wd-lifecycle/state/task-w1.status
+1793549502	1793549502717	check	waiting-timer-home-lane-g1793548602-wait-owner	check: waiting-state lane (blocked key=wait, observed 900s, level=owner; Main must recheck and unblock) id=waiting-timer-home-lane-g1793548602-wait source=[blocked [key=wait]: external condition]
+1793549507	1793549507068	check	waiting-timer-home-paused-g1793529502-default-owner	check: waiting-state paused (paused, observed 20005s, level=owner; Main must recheck and unblock) id=waiting-timer-home-paused-g1793529502-default source=[paused [at=1793529502]: waiting on the pipeline run]
+1793549511	1793549511019	check	waiting-timer-home-blocked-g1793548602-herdr-blocked-owner	check: waiting-state blocked (herdr-blocked, observed 909s, level=owner; Main must recheck and unblock) id=waiting-timer-home-blocked-g1793548602-herdr-blocked source=[herdr-blocked]
+1793549515	1793549515081	check	waiting-timer-home-lane-g1793548602-wait-owner	check: waiting-state lane (blocked key=wait, observed 913s, level=owner; owning lead must recheck and unblock) id=waiting-timer-home-lane-g1793548602-wait source=[blocked [key=wait]: external condition]
+1793549533	1793549533645	signal	task1	watcher fired
+1793549589	1793549589231	check	merged-merged-https://github.com/example/demo/pull/33	check: merge landed: merged https://github.com/example/demo/pull/33
+1793549595	1793549595819	check	merged-task-v1-https://github.com/o/r/pull/1	check: merge landed: task-v1 https://github.com/o/r/pull/1
+1793549600	1793549600265	check	merged-task-v2-https://github.com/o/r/pull/1	check: merge landed: task-v2 https://github.com/o/r/pull/1
+1793549694	1793549694477	check	mail:10001/42	check: mail 42 - mail from alice@example.com - Hello
+1793549699	1793549699280	check	mail:40004/77	check: mail 77 - mail from bob@example.com - Again
+1793549699	1793549699382	check	mail:30003/77	check: mail 77 - mail from alice@example.com - Hello
+1793549699	1793549699738	check	mail:60006/99	check: mail 99 - mail from alice@example.com - Hello
+1793549705	1793549705076	check	mail:70007/55	check: mail 55 - mail from alice@example.com - Hello
+1793549705	1793549705788	check	mail:50005/88	check: mail 88 - mail from alice@example.com - Hello
+1793549706	1793549706282	check	mail:90009/44	check: mail 44 - mail from alice@example.com - Hello
+1793549711	1793549711269	check	mail:90009/42	check: mail 42 - mail from alice@example.com - Hello
+1793550945	1793550945379	signal	sm-x	done: surfaced before refusal
+1793550950	1793550950043	signal	task-a	done: must remain queued
+1793551055	1793551055842	signal	task-z.status	needs-decision: pick a library
+1793551231	1793551231421	signal	task-r	done: queued after startup
+1793551237	1793551237295	signal	task-r	done: queued after the re-emit too
+1793551399	1793551399586	check	procevent:symlinked-src:1	check: procevent blocking symlinked-src 1
+1793551518	1793551518091	signal	task-w1.status	signal: /tmp/jg-wake-daemon-e2e.tqDkZh/wd-lifecycle/state/task-w1.status
+1793551779	1793551779736	check	procevent:symlinked-src:1	check: procevent blocking symlinked-src 1
+1793551831	1793551831952	check	procevent:symlinked-src:1	check: procevent blocking symlinked-src 1
+1793552121	1793552121053	check	procevent:symlinked-src:1	check: procevent blocking symlinked-src 1
+1793553010	1793553010977	check	procevent:symlinked-src:1	check: procevent blocking symlinked-src 1
+1793554051	1793554051087	check	jg-bus-probe	check: bus probe
+1793556863	1793556863063	check	fleet-autosync-stale-primary	check: fleet autosync left primary 1 behind: on fm/fix-behavior-watcher-lock-hold, expected main
+1793556863	1793556863918	check	merged-sample-missing-pr-authority-https://github.com/sample/sample/pull/43	check: merge landed: sample-missing-pr-authority https://github.com/sample/sample/pull/43
+1793556880	1793556880647	check	merged-sample-teardown-race-pr-https://github.com/sample/sample/pull/33	check: merge landed: sample-teardown-race-pr https://github.com/sample/sample/pull/33
+1793556881	1793556881125	check	fleet-autosync-stale-primary	check: fleet autosync left primary 1 behind: on fm/fix-behavior-watcher-lock-hold, expected main
+1793556891	1793556891017	check	merged-sample-released-merge-https://github.com/sample/sample/pull/32	check: merge landed: sample-released-merge https://github.com/sample/sample/pull/32
+1793556892	1793556892375	check	fleet-autosync-stale-primary	check: fleet autosync left primary 1 behind: on fm/fix-behavior-watcher-lock-hold, expected main
