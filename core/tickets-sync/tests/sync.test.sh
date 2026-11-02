@@ -237,7 +237,8 @@ echo "reconcile: settled board in ${secs}s, ${quiet} bytes of output"
 echo 'PASS: --reconcile corrects a drifted ticket and settles a true board without writing'
 
 # The daily clean-up flags what needs a keep/remove call, back-fills a captain quote's
-# date and source from the steer record, raises one card and prints one line a day.
+# date and source from the steer record, posts one report card (never an ask) and
+# prints one line a day.
 (cd "$JG_HOME"; tasks-axi add ask3 '[captain-ask] P2 Umer ask three' --repo alpha --priority 2 --body 'type: captain-ask: "Umer wants the board to show quotes always"' >/dev/null
  tasks-axi add dupa 'Umer duplicate thing' --repo alpha --priority 2 >/dev/null
  tasks-axi add dupb 'Umer duplicate thing.' --repo alpha --priority 2 >/dev/null
@@ -256,9 +257,12 @@ grep -q "quoted-at: 2026-10-28" <(cd "$JG_HOME"; tasks-axi show ask3 --full)
 grep -q "source: $JG_HOME/state/lane.inbox/001.msg" <(cd "$JG_HOME"; tasks-axi show ask3 --full)
 sign-off-axi list "$work/board.json" --json > "$work/cards.json"
 grep -q "ticket-cleanup-$(date -u +%F)" "$work/cards.json"
-jq -e '[.decisions[].detail // ""] | any(contains("no-ask-card: main/other")) and (any(contains("no-ask-card: main/ask3")) | not)' "$work/cards.json"
+# A report, never an ask: an ask with no must category is what the board gate routes
+# and re-alerts on, so the card must take no answer.
+jq -e '.decisions[] | select(.key | startswith("ticket-cleanup-")) | .kind == "report" and (.options | length) == 0' "$work/cards.json"
+jq -e '[.decisions[] | select(.key | startswith("ticket-cleanup-")) | .sections[].items[].title] | any(. == "no-ask-card: main/other") and (any(. == "no-ask-card: main/ask3") | not)' "$work/cards.json"
 test -z "$(bash "$work/cleanup.sh")"
-echo 'PASS: the daily clean-up flags, back-fills a quote from the steer record, raises one card and runs once a day'
+echo 'PASS: the daily clean-up flags, back-fills a quote from the steer record, posts one report card and runs once a day'
 
 # The card reconcile (same daily pass) archives a waiting card whose ticket is done, keeps one whose
 # ticket is open, and lists a card with no source to check for Main.

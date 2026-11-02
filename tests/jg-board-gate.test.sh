@@ -25,8 +25,22 @@ board=$SIGN_OFF_HOME/.sign-off/decisions.json
 case "$cmd" in
   list) jq -c '{decisions: [.items[]]}' "$board" ;;
   dismiss)
-    printf 'dismiss %s\n' "$1" >> "$SIGNOFF_LOG"
-    jq --arg k "$1" '.items = [.items[] | if .key == $k then . + {dismissed: true} else . end]' "$board" > "$board.t" && mv "$board.t" "$board" ;;
+    # The real sign-off-axi takes only its own three reasons and refuses any
+    # other, so this fake does too: a free-text reason is a pass that dismisses
+    # nothing and re-alerts forever on the card it meant to remove.
+    key=$1
+    reason=''
+    while [ "$#" -gt 0 ]; do
+      case "$1" in --reason) shift; reason=${1-} ;; esac
+      shift
+    done
+    case "$reason" in
+      not-relevant|replaced|done-elsewhere) ;;
+      *) printf 'code: VALIDATION_ERROR\n' >&2; exit 2 ;;
+    esac
+    case " ${SIGNOFF_DISMISS_FAILS:-} " in *" $key "*) exit 3 ;; esac
+    printf 'dismiss %s\n' "$key" >> "$SIGNOFF_LOG"
+    jq --arg k "$key" '.items = [.items[] | if .key == $k then . + {dismissed: true} else . end]' "$board" > "$board.t" && mv "$board.t" "$board" ;;
   raise)
     key='' title='' detail=''
     while [ "$#" -gt 0 ]; do
@@ -217,6 +231,44 @@ test_decided_writes_mains_decision() {
   pass "Main's decision replaces the record's open line"
 }
 
+test_check_alerts_once_for_an_unchanged_set() {
+  local d first second third added
+  d=$(setup unchanged-set)
+  add_card "$d" stuck-one "" "$(iso_ago 7200)"
+  add_card "$d" stuck-two "" "$(iso_ago 7200)"
+  # The board refuses these two, so the set of offending keys cannot change.
+  first=$(SIGNOFF_DISMISS_FAILS="stuck-one stuck-two" run "$d" "$GATE" check)
+  assert_contains "$first" "could not be dismissed: stuck-one" "the first pass did not alert on an undismissable ask"
+  assert_contains "$first" "could not be dismissed: stuck-two" "the first pass alerted on one ask only"
+  second=$(SIGNOFF_DISMISS_FAILS="stuck-one stuck-two" run "$d" "$GATE" check)
+  assert_equals "" "$second" "the same unchanged set of offending keys alerted a second time"
+  third=$(SIGNOFF_DISMISS_FAILS="stuck-one stuck-two" run "$d" "$GATE" check)
+  assert_equals "" "$third" "the same unchanged set alerted a third time"
+  # One ask makes one record, however often the set is looked at again.
+  assert_equals "1" "$(records "$d" | grep -c '^- Ask ref: stuck-one' || true)" "a card the gate could not remove was routed to Overwatch again"
+  # A new offending key changes the set, so the gate alerts once more.
+  add_card "$d" stuck-three "" "$(iso_ago 7200)"
+  added=$(SIGNOFF_DISMISS_FAILS="stuck-one stuck-two stuck-three" run "$d" "$GATE" check)
+  assert_contains "$added" "could not be dismissed: stuck-three" "a changed set of offending keys did not alert"
+  assert_equals "" "$(SIGNOFF_DISMISS_FAILS="stuck-one stuck-two stuck-three" run "$d" "$GATE" check)" \
+    "the changed set alerted again with nothing further changed"
+  pass "an unchanged set of offending keys alerts once, and a changed set alerts again"
+}
+
+test_check_reads_one_ask_from_a_many_line_detail() {
+  local d out
+  d=$(setup many-line-detail)
+  # A card's detail holds one finding per line; a bare join read each line as
+  # another ask and routed a key that exists nowhere on the board.
+  add_card "$d" one-card "$(printf 'no-quote: main/a - first\nno-ask-card: main/b - second\n... and 333 more')" "$(iso_ago 7200)"
+  out=$(run "$d" "$GATE" check)
+  assert_equals "1" "$(printf '%s\n' "$out" | grep -c 'one-card')" "one card with a many-line detail did not alert once"
+  assert_not_contains "$out" "no-quote: main/a" "a line of a card's detail was read as its own ask"
+  assert_not_contains "$out" "... and 333 more" "the last line of a card's detail was read as its own ask"
+  assert_equals "1" "$(records "$d" | grep -c '^- Ask:' || true)" "one card with a many-line detail made more than one Overwatch record"
+  pass "one card is one ask, however many lines its detail holds"
+}
+
 test_non_must_ask_is_refused_and_routed
 test_must_ask_is_posted_and_counted
 test_check_re_pings_an_old_must_ask_once
@@ -225,3 +277,5 @@ test_check_reports_a_merge_with_no_board_evidence
 test_check_leaves_a_dismissed_card_alone
 test_check_reads_the_category_record
 test_decided_writes_mains_decision
+test_check_alerts_once_for_an_unchanged_set
+test_check_reads_one_ask_from_a_many_line_detail
