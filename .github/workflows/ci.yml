@@ -85,6 +85,9 @@ jobs:
         with:
           # The scope step diffs against the pull request's base commit.
           fetch-depth: 0
+          # Blobless: every commit and tree for the diff, no file contents until
+          # they are read. The history is 107 MB with them and 6.5 MB without.
+          filter: blob:none
       - name: Classify the changed paths
         id: scope
         env:
@@ -167,6 +170,9 @@ jobs:
         with:
           # The changed-file lint diffs against the pull request's base commit.
           fetch-depth: 0
+          # Blobless: every commit and tree for the diff, no file contents until
+          # they are read. The history is 107 MB with them and 6.5 MB without.
+          filter: blob:none
       - name: Install pinned ShellCheck
         run: |
           set -eu
@@ -232,16 +238,20 @@ jobs:
       - name: Parse every shell file
         run: |
           set -eu
-          inventory="$RUNNER_TEMP/jg-shell-inventory"
-          bin/jg-lint.sh --list-files > "$inventory"
-          files=$(wc -l < "$inventory" | tr -d '[:space:]')
-          echo "parsing $files shell files"
-          fail=0
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            /bin/bash -n "$f" || { echo "::error::bash -n failed on $f"; fail=1; }
-          done < "$inventory"
-          [ "$fail" -eq 0 ] || exit 1
+          # Through the read trace (bin/jg-ci-area-reads.sh), like the other area lanes.
+          bin/jg-ci-area-reads.sh --check shell -- bash -c '
+            set -eu
+            inventory="$RUNNER_TEMP/jg-shell-inventory"
+            bin/jg-lint.sh --list-files > "$inventory"
+            files=$(wc -l < "$inventory" | tr -d "[:space:]")
+            echo "parsing $files shell files"
+            fail=0
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              /bin/bash -n "$f" || { echo "::error::bash -n failed on $f"; fail=1; }
+            done < "$inventory"
+            [ "$fail" -eq 0 ] || exit 1'
+
 
   # The smoke run: one eval that proves a home boots and its fleet view renders.
   # It is the cheapest signal that the product starts at all, and it fails in
@@ -262,8 +272,11 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
+      # Run through the read trace: it fails if the suite reads a file that
+      # bin/jg-ci-scope.sh would not send to this lane, which is how a change to
+      # such a file would skip the lane green (bin/jg-ci-area-reads.sh).
       - name: Run the smoke eval
-        run: bin/jg-fast-evals.sh --smoke
+        run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh --smoke
 
   # The fast evals: deterministic behaviour checks over real entry points in a
   # throwaway home. bin/jg-fast-evals.sh owns the set; nothing here mocks a
@@ -285,7 +298,7 @@ jobs:
           npm install -g tasks-axi
           tasks-axi --version
       - name: Run the fast evals
-        run: bin/jg-fast-evals.sh
+        run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh
 
   # The bus lane: the pinned JetStream server and client install through this
   # repository's own install path, and the test that proves a home comes up with
@@ -317,6 +330,19 @@ jobs:
           # The module is the one owner of the version this repo builds with.
           go-version-file: core/bus/go.mod
           cache: false
+      # The Go build cache is seeded by the push that follows a merge (the save
+      # step below) and only read on a pull request, so a pull request starts from
+      # the release branch's compiled packages instead of building them cold, and
+      # never writes a cache of its own. The module has no third-party dependencies,
+      # so there is no module cache to keep. A pull request that edits go.mod misses
+      # the exact key and falls back to the newest cache for the prefix.
+      - name: Restore the Go build cache seeded from the release branch
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-bus-${{ runner.os }}-${{ hashFiles('core/bus/go.mod') }}
+          restore-keys: |
+            go-bus-${{ runner.os }}-
       # The captain channel's command is Go, per the stack decision that new
       # long-running parts are Go, and the shell is only its dispatcher. Build it
       # here once and name it for the lane, so the behaviour test below proves the
@@ -326,34 +352,59 @@ jobs:
           set -eu
           ( cd core/bus && go vet ./... && go build -o "$RUNNER_TEMP/bin/jg-bus" ./cmd/jg-bus )
           echo "JG_BUS_BIN=$RUNNER_TEMP/bin/jg-bus" >> "$GITHUB_ENV"
+      - name: Seed the Go build cache for pull requests
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-bus-${{ runner.os }}-${{ hashFiles('core/bus/go.mod') }}
       - name: Prove a home comes up with JetStream running
         run: |
           set -eu
           nats-server --version
           nats --version
-          tests/jg-bus-service.test.sh
-          tests/jg-bus-machine-service.test.sh
-          tests/jg-stack.test.sh
+          # Through the read trace (bin/jg-ci-area-reads.sh): a file this lane
+          # reads that the Bus area in bin/jg-ci-scope.sh misses fails the lane
+          # here instead of letting a change to it skip the lane green.
+          bin/jg-ci-area-reads.sh --check bus -- bash -c '
+            set -eu
+            tests/jg-bus-service.test.sh
+            tests/jg-bus-machine-service.test.sh
+            tests/jg-stack.test.sh'
+
       - name: Prove the captain channel's Go command at parity
         run: |
           set -eu
-          tests/jg-bus.test.sh
+          bin/jg-ci-area-reads.sh --check bus -- tests/jg-bus.test.sh
 
   # The changed-file tests: the suite scripts this change's paths map to, on the
   # pull request, and nothing else. They are the second half of the fast required
   # set; the whole suite on main and release branches is
   # .github/workflows/behavior.yml, which runs post-merge.
+  #
+  # The selection is split across three runners at once (bin/jg-test-run.sh
+  # --shard owns the split): the audit of the last 150 runs found this job was the
+  # longest required one, 1.4 minutes at the median and up to 13.5 on a wide change.
+  # A shard with no scripts passes at once, and `CI required` reads the matrix as
+  # one result, so a failed or cancelled shard still fails the lane.
   tests:
-    name: Changed tests
+    name: Changed tests ${{ matrix.shard }}
     runs-on: ubuntu-latest
     needs: invariants
     if: ${{ needs.invariants.outputs.behavior == 'true' && github.event_name == 'pull_request' }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v6
         with:
           # --changed diffs against the pull request's base commit.
           fetch-depth: 0
+          # Blobless: every commit and tree for the diff, no file contents until
+          # they are read. The history is 107 MB with them and 6.5 MB without.
+          filter: blob:none
       - name: Install pinned ShellCheck
         run: |
           set -eu
@@ -371,7 +422,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         # The real-Herdr family needs a live herdr, so it runs in its own
         # post-merge lane instead of gate-skipping inside the fast set.
-        run: bin/jg-test-run.sh --changed --base "$BASE_SHA" --exclude-family real-herdr-gated --max-weight-ms 60000
+        run: |
+          bin/jg-test-run.sh --changed --base "$BASE_SHA" --exclude-family real-herdr-gated --max-weight-ms 60000 \
+            --shard "${{ matrix.shard }}of${{ strategy.job-total }}"
 
   # The one required status check: it always reports, refusing a lane that did
   # not run.

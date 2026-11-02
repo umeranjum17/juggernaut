@@ -951,6 +951,32 @@ test_ready_work_wakes_the_primary_home_too() {
   pass "ready work with no worker working wakes the primary home, not only a lead, and a freed place re-raises it"
 }
 
+test_a_merge_freeze_never_idles_free_lanes() {
+  local m crew n
+  m=$(home freeze-main)
+  mkdir -p "$m/data"
+  crew=$(working_crew_state "$m")
+  printf '6\n' > "$m/config/lane-target"
+  # The lead holds merges to keep a release head still: a freeze record, three
+  # lanes working, and three lanes parked on held PRs that only wait.
+  printf 'merges held for the release head\n' > "$m/state/.merge-freeze"
+  for n in 1 2 3; do
+    printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\n' "$n" > "$m/state/w$n.meta"
+    printf 'working [at=1]: on it\n' > "$m/state/w$n.status"
+  done
+  for n in 4 5 6; do
+    printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\n' "$n" > "$m/state/w$n.meta"
+    printf 'paused [at=1]: PR held for the merge freeze\n' > "$m/state/w$n.status"
+  done
+  backlog "$m" add alpha "first item" --priority 1
+  backlog "$m" add beta "second item"
+  JG_CREW_STATE_BIN="$crew" PANES='1 2 3 4 5 6' cycle "$m"
+  grep -q '^check: ready work waiting with free lane slots (3/6 open): alpha beta - ' "$m/events" \
+    || fail "a merge freeze with 3 live lanes of 6 and 2 ready items raised no wake naming the count and ids: $(cat "$m/events")"
+  [ "$(grep -c '^check: ready work waiting' "$m/events")" = 1 ] || fail "the shortfall rang more than once: $(cat "$m/events")"
+  pass "live lanes below the floor with ready work wake the home whatever a merge freeze holds, and parked lanes do not count as live"
+}
+
 test_a_fleet_pause_silences_ready_work_but_not_a_blocker() {
   local m before
   m=$(home ready-pause)
@@ -1026,6 +1052,7 @@ test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts
 test_ship_ready_line_goes_through_the_pr_check
 test_watcher_handoff_gap_is_not_a_dead_watcher
 test_ready_work_wakes_the_primary_home_too
+test_a_merge_freeze_never_idles_free_lanes
 test_a_fleet_pause_silences_ready_work_but_not_a_blocker
 test_memory_refused_launch_reraises_when_admission_clears
 test_green_unmerged_pr_climbs_lead_main_and_the_board

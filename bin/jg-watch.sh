@@ -140,7 +140,10 @@
 #                          a primary or squad_lead home's base-cadence scan found dispatchable
 #                          queued work (jg-tasks-axi.sh ready) while the home sits
 #                          below its lane floor: with config/lane-target naming a
-#                          positive integer, fewer open lanes than that target;
+#                          positive integer, fewer live lanes than that target
+#                          (a lane whose last status line is paused, blocked,
+#                          needs-decision, done or failed is not live, and a
+#                          merge freeze or held PR never counts as a reason to idle);
 #                          otherwise (no usable target, or at least that many
 #                          open lanes), none of its workers is provably working.
 #                          Re-raised while the condition holds, once per
@@ -2975,8 +2978,11 @@ lane_target_value() {
 }
 
 # Open lanes: every state/<task>.meta whose kind is ship (the default when a
-# meta omits it) or scout. A squad_lead endpoint's own meta (kind=squad_lead) is
-# not a lane of this home, so it never counts toward the floor.
+# meta omits it) or scout and whose last state line is not paused, blocked,
+# needs-decision, done or failed: a parked or finished lane that only waits on a
+# held merge is not live, so a merge freeze never hides a free lane. A
+# squad_lead endpoint's own meta (kind=squad_lead) is not a lane of this home,
+# so it never counts toward the floor.
 # Fork hook (thin layer over upstream): the fleet-flow feature owns the rule that
 # a lane parked on a stale external wait stops counting toward the cap, so when
 # its installed check is present its `counted` column is the open-lane number and
@@ -2984,7 +2990,7 @@ lane_target_value() {
 # falls back to the meta count below, byte-for-byte upstream behaviour; the
 # counting rule stays in the feature, not here.
 open_lane_count() {
-  local check counted meta kind count=0
+  local check counted meta kind last count=0
   check=${XDG_DATA_HOME:-$HOME/.local/share}/jg-fleet-flow/jg-flow-check.sh
   if [ -f "$check" ] && [ -x "$check" ] \
     && counted=$(jg_run_timed "${JG_FLOW_CHECK_TIMEOUT_SECS:-10}" "$check" "$JG_HOME" --summary 2>/dev/null); then
@@ -2998,7 +3004,13 @@ open_lane_count() {
     [ -f "$meta" ] || continue
     kind=$(grep '^kind=' "$meta" 2>/dev/null | head -1 | cut -d= -f2- || true)
     case "${kind:-ship}" in
-      ship|scout) count=$((count + 1)) ;;
+      ship|scout) ;;
+      *) continue ;;
+    esac
+    last=$(grep -E '^(working|paused|blocked|needs-decision|done|failed)[ :[]' "${meta%.meta}.status" 2>/dev/null | tail -1 || true)
+    case "$last" in
+      paused*|blocked*|needs-decision*|done*|failed*) ;;
+      *) count=$((count + 1)) ;;
     esac
   done
   printf '%s\n' "$count"

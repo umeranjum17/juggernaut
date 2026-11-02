@@ -15,17 +15,21 @@ them:
 - `Repo invariants` - the seconds-long file comparisons and the coverage proofs.
 - `Lint <n>` - the sharded lint over the files the change touched
   (`bin/jg-lint.sh --changed-base <base>`), not over the whole tree.
-- `Changed tests` - the suite scripts the change's paths map to
-  (`bin/jg-test-run.sh --changed --base <base> --exclude-family real-herdr-gated --max-weight-ms 60000`): a suite whose recorded time is over a minute is named in the log and runs in the post-merge lane instead.
+- `Changed tests <n>` - the suite scripts the change's paths map to
+  (`bin/jg-test-run.sh --changed --base <base> --exclude-family real-herdr-gated --max-weight-ms 60000 --shard <n>of3`): a suite whose recorded time is over a minute is named in the log and runs in the post-merge lane instead.
+  The selection is split across three runners at once, by recorded time, so the slowest required lane is a third as long.
 
 `CI required` is still the one required status check, and `bin/jg-ci-required.sh`
 now holds two lane sets: the fast set for a `pull_request` event and the full set
 for a `push`.
 Four area suites run on every `push` to `main` or `release/**` (the release gate),
 and on a pull request only when it touches their area (`bin/jg-ci-scope.sh` owns
-the paths): `Bus service` (core/bus, bus scripts, install, bootstrap), `Shell syntax`
-(any `.sh`), and `Smoke` plus `Fast evals` (bin/ or core/). An untouched area skips,
-and `CI required` refuses a touched area whose suite was skipped or did not report.
+the paths): `Bus service` (core/, bin/, defaults/, install, the pinned versions, the bus doc and test helpers),
+`Shell syntax` (any `.sh`), and `Smoke` plus `Fast evals` (bin/, core/ or the pinned versions).
+A change to `.github/` owes all of them, because the workflow defines the lanes.
+An untouched area skips, and `CI required` refuses a touched area whose suite was skipped or did not report.
+A skip is only safe if the area covers every file its suite reads, so each of these lanes runs its suite through
+`bin/jg-ci-area-reads.sh`, which traces what the suite opens and fails, naming the file, when one is outside the area.
 The rest run after the merge instead: the behaviour suite
 (`behavior.yml`), and the core journeys (`core-suites.yml`).
 An unreadable diff still widens the pull request to the full set.
