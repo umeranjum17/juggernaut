@@ -370,7 +370,8 @@ jobs:
             set -eu
             tests/jg-bus-service.test.sh
             tests/jg-bus-machine-service.test.sh
-            tests/jg-stack.test.sh'
+            tests/jg-stack.test.sh
+            tests/jg-stack-owner.test.sh'
 
       - name: Prove the captain channel's Go command at parity
         run: |

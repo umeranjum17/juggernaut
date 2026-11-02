@@ -136,3 +136,36 @@ The undelivered record holds the event with its error:
 
 `tests/jg-bus.test.sh` carries the same claims without any of these binaries: it stands a local HTTP sink in for the Dapr sidecar and for ntfy, and it drives the real `bin/jg-question-card.sh post`, `bin/jg-branch-outcome.sh append` and `bin/jg-bus.sh reply` against a fixture home.
 It proves the shipped live mode, the one-line `mode shadow` reversal, a live delivery that is named in the undelivered record, the replay's zero-difference run and its tampered run, and the reply routing.
+
+## The stack with ntfy logins, over the tailnet address
+
+Date: 2026-11-02.
+Host: Linux, amd64, with a tailnet address.
+Versions: `nats-server` 2.10.22, `daprd` 1.19.1, `ntfy` 2.36.0.
+A throwaway home with free ports ran `bin/jg-stack.sh up` with `config/bus/ntfy.yml` bound to the host's tailnet address, the shipped `deny-all` auth, and no other override.
+The machine's own bus unit and state were not touched.
+
+```sh
+bin/jg-stack.sh up
+bin/jg-captain-probe.sh
+bin/jg-stack.sh up
+```
+
+```text
+ntfy  installed 2.36.0, enabled n/a, detached (no user session for this HOME), running pid <n>, listening <tailnet-ip>:<port>
+ntfy: logins ready for topic juggernaut-captain at http://<tailnet-ip>:<port>: publisher juggernaut, captain captain (password in <home>/state/bus/ntfy-captain.pass)
+deliver enabled n/a, detached (no user session for this HOME), running pid <n>, consuming CAPTAIN
+stream CAPTAIN messages=0; consumer captain-ntfy delivered=0 acked=0 pending=0 ack-pending=0
+stream CAPTAIN messages=1; consumer captain-ntfy delivered=1 acked=1 pending=0 ack-pending=0
+{"at":1793585870,"subject":"jg.captain.probe","key":"probe-1793585870-3236254","ntfy_id":"eu1puC7vsHBe","target":"http://<tailnet-ip>:<port>/juggernaut-captain"}
+captain login read the event: {"id":"eu1puC7vsHBe","time":1793585870,"event":"message","topic":"juggernaut-captain",...}
+anonymous publish: HTTP 403; captain (read-only) publish: HTTP 403
+probe: PASS bus -> ntfy, stream 0 -> 1, message eu1puC7vsHBe
+```
+
+The second `up` printed the same lines and kept both passwords (`-rw-------`).
+`tests/jg-stack.test.sh` runs the same journey on a clean home, and `tests/jg-stack-owner.test.sh` proves a home that does not own the bus unit installs, starts and provisions nothing.
+
+Limits of this record: the iPad itself was not subscribed, and the machine's own units were not installed from this branch.
+The captain's notification on his iPad needs the owner home to run `bin/jg-stack.sh up` from the merged and released build, plus the two-line tailnet override in [the captain channel](../captain-channel.md#reaching-his-ipad-logins-and-address).
+A freshly downloaded `daprd` 1.19.1 release binary segfaulted on `--version` on this host, so `tests/jg-stack.test.sh` could not run from a clean download here; the run above used the already installed `daprd` of the same version.
