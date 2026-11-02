@@ -33,11 +33,10 @@ func runDefaultBranch(args []string) int {
 	return 0
 }
 
-func runLanded(args []string) int {
-	fs := flag.NewFlagSet("landed", flag.ContinueOnError)
-	l := &landing{}
+// landedFlags registers the flags that describe one landed-work question, shared by `landed` and
+// `safety` so both read the task's recorded facts the same way. build must run after Parse.
+func landedFlags(fs *flag.FlagSet, l *landing) (build func()) {
 	fs.StringVar(&l.wt, "worktree", "", "the task's worktree")
-	fs.StringVar(&l.branch, "branch", "", "the worktree's branch")
 	fs.StringVar(&l.project, "project", "", "the project clone")
 	fs.StringVar(&l.prURL, "pr-url", "", "the PR recorded for the task")
 	fs.StringVar(&l.baseBranch, "base-branch", "", "the task's recorded base branch")
@@ -46,13 +45,23 @@ func runLanded(args []string) int {
 	fPath := fs.String("forgejo-path", "", "Forgejo owner/repository of the recorded PR")
 	fNum := fs.String("forgejo-number", "", "Forgejo pull number of the recorded PR")
 	fLogin := fs.String("forgejo-login", "", "tea login for the Forgejo host")
+	return func() {
+		if *fHost != "" {
+			l.forgejo = &forgejoRef{*fHost, *fPath, *fNum, *fLogin}
+		}
+	}
+}
+
+func runLanded(args []string) int {
+	fs := flag.NewFlagSet("landed", flag.ContinueOnError)
+	l := &landing{}
+	fs.StringVar(&l.branch, "branch", "", "the worktree's branch")
+	build := landedFlags(fs, l)
 	fs.SetOutput(os.Stderr)
 	if fs.Parse(args) != nil || l.wt == "" || l.project == "" {
 		return 2
 	}
-	if *fHost != "" {
-		l.forgejo = &forgejoRef{*fHost, *fPath, *fNum, *fLogin}
-	}
+	build()
 	landed := l.workIsLanded()
 	if landed {
 		fmt.Println("landed=yes")

@@ -99,7 +99,21 @@ func (a *app) noteFailure(what, why string) {
 func post(target, body string, headers map[string]string) (int, string, error) {
 	args := []string{"-sS", "--max-time", "5", "-X", "POST", "--data-binary", "@-", "-w", "\n%{http_code}"}
 	for k, v := range headers {
-		args = append(args, "-H", k+": "+v)
+		if k != "Authorization" {
+			args = append(args, "-H", k+": "+v)
+		}
+	}
+	// A login never goes on the argument list, where any process on the host can read it:
+	// curl reads those headers from a private file.
+	if login := headers["Authorization"]; login != "" {
+		file, err := os.CreateTemp("", "jg-bus-auth-*")
+		if err != nil {
+			return 0, "", err
+		}
+		defer os.Remove(file.Name())
+		fmt.Fprintf(file, "Authorization: %s\n", login)
+		file.Close()
+		args = append(args, "-H", "@"+file.Name())
 	}
 	args = append(args, target)
 	cmd := exec.Command("curl", args...)
@@ -127,7 +141,7 @@ func ok2xx(status int) bool { return status >= 200 && status < 300 }
 func (a *app) deliverToNtfy(text string) (target, id string, err error) {
 	target = a.ntfyURL()
 	headers := map[string]string{"Title": clampChars(firstLine(text), 120),
-		"Tags": a.cfgOr("ntfy-tag", "")}
+		"Tags": a.cfgOr("ntfy-tag", ""), "Authorization": a.ntfyAuthHeader()}
 	status, out, perr := post(target, text, headers)
 	if perr != nil {
 		return target, "", fmt.Errorf("%s", detail(out))

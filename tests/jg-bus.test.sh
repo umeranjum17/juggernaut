@@ -83,7 +83,7 @@ class H(http.server.BaseHTTPRequestHandler):
         n = int(self.headers.get('content-length') or 0)
         body = self.rfile.read(n).decode('utf-8', 'replace')
         with open(out, 'a') as f:
-            f.write(json.dumps({'path': self.path, 'title': self.headers.get('Title'), 'body': body}) + '\n')
+            f.write(json.dumps({'path': self.path, 'title': self.headers.get('Title'), 'body': body, 'auth': self.headers.get('Authorization')}) + '\n')
         # A sidecar that cannot take the event answers 503, so publish delivers it directly;
         # only the pub/sub name `accepted` stands for a bus that took it onto the stream.
         refused = self.path.startswith('/v1.0/publish/') and not self.path.startswith('/v1.0/publish/accepted/')
@@ -166,6 +166,19 @@ run_quiet "$d" "$BUS" publish card k-live "A decision waits for you."
 assert_equals "live" "$(run_quiet "$d" "$BUS" config mode)" "the shipped mode is live"
 assert_contains "$(requests)" '"path": "/juggernaut-captain"' "a live event reaches the captain with no delivery key set"
 assert_equals "0" "$(cat "$d/home/state/captain-channel-undelivered.jsonl" 2>/dev/null | wc -l | tr -d ' ')" "nothing is undelivered when the delivery arrives"
+
+# --- ntfy behind a login: the owner's publisher password is sent, and only when it exists ---
+d=$(setup login)
+mkdir -p "$d/home/state/bus"
+printf 'secret-pass\n' >"$d/home/state/bus/ntfy-juggernaut.pass"
+: >"$SINK_OUT"
+run_quiet "$d" "$BUS" publish card k-login "Behind a login."
+want="Basic $(printf 'juggernaut:secret-pass' | base64)"
+assert_contains "$(grep '"path": "/juggernaut-captain"' <<<"$(requests)")" "\"auth\": \"$want\"" "the delivery carries the publisher login"
+d=$(setup open-ntfy)
+: >"$SINK_OUT"
+run_quiet "$d" "$BUS" publish card k-open "No login made."
+assert_contains "$(grep '"path": "/juggernaut-captain"' <<<"$(requests)")" '"auth": null' "an open server gets no login"
 
 # --- one line reverses it, and off still means nothing at all -----------------
 d=$(setup reversed)

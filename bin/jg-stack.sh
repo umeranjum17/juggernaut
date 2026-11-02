@@ -31,6 +31,9 @@
 #   stop     the first part that cannot be made whole stops the run with exit 1 and ONE line,
 #            `STACK_FAILED: <part>: <what is missing>; blocks <what depends on it>`. No later part
 #            is attempted, so a half state is never reported as healthy.
+#   owner    dapr, ntfy and the consumer are one per machine: only the home that owns the machine's
+#            bus unit installs, enables and starts them (and the ntfy logins, `jg-bus.sh
+#            ntfy-provision`); any other home reports them and changes nothing.
 #   callers  bin/jg-bootstrap.sh and bin/jg-update.sh run `up`, so a release never lands on a machine
 #            without its services; install.sh runs it last.
 # Env: JG_HOME, JG_STATE_OVERRIDE; JG_STACK_UNIT_PREFIX (unit names, default jg); JG_STACK_SUPERVISOR
@@ -170,13 +173,27 @@ mkdir -p "$STATE/bus" || fail state "cannot create $STATE/bus" "everything"
   || fail jg-bus "the Go command is not built and there is no Go toolchain (install go), see $STATE/bus/build.log" "every service"
 printf 'jg-bus built, state %s\n' "$STATE/bus"
 
-# 2. The pinned tools.
-for t in nats-server nats daprd ntfy; do ensure_tool "$t"; done
-
+# 2. The pinned tools. dapr, ntfy and the consumer are one per machine, so only the home that owns
+# the machine's bus unit installs and runs them; every other home adds its account to the bus and
+# changes nothing else (the rule the nats unit already follows, core/bus/cmd/jg-bus/owner.go).
 sup=$(supervisor)
+owner=self
+[ "$sup" != systemd ] || owner=$("$BUS" owner 2>/dev/null) || true
+[ -n "$owner" ] || owner=self
+tools="nats-server nats"
+[ "$owner" != self ] || tools="$tools daprd ntfy"
+for t in $tools; do ensure_tool "$t"; done
+
 started=0
 for part in nats wake-engine wake-watcher router dapr ntfy deliver; do
-  if [ "$mode" = up ]; then
+  mine=1
+  # The wake engine, watcher and router read this home's own wakes, so every home runs its own; the rest
+  # are the machine's shared services, which only the bus owner installs and runs.
+  if ! consumer_part "$part"; then
+    [ "$part" = nats ] || [ "$owner" = self ] || mine=0
+  fi
+  [ "$mine" = 1 ] || echo "$part: owned by $owner, which installs and runs it; this home changes nothing"
+  if [ "$mode" = up ] && [ "$mine" = 1 ]; then
     if [ "$sup" = systemd ]; then
       changed=0; install_unit "$part" && changed=1
       name=$(unit_name "$part")
@@ -197,10 +214,15 @@ for part in nats wake-engine wake-watcher router dapr ntfy deliver; do
   fi
   if consumer_part "$part"; then
     [ "$mode" = status ] || wait_consumer "$part" || true
-  elif [ "$part" != deliver ]; then
-    [ "$mode" = status ] || wait_listening "$(listen_addr "$part")" || true
+  else
+    [ "$mode" = status ] || [ "$part" = deliver ] || [ "$mine" = 0 ] || wait_listening "$(listen_addr "$part")" || true
   fi
   report "$part" "$sup"
+  if [ "$part" = ntfy ] && [ "$mode" = up ] && [ "$mine" = 1 ]; then
+    "$BUS" ntfy-provision 2>"$STATE/bus/ntfy-provision.log" \
+      || fail ntfy "the captain's logins could not be made, see $STATE/bus/ntfy-provision.log" "delivery to the captain"
+    tail -n 1 "$STATE/bus/ntfy-provision.log"
+  fi
   if [ "$part" = nats ]; then
     [ "$mode" = status ] || "$BUS" bootstrap >/dev/null 2>&1
     stream=$(sed -n 's/.*"name"[^"]*"\([^"]*\)".*/\1/p' "$ROOT/core/bus/stream.json" | head -n 1)

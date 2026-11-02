@@ -1763,6 +1763,17 @@ test_operator_scaffolds_forbid_pool_administration() {
     "ship brief did not require the proof line to say no verify skill"
   assert_grep "Commit nothing afterward" "$home/data/brief-pool-no-mistakes/brief.md" \
     "ship brief did not forbid commits after the final-head done-done run"
+  # The merge-gate recipe: real tool paths of this checkout, the verify skill run named in the proof line, and the PR variable.
+  b="$home/data/brief-pool-no-mistakes/brief.md"
+  for tool in core/merge-card/merge-card core/merge-on-green/checks-lint.sh; do
+    assert_grep "$ROOT/$tool" "$b" "ship brief did not name $tool at this checkout's path"
+    [ -x "$ROOT/$tool" ] || fail "the brief names $tool but it is not an executable of this checkout"
+  done
+  assert_grep "done-done-verify-suites" "$b" "ship brief did not require the proof line to name the done-done-verify-suites run"
+  assert_grep "JG_RECEIPT_PR=<PR url>" "$b" "ship brief did not give the receipt command the PR variable"
+  assert_grep "## Checks" "$b" "ship brief did not describe the ## Checks block of the merge gate"
+  assert_grep "receipts/bin/jg-run-receipt.sh" "$b" "ship brief did not name the receipt publisher"
+  if grep -Eq "projects/(juggernaut|firstmate)-addons" "$b"; then fail "ship brief names a retired add-ons checkout path"; fi
 
   JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-pool-scout alpha --scout >/dev/null 2>&1 \
     || fail "jg-brief.sh --scout exited non-zero"

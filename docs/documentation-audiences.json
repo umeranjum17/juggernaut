@@ -588,6 +588,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/ci-speed.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/devin.md",
       "audience": "maintainer-verification"
     },

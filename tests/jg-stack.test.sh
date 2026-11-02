@@ -74,6 +74,12 @@ probe=$("$ROOT/bin/jg-captain-probe.sh" 2>&1); rc=$?
 [ "$rc" = 0 ] || fail "the live probe exited $rc: $probe"
 printf '%s\n' "$probe" | grep -Eq '^probe: PASS bus -> ntfy, stream [0-9]+ -> [0-9]+, message [A-Za-z0-9]+$' || fail "the probe did not prove bus -> ntfy: $probe"
 pass "stack: a real captain event travels the CAPTAIN stream to ntfy, with a delivery record and ntfy's own log line"
+# The server denies everyone by default and the owner's stack made the two logins: the probe read the event
+# back as the captain and saw an anonymous publish and the read-only login's publish refused.
+printf '%s\n' "$probe" | grep -q '^captain login read the event: ' || fail "the captain login did not read the event back: $probe"
+printf '%s\n' "$probe" | grep -Eq '^anonymous publish: HTTP 40[13]; captain \(read-only\) publish: HTTP 40[13]$' || fail "ntfy did not refuse the anonymous and the read-only publish: $probe"
+[ "$(stat -c %a "$JG_HOME/state/bus/ntfy-captain.pass")" = 600 ] || fail "the captain's ntfy password file is not private"
+pass "stack: ntfy denies anonymous access; the publisher login delivers, the captain login reads, and its own publish is refused"
 
 # A part that cannot run stops the run with one line naming it and what it blocks.
 "$ROOT/bin/jg-bus.sh" stop >/dev/null 2>&1

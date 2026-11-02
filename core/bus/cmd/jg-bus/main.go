@@ -69,6 +69,15 @@
 //	         absolute path), never its folder name. `accounts [home...]` prints the
 //	         server block for these homes, Main and every data/squad_leads.md entry;
 //	         two homes on one account name are refused with a line naming both.
+//	owner    Print "self" and exit 0 when this home owns the machine's bus unit (or may take
+//	         it, none being installed); print the owner's home and exit 3 when another
+//	         does. bin/jg-stack.sh asks it before it installs or starts a per-machine part.
+//	ntfy-provision
+//	         The bus owner's one-time ntfy logins, when the server config names an
+//	         auth-file (the shipped one does, with deny-all): `juggernaut` write-only, what
+//	         `deliver` posts with, and `captain` read-only, what his iPad subscribes with.
+//	         Passwords are generated into state/bus/ntfy-<user>.pass (0600) and kept on a
+//	         second run. A config with no auth-file is an open server; nothing is made.
 //	check-limits <config>
 //	         Exit 1, naming the shortfall, when a server config's global JetStream caps
 //	         are below what its accounts reserve. `unit` runs the same check on the
@@ -187,6 +196,10 @@ func run(args []string) int {
 		return a.accounts(rest)
 	case "account":
 		return a.account()
+	case "owner":
+		return a.owner()
+	case "ntfy-provision":
+		return a.ntfyProvision()
 	case "check-limits":
 		return a.checkLimitsCommand(rest)
 	case "ensure":
