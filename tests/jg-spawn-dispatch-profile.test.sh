@@ -144,14 +144,12 @@ assert_meta_profile() {
 }
 
 # The provider-credential strip jg-spawn pins in front of every launch, which
-# docs/configuration.md owns and bin/jg-launch-env-lib.sh implements. It reads
+# docs/configuration.md owns and the spawn core's launch-env-strip implements. It reads
 # the launching process's credential-shaped names, and a spawn inherits this
 # one, so the expected launch composes the same prefix. Empty on a host whose
 # shell carries no such name.
 launch_strip_prefix() {
-  # shellcheck source=bin/jg-launch-env-lib.sh
-  . "$ROOT/bin/jg-launch-env-lib.sh"
-  jg_launch_env_strip_prefix ""
+  "$ROOT/bin/jg-spawn-core.sh" launch-env-strip ""
 }
 
 test_no_profile_keeps_claude_profile_defaults() {
@@ -1326,6 +1324,7 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
     JG_PROJECTS_OVERRIDE="$HOME_DIR/projects" JG_CONFIG_OVERRIDE="$HOME_DIR/config" \
     JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
     JG_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+    JG_SPAWN_CORE_GO="$(command -v go)" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1)
   status=$?
   expect_code 1 "$status" "a missing pi-signed executable should refuse the spawn"
@@ -2047,7 +2046,7 @@ claude_launch_brief_arg() {  # <launch>
 
 # The --add-dir segment every Claude worker launch now carries between the
 # permission flag and --settings, real-path resolved the way the spawn's
-# claude_add_dirs_flag resolves it. Prints a trailing space so callers can
+# the spawn core's claude-add-dirs resolves it. Prints a trailing space so callers can
 # drop it straight into an expected command.
 claude_worker_add_dirs() {  # <home> <id>
   local state_real data_real root_real

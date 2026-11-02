@@ -75,6 +75,34 @@ check "a scout may not carry a mode" "$(intake --scout t1 proj --mode direct-PR 
 check "a squad_lead may not carry a base branch, a scout may" "$(intake --squad-lead t1 --base-branch x | var INTAKE_REFUSAL | head_is "'error: --base-branch applies only")|$(intake --scout t1 proj --base-branch x | var INTAKE_REFUSAL)" "'error: --base-branch applies only|''"
 check "a quote in a positional survives the round trip" "$(eval "$("$core" intake "it's here" proj)"; printf %s "${POS[0]}")" "it's here"
 
+# The launch builders: the grants and settings that depend only on the task's own directories, the
+# home's identity, the model and the launch-env allow-list.
+mkdir -p "$lab/b/state" "$lab/b/data" "$lab/b/code/.agents/skills"
+b=$(cd "$lab/b" && pwd -P)
+check "rovo gets one override with the effort and exactly the task's three paths" "$("$core" rovo-override high "$lab/b/data" "$lab/b/state" t1)" "--config-override '{\"agent\":{\"efficiencyLevel\":\"high\"},\"toolPermissions\":{\"allowedExternalPaths\":[\"$b/data/t1\",\"$b/state/t1.inbox\",\"$b/state/t1.status\"]}}' "
+check "rovo omits an effort it cannot take" "$("$core" rovo-override ultra "$lab/b/data" "$lab/b/state" t1 | grep -c efficiencyLevel)" 0
+check "rovo with a data directory that does not exist stops" "$(rc "$core" rovo-override high "$lab/b/none" "$lab/b/state" t1)" 1
+check "claude is granted this task's channel directories and they are made" "$("$core" claude-add-dirs ship "$lab/b/state" "$lab/b/data" "$lab/b/code" t1)|$(test -d "$b/state/t1.inbox/handled" && test -d "$b/data/t1" && echo made)" "--add-dir '$b/state/operational-inbox' --add-dir '$b/state/t1.inbox' --add-dir '$b/data/t1' --add-dir '$b/code/.agents/skills' |made"
+check "a squad_lead is granted its steering inbox and the parent's pending replies" "$("$core" claude-add-dirs squad_lead "$lab/b/state" "$lab/b/data" "$lab/b/code" t2)" "--add-dir '$b/state/t2.inbox' --add-dir '$b/state/pending-replies' "
+check "a code root with no skills directory stops the claude grant" "$(rc "$core" claude-add-dirs ship "$lab/b/state" "$lab/b/data" "$lab/b" t1)" 1
+mkdir -p "$lab/b/lead"
+"$core" opencode-lead-grant "$lab/b/lead" "$lab/b/state" t3 "$lab/b/code"
+check "an opencode squad_lead's grant allows its channels and denies edits to the parent's tooling" "$(grep -o '"edit":{.*' "$lab/b/lead/.opencode/opencode.json")" '"edit":{"*/code/bin/**":"deny","*/code/docs/**":"deny","*/code/.agents/skills/**":"deny"}}}'
+tok=$("$core" launch-home-token "$lab/b")
+check "the home token is a sha-256 of the physical path" "${#tok}" 64
+check "opencode on the console provider and with no model keeps the shared store" "$("$core" opencode-db "$tok" t1 opencode/gpt-5)$("$core" opencode-db "$tok" t1 '')$("$core" opencode-db "$tok" t1 default)" ""
+check "opencode on another provider takes its own store named by home and task" "$("$core" opencode-db "$tok" t1 openai/gpt-5)" "OPENCODE_DB='juggernaut-${tok:0:12}-t1.db' "
+mkdir -p "$lab/xdg/opencode"
+check "opencode on a Go model without a key in auth.json keeps the shared store" "$(XDG_DATA_HOME=$lab/xdg "$core" opencode-db "$tok" t1 opencode-go/glm-5)" ""
+printf '{"opencode-go":{"type":"api"}}\n' > "$lab/xdg/opencode/auth.json"
+check "opencode on a Go model with a key in auth.json takes its own store" "$(XDG_DATA_HOME=$lab/xdg "$core" opencode-db "$tok" t1 opencode-go/glm-5)" "OPENCODE_DB='juggernaut-${tok:0:12}-t1.db' "
+printf '# keys\n\nFOO\nBAR_2\n' > "$lab/allow"
+check "the launch-env allow-list yields its names and skips blanks and comments" "$("$core" launch-env-names "$lab/allow" | tr '\n' ' ')" "FOO BAR_2 "
+printf 'FOO\nA-B\n' > "$lab/bad-allow"
+check "an allow-list with a bad name is refused with 1" "$(rc "$core" launch-env-names "$lab/bad-allow")" 1
+check "a stripped credential is named and an allow-listed one is not" "$(env -i PATH="$PATH" JG_SPAWN_CORE_GO="${JG_SPAWN_CORE_GO:-go}" JG_STATE_OVERRIDE="$JG_STATE_OVERRIDE" JG_T_API_KEY=x JG_U_API_KEY=y "$core" launch-env-strip $'JG_U_API_KEY\n')" "unset JG_T_API_KEY; "
+check "a filtered launch forwards names by reference and ends in the quoted launch" "$(printf %s "it's" | "$core" launch-env-wrap FOO 1 | sed 's/.* COMPACT_ADVISER_DISABLE=1//')" " \${TRACEPARENT+\"TRACEPARENT=\$TRACEPARENT\"} /bin/sh -c 'it'\\''s'"
+
 # A home whose bin/ is a symlink to a checkout (the session-start suite's fake root, a relocated home)
 # builds from the checkout the link points into, not from a core/ the link's parent lacks.
 mkdir -p "$lab/linked/root"

@@ -27,8 +27,15 @@ a parity replay of the shell it deletes against the Go that replaces it.
    runs between the first refusals and the rest, so the rest comes back as `INTAKE_REFUSAL` and the
    spawn raises it right after that check. The refusals that read the harness, the model list, the
    backend or an account pin need configuration and stay with the effects for now.
-3. The remaining pure builders: the Claude `--add-dir` grant, the Rovo override, the OpenCode
-   database assignment, the launch environment allow-list.
+3. Done. The pure builders: the Claude `--add-dir` grant (`claude-add-dirs`), the Rovo override
+   (`rovo-override`), the OpenCode squad_lead grant file (`opencode-lead-grant`) and per-launch
+   session store (`launch-home-token`, `opencode-db`), and the launch environment: the allow-list's
+   grammar (`launch-env-names`), the provider-credential strip (`launch-env-strip`) and the
+   `env -i` wrap (`launch-env-wrap`). `bin/jg-launch-env-lib.sh` is deleted with them. Two small
+   differences, both in the direction of fewer dependencies: the OpenCode `auth.json` check no
+   longer needs `jq` on the machine, and the strip lists its names sorted where the shell listed
+   them in its variable table's order. One difference is known and left: `jq` reads the non-JSON
+   literal `NaN` in `auth.json`, which opencode never writes, and the Go side does not.
 4. Launch templates per harness.
 5. Worktree, endpoint and metadata effects: locks, treehouse leases, backend adapters, the task
    record, rollback.
@@ -57,6 +64,19 @@ against this command:
   control relaunch marker; every mode, yolo and consent value together; every ordering of four flags;
   and seeded random sequences. Each case compares the eval-ed variables, the exit code and the full
   stderr, byte for byte. All 73 distinct refusals are reached.
+
+- **Builders:** the shell functions of the base commit (`json_escape`, `shell_quote`, `rovo_config_override_flag`,
+  `claude_add_dirs_flag`, `opencode_lead_grant_write`, `spawn_launch_home_token`, `opencode_go_auth_present`,
+  `opencode_db_assignment`, the credential-strip library, the `jq` allow-list read and the `env -i`
+  block) against the commands that replaced them, 41,094 cases: every effort word against 40 directory
+  spellings (symlinks, dot-dot through a link, relative, trailing slash, spaces, quotes, newline,
+  unreadable, a file, missing, empty, `//`) for the two task directories and eleven task ids; the
+  writing builders over 2,766 directory trees (state, data and code root present, linked, missing or
+  a file; a channel directory already there as a file), comparing the output, the exit code and the
+  whole resulting tree byte for byte; 16 models against 28 `auth.json` contents under three ways of
+  finding the data directory; 7,429 allow-list files; 3,240 environments against allow-lists; and
+  240 launch commands. Standard output and exit code are compared byte for byte, and for the strip
+  the set of names (the shell's order is its variable table's).
 
 A control run with a corrupted Go side (the gerrit refusal removed) must fail the replay.
 `tests/jg-spawn-core.test.sh` keeps the interesting shapes as an end-to-end suite.

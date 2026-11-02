@@ -1367,7 +1367,7 @@ _CREDENTIAL  _CREDENTIALS  _ACCESS_KEY  _ACCESS_KEY_ID  _PRIVATE_KEY
 
 A name that merely contains `KEY` is not a credential and is never stripped, so `STARSHIP_SESSION_KEY` and `GIT_CONFIG_KEY_0` reach the worker unchanged.
 The list is a shape rule rather than a list of provider names, so a credential a later provider introduces is stripped without a code change.
-[`bin/jg-launch-env-lib.sh`](../bin/jg-launch-env-lib.sh) owns the shapes and is the only implementation.
+`launchEnvStrip` in [`core/spawn/cmd/jg-spawn-core/builders.go`](../core/spawn/cmd/jg-spawn-core/builders.go) owns the shapes and is the only implementation; `bin/jg-spawn-core.sh launch-env-strip` prints the prefix a launch would carry.
 
 Listing a name in `config/launch-env-allowlist` is the way to keep it, and it is the only way; an allowlisted credential reaches the worker as described above.
 A home whose workers authenticate a provider through an environment variable therefore names that variable in the allowlist file, which also opts the home into the full filter described above.

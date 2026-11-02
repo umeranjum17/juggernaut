@@ -367,11 +367,11 @@
 #   This is an exec environment boundary, not a sandbox for the pane's startup
 #   shell, credential files, same-user processes, or later shell initialization.
 #   See docs/configuration.md for provider/Git setup and supported limits.
-# Provider credentials (bin/jg-launch-env-lib.sh):
+# Provider credentials (core/spawn builders.go, launchEnvStrip):
 #   Independently of the allowlist above, every launch strips the
 #   credential-shaped variables this process carries - provider keys, tokens,
 #   secrets, passwords, and access keys - unless config/launch-env-allowlist
-#   names them. The shapes live in one place in that library, so a credential a
+#   names them. The shapes live in one place in the spawn core, so a credential a
 #   later provider introduces is stripped with no change here, and the emitted
 #   launch text carries names only, never a value. docs/configuration.md
 #   "Provider credentials stripped from every launch" owns the contract and its
@@ -411,7 +411,7 @@
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
 #     __CLAUDEADDDIRS__ quoted --add-dir flags granting exactly this task's
-#                  Juggernaut channel directories (claude_add_dirs_flag below;
+#                  Juggernaut channel directories (core/spawn builders.go claudeAddDirs;
 #                  supplies its own trailing space, empty never used)
 #     __CLAUDESETTINGS__ the single claude --settings value: a quoted inline
 #                  JSON object for a operator or scout, or a quoted path to
@@ -647,8 +647,6 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 . "$SCRIPT_DIR/jg-config-inherit-lib.sh"
 # shellcheck source=bin/jg-exclude-tools-lib.sh
 . "$SCRIPT_DIR/jg-exclude-tools-lib.sh"
-# shellcheck source=bin/jg-launch-env-lib.sh
-. "$SCRIPT_DIR/jg-launch-env-lib.sh"
 if ! LAUNCH_ENV_ENABLED=$(jg_config_source_present "$CONFIG/launch-env-allowlist"); then
   exit 1
 fi
@@ -658,14 +656,15 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
     echo "error: config/launch-env-allowlist must be a readable regular file" >&2
     exit 1
   fi
-  if ! LAUNCH_ENV_NAMES=$(jq -Rrs '
-    split("\n") | map(select(. != "" and (startswith("#") | not))) |
-    if all(.[]; test("^[A-Za-z_][A-Za-z0-9_]*$")) then .[]
-    else error("expected environment names only") end
-  ' "$CONFIG/launch-env-allowlist" 2>/dev/null); then
+  # The core owns the grammar (core/spawn builders.go launchEnvNames): 1 means the file is invalid,
+  # and anything else (2: no runnable core, which it has already reported) stops the spawn as is.
+  LAUNCH_ENV_RC=0
+  LAUNCH_ENV_NAMES=$("$SCRIPT_DIR/jg-spawn-core.sh" launch-env-names "$CONFIG/launch-env-allowlist") || LAUNCH_ENV_RC=$?
+  if [ "$LAUNCH_ENV_RC" -eq 1 ]; then
     echo "error: config/launch-env-allowlist must contain one environment name per line, blank lines, or # comments" >&2
     exit 1
   fi
+  [ "$LAUNCH_ENV_RC" -eq 0 ] || exit "$LAUNCH_ENV_RC"
 fi
 # config/claude-permission-mode (header above): resolved once per spawn or
 # relaunch, before any mutation, so a malformed file refuses instead of
@@ -2044,7 +2043,7 @@ launch_template() {
   # selects (header above): --dangerously-skip-permissions by default, or
   # --permission-mode auto for a captain who refuses bypass mode.
   # __CLAUDEADDDIRS__ is the task-channel directory grant
-  # claude_add_dirs_flag below builds: Claude path-checks Read/Glob/Grep (and
+  # claudeAddDirs (core/spawn builders.go) builds: Claude path-checks Read/Glob/Grep (and
   # an Edit's mandatory prior Read) against cwd plus --add-dir, and since
   # 2.1.257 the first outside read under --permission-mode auto parks the
   # pane on a one-time interactive question - while a "Block" answer anywhere
@@ -2101,7 +2100,7 @@ launch_template() {
     fi
     ;;
   # OpenCode separately asks for paths outside the worktree, including the inbox.
-  # __OPENCODEDB__ is the per-task session store; see opencode_db_assignment.
+  # __OPENCODEDB__ is the per-task session store; see opencodeDB in core/spawn builders.go.
   opencode)
     # A worker never asks the human directly: its question belongs to the lead, so opencode's
     # question tool is denied for ship and Recon workers (a squad_lead keeps it).
@@ -2708,115 +2707,6 @@ lfm_poll_guard_path() {
   guard=$(perl -MCwd=abs_path -e 'my $b = abs_path(shift) // exit 1; $b =~ s{/[^/]+/[^/]+$}{}; print "$b/src/tokens/poll.mjs"' "$bin") || return 1
   [ -f "$guard" ] || return 1
   printf '%s\n' "$guard"
-}
-
-# rovo confines every file-tool operation (open_files, create_file, grep, ...)
-# to its worktree by default; toolPermissions.allowedExternalPaths
-# (~/.rovo/config.yml) is the only lift, and it must be granted at launch
-# through --config-override since there is no per-session escalation once
-# the process is running. rovo's bash tool is NOT covered by this grant and
-# stays confined to the worktree regardless (confirmed live) - the standard
-# operator flow's literal `echo ... >> status file` bash line therefore still
-# fails under rovo, but the worker recovers by falling back to its own file
-# tools for the same append (confirmed live), which the grant below does cover.
-# --config-override itself is single-value (a second occurrence silently
-# discards the first, confirmed live), so this is the ONE place that must
-# also fold in agent.efficiencyLevel when a supported effort was requested.
-# Granted paths are real (symlink-resolved) directories/files under this
-# task's home, matching BRIEF_REAL's own resolution: the brief dir (covers
-# brief.md/launch-brief.md/report.md), the steering inbox directory (covers
-# every steer and its handled/ acknowledgement), and the status file itself.
-rovo_config_override_flag() {
-  local effort=$1 data_dir=$2 state_dir=$3 id=$4
-  local data_real state_real agent_json paths_json config_json
-  data_real=$(cd "$data_dir" && pwd -P) || return 1
-  state_real=$(cd "$state_dir" && pwd -P) || return 1
-  agent_json=
-  case "$effort" in
-  low | medium | high | max) agent_json="\"agent\":{\"efficiencyLevel\":\"$(json_escape "$effort")\"}," ;;
-  esac
-  paths_json=$(printf '"%s","%s","%s"' \
-    "$(json_escape "$data_real/$id")" \
-    "$(json_escape "$state_real/$id.inbox")" \
-    "$(json_escape "$state_real/$id.status")")
-  config_json="{${agent_json}\"toolPermissions\":{\"allowedExternalPaths\":[$paths_json]}}"
-  printf -- '--config-override %s ' "$(shell_quote "$config_json")"
-}
-
-# Claude Code path-checks the Read/Glob/Grep file tools (and an Edit's
-# mandatory prior Read) against its working directories: the pane cwd plus
-# every --add-dir. Since 2.1.257 the first outside read in --permission-mode
-# auto parks the pane on a one-time interactive question instead of reading,
-# and any "Block" answer on the machine lands
-# permissions.blockReadsOutsideWorkingDirectories in user settings, which
-# then refuses the same reads under --dangerously-skip-permissions too. A
-# Juggernaut worker always reads outside its cwd - a squad_lead's steers live
-# in the PARENT home's state/<id>.inbox, and a ship or scout worker's launch
-# record, steers, and brief live in this home's state/operational-inbox,
-# state/<id>.inbox, and data/<id>, plus the code root's .agents/skills so the
-# worker can read the skill file the launch role names as the fallback for a
-# session where the skill name does not resolve - so every Claude launch,
-# fresh spawn and relaunch, in both permission modes, grants exactly those
-# task-channel directories. The skills grant is that directory, not the
-# checkout root, so the grant does not open the whole checkout. Paths resolve
-# the way rovo_config_override_flag resolves them
-# (real paths under the task's home). The state channel dirs are created
-# lazily by their first record, so they are made here: an --add-dir naming a
-# directory that does not exist at launch would leave the channel created
-# later outside the grant. The grant never covers the whole state/ (watcher
-# internals live there) or anything wider.
-claude_add_dirs_flag() {  # <kind> <state-dir> <data-dir> <code-root> <task-id>
-  local kind=$1 state_dir=$2 data_dir=$3 code_root=$4 id=$5
-  local state_real data_real root_real out='' d
-  local dirs=()
-  state_real=$(cd "$state_dir" && pwd -P) || return 1
-  case "$kind" in
-  squad_lead)
-    mkdir -p "$state_real/$id.inbox/handled" "$state_real/pending-replies" || return 1
-    dirs=("$state_real/$id.inbox" "$state_real/pending-replies")
-    ;;
-  *)
-    data_real=$(cd "$data_dir" && pwd -P) || return 1
-    root_real=$(cd "$code_root" && pwd -P) || return 1
-    [ -d "$root_real/.agents/skills" ] || return 1
-    mkdir -p "$state_real/operational-inbox" "$state_real/$id.inbox/handled" "$data_real/$id" || return 1
-    dirs=("$state_real/operational-inbox" "$state_real/$id.inbox" "$data_real/$id" "$root_real/.agents/skills")
-    ;;
-  esac
-  for d in "${dirs[@]}"; do
-    out="$out--add-dir $(shell_quote "$d") "
-  done
-  printf '%s' "$out"
-}
-
-# OpenCode asks before reading outside its cwd, and a squad_lead's steering
-# inbox, the parent's pending-replies, and the parent's tracked tooling (the
-# bin/ scripts it sources, docs/, .agents/skills/) live in the PARENT home. The
-# launch-time OPENCODE_CONFIG_CONTENT grant above is an env var, so a lead
-# restarted by hand (OpenCode's exit banner prints a bare `opencode --session`)
-# loses it and stalls on "Access external directory". The same access, scoped
-# to exactly those directories, is therefore also written where OpenCode
-# reads it from the lead's own cwd: <home>/.opencode/opencode.json (verified
-# on 1.18.25; the root .gitignore keeps it out of git). The tooling
-# directories are read-only for the edit tool: it matches a path relative to
-# the lead's cwd (../<root name>/bin/...), so the deny keys on the root's
-# basename. A shell command can still write; only the edit tool is blocked.
-# OpenCode matches an outside read on its parent directory, so a single file
-# cannot be granted: the lead's status file shares state/ with watcher
-# internals and the parent's AGENTS.md shares the root with .env, so both are
-# left out. Reaching the rest of the parent home (data/, config/, projects/,
-# other tasks' state) stays a prompt.
-opencode_lead_grant_write() {  # <lead-home> <parent-state-dir> <task-id> <parent-code-root>
-  local home=$1 state_dir=$2 id=$3 code_root=$4 state_real root_real d allow='' deny=''
-  state_real=$(cd "$state_dir" && pwd -P) || return 1
-  root_real=$(cd "$code_root" && pwd -P) || return 1
-  mkdir -p "$state_real/$id.inbox/handled" "$state_real/pending-replies" "$home/.opencode" || return 1
-  allow="\"$(json_escape "$state_real/$id.inbox/**")\":\"allow\",\"$(json_escape "$state_real/pending-replies/**")\":\"allow\""
-  for d in bin docs .agents/skills; do
-    allow="$allow,\"$(json_escape "$root_real/$d/**")\":\"allow\""
-    deny="${deny:+$deny,}\"$(json_escape "*/${root_real##*/}/$d/**")\":\"deny\""
-  done
-  printf '{"permission":{"external_directory":{%s},"edit":{%s}}}\n' "$allow" "$deny" >"$home/.opencode/opencode.json"
 }
 
 resolved_existing_dir() {
@@ -5298,63 +5188,14 @@ fi
 "$SCRIPT_DIR/jg-home-summary-refresh.sh" --best-effort || true
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
-# Implement the launch-delivery contract in this script's header. The full
-# home-identity hash isolates equal task ids across homes, and the spawn token in
-# the final filename keeps a buffered source line bound to this incarnation.
-spawn_launch_home_token() {
-  local home=$1 root hash
-  root=$(cd "$home" 2>/dev/null && pwd -P) || root=$home
-  if command -v shasum >/dev/null 2>&1; then
-    hash=$(printf '%s' "$root" | shasum -a 256 | awk '{print $1}')
-  elif command -v sha256sum >/dev/null 2>&1; then
-    hash=$(printf '%s' "$root" | sha256sum | awk '{print $1}')
-  else
-    return 1
-  fi
-  case "$hash" in
-    *[!0-9a-fA-F]*|'') return 1 ;;
-  esac
-  printf '%s' "$hash"
-}
-LAUNCH_HOME_TOKEN=$(spawn_launch_home_token "$JG_HOME") || LAUNCH_HOME_TOKEN=
+# The staged launch file and the per-launch OpenCode store are both named from the home's identity:
+# the full hash isolates equal task ids across homes, and the spawn token in the launch file's
+# final name keeps a buffered source line bound to this incarnation.
+LAUNCH_HOME_TOKEN=$("$SCRIPT_DIR/jg-spawn-core.sh" launch-home-token "$JG_HOME") || LAUNCH_HOME_TOKEN=
 if [ -z "$LAUNCH_HOME_TOKEN" ]; then
   echo "error: could not derive a home identity for the staged launch file" >&2
   exit 1
 fi
-# OpenCode keeps every session in one SQLite store, and OpenCode 1.18.25 fails
-# a write after a fixed 5000 ms busy timeout. Workers sharing the default
-# ~/.local/share/opencode/opencode.db (20.7 GB on 2026-10-10) lost turns to
-# "database is locked": one worker held the WAL write lock for up to 11 s.
-# So each launch gets its own store through OpenCode's OPENCODE_DB setting.
-# The name is relative, so OpenCode resolves it inside its own data directory
-# ($XDG_DATA_HOME/opencode, default ~/.local/share/opencode), next to the shared
-# auth.json, snapshots, and log, and this script writes nothing there itself.
-# It is keyed by home identity and task id, so a relaunch reopens the same
-# store and equal task ids in different homes never share one. Readers of
-# OpenCode sessions and usage read <opencode data dir>/opencode.db plus every
-# <opencode data dir>/juggernaut-*.db; the stores are kept after teardown.
-# The opencode console provider keeps its access and refresh tokens inside the
-# shared store, and a fresh store has no account, so an opencode/* launch keeps
-# the shared store rather than copying credentials, as does a launch whose
-# provider is unknown because no model was given. The opencode-go provider is
-# different: its key lives in the data dir's auth.json, not in the store, so a
-# fresh store still bills that key (verified live with an opencode-go model). A
-# Go model therefore gets its own store whenever that auth.json carries an
-# opencode-go entry, which keeps it off the console account the shared store
-# bills. Only key presence is tested; the value is never read.
-opencode_go_auth_present() {
-  local auth="${XDG_DATA_HOME:-${HOME:-}/.local/share}/opencode/auth.json"
-  command -v jq >/dev/null 2>&1 || return 1
-  [ -f "$auth" ] || return 1
-  jq -e 'has("opencode-go")' "$auth" >/dev/null 2>&1
-}
-opencode_db_assignment() {  # <model>
-  case "${1:-}" in
-    '' | default | opencode/*) return 0 ;;
-    opencode-go/*) opencode_go_auth_present || return 0 ;;
-  esac
-  printf "OPENCODE_DB='juggernaut-%s-%s.db' " "${LAUNCH_HOME_TOKEN:0:12}" "$ID"
-}
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
@@ -5370,7 +5211,8 @@ MODELFLAG=$("$SCRIPT_DIR/jg-spawn-core.sh" model-flag "$HARNESS" "$MODEL") || ex
 EFFORTFLAG=$("$SCRIPT_DIR/jg-spawn-core.sh" effort-flag --harness-script "$SCRIPT_DIR/jg-harness.sh" "$HARNESS" "$EFFORT" "$MODEL") || exit 1
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
-LAUNCH=${LAUNCH//__OPENCODEDB__/$(opencode_db_assignment "$MODEL")}
+OPENCODE_DB_ASSIGNMENT=$("$SCRIPT_DIR/jg-spawn-core.sh" opencode-db "$LAUNCH_HOME_TOKEN" "$ID" "$MODEL") || exit 1
+LAUNCH=${LAUNCH//__OPENCODEDB__/$OPENCODE_DB_ASSIGNMENT}
 # Relaunch session continuity. Computed here, where the adopted endpoint (T) is
 # known, and substituted only into the Pi-family template's `__PIRESUME__`
 # placeholder; an empty value leaves every other launch byte-identical.
@@ -5397,7 +5239,7 @@ else
   LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/,'"attribution":{"commit":"","pr":"","sessionUrl":false}'}
 fi
 if [ "$HARNESS" = rovo ]; then
-  ROVOCONFIGOVERRIDE=$(rovo_config_override_flag "$EFFORT" "$DATA" "$STATE" "$ID") || {
+  ROVOCONFIGOVERRIDE=$("$SCRIPT_DIR/jg-spawn-core.sh" rovo-override "$EFFORT" "$DATA" "$STATE" "$ID") || {
     echo "error: could not resolve this task's home paths for rovo's allowedExternalPaths grant" >&2
     exit 1
   }
@@ -5440,7 +5282,7 @@ case "$LAUNCH" in
 esac
 case "$LAUNCH" in
 *__CLAUDEADDDIRS__*)
-  CLAUDE_ADD_DIRS=$(claude_add_dirs_flag "$KIND" "$STATE" "$DATA" "$JG_ROOT" "$ID") || {
+  CLAUDE_ADD_DIRS=$("$SCRIPT_DIR/jg-spawn-core.sh" claude-add-dirs "$KIND" "$STATE" "$DATA" "$JG_ROOT" "$ID") || {
     echo "error: could not resolve the task-channel directories for $ID's claude --add-dir grant" >&2
     exit 1
   }
@@ -5449,7 +5291,7 @@ case "$LAUNCH" in
 esac
 case "$HARNESS:$KIND" in
 opencode:squad_lead)
-  opencode_lead_grant_write "$PROJ_ABS" "$STATE" "$ID" "$JG_ROOT" || {
+  "$SCRIPT_DIR/jg-spawn-core.sh" opencode-lead-grant "$PROJ_ABS" "$STATE" "$ID" "$JG_ROOT" || {
     echo "error: could not write the OpenCode task-channel grant for squad_lead $ID under $PROJ_ABS/.opencode" >&2
     exit 1
   }
@@ -5510,7 +5352,7 @@ if [ "$KIND" = squad_lead ]; then
   # injected carrier and this on/off snapshot are guaranteed to agree.
   LAUNCH="JG_ROOT_OVERRIDE= JG_STATE_OVERRIDE= JG_DATA_OVERRIDE= JG_PROJECTS_OVERRIDE= JG_CONFIG_OVERRIDE= JG_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home JG_HOME=$sq_home JG_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE JG_SUPERVISION_MODEL=$supervision_model $LAUNCH"
 fi
-# LAUNCH_HOME_TOKEN (and its spawn_launch_home_token helper) is derived above,
+# LAUNCH_HOME_TOKEN (from the core's launch-home-token) is derived above,
 # before the OpenCode store name that consumes it; the spawn-incarnation check
 # and the launch directory stay here so they precede the launch-file staging
 # below and the AI-trailer helper that writes into LAUNCH_DIR.
@@ -5644,7 +5486,7 @@ if [ -n "$SPAWN_TRACEPARENT" ]; then
     LAUNCH="unset TRACEPARENT; $LAUNCH"
   fi
 fi
-# Provider-credential strip (bin/jg-launch-env-lib.sh; docs/configuration.md
+# Provider-credential strip (core/spawn builders.go launchEnvStrip; docs/configuration.md
 # "Provider credentials stripped from every launch" owns the contract). Every
 # launch - ship, scout, squad_lead, local and remote, raw command, and relaunch -
 # drops the credential-shaped variables this process would otherwise pass on
@@ -5652,42 +5494,15 @@ fi
 # every other statement so nothing later can re-export a stripped name, and it
 # runs in the pane, where the inheritance actually happens. Names only: the
 # emitted text can never carry a value.
-LAUNCH_ENV_STRIP=$(jg_launch_env_strip_prefix "$LAUNCH_ENV_NAMES") || exit 1
+LAUNCH_ENV_STRIP=$("$SCRIPT_DIR/jg-spawn-core.sh" launch-env-strip "$LAUNCH_ENV_NAMES") || exit 1
 if [ -n "$LAUNCH_ENV_STRIP" ]; then
   LAUNCH="$LAUNCH_ENV_STRIP$LAUNCH"
 fi
 if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
-  LAUNCH_ENV_PREFIX='/usr/bin/env -i'
-  # COMPACT_ADVISER_DISABLE is the intentional declarative floor-membership
-  # entry; the explicit COMPACT_ADVISER_DISABLE=1 assignment below is the
-  # authoritative setter.
-  for env_name in HOME PATH USER LOGNAME SHELL TERM COLORTERM LANG LC_ALL LC_CTYPE \
-    TMPDIR TMP TEMP GOTMPDIR TMUX TMUX_PANE HERDR_ENV HERDR_SESSION HERDR_SOCKET_PATH \
-    HERDR_PANE_ID CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID \
-    CMUX_SOCKET_PATH ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID JG_ZELLIJ_SESSION \
-    JG_TASK_ID COMPACT_ADVISER_DISABLE \
-    $LAUNCH_ENV_NAMES; do
-    # Only validated names enter shell syntax. Values expand once, quoted, in
-    # the pane shell and never become source text or spawn-process snapshots.
-    # shellcheck disable=SC2016
-    printf -v env_arg '${%s+"%s=$%s"}' "$env_name" "$env_name" "$env_name"
-    LAUNCH_ENV_PREFIX="$LAUNCH_ENV_PREFIX $env_arg"
-  done
-  # COMPACT_ADVISER_DISABLE is retained by the floor loop above, which forwards
-  # whatever the pane export set, and then pinned here to the one value Juggernaut
-  # launches on. The literal assignment comes last deliberately: `env` applies
-  # assignments left to right, so this one wins over a forwarded pane value, and
-  # it still delivers the switch on a pane whose export never landed. Unlike the
-  # trace carrier below it carries no gate, so it is appended unconditionally.
-  # Setting it here rather than relying on the assignment already carried by
-  # $LAUNCH is what gives the wrapping `/bin/sh` itself the switch, not only the
-  # agent command it runs.
-  LAUNCH_ENV_PREFIX="$LAUNCH_ENV_PREFIX COMPACT_ADVISER_DISABLE=1"
-  if [ -n "$SPAWN_TRACEPARENT" ]; then
-    # shellcheck disable=SC2016
-    LAUNCH_ENV_PREFIX="$LAUNCH_ENV_PREFIX "'${TRACEPARENT+"TRACEPARENT=$TRACEPARENT"}'
-  fi
-  LAUNCH="$LAUNCH_ENV_PREFIX /bin/sh -c $(shell_quote "$LAUNCH")"
+  # /usr/bin/env -i, the operational floor, the allow-listed names, the pinned
+  # COMPACT_ADVISER_DISABLE=1 and the trace carrier when one is delivered, then /bin/sh -c of the
+  # launch (core/spawn builders.go launchEnvWrap owns the exact text and why each part is there).
+  LAUNCH=$(printf '%s' "$LAUNCH" | "$SCRIPT_DIR/jg-spawn-core.sh" launch-env-wrap "$LAUNCH_ENV_NAMES" "$([ -n "$SPAWN_TRACEPARENT" ] && echo 1 || echo 0)") || exit 1
 fi
 if ! (umask 077 && mkdir "$LAUNCH_DIR") 2>/dev/null; then
   if [ -L "$LAUNCH_DIR" ] || [ ! -d "$LAUNCH_DIR" ] || [ ! -O "$LAUNCH_DIR" ] ||

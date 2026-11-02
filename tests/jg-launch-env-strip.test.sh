@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # A launch never carries a provider credential it was not allowed to carry.
-# The real builder (bin/jg-launch-env-lib.sh, called by bin/jg-spawn.sh) is run
-# here in a subshell with planted synthetic names: the credential name must be
+# The real builder (the spawn core's launch-env-strip, called by bin/jg-spawn.sh) is run
+# here with planted synthetic names: the credential name must be
 # gone, an allowlisted credential must survive, and a non-credential name that
 # merely contains KEY must survive. Only names are used; the values are
 # synthetic and are never asserted on.
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source=bin/jg-launch-env-lib.sh
-. "$ROOT/bin/jg-launch-env-lib.sh"
+# jg_launch_env_strip_prefix <allowlist-names>: the `unset ...; ` prefix a launch would carry.
+jg_launch_env_strip_prefix() { "$ROOT/bin/jg-spawn-core.sh" launch-env-strip "$1"; }
 
 # print_set <shell> <prefix>: run the emitted prefix in a fresh shell that holds
 # the synthetic names, then report which of them are still set.
@@ -69,6 +69,6 @@ assert_contains "$out" "OPENROUTER_API_KEY=unset" "an unlisted credential reache
 pass "an allowlisted credential survives and an unlisted one does not"
 
 # The strip only holds if the launch path actually applies it.
-grep -q 'jg_launch_env_strip_prefix' "$ROOT/bin/jg-spawn.sh" ||
+grep -q 'jg-spawn-core.sh" launch-env-strip' "$ROOT/bin/jg-spawn.sh" ||
   fail "bin/jg-spawn.sh does not apply the launch-environment strip"
 pass "bin/jg-spawn.sh applies the builder to every launch"

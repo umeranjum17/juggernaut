@@ -171,7 +171,7 @@ pass "real rovo exits cleanly on /exit"
 
 # --- allowedExternalPaths: prove the standard operator flow's brief-read and
 # status/report-write against real files OUTSIDE the worktree, mirroring
-# jg-spawn.sh's rovo_config_override_flag grant, and that the same access is
+# the spawn core's rovo-override grant, and that the same access is
 # blocked by default (AGENTS.md jg-rovo-external-paths finding). rovo's
 # --config-override must be set at launch; there is no live escalation once
 # the process is running.
