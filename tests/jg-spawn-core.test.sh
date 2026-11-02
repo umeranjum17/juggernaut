@@ -54,6 +54,27 @@ check "dropping below the standing posture is announced" "$(notices --standing-m
 check "a conditional policy raises no notice" "$(notices --standing-mode no-mistakes-prod-only --standing-branch fm/)" ""
 check "a registered prefix the branch lacks is announced" "$(notices --standing-mode '' --standing-branch x/ | head_is "notice: t1 ships branch=fm/t1 while proj registers the ship-bra")" "notice: t1 ships branch=fm/t1 while proj registers the ship-bra"
 
+# The argument grammar: the dispatcher prints the parsed variables for the spawn to eval, or the
+# refusal that stops it. These keep the shapes the intake replay (core/spawn/README.md) found interesting.
+intake() { "$core" intake "$@" 2>&1; }
+var() { sed -n "s/^$1=//p" | head -1; }
+check "a ship request is parsed into the spawn's variables" "$(intake t1 proj --mode direct-PR --yolo off --harness=claude | var MODE)|$(intake t1 proj --mode direct-PR --yolo off --harness=claude | var HARNESS_ARG)|$(intake t1 proj --mode direct-PR --yolo off | var POS)" "'direct-PR'|'claude'|('t1' 'proj')"
+check "a value flag followed by another flag is refused" "$(intake --model --mode x)" "error: --model requires a value"
+check "a flag with no value at the end is refused" "$(intake t1 --backend)" "error: --backend requires a value"
+check "an empty value is refused by name" "$(intake t1 --effort=)" "error: --effort requires a non-empty value"
+check "an unknown effort is refused" "$(intake t1 --effort turbo)" "error: --effort must be one of low, medium, high, xhigh, max, ultra"
+check "the last repeat of a flag wins" "$(intake t1 p --mode local-only --yolo off --mode direct-PR | var MODE)" "'direct-PR'"
+check "a traceparent is accepted only on a squad_lead" "$(intake t1 --traceparent 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01 | head -1)" "error: --traceparent applies only to --squad-lead spawns; every other spawn resolves its own carrier from this home's frozen trace-context decision"
+check "an all-zero traceparent is refused" "$(intake --squad-lead t1 --traceparent 00-00000000000000000000000000000000-b7ad6b7169203331-01)" "error: --traceparent is not a valid W3C traceparent"
+check "a ship without a mode is held for the spawn to refuse after the account check" "$(intake t1 proj | var INTAKE_REFUSAL | head_is "'error: ship spawns require --mode")" "'error: ship spawns require --mode"
+check "no-mistakes-prod-only is not a task mode" "$(intake t1 proj --mode no-mistakes-prod-only --yolo off | var INTAKE_REFUSAL | head_is "'error: no-mistakes-prod-only is a registry policy")" "'error: no-mistakes-prod-only is a registry policy"
+check "an upstream consent is folded to lower case" "$(intake t1 proj --mode direct-PR --yolo off --upstream-consent GitHub.com/O/R | var UPSTREAM_CONSENT)" "'github.com/o/r'"
+check "an upstream consent with a dot-dot is refused" "$(intake t1 proj --mode direct-PR --yolo off --upstream-consent a/../c | var INTAKE_REFUSAL)" "'error: --upstream-consent must be <host>/<owner>/<repo> (got '\\''a/../c'\\'')'"
+check "a relaunch may not restate the recorded mode" "$(intake --relaunch t1 --mode direct-PR | var INTAKE_REFUSAL)" "'error: --relaunch reuses the task'\\''s recorded delivery mode; --mode cannot override it'"
+check "a scout may not carry a mode" "$(intake --scout t1 proj --mode direct-PR | var INTAKE_REFUSAL | head_is "'error: --mode applies only to ship spawns")" "'error: --mode applies only to ship spawns"
+check "a squad_lead may not carry a base branch, a scout may" "$(intake --squad-lead t1 --base-branch x | var INTAKE_REFUSAL | head_is "'error: --base-branch applies only")|$(intake --scout t1 proj --base-branch x | var INTAKE_REFUSAL)" "'error: --base-branch applies only|''"
+check "a quote in a positional survives the round trip" "$(eval "$("$core" intake "it's here" proj)"; printf %s "${POS[0]}")" "it's here"
+
 # A home whose bin/ is a symlink to a checkout (the session-start suite's fake root, a relocated home)
 # builds from the checkout the link points into, not from a core/ the link's parent lacks.
 mkdir -p "$lab/linked/root"
