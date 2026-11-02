@@ -42,6 +42,17 @@ jg_route_chain_json() {
   printf '%s\n' "$out"
 }
 
+# jg_route_quota_provider <provider>: the provider name quota-axi reports this route's room under, because pi and the
+# chain call openai-codex "codex" and kimi-coding "kimi". One owner for the mapping, read by the probe and by any
+# tool that asks a route's room before it calls it.
+jg_route_quota_provider() {
+  case $1 in
+  openai-codex | codex) echo codex ;;
+  kimi-coding) echo kimi ;;
+  *) echo "$1" ;;
+  esac
+}
+
 jg_route_marker() { printf '%s/route-health/%s\n' "$(jg_route_state)" "${1//\//%}"; }
 jg_route_read() { [ -r "$(jg_route_marker "$1")" ] && head -n 1 -- "$(jg_route_marker "$1")" 2>/dev/null; }
 

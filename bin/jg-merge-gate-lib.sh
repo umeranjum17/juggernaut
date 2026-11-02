@@ -36,7 +36,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -94,7 +93,11 @@ _jg_dod_receipt_line() {  # <state> <id> <head> <label>
 }
 
 # The size rule (bin/jg-design-gate.sh owns it): UI files are matched by name, and a
-# change is a small tweak when they change at most 40 lines and none is new.
+# change is a small tweak when they change at most 40 lines and none is new. Both halves
+# are measured with renames detected: a file that only moved is moved on both sides, so
+# it adds no UI line and is not a new UI file. A move is not design work, and counting it
+# as one refused every rename of a UI file at any size; a file that really is added, or
+# really gains lines, still counts and still refuses on its own merits.
 JG_DESIGN_UI_RE='[.](html?|css|scss|sass|less|svg|jsx|tsx|vue|svelte|astro)$'
 JG_DESIGN_TWEAK_LINES=40
 
@@ -215,9 +218,12 @@ jg_design_size() {  # <worktree> <base-branch> <head>: prints `design|tweak <ui-
   ref=origin/$base
   git -C "$wt" rev-parse -q --verify "$ref^{commit}" >/dev/null || ref=$base
   mb=$(git -C "$wt" merge-base "$ref" "$head" 2>/dev/null) || return 2
-  lines=$(git -C "$wt" diff --numstat --no-renames "$mb" "$head" \
-    | awk -F'\t' -v re="$JG_DESIGN_UI_RE" 'tolower($3) ~ re && $1 != "-" { n += $1 + $2 } END { print n + 0 }')
-  new=$(git -C "$wt" diff --name-only --no-renames --diff-filter=A "$mb" "$head" | grep -ciE "$JG_DESIGN_UI_RE")
+  # Both halves detect renames. A pure move reads 0 0 here, so it is neither a changed
+  # line nor a new file; the whole numstat line is matched because a rename prints its
+  # paths in git's own compact form and either side may carry the UI extension.
+  lines=$(git -C "$wt" diff --numstat -M "$mb" "$head" \
+    | awk -F'\t' -v re="$JG_DESIGN_UI_RE" 'tolower($0) ~ re && $1 != "-" { n += $1 + $2 } END { print n + 0 }')
+  new=$(git -C "$wt" diff --name-only -M --diff-filter=A "$mb" "$head" | grep -ciE "$JG_DESIGN_UI_RE")
   if [ "$new" -gt 0 ] || [ "$lines" -gt "$JG_DESIGN_TWEAK_LINES" ]; then echo "design $lines $new"; else echo "tweak $lines $new"; fi
 }
 

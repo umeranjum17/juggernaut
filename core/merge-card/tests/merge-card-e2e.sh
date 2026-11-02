@@ -84,7 +84,7 @@ fi
 if [ -n "${ROUTE_LOG:-}" ]; then
   model=$(python3 -c 'import os,yaml; print(yaml.safe_load(open(os.environ["DONE_DONE_HOME"]+"/config.yaml"))["judge"]["model"])')
   echo "$model" >>"$ROUTE_LOG"
-  if [ "${SOL_LIMIT:-0}" = 1 ] && [ "$model" = openai-codex/gpt-6.1-sol ]; then
+  if [ -n "${LIMIT_MODEL:-}" ] && [ "$model" = "$LIMIT_MODEL" ]; then
     echo '{"error":"429 quota exhausted"}'; exit 2
   fi
 fi
@@ -230,15 +230,21 @@ fi
 STUB
 chmod +x "$work/bin/done-done" "$work/bin/sign-off-axi" "$work/bin/gh" "$work/bin/pool-claude"
 
-# Offline routing fixtures: no installed quota reader or model CLI is invoked.
+# Offline routing fixtures: no installed quota reader or model CLI is invoked. The chain's routes
+# come from the shared route chain, so the machine's model list is a file a test can rewrite.
 cat >"$work/bin/pi" <<'STUB'
 #!/usr/bin/env bash
-echo 'commandcode deepseek/deepseek-v4.1-flash 262K'
+cat -- "$PI_MODELS"
 STUB
 cat >"$work/bin/quota-axi" <<'STUB'
 #!/usr/bin/env bash
 printf '  codex,all_models,%s,unknown\n' "${CODEX_ROOM:-10}"
+[ -z "${OLLAMA_ROOM:-}" ] || printf '  ollama-cloud,all_models,%s,unknown\n' "$OLLAMA_ROOM"
 STUB
+# pi names a model as two columns: <provider> <model>, as the chain's route names it.
+PI_MODELS=$work/pi-models
+printf 'ollama-cloud    deepseek-v4.1-flash    1M\ncommandcode     deepseek/deepseek-v4.1-flash  262K\n' >"$PI_MODELS"
+export PI_MODELS
 chmod +x "$work/bin/pi" "$work/bin/quota-axi"
 export DONE_DONE_HOME=$work/dd-config DD_EVIDENCE_ROOT=$work/evidence
 mkdir -p "$DONE_DONE_HOME"
@@ -344,22 +350,6 @@ POOL_FAIL=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check poo
 is "reader failure without cache: judge starts" "$(wc -l <"$DD_ENV_LOG" | tr -d ' ')" 1
 grep -q 'quota reader unavailable' "$work/no-cache.log" && ok "failure reports cause" || no "failure reports cause"
 
-# A caller's explicit non-Claude route ignores even a dry pool.
-: >"$DD_POOL_LOG"
-: >"$DD_LOG"
-POOL_FAIL=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check --judge answerer:pi pool "$wt" "$head_c" - >/dev/null 2>&1
-is "explicit non-Claude: no pool pick" "$(wc -c <"$DD_POOL_LOG")" 0
-is "explicit non-Claude: judge passes" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
-export ROUTE_LOG=$work/routes.log
-: >"$ROUTE_LOG"
-POOL_FAIL=1 SOL_LIMIT=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >"$work/routes.out" 2>&1
-is "dry pool: Sol quota failure moves to Goat" "$(paste -sd, "$ROUTE_LOG")" 'openai-codex/gpt-6.1-sol,commandcode/deepseek/deepseek-v4.1-flash'
-is "dry pool: fallback verdict passes" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
-: >"$ROUTE_LOG"
-POOL_FAIL=1 CODEX_ROOM=0 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
-is "quota output: empty Codex skips to Goat" "$(cat "$ROUTE_LOG")" commandcode/deepseek/deepseek-v4.1-flash
-is "per-call config: global model unchanged" "$(python3 -c 'import os,yaml; print(yaml.safe_load(open(os.environ["DONE_DONE_HOME"]+"/config.yaml"))["judge"]["model"])')" claude-haiku-5-5
-unset ROUTE_LOG
 
 # A 0.3.0 done-done on PR 24's shape: the PR body names the PNG bare, the file
 # is in the task folder, the flag is never passed, and merge-card hands done-done
@@ -385,15 +375,62 @@ if [ -f "$work/card-older/1.png" ] && cmp -s "$work/card-older/1.png" "$shot"; t
 POOL_FAIL=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check --judge answerer:pi pool "$wt" "$head_c" - >/dev/null 2>&1
 is "explicit non-Claude: no pool pick" "$(wc -c <"$DD_POOL_LOG")" 0
 is "explicit non-Claude: judge passes" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
+
+# The judge's candidates and their liveness are the shared route chain the dispatcher reads, in chain
+# order. With the Claude pool dry and the Codex window exhausted, the card is still produced through the
+# DeepSeek route every worker runs on, and it is the route the chain leads with.
 export ROUTE_LOG=$work/routes.log
 : >"$ROUTE_LOG"
-POOL_FAIL=1 SOL_LIMIT=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >"$work/routes.out" 2>&1
-is "dry pool: Sol quota failure moves to Goat" "$(paste -sd, "$ROUTE_LOG")" 'openai-codex/gpt-6.1-sol,commandcode/deepseek/deepseek-v4.1-flash'
-is "dry pool: fallback verdict passes" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
+SO_CAPTURE=$work/card-route
+export SO_CAPTURE
+POOL_FAIL=1 CODEX_ROOM=0 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >"$work/routes.out" 2>&1
+is "dry pool, Codex exhausted: the fleet's DeepSeek route judges" "$(cat "$ROUTE_LOG")" ollama-cloud/deepseek-v4.1-flash
+is "dry pool, Codex exhausted: the verdict is the judge's" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
+POOL_FAIL=1 CODEX_ROOM=0 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" post --board "$work/board-route.json" pool "$wt" "$head_c" - >"$work/route-post.log" 2>&1
+holds "dry pool, Codex exhausted: the card is still produced" "$SO_CAPTURE/card.json"
 : >"$ROUTE_LOG"
-POOL_FAIL=1 CODEX_ROOM=0 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
-is "quota output: empty Codex skips to Goat" "$(cat "$ROUTE_LOG")" commandcode/deepseek/deepseek-v4.1-flash
+POOL_FAIL=1 OLLAMA_ROOM=0 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
+is "no room on the fleet route: the next chain route judges" "$(cat "$ROUTE_LOG")" commandcode/deepseek/deepseek-v4.1-flash
+
+# Only a quota or auth failure moves to the next route; a real proof failure is final.
+: >"$ROUTE_LOG"
+POOL_FAIL=1 LIMIT_MODEL=ollama-cloud/deepseek-v4.1-flash PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
+is "quota failure: the next chain route judges" "$(paste -sd, "$ROUTE_LOG")" 'ollama-cloud/deepseek-v4.1-flash,commandcode/deepseek/deepseek-v4.1-flash'
+is "quota failure: the verdict passes" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
+: >"$ROUTE_LOG"
+MODE=inconclusive POOL_FAIL=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
+is "proof failure: no second route is tried" "$(cat "$ROUTE_LOG")" ollama-cloud/deepseek-v4.1-flash
+is "proof failure: the verdict is the proof's own" "$(jq -r .verdict "$home/data/pool/merge-card.json")" inconclusive
 is "per-call config: global model unchanged" "$(python3 -c 'import os,yaml; print(yaml.safe_load(open(os.environ["DONE_DONE_HOME"]+"/config.yaml"))["judge"]["model"])')" claude-haiku-5-5
+
+# Every route dry: the card says plainly that no judge has room, and never blames the proof.
+mv "$PI_MODELS" "$work/pi-models.listed"
+printf 'codex  gpt-6-luna  128K\n' >"$PI_MODELS"
+: >"$ROUTE_LOG"
+POOL_FAIL=1 CODEX_ROOM=0 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >"$work/dry.log" 2>&1
+is "every route dry: no judge is started" "$(wc -c <"$ROUTE_LOG" | tr -d ' ')" 0
+case $(jq -r .verdict "$home/data/pool/merge-card.json") in
+  "not checked: No judge has room"*) ok "every route dry: the verdict says no judge has room" ;;
+  *) no "every route dry: the verdict says no judge has room: $(jq -r .verdict "$home/data/pool/merge-card.json")" ;;
+esac
+grep -q 'ollama-cloud/deepseek-v4.1-flash (pi does not list it)' "$work/dry.log" &&
+  ok "every route dry: the line names each dry route" || no "every route dry: the line names each dry route: $(cat "$work/dry.log")"
+POOL_FAIL=1 CODEX_ROOM=0 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" post --board "$work/board-dry.json" pool "$wt" "$head_c" - >"$work/dry-post.log" 2>&1
+grep -q 'no evidence card' "$work/dry-post.log" &&
+  ok "every route dry: no card is posted" || no "every route dry: no card is posted: $(cat "$work/dry-post.log")"
+if grep -qi 'does not hold up' "$work/dry-post.log"; then no "every route dry: the proof is not blamed"; else ok "every route dry: the proof is not blamed"; fi
+mv "$work/pi-models.listed" "$PI_MODELS"
+
+# The candidates are the home's own route= lines, so adding or retiring a model needs no change here.
+printf 'command=%s\nstate=%s\nroute={"id":"route:minimax/m3","provider":"minimax","model":"minimax/m3","billing":"plan"}\n' \
+  "$work/bin/pool-claude" "$work/pool" >"$home/config/account-pool"
+printf 'minimax  m3  1M\n' >"$PI_MODELS"
+: >"$ROUTE_LOG"
+POOL_FAIL=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
+is "home route= lines: the named route judges with no code change" "$(cat "$ROUTE_LOG")" minimax/m3
+is "home route= lines: the verdict passes" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
+printf 'command=%s\nstate=%s\n' "$work/bin/pool-claude" "$work/pool" >"$home/config/account-pool"
+printf 'ollama-cloud    deepseek-v4.1-flash    1M\ncommandcode     deepseek/deepseek-v4.1-flash  262K\n' >"$PI_MODELS"
 unset ROUTE_LOG
 
 # A 0.3.0 done-done with an absolute name, kept as it is, and a bare name the task

@@ -435,14 +435,6 @@ status_scan_parent_channel_exclude() {  # <state>
   printf '%s\n' "$exclude"
 }
 
-# Fleet-wide wrapper around status_open_decisions: scans every task's status log under <state>
-# and prefixes each still-open decision with its owning task id, so a per-wake or per-session
-# surface can print the consolidated open set without re-walking the fold. A thin directory walk
-# only - core/classify/cmd/jg-classify/cursor.go owns the fold and the cursor contract behind it.
-scan_open_decisions() {  # <state>
-  _jg_classify_go scan-open-decisions "$1" "$(status_scan_parent_channel_exclude "$1")"
-}
-
 # --- incremental (cursor-backed) open-decisions fold ------------------------
 # status_open_decisions_incremental reads only the bytes a status file gained since its own last
 # call, folds those into a persisted open set through the same rule status_open_decisions uses,
@@ -480,7 +472,7 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
   _jg_classify_go open-decisions-incremental "$@"
 }
 
-# Incremental sibling of scan_open_decisions: the same fleet-wide walk and output shape
+# Incremental sibling of status_open_decisions: the same fleet-wide walk and output shape
 # ("<task>\t<key>\t<verb>\t<note>" per open decision), folding each task's status log through
 # the cursor-backed fold instead of the whole-file one.
 scan_open_decisions_incremental() {  # <state>
@@ -1041,7 +1033,7 @@ status_line_is_unread_surface() {  # <status-line>
 # Fleet-wide unread informational lines: one "<task>\t<status-line>" row per
 # still-unread `note:` or pending-reply resolution, in glob (task id) order.
 # Prints nothing when none are unread. Directory scan rejects status symlinks
-# the same way scan_open_decisions does.
+# the same way status_open_decisions does.
 scan_unread_surface_lines() {  # <state>
   local state=$1 f task lines line exclude
   exclude=$(status_scan_parent_channel_exclude "$state")
@@ -1774,7 +1766,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }

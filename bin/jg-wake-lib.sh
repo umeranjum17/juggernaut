@@ -755,56 +755,6 @@ jg_lock_remove_path() {
   rmdir "$lockdir" 2>/dev/null
 }
 
-# jg_lock_owner_dir_is_stale <owner-dir>: 0 iff an owner directory is provably
-# abandoned - a dead recorded pid, or no usable pid record at all while nothing
-# but link entries and known scratch remain inside, past the same
-# JG_LOCK_STALE_AFTER floor that protects a half-written owner. A live pid, an
-# unreadable age, or an unrecognized regular file answers "not stale".
-jg_lock_owner_dir_is_stale() {
-  local dir=$1 pid floor age
-  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
-  pid=$(cat "$dir/pid" 2>/dev/null || true)
-  case "$pid" in
-    '' | *[!0-9]*) ;;
-    *)
-      jg_pid_alive "$pid" && return 1
-      return 0
-      ;;
-  esac
-  if find "$dir" -mindepth 1 -maxdepth 1 -type f ! -name pid ! -name task 2>/dev/null | grep -q .; then
-    return 1
-  fi
-  floor=$JG_LOCK_STALE_AFTER
-  case "$floor" in '' | *[!0-9]* | 0 | 1) floor=2 ;; esac
-  age=$(jg_path_age "$dir")
-  case "$age" in '' | *[!0-9]*) return 1 ;; esac
-  [ "$age" -ge "$floor" ]
-}
-
-# jg_lock_sweep_stale_scratch <lockdir>: remove one lock's provably abandoned
-# owner directories and its abandoned steal mutex, printing each path removed.
-# Single owner of lock-scratch hygiene: the bounded lease-command acquire runs it
-# once past its wait bound and bin/jg-lease.sh sweep runs it on demand. A live
-# holder's directories are never touched.
-jg_lock_sweep_stale_scratch() {
-  local lockdir=$1 path owner
-  for path in "$lockdir".steal "$lockdir".steal.owner.* "$lockdir".owner.*; do
-    [ -e "$path" ] || [ -L "$path" ] || continue
-    if [ -L "$path" ]; then
-      owner=$(jg_lock_link_owner "$path" 2>/dev/null || true)
-      [ -n "$owner" ] || continue
-      jg_lock_owner_dir_is_stale "$owner" || continue
-      rm -f -- "$path" 2>/dev/null || continue
-      jg_lock_discard_owner "$owner"
-    else
-      jg_lock_owner_dir_is_stale "$path" || continue
-      jg_lock_discard_owner "$path"
-    fi
-    [ -e "$path" ] || [ -L "$path" ] || printf '%s\n' "$path"
-  done
-  return 0
-}
-
 jg_lock_mid_acquire_is_fresh() {
   local lockdir=$1 pid=$2 mid_acquire_stale
   case "$pid" in
@@ -3273,10 +3223,6 @@ jg_wake_unread_events() {  # <validated-status-path> <unused-tail-byte-cap> <min
   JG_WAKE_EVENT_LINE=$(printf '%s' "$JG_WAKE_EVENT_LINE" | LC_ALL=C tr '\t\r' '  ')
 }
 
-jg_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
-  jg_wake_unread_events "$1" "$2" 0
-}
-
 # Print supplemental drain-time context only after the caller has committed the
 # raw queue consumption and released the append lock.
 jg_wake_print_annotations() {  # <deduped-raw-rows> [<presentation-snapshot>]
@@ -3379,7 +3325,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
