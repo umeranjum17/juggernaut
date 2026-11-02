@@ -17,7 +17,9 @@
 #     gate, check and post all take `--judge <route>`: it reaches `done-done check --judge <route>`
 #     for that call alone, so a lane whose configured judge route is rate limited can name another
 #     one instead of waiting on the fallback. Without it done-done checks with its own configured
-#     judge when the Claude pool has room; otherwise try Sol then Command Code DeepSeek.
+#     judge when the Claude pool has room; otherwise the judge takes the routes of the shared
+#     free-route chain the dispatcher reads (a home's config/account-pool route= lines, else the
+#     captain's approved order, so Ollama Cloud DeepSeek first), in chain order.
 #   merge-card post --board <board.json> [--claim-id <id>] [--judge <route>] <task-id> <worktree|-> <head|-> <pr-url|->
 #     Install as $JG_HOME/config/post-merge. --claim-id names the done-done claim to check (passed to
 #     `done-done check --claim-id`, and the check is re-run); without it done-done picks its own. Posts one evidence card per merge (one live card per PR: a new head posts its card and archives the old one), and
@@ -65,9 +67,12 @@
 # The done-done check runs as the pool's claude account when the home has one
 # (config/account-pool): the check's env carries that account's profile folder in
 # CLAUDE_CONFIG_DIR and the pool's login variables unset, so the judge never answers on
-# the default login. A fresh pick is required; a dry pool uses non-Claude judges.
+# the default login. A fresh pick is required; a dry pool uses the route chain's non-Claude
+# routes, skipping a route the route probe marked down, one whose provider has no room left,
+# or one pi does not list on this machine, and moving on only after a quota or auth failure.
 # Needs done-done on PATH (0.3.1+ cites the task folder's evidence itself; an older one is
-# still covered), sign-off-axi, jq and gh. Dry-pool fallback also needs Python 3 with PyYAML and pi.
+# still covered), sign-off-axi, jq and gh. Dry-pool fallback also needs Python 3 with PyYAML
+# and pi (quota-axi when present).
 set -u
 
 die() { echo "merge-card: $*" >&2; exit 1; }
@@ -229,6 +234,8 @@ redirect_evidence() {
 
 # shellcheck source=account-pool/bin/jg-pool-claude-env.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/account-pool/bin/jg-pool-claude-env.sh"
+# shellcheck source=account-pool/bin/jg-route-chain-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/account-pool/bin/jg-route-chain-lib.sh"
 # shellcheck source=signoff/bin/jg-signoff-feedback-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/signoff/bin/jg-signoff-feedback-lib.sh"
 
@@ -242,21 +249,37 @@ pool_env_run() {
   fi
   # Scope the copied config and its cleanup to this check, including interrupts.
   (
-    local config model quota='' output='' rc=2 provider remaining models=''
+    local config model quota='' output='' rc=2 provider remaining models='' id pi_provider pi_model dry='' chain
     config=$(mktemp -d) || return 2
     trap 'rm -rf -- "$config"' EXIT
     if command -v quota-axi >/dev/null; then
       quota=$(quota-axi --no-credential-refresh 2>/dev/null) || quota=''
     fi
     models=$(pi --list-models 2>/dev/null) || models=''
-    for model in openai-codex/gpt-6.1-sol commandcode/deepseek/deepseek-v4.1-flash; do
-      provider=codex
-      if [[ $model == commandcode/* ]]; then
-        provider=commandcode
-        grep -Eq '^commandcode[[:space:]]+deepseek/deepseek-v4[.]1-flash[[:space:]]' <<<"$models" || continue
+    # The candidates and their liveness are the shared route chain the dispatcher reads - a home's
+    # config/account-pool route= lines, else the captain's approved order - so adding or retiring a model
+    # never needs a change here. In chain order a route is skipped, and the next one tried instead, when it
+    # is kept for hard steps only, when the route probe marked it down, when its provider has no room left,
+    # or when pi does not list it on this machine. A route the fleet cannot read counts as up.
+    chain=$(jg_route_chain_json "${JG_HOME:-}/config/account-pool") || chain=''
+    while IFS=$'\t' read -r id provider model <&3; do
+      [ -n "$model" ] || continue
+      if jg_route_down "$id"; then
+        dry="${dry:+$dry, }$model (route probe says down: $(jg_route_cause "$id"))"
+        continue
       fi
-      remaining=$(awk -F, -v p="$provider" '$1 ~ "^[[:space:]]*" p "$" && $2 == "all_models" {print $3; exit}' <<<"$quota")
+      remaining=$(awk -F, -v p="$(jg_route_quota_provider "$provider")" '$1 ~ "^[[:space:]]*" p "$" && $2 == "all_models" {print $3; exit}' <<<"$quota")
       if [[ $remaining =~ ^[0-9]+([.][0-9]+)?$ ]] && awk "BEGIN {exit !($remaining <= 0)}"; then
+        dry="${dry:+$dry, }$model (no room left)"
+        continue
+      fi
+      # pi names a model as <provider> <model>; the chain names it <provider>/<model>.
+      case $model in
+        */*) pi_provider=${model%%/*} pi_model=${model#*/} ;;
+        *) pi_provider=$provider pi_model=$model ;;
+      esac
+      if [ -n "$models" ] && ! awk -v p="$pi_provider" -v m="$pi_model" '$1 == p && $2 == m { found = 1 } END { exit !found }' <<<"$models"; then
+        dry="${dry:+$dry, }$model (pi does not list it)"
         continue
       fi
       # PyYAML preserves every existing setting while overriding only this call's judge.
@@ -277,8 +300,13 @@ CONFIG
         printf '%s\n' "$output"
         return "$rc"
       fi
-    done
-    printf '%s\n' "${output:-No non-Claude judge has room or a listed model; Claude was not started}"
+    done 3<<<"$(jq -r '.[] | select((.only // "") != "hard") | "\(.id)\t\(.provider // "")\t\(.model // "")"' <<<"${chain:-[]}" 2>/dev/null)"
+    # Every route is dry, or there is none a judge can take: say so plainly, and never blame the proof.
+    if [ -n "$dry" ]; then
+      printf 'No judge has room: Claude was not started and every route is dry: %s\n' "$dry"
+    else
+      printf 'No judge has room: Claude was not started and the route list named no route a judge can take\n'
+    fi
     return "$rc"
   )
 }
