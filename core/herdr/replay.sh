@@ -20,6 +20,13 @@
 #             nothing)
 set -u
 
+# A replay that starts a replay would multiply itself, so a second one refuses to start.
+if [ -n "${JG_HERDR_REPLAY_ACTIVE:-}" ]; then
+  echo "replay: refusing to start inside a running herdr replay" >&2
+  exit 2
+fi
+export JG_HERDR_REPLAY_ACTIVE=1
+
 OLD=${1:?usage: replay.sh <old-herdr.sh> <recorded-dir> [--control]}
 REC=${2:?usage: replay.sh <old-herdr.sh> <recorded-dir> [--control]}
 CONTROL=${3:-}
@@ -95,12 +102,86 @@ null
 {}
 {"result":null}
 {"result":"text"}
+{"result":{"tab":{"tab_id":"w1:t1","workspace_id":"w1","label":"jg-a"}}}
+{"result":{"tab":{"tab_id":"w1:t2","workspace_id":"w2"}}}
+{"result":{"tab":"w1:t1"}}
+{"result":{"tabs":[{"tab_id":"w1:t1","focused":true},{"tab_id":"w1:t2","focused":false}]}}
+{"result":{"tabs":[{"tab_id":"w1:t1","focused":true},{"tab_id":"w1:t2","focused":true}]}}
+{"result":{"tabs":[{"tab_id":"w1:t1"},{"tab_id":"w1:t2","focused":"yes"}]}}
+{"result":{"tabs":[{"tab_id":"w1:t1","label":"jg-a"}]}}
+{"result":{"tabs":[{"tab_id":"w1:t1","label":"other"}]}}
+{"result":{"tabs":[{"tab_id":"w1:t2","label":"jg-b"}]}}
+{"result":{"tabs":{"tab_id":"w1:t1"}}}
+{"result":{"tabs":[3]}}
+{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1"}]}}
+{"result":{"panes":[{"pane_id":"w1:p2","tab_id":"w1:t1"}]}}
+{"result":{"panes":[{"pane_id":"w1:p3","tab_id":"w1:t2"}]}}
+{"result":{"panes":[]}}
+{"result":{"type":"pane_info","pane":{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","foreground_cwd":"/wt","agent_status":"unknown"}}}
+{"result":{"type":"pane_info","pane":{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","foreground_cwd":"/x y","agent_status":"working"}}}
+{"result":{"type":"pane_info","pane":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"w1:t1","foreground_cwd":"/wt","agent_status":"unknown"}}}
+{"result":{"type":"agent_info","agent":{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","foreground_cwd":"/wt","agent_status":"unknown"}}}
+{"result":{"type":"agent_info","agent":{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","foreground_cwd":"/x y","agent_status":"unknown"}}}
+{"result":{"type":"agent_info","agent":null}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":4242,"foreground_process_group_id":4242,"foreground_processes":[{"pid":4242,"name":"/bin/bash","argv0":"-bash"}]}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":4242.9,"foreground_process_group_id":4242,"foreground_processes":[{"pid":4242,"name":"zsh","argv":["zsh","-l"]}]}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"init"}]}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":"4242","foreground_process_group_id":4242,"foreground_processes":[]}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":1e3,"foreground_process_group_id":1000,"foreground_processes":[{"pid":1e3,"name":"fish","argv0":null,"argv":[]},{"pid":7,"name":"vim"}]}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":12345678901234567890,"foreground_process_group_id":1e19,"foreground_processes":[{"pid":1e16,"name":"","argv0":""}]}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":4242,"foreground_process_group_id":4242,"foreground_processes":{"pid":4242}}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":4242,"foreground_process_group_id":4242,"foreground_processes":[7]}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":4242,"foreground_process_group_id":4242,"foreground_processes":[{"pid":4242,"name":"bash","argv0":false,"argv":{"0":"x"}}]}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":4242,"foreground_process_group_id":4242,"foreground_processes":[{"pid":4242,"name":"bash","argv0":0,"argv":"bash"}]}}}
+{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p1","shell_pid":4242,"foreground_process_group_id":4242,"foreground_processes":[{"pid":4242,"name":"bash","argv0":"büsh"}]}}}
+{"schemas":{"request":{"oneOf":[{"properties":{"method":{"const":"workspace.list"}}},{"properties":{"method":{"const":"workspace.move"}}}],"$defs":{"WorkspaceMoveParams":{"required":["workspace_id","insert_index"],"properties":{"insert_index":{"type":"integer"}}}}}}}
+{"schemas":{"request":{"oneOf":[{"properties":{"method":{"const":"workspace.move"}}}],"$defs":{"WorkspaceMoveParams":{"required":["insert_index","workspace_id"],"properties":{"insert_index":{"type":"integer"}}}}}}}
+{"schemas":{"request":{"oneOf":[{"properties":{"method":{"const":"workspace.move"}}}],"$defs":{"WorkspaceMoveParams":{"required":["workspace_id","insert_index"],"properties":{"insert_index":{"type":"number"}}}}}}}
+{"schemas":{"request":{"oneOf":[5,{"properties":{"method":{"const":"workspace.move"}}}]}}}
+{"schemas":{"request":{"oneOf":"x"}}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut","focused":true},{"workspace_id":"w2","label":"juggernaut-other","focused":false},{"workspace_id":"w3","label":"└ task-a · p:AAAAAAAAAAAAAAAAAAAAAA","focused":false},{"workspace_id":"w4","label":"juggernaut/task-b · p:BBBBBBBBBBBBBBBBBBBBBB","focused":false}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut","focused":false},{"workspace_id":"w3","label":"└ task-a · p:AAAAAAAAAAAAAAAAAAAAAA","focused":true},{"workspace_id":"w4","label":"└ task-b · p:AAAAAAAAAAAAAAAAAAAAAA","focused":false},{"workspace_id":"w2","label":"x","focused":false}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut","focused":true},{"workspace_id":"w3","label":"└ task-a · p:AAAAAAAAAAAAAAAAAAAAAA\n"},{"workspace_id":"w4","label":"└ task-b · p:CCCCCCCCCCCCCCCCCCCCCC"},{"workspace_id":"w6","label":"└ task-c · p:CCCCCCCCCCCCCCCCCCCCCC"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w5","label":"lead-alpha","focused":true},{"workspace_id":"w4","label":"2ndmate-alpha/task-b · p:BBBBBBBBBBBBBBBBBBBBBB"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w5","label":"lead-alpha","focused":true},{"workspace_id":"w4","label":"lead-alpha/task-b · p:BBBBBBBBBBBBBBBBBBBBBB"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w5","label":"lead-alpha","focused":true},{"workspace_id":"w4","label":"lead-alpha/task-b · p:BBBBBBBBBBBBBBBBBBBBBB"},{"workspace_id":"w6","label":"2ndmate-alpha/task-b · p:BBBBBBBBBBBBBBBBBBBBBB"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut","focused":true},{"workspace_id":"w2","label":"└ other · p:ZZZZZZZZZZZZZZZZZZZZZZ"},{"workspace_id":"w3","label":"└ task-a · p:AAAAAAAAAAAAAAAAAAAAAA"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut","focused":true},{"workspace_id":"w2","label":"└ x · p:ZZZZZZZZZZZZZZZZZZZZZZ\n"},{"workspace_id":"w3","label":"└ task-a · p:AAAAAAAAAAAAAAAAAAAAAA"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut","focused":true},{"workspace_id":"w2","label":"└ x\ny · p:ZZZZZZZZZZZZZZZZZZZZZZ"},{"workspace_id":"w3","label":"└ task-a · p:AAAAAAAAAAAAAAAAAAAAAA"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut","focused":true},{"workspace_id":"w3","label":"juggernaut/task-x · p:ZZZZZZZZZZZZZZZZZZZZZZ"},{"workspace_id":"w4","label":"juggernaut/task-b · p:BBBBBBBBBBBBBBBBBBBBBB"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut","focused":true},{"workspace_id":"w3","label":"lead-x/task-x · p:ZZZZZZZZZZZZZZZZZZZZZZ"},{"workspace_id":"w4","label":"juggernaut/task-b · p:BBBBBBBBBBBBBBBBBBBBBB"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w6","label":"└ task-c · p:CCCCCCCCCCCCCCCCCCCCCC"},{"workspace_id":"w1","label":"juggernaut"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w2","label":"b","focused":false},{"workspace_id":"w3","label":"c","focused":false},{"workspace_id":"w1","label":"a","focused":true}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","focused":true},{"workspace_id":"w3","focused":false},{"workspace_id":"w2","focused":false}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","focused":false},{"workspace_id":"w3","focused":false},{"workspace_id":"w2","focused":true}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"juggernaut","focused":true},{"workspace_id":"w2","label":"x"},{"workspace_id":"w3","label":"juggernaut"}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1"},7]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","focused":true}]}}
+{"result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":5},{"workspace_id":"w2","label":null}]}}
+{"result":{"type":"workspace_list","workspaces":null}}
+{"result":"gone"}
+{"result":{"workspaces":[{"workspace_id":"w1","label":"juggernaut"},{"workspace_id":"w2","label":"lead-alpha"}]}}
+{"result":{"workspaces":[{"workspace_id":"w1","label":"juggernaut"},{"workspace_id":"w2","label":"2ndmate-alpha"}]}}
 not json at all
 {"unterminated":
 EOF
 printf '' > "$syn/empty.json"
 printf '\n' > "$syn/newline.json"
 printf 'error: herdr: protocol_mismatch\n' > "$syn/stderr.json"
+# Two documents in one answer, and a truncated one, for the programs that read a whole stream.
+printf '{"result":{"tab":{"tab_id":"w1:t1","workspace_id":"w1"}}}{"result":{"tab":{"tab_id":"w9:t9","workspace_id":"w9"}}}' > "$syn/two-docs.json"
+printf '{"result":{"tab":{"tab_id":"w9:t9","workspace_id":"w9"}}}{"result":{"tab":{"tab_id":"w1:t1","workspace_id":"w1"}}}' > "$syn/two-docs-rev.json"
+printf '{"result":{"tab":{"tab_id":"w1:t1","workspace_id":"w1"}}}{"result":' > "$syn/second-truncated.json"
+
+printf '{"result":{"tabs":[{"tab_id":"w1:t1","label":"jg-a"}]}}' > "$syn/tabs-sole.json"
+printf '{"result":{"tabs":[{"tab_id":"w1:t1","label":"jg-a"},{"tab_id":"w1:t2","label":"jg-b"}]}}' > "$syn/tabs-other.json"
+printf '{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1"}]}}' > "$syn/panes-sole.json"
+printf '{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t2"}]}}' > "$syn/panes-other.json"
+
+# The `jq -e` programs have their own program-level replay beside this one.
+if [ "${REPLAY_ONLY_CHECKS:-}" = 1 ]; then
+  exec bash "$ROOT/core/herdr/replay-checks.sh" "$REC" "$syn" "$CONTROL"
+fi
 
 # The stand-in client: replays a recorded file for the subcommand it is asked, to the caller.
 cat > "$work/driver.sh" <<'DRV'
@@ -124,6 +205,19 @@ exit "${R_RC:-0}"
 SH
 chmod +x "$fake/herdr"
 PATH="$fake:$PATH"
+# A stand-in process table: one idle shell, pid 4242, with no children.
+cat > "$fake/ps" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *"-o stat="*) printf 'Ss\n' ;;
+  *"-o comm="*) printf '%s\n' "${R_PS_COMM:--bash}" ;;
+  *"-o args="*) printf '%s\n' "${R_PS_COMM:--bash}" ;;
+  *"pid=,ppid=,comm="*) printf '4242 1 bash\n' ;;
+  *"pid=,ppid="*) printf '4242 1\n' ;;
+esac
+SH
+chmod +x "$fake/ps"
+export JG_HERDR_PS_BIN=$fake/ps JG_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS=1
 
 # Replays the file named by the slot the subcommand reads.
 jg_backend_herdr_cli() {
@@ -136,6 +230,10 @@ jg_backend_herdr_cli() {
     "pane get") f=${R_PANEGET:-} ;;
     "agent get") f=${R_AGENTGET:-} ;;
     "terminal title") f=${R_TITLE:-} ;;
+    "tab get") f=${R_TABGET:-} ;;
+    "api schema") f=${R_SCHEMA:-} ;;
+    "pane process-info") f=${R_PROCINFO:-} ;;
+    "session list") f=${R_SESSIONS:-} ;;
     "status --json") f=${R_STATUS:-} ;;
   esac
   [ -z "$f" ] || cat "$f"
@@ -195,6 +293,19 @@ for a in "${answers[@]}"; do
     call "socket-path $tag" jg_backend_herdr_socket_path lab-a
     call "bare-selector $tag" jg_backend_herdr_resolve_bare_selector jg-a
     call "version-check $tag" jg_backend_herdr_version_check
+    export R_TABGET=$a R_SCHEMA=$a R_PROCINFO=$a
+    call "session-socket $tag" jg_backend_herdr_presentation_session_socket_path lab-a
+    call "session-socket-b $tag" jg_backend_herdr_presentation_session_socket_path lab-b
+    call "focus-snapshot $tag" jg_backend_herdr_projection_focus_snapshot s
+    call "move-capable $tag" jg_backend_herdr_workspace_move_capable s
+    call "parent-workspace $tag" jg_backend_herdr_projection_parent_workspace_exact s juggernaut
+    call "parent-workspace-lead $tag" jg_backend_herdr_projection_parent_workspace_exact s lead-alpha
+    call "idle-shell $tag" jg_backend_herdr_pane_idle_shell_sample s w1:p1
+    call "process-state $tag" jg_backend_herdr_pane_process_state_sample s w1:p1
+    call "process-state-p2 $tag" jg_backend_herdr_pane_process_state_sample s w1:p2
+    call "focus-restore $tag" jg_backend_herdr_projection_focus_restore s "$(printf 'w1\tw1:t1')" test
+    call "focus-restore-b $tag" jg_backend_herdr_projection_focus_restore s "$(printf 'w2\tw2:t1')" test
+    unset R_TABGET R_SCHEMA R_PROCINFO
   done
 done
 # The recovery scan reads three different answers in one call: the workspace list, the tab list
@@ -206,6 +317,21 @@ for tabs in "$REC/tab-list-w1.json" "$REC/tab-list.json" "$SYN"/*.json; do
     export R_WSLIST=$REC/workspace-list.json R_TABLIST=$tabs R_PANELIST=$panes
     for h in lead primary; do
       JG_HOME=$homes/$h call "list-live-triple ${tabs##*/} ${panes##*/} $h" jg_backend_herdr_list_live s
+    done
+  done
+done
+# The projection binding reads three answers too: the workspace list, the one tab and the one pane.
+export R_RC=0
+for ws in "$REC/workspace-list.json" "$SYN"/*.json; do
+  for tabs in "$SYN/tabs-sole.json" "$SYN/tabs-other.json" "$REC/tab-list-w1.json"; do
+    for panes in "$SYN/panes-sole.json" "$SYN/panes-other.json" "$REC/pane-list-w1.json"; do
+      export R_WSLIST=$ws R_TABLIST=$tabs R_PANELIST=$panes
+      for tuple in "AAAAAAAAAAAAAAAAAAAAAA w3 juggernaut" "BBBBBBBBBBBBBBBBBBBBBB w4 juggernaut" "BBBBBBBBBBBBBBBBBBBBBB w4 lead-alpha" "CCCCCCCCCCCCCCCCCCCCCC w6 juggernaut"; do
+        read -r token wsid owner <<< "$tuple"
+        pws=w1
+        [ "$owner" != lead-alpha ] || pws=w5
+        call "live-binding ${ws##*/} ${tabs##*/} ${panes##*/} $tuple" jg_backend_herdr_projection_live_binding_matches s "$token" "$wsid" w1:t1 w1:p1 "$pws" "$owner" "└ task · p:$token" jg-a
+      done
     done
   done
 done
