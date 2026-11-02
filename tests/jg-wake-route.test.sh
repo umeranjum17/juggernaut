@@ -106,7 +106,7 @@ test_no_model_wakes() (
   pass "pause acks, relaunch notices, re-arms and timers on paused homes settle; a cap bounds them"
 )
 
-# Recorded wakes of the real homes (tests/fixtures/wake-routing-recorded.tsv: the class the
+# Recorded wakes of the real homes (tests/fixtures/wake-routing/recorded.tsv: the class the
 # shared rules give, then kind, key, payload) replayed through the rule file.
 test_recorded_wakes() (
   dir=$(make_case route-recorded)
@@ -117,7 +117,7 @@ test_recorded_wakes() (
       *"needs-decision"*|*"STALLED"*|*"failed"*|*"security"*|*"merge landed with no board"*)
         assert_equals "$got" now "a decision, stall, failure or security wake must stay now: $payload" ;;
     esac
-  done < "$ROOT/tests/fixtures/wake-routing-recorded.tsv"
+  done < "$ROOT/tests/fixtures/wake-routing/recorded.tsv"
   pass "recorded wakes keep the classes the shared rules give, and decisions stay now"
 )
 
