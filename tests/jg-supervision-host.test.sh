@@ -3053,6 +3053,10 @@ test_superseded_host_leaves_the_owner_untouched() {
 
 # CI runs the two halves in separate serial jobs. Run with
 # JG_SUPERVISION_HOST_PART=all for the complete local suite.
+if [ "${JG_SUPERVISION_HOST_PART:-}" = defer ]; then
+  test_settled_captain_outcome_rides_the_next_drain_and_is_bounded
+  exit 0
+fi
 case "${JG_SUPERVISION_HOST_PART:-early}" in
   early|late|all) ;;
   *) fail "unknown supervision-host test part: $JG_SUPERVISION_HOST_PART" ;;
