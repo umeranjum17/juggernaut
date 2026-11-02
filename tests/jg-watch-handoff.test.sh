@@ -100,8 +100,6 @@ test_cleaned_lane() (
   rmdir "$dir/state/lane.inbox"
   append_wake "$dir/state" stale crew:gone 'stale: crew:gone'
   append_wake "$dir/state" signal lane.status "signal: $dir/state/lane.status"
-  # Force both replay timers due, including on a restarted cycle.
-  printf '1\t%s-1\n' "$(date +%s)" > "$dir/state/.own-wake-progress"
   hold_scan "$dir"
   : > "$dir/release"
   for cycle in 1 2; do
@@ -128,7 +126,6 @@ test_live_lane_replays() (
   printf 'crew_live\n' > "$dir/state/.pruned-panes"
   key=lane.status; [ "$kind" != stale ] || key=crew:live
   append_wake "$dir/state" "$kind" "$key" "$kind: $key"
-  printf '1\t%s-1\n' "$(date +%s)" > "$dir/state/.own-wake-progress"
   start_cycle "$dir"
   wait_for_exit "$pid" 150 || fail "live lane alarm did not replay"
   pid=''

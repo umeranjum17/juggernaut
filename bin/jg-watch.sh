@@ -1290,6 +1290,27 @@ jg_host_memory_lib=$SCRIPT_DIR/../core/host-memory/bin/jg-host-memory-lib.sh
 # shellcheck disable=SC1090,SC1091 # The optional feature source is installed outside this repository.
 if [ -f "$jg_host_memory_lib" ]; then . "$jg_host_memory_lib"; fi
 
+# watcher_queue <verb> ...: this home's own wake queue as the bus's consumer folds it, never an
+# open of state/.wake-queue (core/bus/cmd/jg-bus/watcher.go owns the verbs and the view). A
+# degraded view is named once per change in the triage log, so it never repeats every poll.
+watcher_queue() {
+  local out err rc
+  err=$(mktemp "$STATE/.watcher-queue.XXXXXX") || return 1
+  out=$(JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-bus.sh" watcher "$@" 2>"$err")
+  rc=$?
+  if [ -s "$err" ]; then
+    if [ "$(cat "$STATE/.wake-watcher-degraded" 2>/dev/null)" != "$(cat "$err")" ]; then
+      cp "$err" "$STATE/.wake-watcher-degraded" 2>/dev/null || true
+      triage_log "$(tr '\n' ' ' < "$err")"
+    fi
+  else
+    rm -f "$STATE/.wake-watcher-degraded"
+  fi
+  rm -f "$err"
+  printf '%s' "$out"
+  return "$rc"
+}
+
 # Publication and acknowledgement remain the sampler and drain's jobs. A
 # delivered row must not immediately close the successor before it can prove
 # continuity; the own-queue backstop below re-rings an unhandled row later.
@@ -1304,9 +1325,11 @@ host_memory_surface_after_output() {
 
 host_memory_surface_queued() {
   local row reason
-  [ -s "$JG_WAKE_QUEUE" ] || return 0
+  row=$(watcher_queue latest check host-memory) || return 1
+  [ -n "$row" ] || return 0
+  [ "$(printf '%s\n' "$row" | cut -f1,2)" != "$(cat "$STATE/.host-memory-surfaced" 2>/dev/null)" ] || return 0
   jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK" || return 1
-  row=$(awk -F '\t' '$3 == "check" && $4 == "host-memory" { row=$0 } END { if (row != "") print row }' "$JG_WAKE_QUEUE")
+  row=$(watcher_queue latest check host-memory) || { jg_lock_release "$JG_WAKE_QUEUE_LOCK"; return 1; }
   HOST_MEMORY_SURFACED=$(printf '%s\n' "$row" | cut -f1,2)
   if [ -z "$row" ] || [ "$HOST_MEMORY_SURFACED" = "$(cat "$STATE/.host-memory-surfaced" 2>/dev/null)" ]; then
     jg_lock_release "$JG_WAKE_QUEUE_LOCK"
@@ -1323,14 +1346,15 @@ host_memory_surface_queued() {
 # excludes declared external waits, and defers rows a live branch is handling.
 # The ordinary arm owner delivers the reason, never a synthetic keyboard ring.
 own_queue_resurface() {
-  local row epoch seq kind key reason now previous observed_at observed_key row_key idle task file
+  local row epoch seq kind key reason idle task file after=''
   while :; do
-    row=$(squad_lead_oldest_queue_row "$JG_WAKE_QUEUE")
-    if [ -z "$row" ]; then
-      rm -f "$STATE/.own-wake-progress"
-      return 0
+    if [ -n "$after" ]; then
+      row=$(watcher_queue oldest --after "$after") || return 1
+    else
+      row=$(watcher_queue oldest) || return 1
     fi
-    IFS=$'\t' read -r epoch seq kind key reason <<EOF
+    [ -n "$row" ] || return 0
+    IFS=$'\t' read -r epoch seq kind key reason idle <<EOF
 $row
 EOF
     # Cleanup can race a scan's queue append. A removed log is not a new
@@ -1343,6 +1367,7 @@ EOF
           && [ ! -e "$STATE/$task.status" ] && [ ! -L "$STATE/$task.status" ] \
           && [ ! -e "$STATE/$task.inbox" ] && [ ! -L "$STATE/$task.inbox" ]; then
           jg_wake_withdraw signal "$key" || return 1
+          after=$seq
           continue
         fi
         ;;
@@ -1352,26 +1377,16 @@ EOF
         if pruned_panes_seen "$task" && [ ! -e "$STATE/.tracked-$task" ] \
           && ! jg_backend_meta_for_window "$key" "$STATE" >/dev/null 2>&1; then
           jg_wake_withdraw stale "$key" || return 1
+          after=$seq
           continue
         fi
         ;;
     esac
     break
   done
-  row_key="$epoch-$seq"
-  jg_epoch_seconds_to now
-  previous=$(cat "$STATE/.own-wake-progress" 2>/dev/null) || previous=
-  observed_at=${previous%%$'\t'*}
-  observed_key=${previous#*$'\t'}
-  case "$observed_at" in ''|*[!0-9]*) observed_at=$now; observed_key= ;; esac
-  if [ "$observed_key" != "$row_key" ] || [ "$now" -lt "$observed_at" ]; then
-    printf '%s\t%s\n' "$now" "$row_key" > "$STATE/.own-wake-progress" || return 1
-    return 0
-  fi
-  idle=$((now - observed_at))
   [ "$idle" -ge "$SQUAD_LEAD_WAKE_STALL_SECS" ] || return 0
   squad_lead_in_active_turn '' "$idle" "$JG_HOME" "$seq" && return 0
-  printf '%s\t%s\n' "$now" "$row_key" > "$STATE/.own-wake-progress" || return 1
+  watcher_queue resurfaced "$epoch-$seq" >/dev/null || return 1
   case "$kind:$reason" in
     signal:needs-decision:*) reason="signal:${reason#needs-decision:}" ;;
   esac
