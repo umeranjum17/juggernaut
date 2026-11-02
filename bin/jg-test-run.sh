@@ -767,8 +767,8 @@ tests/jg-state-bus-parity.test.sh 6515
 tests/jg-lease-live.test.sh 4439
 tests/jg-bus-service.test.sh 3100
 tests/jg-wake-queue-live.test.sh 2600
-tests/jg-wake-engine.test.sh 45000
 tests/jg-wake-watcher.test.sh 35000
+tests/jg-wake-engine.test.sh 128
 tests/jg-bus-account-isolation.test.sh 4200
 tests/jg-squad-lead-lifecycle-e2e.test.sh 15675
 tests/jg-supervision-host-live-e2e.test.sh 58
