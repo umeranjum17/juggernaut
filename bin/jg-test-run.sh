@@ -704,6 +704,7 @@ tests/jg-compat-old-records.test.sh 2167
 tests/jg-composer-matrix-live-e2e.test.sh 59
 tests/jg-control.test.sh 91759
 tests/jg-cursor-primary-live-e2e.test.sh 57
+tests/jg-dapr-workflow.test.sh 150
 tests/jg-decisions-reconcile.test.sh 3240
 tests/jg-design-gate-first-draft.test.sh 680
 tests/jg-design-gate.test.sh 467
