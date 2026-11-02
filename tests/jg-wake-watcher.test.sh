@@ -123,7 +123,12 @@ printf 'nats-url nats://127.0.0.1:%s\n' "$port" > "$HOME_DIR/config/wake-bus"
 printf 'now * * * *\n' > "$HOME_DIR/config/wake-routing"
 export JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$HOME_DIR/state" JG_DATA_OVERRIDE="$HOME_DIR/data" JG_WAKE_ROUTING="$HOME_DIR/config/wake-routing"
 unset JG_BUS_BIN
-"$ROOT/bin/jg-bus.sh" unit nats > "$DIR/unit.txt" 2>"$DIR/unit.err" || fail "the unit and accounts were not generated: $(cat "$DIR/unit.err")"
+# `unit nats` is not used here: it resolves the machine unit's owner and, from any other home, registers
+# itself with that owner. The accounts file and the config that includes it are written for this lab home only.
+# tests/lib.sh points every bus client at a dead address, so this lab names its own for the wake bus.
+export JG_WAKE_BUS_URL="nats://127.0.0.1:$port"
+"$ROOT/bin/jg-bus.sh" accounts "$HOME_DIR" > "$HOME_DIR/state/bus/accounts.conf" 2>"$DIR/accounts.err" || fail "the accounts file was not generated: $(cat "$DIR/accounts.err")"
+printf 'include "../../config/bus/nats.conf"\ninclude "accounts.conf"\n' > "$HOME_DIR/state/bus/bus.conf"
 ( cd "$HOME_DIR/state/bus" && exec "$SERVER" -c bus.conf > "$DIR/nats.log" 2>&1 ) &
 printf '%s\n' "$!" >> "$JG_TEST_BUS_REGISTRY"
 for _ in $(seq 1 200); do grep -q 'Server is ready' "$DIR/nats.log" 2>/dev/null && break; sleep 0.05; done
