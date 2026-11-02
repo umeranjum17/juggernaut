@@ -130,6 +130,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-gate-refuse-lib.sh`  | Shared gate-context lifecycle boundary for real and lab homes                      |
 | `jg-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
 | `jg-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
+| `jg-watch-core.sh`      | Build and run the watcher's window inventory (`core/watch`): which recorded endpoints a cycle watches, in what order, and the kind, backend and harness each one answers |
 | `jg-watch.sh`            | Singleton-safe watcher: absorb benign wakes, detect stalled local Squad Lead wake queues, hand recorded asks to `core/ask-default`, and exit on actionable ones |
 | `jg-retired-catalog-check.sh` | The gate that keeps the retired bolt-on catalog retired: refuse any new path under the retired directory in a change (`--base <ref>`) and any tracked one outside its named deferred images, and `--self-test` proves the refusal with a fixture file |
 | `jg-committed-binary-check.sh` | The gate that keeps compiled binaries out of the tree: refuse every tracked ELF, Mach-O or PE file with one line naming it, the `Repo invariants` CI job runs it before a merge, and `--self-test` proves the refusal with planted files |

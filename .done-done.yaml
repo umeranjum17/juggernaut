@@ -6,6 +6,8 @@ journeys:
     command: bash journeys/stack-install.sh
   wake-watcher:
     command: bash journeys/wake-watcher.sh
+  watcher-window-inventory:
+    command: bash journeys/watcher-window-inventory.sh
   migration-card:
     command: bash journeys/migration-card.sh
   dapr-workflow:
