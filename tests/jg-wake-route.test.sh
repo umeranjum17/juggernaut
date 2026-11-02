@@ -39,8 +39,8 @@ test_classes() {
   printf 'silent signal *.status working*\nnow * * *\n' > "$home.routing"
   assert_equals "$(JG_WAKE_ROUTING="$home.routing" route "$home" "$state" signal lane.status x)" \
     silent "a home rule must be able to record an event only"
-  assert_equals "$(route "$home" "$state" signal lane.status "signal: x")" now \
-    "a status line still wakes unless a home rule holds it"
+  assert_equals "$(route "$home" "$state" signal lane.status "signal: x")" batch \
+    "a progress line rides the digest unless a home rule settles it"
   pass "the rule file assigns now, batch, and silent"
 }
 
@@ -84,7 +84,7 @@ test_no_model_wakes() (
   cp "$ROOT/defaults/wake-routing" "$dir/config/wake-routing"
   printf 'paused [at=1]: ack\n' | tee "$state/alpha.status" > "$state/beta.status"
   assert_equals "$(route "$dir" "$state" signal alpha.status x)" silent "a paused home's pause acknowledgement is settled"
-  assert_equals "$(route "$dir" "$state" signal beta.status x)" now "a live home's pause still wakes"
+  assert_equals "$(route "$dir" "$state" signal beta.status x)" batch "a live home's pause rides the digest"
   assert_equals "$(route "$dir" "$state" check alpha-wait-owner 'check: waiting-state alpha (x)')" silent "a timer on a paused home is settled"
   assert_equals "$(route "$dir" "$state" check beta-wait-owner 'check: waiting-state beta (x)')" now "a timer on a live home still wakes"
   relaunch='check: squad_lead beta auto-relaunched after dead (pane)'
@@ -94,6 +94,7 @@ test_no_model_wakes() (
   printf '%s\tbeta\n' "$(( $(date +%s) - 9999 ))" > "$state/.squad-lead-restart-pass"
   assert_equals "$(route "$dir" "$state" check squad-lead-relaunch-beta-9 "$relaunch")" now "an old restart pass explains nothing"
   assert_equals "$(route "$dir" "$state" check rearm-resurface 'check: rearm-resurface')" silent "a re-arm with nothing queued is settled"
+  printf 'blocked [at=2]: stuck\n' > "$state/beta.status"
   append_wake "$state" signal beta.status 'signal: x'
   assert_equals "$(route "$dir" "$state" check rearm-resurface 'check: rearm-resurface')" now "a re-arm with an urgent row queued still wakes"
   assert_equals "$(route "$dir" "$state" stale w:1 "stale: w:1 (unread juggernaut instruction: /x/a.inbox/002.msg stays unhandled - busy; no doorbell was typed, and it lands as soon as that clears, so no interrupt is needed unless the worker is wedged)")" silent "a busy-deferred doorbell report is settled"
@@ -105,9 +106,105 @@ test_no_model_wakes() (
   pass "pause acks, relaunch notices, re-arms and timers on paused homes settle; a cap bounds them"
 )
 
+# Recorded wakes of the real homes (tests/fixtures/wake-routing-recorded.tsv: the class the
+# shared rules give, then kind, key, payload) replayed through the rule file.
+test_recorded_wakes() (
+  dir=$(make_case route-recorded)
+  while IFS=$'\t' read -r want kind key payload; do
+    got=$(route "$dir" "$dir/state" "$kind" "$key" "$payload")
+    assert_equals "$got" "$want" "recorded wake $kind $key: $payload"
+    case "$payload" in
+      *"needs-decision"*|*"STALLED"*|*"failed"*|*"security"*|*"merge landed with no board"*)
+        assert_equals "$got" now "a decision, stall, failure or security wake must stay now: $payload" ;;
+    esac
+  done < "$ROOT/tests/fixtures/wake-routing-recorded.tsv"
+  pass "recorded wakes keep the classes the shared rules give, and decisions stay now"
+)
+
+test_heartbeat_and_status_classes() (
+  dir=$(make_case route-heartbeat)
+  state="$dir/state"
+  hb="$state/fleet-heartbeat.check.sh"
+  pre="check: $hb: fleet heartbeat:"
+  assert_equals "$(route "$dir" "$state" check "$hb" "$pre firstmate-addons GAP for 0s - 1 open wait(s) climbing their ladder, 20 paused wait(s)")" silent "a gap that is only open waits settles"
+  assert_equals "$(route "$dir" "$state" check "$hb" "$pre firstmate-addons GAP for 9s - 2 ready, 3 of 4 lanes working, 19 paused wait(s)")" batch "a gap with ready work rides the digest"
+  assert_equals "$(route "$dir" "$state" check "$hb" "$pre firstmate-addons MOVING again")" batch "a recovery asks for nothing"
+  assert_equals "$(route "$dir" "$state" check "$hb" "$pre a STALLED for 9s - work waits but no supervision beat for 999s $pre b GAP for 0s - 1 open wait(s) climbing their ladder")" now "a stall in the same report keeps waking"
+  assert_equals "$(route "$dir" "$state" check "$hb" "$pre lane x is done but still open - land it and close it")" now "a finished lane nobody closed keeps waking"
+  for word in working resolved paused; do
+    printf '%s [at=1]: x\n' "$word" > "$state/$word.status"
+    assert_equals "$(route "$dir" "$state" signal "$word.status" "signal: $word.status")" batch "a $word status line asks for nothing"
+  done
+  for word in needs-decision blocked failed "done"; do
+    printf '%s [at=1]: x\n' "$word" > "$state/$word.status"
+    assert_equals "$(route "$dir" "$state" signal "$word.status" "signal: $word.status")" now "a $word status line keeps waking"
+  done
+  printf 'done [key=child-pr-t] [at=1]: child t PR ready: https://x/pull/1 mode=direct-PR\n' > "$state/lead.status"
+  assert_equals "$(route "$dir" "$state" signal lead.status x)" now "the PR-ready report keeps waking"
+  printf 'done [key=child-outcome-t-done-ab12cd34] [at=1]: child t done: PR https://x/pull/1 at head abc\n' > "$state/lead.status"
+  assert_equals "$(route "$dir" "$state" signal lead.status x)" batch "the ledger copy of a reported PR is a repeat"
+  printf 'done [key=child-outcome-r-done-ab12cd34] [at=1]: child r done: findings in data/r/report.md\n' > "$state/lead.status"
+  assert_equals "$(route "$dir" "$state" signal lead.status x)" now "a Recon's findings keep waking"
+  printf 'done [key=merged-t] [at=1]: merged t https://x/pull/1\n' > "$state/lead.status"
+  assert_equals "$(route "$dir" "$state" signal lead.status x)" batch "a task merge notice asks for nothing"
+  printf 'done [key=release-c3] [at=1]: RELEASE c-3 IS ON MAIN\n' > "$state/lead.status"
+  assert_equals "$(route "$dir" "$state" signal lead.status x)" now "a release keeps waking"
+  assert_equals "$(route "$dir" "$state" check waiting-timer-a-g1-default-owner-again "check: waiting-state a (paused, observed 9s, level=owner; still open, owning lead must recheck and unblock) id=x")" batch "a paused wait at the owning lead rides the digest"
+  assert_equals "$(route "$dir" "$state" check waiting-timer-a-g1-default-owner "check: waiting-state a (blocked key=default, observed 9s, level=owner; owning lead must recheck and unblock) id=x")" now "a blocked wait keeps waking"
+  assert_equals "$(route "$dir" "$state" stale w:1 "stale: w:1 (paused 9s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)")" batch "a declared pause being rechecked rides the digest"
+  assert_equals "$(route "$dir" "$state" stale w:1 "stale: w:1 (paused 9s, awaiting external - the declared clearing time has passed, rechecked on a long cadence not a wedge; confirm the wait cleared)")" now "a pause past its clearing time keeps waking"
+  pass "heartbeat, status-line, lead-channel and wait classes settle repeats and keep decisions waking"
+)
+
+test_restart_and_beacon_classes() (
+  dir=$(make_case route-beacon)
+  state="$dir/state"
+  mkdir -p "$state/.watch.lock"
+  body="Supervision is needed but the watcher beacon is 9m old and no turn is running, so nothing is watching the fleet."
+  assert_equals "$(route "$dir" "$state" check sentinel-beacon-old "$body")" now "an old beacon with no live watcher keeps waking"
+  sleep 20 & pid=$!
+  printf '%s\n' "$pid" > "$state/.watch.lock/pid"
+  printf '%s\n' "$dir" > "$state/.watch.lock/jg-home"
+  printf '%s\n' "$ROOT/bin/jg-watch.sh" > "$state/.watch.lock/watcher-path"
+  JG_HOME="$dir" bash -c '. "$1/bin/jg-wake-lib.sh"; jg_pid_identity "$2"' _ "$ROOT" "$pid" > "$state/.watch.lock/pid-identity"
+  assert_equals "$(route "$dir" "$state" check sentinel-beacon-old "$body")" silent "an old beacon under a live watcher settles"
+  printf '99999999\n' > "$state/.watch.lock/pid"
+  assert_equals "$(route "$dir" "$state" check sentinel-beacon-old "$body")" now "an old beacon whose watcher is gone keeps waking"
+  lead="check: squad_lead beta supervision not running while it has work under way; it was told to re-arm, and the wait escalates until it does"
+  assert_equals "$(route "$dir" "$state" check squad-lead-supervision-beta-1 "$lead")" now "a re-arm nobody caused keeps waking"
+  printf '%s\tbeta\n' "$(date +%s)" > "$state/.squad-lead-restart-pass"
+  assert_equals "$(route "$dir" "$state" check squad-lead-supervision-beta-1 "$lead")" silent "a re-arm after Main's restart pass settles"
+  pass "an old beacon settles only under a live watcher, and a restart-pass re-arm settles"
+)
+
+test_repeat_and_override() (
+  dir=$(make_case route-repeat)
+  state="$dir/state"; mkdir -p "$dir/config"
+  printf 'done [at=1]: PR https://x/pull/1 ready\n' > "$state/t.status"
+  first=$(JG_STATE_OVERRIDE="$state" JG_HOME="$dir" bash -c '. "$1/bin/jg-wake-lib.sh"; jg_wake_append signal t.status "signal: t.status"; printf "%s" "$JG_WAKE_LAST"' _ "$ROOT")
+  second=$(JG_STATE_OVERRIDE="$state" JG_HOME="$dir" bash -c '. "$1/bin/jg-wake-lib.sh"; jg_wake_append signal t.status "signal: t.status"; printf "%s" "$JG_WAKE_LAST"' _ "$ROOT")
+  printf 'done [at=2]: PR https://x/pull/1 ready at a new head\n' > "$state/t.status"
+  third=$(JG_STATE_OVERRIDE="$state" JG_HOME="$dir" bash -c '. "$1/bin/jg-wake-lib.sh"; jg_wake_append signal t.status "signal: t.status"; printf "%s" "$JG_WAKE_LAST"' _ "$ROOT")
+  assert_equals "$first" now:t.status "the first outcome line wakes"
+  assert_equals "$second" batch:t.status "the same outcome line again is a repeat"
+  assert_equals "$third" now:t.status "a new outcome line wakes again"
+  # A home's small file wins for what it names; everything else is the shared file's.
+  printf 'now check *fleet-heartbeat.check.sh *climbing their ladder*\n' > "$dir/config/wake-routing"
+  ladder="check: x/fleet-heartbeat.check.sh: fleet heartbeat: a GAP for 0s - 1 open wait(s) climbing their ladder"
+  assert_equals "$(route "$dir" "$state" check x/fleet-heartbeat.check.sh "$ladder")" now "a home rule wins over the shared file"
+  assert_equals "$(route "$dir" "$state" check x/fleet-heartbeat.check.sh "check: x: fleet heartbeat: a MOVING again")" batch "what the home does not name falls through to the shared file"
+  printf 'set re-alert-minutes 0\n' > "$dir/config/wake-routing"
+  assert_equals "$(JG_HOME="$dir" bash -c '. "$1/bin/jg-wake-lib.sh"; _jg_wake_rule_set re-alert-minutes 30' _ "$ROOT")" 0 "a home value wins over the shared set"
+  pass "a repeated outcome line batches, and a home file layers over the shared file"
+)
+
 result=0
 test_classes || result=1
 test_no_model_wakes || result=1
 test_silent_is_recorded_not_queued || result=1
 test_batch_is_gated_and_urgent_latches || result=1
+test_recorded_wakes || result=1
+test_heartbeat_and_status_classes || result=1
+test_restart_and_beacon_classes || result=1
+test_repeat_and_override || result=1
 exit "$result"

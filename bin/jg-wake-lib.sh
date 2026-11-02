@@ -2456,16 +2456,33 @@ jg_wake_append() {
 }
 
 # --- wake urgency routing -----------------------------------------------------
-# One rule file gives every event a class: `now` wakes at once, `batch` waits for a turn
-# that happens anyway, and `silent` is recorded only. defaults/wake-routing owns the
-# classes, the threshold, and the rationale; a home or JG_WAKE_ROUTING overrides it.
-jg_wake_routing_file() {
-  local file
-  for file in "${JG_WAKE_ROUTING:-}" "${JG_HOME:-$JG_WAKE_DEFAULT_ROOT}/config/wake-routing" \
-    "$JG_WAKE_DEFAULT_ROOT/defaults/wake-routing"; do
-    [ -n "$file" ] && [ -f "$file" ] && { printf '%s\n' "$file"; return 0; }
-  done
+# One shared rule file gives every event a class, in every home: `now` wakes at once,
+# `batch` waits for a turn that happens anyway, and `silent` is recorded only.
+# defaults/wake-routing owns the classes, the threshold, and the rationale. A home's small
+# config/wake-routing is read first, so its rules and `set` values win and everything it
+# does not name falls through to the shared file; JG_WAKE_ROUTING replaces both.
+jg_wake_routing_files() {
+  local file home
+  if [ -n "${JG_WAKE_ROUTING:-}" ]; then
+    [ ! -f "$JG_WAKE_ROUTING" ] || printf '%s\n' "$JG_WAKE_ROUTING"
+    return 0
+  fi
+  home="${JG_HOME:-$JG_WAKE_DEFAULT_ROOT}/config/wake-routing"
+  file="$JG_WAKE_DEFAULT_ROOT/defaults/wake-routing"
+  [ ! -f "$home" ] || [ "$home" -ef "$file" ] || printf '%s\n' "$home"
+  [ ! -f "$file" ] || printf '%s\n' "$file"
   return 0
+}
+
+# jg_wake_routing_file: the first file in force (the one a report names).
+jg_wake_routing_file() {
+  jg_wake_routing_files | head -n 1
+}
+
+# _jg_wake_rules: every rule line in priority order, so the first match wins across files.
+_jg_wake_rules() {
+  local file
+  while IFS= read -r file; do cat -- "$file" 2>/dev/null; printf '\n'; done < <(jg_wake_routing_files)
 }
 
 # jg_wake_route_class <kind> <key> <payload>: now, batch, or silent. First rule wins
@@ -2473,9 +2490,9 @@ jg_wake_routing_file() {
 # status-file event is matched against its newest line so a rule can name the state
 # word; an unreadable log falls back to the recorded payload.
 jg_wake_route_class() {
-  local kind=$1 key=$2 payload=$3 file class rkind rkey rpay line
-  file=$(jg_wake_routing_file)
-  [ -n "$file" ] || { printf 'now\n'; return 0; }
+  local kind=$1 key=$2 payload=$3 rules class rkind rkey rpay line
+  rules=$(_jg_wake_rules)
+  [ -n "$rules" ] || { printf 'now\n'; return 0; }
   case "$key" in
     *.status) [ ! -f "$STATE/$key" ] || [ -L "$STATE/$key" ] || {
       line=$(tail -n 1 -- "$STATE/$key" 2>/dev/null) && [ -n "$line" ] && payload=$line
@@ -2494,26 +2511,28 @@ jg_wake_route_class() {
     esac
     printf '%s\n' "$class"
     return 0
-  done < "$file"
+  done <<< "$rules"
   printf 'now\n'
 }
 
-# _jg_wake_rule_set <name> <default>: a `set <name> <value>` number from the rule file.
+# _jg_wake_rule_set <name> <default>: a `set <name> <value>` number from the rule files;
+# the first file that sets it wins, so a home's value overrides the shared one.
 _jg_wake_rule_set() {
-  local file tag name value rest out=$2
-  file=$(jg_wake_routing_file)
-  [ -n "$file" ] || { printf '%s\n' "$out"; return 0; }
+  local tag name value rest
   while read -r tag name value rest; do
     [ "$tag:$name" = "set:$1" ] || continue
     case "$value" in ''|*[!0-9]*) continue ;; esac
-    out=$value
-  done < "$file"
-  printf '%s\n' "$out"
+    printf '%s\n' "$value"
+    return 0
+  done < <(_jg_wake_rules)
+  printf '%s\n' "$2"
 }
 
 # _jg_wake_cond <condition> <key> <payload>: the fact a `class@condition` rule names:
 # parked (a lane of a parked home), restart-pass (a lead the restart pass just restarted,
-# stamped in state/.squad-lead-restart-pass), queue-quiet (no queued row routes to `now`).
+# stamped in state/.squad-lead-restart-pass), queue-quiet (no queued row routes to `now`),
+# watcher-alive (a live watcher holds this home's watcher lock, so an old beacon is its
+# predecessor's and nothing is left unwatched).
 _jg_wake_cond() {
   local cond=$1 key=$2 payload=$3 word prev='' secs now stamp id row_kind row_key row_pay
   case "$cond" in
@@ -2539,6 +2558,10 @@ _jg_wake_cond() {
         fi
       done
       return 1 ;;
+    watcher-alive)
+      word=$(cat "$STATE/.watch.lock/pid" 2>/dev/null || true)
+      jg_pid_alive "$word" && jg_watcher_lock_matches_pid "$STATE" "$JG_WAKE_LIB_DIR/jg-watch.sh" "$word" "${JG_HOME:-}"
+      return ;;
     queue-quiet)
       [ -s "${JG_WAKE_QUEUE:-}" ] || return 0
       while IFS=$'\t' read -r _ _ row_kind row_key row_pay _; do
@@ -2567,16 +2590,8 @@ _jg_wake_silence_charge() {
 # _jg_wake_realert_record <kind> <key> <payload>: remember a delivered event for the
 # rule file's re-alert-minutes only, so the same unchanged event cannot wake again.
 _jg_wake_realert_record() {
-  local kind=$1 key=$2 payload=$3 rules="$STATE/.wake-realert" tmp cutoff window=30
-  local tag name value rest file
-  file=$(jg_wake_routing_file)
-  if [ -n "$file" ]; then
-    while read -r tag name value rest; do
-      [ "$tag:$name" = set:re-alert-minutes ] || continue
-      case "$value" in ''|*[!0-9]*) continue ;; esac
-      window=$value
-    done < "$file"
-  fi
+  local kind=$1 key=$2 payload=$3 rules="$STATE/.wake-realert" tmp cutoff window
+  window=$(_jg_wake_rule_set re-alert-minutes 30)
   [ "$window" -gt 0 ] || return 0
   jg_epoch_seconds_to cutoff
   cutoff=$((cutoff - window * 60))
@@ -2593,6 +2608,26 @@ _jg_wake_settled_locked() {
   jg_wake_bus settle "$1" "$2" "$3"
 }
 
+# jg_wake_settle <kind> <key> <payload>: record an event that a caller settled itself
+# after jg_wake_route_class answered something other than `now`, so it is counted
+# with the rest (bin/jg-wake.sh settled) instead of vanishing from the tally.
+jg_wake_settle() {
+  _jg_wake_settled_locked "$1" "$(printf '%s' "$2" | jg_wake_clean_field)" "$(printf '%s' "$3" | jg_wake_clean_field)"
+}
+
+# _jg_wake_identity <key> <payload>: what makes an event the same event again. A status
+# row's payload lists files only, so its identity is the newest status line: the same
+# line delivered twice is one fact. Any other event is its payload.
+_jg_wake_identity() {
+  local line
+  case "$1" in
+    *.status) [ ! -f "$STATE/$1" ] || [ -L "$STATE/$1" ] || {
+      line=$(tail -n 1 -- "$STATE/$1" 2>/dev/null | jg_wake_clean_field) && [ -n "$line" ] && { printf '%s\n' "$line"; return 0; }
+    } ;;
+  esac
+  printf '%s\n' "$2"
+}
+
 # jg_wake_append_locked <kind> <key> <payload>
 # Locked core of jg_wake_append: records one event under an already-held
 # JG_WAKE_QUEUE_LOCK. Callers that must commit another durable record atomically with
@@ -2604,7 +2639,7 @@ _jg_wake_settled_locked() {
 # JG_WAKE_CYCLE_URGENT latches once any row this cycle was `now`.
 # shellcheck disable=SC2034 # JG_WAKE_LAST and JG_WAKE_CYCLE_URGENT are read by wake() in the separately linted transition owner.
 jg_wake_append_locked() {
-  local kind=$1 key=$2 payload=$3 clean_key clean_payload class status=0
+  local kind=$1 key=$2 payload=$3 clean_key clean_payload class ident status=0
   case "$kind" in
     signal|stale|check|heartbeat) ;;
     *) printf 'jg_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
@@ -2613,16 +2648,15 @@ jg_wake_append_locked() {
   clean_key=$(printf '%s' "$key" | jg_wake_clean_field)
   clean_payload=$(printf '%s' "$payload" | jg_wake_clean_field)
   class=$(jg_wake_route_class "$kind" "$clean_key" "$clean_payload")
-  # A status-file row records only the file list, so two different status events look
-  # identical: re-alert dedupe applies where the payload is the event itself.
-  case "$clean_key" in
-    *.status) ;;
-    *) if [ "$class" = now ] && [ -s "$STATE/.wake-realert" ] \
-      && grep -qF -- "$(printf '\t%s\t%s\t%s' "$kind" "$clean_key" "$clean_payload")" \
-        "$STATE/.wake-realert" 2>/dev/null; then
-      class='batch'
-    fi ;;
-  esac
+  # The same event delivered again inside the re-alert window is one fact: it rides the
+  # digest. A status row's identity is its newest line (a payload of file names says
+  # nothing), so a repeated outcome line never wakes twice while a new line always does.
+  ident=$(_jg_wake_identity "$clean_key" "$clean_payload")
+  if [ "$class" = now ] && [ -s "$STATE/.wake-realert" ] \
+    && grep -qF -- "$(printf '\t%s\t%s\t%s' "$kind" "$clean_key" "$ident")" \
+      "$STATE/.wake-realert" 2>/dev/null; then
+    class='batch'
+  fi
   if [ "$class" = silent ] && ! _jg_wake_silence_charge; then class='batch'; fi
   if [ "$class" = silent ]; then
     _jg_wake_settled_locked "$kind" "$clean_key" "$clean_payload" || true
@@ -2640,7 +2674,7 @@ jg_wake_append_locked() {
   JG_WAKE_LAST="$class:$clean_key"
   if [ "$class" = now ]; then
     JG_WAKE_CYCLE_URGENT=1
-    _jg_wake_realert_record "$kind" "$clean_key" "$clean_payload" || true
+    _jg_wake_realert_record "$kind" "$clean_key" "$ident" || true
   fi
   # #fleet: the same event, in plain words, on the fleet chat channel. This is
   # the call site that already records the wake, so the channel needs no scan of

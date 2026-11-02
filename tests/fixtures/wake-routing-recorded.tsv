@@ -1,0 +1,85 @@
+now	check	contributions.check.sh	check: contributions.check.sh: contributions: observation unavailable for https://github.com/umeranjum17/takeone/pull/280
+silent	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 0s - 1 open wait(s) climbing their ladder, 20 paused wait(s)
+batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 0s - 1 ready, 2 of 6 lanes working, 18 paused wait(s)
+batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 0s - 1 ready, 5 of 6 lanes working, 17 paused wait(s)
+batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 0s - 2 ready, 3 of 4 lanes working, 19 paused wait(s)
+silent	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 1040s - 1 open wait(s) climbing their ladder, 16 paused wait(s)
+batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 1979s - 1 ready, 1 of 6 lanes working, 19 paused wait(s)
+batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 3099s - 1 ready, 1 of 6 lanes working, 20 paused wait(s)
+silent	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 608s - 2 open wait(s) climbing their ladder, 20 paused wait(s)
+silent	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 612s - 1 open wait(s) climbing their ladder, 19 paused wait(s)
+batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 789s - 1 ready, 4 of 6 lanes working, 18 paused wait(s)
+batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons MOVING again
+batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: overwatch PAUSED again fleet heartbeat: takeone PAUSED again fleet heartbeat: sign-off PAUSED again fleet heartbeat: firstmate-addons MOVING again
+silent	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: sign-off GAP for 2873s - 1 open wait(s) climbing their ladder
+now	check	fleet-pulse.check.sh	check: fleet-pulse.check.sh: fleet-pulse 2h (landings = merged PRs; open target 4, ! = over, UNDER = free slots with ready work; rule words 8602): crewhouse:landed0/open1(w0 done0 asks>2h0 dry=1) writ
+now	check	fleet-pulse.check.sh	check: fleet-pulse.check.sh: fleet-retro due: last report report.md; spawn the next strong-model fleet retro scout (captain-shared A5)
+now	check	key-in-env-check.check.sh	check: key-in-env-check.check.sh: key-in-env: 2272 process(es) in 11 home(s) carry a provider API key in their environment (names only): pid 1095 firstmate-cff959/4 captain-ask-go-port-the-wake-lib-an
+now	check	migration-watch.check.sh	check: migration-watch.check.sh: migration-watch: lane port-shell-core-part1-classify-wake has no status change for 129 min - inspect and unblock
+now	check	migration-watch.check.sh	check: migration-watch.check.sh: migration-watch: lane port-shell-core-part1-classify-wake has no status change for 44 min - inspect and unblock
+now	check	migration-watch.check.sh	check: migration-watch.check.sh: migration-watch: no live migration lane on release/c-2 or a feature branch - check whether steps are dispatched or the version branch is ready to merge
+now	check	squad-lead-relaunch-failed-crewhouse-N	check: squad_lead crewhouse auto-relaunch failed after confirmed agent absence on existing endpoint: error: another spawn is already creating task crewhouse
+now	check	squad-lead-supervision-firstmate-addons-N	check: squad_lead firstmate-addons supervision not running while it has work under way; it was told to re-arm, and the wait escalates until it does
+now	check	startup-network	check: startup-network: deferred startup network checks finished (done); read them with jg-startup-network.sh report
+now	check	waiting-timer-439a0feb-blocker-a-doorbell-for-an-operational-in-b7-gN-quota-owner	check: waiting-state blocker-a-doorbell-for-an-operational-in-b7 (quota, observed 134s, level=owner; owning lead must recheck and unblock) id=waiting-timer-439a0feb-blocker-a-doorbell-for-an-operation
+now	check	waiting-timer-439a0feb-blocker-a-doorbell-for-an-operational-in-b7-gN-quota-owner	check: waiting-state blocker-a-doorbell-for-an-operational-in-b7 (quota, observed 435s, level=owner; owning lead must recheck and unblock) id=waiting-timer-439a0feb-blocker-a-doorbell-for-an-operation
+now	check	waiting-timer-439a0feb-captain-ask-go-port-the-wake-lib-and-the-dd-gN-default-owner-again	check: waiting-state captain-ask-go-port-the-wake-lib-and-the-dd (blocked key=default, observed 1363s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-captain-
+now	check	waiting-timer-439a0feb-captain-ask-go-port-the-wake-lib-and-the-dd-gN-default-owner	check: waiting-state captain-ask-go-port-the-wake-lib-and-the-dd (blocked key=default, observed 221s, level=owner; owning lead must recheck and unblock) id=waiting-timer-439a0feb-captain-ask-go-port-t
+batch	check	waiting-timer-439a0feb-ci-macos-job-never-starts-blocks-prs-gN-default-owner-again	check: waiting-state ci-macos-job-never-starts-blocks-prs (paused, observed 44588s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-ci-macos-job-never-starts-b
+batch	check	waiting-timer-439a0feb-ci-macos-job-never-starts-blocks-prs-gN-default-owner-again	check: waiting-state ci-macos-job-never-starts-blocks-prs (paused, observed 59105s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-ci-macos-job-never-starts-b
+batch	check	waiting-timer-439a0feb-every-board-input-wakes-its-owner-and-sh-2a-gN-default-owner-again	check: waiting-state every-board-input-wakes-its-owner-and-sh-2a (paused, observed 44588s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-every-board-input-wa
+batch	check	waiting-timer-439a0feb-every-board-input-wakes-its-owner-and-sh-2a-gN-default-owner-again	check: waiting-state every-board-input-wakes-its-owner-and-sh-2a (paused, observed 59105s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-every-board-input-wa
+batch	check	waiting-timer-439a0feb-holds-and-blocks-clear-themselves-date-g-5c-gN-default-owner-again	check: waiting-state holds-and-blocks-clear-themselves-date-g-5c (paused, observed 44588s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-holds-and-blocks-cle
+batch	check	waiting-timer-439a0feb-holds-and-blocks-clear-themselves-date-g-5c-gN-default-owner-again	check: waiting-state holds-and-blocks-clear-themselves-date-g-5c (paused, observed 59105s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-holds-and-blocks-cle
+batch	check	waiting-timer-439a0feb-juggernaut-behaviour-evals-gN-default-owner-again	check: waiting-state juggernaut-behaviour-evals (paused, observed 44588s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-juggernaut-behaviour-evals-gN-default
+batch	check	waiting-timer-439a0feb-juggernaut-behaviour-evals-gN-default-owner-again	check: waiting-state juggernaut-behaviour-evals (paused, observed 59105s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-juggernaut-behaviour-evals-gN-default
+batch	check	waiting-timer-439a0feb-juggernaut-test-ci-rules-gN-default-owner-again	check: waiting-state juggernaut-test-ci-rules (paused, observed 44588s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-juggernaut-test-ci-rules-gN-default sou
+batch	check	waiting-timer-439a0feb-juggernaut-test-ci-rules-gN-default-owner-again	check: waiting-state juggernaut-test-ci-rules (paused, observed 59105s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-juggernaut-test-ci-rules-gN-default sou
+batch	check	waiting-timer-439a0feb-radio-silence-animation-awesome-proper-o-f5-gN-default-owner-again	check: waiting-state radio-silence-animation-awesome-proper-o-f5 (paused, observed 43882s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-radio-silence-animat
+batch	check	waiting-timer-439a0feb-radio-silence-animation-awesome-proper-o-f5-gN-default-owner-again	check: waiting-state radio-silence-animation-awesome-proper-o-f5 (paused, observed 44588s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-radio-silence-animat
+batch	check	waiting-timer-439a0feb-radio-silence-animation-awesome-proper-o-f5-gN-default-owner-again	check: waiting-state radio-silence-animation-awesome-proper-o-f5 (paused, observed 59105s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-radio-silence-animat
+batch	check	waiting-timer-439a0feb-rename-sweep-a-sessions-gN-default-owner-again	check: waiting-state rename-sweep-a-sessions (paused, observed 44091s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-rename-sweep-a-sessions-gN-default sourc
+batch	check	waiting-timer-439a0feb-rename-sweep-a-sessions-gN-default-owner-again	check: waiting-state rename-sweep-a-sessions (paused, observed 44588s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-rename-sweep-a-sessions-gN-default sourc
+batch	check	waiting-timer-439a0feb-rename-sweep-a-sessions-gN-default-owner-again	check: waiting-state rename-sweep-a-sessions (paused, observed 59105s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-rename-sweep-a-sessions-gN-default sourc
+batch	check	waiting-timer-439a0feb-tickets-sync-raise-missing-asked-card-gN-default-owner-again	check: waiting-state tickets-sync-raise-missing-asked-card (paused, observed 44091s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-tickets-sync-raise-missing
+batch	check	waiting-timer-439a0feb-tickets-sync-raise-missing-asked-card-gN-default-owner-again	check: waiting-state tickets-sync-raise-missing-asked-card (paused, observed 44588s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-tickets-sync-raise-missing
+batch	check	waiting-timer-439a0feb-tickets-sync-raise-missing-asked-card-gN-default-owner-again	check: waiting-state tickets-sync-raise-missing-asked-card (paused, observed 59105s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-tickets-sync-raise-missing
+batch	check	waiting-timer-439a0feb-turn-end-guard-flags-the-captain-s-own-q-00-gN-default-owner-again	check: waiting-state turn-end-guard-flags-the-captain-s-own-q-00 (paused, observed 44339s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-turn-end-guard-flags
+batch	check	waiting-timer-439a0feb-turn-end-guard-flags-the-captain-s-own-q-00-gN-default-owner-again	check: waiting-state turn-end-guard-flags-the-captain-s-own-q-00 (paused, observed 44588s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-turn-end-guard-flags
+batch	check	waiting-timer-439a0feb-turn-end-guard-flags-the-captain-s-own-q-00-gN-default-owner-again	check: waiting-state turn-end-guard-flags-the-captain-s-own-q-00 (paused, observed 59105s, level=owner; still open, owning lead must recheck and unblock) id=waiting-timer-439a0feb-turn-end-guard-flags
+now	check	waiting-timer-8a88d6fd-firstmate-addons-gN-bus-unit-writer-escalation	check: waiting-state firstmate-addons (needs-decision key=bus-unit-writer, observed 3441s, level=main; Main must unblock it now) id=waiting-timer-8a88d6fd-firstmate-addons-gN-bus-unit-writer source=[n
+now	check	waiting-timer-8a88d6fd-firstmate-addons-gN-bus-unit-writer-owner	check: waiting-state firstmate-addons (needs-decision key=park-stale-lanes, observed 660s, level=owner; Main must recheck and unblock) id=waiting-timer-8a88d6fd-firstmate-addons-gN-bus-unit-writer sou
+now	check	waiting-timer-8a88d6fd-firstmate-addons-gN-s08-dependency-owner	check: waiting-state firstmate-addons (needs-decision key=s08-dependency, observed 449s, level=owner; Main must recheck and unblock) id=waiting-timer-8a88d6fd-firstmate-addons-gN-s08-dependency source
+now	check	waiting-timer-9d008e40-takeone-gN-ready-backlog-stall	check: ready backlog stalled: work-the-ready-queue-now-dispatch-every-0b t1-aud-a06 jg-watcher-beacon-churn t1-aud-a49 t1-aud-a69 t1-aud-a70 t1-aud-a74 t1-aud-a75 t1-aud-a77 t1-aud-a78 t1-aud-a83 t1-a
+now	stale	default:w2Y8:pA9	stale: default:w2Y8:pA9 (paused 158041s, awaiting external - the declared clearing time has passed, rechecked on a long cadence not a wedge; confirm the wait cleared)
+now	stale	default:w2Y8:pAX	stale: default:w2Y8:pAX (paused 129771s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)
+now	stale	default:w2Y8:pB4	stale: default:w2Y8:pB4 (paused 129738s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)
+now	stale	default:w2Y8:pB5	stale: default:w2Y8:pB5 (paused 129700s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)
+batch	stale	default:w2YB:pGA	stale: default:w2YB:pGA (paused 117217s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+batch	stale	default:w2YB:pGC	stale: default:w2YB:pGC (paused 132127s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+batch	stale	default:w2YB:pGD	stale: default:w2YB:pGD (paused 116860s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+now	stale	default:w2YB:pJ0	stale: default:w2YB:pJ0
+batch	stale	default:w2YB:pJR	stale: default:w2YB:pJR (paused 16854s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+now	stale	default:w2YB:pK0	stale: default:w2YB:pK0
+now	stale	default:w2YB:pK7	stale: default:w2YB:pK7
+batch	stale	default:w2YB:pK7	stale: default:w2YB:pK7 (paused 16576s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+batch	stale	default:w2YB:pK8	stale: default:w2YB:pK8 (paused 17653s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+now	stale	default:w2YB:pK9	stale: default:w2YB:pK9
+now	stale	default:w2YB:pKA	stale: default:w2YB:pKA
+now	stale	default:w2YB:pKH	stale: default:w2YB:pKH
+now	stale	default:w2YB:pKJ	stale: default:w2YB:pKJ
+now	stale	default:w2YB:pKM	stale: default:w2YB:pKM
+now	stale	default:w2YB:pKN	stale: default:w2YB:pKN
+now	stale	default:w2YB:pKP	stale: default:w2YB:pKP
+now	stale	default:w2YB:pKP	stale: default:w2YB:pKP (herdr: agent blocked - waiting on human, escalated immediately, not via wedge timer)
+now	stale	default:w2YB:pKQ	stale: default:w2YB:pKQ
+now	stale	default:w2YB:pKR	stale: default:w2YB:pKR
+now	stale	default:w2YB:pKS	stale: default:w2YB:pKS
+now	stale	default:w2YB:pKT	stale: default:w2YB:pKT
+now	stale	default:w2YB:pKV	stale: default:w2YB:pKV
+now	stale	default:w2YB:pKX	stale: default:w2YB:pKX
+now	stale	default:w2YB:pKY	stale: default:w2YB:pKY
+now	stale	default:w2YB:pKZ	stale: default:w2YB:pKZ
+now	stale	default:w2YB:pM1	stale: default:w2YB:pM1
+now	stale	default:w2YB:pM6	stale: default:w2YB:pM6 (herdr: agent blocked - waiting on human, escalated immediately, not via wedge timer)
+batch	stale	default:w2YR:p5	stale: default:w2YR:p5 (paused 216556s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
