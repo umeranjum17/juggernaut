@@ -23,14 +23,9 @@ KEY_FILE=${OLLAMA_API_KEY_FILE:-$HOME/.config/ollama-cloud/api_key}
 MARK=$STATE/.route-probe.last
 CADENCE=${JG_ROUTE_PROBE_SECONDS:-180}
 
-# The pi provider names that differ from quota-axi's: it calls openai-codex "codex" and kimi-coding "kimi".
-quota_provider() {
-  case $1 in
-  openai-codex | codex) echo codex ;;
-  kimi-coding) echo kimi ;;
-  *) echo "$1" ;;
-  esac
-}
+# The pi provider names that differ from quota-axi's are the route chain lib's one mapping, shared with every
+# other reader of a route's room.
+quota_provider() { jg_route_quota_provider "$1"; }
 
 quota_json() {
   command -v jq >/dev/null 2>&1 || return 1
