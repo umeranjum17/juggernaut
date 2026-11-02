@@ -3,6 +3,7 @@
 # doorbell is dropped, never delivered, when the record it names is gone.
 # Drives the real text submit against a real tmux pane (private socket) whose
 # process is `cat`, so what the pane's program received is the delivery proof.
+# shellcheck disable=SC2154 # ring and record are assigned through printf -v
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -45,7 +46,7 @@ start_reader() {  # <out-file>
   sleep 0.3
 }
 
-# A fresh record and the doorbell naming it.
+# A fresh record and the doorbell naming it; the callers read both through printf -v.
 new_ring() {  # <state-dir> <doorbell-var> <record-var>
   local doorbell named
   jg_operational_record_write "$1" watcher "wake body" doorbell || fail "could not write a record"
