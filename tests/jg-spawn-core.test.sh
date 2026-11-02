@@ -54,6 +54,89 @@ check "dropping below the standing posture is announced" "$(notices --standing-m
 check "a conditional policy raises no notice" "$(notices --standing-mode no-mistakes-prod-only --standing-branch fm/)" ""
 check "a registered prefix the branch lacks is announced" "$(notices --standing-mode '' --standing-branch x/ | head_is "notice: t1 ships branch=fm/t1 while proj registers the ship-bra")" "notice: t1 ships branch=fm/t1 while proj registers the ship-bra"
 
+# The argument grammar: the dispatcher prints the parsed variables for the spawn to eval, or the
+# refusal that stops it. These keep the shapes the intake replay (core/spawn/README.md) found interesting.
+intake() { "$core" intake "$@" 2>&1; }
+var() { sed -n "s/^$1=//p" | head -1; }
+check "a ship request is parsed into the spawn's variables" "$(intake t1 proj --mode direct-PR --yolo off --harness=claude | var MODE)|$(intake t1 proj --mode direct-PR --yolo off --harness=claude | var HARNESS_ARG)|$(intake t1 proj --mode direct-PR --yolo off | var POS)" "'direct-PR'|'claude'|('t1' 'proj')"
+check "a value flag followed by another flag is refused" "$(intake --model --mode x)" "error: --model requires a value"
+check "a flag with no value at the end is refused" "$(intake t1 --backend)" "error: --backend requires a value"
+check "an empty value is refused by name" "$(intake t1 --effort=)" "error: --effort requires a non-empty value"
+check "an unknown effort is refused" "$(intake t1 --effort turbo)" "error: --effort must be one of low, medium, high, xhigh, max, ultra"
+check "the last repeat of a flag wins" "$(intake t1 p --mode local-only --yolo off --mode direct-PR | var MODE)" "'direct-PR'"
+check "a traceparent is accepted only on a squad_lead" "$(intake t1 --traceparent 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01 | head -1)" "error: --traceparent applies only to --squad-lead spawns; every other spawn resolves its own carrier from this home's frozen trace-context decision"
+check "an all-zero traceparent is refused" "$(intake --squad-lead t1 --traceparent 00-00000000000000000000000000000000-b7ad6b7169203331-01)" "error: --traceparent is not a valid W3C traceparent"
+check "a ship without a mode is held for the spawn to refuse after the account check" "$(intake t1 proj | var INTAKE_REFUSAL | head_is "'error: ship spawns require --mode")" "'error: ship spawns require --mode"
+check "no-mistakes-prod-only is not a task mode" "$(intake t1 proj --mode no-mistakes-prod-only --yolo off | var INTAKE_REFUSAL | head_is "'error: no-mistakes-prod-only is a registry policy")" "'error: no-mistakes-prod-only is a registry policy"
+check "an upstream consent is folded to lower case" "$(intake t1 proj --mode direct-PR --yolo off --upstream-consent GitHub.com/O/R | var UPSTREAM_CONSENT)" "'github.com/o/r'"
+check "an upstream consent with a dot-dot is refused" "$(intake t1 proj --mode direct-PR --yolo off --upstream-consent a/../c | var INTAKE_REFUSAL)" "'error: --upstream-consent must be <host>/<owner>/<repo> (got '\\''a/../c'\\'')'"
+check "a relaunch may not restate the recorded mode" "$(intake --relaunch t1 --mode direct-PR | var INTAKE_REFUSAL)" "'error: --relaunch reuses the task'\\''s recorded delivery mode; --mode cannot override it'"
+check "a scout may not carry a mode" "$(intake --scout t1 proj --mode direct-PR | var INTAKE_REFUSAL | head_is "'error: --mode applies only to ship spawns")" "'error: --mode applies only to ship spawns"
+check "a squad_lead may not carry a base branch, a scout may" "$(intake --squad-lead t1 --base-branch x | var INTAKE_REFUSAL | head_is "'error: --base-branch applies only")|$(intake --scout t1 proj --base-branch x | var INTAKE_REFUSAL)" "'error: --base-branch applies only|''"
+check "a quote in a positional survives the round trip" "$(eval "$("$core" intake "it's here" proj)"; printf %s "${POS[0]}")" "it's here"
+
+# The launch builders: the grants and settings that depend only on the task's own directories, the
+# home's identity, the model and the launch-env allow-list.
+mkdir -p "$lab/b/state" "$lab/b/data" "$lab/b/code/.agents/skills"
+b=$(cd "$lab/b" && pwd -P)
+check "rovo gets one override with the effort and exactly the task's three paths" "$("$core" rovo-override high "$lab/b/data" "$lab/b/state" t1)" "--config-override '{\"agent\":{\"efficiencyLevel\":\"high\"},\"toolPermissions\":{\"allowedExternalPaths\":[\"$b/data/t1\",\"$b/state/t1.inbox\",\"$b/state/t1.status\"]}}' "
+check "rovo omits an effort it cannot take" "$("$core" rovo-override ultra "$lab/b/data" "$lab/b/state" t1 | grep -c efficiencyLevel)" 0
+check "rovo with a data directory that does not exist stops" "$(rc "$core" rovo-override high "$lab/b/none" "$lab/b/state" t1)" 1
+check "claude is granted this task's channel directories and they are made" "$("$core" claude-add-dirs ship "$lab/b/state" "$lab/b/data" "$lab/b/code" t1)|$(test -d "$b/state/t1.inbox/handled" && test -d "$b/data/t1" && echo made)" "--add-dir '$b/state/operational-inbox' --add-dir '$b/state/t1.inbox' --add-dir '$b/data/t1' --add-dir '$b/code/.agents/skills' |made"
+check "a squad_lead is granted its steering inbox and the parent's pending replies" "$("$core" claude-add-dirs squad_lead "$lab/b/state" "$lab/b/data" "$lab/b/code" t2)" "--add-dir '$b/state/t2.inbox' --add-dir '$b/state/pending-replies' "
+check "a code root with no skills directory stops the claude grant" "$(rc "$core" claude-add-dirs ship "$lab/b/state" "$lab/b/data" "$lab/b" t1)" 1
+mkdir -p "$lab/b/lead"
+"$core" opencode-lead-grant "$lab/b/lead" "$lab/b/state" t3 "$lab/b/code"
+check "an opencode squad_lead's grant allows its channels and denies edits to the parent's tooling" "$(grep -o '"edit":{.*' "$lab/b/lead/.opencode/opencode.json")" '"edit":{"*/code/bin/**":"deny","*/code/docs/**":"deny","*/code/.agents/skills/**":"deny"}}}'
+tok=$("$core" launch-home-token "$lab/b")
+check "the home token is a sha-256 of the physical path" "${#tok}" 64
+check "opencode on the console provider and with no model keeps the shared store" "$("$core" opencode-db "$tok" t1 opencode/gpt-5)$("$core" opencode-db "$tok" t1 '')$("$core" opencode-db "$tok" t1 default)" ""
+check "opencode on another provider takes its own store named by home and task" "$("$core" opencode-db "$tok" t1 openai/gpt-5)" "OPENCODE_DB='juggernaut-${tok:0:12}-t1.db' "
+mkdir -p "$lab/xdg/opencode"
+check "opencode on a Go model without a key in auth.json keeps the shared store" "$(XDG_DATA_HOME=$lab/xdg "$core" opencode-db "$tok" t1 opencode-go/glm-5)" ""
+printf '{"opencode-go":{"type":"api"}}\n' > "$lab/xdg/opencode/auth.json"
+check "opencode on a Go model with a key in auth.json takes its own store" "$(XDG_DATA_HOME=$lab/xdg "$core" opencode-db "$tok" t1 opencode-go/glm-5)" "OPENCODE_DB='juggernaut-${tok:0:12}-t1.db' "
+printf '# keys\n\nFOO\nBAR_2\n' > "$lab/allow"
+check "the launch-env allow-list yields its names and skips blanks and comments" "$("$core" launch-env-names "$lab/allow" | tr '\n' ' ')" "FOO BAR_2 "
+printf 'FOO\nA-B\n' > "$lab/bad-allow"
+check "an allow-list with a bad name is refused with 1" "$(rc "$core" launch-env-names "$lab/bad-allow")" 1
+check "the strip walks the pane's own exported names, not the spawner's" "$("$core" launch-env-strip '' | grep -c 'env | sed -n')" 1
+check "the strip names no credential name the spawning process happens to hold" "$(JG_T_API_KEY=x "$core" launch-env-strip '' | grep -c JG_T_API_KEY)" 0
+check "an allow-listed credential is the one name the strip carries" "$("$core" launch-env-strip $'JG_U_API_KEY\n' | grep -cF 'JG_U_API_KEY) ;;')" 1
+check "a filtered launch forwards names by reference and ends in the quoted launch" "$(printf %s "it's" | "$core" launch-env-wrap FOO 1 | sed 's/.* COMPACT_ADVISER_DISABLE=1//')" " \${TRACEPARENT+\"TRACEPARENT=\$TRACEPARENT\"} /bin/sh -c 'it'\\''s'"
+
+# The launch templates: the verified command per adapter, with its placeholders, by kind.
+check "a claude ship worker is launched with the dialog tool off and the worker statement" "$("$core" launch-template claude ship | grep -o -e '--disallowedTools=AskUserQuestion' -e 'You are a task worker launched by Juggernaut' | wc -l)" 2
+check "a claude squad_lead gets neither" "$("$core" launch-template claude squad_lead | grep -c -e AskUserQuestion -e 'task worker')" 0
+check "a codex worker disables hooks and a codex squad_lead keeps them" "$("$core" launch-template codex scout | grep -c -e '--disable hooks')|$("$core" launch-template codex squad_lead | grep -c -e '--disable hooks')" "1|0"
+check "an opencode worker denies the question tool and a squad_lead keeps it" "$("$core" launch-template opencode ship | grep -cF 'question":"deny')|$("$core" launch-template opencode squad_lead | grep -cF 'question":"deny')" "1|0"
+check "pi and pi-signed share one template" "$("$core" launch-template pi ship)" "$("$core" launch-template pi-signed ship)"
+check "a name that is not a verified adapter prints nothing and exits 1" "$("$core" launch-template bogus ship)|$(rc "$core" launch-template bogus ship)" "|1"
+check "no kind means a ship" "$("$core" launch-template grok)" "$("$core" launch-template grok ship)"
+
+# The checks a spawn makes before it creates anything: a squad_lead's home, and a worker's worktree.
+mkdir -p "$lab/h/active/state" "$lab/h/repo/bin" "$lab/h/lead/bin" "$lab/h/lead/data" "$lab/h/lead/state" "$lab/h/lead/config" "$lab/h/lead/projects"
+printf 'lead1\n' > "$lab/h/lead/.jg-squad-lead-home"; : > "$lab/h/lead/AGENTS.md"
+hv() { "$core" home-validate "$1" "$2" "$lab/h/active" "$lab/h/repo" .jg-squad-lead-home 2>&1; }
+hp=$(cd "$lab/h" && pwd -P)
+check "a seeded squad_lead home passes and prints its physical path" "$(hv lead1 "$lab/h/lead")" "$hp/lead"
+check "a home marked for another squad_lead is refused by name" "$(hv lead2 "$lab/h/lead")" "error: juggernaut home $lab/h/lead is marked for squad_lead lead1, expected lead2"
+check "the active home cannot be a squad_lead's home" "$(hv lead1 "$lab/h/active")" "error: squad_lead home cannot be the active juggernaut home: $lab/h/active"
+check "a directory inside the repository cannot be a squad_lead's home" "$(mkdir -p "$lab/h/repo/in"; hv lead1 "$lab/h/repo/in")" "error: squad_lead home cannot be inside the juggernaut repo: $lab/h/repo/in"
+check "a home that does not exist is refused" "$(hv lead1 "$lab/h/none")" "error: juggernaut home does not exist or is not a directory: $lab/h/none"
+check "a working directory that resolves outside the home is refused" "$(rm -rf "$lab/h/lead/data"; mkdir -p "$lab/h/elsewhere"; ln -s "$lab/h/elsewhere" "$lab/h/lead/data"; hv lead1 "$lab/h/lead")" "error: squad_lead data directory must resolve inside the squad_lead home: $lab/h/lead/data"
+rm -f "$lab/h/lead/data"; mkdir "$lab/h/lead/data"
+check "a home with no AGENTS.md is not a juggernaut home" "$(rm "$lab/h/lead/AGENTS.md"; hv lead1 "$lab/h/lead")" "error: $lab/h/lead is not a juggernaut home (missing AGENTS.md)"
+git_lab=$lab/g; mkdir -p "$git_lab"
+git -C "$git_lab" init -q P && git -C "$git_lab/P" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i && git -C "$git_lab/P" worktree add -q ../W && mkdir -p "$git_lab/W/sub" "$git_lab/plain"
+gp=$(cd "$git_lab" && pwd -P)
+iso() { "$core" worktree-isolated "$1" "$gp/P" "$gp/P"; echo "rc=$?"; }
+check "a linked worktree of the project is isolated" "$(iso "$git_lab/W" | tail -1)" "rc=0"
+check "the spawning project itself is refused by name" "$(iso "$git_lab/P" | grep REASON)" "SPAWN_WT_REASON='it is the spawning project itself'"
+check "a subdirectory of a worktree is not a worktree root" "$(iso "$git_lab/W/sub" | grep -c "subdirectory of worktree root .*$gp/W.*not a worktree root")" 1
+check "a directory in no repository is refused" "$(iso "$git_lab/plain" | grep REASON)" "SPAWN_WT_REASON='it is not inside a git worktree'"
+check "a path that is not a directory is refused" "$(iso "$git_lab/none" | grep REASON)" "SPAWN_WT_REASON='it is not a readable directory'"
+
 # A home whose bin/ is a symlink to a checkout (the session-start suite's fake root, a relocated home)
 # builds from the checkout the link points into, not from a core/ the link's parent lacks.
 mkdir -p "$lab/linked/root"

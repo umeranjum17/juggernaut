@@ -88,6 +88,10 @@
 //	         (the default) runs the server itself and creates the stream after it
 //	         starts; wake-engine, wake-watcher and router run this command's own consumers; dapr and
 //	         ntfy run their binary in the foreground.
+//	registry The machine's member homes live in one list, the owner's state/bus/homes.
+//	         A home that joins appends one line; a temp or worktree test home never
+//	         joins a real machine's list, and a test or a lab names its own list with
+//	         JG_BUS_HOMES so its fixture homes are recorded there instead.
 //	deliver  The CAPTAIN stream's consumer, and the one path that delivers a captain-bound
 //	         event the bus accepted to ntfy: a durable pull consumer (captain-ntfy) reads
 //	         each message, posts it to the captain's topic, and writes the delivery to
@@ -122,7 +126,7 @@
 //	jg-bus wake-watcher | watcher oldest|resurfaced|latest|rows|replay|rebuild   (watcher.go owns these)
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
-// JG_CAPTAIN_CHANNEL.
+// JG_CAPTAIN_CHANNEL, JG_BUS_HOMES (the machine member list, for a test or a lab).
 package main
 
 import (

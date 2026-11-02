@@ -24,7 +24,7 @@ This feature parents no SDK span by itself.
 
 Because the injected carrier and the recorded carrier are the same string, an observer that reads the metadata reconstructs exactly the identity the child received.
 The injection sits at the unconditional pre-launch export site, so it covers ship and Recon spawns across `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, `gemini`, `muse`, `rovo`, `agy`, and `devin`, plus Squad Lead spawns across that same set except the deliberately operator-only `gemini`, `muse`, `rovo`, `agy`, and `devin` adapters.
-This is the same coverage `GOTMPDIR` already has and requires no trace-specific `launch_template()` behavior.
+This is the same coverage `GOTMPDIR` already has and requires no trace-specific launch template behavior.
 Ship and Recon spawns reach that site on every spawn backend (`tmux`, `herdr`, `zellij`, `orca`, `cmux`); a Squad Lead reaches it on every backend that accepts a Squad Lead spawn (`tmux`, `herdr`, `zellij`), because `bin/jg-spawn.sh` rejects a Squad Lead on `orca` and `cmux`.
 
 ### Remote Squad Lead routes

@@ -75,14 +75,53 @@ func (a *app) ownerApp(o unitOwner) *app {
 	return &b
 }
 
+// registryFile is the machine's list of member homes: one "<resolved home>\t<state
+// directory>" line per home that joined. JG_BUS_HOMES names another file, which is how a
+// test or a lab keeps its registrations out of a real machine's list.
+func registryFile(runtime string) string {
+	if file := os.Getenv("JG_BUS_HOMES"); file != "" {
+		return file
+	}
+	return filepath.Join(runtime, "homes")
+}
+
+// labHome is THE decision on whether a home may enter a machine's real registry: a
+// throw-away home - one under a system temp root, or inside the checkout running this
+// command - is a test fixture, never a member. It names the root that matched.
+func labHome(home, root string) (string, bool) {
+	for _, temp := range []string{os.TempDir(), "/tmp", "/var/tmp", "/dev/shm"} {
+		if temp != "" && withinHome(home, temp) {
+			return resolveHome(temp), true
+		}
+	}
+	if root != "" && withinHome(home, root) {
+		return resolveHome(root), true
+	}
+	return "", false
+}
+
+// withinHome reports whether path is root itself or below it, both resolved first.
+func withinHome(path, root string) bool {
+	p, r := resolveHome(path), resolveHome(root)
+	return p == r || strings.HasPrefix(p, r+string(filepath.Separator))
+}
+
 // registerHome records this home and its state directory in the owner's list of
-// machine homes, once, so the owner's accounts file carries it from then on.
+// machine homes, once, so the owner's accounts file carries it from then on. A lab home
+// with no JG_BUS_HOMES is refused: 452 temp and worktree fixture homes had reached a real
+// machine's list, because every suite's join landed in the owner's own registry.
 func (a *app) registerHome(owner *app) error {
-	if err := os.MkdirAll(owner.runtime, 0o755); err != nil {
+	home := resolveHome(a.home)
+	if os.Getenv("JG_BUS_HOMES") == "" {
+		if root, lab := labHome(home, a.root); lab {
+			return fmt.Errorf("%s is a temporary or test home under %s, so it is never added to the machine registry owned by %s; set JG_BUS_HOMES to a file of its own to register it there", home, root, owner.home)
+		}
+	}
+	file := registryFile(owner.runtime)
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
 	}
-	file := filepath.Join(owner.runtime, "homes")
-	line := resolveHome(a.home) + "\t" + a.state
+	line := home + "\t" + a.state
 	for _, l := range strings.Split(readFileString(file), "\n") {
 		if l == line {
 			return nil
@@ -100,7 +139,7 @@ func (a *app) registerHome(owner *app) error {
 // registeredStates reads the machine's list of registered homes: resolved home -> state.
 func (a *app) registeredStates() map[string]string {
 	out := map[string]string{}
-	for _, l := range strings.Split(readFileString(filepath.Join(a.runtime, "homes")), "\n") {
+	for _, l := range strings.Split(readFileString(registryFile(a.runtime)), "\n") {
 		if home, state, ok := strings.Cut(l, "\t"); ok && home != "" && state != "" {
 			out[home] = state
 		}

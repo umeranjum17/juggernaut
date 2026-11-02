@@ -7,7 +7,7 @@
 // worker or the sidecar loses none of them.
 //
 //	jg-escalation-worker serve                                    run the worker (needs the sidecar)
-//	jg-escalation-worker start <class> <task> <key>               schedule an episode; the key is its id
+//	jg-escalation-worker start <class> <task> <key> [payload]   schedule an episode; the key is its id, the payload feeds the priority rules
 //	jg-escalation-worker clear <key>                              the owner cleared the wait
 //	jg-escalation-worker status <key>                             runtime status and the rungs fired
 //
@@ -50,13 +50,23 @@ type Episode struct {
 	Key         string `json:"key"`
 	Rungs       []Rung `json:"rungs"`
 	RealertSecs int    `json:"realertSecs"`
-	MaxRealerts int    `json:"maxRealerts"`
+	// The behaviours of the rule file, resolved at start: re-alerts back off by BackoffFactor up
+	// to BackoffCap and stop at Horizon; Payload feeds the priority rules; Fingerprint is the state
+	// the wait was raised about.
+	BackoffFactor int    `json:"backoffFactor"`
+	BackoffCap    int    `json:"backoffCap"`
+	Horizon       int    `json:"horizon"`
+	Payload       string `json:"payload"`
+	Fingerprint   string `json:"fingerprint"`
 }
 
-// Result is the workflow's output: whether the owner cleared it and every rung that fired.
+// Result is the workflow's output: whether the owner cleared it, whether its state changed under
+// it (auto-resolve), the rungs that woke someone and the rungs held back or dropped.
 type Result struct {
-	Cleared bool     `json:"cleared"`
-	Fired   []string `json:"fired"`
+	Cleared  bool     `json:"cleared"`
+	Resolved bool     `json:"resolved"`
+	Fired    []string `json:"fired"`
+	Held     []string `json:"held"`
 }
 
 const (
@@ -73,7 +83,10 @@ func Escalation(ctx *workflow.WorkflowContext) (any, error) {
 	}
 	start := ctx.CurrentTimeUTC()
 	cleared := ctx.WaitForExternalEvent("cleared", -1)
-	res := Result{Fired: []string{}}
+	res := Result{Fired: []string{}, Held: []string{}}
+
+	// publish shows the rungs that woke someone, then those held back, in the runtime status.
+	publish := func() { ctx.SetCustomStatus(strings.Join(res.Fired, ",") + " held=" + strings.Join(res.Held, ",")) }
 
 	// at runs <name> at start+secs, or reports the owner cleared the wait first.
 	at := func(name, actor string, secs int) (bool, error) {
@@ -88,13 +101,49 @@ func Escalation(ctx *workflow.WorkflowContext) (any, error) {
 			}
 		}
 		retry := &workflow.RetryPolicy{MaxAttempts: 3, InitialRetryInterval: time.Second, BackoffCoefficient: 2, MaxRetryInterval: 10 * time.Second}
+		var v Verdict
+		if err := ctx.CallActivity(Admit, workflow.WithActivityInput(Admission{Rung: name, Task: in.Task, Key: in.Key, Payload: in.Payload, Fingerprint: in.Fingerprint})).Await(&v); err != nil {
+			return false, fmt.Errorf("admit %s: %w", name, err)
+		}
+		switch v.Action {
+		case "resolve": // the state the wait was raised about changed: close it and withdraw its wakes
+			res.Resolved = true
+			_ = ctx.CallActivity(Deliver, workflow.WithActivityInput(Delivery{Rung: "withdraw", Task: in.Task, Key: in.Key, Class: in.Class})).Await(nil)
+			return true, nil
+		case "drop":
+			res.Held = append(res.Held, name+":silent")
+			publish()
+			return false, nil
+		case "defer": // coalesce: wait out the group's window, then one digest covers every held row
+			res.Held = append(res.Held, name+":"+v.Group)
+			publish()
+			if v.WaitSecs > 0 {
+				timer := ctx.CreateTimer(time.Duration(v.WaitSecs)*time.Second, workflow.WithTimerName("flush-"+v.Group))
+				idx, err := ctx.Select(timer, cleared)
+				if err != nil {
+					return false, err
+				}
+				if idx == 1 {
+					return true, cleared.Await(nil)
+				}
+			}
+			var line string
+			if err := ctx.CallActivity(Flush, workflow.WithActivityInput(v.Group), workflow.WithActivityRetryPolicy(retry)).Await(&line); err != nil {
+				return false, fmt.Errorf("flush %s: %w", v.Group, err)
+			}
+			if line != "" {
+				res.Fired = append(res.Fired, "digest-"+v.Group)
+				publish()
+			}
+			return false, nil
+		}
 		err := ctx.CallActivity(Deliver, workflow.WithActivityInput(Delivery{Rung: name, Actor: actor, Task: in.Task, Key: in.Key, Class: in.Class}),
 			workflow.WithActivityRetryPolicy(retry)).Await(nil)
 		if err != nil {
 			return false, fmt.Errorf("deliver %s: %w", name, err)
 		}
 		res.Fired = append(res.Fired, name)
-		ctx.SetCustomStatus(strings.Join(res.Fired, ","))
+		publish()
 		return false, nil
 	}
 
@@ -102,16 +151,23 @@ func Escalation(ctx *workflow.WorkflowContext) (any, error) {
 	for _, r := range in.Rungs {
 		done, err := at(r.Rung, r.Actor, r.Secs)
 		if err != nil || done {
-			res.Cleared = done
+			res.Cleared = done && !res.Resolved
 			return res, err
 		}
 		last = r.Secs
 	}
-	for i := 1; i <= in.MaxRealerts && in.RealertSecs > 0; i++ {
-		done, err := at(fmt.Sprintf("re-alert-%d", i), "", last+i*in.RealertSecs)
-		if err != nil || done {
-			res.Cleared = done
+	// Re-alerts back off: each interval is the last times the factor, up to the cap, until the
+	// episode's horizon. Without the rule file the factor is 1 and the cadence is flat.
+	gap := in.RealertSecs
+	for i := 1; gap > 0 && last+gap <= in.Horizon; i++ {
+		last += gap
+		done, err := at(fmt.Sprintf("re-alert-%d", i), "", last)
+		if err != nil || done || res.Resolved {
+			res.Cleared = done && !res.Resolved
 			return res, err
+		}
+		if gap *= max(in.BackoffFactor, 1); in.BackoffCap > 0 && gap > in.BackoffCap {
+			gap = max(in.BackoffCap, in.RealertSecs)
 		}
 	}
 	return res, nil
@@ -133,18 +189,24 @@ func Deliver(ctx workflow.ActivityContext) (any, error) {
 	if err := ctx.GetInput(&d); err != nil {
 		return nil, err
 	}
+	return runDeliver(ctx.Context(), d.Rung, d.Task, d.Key, d.Class, d.Actor)
+}
+
+// runDeliver runs the delivery command for one rung (or the digest, or the withdraw of a resolved
+// episode's wakes).
+func runDeliver(parent context.Context, rung, task, key, class, actor string) (any, error) {
 	cmdPath := os.Getenv("JG_WORKFLOW_DELIVER")
 	if cmdPath == "" {
 		return nil, errors.New("JG_WORKFLOW_DELIVER is not set: no command to deliver the rung with")
 	}
 	// A delivery that hangs would hold the rung forever; the retry policy needs it to fail.
-	runCtx, cancel := context.WithTimeout(ctx.Context(), deliverTimeout)
+	runCtx, cancel := context.WithTimeout(parent, deliverTimeout)
 	defer cancel()
 	words := strings.Fields(cmdPath)
-	argv := append(words[1:], d.Rung, d.Task, d.Key, d.Class, d.Actor)
+	argv := append(words[1:], rung, task, key, class, actor)
 	out, err := exec.CommandContext(runCtx, words[0], argv...).CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w: %s", cmdPath, d.Rung, err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("%s %s: %w: %s", cmdPath, rung, err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -166,12 +228,12 @@ type definition struct {
 	} `json:"spec"`
 }
 
-// maxRealerts bounds how long an episode lives when nobody clears it: a day of re-alerts at the
-// ten-minute cadence is already more than the owner chain needs, and the episode ends cleanly.
-const maxRealerts = 144
+// defaultHorizon bounds how long an episode lives when nobody clears it: a day is already more
+// than the owner chain needs, and the episode ends cleanly. The rule file may set its own.
+const defaultHorizon = 86400
 
 // episode resolves the ladder for <class> from the definition, with each timer's override.
-func episode(class, task, key string) (Episode, error) {
+func episode(class, task, key, payload string) (Episode, error) {
 	path := os.Getenv("JG_ESCALATION_WORKFLOW")
 	if path == "" {
 		return Episode{}, errors.New("JG_ESCALATION_WORKFLOW is not set: no definition to read the ladder from")
@@ -205,7 +267,17 @@ func episode(class, task, key string) (Episode, error) {
 		}
 		return n, nil
 	}
-	ep := Episode{Class: class, Task: task, Key: key, MaxRealerts: maxRealerts}
+	ep := Episode{Class: class, Task: task, Key: key, Payload: payload, Horizon: defaultHorizon}
+	r, err := loadRules()
+	if err != nil {
+		return Episode{}, err
+	}
+	if r != nil {
+		ep.BackoffFactor, ep.BackoffCap, ep.Fingerprint = r.Spec.Backoff.Factor, r.Spec.Backoff.CapSeconds, r.fingerprint(task)
+		if h := r.Spec.Workflow.HorizonSeconds; h > 0 {
+			ep.Horizon = h
+		}
+	}
 	for _, r := range ladder.Rungs {
 		n, err := secs(r.Timer)
 		if err != nil {
@@ -239,8 +311,10 @@ func run(args []string) error {
 		if err := reg.AddWorkflowN(workflowName, Escalation); err != nil {
 			return err
 		}
-		if err := reg.AddActivity(Deliver); err != nil {
-			return err
+		for _, act := range []workflow.Activity{Deliver, Admit, Flush} {
+			if err := reg.AddActivity(act); err != nil {
+				return err
+			}
 		}
 		if err := client.StartWorker(ctx, reg); err != nil {
 			return fmt.Errorf("worker did not start: %w", err)
@@ -249,10 +323,10 @@ func run(args []string) error {
 		<-ctx.Done()
 		return nil
 	case "start":
-		if len(args) != 4 {
-			return errors.New("usage: jg-escalation-worker start <class> <task> <key>")
+		if len(args) != 4 && len(args) != 5 {
+			return errors.New("usage: jg-escalation-worker start <class> <task> <key> [payload]")
 		}
-		ep, err := episode(args[1], args[2], args[3])
+		ep, err := episode(args[1], args[2], args[3], strings.Join(args[4:], " "))
 		if err != nil {
 			return err
 		}

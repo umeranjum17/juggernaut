@@ -97,7 +97,14 @@ for name in claude codex cursor opencode; do
   chmod +x "$stub/$name"
 done
 
-printf 'state=%s\ncommand=%s\n' "$work/pool" "$stub/pool-cmd" >"$work/account-pool"
+# The fixture names its own three-route chain (Sol, Goat, Cursor), so this test proves the wrapper's failover and not
+# which order the shipped chain happens to carry.
+{
+  printf 'state=%s\ncommand=%s\n' "$work/pool" "$stub/pool-cmd"
+  printf 'route={"id":"route:openai-codex/gpt-6.1-sol","provider":"codex","harness":"codex","model":"openai-codex/gpt-6.1-sol","billing":"plan"}\n'
+  printf 'route={"id":"route:deepseek/deepseek-goat","provider":"deepseek","harness":"opencode","model":"deepseek/deepseek-goat","billing":"plan"}\n'
+  printf 'route={"id":"route:cursor/auto","provider":"cursor","harness":"cursor","model":"auto","billing":"plan"}\n'
+} >"$work/account-pool"
 cat >"$work/registry.json" <<R
 {"version":1,"accounts":[
  {"id":"pa_umer_a","provider":"claude","name":"Umer A","folder":"$work/a"},

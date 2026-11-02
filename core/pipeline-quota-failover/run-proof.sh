@@ -76,7 +76,7 @@ for exit_file in "$evidence"/*.exit; do
   [ "$(cat "$exit_file")" = 0 ] || fail=1
 done
 cat >"$evidence/steps.json" <<'JSON'
-{"target":{"version":"pipeline-quota-failover jg-model-pool route"},"start":"stub pi and quota-axi, real jg-model-pool, fixture Umer A/B; no login copy, no network","steps":["forced-limit A=70% over B=40% then next yields B","all Claude under floor falls over Sol then Goat then Cursor auto","switch.sh backup and PONG probe"],"result":"wrapper takes route from jg-model-pool; never default-login Claude fallback"}
+{"target":{"version":"pipeline-quota-failover jg-model-pool route"},"start":"stub pi and quota-axi, real jg-model-pool, fixture Umer A/B; no login copy, no network","steps":["forced-limit A=70% over B=40% then next yields B","all Claude under floor falls over to the fixture route chain (Sol, Goat, Cursor auto)","switch.sh backup and PONG probe"],"result":"wrapper takes route from jg-model-pool; never default-login Claude fallback"}
 JSON
 if [ "$fail" != 0 ]; then
   echo "run-proof: a capture failed; see $evidence" >&2

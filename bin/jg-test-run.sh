@@ -2520,6 +2520,12 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   unset JG_HOME JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_ROOT_OVERRIDE \
     JG_PROJECTS_OVERRIDE JG_CONFIG_OVERRIDE JG_BACKEND \
     JG_PUBLIC_FOLLOWUP_PRIMARY_HOME 2>/dev/null || true
+  # A script never records its fixture homes in a real machine's bus registry: the
+  # owner home's state/bus/homes must stay byte for byte as Main left it, so each script
+  # names a registry file of its own under this run's temp tree.
+  local JG_BUS_HOMES
+  JG_BUS_HOMES="$RUN_TMP/bus-homes.$$"
+  export JG_BUS_HOMES
   set +e
   if [ "$stream" -eq 1 ]; then
     if [ "$bound" -gt 0 ]; then

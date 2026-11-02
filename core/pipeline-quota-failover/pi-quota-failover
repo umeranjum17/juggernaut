@@ -35,6 +35,7 @@
 #                              exists; empty turns it off): route and account come from jg-model-pool pick/next (Claude
 #                              above the eligibility floor, else Sol then Goat then Cursor auto); a limit calls next
 #   PI_QUOTA_FAILOVER_MODEL_POOL  absolute path to jg-model-pool (default: sibling account-pool/bin/jg-model-pool)
+#   PI_QUOTA_FAILOVER_HARD     non-empty: this call is a hard step, so the chain may also use its hard-only routes (Sol)
 #   PI_QUOTA_FAILOVER_PRINT_CHAIN  non-empty: print the chain and exit (route-change reads it)
 #   PI_QUOTA_FAILOVER_LOG      log file (default ~/.local/state/pi-quota-failover.log)
 #   PI_QUOTA_FAILOVER_GATE     host-memory gate run before each call (default ~/juggernaut/config/jg-mem-gate.sh
@@ -154,7 +155,8 @@ credit_empty() {
 # Folder paths and unset names only; never credentials. Without a pool file the static chain runs as before.
 pool_file=${PI_QUOTA_FAILOVER_ACCOUNT_POOL-$HOME/juggernaut/config/account-pool}
 pool_helper=${PI_QUOTA_FAILOVER_MODEL_POOL:-}
-pool_sel='' pool_id='' pool_model='' pool_attempted='[]' pool_mode=0
+pool_sel='' pool_id='' pool_model='' pool_attempted='[]' pool_mode=0 pool_hard=false
+[ -z "${PI_QUOTA_FAILOVER_HARD:-}" ] || pool_hard=true
 if [ -z "$pool_helper" ]; then
   for cand in \
     "$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/account-pool/bin/jg-model-pool" \
@@ -195,7 +197,7 @@ pool_apply() {
 }
 pool_pick() {
   local req out
-  req=$(jq -nc --arg p "$pool_file" '{v:1,purpose:"work",pool_config:$p,capabilities:["text"],attempted:[]}')
+  req=$(jq -nc --arg p "$pool_file" --argjson hard "$pool_hard" '{v:1,purpose:"work",pool_config:$p,capabilities:["text"],hard:$hard,attempted:[]}')
   out=$(printf '%s' "$req" | timeout 120 "$pool_helper" pick --json 2>/dev/null) || out=''
   if ! jq -e '.ok == true' <<<"$out" >/dev/null 2>&1; then
     detail="jg-model-pool pick refused: $(jq -r '.reason // "no answer"' <<<"${out:-}" 2>/dev/null)"
@@ -210,8 +212,8 @@ pool_next() {
   id=$(jq -r '.selection_id // .id // empty' <<<"$pool_sel")
   [ -n "$id" ] || return 1
   pool_attempted=$(jq -c --arg id "$id" '. + [$id]' <<<"$pool_attempted")
-  req=$(jq -nc --arg p "$pool_file" --argjson s "$pool_sel" --argjson a "$pool_attempted" --arg c "$cause" \
-    '{v:1,purpose:"work",pool_config:$p,capabilities:["text"],selection:$s,cause:$c,attempted:$a}')
+  req=$(jq -nc --arg p "$pool_file" --argjson s "$pool_sel" --argjson a "$pool_attempted" --arg c "$cause" --argjson hard "$pool_hard" \
+    '{v:1,purpose:"work",pool_config:$p,capabilities:["text"],hard:$hard,selection:$s,cause:$c,attempted:$a}')
   out=$(printf '%s' "$req" | timeout 120 "$pool_helper" next --json 2>/dev/null) || out=''
   if ! jq -e '.ok == true' <<<"$out" >/dev/null 2>&1; then
     detail="jg-model-pool next refused: $(jq -r '.reason // "no answer"' <<<"${out:-}" 2>/dev/null)"

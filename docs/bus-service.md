@@ -91,6 +91,12 @@ in the owner's `accounts.conf` and asks the running server to reload (SIGHUP, th
 `bus.conf`, and it says who the owner is. Before this rule every home's session start
 pointed the machine's unit at its own config and locked every other home out.
 
+The owner keeps the machine's member list in `state/bus/homes`, one line per home that
+joined, and the accounts are written from it. A home under a temp root, or inside the
+checkout running the command, is a test fixture and is refused instead of added, naming
+the way out: a test or a lab names its own list with `JG_BUS_HOMES`, so fixture homes are
+recorded there and a real machine's list stays byte for byte as it is.
+
 The JetStream caps in `bus.conf` are the per-account reservation times the accounts in
 `accounts.conf` plus one account of headroom, rounded up to a step of eight reservations.
 The rounding is what lets a reload add accounts, because a reload cannot change the caps.
