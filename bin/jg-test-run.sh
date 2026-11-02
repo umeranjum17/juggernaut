@@ -52,6 +52,13 @@
 #                   after selection, and name each one on stderr. The pull request
 #                   fast set uses it so a slow suite runs in the post-merge lane
 #                   instead of holding the merge.
+#   --shard <k>of<n>
+#                   keep only shard k of n of the selection, after the exclusions and
+#                   the weight cap, so one pull request selection can run on n runners
+#                   at once. Scripts are packed longest-hint-first onto the lightest
+#                   shard (ties take the lowest index), so the n shards are disjoint,
+#                   together are the whole selection, and every runner computes the same
+#                   split. A shard that gets nothing runs nothing and passes.
 #   --fail-on-gate-skip <token>
 #                   after each script, fail the run if any output line contains
 #                   "skip: <token>" (e.g. --fail-on-gate-skip 'herdr not found').
@@ -236,6 +243,7 @@ JSON_PATH=
 SCRIPTS=()
 EXCLUDE_FAMILIES=()
 MAX_WEIGHT_MS=
+SHARD=
 FAIL_ON_GATE_SKIP=
 JOBS=1
 JOBS_EXPLICIT=0
@@ -1750,6 +1758,43 @@ apply_max_weight() {
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
 }
 
+# apply_shard keeps shard k of n of the selection (--shard <k>of<n>): the
+# scripts are packed longest-hint-first onto the lightest of n bins, a tie taking
+# the lowest bin, and this shard keeps its bin. The packing depends only on the
+# selection and the hints, so every runner of a matrix computes the same split.
+apply_shard() {
+  local index count s ms i best best_load
+  local -a kept=() loads=()
+  [ -n "$SHARD" ] || return 0
+  index=${SHARD%%of*}
+  count=${SHARD#*of}
+  i=1
+  while [ "$i" -le "$count" ]; do
+    loads[i]=0
+    i=$((i + 1))
+  done
+  while IFS=$'\t' read -r ms s; do
+    [ -n "$s" ] || continue
+    best=1
+    best_load=${loads[1]}
+    i=2
+    while [ "$i" -le "$count" ]; do
+      if [ "${loads[i]}" -lt "$best_load" ]; then
+        best_load=${loads[i]}
+        best=$i
+      fi
+      i=$((i + 1))
+    done
+    loads[best]=$((best_load + ms))
+    [ "$best" -ne "$index" ] || kept+=("$s")
+  done < <(
+    for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+      printf '%s\t%s\n' "$(portable_serial_weight_for "$s")" "$s"
+    done | LC_ALL=C sort -t"$(printf '\t')" -k1,1nr -k2,2
+  )
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
 write_json_artifact() {
   local out=$1
   local started=$2
@@ -1984,6 +2029,16 @@ while [ "$#" -gt 0 ]; do
       MAX_WEIGHT_MS=$2
       shift 2
       ;;
+    --shard)
+      [ "$#" -gt 1 ] || die "--shard requires <k>of<n>"
+      case "$2" in
+        [1-9]of[1-9]|[1-9]of[1-9][0-9]|[1-9][0-9]of[1-9][0-9]) ;;
+        *) die "--shard requires <k>of<n>, for example 2of3 (got '$2')" ;;
+      esac
+      [ "${2%%of*}" -le "${2#*of}" ] || die "--shard index is outside 1..${2#*of}: $2"
+      SHARD=$2
+      shift 2
+      ;;
     --fail-on-gate-skip)
       [ "$#" -gt 1 ] || die "--fail-on-gate-skip requires a token (e.g. 'herdr not found')"
       FAIL_ON_GATE_SKIP=$2
@@ -2132,6 +2187,10 @@ esac
 
 apply_exclude_families
 apply_max_weight
+apply_shard
+if [ -n "$SHARD" ]; then
+  SELECTION_DESC="${SELECTION_DESC};shard=$SHARD"
+fi
 if [ "${#EXCLUDE_FAMILIES[@]}" -gt 0 ]; then
   SELECTION_DESC="${SELECTION_DESC};exclude-family=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")"
 fi
