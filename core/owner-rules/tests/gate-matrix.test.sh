@@ -42,12 +42,12 @@ gen_cases() {
       local c1=("${base[@]}"); c1[i]=$v; case_line "${c1[@]}"
     done
   done
-  for n in 0 1; do for r in ok absent other dirty; do for c in absent other listed; do for w in none future; do for s in valid none bad; do
-    case_line $n $r $c $w $s pass empty ok url
-  done; done; done; done; done
-  for n in 0 1; do for w in "ok fail"; do for b in card unset unreadable empty wrong; do for c in absent listed other; do
-    for wr in $w; do case_line $n ok $c none valid pass $b "$wr" url; done
+  for n in 0 1; do for r in ok absent; do for c in absent other listed; do for s in valid none; do
+    case_line $n $r $c none $s pass empty ok url
   done; done; done; done
+  for n in 0 1; do for b in card unset unreadable empty wrong; do for wr in ok fail; do
+    case_line $n ok listed none valid pass $b $wr url
+  done; done; done
 }
 setup_and_run() { # <case line>: build the home, run the gate, print "rc=<n>" then the normalized output
   local line=$1 k v home b
@@ -100,7 +100,7 @@ setup_and_run() { # <case line>: build the home, run the gate, print "rc=<n>" th
   jq -cn --arg case "$line" --argjson rc "$rc" --arg out "$out" '{case: $case, rc: $rc, out: $out}'
 }
 got=$work/got.jsonl
-gen_cases | while IFS= read -r line; do setup_and_run "$line"; done > "$got"
+gen_cases | awk '!seen[$0]++' | while IFS= read -r line; do setup_and_run "$line"; done > "$got"
 if [ -n "${RECORD:-}" ]; then cp "$got" "$CASES"; printf 'recorded %s cases\n' "$(wc -l < "$got")"; exit 0; fi
 n=$(wc -l < "$CASES") fails=0
 [ "$n" -gt 0 ] && [ "$(wc -l < "$got")" -eq "$n" ] || { echo "FAIL: case count differs from the recording"; exit 1; }

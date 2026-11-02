@@ -18,7 +18,7 @@ is() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1: got [$2], want [$3]"; fi 
 
 # A lane of this home: its brief requires a receipt, and the fork libraries the publisher and the merge path
 # use are this candidate's own, not a copy of another checkout.
-cp -a "$ROOT/../bin" "$ROOT/../core" "$d/fm/"
+cp -a "$ROOT/../bin" "$ROOT/../core" "$ROOT/../policy" "$d/fm/"
 git -C "$d/wt" init -q .
 git -C "$d/wt" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 head=$(git -C "$d/wt" rev-parse HEAD)
