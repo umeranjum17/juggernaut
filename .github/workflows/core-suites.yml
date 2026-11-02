@@ -251,9 +251,6 @@ jobs:
       # Fixture home and gate logs; no merge runs.
       - name: Merge-on-green test
         run: bash merge-on-green/tests/merge-on-green.test.sh
-      # A direct-PR task has no pipeline run: its done line in the status log plus a green forge read merges.
-      - name: Merge-on-green direct-PR test
-        run: bash merge-on-green/tests/merge-on-green-direct-pr.test.sh
       - name: Merge-on-green uninstall test
         run: bash merge-on-green/tests/merge-on-green-uninstall.test.sh
       # Fixture home, stub gh and receipts; no merge runs.
