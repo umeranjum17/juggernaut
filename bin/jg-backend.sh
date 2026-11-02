@@ -854,8 +854,10 @@ jg_backend_send_key() {  # <backend> <target> <key> [expected-label]
 # below drops such a ring before it types, and the tmux and Herdr adapters drop
 # it again just before their first Enter, with the verdict `record-missing`.
 jg_backend_doorbell_stale() {  # <text>
-  type jg_operational_doorbell_stale >/dev/null 2>&1 \
-    || . "$JG_BACKEND_LIB_DIR/jg-operational-input.sh" 2>/dev/null || return 1
+  if ! type jg_operational_doorbell_stale >/dev/null 2>&1; then
+    # shellcheck source=bin/jg-operational-input.sh
+    . "$JG_BACKEND_LIB_DIR/jg-operational-input.sh" 2>/dev/null || return 1
+  fi
   jg_operational_doorbell_stale "${1-}"
 }
 
