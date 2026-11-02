@@ -13,3 +13,21 @@ bash quota-axi-pool/run-proof.sh        # done-done journey quota-axi-pool (scre
 ```
 
 Needs `account-pool` (`jg-model-pool`) and `state/claude-accounts.json` from the `claude-accounts` reader.
+
+## The two routes upstream cannot read
+
+The shared route chain leads with two providers upstream quota-axi either omits or misreads, so the wrapper reports
+them truthfully instead of passing the wrong answer on:
+
+- **Ollama** has no provider row upstream at all. When the home's allow-list (`model-gate`'s `config/model-allow-list.json`)
+  names `ollama-cloud`, the wrapper adds an `ollama-cloud` row from Ollama's own balance API (`/api/balance`, the same read
+  model-gate uses; key from `$OLLAMA_API_KEY_FILE` or `~/.config/ollama-cloud/api_key`, never printed): `credits.remaining`
+  in USD, one `credit` window as a percentage of the monthly allowance, and `quotaSemantics.effectiveAvailability` with
+  `exhausted_now` at zero credit, so the pipeline's own quota pre-check reads it like any other provider. A successful read
+  is reused for `JG_QUOTA_AXI_POOL_OLLAMA_SECONDS` (default 60). A read that fails adds **no** row: never a healthy row for a
+  provider we could not read.
+- **Command Code** is usable with the fleet's key even while upstream says `auth_required`: upstream reads that key only
+  from `COMMANDCODE_API_KEY` (env), `~/.commandcode/auth.json`, or a `commandcode` entry in pi's `auth.json`, and this
+  fleet keeps it in `$JG_HOME/config/commandcode-api-key`. The wrapper reads that file into the child's environment
+  (`JG_QUOTA_AXI_POOL_COMMANDCODE_KEY` overrides the path; nothing is printed, copied or logged), so upstream reports the
+  real Command Code state - fresh, with its 5-hour and weekly windows.

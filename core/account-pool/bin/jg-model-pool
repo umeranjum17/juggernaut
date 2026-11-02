@@ -13,6 +13,8 @@ SCRIPT_DIR=${SCRIPT_DIR:-$here}
 type jg_run_timed >/dev/null 2>&1 || jg_run_timed() { shift; "$@"; }
 # shellcheck source=account-pool/bin/jg-account-pool-lib.sh
 . "$here/jg-account-pool-lib.sh"
+# shellcheck source=account-pool/bin/jg-route-chain-lib.sh
+. "$here/jg-route-chain-lib.sh"
 
 FLOOR=${JG_MODEL_POOL_FLOOR:-${JG_ACCOUNT_POOL_REST_FLOOR:-15}}
 LAUNCH_FLOOR=${JG_CLAUDE_ACCOUNTS_LOW:-5}
@@ -21,13 +23,12 @@ REGISTRY=${JG_CLAUDE_ACCOUNTS_REGISTRY:-${HOME}/.muxr/plans/accounts-v1.json}
 # never emitted. Not installed (or not on PATH) means no limit, so this feature stays usable on its own.
 MODEL_GATE=${JG_MODEL_GATE:-jg-model-gate}
 
-# Built-in normal-work fallovers after every eligible Claude account is under the floor.
-# selection ids are stable route:* keys; billing is plan unless a route record enables credits.
-FALLBACK_JSON='[
-  {"id":"route:openai-codex/gpt-6.1-sol","provider":"codex","harness":"codex","model":"openai-codex/gpt-6.1-sol","billing":"plan"},
-  {"id":"route:deepseek/deepseek-goat","provider":"deepseek","harness":"opencode","model":"deepseek/deepseek-goat","billing":"plan"},
-  {"id":"route:cursor/auto","provider":"cursor","harness":"cursor","model":"auto","billing":"plan"}
-]'
+# Normal-work fallovers after every eligible Claude account is under the floor: the shared route chain in
+# bin/jg-route-chain-lib.sh (a home's config/account-pool route= lines, else the captain's approved free-route order).
+# selection ids are stable route:* keys; billing is plan unless a route record enables credits. A route the chain's
+# probe marked down is skipped here and retried by the chain after its retry time, and each such skip writes one
+# switch status line.
+CHAIN_JSON='[]'
 
 die() {
   local reason=$1 code=${2:-1}
@@ -187,9 +188,10 @@ emit_route() {
 }
 
 pick_work() {
-  local req=$1 command=$2 state=$3 attempted model ranked first id folder account i n route
+  local req=$1 command=$2 state=$3 attempted model hard ranked first id folder account i n route skipped
   attempted=$(jq -c '.attempted // []' <<<"$req")
   model=$(jq -r '.model // "claude-haiku-5-5"' <<<"$req")
+  hard=$(jq -r '.hard // false' <<<"$req")
   deadline_ok "$(jq -r '.deadline // empty' <<<"$req")"
   ranked=$(rank_claude "$state" "$attempted")
   n=$(jq 'length' <<<"$ranked")
@@ -205,18 +207,30 @@ pick_work() {
     log "claude candidate $id skipped after admission failure; trying next"
     attempted=$(jq -c --arg id "$id" '. + [$id]' <<<"$attempted")
   done
-  n=$(jq 'length' <<<"$FALLBACK_JSON")
+  n=$(jq 'length' <<<"$CHAIN_JSON")
+  skipped=''
   for ((i = 0; i < n; i++)); do
-    route=$(jq -c --argjson i "$i" '.[$i]' <<<"$FALLBACK_JSON")
+    route=$(jq -c --argjson i "$i" '.[$i]' <<<"$CHAIN_JSON")
     id=$(jq -r .id <<<"$route")
     jq -e --arg id "$id" 'index($id) != null' <<<"$attempted" >/dev/null && continue
+    if [ "$(jq -r '.only // ""' <<<"$route")" = hard ] && [ "$hard" != true ]; then
+      log "route $id is kept for hard steps only; request did not ask for one"
+      continue
+    fi
+    if jg_route_down "$id"; then
+      log "route $id is down per the route probe ($(jg_route_cause "$id")); retried after its retry time"
+      [ -n "$skipped" ] || skipped=$id
+      continue
+    fi
     if out=$(emit_route "$route"); then
+      # One status line per switch: the first route this pass skipped is the one work moved away from.
+      [ -z "$skipped" ] || jg_route_switch "$skipped" "$id" "$(jg_route_cause "$skipped")"
       printf '%s\n' "$out"
       return 0
     fi
     attempted=$(jq -c --arg id "$id" '. + [$id]' <<<"$attempted")
   done
-  die "no eligible Claude account above ${FLOOR}% and every fallover route was unavailable or credits-enabled"
+  die "no eligible Claude account above ${FLOOR}% and every route in the chain was down, unavailable or credits-enabled"
 }
 
 do_next() {
@@ -276,6 +290,7 @@ if [ "$parse_rc" -ne 0 ]; then
 fi
 command=${cfg%%$'\t'*}
 state=${cfg#*$'\t'}
+CHAIN_JSON=$(jg_route_chain_json "$cfg_path") || exit 1
 purpose=$(jq -r '.purpose // "work"' <<<"$req")
 case "$purpose" in
 work) ;;

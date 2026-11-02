@@ -188,4 +188,5 @@ TEST_HARNESS=gemini run "$addons" fake-spawn.sh --relaunch --account pa_named; h
 run "$w/empty" fake-control.sh relaunch --account next; run1 "absent: --account stays the caller's own argument" "1|error: unexpected argument '--account'"
 # Shared model-pool helper (JSON pick/next) forced-limit journey; same feature tree.
 if bash "$addons/account-pool/tests/model-pool.test.sh"; then echo "ok - model-pool forced-limit"; else echo "not ok - model-pool forced-limit"; fails=$((fails + 1)); fi
+if bash "$addons/account-pool/tests/route-chain.test.sh"; then echo "ok - route-chain order and probe"; else echo "not ok - route-chain order and probe"; fails=$((fails + 1)); fi
 [ "$fails" -eq 0 ]

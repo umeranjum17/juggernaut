@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# jg-route-probe - the shared free-route chain's cheap health probe at pulse cadence. Installed as
+# <home>/state/route-chain.check.sh so the fleet pulse runs it every few minutes; `probe --force` runs one pass now.
+#
+# Each pass reads the chain (config/account-pool route= lines, else the built-in approved order), checks every route
+# against evidence that spends no model request - the provider's own quota/auth reading, and Ollama's credit - marks a
+# failing route down until its retry time, and writes ONE status line when the route the chain leads with moves.
+# A provider the fleet cannot read counts as up, so a missing reader never takes a working route out of service.
+# One quota-axi answer and one Ollama balance read serve the whole pass.
+# Usage: jg-route-probe [probe [--force] | status]   (JG_ROUTE_PROBE_SECONDS default 180, JG_ROUTE_RETRY_SECONDS
+# default 900, JG_ROUTE_QUOTA_AXI, OLLAMA_API_KEY_FILE; the key is never printed)
+set -uo pipefail
+# A copied fleet check names its own home and needs no environment.
+case ${0##*/} in *.check.sh) JG_HOME=${JG_HOME:-$(cd -- "$(dirname -- "$0")/.." && pwd -P)} ;; esac
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 1
+# shellcheck source=account-pool/bin/jg-route-chain-lib.sh
+. "$here/jg-route-chain-lib.sh" || exit 1
+
+STATE=$(jg_route_state)
+POOL=${JG_ROUTE_POOL_CONFIG:-${JG_HOME:-$HOME/juggernaut}/config/account-pool}
+QUOTA_AXI=${JG_ROUTE_QUOTA_AXI:-quota-axi}
+KEY_FILE=${OLLAMA_API_KEY_FILE:-$HOME/.config/ollama-cloud/api_key}
+MARK=$STATE/.route-probe.last
+CADENCE=${JG_ROUTE_PROBE_SECONDS:-180}
+
+# The pi provider names that differ from quota-axi's: it calls openai-codex "codex" and kimi-coding "kimi".
+quota_provider() {
+  case $1 in
+  openai-codex | codex) echo codex ;;
+  kimi-coding) echo kimi ;;
+  *) echo "$1" ;;
+  esac
+}
+
+quota_json() {
+  command -v jq >/dev/null 2>&1 || return 1
+  timeout 20 "$QUOTA_AXI" --json --max-age 5m --no-credential-refresh 2>/dev/null
+}
+
+# The same balance read model-gate uses; the key is never printed or copied.
+balance_json() {
+  [ -r "$KEY_FILE" ] || return 1
+  curl -sS --max-time 10 --fail -H "Authorization: Bearer $(cat -- "$KEY_FILE")" https://ollama.com/api/balance 2>/dev/null
+}
+
+# probe_route <route-json>: "up <cause>" or "down <cause>".
+probe_route() {
+  local p m qp status bal
+  p=$(jq -r .provider <<<"$1")
+  m=$(jq -r .model <<<"$1")
+  if [ "$p" = ollama-cloud ]; then
+    bal=$(balance_json) || { echo 'up balance_unreadable'; return 0; }
+    if jq -e '((.included.balance_usd // 0) + (.purchased.balance_usd // 0)) <= 0' <<<"$bal" >/dev/null 2>&1; then
+      echo 'down ollama_credit_empty'
+    else
+      echo 'up credit_left'
+    fi
+    return 0
+  fi
+  qp=$(quota_provider "$p")
+  [ -n "${QUOTA_JSON:-}" ] || { echo 'up quota_axi_unavailable'; return 0; }
+  status=$(jq -r --arg p "$qp" '[.providers[]? | select(.provider == $p) | .state.status] | first // "unknown"' <<<"$QUOTA_JSON" 2>/dev/null)
+  case $status in
+  auth_required | unavailable | missing) echo "down provider_$status"; return 0 ;;
+  error) echo 'down provider_error'; return 0 ;;
+  esac
+  if jq -e --arg p "$qp" --arg s "model:${m##*/}" '
+    [.providers[]? | select(.provider == $p) | .quotaSemantics.effectiveAvailability[]?
+     | select((.scope == "all_models" or .scope == $s) and .runway.status == "exhausted_now")] | length > 0
+  ' <<<"$QUOTA_JSON" >/dev/null 2>&1; then
+    echo 'down quota_exhausted'
+    return 0
+  fi
+  echo 'up ok'
+}
+
+# head_of <chain-json>: the first route the chain leads with that is not down.
+head_of() {
+  local r id
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    id=$(jq -r .id <<<"$r")
+    jg_route_down "$id" && continue
+    printf '%s\n' "$id"
+    return 0
+  done < <(jq -c '.[]' <<<"$1")
+}
+
+# status_rows <chain-json>: one line per route - id, state, cause, retry-at.
+status_rows() {
+  local r id retry
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    id=$(jq -r .id <<<"$r")
+    retry=0
+    jg_route_down "$id" && read -r _ retry _ <<<"$(jg_route_read "$id")"
+    printf '%s\t%s\t%s\t%s\n' "$id" "$( [ "$retry" = 0 ] && echo up || echo down)" "$(jg_route_cause "$id")" "$retry"
+  done < <(jq -c '.[]' <<<"$1")
+}
+
+probe() {
+  local force=${1:-} chain route id verdict status cause before after
+  chain=$(jg_route_chain_json "$POOL") || exit 1
+  if [ "$force" != --force ] && [ -f "$MARK" ] &&
+    [ "$(($(date +%s) - $(stat -c %Y -- "$MARK" 2>/dev/null || echo 0)))" -lt "$CADENCE" ]; then
+    status_rows "$chain"
+    return 0
+  fi
+  mkdir -p -- "$STATE" 2>/dev/null || true
+  : >"$MARK"
+  QUOTA_JSON=$(quota_json) || QUOTA_JSON=''
+  before=$(cat -- "$STATE/.route-chain.head" 2>/dev/null || true)
+  while IFS= read -r route; do
+    [ -n "$route" ] || continue
+    id=$(jq -r .id <<<"$route")
+    verdict=$(probe_route "$route")
+    status=${verdict%% *}
+    cause=${verdict#* }
+    jg_route_mark "$id" "$status" "$cause"
+  done < <(jq -c '.[]' <<<"$chain")
+  after=$(head_of "$chain")
+  printf '%s' "$after" >"$STATE/.route-chain.head" 2>/dev/null || true
+  [ -z "$before" ] || [ "$before" = "$after" ] || jg_route_switch "$before" "$after" "$(jg_route_cause "$before")"
+  status_rows "$chain"
+}
+
+case ${1:-probe} in
+probe) shift || true; probe "${1:-}" ;;
+status)
+  chain=$(jg_route_chain_json "$POOL") || exit 1
+  status_rows "$chain"
+  ;;
+*) echo 'usage: jg-route-probe [probe [--force] | status]' >&2; exit 2 ;;
+esac
