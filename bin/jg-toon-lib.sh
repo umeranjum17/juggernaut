@@ -5,7 +5,8 @@
 # Nested objects use indented keys; arrays of uniform scalar objects use
 # the tabular array form
 # (key[N]{fields}: + comma rows at +2 indent), and the empty-array form (key: []),
-# per the TOON spec. Quoting follows the spec exactly.
+# per the TOON spec. Quoting follows the spec exactly. An array of plain scalars
+# (the help[] next-step lines tasks-axi prints) is key[N]: with one "- item" per line.
 # shellcheck disable=SC2034,SC2016
 JG_TOON_JQ='
   def q:
@@ -29,6 +30,8 @@ JG_TOON_JQ='
       "\($k): ", ($v | to_entries[] | emit(.key;.value) | "  " + .)
     elif ($v | type) == "array" then
       if ($v | length) == 0 then "\($k): []"
+      elif ($v | all(type != "object" and type != "array")) then
+        "\($k)[\($v | length)]:", ($v[] | "  - " + scal)
       else
         ($v[0] | keys_unsorted) as $ks
         | ( "\($k)[\($v | length)]{\($ks | map(q) | join(","))}:",

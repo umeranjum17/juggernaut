@@ -133,3 +133,27 @@ Juggernaut PR #3644 demonstrated the cost: pinning a 75-162-script walk took 32.
 - A maintainer-verification record under `docs/verification/` records active empirical facts, not assumptions or task chronology.
 - Include the date, version, exact commands run, and exact output needed to support the current guarantee.
 - Keep incident chronology and delivery evidence in private task reports or PR evidence unless a concise rationale is required to maintain a current safety boundary.
+
+## Concurrency: remove sharing before adding a lock
+
+The fleet has many writers on one home, so a script that touches shared status, backlog, or queue files will meet a second writer.
+Ask first whether the state must be shared at all.
+Give each writer its own file, directory, or append-only record, and merge the results at read time.
+Add a lock only for state that is shared by nature, and keep its critical section short.
+A lock around state that needed no sharing hides the design fault and adds a way to hang.
+Whichever you choose, make a rerun after a crash converge, as the idempotence rule above requires.
+
+## State how sure you are about a change
+
+A claim that a change is safe needs a stated level of proof.
+Use the lowest rung that is true, never a higher one:
+
+- **Said** - I reasoned about it, or someone told me. Nothing was opened or run.
+- **Pointed** - I found the exact lines, callers, and readers, and they are listed (`git grep` output or `file:line`).
+- **Ran** - I executed the changed path, plus one caller that depends on it, and saw the result.
+
+Before you change a shared script, list every caller and reader you could reach, then state the rung for each claim in your report.
+"Nothing else uses this" is a claim at the **said** rung until a search backs it.
+A reviewer should be able to tell from your wording which rung you stand on.
+
+Lock and certainty-ladder ideas adapted from pstack, MIT licence, by Lauren Tan (github.com/backnotprop/pstack).

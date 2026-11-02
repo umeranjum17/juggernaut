@@ -8,13 +8,18 @@
 # the record or the switch for a path that has no service of its own. No model turn
 # is part of it, which is what lets it run on a cadence.
 #
-# Usage: jg-migration-live.sh [--quiet] [<part>]
+# Usage: jg-migration-live.sh [--quiet] [--link] [<part>]
 #   (nothing)   probe every part, write the data and print the table
 #   <part>      probe the one part named (its slug, or its first word) and print its row
 #   --quiet     write the data and print nothing
+#   --link      print the card's link only (no probe): the board deep link, else the page's
+#               file path; exit 1 when no card is posted
 #
 # CONTRACT.
-#   data    $DIR/live.tsv holds one row per part: part, state, detail, tab separated.
+#   data    $DIR/live.tsv holds one row per part: part, state, detail, pr, tab separated.
+#           A live row's detail carries the count measured on the path; a pending or
+#           absent row's pr names the open pull request that finishes it, read from
+#           $DIR/prs.tsv (one `gh pr list` per pass, kept when the read fails).
 #           $DIR is ${JG_DATA_OVERRIDE:-$JG_HOME/data}/migration-card, the folder
 #           bin/jg-migration-card.sh posts its card from, and $DIR/live.at holds the
 #           epoch of the last probe.
@@ -27,8 +32,9 @@
 #   owner   bin/jg-bus.sh, bin/jg-wake-bus.sh, core/bus/ and core/merge-on-green/
 #           own the names, addresses and switches read here; this file re-spells
 #           none of them without this header changing too.
-#   cost    one pass runs a bounded handful of processes and one real message, and
-#           writes nothing outside $DIR.
+#   cost    one pass runs a bounded handful of processes, one real message and one
+#           read of the open pull requests, and writes nothing outside $DIR. A probe
+#           never starts, restarts or reloads a service.
 set -u
 PROBE_TIMEOUT=${PROBE_TIMEOUT:-4}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,8 +44,10 @@ STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 CFG=${JG_CONFIG_OVERRIDE:-$JG_HOME/config}
 DIR=${JG_DATA_OVERRIDE:-$JG_HOME/data}/migration-card
 
-PART_SLUGS=(nats accounts wake inbox leases captain dapr godaemons gate escalation fiveminute deletions rules axi addons)
-PART_NAMES=('NATS server' 'per-home accounts' 'wake queue' 'task inbox' 'leases' 'captain channel/ntfy' 'Dapr' 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' 'deletions' 'rules JSON' 'juggernaut-axi' 'add-on removal')
+PART_SLUGS=(nats accounts wake inbox leases captain dapr godaemons gate escalation fiveminute deletions rules axi addons policy pendingreplies leadwake linecounts)
+PART_NAMES=('NATS server' 'per-home accounts' 'wake queue' 'task inbox' 'leases' 'captain channel/ntfy' 'Dapr' 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' 'deletions' 'rules JSON' 'juggernaut-axi' 'add-on removal' 'Rego policy' 'pending-replies cleanup' 'lead-wake cleanup' 'line counts from git')
+# Per part: a case-insensitive pattern over open pull request titles.
+PART_PR_RE=('nats|bus server|machine bus' 'account' 'wake queue|wake engine|wake' 'inbox|wake queue' 'lease' 'ntfy|captain channel' 'dapr|wait ladder' ' go\b|in go|go consumer|go wake' 'merge gate' 'wait ladder|escalation' 'merge-on-green|five-minute|merge path' 'delet|release c-' 'rules json|crew-dispatch|rego' 'juggernaut-axi' 'add-on|addon' 'rego|opa|policy' 'pending-repl' 'lead-wake|leadwake' 'line count')
 
 # cfg <key>: the captain channel's value in force, in bin/jg-bus.sh's own order -
 # JG_CAPTAIN_CHANNEL, then this home's file, then the shipped defaults - so the
@@ -123,6 +131,18 @@ stream_msgs() {
     | sed -n 's/.*"messages":[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1
 }
 
+# bus_traffic <url>: the messages the server holds, summed over its streams.
+bus_traffic() {
+  local url=$1 client name total=0 streams=0 n
+  client=$(nats_client) || { printf 'no message count without a nats client'; return 0; }
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    n=$(stream_msgs "$url" "$name")
+    total=$((total + ${n:-0})); streams=$((streams + 1))
+  done < <(timeout "$PROBE_TIMEOUT" "$client" -s "$url" stream ls -n 2>/dev/null)
+  printf '%s messages held in %s streams' "$total" "$streams"
+}
+
 # wake_stream <variable>: the stream name bin/jg-wake-bus.sh already owns.
 wake_stream() {
   local name
@@ -153,7 +173,7 @@ server_conf() {
 }
 
 probe_nats() {
-  local url hostport host port pid state=live detail
+  local url hostport host port pid state=live detail traffic
   url=$(nats_url)
   hostport=$(host_port "$url")
   host=${hostport%:*}
@@ -169,10 +189,12 @@ probe_nats() {
     2) detail='no nats client is installed, so no message could be sent' ;;
     *) state=pending detail='the port answers but a message did not come back' ;;
   esac
+  [ "$state" = live ] || { printf 'pending\t%s\n' "$detail"; return 0; }
+  traffic=$(bus_traffic "$url")
   if [ -n "${pid:-}" ]; then
-    printf 'live\tpid %s, port %s, %s\n' "$pid" "$port" "$detail"
+    printf 'live\tpid %s, port %s, %s; %s\n' "$pid" "$port" "$detail" "$traffic"
   else
-    printf 'live\tport %s, pid not readable, %s\n' "$port" "$detail"
+    printf 'live\tport %s, pid not readable, %s; %s\n' "$port" "$detail" "$traffic"
   fi
 }
 
@@ -220,19 +242,20 @@ probe_queue() {
 
 probe_leases() {
   local out rc
+  leases_held() { timeout "$PROBE_TIMEOUT" "$(nats_client)" -s "$(nats_url)" kv ls JG_LEASES 2>/dev/null | grep -c . || true; }
   [ -x "$ROOT/bin/jg-lease.sh" ] || { printf 'absent\tbin/jg-lease.sh is not in this checkout\n'; return 0; }
   out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CFG" \
     timeout 20 "$ROOT/bin/jg-lease.sh" check jg-live-probe 2>&1)
   rc=$?
   case $rc in
-    0) printf 'live\tthe store answers, jg-live-probe is held by %s\n' "$out" ;;
-    1) printf 'live\tthe store answers, and holds no lease on the probe id\n' ;;
+    0) printf 'live\tthe store answers, %s leases held in this store, jg-live-probe is held by %s\n' "$(leases_held)" "$out" ;;
+    1) printf 'live\tthe store answers, %s leases held in this store, none on the probe id\n' "$(leases_held)" ;;
     *) printf 'pending\tthe lease store could not answer (exit %s)\n' "$rc" ;;
   esac
 }
 
 probe_captain() {
-  local mode stream events msgs detail ntfy=
+  local mode stream events msgs ntfy='' server topic
   mode=$(cfg mode)
   mode=${mode:-live}
   stream=$(channel_stream)
@@ -240,27 +263,37 @@ probe_captain() {
   events=$(count_lines "$STATE/captain-channel.jsonl")
   msgs=$(stream_msgs "$(nats_url)" "$stream")
   command -v ntfy >/dev/null 2>&1 && ntfy=installed
+  server=$(cfg ntfy-server)
+  topic=$(cfg ntfy-topic)
   if [ "$mode" != live ]; then
     printf 'pending\tmode %s, so nothing reaches the captain; %s events recorded, %s on %s\n' \
       "$mode" "$events" "${msgs:-0}" "$stream"
   elif [ -z "$ntfy" ]; then
     printf 'pending\tmode live, ntfy is not installed, so nothing is delivered; %s events recorded, %s on %s\n' \
       "$events" "${msgs:-0}" "$stream"
+  elif ! curl -fsS -m "$PROBE_TIMEOUT" "$server/v1/health" 2>/dev/null | grep -q '"healthy": *true'; then
+    printf 'pending\tntfy is installed and nothing answers at %s, so nothing is delivered; %s events recorded, %s on %s\n' \
+      "${server:-no ntfy-server set}" "$events" "${msgs:-0}" "$stream"
   else
-    printf 'live\tmode live through %s; %s events recorded, %s on %s\n' \
-      "$(cfg ntfy-server)" "$events" "${msgs:-0}" "$stream"
+    printf 'live\tntfy answers at %s; %s messages on topic %s, %s events recorded, %s on %s\n' \
+      "$server" "$(curl -fsS -m "$PROBE_TIMEOUT" "$server/${topic:-juggernaut-captain}/json?poll=1&since=all" 2>/dev/null | grep -c '"event": *"message"')" \
+      "${topic:-juggernaut-captain}" "$events" "${msgs:-0}" "$stream"
   fi
 }
 
 probe_dapr() {
-  local pid
+  local pid url n
   pid=$(pgrep -x daprd 2>/dev/null | head -n 1)
-  if [ -n "${pid:-}" ]; then
-    printf 'live\tpid %s, sidecar at %s\n' "$pid" "$(cfg dapr-http-url)"
-  elif command -v daprd >/dev/null 2>&1; then
-    printf 'pending\tdaprd is installed and not running\n'
-  else
+  url=$(cfg dapr-http-url)
+  if ! command -v daprd >/dev/null 2>&1; then
     printf 'absent\tdaprd is not installed (dapr init --slim)\n'
+  elif [ -n "${url:-}" ] && curl -fsS -m "$PROBE_TIMEOUT" -o /dev/null "$url/v1.0/healthz" 2>/dev/null; then
+    n=$(curl -fsS -m "$PROBE_TIMEOUT" "$url/v1.0/metadata" 2>/dev/null | jq -r '(.components // []) | length' 2>/dev/null)
+    printf 'live\tdaprd%s answers at %s with %s components loaded\n' "${pid:+ pid $pid}" "$url" "${n:-0}"
+  elif [ -n "${pid:-}" ]; then
+    printf 'pending\tdaprd pid %s runs and nothing answers at %s, so it is not the stack sidecar\n' "$pid" "${url:-no dapr-http-url set}"
+  else
+    printf 'pending\tdaprd is installed and not running\n'
   fi
 }
 
@@ -288,18 +321,22 @@ probe_gate() {
 probe_escalation() {
   local lib="$ROOT/core/wait-timers/bin/jg-wait-timers-lib.sh"
   if [ -r "$lib" ] && grep -q 'core/wait-timers/bin/jg-wait-timers-lib.sh' "$ROOT/bin/jg-watch.sh" 2>/dev/null; then
-    printf 'live\tthe watcher sources core/wait-timers on every tick\n'
+    printf 'live\tthe watcher sources core/wait-timers on every tick; %s timers open in this home\n' \
+      "$(find "$STATE/.waiting-timers" -mindepth 1 -maxdepth 1 ! -name '.*' 2>/dev/null | wc -l | tr -d ' ')"
   else
     printf 'pending\tthe escalation ladder is not sourced by the watcher\n'
   fi
 }
 
 probe_fiveminute() {
-  if [ -f "$STATE/merge-on-green.check.sh" ]; then
-    printf 'live\tthe merge-on-green check is armed in this home\n'
-  else
+  local file="$JG_HOME/data/merge-latency.tsv" n
+  if [ ! -f "$STATE/merge-on-green.check.sh" ]; then
     printf 'pending\tmerge-on-green is not armed, so a green pull request waits for a person\n'
+    return 0
   fi
+  n=$(count_lines "$file")
+  printf 'live\tthe merge-on-green check is armed in this home; %s merges recorded%s\n' "${n:-0}" \
+    "$([ "${n:-0}" -gt 0 ] && awk -F'\t' '$5+0 > m { m = $5+0 } END { printf ", worst %s minutes", m+0 }' "$file")"
 }
 
 probe_deletions() {
@@ -363,6 +400,57 @@ probe_addons() {
   fi
 }
 
+probe_policy() {
+  local n out
+  n=$(find "$ROOT/policy" -name '*.rego' ! -name '*_test.rego' 2>/dev/null | wc -l | tr -d ' ')
+  if ! command -v opa >/dev/null 2>&1; then
+    printf 'absent\topa is not installed; %s Rego policies wait in policy/\n' "$n"
+  elif out=$(timeout 30 opa test "$ROOT/policy" 2>&1 | sed -n 's/^PASS: \([0-9]*\/[0-9]*\).*/\1/p'); [ -n "$out" ]; then
+    printf 'live\topa answers: %s policy tests pass over %s Rego policies\n' "$out" "$n"
+  else
+    printf 'pending\topa is installed and the policy tests did not pass over %s Rego policies\n' "$n"
+  fi
+}
+
+probe_pendingreplies() {
+  local records
+  records=$(find "$STATE/pending-replies" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+  if grep -q '^jg_pending_reply_path()' "$ROOT/bin/jg-pending-reply-lib.sh" 2>/dev/null; then
+    printf 'pending\tthe per-waiter record file is still in bin/jg-pending-reply-lib.sh; %s record files in this home\n' "$records"
+  else
+    printf 'live\tno per-waiter record file is left; %s stray record files in this home\n' "$records"
+  fi
+}
+
+probe_leadwake() {
+  local markers
+  markers=$(find "$STATE" -maxdepth 1 -name '.squad-lead-wake-*' 2>/dev/null | wc -l | tr -d ' ')
+  if grep -q 'lead_wake_tick' "$ROOT/bin/jg-watch.sh" 2>/dev/null; then
+    printf 'live\tthe watcher calls core/lead-wake each tick; %s lead-wake markers in this home\n' "$markers"
+  else
+    printf 'pending\tcore/lead-wake is in this checkout and the watcher does not call it; %s lead-wake markers in this home\n' "$markers"
+  fi
+}
+
+probe_linecounts() {
+  local ref head del add
+  ref=$(sed -n 's/^baseline-ref=//p' "$CFG/migration-card" 2>/dev/null | tail -n 1)
+  if [ -z "${ref:-}" ]; then
+    printf 'pending\tno baseline-ref in config/migration-card, so no line count is taken from git\n'
+    return 0
+  fi
+  head=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null)
+  if ! read -r del add < <(git -C "$ROOT" diff --numstat "$ref" HEAD 2>/dev/null | awk '$1 != "-" { a += $1; d += $2 } END { print d + 0, a + 0 }'); then
+    printf 'pending\tgit cannot diff %s against HEAD\n' "$ref"
+    return 0
+  fi
+  if [ -z "${head:-}" ]; then
+    printf 'pending\tgit cannot read HEAD of this checkout\n'
+  else
+    printf 'live\tgit counts %s deleted and %s added lines from %s to %s\n' "$del" "$add" "$ref" "$head"
+  fi
+}
+
 probe() {  # <slug>: one row, "state<TAB>detail"
   case $1 in
     nats) probe_nats ;;
@@ -380,27 +468,85 @@ probe() {  # <slug>: one row, "state<TAB>detail"
     rules) probe_rules ;;
     axi) probe_axi ;;
     addons) probe_addons ;;
+    policy) probe_policy ;;
+    pendingreplies) probe_pendingreplies ;;
+    leadwake) probe_leadwake ;;
+    linecounts) probe_linecounts ;;
     *) printf 'pending\tunknown part %s\n' "$1" ;;
   esac
+}
+
+# refresh_prs: one read of the open pull requests into $DIR/prs.tsv; a failed read keeps the last list.
+refresh_prs() {
+  local tmp
+  command -v gh >/dev/null 2>&1 || return 0
+  tmp=$(mktemp "$DIR/.prs.XXXXXX") || return 0
+  if (cd "$ROOT" && timeout 30 gh pr list --state open --limit 100 --json number,url,title \
+      --jq '.[] | [.number, .url, (.title | gsub("[\t\n]"; " "))] | @tsv') >"$tmp" 2>/dev/null; then
+    mv -f -- "$tmp" "$DIR/prs.tsv"
+  else
+    rm -f -- "$tmp"
+  fi
+}
+
+# pr_links <slug> <state>: the open pull requests that finish a part ("-" when it runs).
+pr_links() {
+  local i re urls
+  [ "$2" = live ] && { printf -- '-'; return 0; }
+  [ -r "$DIR/prs.tsv" ] || { printf 'the open pull request list could not be read'; return 0; }
+  for i in "${!PART_SLUGS[@]}"; do
+    [ "${PART_SLUGS[$i]}" = "$1" ] || continue
+    re=${PART_PR_RE[$i]}
+    urls=$(awk -F'\t' '{ print $2 "\t" $3 }' "$DIR/prs.tsv" | grep -iE "$re" | cut -f1 | head -n 2 | tr '\n' ' ')
+    [ -n "${urls// /}" ] && printf '%s' "${urls% }" || printf 'no open pull request'
+    return 0
+  done
+}
+
+row() {
+  local i=$1 out state
+  out=$(probe "${PART_SLUGS[$i]}")
+  state=${out%%$'\t'*}
+  printf '%s\t%s\t%s\n' "${PART_NAMES[$i]}" "$out" "$(pr_links "${PART_SLUGS[$i]}" "$state")"
 }
 
 # write_rows: every part, in the captain's order, into $DIR/live.tsv.
 write_rows() {
   local i tmp
   mkdir -p "$DIR" || return 1
+  refresh_prs
   tmp=$(mktemp "$DIR/.live.XXXXXX") || return 1
-  for i in "${!PART_SLUGS[@]}"; do
-    printf '%s\t%s\n' "${PART_NAMES[$i]}" "$(probe "${PART_SLUGS[$i]}")"
-  done > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  for i in "${!PART_SLUGS[@]}"; do row "$i"; done > "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$DIR/live.tsv" || { rm -f -- "$tmp"; return 1; }
   date -u +%s > "$DIR/live.at"
 }
 
+# card_link: the board deep link, else the card page's file, else exit 1.
+card_link() {
+  local key link page board
+  key=$(sed -n 's/^card=//p' "$CFG/migration-card" 2>/dev/null | tail -n 1)
+  [ -n "$key" ] || key=$(sed -n 's/^card=//p' "$DIR/current" 2>/dev/null | tail -n 1)
+  [ -n "$key" ] || { printf 'jg-migration-live: no card is posted yet; run bin/jg-migration-card.sh live\n' >&2; return 1; }
+  # shellcheck source=bin/jg-board-link-lib.sh
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR/jg-board-link-lib.sh"
+  if link=$(JG_HOME="$JG_HOME" JG_SIGNOFF_URL_FILE="${JG_SIGNOFF_URL_FILE:-$STATE/signoff-board.url}" jg_board_link reports "$key" 2>/dev/null); then
+    printf '%s\n' "$link"
+    return 0
+  fi
+  board=$(sed -n 's/^board=//p' "$CFG/migration-card" 2>/dev/null | tail -n 1)
+  page="$(dirname "${board:-${JG_PROOF_BOARD:-/nonexistent/board.json}}")/reports/$key/index.html"
+  [ -r "$page" ] || { printf 'jg-migration-live: card %s has no page and no board address is recorded\n' "$key" >&2; return 1; }
+  printf 'jg-migration-live: no board address in state/signoff-board.url; the card page is a file\n' >&2
+  printf 'file://%s\n' "$page"
+}
+
 main() {
-  local quiet=0 part='' i row
+  local quiet=0 part='' i
   while [ "$#" -gt 0 ]; do
     case $1 in
       --quiet) quiet=1 ;;
+      --link) card_link; return $? ;;
       -*) printf 'jg-migration-live: unknown option %s\n' "$1" >&2; return 2 ;;
       *) part=$1 ;;
     esac
@@ -409,8 +555,9 @@ main() {
   if [ -n "$part" ]; then
     for i in "${!PART_SLUGS[@]}"; do
       [ "${PART_SLUGS[$i]}" = "$part" ] || [ "${PART_NAMES[$i]}" = "$part" ] || continue
-      row=$(probe "${PART_SLUGS[$i]}")
-      printf '%s\t%s\t%s\n' "${PART_NAMES[$i]}" "${row%%$'\t'*}" "${row#*$'\t'}"
+      mkdir -p "$DIR" 2>/dev/null
+      [ -r "$DIR/prs.tsv" ] || refresh_prs
+      row "$i"
       return 0
     done
     printf 'jg-migration-live: no part named %s\n' "$part" >&2
@@ -418,10 +565,8 @@ main() {
   fi
   write_rows || { printf 'jg-migration-live: cannot write %s\n' "$DIR/live.tsv" >&2; return 1; }
   [ "$quiet" -eq 1 ] && return 0
-  printf 'PART\tSTATE\tMEASURED\n'
-  while IFS=$'\t' read -r name state detail; do
-    printf '%s\t%s\t%s\n' "$name" "$state" "$detail"
-  done < "$DIR/live.tsv"
+  printf 'PART\tSTATE\tMEASURED\tPULL REQUEST\n'
+  cat "$DIR/live.tsv"
   return 0
 }
 
