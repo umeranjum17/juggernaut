@@ -89,28 +89,28 @@ is "after A limit, B is next" "$(jq -r .id <<<"$out")" pa_umer_b
 is "B not a repeat of A" "$(jq -r .id <<<"$out")" pa_umer_b
 is "next request carried attempted A" "$(jq -r '.attempted | index("pa_umer_a") != null' <<<"$next")" true
 
-# All Claude below eligibility floor (15%): fall over Sol -> Goat -> Cursor.
+# All Claude below eligibility floor (15%): the shared free-route chain, Ollama credit first.
 reading 10 10 5 5 10 10
 run pick "$base"
-is "all Claude under floor -> Sol first" "$(jq -r .id <<<"$out")" "route:openai-codex/gpt-6.1-sol"
-is "Sol model id" "$(jq -r .model <<<"$out")" "openai-codex/gpt-6.1-sol"
-sol=$out
-run next "$(jq -nc --argjson b "$base" --argjson s "$sol" --argjson a '["route:openai-codex/gpt-6.1-sol"]' \
+is "all Claude under floor -> Ollama first" "$(jq -r .id <<<"$out")" "route:ollama-cloud/deepseek-v4.1-flash"
+is "Ollama model id" "$(jq -r .model <<<"$out")" "ollama-cloud/deepseek-v4.1-flash"
+ollama=$out
+run next "$(jq -nc --argjson b "$base" --argjson s "$ollama" --argjson a '["route:ollama-cloud/deepseek-v4.1-flash"]' \
   '$b + {selection:$s, cause:"quota", attempted:$a}')"
-is "Sol limit -> Goat" "$(jq -r .id <<<"$out")" "route:deepseek/deepseek-goat"
-goat=$out
-run next "$(jq -nc --argjson b "$base" --argjson s "$goat" --argjson a '["route:openai-codex/gpt-6.1-sol","route:deepseek/deepseek-goat"]' \
+is "Ollama limit -> Command Code" "$(jq -r .id <<<"$out")" "route:commandcode/deepseek/deepseek-v4.1-flash"
+cc=$out
+run next "$(jq -nc --argjson b "$base" --argjson s "$cc" --argjson a '["route:ollama-cloud/deepseek-v4.1-flash","route:commandcode/deepseek/deepseek-v4.1-flash"]' \
   '$b + {selection:$s, cause:"quota", attempted:$a}')"
-is "Goat limit -> Cursor auto" "$(jq -r .id <<<"$out")" "route:cursor/auto"
-is "Cursor model is auto" "$(jq -r .model <<<"$out")" auto
+is "Command Code limit -> Luna" "$(jq -r .id <<<"$out")" "route:openai-codex/gpt-6-luna"
+is "Luna model is the codex route" "$(jq -r .model <<<"$out")" "openai-codex/gpt-6-luna"
 
-# No repeated attempted id when asking next again with Cursor already attempted and Claude still low.
-run next "$(jq -nc --argjson b "$base" --argjson s "$out" --argjson a '["route:openai-codex/gpt-6.1-sol","route:deepseek/deepseek-goat","route:cursor/auto"]' \
+# No repeated attempted id when every free route is attempted: Sol waits for a hard step, so an ordinary call refuses.
+run next "$(jq -nc --argjson b "$base" --argjson s "$out" --argjson a '["route:ollama-cloud/deepseek-v4.1-flash","route:commandcode/deepseek/deepseek-v4.1-flash","route:openai-codex/gpt-6-luna","route:kimi-coding/kimi-for-coding","route:cursor/auto"]' \
   '$b + {selection:$s, cause:"quota", attempted:$a}')"
 is "exhausted routes refuse" "$rc" 1
 is "refusal is typed" "$(jq -r .ok <<<"$out")" false
 
-# Credits-enabled account refused even at 100%; fall to Sol and log the check.
+# Credits-enabled account refused even at 100%; fall to the chain and log the check.
 cat >"$w/registry.json" <<R
 {"version":1,"accounts":[
  {"id":"pa_credits","provider":"claude","name":"Credits","folder":"$w/c","usage_credits":true}
@@ -123,7 +123,7 @@ jq -n --argjson at "$now" --arg c pa_credits --arg fc "$w/c" \
 cp "$w/pool/claude-accounts.json" "$w/home/state/claude-accounts.json"
 : >"$w/err"
 run pick "$base"
-is "only credits-enabled Claude falls to Sol" "$(jq -r .id <<<"$out")" "route:openai-codex/gpt-6.1-sol"
+is "only credits-enabled Claude falls to Ollama" "$(jq -r .id <<<"$out")" "route:ollama-cloud/deepseek-v4.1-flash"
 is "credits refuse logged" "$(grep -c 'credits-check refuse id=pa_credits' "$w/err")" 1
 
 # Deadline across attempts.

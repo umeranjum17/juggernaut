@@ -15,7 +15,7 @@
 # before the edit is kept; otherwise the backup is restored.
 #
 # With neither --agent nor --model, the route comes from jg-model-pool pick
-# (Claude above the eligibility floor, else Sol then Goat then Cursor auto).
+# (Claude above the eligibility floor, else the shared route chain, hard-only routes left out).
 # Explicit --agent/--model keep the old pin. Never hand-edit the live config.
 #
 # The no-mistakes daemon re-reads its config per run, so no daemon restart is
