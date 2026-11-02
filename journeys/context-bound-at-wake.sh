@@ -82,7 +82,7 @@ hook() { printf '{"source":"%s","transcript_path":"%s"}' "$1" "$AT" | JG_HOME="$
 check "compact prints the digest, then the captain's note 9 verbatim" bash -c '[[ $1 == DIGEST* && $1 == *"$2"* ]]' _ "$(hook compact)" "the vault word for note 9 is $(vault 9)"
 check "startup prints only the digest" bash -c '[[ $1 != *VAULT-* ]]' _ "$(hook startup)"
 
-printf '{"target":{"version":"%s"},"result":"wake context at start %s -> %s, input tokens %s -> %s, ceiling %s"}\n' \
+printf '{"target":{"version":"%s"},"start":"two sessions with nine captain notes of about 20k tokens each","steps":["run without the bound","run with the shipped bound","send one wake","count input tokens","read the history back"],"result":"wake context at start %s -> %s, input tokens %s -> %s, ceiling %s"}\n' \
   "$(git -C "$REPO" rev-parse --short HEAD)" "$b_first" "$a_first" "$b_tot" "$a_tot" "$CEILING" >"$OUT/steps.json"
 if [ "$fails" -eq 0 ]; then say "PASS: wake input $b_tot -> $a_tot tokens, context $b_first -> $a_first, record intact"; exit 0; fi
 exit 1
