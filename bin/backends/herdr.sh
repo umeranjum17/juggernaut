@@ -3747,6 +3747,16 @@ jg_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       return 0
     fi
   fi
+  # Delivery time: a doorbell whose record vanished while it was being typed is
+  # cleared instead of submitted (jg_backend_doorbell_stale owns the test).
+  if jg_backend_doorbell_stale "$text"; then
+    if jg_backend_herdr_composer_clear "$target" "$text"; then
+      printf 'record-missing'
+    else
+      printf 'unknown'
+    fi
+    return 0
+  fi
   raw_status=$(jg_backend_herdr_agent_status_raw "$JG_BACKEND_HERDR_SESSION" "$JG_BACKEND_HERDR_PANE")
   baseline=$(jg_backend_herdr_classify_submit_agent_status "$raw_status")
   confirm_sleep=$(jg_backend_herdr_submit_confirm_budget "$sleep_s")

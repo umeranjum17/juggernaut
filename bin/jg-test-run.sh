@@ -475,6 +475,7 @@ family_for_basename() {
       printf '%s\n' live-harness-optin
       ;;
     jg-backend-tmux-smoke.test.sh|jg-control.test.sh|jg-send-inbox.test.sh|\
+    jg-doorbell-missing-record.test.sh|\
     jg-spawn-dispatch-profile.test.sh)
       printf '%s\n' backend-dispatch
       ;;
@@ -707,6 +708,7 @@ tests/jg-decisions-reconcile.test.sh 3240
 tests/jg-design-gate-first-draft.test.sh 680
 tests/jg-design-gate.test.sh 467
 tests/jg-devin-signals-live-e2e.test.sh 65
+tests/jg-doorbell-missing-record.test.sh 5000
 tests/jg-escalation-chain.test.sh 120130
 tests/jg-escalation-workflows.test.sh 4000
 tests/jg-fast-evals.test.sh 704
