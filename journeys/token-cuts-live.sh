@@ -16,8 +16,11 @@ expect() {  # <label> <want> <got>
   if [ "$2" = "$3" ]; then say "ok - $1"; else say "FAIL $1: want [$2] got [$3]"; fails=1; fi
 }
 if [ -z "$BEFORE_RULES" ]; then
+  # The baseline is this change's rules removed, so the same hour runs once without them.
   BEFORE_RULES=$T/before.routing
-  grep -v -E '^(silent@|set silence-cap|set restart-pass)' "$REPO/defaults/wake-routing" >"$BEFORE_RULES"
+  grep -v -E '^(silent@|set silence-cap|set restart-pass)' "$REPO/defaults/wake-routing" \
+    | grep -v -E '^(batch|silent) +signal +\*\.status +(done\*key=child-outcome|working\*|resolved\*|paused\*)|^(batch|silent|now) +check +\*fleet-heartbeat\.check\.sh |^silent@restart-pass +check +squad-lead-supervision' \
+      >"$BEFORE_RULES"
 fi
 
 # One hour: 8 pause acks and 6 timers on parked homes, 4 restart-pass relaunch notices, 3 re-arms,
@@ -53,7 +56,24 @@ run_hour() {  # <routing-file> <home-dir>
     for i in 1 2 3; do
       c=$(jg_wake_route_class check rearm-resurface "check: rearm-resurface"); echo "$c rearm-resurface"
     done
-    printf "needs-decision [at=1]: pick\n" >"$STATE/w1.status"; ev signal w1.status "signal: w1.status" needs-decision
+    # The routine classes this change adds, one event each, beside the captain facts that must
+    # still wake: three routine status lines, a heartbeat gap that is only open waits, a gap
+    # with ready work, a repeated PR outcome and a re-arm the restart pass itself caused.
+    for word in working paused resolved; do
+      printf "%s [at=4]: x\n" "$word" >"$STATE/routine-$word.status"
+      ev signal "routine-$word.status" "signal: routine-$word.status" "routine-$word"
+    done
+    HB="$STATE/fleet-heartbeat.check.sh"
+    ev check "$HB" "check: $HB: fleet heartbeat: homeA GAP for 0s - 3 open wait(s) climbing their ladder, 2 paused wait(s)" gap-only-waits
+    ev check "$HB" "check: $HB: fleet heartbeat: homeA GAP for 9s - 1 ready, 3 of 4 lanes working, 2 paused wait(s)" gap-ready-work
+    printf "done [key=child-pr-t] [at=5]: child t PR ready: https://example.test/pull/7 mode=direct-PR\n" >"$STATE/lead.status"
+    ev signal lead.status "signal: lead.status" lead-pr-ready
+    printf "done [key=child-outcome-t-done-ab12cd34] [at=6]: child t done: PR https://example.test/pull/7 at head abc\n" >"$STATE/lead.status"
+    ev signal lead.status "signal: lead.status" lead-pr-repeat
+    ev check squad-lead-supervision-beta-1 "check: squad_lead beta supervision not running while it has work under way; it was told to re-arm, and the wait escalates until it does" restart-pass-rearm
+    printf "blocked [at=7]: waiting on the forge answer\n" >"$STATE/b1.status"
+    ev signal b1.status "signal: b1.status" blocked
+    printf "needs-decision [at=8]: pick\n" >"$STATE/w1.status"; ev signal w1.status "signal: w1.status" needs-decision
     printf "failed [at=2]: broke\n" >"$STATE/w2.status"; ev signal w2.status "signal: w2.status" failed
     printf "done [at=3]: shipped\n" >"$STATE/w3.status"; ev signal w3.status "signal: w3.status" done
     for i in 1 2 3 4 5 6 7 8 9; do ev check "merged-$i" "check: merged-$i https://example.test/pull/$i" merged-check; done
@@ -71,8 +91,12 @@ a=$(turns <"$AFTER_LOG")
 say "== the same $total events in one hour"
 say "wake turns before: $b"
 say "wake turns after:  $a"
-expect "the events that need a model still wake it" 3 "$(awk '$1 == "now" && ($2 == "needs-decision" || $2 == "failed" || $2 == "done")' "$AFTER_LOG" | wc -l | tr -d ' ')"
-expect "no silenced wake type wakes a model" 0 "$(awk '$1 == "now" && ($2 == "pause-ack" || $2 == "relaunch-notice" || $2 == "paused-timer" || $2 == "rearm-resurface")' "$AFTER_LOG" | wc -l | tr -d ' ')"
+expect "the events that need a model still wake it" 5 "$(awk '$1 == "now" && ($2 == "needs-decision" || $2 == "failed" || $2 == "done" || $2 == "blocked" || $2 == "lead-pr-ready")' "$AFTER_LOG" | wc -l | tr -d ' ')"
+expect "no routine class wakes a model" 0 "$(awk '$1 == "now" && ($2 ~ /^routine-/ || $2 == "gap-only-waits" || $2 == "gap-ready-work" || $2 == "lead-pr-repeat" || $2 == "restart-pass-rearm" || $2 == "pause-ack" || $2 == "relaunch-notice" || $2 == "paused-timer" || $2 == "rearm-resurface")' "$AFTER_LOG" | wc -l | tr -d ' ')"
+expect "a gap that is only open waits is settled" 1 "$(awk '$1 == "silent" && $2 == "gap-only-waits"' "$AFTER_LOG" | wc -l | tr -d ' ')"
+expect "a gap with ready work rides the digest" 1 "$(awk '$1 == "batch" && $2 == "gap-ready-work"' "$AFTER_LOG" | wc -l | tr -d ' ')"
+expect "a repeated PR outcome rides the digest" 1 "$(awk '$1 == "batch" && $2 == "lead-pr-repeat"' "$AFTER_LOG" | wc -l | tr -d ' ')"
+expect "the re-arm Main's own restart pass caused is settled" 1 "$(awk '$1 == "silent" && $2 == "restart-pass-rearm"' "$AFTER_LOG" | wc -l | tr -d ' ')"
 [ "$a" -lt "$b" ] || { say "FAIL wake turns did not drop: $b -> $a"; fails=1; }
 
 say "== each silenced type stays silent: recorded, never queued"
@@ -102,7 +126,7 @@ expect "the digest does not arrive twice" "" "$(dec flush "$((now + 900))")"
 cat >"$OUT/steps.json" <<JSON
 {"target":{"version":"$(git -C "$REPO" rev-parse --short HEAD)"},"start":"two disposable homes, old and new routing, the same $total events",
  "steps":["feed the hour through the real wake append","count model turns","check settled types stay out of the queue","fill the cap","flush the digest"],
- "result":"wake turns fell from $b to $a"}
+ "result":"wake turns fell from $b to $a, and only a decision, blocker, failure, done line or a new PR report woke one"}
 JSON
 if [ "$fails" -eq 0 ]; then say "PASS: wake turns $b -> $a over the same hour"; exit 0; fi
 exit 1

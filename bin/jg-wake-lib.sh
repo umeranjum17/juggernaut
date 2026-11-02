@@ -2474,11 +2474,6 @@ jg_wake_routing_files() {
   return 0
 }
 
-# jg_wake_routing_file: the first file in force (the one a report names).
-jg_wake_routing_file() {
-  jg_wake_routing_files | head -n 1
-}
-
 # _jg_wake_rules: every rule line in priority order, so the first match wins across files.
 _jg_wake_rules() {
   local file
