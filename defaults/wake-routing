@@ -20,12 +20,16 @@ set silence-cap-per-hour 30
 set restart-pass-seconds 600
 
 # class  kind    key              payload
-# A lead's parent channel repeats itself on purpose (docs/squad-lead-parent-channel.md): the
-# `child-pr-*` line is the PR-ready report that Main acts on, so the ledger's later
-# `child-outcome-*-done` line for the same PR and the `merged-*` notice after the merge
-# repeat it and ask for nothing. A Recon's findings carry no PR and keep waking.
-batch    signal  *.status         done*key=child-outcome-*done: PR http*
-batch    signal  *.status         done*key=merged-*merged*
+# A squad_lead's status log is a relay channel for its child work, not a record of its
+# own completion, so its `done` lines report a child's outcome and are routine. They ride
+# the digest: the parent-channel libraries alone write these reserved keys
+# (bin/jg-pr-check.sh's child-pr-, bin/jg-inactive-reconcile.sh's child-outcome-,
+# bin/jg-merge-outcome-lib.sh's merged-), so no worker's own `done` can match them, and a
+# `failed` child line keeps waking. The `[at=]` stamp sits after the key tag, so the glob
+# cannot anchor on the colon.
+batch    signal  *.status         done*key=child-pr-*
+batch    signal  *.status         done*key=child-outcome-*
+batch    signal  *.status         done*key=merged-*
 now      *       *                needs-decision*
 now      *       *                failed*
 now      *       *                blocked*

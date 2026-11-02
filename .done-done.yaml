@@ -6,6 +6,8 @@ journeys:
     command: bash journeys/stack-install.sh
   wake-watcher:
     command: bash journeys/wake-watcher.sh
+  wake-batching:
+    command: bash journeys/wake-batching.sh
   watcher-window-inventory:
     command: bash journeys/watcher-window-inventory.sh
   migration-card:
