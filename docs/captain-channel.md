@@ -57,6 +57,38 @@ So one event is never delivered twice, and none is dropped.
 `bin/jg-captain-probe.sh` is the live proof on a machine: it prints the stack's processes, the stream and consumer counts, publishes one real event to the captain's own topic, prints the counts again, then the delivery record line and ntfy's own log line for that message id.
 It waits by blocking on the delivery record and exits non-zero unless the stream count rose and both records name the event.
 
+## Reaching his iPad: logins and address
+
+The shipped `core/bus/ntfy.yml` turns on an auth file and `deny-all`, so nobody reads or writes the captain's topic anonymously.
+The bus owner's `bin/jg-stack.sh up` runs `bin/jg-bus.sh ntfy-provision` after ntfy starts, which makes two logins once:
+
+| Login | Right on the topic | Used by |
+| --- | --- | --- |
+| `juggernaut` | write only | `jg-bus deliver`, which posts with it |
+| `captain` | read only | his iPad's ntfy app |
+
+Each password is generated into the owner's `state/bus/ntfy-<login>.pass` (mode 0600) and kept on a second run.
+A server config with no `auth-file` is an open local server: nothing is made and the delivery sends no login.
+The login travels in a private header file, never on the command line.
+
+The shipped listener is loopback, which his iPad cannot reach.
+A home that serves him sets two lines of its own, never a shipped public endpoint:
+
+```sh
+# config/bus/ntfy.yml: a copy of core/bus/ntfy.yml with these two keys set to the host's tailnet address
+base-url: "http://<tailnet-ip>:2586"
+listen-http: "<tailnet-ip>:2586"
+# config/captain-channel
+set ntfy-server http://<tailnet-ip>:2586
+```
+
+In the iPad's ntfy app he adds that server, the topic `juggernaut-captain`, and the `captain` login with the password from `state/bus/ntfy-captain.pass`.
+Instant delivery to an iPad from a self-hosted server needs ntfy's `upstream-base-url: https://ntfy.sh`, which sends a poll request through ntfy.sh.
+That is the relay question below, so it is not set.
+Without it the app still shows the topic when he opens it.
+
+`bin/jg-captain-probe.sh` proves the three rights over that address: the `captain` login reads the event, and neither an anonymous request nor the read-only login can publish.
+
 ## The mode switch and its one-step reversal
 
 `defaults/captain-channel` carries the routing and the mode: addresses, subject prefix, stream name, the mode, and the relay switch.

@@ -141,6 +141,11 @@ assert_contains "$(cat "$D/unit2.err")" "owned by $H1" "the bootstrap path must 
 [ "$(snap)" = "$before" ] || fail "a non-owner changed the owner's unit file or bus.conf"
 [ "$(cat "$D/service.pid")" = "$pid_before" ] || fail "a non-owner restarted the shared bus"
 grep -q reload "$D/systemctl.log" || fail "the server was never asked to reload the new account"
+# `owner` is what bin/jg-stack.sh asks before it installs dapr, ntfy or the consumer.
+assert_equals "self" "$(bus "$H1" owner)" "the home that owns the unit is told it owns it"
+other_owner=$(bus "$H2" owner); rc=$?
+assert_equals "$H1" "$other_owner" "a joined home is told who owns the unit"
+assert_equals "3" "$rc" "a joined home's owner answer exits 3"
 
 for h in "$H1" "$H2"; do
   one=$(bus "$h" ensure 2>&1)

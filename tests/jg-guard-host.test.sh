@@ -78,6 +78,13 @@ check "a recursive delete of a project folder passes" "$(del "$clone" 'rm -rf ./
 check "a recursive delete of a fresh mktemp folder passes" "$(del "$clone" 'd=$(mktemp -d); rm -rf "$d"')" '0|'
 check "a recursive delete of a variable set earlier is refused" "$(printf '%s' "$(del "$clone" 'rm -rf "$T"')" | cut -d'|' -f1)" 2
 
+# --- the eval door: any policy package's decision, and a gate that cannot be judged never looks like a pass ---
+check "eval answers a package's decision" "$(printf '{"pr":"-","head":"x","task":"t","rows":[]}' | "$HOST" eval gate.lint_row | jq -r .ok)" false
+printf '{}' | OPA=$d/no-such-opa "$HOST" eval gate.lint_row >/dev/null 2>&1 && rc=0 || rc=$?
+check "eval with no OPA refuses rather than answering" "$rc" 2
+printf '{}' | "$HOST" eval gate.no_such_package >/dev/null 2>&1 && rc=0 || rc=$?
+check "eval of a package that decides nothing refuses" "$rc" 2
+
 # --- a new guard is one .rego file, with no core change ---
 mkdir -p "$d/feature/bin" "$d/feature/core/guard-host" "$d/feature/policy"
 cp "$ROOT/bin/jg-guard-host.sh" "$d/feature/bin/"
