@@ -36,7 +36,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-skill-stats.sh`      | Shim for `core/fleet-stats`: read per-skill fleet read counts as JSON ([skill statistics](fleet-ledger.md#skill-statistics)) |
 | `jg-ticket.sh`           | Record one task's ticket truth on the fleet board now: stage, state, delivered PR and target release ([tickets](../core/tickets-sync/README.md#writing-a-ticket-at-the-moment-it-changes)) |
 | `jg-bearings-snapshot.sh` | Project the bounded remote-ledger fleet snapshot to compact TOON; `--include-prs` adds live GitHub enrichment |
-| `juggernaut-axi`          | Read-only fleet facts for external tools: `status`, `lanes`, `wakes`, `tickets`, `decisions`, and `messages` as TOON, plus the guarded writes `answer`, `message`, and `ticket` or `--json` (`juggernaut-axi.v1`) |
+| `juggernaut-axi`          | Read-only fleet facts for external tools: `status`, `lanes`, `wakes`, `tasks` (list, show, ready), `holds`, `pr`, `tickets`, `decisions`, and `messages` as TOON, plus the guarded writes `answer`, `message`, and `ticket` or `--json` (`juggernaut-axi.v1`) |
 | `jg-squad-lead-reconcile.sh` | Queue Bearings reconcile requests for later supervision delivery and ask each mismatched home through its durable inbox with a per-home cooldown |
 | `jg-update.sh`           | Guarded self-update of Juggernaut and local or remote Squad Lead homes, reconciling redundant divergence and classifying every live mate left on the target commit for restart or fallback nudge |
 | `jg-squad-lead-restart.sh` | Persist open conversational work, then restart eligible Squad Leads one at a time or report the fallback outcome |
