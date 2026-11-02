@@ -54,24 +54,32 @@ jg_ci_scope_cheap_path() {
     *) return 1 ;;
   esac
   case $path in
-    docs/examples/*|docs/supervision-protocols/*) return 1 ;;
+    docs/examples/*|docs/supervision-protocols/*|docs/bus-service.md) return 1 ;;
     docs/*) return 0 ;;
   esac
   return 1
 }
 
-# Area predicates: true when one path belongs to the area's suite.
+# Area predicates: true when one path belongs to the area's suite. Each area covers
+# every file its suite reads, which bin/jg-ci-area-reads.sh proves from inside the
+# suite's own lane by tracing what the command opens: a path the suite reads but this
+# list misses would let a change to it skip the suite green. The lists are coarse on
+# purpose (a whole directory, not the files seen today), because a new read in an
+# unlisted file of a listed directory must still send the change to the suite.
 jg_ci_scope_bus_path() {
   case $1 in
-    core/bus/*|bin/jg-bus*.sh|bin/jg-wake-bus.sh|bin/jg-reply-bus.sh|install.sh) return 0 ;;
-    bin/jg-bootstrap*|bin/fm-bootstrap*) return 0 ;;
-    # The three suites the Bus service lane runs.
+    core/*|bin/*|defaults/*|install.sh|toolchain.versions) return 0 ;;
+    # The workflow that defines a lane is part of the lane: a change to it must run it.
+    .github/*) return 0 ;;
+    docs/bus-service.md) return 0 ;;
+    # The helpers and the four suites the Bus service lane runs.
+    tests/lib.sh|tests/git-config-helpers.sh) return 0 ;;
     tests/jg-bus-service.test.sh|tests/jg-bus-machine-service.test.sh|tests/jg-stack.test.sh|tests/jg-bus.test.sh) return 0 ;;
   esac
   return 1
 }
-jg_ci_scope_shell_path() { case $1 in *.sh) return 0 ;; esac; return 1; }
-jg_ci_scope_evals_path() { case $1 in bin/*|core/*) return 0 ;; esac; return 1; }
+jg_ci_scope_shell_path() { case $1 in *.sh|.github/*) return 0 ;; esac; return 1; }
+jg_ci_scope_evals_path() { case $1 in bin/*|core/*|toolchain.versions|.github/*) return 0 ;; esac; return 1; }
 
 jg_ci_scope_main() {
   local seen=false cheap=true bus=false shell=false evals=false path line
