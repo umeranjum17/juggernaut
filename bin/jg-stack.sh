@@ -145,7 +145,12 @@ report() {  # <part> <supervisor>
     return
   fi
   if consumer_part "$part"; then
-    line=$("$BUS" probe "$part" 2>/dev/null) || fail "$part" "running (pid $pid) but its consumer does not exist on the server, see $STATE/bus/$part.log" "$(blocks "$part")"
+    # A part that resets its consumer on start (the watcher, when it holds no state yet) has none for an
+    # instant, and a consumer left by an earlier run is already there before the part has touched it; so the
+    # consumer must be seen again, here, after the part is up. Bounded, no fixed sleep.
+    line=''
+    for _ in $(seq 1 100); do line=$("$BUS" probe "$part" 2>/dev/null) && break; line=''; sleep 0.2; done
+    [ -n "$line" ] || fail "$part" "running (pid $pid) but its consumer does not exist on the server, see $STATE/bus/$part.log: $(tail -n 2 "$STATE/bus/$part.log" 2>/dev/null | tr '\n' ' ')" "$(blocks "$part")"
     printf '%-11s installed %s, enabled %s, running pid %s, consuming %s\n' "$part" "$ver" "$enabled" "$pid" \
       "$(printf '%s\n' "$line" | sed -n 's/.* stream=\([^ ]*\) .* consumer=\([^ ]*\) .*/\1\/\2/p')"
     return
