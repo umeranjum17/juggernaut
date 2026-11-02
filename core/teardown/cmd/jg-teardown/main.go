@@ -44,6 +44,16 @@ func main() {
 	switch os.Args[1] {
 	case "landed":
 		os.Exit(runLanded(os.Args[2:]))
+	case "reap":
+		os.Exit(runReap(os.Args[2:]))
+	case "validate-removal":
+		os.Exit(runValidateRemoval(os.Args[2:]))
+	case "validate-child":
+		os.Exit(runValidateChild(os.Args[2:]))
+	case "validate-home":
+		os.Exit(runValidateHome(os.Args[2:]))
+	case "worktree-registered":
+		os.Exit(runWorktreeRegistered(os.Args[2:]))
 	case "default-branch":
 		os.Exit(runDefaultBranch(os.Args[2:]))
 	case "safety":
@@ -55,5 +65,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: jg-teardown safety --worktree W --project P --mode M [flags] | landed --worktree W --branch B --project P [flags] | default-branch --project P")
+	fmt.Fprintln(os.Stderr, "usage: jg-teardown safety --worktree W --project P --mode M [flags] | landed --worktree W --branch B --project P [flags] | default-branch --project P | reap --label L --task-id ID --backend B --target T --caller-pid N DIR... | validate-removal|validate-child|validate-home|worktree-registered [flags] -- TARGET")
 }
