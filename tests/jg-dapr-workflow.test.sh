@@ -31,6 +31,18 @@ export JG_WAIT_ALERT_SECS=2 JG_WAIT_ESCALATE_SECS=4 JG_WAIT_CARD_SECS=60 JG_PROM
 cleanup() { bash "$WF" down >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
+# The five escalation behaviours read the shared rule file; the test points the worker at a copy
+# with small numbers (a 3s coalesce window, two wakes per hour for the budget lane, a 2x back-off
+# capped at 8s) so recorded waits play out in seconds. The routing is by lane name in the key.
+OPT=$TMP/escalation-optimization.json
+jq '.spec.priority = [{class:"urgent",kind:"*",key:"*",payload:"*security*"},
+      {class:"silent",kind:"check",key:"*-silent-a-*",payload:"*"},{class:"batch",kind:"check",key:"*-merged-*",payload:"*"}]
+    | .spec.targets = [{key:"*-bud-*",target:"budget-lane"},{key:"*-back-*",target:"lead"},{key:"*",target:"main"}]
+    | .spec.budget.targets = {main:50,lead:50,"budget-lane":2} | .spec.coalesce.windowSeconds = 3 | .spec.coalesce.groups = [{name:"merged",key:"*-merged-*"},{name:"other",key:"*"}]
+    | .spec.backoff = {baseSeconds:2,factor:2,capSeconds:8,resetOn:"payload-change"}' \
+  "$ROOT/core/bus/workflows/escalation-optimization.json" >"$OPT" || fail "cannot build the rule copy"
+export JG_ESCALATION_OPT=$OPT
+
 if ! out=$(bash "$ROOT/bin/jg-bootstrap.sh" install dapr-scheduler 2>&1); then
   printf 'skip: the pinned scheduler cannot be fetched here: %s\n' "$out"
   exit 0
@@ -43,7 +55,7 @@ wait_until() {
   for _ in $(seq 1 $((secs * 5))); do "$@" && return 0; sleep 0.2; done
   return 1
 }
-fired() { bash "$WF" episode "$1" 2>/dev/null | grep -q "fired=.*$2"; }
+fired() { bash "$WF" episode "$1" 2>/dev/null | grep -q "fired=[^ ]*$2"; }
 queue_has() { [ -f "$STATE/.wake-queue" ] && grep -q "$1" "$STATE/.wake-queue"; }
 
 # 1. The processes come up, and a second `up` changes nothing.
@@ -99,6 +111,50 @@ bash "$WF" clear "$key2" >/dev/null 2>&1 || fail "clear of the second episode fa
 wait_until 20 bash -c "bash '$WF' episode '$key2' 2>/dev/null | grep -q COMPLETED" || fail "the second cleared episode did not complete"
 if queue_has "$key2"; then fail "an episode cleared before its timer still delivered: $(cat "$STATE/.wake-queue")"; fi
 pass "clearing an episode before its timer ends it and delivers nothing"
+
+# 3b. The five escalation behaviours, on recorded waits. Each row of the fixture is one recorded
+# wait episode; all start together and are read at their checkpoints. The same recorded waits on
+# a worker without the rules wake the owner for every lane (no silence, no budget, a flat
+# re-alert cadence, no digest, no auto-resolve), which is how this section fails before the change.
+printf '# state the wait was raised about\nblocked [at=1]: waiting for an answer\n' >"$STATE/resolve-a.status"
+t0=$(date +%s)
+while IFS=$'\t' read -r scen task key payload envs; do
+  case "$scen" in '' | '#'*) continue ;; esac
+  # shellcheck disable=SC2086
+  env $envs bash "$WF" start wait "$task" "$key" "$payload" >/dev/null 2>&1 || fail "start of recorded wait $task failed"
+done <"$ROOT/tests/fixtures/escalation-waits.tsv"
+printf 'working [at=2]: the lane answered\n' >>"$STATE/resolve-a.status"
+rkey() { awk -F'\t' -v t="$1" '$2 == t { print $3 }' "$ROOT/tests/fixtures/escalation-waits.tsv"; }
+owner_rows() { grep -c -- "$(rkey "$1")-owner" "$STATE/.wake-queue" 2>/dev/null || true; }
+
+# priority + budget: a silent wait wakes nobody; of three ordinary waits on a 2-per-hour lane two
+# wake and one is held over budget; the security wait wakes even though that budget is spent.
+wait_until 20 fired "$(rkey bud-urgent)" owner || fail "the urgent wait never woke its owner (budget must not stop it)"
+sleep 1
+[ "$(owner_rows silent-a)" = 0 ] || fail "a silent-class wait woke its owner: $(cat "$STATE/.wake-queue")"
+bash "$WF" episode "$(rkey silent-a)" 2>/dev/null | grep -q 'owner:silent' || fail "the silent wait left no record that it was dropped: $(bash "$WF" episode "$(rkey silent-a)" 2>&1)"
+woken=$((  $(owner_rows bud-1) + $(owner_rows bud-2) + $(owner_rows bud-3) ))
+[ "$woken" = 2 ] || fail "a budget of 2 wakes per hour woke $woken of 3 ordinary waits: $(cat "$STATE/.wake-queue")"
+[ "$(owner_rows bud-urgent)" = 1 ] || fail "the security wait did not wake its owner once"
+pass "priority: a silent wait wakes nobody, a security wait ignores the spent budget; budget: 2 of 3 ordinary waits wake"
+
+# coalesce: three waits on one group wake nobody one by one; one digest names all three.
+wait_until 20 queue_has escalation-digest-merged || fail "no digest wake after the 3s window: $(cat "$STATE/.wake-queue")"
+[ "$(grep -c escalation-digest-merged "$STATE/.wake-queue")" = 1 ] || fail "the group woke more than once"
+grep escalation-digest-merged "$STATE/.wake-queue" | grep -q '3 events' || fail "the digest does not cover all three waits: $(grep escalation-digest-merged "$STATE/.wake-queue")"
+[ "$(owner_rows merged-a)$(owner_rows merged-b)$(owner_rows merged-c)" = 000 ] || fail "a coalesced wait still woke its owner on its own"
+pass "coalesce: three grouped waits leave as one digest wake"
+
+# back-off: re-alerts at 2s, 4s then 8s gaps after the card rung; a flat cadence would have fired a fourth by now.
+wait_until 30 fired "$(rkey back-1)" re-alert-2 || fail "re-alert-2 never fired: $(bash "$WF" episode "$(rkey back-1)" 2>&1)"
+bash "$WF" episode "$(rkey back-1)" 2>/dev/null | grep -q 're-alert-3' && fail "re-alert-3 fired right after re-alert-2: the gaps did not grow"
+pass "back-off: each re-alert waits twice as long as the one before, up to the cap"
+
+# auto-resolve: the lane's own status changed, so its wait closes at its owner rung and wakes nobody.
+wait_until 20 bash -c "bash '$WF' episode '$(rkey resolve-a)' 2>/dev/null | grep -q COMPLETED" || fail "the self-answered wait never closed"
+bash "$WF" episode "$(rkey resolve-a)" 2>/dev/null | grep -q '"resolved":true' || fail "the closed wait does not say its state changed"
+[ "$(owner_rows resolve-a)" = 0 ] || fail "a wait whose state changed still woke its owner"
+pass "auto-resolve: a wait whose lane answered itself closes without a wake"
 
 # 4. The owner install path: the units run the detached run's argv, a foreign owner is refused,
 # and no real service manager is touched.
