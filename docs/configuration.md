@@ -95,6 +95,7 @@ Each effective `JG_HOME` contains private operational directories.
 - One-shot Bearings reconcile requests under `state/reconcile-notify/`.
 - Private Squad Lead config-reread generations with their retry and quarantine state.
 - Per-task steering-inbox records under `state/<id>.inbox/` (`bin/jg-task-inbox-lib.sh`).
+- Per-task lane-harness run tokens under `state/<id>.lane-groups` ([`bin/jg-lane-run.sh`](../bin/jg-lane-run.sh) writes them; [`bin/jg-teardown.sh`](../bin/jg-teardown.sh) reaps and removes them).
 - Per-task scratch-directory records under `state/<id>.scratch` ([`bin/jg-scratch.sh`](../bin/jg-scratch.sh) owns registration and validation; [`bin/jg-teardown.sh`](../bin/jg-teardown.sh) owns cleanup).
 - Parent-owned Squad Lead pending-reply records under `state/pending-replies/` (`bin/jg-pending-reply-lib.sh`).
 - [Host memory guard records](#host-memory-guard-confighost-memory).

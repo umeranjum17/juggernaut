@@ -18,7 +18,7 @@ import (
 // are rooted in. It is the process-reaping half of teardown, ported from the shell
 // reap_task_worktree_processes and its helpers.
 //
-//	jg-teardown reap --label L --task-id ID --backend B --target T --caller-pid N DIR...
+//	jg-teardown reap --label L --task-id ID --backend B --target T --caller-pid N [--lane-groups FILE] DIR...
 //
 // A process belongs to the task when its working directory is DIR or under it, from one bounded
 // system-wide `lsof -a -d cwd` scan (never the recursive +D walk, which lsof documents as slow).
@@ -30,10 +30,15 @@ import (
 //	exit 1  REFUSED: the scan failed, a process could not be identified, or processes remain
 //	exit 2  the request itself was invalid
 //
+// --lane-groups names state/<id>.lane-groups, one run token per line (bin/jg-lane-run.sh). Every
+// process whose environment carries JG_LANE_TOKEN=<token> for a recorded token is the lane's
+// harness or its descendant and is stopped the same way, wherever its cwd or group is. The
+// record is the only authority: no name or pattern is read. A host without /proc warns and skips.
+//
 // Without lsof the command falls back to the tmux pane's process group. --caller-pid is the
 // teardown script's own pid: that process is never a leak, and its process group is never signalled.
 func runReap(args []string) int {
-	var label, id, backend, target string
+	var label, id, backend, target, laneGroups string
 	callerPid := 0
 	var roots []string
 	for i := 0; i < len(args); i++ {
@@ -53,6 +58,8 @@ func runReap(args []string) int {
 			backend = next()
 		case "--target":
 			target = next()
+		case "--lane-groups":
+			laneGroups = next()
 		case "--caller-pid":
 			n, err := strconv.Atoi(next())
 			if err != nil || n < 0 {
@@ -69,6 +76,9 @@ func runReap(args []string) int {
 		}
 	}
 	r := &reaper{label: label, id: id, backend: backend, target: target, callerPid: callerPid, roots: roots}
+	if !r.reapLaneTokens(laneGroups) {
+		return 1
+	}
 	if _, err := exec.LookPath("lsof"); err != nil {
 		r.reapBackendProcessGroup()
 		return 0
@@ -381,4 +391,84 @@ func (r *reaper) reapBackendProcessGroup() {
 		fmt.Fprintf(os.Stderr, "teardown: force-killing leaked %s process group for %s: %s\n", r.label, r.id, pgid)
 		_ = syscall.Kill(-group, syscall.SIGKILL)
 	}
+}
+
+// laneTokenPids lists the processes (never the caller or this command) whose environment holds one of the tokens.
+func (r *reaper) laneTokenPids(tokens []string) []int {
+	root := os.Getenv("JG_PROC_ROOT_OVERRIDE")
+	if root == "" {
+		root = "/proc"
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid == r.callerPid || pid == os.Getpid() {
+			continue
+		}
+		env, err := os.ReadFile(fmt.Sprintf("%s/%d/environ", root, pid))
+		if err != nil {
+			continue // exited, or not ours to read
+		}
+		padded := append(append([]byte{0}, env...), 0) // match whole entries only
+		for _, t := range tokens {
+			if bytes.Contains(padded, []byte("\x00JG_LANE_TOKEN="+t+"\x00")) {
+				pids = append(pids, pid)
+				break
+			}
+		}
+	}
+	sort.Ints(pids)
+	return pids
+}
+
+// reapLaneTokens stops the harness processes the lane recorded. It reports whether none is left.
+func (r *reaper) reapLaneTokens(file string) bool {
+	raw, err := os.ReadFile(file)
+	if file == "" || err != nil {
+		return true // nothing recorded
+	}
+	var tokens []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if t := strings.TrimSpace(line); t != "" && strings.Trim(t, "0123456789abcdefABCDEF-") == "" {
+			tokens = append(tokens, t)
+		}
+	}
+	if _, err := os.Stat("/proc/self"); err != nil && os.Getenv("JG_PROC_ROOT_OVERRIDE") == "" {
+		fmt.Fprintf(os.Stderr, "warning: no /proc on this host; cannot find lane harness processes for %s\n", r.id)
+		return true
+	}
+	for pass := 1; pass <= 3; pass++ {
+		pids := r.laneTokenPids(tokens)
+		if len(pids) == 0 {
+			return true
+		}
+		ids := map[int]string{}
+		for _, pid := range pids {
+			if identity, ok := processIdentity(pid); ok {
+				ids[pid] = identity
+			}
+		}
+		fmt.Fprintf(os.Stderr, "teardown: reaping leaked lane harness process(es) for %s: %s\n", r.id, joinInts(pids))
+		for pid, identity := range ids {
+			if identityMatches(pid, identity) {
+				_ = syscall.Kill(pid, syscall.SIGTERM)
+			}
+		}
+		time.Sleep(time.Second)
+		for pid, identity := range ids {
+			if identityMatches(pid, identity) {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if left := r.laneTokenPids(tokens); len(left) > 0 {
+		fmt.Fprintf(os.Stderr, "REFUSED: lane harness processes for %s remain after 3 reap attempts: %s; preserving the worktree/tasktmp for manual inspection or retry.\n", r.id, joinInts(left))
+		return false
+	}
+	return true
 }

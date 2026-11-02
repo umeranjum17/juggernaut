@@ -3946,6 +3946,48 @@ test_registered_scratch_is_reaped_after_launching_session_is_gone() {
   pass "teardown reaps exactly the registered scratch directories and their detached processes, keeping evidence and unregistered siblings"
 }
 
+# Retro 5: a replay or measurement harness outlived the lane that started it and ran for hours. A harness
+# started through bin/jg-lane-run.sh dies with its lane: a normal finish stops what it backgrounded, and a lane
+# killed outright leaves nothing for teardown to miss even when the leftovers moved to another session and cwd.
+test_lane_harness_dies_with_its_lane() {
+  local case_dir rc pid wrapper marker harness
+  case_dir=$(make_case lane-harness-reap)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  mkdir -p "$case_dir/data/task-x1"
+  marker="$case_dir/harness-pids"
+  harness="$case_dir/harness.sh"
+  # The harness backgrounds a loop in its own group (a "replay") and, unless told to stay, ends at once.
+  printf '#!/bin/sh\n(cd / && setsid sleep 302 </dev/null >/dev/null 2>&1 & echo $! >> "%s")\nsleep 303 </dev/null >/dev/null 2>&1 &\necho $! >> "%s"\n[ "$1" = stay ] && sleep 304\nexit 7\n' "$marker" "$marker" > "$harness"
+  chmod +x "$harness"
+
+  # 1. A lane that starts a harness and finishes leaves no surviving process, and the harness status comes through.
+  rc=0
+  JG_ROOT_OVERRIDE="$ROOT" JG_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/jg-lane-run.sh" task-x1 -- "$harness" > /dev/null 2>&1 || rc=$?
+  expect_code 7 "$rc" "lane-harness-reap: jg-lane-run should pass the harness status through"
+  sleep 0.3
+  while read -r pid; do
+    if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null || true; fail "lane-harness-reap: harness process $pid survived its finished lane"; fi
+  done < "$marker"
+
+  # 2. A lane killed outright: nothing ran the wrapper's trap, so teardown reaps by the recorded token.
+  : > "$marker"
+  JG_ROOT_OVERRIDE="$ROOT" JG_STATE_OVERRIDE="$case_dir/state" setsid "$ROOT/bin/jg-lane-run.sh" task-x1 -- "$harness" stay < /dev/null > /dev/null 2>&1 &
+  wrapper=$!
+  sleep 1
+  kill -KILL "$wrapper" 2>/dev/null || true
+  [ "$(wc -l < "$marker")" -eq 2 ] && pid=$(head -n1 "$marker") && kill -0 "$pid" 2>/dev/null \
+    || fail "lane-harness-reap: setup harness did not start"
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "lane-harness-reap: teardown should succeed: $(cat "$case_dir/stderr")"
+  while read -r pid; do
+    if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null || true; fail "lane-harness-reap: harness process $pid survived teardown"; fi
+  done < "$marker"
+  [ ! -e "$case_dir/state/task-x1.lane-groups" ] || fail "lane-harness-reap: teardown left the lane record"
+  pass "a harness started through jg-lane-run dies with its lane, and teardown reaps what a killed lane left"
+}
+
 test_registered_scratch_cleanup_paths() {
   local route failure case_dir home state data task scratch pid rc test_path
   for route in direct child; do
@@ -5650,6 +5692,7 @@ test_own_autonomous_run_is_left_alone
 test_leaked_worktree_process_is_reaped
 test_leaked_tasktmp_process_is_reaped
 test_registered_scratch_is_reaped_after_launching_session_is_gone
+test_lane_harness_dies_with_its_lane
 test_retained_task_data_processes_are_reaped
 test_hard_interruption_preserves_scratch_ownership_on_replay
 test_hard_interruption_preserves_scratch_ownership_on_replay data
