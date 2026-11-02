@@ -29,9 +29,11 @@ jobs:
     # Draft pull requests skip this job; ready_for_review runs it.
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
-    # The full-fork hook journeys take several minutes; leave room for them
-    # alongside shell checks and the stubbed feature integration suites.
-    timeout-minutes: 30
+    # The four hook journeys alone take about twenty minutes, and the shell checks and the
+    # stubbed feature integration suites follow them. Measured on release/c-3 at f38041ae, the
+    # job reached its last journeys at thirty minutes and was cancelled by the old cap, so the
+    # budget carries that run plus headroom for a slower runner.
+    timeout-minutes: 45
     # The feature suites run from the core tree, the same way the retired catalog ran its own,
     # so a suite's relative paths keep resolving and a fixture copy still has the same shape.
     defaults:
