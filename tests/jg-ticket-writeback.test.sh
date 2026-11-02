@@ -106,3 +106,39 @@ assert_equals "done" "$(ticket_field "$(ticket_id merged)" stage)" 'the merge pa
 assert_equals "$url" "$(sign-off-axi ticket "$board" --id "$(ticket_id merged)" --json | jq -r '.ticket.prs[0]')" \
   'the merge path must link the delivered PR'
 pass 'the merge path closes the ticket with the delivered PR'
+
+# 6. The backlog and the board are one list: an added row appears on the board and a
+# done row follows with no sync run by hand, syncing twice leaves one card, and a
+# board that cannot be reached never fails the backlog write but says it is behind.
+export JG_TICKETS_SYNC="$ROOT/core/tickets-sync/sync.py"
+mirror="$work/mirror"
+mkdir -p "$mirror"/{data,config,state}
+cp "$home/.tasks.toml" "$mirror/.tasks.toml"
+: > "$mirror/config/backlog-intake-loose"
+ln -s "$ROOT/bin" "$mirror/bin"
+mboard="$work/mirror-board.json"
+printf '{"schema":2,"items":[]}\n' > "$mboard"
+printf '%s\n' "$mboard" > "$mirror/config/fleet-board"
+count_cards() { sign-off-axi ticket "$mboard" --json | jq '[.tickets[] | select(.title | contains("Mirror the backlog"))] | length'; }
+mid=$(printf 'jg-%s' "$(printf 'main/mirrorone' | sha256sum | cut -c1-32)")
+out=$(JG_HOME="$mirror" bash "$ROOT/bin/jg-tasks-axi.sh" add mirrorone 'Mirror the backlog' --repo demo --priority 1 2>&1) || fail "add failed: $out"
+assert_not_contains "$out" 'mirror is behind' 'a reachable board must not report the mirror behind'
+assert_equals 1 "$(count_cards)" 'an added ticket must appear on the board with no sync run by hand'
+assert_equals queued "$(sign-off-axi ticket "$mboard" --id "$mid" --json | jq -r .ticket.state)" 'an added ticket must show as queued'
+out=$(JG_HOME="$mirror" bash "$ROOT/bin/jg-tasks-axi.sh" "done" mirrorone 2>&1) || fail "done failed: $out"
+assert_equals "done" "$(sign-off-axi ticket "$mboard" --id "$mid" --json | jq -r .ticket.state)" 'a done ticket must show done on the board'
+JG_HOME="$mirror" python3 "$JG_TICKETS_SYNC" >/dev/null 2>&1 || fail 'the first explicit sync failed'
+JG_HOME="$mirror" python3 "$JG_TICKETS_SYNC" >/dev/null 2>&1 || fail 'the second explicit sync failed'
+assert_equals 1 "$(count_cards)" 'syncing twice must leave one card'
+assert_equals "done" "$(sign-off-axi ticket "$mboard" --id "$mid" --json | jq -r .ticket.state)" 'syncing must not bounce a done ticket'
+pass 'an added and a done ticket reach the board with no sync run by hand, once'
+
+# A board the writer cannot reach: the backlog write still succeeds and says so.
+fakebin=$(jg_fakebin "$work/fakebin-down") || fail 'fake bin was not built'
+printf '#!/bin/sh\necho "board unreachable" >&2\nexit 1\n' > "$fakebin/sign-off-axi"
+chmod +x "$fakebin/sign-off-axi"
+err=$(PATH="$fakebin:$PATH" JG_HOME="$mirror" bash "$ROOT/bin/jg-tasks-axi.sh" add mirrortwo 'Mirror the backlog while down' --repo demo --priority 1 2>&1 >/dev/null) \
+  || fail "an unreachable board failed the backlog write: $err"
+assert_contains "$err" 'board mirror is behind' 'an unreachable board must be reported, not hidden'
+assert_contains "$(cd "$mirror" && tasks-axi list 2>&1)" 'mirrortwo' 'the backlog write must stand when the board is down'
+pass 'an unreachable board keeps the backlog write and says the mirror is behind'

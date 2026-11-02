@@ -488,7 +488,7 @@ jg_backlog_row_probe() {  # <data-dir> <id>
 # no stage, so it writes nothing.
 # Usage: jg_backlog_ticket_note <data-dir> <verb> <id> [flag...]
 jg_backlog_ticket_note() {  # <data-dir> <verb> <id> [flag...]
-  local data=$1 verb=$2 id=$3 home tool pr='' reason=''
+  local data=$1 verb=$2 id=$3 home tool pr='' reason='' note_out
   local -a args=()
   shift 3
   case "$verb" in
@@ -509,7 +509,46 @@ jg_backlog_ticket_note() {  # <data-dir> <verb> <id> [flag...]
   home=${JG_HOME:-${data%/*}}
   tool=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/jg-ticket.sh
   [ -x "$tool" ] || return 0
-  JG_HOME=$home "$tool" "$id" "${args[@]}" >/dev/null 2>&1 || true
+  note_out=$(JG_HOME=$home "$tool" "$id" "${args[@]}" 2>&1) \
+    || jg_backlog_mirror_behind "$id" "$note_out"
+  case "$verb" in done|close) jg_backlog_ticket_publish "$data" "$verb" "$id" ;; esac
+  return 0
+}
+
+# Say, never silently, that the board no longer matches the backlog. The backlog
+# write already succeeded and stays; the next tickets-sync poll catches the board up.
+jg_backlog_mirror_behind() {  # <id> <cause>
+  printf 'jg-backlog: board mirror is behind for %s (the backlog write succeeded; the next tickets-sync poll will catch up): %s\n' \
+    "$1" "$(printf '%s' "${2:-no cause given}" | sed -n '1p')" >&2
+}
+
+# Make the board show a backlog write now. The poll (core/tickets-sync/sync.py) owns
+# creating a ticket and is idempotent through its ledger, so running it here puts an
+# added row on the board and closes a done one with nobody running a sync by hand,
+# and running it twice changes nothing. A home with no fleet board, or no installed
+# sync, is a silent no-op. Anything else that leaves the board unlike the backlog is
+# reported on stderr and still returns 0, so a board problem never fails a write.
+# Usage: jg_backlog_ticket_publish <data-dir> <add|done|close> <id>
+jg_backlog_ticket_publish() {  # <data-dir> <verb> <id>
+  local data=$1 verb=$2 id=$3 home sync pointer board tool tid out want
+  home=${JG_HOME:-${data%/*}}
+  sync=${JG_TICKETS_SYNC:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-tickets-sync/tickets-sync/sync.py}
+  pointer=${JG_CONFIG_OVERRIDE:-$home/config}/fleet-board
+  [ -f "$sync" ] && [ -f "$pointer" ] || return 0
+  IFS= read -r board < "$pointer" || true
+  case "$board" in /*) ;; *) board=$home/$board ;; esac
+  tool=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/jg-ticket.sh
+  tid=$("$tool" id "$id" 2>/dev/null) || return 0
+  if ! command -v python3 >/dev/null 2>&1 || ! command -v sign-off-axi >/dev/null 2>&1; then
+    jg_backlog_mirror_behind "$id" 'python3 and sign-off-axi are needed to publish the ticket'
+    return 0
+  fi
+  out=$(JG_HOME=$home timeout "${JG_TICKETS_PUBLISH_SECS:-90}" python3 "$sync" 2>&1) \
+    || { jg_backlog_mirror_behind "$id" "$out"; return 0; }
+  want='.ticket != null'
+  case "$verb" in done|close) want='.ticket.state == "done"' ;; esac
+  sign-off-axi ticket "$board" --id "$tid" --json 2>/dev/null | jq -e "$want" >/dev/null 2>&1 \
+    || jg_backlog_mirror_behind "$id" "the board does not show it yet${out:+: $out}"
   return 0
 }
 
