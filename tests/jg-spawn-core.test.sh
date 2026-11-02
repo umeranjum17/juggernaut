@@ -54,6 +54,12 @@ check "dropping below the standing posture is announced" "$(notices --standing-m
 check "a conditional policy raises no notice" "$(notices --standing-mode no-mistakes-prod-only --standing-branch fm/)" ""
 check "a registered prefix the branch lacks is announced" "$(notices --standing-mode '' --standing-branch x/ | head_is "notice: t1 ships branch=fm/t1 while proj registers the ship-bra")" "notice: t1 ships branch=fm/t1 while proj registers the ship-bra"
 
+# A home whose bin/ is a symlink to a checkout (the session-start suite's fake root, a relocated home)
+# builds from the checkout the link points into, not from a core/ the link's parent lacks.
+mkdir -p "$lab/linked/root"
+ln -s "$ROOT/bin" "$lab/linked/root/bin"
+check "a symlinked bin/ still builds the core from the real checkout" "$(JG_STATE_OVERRIDE=$lab/linked/state "$lab/linked/root/bin/jg-spawn-core.sh" model-flag claude sonnet 2>&1)" "--model 'sonnet' "
+
 # The dispatcher never turns a core that cannot run into an answer.
 JG_SPAWN_CORE_BIN=$lab/none/jg-spawn-core JG_SPAWN_CORE_GO=$lab/no-such-go "$core" model-flag claude x >/dev/null 2>&1
 check "no binary and no toolchain exits 2, not an answer" "$?" 2

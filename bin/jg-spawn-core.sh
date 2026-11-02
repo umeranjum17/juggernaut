@@ -21,7 +21,10 @@
 # Usage: jg-spawn-core.sh <command> [args] - see core/spawn/cmd/jg-spawn-core/main.go.
 set -u
 
-SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
+# Physical path (pwd -P): a home whose bin/ is a symlink to a checkout (a relocated home, the
+# session-start suite's fake root) builds from the checkout the link points into, not from a core/
+# its parent lacks.
+SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd -P)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$ROOT}}
 STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}

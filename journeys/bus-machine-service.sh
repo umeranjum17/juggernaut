@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# The machine bus after a stack up or update: two homes install the service in a lab and both log in, 21 accounts get caps they fit under, and the 384Mb incident config is refused.
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+out=${DONE_DONE_EVIDENCE_ROOT:?}/${DONE_DONE_RUN_ID:-run}.log
+bash "$root/tests/jg-bus-machine-service.test.sh" > "$out" 2>&1
+rc=$?
+cat "$out"
+cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
+{"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
+ "start": "a lab with its own random port, store directory and a stand-in for the user manager; nothing on port 4222",
+ "steps": ["run bin/jg-bus.sh install-service for two homes", "run bin/jg-bus.sh ensure as each home", "add a third home and install again", "generate the server config for 21 accounts and start a real server on it", "check the 384Mb incident config with bin/jg-bus.sh check-limits"],
+ "result": "both homes authenticate and create their stream, the third is loaded by one restart, the 21-account caps are (21+1) x the reservation and the server starts, and the 384Mb config is refused with the shortfall named"}
+JSON
+exit "$rc"
