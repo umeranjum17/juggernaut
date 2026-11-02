@@ -104,15 +104,15 @@ def cmd_emit(args):
     print("CONTEXT BOUND: the conversation was compacted to stay under the wake-time ceiling (%s: %s tokens before, %s after)." % (trigger, pre, post))
     print("The full history before the compaction is still on disk and readable at: %s" % path)
     print("The captain's own words below are verbatim; the summary above may paraphrase them.")
-    used = 0
-    for word in captain_words(path)[-20:]:
-        if len(word) > args.max_chars:
-            word = word[:args.max_chars] + " [cut here; the rest is in the history file]"
+    used, keep = 0, []
+    for word in reversed(captain_words(path)[-20:]):  # newest first, so a full budget drops the oldest
+        word = word if len(word) <= args.max_chars else word[:args.max_chars] + " [cut here; the rest is in the history file]"
         used += len(word)
         if used > 20000:
-            print("[older captain words omitted here; they are in the history file]")
+            keep.append("[older captain words omitted here; they are in the history file]")
             break
-        print("--- captain ---\n" + word)
+        keep.append("--- captain ---\n" + word)
+    print("\n".join(reversed(keep)))
     if args.state and os.path.isdir(args.state):
         with open(os.path.join(args.state, "context-bound.log"), "a", encoding="utf-8") as log:
             log.write("%d\t%s\t%s\t%s\t%s\n" % (time.time(), trigger, pre, post, path))
