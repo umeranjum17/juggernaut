@@ -104,6 +104,12 @@ mkdir -p "$STATE_DIR"
 LOG_FILE="$STATE_DIR/submitted.log"
 : > "$LOG_FILE"
 
+# The Go herdr core (bin/jg-herdr.sh) builds on first use into the state directory. The daemon's
+# first injection would otherwise spend the scenarios' wait windows compiling it, on a runner whose
+# Go cache is still cold because this is the first real-Herdr suite to need it.
+JG_STATE_OVERRIDE="$STATE_DIR" "$ROOT/bin/jg-herdr.sh" version-at-least 1 1 >/dev/null \
+  || fail "could not build the Go herdr core into the scenario state directory"
+
 CONTAINER_RAW=$(jg_backend_herdr_container_ensure /tmp) || fail "container_ensure failed"
 CONTAINER=${CONTAINER_RAW%%$'\t'*}
 SEEDED_TAB_ID=${CONTAINER_RAW#*$'\t'}
