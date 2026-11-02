@@ -136,10 +136,29 @@ if [ "$FF_STATUS" = "updated" ]; then
   JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$SCRIPT_DIR/jg-procevent-when.sh" rebind-all || true
 fi
 
+# The bus is a SERVICE, not a process someone remembers to start: a release that lands
+# the bus code on a home - or lands on a home that never had it - otherwise goes live
+# with no message server, and every steer and lead restart is refused until somebody
+# starts one by hand, which a reboot then takes away again. So every pass asks the
+# updated home's own command to install or start it, and prints its one line. Best
+# effort: a home whose bus cannot start still finishes its update.
+ensure_bus_service() {  # <home>
+  local home=$1 out
+  [ -f "$home/bin/jg-bus.sh" ] || return 0
+  if out=$(JG_HOME="$home" JG_ROOT_OVERRIDE="$home" "$home/bin/jg-bus.sh" install-service 2>&1); then
+    [ -z "$out" ] || printf '%s\n' "$out"
+  else
+    echo "bus: could not start in $home: ${out:-unknown error}"
+  fi
+}
+
 # The services come with the release: run the updated checkout's own install command so a
 # release never lands on a machine without them. A failure is reported, never fatal to the update.
 if [ "${JG_STACK_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-stack.sh" ]; then
   JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-stack.sh" up || echo "stack: not whole after the update (see the STACK_FAILED line above)" >&2
+else
+  # No stack run (JG_STACK_SKIP or an older checkout): the bus alone still comes up.
+  ensure_bus_service "$JG_ROOT"
 fi
 
 # --- squad_leads -----------------------------------------------------------

@@ -5,6 +5,9 @@
 # hold/release/close path. Real tasks-axi and real sign-off-axi on a disposable
 # board; the poll never runs, so nothing but the transition can move a ticket.
 # shellcheck source=tests/lib.sh
+#
+# This is also the test that owns journeys/tickets-writeback.sh (the done-done journey drives the same script),
+# so the changed-test map selects it for a change to that journey.
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 command -v tasks-axi >/dev/null 2>&1 || { echo 'skip - tasks-axi is not installed'; exit 0; }

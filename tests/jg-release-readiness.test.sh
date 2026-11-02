@@ -8,6 +8,9 @@
 # or running check and an unreadable check each hold the release with their own
 # reason shown; a release that waits past wait-hours raises one alert and one
 # only; and a changed release replaces its card.
+#
+# This is also the test that owns journeys/release-readiness.sh (the done-done journey drives the same script),
+# so the changed-test map selects it for a change to that journey.
 set -u
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"

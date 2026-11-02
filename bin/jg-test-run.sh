@@ -759,6 +759,7 @@ tests/jg-send-inbox.test.sh 51917
 tests/jg-session-start.test.sh 347046
 tests/jg-sessionstart-hook-live-e2e.test.sh 61
 tests/jg-ship-local.test.sh 521
+tests/jg-spawn-core.test.sh 3000
 tests/jg-spawn-dispatch-profile.test.sh 506834
 tests/jg-squad-lead-dormant.test.sh 1091
 tests/jg-state-bus-parity.test.sh 6515

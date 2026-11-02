@@ -64,6 +64,8 @@ export LC_ALL=C
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+# shellcheck source=bin/jg-kv-lib.sh
+. "$SCRIPT_DIR/jg-kv-lib.sh"
 
 SINCE_HOURS=168
 CORRUPT=0
@@ -250,7 +252,7 @@ facts_rows() { # <state-dir> <since-epoch>
 
 # --- the workflow path -------------------------------------------------------
 bus() { # one client call against the bus; the server address is always explicit
-  "$BUS_NATS" -s "$BUS_URL" --timeout 10s "$@"
+  jg_kv_run "$BUS_NATS" "$BUS_URL" "$HOME_DIR/state" "$@"
 }
 
 # bus_gate: resolve the client and prove the server answers, or say why not. It

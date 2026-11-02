@@ -80,6 +80,12 @@
 //	         state/captain-channel-delivered.jsonl with ntfy's own message id. `--once`
 //	         drains what waits and exits; otherwise it runs as the service (the `deliver`
 //	         unit). `publish` delivers directly only for an event the bus did not accept.
+//	install-service
+//	         Make that service real: write the unit when it is missing or names another
+//	         home, reload systemd, enable it now, and verify. Without a user manager it
+//	         falls back to `ensure`. One line either way, and never a failed boot - this
+//	         is what bin/jg-bootstrap.sh and bin/jg-update.sh run so a release cannot go
+//	         live without its bus and a reboot brings it back.
 //	serve    Start the services from their files (nats, dapr, ntfy, and the deliver consumer), every one of them read as config
 //	         and none re-implemented here: nats-server (core/bus/nats.conf), the
 //	         JetStream stream it carries (core/bus/stream.json), the slim Dapr runtime
@@ -95,7 +101,7 @@
 //	jg-bus publish <kind> <key> <text> [--link <url>]
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus stream | serve | ensure | unit [nats|dapr|ntfy|deliver] | deliver [--once] | stop | status | bootstrap
+//	jg-bus stream | serve | ensure | unit [nats|dapr|ntfy|deliver] | install-service | deliver [--once] | stop | status | bootstrap
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
 // JG_CAPTAIN_CHANNEL.
@@ -152,6 +158,8 @@ func run(args []string) int {
 		return a.deliver(rest)
 	case "unit":
 		return a.unit(rest)
+	case "install-service":
+		return a.installService()
 	case "accounts":
 		return a.accounts(rest)
 	case "account":
