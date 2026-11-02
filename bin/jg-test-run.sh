@@ -708,6 +708,7 @@ tests/jg-decisions-reconcile.test.sh 3240
 tests/jg-design-gate-first-draft.test.sh 680
 tests/jg-design-gate.test.sh 467
 tests/jg-devin-signals-live-e2e.test.sh 65
+tests/jg-doorbell-missing-record.test.sh 5000
 tests/jg-escalation-chain.test.sh 120130
 tests/jg-escalation-workflows.test.sh 4000
 tests/jg-fast-evals.test.sh 704
