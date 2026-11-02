@@ -63,10 +63,10 @@ jg_ci_scope_cheap_path() {
 # Area predicates: true when one path belongs to the area's suite.
 jg_ci_scope_bus_path() {
   case $1 in
-    core/bus/*|bin/jg-bus*.sh|bin/jg-wake-bus.sh|bin/jg-reply-bus.sh|install.sh) return 0 ;;
+    core/bus/*|bin/jg-bus*.sh|bin/jg-stack.sh|bin/jg-captain-probe.sh|bin/jg-wake-bus.sh|bin/jg-reply-bus.sh|install.sh) return 0 ;;
     bin/jg-bootstrap*|bin/fm-bootstrap*) return 0 ;;
     # The three suites the Bus service lane runs.
-    tests/jg-bus-service.test.sh|tests/jg-bus-machine-service.test.sh|tests/jg-stack.test.sh|tests/jg-bus.test.sh) return 0 ;;
+    tests/jg-bus-service.test.sh|tests/jg-bus-machine-service.test.sh|tests/jg-stack.test.sh|tests/jg-stack-owner.test.sh|tests/jg-bus.test.sh) return 0 ;;
   esac
   return 1
 }
