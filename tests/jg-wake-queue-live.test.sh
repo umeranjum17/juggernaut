@@ -236,6 +236,17 @@ test_the_journey_proves_the_probe_in_two_homes() {
   pass "the journey proves the probe in two homes"
 }
 
+# The done-done journey (journeys/wake-cursor-kill.sh) is the transcript proof of the kill case
+# above: the same real render, killed and restarted on its own throwaway server.
+test_the_kill_journey_delivers_each_wake_once() {
+  local out
+  mkdir -p "$DIR/evidence-kill"
+  out=$(DONE_DONE_EVIDENCE_ROOT="$DIR/evidence-kill" RUN_ID=kill bash "$ROOT/journeys/wake-cursor-kill.sh" 2>&1) \
+    || fail "the kill journey failed: $out"
+  assert_contains "$out" "journey rc=0" "the kill journey must end clean"
+  pass "the kill journey delivers each wake once"
+}
+
 result=0
 test_raise_reaches_the_read_model || result=1
 test_acknowledgement_removes_the_row_everywhere || result=1
@@ -248,5 +259,6 @@ test_an_acknowledgement_owed_by_the_outbox_still_settles || result=1
 test_a_render_killed_after_reading_one_stream_loses_no_wake || result=1
 test_a_render_killed_mid_read_loses_no_wake || result=1
 test_an_ordinary_run_delivers_each_wake_once || result=1
+test_the_kill_journey_delivers_each_wake_once || result=1
 test_the_journey_proves_the_probe_in_two_homes || result=1
 exit "$result"
