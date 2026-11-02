@@ -89,6 +89,14 @@ case $msg in
   *) echo "FAIL: missing-receipt refusal does not name the publisher: $msg" >&2; exit 1 ;;
 esac
 rm "$st/t.evidence-card"
+# With no feature checkout (JG_ADDONS_DIR unset or stale) a refusal still names a publisher that exists, and the PR variable.
+for stale in unset "$d/retired-addons"; do
+  msg=$(unset JG_ADDONS_DIR; [ "$stale" = unset ] || export JG_ADDONS_DIR=$stale; jg_dod_receipt_accept "$st" t "$st/t.meta" "$h" 2>&1 || true)
+  tool=${msg##*JG_RECEIPT_PR=* }; tool=${tool%% t PASS*}
+  case $msg in *"JG_RECEIPT_PR="*) ;; *) echo "FAIL: missing-receipt refusal omits JG_RECEIPT_PR ($stale): $msg" >&2; exit 1 ;; esac
+  [ -x "$tool" ] && [ "${tool##*/core/}" = receipts/bin/jg-run-receipt.sh ] \
+    || { echo "FAIL: refusal names a publisher that does not exist ($stale): $tool" >&2; exit 1; }
+done
 
 # Next PR of a lane: when meta pr= is merge-notified (jg-pr-merge's proof) and the
 # receipt names a different open PR of the same repo, accept; keep every other
