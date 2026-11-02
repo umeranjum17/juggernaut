@@ -155,6 +155,14 @@ export JG_REPO="$ROOT"
 export JG_SUPERVISION_ENGINE_CLAUDE_BIN="$STUB"
 export JG_SUPERVISION_HOST_PRIMARY=claude
 export JG_POLL=1 JG_SIGNAL_GRACE=0 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999
+# A routine `working` status line routes as batch (defaults/wake-routing): it waits for the
+# next drain and rings nobody, so a host parked on its own watcher would wait for the
+# resurface cadence (about three minutes a case, and never once resurface skips batch rows).
+# The cases that park a host use that line as the wake they hand it, so their watcher's
+# rules ring on it and every other shipped rule stays as shipped. A Stop hook session takes
+# its wakes through the arm and keeps the shipped rules (start_hook_session clears this).
+{ printf 'now signal *.status working*\n'; cat "$ROOT/defaults/wake-routing"; } > "$TMP_ROOT/wake-routing"
+export JG_WAKE_ROUTING="$TMP_ROOT/wake-routing"
 # Keep the real engine watchdog/reaping path, but not its production grace in fixtures.
 export JG_SUPERVISION_ENGINE_GRACE=1
 export JG_ARM_CONFIRM_TIMEOUT=30
@@ -1186,7 +1194,7 @@ make_primary_home() {  # <name>
 # status and stderr (the rewake banner Claude delivers on exit 2).
 start_hook_session() {  # <home>
   local home=$1
-  JG_HOME="$home" JG_ROOT_OVERRIDE="$home" JG_CREW_STATE_BIN="$home/fakebin/jg-crew-state.sh" \
+  JG_HOME="$home" JG_ROOT_OVERRIDE="$home" JG_CREW_STATE_BIN="$home/fakebin/jg-crew-state.sh" JG_WAKE_ROUTING='' \
     PATH="$home/fakebin:$PATH" "$FAKE_CLAUDE" -c '
       printf "%s\n" "$$" > "$JG_HOME/state/.lock"
       printf "%s\n" "$$" >> "$JG_HOME/claude-pids"

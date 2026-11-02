@@ -39,7 +39,10 @@ done
 URL=nats://127.0.0.1:$PORT
 
 export JG_HOME=$HOME_DIR PATH=$T/bin:$PATH FAKE_LOG=$T/calls.log
-printf 'set nats-url %s\n' "$URL" >"$HOME_DIR/config/captain-channel"
+# The shipped default for ntfy-server is 127.0.0.1:2586, the address of the machine's own
+# ntfy service, so a fixture that leaves it alone measures whatever the host runs there.
+# Port 1 never listens: the ntfy part is pending because this fixture says nothing answers.
+printf 'set nats-url %s\nset ntfy-server http://127.0.0.1:1\n' "$URL" >"$HOME_DIR/config/captain-channel"
 printf '{"schema":2,"items":[]}\n' >"$BOARD"
 printf 'branch=release/c-2\ntarget=100000\nboard=%s\ncard=migration-card\nbaseline-deleted=0\nbaseline-added=0\nfiler=test\nproject=Test\n' \
   "$BOARD" >"$HOME_DIR/config/migration-card"

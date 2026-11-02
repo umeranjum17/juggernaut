@@ -1426,6 +1426,15 @@ EOF
     esac
     break
   done
+  # A row the routing rules class `batch` waits for a turn that happens anyway, so
+  # re-delivering it here is what turned a routine event into a Stop-owned wake.
+  # resurface_after_downtime asks the same owner (jg_wake_route_class) before it wakes,
+  # so both arm paths use one rule for which queued row is worth a turn. A row that
+  # classes `now` still re-delivers exactly as before.
+  case "$(jg_wake_route_class "$kind" "$key" "$reason")" in
+    now) ;;
+    *) return 0 ;;
+  esac
   [ "$idle" -ge "$SQUAD_LEAD_WAKE_STALL_SECS" ] || return 0
   squad_lead_in_active_turn '' "$idle" "$JG_HOME" "$seq" && return 0
   watcher_queue resurfaced "$epoch-$seq" >/dev/null || return 1
