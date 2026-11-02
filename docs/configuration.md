@@ -506,6 +506,15 @@ A feature branch whose merge conflicts is reported and left exactly as it is, an
 A pull request that already carries a sealed proof at its head is skipped for the same reason and left exactly as it is, because the carry moves that head and every proof, receipt and card bound to it goes stale and the change has to be proved again from scratch; a branch with no proof at its head is still carried, so the release branch keeps reaching the work in flight.
 One line per branch prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
 
+### Frozen release branches (config/version-branch-frozen)
+
+The optional local, gitignored `config/version-branch-frozen` lists release branches that take no new work, one branch name per line (blank lines and `#` comments are ignored); an absent file freezes nothing.
+`bin/jg-version-branch-lib.sh` reads it, and three places refuse a frozen base with one line that names the frozen branch and the next release branch to use: `bin/jg-brief.sh` at scaffold, `bin/jg-spawn.sh` before any brief render, endpoint or task record exists (a relaunch included), and `bin/jg-pr-check.sh` when a lane retargets its pull request at the frozen branch later.
+The one exception is a fix to that release's own red checks: pass `--red-fix-of <branch>` to the brief and to the spawn, with `<branch>` also the `--base-branch`.
+The spawn records `red_fix_of=<branch>` in the task record, which a relaunch and the pull request check read; it frees only the branch it names.
+The merge gate and the release process are unchanged.
+`journeys/frozen-release-base.sh` drives all of it.
+
 ## Fleet autosync (config/fleet-autosync-off)
 
 Every home that runs a merged change needs the new bytes, so a landed merge carries itself to `bin/jg-update.sh`, which fast-forwards this home and every live local Squad Lead home.
