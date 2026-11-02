@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a operator in a treehouse or Orca worktree, or a
 # squad_lead in its isolated juggernaut home.
-# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> [<juggernaut-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --squad-lead
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -56,6 +56,13 @@
 #   The spawn records the base as base_branch= in state/<id>.meta, which a
 #   relaunch reuses and later review and cleanup read; it is refused on
 #   squad_leads and relaunches.
+#   A ship never starts from a frozen release branch (one named in
+#   config/version-branch-frozen, which bin/jg-version-branch-lib.sh reads): the
+#   spawn stops before any brief render, worktree or record exists, with one
+#   line naming the frozen branch and the next release branch to use. The one
+#   exception is --red-fix-of <branch>, which declares the task a fix to that
+#   frozen release's own red checks; <branch> must be the base, and the spawn
+#   records it as red_fix_of= for bin/jg-pr-check.sh and for relaunches.
 #   When config/launch-env-hook is an executable file, every local launch runs
 #   it in the pane at the worktree as `config/launch-env-hook <out-file>` and
 #   sources the one export statement it writes before the AI-trailer step; a
@@ -1437,6 +1444,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
   [ "$BRANCH_PREFIX_SET" -eq 0 ] || shared_args+=(--branch-prefix "$BRANCH_PREFIX")
   [ "$BASE_BRANCH_SET" -eq 0 ] || shared_args+=(--base-branch "$BASE_BRANCH")
+  [ "$RED_FIX_OF_SET" -eq 0 ] || shared_args+=(--red-fix-of "$RED_FIX_OF")
   [ "$HERDR_RESUME_LOCK_WAIT" -eq 0 ] || shared_args+=(--herdr-resume-lock-wait)
   for pair in "${POS[@]}"; do
     case "$pair" in
@@ -2618,6 +2626,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   fi
   if [ "$RELAUNCH" -eq 1 ]; then
     BASE_BRANCH=$(jg_meta_get "$RELAUNCH_META" base_branch)
+    RED_FIX_OF=$(jg_meta_get "$RELAUNCH_META" red_fix_of)
   elif [ "$BASE_BRANCH_SET" -eq 1 ]; then
     [ -n "$BASE_BRANCH" ] || {
       echo "error: --base-branch requires a branch name" >&2
@@ -2655,6 +2664,17 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
       echo "error: $BRIEF records a Base branch line but the spawn has no --base-branch; pass the brief's base with --base-branch or re-scaffold the brief without one" >&2
       exit 1
     fi
+  fi
+  # A frozen release branch takes no new work, whichever way the base was
+  # chosen: the flag, the version-branch default or a relaunch's recorded base.
+  # Only a declared fix to that release's own red checks (--red-fix-of) passes.
+  # bin/jg-version-branch-lib.sh owns the freeze record and the one-line refusal.
+  if [ "$KIND" = ship ]; then
+    if [ -n "$RED_FIX_OF" ] && [ "$RED_FIX_OF" != "$BASE_BRANCH" ]; then
+      echo "error: jg-spawn.sh: --red-fix-of $RED_FIX_OF must name the base branch this task targets (${BASE_BRANCH:-the default branch}); pass --base-branch $RED_FIX_OF to the brief and to this spawn" >&2
+      exit 1
+    fi
+    jg_frozen_base_refusal "$CONFIG" "$PROJ_ABS" "$BASE_BRANCH" "$RED_FIX_OF" "jg-spawn.sh" || exit 1
   fi
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
@@ -4623,6 +4643,7 @@ preserve_relaunch_meta() {
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"
   echo "tasktmp=$TASK_TMP"
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
+  [ -z "$RED_FIX_OF" ] || echo "red_fix_of=$RED_FIX_OF"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"

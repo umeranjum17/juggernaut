@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
 #        jg-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
 #   --medium names the project's medium at intake, so the brief can carry this
@@ -110,6 +110,12 @@
 # rather than the default branch. bin/jg-version-branch-lib.sh owns which branch
 # that is, and bin/jg-spawn.sh resolves the same default and refuses a brief
 # that disagrees.
+# A ship brief refuses a base branch named in config/version-branch-frozen
+# (bin/jg-version-branch-lib.sh owns the record), with one line naming the frozen
+# branch and the next release branch to use. --red-fix-of <branch> declares the
+# task a fix to that frozen release's own red checks; <branch> must be the
+# --base-branch, and the brief records a "Red-fix of: <branch>" line after the
+# Base branch line. Refused outside ship briefs.
 # The read happens only when --project names the project directory, because a
 # brief is scaffolded before any copy exists; a brief scaffolded without it
 # keeps the default-branch setup and is refused at spawn until the base is
@@ -288,6 +294,8 @@ BRANCH_PREFIX=fm/
 BRANCH_PREFIX_SET=0
 BASE_BRANCH=
 BASE_BRANCH_SET=0
+RED_FIX_OF=
+RED_FIX_OF_SET=0
 FORGE=none
 FORGE_SET=0
 SHAPE=
@@ -315,6 +323,7 @@ for a in "$@"; do
       mode) MODE=$a; MODE_SET=1 ;;
       branch-prefix) BRANCH_PREFIX=$a; BRANCH_PREFIX_SET=1 ;;
       base-branch) BASE_BRANCH=$a; BASE_BRANCH_SET=1 ;;
+      red-fix-of) RED_FIX_OF=$a; RED_FIX_OF_SET=1 ;;
       forge) FORGE=$a; FORGE_SET=1 ;;
       shape) SHAPE=$a; SHAPE_SET=1 ;;
       upstream-consent) UPSTREAM_CONSENT=$a; UPSTREAM_CONSENT_SET=1 ;;
@@ -342,6 +351,8 @@ for a in "$@"; do
     --branch-prefix=*) BRANCH_PREFIX=${a#--branch-prefix=}; BRANCH_PREFIX_SET=1 ;;
     --base-branch) want_value="base-branch" ;;
     --base-branch=*) BASE_BRANCH=${a#--base-branch=}; BASE_BRANCH_SET=1 ;;
+    --red-fix-of) want_value="red-fix-of" ;;
+    --red-fix-of=*) RED_FIX_OF=${a#--red-fix-of=}; RED_FIX_OF_SET=1 ;;
     --forge) want_value=forge ;;
     --forge=*) FORGE=${a#--forge=}; FORGE_SET=1 ;;
     --shape) want_value=shape ;;
@@ -498,6 +509,23 @@ fi
 if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
   && [ "$FORGE" = none ] && [ "$PROJECT_DIR_SET" -eq 1 ] && [ -n "$PROJECT_DIR" ]; then
   BASE_BRANCH=$(jg_current_version_branch "$PROJECT_DIR") || BASE_BRANCH=
+fi
+# A frozen release branch takes no new work, so a ship brief never records one
+# as its base unless the task is declared a fix to that release's own red checks.
+# bin/jg-version-branch-lib.sh owns the freeze record and the one-line refusal,
+# and bin/jg-spawn.sh repeats the refusal at launch.
+if [ "$RED_FIX_OF_SET" -eq 1 ]; then
+  if [ "$KIND" != ship ] || [ -z "$RED_FIX_OF" ]; then
+    echo "error: --red-fix-of takes a branch name and applies only to ship briefs" >&2
+    exit 1
+  fi
+  if [ "$RED_FIX_OF" != "$BASE_BRANCH" ]; then
+    echo "error: jg-brief.sh: --red-fix-of $RED_FIX_OF must name the base branch this task targets (${BASE_BRANCH:-the default branch}); pass --base-branch $RED_FIX_OF too" >&2
+    exit 1
+  fi
+fi
+if [ "$KIND" = ship ] && [ -n "$BASE_BRANCH" ]; then
+  jg_frozen_base_refusal "$CONFIG" "${PROJECT_DIR:-}" "$BASE_BRANCH" "$RED_FIX_OF" "jg-brief.sh" || exit 1
 fi
 if [ "$KIND" != ship ]; then
   [ "$UPSTREAM_CONSENT_SET" -eq 0 ] || {
@@ -834,6 +862,9 @@ SHARED_INFRA_RULE=${SHARED_INFRA_RULE%$'\n'}
 if [ -n "$BASE_BRANCH" ]; then
   SETUP_BASE="You are in a disposable git worktree of $REPO, at a detached HEAD on a clean copy of its base branch.
 Base branch: $BASE_BRANCH"
+  [ -z "$RED_FIX_OF" ] || SETUP_BASE="$SETUP_BASE
+
+Red-fix of: $RED_FIX_OF (this task fixes that release's own red checks; the freeze on it does not apply to this task)"
 else
   SETUP_BASE="You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch."
 fi

@@ -425,4 +425,18 @@ test_conflicting_feature_branch_is_left_alone
 test_recorded_release_merge_runs_the_features_pass
 test_spawn_and_brief_default_to_the_version_branch
 test_sealed_feature_branch_keeps_its_head
+# A frozen release branch (config/version-branch-frozen) is refused as a base at
+# the brief, the spawn and the pull request check unless the work is declared a
+# fix to its own red checks. This is also the test that owns
+# journeys/frozen-release-base.sh, which drives all three through the real scripts.
+test_frozen_release_base_is_refused() {
+  local ev
+  ev=$(mktemp -d) || fail "cannot create the evidence folder"
+  DONE_DONE_EVIDENCE_ROOT=$ev bash "$ROOT/journeys/frozen-release-base.sh" > "$ev/out" 2>&1 \
+    || { cat "$ev/out"; rm -rf -- "$ev"; fail "T13 the frozen-release journey failed"; }
+  rm -rf -- "$ev"
+  pass "T13 a frozen release branch is refused as a base unless declared a red-fix"
+}
+
+test_frozen_release_base_is_refused
 echo "all jg-version-branch-sync tests passed"
