@@ -130,8 +130,8 @@ watcher writes one line to its triage log per change. Run `bin/jg-bus.sh watcher
 restart the service to replay the stream from the start.
 
 `bin/jg-bus.sh probe wake-watcher` shows the consumer's acknowledged counter; it rises with each
-real wake. `tests/jg-wake-watcher.test.sh` replays every recorded `JG_WAKE` event
-(`tests/fixtures/wake-recorded/events.jsonl`) through the Go fold and the shell reader it replaced and
+real wake. `tests/jg-wake-watcher.test.sh` replays recorded `JG_WAKE` events
+(`tests/fixtures/wake-recorded/events.jsonl`, 123 events of 52 homes; the full 241-event export replays clean) through the Go fold and the shell reader it replaced and
 requires identical answers after each event, with a corrupted control that must fail, then proves
 the service, the counter and the watcher cycle on a throwaway server.
 
