@@ -27,6 +27,18 @@ assert_equals "design 1 1" "$(sizeof tnew 'echo "<p>" > new.html')" "a new UI fi
 assert_equals "tweak 0 0" "$(sizeof tdoc 'seq 1 400 > notes.md')" "non-UI lines never count"
 pass "size rule: 40 UI lines and no new UI file is the tweak bar"
 
+# A move is measured as a move on both sides. Moving a UI file is not design work, and
+# before renames were detected a pure move read as its whole content added, with the new
+# path counted as a new UI file, so every rename of a page, stylesheet or image was
+# refused at any size (PR 498: ten moved .svg read 58 UI lines and 10 new UI files).
+assert_equals "tweak 0 0" "$(sizeof tmove 'mkdir -p lib && git mv app.css lib/app.css')" "a moved UI file is not a new UI file and adds no UI line"
+assert_equals "tweak 40 0" "$(sizeof tmove20 'mkdir -p lib && git mv app.css lib/app.css && sed -i "1,20s/\$/y/" lib/app.css')" "a move plus 20 changed lines counts those 20 on both sides and stays a tweak"
+# The other direction: the corrected measure must still refuse real design work.
+assert_equals "design 42 0" "$(sizeof tmove21 'mkdir -p lib && git mv app.css lib/app.css && sed -i "1,21s/\$/y/" lib/app.css')" "a move plus 21 changed lines is still past the bar"
+assert_equals "design 1 1" "$(sizeof tmovethennew 'mkdir -p lib && git mv app.css lib/app.css && echo "<p>" > new.html')" "a genuinely new UI file beside a moved one is still design"
+assert_equals "design 41 0" "$(sizeof tappend 'seq 1 41 >> app.css')" "genuinely added UI lines still count and still refuse"
+pass "size rule measures a move as a move and still refuses real design work"
+
 # A merge past the size rule needs the first-draft receipt even when briefed design_call=no.
 head=$(git -C "$repo" rev-parse t42)
 jg_dod_meta_value() { sed -n "s/^$2=//p" "$1" | tail -1; }
