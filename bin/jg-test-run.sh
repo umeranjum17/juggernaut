@@ -2314,6 +2314,17 @@ cleanup_run() {
 
 trap cleanup_run EXIT
 
+# Build the status classifier once for the whole run. Its launcher builds on first use into the
+# calling home's state directory, and every test makes a fresh state directory, so without this
+# each watcher test would pay a cold Go build inside its own timing window. A run that sets
+# JG_CLASSIFY_BIN itself, or has no Go toolchain, keeps the launcher's own behaviour.
+if [ -z "${JG_CLASSIFY_BIN:-}" ] && command -v "${JG_CLASSIFY_GO:-go}" >/dev/null 2>&1; then
+  if JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify" "$ROOT/bin/jg-classify.sh" is-terminal x >/dev/null 2>&1 \
+    || [ -x "$RUN_TMP/classify/jg-classify" ]; then
+    export JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify"
+  fi
+fi
+
 RUN_ID="jg-test-run-${RUN_STARTED_MS}-$$"
 TOTAL=0
 FAILED=0
