@@ -72,7 +72,7 @@ func parseRemovalFlags(name string, args []string) (removalFlags, bool) {
 	return f, true
 }
 
-func refuse(format string, a ...any) int {
+func refusal(format string, a ...any) int {
 	fmt.Fprintf(os.Stderr, "REFUSED: "+format+"\n", a...)
 	return 1
 }
@@ -175,25 +175,25 @@ func validateRemovalTarget(f removalFlags, target, label string) (string, int) {
 		return "", 2
 	}
 	if absTarget == "" || absTarget == "/" {
-		return "", refuse("unsafe %s removal target %s", label, target)
+		return "", refusal("unsafe %s removal target %s", label, target)
 	}
 	if absHome != "" && absTarget == absHome {
-		return "", refuse("unsafe %s removal target %s is the active juggernaut home", label, target)
+		return "", refusal("unsafe %s removal target %s is the active juggernaut home", label, target)
 	}
 	if absTarget == absRoot {
-		return "", refuse("unsafe %s removal target %s is the juggernaut repo", label, target)
+		return "", refusal("unsafe %s removal target %s is the juggernaut repo", label, target)
 	}
 	if absHome != "" && pathIsAncestorOf(absTarget, absHome) {
-		return "", refuse("unsafe %s removal target %s is an ancestor of the active juggernaut home", label, target)
+		return "", refusal("unsafe %s removal target %s is an ancestor of the active juggernaut home", label, target)
 	}
 	if pathIsAncestorOf(absTarget, absRoot) {
-		return "", refuse("unsafe %s removal target %s is an ancestor of the juggernaut repo", label, target)
+		return "", refusal("unsafe %s removal target %s is an ancestor of the juggernaut repo", label, target)
 	}
 	if absHome != "" && pathIsAncestorOf(absHome, absTarget) {
-		return "", refuse("unsafe %s removal target %s is inside the active juggernaut home", label, target)
+		return "", refusal("unsafe %s removal target %s is inside the active juggernaut home", label, target)
 	}
 	if pathIsAncestorOf(absRoot, absTarget) {
-		return "", refuse("unsafe %s removal target %s is inside the juggernaut repo", label, target)
+		return "", refusal("unsafe %s removal target %s is inside the juggernaut repo", label, target)
 	}
 	return absTarget, 0
 }
@@ -223,18 +223,18 @@ func runValidateChild(args []string) int {
 		return rc
 	}
 	if absHome, ok := physicalDir(f.jgHome); ok && pathIsAncestorOf(absHome, abs) {
-		return refuse("unsafe child worktree removal target %s is inside the active juggernaut home", f.target)
+		return refusal("unsafe child worktree removal target %s is inside the active juggernaut home", f.target)
 	}
 	absRoot, _ := physicalDir(f.jgRoot)
 	if pathIsAncestorOf(absRoot, abs) {
-		return refuse("unsafe child worktree removal target %s is inside the juggernaut repo", f.target)
+		return refusal("unsafe child worktree removal target %s is inside the juggernaut repo", f.target)
 	}
 	if !worktreeRegisteredForProject(f.project, f.target) {
 		p := f.project
 		if p == "" {
 			p = "the recorded project"
 		}
-		return refuse("unsafe child worktree removal target %s is not a git worktree for %s", f.target, p)
+		return refusal("unsafe child worktree removal target %s is not a git worktree for %s", f.target, p)
 	}
 	fmt.Println(abs)
 	return 0
@@ -250,16 +250,16 @@ func validateOperationalDirs(home, label string) int {
 			continue
 		}
 		if lst, _ := os.Lstat(dir); lst != nil && lst.Mode()&os.ModeSymlink != 0 && !exists(dir) {
-			return refuse("unsafe %s %s directory %s resolves outside the squad_lead home", label, name, dir)
+			return refusal("unsafe %s %s directory %s resolves outside the squad_lead home", label, name, dir)
 		}
 		absDir := ""
 		if st, err := os.Stat(dir); err == nil && st.IsDir() {
 			absDir, _ = physicalDir(dir)
 		} else if exists(dir) {
-			return refuse("unsafe %s %s path %s is not a directory", label, name, dir)
+			return refusal("unsafe %s %s path %s is not a directory", label, name, dir)
 		}
 		if absDir == "" || !pathIsAncestorOf(absHome, absDir) {
-			return refuse("unsafe %s %s directory %s resolves outside the squad_lead home", label, name, dir)
+			return refusal("unsafe %s %s directory %s resolves outside the squad_lead home", label, name, dir)
 		}
 	}
 	return 0
@@ -272,7 +272,7 @@ func registeredDescendantHome(reg, target string) (id, home string, rc int) {
 		return "", "", 1
 	}
 	if _, errText := validateBindings(reg, "", ""); errText != "" {
-		refuse("%s", errText)
+		refusal("%s", errText)
 		return "", "", 2
 	}
 	data, _ := os.ReadFile(reg)
@@ -282,7 +282,7 @@ func registeredDescendantHome(reg, target string) (id, home string, rc int) {
 		}
 		rec, ok := parseRegistryLine(line)
 		if !ok {
-			refuse("malformed squad_lead registry entry: %s", line)
+			refusal("malformed squad_lead registry entry: %s", line)
 			return "", "", 2
 		}
 		regAbs, ok := removalAbsPath(rec.home)
@@ -310,7 +310,7 @@ func runValidateHome(args []string) int {
 	}
 	markerPath := abs + "/" + f.marker
 	if st, err := os.Stat(markerPath); err != nil || !st.Mode().IsRegular() {
-		return refuse("unsafe %s removal target %s is not a seeded squad_lead home", f.label, f.target)
+		return refusal("unsafe %s removal target %s is not a seeded squad_lead home", f.label, f.target)
 	}
 	if f.expectedID != "" {
 		raw, _ := os.ReadFile(markerPath)
@@ -319,14 +319,14 @@ func runValidateHome(args []string) int {
 			if markerID == "" {
 				markerID = "unknown"
 			}
-			return refuse("unsafe %s removal target %s is marked for squad_lead %s, expected %s", f.label, f.target, markerID, f.expectedID)
+			return refusal("unsafe %s removal target %s is marked for squad_lead %s, expected %s", f.label, f.target, markerID, f.expectedID)
 		}
 		if existsOrLink(f.registry) {
 			if _, errText := validateBindings(f.registry, f.expectedID, abs); errText != "" {
 				if strings.HasPrefix(errText, "overlapping squad_lead home assignment:") {
-					return refuse("unsafe %s removal target %s contains registered squad_lead home; %s", f.label, f.target, errText)
+					return refusal("unsafe %s removal target %s contains registered squad_lead home; %s", f.label, f.target, errText)
 				}
-				return refuse("%s", errText)
+				return refusal("%s", errText)
 			}
 		}
 	}
@@ -344,7 +344,7 @@ func runValidateHome(args []string) int {
 		}
 	}
 	if crc == 0 {
-		return refuse("unsafe %s removal target %s contains registered squad_lead home %s for %s", f.label, f.target, childHome, childID)
+		return refusal("unsafe %s removal target %s contains registered squad_lead home %s for %s", f.label, f.target, childHome, childID)
 	}
 	fmt.Println(abs)
 	return 0
