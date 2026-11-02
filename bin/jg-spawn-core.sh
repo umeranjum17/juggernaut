@@ -45,7 +45,7 @@ build() {
   command -v "$GO" >/dev/null 2>&1 || return 1
   mkdir -p "${BIN%/*}" || return 1
   tmp="$BIN.tmp.$$"
-  if ! ( cd "$SOURCE_DIR" && "$GO" build -o "$tmp" ./cmd/jg-spawn-core ) >&2; then
+  if ! ( cd "$SOURCE_DIR" && "$GO" build -buildvcs=false -o "$tmp" ./cmd/jg-spawn-core ) >&2; then
     rm -f -- "$tmp"
     return 1
   fi

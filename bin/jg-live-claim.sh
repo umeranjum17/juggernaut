@@ -36,6 +36,9 @@
 # more characters also matches a record whose ref starts with it.
 # An absent, unreadable, or silent record proves no release, so a ref it does not
 # name is downgraded rather than accepted.
+# A release is live only when its services run: a `live:` claim that the record
+# supports also needs bin/jg-live-services.sh to pass on this machine, and is
+# downgraded with the down services named when any required one is not running.
 set -u
 
 die() { printf 'jg-live-claim: %s\n' "$*" >&2; exit 2; }
@@ -97,6 +100,13 @@ if [ -z "$releases" ]; then
 fi
 ref=$(released_ref_in_claim "$claim")
 where=$(observation_in_claim "$claim")
-if [ -n "$ref" ] && [ -n "$where" ] && ref_is_recorded "$ref"; then keep_as_written; fi
+if [ -n "$ref" ] && [ -n "$where" ] && ref_is_recorded "$ref"; then
+  svc_script=${JG_LIVE_SERVICES_BIN:-${0%/*}/jg-live-services.sh}
+  if [ ! -x "$svc_script" ]; then keep_as_written; fi
+  if svc_out=$("$svc_script" --quiet 2>&1); then keep_as_written; fi
+  printf 'merged-not-released: %s\n' "$claim"
+  printf 'jg-live-claim: release %s is recorded but not live: %s. Bring the services up (bin/jg-stack.sh up), then claim it live.\n' "$ref" "$(printf '%s' "$svc_out" | tail -n 1)" >&2
+  exit 3
+fi
 
 downgrade "$claim"

@@ -1385,10 +1385,6 @@ elif [ "$FORCE" != "--force" ] && jg_pf_relay_active "$JG_HOME"; then
   PUBLIC_FOLLOWUP_RELAY_ACTIVE=1
 fi
 
-default_branch() {
-  "$SCRIPT_DIR/jg-teardown-core.sh" default-branch --project "$PROJ"
-}
-
 meta_value() {
   local meta=$1 key=$2
   jg_meta_get "$meta" "$key"
@@ -1488,41 +1484,6 @@ remove_pr_poll_artifacts() {
     "$state_dir/$id.merge-authority" "$state_dir/$id.check-trust" || return 1
 }
 
-# The landed-work test is Go (core/teardown, run through bin/jg-teardown-core.sh): this function
-# only gathers the facts the command cannot read from the worktree - the recorded PR, its base
-# branch and the forge identity jg_pr_url_parse derives from the PR URL - and relays its answer.
-# A check that cannot run is a refusal, never a landing. LANDING_GAP is the reason the refusal
-# prints; PR_URL is filled in when the forge resolved a merged PR the record did not carry.
-LANDING_GAP=
-work_is_landed() {
-  local branch=$1 out rc=0 line login
-  local args=(landed --worktree "$WT" --branch "$branch" --project "$PROJ")
-  [ -z "$PR_URL" ] || args+=(--pr-url "$PR_URL")
-  [ -z "$BASE_BRANCH" ] || args+=(--base-branch "$BASE_BRANCH")
-  if [ -n "$PR_URL" ]; then
-    ! jg_dod_pr_outside_origin "$WT" "$PR_URL" || args+=(--pr-outside-origin)
-    if jg_pr_url_parse "$PR_URL" && [ "$JG_PR_PROVIDER" = forgejo ]; then
-      args+=(--forgejo-host "$JG_PR_HOST" --forgejo-path "$JG_PR_PATH" --forgejo-number "$JG_PR_NUMBER")
-      ! login=$(jg_pr_forgejo_login "$JG_PR_HOST") || args+=(--forgejo-login "$login")
-    fi
-  fi
-  out=$("$SCRIPT_DIR/jg-teardown-core.sh" "${args[@]}") || rc=$?
-  while IFS= read -r line; do
-    case "$line" in
-      gap=*) LANDING_GAP=${line#gap=} ;;
-      pr_url=*) [ -n "$PR_URL" ] || PR_URL=${line#pr_url=} ;;
-    esac
-  done <<EOF_OUT
-$out
-EOF_OUT
-  case "$rc" in
-    0) return 0 ;;
-    1) return 1 ;;
-  esac
-  LANDING_GAP="the landed-work check could not run (exit $rc)"
-  return 1
-}
-
 # The completion links this teardown already holds locally. A scout's
 # deliverable is its report, a local-only ship lands on local main, and every
 # other ship carries the PR recorded on its own record.
@@ -1572,44 +1533,21 @@ backlog_refresh_reminder() {
   fi
 }
 
-path_is_ancestor_of() {
-  local ancestor=$1 path=$2
-  [ -n "$ancestor" ] || return 1
-  [ -n "$path" ] || return 1
-  [ "$ancestor" != "$path" ] || return 1
-  case "$path" in
-    "$ancestor"/*) return 0 ;;
-  esac
+# The removal checks below are Go (core/teardown, through bin/jg-teardown-core.sh); the
+# command's header owns each refusal sentence. These wrappers pass the facts it cannot
+# read (this home, this repo, the registry and the seeded-home marker) and keep the
+# stdout contract: the canonical path, or nothing when there is nothing to remove.
+# A core that cannot run refuses the removal, never allows it.
+teardown_core_removal_check() {  # <jg-teardown command> <args...>
+  local rc=0
+  "$SCRIPT_DIR/jg-teardown-core.sh" "$@" || rc=$?
+  case "$rc" in 0|1) return "$rc" ;; esac
+  echo "REFUSED: the removal check could not run (exit $rc); nothing was removed." >&2
   return 1
 }
 
-removal_target_abs_path() {
-  local target=$1
-  if [ -d "$target" ]; then
-    cd "$target" && pwd -P
-  else
-    cd "$(dirname "$target")" && printf '%s/%s\n' "$(pwd -P)" "$(basename "$target")"
-  fi
-}
-
-worktree_registered_for_project() {
-  local project=$1 target=$2 abs_target listed line listed_abs
-  [ -n "$project" ] || return 1
-  [ -d "$project" ] || return 1
-  git -C "$project" rev-parse --git-dir >/dev/null 2>&1 || return 1
-  abs_target=$(removal_target_abs_path "$target")
-  listed=$(git -C "$project" -c core.quotePath=false worktree list --porcelain 2>/dev/null) || return 1
-  while IFS= read -r line; do
-    case "$line" in
-      worktree\ *)
-        listed_abs=$(removal_target_abs_path "${line#worktree }" 2>/dev/null || true)
-        [ "$listed_abs" = "$abs_target" ] && return 0
-        ;;
-    esac
-  done <<EOF
-$listed
-EOF
-  return 1
+worktree_registered_for_project() {  # <project> <target>
+  "$SCRIPT_DIR/jg-teardown-core.sh" worktree-registered --project "$1" -- "$2"
 }
 
 inspectable_git_worktree() {
@@ -1676,14 +1614,6 @@ worktree_git_lock_path() {
 # is owned by bin/jg-lock-lib.sh's jg_lock_is_provably_stale, sourced above.
 # Teardown passes the worktree dir as the companion directory and its own
 # STALE_WORKTREE_LOCK_AGE_SECS threshold.
-
-worktree_safety_blocked_by_lock() {
-  local reason=$1 lock
-  lock=$(worktree_git_lock_path "$WT") || lock=""
-  [ -n "$lock" ] && [ -e "$lock" ] || return 1
-  echo "teardown: cannot inspect worktree $WT for $reason while git lock $lock is present; checking whether the lock is stale" >&2
-  return 0
-}
 
 cleanup_stale_lock_for_safety_check() {
   local dir=$1 lock
@@ -1786,23 +1716,6 @@ teardown_treehouse_return() {
   return 1
 }
 
-report_worktree_dirt() {
-  # Use the same porcelain snapshot and exemptions as the refusal predicate.
-  printf '%s\n' "$1" | awk '
-    /^\?\? / { if (++untracked <= 10) paths = paths "  " substr($0, 4) "\n"; next }
-    NF { tracked = 1 }
-    END {
-      if (tracked) print "uncommitted changes present (includes tracked edits)"
-      else print "uncommitted changes present (untracked-only leftovers)"
-      if (untracked) {
-        print "untracked paths (up to 10):"
-        printf "%s", paths
-        if (untracked > 10) print "  ... additional untracked paths omitted"
-      }
-    }
-  ' >&2
-}
-
 # Scratch and --force copies are scrubbed before Treehouse return. See the
 # script header for why `git clean -fd` is not enough and why a dirty return
 # is not reported as clean.
@@ -1834,72 +1747,47 @@ teardown_note_dirty_return() {
   printf '%s\n' "$residue" | sed 's/^/  /' >&2
 }
 
+# The worktree safety test is Go (core/teardown `safety`, through bin/jg-teardown-core.sh): nothing
+# uncommitted, and nothing unpushed that the forge or the default branch has not absorbed. This
+# function keeps the policy that decides whether to ask (a --force, a scout or a Squad Lead is never
+# asked) and gathers the facts the command cannot read from the worktree: the recorded PR, its base
+# branch, and the forge identity jg_pr_url_parse derives from the PR URL. The command prints every
+# refusal itself. It exits 3 when a git index lock stopped a read, and a command that cannot run
+# refuses: a check that cannot run is never a pass. PR_URL is filled in when the forge resolved a
+# merged PR the record did not carry; the branch it read is kept so a later call, after the branch
+# is detached, still asks about the branch the work was done on.
 validate_worktree_teardown_safety() {
-  local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
+  local out rc=0 line login
   [ -d "$WT" ] || return 0
   [ "$FORCE" != "--force" ] || return 0
   case "$KIND" in
     squad_lead|scout) return 0 ;;
   esac
-
-  if ! dirty_raw=$(git -C "$WT" status --porcelain 2>/dev/null); then
-    if worktree_safety_blocked_by_lock "uncommitted changes"; then
-      return "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED"
-    fi
-    echo "REFUSED: cannot inspect worktree $WT for uncommitted changes." >&2
-    echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
-    return 1
-  fi
-  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.jg-(grok|kimi)-turnend$)' || true)
-
-  if ! unpushed_raw=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null); then
-    if worktree_safety_blocked_by_lock "commits not on a remote"; then
-      return "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED"
-    fi
-    echo "REFUSED: cannot inspect worktree $WT for commits not on a remote." >&2
-    echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
-    return 1
-  fi
-  unpushed=$(printf '%s\n' "$unpushed_raw" | head -5)
-
-  if [ -n "$unpushed" ] && [ "$MODE" = local-only ]; then
-    DEFAULT=$(default_branch) || { echo "REFUSED: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master." >&2; return 1; }
-    if ! unmerged_raw=$(git -C "$WT" log --oneline HEAD --not "$DEFAULT" -- 2>/dev/null); then
-      if worktree_safety_blocked_by_lock "commits not on $DEFAULT"; then
-        return "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED"
-      fi
-      echo "REFUSED: cannot inspect worktree $WT for commits not on $DEFAULT." >&2
-      echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
-      return 1
-    fi
-    unmerged=$(printf '%s\n' "$unmerged_raw" | head -5)
-    if [ -n "$dirty" ] || [ -n "$unmerged" ]; then
-      echo "REFUSED: local-only worktree $WT has work not yet merged into $DEFAULT and not on any remote." >&2
-      [ -n "$dirty" ] && report_worktree_dirt "$dirty"
-      [ -n "$unmerged" ] && printf 'commits not yet on %s:\n%s\n' "$DEFAULT" "$unmerged" >&2
-      echo "Merge the branch into local $DEFAULT first (bin/jg-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force." >&2
-      return 1
-    fi
-  elif [ -n "$dirty" ]; then
-    echo "REFUSED: worktree $WT has uncommitted changes." >&2
-    report_worktree_dirt "$dirty"
-    echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
-    return 1
-  elif [ "$MODE" != local-only ]; then
-    # A pushed branch is not a landing: the forge must prove the merge.
-    branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
-    if [ -z "$branch" ]; then
-      branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
-      TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
-    fi
-    if ! work_is_landed "$branch"; then
-      echo "REFUSED: worktree $WT has no merge proved on the forge: $LANDING_GAP." >&2
-      [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed" >&2
-      echo "A pushed branch, a done or merged status line, a pipeline state, or a summary is a claim, not proof." >&2
-      echo "Check the PR on the forge and re-run once it shows merged at a head containing this copy's HEAD, or get the captain's explicit OK to discard, then --force." >&2
-      return 1
+  local args=(safety --worktree "$WT" --project "$PROJ" --mode "$MODE")
+  [ -z "${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}" ] || args+=(--cached-branch "$TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY")
+  [ -z "$PR_URL" ] || args+=(--pr-url "$PR_URL")
+  [ -z "$BASE_BRANCH" ] || args+=(--base-branch "$BASE_BRANCH")
+  if [ -n "$PR_URL" ]; then
+    ! jg_dod_pr_outside_origin "$WT" "$PR_URL" || args+=(--pr-outside-origin)
+    if jg_pr_url_parse "$PR_URL" && [ "$JG_PR_PROVIDER" = forgejo ]; then
+      args+=(--forgejo-host "$JG_PR_HOST" --forgejo-path "$JG_PR_PATH" --forgejo-number "$JG_PR_NUMBER")
+      ! login=$(jg_pr_forgejo_login "$JG_PR_HOST") || args+=(--forgejo-login "$login")
     fi
   fi
+  out=$("$SCRIPT_DIR/jg-teardown-core.sh" "${args[@]}") || rc=$?
+  while IFS= read -r line; do
+    case "$line" in
+      branch=*) TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=${line#branch=} ;;
+      pr_url=*) [ -n "$PR_URL" ] || PR_URL=${line#pr_url=} ;;
+    esac
+  done <<EOF_OUT
+$out
+EOF_OUT
+  case "$rc" in
+    0|1|"$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED") return "$rc" ;;
+  esac
+  echo "REFUSED: the worktree safety check for $WT could not run (exit $rc)." >&2
+  return 1
 }
 
 # Fix 1 (see script header): does the active-or-most-recent no-mistakes run in
@@ -2016,233 +1904,21 @@ conclude_task_no_mistakes_run() {  # <worktree>
   return 1
 }
 
-# Fix 2 (see script header): pids of every process whose CURRENT WORKING
-# DIRECTORY is exactly $1 or under it, from one bounded system-wide `lsof -a
-# -d cwd` scan (never the recursive +D file-tree walk, which lsof itself
-# documents as slow). Never $$ (this script's own pid). Empty output when
-# nothing matches; failure means the scan could not establish a safe result.
-pids_with_cwd_under() {  # <dir>
-  local dir=$1 out pid path line
-  [ -n "$dir" ] && [ -d "$dir" ] || return 0
-  dir=$(cd "$dir" && pwd -P) || return 1
-  out=$(lsof -a -d cwd -Fpn 2>/dev/null) || return 1
-  [ -n "$out" ] || return 0
-  pid=
-  while IFS= read -r line; do
-    case "$line" in
-      p*)
-        pid=${line#p}
-        case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-        ;;
-      fcwd) [ -n "$pid" ] || return 1 ;;
-      n*)
-        [ -n "$pid" ] || return 1
-        path=${line#n}
-        case "$path" in
-          "$dir"|"$dir"/*)
-            [ -n "$pid" ] && [ "$pid" != "$$" ] && printf '%s\n' "$pid"
-            ;;
-        esac
-        ;;
-      '') ;;
-      *) return 1 ;;
-    esac
-  done <<EOF
-$out
-EOF
-}
-
-task_process_identity() {  # <pid>
-  local pid=$1 proc_root stat_line starttime value
-  local -a stat_fields
-  proc_root=${JG_PROC_ROOT_OVERRIDE:-/proc}
-  if [ -r "$proc_root/$pid/stat" ]; then
-    stat_line=$(cat "$proc_root/$pid/stat" 2>/dev/null) || return 1
-    read -r -a stat_fields <<< "${stat_line##*)}"
-    [ "${#stat_fields[@]}" -ge 20 ] || return 1
-    starttime=${stat_fields[19]}
-    case "$starttime" in ''|*[!0-9]*) return 1 ;; esac
-    printf 'starttime=%s\n' "$starttime"
-    return 0
-  fi
-  value=$(LC_ALL=C ps -p "$pid" -o lstart= 2>/dev/null) || return 1
-  value=$(jg_nm_trim "$value")
-  [ -n "$value" ] || return 1
-  case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
-  printf 'lstart=%s\n' "$value"
-}
-
-task_process_identity_matches() {  # <pid> <identity>
-  local current
-  current=$(task_process_identity "$1") || return 1
-  [ "$current" = "$2" ]
-}
-
-task_pid_list_contains() {  # <pid-list> <pid>
-  printf '%s\n' "$1" | grep -Fxq "$2"
-}
-
-task_pids_under_roots() {  # <dir>...
-  TASK_PIDS=
-  TASK_PIDS_FAILED_DIR=
-  local dir dir_pids pids=""
-  for dir in "$@"; do
-    [ -n "$dir" ] || continue
-    if ! dir_pids=$(pids_with_cwd_under "$dir"); then
-      TASK_PIDS_FAILED_DIR=$dir
-      return 1
-    fi
-    pids="$pids
-$dir_pids"
-  done
-  TASK_PIDS=$(printf '%s\n' "$pids" | grep -E '^[0-9]+$' | sort -un || true)
-}
-
-reap_task_backend_process_group() {  # <label>
-  local label=$1 leader leader_start pgid current_pgid own_pgid
-  if [ "$BACKEND" != tmux ]; then
-    echo "warning: lsof is unavailable; cannot resolve a process-group fallback for $BACKEND task $ID" >&2
-    return 0
-  fi
-  leader=$(tmux display-message -p -t "$T" '#{pane_pid}' 2>/dev/null) || leader=""
-  case "$leader" in ''|*[!0-9]*)
-    echo "warning: lsof is unavailable; cannot resolve the tmux pane process group for $ID" >&2
-    return 0
-    ;;
-  esac
-  leader_start=$(task_process_identity "$leader") || {
-    echo "warning: lsof is unavailable; cannot identify the tmux pane process group for $ID" >&2
-    return 0
-  }
-  pgid=$(ps -o pgid= -p "$leader" 2>/dev/null) || pgid=""
-  pgid=$(printf '%s' "$pgid" | tr -d '[:space:]')
-  case "$pgid" in ''|*[!0-9]*|0|1)
-    echo "warning: lsof is unavailable; cannot resolve the tmux pane process group for $ID" >&2
-    return 0
-    ;;
-  esac
-  own_pgid=$(ps -o pgid= -p "$$" 2>/dev/null) || own_pgid=""
-  own_pgid=$(printf '%s' "$own_pgid" | tr -d '[:space:]')
-  if [ "$pgid" = "$own_pgid" ]; then
-    echo "warning: lsof is unavailable; refusing to signal teardown's own process group for $ID" >&2
-    return 0
-  fi
-  task_process_identity_matches "$leader" "$leader_start" || return 0
-  current_pgid=$(ps -o pgid= -p "$leader" 2>/dev/null) || current_pgid=""
-  current_pgid=$(printf '%s' "$current_pgid" | tr -d '[:space:]')
-  [ "$current_pgid" = "$pgid" ] || return 0
-  echo "teardown: reaping leaked $label process group for $ID: $pgid" >&2
-  kill -TERM -- "-$pgid" 2>/dev/null || true
-  sleep 1
-  if task_process_identity_matches "$leader" "$leader_start" \
-     && [ "$(ps -o pgid= -p "$leader" 2>/dev/null | tr -d '[:space:]')" = "$pgid" ] \
-     && kill -0 -- "-$pgid" 2>/dev/null; then
-    echo "teardown: force-killing leaked $label process group for $ID: $pgid" >&2
-    kill -KILL -- "-$pgid" 2>/dev/null || true
-  fi
-}
-
-# Reap processes rooted (by cwd) under the caller's task-owned directories;
-# the header's Fix 2 contract owns root selection and directory retention. TERM
-# first, then KILL after a short grace period for anything still alive; a
-# process that exits on its own between the two passes is simply absent from
-# the recheck. A missing lsof uses the backend process-group fallback; an lsof
-# scan error refuses before destructive teardown. Scratch and retained-data
-# callers require lsof before entering this helper.
+# Fix 2 (see script header): the process reaping is Go (core/teardown, through
+# bin/jg-teardown-core.sh); its header owns the contract. This wrapper hands it the
+# task facts the command cannot read: the label, the task id, the backend and its
+# pane target for the tmux fallback, and this script's own pid, which is never a leak.
+# A core that cannot run refuses the teardown rather than skipping the reap.
 reap_task_worktree_processes() {  # <label> <dir>...
-  local label=$1 pids pid identity current_pids i pass=1 max_passes=3
-  local -a tracked_pids tracked_identities remaining_pids remaining_identities
+  local label=$1 rc=0
   shift
-  if ! command -v lsof >/dev/null 2>&1; then
-    reap_task_backend_process_group "$label"
-    return 0
-  fi
-  while [ "$pass" -le "$max_passes" ]; do
-    if ! task_pids_under_roots "$@"; then
-      echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-      return 1
-    fi
-    pids=$TASK_PIDS
-    [ -n "$pids" ] || return 0
-    tracked_pids=()
-    tracked_identities=()
-    while IFS= read -r pid; do
-      [ -n "$pid" ] || continue
-      if ! identity=$(task_process_identity "$pid"); then
-        if ! task_pids_under_roots "$@"; then
-          echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-          return 1
-        fi
-        if task_pid_list_contains "$TASK_PIDS" "$pid"; then
-          echo "REFUSED: cannot verify leaked process $pid identity for $ID; preserving the worktree/tasktmp for manual inspection or retry." >&2
-          return 1
-        fi
-        continue
-      fi
-      tracked_pids+=("$pid")
-      tracked_identities+=("$identity")
-    done <<EOF
-$pids
-EOF
-    if [ "${#tracked_pids[@]}" -eq 0 ]; then
-      pass=$((pass + 1))
-      continue
-    fi
-    if ! task_pids_under_roots "$@"; then
-      echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-      return 1
-    fi
-    current_pids=$TASK_PIDS
-    echo "teardown: reaping leaked $label process(es) for $ID: $(printf '%s' "$pids" | tr '\n' ' ')" >&2
-    for i in "${!tracked_pids[@]}"; do
-      pid=${tracked_pids[$i]}
-      identity=${tracked_identities[$i]}
-      if task_pid_list_contains "$current_pids" "$pid" \
-         && task_process_identity_matches "$pid" "$identity"; then
-        kill -TERM "$pid" 2>/dev/null || true
-      fi
-    done
-    sleep 1
-    if ! task_pids_under_roots "$@"; then
-      echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-      return 1
-    fi
-    current_pids=$TASK_PIDS
-    remaining_pids=()
-    remaining_identities=()
-    for i in "${!tracked_pids[@]}"; do
-      pid=${tracked_pids[$i]}
-      identity=${tracked_identities[$i]}
-      if task_pid_list_contains "$current_pids" "$pid" \
-         && task_process_identity_matches "$pid" "$identity"; then
-        remaining_pids+=("$pid")
-        remaining_identities+=("$identity")
-      fi
-    done
-    if [ "${#remaining_pids[@]}" -gt 0 ]; then
-      echo "teardown: force-killing leaked $label process(es) for $ID: ${remaining_pids[*]}" >&2
-      if ! task_pids_under_roots "$@"; then
-        echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-        return 1
-      fi
-      current_pids=$TASK_PIDS
-      for i in "${!remaining_pids[@]}"; do
-        pid=${remaining_pids[$i]}
-        identity=${remaining_identities[$i]}
-        if task_pid_list_contains "$current_pids" "$pid" \
-           && task_process_identity_matches "$pid" "$identity"; then
-          kill -KILL "$pid" 2>/dev/null || true
-        fi
-      done
-    fi
-    pass=$((pass + 1))
-  done
-  if ! task_pids_under_roots "$@"; then
-    echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
-    return 1
-  fi
-  [ -z "$TASK_PIDS" ] && return 0
-  echo "REFUSED: leaked $label processes for $ID remain after $max_passes reap attempts; preserving the worktree/tasktmp for manual inspection or retry." >&2
+  "$SCRIPT_DIR/jg-teardown-core.sh" reap --label "$label" --task-id "$ID" --backend "$BACKEND" \
+    --target "$T" --caller-pid "$$" -- "$@" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+  esac
+  echo "REFUSED: the process-reaping check could not run for $ID (exit $rc); preserving the worktree/tasktmp for manual inspection or retry." >&2
   return 1
 }
 
@@ -2377,122 +2053,12 @@ juggernaut_home_has_treehouse_slot() {
   worktree_registered_for_project "$JG_ROOT" "$home"
 }
 
-validate_removal_target() {
-  local target=$1 label=$2 abs_target abs_home abs_root
-  [ -n "$target" ] || return 0
-  [ -e "$target" ] || return 0
-  abs_target=$(removal_target_abs_path "$target")
-  if abs_home=$(cd "$JG_HOME" 2>/dev/null && pwd -P); then
-    :
-  else
-    abs_home=
-  fi
-  abs_root=$(cd "$JG_ROOT" && pwd -P)
-  case "$abs_target" in
-    ''|/) echo "REFUSED: unsafe $label removal target $target" >&2; return 1 ;;
-  esac
-  if [ -n "$abs_home" ] && [ "$abs_target" = "$abs_home" ]; then
-    echo "REFUSED: unsafe $label removal target $target is the active juggernaut home" >&2
-    return 1
-  fi
-  if [ "$abs_target" = "$abs_root" ]; then
-    echo "REFUSED: unsafe $label removal target $target is the juggernaut repo" >&2
-    return 1
-  fi
-  if [ -n "$abs_home" ] && path_is_ancestor_of "$abs_target" "$abs_home"; then
-    echo "REFUSED: unsafe $label removal target $target is an ancestor of the active juggernaut home" >&2
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_target" "$abs_root"; then
-    echo "REFUSED: unsafe $label removal target $target is an ancestor of the juggernaut repo" >&2
-    return 1
-  fi
-  if [ -n "$abs_home" ] && path_is_ancestor_of "$abs_home" "$abs_target"; then
-    echo "REFUSED: unsafe $label removal target $target is inside the active juggernaut home" >&2
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_root" "$abs_target"; then
-    echo "REFUSED: unsafe $label removal target $target is inside the juggernaut repo" >&2
-    return 1
-  fi
-  printf '%s\n' "$abs_target"
+validate_removal_target() {  # <target> <label>
+  teardown_core_removal_check validate-removal --jg-home "$JG_HOME" --jg-root "$JG_ROOT" --label "$2" -- "$1"
 }
 
-registered_descendant_home_for_removal() {
-  local reg=$1 target=$2 line id registered_home registered_abs
-  [ -f "$reg" ] || return 1
-  if ! squad_lead_registry_validate_bindings "$reg" squad_lead_registry_path_key; then
-    echo "REFUSED: $SQUAD_LEAD_REGISTRY_ERROR" >&2
-    return 2
-  fi
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      "- "*)
-        squad_lead_registry_parse_line "$line" || {
-          echo "REFUSED: malformed squad_lead registry entry: $line" >&2
-          return 2
-        }
-        id=$SQUAD_LEAD_REGISTRY_ID
-        registered_home=$SQUAD_LEAD_REGISTRY_HOME
-        registered_abs=$(removal_target_abs_path "$registered_home" 2>/dev/null || true)
-        [ -n "$registered_abs" ] || continue
-        [ "$registered_abs" = "$target" ] && continue
-        if path_is_ancestor_of "$target" "$registered_abs"; then
-          printf '%s\t%s\n' "$id" "$registered_abs"
-          return 0
-        fi
-        ;;
-    esac
-  done < "$reg"
-  return 1
-}
-
-validate_juggernaut_operational_dirs_for_removal() {
-  local home=$1 label=$2 name dir abs_home abs_dir
-  abs_home=$(removal_target_abs_path "$home")
-  for name in data state config projects; do
-    dir="$home/$name"
-    [ -e "$dir" ] || [ -L "$dir" ] || continue
-    if [ -L "$dir" ] && [ ! -e "$dir" ]; then
-      echo "REFUSED: unsafe $label $name directory $dir resolves outside the squad_lead home" >&2
-      return 1
-    fi
-    if [ -d "$dir" ]; then
-      abs_dir=$(cd "$dir" && pwd -P)
-    elif [ -e "$dir" ]; then
-      echo "REFUSED: unsafe $label $name path $dir is not a directory" >&2
-      return 1
-    else
-      abs_dir=
-    fi
-    if [ -z "$abs_dir" ] || ! path_is_ancestor_of "$abs_home" "$abs_dir"; then
-      echo "REFUSED: unsafe $label $name directory $dir resolves outside the squad_lead home" >&2
-      return 1
-    fi
-  done
-}
-
-validate_child_worktree_for_removal() {
-  local target=$1 project=$2 abs_target abs_home abs_root
-  [ -n "$target" ] || return 0
-  [ -e "$target" ] || return 0
-  abs_target=$(validate_removal_target "$target" "child worktree") || return 1
-  if abs_home=$(cd "$JG_HOME" 2>/dev/null && pwd -P); then
-    if path_is_ancestor_of "$abs_home" "$abs_target"; then
-      echo "REFUSED: unsafe child worktree removal target $target is inside the active juggernaut home" >&2
-      return 1
-    fi
-  fi
-  abs_root=$(cd "$JG_ROOT" && pwd -P)
-  if path_is_ancestor_of "$abs_root" "$abs_target"; then
-    echo "REFUSED: unsafe child worktree removal target $target is inside the juggernaut repo" >&2
-    return 1
-  fi
-  if ! worktree_registered_for_project "$project" "$target"; then
-    echo "REFUSED: unsafe child worktree removal target $target is not a git worktree for ${project:-the recorded project}" >&2
-    return 1
-  fi
-  printf '%s\n' "$abs_target"
+validate_child_worktree_for_removal() {  # <target> <project>
+  teardown_core_removal_check validate-child --jg-home "$JG_HOME" --jg-root "$JG_ROOT" --project "$2" -- "$1"
 }
 
 safe_rm_rf() {
@@ -2507,57 +2073,9 @@ safe_rm_rf_child_worktree() {
   rm -rf -- "$target"
 }
 
-validate_juggernaut_home_for_removal() {
-  local home=$1 label=$2 expected_id=${3:-} abs_home_path marker_id conflict child_id child_home
-  [ -n "$home" ] || return 0
-  [ -e "$home" ] || return 0
-  abs_home_path=$(validate_removal_target "$home" "$label") || return 1
-  if [ ! -f "$abs_home_path/$SUB_HOME_MARKER" ]; then
-    echo "REFUSED: unsafe $label removal target $home is not a seeded squad_lead home" >&2
-    return 1
-  fi
-  if [ -n "$expected_id" ]; then
-    marker_id=$(cat "$abs_home_path/$SUB_HOME_MARKER" 2>/dev/null || true)
-    if [ "$marker_id" != "$expected_id" ]; then
-      echo "REFUSED: unsafe $label removal target $home is marked for squad_lead ${marker_id:-unknown}, expected $expected_id" >&2
-      return 1
-    fi
-    if [ -e "$SQUAD_LEAD_REG" ] || [ -L "$SQUAD_LEAD_REG" ]; then
-      if ! squad_lead_registry_validate_bindings "$SQUAD_LEAD_REG" squad_lead_registry_path_key "$expected_id" "$abs_home_path"; then
-        case "$SQUAD_LEAD_REGISTRY_ERROR" in
-          overlapping\ squad_lead\ home\ assignment:*)
-            echo "REFUSED: unsafe $label removal target $home contains registered squad_lead home; $SQUAD_LEAD_REGISTRY_ERROR" >&2
-            ;;
-          *) echo "REFUSED: $SQUAD_LEAD_REGISTRY_ERROR" >&2 ;;
-        esac
-        return 1
-      fi
-    fi
-  fi
-  validate_juggernaut_operational_dirs_for_removal "$abs_home_path" "$label" || return 1
-  conflict=
-  if conflict=$(registered_descendant_home_for_removal "$SQUAD_LEAD_REG" "$abs_home_path"); then
-    :
-  else
-    conflict_rc=$?
-    [ "$conflict_rc" -eq 1 ] || return 1
-  fi
-  if [ -z "$conflict" ]; then
-    if conflict=$(registered_descendant_home_for_removal "$abs_home_path/data/squad_leads.md" "$abs_home_path"); then
-      :
-    else
-      conflict_rc=$?
-      [ "$conflict_rc" -eq 1 ] || return 1
-    fi
-  fi
-  if [ -n "$conflict" ]; then
-    IFS=$'\t' read -r child_id child_home <<EOF
-$conflict
-EOF
-    echo "REFUSED: unsafe $label removal target $home contains registered squad_lead home $child_home for $child_id" >&2
-    return 1
-  fi
-  printf '%s\n' "$abs_home_path"
+validate_juggernaut_home_for_removal() {  # <home> <label> [expected-id]
+  teardown_core_removal_check validate-home --jg-home "$JG_HOME" --jg-root "$JG_ROOT" --label "$2" \
+    --registry "$SQUAD_LEAD_REG" --marker "$SUB_HOME_MARKER" --expected-id "${3:-}" -- "$1"
 }
 
 remove_juggernaut_home() {

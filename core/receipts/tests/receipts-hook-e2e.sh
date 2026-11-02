@@ -32,14 +32,14 @@ chmod +x "$d/fork/bin/jg-run-receipt.sh"
 bash -n "$d/fork/bin/jg-dod-lib.sh"
 
 test=jg-pr-merge.test.sh
-(cd "$d/fork" && env -u JG_TASK_ID JG_ADDONS_DIR="$addons" bash "tests/$test") > "$d/$test.out" 2>&1 \
+(cd "$d/fork" && env -u JG_TASK_ID JG_CORE_DIR="$addons" bash "tests/$test") > "$d/$test.out" 2>&1 \
   || { echo "FAIL: fork receipt hook journey $test" >&2; tail -20 "$d/$test.out" >&2; exit 1; }
 
 # Helpers the spawn, promote and brief hooks call.
-export JG_HOME=$d/home JG_ADDONS_DIR=$addons
+export JG_HOME=$d/home JG_CORE_DIR=$addons
 mkdir -p "$JG_HOME"
 # Source the real fork library so the feature helper runs with its real dependencies.
-JG_ADDONS_DIR=$addons
+JG_CORE_DIR=$addons
 # shellcheck disable=SC1091 # sourced from the private fork clone at runtime
 . "$d/fork/bin/jg-dod-lib.sh"
 printf 'x\nCompletion receipt: required\n' > "$d/brief"
@@ -51,6 +51,10 @@ printf 'kind=ship\nreceipt_required=0\n' > "$d/tmp.meta"
 jg_receipts_promote "$d/old.meta" "$d/tmp.meta"
 [ "$(grep -c '^receipt_required=' "$d/tmp.meta")" -eq 1 ] && grep -qx 'receipt_required=1' "$d/tmp.meta" || { echo "FAIL: promote" >&2; exit 1; }
 jg_receipts_brief demo-id | grep -q "$addons/receipts/bin/jg-run-receipt.sh demo-id PASS" || { echo "FAIL: brief contract" >&2; exit 1; }
+# With no override the brief names the publisher beside the library, never a clone under projects/.
+own=$(unset JG_CORE_DIR; jg_receipts_brief demo-id)
+case $own in *projects/*) echo "FAIL: brief names a clone under projects/" >&2; exit 1 ;; esac
+grep -q "/core/receipts/bin/jg-run-receipt.sh demo-id PASS" <<<"$own" || { echo "FAIL: brief does not name the core publisher" >&2; exit 1; }
 
 # Done acceptance through the helper: a PASS receipt bound to the worktree head
 # accepts; a FAIL receipt for the same head refuses.
@@ -89,9 +93,9 @@ case $msg in
   *) echo "FAIL: missing-receipt refusal does not name the publisher: $msg" >&2; exit 1 ;;
 esac
 rm "$st/t.evidence-card"
-# With no feature checkout (JG_ADDONS_DIR unset or stale) a refusal still names a publisher that exists, and the PR variable.
+# With no feature checkout (JG_CORE_DIR unset or stale) a refusal still names a publisher that exists, and the PR variable.
 for stale in unset "$d/retired-addons"; do
-  msg=$(unset JG_ADDONS_DIR; [ "$stale" = unset ] || export JG_ADDONS_DIR=$stale; jg_dod_receipt_accept "$st" t "$st/t.meta" "$h" 2>&1 || true)
+  msg=$(unset JG_CORE_DIR; [ "$stale" = unset ] || export JG_CORE_DIR=$stale; jg_dod_receipt_accept "$st" t "$st/t.meta" "$h" 2>&1 || true)
   tool=$(printf '%s\n' "$msg" | grep -Eo '[^ ]+/jg-run-receipt\.sh' | head -n 1)
   case $msg in *"JG_RECEIPT_PR="*) ;; *) echo "FAIL: missing-receipt refusal omits JG_RECEIPT_PR ($stale): $msg" >&2; exit 1 ;; esac
   [ -x "$tool" ] && [ "${tool##*/core/}" = receipts/bin/jg-run-receipt.sh ] \

@@ -11,4 +11,4 @@ for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
 done
 unset _jg_old _jg_new 2>/dev/null || true
 
-echo "account-pool: nothing to remove. Delete ${JG_ADDONS_DIR:-${1:-<jg-home>}/projects/juggernaut-addons}/account-pool to turn the pool off."
+echo "account-pool: nothing to remove. Remove config/account-pool in the home to turn the pool off."

@@ -14,6 +14,8 @@ unset _jg_old _jg_new 2>/dev/null || true
 
 set -u
 here=$(cd "$(dirname "$0")" && pwd) || exit 1
+# shellcheck source=lib/policy-test-env.sh
+. "$here/../../lib/policy-test-env.sh"
 addons=$(cd "$here/../.." && pwd) || exit 1
 work=$(mktemp -d "${TMPDIR:-/tmp}/owner-rules-gate.XXXXXX") || exit 1
 trap 'rm -rf -- "$work"' EXIT

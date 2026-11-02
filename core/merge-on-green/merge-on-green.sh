@@ -125,9 +125,19 @@ for m in "$STATE"/*.meta; do
 
   # Gate: the task's resolved state must say checks green / PR ready. "PR merged" means the work
   # already landed; nothing happened, so nothing is printed.
+  # Only a pipeline run says "checks green: PR ready". A direct-PR task has no run, so its resolved state
+  # is the worker's own done line in free text ("state: done · source: status-log · ..."): for it the
+  # forge decides. bin/jg-pr-state.sh --all prints one line per open draft, conflict, unfinished or red
+  # check, or a merged or closed state, and nothing when the pull request is open with every reported
+  # check green. A false done, a lookup error and a merged pull request therefore stay silent, burn no
+  # head and are read again next sweep; jg-pr-merge below still makes the final live green call.
   cs=$(JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-crew-state.sh" "$task" 2>/dev/null) || continue
   case "$cs" in
     *"checks green: PR ready"*|*"checks green: PR held for merge"*) ;;
+    "state: done · source: status-log"*)
+      ws=$(JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-pr-state.sh" --all "$pr" 2>/dev/null) || continue
+      [ -z "$ws" ] || continue
+      ;;
     *) continue ;;
   esac
 

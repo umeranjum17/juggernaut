@@ -65,6 +65,26 @@ export JG_STATE_BUS_URL="${JG_STATE_BUS_URL:-nats://127.0.0.1:1}"
 # A host-installed task-priority feature must not change what test fixtures can add.
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 
+# The watcher asks the bus command about its own wake queue on every poll (bin/jg-bus.sh watcher),
+# and bin/jg-bus.sh builds that command on first use into the home's own state directory. A fixture
+# home is new for every case, so a real watcher cycle would spend its first poll compiling, which a
+# cold Go build cache makes longer than the cycle's own bound. Build the command once per source
+# tree, into a cache shared by every suite, and hand it to the watcher
+# (an explicit JG_BUS_BIN still wins).
+if [ -z "${JG_BUS_BIN:-}" ] && command -v "${JG_BUS_GO:-go}" >/dev/null 2>&1; then
+  _jg_bus_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+  _jg_bus_key=$(find "$_jg_bus_root/core/bus" -name '*.go' -o -name go.mod | LC_ALL=C sort | xargs cat | sha256sum | cut -c1-16)
+  _jg_bus_dir=${JG_TEST_BIN_CACHE:-/tmp}/jg-bus-test-bin-$(id -u)/$_jg_bus_key
+  if [ ! -x "$_jg_bus_dir/jg-bus" ] && mkdir -p "$_jg_bus_dir"; then
+    if ( cd "$_jg_bus_root/core/bus" && "${JG_BUS_GO:-go}" build -o "$_jg_bus_dir/jg-bus.$$" ./cmd/jg-bus ); then
+      mv -f "$_jg_bus_dir/jg-bus.$$" "$_jg_bus_dir/jg-bus"
+    else
+      rm -f "$_jg_bus_dir/jg-bus.$$"
+    fi
+  fi
+  [ ! -x "$_jg_bus_dir/jg-bus" ] || export JG_BUS_BIN="$_jg_bus_dir/jg-bus"
+fi
+
 # Clear the task-worker marker bin/jg-spawn.sh exports into ship and scout
 # panes. This suite builds git-init fixture repositories whose primary checkout
 # it runs a copied bin/jg-test-run.sh in, and that runner refuses the primary
@@ -149,6 +169,8 @@ jg_test_launch_git_prefix() {  # <launch>
 jg_test_launch_command() {  # <launch>
   local command=$1 end=' || return 1 2>/dev/null || exit 1; '
   case "$command" in *"$end"*) command=${command#*"$end"} ;; esac
+  # The credential strip is a pane-side loop that ends with this statement.
+  case "$command" in *"; unset jg_n; "*) command=${command#*"; unset jg_n; "} ;; esac
   while [[ "$command" == *\;* ]]; do
     case "$command" in
     export\ *\;* | unset\ *\;* | :) command=${command#*; } ;;
@@ -208,6 +230,13 @@ jg_test_tmpdir() {
 }
 
 JG_TEST_TMPDIR=$(jg_test_tmpdir) || return 1
+
+# A fixture never joins a real machine's bus: bin/jg-bus.sh records membership in the
+# owner's state/bus/homes, and 452 temp and worktree fixture homes had reached a real
+# owner's list before this file named a list of its own. JG_BUS_HOMES is that list, so
+# every suite's registrations land in this run's temp tree. A case that proves the
+# refusal unsets it deliberately.
+export JG_BUS_HOMES="${JG_BUS_HOMES:-$JG_TEST_TMPDIR/jg-bus-homes.$$}"
 
 JG_TEST_CLEANUP_DIRS=()
 JG_TEST_CLEANUP_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-cleanup.$$.XXXXXX") || return 1

@@ -72,45 +72,48 @@ jg_receipts_next_pr_of_lane_ok() {  # <state> <id> <meta-pr> <receipt-pr>
 _JG_RECEIPTS_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 
 # The receipt publisher a refusal tells a worker to run. It lives in this checkout's
-# core/receipts/bin; JG_ADDONS_DIR overrides the publisher only
+# core/receipts/bin; JG_CORE_DIR overrides the publisher only
 # when it really holds one, so a stale value never prints a path that does not exist.
 jg_receipts_tool() {
-  local over=${JG_ADDONS_DIR:-}/receipts/bin/jg-run-receipt.sh
-  if [ -n "${JG_ADDONS_DIR:-}" ] && [ -x "$over" ]; then printf '%s\n' "$over"; else printf '%s\n' "$_JG_RECEIPTS_LIB_DIR/jg-run-receipt.sh"; fi
+  local over=${JG_CORE_DIR:-}/receipts/bin/jg-run-receipt.sh
+  if [ -n "${JG_CORE_DIR:-}" ] && [ -x "$over" ]; then printf '%s\n' "$over"; else printf '%s\n' "$_JG_RECEIPTS_LIB_DIR/jg-run-receipt.sh"; fi
 }
 
+# The acceptance rules are policy/gate/receipt.rego and policy/gate/rules.json: this reads the task record and the
+# receipt file into facts, asks the one evaluator, and prints the message for the reason it gives. The forge read for
+# "the lane's next pull request" is made only when the policy asks for it. An evaluator that cannot run refuses.
 jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
-  local state=$1 id=$2 meta=$3 head=$4 receipt required mode gen count pr receipt_pr
+  local state=$1 id=$2 meta=$3 head=$4 receipt pr file hv=false facts docs verdict count why
   [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] || return 0
   receipt="$state/$id.run-receipt.json"
   pr=$(jg_dod_meta_value "$meta" pr)
-  required=$(jg_dod_meta_value "$meta" receipt_required)
   count=$(awk -F= '$1 == "receipt_required" { n++ } END { print n+0 }' "$meta") || return 1
-  if [ "$count" -gt 1 ] || { [ "$count" -eq 1 ] && [ "$required" != 1 ]; }; then
-    echo "completion receipt requirement malformed for $id"
+  file=other
+  if [ ! -e "$receipt" ] && [ ! -L "$receipt" ]; then file="absent"; elif [ -f "$receipt" ] && [ ! -L "$receipt" ]; then file="file"; fi
+  jg_pr_head_valid "$head" && hv=true
+  command -v jq >/dev/null 2>&1 || { echo "completion receipt cannot be checked for $id: jq is required"; return 1; }
+  [ "$file" = file ] || receipt=/dev/null
+  docs=$(jq -sc . "$receipt" 2>/dev/null) || docs=null
+  facts=$({ jq -nc --arg task "$id" --arg mode "$(jg_dod_meta_value "$meta" mode)" --arg gen "$(jg_dod_meta_value "$meta" spawn_gen)" \
+    --arg head "$head" --argjson hv "$hv" --argjson n "$count" --arg req "$(jg_dod_meta_value "$meta" receipt_required)" \
+    --arg pr "$pr" --arg file "$file" '{task: $task, mode: $mode, spawn_gen: $gen, head: $head, head_valid: $hv, required_lines: $n,
+      required: $req, pr: $pr, file: $file, next_pr_ok: null}'; printf '%s\n' "$docs"; } | jq -sc '.[0] + {docs: .[1]}')
+  if ! verdict=$(printf '%s' "$facts" | "$_JG_RECEIPTS_LIB_DIR/../../../bin/jg-guard-host.sh" eval gate.receipt 2>&1); then
+    echo "completion receipt cannot be checked for $id: ${verdict:-no answer}"
     return 1
   fi
-  if [ ! -e "$receipt" ] && [ ! -L "$receipt" ]; then
-    [ "$required" != 1 ] && return 0
-    echo "completion receipt missing for $id: publish one with: JG_HOME=${JG_HOME:-${JG_ROOT:-}} JG_RECEIPT_PR=${pr:-<PR url>} $(jg_receipts_tool) $id PASS <evidence-file>"
-    return 1
+  if [ "$(jq -r '.need // ""' <<<"$verdict")" = next_pr ]; then
+    local ok=false
+    jg_receipts_next_pr_of_lane_ok "$state" "$id" "$pr" "$(jq -r 'if (.docs[0].pr | type) == "string" then .docs[0].pr else "" end' <<<"$facts")" && ok=true
+    verdict=$(printf '%s' "$facts" | jq -c --argjson ok "$ok" '.next_pr_ok = $ok' | "$_JG_RECEIPTS_LIB_DIR/../../../bin/jg-guard-host.sh" eval gate.receipt 2>&1) || { echo "completion receipt cannot be checked for $id: ${verdict:-no answer}"; return 1; }
   fi
-  mode=$(jg_dod_meta_value "$meta" mode)
-  gen=$(jg_dod_meta_value "$meta" spawn_gen)
-  if jg_pr_head_valid "$head" && [ -f "$receipt" ] && [ ! -L "$receipt" ] && command -v jq >/dev/null 2>&1 \
-    && jq -se --arg task "$id" --arg mode "$mode" --arg gen "$gen" --arg head "$head" '
-      length == 1 and (.[0] | .schema == 1 and .task == $task and .mode == $mode and
-      .spawn_gen == $gen and .head == $head and .verdict == "PASS" and
-      (.evidence | type == "string" and test("[^[:space:]]")) and
-      (.at | type == "number" and . > 0))
-    ' "$receipt" >/dev/null 2>&1; then
-    receipt_pr=$(jq -r 'if type == "object" and (.pr | type == "string") then .pr else empty end' "$receipt" 2>/dev/null || true)
-    if [ -z "$pr" ] || [ "$receipt_pr" = "$pr" ] \
-      || jg_receipts_next_pr_of_lane_ok "$state" "$id" "$pr" "$receipt_pr"; then
-      return 0
-    fi
-  fi
-  echo "completion receipt refused for $id: FAIL, mismatched candidate/incarnation, malformed or absent evidence; publish one for this head with: JG_HOME=${JG_HOME:-${JG_ROOT:-}} JG_RECEIPT_PR=${pr:-<PR url>} $(jg_receipts_tool) $id PASS <evidence-file>"
+  [ "$(jq -r '.ok' <<<"$verdict")" != true ] || return 0
+  why=$(jq -r '.why' <<<"$verdict")
+  case $why in
+    malformed) echo "completion receipt requirement malformed for $id" ;;
+    missing) echo "completion receipt missing for $id: publish one with: JG_HOME=${JG_HOME:-${JG_ROOT:-}} JG_RECEIPT_PR=${pr:-<PR url>} $(jg_receipts_tool) $id PASS <evidence-file>" ;;
+    *) echo "completion receipt refused for $id: FAIL, mismatched candidate/incarnation, malformed or absent evidence; publish one for this head with: JG_HOME=${JG_HOME:-${JG_ROOT:-}} JG_RECEIPT_PR=${pr:-<PR url>} $(jg_receipts_tool) $id PASS <evidence-file>" ;;
+  esac
   return 1
 }
 

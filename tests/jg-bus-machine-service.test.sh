@@ -141,6 +141,11 @@ assert_contains "$(cat "$D/unit2.err")" "owned by $H1" "the bootstrap path must 
 [ "$(snap)" = "$before" ] || fail "a non-owner changed the owner's unit file or bus.conf"
 [ "$(cat "$D/service.pid")" = "$pid_before" ] || fail "a non-owner restarted the shared bus"
 grep -q reload "$D/systemctl.log" || fail "the server was never asked to reload the new account"
+# `owner` is what bin/jg-stack.sh asks before it installs dapr, ntfy or the consumer.
+assert_equals "self" "$(bus "$H1" owner)" "the home that owns the unit is told it owns it"
+other_owner=$(bus "$H2" owner); rc=$?
+assert_equals "$H1" "$other_owner" "a joined home is told who owns the unit"
+assert_equals "3" "$rc" "a joined home's owner answer exits 3"
 
 for h in "$H1" "$H2"; do
   one=$(bus "$h" ensure 2>&1)
@@ -180,10 +185,39 @@ assert_contains "$out4" "owned by $H1" "the refusal must name the owner: $out4"
 [ "$(sha256sum "$H1/state/bus/accounts.conf")" = "$accounts_before" ] || fail "a refused join changed the shared accounts"
 [ "$(snap)" = "$before" ] || fail "a refused join changed the owner's unit file or bus.conf"
 pass "one owner: other homes' bootstrap and update only add their account (reload), the owner's unit and bus.conf stay byte-identical, everyone authenticates, an over-cap join is refused"
+
+# --- 1b. a lab home never reaches a machine's real registry -------------------------
+# The owner's homes file IS this machine's registry. 452 temp and worktree fixture homes
+# had reached a real one, because every suite's join landed in the owner's own list. A
+# lab home with no registry of its own is refused and leaves that file byte-identical;
+# the same home names its own list with JG_BUS_HOMES and is recorded there instead.
+H6="$D/homes/six"; make_home "$H6"
+OWNER_REGISTRY="$H1/state/bus/homes"
+# What a real machine's list holds: one line a real home left there. Nothing a fixture
+# does may change a byte of it. Its path is inside this lab so a refused join can never
+# write outside the temp tree.
+mkdir -p "$D/homes/registered-real/state"
+printf '%s\t%s\n' "$D/homes/registered-real" "$D/homes/registered-real/state" > "$OWNER_REGISTRY"
+registry_before=$(sha256sum "$OWNER_REGISTRY")
+out5=$(env -u JG_BUS_HOMES JG_HOME="$H6" JG_STATE_OVERRIDE="$H6/state" JG_DATA_OVERRIDE="$H6/data" \
+  timeout 120 "$BUS" install-service 2>&1)
+[ "$(sha256sum "$OWNER_REGISTRY")" = "$registry_before" ] || fail "a lab home was added to the machine's real registry"
+assert_contains "$out5" "never added to the machine registry" "a lab home with no registry of its own must be refused: $out5"
+assert_contains "$out5" "JG_BUS_HOMES" "the refusal must name the way a lab home registers: $out5"
+[ "$(cat "$D/service.pid")" = "$pid_before" ] || fail "a refused lab home restarted the shared bus"
+LAB_REGISTRY="$D/lab-registry"
+JG_BUS_HOMES="$LAB_REGISTRY" bus "$H6" install-service >/dev/null 2>&1
+[ "$(awk -F '\t' -v h="$H6" '$1 == h { found = 1 } END { print found + 0 }' "$LAB_REGISTRY" 2>/dev/null)" = 1 ] \
+  || fail "a lab home was not recorded in the registry JG_BUS_HOMES named"
+[ "$(sha256sum "$OWNER_REGISTRY")" = "$registry_before" ] || fail "a lab home with its own registry still changed the machine's real one"
+pass "a lab home is refused by the machine's real registry, which stays byte-identical; the registry JG_BUS_HOMES names holds it instead"
 stop_lab
 rm -f -- "$UNIT"   # the lab's unit: the 21-account home below installs a machine of its own
 
 # --- 2. the limits arithmetic with 21 accounts -------------------------------------
+# This lab installs its own unit, so it registers nothing; it still names its own list, so
+# the homes the lab above registered cannot count as members of this one.
+export JG_BUS_HOMES="$D/solo-registry"
 H21="$D/solo/many"; make_home "$H21"
 : > "$H21/data/squad_leads.md"
 for i in $(seq 20); do

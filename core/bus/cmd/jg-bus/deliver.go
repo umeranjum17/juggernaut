@@ -59,6 +59,13 @@ func eventText(payload []byte) (ev event, ok bool) {
 func (a *app) deliverOne(payload []byte) {
 	ev, ok := eventText(payload)
 	if !ok {
+		// A captain reply shares the stream and belongs to the router, not to ntfy.
+		var reply struct {
+			Answer string `json:"answer"`
+		}
+		if json.Unmarshal(payload, &reply) == nil && reply.Answer != "" {
+			return
+		}
 		a.noteFailure("deliver", "stream message is not a captain event")
 		a.noteUndelivered("", "stream message is not a captain event", toJSON(string(payload)))
 		return

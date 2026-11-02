@@ -20,8 +20,11 @@
 // and core/delete-guard/tests/delete-guard.test.sh drive the same claims they drove
 // before, and `opa test policy/guard` still proves the rule's own decisions.
 //
+// A fifth door, eval, asks any other policy package for its decision (eval.go), so the
+// merge gate's rules are Rego and JSON under policy/gate/ and this is the one evaluator.
+//
 // Usage: jg-guard-host.sh hook | --list | delete [--runtime <name>] | decide <command> |
-// gh <args...> | gh-axi <args...> | pre-push <remote> <url>
+// gh <args...> | gh-axi <args...> | pre-push <remote> <url> | eval <package>
 package main
 
 import (
@@ -33,7 +36,7 @@ import (
 )
 
 func usage() {
-	fmt.Fprint(os.Stderr, "usage: jg-guard-host.sh hook | --list | delete [--runtime <name>] | decide <command> | gh <args...> | gh-axi <args...> | pre-push <remote> <url>\n")
+	fmt.Fprint(os.Stderr, "usage: jg-guard-host.sh hook | --list | delete [--runtime <name>] | decide <command> | gh <args...> | gh-axi <args...> | pre-push <remote> <url> | eval <package>\n")
 	os.Exit(2)
 }
 
@@ -59,6 +62,8 @@ func main() {
 			return
 		}
 		fmt.Println("allow")
+	case "eval":
+		evalMode(args[1:])
 	case "pre-push":
 		pushMode(args[1:])
 	case "gh", "gh-axi":

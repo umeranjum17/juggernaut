@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Behavior test for the read verbs of `juggernaut-axi` (slice 1): status, lanes, wakes.
+# Behavior test for the read verbs of `juggernaut-axi` (slices 1 and 2): status, lanes, wakes,
+# tasks (list, show, ready), holds, and pr.
 # Drives the real CLI over a fixture home and checks the tasks-axi conventions (count line,
 # tabular rows, plain-words empty state, cut text with --full, --fields, --limit, help[]),
 # TOON/JSON parity, and that reading never changes a record.
@@ -15,7 +16,14 @@ AXI="$ROOT/bin/juggernaut-axi"
 TMP_ROOT=$(jg_test_tmproot juggernaut-axi)
 H=$TMP_ROOT/home
 mkdir -p "$H/data" "$H/state" "$H/config" "$H/projects" "$TMP_ROOT/fixture-root"
-printf '## In flight\n- [ ] w1 - Worker one (repo: alpha) (kind: ship)\n- [ ] w2 - Worker two (repo: alpha) (kind: ship)\n- [ ] w3 - Scout three (repo: beta) (kind: scout)\n\n## Queued\n\n## Done\n' > "$H/data/backlog.md"
+{
+  printf '## In flight\n- [ ] w1 - Worker one (repo: alpha) (kind: ship)\n- [ ] w2 - Worker two (repo: alpha) (kind: ship)\n- [ ] w3 - Scout three (repo: beta) (kind: scout)\n\n## Queued\n'
+  printf -- '- [ ] q-ready - Ready alpha work (repo: alpha) (kind: ship) (priority: 1) (since 2026-10-30)\n'
+  printf -- '- [ ] q-blocked - Waits on worker one blocked-by: w1 (repo: alpha) (kind: ship) (priority: 2) (since 2026-10-30)\n'
+  printf -- '- [ ] q-captain - Needs the captain (repo: beta) (kind: ship) (priority: 1) (since 2026-10-30) (hold: pick the name) (hold-kind: captain)\n'
+  printf -- '- [ ] q-future - Parked behind the move (repo: beta) (kind: ship) (priority: 3) (since 2026-10-30) (hold: after the move) (hold-kind: future)\n'
+  printf '\n## Done\n'
+} > "$H/data/backlog.md"
 export JG_HOME=$H JG_ROOT_OVERRIDE=$TMP_ROOT/fixture-root
 LONG=$(printf 'long-note-%.0s' $(seq 30))
 for t in w1:ship:alpha w2:ship:alpha w3:scout:beta; do
@@ -76,4 +84,75 @@ assert_contains "$st" "juggernaut-axi lanes" "status points at lanes"
 assert_contains "$("$AXI" lanes --help)" "usage: juggernaut-axi lanes" "lanes has its own help"
 assert_contains "$("$AXI" wakes --help)" "usage: juggernaut-axi wakes" "wakes has its own help"
 assert_contains "$("$AXI" tickets --json)" "juggernaut-axi.v1" "existing views still answer"
+# tasks: list, show, ready
+before=$(sha256sum "$H/data/backlog.md")
+tl=$("$AXI" tasks)
+assert_contains "$tl" "view: tasks" "tasks names its view"
+assert_contains "$tl" "count: 7 of 7 total" "tasks counts its rows"
+assert_contains "$tl" "tasks[7]{id,state,kind,repo,title}:" "tasks rows are tabular"
+assert_contains "$tl" "help[" "tasks ends with next-step help"
+assert_equals 3 "$("$AXI" tasks --state in_flight --json | jq '.tasks | length')" "--state filters"
+assert_equals "q-captain q-future" "$("$AXI" tasks --state held --json | jq -r '[.tasks[].id] | join(" ")')" "--state held lists every held task"
+assert_equals q-blocked "$("$AXI" tasks --blocked --json | jq -r '.tasks[].id')" "--blocked lists only blocked work"
+assert_equals "q-captain q-future" "$("$AXI" tasks --repo beta --kind ship --json | jq -r '[.tasks[].id] | join(" ")')" "--repo and --kind combine"
+assert_contains "$("$AXI" tasks --limit 2)" "tasks beyond limit,5" "the omitted tasks are counted"
+assert_contains "$("$AXI" tasks --fields blocked_by,hold_kind)" "title,blocked_by,hold_kind}" "--fields adds columns"
+assert_equals w1 "$("$AXI" tasks --fields blocked_by --json | jq -r '.tasks[] | select(.id == "q-blocked") | .blocked_by')" "blocked_by names the open blocker"
+none=$("$AXI" tasks --state "done")
+assert_contains "$none" "tasks: 0 tasks match these filters" "an empty list says so in words"
+assert_contains "$none" "count: 0 of 0 total" "an empty tasks list still counts"
+"$AXI" tasks --state bogus >/dev/null 2>&1 && fail "an unknown state must be refused"
+sh1=$("$AXI" tasks show q-captain)
+assert_contains "$sh1" "view: task" "show names its view"
+assert_contains "$sh1" "hold_kind: captain" "show states the hold kind"
+assert_contains "$sh1" "hold_reason: pick the name" "show states the hold reason"
+assert_contains "$sh1" "held: yes" "show states the task is held"
+assert_contains "$("$AXI" tasks show q-blocked)" "blocked_by: w1" "show names the blocker"
+assert_equals 1 "$("$AXI" tasks show q-ready --json | jq '[.task] | length')" "show --json carries the task"
+"$AXI" tasks show no-such-task >/dev/null 2>"$TMP_ROOT/err"; rc=$?
+assert_equals 2 "$rc" "an unknown task exits 2"
+assert_contains "$(cat "$TMP_ROOT/err")" "unknown task: no-such-task" "the refusal names the task"
+rd=$("$AXI" tasks ready)
+assert_contains "$rd" "view: ready" "ready names its view"
+assert_equals q-ready "$("$AXI" tasks ready --json | jq -r '[.ready[].id] | join(" ")')" "ready is queued, unblocked, and unheld work only"
+assert_contains "$("$AXI" tasks ready --repo beta)" "ready: 0 tasks are ready" "an empty ready list says so in words"
+assert_contains "$("$AXI" holds --help)" "usage: juggernaut-axi holds" "holds has its own help"
+
+# holds
+hl=$("$AXI" holds)
+assert_contains "$hl" "view: holds" "holds names its view"
+assert_contains "$hl" "holds[2]{id,kind,bucket,age_days,until,reason}:" "hold rows are tabular"
+assert_equals "captain:1 future:1" "$("$AXI" holds --json | jq -r '[.kinds[] | "\(.kind):\(.count)"] | join(" ")')" "holds are counted by kind"
+assert_equals q-captain "$("$AXI" holds --kind captain --json | jq -r '.holds[0].id')" "--kind filters"
+assert_equals live "$("$AXI" holds --bucket live --json | jq -r '.holds[0].bucket')" "a fresh captain hold is live"
+assert_contains "$("$AXI" holds --kind parked)" "holds: 0 holds match these filters" "an empty hold list says so in words"
+assert_contains "$("$AXI" holds --limit 1)" "holds beyond limit,1" "the omitted holds are counted"
+"$AXI" holds --kind bogus >/dev/null 2>&1 && fail "an unknown hold kind must be refused"
+assert_equals "$before" "$(sha256sum "$H/data/backlog.md")" "reading tasks and holds changes no record"
+
+# pr: a stub gh stands in for GitHub; the real jg-pr-state.sh reads it
+mkdir -p "$TMP_ROOT/bin"
+cat > "$TMP_ROOT/bin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "pr view") printf 'state=open\nmerged_at=\ndraft=%s\nhead=abc123\nauthor=umer\nmergeability=mergeable\nreview_decision=\n' "${STUB_DRAFT:-false}" ;;
+  "pr checks") [ -z "${STUB_RED:-}" ] || echo "REQUIRED CHECK: lint (FAILURE)" ;;
+  *) exit 1 ;;
+esac
+GH
+chmod +x "$TMP_ROOT/bin/gh"
+PRURL=https://github.com/example/repo/pull/7
+red=$(PATH="$TMP_ROOT/bin:$PATH" STUB_RED=1 "$AXI" pr "$PRURL")
+assert_contains "$red" "view: pr" "pr names its view"
+assert_contains "$red" "blockers[1]{kind,detail}:" "blockers are tabular"
+assert_contains "$red" "REQUIRED CHECK,lint (FAILURE)" "a red required check is listed"
+assert_contains "$red" "waiting_for: \"a required check is not passing: lint\"" "the one wait is named"
+assert_contains "$red" "not a readiness verdict" "an empty list is never read as ready"
+green=$(PATH="$TMP_ROOT/bin:$PATH" "$AXI" pr "$PRURL")
+assert_contains "$green" "blockers: 0 blockers reported" "no blocker says so in words"
+assert_contains "$green" "waiting_for: \"the merge call" "a clean pull request waits only on the merge call"
+assert_contains "$(PATH="$TMP_ROOT/bin:$PATH" STUB_DRAFT=true "$AXI" pr "$PRURL" --json)" "marked ready for review" "--json carries the same wait"
+"$AXI" pr not-a-url >/dev/null 2>&1 && fail "a non-URL must be refused"
+PATH="$TMP_ROOT/bin:$PATH" "$AXI" pr "https://github.com/example/repo/issues/7" >/dev/null 2>&1 && fail "an issue URL must be refused"
+assert_contains "$("$AXI" pr --help)" "usage: juggernaut-axi pr" "pr has its own help"
 pass "juggernaut-axi read verbs"

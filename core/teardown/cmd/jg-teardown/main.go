@@ -19,7 +19,14 @@
 // the completion link it did not have. `default-branch --project P` prints the project's default
 // branch and exits 1 when none can be determined.
 //
-// There is no --force here and no override: whether to run this test at all is the caller's
+// `safety` is the next question, asked before the worktree is returned: is anything uncommitted or
+// unpushed that nobody has absorbed? It takes the landed flags plus --mode and --cached-branch,
+// exits 0 to proceed, 1 for a refusal whose sentences it prints on stderr, 3 when a git index lock
+// stopped a read (the caller waits, proves the lock stale, and asks again), and 2 for an invalid
+// request. branch= and pr_url= on stdout are facts for the caller to keep. The landed question is
+// answered in-process, not through `landed`.
+//
+// There is no --force here and no override: whether to run these tests at all is the caller's
 // policy, and this command only ever answers it. It never changes a repository except for
 // fetching the refs it compares against.
 package main
@@ -37,8 +44,20 @@ func main() {
 	switch os.Args[1] {
 	case "landed":
 		os.Exit(runLanded(os.Args[2:]))
+	case "reap":
+		os.Exit(runReap(os.Args[2:]))
+	case "validate-removal":
+		os.Exit(runValidateRemoval(os.Args[2:]))
+	case "validate-child":
+		os.Exit(runValidateChild(os.Args[2:]))
+	case "validate-home":
+		os.Exit(runValidateHome(os.Args[2:]))
+	case "worktree-registered":
+		os.Exit(runWorktreeRegistered(os.Args[2:]))
 	case "default-branch":
 		os.Exit(runDefaultBranch(os.Args[2:]))
+	case "safety":
+		os.Exit(runSafety(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -46,5 +65,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: jg-teardown landed --worktree W --branch B --project P [flags] | default-branch --project P")
+	fmt.Fprintln(os.Stderr, "usage: jg-teardown safety --worktree W --project P --mode M [flags] | landed --worktree W --branch B --project P [flags] | default-branch --project P | reap --label L --task-id ID --backend B --target T --caller-pid N DIR... | validate-removal|validate-child|validate-home|worktree-registered [flags] -- TARGET")
 }

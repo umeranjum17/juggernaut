@@ -72,9 +72,9 @@ jg_ci_scope_bus_path() {
     # The workflow that defines a lane is part of the lane: a change to it must run it.
     .github/*) return 0 ;;
     docs/bus-service.md) return 0 ;;
-    # The helpers and the four suites the Bus service lane runs.
+    # The helpers and the five suites the Bus service lane runs.
     tests/lib.sh|tests/git-config-helpers.sh) return 0 ;;
-    tests/jg-bus-service.test.sh|tests/jg-bus-machine-service.test.sh|tests/jg-stack.test.sh|tests/jg-bus.test.sh) return 0 ;;
+    tests/jg-bus-service.test.sh|tests/jg-bus-machine-service.test.sh|tests/jg-stack.test.sh|tests/jg-stack-owner.test.sh|tests/jg-bus.test.sh|tests/jg-dapr-workflow.test.sh) return 0 ;;
   esac
   return 1
 }
