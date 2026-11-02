@@ -20,7 +20,7 @@ mkdir -p "$HOME" "$JG_HOME/state"
 . "$ROOT/bin/jg-dod-lib.sh"
 # The forge read behind "the lane's next PR" is the one fact the acceptance cannot gather offline: each case says what it answers.
 NEXT=no
-# shellcheck disable=SC2329  # the acceptance calls this through the library
+# shellcheck disable=SC2317,SC2329  # the acceptance calls this through the library
 jg_receipts_next_pr_of_lane_ok() { [ "$NEXT" = yes ]; }
 st=$JG_HOME/state head=$(printf 'c%.0s' {1..40}) pr=https://github.com/o/r/pull/1 pr2=https://github.com/o/r/pull/2
 good() { # <field=value>... overrides: the receipt of task t that the acceptance accepts at $head
