@@ -1465,6 +1465,19 @@ A malformed or unreadable file refuses every fresh ship or Recon spawn until it 
 Juggernaut cannot see which part of a worker's life uses the resource, so the number bounds whole workers from launch to handoff, and the tightest resource every worker needs should decide it.
 [`bin/jg-project-capacity-lib.sh`](../bin/jg-project-capacity-lib.sh) owns the file format, what holds a place, and why concurrent spawns cannot both take the last one.
 
+## Preferences and owner-rule clauses (config/preferences/)
+
+A preference is one small JSON block; an owner rule's machine form is a clause. Both follow `defaults/preferences/schema.json`, and nothing here needs new code per rule.
+
+- **Blocks.** `defaults/preferences/<block>.json` ships; `config/preferences/<block>.json` in a home wins. A home block that fails the schema is one warning and the shipped block applies. `peak-hours` holds the provider peak window (default weekdays 12:00-18:00 UTC); `rules` holds clauses.
+- **One command to change one.** `bin/jg-pref.sh list|get|set|swap|reset|validate`, for example `bin/jg-pref.sh set peak-hours.utcHours 13-18`. A change is pushed to every squad_lead home by the existing config push, because every shipped block name is in `JG_INHERITABLE_CONFIG`; a new block file joins by existing.
+- **Decision points and facts are data.** The schema declares each point, its facts and its allowed actions; `utcHour`, `weekday` and `peak` are standard facts gathered once. Today `route-select` is wired (`jg-model-pool` asks before it uses a route); `spawn`, `merge`, `wake-route` and `captain-message` are declared and refuse clauses until wired.
+- **One evaluator.** `bin/jg-clause.sh decide <point> fact=value ...` matches every clause for the point and answers with the strongest action (`deny` > `skip` > `warn` > `allow`). A `when` value is a scalar, an any-of array, a `*` glob, or an `a-b` range.
+- **A new rule is one line.** `bin/jg-owner-rules.sh add --kind owner --words "..." --scope "..." --point route-select --when "provider=kimi-coding weekday=1" --then skip` records his words and the clause together. A clause naming a fact the point does not gather is refused and nothing is recorded; adding the fact to the point in the schema is the only case for code.
+- **First clauses.** `no-deepseek-at-peak` (owner-rule-3262dff8) skips DeepSeek routes in the peak window and falls to the next route. `sol-hard-only` replaces the hard-only branch that `jg-model-pool` used to carry.
+
+Proof: `bash tests/jg-clause.test.sh`. Not yet folded into blocks: `preferred-stack.json`, `architecture.json`, `engineering-rules.json`, `crew-dispatch.json`, wake batching and the other decision points.
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that Juggernaut reads before dispatching an operator or Recon.

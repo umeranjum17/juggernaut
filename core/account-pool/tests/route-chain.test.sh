@@ -43,6 +43,7 @@ req() { jq -nc --arg p "$pool_cfg" --argjson a "${1:-[]}" --argjson hard "${2:-f
 pick() { # <attempted-json> [hard]
   out=$(printf '%s' "$(req "${1:-[]}" "${2:-false}")" | env -i PATH="$w/bin:/usr/bin:/bin" HOME="$w" TMPDIR="$w" \
     JG_HOME="$w/home" JG_ROUTE_CHAIN_STATE="$w/home/state" JG_CLAUDE_ACCOUNTS_REGISTRY="$w/none.json" \
+    JG_CLAUSE_NOW="${JG_CLAUSE_NOW:-1793538000}" \
     JG_MODEL_POOL_FLOOR=15 JG_ACCOUNT_POOL_REST_FLOOR=15 "$helper" pick --json 2>"$w/err"); rc=$?
 }
 probe_run() {

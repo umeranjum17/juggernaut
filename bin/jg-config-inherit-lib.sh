@@ -86,6 +86,19 @@ JG_SHARED_CAPTAIN_MODE="444"
 # Extend here to inherit more of the primary's local config; override via the
 # environment only in tests. Items must not contain whitespace.
 JG_INHERITABLE_CONFIG="${JG_INHERITABLE_CONFIG:-crew-dispatch.json preferred-stack.json architecture.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode keep-ai-trailers supervision-host-off juggernaut-role lane-target}"
+# Every shipped preference block (defaults/preferences/<block>.json, see bin/jg-pref.sh) is inheritable as
+# config/preferences/<block>.json, so one `jg-pref.sh set` reaches every home through the same push. A new
+# block file joins by existing; no list here changes.
+for _jg_pref in "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/../defaults/preferences/*.json; do
+  [ -f "$_jg_pref" ] || continue
+  _jg_pref=${_jg_pref##*/}
+  [ "$_jg_pref" = schema.json ] && continue
+  case " $JG_INHERITABLE_CONFIG " in
+    *" preferences/$_jg_pref "*) ;;
+    *) JG_INHERITABLE_CONFIG="$JG_INHERITABLE_CONFIG preferences/$_jg_pref" ;;
+  esac
+done
+unset _jg_pref
 # core/brief-inherit owns the shared-instruction seam; a fixture checkout copied from bin/ alone has
 # no core/ tree, so the seam is simply absent there and the home's own config stands alone.
 _bi=$(cd "$(dirname "${BASH_SOURCE[0]}")/../core/brief-inherit/bin" 2>/dev/null && pwd)/jg-brief-inherit-lib.sh
