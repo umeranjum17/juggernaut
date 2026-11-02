@@ -378,6 +378,7 @@ Two notes on what the screens show:
 ### Architecture and configuration
 
 - [docs/architecture.md](docs/architecture.md) — maintainer architecture for the squad, supervision, worktrees, Squad Leads, and project modes.
+- [docs/migration-c.md](docs/migration-c.md) — decisions, code shape, steps, and process rules for the option C migration.
 - [docs/configuration.md](docs/configuration.md) — environment variables, `JG_HOME`, runtime backend selection, optional Relay and its X and Discord setup steps, trusted external process-event adapter setup, the files you set, and harness support.
 - [docs/extension-bindings.md](docs/extension-bindings.md) — maintainer architecture for the narrow trusted external `process-event-adapter/1` package, binding, handshake, and evidence boundary.
 - [docs/remote-squad-leads.md](docs/remote-squad-leads.md) — current setup, routing, transfer, recovery, and safety behavior for whole-home remote Squad Leads.

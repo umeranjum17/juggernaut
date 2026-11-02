@@ -2946,126 +2946,6 @@ relaunch_resume_args() {  # <harness> <backend> <target>
   printf -- ' %s %s' "$flag" "$(shell_quote "$ref")"
 }
 
-model_flag_for_harness() {
-  local harness=$1 model=$2
-  [ -n "$model" ] && [ "$model" != default ] || return 0
-  case "$harness" in
-  claude | codex | opencode | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy | devin)
-    printf -- '--model %s ' "$(shell_quote "$model")"
-    ;;
-  esac
-}
-
-effort_flag_for_harness() {
-  local harness=$1 effort=$2 model=${3:-}
-  [ -n "$effort" ] && [ "$effort" != default ] || return 0
-  case "$harness" in
-  claude)
-    case "$effort" in
-    low | medium | high | xhigh | max) printf -- '--effort %s ' "$(shell_quote "$effort")" ;;
-    esac
-    ;;
-  codex)
-    # The installed codex config schema uses model_reasoning_effort. The
-    # installed model catalog supports max for gpt-5.6-luna; keep that level
-    # scoped to the model whose catalog entry advertises it.
-    case "$effort" in
-    low | medium | high | xhigh) printf -- '-c %s ' "$(shell_quote "model_reasoning_effort=\"$effort\"")" ;;
-    max)
-      [ "$model" = gpt-5.6-luna ] || return 0
-      printf -- '-c %s ' "$(shell_quote 'model_reasoning_effort="max"')"
-      ;;
-    esac
-    ;;
-  grok)
-    # grok exposes both --effort and --reasoning-effort; juggernaut's profile
-    # axis is the reasoning knob. As of grok 0.2.99, --reasoning-effort accepts
-    # only low|medium|high and rejects both xhigh and max, so omit those rather
-    # than passing a known-bad value.
-    case "$effort" in
-    low | medium | high) printf -- '--reasoning-effort %s ' "$(shell_quote "$effort")" ;;
-    esac
-    ;;
-  agy)
-    # agy 1.2.0 --effort accepts exactly low|medium|high, so xhigh and max are
-    # omitted rather than passed as known-bad values (record-and-omit).
-    case "$effort" in
-    low | medium | high) printf -- '--effort %s ' "$(shell_quote "$effort")" ;;
-    esac
-    ;;
-  pi | pi-signed)
-    # Pi 0.80.6 accepts the full shared effort vocabulary, including max, through
-    # its --thinking flag.
-    case "$effort" in
-    ultra)
-      "$SCRIPT_DIR/jg-harness.sh" validate-native-effort "$harness" "$model" "$effort" || return 1
-      printf -- '--codex-effort %s ' "$(shell_quote ultra)"
-      ;;
-    low | medium | high | xhigh | max) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
-    esac
-    ;;
-  omp)
-    # omp 18.1.11 --thinking accepts off|minimal|low|medium|high|xhigh|max|auto,
-    # a superset of the shared vocabulary, so every level maps straight across.
-    case "$effort" in
-    low | medium | high | xhigh | max) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
-    esac
-    ;;
-  opencode)
-    # opencode's interactive `opencode --prompt` launch has no effort flag
-    # (`opencode run --variant` is a different, non-interactive mode). Its
-    # config schema (opencode 1.18.32, `opencode debug config` / config.json)
-    # carries per-model reasoning effort as agent.<name>.variant, "Default model
-    # variant for this agent (applies only when using the agent's configured
-    # model)", so the effort rides the OPENCODE_CONFIG_CONTENT JSON the launch
-    # already writes: the default build agent is pinned to the resolved model
-    # and the effort named as its variant, which OpenCode resolves against that
-    # model's own variant list. Those lists are per-provider (anthropic/* expose
-    # high|max, openai/* expose low|medium|high|xhigh), so emit the variant only
-    # when the resolved model's provider is known to expose that effort; any
-    # other provider, or an effort outside its family's list, keeps the
-    # permission-only launch and omits the variant (record-and-omit, as codex
-    # and grok do). Without a resolved model the variant has nothing to key to
-    # and is likewise omitted. The fragment lands inside the launch's
-    # single-quoted assignment, so a literal quote in the model id must close and
-    # reopen that quoting.
-    [ -n "$model" ] && [ "$model" != default ] || return 0
-    case "${model%%/*}:$effort" in
-    anthropic:high | anthropic:max) ;;
-    openai:low | openai:medium | openai:high | openai:xhigh) ;;
-    *) return 0 ;;
-    esac
-    local model_json
-    model_json=$(json_escape "$model")
-    model_json=${model_json//\'/\'\\\'\'}
-    printf ',"agent":{"build":{"model":"%s","variant":"%s"}}' "$model_json" "$effort"
-    ;;
-  muse)
-    # muse 0.1.0-R708.1 --reasoning-effort accepts none|minimal|low|medium|
-    # high|xhigh|ultra and defaults to high, so low..xhigh map straight across.
-    # ultra is muse's max-CLASS level, so juggernaut's max maps onto it - but
-    # only ever as an EXPLICIT captain choice, never as a fallback, because
-    # the harness-adapters effort policy forbids selecting max without captain preference and
-    # the omitted effort here leaves muse on its own high default. muse's extra
-    # none/minimal levels sit below juggernaut's shared vocabulary and are
-    # deliberately unreachable rather than remapped onto low.
-    case "$effort" in
-    low | medium | high | xhigh) printf -- '--reasoning-effort %s ' "$(shell_quote "$effort")" ;;
-    max) printf -- '--reasoning-effort %s ' "$(shell_quote ultra)" ;;
-    esac
-    ;;
-    # rovo has no --effort flag on `run`; its effort mapping rides
-    # --config-override, but that flag is single-value (see
-    # rovo_config_override_flag below) so it is built there, merged with the
-    # mandatory allowedExternalPaths grant, rather than here.
-    # kimi provider catalogs expose supported and default effort values, but a
-    # launch flag and mapping have not been live-verified; the requested axis
-    # stays in task metadata but never reaches the launch command. Cursor encodes
-    # effort in model ids such as cursor-grok-4.5-high, so it also receives no
-    # separate effort flag.
-  esac
-}
-
 case "$LAUNCH" in
 *__MUSEBIN__*)
   MUSE_BIN=$(resolve_muse_binary) || exit 1
@@ -3569,15 +3449,6 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   fi
 fi
 
-delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task mode
-  case "$1" in
-  no-mistakes) echo 3 ;;
-  direct-PR) echo 2 ;;
-  local-only) echo 1 ;;
-  *) echo 0 ;;
-  esac
-}
-
 # Brief/spawn delivery agreement, checked before any endpoint exists.
 # jg-brief.sh records a ship brief's mode as a fixed "Delivery contract: mode=<mode>"
 # line, with " forge=<forge>" appended on a bound forge. A spawn that disagrees
@@ -3597,66 +3468,15 @@ if [ "$KIND" = ship ]; then
   fi
   [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
   STANDING_MODE=$("$JG_ROOT/bin/jg-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d' ' -f1) || STANDING_MODE=
-  BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
-  BRIEF_FORGE=$(sed -n 's/^Delivery contract: mode=[^ ]*.*[[:space:]]forge=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
-  [ -n "$BRIEF_FORGE" ] || BRIEF_FORGE=none
-  BRIEF_BRANCH=$(sed -n 's/^Ship branch: //p' "$BRIEF" | head -n 1)
-  if [ -n "$BRIEF_BRANCH" ]; then
-    [ "$BRIEF_BRANCH" = "$BRANCH" ] || {
-      echo "error: branch mismatch for $ID: the brief says branch=$BRIEF_BRANCH but this spawn selected branch=$BRANCH" >&2
-      exit 1
-    }
-  elif [ "$BRANCH" != "fm/$ID" ]; then
-    # A relaunch's branch comes from the meta record (--branch-prefix is refused
-    # there), so a promoted scout whose brief never carried a Ship branch line
-    # must relaunch on that recorded branch rather than be refused.
-    if [ "$RELAUNCH" -eq 1 ]; then
-      echo "warning: $BRIEF records no ship branch; relaunching on the task's recorded branch $BRANCH" >&2
-    else
-      echo "error: $BRIEF records no ship branch; regenerate it with --branch-prefix before spawning $BRANCH" >&2
-      exit 1
-    fi
-  else
-    echo "warning: $BRIEF records no ship branch; defaulting to legacy branch $BRANCH" >&2
-  fi
-  if [ -z "$BRIEF_MODE" ]; then
-    echo "warning: $BRIEF records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode $MODE - confirm its definition of done matches" >&2
-  elif [ "$BRIEF_MODE" != "$MODE" ]; then
-    echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
-    exit 1
-  fi
-  # A juggernaut-repository contribution records its one-task publication consent
-  # as an upstream-consent= token on that same line; like mode and forge, the
-  # brief and the spawn flag must agree so the worker's contract and the task
-  # record carry the same authority.
-  BRIEF_CONSENT=$(sed -n 's/^Delivery contract: mode=[^ ]*.*[[:space:]]upstream-consent=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
-  if [ "$BRIEF_CONSENT" != "$UPSTREAM_CONSENT" ]; then
-    echo "error: upstream-consent mismatch for $ID: $BRIEF records upstream-consent=${BRIEF_CONSENT:-none} but this spawn passed ${UPSTREAM_CONSENT:-none}; correct the flag or re-scaffold the brief so the worker's contract and the task record agree" >&2
-    exit 1
-  fi
-  # The registered forge is the captain's confirmed binding (bin/jg-project-mode.sh)
-  # and is never inferred here from a remote, host, or protocol. A brief that
-  # disagrees with it would tell the worker to open a pull request a Gerrit
-  # server does not have, or to publish a change to a forge that is not Gerrit.
-  if [ "$BRIEF_FORGE" != "$STANDING_FORGE" ]; then
-    risk_scaffold=
-    [ "$MODE" != no-mistakes ] || risk_scaffold=" --risk <release|security|migration|large-change|shared-protocol|fork-repo>"
-    if [ "$STANDING_FORGE" = none ]; then
-      forge_scaffold="jg-brief.sh $ID $PROJ_NAME --mode $MODE$risk_scaffold"
-    else
-      forge_scaffold="jg-brief.sh $ID $PROJ_NAME --mode $MODE --forge $STANDING_FORGE$risk_scaffold"
-    fi
-    echo "error: forge mismatch for $ID: $PROJ_NAME is registered forge=$STANDING_FORGE but $SOURCE_BRIEF records forge=$BRIEF_FORGE; keep the filled ## Captain's intent and ## Juggernaut spec bodies, remove $SOURCE_BRIEF, re-scaffold it with $forge_scaffold, then re-fill those two subsections, so the worker's publication matches the project's forge" >&2
-    exit 1
-  fi
-  # Merge authority on a Gerrit forge is refused rather than quietly dropped, on
-  # the captain's decision of 2026-09-15: a Code-Review+2 is a positive
-  # attributed claim that a named human approved, and juggernaut must not
-  # manufacture one.
-  if [ "$STANDING_FORGE" = gerrit ] && [ "$YOLO" = on ]; then
-    echo "error: --yolo on is refused for $ID: $PROJ_NAME is registered forge=gerrit, where yolo is inactive because a Code-Review+2 is a positive attributed claim that a named human approved and juggernaut must not manufacture one (captain's decision 2026-09-15); spawn with --yolo off" >&2
-    exit 1
-  fi
+  # The brief/spawn agreement (branch, mode, upstream consent, forge, yolo on gerrit) is the Go
+  # spawn core's (core/spawn/cmd/jg-spawn-core/delivery.go), which prints its own refusal.
+  # The registered forge is the captain's confirmed binding (bin/jg-project-mode.sh), read
+  # above and never inferred from a remote, host, or protocol. Merge authority on a Gerrit forge
+  # is refused rather than quietly dropped (captain's decision, 2026-09-15).
+  "$SCRIPT_DIR/jg-spawn-core.sh" delivery-agree --id "$ID" --mode "$MODE" --yolo "$YOLO" \
+    --branch "$BRANCH" --relaunch="$RELAUNCH" --upstream-consent "$UPSTREAM_CONSENT" \
+    --brief "$BRIEF" --source-brief "$SOURCE_BRIEF" --project "$PROJ_NAME" \
+    --standing-forge "$STANDING_FORGE" || exit 1
   # Self-repository publication gate (bin/jg-role-lib.sh): a ship task whose
   # project is juggernaut's own repository may launch a publishing contract only
   # under an explicit grant - this home's maintainer scope in
@@ -3675,24 +3495,12 @@ if [ "$KIND" = ship ]; then
       ;;
     esac
   fi
-  # The registry holds the captain's standing posture, so dropping below it is
-  # allowed (a current explicit captain instruction wins) but never silent. An
-  # unregistered project resolves to the same no-mistakes standing default, which
-  # is why the notice names the standing posture rather than the registry line. A
-  # conditional policy is excluded: both of its legs are legitimate classifications.
-  if [ -n "$STANDING_MODE" ] && [ "$STANDING_MODE" != no-mistakes-prod-only ] &&
-    [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$STANDING_MODE")" ]; then
-    echo "notice: $ID ships mode=$MODE while the standing posture for $PROJ_NAME is $STANDING_MODE - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
-  fi
-  # The registered ship-branch prefix (bin/jg-project-mode.sh) is the captain's
-  # answer to "should this project's branches read as juggernaut-authored", so a
-  # spawn that ships the legacy fm/ prefix past a registered override is
-  # announced, not refused: the brief-vs-spawn agreement above already
-  # guarantees the worker's instructions match the branch this spawn selected.
+  # The registry holds the captain's standing posture and its ship-branch prefix, so dropping
+  # below the one or shipping past the other is allowed (a current explicit captain
+  # instruction wins) but never silent: the Go spawn core prints the notices.
   STANDING_BRANCH=$("$JG_ROOT/bin/jg-project-mode.sh" --branch-prefix "$PROJ_NAME" 2>/dev/null) || STANDING_BRANCH=
-  if [ "$BRANCH" != "$STANDING_BRANCH$ID" ]; then
-    echo "notice: $ID ships branch=$BRANCH while $PROJ_NAME registers the ship-branch prefix '$STANDING_BRANCH' (branch $STANDING_BRANCH$ID) - the task's branch and PR will read as juggernaut-authored; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
-  fi
+  "$SCRIPT_DIR/jg-spawn-core.sh" delivery-notices --id "$ID" --mode "$MODE" --branch "$BRANCH" \
+    --project "$PROJ_NAME" --standing-mode "$STANDING_MODE" --standing-branch "$STANDING_BRANCH" || exit 1
 fi
 
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
@@ -5850,10 +5658,10 @@ sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
 sq_ompcfg=$(shell_quote "${OMP_WORKER_CFG:-$JG_ROOT/.omp/jg-worker-overlay.yml}")
 sq_opinput=$(shell_quote "$JG_ROOT/bin/jg-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
-MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
+MODELFLAG=$("$SCRIPT_DIR/jg-spawn-core.sh" model-flag "$HARNESS" "$MODEL") || exit 1
 # A pinned Pi launch confines Pi's model lookup to the declared provider.
 [ -z "$WORKER_ACCOUNT_PROVIDER" ] || MODELFLAG="--provider $(shell_quote "$WORKER_ACCOUNT_PROVIDER") $MODELFLAG"
-EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
+EFFORTFLAG=$("$SCRIPT_DIR/jg-spawn-core.sh" effort-flag --harness-script "$SCRIPT_DIR/jg-harness.sh" "$HARNESS" "$EFFORT" "$MODEL") || exit 1
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__OPENCODEDB__/$(opencode_db_assignment "$MODEL")}

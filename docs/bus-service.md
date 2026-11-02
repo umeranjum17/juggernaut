@@ -66,25 +66,46 @@ itself, not `serve`, which starts services and exits; `ExecStartPost` runs
 `core/bus/stream.json`.
 
 `bin/jg-bus.sh install-service` is the bus alone: it writes `jg-bus.service` when missing
-or naming another home, reloads systemd, enables it now, and falls back to `ensure` without a
+(from the home that owns it; any other home only adds its account), reloads systemd, enables it now, and falls back to `ensure` without a
 user session. It prints one line, `bus: up ...`, `bus: installed and started ...` or a
 `bus: cannot start ...` line, and never fails its caller. `bin/jg-update.sh` runs it when the
 stack run is skipped, so a release never goes live with no message server.
 
-One config file, sized for the machine. `bin/jg-bus.sh unit` writes
-`state/bus/bus.conf` as ONE file: the server config in force plus this machine's
-per-home accounts, with no `include` lines. nats-server resolves an include path
-against the config's own directory, so an absolute one lands at
-`state/bus/home/...` and the server refuses to start. The JetStream budget in that
-file is the per-account reservation times the number of accounts, because a global
-cap below the sum of the reservations makes the server refuse JetStream with
-`insufficient storage resources available (10047)`.
+One owner, one config. The machine runs one bus unit and one server config, and exactly one
+home owns them: the home the installed unit names in its `JG_HOME` (the first home to run
+`install-service` when none is installed; `JG_BUS_TAKE_OWNERSHIP=1` moves it here on purpose).
+`bin/jg-bus.sh unit` writes the owner's `state/bus/bus.conf` and `state/bus/accounts.conf`.
+`bus.conf` is the server config in force plus the JetStream caps, and includes
+`accounts.conf` beside it (nats-server resolves an include against the including file's
+directory, so the name is relative; an absolute one lands at `state/bus/home/...` and the
+server refuses to start). Every other home's bootstrap (`jg-stack.sh up`, which writes the
+unit from `jg-bus.sh unit nats`) and update (`install-service`) only registers its account
+in the owner's `accounts.conf` and asks the running server to reload (SIGHUP, through
+`systemctl --user kill`). It never installs, rewrites or restarts the unit and never touches
+`bus.conf`, and it says who the owner is. Before this rule every home's session start
+pointed the machine's unit at its own config and locked every other home out.
+
+The JetStream caps in `bus.conf` are the per-account reservation times the accounts in
+`accounts.conf` plus one account of headroom, rounded up to a step of eight reservations.
+The rounding is what lets a reload add accounts, because a reload cannot change the caps.
+A global cap below the sum of the reservations makes the server refuse JetStream with
+`insufficient memory resources (10028)` or `insufficient storage resources available (10047)`.
+The generator checks the finished config (accounts included) and refuses, naming the
+shortfall, to write one whose caps sit below the reservations. A home whose account would
+push the machine past the caps is refused the same way, naming the owner, with the accounts
+left as they were; run `install-service` on the owner to raise them. `bin/jg-bus.sh
+check-limits <config>` runs the same check on any file.
 
 Clients authenticate as their own home. The machine carries one account per home,
 so every client call - `bin/jg-kv-lib.sh`'s, and the wake and reply paths that share
 it - authenticates as the home that owns the state directory, with the name and the
-password in `state/bus/<account>.pass`. A client that connects as the empty user is
-refused, and that is what a release without this shipped.
+password in `state/bus/<account>.pass`. The name and that path come from ONE function
+(`bin/jg-bus.sh account`), the one the accounts file is written from, and the stream
+client, the sidecar login and `bin/jg-kv-lib.sh` all ask it, so the account scheme cannot
+change on the server and miss a client (the #415 rename did, and every client was
+refused). Each home keeps its password in its own `state/bus`, and the generator
+writes a sibling home's account from that home's file. A client that connects as the
+empty user is refused.
 
 Three config faults made the first unit fail on a real machine and are fixed:
 includes were absolute (nats resolves them against the including file), the

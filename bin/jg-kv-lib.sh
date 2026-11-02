@@ -14,9 +14,9 @@
 #   client   JG_NATS_BIN when set, else `nats` on PATH.
 #   auth     the machine runs one account per home, so a client that connects as the
 #            empty user is refused. jg_kv_run authenticates every call as the home that
-#            owns the state directory, with the name core/bus/cmd/jg-bus writes into the
-#            machine's accounts file and the password it wrote into that home's
-#            credentials file (<state>/bus/<account>.pass). A machine with no such file
+#            owns the state directory, with the name and the credentials file that
+#            `bin/jg-bus.sh account` prints - the same function core/bus/cmd/jg-bus
+#            writes the machine's accounts file from (<state>/bus/<account>.pass). A machine with no such file
 #            (an unauthenticated single-home server) is called without credentials.
 #   gate     jg_kv_ready fails, printing the reason into JG_KV_WHY, when either
 #            the client or the server is missing. It never decides whether that
@@ -74,36 +74,37 @@ jg_kv_resolve() { # <home-dir>
   return 0
 }
 
-# jg_kv_home_account <home-dir>: the account name this home owns on the machine's one
-# server - its directory name spelled as a NATS subject can carry it, which is the same
-# spelling core/bus/cmd/jg-bus gives the accounts file.
-jg_kv_home_account() { # <home-dir>
-  local name
-  name=$(basename -- "${1:-}") || return 1
-  name=${name//[^A-Za-z0-9_-]/_}
-  printf '%s\n' "${name:-home}"
-}
-
-# jg_kv_home_password <state-dir>: the password the machine's accounts file carries for
-# this home. Fails when the machine keeps none, which is how an unauthenticated server
-# is called without credentials.
-jg_kv_home_password() { # <state-dir>
-  local account
-  account=$(jg_kv_home_account "$(dirname "$1")") || return 1
-  [ -s "$1/bus/$account.pass" ] || return 1
-  tr -d '\n' < "$1/bus/$account.pass"
+# jg_kv_login <state-dir>: this home's account name and its credentials file, tab
+# separated, asked of the one function that also writes the server's accounts block
+# (bin/jg-bus.sh account), so the name and the password can never drift from what the
+# server loaded. A machine where that command cannot answer (no Go toolchain and no
+# built command) keeps no credentials for this home, which is how an unauthenticated
+# server is called without them. The answer is kept for the rest of the shell.
+JG_KV_LOGIN_STATE=
+JG_KV_LOGIN=
+jg_kv_login() { # <state-dir>
+  local state=$1 bus
+  if [ "$JG_KV_LOGIN_STATE" != "$state" ]; then
+    bus=${BASH_SOURCE[0]%/*}/jg-bus.sh
+    JG_KV_LOGIN=$(JG_HOME=$(dirname -- "$state") JG_STATE_OVERRIDE=$state "$bus" account 2>/dev/null) || JG_KV_LOGIN=
+    JG_KV_LOGIN_STATE=$state
+  fi
+  [ -n "$JG_KV_LOGIN" ] && printf '%s\n' "$JG_KV_LOGIN"
 }
 
 # jg_kv_run <client> <url> <state-dir> [args...]: one client call, authenticated as the
 # home that owns <state-dir> when the machine keeps credentials for it. The password
 # travels in NATS_PASSWORD, never on the argument list, so it never shows in `ps`.
 jg_kv_run() { # <client> <url> <state-dir> [args...]
-  local client=$1 url=$2 state=$3 account pass
+  local client=$1 url=$2 state=$3 login account cred pass
   shift 3
-  account=$(jg_kv_home_account "$(dirname "$state")")
-  if pass=$(jg_kv_home_password "$state"); then
-    NATS_USER=$account NATS_PASSWORD=$pass "$client" -s "$url" --timeout 10s "$@"
-    return
+  if login=$(jg_kv_login "$state"); then
+    account=${login%%$'\t'*}
+    cred=${login#*$'\t'}
+    if [ -s "$cred" ] && pass=$(tr -d '\n' < "$cred"); then
+      NATS_USER=$account NATS_PASSWORD=$pass "$client" -s "$url" --timeout 10s "$@"
+      return
+    fi
   fi
   "$client" -s "$url" --timeout 10s "$@"
 }
