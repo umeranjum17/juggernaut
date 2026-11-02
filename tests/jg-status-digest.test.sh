@@ -7,6 +7,9 @@
 # window pushes once, an unchanged digest is never pushed twice, and the digest
 # goes to the captain channel when it is live and to the fleet board report card
 # while it is not.
+#
+# This is also the test that owns journeys/status-digest.sh (the done-done journey drives the same script),
+# so the changed-test map selects it for a change to that journey.
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
