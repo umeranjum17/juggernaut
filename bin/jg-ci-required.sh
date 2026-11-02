@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # jg-ci-required.sh - the single merge-gate verdict for ci.yml's `CI required`.
-# measurement edit 2
+# measurement edit 3
 #
 # JG_CI_NEEDS is GitHub's toJSON(needs) and JG_CI_BEHAVIOR the invariants job's
 # scope verdict. A behavior change needs every lane passed; a documentation
