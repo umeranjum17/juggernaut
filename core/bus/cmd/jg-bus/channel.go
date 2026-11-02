@@ -313,17 +313,80 @@ func (a *app) status() int {
 	fmt.Printf("mode %s, relay %s, delivery %s\n", a.channelMode(), a.cfgOr("ntfy-relay", ""), target)
 	fmt.Printf("record %s: %d event(s), %d undelivered\n", a.record, countLines(a.record), countLines(a.undelivered))
 	for _, name := range []string{"nats", "dapr", "ntfy", "deliver"} {
-		state := "down"
-		if pid, ok := a.runningPid(name); ok {
-			state = fmt.Sprintf("up (%d)", pid)
-		} else if name == "nats" && busListening(a.cfgOr("nats-url", "")) {
-			// The unit runs the server itself, so there is no pid file here; a server
-			// that answers is up whoever started it.
-			state = "up (systemd user service " + unitName() + ")"
-		}
-		fmt.Printf("%s: %s\n", name, state)
+		fmt.Printf("%s: %s\n", name, a.serviceState(name))
 	}
 	return 0
+}
+
+// serviceState says whether one service runs. A detached service this home started is
+// read from its pid, and every other one from the unit the service manager runs it as,
+// because the manager is the one owner of that truth: a proxy beside it (a listening
+// port, a pid nobody wrote) can disagree with it and send a reader after a fault that
+// is not there. A state this probe could not read is unknown, never down.
+func (a *app) serviceState(name string) string {
+	if pid, ok := a.runningPid(name); ok {
+		return fmt.Sprintf("up (pid %d)", pid)
+	}
+	// The server's unit is the one install-service installs, which a lab names itself;
+	// every other part is named by the prefix bin/jg-stack.sh writes its unit under.
+	unit := stackUnit(name)
+	if name == "nats" {
+		unit = unitName()
+	}
+	load, active, ok := unitState(unit)
+	answering := name == "nats" && busListening(a.cfgOr("nats-url", ""))
+	if !ok {
+		// A server that answers is up whoever started it, whatever the manager can say.
+		if answering {
+			return "up (the server answers on " + a.cfgOr("nats-url", "") + ", no unit state read)"
+		}
+		return "unknown (cannot read the service manager for " + unit + ")"
+	}
+	if load == "not-found" {
+		if answering {
+			return "up (the server answers on " + a.cfgOr("nats-url", "") + ", no unit " + unit + ")"
+		}
+		return "down (no unit " + unit + " is installed)"
+	}
+	if load != "loaded" {
+		return "down (unit " + unit + " " + load + ")"
+	}
+	switch active {
+	case "active":
+		return "up (unit " + unit + ")"
+	case "inactive", "failed":
+		return "down (unit " + unit + " " + active + ")"
+	}
+	// activating, deactivating, reloading and anything else the manager reports: say
+	// the state as it is rather than calling a moving service either up or down.
+	return active + " (unit " + unit + ")"
+}
+
+// unitState reads one unit's LoadState and ActiveState from the service manager. ok is
+// false when the manager cannot be asked at all or answers without both, which the
+// caller reports as unknown.
+func unitState(unit string) (load, active string, ok bool) {
+	out, err := exec.Command("systemctl", "--user", "show", "--no-pager",
+		"-p", "LoadState", "-p", "ActiveState", unit).Output()
+	if err != nil {
+		return "", "", false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		switch key {
+		case "LoadState":
+			load = value
+		case "ActiveState":
+			active = value
+		}
+	}
+	if load == "" || active == "" {
+		return "", "", false
+	}
+	return load, active, true
 }
 
 // unit prints the systemd user service for one part of the stack a home installs once,
@@ -447,15 +510,23 @@ func (a *app) buildUnit(part string) (string, error) {
 	return b.String(), nil
 }
 
-// natsUnit is the name of the unit that runs the server, which the sidecar's unit
-// requires; JG_STACK_UNIT_PREFIX is how a second stack on one machine stays apart.
-func natsUnit() string {
+// stackUnit is the unit that runs one part, named the way bin/jg-stack.sh names it:
+// the server is <prefix>-bus.service and every other part is <prefix>-<part>.service.
+// JG_STACK_UNIT_PREFIX is how a second stack on one machine stays apart.
+func stackUnit(part string) string {
 	prefix := os.Getenv("JG_STACK_UNIT_PREFIX")
 	if prefix == "" {
 		prefix = "jg"
 	}
-	return prefix + "-bus.service"
+	if part == "nats" {
+		return prefix + "-bus.service"
+	}
+	return prefix + "-" + part + ".service"
 }
+
+// natsUnit is the name of the unit that runs the server, which the sidecar's unit
+// requires.
+func natsUnit() string { return stackUnit("nats") }
 
 // unitService writes the [Service] lines every part shares, ending at its ExecStart.
 func (a *app) unitService(b *strings.Builder, quote, percent func(string) string, execStart string) {

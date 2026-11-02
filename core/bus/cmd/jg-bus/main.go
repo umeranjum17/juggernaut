@@ -114,6 +114,12 @@
 //	         Pids and logs live in $STATE/bus/, so `stop` and `status` are per home. A
 //	         service whose binary is missing is named and not started; the others still
 //	         run, because the record never depends on them.
+//	status   What the channel holds and which of its services run: the mode, the
+//	         delivery target, the record counts, then one line per service read from the
+//	         service manager's own state for the unit that runs it. A service this home
+//	         started detached is read from its pid. A state this probe could not read is
+//	         `unknown`, never down: a wrong down sends a reader after a fault that is not
+//	         there, and a real outage then looks like a healthy fleet.
 //
 // Usage:
 //

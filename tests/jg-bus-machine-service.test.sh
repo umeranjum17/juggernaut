@@ -55,8 +55,10 @@ ln -sf "$NATS_SERVER" "$LAB_BIN/nats-server"
 ln -sf "$NATS_BIN" "$LAB_BIN/nats"
 cat > "$LAB_BIN/systemctl" <<'EOF'
 #!/usr/bin/env bash
-# Lab systemctl: only the verbs install-service uses, over one unit, run as a plain process.
-unit="$XDG_CONFIG_HOME/systemd/user/$JG_BUS_UNIT"
+# Lab systemctl: only the verbs install-service and status use, over the lab's own
+# units, run as plain processes.
+unitdir="$XDG_CONFIG_HOME/systemd/user"
+unit="$unitdir/$JG_BUS_UNIT"
 pidfile="$LAB_DIR/service.pid"
 alive() { [ -s "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
 start() {
@@ -73,6 +75,15 @@ stop() { alive && kill "$(cat "$pidfile")"; for _ in $(seq 50); do alive || retu
 [ "${1:-}" != --user ] || shift
 case "${1:-}" in
   show-environment|daemon-reload|enable-only) exit 0 ;;
+  show) # `status` reads one unit's own state from the manager, and only that.
+    name=${!#}
+    if [ -f "$unitdir/$name" ]; then load=loaded; else load=not-found; fi
+    if [ "$name" = "$JG_BUS_UNIT" ]; then
+      alive && active=active || active=inactive
+    elif [ -f "$LAB_DIR/units/$name.active" ]; then active=active
+    else active=inactive; fi
+    printf 'LoadState=%s\nActiveState=%s\n' "$load" "$active"
+    ;;
   enable) alive || start ;;
   is-active) alive ;;
   restart) stop; start ;;
@@ -81,7 +92,8 @@ case "${1:-}" in
 esac
 EOF
 chmod +x "$LAB_BIN/systemctl"
-export LAB_DIR="$D" LAB_PORT="$PORT" XDG_CONFIG_HOME="$D/xdg" JG_BUS_UNIT="jg-bus-lab-$$.service"
+export LAB_DIR="$D" LAB_PORT="$PORT" XDG_CONFIG_HOME="$D/xdg" JG_STACK_UNIT_PREFIX="jg-lab-$$" \
+  JG_BUS_UNIT="jg-lab-$$-bus.service"
 PATH="$LAB_BIN:$PATH"; export PATH
 
 # stop_lab: stop only the server this lab's systemctl started, by the pid it recorded.
@@ -211,6 +223,45 @@ JG_BUS_HOMES="$LAB_REGISTRY" bus "$H6" install-service >/dev/null 2>&1
   || fail "a lab home was not recorded in the registry JG_BUS_HOMES named"
 [ "$(sha256sum "$OWNER_REGISTRY")" = "$registry_before" ] || fail "a lab home with its own registry still changed the machine's real one"
 pass "a lab home is refused by the machine's real registry, which stays byte-identical; the registry JG_BUS_HOMES names holds it instead"
+
+# --- 1c. status reads the service manager itself ------------------------------------
+# The probe used to call a service down unless this home had written its own pid file, so
+# a machine whose four units were all active read three of them down: a reader chased a
+# fault that was not there, and a real outage looked the same. It now reads each unit's
+# own state from the manager. Active units read up, one stopped unit reads down on its own
+# line with the others still up, and a manager that cannot be asked reads unknown.
+UNITS="$XDG_CONFIG_HOME/systemd/user"; mkdir -p "$D/units"
+for part in dapr ntfy deliver; do
+  : > "$UNITS/$JG_STACK_UNIT_PREFIX-$part.service"
+  : > "$D/units/$JG_STACK_UNIT_PREFIX-$part.service.active"
+done
+unit_of() { case $1 in nats) echo "$JG_BUS_UNIT" ;; *) echo "$JG_STACK_UNIT_PREFIX-$1.service" ;; esac; }
+status_out=$(bus "$H1" status 2>&1)
+for part in nats dapr ntfy deliver; do
+  assert_contains "$status_out" "$part: up (unit $(unit_of "$part"))" "an active $part unit must read up: $status_out"
+done
+rm -f -- "$D/units/$(unit_of ntfy).active"
+status_out=$(bus "$H1" status 2>&1)
+assert_contains "$status_out" "ntfy: down (unit $(unit_of ntfy) inactive)" "a stopped unit must read down: $status_out"
+for part in nats dapr deliver; do
+  assert_contains "$status_out" "$part: up (unit $(unit_of "$part"))" "one stopped unit must not read the others down: $status_out"
+done
+pass "status reads each service's unit state: active units read up, and a stopped one reads down alone"
+
+# The manager is the only owner of that truth, so a probe that cannot ask it says unknown
+# instead of guessing down - with the server stopped too, so nothing answers and a wrong
+# down would be very plausible.
+stop_lab
+BLIND="$D/blind"; mkdir -p "$BLIND"
+printf '#!/usr/bin/env bash\necho "Failed to connect to bus: no medium found" >&2\nexit 1\n' > "$BLIND/systemctl"
+chmod +x "$BLIND/systemctl"
+status_out=$(PATH="$BLIND:$PATH" bus "$H1" status 2>&1)
+for part in nats dapr ntfy deliver; do
+  assert_contains "$status_out" "$part: unknown (cannot read the service manager for $(unit_of "$part"))" \
+    "a probe that cannot ask the manager must say unknown for $part: $status_out"
+done
+case "$status_out" in *": down"*) fail "a probe that cannot read the manager guessed down: $status_out" ;; esac
+pass "a probe that cannot read the service manager reports unknown, never down"
 stop_lab
 rm -f -- "$UNIT"   # the lab's unit: the 21-account home below installs a machine of its own
 
