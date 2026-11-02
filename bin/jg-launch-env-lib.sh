@@ -9,15 +9,14 @@
 # names it, so a credential a later provider invents is stripped with no code
 # change here.
 #
-# Names only: this file reads the launching process's variable NAMES, never a
-# value, and the launch text it emits carries names only. Nothing here prints,
-# logs, or records a value.
+# The strip runs inside the destination pane and reads the pane's own
+# environment when it runs, never this process's: the pane inherits from the
+# herdr server and re-exports from the shell profile after this process has
+# built the launch, so a name list computed here misses exactly the credentials
+# that reach workers.
 #
-# Limit, documented rather than hidden: the strip is computed from the process
-# that builds the launch, so a variable that exists only inside the destination
-# pane and not in this process survives. Launchers and their panes share
-# lineage on every verified backend, so that gap needs a separately configured
-# pane environment.
+# Names only: the launch text this file emits carries variable NAMES and
+# patterns, never a value, and nothing here prints, logs, or records a value.
 
 # Shapes a provider credential takes. Case-insensitive, suffix-anchored, and
 # deliberately narrow: a name that merely contains KEY (STARSHIP_SESSION_KEY,
@@ -26,46 +25,29 @@ JG_LAUNCH_ENV_CREDENTIAL_SHAPES='_api_key _apikey _token _secret _secret_key
 _password _passwd _credential _credentials _access_key _access_key_id
 _private_key'
 
-# jg_launch_env_is_credential_name <name>: succeed when NAME has a credential
-# shape.
-jg_launch_env_is_credential_name() {
-  local name shape lower
-  lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  for shape in $JG_LAUNCH_ENV_CREDENTIAL_SHAPES; do
-    case "$lower" in
-    *"$shape") return 0 ;;
-    esac
-  done
-  return 1
-}
-
-# jg_launch_env_strip_names <allowlist-names>: print, one per line, the
-# credential-shaped names this process exports that the allowlist does not
-# name. <allowlist-names> is the newline-separated name list read from
-# config/launch-env-allowlist, empty when the home has not opted into that
-# file.
-jg_launch_env_strip_names() {
-  local allowed=$'\n'"$1"$'\n' name
-  while IFS= read -r name; do
-    case "$allowed" in
-    *$'\n'"$name"$'\n'*) continue ;;
-    esac
-    jg_launch_env_is_credential_name "$name" || continue
-    printf '%s\n' "$name"
-  done < <(compgen -e)
-}
-
-# jg_launch_env_strip_prefix <allowlist-names>: print the `unset ...; ` prefix
-# this launch pins in front of everything else, or nothing when there is
-# nothing to strip. The prefix runs in the destination pane, so the names it
-# carries were present in the launching process and would otherwise be
-# inherited by the worker.
+# jg_launch_env_strip_prefix <allowlist-names>: print the statement this launch
+# pins in front of everything else. It walks the pane's exported names and
+# unsets every credential-shaped one that the newline-separated allowlist (read
+# from config/launch-env-allowlist, empty when the home has not opted in) does
+# not name. POSIX sh, so every pane shell runs it unchanged.
 jg_launch_env_strip_prefix() {
-  local names name prefix='unset'
-  names=$(jg_launch_env_strip_names "$1") || return 1
-  [ -n "$names" ] || return 0
+  local shape lower pattern='' allow='' name i c
+  for shape in $JG_LAUNCH_ENV_CREDENTIAL_SHAPES; do
+    lower=
+    for ((i = 0; i < ${#shape}; i++)); do
+      c=${shape:i:1}
+      case "$c" in
+      [a-z]) c="[$c${c^^}]" ;;
+      esac
+      lower="$lower$c"
+    done
+    pattern="$pattern${pattern:+|}*$lower"
+  done
   while IFS= read -r name; do
-    prefix="$prefix $name"
-  done <<<"$names"
-  printf '%s; ' "$prefix"
+    [ -n "$name" ] || continue
+    allow="$allow${allow:+|}$name"
+  done <<<"$1"
+  # shellcheck disable=SC2016  # expanded by the pane shell
+  printf 'for jg_n in $(env | sed -n %s); do case $jg_n in %s) unset "$jg_n";; esac; done; unset jg_n; ' \
+    "'s/^\\([A-Za-z_][A-Za-z0-9_]*\\)=.*/\\1/p'" "${allow:+$allow) ;; }$pattern"
 }
