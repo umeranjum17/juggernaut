@@ -18,6 +18,8 @@
 //	jg-spawn-core opencode-db <home-token> <id> <model>
 //	jg-spawn-core launch-env-names <file>  the allow-list's names, or exit 1 when the file is invalid
 //	jg-spawn-core launch-template <harness> [kind]  the verified launch command, or exit 1 for an unverified adapter
+//	jg-spawn-core home-validate <id> <home> <active-home> <repo-root> <marker>  the squad_lead home checks
+//	jg-spawn-core worktree-isolated <path> <project-physical-path> <project-path>  the isolation check
 //	jg-spawn-core launch-env-strip <allowed-names>
 //	jg-spawn-core launch-env-wrap <allowed-names> <traceparent 0|1>   the launch command on stdin
 //
@@ -66,10 +68,13 @@ func run(args []string) int {
 	if code, ok := builderCmd(args[0], args[1:]); ok {
 		return code
 	}
+	if code, ok := validatorCmd(args[0], args[1:]); ok {
+		return code
+	}
 	return usage()
 }
 
 func usage() int {
-	fmt.Fprintln(os.Stderr, "usage: jg-spawn-core model-flag|effort-flag|rigor-rank|delivery-agree|delivery-notices|intake|launch-template|rovo-override|claude-add-dirs|opencode-lead-grant|launch-home-token|opencode-db|launch-env-names|launch-env-strip|launch-env-wrap ... (see the file header)")
+	fmt.Fprintln(os.Stderr, "usage: jg-spawn-core model-flag|effort-flag|rigor-rank|delivery-agree|delivery-notices|intake|launch-template|home-validate|worktree-isolated|rovo-override|claude-add-dirs|opencode-lead-grant|launch-home-token|opencode-db|launch-env-names|launch-env-strip|launch-env-wrap ... (see the file header)")
 	return 2
 }

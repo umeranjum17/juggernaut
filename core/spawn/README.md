@@ -41,7 +41,13 @@ a parity replay of the shell it deletes against the Go that replaces it.
    squad_lead differs from a ship or Recon worker). `bin/jg-spawn.sh` keeps the placeholder
    substitution, which reads the task's own state.
 5. Worktree, endpoint and metadata effects: locks, treehouse leases, backend adapters, the task
-   record, rollback.
+   record, rollback. Started: the read-only checks a spawn makes before it creates anything are Go,
+   `home-validate` (a squad_lead's home is a seeded home of its own, outside the active home and the
+   repository, with working directories of its own) and `worktree-isolated` (a worker's directory is
+   its own worktree root, not the spawning project and not the primary checkout). Next, each with
+   its own replay over recorded records and fixtures: the task record and the relaunch record it
+   preserves, the abort and rollback paths, the fresh-worktree base check, then the lock, lease and
+   backend-adapter effects.
 
 ## Parity replay
 
@@ -84,6 +90,16 @@ against this command:
 - **Launch templates:** `launch_template()` of the base commit against `launch-template` over the
   fourteen adapters and 16 invalid names against ten kinds, 330 cases, stdout and exit code byte
   for byte. The control, with the Codex hooks flag and the OpenCode question denial removed, fails.
+
+- **Validators:** the base commit's squad_lead home functions and `spawn_worktree_isolated` against the
+  wrappers now in the script running the core, 3,203 cases, exit code, stdout and stderr byte for
+  byte: 2,426 generated homes (the home, a relative path, a symlink, the filesystem root, the active
+  home, the repository, a directory inside or above either, seven marker shapes, the three other
+  required entries, and every working directory as a dangling link, a link out, a link in, a link
+  chain, a file, missing or unreadable, singly and in pairs) and 777 git states (primary, linked and
+  detached worktrees, a worktree of another repository, a bare repository, a submodule, a nested
+  repository, a broken `.git` file, subdirectories, links, an unreadable directory, and four git
+  environments) against seven spawning projects.
 
 A control run with a corrupted Go side (the gerrit refusal removed) must fail the replay.
 `tests/jg-spawn-core.test.sh` keeps the interesting shapes as an end-to-end suite.

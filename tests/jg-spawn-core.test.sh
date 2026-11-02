@@ -112,6 +112,29 @@ check "pi and pi-signed share one template" "$("$core" launch-template pi ship)"
 check "a name that is not a verified adapter prints nothing and exits 1" "$("$core" launch-template bogus ship)|$(rc "$core" launch-template bogus ship)" "|1"
 check "no kind means a ship" "$("$core" launch-template grok)" "$("$core" launch-template grok ship)"
 
+# The checks a spawn makes before it creates anything: a squad_lead's home, and a worker's worktree.
+mkdir -p "$lab/h/active/state" "$lab/h/repo/bin" "$lab/h/lead/bin" "$lab/h/lead/data" "$lab/h/lead/state" "$lab/h/lead/config" "$lab/h/lead/projects"
+printf 'lead1\n' > "$lab/h/lead/.jg-squad-lead-home"; : > "$lab/h/lead/AGENTS.md"
+hv() { "$core" home-validate "$1" "$2" "$lab/h/active" "$lab/h/repo" .jg-squad-lead-home 2>&1; }
+hp=$(cd "$lab/h" && pwd -P)
+check "a seeded squad_lead home passes and prints its physical path" "$(hv lead1 "$lab/h/lead")" "$hp/lead"
+check "a home marked for another squad_lead is refused by name" "$(hv lead2 "$lab/h/lead")" "error: juggernaut home $lab/h/lead is marked for squad_lead lead1, expected lead2"
+check "the active home cannot be a squad_lead's home" "$(hv lead1 "$lab/h/active")" "error: squad_lead home cannot be the active juggernaut home: $lab/h/active"
+check "a directory inside the repository cannot be a squad_lead's home" "$(mkdir -p "$lab/h/repo/in"; hv lead1 "$lab/h/repo/in")" "error: squad_lead home cannot be inside the juggernaut repo: $lab/h/repo/in"
+check "a home that does not exist is refused" "$(hv lead1 "$lab/h/none")" "error: juggernaut home does not exist or is not a directory: $lab/h/none"
+check "a working directory that resolves outside the home is refused" "$(rm -rf "$lab/h/lead/data"; mkdir -p "$lab/h/elsewhere"; ln -s "$lab/h/elsewhere" "$lab/h/lead/data"; hv lead1 "$lab/h/lead")" "error: squad_lead data directory must resolve inside the squad_lead home: $lab/h/lead/data"
+rm -f "$lab/h/lead/data"; mkdir "$lab/h/lead/data"
+check "a home with no AGENTS.md is not a juggernaut home" "$(rm "$lab/h/lead/AGENTS.md"; hv lead1 "$lab/h/lead")" "error: $lab/h/lead is not a juggernaut home (missing AGENTS.md)"
+git_lab=$lab/g; mkdir -p "$git_lab"
+git -C "$git_lab" init -q P && git -C "$git_lab/P" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i && git -C "$git_lab/P" worktree add -q ../W && mkdir -p "$git_lab/W/sub" "$git_lab/plain"
+gp=$(cd "$git_lab" && pwd -P)
+iso() { "$core" worktree-isolated "$1" "$gp/P" "$gp/P"; echo "rc=$?"; }
+check "a linked worktree of the project is isolated" "$(iso "$git_lab/W" | tail -1)" "rc=0"
+check "the spawning project itself is refused by name" "$(iso "$git_lab/P" | grep REASON)" "SPAWN_WT_REASON='it is the spawning project itself'"
+check "a subdirectory of a worktree is not a worktree root" "$(iso "$git_lab/W/sub" | grep -c "subdirectory of worktree root .*$gp/W.*not a worktree root")" 1
+check "a directory in no repository is refused" "$(iso "$git_lab/plain" | grep REASON)" "SPAWN_WT_REASON='it is not inside a git worktree'"
+check "a path that is not a directory is refused" "$(iso "$git_lab/none" | grep REASON)" "SPAWN_WT_REASON='it is not a readable directory'"
+
 # A home whose bin/ is a symlink to a checkout (the session-start suite's fake root, a relocated home)
 # builds from the checkout the link points into, not from a core/ the link's parent lacks.
 mkdir -p "$lab/linked/root"

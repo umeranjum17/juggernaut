@@ -50,7 +50,8 @@ func physDir(d string) (string, error) {
 			if strings.HasPrefix(d, "//") && !strings.HasPrefix(d, "///") {
 				real = "/" + real
 			}
-			return real, nil
+			// The shell captures the path in a command substitution, which drops trailing newlines.
+			return strings.TrimRight(real, "\n"), nil
 		}
 		if firstErr == nil {
 			firstErr = err

@@ -2443,15 +2443,6 @@ lfm_poll_guard_path() {
   printf '%s\n' "$guard"
 }
 
-resolved_existing_dir() {
-  local path=$1
-  [ -d "$path" ] || {
-    echo "error: juggernaut home does not exist or is not a directory: $path" >&2
-    return 1
-  }
-  cd "$path" && pwd -P
-}
-
 resolve_project_dir_arg() {
   local path=$1
   case "$path" in
@@ -2460,100 +2451,12 @@ resolve_project_dir_arg() {
   esac
 }
 
-path_is_ancestor_of() {
-  local ancestor=$1 path=$2
-  [ -n "$ancestor" ] || return 1
-  [ -n "$path" ] || return 1
-  [ "$ancestor" != "$path" ] || return 1
-  case "$path" in
-  "$ancestor"/*) return 0 ;;
-  esac
-  return 1
-}
-
+# The squad_lead home's refusals (not the filesystem root, the active home or the repository, neither
+# inside nor an ancestor of either, working directories of its own, this squad_lead's seed marker) are
+# the spawn core's home-validate (core/spawn/cmd/jg-spawn-core/validators.go): the home's physical
+# path on success, or the refusal on stderr and exit 1.
 validate_juggernaut_home_for_spawn() {
-  local id=$1 home=$2 abs_home abs_active_home abs_root marker_id
-  abs_home=$(resolved_existing_dir "$home") || return 1
-  abs_active_home=$(resolved_existing_dir "$JG_HOME")
-  abs_root=$(resolved_existing_dir "$JG_ROOT")
-  if [ "$abs_home" = "/" ]; then
-    echo "error: squad_lead home cannot be the filesystem root: $home" >&2
-    return 1
-  fi
-  if [ "$abs_home" = "$abs_active_home" ]; then
-    echo "error: squad_lead home cannot be the active juggernaut home: $home" >&2
-    return 1
-  fi
-  if [ "$abs_home" = "$abs_root" ]; then
-    echo "error: squad_lead home cannot be the juggernaut repo: $home" >&2
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_active_home" "$abs_home"; then
-    echo "error: squad_lead home cannot be inside the active juggernaut home: $home" >&2
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_root" "$abs_home"; then
-    echo "error: squad_lead home cannot be inside the juggernaut repo: $home" >&2
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_home" "$abs_active_home"; then
-    echo "error: squad_lead home cannot be an ancestor of the active juggernaut home: $home" >&2
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_home" "$abs_root"; then
-    echo "error: squad_lead home cannot be an ancestor of the juggernaut repo: $home" >&2
-    return 1
-  fi
-  validate_juggernaut_operational_dirs "$abs_home" "$abs_active_home" "$abs_root" || return 1
-  if [ ! -f "$abs_home/$SUB_HOME_MARKER" ]; then
-    echo "error: juggernaut home $home is not a seeded squad_lead home" >&2
-    return 1
-  fi
-  marker_id=$(cat "$abs_home/$SUB_HOME_MARKER" 2>/dev/null || true)
-  if [ "$marker_id" != "$id" ]; then
-    echo "error: juggernaut home $home is marked for squad_lead ${marker_id:-unknown}, expected $id" >&2
-    return 1
-  fi
-  if [ ! -f "$abs_home/AGENTS.md" ]; then
-    echo "error: $home is not a juggernaut home (missing AGENTS.md)" >&2
-    return 1
-  fi
-  if [ ! -d "$abs_home/bin" ]; then
-    echo "error: $home is not a juggernaut home (missing bin/)" >&2
-    return 1
-  fi
-  printf '%s\n' "$abs_home"
-}
-
-validate_juggernaut_operational_dirs() {
-  local abs_home=$1 abs_active_home=$2 abs_root=$3 name dir abs_dir
-  for name in data state config projects; do
-    dir="$abs_home/$name"
-    if [ -L "$dir" ] && [ ! -e "$dir" ]; then
-      echo "error: squad_lead $name directory must resolve inside the squad_lead home: $dir" >&2
-      return 1
-    fi
-    if [ -d "$dir" ]; then
-      abs_dir=$(cd "$dir" && pwd -P)
-    elif [ -e "$dir" ]; then
-      echo "error: squad_lead $name path is not a directory: $dir" >&2
-      return 1
-    else
-      abs_dir="$abs_home/$name"
-    fi
-    if ! path_is_ancestor_of "$abs_home" "$abs_dir"; then
-      echo "error: squad_lead $name directory must resolve inside the squad_lead home: $dir" >&2
-      return 1
-    fi
-    if [ "$abs_dir" = "$abs_active_home" ] || path_is_ancestor_of "$abs_active_home" "$abs_dir"; then
-      echo "error: squad_lead $name directory cannot be inside the active juggernaut home: $dir" >&2
-      return 1
-    fi
-    if [ "$abs_dir" = "$abs_root" ] || path_is_ancestor_of "$abs_root" "$abs_dir"; then
-      echo "error: squad_lead $name directory cannot be inside the juggernaut repo: $dir" >&2
-      return 1
-    fi
-  done
+  "$SCRIPT_DIR/jg-spawn-core.sh" home-validate "$1" "$2" "$JG_HOME" "$JG_ROOT" "$SUB_HOME_MARKER"
 }
 
 if [ "$KIND" = squad_lead ]; then
@@ -2879,54 +2782,18 @@ real_path_or_raw() { # <path>
 SPAWN_WT_TOP=
 SPAWN_WT_REASON=
 spawn_worktree_isolated() { # <path>
-  local path=$1 wt_real wt_top_real wt_git_dir proj_common
+  local out rc=0
   SPAWN_WT_TOP=
   SPAWN_WT_REASON=
-  wt_real=
-  if ! wt_real=$(cd "$path" 2>/dev/null && pwd -P); then
-    wt_real=
-  fi
-  if [ -z "$wt_real" ]; then
-    SPAWN_WT_REASON="it is not a readable directory"
+  # The check is the spawn core's worktree-isolated (core/spawn/cmd/jg-spawn-core/validators.go): it
+  # prints the two assignments above and exits 0 for an isolated worktree, 1 for any other path.
+  out=$("$SCRIPT_DIR/jg-spawn-core.sh" worktree-isolated "$1" "$PROJ_ABS_REAL" "$PROJ_ABS") || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    SPAWN_WT_REASON="the spawn core could not run"
     return 1
   fi
-  SPAWN_WT_TOP=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || true)
-  # A path in no repository leaves the toplevel empty, and that empty value must
-  # never reach `cd`: bash before 5.3 accepts `cd ""` as a successful no-op, so
-  # it would resolve to jg-spawn's OWN cwd and report the path as a subdirectory
-  # of whatever checkout juggernaut happens to be running from.
-  wt_top_real=
-  if [ -n "$SPAWN_WT_TOP" ] && ! wt_top_real=$(cd "$SPAWN_WT_TOP" 2>/dev/null && pwd -P); then
-    wt_top_real=
-  fi
-  if [ -z "$wt_top_real" ]; then
-    SPAWN_WT_REASON="it is not inside a git worktree"
-    return 1
-  fi
-  if [ "$wt_real" != "$wt_top_real" ]; then
-    SPAWN_WT_REASON="it is a subdirectory of worktree root '$wt_top_real', not a worktree root"
-    return 1
-  fi
-  if [ "$wt_real" = "$PROJ_ABS_REAL" ]; then
-    SPAWN_WT_REASON="it is the spawning project itself"
-    return 1
-  fi
-  # The primary checkout uses the repository's common git dir as its own git
-  # dir. A linked spawning home has a different top-level, but the same common
-  # dir, so comparing only the two working directories cannot protect primary.
-  wt_git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) &&
-    wt_git_dir=$(cd "$wt_git_dir" 2>/dev/null && pwd -P) || wt_git_dir=
-  proj_common=$(git -C "$PROJ_ABS" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
-    proj_common=$(cd "$proj_common" 2>/dev/null && pwd -P) || proj_common=
-  if [ -z "$wt_git_dir" ] || [ -z "$proj_common" ]; then
-    SPAWN_WT_REASON="its git directory could not be resolved"
-    return 1
-  fi
-  if [ "$wt_git_dir" = "$proj_common" ]; then
-    SPAWN_WT_REASON="it is the repository's primary checkout (its git dir is the spawning project's common git dir)"
-    return 1
-  fi
-  return 0
+  eval "$out"
+  return "$rc"
 }
 
 validate_spawn_worktree() { # <source> <inspect-target>
