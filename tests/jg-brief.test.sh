@@ -225,7 +225,7 @@ test_ship_modes_generate_clean_briefs() {
       "$id: brief missing the binding rule that evidence is run-owned"
     assert_grep "by hand is not evidence" "$brief" \
       "$id: brief missing the rule that a hand-copied file is not evidence"
-    assert_grep 'still needs `screen: none` alone on its own line in the Checks block' "$brief" \
+    assert_grep "still needs \`screen: none\` alone on its own line in the Checks block" "$brief" \
       "$id: brief missing the screen: none rule for a tooling change"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
