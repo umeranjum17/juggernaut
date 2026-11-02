@@ -5,9 +5,11 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) # the core tree
 LINT=$ROOT/merge-on-green/jg-checks-lint.sh
+# shellcheck source=lib/policy-test-env.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../lib/policy-test-env.sh"
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
-export HOME=$d/home XDG_DATA_HOME=$d/xdg TMPDIR=$d JG_HOME=$d/fm JG_ADDONS_DIR=$ROOT
+export HOME=$d/home XDG_DATA_HOME=$d/xdg TMPDIR=$d JG_HOME=$d/fm JG_CORE_DIR=$ROOT
 mkdir -p "$HOME" "$XDG_DATA_HOME" "$d/fm/bin" "$d/fm/state" "$d/fm/data/lane-x/evidence" "$d/wt"
 fails=0
 bad() { printf 'not ok - %s\n' "$1"; fails=$((fails + 1)); }
@@ -16,7 +18,7 @@ is() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1: got [$2], want [$3]"; fi 
 
 # A lane of this home: its brief requires a receipt, and the fork libraries the publisher and the merge path
 # use are this candidate's own, not a copy of another checkout.
-cp -a "$ROOT/../bin" "$ROOT/../core" "$d/fm/"
+cp -a "$ROOT/../bin" "$ROOT/../core" "$ROOT/../policy" "$d/fm/"
 git -C "$d/wt" init -q .
 git -C "$d/wt" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 head=$(git -C "$d/wt" rev-parse HEAD)

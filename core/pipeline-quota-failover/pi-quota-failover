@@ -158,8 +158,7 @@ pool_sel='' pool_id='' pool_model='' pool_attempted='[]' pool_mode=0
 if [ -z "$pool_helper" ]; then
   for cand in \
     "$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/account-pool/bin/jg-model-pool" \
-    "${JG_ADDONS_DIR:+$JG_ADDONS_DIR/account-pool/bin/jg-model-pool}" \
-    "${JG_HOME:+$JG_HOME/projects/juggernaut-addons/account-pool/bin/jg-model-pool}"; do
+    "${JG_CORE_DIR:+$JG_CORE_DIR/account-pool/bin/jg-model-pool}"; do
     [ -n "${cand:-}" ] && [ -x "$cand" ] && { pool_helper=$cand; break; }
   done
 fi

@@ -1716,6 +1716,7 @@ test_launch_environment_allowlist() {
   local setting rec id out status probe result expected launch value pane_shell pane_path
   # shellcheck disable=SC2016
   value='synthetic value; $(touch SHOULD_NOT_EXIST) `false` "quoted"'
+  unset OPENROUTER_API_KEY JG_TEST_REFRESH_TOKEN
   for setting in absent missing-config enabled empty; do
     id="env-$setting"
     rec=$(make_spawn_case "$id" codex "$id")
@@ -1731,6 +1732,7 @@ test_launch_environment_allowlist() {
 printf '%s\n' "${JG_TEST_AMBIENT_SENTINEL-unset}" "${JG_TEST_ALLOWED-unset}" \
   "${JG_TEST_EMPTY-unset}" "${JG_TEST_UNSET-unset}" "$HOME" "$PATH" "$TERM" "$TMUX" "$GOTMPDIR"
 printf 'hooksPath=%s\n' "$(git config --get core.hooksPath || :)"
+printf '%s\n' "${OPENROUTER_API_KEY-unset}" "${JG_TEST_REFRESH_TOKEN-unset}"
 SH
     out=$(JG_TEST_AMBIENT_SENTINEL=synthetic-unrelated \
       run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
@@ -1747,6 +1749,7 @@ SH
       result=$(env -i HOME="$HOME_DIR/user-home" PATH=/usr/bin:/bin TERM=xterm \
       TMUX=synthetic-pane GOTMPDIR=/synthetic/gotmp \
       JG_TEST_AMBIENT_SENTINEL=synthetic-unrelated JG_TEST_ALLOWED="$value" JG_TEST_EMPTY='' \
+      OPENROUTER_API_KEY=synthetic-credential JG_TEST_REFRESH_TOKEN=synthetic-credential \
       "$pane_shell" -c "$launch") || fail "allowlist=$setting emitted launch failed in $pane_shell"
       case "$setting" in
         absent|missing-config) expected=$(printf '%s\n' synthetic-unrelated "$value" '' unset) ;;
@@ -1756,6 +1759,10 @@ SH
       expected="$expected"$'\n'"$HOME_DIR/user-home"$'\n'"$pane_path"$'\nxterm\nsynthetic-pane\n/synthetic/gotmp'
       # The strip-hook entry must also survive the env -i boundary.
       expected="$expected"$'\n'"hooksPath=$(cd "$HOME_DIR/state" && pwd -P)/$id.git-hooks"
+      # A credential only the pane holds - the launching process never had it,
+      # as with a herdr server environment or a shell profile - must not
+      # reach the worker on any launch path.
+      expected="$expected"$'\nunset\nunset'
       [ "$result" = "$expected" ] || fail "allowlist=$setting worker environment mismatch: $result"
     done
     pass "allowlist=$setting preserves the operational floor and filters only when opted in"

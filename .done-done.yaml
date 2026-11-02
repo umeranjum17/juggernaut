@@ -1,11 +1,17 @@
 app: juggernaut
 journeys:
+  live-services:
+    command: bash journeys/live-services.sh
   stack-install:
     command: bash journeys/stack-install.sh
   migration-card:
     command: bash journeys/migration-card.sh
+  dapr-workflow:
+    command: bash journeys/dapr-workflow.sh
   relaunch-model-refusal:
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  pre-push-hook:
+    command: bash tests/jg-pre-push.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   receipt-candidate-hook:
     command: bash journeys/receipt-candidate-hook.sh
   tickets-stage-publish:
@@ -25,6 +31,8 @@ journeys:
     command: bash journeys/proof-attach.sh
   design-call-gate:
     command: bash journeys/design-call-gate.sh
+  merge-gate-policy:
+    command: bash journeys/merge-gate-policy.sh
   running-products:
     command: bash journeys/running-products.sh
   demo-call-gate:

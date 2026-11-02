@@ -288,6 +288,25 @@ jg_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle
   jg_composer_queued_enter_verdict "$state" "$busy_state"
 }
 
+# Remove just-typed <text> from the composer: Ctrl+U once per wrapped screen row
+# plus one spare, then answer `record-missing` only if the composer reads empty
+# and `unknown` otherwise, because text left behind could still be submitted.
+jg_tmux_clear_typed() {  # <target> <text>
+  local target=$1 text=$2 width presses i=0
+  width=$(tmux display-message -p -t "$target" '#{pane_width}' 2>/dev/null)
+  case "$width" in ''|*[!0-9]*|0) width=40 ;; esac
+  presses=$(( ${#text} / width + 2 ))
+  while [ "$i" -lt "$presses" ]; do
+    tmux send-keys -t "$target" C-u 2>/dev/null || break
+    i=$((i + 1))
+  done
+  if [ "$(jg_tmux_composer_state "$target")" = empty ]; then
+    printf 'record-missing'
+  else
+    printf 'unknown'
+  fi
+}
+
 jg_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
   local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 baseline_idle='' baseline_state err
   # The turn-started baseline must predate our own typing: a pane already
@@ -303,6 +322,12 @@ jg_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
     return 0
   fi
   sleep "$settle"
+  # Delivery time: a doorbell whose record vanished while it was being typed is
+  # cleared instead of submitted (jg_backend_doorbell_stale owns the test).
+  if type jg_backend_doorbell_stale >/dev/null 2>&1 && jg_backend_doorbell_stale "$text"; then
+    jg_tmux_clear_typed "$target" "$text"
+    return 0
+  fi
   jg_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$baseline_idle"
 }
 

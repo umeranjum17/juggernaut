@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 )
@@ -331,38 +330,48 @@ func validEnvName(s string) bool {
 var credentialShapes = []string{"_api_key", "_apikey", "_token", "_secret", "_secret_key", "_password", "_passwd",
 	"_credential", "_credentials", "_access_key", "_access_key_id", "_private_key"}
 
-// launchEnvStrip is the `unset ...; ` prefix naming the credential-shaped variables this process
-// exports that the allow-list does not name; empty when there is nothing to strip. The names are
-// sorted, where the shell listed them in the order its variable table held them.
-func launchEnvStrip(allowed []string, environ []string) string {
-	allow := map[string]bool{}
-	for _, n := range allowed {
-		allow[n] = true
-	}
-	seen := map[string]bool{}
-	var names []string
-	for _, kv := range environ {
-		name := kv
-		if i := strings.IndexByte(kv, '='); i >= 0 {
-			name = kv[:i]
-		}
-		if seen[name] || allow[name] || !validEnvName(name) {
-			continue
-		}
-		lower := strings.ToLower(name)
-		for _, shape := range credentialShapes {
-			if strings.HasSuffix(lower, shape) {
-				seen[name] = true
-				names = append(names, name)
-				break
+// launchEnvStrip is the statement a launch pins in front of everything else: a POSIX sh loop that
+// walks the pane's own exported names and unsets every credential-shaped one the allow-list does
+// not name. It runs in the destination pane, because the pane inherits from the backend server and
+// re-exports from its profile after this process built the launch, so a name list computed here
+// would miss exactly the credentials that reach workers. The shapes travel as case patterns, never
+// as names, so nothing here reads or carries a value.
+func launchEnvStrip(allowed []string) string {
+	pattern := make([]string, 0, len(credentialShapes))
+	for _, shape := range credentialShapes {
+		var b strings.Builder
+		b.WriteByte('*')
+		for i := 0; i < len(shape); i++ {
+			c := shape[i]
+			if c >= 'a' && c <= 'z' {
+				b.WriteByte('[')
+				b.WriteByte(c)
+				b.WriteByte(c - 'a' + 'A')
+				b.WriteByte(']')
+				continue
 			}
+			b.WriteByte(c)
+		}
+		pattern = append(pattern, b.String())
+	}
+	allow := strings.Join(allowed, "|")
+	if allow != "" {
+		allow += ") ;; "
+	}
+	return "for jg_n in $(env | sed -n 's/^\\([A-Za-z_][A-Za-z0-9_]*\\)=.*/\\1/p'); do case $jg_n in " +
+		allow + strings.Join(pattern, "|") + ") unset \"$jg_n\";; esac; done; unset jg_n; "
+}
+
+// allowNames is the `|`-free list form of config/launch-env-allowlist as the spawn passes it: one
+// name per line, empty lines dropped.
+func allowNames(names string) []string {
+	var out []string
+	for _, n := range strings.Split(names, "\n") {
+		if n != "" {
+			out = append(out, n)
 		}
 	}
-	if len(names) == 0 {
-		return ""
-	}
-	sort.Strings(names)
-	return "unset " + strings.Join(names, " ") + "; "
+	return out
 }
 
 // envFloor is the operational floor a filtered launch keeps: identity, locale and temp paths, the
@@ -467,7 +476,7 @@ func builderCmd(name string, args []string) (code int, ok bool) {
 		if len(args) != 1 {
 			return usage(), true
 		}
-		fmt.Print(launchEnvStrip(strings.Split(args[0], "\n"), os.Environ()))
+		fmt.Print(launchEnvStrip(allowNames(args[0])))
 		return 0, true
 	case "launch-env-wrap":
 		// launch-env-wrap <allowed-names> <traceparent 0|1>, the launch command on stdin.

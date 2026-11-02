@@ -54,6 +54,11 @@ running pid 123, listening 127.0.0.1:4222`, and a second run prints the same lin
 The first part that cannot be made whole stops the run with one line,
 `STACK_FAILED: <part>: <what is missing>; blocks <what depends on it>`.
 
+The Dapr sidecar, ntfy and the `deliver` consumer are one per machine, like the bus unit, so the same owner rule governs them.
+Only the home that owns the bus unit (`bin/jg-bus.sh owner` prints `self` there) installs the pinned `daprd` and `ntfy`, writes, enables and starts their units, and makes the ntfy logins (`bin/jg-bus.sh ntfy-provision`, [the captain channel](captain-channel.md#reaching-his-ipad-logins-and-address)).
+Any other home prints `<part>: owned by <home>, which installs and runs it; this home changes nothing` and reports the part as it finds it, so a second home's session start can no longer rewrite the owner's units or ports.
+`tests/jg-stack-owner.test.sh` proves it.
+
 `bin/jg-bootstrap.sh` (every session start), `bin/jg-update.sh` (after the
 fast-forward) and `install.sh` all run it, so a release never lands without its
 services. Each service is a **systemd user service** (`jg-bus`, `jg-dapr`,
@@ -84,6 +89,12 @@ in the owner's `accounts.conf` and asks the running server to reload (SIGHUP, th
 `systemctl --user kill`). It never installs, rewrites or restarts the unit and never touches
 `bus.conf`, and it says who the owner is. Before this rule every home's session start
 pointed the machine's unit at its own config and locked every other home out.
+
+The owner keeps the machine's member list in `state/bus/homes`, one line per home that
+joined, and the accounts are written from it. A home under a temp root, or inside the
+checkout running the command, is a test fixture and is refused instead of added, naming
+the way out: a test or a lab names its own list with `JG_BUS_HOMES`, so fixture homes are
+recorded there and a real machine's list stays byte for byte as it is.
 
 The JetStream caps in `bus.conf` are the per-account reservation times the accounts in
 `accounts.conf` plus one account of headroom, rounded up to a step of eight reservations.

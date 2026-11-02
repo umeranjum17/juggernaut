@@ -28,6 +28,9 @@
 #             exactly the encoded envelope bytes, published by atomic rename.
 #             Records are never re-rung or acknowledged; every write prunes
 #             records at about JG_OPERATIONAL_RECORD_RETENTION_DAYS (7) elapsed days.
+#             A producer never deletes a record it rang, because typed text that
+#             was not confirmed can still be submitted later; a ring whose record
+#             is gone is dropped by jg_operational_doorbell_stale instead.
 #   Doorbell: JG_OPERATIONAL_DOORBELL_PREFIX <absolute physical record path>
 #             JG_OPERATIONAL_DOORBELL_SUFFIX, one printable-ASCII line whose
 #             leading ": " is the shell no-op, as for the steering doorbell.
@@ -359,6 +362,17 @@ jg_operational_doorbell_shaped() {  # <message>
     'Juggernaut instruction waiting: list '*) return 0 ;;
   esac
   return 1
+}
+
+# Whether <text> is a well-formed doorbell whose named record is gone. A ring
+# for a missing record only sends its reader to a file that is not there, so
+# every producer that types a doorbell drops it when this holds, once before
+# typing and again just before the submit (bin/jg-backend.sh owns both checks).
+# Text that is not a well-formed doorbell is never stale. No record is read.
+jg_operational_doorbell_stale() {  # <text>
+  local named_record
+  jg_operational_doorbell_path "${1-}" named_record || return 1
+  [ ! -f "$named_record" ]
 }
 
 # A doorbell whose named record exists and holds a current generic envelope.

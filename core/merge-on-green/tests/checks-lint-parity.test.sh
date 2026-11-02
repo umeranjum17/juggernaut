@@ -12,6 +12,8 @@ unset _jg_old _jg_new 2>/dev/null || true
 
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+# shellcheck source=lib/policy-test-env.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../lib/policy-test-env.sh"
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
 mkdir -p "$d/bin" "$d/home" "$d/data" "$d/fm/state" "$d/fm/data/evidence" "$d/addons/receipts/bin" "$d/main" "$d/cwd/data/evidence"
@@ -69,7 +71,7 @@ cat > "$d/legacy.sh" <<'EOF'
 case "$1" in */1004) echo 'checks-lint: FAIL: 1000 added non-generated lines'; exit 1 ;; *) echo 'checks-lint: PASS: fixture' ;; esac
 EOF
 chmod +x "$d/bin/gh" "$d/bin/done-done" "$d/legacy.sh" "$d/addons/receipts/bin/jg-run-receipt.sh"
-export PATH="$d/bin:$PATH" JG_DONE_DONE_BIN="$d/bin/done-done" JG_LEGACY_CHECKS_LINT="$d/legacy.sh" JG_ADDONS_DIR="$d/addons" JG_MAIN_HOME="$d/main" DONE_DONE_ARGS_LOG="$d/done-done-args"
+export PATH="$d/bin:$PATH" JG_DONE_DONE_BIN="$d/bin/done-done" JG_LEGACY_CHECKS_LINT="$d/legacy.sh" JG_CORE_DIR="$d/addons" JG_MAIN_HOME="$d/main" DONE_DONE_ARGS_LOG="$d/done-done-args"
 failures=0
 # done-done 0.6.17 reads the pull number from the URL, so each fixture carries a real-shaped one.
 for id in good:1001 generated:1002 routes:1003 bad:1004; do

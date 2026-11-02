@@ -52,6 +52,13 @@
 #                   after selection, and name each one on stderr. The pull request
 #                   fast set uses it so a slow suite runs in the post-merge lane
 #                   instead of holding the merge.
+#   --shard <k>of<n>
+#                   keep only shard k of n of the selection, after the exclusions and
+#                   the weight cap, so one pull request selection can run on n runners
+#                   at once. Scripts are packed longest-hint-first onto the lightest
+#                   shard (ties take the lowest index), so the n shards are disjoint,
+#                   together are the whole selection, and every runner computes the same
+#                   split. A shard that gets nothing runs nothing and passes.
 #   --fail-on-gate-skip <token>
 #                   after each script, fail the run if any output line contains
 #                   "skip: <token>" (e.g. --fail-on-gate-skip 'herdr not found').
@@ -236,6 +243,7 @@ JSON_PATH=
 SCRIPTS=()
 EXCLUDE_FAMILIES=()
 MAX_WEIGHT_MS=
+SHARD=
 FAIL_ON_GATE_SKIP=
 JOBS=1
 JOBS_EXPLICIT=0
@@ -467,6 +475,7 @@ family_for_basename() {
       printf '%s\n' live-harness-optin
       ;;
     jg-backend-tmux-smoke.test.sh|jg-control.test.sh|jg-send-inbox.test.sh|\
+    jg-doorbell-missing-record.test.sh|\
     jg-spawn-dispatch-profile.test.sh)
       printf '%s\n' backend-dispatch
       ;;
@@ -686,6 +695,7 @@ tests/jg-browser-reaper.test.sh 8000
 tests/jg-calm-home-links.test.sh 381
 tests/jg-chat-answer-card.test.sh 1030
 tests/jg-ci-required.test.sh 122
+tests/jg-ci-scope.test.sh 700
 tests/jg-claude-stop-autoarm-live-e2e.test.sh 58
 tests/jg-codex-continuity-live-e2e.test.sh 57
 tests/jg-codex-hook-layer-live-e2e.test.sh 68
@@ -694,10 +704,12 @@ tests/jg-compat-old-records.test.sh 2167
 tests/jg-composer-matrix-live-e2e.test.sh 59
 tests/jg-control.test.sh 91759
 tests/jg-cursor-primary-live-e2e.test.sh 57
+tests/jg-dapr-workflow.test.sh 150
 tests/jg-decisions-reconcile.test.sh 3240
 tests/jg-design-gate-first-draft.test.sh 680
 tests/jg-design-gate.test.sh 467
 tests/jg-devin-signals-live-e2e.test.sh 65
+tests/jg-doorbell-missing-record.test.sh 5000
 tests/jg-escalation-chain.test.sh 120130
 tests/jg-escalation-workflows.test.sh 4000
 tests/jg-fast-evals.test.sh 704
@@ -709,6 +721,7 @@ tests/jg-grok-continuity-live-e2e.test.sh 53
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 57
 tests/jg-harness-quirks.test.sh 321
 tests/jg-herdr-lead-label.test.sh 99
+tests/jg-classify-go.test.sh 3000
 tests/jg-herdr-go.test.sh 3000
 tests/jg-guard-host.test.sh 829
 tests/jg-herdr-names.test.sh 1061
@@ -725,6 +738,7 @@ tests/jg-merge-on-green.test.sh 900
 tests/jg-lint-root-memory.test.sh 4747
 tests/jg-mail.test.sh 21000
 tests/jg-merge-gate-lib.test.sh 83
+tests/jg-merge-gate-policy.test.sh 15000
 tests/jg-metrics-shadow-parity.test.sh 9744
 tests/jg-muse-signals-live-e2e.test.sh 61
 tests/jg-omp-primary-live-e2e.test.sh 58
@@ -740,6 +754,7 @@ tests/jg-pi-wake-replay.test.sh 1500
 tests/jg-post-merge-ci-main.test.sh 154
 tests/jg-pr-state-live-e2e.test.sh 59
 tests/jg-pr-wait.test.sh 208
+tests/jg-pre-push.test.sh 10000
 tests/jg-procevent.test.sh 351871
 tests/jg-project-mode.test.sh 164
 tests/jg-prompt-gate-live-e2e.test.sh 56
@@ -772,6 +787,7 @@ tests/jg-squad-lead-lifecycle-e2e.test.sh 15675
 tests/jg-supervision-host-live-e2e.test.sh 58
 tests/jg-supervision-host.test.sh 1162449
 tests/jg-status-digest.test.sh 1569
+tests/jg-stack-owner.test.sh 1000
 tests/jg-tangle-guard.test.sh 12088
 tests/jg-tasks-axi.test.sh 42685
 tests/jg-teardown-core.test.sh 3000
@@ -793,6 +809,7 @@ tests/jg-watch-handoff.test.sh 11741
 tests/jg-watcher-lock.test.sh 1059731
 tests/jg-worker-account-live-e2e.test.sh 70
 tests/juggernaut-axi-serve.test.sh 1635
+tests/juggernaut-axi.test.sh 5700
 tests/migration-card.test.sh 1443
 tests/migration-card-live.test.sh 5200
 tests/merge-card-title.test.sh 701
@@ -1425,6 +1442,11 @@ families_for_changed_path() {
     bin/jg-quota-axi-lib.sh)
       printf '%s\n' session-bootstrap
       ;;
+    bin/jg-toon-lib.sh)
+      # The TOON renderer sourced by juggernaut-axi and jg-bearings-snapshot.sh.
+      printf '%s\n' "__script__:juggernaut-axi.test.sh"
+      printf '%s\n' "__script__:juggernaut-axi-serve.test.sh"
+      ;;
     bin/jg-procevent-quota.sh)
       ;;
     bin/jg-quota-choose.sh)
@@ -1602,6 +1624,10 @@ families_for_changed_path() {
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
       ;;
+    policy/gate/*)
+      # The merge gate's rules and their data: the test that drives them through the real gate scripts.
+      printf '%s\n' "__script__:jg-merge-gate-policy.test.sh"
+      ;;
     journeys/*)
       # A done-done journey is owned by the test that names it: a direct
       # reference is per-script evidence, so select that script, not its family.
@@ -1747,6 +1773,43 @@ apply_max_weight() {
       kept+=("$s")
     fi
   done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
+# apply_shard keeps shard k of n of the selection (--shard <k>of<n>): the
+# scripts are packed longest-hint-first onto the lightest of n bins, a tie taking
+# the lowest bin, and this shard keeps its bin. The packing depends only on the
+# selection and the hints, so every runner of a matrix computes the same split.
+apply_shard() {
+  local index count s ms i best best_load
+  local -a kept=() loads=()
+  [ -n "$SHARD" ] || return 0
+  index=${SHARD%%of*}
+  count=${SHARD#*of}
+  i=1
+  while [ "$i" -le "$count" ]; do
+    loads[i]=0
+    i=$((i + 1))
+  done
+  while IFS=$'\t' read -r ms s; do
+    [ -n "$s" ] || continue
+    best=1
+    best_load=${loads[1]}
+    i=2
+    while [ "$i" -le "$count" ]; do
+      if [ "${loads[i]}" -lt "$best_load" ]; then
+        best_load=${loads[i]}
+        best=$i
+      fi
+      i=$((i + 1))
+    done
+    loads[best]=$((best_load + ms))
+    [ "$best" -ne "$index" ] || kept+=("$s")
+  done < <(
+    for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+      printf '%s\t%s\n' "$(portable_serial_weight_for "$s")" "$s"
+    done | LC_ALL=C sort -t"$(printf '\t')" -k1,1nr -k2,2
+  )
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
 }
 
@@ -1984,6 +2047,16 @@ while [ "$#" -gt 0 ]; do
       MAX_WEIGHT_MS=$2
       shift 2
       ;;
+    --shard)
+      [ "$#" -gt 1 ] || die "--shard requires <k>of<n>"
+      case "$2" in
+        [1-9]of[1-9]|[1-9]of[1-9][0-9]|[1-9][0-9]of[1-9][0-9]) ;;
+        *) die "--shard requires <k>of<n>, for example 2of3 (got '$2')" ;;
+      esac
+      [ "${2%%of*}" -le "${2#*of}" ] || die "--shard index is outside 1..${2#*of}: $2"
+      SHARD=$2
+      shift 2
+      ;;
     --fail-on-gate-skip)
       [ "$#" -gt 1 ] || die "--fail-on-gate-skip requires a token (e.g. 'herdr not found')"
       FAIL_ON_GATE_SKIP=$2
@@ -2132,6 +2205,10 @@ esac
 
 apply_exclude_families
 apply_max_weight
+apply_shard
+if [ -n "$SHARD" ]; then
+  SELECTION_DESC="${SELECTION_DESC};shard=$SHARD"
+fi
 if [ "${#EXCLUDE_FAMILIES[@]}" -gt 0 ]; then
   SELECTION_DESC="${SELECTION_DESC};exclude-family=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")"
 fi
@@ -2316,6 +2393,17 @@ cleanup_run() {
 
 trap cleanup_run EXIT
 
+# Build the status classifier once for the whole run. Its launcher builds on first use into the
+# calling home's state directory, and every test makes a fresh state directory, so without this
+# each watcher test would pay a cold Go build inside its own timing window. A run that sets
+# JG_CLASSIFY_BIN itself, or has no Go toolchain, keeps the launcher's own behaviour.
+if [ -z "${JG_CLASSIFY_BIN:-}" ] && command -v "${JG_CLASSIFY_GO:-go}" >/dev/null 2>&1; then
+  if JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify" "$ROOT/bin/jg-classify.sh" is-terminal x >/dev/null 2>&1 \
+    || [ -x "$RUN_TMP/classify/jg-classify" ]; then
+    export JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify"
+  fi
+fi
+
 RUN_ID="jg-test-run-${RUN_STARTED_MS}-$$"
 TOTAL=0
 FAILED=0
@@ -2430,6 +2518,12 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   unset JG_HOME JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_ROOT_OVERRIDE \
     JG_PROJECTS_OVERRIDE JG_CONFIG_OVERRIDE JG_BACKEND \
     JG_PUBLIC_FOLLOWUP_PRIMARY_HOME 2>/dev/null || true
+  # A script never records its fixture homes in a real machine's bus registry: the
+  # owner home's state/bus/homes must stay byte for byte as Main left it, so each script
+  # names a registry file of its own under this run's temp tree.
+  local JG_BUS_HOMES
+  JG_BUS_HOMES="$RUN_TMP/bus-homes.$$"
+  export JG_BUS_HOMES
   set +e
   if [ "$stream" -eq 1 ]; then
     if [ "$bound" -gt 0 ]; then

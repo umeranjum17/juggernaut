@@ -13,6 +13,20 @@ set -eu
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 TMP_ROOT=$(jg_test_tmproot jg-wait-timers)
+# The status classifier is Go, built on first use into the home's own state directory
+# (bin/jg-classify.sh), and every fixture here has a fresh state directory. A cold build
+# outlasts JG_WAIT_ALERT_SECS, so the arming cycle would age the wait past its owner alert
+# and the journey's own owner assertions would fire inside it. Build the classifier once
+# here and point every cycle at it. Every cycle also gets a Go whose build is slow, so a
+# fixture that ever reaches a cold build again fails here instead of only on a slow runner.
+if command -v "${JG_CLASSIFY_GO:-go}" >/dev/null 2>&1; then
+  JG_CLASSIFY_BIN="$TMP_ROOT/classify/jg-classify" "$ROOT/bin/jg-classify.sh" is-paused 'paused: warm' >/dev/null 2>&1 || :
+  [ -x "$TMP_ROOT/classify/jg-classify" ] || { echo "wait-timers journey: the classifier did not build" >&2; exit 1; }
+  export JG_CLASSIFY_BIN="$TMP_ROOT/classify/jg-classify"
+  printf '#!/bin/sh\nsleep 4\nexec %s "$@"\n' "$(command -v "${JG_CLASSIFY_GO:-go}")" > "$TMP_ROOT/slow-go"
+  chmod 0755 "$TMP_ROOT/slow-go"
+  export JG_CLASSIFY_GO="$TMP_ROOT/slow-go"
+fi
 WATCH="$ROOT/bin/jg-watch.sh"
 DRAIN="$ROOT/bin/jg-wake-drain.sh"
 

@@ -1221,7 +1221,8 @@ The worker account pool (`config/account-pool` and `relaunch --account`) is owne
 The optional local, gitignored `config/lane-target` holds one positive integer: the number of open lanes this home keeps working while ready backlog work exists.
 It is primary-authoritative inherited configuration, so one value in the main home reaches every Squad Lead home through [`jg_config_inherit_items`](../bin/jg-config-inherit-lib.sh).
 
-An open lane is a `state/<task>.meta` whose `kind` is `ship` or `scout`; a Squad Lead endpoint's own meta is not a lane of that home.
+An open lane is a `state/<task>.meta` whose `kind` is `ship` or `scout` and whose last status line is not `paused`, `blocked`, `needs-decision`, `done` or `failed`; a Squad Lead endpoint's own meta is not a lane of that home.
+A lane parked on a held PR or a merge freeze is therefore not open, and a freeze never counts as a reason to leave a free lane idle.
 
 In every home, primary or Squad Lead, a scan whose home sits below the floor with `jg-tasks-axi.sh ready` work raises one check wake naming the open and target counts and the first ready ids, re-raised while the condition holds every `JG_READY_WORK_RESURFACE_SECS` (1800 by default), and at once when `bin/jg-teardown.sh` or `bin/jg-pr-check.sh` frees a project place and stamps `state/.capacity-freed`, because that is what makes an already-surfaced set startable.
 Ready intake uses the base heartbeat interval independently of idle-heartbeat backoff and runs before an away heartbeat can end the cycle; held and future-dated work stays excluded by the backlog's ready query.
@@ -1292,6 +1293,15 @@ A home that wants the refusal back writes `refuse` in the local, gitignored `con
 `core/merge-on-green/wiring.sh <jg-home>` is how a home gets this rule: it installs the feature's copy, and a home still running the retired install of the gate has that copy's refusing rule file removed and its `merge-on-green.sh` left as one redirect to the installed gate.
 Worker briefs still tell a worker to prefer a small slice; that wording is instruction only and enforces nothing.
 
+## Open pull request cap (config/open-pr-cap)
+
+The merge-on-green check counts open pull requests for every repository a task's recorded pull request names.
+A repository over the cap raises one alert naming the repository, the count and the cap.
+The local, gitignored `config/open-pr-cap` holds one whole number; an absent, empty, zero or unrecognised value is 8, the default.
+The alert repeats only when the count changes, and a repository back under the cap forgets it.
+A red pull request never holds a green one: each merges on its own checks.
+`core/merge-on-green/merge-on-green.sh` owns the count and the alert.
+
 ## Worker launch environment (config/launch-env-allowlist)
 
 The optional local, gitignored `config/launch-env-allowlist` limits the ambient environment passed to newly launched workers, Recon missions, and Squad Leads, including relaunches.
@@ -1356,7 +1366,7 @@ Regression coverage executes emitted launch commands with synthetic nonsecret va
 
 ### Provider credentials stripped from every launch
 
-Every launch drops the credential-shaped variables the launching process carries, whether or not that home opted into the allowlist above.
+Every launch drops the credential-shaped variables the destination pane carries when the launch starts, whether or not that home opted into the allowlist above.
 This is the default, with no file and no flag to turn it off, and it covers ship, Recon, squad_lead, local and remote, raw commands, and relaunches.
 Stripped shapes are matched on the name's ending, case-insensitively:
 
@@ -1375,11 +1385,11 @@ A home whose workers authenticate a provider through an environment variable the
 An allowlisted name keeps the value the destination pane supplies; a stripped name is reported nowhere.
 Diagnostics print names only, and no value is copied, logged, written to a record, or sent anywhere.
 
-Limit: this is not a sandbox, and the strip is computed from the process that builds the launch.
-A variable that exists only inside the destination pane, not in that process, survives, and tools or later shells can still create or reload credentials.
+The strip runs inside the pane and reads the pane's own environment when it runs, so a name the herdr server exports or a shell profile sets after the launch is built is stripped too.
+Limit: this is not a sandbox, and tools or later shells can still create or reload credentials.
 For the population side of the same problem, [`addons/key-in-env-check`](../addons/key-in-env-check/README.md) scans running processes for provider keys.
 
-Regression coverage plants a synthetic credential name and runs the real launch-environment builder in a subshell in [`tests/jg-launch-env-strip.test.sh`](../tests/jg-launch-env-strip.test.sh).
+Regression coverage plants synthetic credential names only in the pane, never in the launching process, and runs the real builder and every emitted launch in [`tests/jg-launch-env-strip.test.sh`](../tests/jg-launch-env-strip.test.sh) and [`tests/jg-spawn-dispatch-profile.test.sh`](../tests/jg-spawn-dispatch-profile.test.sh).
 
 ### Compact adviser setting
 

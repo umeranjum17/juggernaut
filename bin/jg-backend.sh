@@ -849,6 +849,18 @@ jg_backend_send_key() {  # <backend> <target> <key> [expected-label]
   esac
 }
 
+# jg_backend_doorbell_stale: whether <text> is a record-backed doorbell whose
+# record is gone (bin/jg-operational-input.sh owns the test). The text submit
+# below drops such a ring before it types, and the tmux and Herdr adapters drop
+# it again just before their first Enter, with the verdict `record-missing`.
+jg_backend_doorbell_stale() {  # <text>
+  if ! type jg_operational_doorbell_stale >/dev/null 2>&1; then
+    # shellcheck source=bin/jg-operational-input.sh
+    . "$JG_BACKEND_LIB_DIR/jg-operational-input.sh" 2>/dev/null || return 1
+  fi
+  jg_operational_doorbell_stale "${1-}"
+}
+
 # jg_backend_send_text_submit: type text once, then submit and verify,
 # retrying only the submission (never retyping). Echoes the backend's
 # proof-carrying verdict; callers require exact empty for confirmed delivery.
@@ -860,6 +872,10 @@ jg_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
   target=$1
   label=${6:-}
   jg_backend_source "$backend" || return 1
+  if jg_backend_doorbell_stale "${2-}"; then
+    printf 'record-missing'
+    return 0
+  fi
   # Every Enter loop below reads the dialog sink, so it must exist before
   # any adapter types: a sink that fails here leaves the composer untouched.
   jg_composer_dialog_sink_prepare || {

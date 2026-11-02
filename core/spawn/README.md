@@ -31,11 +31,10 @@ a parity replay of the shell it deletes against the Go that replaces it.
    (`rovo-override`), the OpenCode squad_lead grant file (`opencode-lead-grant`) and per-launch
    session store (`launch-home-token`, `opencode-db`), and the launch environment: the allow-list's
    grammar (`launch-env-names`), the provider-credential strip (`launch-env-strip`) and the
-   `env -i` wrap (`launch-env-wrap`). `bin/jg-launch-env-lib.sh` is deleted with them. Two small
-   differences, both in the direction of fewer dependencies: the OpenCode `auth.json` check no
-   longer needs `jq` on the machine, and the strip lists its names sorted where the shell listed
-   them in its variable table's order. One difference is known and left: `jq` reads the non-JSON
-   literal `NaN` in `auth.json`, which opencode never writes, and the Go side does not.
+   `env -i` wrap (`launch-env-wrap`). `bin/jg-launch-env-lib.sh` is deleted with them. One small
+   difference, in the direction of fewer dependencies: the OpenCode `auth.json` check no longer needs
+   `jq` on the machine. One difference is known and left: `jq` reads the non-JSON literal `NaN` in
+   `auth.json`, which opencode never writes, and the Go side does not.
 4. Done. Launch templates per harness (`launch-template`): the verified launch command with its
    placeholders for each of the fourteen adapters, by kind (a Claude, Codex, OpenCode or Pi
    squad_lead differs from a ship or Recon worker). `bin/jg-spawn.sh` keeps the placeholder

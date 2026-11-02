@@ -369,14 +369,13 @@
 #   See docs/configuration.md for provider/Git setup and supported limits.
 # Provider credentials (core/spawn builders.go, launchEnvStrip):
 #   Independently of the allowlist above, every launch strips the
-#   credential-shaped variables this process carries - provider keys, tokens,
+#   credential-shaped variables the destination pane carries - provider keys, tokens,
 #   secrets, passwords, and access keys - unless config/launch-env-allowlist
 #   names them. The shapes live in one place in the spawn core, so a credential a
 #   later provider introduces is stripped with no change here, and the emitted
 #   launch text carries names only, never a value. docs/configuration.md
 #   "Provider credentials stripped from every launch" owns the contract and its
-#   limit: a variable present only in the destination pane, not in this
-#   process, is not stripped.
+#   limit: this is not a sandbox.
 # Claude permission mode (config/claude-permission-mode):
 #   One token selecting the permission flag every claude launch (ship, scout,
 #   squad_lead, and relaunch) carries. Absent or `bypass` keeps today's
@@ -5090,7 +5089,7 @@ fi
 # Provider-credential strip (core/spawn builders.go launchEnvStrip; docs/configuration.md
 # "Provider credentials stripped from every launch" owns the contract). Every
 # launch - ship, scout, squad_lead, local and remote, raw command, and relaunch -
-# drops the credential-shaped variables this process would otherwise pass on
+# drops the credential-shaped variables the pane holds when the launch starts
 # unless config/launch-env-allowlist names them. The prefix is pinned in front of
 # every other statement so nothing later can re-export a stripped name, and it
 # runs in the pane, where the inheritance actually happens. Names only: the

@@ -100,7 +100,9 @@ printf '# keys\n\nFOO\nBAR_2\n' > "$lab/allow"
 check "the launch-env allow-list yields its names and skips blanks and comments" "$("$core" launch-env-names "$lab/allow" | tr '\n' ' ')" "FOO BAR_2 "
 printf 'FOO\nA-B\n' > "$lab/bad-allow"
 check "an allow-list with a bad name is refused with 1" "$(rc "$core" launch-env-names "$lab/bad-allow")" 1
-check "a stripped credential is named and an allow-listed one is not" "$(env -i PATH="$PATH" JG_SPAWN_CORE_GO="${JG_SPAWN_CORE_GO:-go}" JG_STATE_OVERRIDE="$JG_STATE_OVERRIDE" JG_T_API_KEY=x JG_U_API_KEY=y "$core" launch-env-strip $'JG_U_API_KEY\n')" "unset JG_T_API_KEY; "
+check "the strip walks the pane's own exported names, not the spawner's" "$("$core" launch-env-strip '' | grep -c 'env | sed -n')" 1
+check "the strip names no credential name the spawning process happens to hold" "$(JG_T_API_KEY=x "$core" launch-env-strip '' | grep -c JG_T_API_KEY)" 0
+check "an allow-listed credential is the one name the strip carries" "$("$core" launch-env-strip $'JG_U_API_KEY\n' | grep -cF 'JG_U_API_KEY) ;;')" 1
 check "a filtered launch forwards names by reference and ends in the quoted launch" "$(printf %s "it's" | "$core" launch-env-wrap FOO 1 | sed 's/.* COMPACT_ADVISER_DISABLE=1//')" " \${TRACEPARENT+\"TRACEPARENT=\$TRACEPARENT\"} /bin/sh -c 'it'\\''s'"
 
 # The launch templates: the verified command per adapter, with its placeholders, by kind.

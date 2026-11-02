@@ -19,3 +19,4 @@ config/
 # directory, so a jg-bus executable in the tree is always an accident.
 core/bus/jg-bus
 core/bus/cmd/jg-bus/jg-bus
+core/spawn/jg-spawn-core

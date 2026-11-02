@@ -69,6 +69,15 @@
 //	         absolute path), never its folder name. `accounts [home...]` prints the
 //	         server block for these homes, Main and every data/squad_leads.md entry;
 //	         two homes on one account name are refused with a line naming both.
+//	owner    Print "self" and exit 0 when this home owns the machine's bus unit (or may take
+//	         it, none being installed); print the owner's home and exit 3 when another
+//	         does. bin/jg-stack.sh asks it before it installs or starts a per-machine part.
+//	ntfy-provision
+//	         The bus owner's one-time ntfy logins, when the server config names an
+//	         auth-file (the shipped one does, with deny-all): `juggernaut` write-only, what
+//	         `deliver` posts with, and `captain` read-only, what his iPad subscribes with.
+//	         Passwords are generated into state/bus/ntfy-<user>.pass (0600) and kept on a
+//	         second run. A config with no auth-file is an open server; nothing is made.
 //	check-limits <config>
 //	         Exit 1, naming the shortfall, when a server config's global JetStream caps
 //	         are below what its accounts reserve. `unit` runs the same check on the
@@ -78,6 +87,10 @@
 //	unit     Print the systemd user service a home installs once for one part: nats
 //	         (the default) runs the server itself and creates the stream after it
 //	         starts; dapr and ntfy run their binary in the foreground.
+//	registry The machine's member homes live in one list, the owner's state/bus/homes.
+//	         A home that joins appends one line; a temp or worktree test home never
+//	         joins a real machine's list, and a test or a lab names its own list with
+//	         JG_BUS_HOMES so its fixture homes are recorded there instead.
 //	deliver  The CAPTAIN stream's consumer, and the one path that delivers a captain-bound
 //	         event the bus accepted to ntfy: a durable pull consumer (captain-ntfy) reads
 //	         each message, posts it to the captain's topic, and writes the delivery to
@@ -110,7 +123,7 @@
 //	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|dapr|ntfy|deliver] | install-service | deliver [--once] | stop | status | bootstrap
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
-// JG_CAPTAIN_CHANNEL.
+// JG_CAPTAIN_CHANNEL, JG_BUS_HOMES (the machine member list, for a test or a lab).
 package main
 
 import (
@@ -174,6 +187,10 @@ func run(args []string) int {
 		return a.accounts(rest)
 	case "account":
 		return a.account()
+	case "owner":
+		return a.owner()
+	case "ntfy-provision":
+		return a.ntfyProvision()
 	case "check-limits":
 		return a.checkLimitsCommand(rest)
 	case "ensure":
