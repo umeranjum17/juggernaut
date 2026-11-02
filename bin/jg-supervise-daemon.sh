@@ -153,7 +153,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -321,22 +320,6 @@ message_is_injection() {  # <message-text> [state]
     "$JG_INJECT_MARK"*) return 0 ;;
   esac
   jg_operational_doorbell_kind "$msg" "$state" record_kind
-}
-
-# strip_injection_marker: remove a current typed away envelope, the landed
-# untyped JUGGERNAUT_OP prefix, or the legacy bare sentinel. Current grammar is
-# delegated to its owner rather than reimplemented here.
-strip_injection_marker() {  # <message-text>
-  local msg=$1 body
-  if jg_operational_input_body "$msg" body; then
-    printf '%s' "$body"
-    return
-  fi
-  case "$msg" in
-    "$JG_OPERATIONAL_PREFIX"*) msg=${msg#"$JG_OPERATIONAL_PREFIX"} ;;
-    "$JG_INJECT_MARK"*) msg=${msg#"$JG_INJECT_MARK"} ;;
-  esac
-  printf '%s' "$msg"
 }
 
 # Collapse all newlines to a literal " - " separator so the injected digest is

@@ -63,16 +63,6 @@ jg_compat_label_ok() {  # <actual> <expected>
   return 1
 }
 
-# The operational-input marker was "\u2063FIRSTMATE_OP: ". A supervisor and a
-# worker can be on different sides of the update for a while, so both markers
-# are recognised; the new spelling is written from now on.
-jg_compat_marker_ok() {  # <marker-text>
-  case "${1-}" in
-  JUGGERNAUT_OP | FIRSTMATE_OP) return 0 ;;
-  esac
-  return 1
-}
-
 # The squad-lead home marker files and their schema line. A home that has not
 # been migrated still carries the old names, so every reader and writer asks
 # for the path rather than assuming the new spelling.
