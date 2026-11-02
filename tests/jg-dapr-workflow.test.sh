@@ -8,6 +8,7 @@
 # is delivered; and the owner install path writes exactly the argv the detached run executes,
 # refuses a home that does not own the units, and touches no real service manager.
 # Skipped when python3, Go, daprd or the network (for the scheduler release) is absent.
+# This is also the test that owns journeys/dapr-workflow.sh (the done-done journey runs this file).
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
