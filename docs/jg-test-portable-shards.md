@@ -22,10 +22,11 @@ In particular, run 36664663190's serial 5 finished in 22m15s with an assertion f
 Collect successful per-script measurements for every member before calculating a split.
 
 The serial hint table was refreshed on 2026-10-29 from the portable serial artifacts of five Ubuntu CI runs: [40834047706](https://github.com/umeranjum17/juggernaut/actions/runs/40834047706), [40836566918](https://github.com/umeranjum17/juggernaut/actions/runs/40836566918), [40838305188](https://github.com/umeranjum17/juggernaut/actions/runs/40838305188), [40843475618](https://github.com/umeranjum17/juggernaut/actions/runs/40843475618) (its one failed script excluded), and [40844984644](https://github.com/umeranjum17/juggernaut/actions/runs/40844984644).
-The measured maxima pack four shards to about 1520 s and five to about 1215 s against the 1200 s target, so the lane runs six shards; the largest is the single script `tests/jg-supervision-host.test.sh` at 1162449 ms.
+The measured maxima pack four shards to about 1520 s and five to about 1215 s against the 1200 s target, so the lane ran six shards, and seven since the wake watcher (about 30 s) joined the serial lane on 2026-11-02 and the largest of six packed 1203857 ms; the largest is the single script `tests/jg-supervision-host.test.sh` at 1162449 ms.
 The complete local host suite remains available through `JG_SUPERVISION_HOST_PART=all bash tests/jg-supervision-host.test.sh`.
 The 2026-10-07 polytoken adapter tests carry provisional local measurements instead - 21090 ms for `tests/jg-polytoken-harness.test.sh` and the 103 ms live-guard skip for `tests/jg-polytoken-signals-live-e2e.test.sh`, both measured on the adapter-verification macOS host - until the next CI refresh replaces them with Ubuntu measurements, because they postdate the 2026-09-30 baseline.
 The 2026-10-30 `tests/jg-design-gate-first-draft.test.sh` carries its provisional local measurement of 680 ms from `bin/jg-test-run.sh --json` on the Linux workspace host for the same reason, and the next CI refresh replaces it with an Ubuntu measurement.
+The 2026-11-02 `tests/jg-wake-engine.test.sh` carries 128 ms, its measured portable-runner duration (the lane has no `nats-server`, so it gate-skips); with a server it runs in about 37 s on the Linux workspace host.
 The 2026-11-01 `tests/jg-reply-bus-parity.test.sh` carries its provisional local measurement of 2655 ms from `bin/jg-test-run.sh --json` on the Linux workspace host, which starts its own throwaway `nats-server`, for the same reason.
 The 2026-10-30 hints for the fourteen scripts that had none (the ones the coverage guard listed) carry provisional local measurements from one serial `bin/jg-test-run.sh --json` run on the Linux workspace host, the largest being 14071 ms for `tests/jg-tmp-sweep.test.sh`; the next CI refresh replaces them with Ubuntu measurements.
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
@@ -130,7 +131,7 @@ No fast mode, path skips, or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the watcher-lock floor alone exceeds that objective.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
-The layout uses ten long-lived Linux jobs (six serial, two parallel, Herdr, two lint), plus short checks and macOS; the heavy ten run in `behavior.yml` and only the two lint partitions plus the short checks gate a pull request, so insufficient shared account capacity can still delay a merge's backstop.
+The layout uses eleven long-lived Linux jobs (seven serial, two parallel, Herdr, two lint), plus short checks and macOS; the heavy ten run in `behavior.yml` and only the two lint partitions plus the short checks gate a pull request, so insufficient shared account capacity can still delay a merge's backstop.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
 

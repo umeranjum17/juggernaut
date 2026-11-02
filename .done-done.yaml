@@ -4,6 +4,8 @@ journeys:
     command: bash journeys/live-services.sh
   stack-install:
     command: bash journeys/stack-install.sh
+  wake-watcher:
+    command: bash journeys/wake-watcher.sh
   migration-card:
     command: bash journeys/migration-card.sh
   dapr-workflow:

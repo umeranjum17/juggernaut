@@ -266,7 +266,7 @@ CHANGED_CEILING_FLOOR_SECS=120
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
-PORTABLE_SERIAL_SHARDS=6
+PORTABLE_SERIAL_SHARDS=7
 
 # Conservative balance hint for a portable-serial script with no measurement.
 # Rounded above the current CI mean, including the capability-skipped scripts.
@@ -438,7 +438,7 @@ family_for_basename() {
     jg-reply-engine.test.sh|\
     jg-metrics-shadow-parity.test.sh|\
     jg-bus-service.test.sh|\
-    jg-wake-queue-live.test.sh|\
+    jg-wake-queue-live.test.sh|jg-wake-engine.test.sh|jg-wake-watcher.test.sh|\
     jg-bus-account-isolation.test.sh|\
     jg-escalation-workflows.test.sh|jg-bus-leaf-parity.test.sh)
       printf '%s\n' watcher-wake-lock
@@ -782,6 +782,8 @@ tests/jg-state-bus-parity.test.sh 6515
 tests/jg-lease-live.test.sh 4439
 tests/jg-bus-service.test.sh 3100
 tests/jg-wake-queue-live.test.sh 2600
+tests/jg-wake-watcher.test.sh 35000
+tests/jg-wake-engine.test.sh 128
 tests/jg-bus-account-isolation.test.sh 4200
 tests/jg-squad-lead-lifecycle-e2e.test.sh 15675
 tests/jg-supervision-host-live-e2e.test.sh 58

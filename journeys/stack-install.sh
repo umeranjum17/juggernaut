@@ -9,7 +9,7 @@ cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "a clean throwaway HOME with a fresh clone and none of the four tools installed",
- "steps": ["run bin/jg-stack.sh up", "read one line per part: installed, enabled, running pid, listening", "run bin/jg-stack.sh up again", "break ntfy and run it a third time"],
+ "steps": ["run bin/jg-stack.sh up", "read one line per part: installed, enabled, running pid, listening (wake-engine and router: consuming <stream>/<consumer>)", "run bin/jg-stack.sh up again", "break ntfy and run it a third time"],
  "result": "every part is up with a pid and listener, the second run is identical, and the broken part stops the run with one STACK_FAILED line"}
 JSON
 exit "$rc"

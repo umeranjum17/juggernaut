@@ -25,7 +25,7 @@ pass "stack: the documented one-install command is bin/jg-stack.sh up"
 
 T=$(jg_test_tmproot jg-stack)
 export HOME="$T/home" JG_HOME="$T/jg" JG_STACK_SUPERVISOR=detached
-unset JG_STACK_SKIP JG_BUS_BIN JG_STATE_OVERRIDE JG_STATE JG_ROOT_OVERRIDE NPM_CONFIG_PREFIX XDG_CONFIG_HOME
+unset JG_STACK_SKIP JG_BUS_BIN JG_STATE_OVERRIDE JG_STATE JG_ROOT_OVERRIDE NPM_CONFIG_PREFIX XDG_CONFIG_HOME JG_WAKE_BUS_URL
 export GOCACHE="$T/gocache" GOFLAGS=-mod=mod
 mkdir -p "$HOME" "$JG_HOME/config/bus/dapr/components"
 # The bare minimum PATH: no tool the install should provide may come from the host.
@@ -52,7 +52,11 @@ for part in nats dapr ntfy; do
 done
 printf '%s\n' "$first" | grep -Eq '^deliver +enabled .*, running pid [0-9]+, consuming CAPTAIN$' \
   || fail "the CAPTAIN stream consumer was not reported running with a pid: $first"
-pass "stack: the first run reports nats, dapr and ntfy installed, enabled, running with a pid, listening, and the stream consumer running"
+for part in wake-engine wake-watcher router; do
+  printf '%s\n' "$first" | grep -Eq "^$part +installed jg-bus, enabled .*, running pid [0-9]+, consuming (JG_WAKE|CAPTAIN)/$part\$" \
+    || fail "$part was not reported running with a pid and its consumer: $first"
+done
+pass "stack: the first run reports nats, dapr and ntfy installed, enabled, running with a pid, listening, and the stream consumers (deliver, wake engine, wake watcher, router) running"
 printf '%s\n' "$first" | grep -q '^stream CAPTAIN exists' || fail "the CAPTAIN stream was not confirmed: $first"
 for pid in $(printf '%s\n' "$first" | sed -n 's/.*running pid \([0-9]*\),.*/\1/p'); do
   kill -0 "$pid" 2>/dev/null || fail "reported pid $pid is not a live process"
