@@ -22,7 +22,7 @@
 #           missing on stderr and exits 2, which is the blocking answer every hook reads.
 #
 # Usage: jg-guard-host.sh hook | --list | delete [--runtime <name>] | decide <command> |
-#        gh <args...> | gh-axi <args...> | pre-push <remote> <url>
+#        gh <args...> | gh-axi <args...> | pre-push <remote> <url> | eval <package>
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"

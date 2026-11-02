@@ -34,6 +34,9 @@ nats 0.5.1
 # The sidecar and the delivery server the same channel runs on, installed the same way.
 daprd 1.19.1
 ntfy 2.36.0
+# The policy engine every yes/no rule under policy/ is evaluated by (jg-guard-host.sh eval), a bare release
+# binary installed by bin/jg-bootstrap.sh like the rows above.
+opa 1.22.0
 # Lookout is the only supported fleet dashboard package.
 lookout-axi lookout-axi@0.1.0
 byokit-accounts @byokit/accounts@0.34.0

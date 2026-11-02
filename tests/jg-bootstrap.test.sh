@@ -117,6 +117,7 @@ SH
   chmod +x "$fakebin/no-mistakes"
   jg_fake_version_tool "$fakebin" nats-server JG_FAKE_NATS_SERVER_VERSION "$(nats_server_pin)"
   jg_fake_version_tool "$fakebin" nats JG_FAKE_NATS_VERSION "$(nats_pin)"
+  jg_fake_version_tool "$fakebin" opa JG_FAKE_OPA_VERSION "$(jg_pin_version opa 2>/dev/null || printf '1.22.0\n')"
   add_tasks_axi "$fakebin" "0.2.6"
   add_quota_axi "$fakebin"
   printf '%s\n' "$fakebin"
