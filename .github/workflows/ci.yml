@@ -317,6 +317,19 @@ jobs:
           # The module is the one owner of the version this repo builds with.
           go-version-file: core/bus/go.mod
           cache: false
+      # The Go build cache is seeded by the push that follows a merge (the save
+      # step below) and only read on a pull request, so a pull request starts from
+      # the release branch's compiled packages instead of building them cold, and
+      # never writes a cache of its own. The module has no third-party dependencies,
+      # so there is no module cache to keep. A pull request that edits go.mod misses
+      # the exact key and falls back to the newest cache for the prefix.
+      - name: Restore the Go build cache seeded from the release branch
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-bus-${{ runner.os }}-${{ hashFiles('core/bus/go.mod') }}
+          restore-keys: |
+            go-bus-${{ runner.os }}-
       # The captain channel's command is Go, per the stack decision that new
       # long-running parts are Go, and the shell is only its dispatcher. Build it
       # here once and name it for the lane, so the behaviour test below proves the
@@ -326,6 +339,12 @@ jobs:
           set -eu
           ( cd core/bus && go vet ./... && go build -o "$RUNNER_TEMP/bin/jg-bus" ./cmd/jg-bus )
           echo "JG_BUS_BIN=$RUNNER_TEMP/bin/jg-bus" >> "$GITHUB_ENV"
+      - name: Seed the Go build cache for pull requests
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-bus-${{ runner.os }}-${{ hashFiles('core/bus/go.mod') }}
       - name: Prove a home comes up with JetStream running
         run: |
           set -eu
