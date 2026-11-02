@@ -2513,13 +2513,14 @@ jg_wake_route_class() {
 # _jg_wake_rule_set <name> <default>: a `set <name> <value>` number from the rule files;
 # the first file that sets it wins, so a home's value overrides the shared one.
 _jg_wake_rule_set() {
-  local tag name value rest
+  local tag name value rest rules
+  rules=$(_jg_wake_rules)
   while read -r tag name value rest; do
     [ "$tag:$name" = "set:$1" ] || continue
     case "$value" in ''|*[!0-9]*) continue ;; esac
     printf '%s\n' "$value"
     return 0
-  done < <(_jg_wake_rules)
+  done <<< "$rules"
   printf '%s\n' "$2"
 }
 
