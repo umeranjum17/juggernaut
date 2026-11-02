@@ -22,31 +22,39 @@ if [ -z "$want" ] || [ "$have" != "$want" ]; then
   exit 0
 fi
 
-# make_world <name>: a clone of a tiny repository with this repo's bin/, the
-# recorder in place of bin/jg-test-run.sh, and the hook installed. origin/main
-# is the base commit. Prints the clone's path.
-make_world() {
-  local name=$1 dir=$TMP_ROOT/$1 seed
-  seed=$dir/seed
-  mkdir -p "$dir"
+# The shared template: a tiny repository with this repo's bin/ (copied once,
+# it is megabytes), the recorder in place of bin/jg-test-run.sh, and one valid
+# workflow because bin/jg-lint.sh refuses a tree with none. The recorder writes
+# to the files named by PP_LOG and PP_RC, which each world sets.
+TEMPLATE=$TMP_ROOT/template.git
+build_template() {
+  local seed=$TMP_ROOT/seed
   jg_git_init_commit "$seed"
   cp -R "$ROOT/bin" "$seed/bin"
-  cat >"$seed/bin/jg-test-run.sh" <<SH
+  cat >"$seed/bin/jg-test-run.sh" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' "\$*" >>"$dir/test-run.log"
-exit "\$(cat "$dir/test-run.rc" 2>/dev/null || echo 0)"
+printf '%s\n' "$*" >>"$PP_LOG"
+exit "$(cat "$PP_RC" 2>/dev/null || echo 0)"
 SH
   chmod +x "$seed/bin/jg-test-run.sh"
-  # bin/jg-lint.sh also validates the workflow definitions, and refuses a tree with none.
   mkdir -p "$seed/.github/workflows"
   printf '%s\n' 'name: x' 'on: push' 'jobs:' '  a:' '    runs-on: ubuntu-latest' '    steps:' '      - run: "true"' \
     >"$seed/.github/workflows/x.yml"
   git -C "$seed" add -A
   git -C "$seed" commit -qm 'base with bin'
-  git clone -q --bare "$seed" "$dir/origin.git"
-  git clone -q "$dir/origin.git" "$dir/work"
-  : >"$dir/test-run.log"
-  printf '%s\n' "$dir"
+  git clone -q --bare "$seed" "$TEMPLATE"
+}
+build_template
+
+# make_world <name>: sets WORLD to a fresh directory holding a bare origin and
+# a clone of it whose origin/main is the base commit.
+make_world() {
+  WORLD=$TMP_ROOT/$1
+  mkdir -p "$WORLD"
+  git clone -q --bare "$TEMPLATE" "$WORLD/origin.git"
+  git clone -q "$WORLD/origin.git" "$WORLD/work"
+  : >"$WORLD/test-run.log"
+  export PP_LOG=$WORLD/test-run.log PP_RC=$WORLD/test-run.rc
 }
 
 commit_file() { # <work> <path> <content> <message>
@@ -58,7 +66,8 @@ commit_file() { # <work> <path> <content> <message>
 
 test_install_is_safe_to_rerun_and_to_remove() {
   local dir work hook rc
-  dir=$(make_world install)
+  make_world install
+  dir=$WORLD
   work=$dir/work
   hook=$(git -C "$work" rev-parse --path-format=absolute --git-common-dir)/hooks/pre-push
 
@@ -82,7 +91,8 @@ test_install_is_safe_to_rerun_and_to_remove() {
 
 test_clean_push_runs_both_checks_against_the_nearest_base() {
   local dir work
-  dir=$(make_world clean)
+  make_world clean
+  dir=$WORLD
   work=$dir/work
   "$work/bin/jg-install-pre-push.sh" 2>/dev/null || fail "clean: install failed"
   git -C "$work" checkout -q -b feature
@@ -96,7 +106,8 @@ test_clean_push_runs_both_checks_against_the_nearest_base() {
 
 test_a_shellcheck_error_stops_the_push_before_the_tests() {
   local dir work rc
-  dir=$(make_world lint)
+  make_world lint
+  dir=$WORLD
   work=$dir/work
   "$work/bin/jg-install-pre-push.sh" 2>/dev/null || fail "lint: install failed"
   git -C "$work" checkout -q -b feature
@@ -115,7 +126,8 @@ test_a_shellcheck_error_stops_the_push_before_the_tests() {
 
 test_a_failing_changed_test_stops_the_push() {
   local dir work rc
-  dir=$(make_world tests)
+  make_world tests
+  dir=$WORLD
   work=$dir/work
   "$work/bin/jg-install-pre-push.sh" 2>/dev/null || fail "tests: install failed"
   git -C "$work" checkout -q -b feature
@@ -130,7 +142,8 @@ test_a_failing_changed_test_stops_the_push() {
 
 test_an_update_checks_only_the_new_commits() {
   local dir work first
-  dir=$(make_world update)
+  make_world update
+  dir=$WORLD
   work=$dir/work
   "$work/bin/jg-install-pre-push.sh" 2>/dev/null || fail "update: install failed"
   git -C "$work" checkout -q -b feature
@@ -147,7 +160,8 @@ test_an_update_checks_only_the_new_commits() {
 
 test_a_push_that_is_not_head_or_deletes_is_let_through_with_a_note() {
   local dir work
-  dir=$(make_world other)
+  make_world other
+  dir=$WORLD
   work=$dir/work
   "$work/bin/jg-install-pre-push.sh" 2>/dev/null || fail "other: install failed"
   git -C "$work" checkout -q -b feature
@@ -165,7 +179,8 @@ test_a_push_that_is_not_head_or_deletes_is_let_through_with_a_note() {
 
 test_a_checkout_without_the_script_is_unaffected() {
   local dir work
-  dir=$(make_world absent)
+  make_world absent
+  dir=$WORLD
   work=$dir/work
   "$work/bin/jg-install-pre-push.sh" 2>/dev/null || fail "absent: install failed"
   git -C "$work" checkout -q -b feature
