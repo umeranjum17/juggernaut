@@ -33,8 +33,10 @@ import (
 //
 // Fold. needs-decision or blocked opens a keyed decision; the resolve verb or the verified
 // captain-held transfer verb for that key closes it; a done or failed line carrying a colon on
-// a ship or scout closes every open decision (a squad_lead's terminal event may describe other
-// work). A line with neither a colon nor a complete key token is prose and never moves the set.
+// a ship or scout closes every open decision (a ship's terminal event ends its work). On any
+// other kind a done or failed line closes exactly the key it names, and a keyless one says
+// nothing: a squad_lead's terminal event describes that lead's own work, not a child's wait.
+// A line with neither a colon nor a complete key token is prose and never moves the set.
 // A key in a reserved namespace (JG_CLASSIFY_RESERVED_KEY_PREFIXES) moves only on a note that
 // begins with that namespace's own "<namespace>...:" vocabulary, so a writer cannot take over
 // or clear a decision a supervisor library owns.
@@ -189,19 +191,29 @@ func setVerb(set, key string) string {
 }
 
 // foldLine folds one status line into an open set: needs-decision or blocked opens a keyed
-// decision, a resolve or captain-held line for its key closes it, and a done or failed line on
-// a ship or scout closes them all.
+// decision, a resolve or captain-held line for its key closes it, a done or failed line on a
+// ship or scout closes them all, and a done or failed line carrying an explicit key closes that
+// key on any other kind of lane.
 func foldLine(open, line, kind string) string {
 	u := unstamped(line)
 	if strings.IndexByte(u, ':') < 0 && !hasTag(u, "[key=") {
 		return open
 	}
 	verb := lineVerb(line)
-	if strings.IndexByte(u, ':') >= 0 && (verb == "done" || verb == "failed") && (kind == "ship" || kind == "scout") {
+	terminal := strings.IndexByte(u, ':') >= 0 && (verb == "done" || verb == "failed")
+	if terminal && (kind == "ship" || kind == "scout") {
 		return ""
 	}
-	if verb != "needs-decision" && verb != "blocked" && verb != resolveVerb() && verb != captainHeldVerb() {
+	if !terminal && verb != "needs-decision" && verb != "blocked" && verb != resolveVerb() && verb != captainHeldVerb() {
 		return open
+	}
+	// A terminal line closes a decision only when it states the key to close. A keyless
+	// squad_lead `done` reports that lead's own work, so it may not clear a child's wait.
+	if terminal {
+		_, atHead := keyAtNoteHead(u)
+		if !keyBeforeColon(u) && !atHead {
+			return open
+		}
 	}
 	key, ok := decisionKey(line, "default")
 	if !ok {
@@ -341,12 +353,15 @@ func keyClosingVerb(file, want string) string {
 	open, verb := "", ""
 	for _, l := range lines {
 		event := lineVerb(l)
-		terminal := (event == "done" || event == "failed") && (kind == "ship" || kind == "scout")
+		named := strings.Contains(l, "[key="+want+"]")
+		// The same transitions foldLine applies: a done or failed line is terminal on a ship
+		// or scout, and on any other kind only when it names the key it closes.
+		terminal := (event == "done" || event == "failed") && ((kind == "ship" || kind == "scout") || named)
 		if !terminal {
 			if event != "needs-decision" && event != "blocked" && event != resolveVerb() && event != captainHeldVerb() {
 				continue
 			}
-			if want != "default" && !strings.Contains(l, "[key="+want+"]") {
+			if want != "default" && !named {
 				continue
 			}
 		}
