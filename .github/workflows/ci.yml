@@ -232,16 +232,20 @@ jobs:
       - name: Parse every shell file
         run: |
           set -eu
-          inventory="$RUNNER_TEMP/jg-shell-inventory"
-          bin/jg-lint.sh --list-files > "$inventory"
-          files=$(wc -l < "$inventory" | tr -d '[:space:]')
-          echo "parsing $files shell files"
-          fail=0
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            /bin/bash -n "$f" || { echo "::error::bash -n failed on $f"; fail=1; }
-          done < "$inventory"
-          [ "$fail" -eq 0 ] || exit 1
+          # Through the read trace (bin/jg-ci-area-reads.sh), like the other area lanes.
+          bin/jg-ci-area-reads.sh --check shell -- bash -c '
+            set -eu
+            inventory="$RUNNER_TEMP/jg-shell-inventory"
+            bin/jg-lint.sh --list-files > "$inventory"
+            files=$(wc -l < "$inventory" | tr -d "[:space:]")
+            echo "parsing $files shell files"
+            fail=0
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              /bin/bash -n "$f" || { echo "::error::bash -n failed on $f"; fail=1; }
+            done < "$inventory"
+            [ "$fail" -eq 0 ] || exit 1'
+
 
   # The smoke run: one eval that proves a home boots and its fleet view renders.
   # It is the cheapest signal that the product starts at all, and it fails in
@@ -262,8 +266,11 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
+      # Run through the read trace: it fails if the suite reads a file that
+      # bin/jg-ci-scope.sh would not send to this lane, which is how a change to
+      # such a file would skip the lane green (bin/jg-ci-area-reads.sh).
       - name: Run the smoke eval
-        run: bin/jg-fast-evals.sh --smoke
+        run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh --smoke
 
   # The fast evals: deterministic behaviour checks over real entry points in a
   # throwaway home. bin/jg-fast-evals.sh owns the set; nothing here mocks a
@@ -285,7 +292,7 @@ jobs:
           npm install -g tasks-axi
           tasks-axi --version
       - name: Run the fast evals
-        run: bin/jg-fast-evals.sh
+        run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh
 
   # The bus lane: the pinned JetStream server and client install through this
   # repository's own install path, and the test that proves a home comes up with
@@ -331,13 +338,19 @@ jobs:
           set -eu
           nats-server --version
           nats --version
-          tests/jg-bus-service.test.sh
-          tests/jg-bus-machine-service.test.sh
-          tests/jg-stack.test.sh
+          # Through the read trace (bin/jg-ci-area-reads.sh): a file this lane
+          # reads that the Bus area in bin/jg-ci-scope.sh misses fails the lane
+          # here instead of letting a change to it skip the lane green.
+          bin/jg-ci-area-reads.sh --check bus -- bash -c '
+            set -eu
+            tests/jg-bus-service.test.sh
+            tests/jg-bus-machine-service.test.sh
+            tests/jg-stack.test.sh'
+
       - name: Prove the captain channel's Go command at parity
         run: |
           set -eu
-          tests/jg-bus.test.sh
+          bin/jg-ci-area-reads.sh --check bus -- tests/jg-bus.test.sh
 
   # The changed-file tests: the suite scripts this change's paths map to, on the
   # pull request, and nothing else. They are the second half of the fast required
