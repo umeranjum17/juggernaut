@@ -31,6 +31,10 @@ run still fails keeps refusing even when an older row passed, and no row is ever
 A non-conforming evidence list (a stray comma, a name written twice, a path instead of a name, a
 doubled or missing `evidence/` prefix) fails naming the exact line and the name to write instead.
 
+A task is judged on its own PR's checks alone: a red PR elsewhere, including another PR into the same release branch, never holds a green one.
+After the merges, the check counts each repo's open PRs (the repos named by the tasks' recorded `pr=` URLs) and prints one alert when a count passes `config/open-pr-cap` (a whole number, default 8).
+The alert is remembered per repo and count in `<home>/data/jg-merge-on-green/open-pr-cap/`, so it repeats only when the count changes, and a repo back under the cap forgets it; a forge failure is silent and retried next sweep.
+
 Any refusal or FAIL prints one wake line naming the task, the PR URL and the first refusal reason,
 so the lead acts (the line ends with the routing: the lead merges through `bin/jg-pr-merge.sh` once it clears, and only a genuine hold — owner review, red CI, missing proof, security, destructive — goes to Main); the refusal is remembered per task+head+reason+receipt state in
 `<home>/data/jg-merge-on-green/<task>.refused` (never in `state/`), and repeats stay silent until
@@ -108,7 +112,9 @@ merge and one wake line, receipt head mismatch -> no merge, all gates pass -> `j
 once with exactly the task and PR URL and the merged line written, the same head never retried after a merge or a refusal, a
 gate refusal waking once per task+head+reason+receipt state with repeats silent and a changed
 reason, receipt or head waking again, and `wiring.sh` in both `--dry-run` and real mode (register
-runs with `JG_STATE_OVERRIDE` unset, the shim execs the installed script with the home). It also covers
+runs with `JG_STATE_OVERRIDE` unset, the shim execs the installed script with the home). It also covers a
+green PR merging while a sibling PR is red, and the open-PR cap (at the cap silent, one alert over it, repeats silent, a changed count
+alerting again, config raising the cap, a forge failure silent). It also covers
 the migration of the retired install (its rule file gone, the retired path redirecting and still running
 the gate, a re-run changing nothing), a home wired at another install path keeping that path, and both
 refusals: an unknown shim target, a shim running another home's gate, and an unknown retired directory,
