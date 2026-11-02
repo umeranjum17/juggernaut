@@ -1201,9 +1201,10 @@ jg_pr_forgejo_login() {  # <host>
 # types is accepted; anything else returns 1 for an honest unknown.
 jg_pr_forgejo_read_record() {  # <host> <path> <number>
   local host=$1 path=$2 number=$3 login json fields line
-  local total=0 named=0 state='' merged=''
+  local total=0 named=0 state='' merged='' head=''
   JG_PR_RECORD_STATE=
   JG_PR_RECORD_MERGED=
+  JG_PR_RECORD_HEAD=
   command -v jq >/dev/null 2>&1 || return 1
   case "$number" in
     ''|*[!0-9]*) return 1 ;;
@@ -1231,7 +1232,7 @@ jg_pr_forgejo_read_record() {  # <host> <path> <number>
     case "$line" in
       state=*) state=${line#state=} ;;
       merged=*) merged=${line#merged=} ;;
-      head=*) ;;
+      head=*) head=${line#head=} ;;
       *) continue ;;
     esac
     named=$((named + 1))
@@ -1249,6 +1250,10 @@ FIELDS
   # Consumed by bin/jg-crew-state.sh passed_pr_detail.
   # shellcheck disable=SC2034
   JG_PR_RECORD_MERGED=$merged
+  # Consumed by bin/jg-dod-lib.sh's Forgejo live-head read. The shell teardown test
+  # that also read it is gone: core/teardown asks the forge for its own answer.
+  # shellcheck disable=SC2034
+  JG_PR_RECORD_HEAD=$head
 }
 
 # gerrit-axi resolves its server from the current directory's origin remote
