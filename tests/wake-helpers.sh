@@ -20,26 +20,6 @@ if [ -z "${JG_ROOT_OVERRIDE:-}" ]; then
   export JG_ROOT_OVERRIDE
 fi
 
-# The watcher asks the bus command about its own wake queue on every poll (bin/jg-bus.sh watcher),
-# and bin/jg-bus.sh builds that command on first use into the home's own state directory. A fixture
-# home is new for every case, so a real watcher cycle would spend its first poll compiling, which a
-# cold Go build cache makes longer than the cycle's own bound. Build the command once per source
-# tree, into a cache beside the tmp root shared by every suite, and hand it to the watcher
-# (an explicit JG_BUS_BIN still wins).
-if [ -z "${JG_BUS_BIN:-}" ] && command -v "${JG_BUS_GO:-go}" >/dev/null 2>&1; then
-  _jg_bus_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-  _jg_bus_key=$(find "$_jg_bus_root/core/bus" -name '*.go' -o -name go.mod | LC_ALL=C sort | xargs cat | sha256sum | cut -c1-16)
-  _jg_bus_dir=${TMPDIR:-/tmp}/jg-bus-test-bin-$(id -u)/$_jg_bus_key
-  if [ ! -x "$_jg_bus_dir/jg-bus" ] && mkdir -p "$_jg_bus_dir"; then
-    if ( cd "$_jg_bus_root/core/bus" && "${JG_BUS_GO:-go}" build -o "$_jg_bus_dir/jg-bus.$$" ./cmd/jg-bus ); then
-      mv -f "$_jg_bus_dir/jg-bus.$$" "$_jg_bus_dir/jg-bus"
-    else
-      rm -f "$_jg_bus_dir/jg-bus.$$"
-    fi
-  fi
-  [ ! -x "$_jg_bus_dir/jg-bus" ] || export JG_BUS_BIN="$_jg_bus_dir/jg-bus"
-fi
-
 # Captain-channel quiet seam. The away-mode wedge alert reaches the captain by
 # the one captain channel (bin/jg-bus.sh, docs/captain-channel.md), whose live
 # mode posts to a bus and an iPad that no test has business reaching. Point every
