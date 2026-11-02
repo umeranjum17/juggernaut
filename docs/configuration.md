@@ -1366,7 +1366,7 @@ Regression coverage executes emitted launch commands with synthetic nonsecret va
 
 ### Provider credentials stripped from every launch
 
-Every launch drops the credential-shaped variables the launching process carries, whether or not that home opted into the allowlist above.
+Every launch drops the credential-shaped variables the destination pane carries when the launch starts, whether or not that home opted into the allowlist above.
 This is the default, with no file and no flag to turn it off, and it covers ship, Recon, squad_lead, local and remote, raw commands, and relaunches.
 Stripped shapes are matched on the name's ending, case-insensitively:
 
@@ -1385,11 +1385,11 @@ A home whose workers authenticate a provider through an environment variable the
 An allowlisted name keeps the value the destination pane supplies; a stripped name is reported nowhere.
 Diagnostics print names only, and no value is copied, logged, written to a record, or sent anywhere.
 
-Limit: this is not a sandbox, and the strip is computed from the process that builds the launch.
-A variable that exists only inside the destination pane, not in that process, survives, and tools or later shells can still create or reload credentials.
+The strip runs inside the pane and reads the pane's own environment when it runs, so a name the herdr server exports or a shell profile sets after the launch is built is stripped too.
+Limit: this is not a sandbox, and tools or later shells can still create or reload credentials.
 For the population side of the same problem, [`addons/key-in-env-check`](../addons/key-in-env-check/README.md) scans running processes for provider keys.
 
-Regression coverage plants a synthetic credential name and runs the real launch-environment builder in a subshell in [`tests/jg-launch-env-strip.test.sh`](../tests/jg-launch-env-strip.test.sh).
+Regression coverage plants synthetic credential names only in the pane, never in the launching process, and runs the real builder and every emitted launch in [`tests/jg-launch-env-strip.test.sh`](../tests/jg-launch-env-strip.test.sh) and [`tests/jg-spawn-dispatch-profile.test.sh`](../tests/jg-spawn-dispatch-profile.test.sh).
 
 ### Compact adviser setting
 

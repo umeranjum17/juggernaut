@@ -136,6 +136,8 @@ jg_test_launch_git_prefix() {  # <launch>
 jg_test_launch_command() {  # <launch>
   local command=$1 end=' || return 1 2>/dev/null || exit 1; '
   case "$command" in *"$end"*) command=${command#*"$end"} ;; esac
+  # The credential strip is a pane-side loop that ends with this statement.
+  case "$command" in *"; unset jg_n; "*) command=${command#*"; unset jg_n; "} ;; esac
   while [[ "$command" == *\;* ]]; do
     case "$command" in
     export\ *\;* | unset\ *\;* | :) command=${command#*; } ;;
