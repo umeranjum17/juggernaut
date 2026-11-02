@@ -28,10 +28,15 @@ mkdir -p "$HOME_DIR/state/bus" "$HOME_DIR/config/bus" "$HOME_DIR/data"
 port=$(( 47100 + RANDOM % 800 ))
 sed "s/4222/$port/" "$ROOT/core/bus/nats.conf" > "$HOME_DIR/config/bus/nats.conf"
 printf 'set nats-url nats://127.0.0.1:%s\n' "$port" > "$HOME_DIR/config/captain-channel"
-printf 'nats-url nats://127.0.0.1:%s\n' "$port" > "$HOME_DIR/config/wake-bus"
 printf 'now * * * *\n' > "$HOME_DIR/config/wake-routing"
+# tests/lib.sh points every bus client at a dead address so a test never reaches the machine bus; this
+# test runs its own lab server, so it names that one for the wake bus.
+export JG_WAKE_BUS_URL="nats://127.0.0.1:$port"
 export JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$HOME_DIR/state" JG_DATA_OVERRIDE="$HOME_DIR/data" JG_WAKE_ROUTING="$HOME_DIR/config/wake-routing"
-"$ROOT/bin/jg-bus.sh" unit nats > "$DIR/unit.txt" 2>"$DIR/unit.err" || fail "the unit and accounts were not generated: $(cat "$DIR/unit.err")"
+# `unit nats` is not used here: it resolves the machine unit's owner and, from any other home, registers
+# itself with that owner. The accounts file and the config that includes it are written for this lab home only.
+"$ROOT/bin/jg-bus.sh" accounts "$HOME_DIR" > "$HOME_DIR/state/bus/accounts.conf" 2>"$DIR/accounts.err" || fail "the accounts file was not generated: $(cat "$DIR/accounts.err")"
+printf 'include "../../config/bus/nats.conf"\ninclude "accounts.conf"\n' > "$HOME_DIR/state/bus/bus.conf"
 ( cd "$HOME_DIR/state/bus" && exec "$SERVER" -c bus.conf > "$DIR/nats.log" 2>&1 ) &
 printf '%s\n' "$!" >> "$JG_TEST_BUS_REGISTRY"
 for _ in $(seq 1 200); do grep -q 'Server is ready' "$DIR/nats.log" 2>/dev/null && break; sleep 0.05; done
@@ -73,7 +78,7 @@ for _ in $(seq 1 40); do "$BUS" bootstrap >/dev/null 2>&1; "$BUS" stream >/dev/n
 "$BUS" stream || fail "the captain stream was not created"
 start_engine
 "$BUS" router >> "$DIR/router.log" 2>&1 & ROUTER_PID=$!
-wait_ready wake-engine || fail "the wake engine never created its consumer: $(cat "$DIR/engine.log")"
+wait_ready wake-engine || fail "the wake engine never created its consumer: $(cat "$DIR/engine.log") server: $(tail -n 3 "$DIR/nats.log")"
 wait_ready router || fail "the router never created its consumer: $(cat "$DIR/router.log")"
 pass "both consumers are running and have a durable consumer on the server"
 

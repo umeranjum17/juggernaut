@@ -25,7 +25,7 @@ pass "stack: the documented one-install command is bin/jg-stack.sh up"
 
 T=$(jg_test_tmproot jg-stack)
 export HOME="$T/home" JG_HOME="$T/jg" JG_STACK_SUPERVISOR=detached
-unset JG_STACK_SKIP JG_BUS_BIN JG_STATE_OVERRIDE JG_STATE JG_ROOT_OVERRIDE NPM_CONFIG_PREFIX XDG_CONFIG_HOME
+unset JG_STACK_SKIP JG_BUS_BIN JG_STATE_OVERRIDE JG_STATE JG_ROOT_OVERRIDE NPM_CONFIG_PREFIX XDG_CONFIG_HOME JG_WAKE_BUS_URL
 export GOCACHE="$T/gocache" GOFLAGS=-mod=mod
 mkdir -p "$HOME" "$JG_HOME/config/bus/dapr/components"
 # The bare minimum PATH: no tool the install should provide may come from the host.
