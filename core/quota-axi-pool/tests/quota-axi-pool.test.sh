@@ -22,8 +22,15 @@ fails=0
 is() { if [ "$2" = "$3" ]; then echo "ok - $1"; else echo "not ok - $1: got [$2], want [$3]"; fails=$((fails + 1)); fi; }
 row_pct() { jq -r --arg p "$2" --arg k "$3" '[.providers[]|select(.provider==$p and (.accountKey // "default")==$k)|.quotaSemantics.effectiveAvailability[0].effectivePercentRemaining]|first' <<<"$1"; }
 
+mkdir -p "$w/.config/ollama-cloud"
+printf 'fixture-ollama-key\n' >"$w/.config/ollama-cloud/api_key"
+printf '{"ollama-cloud":["deepseek-v4.1-flash"]}\n' >"$w/home/config/model-allow-list.json"
+printf 'fixture-commandcode-key\n' >"$w/home/config/commandcode-api-key"
+printf '#!/usr/bin/env bash\nprintf %%s %s\n' "'{\"purchased\":{\"balance_usd\":0},\"included\":{\"balance_usd\":240.5,\"allowance_usd\":300,\"period\":{\"until\":\"2026-11-25T12:23:12Z\"}}}'" >"$w/bin/curl"
+chmod +x "$w/bin/curl"
 cat >"$w/bin/quota-axi-real" <<'SH'
 #!/usr/bin/env bash
+[ -z "${COMMANDCODE_API_KEY:-}" ] || printf 'present\n' >"$W/log/cc-env"
 for a in "$@"; do case "$a" in
   --version|-v) printf 'quota-axi 0.1.54 (stub)\n'; exit 0 ;;
   --json) printf '%s\n' '{"generatedAt":"2030-01-01T00:00:00Z","schemaVersion":5,"providers":[{"provider":"claude","state":{"status":"fresh","stale":false},"windows":[{"id":"five_hour","percentRemaining":11},{"id":"seven_day","percentRemaining":11}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":11,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["seven_day"],"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":0.11}}]}},{"provider":"codex","state":{"status":"fresh","stale":false},"windows":[{"id":"weekly","percentRemaining":50}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":50,"boundedBy":["weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":0.5}}]}}]}'; exit 0 ;;
@@ -60,7 +67,7 @@ run_json() {
   out=$(env -i PATH="$w/bin:/usr/bin:/bin" HOME="$w" TMPDIR="$w" JG_HOME="$w/home" \
     JG_CLAUDE_ACCOUNTS_REGISTRY="$w/registry.json" JG_MODEL_POOL="$helper" \
     JG_MODEL_POOL_FLOOR=15 JG_ACCOUNT_POOL_REST_FLOOR=15 JG_CLAUDE_ACCOUNTS_LOW=5 \
-    JG_CLAUDE_ACCOUNTS_FRESH=999999 JG_QUOTA_AXI_REAL="$w/bin/quota-axi-real" \
+    JG_CLAUDE_ACCOUNTS_FRESH=999999 JG_QUOTA_AXI_REAL="$w/bin/quota-axi-real" W="$w" \
     JG_QUOTA_AXI_POOL_ATTEMPTED="${1:-[]}" "$wrap" --json 2>"$w/err"); rc=$?
 }
 
@@ -77,6 +84,16 @@ is "Claude default row is the best worker A=70, not ambient 11" "$(row_pct "$out
 is "worker B row" "$(row_pct "$out" claude pa_umer_b)" 40
 is "Main's login shown apart, reserved" "$(jq -r '[.providers[]|select(.provider=="claude" and .accountKey=="main")|"\(.account.reserved):\(.quotaSemantics.effectiveAvailability[0].effectivePercentRemaining)"]|first' <<<"$out")" true:5
 is "codex passthrough" "$(row_pct "$out" codex default)" 50
+# The chain leads with Ollama, which upstream quota-axi has no provider for at all: the row and its credit come here.
+is "Ollama row from its balance" "$(jq -r '[.providers[]|select(.provider=="ollama-cloud")|.credits.remaining]|first' <<<"$out")" 240.5
+is "Ollama credit is a percentage of the allowance" \
+  "$(jq -r '[.providers[]|select(.provider=="ollama-cloud")|.windows[]|select(.id=="credit")|.percentRemaining]|first|round' <<<"$out")" 80
+is "Ollama runway is usable" \
+  "$(jq -r '[.providers[]|select(.provider=="ollama-cloud")|.quotaSemantics.effectiveAvailability[0].runway.status]|first' <<<"$out")" through_reset
+is "one Ollama row, Claude row kept" \
+  "$(jq -r '[.providers[]|.provider]|group_by(.)|map("\(.[0])=\(length)")|join(",")' <<<"$out")" "claude=4,codex=1,ollama-cloud=1"
+# Command Code's real key lives in the home's file: the wrapper hands it to upstream, which reads env only.
+is "Command Code key reaches upstream" "$(cat "$w/log/cc-env" 2>/dev/null)" present
 # shellcheck source=../../../bin/jg-quota-axi-lib.sh disable=SC1091
 . "$addons/../bin/jg-quota-axi-lib.sh"
 jg_quota_json_valid <<<"$out" && echo "ok - snapshot valid for dispatch" || { echo "not ok - snapshot valid for dispatch"; fails=$((fails + 1)); }

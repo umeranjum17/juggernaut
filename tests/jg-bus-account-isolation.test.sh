@@ -61,7 +61,8 @@ port=
 for _ in $(seq 200); do port=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$D/nats.log" | head -1); [ -n "$port" ] && break; sleep 0.05; done
 [ -n "$port" ] || { cat "$D/nats.log"; fail "the server did not listen"; }
 url="nats://127.0.0.1:$port"
-pw() { cat "$A/state/bus/$1.pass"; }
+# Each home keeps its own password in its own state directory, where its client reads it.
+pw() { local h; case "$1" in "$ia") h=$A ;; "$ib") h=$B ;; *) h=$C ;; esac; cat "$h/state/bus/$1.pass"; }
 # Each home publishes on its own prefix and consumes it as itself.
 for n in "$ia" "$ib" "$ic"; do
   timeout 15 "$CLI" -s "$url" --user "$n" --password "$(pw "$n")" sub "jg.$n.wake.>" --count 1 --timeout 12s > "$D/got.$n" 2>&1 &

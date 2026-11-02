@@ -12,6 +12,12 @@ cache-file: "./ntfy-cache.db"
 cache-duration: "24h"
 behind-proxy: false
 enable-signup: false
+# Nobody reads or writes the captain's topic anonymously: the server is reached over the tailnet
+# once a home overrides listen-http, so access is deny-all and two logins exist (publisher
+# write-only, captain read-only). The bus owner makes them with `bin/jg-bus.sh ntfy-provision`,
+# which bin/jg-stack.sh up runs; delete these two lines for an open local server.
+auth-file: "./ntfy-auth.db"
+auth-default-access: "deny-all"
 # ntfy's own delivery log: one DEBUG "Received message" line per publish, carrying the
 # message_id that state/captain-channel-delivered.jsonl records, so bin/jg-captain-probe.sh can
 # show the same event in both. It goes to stdout: state/bus/ntfy.log, or the unit's journal.

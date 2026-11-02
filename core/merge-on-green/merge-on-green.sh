@@ -105,7 +105,7 @@ refuse() { # <reason> <receipt-stamp>: the wake line prints once per task+head+r
 }
 
 for m in "$STATE"/*.meta; do
-  [ -f "$m" ] || exit 0
+  [ -f "$m" ] || break
   task=$(basename "$m" .meta)
   case "$task" in [A-Za-z0-9]*) ;; *) continue ;; esac
   yolo=$(meta_get "$m" yolo); pr=$(meta_get "$m" pr); pr_head=$(meta_get "$m" pr_head); gen=$(meta_get "$m" spawn_gen)
@@ -121,13 +121,23 @@ for m in "$STATE"/*.meta; do
   [ -n "$pr" ] && [ -n "$pr_head" ] || continue
   # One merge attempt per head: a head already attempted (merged or refused) is never retried.
   [ "$(cat "$DATA/$task.head" 2>/dev/null)" = "$pr_head" ] && continue
-  [ "$(date +%s)" -lt "$DEADLINE" ] || exit 0
+  [ "$(date +%s)" -lt "$DEADLINE" ] || break
 
   # Gate: the task's resolved state must say checks green / PR ready. "PR merged" means the work
   # already landed; nothing happened, so nothing is printed.
+  # Only a pipeline run says "checks green: PR ready". A direct-PR task has no run, so its resolved state
+  # is the worker's own done line in free text ("state: done · source: status-log · ..."): for it the
+  # forge decides. bin/jg-pr-state.sh --all prints one line per open draft, conflict, unfinished or red
+  # check, or a merged or closed state, and nothing when the pull request is open with every reported
+  # check green. A false done, a lookup error and a merged pull request therefore stay silent, burn no
+  # head and are read again next sweep; jg-pr-merge below still makes the final live green call.
   cs=$(JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-crew-state.sh" "$task" 2>/dev/null) || continue
   case "$cs" in
     *"checks green: PR ready"*|*"checks green: PR held for merge"*) ;;
+    "state: done · source: status-log"*)
+      ws=$(JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-pr-state.sh" --all "$pr" 2>/dev/null) || continue
+      [ -z "$ws" ] || continue
+      ;;
     *) continue ;;
   esac
 
@@ -186,7 +196,7 @@ for m in "$STATE"/*.meta; do
   # start one only when it still fits inside the watcher's whole-check bound; the fit arithmetic
   # doubles as the merge's bound, so the whole remaining window is available to it.
   mbudget=$(( START + ${JG_CHECK_TIMEOUT:-30} - $(date +%s) - 1 ))
-  [ "$mbudget" -ge "$BUDGET" ] || exit 0
+  [ "$mbudget" -ge "$BUDGET" ] || break
   mkdir -p "$DATA" || { echo "merge-on-green: NOT merging $task $pr: cannot write $DATA; $LEAD_NOTE"; continue; }
   printf '%s\n' "$pr_head" > "$DATA/$task.head" || { echo "merge-on-green: NOT merging $task $pr: cannot write $DATA/$task.head; $LEAD_NOTE"; continue; }
   merge_out=$(JG_HOME="$FMH" timeout "$mbudget" "$FMH/bin/jg-pr-merge.sh" "$task" "$pr" 2>&1); merge_rc=$?
@@ -213,4 +223,28 @@ for m in "$STATE"/*.meta; do
   else
     echo "merge-on-green: NOT merging $task $pr: jg-pr-merge refused: $(first_reason "$merge_out" "$merge_rc"); $LEAD_NOTE"
   fi
+done
+
+# Open-PR cap: ten green PRs once sat unmerged behind one red release PR and nobody saw the pile.
+# A merge never waits on another PR's colour (each task above is judged on its own PR), so the pile is
+# raised here instead. For every repo named by a task's recorded pr= URL, count its open PRs; over
+# <home>/config/open-pr-cap (a whole number, default 8) one alert names the repo, the count and the cap.
+# The alert is remembered per repo and count in <home>/data/jg-merge-on-green/open-pr-cap/, so it repeats
+# only when the count changes, and a repo back under the cap forgets it. Runs after the merges and only
+# while a gh call still fits in the bound; a gh failure is silent and retried next sweep.
+CAP=; [ ! -f "$FMH/config/open-pr-cap" ] || read -r CAP _ < "$FMH/config/open-pr-cap" || :
+case "$CAP" in ''|*[!0-9]*|0) CAP=8 ;; esac
+repos=$(for m in "$STATE"/*.meta; do
+  [ -f "$m" ] || continue
+  { meta_get "$m" pr; echo; } | sed -n 's#^https://github\.com/\([A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*\)/pull/[0-9]*$#\1#p'
+done | sort -u)
+for repo in $repos; do
+  [ "$(( $(date +%s) + BUDGET ))" -lt "$(( START + ${JG_CHECK_TIMEOUT:-30} ))" ] || break
+  seen=$DATA/open-pr-cap/${repo//\//__}
+  open=$(timeout "$BUDGET" gh pr list --repo "$repo" --state open --limit 500 --json number --jq length 2>/dev/null) || continue
+  case "$open" in ''|*[!0-9]*) continue ;; esac
+  if [ "$open" -le "$CAP" ]; then rm -f "$seen" 2>/dev/null || :; continue; fi
+  [ "$(cat "$seen" 2>/dev/null)" = "$open" ] && continue
+  echo "merge-on-green: $open open pull requests in $repo, over the cap of $CAP; lead: merge the green ones now, a red pull request elsewhere never holds them"
+  mkdir -p "$DATA/open-pr-cap" 2>/dev/null && printf '%s\n' "$open" > "$seen" 2>/dev/null || :
 done

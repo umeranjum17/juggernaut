@@ -1,0 +1,65 @@
+{
+  "rules": {
+    "checks_lint": {
+      "required_fields": [
+        "outcome",
+        "repro",
+        "proof",
+        "evidence"
+      ],
+      "size_guidance": 1000,
+      "size_refuse_mode": "refuse",
+      "bot_authors": [
+        "^(dependabot|renovate)(\\[bot\\])?$",
+        "^app/(dependabot|renovate)$"
+      ],
+      "proof_command_pattern": "[/`]|\\.\\w{2,4}\\b|\\b(npm|pnpm|yarn|npx|bash|sh|python3?|node|cargo|go|gradle|make|adb|xcrun|bin/)\\b",
+      "verify_skill_marker": "verify-",
+      "no_verify_skill_pattern": "(?i)no verify skill",
+      "repro_na_pattern": "(?i)^n/?a\\b",
+      "repro_debug_marker": "systematic-debugging",
+      "fix_title_pattern": "(?i)^(fix|bugfix|hotfix)\\b",
+      "not_proven_pattern": "(?i)^not proven\\s*:\\s*\\S",
+      "not_proven_keep": 120,
+      "evidence_name_pattern": "\\.\\w{1,10}$"
+    },
+    "lint_row": {
+      "pass_verdict": "pass",
+      "skipped_verdicts": [
+        "card"
+      ],
+      "no_value": "-",
+      "url_pattern": "^https?:"
+    },
+    "owner_proof": {
+      "no_value": "-",
+      "waiver_pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z$",
+      "card_kind": "evidence",
+      "card_key_suffix_separator": "-"
+    },
+    "brief_rules": {
+      "skip_kinds": [
+        "squad_lead"
+      ],
+      "parent_exempt_kinds": [
+        "scout"
+      ],
+      "ask_prefix": "[captain-ask]",
+      "order_pattern": "(^|[^[:alnum:]])Main[0-9]+",
+      "upkeep_parent": "upkeep",
+      "parent_line_pattern": "^[[:space:]]*parent:",
+      "parent_value_pattern": "^[[:space:]]*parent:[[:space:]]*(.*?)[[:space:]]*$",
+      "design_line_pattern": "(?i)^[[:space:]]*(design|desing|desgin|designs|design[ _-]discovery)[[:space:]]*:",
+      "design_exact_pattern": "^[[:space:]]*design:[[:space:]]*(required|none)[[:space:]]*$",
+      "design_required_pattern": "^[[:space:]]*design:[[:space:]]*required[[:space:]]*$",
+      "design_like_pattern": "(?i)\\b(redesign|landing page|new screen|mock-?up|prototype|first draft)\\b",
+      "design_required_line": "Design discovery: required"
+    },
+    "receipt": {
+      "required": "1",
+      "schema": 1,
+      "pass_verdict": "PASS",
+      "nonblank_pattern": "[^[:space:]]"
+    }
+  }
+}

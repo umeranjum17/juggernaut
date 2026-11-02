@@ -25,20 +25,13 @@ JG_HOME=$home
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd) || exit 1
 lib="$here/parked-homes/bin/jg-parked-homes-lib.sh"
-[ -f "$lib" ] || die "this checkout is missing parked-homes/bin/jg-parked-homes-lib.sh (run from the juggernaut-addons checkout)"
+[ -f "$lib" ] || die "this checkout is missing parked-homes/bin/jg-parked-homes-lib.sh (run from a juggernaut checkout)"
 
 status=0
 say() { printf '%s\n' "$*"; }
 bad() { printf 'MISSING: %s\n' "$*"; status=1; }
 
-addons="${JG_ADDONS_DIR:-$home/projects/juggernaut-addons}"
-if [ -f "$addons/parked-homes/bin/jg-parked-homes-lib.sh" ]; then
-  same=0
-  [ "$(cat "$addons/parked-homes/bin/jg-parked-homes-lib.sh" 2>/dev/null)" = "$(cat "$lib")" ] && same=1
-  say "feature checkout: $addons (lib $([ "$same" = 1 ] && echo matches || echo DIFFERS-FROM-this-checkout))"
-else
-  bad "feature checkout reachable at $addons/parked-homes (set JG_ADDONS_DIR or update projects/juggernaut-addons)"
-fi
+say "parked-homes lib: $lib"
 
 if [ -f "$home/bin/jg-parked-homes-lib.sh" ] &&
    grep -q "parked-homes/bin/jg-parked-homes-lib.sh" "$home/bin/jg-parked-homes-lib.sh"; then

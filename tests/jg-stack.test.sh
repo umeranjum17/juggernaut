@@ -25,7 +25,7 @@ pass "stack: the documented one-install command is bin/jg-stack.sh up"
 
 T=$(jg_test_tmproot jg-stack)
 export HOME="$T/home" JG_HOME="$T/jg" JG_STACK_SUPERVISOR=detached
-unset JG_STACK_SKIP JG_BUS_BIN JG_STATE_OVERRIDE JG_STATE JG_ROOT_OVERRIDE NPM_CONFIG_PREFIX XDG_CONFIG_HOME
+unset JG_STACK_SKIP JG_BUS_BIN JG_STATE_OVERRIDE JG_STATE JG_ROOT_OVERRIDE NPM_CONFIG_PREFIX XDG_CONFIG_HOME JG_WAKE_BUS_URL
 export GOCACHE="$T/gocache" GOFLAGS=-mod=mod
 mkdir -p "$HOME" "$JG_HOME/config/bus/dapr/components"
 # The bare minimum PATH: no tool the install should provide may come from the host.
@@ -52,7 +52,11 @@ for part in nats dapr ntfy; do
 done
 printf '%s\n' "$first" | grep -Eq '^deliver +enabled .*, running pid [0-9]+, consuming CAPTAIN$' \
   || fail "the CAPTAIN stream consumer was not reported running with a pid: $first"
-pass "stack: the first run reports nats, dapr and ntfy installed, enabled, running with a pid, listening, and the stream consumer running"
+for part in wake-engine wake-watcher router; do
+  printf '%s\n' "$first" | grep -Eq "^$part +installed jg-bus, enabled .*, running pid [0-9]+, consuming (JG_WAKE|CAPTAIN)/$part\$" \
+    || fail "$part was not reported running with a pid and its consumer: $first"
+done
+pass "stack: the first run reports nats, dapr and ntfy installed, enabled, running with a pid, listening, and the stream consumers (deliver, wake engine, wake watcher, router) running"
 printf '%s\n' "$first" | grep -q '^stream CAPTAIN exists' || fail "the CAPTAIN stream was not confirmed: $first"
 for pid in $(printf '%s\n' "$first" | sed -n 's/.*running pid \([0-9]*\),.*/\1/p'); do
   kill -0 "$pid" 2>/dev/null || fail "reported pid $pid is not a live process"
@@ -70,6 +74,12 @@ probe=$("$ROOT/bin/jg-captain-probe.sh" 2>&1); rc=$?
 [ "$rc" = 0 ] || fail "the live probe exited $rc: $probe"
 printf '%s\n' "$probe" | grep -Eq '^probe: PASS bus -> ntfy, stream [0-9]+ -> [0-9]+, message [A-Za-z0-9]+$' || fail "the probe did not prove bus -> ntfy: $probe"
 pass "stack: a real captain event travels the CAPTAIN stream to ntfy, with a delivery record and ntfy's own log line"
+# The server denies everyone by default and the owner's stack made the two logins: the probe read the event
+# back as the captain and saw an anonymous publish and the read-only login's publish refused.
+printf '%s\n' "$probe" | grep -q '^captain login read the event: ' || fail "the captain login did not read the event back: $probe"
+printf '%s\n' "$probe" | grep -Eq '^anonymous publish: HTTP 40[13]; captain \(read-only\) publish: HTTP 40[13]$' || fail "ntfy did not refuse the anonymous and the read-only publish: $probe"
+[ "$(stat -c %a "$JG_HOME/state/bus/ntfy-captain.pass")" = 600 ] || fail "the captain's ntfy password file is not private"
+pass "stack: ntfy denies anonymous access; the publisher login delivers, the captain login reads, and its own publish is refused"
 
 # A part that cannot run stops the run with one line naming it and what it blocks.
 "$ROOT/bin/jg-bus.sh" stop >/dev/null 2>&1

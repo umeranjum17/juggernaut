@@ -24,7 +24,7 @@
 # missing evidence/ prefix) fails naming the exact line and the name to write instead.
 # One gh call per run (plus one per 100 files past the 100-file view cap, the compare/upstream diffs and one or two per moved file). Each run appends a row to $JG_HOME/data/checks-gate.log, and the newest row for a head is
 # that head's verdict (readers take the last row, never any older pass). A run for a task of this home also publishes its own verdict
-# as the task's completion receipt (receipts/bin/jg-run-receipt.sh in juggernaut-addons), so a lane that fixes its evidence and re-lints
+# as the task's completion receipt (core/receipts/bin/jg-run-receipt.sh), so a lane that fixes its evidence and re-lints
 # to PASS republishes PASS over its earlier FAIL for the same candidate with no hand-posted record; bin/jg-pr-merge.sh and
 # jg-merge-local.sh read that receipt (bin/jg-dod-lib.sh jg_dod_receipt_accept), so a still-failing head keeps refusing. Rows are never removed.
 import os, re, sys, json, time, hashlib, subprocess, tempfile
@@ -37,20 +37,24 @@ home = os.environ['JG_HOME']; LOG = f'{home}/data/checks-gate.log'; HASHES = f'{
 GEN = re.compile(r'(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock|go\.sum|[^/]*\.lock)$'+ r'|(^|/)packages/accounts/src/pi/|(^|/)packages/accounts/src/routes\.json$|(^|/)vendor/|(^|/)dist/|(^|/)(LICENSE|LICENSES|NOTICE|COPYING)[^/]*$')  # third-party, legal text and committed build output (dist/) are not reviewable code
 
 task, ROOT = '', os.path.dirname(os.path.dirname(os.path.realpath(__file__)))  # task is set below
-SIZE_GUIDANCE = 1000  # the advisory added-line size; config/checks-size decides whether it can refuse
+def load_rules():
+    """The thresholds and patterns of the merge gate: policy/gate/rules.json of the checkout that holds this lint
+    (a source run), else of this home (the installed copy sits in the data directory, beside no policy tree)."""
+    for base in (os.path.dirname(ROOT), home):
+        try:
+            return base, json.load(open(f'{base}/policy/gate/rules.json'))['rules']['checks_lint']
+        except (OSError, ValueError, KeyError):
+            continue
+    sys.exit('checks-lint: policy/gate/rules.json not found beside this lint or in ' + home)
+POLICY_BASE, RULES = load_rules()
+SIZE_GUIDANCE = RULES['size_guidance']  # the size the policy advises on; config/checks-size lets it refuse
 def size_mode():
-    """config/checks-size: 'refuse' makes the guidance a refusal; absent, empty or unknown is advisory."""
+    """config/checks-size, the facts only: its first word lowercased ('' when absent or empty) and its path."""
     p = f'{home}/config/checks-size'
     try:
-        first = (open(p, errors='replace').read().split() or [''])[0].lower()
+        return (open(p, errors='replace').read().split() or [''])[0].lower(), p
     except OSError:
-        return 'advisory'
-    if first in ('', 'advisory'):
-        return 'advisory'
-    if first == 'refuse':
-        return 'refuse'
-    print(f'checks-lint: note: {p} holds {first!r}, not refuse: staying advisory (accepted: advisory, refuse)')
-    return 'advisory'
+        return '', p
 
 def gh_api(*a):  # errors=replace: the move rule also fetches binary files, which must not crash the count
     return subprocess.run(['gh', 'api', *a], capture_output=True, text=True, errors='replace', timeout=60)
@@ -198,7 +202,7 @@ def publish(ok, why):
     with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as t:
         t.write(f'checks-lint {"PASS" if ok else "FAIL"} {src} head {head}: {why}\n')
     try:
-        r = subprocess.run([f"{os.environ.get('JG_ADDONS_DIR') or ROOT}/receipts/bin/jg-run-receipt.sh", task, 'PASS' if ok else 'FAIL', t.name, repo],
+        r = subprocess.run([next((c for c in (f"{os.environ.get('JG_CORE_DIR') or ROOT}/receipts/bin/jg-run-receipt.sh", f"{home}/core/receipts/bin/jg-run-receipt.sh") if os.access(c, os.X_OK)), f"{ROOT}/receipts/bin/jg-run-receipt.sh"), task, 'PASS' if ok else 'FAIL', t.name, repo],
                            env={**os.environ, 'JG_HOME': home}, capture_output=True, text=True, timeout=60)
         if r.returncode == 0:
             superseded = isinstance(prior, dict) and prior.get('verdict') == 'FAIL'
@@ -219,6 +223,7 @@ def done(ok, why, head='-'):
     publish(ok, why)
     sys.exit(0 if ok else 1)
 
+size = 0
 if os.path.isfile(src):  # local-only lane: the report file its done line names
     body, title, head, task, author, files = open(src, errors='replace').read(), '', '-', os.path.basename(os.path.dirname(os.path.abspath(src))), '', []
     task = lane_task(home, src, ev, task)
@@ -230,8 +235,6 @@ else:
     body, title, head = pr.get('body') or '', pr.get('title') or '', pr.get('headRefOid', '-')
     author, files = (pr.get('author') or {}).get('login', ''), pr.get('files') or []
     task = lane_task(home, src, ev, pr.get('headRefName', '').rsplit('/', 1)[-1])
-    if re.match(r'(dependabot|renovate)(\[bot\])?$', author) or author in ('app/dependabot', 'app/renovate'):
-        done(True, 'bot', head)
     nwo = re.match(r'https://github\.com/([^/]+/[^/]+)/pull/(\d+)', src)
     if nwo and len(files) >= 100:  # view list is capped at 100, so a bigger PR needs every page (Juggernaut PR 133: 408 files)
         files = all_files(nwo) or files
@@ -256,21 +259,14 @@ else:
             # and every authored line still counts.
             pairs = moved_pairs(nwo, files, body, pr.get('baseRefOid'), head) if size >= SIZE_GUIDANCE else {}
             if pairs: size = sum(cancel_moved(n, ents, pairs).values())
-    if size >= SIZE_GUIDANCE:
-        why = f'{size} added non-generated lines (moved and upstream lines excluded)'
-        if size_mode() == 'refuse':
-            done(False, f'{why}: split it (limit {SIZE_GUIDANCE})', head)
-        print(f'checks-lint: advisory: {why} is over the {SIZE_GUIDANCE}-line guidance: a smaller slice lands faster')
-
 
 m = ([None] + list(re.finditer(r'^##\s*Checks\s*$(.*?)(?=^##\s|\Z)', body, re.M | re.S)))[-1]  # newest block: workers append, never replace
-if not m: done(False, 'no "## Checks" block', head)
-block = re.sub(r'```\w*', '', m.group(1))
-F = {k: v.strip() for k, v in re.findall(r'^\s*(outcome|repro|proof|evidence)\s*:\s*(.*)$', block, re.M)}
-miss = [k for k in ('outcome', 'repro', 'proof', 'evidence') if not F.get(k)]
-if miss: done(False, 'missing or empty Checks line: ' + ', '.join(miss), head)
-if not re.search(r'[/`]|\.\w{2,4}\b|\b(npm|pnpm|yarn|npx|bash|sh|python3?|node|cargo|go|gradle|make|adb|xcrun|bin/)\b', F['proof']):
-    done(False, 'proof: names no command or path', head)
+checks = None
+if m:
+    block = re.sub(r'```\w*', '', m.group(1))
+    keys = '|'.join(RULES['required_fields'])
+    checks = {'fields': {k: v.strip() for k, v in re.findall(rf'^\s*({keys})\s*:\s*(.*)$', block, re.M)}}
+
 def repo_under_test():
     """The clone this pull request belongs to, never the folder this lint runs from: the lane's recorded
     worktree first, else this home's clone of the pull request's repository. '' when neither is on disk, so a
@@ -291,24 +287,13 @@ def repo_under_test():
 root = repo_under_test()
 vdir = f'{root}/.agents/skills' if root else ''
 # A done-done run writes its own verify skill as done-done-verify-<app>, which is a verify skill of this
-# repository too; naming it and naming the hand-written verify-<app> both satisfy the rule.
+# repository too; the policy accepts a proof that names any of them.
 skills = sorted(d for d in (os.listdir(vdir) if os.path.isdir(vdir) else [])
                 if d.startswith('verify-') or d.startswith('done-done-verify-'))
-if skills:
-    if not any(s in F['proof'] for s in skills):
-        done(False, f'proof: does not name the verify skill this repository has ({", ".join(skills)}); name the skill you ran', head)
-elif 'verify-' not in F['proof'] and not re.search(r'no verify skill', F['proof'], re.I):
-    done(False, 'proof: does not name the verify-<app> skill run (or "no verify skill")', head)
-if not re.match(r'n/?a\b', F['repro'], re.I) and 'systematic-debugging' not in F['repro']:
-    done(False, 'repro: a real repro must say "systematic-debugging used" (brief step 2)', head)
-if re.match(r'(fix|bugfix|hotfix)\b', title, re.I) and re.match(r'n/?a\b', F['repro'], re.I):
-    done(False, 'repro: is n/a on a fix PR', head)
-if re.match(r'not proven\s*:\s*\S', F['evidence'], re.I):
-    done(True, 'not-proven: ' + F['evidence'][:120], head)
 
-def ev_hint(n, p):
-    """Why one evidence name did not resolve, naming the line and the name to write instead: the evidence list
-    takes names relative to the evidence folder, so a path, a doubled or missing evidence/ prefix is the slip."""
+def ev_fix(n, p):
+    """What to write instead of one evidence name that did not resolve: the evidence list takes names relative
+    to the evidence folder, so a path, a doubled or missing evidence/ prefix is the slip."""
     base = os.path.basename(n)
     if n.startswith('evidence/'):
         rest = n[len('evidence/'):]
@@ -320,18 +305,12 @@ def ev_hint(n, p):
     for cand, fix in tries:
         alt = os.path.join(ev, cand)
         if os.path.isfile(alt) and os.path.getsize(alt):
-            return f'evidence: "{n}" is missing ({p}); {fix}'
-    return f'evidence: "{n}" is missing ({p}); write each name relative to the evidence folder {ev}'
+            return fix
+    return f'write each name relative to the evidence folder {ev}'
 
-
-toks = [n.strip(' `"\'') for n in re.split(r'[,\s]+', F['evidence'])]  # .stdout etc. (8 Oct, ownvoice PR 175)
-names = [n for n in toks if re.search(r'\.\w{1,10}$', n)]
-eline = f'evidence: {F["evidence"]}'
-if '' in toks:  # consecutive, leading or trailing separator
-    done(False, f'{eline} has a stray comma; separate the names with one space and no trailing comma', head)
-if len(set(names)) < len(names):
-    done(False, f'{eline} names "{[n for n in names if names.count(n) > 1][0]}" twice; name each file once', head)
-if not names: done(False, f'{eline} names no file; write each one relative to the evidence folder {ev} (e.g. shot.png), or change it to "evidence: not proven: <cause>"', head)
+# The facts of the evidence line: each word, and for each file name its path, whether it is there and non-empty,
+# whether it predates the lane, its hash, and whether another pull request had not used it first.
+toks = [n.strip(' `"\'') for n in re.split(r'[,\s]+', checks['fields'].get('evidence', ''))] if checks and checks['fields'].get('evidence') else []
 born = 0
 if os.path.isdir(f'{home}/data/{task}'):
     out = subprocess.run(['stat', '-c', '%W', f'{home}/data/{task}'], capture_output=True, text=True).stdout.strip()
@@ -341,18 +320,36 @@ if os.path.exists(HASHES):
     for l in open(HASHES):
         p = l.split()
         if len(p) == 2: seen[p[0]] = p[1]
-fresh, mine = False, []
-for n in names:
+efiles = {}
+for n in toks:
+    if not n or not re.search(RULES['evidence_name_pattern'], n):
+        continue
     p = n if os.path.isabs(n) else os.path.join(ev, n)
-    if not os.path.isfile(p) or os.path.getsize(p) == 0: done(False, ev_hint(n, p), head)
-    if born and os.path.getmtime(p) < born: done(False, f'evidence file older than the lane launch: {p}', head)
-    hsh = hashlib.sha256(open(p, 'rb').read()).hexdigest()
-    mine.append(hsh)
+    present = os.path.isfile(p) and os.path.getsize(p) > 0
+    hsh = hashlib.sha256(open(p, 'rb').read()).hexdigest() if present else ''
     o = seen.get(hsh)  # same task's earlier lint (local body or PR) is not reuse
-    if o is None or o in (src, task) or (task and f'/{task}/' in o): fresh = True
-if not fresh: done(False, 'every evidence file was already used by another PR', head)
-if len(set(mine)) < len(mine): done(False, 'two evidence files are byte-identical: capture each claimed state separately, or write "not proven: <cause>"', head)
-with open(HASHES, 'a') as f:
-    for hsh in mine:
-        if hsh not in seen: f.write(f'{hsh} {task or src}\n')
-done(True, f'{len(names)} evidence files', head)
+    efiles[n] = {'path': p, 'present': present, 'older': bool(present and born and os.path.getmtime(p) < born),
+                 'sha256': hsh, 'fresh': present and (o is None or o in (src, task) or bool(task and f'/{task}/' in o)),
+                 'fix': '' if present else ev_fix(n, p)}
+mode_raw, mode_file = size_mode() if size >= SIZE_GUIDANCE else ('', '')
+facts = {'author': author, 'title': title, 'size': {'added': size, 'mode_raw': mode_raw, 'mode_file': mode_file},
+         'checks': checks, 'verify_skills': skills, 'evidence': {'folder': ev, 'tokens': toks, 'files': efiles}}
+# The Rego rule decides. A gate that cannot be evaluated refuses: it never looks like a pass.
+evaluator = os.environ.get('JG_POLICY_EVAL') or f'{POLICY_BASE}/bin/jg-guard-host.sh'
+try:
+    r = subprocess.run([evaluator, 'eval', 'gate.checks_lint'], input=json.dumps(facts), capture_output=True, text=True,
+                       timeout=120, env={**os.environ, 'JG_GUARD_HOST_ROOT': POLICY_BASE})
+    decision = json.loads(r.stdout) if r.returncode == 0 else None
+except (OSError, ValueError, subprocess.SubprocessError):
+    r, decision = None, None
+if not isinstance(decision, dict):
+    detail = ((r.stderr.strip().splitlines() or ['?'])[-1] if r else 'the evaluator did not run')[:200]
+    done(False, f'the merge-gate policy could not be evaluated ({detail}); install OPA and Go, then run this again', head)
+for line in decision.get('advice', []):
+    print(f'checks-lint: {line}')
+if decision['ok'] and decision['kind'] == 'evidence':
+    with open(HASHES, 'a') as f:
+        for n in toks:
+            h = efiles.get(n, {}).get('sha256')
+            if h and h not in seen: f.write(f'{h} {task or src}\n')
+done(decision['ok'], decision['why'], head)

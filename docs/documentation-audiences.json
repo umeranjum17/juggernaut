@@ -408,6 +408,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/migration-c.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/captain-hold-lifecycle.md",
       "audience": "maintainer-architecture"
     },
@@ -581,6 +585,10 @@
     },
     {
       "path": "docs/verification/captain-channel.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/ci-speed.md",
       "audience": "maintainer-verification"
     },
     {

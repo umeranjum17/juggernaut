@@ -115,6 +115,21 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 # shellcheck source=bin/jg-agent-process-lib.sh
 . "$JG_BACKEND_HERDR_ROOT/bin/jg-agent-process-lib.sh"
 
+# The decisions and answer readers this adapter used to make with jq, awk, cksum and tr are
+# core/herdr's Go command (core/herdr/cmd/jg-herdr, its header owns the list), run through
+# bin/jg-herdr.sh, which builds it on first use. This adapter runs the `herdr` client and
+# keeps the function names its callers use; a reader that cannot run exits non-zero rather than
+# answering, so a missing build never reads as an empty herdr answer.
+jg_backend_herdr_go() {  # <jg-herdr command> [args...]
+  "$JG_BACKEND_HERDR_ROOT/bin/jg-herdr.sh" "$@"
+}
+jg_backend_herdr_check() {  # <check> [args...]: stdin JSON -> a `jq -e` program's verdict, as its exit status
+  jg_backend_herdr_go check "$@"
+}
+jg_backend_herdr_field() {  # <.a.b.c> [--default <text>]: stdin JSON -> `jq -r '.a.b.c // empty'`
+  jg_backend_herdr_go field "$@"
+}
+
 JG_BACKEND_HERDR_MIN_PROTOCOL=14
 # events.subscribe (the native pane.agent_status_changed push stream) and its
 # subscription_event schema first shipped at protocol 16 (verified: herdr
@@ -187,19 +202,10 @@ JG_BACKEND_HERDR_PRESENTATION_CONFIG="herdr-presentation-spaces"
 # default rather than failing a spawn over a purely visual setting, so a typo is
 # visible instead of silently deciding anything.
 jg_backend_herdr_presentation_preference() {  # <config-dir>
-  local config_dir=${1:-} file value
+  local config_dir=${1:-} answer
   [ -n "$config_dir" ] || { printf 'default\n'; return 0; }
-  file="$config_dir/$JG_BACKEND_HERDR_PRESENTATION_CONFIG"
-  [ -f "$file" ] || { printf 'default\n'; return 0; }
-  value=$(tr -d '[:space:]' < "$file" 2>/dev/null | tr '[:upper:]' '[:lower:]') || value=""
-  case "$value" in
-    off) printf 'off\n' ;;
-    ''|on) printf 'on\n' ;;
-    *)
-      echo "warning: $file: unrecognized value \"$value\"; herdr presentation spaces fall back to the default (write \"off\" to opt out, \"on\" to force the projection on)" >&2
-      printf 'default\n'
-      ;;
-  esac
+  answer=$(jg_backend_herdr_go presentation-preference "$config_dir/$JG_BACKEND_HERDR_PRESENTATION_CONFIG") || answer=
+  printf '%s\n' "${answer:-default}"
 }
 
 # jg_backend_herdr_version_at_least <candidate> <floor>: numeric dotted-release
@@ -208,19 +214,11 @@ jg_backend_herdr_presentation_preference() {  # <config-dir>
 # a 0.8.0-preview build compares as 0.8.0 (it is built from the 0.8.0 line and
 # carries its fixes) while a 0.7.5-preview build compares as 0.7.5.
 jg_backend_herdr_version_at_least() {  # <candidate> <floor>
-  local candidate=${1:-} floor=${2:-} c f
-  candidate=${candidate%%[-+]*}
-  case "$candidate" in ''|*[!0-9.]*) return 2 ;; esac
-  while [ -n "$floor" ]; do
-    c=${candidate%%.*}
-    f=${floor%%.*}
-    [ -n "$c" ] || c=0
-    [ "$c" -gt "$f" ] 2>/dev/null && return 0
-    [ "$c" -lt "$f" ] 2>/dev/null && return 1
-    case "$candidate" in *.*) candidate=${candidate#*.} ;; *) candidate= ;; esac
-    case "$floor" in *.*) floor=${floor#*.} ;; *) floor= ;; esac
-  done
-  return 0
+  case "$(jg_backend_herdr_go version-at-least "${1:-}" "${2:-}")" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
 }
 
 # jg_backend_herdr_release_floor_verdict <protocol> <version>: the pure
@@ -233,19 +231,12 @@ jg_backend_herdr_version_at_least() {  # <candidate> <floor>
 # unparseable simply cannot carry a verdict; a readable protocol below the floor
 # is decisive on its own, and only losing BOTH signals reports indeterminate.
 jg_backend_herdr_release_floor_verdict() {  # <protocol> <version>
-  local protocol=${1:-} version=${2:-} protocol_known=0 version_status=0
-  case "$protocol" in
-    ''|*[!0-9]*) ;;
-    *)
-      protocol_known=1
-      [ "$protocol" -ge "$JG_BACKEND_HERDR_MIN_PRESENTATION_PROTOCOL" ] && return 0
-      ;;
+  case "$(jg_backend_herdr_go release-floor-verdict "${1:-}" "${2:-}" \
+    "$JG_BACKEND_HERDR_MIN_PRESENTATION_PROTOCOL" "$JG_BACKEND_HERDR_MIN_PRESENTATION_VERSION")" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) return 2 ;;
   esac
-  jg_backend_herdr_version_at_least "$version" "$JG_BACKEND_HERDR_MIN_PRESENTATION_VERSION" \
-    || version_status=$?
-  [ "$version_status" -eq 0 ] && return 0
-  { [ "$protocol_known" -eq 1 ] || [ "$version_status" -eq 1 ]; } && return 1
-  return 2
 }
 
 # jg_backend_herdr_presentation_release_supported: run the floor classifier
@@ -265,19 +256,14 @@ jg_backend_herdr_presentation_release_supported() {  # [<session>]
   command -v jq >/dev/null 2>&1 || return 2
   [ -n "$session" ] || session=$(jg_backend_herdr_session)
   status=$(jg_backend_herdr_cli "$session" status --json 2>/dev/null) || return 2
-  client_protocol=$(printf '%s' "$status" | jq -r '.client.protocol // empty' 2>/dev/null) || return 2
-  client_version=$(printf '%s' "$status" | jq -r '.client.version // empty' 2>/dev/null) || return 2
+  client_protocol=$(printf '%s' "$status" | jg_backend_herdr_field '.client.protocol') || return 2
+  client_version=$(printf '%s' "$status" | jg_backend_herdr_field '.client.version') || return 2
   jg_backend_herdr_release_floor_verdict "$client_protocol" "$client_version" || client_verdict=$?
-  running=$(printf '%s' "$status" | jq -r '
-    if .server.running == true then "true"
-    elif .server.running == false then "false"
-    else "unknown"
-    end
-  ' 2>/dev/null) || return 2
+  running=$(printf '%s' "$status" | jg_backend_herdr_go server-running) || return 2
   case "$running" in
-    true)
-      server_protocol=$(printf '%s' "$status" | jq -r '.server.protocol // empty' 2>/dev/null) || return 2
-      server_version=$(printf '%s' "$status" | jq -r '.server.version // empty' 2>/dev/null) || return 2
+    running)
+      server_protocol=$(printf '%s' "$status" | jg_backend_herdr_field '.server.protocol') || return 2
+      server_version=$(printf '%s' "$status" | jg_backend_herdr_field '.server.version') || return 2
       jg_backend_herdr_release_floor_verdict "$server_protocol" "$server_version" || server_verdict=$?
       if [ "$server_verdict" -eq 1 ]; then
         JG_BACKEND_HERDR_PRESENTATION_RELEASE="server version ${server_version:-unknown} (protocol ${server_protocol:-unknown})"
@@ -297,7 +283,7 @@ jg_backend_herdr_presentation_release_supported() {  # [<session>]
       fi
       return 0
       ;;
-    false)
+    stopped)
       JG_BACKEND_HERDR_PRESENTATION_RELEASE="version ${client_version:-unknown} (protocol ${client_protocol:-unknown})"
       return "$client_verdict"
       ;;
@@ -527,14 +513,7 @@ jg_backend_herdr_client_candidates() {
 jg_backend_herdr_client_status() {  # <bin> <session>
   local bin=$1 session=$2 out
   out=$(HERDR_SESSION="$session" jg_backend_herdr_bounded "$bin" status --json --session "$session" 2>/dev/null) || out=
-  printf '%s' "$out" | jq -r '
-    [ (if (.server | type) == "object" and .server.running != null then (.server.running | tostring) else "" end),
-      (if (.server | type) == "object" and (.server | has("compatible"))
-       then (.server.compatible | tostring)
-       elif (.client.protocol != null and .server.protocol != null)
-       then ((.client.protocol == .server.protocol) | tostring)
-       else "" end) ] | join("|")' 2>/dev/null \
-    || printf '|'
+  printf '%s' "$out" | jg_backend_herdr_go client-status || printf '|'
 }
 
 # jg_backend_herdr_client_select: resolve the client for <session> once per
@@ -579,8 +558,8 @@ jg_backend_herdr_version_check() {
   jg_backend_herdr_tool_check || return 1
   local status protocol version
   status=$(herdr status --json 2>/dev/null) || { echo "error: 'herdr status --json' failed; is herdr installed correctly?" >&2; return 1; }
-  protocol=$(printf '%s' "$status" | jq -r '.client.protocol // empty' 2>/dev/null)
-  version=$(printf '%s' "$status" | jq -r '.client.version // empty' 2>/dev/null)
+  protocol=$(printf '%s' "$status" | jg_backend_herdr_field '.client.protocol')
+  version=$(printf '%s' "$status" | jg_backend_herdr_field '.client.version')
   case "$protocol" in
     ''|*[!0-9]*)
       echo "error: could not read herdr client protocol from 'herdr status --json'; refusing to use an unverified herdr build" >&2
@@ -914,14 +893,7 @@ jg_backend_herdr_presentation_session_socket_path() {  # <session>
   local session=$1 sessions socket
   [ -n "$session" ] || return 1
   sessions=$(jg_backend_herdr_cli "$session" session list --json 2>/dev/null) || return 1
-  socket=$(printf '%s' "$sessions" | jq -er --arg want "$session" '
-    [.sessions[]?
-      | select(.name == $want and .running == true)
-      | select((.socket_path | type) == "string")
-      | select((.socket_path | length) > 0)
-      | .socket_path]
-    | if length == 1 then .[0] else empty end
-  ' 2>/dev/null) || return 1
+  socket=$(printf '%s' "$sessions" | jg_backend_herdr_check session-socket "$session" 2>/dev/null) || return 1
   jg_backend_herdr_canonical_socket_path "$socket"
 }
 
@@ -971,11 +943,7 @@ jg_backend_herdr_projection_focus_snapshot() {  # <session>
   tab=${snapshot#*$'\t'}
   [ -n "$workspace" ] && [ -n "$tab" ] && [ "$workspace" != "$tab" ] || return 1
   tabs=$(jg_backend_herdr_cli "$session" tab list --workspace "$workspace" 2>/dev/null) || return 1
-  printf '%s' "$tabs" | jq -e --arg tab "$tab" '
-    (.result.tabs | type) == "array"
-    and ([.result.tabs[] | select(.focused == true)] | length) == 1
-    and ([.result.tabs[] | select(.focused == true)][0].tab_id == $tab)
-  ' >/dev/null 2>&1 || return 1
+  printf '%s' "$tabs" | jg_backend_herdr_check focus-tab-is "$tab" >/dev/null 2>&1 || return 1
   printf '%s\t%s' "$workspace" "$tab"
 }
 
@@ -1003,9 +971,7 @@ jg_backend_herdr_projection_focus_restore() {  # <session> <snapshot> <operation
     echo "warning: herdr presentation $operation changed focus and the exact prior tab could not be verified for restoration" >&2
     return 1
   }
-  if ! printf '%s' "$info" | jq -e --arg workspace "$workspace" --arg tab "$tab" '
-    .result.tab.workspace_id == $workspace and .result.tab.tab_id == $tab
-  ' >/dev/null 2>&1; then
+  if ! printf '%s' "$info" | jg_backend_herdr_check tab-binds "$tab" "$workspace" >/dev/null 2>&1; then
     echo "warning: herdr presentation $operation changed focus and the exact prior tab response was ambiguous" >&2
     return 1
   fi
@@ -1034,7 +1000,7 @@ jg_backend_herdr_projection_focus_restore() {  # <session> <snapshot> <operation
 jg_backend_herdr_foreground_client_present() {  # <session>
   local session=$1 out reason
   out=$(jg_backend_herdr_cli "$session" terminal title clear 2>/dev/null) || return 2
-  reason=$(printf '%s' "$out" | jq -r '.result.reason // empty' 2>/dev/null) || return 2
+  reason=$(printf '%s' "$out" | jg_backend_herdr_field '.result.reason') || return 2
   case "$reason" in
     no_foreground_client) return 1 ;;
     cleared) return 0 ;;
@@ -1094,9 +1060,9 @@ jg_backend_herdr_projection_close_pane_focus_preserving() {  # <session> <pane-i
     echo "warning: herdr presentation cleanup could not verify the exact pane; refusing focus-unsafe pane close" >&2
     return 1
   }
-  target_pane=$(printf '%s' "$info" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-  target_tab=$(printf '%s' "$info" | jq -r '.result.pane.tab_id // empty' 2>/dev/null)
-  target_ws=$(printf '%s' "$info" | jq -r '.result.pane.workspace_id // empty' 2>/dev/null)
+  target_pane=$(printf '%s' "$info" | jg_backend_herdr_field '.result.pane.pane_id')
+  target_tab=$(printf '%s' "$info" | jg_backend_herdr_field '.result.pane.tab_id')
+  target_ws=$(printf '%s' "$info" | jg_backend_herdr_field '.result.pane.workspace_id')
   if [ "$target_pane" != "$pane_id" ] || [ -z "$target_tab" ]; then
     echo "warning: herdr presentation cleanup received an ambiguous exact-pane response; refusing focus-unsafe pane close" >&2
     return 1
@@ -1232,17 +1198,13 @@ jg_backend_herdr_projection_close_pane_focus_preserving() {  # <session> <pane-i
 jg_backend_herdr_workspace_move_capable() {  # <session>
   local session=$1 protocol schema
   command -v python3 >/dev/null 2>&1 || return 1
-  protocol=$(jg_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.client.protocol // empty' 2>/dev/null)
+  protocol=$(jg_backend_herdr_cli "$session" status --json 2>/dev/null | jg_backend_herdr_field '.client.protocol')
   case "$protocol" in
     ''|*[!0-9]*) return 2 ;;
   esac
   [ "$protocol" -lt "$JG_BACKEND_HERDR_MIN_WORKSPACE_MOVE_PROTOCOL" ] && return 3
   schema=$(jg_backend_herdr_cli "$session" api schema --json 2>/dev/null) || return 4
-  printf '%s' "$schema" | jq -e '
-    any(.schemas.request.oneOf[]?; .properties.method.const == "workspace.move")
-    and .schemas.request["$defs"].WorkspaceMoveParams.required == ["workspace_id", "insert_index"]
-    and .schemas.request["$defs"].WorkspaceMoveParams.properties.insert_index.type == "integer"
-  ' >/dev/null 2>&1 || return 5
+  printf '%s' "$schema" | jg_backend_herdr_check move-schema >/dev/null 2>&1 || return 5
 }
 
 # jg_backend_herdr_emptying_close_plan: choose the focus-safe removal for one
@@ -1266,15 +1228,9 @@ jg_backend_herdr_emptying_close_plan() {  # <session> <pane-id> <workspace-id> <
   local tabs panes list indices r rest a len capable socket mover response move_status shell_pid before_order
   [ -n "$ws_id" ] && [ -n "$tab_id" ] && [ -n "$focused_ws" ] || { printf 'plain\n'; return 0; }
   tabs=$(jg_backend_herdr_cli "$session" tab list --workspace "$ws_id" 2>/dev/null) || { printf 'plain\n'; return 0; }
-  printf '%s' "$tabs" | jq -e --arg tab "$tab_id" '
-    (.result.tabs | type) == "array" and (.result.tabs | length) == 1
-    and .result.tabs[0].tab_id == $tab
-  ' >/dev/null 2>&1 || { printf 'plain\n'; return 0; }
+  printf '%s' "$tabs" | jg_backend_herdr_check sole-tab "$tab_id" >/dev/null 2>&1 || { printf 'plain\n'; return 0; }
   panes=$(jg_backend_herdr_cli "$session" pane list --workspace "$ws_id" 2>/dev/null) || { printf 'plain\n'; return 0; }
-  printf '%s' "$panes" | jq -e --arg pane "$pane_id" '
-    (.result.panes | type) == "array" and (.result.panes | length) == 1
-    and .result.panes[0].pane_id == $pane
-  ' >/dev/null 2>&1 || { printf 'plain\n'; return 0; }
+  printf '%s' "$panes" | jg_backend_herdr_check sole-pane "$pane_id" >/dev/null 2>&1 || { printf 'plain\n'; return 0; }
   list=$(jg_backend_herdr_cli "$session" workspace list 2>/dev/null) || { printf 'plain\n'; return 0; }
   indices=$(printf '%s' "$list" | jq -r --arg ws "$ws_id" --arg focused "$focused_ws" '
     (.result.workspaces // null) as $s
@@ -1336,13 +1292,7 @@ jg_backend_herdr_emptying_close_plan() {  # <session> <pane-id> <workspace-id> <
     # unmoved workspace to its own position is a verified no-op.
     printf 'moved\t%s\t%s\t%s\t%s\t%s\n' "$ws_id" "$r" "$socket" "$focused_ws" "$before_order"
     if [ "$move_status" -ne 0 ] \
-      || ! printf '%s' "$response" | jq -e --arg ws "$ws_id" --arg focused "$focused_ws" \
-        --argjson before "$before_order" '
-        ($before | map(select(. != $ws)) + [$ws]) as $expected
-        | .result.type == "workspace_list"
-        and ([.result.workspaces[].workspace_id] == $expected)
-        and ([.result.workspaces[] | select(.focused == true) | .workspace_id] == [$focused])
-      ' >/dev/null 2>&1; then
+      || ! printf '%s' "$response" | jg_backend_herdr_check move-verify "$ws_id" "$focused_ws" "$before_order" >/dev/null 2>&1; then
       echo "warning: herdr presentation cleanup could not move the doomed workspace behind the focused one; closing without the focus-safe removal path" >&2
       printf 'plain\n'
       return 0
@@ -1382,11 +1332,7 @@ FMEOF
   mover=${JG_BACKEND_HERDR_WORKSPACE_MOVER:-$JG_BACKEND_HERDR_ROOT/bin/backends/herdr-workspace-move.py}
   if { [ -n "$guard_tab" ] && ! jg_backend_herdr_projection_target_tab_mutation_allowed "$session" "$guard_tab"; } \
     || ! response=$("$mover" "$socket" "$ws" "$index" 2>/dev/null) \
-    || ! printf '%s' "$response" | jq -e --argjson expected "$order" --arg focused "$focused" '
-      .result.type == "workspace_list"
-      and ([.result.workspaces[].workspace_id] == $expected)
-      and ([.result.workspaces[] | select(.focused == true) | .workspace_id] == [$focused])
-    ' >/dev/null 2>&1; then
+    || ! printf '%s' "$response" | jg_backend_herdr_check restore-verify "$order" "$focused" >/dev/null 2>&1; then
     echo "warning: herdr presentation cleanup could not restore the original workspace order after a failed removal" >&2
     return 1
   fi
@@ -1485,28 +1431,16 @@ jg_backend_herdr_pane_idle_shell_sample() {  # <session> <pane-id>
   local session=$1 pane=$2 info shell_pid foreground_pgid count
   local process_pid name argv0 shell_name rows stat ps_bin
   info=$(jg_backend_herdr_cli "$session" pane process-info --pane "$pane" 2>/dev/null) || return 1
-  printf '%s' "$info" | jq -e --arg pane "$pane" '
-    .result.type == "pane_process_info"
-    and .result.process_info.pane_id == $pane
-  ' >/dev/null 2>&1 || return 1
-  shell_pid=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.shell_pid | select(type == "number" and . > 1) | floor' 2>/dev/null) || return 1
-  foreground_pgid=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.foreground_process_group_id | select(type == "number" and . > 1) | floor' 2>/dev/null) || return 1
+  printf '%s' "$info" | jg_backend_herdr_check process-info-pane "$pane" >/dev/null 2>&1 || return 1
+  shell_pid=$(printf '%s' "$info" | jg_backend_herdr_check process-field shell-pid 2>/dev/null) || return 1
+  foreground_pgid=$(printf '%s' "$info" | jg_backend_herdr_check process-field foreground-pgid 2>/dev/null) || return 1
   [ "$foreground_pgid" = "$shell_pid" ] || return 1
-  count=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.foreground_processes | select(type == "array") | length' 2>/dev/null) || return 1
+  count=$(printf '%s' "$info" | jg_backend_herdr_check process-field count 2>/dev/null) || return 1
   [ "$count" -eq 1 ] || return 1
-  process_pid=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.foreground_processes[0].pid | select(type == "number") | floor' 2>/dev/null) || return 1
+  process_pid=$(printf '%s' "$info" | jg_backend_herdr_check process-field first-pid 2>/dev/null) || return 1
   [ "$process_pid" = "$shell_pid" ] || return 1
-  name=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.foreground_processes[0].name | select(type == "string" and length > 0)' 2>/dev/null) || return 1
-  argv0=$(printf '%s' "$info" | jq -er '
-    .result.process_info.foreground_processes[0] as $process
-    | ($process.argv0 // $process.argv[0])
-    | select(type == "string" and length > 0)
-  ' 2>/dev/null) || return 1
+  name=$(printf '%s' "$info" | jg_backend_herdr_check process-field first-name 2>/dev/null) || return 1
+  argv0=$(printf '%s' "$info" | jg_backend_herdr_check process-field first-argv0 2>/dev/null) || return 1
   shell_name=${name##*/}
   argv0=${argv0#-}
   argv0=${argv0##*/}
@@ -1632,8 +1566,8 @@ jg_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
     echo "warning: herdr presentation ordering found an ambiguous workspace layout; leaving worker in Herdr's current order" >&2
     return 0
   }
-  current=$(printf '%s' "$analysis" | jq -r '.current // empty' 2>/dev/null)
-  desired=$(printf '%s' "$analysis" | jq -r '.desired // empty' 2>/dev/null)
+  current=$(printf '%s' "$analysis" | jg_backend_herdr_field '.current')
+  desired=$(printf '%s' "$analysis" | jg_backend_herdr_field '.desired')
   case "$current:$desired" in
     *[!0-9:]*)
       echo "warning: herdr presentation ordering could not parse the target position; leaving worker in Herdr's current order" >&2
@@ -1690,22 +1624,7 @@ jg_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
     echo "warning: herdr presentation workspace move failed or had an ambiguous response; leaving worker running without cleanup" >&2
     return 0
   fi
-  if ! printf '%s' "$response" | jq -e --arg created "$created" --arg parent "$parent" --arg parent_ws "$parent_ws" --argjson desired "$desired" '
-    def is_parent:
-      if ($parent_ws | length) > 0
-      then .workspace_id == $parent_ws
-      else (.label | type) == "string" and .label == $parent
-      end;
-    .result.type == "workspace_list"
-    and (.result.workspaces | type) == "array"
-    and .result.workspaces[$desired].workspace_id == $created
-    and ([.result.workspaces[] | select(is_parent)] | length) == 1
-    and (
-      [range(0; .result.workspaces | length) as $i
-        | select(.result.workspaces[$i] | is_parent)
-        | $i][0] < $desired
-    )
-  ' >/dev/null 2>&1; then
+  if ! printf '%s' "$response" | jg_backend_herdr_check order-verify "$created" "$parent" "$parent_ws" "$desired" >/dev/null 2>&1; then
     echo "warning: herdr presentation workspace move returned an unverifiable order; leaving worker running without cleanup" >&2
     return 0
   fi
@@ -1757,7 +1676,7 @@ jg_backend_herdr_workspace_lineage_report_best_effort() {  # <session> <task-wor
 # server to report running.
 jg_backend_herdr_server_ensure() {  # <session>
   local session=$1 running out i
-  running=$(jg_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
+  running=$(jg_backend_herdr_cli "$session" status --json 2>/dev/null | jg_backend_herdr_field '.server.running' --default false)
   [ "$running" = "true" ] && return 0
   (
     unset JG_HOME JG_ROOT_OVERRIDE JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_PROJECTS_OVERRIDE JG_CONFIG_OVERRIDE \
@@ -1765,7 +1684,7 @@ jg_backend_herdr_server_ensure() {  # <session>
     jg_backend_herdr_cli "$session" server </dev/null >/dev/null 2>&1 &
   ) || return 1
   for i in $(seq 1 20); do
-    running=$(jg_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
+    running=$(jg_backend_herdr_cli "$session" status --json 2>/dev/null | jg_backend_herdr_field '.server.running' --default false)
     [ "$running" = "true" ] && return 0
     sleep 0.5
   done
@@ -1791,13 +1710,7 @@ jg_backend_herdr_workspace_find_all() {  # <session>
   label=$(jg_backend_herdr_workspace_label)
   legacy=$(jg_backend_herdr_workspace_legacy_label)
   list=$(jg_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 0
-  # NOTE: the jq variable is $want, NOT $label - `label` is a jq reserved
-  # keyword (label/break), so declaring a jq variable named "label" is a
-  # compile error that `2>/dev/null` would silently swallow, making this find
-  # ALWAYS return empty and every spawn mint a fresh "juggernaut" workspace
-  # (the workspace leak).
-  printf '%s' "$list" | jq -r --arg want "$label" --arg old "$legacy" \
-    '.result.workspaces[]? | select(.label == $want or (($old | length) > 0 and .label == $old)) | .workspace_id' 2>/dev/null
+  printf '%s' "$list" | jg_backend_herdr_go workspace-ids "$label" "$legacy"
 }
 
 # jg_backend_herdr_workspace_find: this HOME's own workspace id inside
@@ -1909,9 +1822,7 @@ jg_backend_herdr_launcher_identity() {  # <session>
     echo "error: herdr launcher tab '$tab' could not be read in session '$session'; refusing to place a worker without its exact parent workspace" >&2
     return 1
   }
-  if ! printf '%s' "$tab_out" | jq -e --arg tab "$tab" --arg workspace "$workspace" '
-    .result.tab.tab_id == $tab and .result.tab.workspace_id == $workspace
-  ' >/dev/null 2>&1; then
+  if ! printf '%s' "$tab_out" | jg_backend_herdr_check tab-binds "$tab" "$workspace" >/dev/null 2>&1; then
     echo "error: herdr launcher pane '$pane' and tab '$tab' disagree about their workspace in session '$session'; refusing to place a worker from a contradictory parent identity" >&2
     return 1
   fi
@@ -1920,10 +1831,7 @@ jg_backend_herdr_launcher_identity() {  # <session>
     echo "error: could not list herdr workspaces in session '$session' to confirm the launcher's own workspace '$workspace'; refusing to place a worker without its exact parent workspace" >&2
     return 1
   }
-  if ! printf '%s' "$list" | jq -e --arg workspace "$workspace" '
-    (.result.workspaces | type) == "array"
-    and ([.result.workspaces[] | select(.workspace_id == $workspace)] | length) == 1
-  ' >/dev/null 2>&1; then
+  if ! printf '%s' "$list" | jg_backend_herdr_check workspace-unique "$workspace" >/dev/null 2>&1; then
     echo "error: herdr launcher workspace '$workspace' is missing or duplicated in session '$session'; refusing to place a worker from a stale parent identity" >&2
     return 1
   fi
@@ -1989,7 +1897,7 @@ jg_backend_herdr_workspace_prune_seeded_default_tab() {  # <session> <workspace_
   pane_id=$(jg_backend_herdr_pane_for_tab "$session" "$wsid" "$tab_id") || return 0
   [ -n "$pane_id" ] || return 0
   agent_out=$(jg_backend_herdr_cli "$session" agent get "$pane_id" 2>/dev/null)
-  agent_status=$(printf '%s' "$agent_out" | jq -r '.result.agent.agent_status // empty' 2>/dev/null)
+  agent_status=$(printf '%s' "$agent_out" | jg_backend_herdr_field '.result.agent.agent_status')
   [ "$agent_status" = working ] && return 0
   if [ "$close_mode" = focus-preserving ]; then
     jg_backend_herdr_projection_close_pane_focus_preserving "$session" "$pane_id"
@@ -2090,7 +1998,7 @@ jg_backend_herdr_workspace_ensure() {  # <session> <cwd> [<launcher-relationship
     return 0
   fi
   out=$(jg_backend_herdr_cli "$session" workspace create --cwd "$cwd" --label "$label" --no-focus 2>/dev/null) || return 1
-  wsid=$(printf '%s' "$out" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)
+  wsid=$(printf '%s' "$out" | jg_backend_herdr_field '.result.workspace.workspace_id')
   [ -n "$wsid" ] || return 1
   JG_BACKEND_HERDR_WS_ID=$wsid
   # Herdr seeds a new workspace with one auto-created default tab juggernaut
@@ -2100,7 +2008,7 @@ jg_backend_herdr_workspace_ensure() {  # <session> <cwd> [<launcher-relationship
   # workspace we just created. jg_backend_herdr_create_task prunes it instead,
   # once the first real task tab exists alongside it, and only ever targets
   # this exact captured tab_id.
-  JG_BACKEND_HERDR_WS_SEEDED_TAB_ID=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
+  JG_BACKEND_HERDR_WS_SEEDED_TAB_ID=$(printf '%s' "$out" | jg_backend_herdr_field '.result.tab.tab_id')
   printf '%s' "$wsid"
 }
 
@@ -2143,29 +2051,15 @@ jg_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-
 # jg_backend_herdr_pane_presence_state: classify one exact pane get response
 # as dead|present|unknown from its JSON body, never from process exit status.
 jg_backend_herdr_pane_presence_state() {  # <session> <pane_id>
-  local session=$1 pane_id=$2 out code pid
+  local session=$1 pane_id=$2 out
   out=$(jg_backend_herdr_cli "$session" pane get "$pane_id" 2>&1)
-  code=$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null)
-  if [ -n "$code" ]; then
-    [ "$code" = "pane_not_found" ] && printf 'dead' || printf 'unknown'
-    return 0
-  fi
-  pid=$(printf '%s' "$out" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-  [ "$pid" = "$pane_id" ] && printf 'present' || printf 'unknown'
+  printf '%s' "$out" | jg_backend_herdr_go pane-presence "$pane_id" || printf 'unknown'
 }
 
 jg_backend_herdr_workspace_presence_state() {  # <session> <workspace_id>
-  local session=$1 workspace_id=$2 out matches
+  local session=$1 workspace_id=$2 out
   out=$(jg_backend_herdr_cli "$session" workspace list 2>&1)
-  matches=$(printf '%s' "$out" | jq -r --arg workspace "$workspace_id" '
-    select((.result.workspaces | type) == "array")
-    | [.result.workspaces[] | select(.workspace_id == $workspace)] | length
-  ' 2>/dev/null) || matches=
-  case "$matches" in
-    0) printf 'dead' ;;
-    1) printf 'present' ;;
-    *) printf 'unknown' ;;
-  esac
+  printf '%s' "$out" | jg_backend_herdr_go workspace-presence "$workspace_id" || printf 'unknown'
 }
 
 # jg_backend_herdr_explicit_close_pane_confirmed: issue one explicit close and
@@ -2237,15 +2131,10 @@ jg_backend_herdr_pane_process_state_sample() {  # <session> <pane_id>
   local others=0 ps_bin rows
   info=$(jg_backend_herdr_cli "$session" pane process-info --pane "$pane_id" 2>/dev/null) \
     || { printf 'unreadable'; return 0; }
-  printf '%s' "$info" | jq -e --arg pane "$pane_id" '
-    .result.type == "pane_process_info"
-    and .result.process_info.pane_id == $pane
-  ' >/dev/null 2>&1 || { printf 'unreadable'; return 0; }
-  shell_pid=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.shell_pid | select(type == "number" and . > 1) | floor' 2>/dev/null) \
+  printf '%s' "$info" | jg_backend_herdr_check process-info-pane "$pane_id" >/dev/null 2>&1 || { printf 'unreadable'; return 0; }
+  shell_pid=$(printf '%s' "$info" | jg_backend_herdr_check process-field shell-pid 2>/dev/null) \
     || { printf 'unreadable'; return 0; }
-  count=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.foreground_processes | select(type == "array") | length' 2>/dev/null) \
+  count=$(printf '%s' "$info" | jg_backend_herdr_check process-field count 2>/dev/null) \
     || { printf 'unreadable'; return 0; }
   i=0
   while [ "$i" -lt "$count" ]; do
@@ -2381,12 +2270,12 @@ jg_backend_herdr_pane_agent_state() {  # <session> <pane_id>
     return 0
   fi
   out=$(jg_backend_herdr_cli "$session" agent get "$pane_id" 2>&1)
-  code=$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null)
+  code=$(printf '%s' "$out" | jg_backend_herdr_field '.error.code')
   if [ -n "$code" ]; then
     [ "$code" = "agent_not_found" ] && printf 'no-agent' || printf 'unknown'
     return 0
   fi
-  status=$(printf '%s' "$out" | jq -r '.result.agent.agent_status // empty' 2>/dev/null)
+  status=$(printf '%s' "$out" | jg_backend_herdr_field '.result.agent.agent_status')
   case "$status" in
     working|idle|done|blocked) ;;
     unknown|stale)
@@ -2398,7 +2287,7 @@ jg_backend_herdr_pane_agent_state() {  # <session> <pane_id>
       # agent_status unknown with no .agent (the TakeOne husk, 2026-10-03) -
       # holds no process identity either, so it may claim only the positive
       # shell-only proof of staleness, never liveness.
-      case "$(printf '%s' "$out" | jq -r '.result.agent.agent // empty' 2>/dev/null)" in
+      case "$(printf '%s' "$out" | jg_backend_herdr_field '.result.agent.agent')" in
         codex) semantic_missing=1 ;;
         '') semantic_missing=1 unlabeled=1 ;;
         *) printf 'unknown'; return 0 ;;
@@ -2456,9 +2345,9 @@ jg_backend_herdr_pane_agent_session_ref() {  # <session> <pane_id>
   local session=$1 pane_id=$2 out agent kind value
   [ -n "$session" ] && [ -n "$pane_id" ] || return 1
   out=$(jg_backend_herdr_cli "$session" agent get "$pane_id" 2>&1) || return 1
-  agent=$(printf '%s' "$out" | jq -r '.result.agent.agent // empty' 2>/dev/null)
-  kind=$(printf '%s' "$out" | jq -r '.result.agent.agent_session.kind // empty' 2>/dev/null)
-  value=$(printf '%s' "$out" | jq -r '.result.agent.agent_session.value // empty' 2>/dev/null)
+  agent=$(printf '%s' "$out" | jg_backend_herdr_field '.result.agent.agent')
+  kind=$(printf '%s' "$out" | jg_backend_herdr_field '.result.agent.agent_session.kind')
+  value=$(printf '%s' "$out" | jg_backend_herdr_field '.result.agent.agent_session.value')
   [ -n "$agent" ] || return 1
   case "$kind" in
     path) case "$value" in /*) ;; *) return 1 ;; esac ;;
@@ -2499,12 +2388,7 @@ jg_backend_herdr_server_running_state() {  # <session>
     printf 'unknown'
     return 0
   }
-  printf '%s' "$status" | jq -r '
-    if .server.running == true then "running"
-    elif .server.running == false then "stopped"
-    else "unknown"
-    end
-  ' 2>/dev/null || printf 'unknown'
+  printf '%s' "$status" | jg_backend_herdr_go server-running || printf 'unknown'
 }
 
 # jg_backend_herdr_agent_state: recovery-grade state for the same session-start
@@ -2551,18 +2435,8 @@ jg_backend_herdr_unknown_task_state() {  # <target> <meta> <task-id>
   worktree=$(jg_backend_meta_exact_value "$meta" worktree) || return 1
   pane_out=$(jg_backend_herdr_cli "$session" pane get "$pane" 2>/dev/null) || return 1
   agent_out=$(jg_backend_herdr_cli "$session" agent get "$pane" 2>/dev/null) || return 1
-  printf '%s' "$pane_out" | jq -e --arg pane "$pane" --arg workspace "$workspace" \
-    --arg tab "$tab" --arg cwd "$worktree" '
-      .result.type == "pane_info" and .result.pane.pane_id == $pane
-      and .result.pane.workspace_id == $workspace and .result.pane.tab_id == $tab
-      and .result.pane.foreground_cwd == $cwd and .result.pane.agent_status == "unknown"
-    ' >/dev/null 2>&1 || return 1
-  printf '%s' "$agent_out" | jq -e --arg pane "$pane" --arg workspace "$workspace" \
-    --arg tab "$tab" --arg cwd "$worktree" '
-      .result.type == "agent_info" and .result.agent.pane_id == $pane
-      and .result.agent.workspace_id == $workspace and .result.agent.tab_id == $tab
-      and .result.agent.foreground_cwd == $cwd and .result.agent.agent_status == "unknown"
-    ' >/dev/null 2>&1 || return 1
+  printf '%s' "$pane_out" | jg_backend_herdr_check pane-info-matches "$pane" "$workspace" "$tab" "$worktree" >/dev/null 2>&1 || return 1
+  printf '%s' "$agent_out" | jg_backend_herdr_check agent-info-matches "$pane" "$workspace" "$tab" "$worktree" >/dev/null 2>&1 || return 1
   process_state=$(jg_backend_herdr_pane_process_state "$session" "$pane")
   case "$process_state" in shell|agent) ;; *) return 1 ;; esac
   [ -f "$meta" ] && [ ! -L "$meta" ] && [ "$(cat "$meta")" = "$prior" ] || return 1
@@ -2725,8 +2599,8 @@ $dup_tabs
 EOF
   fi
   out=$(jg_backend_herdr_cli "$session" tab create --workspace "$wsid" --cwd "$cwd" --label "$label" --no-focus 2>/dev/null) || return 1
-  tab_id=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
-  pane_id=$(printf '%s' "$out" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)
+  tab_id=$(printf '%s' "$out" | jg_backend_herdr_field '.result.tab.tab_id')
+  pane_id=$(printf '%s' "$out" | jg_backend_herdr_field '.result.root_pane.pane_id')
   if [ -z "$tab_id" ] || [ -z "$pane_id" ]; then
     echo "error: could not parse tab/pane id from herdr tab create output" >&2
     return 1
@@ -2743,7 +2617,7 @@ EOF
       echo "error: could not verify herdr husk removal for tab '$label' in workspace $wsid (session $session)" >&2
       return 1
     }
-    if ! printf '%s' "$list" | jq -e '(.result.tabs | type) == "array"' >/dev/null 2>&1; then
+    if ! printf '%s' "$list" | jg_backend_herdr_check is-array .result.tabs >/dev/null 2>&1; then
       echo "error: could not parse herdr tab list output for workspace $wsid (session $session)" >&2
       return 1
     fi
@@ -2803,9 +2677,9 @@ jg_backend_herdr_projection_create_task() {  # <cwd> <workspace-label> <task-lab
   }
   # shellcheck disable=SC2034  # caller consumes the response-derived global
   JG_BACKEND_HERDR_PROJECTION_SESSION=$session
-  JG_BACKEND_HERDR_PROJECTION_WORKSPACE_ID=$(printf '%s' "$out" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)
-  JG_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
-  JG_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID=$(printf '%s' "$out" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)
+  JG_BACKEND_HERDR_PROJECTION_WORKSPACE_ID=$(printf '%s' "$out" | jg_backend_herdr_field '.result.workspace.workspace_id')
+  JG_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID=$(printf '%s' "$out" | jg_backend_herdr_field '.result.tab.tab_id')
+  JG_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID=$(printf '%s' "$out" | jg_backend_herdr_field '.result.root_pane.pane_id')
   if [ -z "$JG_BACKEND_HERDR_PROJECTION_WORKSPACE_ID" ] \
      || [ -z "$JG_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID" ] \
      || [ -z "$JG_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID" ]; then
@@ -2830,8 +2704,8 @@ jg_backend_herdr_projection_create_task() {  # <cwd> <workspace-label> <task-lab
     echo "error: herdr presentation task-tab create did not preserve exact active focus; leaving its journal quarantined" >&2
     return 1
   }
-  JG_BACKEND_HERDR_PROJECTION_TAB_ID=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
-  JG_BACKEND_HERDR_PROJECTION_PANE_ID=$(printf '%s' "$out" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)
+  JG_BACKEND_HERDR_PROJECTION_TAB_ID=$(printf '%s' "$out" | jg_backend_herdr_field '.result.tab.tab_id')
+  JG_BACKEND_HERDR_PROJECTION_PANE_ID=$(printf '%s' "$out" | jg_backend_herdr_field '.result.root_pane.pane_id')
   if [ -z "$JG_BACKEND_HERDR_PROJECTION_TAB_ID" ] || [ -z "$JG_BACKEND_HERDR_PROJECTION_PANE_ID" ]; then
     echo "error: herdr presentation task-tab create returned incomplete IDs; leaving its journal quarantined" >&2
     return 1
@@ -2866,20 +2740,16 @@ jg_backend_herdr_projection_create_task() {  # <cwd> <workspace-label> <task-lab
     echo "error: could not verify the disposable herdr presentation pane shape" >&2
     return 1
   }
-  if ! printf '%s' "$tabs" | jq -e '(.result.tabs | type) == "array"' >/dev/null 2>&1 \
-     || ! printf '%s' "$panes" | jq -e '(.result.panes | type) == "array"' >/dev/null 2>&1; then
+  if ! printf '%s' "$tabs" | jg_backend_herdr_check is-array .result.tabs >/dev/null 2>&1 \
+     || ! printf '%s' "$panes" | jg_backend_herdr_check is-array .result.panes >/dev/null 2>&1; then
     echo "error: could not parse the disposable herdr presentation workspace shape" >&2
     return 1
   fi
   tab_count=$(printf '%s' "$tabs" | jq -r '.result.tabs | length' 2>/dev/null)
   pane_count=$(printf '%s' "$panes" | jq -r '.result.panes | length' 2>/dev/null)
   if [ "$tab_count" != 1 ] || [ "$pane_count" != 1 ] \
-     || ! printf '%s' "$tabs" | jq -e --arg task "$JG_BACKEND_HERDR_PROJECTION_TAB_ID" \
-       --arg seeded "$JG_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID" \
-       '.result.tabs[0].tab_id == $task and ([.result.tabs[] | select(.tab_id == $seeded)] | length) == 0' >/dev/null 2>&1 \
-     || ! printf '%s' "$panes" | jq -e --arg pane "$JG_BACKEND_HERDR_PROJECTION_PANE_ID" \
-       --arg tab "$JG_BACKEND_HERDR_PROJECTION_TAB_ID" \
-       '.result.panes[0].pane_id == $pane and .result.panes[0].tab_id == $tab' >/dev/null 2>&1; then
+     || ! printf '%s' "$tabs" | jg_backend_herdr_check shape-tabs "$JG_BACKEND_HERDR_PROJECTION_TAB_ID" "$JG_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID" >/dev/null 2>&1 \
+     || ! printf '%s' "$panes" | jg_backend_herdr_check shape-panes "$JG_BACKEND_HERDR_PROJECTION_PANE_ID" "$JG_BACKEND_HERDR_PROJECTION_TAB_ID" >/dev/null 2>&1; then
     echo "error: disposable herdr presentation workspace did not converge to exactly one task pane" >&2
     return 1
   fi
@@ -2902,17 +2772,7 @@ jg_backend_herdr_projection_cleanup_exact() {  # <session> <task-pane> <seeded-p
 jg_backend_herdr_projection_parent_workspace_exact() {  # <session> <parent-label>
   local session=$1 parent_label=$2 list
   list=$(jg_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 1
-  printf '%s' "$list" | jq -er --arg parent_label "$parent_label" --arg old "$(jg_backend_herdr_legacy_of_lead_label "$parent_label")" '
-    (.result.workspaces // null) as $spaces
-    | select(($spaces | type) == "array")
-    | [$spaces[]? | select(.label == $parent_label or (($old | length) > 0 and .label == $old))]
-    | if length == 1
-        and (.[0].workspace_id | type) == "string"
-        and (.[0].workspace_id | length) > 0
-      then .[0].workspace_id
-      else empty
-      end
-  ' 2>/dev/null
+  printf '%s' "$list" | jg_backend_herdr_check parent-workspace "$parent_label" "$(jg_backend_herdr_legacy_of_lead_label "$parent_label")" 2>/dev/null
 }
 
 # jg_backend_herdr_projection_live_binding_matches: verify one exact projected
@@ -2923,51 +2783,12 @@ jg_backend_herdr_projection_live_binding_matches() {  # <session> <token> <works
   local session=$1 token=$2 workspace=$3 tab=$4 pane=$5 parent_workspace=$6
   local parent_label=$7 workspace_label=$8 task_label=$9 list tabs panes
   list=$(jg_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 1
-  printf '%s' "$list" | jq -e \
-    --arg token "$token" \
-    --arg workspace "$workspace" \
-    --arg parent_workspace "$parent_workspace" \
-    --arg parent_label "$parent_label" \
-    --arg parent_old "$(jg_backend_herdr_legacy_of_lead_label "$parent_label")" \
-    --arg workspace_label "$workspace_label" '
-      def is_new_child:
-        (.label | type) == "string"
-        and (.label | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
-      def is_legacy_child_for($owner):
-        (.label | type) == "string"
-        and (.label | test("^(juggernaut|(lead|2ndmate)-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$"))
-        and (.label | startswith($owner + "/"));
-      (.result.workspaces // null) as $spaces
-      | select(($spaces | type) == "array")
-      | select(([$spaces[]? | select(.workspace_id == $workspace)] | length) == 1)
-      | select(([$spaces[]? | select(.workspace_id == $workspace and .label == $workspace_label)] | length) == 1)
-      | select(([$spaces[]? | select((.label | type) == "string" and (.label | endswith(" · p:" + $token)))] | length) == 1)
-      | select(([$spaces[]? | select((.label | type) == "string" and (.label | endswith(" · p:" + $token)) and .workspace_id == $workspace)] | length) == 1)
-      | select(([$spaces[]? | select(.workspace_id == $parent_workspace and (.label == $parent_label or (($parent_old | length) > 0 and .label == $parent_old)))] | length) == 1)
-      | ([range(0; $spaces | length) | select($spaces[.].workspace_id == $parent_workspace)]) as $parents
-      | ([range(0; $spaces | length) | select($spaces[.].workspace_id == $workspace)]) as $children
-      | select(($parents | length) == 1 and ($children | length) == 1)
-      | ($parents[0]) as $parent_index
-      | ($children[0]) as $child_index
-      | select($child_index > $parent_index)
-      | reduce range($parent_index + 1; $child_index) as $i
-          (true; . and (($spaces[$i] | is_new_child) or ($spaces[$i] | (is_legacy_child_for($parent_label) or (($parent_old | length) > 0 and is_legacy_child_for($parent_old))))))
-      | select(. == true)
-    ' >/dev/null 2>&1 || return 1
+  printf '%s' "$list" | jg_backend_herdr_check live-binding "$token" "$workspace" "$parent_workspace" \
+    "$parent_label" "$(jg_backend_herdr_legacy_of_lead_label "$parent_label")" "$workspace_label" >/dev/null 2>&1 || return 1
   tabs=$(jg_backend_herdr_cli "$session" tab list --workspace "$workspace" 2>/dev/null) || return 1
-  printf '%s' "$tabs" | jq -e --arg tab "$tab" --arg task_label "$task_label" '
-    (.result.tabs | type) == "array"
-    and (.result.tabs | length) == 1
-    and .result.tabs[0].tab_id == $tab
-    and .result.tabs[0].label == $task_label
-  ' >/dev/null 2>&1 || return 1
+  printf '%s' "$tabs" | jg_backend_herdr_check sole-tab-labelled "$tab" "$task_label" >/dev/null 2>&1 || return 1
   panes=$(jg_backend_herdr_cli "$session" pane list --workspace "$workspace" 2>/dev/null) || return 1
-  printf '%s' "$panes" | jq -e --arg tab "$tab" --arg pane "$pane" '
-    (.result.panes | type) == "array"
-    and (.result.panes | length) == 1
-    and .result.panes[0].pane_id == $pane
-    and .result.panes[0].tab_id == $tab
-  ' >/dev/null 2>&1
+  printf '%s' "$panes" | jg_backend_herdr_check sole-pane-in-tab "$pane" "$tab" >/dev/null 2>&1
 }
 
 jg_backend_herdr_projection_reclaim_rollback() {  # <session> <new-pane>
@@ -3053,8 +2874,8 @@ jg_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <h
     echo "warning: herdr presentation reclaim for $id could not create an exact replacement; spawning flat" >&2
     return 2
   fi
-  new_tab=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
-  new_pane=$(printf '%s' "$out" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)
+  new_tab=$(printf '%s' "$out" | jg_backend_herdr_field '.result.tab.tab_id')
+  new_pane=$(printf '%s' "$out" | jg_backend_herdr_field '.result.root_pane.pane_id')
   if [ -z "$new_tab" ] || [ -z "$new_pane" ]; then
     jg_backend_herdr_projection_focus_restore "$session" "$focus_before" "husk replacement create" || return 1
     echo "warning: herdr presentation reclaim for $id returned ambiguous replacement ids; spawning flat" >&2
@@ -3062,19 +2883,13 @@ jg_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <h
   fi
   jg_backend_herdr_projection_focus_restore "$session" "$focus_before" "husk replacement create" || return 1
   info=$(jg_backend_herdr_cli "$session" tab get "$new_tab" 2>/dev/null) || info=
-  if ! printf '%s' "$info" | jq -e --arg tab "$new_tab" --arg workspace "$meta_workspace" '
-    .result.tab.tab_id == $tab and .result.tab.workspace_id == $workspace
-  ' >/dev/null 2>&1; then
+  if ! printf '%s' "$info" | jg_backend_herdr_check tab-binds "$new_tab" "$meta_workspace" >/dev/null 2>&1; then
     jg_backend_herdr_projection_reclaim_rollback "$session" "$new_pane" || return 1
     echo "warning: herdr presentation reclaim for $id could not verify its replacement tab; spawning flat" >&2
     return 2
   fi
   info=$(jg_backend_herdr_cli "$session" pane get "$new_pane" 2>/dev/null) || info=
-  if ! printf '%s' "$info" | jq -e --arg pane "$new_pane" --arg tab "$new_tab" --arg workspace "$meta_workspace" '
-    .result.pane.pane_id == $pane
-    and .result.pane.tab_id == $tab
-    and .result.pane.workspace_id == $workspace
-  ' >/dev/null 2>&1; then
+  if ! printf '%s' "$info" | jg_backend_herdr_check pane-binds "$new_pane" "$new_tab" "$meta_workspace" >/dev/null 2>&1; then
     jg_backend_herdr_projection_reclaim_rollback "$session" "$new_pane" || return 1
     echo "warning: herdr presentation reclaim for $id could not verify its replacement pane; spawning flat" >&2
     return 2
@@ -3158,7 +2973,7 @@ jg_backend_herdr_projection_recovery_allows_flat() {  # <session> <journal> <tas
     echo "error: could not list herdr workspaces while inspecting the quarantined presentation for $id" >&2
     return 1
   }
-  if ! printf '%s' "$list" | jq -e '(.result.workspaces | type) == "array"' >/dev/null 2>&1; then
+  if ! printf '%s' "$list" | jg_backend_herdr_check is-array .result.workspaces >/dev/null 2>&1; then
     echo "error: could not parse herdr workspaces while inspecting the quarantined presentation for $id" >&2
     return 1
   fi
@@ -3178,7 +2993,7 @@ jg_backend_herdr_projection_recovery_allows_flat() {  # <session> <journal> <tas
       echo "error: could not inspect herdr presentation workspace $wsid for $id; refusing duplicate launch" >&2
       return 1
     }
-    if ! printf '%s' "$panes" | jq -e '(.result.panes | type) == "array"' >/dev/null 2>&1; then
+    if ! printf '%s' "$panes" | jg_backend_herdr_check is-array .result.panes >/dev/null 2>&1; then
       echo "error: could not parse herdr presentation workspace $wsid for $id; refusing duplicate launch" >&2
       return 1
     fi
@@ -3218,7 +3033,7 @@ jg_backend_herdr_projection_endpoint_matches_journal() {  # <session> <workspace
   local session=$1 workspace_id=$2 journal=$3 id=$4 token list matches
   token=$(jg_backend_herdr_projection_journal_token "$journal" "$id") || return 1
   list=$(jg_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 1
-  printf '%s' "$list" | jq -e '(.result.workspaces | type) == "array"' >/dev/null 2>&1 || return 1
+  printf '%s' "$list" | jg_backend_herdr_check is-array .result.workspaces >/dev/null 2>&1 || return 1
   matches=$(printf '%s' "$list" | jq -r --arg suffix " · p:$token" \
     '.result.workspaces[]? | select((.label | type) == "string" and (.label | endswith($suffix))) | .workspace_id' 2>/dev/null)
   [ "$matches" = "$workspace_id" ]
@@ -3287,7 +3102,7 @@ jg_backend_herdr_target_ready() {  # <target>
 jg_backend_herdr_current_path() {  # <target>
   jg_backend_herdr_target_ready "$1" || return 0
   jg_backend_herdr_cli "$JG_BACKEND_HERDR_SESSION" pane get "$JG_BACKEND_HERDR_PANE" 2>/dev/null \
-    | jq -r '.result.pane.foreground_cwd // empty' 2>/dev/null
+    | jg_backend_herdr_field '.result.pane.foreground_cwd'
 }
 
 # jg_backend_herdr_send_text_line: send one line of TEXT then submit,
@@ -3405,7 +3220,7 @@ jg_backend_herdr_visible_capture_ansi() {  # <target>
 jg_backend_herdr_agent_identity_raw() {  # <session> <pane> -> <agent>\t<status>
   local out
   out=$(JG_BACKEND_HERDR_TIMEOUT=$JG_BACKEND_HERDR_READ_TIMEOUT jg_backend_herdr_cli "$1" agent get "$2" 2>/dev/null) || return 1
-  printf '%s' "$out" | jq -r '[.result.agent.agent // "", .result.agent.agent_status // ""] | @tsv' 2>/dev/null
+  printf '%s' "$out" | jg_backend_herdr_go agent-identity
 }
 
 # jg_backend_herdr_agent_name_for: the herdr agent name for a task id.
@@ -3417,31 +3232,15 @@ jg_backend_herdr_agent_identity_raw() {  # <session> <pane> -> <agent>\t<status>
 # and gains "-<4 hex>" of a checksum of the whole id, so two long ids that
 # share a prefix still get different names. Pure: no herdr call.
 jg_backend_herdr_agent_name_for() {  # <task-id> -> <agent-name>
-  local id=${1:-} name
-  [ -n "$id" ] || return 1
-  name=$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_\n-' '-')
-  case "$name" in
-    [a-z]*) ;;
-    *) name="t-$name" ;;
-  esac
-  [ "${#name}" -le 32 ] || name=$(jg_backend_herdr_agent_name_variant "$name" "$id")
-  printf '%s' "$name"
+  [ -n "${1:-}" ] || return 1
+  jg_backend_herdr_go agent-name-for "$1"
 }
 
 # jg_backend_herdr_agent_name_variant: <name> cut to 27 characters and made
 # distinct by "-<4 hex>" of a checksum of <salt>, so it stays within the
 # 32-character herdr limit.
 jg_backend_herdr_agent_name_variant() {  # <name> <salt> -> <name>
-  local name=${1:-} salt=${2:-} sum head
-  sum=$(printf '%s' "$salt" | cksum | awk '{ printf "%04x", $1 % 65536 }')
-  head=${name:0:27}
-  while :; do
-    case "$head" in
-      *[-_]) head=${head%?} ;;
-      *) break ;;
-    esac
-  done
-  printf '%s-%s' "$head" "$sum"
+  jg_backend_herdr_go agent-name-variant "${1:-}" "${2:-}"
 }
 
 # jg_backend_herdr_pin_agent_name: best-effort pin of a pane's agent display
@@ -3481,8 +3280,8 @@ jg_backend_herdr_pin_agent_name() {  # <session> <pane-id> <task-id>
       fi
       ;;
   esac
-  code=$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null) || code=
-  message=$(printf '%s' "$out" | jq -r '.error.message // empty' 2>/dev/null | cut -c1-120) || message=
+  code=$(printf '%s' "$out" | jg_backend_herdr_field '.error.code') || code=
+  message=$(printf '%s' "$out" | jg_backend_herdr_field '.error.message' | cut -c1-120) || message=
   echo "warning: herdr agent rename of pane $pane to '$name' failed (${code:-no herdr error}${message:+: $message}); the agent keeps its server-assigned name" >&2
   return 0
 }
@@ -3812,6 +3611,16 @@ jg_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       return 0
     fi
   fi
+  # Delivery time: a doorbell whose record vanished while it was being typed is
+  # cleared instead of submitted (jg_backend_doorbell_stale owns the test).
+  if jg_backend_doorbell_stale "$text"; then
+    if jg_backend_herdr_composer_clear "$target" "$text"; then
+      printf 'record-missing'
+    else
+      printf 'unknown'
+    fi
+    return 0
+  fi
   raw_status=$(jg_backend_herdr_agent_status_raw "$JG_BACKEND_HERDR_SESSION" "$JG_BACKEND_HERDR_PANE")
   baseline=$(jg_backend_herdr_classify_submit_agent_status "$raw_status")
   confirm_sleep=$(jg_backend_herdr_submit_confirm_budget "$sleep_s")
@@ -3905,9 +3714,9 @@ jg_backend_herdr_kill_serialized() {  # <session> <pane>
   if [ -n "$before" ]; then
     active_tab=${before#*$'\t'}
     info=$(jg_backend_herdr_cli "$session" pane get "$pane" 2>/dev/null) || info=
-    target_pane=$(printf '%s' "$info" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-    target_tab=$(printf '%s' "$info" | jq -r '.result.pane.tab_id // empty' 2>/dev/null)
-    target_ws=$(printf '%s' "$info" | jq -r '.result.pane.workspace_id // empty' 2>/dev/null)
+    target_pane=$(printf '%s' "$info" | jg_backend_herdr_field '.result.pane.pane_id')
+    target_tab=$(printf '%s' "$info" | jg_backend_herdr_field '.result.pane.tab_id')
+    target_ws=$(printf '%s' "$info" | jg_backend_herdr_field '.result.pane.workspace_id')
     if [ "$target_pane" = "$pane" ] && [ -n "$target_tab" ] && [ "$target_tab" != "$active_tab" ]; then
       plan=$(jg_backend_herdr_emptying_close_plan "$session" "$pane" "$target_ws" "$target_tab" "${before%%$'\t'*}")
       plan_move_record=
@@ -4023,7 +3832,7 @@ jg_backend_herdr_classify_submit_agent_status() {  # <raw-agent_status>
 jg_backend_herdr_agent_status_raw() {  # <session> <pane_id>
   local session=$1 pane_id=$2 out
   out=$(jg_backend_herdr_cli "$session" agent get "$pane_id" 2>/dev/null) || { printf ''; return 0; }
-  printf '%s' "$out" | jq -r '.result.agent.agent_status // empty' 2>/dev/null
+  printf '%s' "$out" | jg_backend_herdr_field '.result.agent.agent_status'
 }
 
 # jg_backend_herdr_busy_state: semantic busy state from herdr's native
@@ -4083,14 +3892,7 @@ JG_BACKEND_HERDR_SUBMIT_POLLS=${JG_BACKEND_HERDR_SUBMIT_POLLS:-6}
 JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP=${JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP:-0.6}
 
 jg_backend_herdr_submit_confirm_budget() {  # <caller-budget-seconds>
-  awk -v b="${1:-0}" -v m="$JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP" 'BEGIN {
-    b += 0
-    m += 0
-    if (b < 0) b = 0
-    if (m < 0) m = 0
-    if (m > b) b = m
-    printf "%.4f", b
-  }' 2>/dev/null || printf '%s' "${1:-0}"
+  jg_backend_herdr_go submit-confirm-budget "${1:-0}" "$JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP" || printf '%s' "${1:-0}"
 }
 
 jg_backend_herdr_wait_for_working() {  # <session> <pane_id> <budget-seconds> <polls>
@@ -4122,8 +3924,7 @@ jg_backend_herdr_wait_for_working() {  # <session> <pane_id> <budget-seconds> <p
 jg_backend_herdr_pane_for_tab() {  # <session> <workspace_id> <tab_id>
   local session=$1 wsid=$2 tab_id=$3 panes
   panes=$(jg_backend_herdr_cli "$session" pane list --workspace "$wsid" 2>/dev/null) || return 1
-  printf '%s' "$panes" | jq -r --arg tab "$tab_id" \
-    '.result.panes[]? | select(.tab_id == $tab) | .pane_id' 2>/dev/null | head -1
+  printf '%s' "$panes" | jg_backend_herdr_go select .result.panes tab_id "$tab_id" pane_id | head -1
 }
 
 # jg_backend_herdr_resolve_bare_selector: the live-tab-listing fallback for an
@@ -4134,14 +3935,13 @@ jg_backend_herdr_pane_for_tab() {  # <session> <workspace_id> <tab_id>
 # normally carry meta), best-effort.
 jg_backend_herdr_resolve_bare_selector() {  # <name>
   local name=$1 sessions session tabs tab_id wsid pane_id
-  sessions=$(herdr session list --json 2>/dev/null | jq -r '.sessions[]? | select(.running == true) | .name' 2>/dev/null)
+  sessions=$(herdr session list --json 2>/dev/null | jg_backend_herdr_go select .sessions running --true name)
   while IFS= read -r session; do
     [ -n "$session" ] || continue
     tabs=$(jg_backend_herdr_cli "$session" tab list 2>/dev/null) || continue
-    tab_id=$(printf '%s' "$tabs" | jq -r --arg want "$name" \
-      '.result.tabs[]? | select(.label == $want) | .tab_id' 2>/dev/null | head -1)
+    tab_id=$(printf '%s' "$tabs" | jg_backend_herdr_go select .result.tabs label "$name" tab_id | head -1)
     [ -n "$tab_id" ] || continue
-    wsid=$(printf '%s' "$tabs" | jq -r --arg tab "$tab_id" '.result.tabs[]? | select(.tab_id == $tab) | .workspace_id' 2>/dev/null | head -1)
+    wsid=$(printf '%s' "$tabs" | jg_backend_herdr_go select .result.tabs tab_id "$tab_id" workspace_id | head -1)
     [ -n "$wsid" ] || continue
     pane_id=$(jg_backend_herdr_pane_for_tab "$session" "$wsid" "$tab_id") || continue
     [ -n "$pane_id" ] || continue
@@ -4175,7 +3975,7 @@ jg_backend_herdr_list_live() {  # <session>
     pane_id=$(jg_backend_herdr_pane_for_tab "$session" "$wsid" "$tab_id") || continue
     [ -n "$pane_id" ] || continue
     printf '%s:%s\t%s\n' "$session" "$pane_id" "$label"
-  done < <(printf '%s' "$tabs" | jq -r '.result.tabs[]? | select(.label | startswith("jg-")) | "\(.tab_id)\t\(.label)"' 2>/dev/null)
+  done < <(printf '%s' "$tabs" | jg_backend_herdr_go live-tabs)
 }
 
 # --- native event push: pane.agent_status_changed subscriber -----------------
@@ -4199,7 +3999,7 @@ jg_backend_herdr_list_live() {  # <session>
 jg_backend_herdr_socket_path() {  # <session>
   local session=$1
   herdr session list --json 2>/dev/null \
-    | jq -r --arg name "$session" '.sessions[]? | select(.name == $name) | .socket_path // empty' 2>/dev/null \
+    | jg_backend_herdr_go select .sessions name "$session" socket_path --or-empty \
     | head -1
 }
 
@@ -4222,7 +4022,7 @@ jg_backend_herdr_events_capable() {  # <session>
   if [ -z "${JG_BACKEND_HERDR_EVENT_READER:-}" ]; then
     command -v python3 >/dev/null 2>&1 || return 1
   fi
-  protocol=$(herdr status --json 2>/dev/null | jq -r '.client.protocol // empty' 2>/dev/null)
+  protocol=$(herdr status --json 2>/dev/null | jg_backend_herdr_field '.client.protocol')
   case "$protocol" in ''|*[!0-9]*) return 1 ;; esac
   [ "$protocol" -ge "$JG_BACKEND_HERDR_MIN_EVENTS_PROTOCOL" ] || return 1
   schema=$(herdr api schema --json 2>/dev/null) || return 1

@@ -1042,7 +1042,12 @@ $ASK_USER_BLOCK
    Juggernaut's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a juggernaut reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 
-8. When the merge gate needs done-done proof, run done-done once at your final head with a clean tree and confirm \`merge-card receipt <id> <head>\` exits 0, where <head> is the commit you will push. Commit nothing afterward, not even the receipt, because any later commit moves the PR head and voids the proof. If you must commit again, rerun done-done at the new head. The PR proof line must name the done-done run and say 'no verify skill'.
+8. When the merge gate needs done-done proof, follow this recipe in order, each step at the head you will push with a clean tree. Commit nothing afterward, not even the receipt, because any later commit moves the PR head and voids the proof; if you must commit again, redo steps a to e at the new head.
+   a. Run the repository's verify skill sealed under done-done at the final head (for Juggernaut itself the skill is \`done-done-verify-suites\`: \`done-done run -- <the suite command it names>\`), and keep the sealed run record.
+   b. Build the Evidence card with \`$JG_ROOT/core/merge-card/merge-card\` (\`check <id> <worktree> <head> <PR url>\` runs the gate's own check, and \`merge-card receipt <id> <head>\` must exit 0).
+   c. Put a \`## Checks\` block in the PR body with four lines: \`outcome:\` (what a user can now do), \`repro:\` (the command that failed before and passes now, or \`repro: n/a: no bug\`), \`proof:\` (it must name the verify skill run, for Juggernaut itself \`done-done-verify-suites\`, and the run id; with no verify skill write \`no verify skill\`), and \`evidence:\` (file names at the top level of \`data/<task>/\`).
+   d. Run \`JG_HOME=$JG_HOME $JG_ROOT/core/merge-on-green/checks-lint.sh <PR url> <evidence folder>\` until it prints PASS.
+   e. Publish the receipt bound to the PR head with the Completion receipt command under Definition of done, with \`JG_RECEIPT_PR=<PR url>\` set to the PR's full URL: a receipt for a PR needs it.
 
 $WAIT_BLOCK$INBOX_SECTION
 

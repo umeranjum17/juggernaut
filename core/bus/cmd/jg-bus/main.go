@@ -69,11 +69,29 @@
 //	         absolute path), never its folder name. `accounts [home...]` prints the
 //	         server block for these homes, Main and every data/squad_leads.md entry;
 //	         two homes on one account name are refused with a line naming both.
+//	owner    Print "self" and exit 0 when this home owns the machine's bus unit (or may take
+//	         it, none being installed); print the owner's home and exit 3 when another
+//	         does. bin/jg-stack.sh asks it before it installs or starts a per-machine part.
+//	ntfy-provision
+//	         The bus owner's one-time ntfy logins, when the server config names an
+//	         auth-file (the shipped one does, with deny-all): `juggernaut` write-only, what
+//	         `deliver` posts with, and `captain` read-only, what his iPad subscribes with.
+//	         Passwords are generated into state/bus/ntfy-<user>.pass (0600) and kept on a
+//	         second run. A config with no auth-file is an open server; nothing is made.
+//	check-limits <config>
+//	         Exit 1, naming the shortfall, when a server config's global JetStream caps
+//	         are below what its accounts reserve. `unit` runs the same check on the
+//	         config it writes and refuses to write one the server could not start with.
 //	ensure   Start the server when it is not listening and create the stream, then say
 //	         one line. What a bootstrap step and docs/bus-service.md run.
 //	unit     Print the systemd user service a home installs once for one part: nats
 //	         (the default) runs the server itself and creates the stream after it
-//	         starts; dapr and ntfy run their binary in the foreground.
+//	         starts; wake-engine, wake-watcher and router run this command's own consumers; dapr and
+//	         ntfy run their binary in the foreground.
+//	registry The machine's member homes live in one list, the owner's state/bus/homes.
+//	         A home that joins appends one line; a temp or worktree test home never
+//	         joins a real machine's list, and a test or a lab names its own list with
+//	         JG_BUS_HOMES so its fixture homes are recorded there instead.
 //	deliver  The CAPTAIN stream's consumer, and the one path that delivers a captain-bound
 //	         event the bus accepted to ntfy: a durable pull consumer (captain-ntfy) reads
 //	         each message, posts it to the captain's topic, and writes the delivery to
@@ -81,12 +99,14 @@
 //	         drains what waits and exits; otherwise it runs as the service (the `deliver`
 //	         unit). `publish` delivers directly only for an event the bus did not accept.
 //	install-service
-//	         Make that service real: write the unit when it is missing or names another
-//	         home, reload systemd, enable it now, and verify. Without a user manager it
+//	         Make that service real: write the unit when it is missing, reload systemd, enable
+//	         it now, and verify. Only the unit's owner (the home it names) does that; any
+//	         other home adds its account to the owner's shared accounts, has the server
+//	         reload them, and leaves the unit and the server config untouched. Without a user manager it
 //	         falls back to `ensure`. One line either way, and never a failed boot - this
 //	         is what bin/jg-bootstrap.sh and bin/jg-update.sh run so a release cannot go
 //	         live without its bus and a reboot brings it back.
-//	serve    Start the services from their files (nats, dapr, ntfy, and the deliver consumer), every one of them read as config
+//	serve    Start the services from their files (nats, wake-engine, wake-watcher, router, dapr, ntfy, and the deliver consumer), every one of them read as config
 //	         and none re-implemented here: nats-server (core/bus/nats.conf), the
 //	         JetStream stream it carries (core/bus/stream.json), the slim Dapr runtime
 //	         over NATS (core/bus/dapr/components/pubsub.yaml) and ntfy
@@ -101,10 +121,12 @@
 //	jg-bus publish <kind> <key> <text> [--link <url>]
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus stream | serve | ensure | unit [nats|dapr|ntfy|deliver] | install-service | deliver [--once] | stop | status | bootstrap
+//	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|ntfy|deliver] | install-service | deliver [--once] | stop | status | bootstrap
+//	jg-bus wake-engine | router | probe [wake-engine|wake-watcher|router]   (engine.go owns these)
+//	jg-bus wake-watcher | watcher oldest|resurfaced|latest|rows|replay|rebuild   (watcher.go owns these)
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
-// JG_CAPTAIN_CHANNEL.
+// JG_CAPTAIN_CHANNEL, JG_BUS_HOMES (the machine member list, for a test or a lab).
 package main
 
 import (
@@ -130,6 +152,10 @@ type app struct {
 	delivered   string
 	log         string
 	configFiles []string
+	// set by buildUnit for the nats part: what it just rewrote.
+	accountsChanged, confChanged bool
+	// data is the home's data directory, which holds the Squad Lead registry.
+	data string
 }
 
 func main() {
@@ -156,6 +182,16 @@ func run(args []string) int {
 		return a.serve()
 	case "deliver":
 		return a.deliver(rest)
+	case "wake-engine":
+		return a.wakeEngine()
+	case "wake-watcher":
+		return a.wakeWatcher()
+	case "watcher":
+		return a.watcherCmd(rest)
+	case "router":
+		return a.router()
+	case "probe":
+		return a.probe(rest)
 	case "unit":
 		return a.unit(rest)
 	case "install-service":
@@ -164,6 +200,12 @@ func run(args []string) int {
 		return a.accounts(rest)
 	case "account":
 		return a.account()
+	case "owner":
+		return a.owner()
+	case "ntfy-provision":
+		return a.ntfyProvision()
+	case "check-limits":
+		return a.checkLimitsCommand(rest)
 	case "ensure":
 		return a.ensure()
 	case "stop":
@@ -213,14 +255,24 @@ func resolve() *app {
 		delivered:   filepath.Join(state, "captain-channel-delivered.jsonl"),
 		log:         filepath.Join(state, "captain-channel.log"),
 	}
-	files := []string{os.Getenv("JG_CAPTAIN_CHANNEL"), filepath.Join(home, "config", "captain-channel"),
-		filepath.Join(root, "defaults", "captain-channel")}
-	for _, f := range files {
-		if f != "" {
-			a.configFiles = append(a.configFiles, f)
-		}
+	a.configFiles = configFilesFor(home, root)
+	a.data = os.Getenv("JG_DATA_OVERRIDE")
+	if a.data == "" {
+		a.data = filepath.Join(home, "data")
 	}
 	return a
+}
+
+// configFilesFor lists the captain-channel config files in force for one home.
+func configFilesFor(home, root string) []string {
+	var out []string
+	for _, f := range []string{os.Getenv("JG_CAPTAIN_CHANNEL"), filepath.Join(home, "config", "captain-channel"),
+		filepath.Join(root, "defaults", "captain-channel")} {
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // die reports a refusal and returns the exit status the shell used.

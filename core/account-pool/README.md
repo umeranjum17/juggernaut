@@ -84,7 +84,7 @@ For ordinary work it picks the eligible Claude account with the greatest minimum
 That is deliberately not the worker **launch admission** floor (`JG_CLAUDE_ACCOUNTS_LOW`, **5%**) used by `claude-accounts-pick` at spawn.
 Answers name both floors under `floor.eligibility` and `floor.launch_admission`.
 A registry account whose record enables `usage_credits`, `extra_usage`, or `overage` (or the same under `billing`) is refused; the check is logged; credentials are never printed or stored.
-When every Claude account is under the eligibility floor, normal-work ordering is Codex Sol (`openai-codex/gpt-6.1-sol`), then DeepSeek Goat (`deepseek/deepseek-goat`), then Cursor auto (`auto`), skipping any id already in `attempted`.
+When every Claude account is under the eligibility floor, normal-work ordering is the **route chain** (`bin/jg-route-chain-lib.sh`), skipping any id already in `attempted` and any route the chain's probe marked down.
 `next` rests a pool account after a quota/rate limit when the pool command allows it; a failed rest still excludes that id locally so A/B/A cannot loop.
 
 ### Node / Python consumption
@@ -94,8 +94,17 @@ Python: the same with `subprocess.run([...], input=json.dumps(req), capture_outp
 Neither evaluates shell text, mutates global process env, copies login files, nor keeps a separate account cache.
 On a structured quota/limit error, call `next` with the prior selection and the growing `attempted` set under the same overall `deadline`.
 
+## Route chain and its health probe
+
+The chain is the pool's route list: the order work falls back through when no Claude account is above the floor. A home names its own order with one `route=` line per route, in chain order, in `config/account-pool`; a home that names none gets the captain's approved free-route order (`JG_ROUTE_DEFAULT_CHAIN` in `bin/jg-route-chain-lib.sh`): Ollama credit DeepSeek v4.1 Flash, Command Code DeepSeek v4.1 Flash, Codex Luna, Kimi, Cursor auto, and Sol last for hard steps only (`"only":"hard"`, chosen only when the request sets `hard:true`). Claude is not a route: the owner's own subscription accounts stay ahead of the chain and no route enables usage credits. A home's `route=` line is one JSON object, `{"id","provider","harness","model","billing"}`; a line that is not one object refuses the pick instead of silently shortening the chain.
+
+`bin/jg-route-probe` is the chain's cheap health probe, installed as the home's `state/route-chain.check.sh` fleet check so the pulse runs it every few minutes (`JG_ROUTE_PROBE_SECONDS`, default 180; `probe --force` for one pass now, `status` prints the table). One pass makes one `quota-axi` read for every provider plus one Ollama balance read, and spends no model request: a provider reporting `auth_required`, `unavailable`, `error` or `exhausted_now`, or Ollama with no credit left, is marked down in `state/route-health/<id>` with a retry time (`JG_ROUTE_RETRY_SECONDS`, default 900). A provider the fleet cannot read is treated as up, so a missing reader never takes a working route out of service. `jg-model-pool` skips a route while its marker is down and uses it again once the retry time passes.
+
+Every switch is ONE line in `state/route-chain.log`: `<utc> route-chain: from=<route> to=<route> why=<cause>` - written when the probe moves the route the chain leads with, and when `jg-model-pool` picks past a down route. The same switch repeated (every pulse while a route stays down) stays that one line.
+
 ## Test
 
-`bash account-pool/tests/account-pool.test.sh` drives the hook lines in their fork call-site form, a stub `byokit-accounts` and a synthetic pane through every case above, and checks that the feature absent leaves each line a no-op; it also runs `tests/model-pool.test.sh` (forced-limit A/B, fallovers, credits refusal, deadline).
+`bash account-pool/tests/account-pool.test.sh` drives the hook lines in their fork call-site form, a stub `byokit-accounts` and a synthetic pane through every case above, and checks that the feature absent leaves each line a no-op; it also runs `tests/model-pool.test.sh` (forced-limit A/B, fallovers, credits refusal, deadline) and `tests/route-chain.test.sh`.
 `bash account-pool/run-tool-proof.sh` (done-done journey `pool-tool-account`) proves a tool started on the pool's pick inherits the picked folder.
 `bash account-pool/run-model-pool-proof.sh` (done-done journey `pool-helper`) seals the forced-limit helper proof with `steps.json` (screen: none).
+`bash account-pool/tests/route-chain.test.sh` proves the approved order, Sol only on a hard call, a home's own `route=` order, and the kill: Ollama's credit read goes to zero, the probe marks it down with one switch line, work continues on Command Code, and the route returns by itself after its retry time (`bash account-pool/install.sh [--dry-run] <jg-home>` installs the pulse check).
