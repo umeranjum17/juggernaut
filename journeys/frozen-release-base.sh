@@ -81,6 +81,9 @@ launched() { grep -q 'new-window' "$T/tmux.log"; }
 reset_tmux() { : > "$T/tmux.log"; }
 LINE='release/c-4 is frozen and takes no new work; target release/c-5 instead'
 
+# Host memory pressure on the machine running this proof must not hold a launch
+# the journey means to see reach its window step.
+printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_available_gb=0\n' > "$H/config/host-memory"
 printf 'release/c-4\n' > "$H/config/version-branch-frozen"
 log "freeze record: config/version-branch-frozen = release/c-4; current version branch = release/c-5"
 
