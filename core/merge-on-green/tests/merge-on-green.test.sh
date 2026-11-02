@@ -36,6 +36,8 @@ cat > "$FM/bin/jg-crew-state.sh" <<'EOF'
 # stub: ready line unless the task is listed in $STUB_DIR/not-ready/<task> (working) or $STUB_DIR/merged/<task>
 if [ -f "$STUB_DIR/merged/$1" ]; then
   echo "state: done · source: run-step · checks green: PR merged (ci monitor ended): https://github.com/ex/r/pull/$1"
+elif [ -f "$STUB_DIR/red/$1" ]; then
+  echo "state: failed · source: run-step · required check ci is red"
 elif [ -f "$STUB_DIR/not-ready/$1" ]; then
   echo "state: working · source: run-step · validating (running)"
 else
@@ -67,6 +69,18 @@ fi
 echo "checks-lint: PASS: 2 evidence files"
 EOF
 chmod +x "$FM/bin/jg-crew-state.sh" "$FM/bin/jg-pr-merge.sh" "$STUB_DIR/jg-checks-lint.sh"
+cat > "$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+# stub: the mergedAt read and the open-PR count; every sweep reaches the count, so no real gh runs.
+case "$*" in
+  *mergedAt*) printf '%s\n' "${STUB_MERGED_AT:-}" ;;
+  "pr list"*) printf '%s\n' "$*" >> "$STUB_DIR/gh-list-calls"
+    [ -f "$STUB_DIR/gh-list-fail" ] && exit 1
+    printf '%s\n' "${STUB_OPEN_PRS:-0}" ;;
+esac
+exit 0
+EOF
+chmod +x "$STUB_DIR/gh"
 export PATH=$STUB_DIR:$PATH
 H1=1111111111111111111111111111111111111111 H2=2222222222222222222222222222222222222222
 
@@ -233,13 +247,6 @@ rm "$FM/state/t12.meta" "$FM/state/t12.run-receipt.json"
 # (n) the done-to-merged minutes are recorded for every merge, and a merge over the five-minute
 # target is called out in the wake line the lead relays. The forge's merge time comes from the gh
 # stub, so the number is the one the record holds rather than the moment the sweep ran.
-cat > "$STUB_DIR/gh" <<'EOF'
-#!/usr/bin/env bash
-# stub: only the mergedAt read matters here.
-case "$*" in *mergedAt*) printf '%s\n' "${STUB_MERGED_AT:-}" ;; esac
-exit 0
-EOF
-chmod +x "$STUB_DIR/gh"
 meta t13 on "$H1" s13
 now=$(date +%s)
 printf 'working [at=%s]: implementing\n' "$((now - 1200))" > "$FM/state/t13.status"
@@ -282,6 +289,57 @@ echo merge=manual >> "$FM/state/t16.meta"
 check "p: merge=manual with no yolo stays silent" "$(mog)" ""
 check "p: merge=manual not merged" "$([ -e "$FM/data/jg-merge-on-green/t16.head" ] && echo attempted || echo never)" never
 rm "$FM/state/t16.meta" "$FM/state/t16.run-receipt.json"
+
+# (q) a red PR elsewhere never holds a green one: the red release PR is skipped, the green one lands in
+# the same sweep, and only the green one reaches the merge call.
+meta t17 on "$H1" s17
+meta t18 on "$H2" s18
+mkdir -p "$STUB_DIR/red"
+touch "$STUB_DIR/red/t17"
+calls_before=$(wc -l < "$STUB_DIR/merge-calls")
+out=$(mog)
+check "q: one line, the green merge" "$(printf '%s\n' "$out" | wc -l)" 1
+has "q: the green PR merged beside a red one" "$out" "merged t18 https://github.com/ex/r/pull/18"
+check "q: only the green PR reached the merge call" \
+  "$(tail -n +"$((calls_before + 1))" "$STUB_DIR/merge-calls")" "$FM|t18 https://github.com/ex/r/pull/18"
+check "q: the red PR is untouched" "$([ -e "$FM/data/jg-merge-on-green/t17.head" ] && echo attempted || echo never)" never
+rm "$STUB_DIR/red/t17" "$FM/state/t17.meta" "$FM/state/t17.run-receipt.json" "$FM/state/t18.meta" "$FM/state/t18.run-receipt.json"
+
+# (r) the open-PR cap: nothing at or under the cap; one alert over it; the same count stays silent; a new
+# count alerts again; a drop under the cap forgets it; config/open-pr-cap sets the cap; a gh failure is silent.
+printf 'yolo=off\npr=https://github.com/ex/r/pull/30\n' > "$FM/state/t30.meta"
+STUB_OPEN_PRS=8
+export STUB_OPEN_PRS
+check "r: at the default cap of 8 -> silent" "$(mog)" ""
+check "r: asked the forge about the PR's repo" "$(grep -c -- '--repo ex/r' "$STUB_DIR/gh-list-calls")" "$(wc -l < "$STUB_DIR/gh-list-calls")"
+STUB_OPEN_PRS=23
+out=$(mog)
+check "r: over the cap -> one alert" "$(printf '%s\n' "$out" | wc -l)" 1
+has "r: alert names count, repo and cap" "$out" "23 open pull requests in ex/r, over the cap of 8"
+check "r: same count -> silent" "$(mog)" ""
+STUB_OPEN_PRS=24
+has "r: changed count alerts again" "$(mog)" "24 open pull requests in ex/r"
+check "r: repeat of the changed count silent" "$(mog)" ""
+STUB_OPEN_PRS=3
+check "r: back under the cap -> silent" "$(mog)" ""
+STUB_OPEN_PRS=24
+has "r: over the cap again alerts again" "$(mog)" "24 open pull requests in ex/r"
+mkdir -p "$FM/config"
+echo 30 > "$FM/config/open-pr-cap"
+STUB_OPEN_PRS=25
+check "r: config/open-pr-cap raises the cap" "$(mog)" ""
+STUB_OPEN_PRS=31
+has "r: configured cap named" "$(mog)" "31 open pull requests in ex/r, over the cap of 30"
+echo nonsense > "$FM/config/open-pr-cap"
+STUB_OPEN_PRS=40
+has "r: unreadable config falls back to 8" "$(mog)" "40 open pull requests in ex/r, over the cap of 8"
+rm "$FM/config/open-pr-cap"
+touch "$STUB_DIR/gh-list-fail"
+STUB_OPEN_PRS=99
+check "r: a forge failure is silent" "$(mog)" ""
+rm "$STUB_DIR/gh-list-fail" "$FM/state/t30.meta"
+unset STUB_OPEN_PRS
+
 rm -f "$STUB_DIR/gh"
 
 # (g) install --dry-run lists the steps and writes nothing.
