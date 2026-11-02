@@ -35,7 +35,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-skill-stats.sh`      | Shim for `core/fleet-stats`: read per-skill fleet read counts as JSON ([skill statistics](fleet-ledger.md#skill-statistics)) |
 | `jg-ticket.sh`           | Record one task's ticket truth on the fleet board now: stage, state, delivered PR and target release ([tickets](../core/tickets-sync/README.md#writing-a-ticket-at-the-moment-it-changes)) |
 | `jg-bearings-snapshot.sh` | Project the bounded remote-ledger fleet snapshot to compact TOON; `--include-prs` adds live GitHub enrichment |
-| `juggernaut-axi`          | Read-only fleet facts for external tools: `status`, `tickets`, `decisions`, and `messages` as TOON, plus the guarded writes `answer`, `message`, and `ticket` or `--json` (`juggernaut-axi.v1`) |
+| `juggernaut-axi`          | Read-only fleet facts for external tools: `status`, `lanes`, `wakes`, `tickets`, `decisions`, and `messages` as TOON, plus the guarded writes `answer`, `message`, and `ticket` or `--json` (`juggernaut-axi.v1`) |
 | `jg-squad-lead-reconcile.sh` | Queue Bearings reconcile requests for later supervision delivery and ask each mismatched home through its durable inbox with a per-home cooldown |
 | `jg-update.sh`           | Guarded self-update of Juggernaut and local or remote Squad Lead homes, reconciling redundant divergence and classifying every live mate left on the target commit for restart or fallback nudge |
 | `jg-squad-lead-restart.sh` | Persist open conversational work, then restart eligible Squad Leads one at a time or report the fallback outcome |
@@ -67,7 +67,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-brief-heading-lib.sh` | Single owner of reading a brief's sections, shared by the `--intent` contract, spawn and promotion validation, and `jg-dispatch-resolve.sh` |
 | `jg-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
 | `jg-herdr-lab-viewer.py` | The pty engine behind `jg-herdr-lab.sh viewer`: one real foreground Herdr client on a non-zero window grid |
-| `jg-herdr.sh`            | Build and run the herdr backend core (`core/herdr`): the release-floor, preference and agent-name decisions that `backends/herdr.sh` forwards to |
+| `jg-herdr.sh`            | Build and run the herdr backend core (`core/herdr`): the release-floor, preference and agent-name decisions and the readers of `herdr` JSON answers that `backends/herdr.sh` forwards to |
 | `jg-lab-home.sh`         | Mint disposable lab homes and manage their isolated tmux socket directories       |
 | `jg-live-lab.sh`         | Build and operate a disposable live supervision lab; see its header for usage and readiness contract |
 | `jg-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |

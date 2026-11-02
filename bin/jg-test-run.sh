@@ -803,6 +803,7 @@ tests/jg-watch-handoff.test.sh 11741
 tests/jg-watcher-lock.test.sh 1059731
 tests/jg-worker-account-live-e2e.test.sh 70
 tests/juggernaut-axi-serve.test.sh 1635
+tests/juggernaut-axi.test.sh 5700
 tests/migration-card.test.sh 1443
 tests/migration-card-live.test.sh 5200
 tests/merge-card-title.test.sh 701
@@ -1434,6 +1435,11 @@ families_for_changed_path() {
       ;;
     bin/jg-quota-axi-lib.sh)
       printf '%s\n' session-bootstrap
+      ;;
+    bin/jg-toon-lib.sh)
+      # The TOON renderer sourced by juggernaut-axi and jg-bearings-snapshot.sh.
+      printf '%s\n' "__script__:juggernaut-axi.test.sh"
+      printf '%s\n' "__script__:juggernaut-axi-serve.test.sh"
       ;;
     bin/jg-procevent-quota.sh)
       ;;
