@@ -24,9 +24,12 @@ now holds two lane sets: the fast set for a `pull_request` event and the full se
 for a `push`.
 Four area suites run on every `push` to `main` or `release/**` (the release gate),
 and on a pull request only when it touches their area (`bin/jg-ci-scope.sh` owns
-the paths): `Bus service` (core/bus, bus scripts, install, bootstrap), `Shell syntax`
-(any `.sh`), and `Smoke` plus `Fast evals` (bin/ or core/). An untouched area skips,
-and `CI required` refuses a touched area whose suite was skipped or did not report.
+the paths): `Bus service` (core/, bin/, defaults/, install, the pinned versions, the bus doc and test helpers),
+`Shell syntax` (any `.sh`), and `Smoke` plus `Fast evals` (bin/, core/ or the pinned versions).
+A change to `.github/` owes all of them, because the workflow defines the lanes.
+An untouched area skips, and `CI required` refuses a touched area whose suite was skipped or did not report.
+A skip is only safe if the area covers every file its suite reads, so each of these lanes runs its suite through
+`bin/jg-ci-area-reads.sh`, which traces what the suite opens and fails, naming the file, when one is outside the area.
 The rest run after the merge instead: the behaviour suite
 (`behavior.yml`), and the core journeys (`core-suites.yml`).
 An unreadable diff still widens the pull request to the full set.
