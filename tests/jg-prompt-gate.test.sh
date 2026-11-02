@@ -181,9 +181,13 @@ test_prompt_still_up_is_acted_on_every_interval() {
     "$w" "$TMP_ROOT/lead" "$TMP_ROOT/lead" > "$lab/state/lead1.meta"
   show() { tmux respawn-pane -k -t "$w" "stty -echo; cat '$1'; exec sleep 999999" 2>/dev/null \
     || tmux new-session -d -s jglab -n jg-lead1 -x 220 -y 60 "stty -echo; cat '$1'; exec sleep 999999"; sleep 1; }
+  # The wait ends on evidence, so a pass costs what it always did. Its cap is a clock, not a count
+  # of watcher runs: each run ends at the next wake, the chain wakes every 3 seconds, and an approval
+  # needs several scans, so a count of 15 was a budget that shrank as the runner slowed.
   watch_until() {  # <out> <pattern> <count> [approvals]: rerun the watcher, which exits on each wake
+    local deadline=$((SECONDS + 150))
     : > "$1"
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    while [ "$SECONDS" -lt "$deadline" ]; do
       JG_HOME="$lab" SIGN_OFF_HOME="$lab/signoff" JG_POLL=1 JG_PROMPT_REALERT_SECS=3 \
         JG_WAIT_ALERT_SECS=1 JG_WAIT_ESCALATE_SECS=999998 JG_WAIT_CARD_SECS=999999 \
         JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 timeout 20 "$ROOT/bin/jg-watch.sh" >> "$1" 2>&1
