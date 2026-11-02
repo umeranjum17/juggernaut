@@ -78,13 +78,24 @@ against the config's own directory, so an absolute one lands at
 `state/bus/home/...` and the server refuses to start. The JetStream budget in that
 file is the per-account reservation times the number of accounts, because a global
 cap below the sum of the reservations makes the server refuse JetStream with
-`insufficient storage resources available (10047)`.
+`insufficient memory resources (10028)` or `insufficient storage resources available (10047)`.
+The budget is read from the accounts file the server will load - every account that
+reserves JetStream, plus one account of headroom - so registered Squad Lead homes
+count even when their folders are not on this machine. The generator checks the
+finished text and refuses, naming the shortfall, to write a config whose caps sit below
+the reservations; `bin/jg-bus.sh check-limits <config>` runs the same check on any file.
 
 Clients authenticate as their own home. The machine carries one account per home,
 so every client call - `bin/jg-kv-lib.sh`'s, and the wake and reply paths that share
 it - authenticates as the home that owns the state directory, with the name and the
-password in `state/bus/<account>.pass`. A client that connects as the empty user is
-refused, and that is what a release without this shipped.
+password in `state/bus/<account>.pass`. The name and that path come from ONE function
+(`bin/jg-bus.sh account`), the one the accounts file is written from, and the stream
+client, the sidecar login and `bin/jg-kv-lib.sh` all ask it, so the account scheme cannot
+change on the server and miss a client (the #415 rename did, and every client was
+refused). Each home keeps its password in its own `state/bus`, and the generator
+writes a sibling home's account from that home's file. A client that connects as the
+empty user is refused. When the accounts change, `install-service` restarts the running
+service once so the server loads them; an install that changes nothing restarts nothing.
 
 Three config faults made the first unit fail on a real machine and are fixed:
 includes were absolute (nats resolves them against the including file), the

@@ -60,8 +60,11 @@ func (a *app) accounts(args []string) int {
 	}
 	for _, h := range named {
 		name := h.name
-		cred := filepath.Join(a.runtime, name+".pass")
-		migrateBasenameCredential(a.runtime, name, h.path, named)
+		cred := a.credentialPath(h)
+		if err := os.MkdirAll(filepath.Dir(cred), 0o755); err != nil {
+			return die("cannot create %s", filepath.Dir(cred))
+		}
+		migrateBasenameCredential(filepath.Dir(cred), name, h.path, named)
 		if err := writeCredential(cred); err != nil {
 			return die("cannot write %s: %v", cred, err)
 		}
@@ -208,12 +211,16 @@ func writeCredential(path string) error {
 }
 
 // Reservation one home's account may use, in Mb. The machine-wide budget the merged
-// config carries is one of these per account, because a server whose global cap is
-// smaller than the sum of its account reservations refuses to start JetStream
-// ("insufficient storage resources available", 10047).
+// config carries covers one of these per account in the accounts file plus headroom
+// for the next home, because a server whose global cap is smaller than the sum of its
+// account reservations refuses to start JetStream ("insufficient memory resources",
+// 10028, or "insufficient storage resources available", 10047). See jetstreamLimits.
 const (
 	accountMemStore  = 64
 	accountFileStore = 512
+	// limitsHeadroom is the number of accounts' worth of budget kept above what the
+	// accounts file reserves, so adding one home does not need a server restart to fit.
+	limitsHeadroom = 1
 )
 
 // machineHomes: this home plus every sibling home that has a state directory, which
@@ -272,19 +279,49 @@ func captureStdout(run func() int) string {
 	return text
 }
 
-// account prints this home's account name, which is also its user and the middle of
-// its jg.<name>.> prefix, then its credentials file, so a client connects as itself.
-func (a *app) account() int {
+// myAccount is the ONE place a client learns who it is on the server: this home's
+// account name and the credentials file the accounts block was written from. The
+// server's block (accounts), `account`, the stream client, the sidecar login and the
+// shell key-value library (bin/jg-kv-lib.sh asks `account`) all come through here, so a
+// rename of the account scheme cannot reach the server and miss a client again (the
+// 415 rename did exactly that: the server was named by home id, the clients by folder).
+func (a *app) myAccount() (name, cred string, err error) {
 	named, code := a.accountNames(nil)
 	if code != 0 {
-		return code
+		return "", "", fmt.Errorf("account names are ambiguous")
 	}
 	me := resolveHome(a.home)
 	for _, h := range named {
 		if h.path == me {
-			fmt.Printf("%s\t%s\n", h.name, filepath.Join(a.runtime, h.name+".pass"))
-			return 0
+			return h.name, a.credentialPath(h), nil
 		}
 	}
-	return die("no account for %s", me)
+	return "", "", fmt.Errorf("no account for %s", me)
+}
+
+// credentialPath is where one home's password lives: in that home's own state
+// directory, so the home's client and the machine's one accounts file read the same
+// file whichever home generated the server config. This home uses its resolved
+// runtime directory; a sibling home with a state directory uses its own; a home with
+// none here (a registered Squad Lead elsewhere) falls back to this home's.
+func (a *app) credentialPath(h busHome) string {
+	file := h.name + ".pass"
+	if h.path == resolveHome(a.home) {
+		return filepath.Join(a.runtime, file)
+	}
+	if st, err := os.Stat(filepath.Join(h.path, "state")); err == nil && st.IsDir() {
+		return filepath.Join(h.path, "state", "bus", file)
+	}
+	return filepath.Join(a.runtime, file)
+}
+
+// account prints this home's account name, which is also its user and the middle of
+// its jg.<name>.> prefix, then its credentials file, so a client connects as itself.
+func (a *app) account() int {
+	name, cred, err := a.myAccount()
+	if err != nil {
+		return die("%v", err)
+	}
+	fmt.Printf("%s\t%s\n", name, cred)
+	return 0
 }

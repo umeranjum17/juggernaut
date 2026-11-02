@@ -69,6 +69,10 @@
 //	         absolute path), never its folder name. `accounts [home...]` prints the
 //	         server block for these homes, Main and every data/squad_leads.md entry;
 //	         two homes on one account name are refused with a line naming both.
+//	check-limits <config>
+//	         Exit 1, naming the shortfall, when a server config's global JetStream caps
+//	         are below what its accounts reserve. `unit` runs the same check on the
+//	         config it writes and refuses to write one the server could not start with.
 //	ensure   Start the server when it is not listening and create the stream, then say
 //	         one line. What a bootstrap step and docs/bus-service.md run.
 //	unit     Print the systemd user service a home installs once for one part: nats
@@ -101,7 +105,7 @@
 //	jg-bus publish <kind> <key> <text> [--link <url>]
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus stream | serve | ensure | unit [nats|dapr|ntfy|deliver] | install-service | deliver [--once] | stop | status | bootstrap
+//	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|dapr|ntfy|deliver] | install-service | deliver [--once] | stop | status | bootstrap
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
 // JG_CAPTAIN_CHANNEL.
@@ -164,6 +168,8 @@ func run(args []string) int {
 		return a.accounts(rest)
 	case "account":
 		return a.account()
+	case "check-limits":
+		return a.checkLimitsCommand(rest)
 	case "ensure":
 		return a.ensure()
 	case "stop":

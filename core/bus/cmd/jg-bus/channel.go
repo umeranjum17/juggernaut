@@ -359,7 +359,7 @@ func (a *app) buildUnit(part string) (string, error) {
 			return "", fmt.Errorf("cannot write %s: %v", accounts, err)
 		}
 		conf := filepath.Join(a.runtime, "bus.conf")
-		text, err := a.machineConfig(len(homes))
+		text, err := a.machineConfig()
 		if err != nil {
 			return "", err
 		}

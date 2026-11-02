@@ -25,10 +25,13 @@ func (a *app) natsCommand(url string, rest ...string) *exec.Cmd {
 }
 
 // credentials: this home's account name and the password the machine's accounts file
-// carries for it, from the credentials file bin/jg-bus.sh accounts writes beside it.
+// carries for it, from the one resolver the server's block also uses (myAccount).
 func (a *app) credentials() (string, string, bool) {
-	name := homeAccount(filepath.Base(a.home))
-	data, err := os.ReadFile(filepath.Join(a.runtime, name+".pass"))
+	name, cred, err := a.myAccount()
+	if err != nil {
+		return "", "", false
+	}
+	data, err := os.ReadFile(cred)
 	if err != nil {
 		return "", "", false
 	}
@@ -40,9 +43,11 @@ func (a *app) credentials() (string, string, bool) {
 }
 
 // machineConfig renders the machine's one server config: the base config in force
-// with a JetStream budget sized for this many accounts, plus the accounts file. It is
-// a single file with no includes, which is what `unit` runs.
-func (a *app) machineConfig(homes int) (string, error) {
+// with a JetStream budget sized for the accounts the accounts file actually carries,
+// plus the accounts file. It is a single file with no includes, which is what `unit`
+// runs. It refuses, with the shortfall named, to return a config whose global caps
+// sit below what its accounts reserve: that server would never start JetStream.
+func (a *app) machineConfig() (string, error) {
 	base := readFileString(a.busFile("nats.conf"))
 	if strings.TrimSpace(base) == "" {
 		return "", fmt.Errorf("no server config at %s", a.busFile("nats.conf"))
@@ -53,23 +58,134 @@ func (a *app) machineConfig(homes int) (string, error) {
 	}
 	header := "# Written by bin/jg-bus.sh unit: the server config in force plus this machine's\n" +
 		"# accounts, in one file. Regenerated on every run; edit the sources, not this.\n"
-	return header + withStoreCaps(base, homes) + "\n" + accounts, nil
+	config := header + withStoreCaps(base, countReservations(accounts)) + "\n" + accounts
+	if err := checkLimits(config); err != nil {
+		return "", err
+	}
+	return config, nil
+}
+
+// jetstreamLimits is the machine-wide JetStream budget, in Mb, for <accounts> accounts
+// that each reserve accountMemStore and accountFileStore: one reservation per account
+// plus limitsHeadroom more.
+func jetstreamLimits(accounts int) (memMb, fileMb int) {
+	if accounts < 0 {
+		accounts = 0
+	}
+	n := accounts + limitsHeadroom
+	return accountMemStore * n, accountFileStore * n
+}
+
+// jsReservation matches one account's JetStream reservation in the accounts block.
+var jsReservation = regexp.MustCompile(`jetstream:\s*\{\s*max_mem:\s*(\d+\s*\w+)\s*,\s*max_file:\s*(\d+\s*\w+)\s*\}`)
+
+// countReservations is the number of accounts in an accounts file that reserve
+// JetStream, which is what the machine budget is sized from: the file the server will
+// load, not a count taken somewhere else.
+func countReservations(accounts string) int {
+	return len(jsReservation.FindAllString(accounts, -1))
+}
+
+// parseMb reads a NATS size such as 64Mb, 1Gb or 512MB into Mb.
+func parseMb(raw string) (int, bool) {
+	m := regexp.MustCompile(`^(\d+)\s*([KkMmGgTt])[Bb]?$`).FindStringSubmatch(strings.TrimSpace(raw))
+	if m == nil {
+		return 0, false
+	}
+	var n int
+	if _, err := fmt.Sscanf(m[1], "%d", &n); err != nil {
+		return 0, false
+	}
+	switch strings.ToUpper(m[2]) {
+	case "K":
+		return n / 1024, true
+	case "M":
+		return n, true
+	case "G":
+		return n * 1024, true
+	}
+	return n * 1024 * 1024, true
+}
+
+// checkLimits refuses a server config whose global JetStream caps are below the sum of
+// its accounts' reservations, or that has no caps or no accounts to size against. It
+// reads the finished text, so it also catches a base config the cap rewrite did not
+// reach. `jg-bus check-limits <config>` runs it on any file.
+func checkLimits(config string) error {
+	var needMem, needFile, accounts int
+	for _, m := range jsReservation.FindAllStringSubmatch(config, -1) {
+		mem, okM := parseMb(m[1])
+		file, okF := parseMb(m[2])
+		if !okM || !okF {
+			return fmt.Errorf("bus: refusing the server config: an account reserves %q / %q, which is not a size", m[1], m[2])
+		}
+		needMem, needFile, accounts = needMem+mem, needFile+file, accounts+1
+	}
+	if accounts == 0 {
+		return fmt.Errorf("bus: refusing the server config: it has no account that reserves JetStream")
+	}
+	haveMem, haveFile, err := globalCaps(config)
+	if err != nil {
+		return err
+	}
+	if haveMem < needMem || haveFile < needFile {
+		return fmt.Errorf("bus: refusing the server config: %d accounts reserve %dMb memory and %dMb storage, but the server caps are %dMb and %dMb; the server would not start JetStream (insufficient resources, 10028/10047)",
+			accounts, needMem, needFile, haveMem, haveFile)
+	}
+	return nil
+}
+
+// globalCaps reads max_mem_store and max_file_store of the config's jetstream block.
+func globalCaps(config string) (memMb, fileMb int, err error) {
+	loc := jetstreamBlock.FindStringIndex(config)
+	if loc == nil {
+		return 0, 0, fmt.Errorf("bus: refusing the server config: it has no jetstream block")
+	}
+	block := config[loc[0]:loc[1]]
+	read := func(key string) (int, error) {
+		m := regexp.MustCompile(`(?m)^[ \t]*` + key + `[ \t]*[:=]?[ \t]*(\S+)`).FindStringSubmatch(block)
+		if m == nil {
+			return 0, fmt.Errorf("bus: refusing the server config: its jetstream block has no %s", key)
+		}
+		mb, ok := parseMb(m[1])
+		if !ok {
+			return 0, fmt.Errorf("bus: refusing the server config: %s %q is not a size", key, m[1])
+		}
+		return mb, nil
+	}
+	if memMb, err = read("max_mem_store"); err != nil {
+		return 0, 0, err
+	}
+	fileMb, err = read("max_file_store")
+	return memMb, fileMb, err
+}
+
+// checkLimitsCommand: `check-limits <config>` exits 1 naming the shortfall.
+func (a *app) checkLimitsCommand(args []string) int {
+	if len(args) != 1 {
+		return die("usage: jg-bus check-limits <server-config>")
+	}
+	raw, err := os.ReadFile(args[0])
+	if err != nil {
+		return die("cannot read %s: %v", args[0], err)
+	}
+	if err := checkLimits(string(raw)); err != nil {
+		return die("%v", err)
+	}
+	say("limits: ok, the caps in %s cover every account", args[0])
+	return 0
 }
 
 // jetstreamBlock is the JetStream stanza of a server config.
-var jetstreamBlock = regexp.MustCompile(`(?s)jetstream[ \t]*\{.*?\}`)
+var jetstreamBlock = regexp.MustCompile(`(?s)jetstream[ \t]*[:=]?[ \t]*\{.*?\}`)
 
-// withStoreCaps sizes the config's machine-wide JetStream budget for <homes> accounts,
-// keeping every other key the base wrote (store_dir above all). A global cap below the
-// sum of the account reservations makes the server refuse JetStream outright with
-// "insufficient storage resources available" (10047), which is what a hard-coded
-// 256Mb/64Mb did beside six accounts reserving 512Mb/64Mb each.
-func withStoreCaps(base string, homes int) string {
-	if homes < 1 {
-		homes = 1
-	}
-	mem := fmt.Sprintf("max_mem_store: %dMb", accountMemStore*homes)
-	file := fmt.Sprintf("max_file_store: %dMb", accountFileStore*homes)
+// withStoreCaps sets the config's machine-wide JetStream budget for <accounts>
+// accounts (jetstreamLimits), keeping every other key the base wrote (store_dir above
+// all).
+func withStoreCaps(base string, accounts int) string {
+	memMb, fileMb := jetstreamLimits(accounts)
+	mem := fmt.Sprintf("max_mem_store: %dMb", memMb)
+	file := fmt.Sprintf("max_file_store: %dMb", fileMb)
 	loc := jetstreamBlock.FindStringIndex(base)
 	if loc == nil {
 		return base + fmt.Sprintf("\njetstream {\n  store_dir: \"./jetstream\"\n  %s\n  %s\n}\n", mem, file)
@@ -140,12 +256,16 @@ func (a *app) installService() int {
 	if !haveUserManager() {
 		return a.ensure()
 	}
+	name := unitName()
+	// The server loads its accounts once, so a config that gained or lost an account
+	// needs a restart to take effect; an unchanged one never restarts the shared bus.
+	confBefore := readFileString(filepath.Join(a.runtime, "bus.conf"))
 	text, err := a.buildUnit("nats")
 	if err != nil {
 		say("bus: cannot start, %v", err)
 		return 0
 	}
-	name := unitName()
+	confChanged := readFileString(filepath.Join(a.runtime, "bus.conf")) != confBefore
 	path, ok := unitPath(name)
 	if !ok {
 		say("bus: cannot start, no home directory for the systemd user unit")
@@ -167,9 +287,16 @@ func (a *app) installService() int {
 		}
 		installed = true
 	}
+	wasActive := exec.Command("systemctl", "--user", "is-active", "--quiet", name).Run() == nil
 	if out, err := exec.Command("systemctl", "--user", "enable", "--now", name).CombinedOutput(); err != nil {
 		say("bus: cannot start %s: %s", name, detail(string(out)))
 		return 0
+	}
+	if wasActive && confChanged {
+		if out, err := exec.Command("systemctl", "--user", "restart", name).CombinedOutput(); err != nil {
+			say("bus: cannot restart %s for its new accounts: %s", name, detail(string(out)))
+			return 0
+		}
 	}
 	if exec.Command("systemctl", "--user", "is-active", "--quiet", name).Run() != nil {
 		say("bus: %s did not stay active; see: systemctl --user status %s", name, name)
@@ -290,12 +417,11 @@ func (a *app) ensureStream() error {
 	return cmd.Run()
 }
 
-// natsAuth is the client login for this home's account when the machine's accounts file
-// exists (the unit's server refuses an empty user), and nothing for a bare server.
+// natsAuth is the client login for this home's account when its credentials exist (the
+// unit's server refuses an empty user), and nothing for a bare server.
 func (a *app) natsAuth() []string {
-	name := homeAccount(filepath.Base(a.home))
-	pass := strings.TrimSpace(readFileString(filepath.Join(a.runtime, name+".pass")))
-	if pass == "" {
+	name, pass, ok := a.credentials()
+	if !ok {
 		return nil
 	}
 	return []string{"--user", name, "--password", pass}
