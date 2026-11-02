@@ -1312,19 +1312,22 @@ test_pi_tui_mode_probe_is_safe_for_old_and_new_pi() {
 }
 
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
-  local rec id out status
+  local rec id out status core_go
   id=profile-pi-signed-missing-z8c
   rec=$(make_spawn_case profile-pi-signed-missing pi-signed "$id")
   read_case_record "$rec"
   rm -f "$FAKEBIN_DIR/pi-signed"
   : > "$LAUNCH_LOG"
+  # The restricted PATH below has no Go on it, and the spawn now reads its arguments through the Go
+  # core before it looks for the executable, so the core is built with the toolchain found here.
+  core_go=$(command -v go)
 
   out=$(JG_ROOT_OVERRIDE='' JG_HOME="$HOME_DIR" \
     JG_STATE_OVERRIDE="$HOME_DIR/state" JG_DATA_OVERRIDE="$HOME_DIR/data" \
     JG_PROJECTS_OVERRIDE="$HOME_DIR/projects" JG_CONFIG_OVERRIDE="$HOME_DIR/config" \
     JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
     JG_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
-    JG_SPAWN_CORE_GO="$(command -v go)" \
+    JG_SPAWN_CORE_GO="$core_go" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1)
   status=$?
   expect_code 1 "$status" "a missing pi-signed executable should refuse the spawn"
