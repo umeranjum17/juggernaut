@@ -1221,7 +1221,8 @@ The worker account pool (`config/account-pool` and `relaunch --account`) is owne
 The optional local, gitignored `config/lane-target` holds one positive integer: the number of open lanes this home keeps working while ready backlog work exists.
 It is primary-authoritative inherited configuration, so one value in the main home reaches every Squad Lead home through [`jg_config_inherit_items`](../bin/jg-config-inherit-lib.sh).
 
-An open lane is a `state/<task>.meta` whose `kind` is `ship` or `scout`; a Squad Lead endpoint's own meta is not a lane of that home.
+An open lane is a `state/<task>.meta` whose `kind` is `ship` or `scout` and whose last status line is not `paused`, `blocked`, `needs-decision`, `done` or `failed`; a Squad Lead endpoint's own meta is not a lane of that home.
+A lane parked on a held PR or a merge freeze is therefore not open, and a freeze never counts as a reason to leave a free lane idle.
 
 In every home, primary or Squad Lead, a scan whose home sits below the floor with `jg-tasks-axi.sh ready` work raises one check wake naming the open and target counts and the first ready ids, re-raised while the condition holds every `JG_READY_WORK_RESURFACE_SECS` (1800 by default), and at once when `bin/jg-teardown.sh` or `bin/jg-pr-check.sh` frees a project place and stamps `state/.capacity-freed`, because that is what makes an already-surfaced set startable.
 Ready intake uses the base heartbeat interval independently of idle-heartbeat backoff and runs before an away heartbeat can end the cycle; held and future-dated work stays excluded by the backlog's ready query.
