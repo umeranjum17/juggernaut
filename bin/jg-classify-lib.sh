@@ -267,695 +267,150 @@ status_paused_until() {  # <status-line> -> epoch on stdout
   _jg_classify_go paused-until "${1-}"
 }
 
-# --- optional event emission time -------------------------------------------
-# New writers may append "[at=<epoch>]" before the first colon, alongside key
-# and corr tags in any order. Epoch is UTC Unix seconds: canonical unsigned
-# decimal, at most 12 digits (bounded for safe shell arithmetic). For example:
-#   resolved [key=api-shape] [at=1788576000]: answered: use REST
-# No colons appear inside this field, so existing verb/key/note readers retain
-# their grammar. Missing, malformed, or duplicate time fields mean UNKNOWN time;
-# never infer emission time from file mtime, a wake, or observation time. Relays
-# preserve source tags and leave legacy source events unstamped. Time describes
-# event history only and must never decide current state or decision closure.
-# This parser owns that grammar; every reader below is a thin adapter over it,
-# so no second spelling of "well-formed" can drift against this one.
-# Internals carry a reserved prefix: bash locals are dynamically scoped, so a
-# plain name here would shadow the caller's out-var of the same name.
+# --- status-line grammar and the keyed-decision fold --------------------------
+#
+# The optional "[at=<epoch>]" emission stamp, the verb, note and "[key=<slug>]" readers, the
+# reserved decision-key namespaces and the fold that turns an append-only status stream into the
+# decisions still open are owned by the Go command (core/classify/cmd/jg-classify/decide.go);
+# its header is the one statement of that grammar. These functions keep the names the other
+# libraries call and forward each one. A reader that took an <out-var> still assigns it, so a
+# caller's own variable names stay free of this library's.
+
+# Assign <out-var> from the command's output (trailing newlines dropped), keeping its status.
+_jg_classify_into() {  # <out-var> <command> [args]
+  local __jg_into_val __jg_into_rc
+  __jg_into_val=$(_jg_classify_go "${@:2}")
+  __jg_into_rc=$?
+  printf -v "$1" '%s' "$__jg_into_val"
+  return "$__jg_into_rc"
+}
+
+# Print the command's output, or assign it to <out-var> when one is named.
+_jg_classify_print_or_into() {  # <out-var-or-empty> <command> [args]
+  if [ -n "$1" ]; then _jg_classify_into "$1" "${@:2}"; else _jg_classify_go "${@:2}"; fi
+}
+
 _jg_status_at_epoch() {  # <status-line> <out-var> -> 0 and the epoch when known
-  local __jg_at_head __jg_at_value __jg_at_rest
-  printf -v "$2" '%s' ''
-  case "$1" in *:*) __jg_at_head=${1%%:*} ;; *) return 1 ;; esac
-  case "$__jg_at_head" in *\[at=*\]*) ;; *) return 1 ;; esac
-  __jg_at_rest=${__jg_at_head#*\[at=}
-  __jg_at_value=${__jg_at_rest%%\]*}
-  case "${__jg_at_rest#*\]}" in *\[at=*) return 1 ;; esac
-  case "$__jg_at_value" in ''|*[!0-9]*|0[0-9]*) return 1 ;; esac
-  [ "${#__jg_at_value}" -le 12 ] || return 1
-  printf -v "$2" '%s' "$__jg_at_value"
+  _jg_classify_into "$2" at-epoch "$1"
 }
 
 status_line_at_epoch() {  # <status-line> -> epoch; nonzero when unknown
-  local epoch
-  _jg_status_at_epoch "$1" epoch || return 1
-  printf '%s' "$epoch"
+  _jg_classify_go at-epoch "$1"
 }
 
-# Stamp only a newly emitted event. Preserve an existing tag, even malformed,
-# and preserve the event itself if the clock cannot be read. Never use this to
-# timestamp a copied historical line.
+# Stamp only a newly emitted event; never use this to timestamp a copied historical line.
 status_stamp_line() {  # <new-status-line> -> line (without newline)
-  local head epoch
-  case "$1" in
-    *:*) head=${1%%:*} ;;
-    *) printf '%s' "$1"; return 0 ;;
-  esac
-  case "$head" in *\[at=*) printf '%s' "$1"; return 0 ;; esac
-  if epoch=$(date +%s); then
-    printf '%s [at=%s]:%s' "$head" "$epoch" "${1#*:}"
-  else
-    printf '%s' "$1"
-  fi
+  _jg_classify_go stamp-line "$1"
 }
 
-# Characters status_stamp_line would insert into a line it stamps: the space,
-# the "[at=" and "]" delimiters, and the clock's own digit width. A writer that
-# caps a status line BEFORE the append stamps it must subtract this from its
-# cap, or the bytes actually appended overrun the cap that writer enforces and
-# every capped rendering downstream loses that much real note text. Zero when
-# the clock cannot be read, because then nothing is stamped either.
+# Characters status_stamp_line would insert into a line it stamps, so a writer that caps a line
+# before the append stamps it can subtract them.
 status_stamp_width() {  # -> characters a stamp adds to a line
-  local epoch tag
-  epoch=$(date +%s) || { printf 0; return 0; }
-  case "$epoch" in ''|*[!0-9]*) printf 0; return 0 ;; esac
-  tag=" [at=$epoch]"
-  printf '%s' "${#tag}"
+  _jg_classify_go stamp-width
 }
 
-# Strip the one well-formed time tag _jg_status_at_epoch accepts, for readers
-# that need a stamped line as the exact bytes it carried before stamping:
-# retry-dedup identity here, and the pending-reply escalation match in
-# bin/jg-pending-reply-lib.sh, which compares against its own literal spellings.
-# Every other [at=...] byte run - malformed, duplicate, or outside the canonical
-# bounds - is ordinary line bytes here, never a time tag, so a retry of it stays
-# a distinct event. A reader that instead asks where the HEAD ends owns a more
-# tolerant rule in _jg_status_unstamped below and must route through that one;
-# do not route such a reader through this one. It reads the grammar from that
-# single parser rather than a second spelling of it, and a sweep that normalizes
-# a line at a time never pays a fork for the match it prepares.
+# The line without the one well-formed time tag, the identity a retry is compared by.
 _jg_status_untimed() {  # <status-line> <out-var> -> line without a time tag
-  local __jg_untimed_epoch __jg_untimed_head __jg_untimed_tag __jg_untimed_before
-  if _jg_status_at_epoch "$1" __jg_untimed_epoch; then
-    __jg_untimed_head=${1%%:*}
-    __jg_untimed_tag="[at=$__jg_untimed_epoch]"
-    __jg_untimed_before=${__jg_untimed_head%%"$__jg_untimed_tag"*}
-    printf -v "$2" '%s%s:%s' "${__jg_untimed_before% }" \
-      "${__jg_untimed_head#*"$__jg_untimed_tag"}" "${1#*:}"
-    return 0
-  fi
-  printf -v "$2" '%s' "$1"
+  _jg_classify_into "$2" untimed "$1"
 }
 
-# Strip every time-tag-shaped run a worker could have written as the stamp,
-# however malformed its value. This is the shared head-boundary rule for every
-# reader that asks where a line's head ends rather than what its stamp means:
-# captain-relevance, the event scan, and the note, key, and decision-fold
-# readers. A tag is metadata a worker appended, so it must never decide whether
-# a terminal event reaches its supervisor, which note or key that event carries,
-# or whether a decision opens or closes - not when the worker left the brief's
-# <epoch> placeholder unsubstituted, and not when they wrote a readable time
-# whose colons swallow the head/note separator.
-# A run is the stamp only while nothing before it holds a colon; once one does,
-# the head has ended and every later [at=...] is note text the override may
-# legitimately match on, so scanning stops there. The caller's own bytes are
-# untouched: this writes a throwaway copy used for matching only.
-_jg_status_unstamped() {  # <status-line> <out-var> -> line with its stamp removed
-  local __jg_unstamped_rest=$1 __jg_unstamped_keep='' __jg_unstamped_before
-  while :; do
-    case "$__jg_unstamped_rest" in *\[at=*\]*) ;; *) break ;; esac
-    __jg_unstamped_before=${__jg_unstamped_rest%%\[at=*}
-    case "$__jg_unstamped_before" in *:*) break ;; esac
-    __jg_unstamped_keep=$__jg_unstamped_keep${__jg_unstamped_before% }
-    __jg_unstamped_rest=${__jg_unstamped_rest#*\[at=}
-    __jg_unstamped_rest=${__jg_unstamped_rest#*\]}
-  done
-  printf -v "$2" '%s' "$__jg_unstamped_keep$__jg_unstamped_rest"
-}
-
-# Retry deduplication ignores only a well-formed optional numeric time tag;
-# all other bytes, including correlation metadata, still identify the event.
-# Both sides normalize through _jg_status_untimed, so a stamped retry of an
-# already-recorded event can never read as a new one.
-# A match stays recorded for the life of the file, whatever follows it: a
-# later resolved line for the same key does not make the line new again, so a
-# caller that re-reads an unchanged source after an operator resolve (the
-# continuity break in bin/jg-procevent-remote-reply.sh, which does not advance
-# its cursor) appends nothing. A caller that owns evidence of a new episode
-# decides that itself, as bin/jg-pending-reply-lib.sh's escalation does.
+# 0 when the file already holds <new-status-line>, ignoring a well-formed time tag on either side.
 status_event_recorded() {  # <status-file> <new-status-line>
-  local wanted line untimed
-  [ -f "$1" ] || return 1
-  _jg_status_untimed "$2" wanted
-  while IFS= read -r line || [ -n "$line" ]; do
-    _jg_status_untimed "$line" untimed
-    [ "$untimed" != "$wanted" ] || return 0
-  done < "$1"
-  return 1
+  _jg_classify_go event-recorded "$1" "$2"
 }
 
-# --- durable keyed decisions ------------------------------------------------
-#
-# The status stream is an append-only EVENT log. Reading it last-event-wins
-# (last_status_line above) cannot represent "an earlier decision is still open
-# after a later, unrelated event": a subsequent done/paused/working line silently
-# masks a still-open needs-decision. status_open_decisions is the ONE authoritative
-# statement of the status-fold contract that fixes this - a needs-decision/blocked
-# line OPENS a keyed decision, and an explicit resolution or a verified
-# captain-held backlog transfer referencing that key CLOSES it.
-# Ship/scout terminal declarations supersede stale log decisions; a squad_lead's
-# terminal event may describe other work and cannot close an unrelated decision.
-# Who WRITES the closing line is owned elsewhere: the answering juggernaut closes
-# at answer time through jg-send's --resolve-key (bin/jg-send.sh header), and a
-# worker self-closes only a blocker that cleared without an answer (bin/jg-brief.sh
-# rule 6), so closure never depends on a busy worker's discipline.
-#
-# Decision key grammar (backward-compatible with the existing "<verb>: <note>"
-# format): an OPTIONAL "[key=<slug>]" token names the decision. Its documented
-# position sits between the verb and the colon, and a complete token at the
-# head of the note is accepted as an EQUIVALENT position, because that
-# misplaced-colon shape is common real worker output whose stated key must
-# never silently collapse into the shared "default" bucket (issue #2109):
-#   needs-decision [key=api-shape]: <summary>
-#   needs-decision: [key=api-shape] <summary>
-#   resolved       [key=api-shape]: <how it was decided>
-# Both positions state the same key and yield the same note (a consumed
-# note-head token is key metadata, stripped from the note); when both positions
-# carry a token, the documented before-colon one wins and the note-head token
-# stays note text. A token deeper inside the note is prose, never a stated key,
-# so a summary merely MENTIONING "[key=x]" cannot open or close that decision.
-# A line with no token in either position uses the key "default", preserving
-# the historical one-open-decision-per-task behavior (a bare "resolved:" closes
-# "default"). A stated key whose slug fails the charset below is rejected (the
-# folds skip the line), never rewritten to "default".
-# The parsers are pure reads of a single line. Status metadata may contain any
-# number of "[name=value]" tags before the colon, in any order, so verb parsing
-# ends at the first tag rather than special-casing "[key=...]".
-#
-# Correlation tokens. That bracket rule already covers every BRACKETED tag,
-# including the "[corr=<16 hex>]" form bin/jg-squad-lead-report.sh writes. It
-# does not cover the UNBRACKETED token that bin/jg-pending-reply-lib.sh writes
-# (jg_pending_reply_corr_token), which a squad_lead answering a marked request
-# echoes on its parent status line ahead of the key tag (bin/jg-brief.sh), so a
-# real transition routinely arrives as
-#   needs-decision corr=<16 hex> [key=texte-du-mur]: <summary>
-#   resolved       corr=<16 hex> [key=texte-du-mur]: <how it was decided>
-# and a recovery turn can leave two such tokens on one line. All of those must
-# read as the bare verb, in BOTH directions: a verb parse that keeps the token
-# glued on matches no arm of _jg_decision_fold_line, so the opener never opens
-# and the closer never closes, and a captain decision goes silently missing.
-# Recognition starts only AFTER the retained leading verb: a token-first line
-# keeps that token, so its following word cannot impersonate a transition and
-# close a decision the captain is owed.
-#
-# The token grammar is OWNED by bin/jg-pending-reply-lib.sh
-# (jg_pending_reply_corr_token, JG_PENDING_REPLY_CORR_RE). That library sources
-# this one, so it cannot be sourced back here; the pattern below is a deliberate
-# second statement of the SHAPE alone, and tests/jg-classify-corr-token.test.sh
-# pins the two together through the real writers so they cannot drift.
-#
-# Recognition is deliberately narrow: EXACTLY the token that writer emits, whole
-# word, and nothing else. An arbitrary "<name>=<value>" token is NOT skipped.
-# Skipping unknown tokens would be the permissive road - it would let any
-# free-text word carrying an equals sign ("resolved x=1 [key=k]: ...") reduce to
-# a bare verb and impersonate a transition, which is the takeover the strict
-# parse and _jg_decision_key_transition_allowed exist to prevent. Recognising
-# only what a juggernaut library actually writes costs one more line here each
-# time a real new token shape is introduced, and that is the intended trade: a
-# new shape is a deliberate, reviewed edit rather than a silent widening. A line
-# whose token is malformed, wrong-length, or merely mentioned in prose keeps its
-# extra words and therefore stays a non-transition, exactly as before.
-#
-# The 16 hex classes are written out literally rather than built from a
-# variable, the same way bin/jg-squad-lead-report.sh validates the id it is
-# handed: a variable holding a glob is only re-read as a pattern under some
-# shells' expansion rules, and a safety parse must not turn on that.
-#
-# 0 if <word> is, in whole, an unbracketed correlation token this fleet's own
-# tooling writes. The bracketed form never reaches here: the tag rule above has
-# already ended the verb parse at its opening bracket.
-_jg_classify_is_corr_token() {  # <word>
-  case "$1" in
-    corr=[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])
-      return 0
-      ;;
-  esac
-  return 1
-}
-
-# Printed, or assigned to <out-var> when one is given, so a per-line caller on a
-# hot path can take the verb without forking a command substitution. Under bash's
-# dynamic scope an <out-var> named like one of this function's own locals (v, out,
-# word) would be assigned here and lost, so callers pass a distinct name.
+# The leading verb word, printed or assigned to <out-var>; correlation tokens are not part of it.
 status_line_verb() {  # <status-line> [<out-var>] -> leading verb word
-  local v=${1%%:*} out='' word
-  v=${v%%\[*}
-  v=${v#"${v%%[![:space:]]*}"}
-  v=${v%"${v##*[![:space:]]}"}
-  # Fast path, and the whole no-regression guarantee: a prefix that cannot
-  # contain a correlation token is returned byte-for-byte as before, so every
-  # line without one keeps its exact historical verb, spacing included.
-  case "$v" in
-    *corr=*)
-      # Retain the first word, then drop only recognised tokens from the remaining
-      # whole words. Anything unrecognised stays, so prose still matches no verb.
-      word=${v%%[[:space:]]*}
-      out=$word
-      v=${v#"$word"}
-      v=${v#"${v%%[![:space:]]*}"}
-      while [ -n "$v" ]; do
-        word=${v%%[[:space:]]*}
-        v=${v#"$word"}
-        v=${v#"${v%%[![:space:]]*}"}
-        _jg_classify_is_corr_token "$word" && continue
-        out="$out $word"
-      done
-      ;;
-    *) out=$v ;;
-  esac
-  if [ "$#" -gt 1 ]; then printf -v "$2" '%s' "$out"; else printf '%s' "$out"; fi
+  _jg_classify_print_or_into "${2-}" verb "$1"
 }
-# 0 when a complete "[key=...]" token sits in the documented position before
-# the line's first colon (or anywhere on a line that has no colon at all).
+
 _jg_key_before_colon() {  # <status-line>
-  case "${1%%:*}" in
-    *\[key=*\]*) return 0 ;;
-    *) return 1 ;;
-  esac
+  _jg_classify_go key-before-colon "$1"
 }
-# Raw slug of a complete "[key=<slug>]" token at the head of the note (the
-# first thing after the line's first colon, ignoring whitespace). Fails when
-# the line has no colon or no complete token there; slug charset validity is
-# the caller's check via _jg_decision_slug_ok, exactly as for the before-colon
-# position. With <out-var> the slug is assigned instead of printed, so a
-# per-line caller on a hot path folds without forking a command substitution;
-# the caller's name must differ from this function's own locals below.
+
 _jg_key_at_note_head() {  # <status-line> [<out-var>] -> raw slug
-  local __jg_head_rest __jg_head_slug
-  if [ "$#" -gt 1 ]; then printf -v "$2" '%s' ''; fi
-  case "$1" in
-    *:*) __jg_head_rest=${1#*:} ;;
-    *) return 1 ;;
-  esac
-  __jg_head_rest=${__jg_head_rest#"${__jg_head_rest%%[![:space:]]*}"}
-  case "$__jg_head_rest" in
-    \[key=*\]*) __jg_head_rest=${__jg_head_rest#\[key=}; __jg_head_slug=${__jg_head_rest%%\]*} ;;
-    *) return 1 ;;
-  esac
-  if [ "$#" -gt 1 ]; then printf -v "$2" '%s' "$__jg_head_slug"; else printf '%s' "$__jg_head_slug"; fi
+  [ "$#" -le 1 ] || printf -v "$2" '%s' ''
+  _jg_classify_print_or_into "${2-}" key-at-note-head "$1"
 }
-# 0 when a stated key slug is well-formed: nonempty, A-Za-z0-9._- only.
-_jg_decision_slug_ok() {  # <slug>
-  case "$1" in
-    ''|*[!A-Za-z0-9._-]*) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-# Both readers below locate the head/note separator on an unstamped copy, so a
-# worker-written stamp cannot move it: a readable time like [at=10:30] carries
-# colons that would otherwise end the head mid-tag and hand the caller a note
-# and a key sliced out of the timestamp. The line's own bytes are never altered.
-# With <out-var> the note is assigned instead of printed, so a per-line caller
-# on a hot path folds without forking a command substitution; the caller's name
-# must differ from this function's own locals below.
+
 status_line_note() {  # <status-line> [<out-var>] -> text after the first colon, trimmed
-  local __jg_note_n __jg_note_k __jg_note_unstamped
-  _jg_status_unstamped "$1" __jg_note_unstamped
-  case "$__jg_note_unstamped" in
-    *:*) __jg_note_n=${__jg_note_unstamped#*:}; __jg_note_n=${__jg_note_n#"${__jg_note_n%%[![:space:]]*}"} ;;
-    *)
-      if [ "$#" -gt 1 ]; then printf -v "$2" '%s' "$__jg_note_unstamped"; else printf '%s' "$__jg_note_unstamped"; fi
-      return 0
-      ;;
-  esac
-  # A note-head token that states this line's key (no before-colon token, valid
-  # slug) is key metadata, not note text: strip it so both stated-key positions
-  # yield the same note.
-  if ! _jg_key_before_colon "$__jg_note_unstamped" && _jg_key_at_note_head "$__jg_note_unstamped" __jg_note_k \
-    && _jg_decision_slug_ok "$__jg_note_k"; then
-    __jg_note_n=${__jg_note_n#"[key=$__jg_note_k]"}
-    __jg_note_n=${__jg_note_n#"${__jg_note_n%%[![:space:]]*}"}
-  fi
-  if [ "$#" -gt 1 ]; then printf -v "$2" '%s' "$__jg_note_n"; else printf '%s' "$__jg_note_n"; fi
+  _jg_classify_print_or_into "${2-}" note "$1"
 }
+
 _jg_decision_key() {  # <status-line> [<keyless> [<out-var>]] -> key slug, or <keyless> (default "default") when no token
-  local __jg_key_k __jg_key_unstamped
-  if [ "$#" -gt 2 ]; then printf -v "$3" '%s' ''; fi
-  _jg_status_unstamped "$1" __jg_key_unstamped
-  if _jg_key_before_colon "$__jg_key_unstamped"; then
-    __jg_key_k=${__jg_key_unstamped%%:*}
-    __jg_key_k=${__jg_key_k#*\[key=}
-    __jg_key_k=${__jg_key_k%%\]*}
-  elif _jg_key_at_note_head "$__jg_key_unstamped" __jg_key_k; then
-    :
-  else
-    if [ "$#" -gt 2 ]; then printf -v "$3" '%s' "${2-default}"; else printf '%s' "${2-default}"; fi
-    return 0
-  fi
-  _jg_decision_slug_ok "$__jg_key_k" || return 1
-  if [ "$#" -gt 2 ]; then printf -v "$3" '%s' "$__jg_key_k"; else printf '%s' "$__jg_key_k"; fi
+  local __jg_key_val
+  [ "$#" -le 2 ] || printf -v "$3" '%s' ''
+  __jg_key_val=$(_jg_classify_go key "${2-default}" "$1") || return $?
+  if [ "$#" -gt 2 ]; then printf -v "$3" '%s' "$__jg_key_val"; else printf '%s' "$__jg_key_val"; fi
 }
-# Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
-# Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
-# With <out-var> the set is assigned instead of printed, so a per-line caller
-# on a hot path folds without forking a command substitution; the caller's name
-# must differ from this function's own locals below.
-_jg_decision_drop() {  # <open-set> <key> [<out-var>]
-  local __jg_drop_set=$1 __jg_drop_key=$2 __jg_drop_line __jg_drop_out=''
-  while IFS= read -r __jg_drop_line; do
-    [ -n "$__jg_drop_line" ] || continue
-    case "$__jg_drop_line" in
-      "$__jg_drop_key"$'\t'*) : ;;
-      *) __jg_drop_out="${__jg_drop_out}${__jg_drop_line}"$'\n' ;;
-    esac
-  done <<EOF
-$__jg_drop_set
-EOF
-  # The <out-var> form assigns exactly what `var=$(...drop...)` would capture:
-  # command substitution strips every trailing newline, so strip them here too.
-  # A kept record always ends its line, so at most one can be present, but strip
-  # them all all the same so the shape can never depend on the caller.
-  if [ "$#" -gt 2 ]; then
-    while [ -n "$__jg_drop_out" ]; do
-      case "$__jg_drop_out" in *$'\n') __jg_drop_out=${__jg_drop_out%$'\n'} ;; *) break ;; esac
-    done
-    printf -v "$3" '%s' "$__jg_drop_out"
-  else
-    printf '%s' "$__jg_drop_out"
-  fi
+
+# Drop the record for <key> from a "<key>\t<verb>\t<note>" open set into <out-var>.
+_jg_decision_drop() {  # <open-set> <key> <out-var>
+  _jg_classify_into "$3" drop "$1" "$2"
 }
-# Fold ONE status line into an existing "<key>\t<verb>\t<note>\n"-per-line open
-# set, applying the same needs-decision/blocked-opens, resolved/captain-held-closes
-# rule status_open_decisions documents above. Pure text transform, no file I/O.
-# This is the ONE place the per-line open/resolved rule is written; both the
-# whole-file fold (status_open_decisions) and the incremental cursor-backed fold
-# (status_open_decisions_incremental) below call this instead of re-deriving the
-# rule, so the two consumption strategies can never drift apart on semantics.
-# The rule's helpers (note, key, drop, set-verb readers above) take an optional
-# <out-var> so those folds pay no fork per line; the rule itself takes one too.
-# Reserved decision-key namespaces, and the rule that makes them mean something.
-#
-# A key like `pending-reply-<id>` names a decision that one library raises and is
-# the only thing that ever closes it. Every writer reaches this same stream: a
-# local mate appends straight into it, and a remote mate's lines are mirrored
-# into it verbatim. So without a rule here, any writer could claim a reserved
-# key with an unrelated note, take the key over in this fold, and permanently
-# block the owner's close - leaving a decision nothing will ever resolve - or
-# clear the owner's decision with a bare resolution.
-#
-# The rule is deliberately generic, so this fold needs no knowledge of any
-# particular owner: a reserved key may only be opened or closed by a line whose
-# note speaks that namespace's own vocabulary, which its owner states by
-# beginning the note with a `<namespace>...:` token. A line failing that is not a
-# decision transition at all here and is folded as ordinary status. This is a
-# consumer-side rule on purpose - it protects local and remote writers
-# identically, and it can never fail a whole delta or wedge a stream the way a
-# writer-side rejection would.
+
+# Reserved decision-key namespaces: a key like `pending-reply-<id>` is raised and closed only by
+# the library that owns it, so the fold lets such a key move only on a note that begins with the
+# namespace's own `<namespace>...:` vocabulary.
 JG_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT='pending-reply- waiting-timer-'
 
-# 0 when <key> is not reserved, or is reserved and <note> speaks its vocabulary.
 _jg_decision_key_transition_allowed() {  # <key> <note>
-  local key=$1 note=$2 prefix
-  for prefix in ${JG_CLASSIFY_RESERVED_KEY_PREFIXES:-$JG_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT}; do
-    case "$key" in
-      "$prefix"*)
-        case "$note" in
-          "$prefix"*:*) return 0 ;;
-          *) return 1 ;;
-        esac
-        ;;
-    esac
-  done
-  return 0
+  _jg_classify_go transition-allowed "$1" "$2"
 }
 
 _jg_is_pending_reply_escalation() {  # <key> <note>
-  case "$1" in pending-reply-*) ;; *) return 1 ;; esac
-  case "$2" in
-    pending-reply-missed:*|pending-reply-delivery-unknown:*|pending-reply-recovery-delivery-failed:*|pending-reply-recovery-delivery-unknown:*) return 0 ;;
-    *) return 1 ;;
-  esac
+  _jg_classify_go pending-reply-escalation "$1" "$2"
 }
 
-_jg_status_kind() {
-  local meta=${1%.status}.meta kind=${2:-} line
-  if [ -z "$kind" ]; then
-    [ -f "$meta" ] && [ -r "$meta" ] && [ ! -L "$meta" ] || { printf unknown; return 0; }
-    while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in kind=*) kind=${line#kind=} ;; esac
-    done < "$meta"
-    kind=${kind:-ship}
-  fi
-  case "$kind" in ship|scout|squad_lead) printf '%s' "$kind" ;; *) printf unknown ;; esac
+_jg_status_kind() {  # <status-file> [<kind>] -> ship, scout, squad_lead or unknown
+  _jg_classify_go kind "$1" "${2:-}"
 }
 
-# Emit-out shared by _jg_decision_fold_line's return points: prints the
-# in-progress open set, or assigns it to the caller's <out-var> (the fold's 6th
-# argument, stashed in __jg_fold_outvar with its arity in __jg_fold_narg) when
-# one was given. A function so every return point shares one destination rule;
-# it reads the fold's locals through dynamic scope and declares no locals of
-# its own, so it can never shadow them. It returns 0; callers that must stop
-# the fold still add their own `return 0`, because a callee cannot return for
-# its caller.
-_jg_fold_return() {
-  if [ "$__jg_fold_narg" -gt 5 ]; then
-    # Same capture rule as _jg_decision_drop's <out-var> form: the old call
-    # sites read this function through `var=$(...)`, which strips every
-    # trailing newline, so the assigned set carries none. The printed form
-    # below keeps them, exactly as the old prints did for their capturers.
-    while [ -n "$__jg_fold_open" ]; do
-      case "$__jg_fold_open" in *$'\n') __jg_fold_open=${__jg_fold_open%$'\n'} ;; *) break ;; esac
-    done
-    printf -v "$__jg_fold_outvar" '%s' "$__jg_fold_open"
-  else
-    printf '%s' "$__jg_fold_open"
-  fi
-  return 0
+# Fold ONE status line into an open set (no file I/O), assigning the new set to <out-var>. The
+# whole-file fold, the cursor-backed incremental fold and the key reader all use this one rule.
+_jg_decision_fold_line() {  # <open-set> <status-line> <kind> <out-var>
+  _jg_classify_into "$4" fold-line "$1" "$2" "$3"
 }
 
-_jg_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb> <kind> [<out-var>]
-  local __jg_fold_open=$1 __jg_fold_line=$2 __jg_fold_resolve=$3 __jg_fold_held=$4 __jg_fold_kind=$5
-  local __jg_fold_unstamped __jg_fold_verb __jg_fold_key __jg_fold_note
-  local __jg_fold_narg=$# __jg_fold_outvar=${6:-}
-  # Both colon tests below ask where the head ends, the same question the note
-  # and key readers ask, so they read the same unstamped copy those readers do.
-  # A worker-written time tag must never decide whether a decision opens or
-  # closes: a readable [at=10:30] carries colons that would otherwise make bare
-  # prose look like a transition, or make a keyless line open a phantom
-  # decision no later line could close. The stored and surfaced bytes stay the
-  # caller's own.
-  _jg_status_unstamped "$__jg_fold_line" __jg_fold_unstamped
-  # Declaration guard. A transition's verb ends at a colon, or - in the colonless
-  # form _jg_decision_key still accepts below - at a complete "[key=...]" token.
-  # A line holding neither is continuation prose, a bare word, or blank, and can
-  # never move the set. A `case` glob answers that in one pattern match; the
-  # equivalent parameter expansion costs tens of milliseconds per line under bash
-  # 3.2's global bracket-class substitution, which is the whole per-line cost of
-  # both folds on a status log of ordinary width. Same verdict, bounded cost.
-  case "$__jg_fold_unstamped" in
-    *:*|*\[key=*\]*) ;;
-    *) { _jg_fold_return; return 0; } ;;
-  esac
-  status_line_verb "$__jg_fold_line" __jg_fold_verb
-  case "$__jg_fold_unstamped" in
-    *:*) case "$__jg_fold_verb:$__jg_fold_kind" in done:ship|done:scout|failed:ship|failed:scout) { __jg_fold_open=''; _jg_fold_return; return 0; } ;; esac ;;
-  esac
-  case "$__jg_fold_verb" in
-    needs-decision|blocked|"$__jg_fold_resolve"|"$__jg_fold_held") ;;
-    *) { _jg_fold_return; return 0; } ;;
-  esac
-  _jg_decision_key "$__jg_fold_line" default __jg_fold_key || { _jg_fold_return; return 0; }
-  status_line_note "$__jg_fold_line" __jg_fold_note
-  _jg_decision_key_transition_allowed "$__jg_fold_key" "$__jg_fold_note" || { _jg_fold_return; return 0; }
-  case "$__jg_fold_verb" in
-    needs-decision|blocked)
-      _jg_decision_drop "$__jg_fold_open" "$__jg_fold_key" __jg_fold_open
-      [ -n "$__jg_fold_open" ] && __jg_fold_open="${__jg_fold_open}"$'\n'
-      __jg_fold_open="${__jg_fold_open}${__jg_fold_key}"$'\t'"${__jg_fold_verb}"$'\t'"${__jg_fold_note}"$'\n'
-      ;;
-    "$__jg_fold_resolve"|"$__jg_fold_held")
-      _jg_decision_drop "$__jg_fold_open" "$__jg_fold_key" __jg_fold_open
-      [ -n "$__jg_fold_open" ] && __jg_fold_open="${__jg_fold_open}"$'\n'
-      ;;
-  esac
-  _jg_fold_return
-}
-
-# Fold the WHOLE status stream into the set of decisions still open. Prints one
-# TAB-separated "<key>\t<verb>\t<summary>" line per still-open decision, in
-# most-recently-opened-last order; prints nothing when none are open. Reads the
-# status file, plus its sibling `.meta` for the task kind the terminal rule needs
-# when the caller passes no <kind>; no globals beyond the optional
-# JG_CLASSIFY_RESOLVE_VERB override. This is the durable open-set the fleet
-# snapshot and any point-in-time consumer must use instead of trusting the last
-# status line.
-# The scan_open_decisions wrapper below enumerates a whole directory rather than
-# a single caller-chosen path, so a status file that is itself a symlink (e.g.
-# escaping the state directory) is rejected outright with a plain [ -L ] check
-# before any read - a cheap builtin, unlike jg_wake_latest_event's O_NOFOLLOW
-# subprocess read, which exists for that function's much narrower payload-driven
-# path resolution rather than this directory-local glob.
+# The decisions still open in a status file, one "<key>\t<verb>\t<summary>" per line with none
+# trailing, most recently opened last. Use this instead of trusting the last status line.
 status_open_decisions() {  # <status-file> [<kind>]
-  local f=$1 kind=${2:-} line resolve held open='' verb
-  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
-  kind=$(_jg_status_kind "$f" "$kind")
-  resolve=${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}
-  held=${JG_CLASSIFY_CAPTAIN_HELD_VERB:-$JG_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-  while IFS= read -r line || [ -n "$line" ]; do
-    status_line_verb "$line" verb
-    case "$verb" in
-      needs-decision|blocked|done|failed|"$resolve"|"$held")
-        _jg_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind" open
-        ;;
-    esac
-  done < "$f"
-  printf '%s' "$open"
+  _jg_classify_go open-decisions "$1" "${2:-}"
 }
 
-# Resolve the log's current declaration at one boundary for crew-state consumers.
-# Any decision the fold still holds open wins over unrelated events, and the
-# fold's most recently opened record supplies it; a standing declared wait, then
-# the latest recognized event, stands when nothing is open.
-# Actual run/pane evidence is still reconciled by jg-crew-state.sh.
+# The log's current declaration: the most recently opened decision, else a standing declared
+# wait, else the latest recognized event.
 status_current_line() {  # <status-file> <kind>
-  local open key verb note current=''
-  open=$(status_open_decisions "$1" "$2")
-  while IFS=$'\t' read -r key verb note; do
-    case "$verb" in ?*) current="$verb [key=$key]: $note" ;; esac
-  done <<EOF
-$open
-EOF
-  [ -n "$current" ] || current=$(status_declared_wait_line "$1")
-  [ -n "$current" ] || current=$(last_status_line "$1")
-  printf '%s\n' "$current"
+  _jg_classify_go current-line "$1" "${2-}"
 }
 
-# The subset of status_open_decisions the task raised about its own work: a
-# reserved-namespace key is raised by a supervisor library about the task (a
-# pending-reply escalation), a `remote-reply-continuity-` key is the parent's
-# own blocker about a broken remote reply mirror
-# (bin/jg-procevent-remote-reply.sh), and a `captain-hold-` key relays a child
-# decision a squad_lead escalated to the captain (bin/jg-captain-hold.sh) while
-# it keeps working, so the task is not waiting on any of them. Pending-reply
-# recovery and a fire-and-forget retry ring consult this set and leave a task
-# alone while it is non-empty.
+# The open decisions the task raised about its own work: not a supervisor library's reserved key,
+# the parent's remote-reply-continuity blocker, or a relayed captain-hold decision.
 status_own_open_decisions() {  # <status-file>
-  local line prefix
-  status_open_decisions "$1" | while IFS= read -r line || [ -n "$line" ]; do
-    for prefix in ${JG_CLASSIFY_RESERVED_KEY_PREFIXES:-$JG_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT} remote-reply-continuity- captain-hold-; do
-      case "$line" in "$prefix"*) continue 2 ;; esac
-    done
-    printf '%s\n' "$line"
-  done
+  _jg_classify_go own-open-decisions "$1"
 }
 
-# 0 when the fold above still holds at least one decision OPENED by
-# `needs-decision` - the status side's own record that a human was asked
-# something and has not answered. A `blocked` record is deliberately not this: a
-# blocker is an obstacle the crew reported, not an unanswered question, and a
-# different action clears it. Whole-file and cursor-free on purpose: this answers
-# a point-in-time question for a caller that holds no cursor and must not write
-# one, so it reads status_open_decisions rather than the incremental fold.
-# An unreadable, missing or symlinked status file folds to nothing and answers 1,
-# which is the safe answer for every caller: no evidence, no exception.
-# Given a <run-id>, only a decision whose key is exactly `nm-<run-id>-<step>` for
-# a non-empty step counts - the key shape the brief mandates for a gate
-# escalation - so an unrelated question left open earlier in the same task is
-# never read as juggernaut being told about THIS run's gate.
+# 0 when a decision opened by `needs-decision` is still open; with a <run-id>, only one keyed
+# `nm-<run-id>-<step>`. Whole-file and cursor-free, and no evidence answers 1.
 status_has_open_needs_decision() {  # <status-file> [<run-id>]
-  local run=${2-} open line key verb
-  open=$(status_open_decisions "$1")
-  [ -n "$open" ] || return 1
-  if [ $# -ge 2 ] && [ -z "$run" ]; then return 1; fi
-  while IFS= read -r line; do
-    key=${line%%$'\t'*}
-    verb=${line#*$'\t'}; verb=${verb%%$'\t'*}
-    [ "$verb" = needs-decision ] || continue
-    [ $# -ge 2 ] || return 0
-    case "$key" in "nm-$run-"?*) return 0 ;; esac
-  done <<EOF
-$open
-EOF
-  return 1
+  _jg_classify_go has-open-needs-decision "$@"
 }
 
-# 0 when <key> has a record in a folded "<key>\t<verb>\t<note>" open set.
 _jg_open_set_has() {  # <open-set> <key>
-  case "$1" in
-    "$2"$'\t'*|*$'\n'"$2"$'\t'*) return 0 ;;
-    *) return 1 ;;
-  esac
+  _jg_classify_go open-set-has "$1" "$2"
 }
 
-# The verb stored for <key> in a folded open set (empty when it has no record).
-# With <out-var> the verb is assigned instead of printed; same hot-path rule
-# as the other fold helpers.
 _jg_open_set_verb() {  # <open-set> <key> [<out-var>]
-  local __jg_setverb_line
-  while IFS= read -r __jg_setverb_line; do
-    case "$__jg_setverb_line" in
-      "$2"$'\t'*) __jg_setverb_line=${__jg_setverb_line#*$'\t'}; __jg_setverb_line=${__jg_setverb_line%%$'\t'*}
-        if [ "$#" -gt 2 ]; then printf -v "$3" '%s' "$__jg_setverb_line"; else printf '%s' "$__jg_setverb_line"; fi
-        return 0 ;;
-    esac
-  done <<EOF
-$1
-EOF
-  if [ "$#" -gt 2 ]; then printf -v "$3" '%s' ''; fi
-  return 0
+  _jg_classify_print_or_into "${3-}" open-set-verb "$1" "$2"
 }
 
-# The verb that last moved <key> in a status stream, which is what tells a
-# consumer HOW the status side currently reads that key. Prints the opening verb
-# (needs-decision or blocked) while the key is still open, the closing verb
-# (resolved, or the captain-held durable-transfer verb) once it is closed, and
-# nothing at all when no line in the stream ever stated a transition for it.
-#
-# The distinction between the two closing verbs is the whole point: a
-# `captain-held` close is the VERIFIED handoff to a durable captain-held task
-# (jg-captain-hold.sh complete writes it only after verifying that task), so the
-# structured row staying open afterwards is correct. A `resolved` close claims
-# the question is settled outright, so a structured row still open behind it is a
-# contradiction between the two records - see jg-captain-hold.sh's `diverged`.
-#
-# Semantics are not re-derived here: every candidate line goes through the same
-# _jg_decision_fold_line rule the two folds use, and the reported verb is read
-# off the transitions that rule produces.
-#
-# One `grep` pre-selects those candidates so the bash fold below costs the log's
-# TRANSITIONS rather than its whole lifetime length - status files are only ever
-# appended to, and this runs per open task on every supervision presentation.
-# The pre-select deliberately over-includes: it takes any line whose leading word
-# could be a fold verb (including the ship/scout terminals, which carry no key
-# token), and the fold alone decides which of them really moves the set. A line
-# whose leading word is followed by neither whitespace, a colon, nor a bracket
-# tag cannot be a transition, because the fold's own declaration guard rejects it.
+# The verb that last moved <key> in a status stream: the opening verb while it is open, the
+# closing verb (resolved, or the verified captain-held transfer) once it is closed, nothing when no
+# line ever stated a transition for it. A captain-held close means the durable task holds the
+# question; a resolved close claims it settled, so a structured row still open behind it is a
+# contradiction (bin/jg-captain-hold.sh's `diverged`).
 status_key_closing_verb() {  # <status-file> <key>
-  local f=$1 want=$2 line resolve held open='' was verb='' kind event candidates
-  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
-  [ -n "$want" ] || return 0
-  kind=$(_jg_status_kind "$f")
-  resolve=${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}
-  held=${JG_CLASSIFY_CAPTAIN_HELD_VERB:-$JG_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-  candidates=$(grep -E \
-    "^[[:space:]]*(needs-decision|blocked|done|failed|$resolve|$held)[[:space:]:[]" \
-    "$f") || [ "$?" -eq 1 ] || candidates=$(cat "$f")
-  while IFS= read -r line || [ -n "$line" ]; do
-    status_line_verb "$line" event
-    case "$event:$kind" in
-      done:ship|done:scout|failed:ship|failed:scout) ;;
-      *)
-        case "$event" in
-          needs-decision|blocked|"$resolve"|"$held") ;;
-          *) continue ;;
-        esac
-        if [ "$want" != default ]; then
-          case "$line" in *"[key=$want]"*) ;; *) continue ;; esac
-        fi
-        ;;
-    esac
-    was=0
-    _jg_open_set_has "$open" "$want" && was=1
-    _jg_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind" open
-    if [ "$was" = 1 ] && ! _jg_open_set_has "$open" "$want"; then
-      verb=$event
-    fi
-  done <<EOF
-$candidates
-EOF
-  if _jg_open_set_has "$open" "$want"; then
-    _jg_open_set_verb "$open" "$want"
-    return 0
-  fi
-  printf '%s' "$verb"
+  _jg_classify_go key-closing-verb "$1" "$2"
 }
 
 # The status file inside <state> that is this home's outbound parent channel
@@ -1255,11 +710,7 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
     # than re-reading the whole file, without relying on timing or source text.
     [ -n "${JG_OPEN_DECISIONS_READ_PROBE:-}" ] \
       && printf '%s\t%s\n' "$f" "$chunk_size" >> "$JG_OPEN_DECISIONS_READ_PROBE"
-    resolve=${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}
-    held=${JG_CLASSIFY_CAPTAIN_HELD_VERB:-$JG_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-    while IFS= read -r line || [ -n "$line" ]; do
-      _jg_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind" open
-    done < "$chunk_file"
+    open=$(_jg_classify_go fold-stream "$open" "$kind" < "$chunk_file")
     rm -f "$chunk_file"
     offset=$size
     cursor_dirty=1
@@ -2240,7 +1691,7 @@ _jg_status_open_decision_origins() {  # <status-file> [<kind>]
   held=${JG_CLASSIFY_CAPTAIN_HELD_VERB:-$JG_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
   while IFS= read -r line || [ -n "$line" ]; do
     number=$((number + 1))
-    _jg_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind" after
+    _jg_decision_fold_line "$open" "$line" "$kind" after
     [ -n "$after" ] || origins=''
     _jg_decision_key "$line" default key || { open=$after; continue; }
     status_line_verb "$line" verb
