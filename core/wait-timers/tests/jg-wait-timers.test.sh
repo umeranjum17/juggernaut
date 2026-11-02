@@ -27,6 +27,15 @@ if command -v "${JG_CLASSIFY_GO:-go}" >/dev/null 2>&1; then
   chmod 0755 "$TMP_ROOT/slow-go"
   export JG_CLASSIFY_GO="$TMP_ROOT/slow-go"
 fi
+# The window inventory (bin/jg-watch-core.sh) is a second Go command, built on first use into
+# a cache under HOME, and every cycle here has a fresh HOME. Build it once too, point every
+# cycle at it, and give it the same slow Go so a cold build fails here and not on a runner.
+if command -v "${JG_WATCH_CORE_GO:-go}" >/dev/null 2>&1; then
+  JG_WATCH_CORE_BIN="$TMP_ROOT/watch-core/jg-watch-core" "$ROOT/bin/jg-watch-core.sh" >/dev/null 2>&1 || :
+  [ -x "$TMP_ROOT/watch-core/jg-watch-core" ] || { echo "wait-timers journey: the window inventory did not build" >&2; exit 1; }
+  export JG_WATCH_CORE_BIN="$TMP_ROOT/watch-core/jg-watch-core"
+  export JG_WATCH_CORE_GO="$TMP_ROOT/slow-go"
+fi
 WATCH="$ROOT/bin/jg-watch.sh"
 DRAIN="$ROOT/bin/jg-wake-drain.sh"
 
