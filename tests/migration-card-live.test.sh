@@ -43,6 +43,15 @@ printf 'set nats-url %s\n' "$URL" >"$HOME_DIR/config/captain-channel"
 printf '{"schema":2,"items":[]}\n' >"$BOARD"
 printf 'branch=release/c-2\ntarget=100000\nboard=%s\ncard=migration-card\nbaseline-deleted=0\nbaseline-added=0\nfiler=test\nproject=Test\n' \
   "$BOARD" >"$HOME_DIR/config/migration-card"
+# The open pull request list: number, url, title, the way the probe's own gh read prints it.
+printf '%s\t%s\t%s\n' 7 https://example.test/o/r/pull/7 'Run ntfy as part of the stack' \
+  8 https://example.test/o/r/pull/8 'juggernaut-axi: lanes and wakes' >"$T/open-prs.tsv"
+cat >"$T/bin/gh" <<'F'
+#!/usr/bin/env bash
+case "$*" in 'pr list'*) cat "$OPEN_PRS" ;; *) exit 1 ;; esac
+F
+chmod +x "$T/bin/gh"
+export OPEN_PRS=$T/open-prs.tsv
 cat >"$T/bin/sign-off-axi" <<'F'
 #!/usr/bin/env bash
 echo "$*" >> "$FAKE_LOG"
@@ -55,10 +64,11 @@ card_page() { find "$T/board/reports" -mindepth 1 -maxdepth 1 -type d 2>/dev/nul
 card_count() { find "$T/board/reports" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l; }
 
 "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the probe did not run"
-assert_equals 15 "$(wc -l <"$ROWS")" "every part the captain named has a row"
+assert_equals 19 "$(wc -l <"$ROWS")" "every part the captain named has a row"
 for part in 'NATS server' 'per-home accounts' 'wake queue' 'task inbox' leases 'captain channel/ntfy' \
   Dapr 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' deletions 'rules JSON' \
-  'juggernaut-axi' 'add-on removal'; do
+  'juggernaut-axi' 'add-on removal' 'Rego policy' 'pending-replies cleanup' 'lead-wake cleanup' \
+  'line counts from git'; do
   case $(awk -F'\t' -v p="$part" '$1 == p { print $2 }' "$ROWS") in
     live | pending | absent) ;;
     *) fail "part '$part' has no measured state, so the card would leave it blank" ;;
@@ -78,15 +88,38 @@ assert_contains "$(row 'wake queue')" "pending|the server carries no JG_WAKE str
 "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the second probe did not run"
 assert_contains "$(row 'wake queue')" "live|the bus is the store, 0 records on JG_WAKE" "a wake stream on the server makes the queue live"
 
+assert_contains "$(row 'captain channel/ntfy')" "pending|" "ntfy that nothing answers is pending, never live"
+assert_contains "$(awk -F'\t' '$1 == "captain channel/ntfy" { print $4 }' "$ROWS")" "https://example.test/o/r/pull/7" \
+  "a pending part names its open pull request"
+assert_contains "$(awk -F'\t' '$1 == "juggernaut-axi" { print $4 }' "$ROWS")" "https://example.test/o/r/pull/8" \
+  "a part not installed names its open pull request"
+assert_equals "-" "$(awk -F'\t' '$1 == "wake queue" { print $4 }' "$ROWS")" "a running part names no pull request"
+assert_contains "$(awk -F'\t' '$1 == "Go daemons" { print $4 }' "$ROWS")" "no open pull request" \
+  "a pending part with no open pull request says so"
+assert_contains "$(row 'NATS server')" "messages held in" "the bus part carries its traffic count"
+assert_contains "$(row 'wake queue')" " records on JG_WAKE" "the wake queue part carries its record count"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$T/bin/gh"
+"$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the probe without gh did not run"
+assert_contains "$(awk -F'\t' '$1 == "captain channel/ntfy" { print $4 }' "$ROWS")" "https://example.test/o/r/pull/7" \
+  "a failed pull request read keeps the last list instead of blanking every link"
+
 key=$("$ROOT/bin/jg-migration-card.sh" live)
 page=$(card_page)
 [ -n "$page" ] || fail "the card was not posted"
 assert_contains "$key" "migration-card-" "live posts a card and names its key"
 assert_contains "$(cat "$page/index.html")" "<h2>What runs on this machine</h2>" "the card carries the live section"
 assert_contains "$(cat "$page/index.html")" "<td>NATS server</td><td>runs here</td>" "the card says a running part runs here"
-assert_contains "$(cat "$page/index.html")" "<td>Dapr</td><td>not installed</td>" "a part this machine lacks says it is not installed"
+assert_contains "$(cat "$page/index.html")" "<td>juggernaut-axi</td><td>not installed</td>" "a part this machine lacks says it is not installed"
 assert_contains "$(cat "$page/index.html")" "Each line is a probe of this machine" "the card says where the lines come from"
 assert_contains "$(cat "$page/index.html")" "<meta name=viewport" "the page keeps its viewport tag"
+assert_contains "$(cat "$page/index.html")" '<a href="https://example.test/o/r/pull/7">#7</a>' "the card links the pull request that finishes a pending part"
+assert_contains "$(cat "$page/index.html")" "parts run on this machine" "the card opens with the one-line answer"
+
+link=$("$ROOT/bin/jg-migration-live.sh" --link 2>/dev/null) || fail "--link found no card"
+assert_contains "$link" "file://$T/board/reports/" "without a board address the link is the card page"
+printf 'https://board.example.test/?token=abc#decide/x\n' >"$HOME_DIR/state/signoff-board.url"
+assert_equals "https://board.example.test/?token=abc#reports/$(sed -n 's/^card=//p' "$HOME_DIR/config/migration-card")" \
+  "$("$ROOT/bin/jg-migration-live.sh" --link)" "with a board address the link is the board deep link of the current card"
 
 # The cadence: the watcher runs this shim every cycle it is due, and it prints
 # nothing, so a refresh costs no wake and no model turn.

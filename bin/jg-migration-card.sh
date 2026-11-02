@@ -5,7 +5,8 @@
 #        jg-migration-card.sh live [--quiet] | arm | disarm
 #
 # Opt-in through config/migration-card (key=value lines): branch (the release
-# branch watched), target (lines to delete), board (sign-off board.json, else
+# branch watched), target (lines to delete), baseline-ref (the git ref the line
+# count is taken from), board (sign-off board.json, else
 # $JG_PROOF_BOARD), card (the key of the card already posted), baseline-deleted
 # and baseline-added (totals before the first recorded merge), filer.
 # bin/jg-merge-outcome-lib.sh calls `merge` after every confirmed merge.
@@ -29,8 +30,9 @@
 #        bin/jg-migration-live.sh and post the card again, so the page answers
 #        "what is live now and what is pending" from measurement: runs here,
 #        pending, or not installed, with the pid, port, real message or traffic
-#        count behind it. Every card post probes first, so a merge card is
-#        current too. `live --quiet` is the cadence form: it refreshes the
+#        count behind it, or the open pull request that finishes a pending
+#        part (`bin/jg-migration-live.sh --link` prints the link). Every card
+#        post probes first, so a merge card is current too. `live --quiet` is the cadence form: it refreshes the
 #        posted card's page in place, posts a fresh card only when a part
 #        changed, and prints nothing, so the watcher spends no wake and no model
 #        turn on it. `arm` writes state/migration-card.check.sh, binds it with
@@ -60,14 +62,27 @@ mkdir -p "$DIR" && touch "$LEDGER"
 totals() { awk -F'\t' -v d="$(cfg baseline-deleted)" -v a="$(cfg baseline-added)" \
   '{d+=$2;a+=$3} END{print d+0, a+0, NR}' "$LEDGER" 2>/dev/null || echo "0 0 0"; }
 
-# live_rows: the probed parts as table rows, in the words a reader needs.
+# live_rows: the probed parts as table rows, in the words a reader needs. The last
+# column is the open pull request that finishes a pending part, as a link.
 live_rows() {
-  local part state detail word
-  [ -r "$DIR/live.tsv" ] || { printf '<tr><td colspan=3>No part is probed yet. Run bin/jg-migration-card.sh live.</td></tr>\n'; return 0; }
-  while IFS=$'\t' read -r part state detail; do
+  local part state detail pr word cell url
+  [ -r "$DIR/live.tsv" ] || { printf '<tr><td colspan=4>No part is probed yet. Run bin/jg-migration-card.sh live.</td></tr>\n'; return 0; }
+  while IFS=$'\t' read -r part state detail pr; do
     case $state in live) word='runs here' ;; pending) word='pending' ;; *) word='not installed' ;; esac
-    printf '<tr><td>%s</td><td>%s</td><td>%s</td></tr>\n' "$part" "$word" "$detail"
+    cell=''
+    for url in $pr; do
+      case $url in https://*) cell="$cell<a href=\"$url\">#${url##*/}</a> " ;; esac
+    done
+    [ -n "$cell" ] || cell=$([ "$pr" = - ] && printf '' || printf '%s' "$pr")
+    printf '<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>\n' "$part" "$word" "$detail" "$cell"
   done < "$DIR/live.tsv"
+}
+
+# live_summary: the one-line answer to "what is live now".
+live_summary() {
+  [ -r "$DIR/live.tsv" ] || return 0
+  awk -F'\t' '{ n++; if ($2 == "live") l++; else if ($2 == "pending") p++; else a++ }
+    END { printf "%d of %d parts run on this machine, %d are pending, %d are not installed.", l, n, p, a }' "$DIR/live.tsv"
 }
 
 # probed_at: when the parts were last measured, or a plain line when never.
@@ -88,14 +103,16 @@ write_page() {  # <dir> <del> <add> <step> <n>
 <!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1"><title>Migration: where it stands</title>
 <style>:root{color-scheme:light dark}body{background:Canvas;color:CanvasText;font:16px/1.5 system-ui,sans-serif;margin:0 auto;padding:24px;max-width:700px}
 .sub,summary{color:GrayText}button{background:Canvas;color:CanvasText;border:1px solid GrayText;padding:8px 16px}svg{max-width:100%;height:auto}
-table{border-collapse:collapse}td,th{text-align:left;padding:2px 10px 2px 0;vertical-align:top;border-bottom:1px solid GrayText}
+table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:2px 10px 2px 0;vertical-align:top;border-bottom:1px solid GrayText}td:nth-child(2){white-space:nowrap}td:nth-child(3){overflow-wrap:anywhere}
+@media (max-width:560px){body{padding:16px}table,tbody,tr,td{display:block}tr:first-child{display:none}tr{padding:8px 0;border-bottom:1px solid GrayText}td{border:0;padding:0;overflow-wrap:anywhere}td:first-child{font-weight:600}}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark light}body{background:Canvas;color:CanvasText}}</style>
 <h1>Migration: $(fmt "$del") of $(fmt "$TARGET") lines deleted</h1>
 <p>$(fmt "$left") lines are left to delete. $(fmt "$5") merges are recorded on this card since the baseline.</p>
 $(cat "$dir/preview.svg")
 <h2>What runs on this machine</h2>
-<p class=sub>Each line is a probe of this machine, last run $(probed_at).</p>
-<table><tr><th>Part</th><th>State</th><th>Measured</th></tr>
+<p>$(live_summary)</p>
+<p class=sub>Each line is a probe of this machine, last run $(probed_at). A part that is not running names the open pull request that finishes it.</p>
+<table><tr><th>Part</th><th>State</th><th>Measured</th><th>Pull request</th></tr>
 $(live_rows)
 </table>
 <p class=sub>Latest change: $(printf '%s' "$4" | cut -c1-150). It removed and added the lines shown under Tap through.</p>
