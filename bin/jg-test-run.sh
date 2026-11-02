@@ -793,6 +793,7 @@ tests/jg-watch-handoff.test.sh 11741
 tests/jg-watcher-lock.test.sh 1059731
 tests/jg-worker-account-live-e2e.test.sh 70
 tests/juggernaut-axi-serve.test.sh 1635
+tests/juggernaut-axi.test.sh 5700
 tests/migration-card.test.sh 1443
 tests/migration-card-live.test.sh 5200
 tests/merge-card-title.test.sh 701
