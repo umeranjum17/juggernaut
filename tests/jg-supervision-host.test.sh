@@ -978,6 +978,7 @@ test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   append_status "$home" 'PR ready' done
   wait_until 250 handled_at_least "$home" 1 || fail "settled: the wake was not handled: $(cat "$home/state/.supervision-host.log")"
   assert_grep '"verdict":"captain"' "$home/state/branch-outcomes.jsonl" "fixture: the stub did not report a captain outcome"
+  wait_until 100 grep -q '	deferred	rows=1' "$home/state/.supervision-host.log" || fail "the host never recorded the deferral: $(cat "$home/state/.supervision-host.log")"
   [ ! -s "$home/host.rc" ] || fail "a settled captain outcome woke main at once: $(cat "$home/host.out")"
   assert_re '^[0-9]+ 1$' "$home/state/.branch-outcome-deferred" "the deferral must record when it began and its newest row"
   assert_re '	deferred	rows=1' "$home/state/.supervision-host.log" "the ledger must record the deferral"
