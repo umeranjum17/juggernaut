@@ -46,7 +46,20 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the her
 # as a cross-session parent identity (tests/herdr-test-safety.sh).
 herdr_forget_inherited_pane
 
-fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
+# A failed scenario names the daemon's own record: the real-Herdr job keeps no state directory
+# after the run, so without this the daemon's reasons are lost with the lab.
+dump_daemon_diagnostics() {
+  local f
+  [ -n "${STATE_DIR:-}" ] || return 0
+  for f in daemon.err daemon.out .supervise-daemon.log submitted.log; do
+    [ -s "$STATE_DIR/$f" ] || continue
+    printf -- '--- %s (last 40 lines) ---\n' "$f" >&2
+    tail -n 40 -- "$STATE_DIR/$f" >&2
+  done
+  printf -- '--- state/bin ---\n' >&2
+  ls -l -- "$STATE_DIR/bin" >&2 2>&1 || true
+}
+fail() { printf 'not ok - %s\n' "$1" >&2; dump_daemon_diagnostics; cleanup_all; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 
 SESSION="jg-lab-afk-herdr-e2e-$$"
