@@ -734,6 +734,7 @@ tests/jg-merge-on-green.test.sh 900
 tests/jg-lint-root-memory.test.sh 4747
 tests/jg-mail.test.sh 21000
 tests/jg-merge-gate-lib.test.sh 83
+tests/jg-merge-gate-policy.test.sh 15000
 tests/jg-metrics-shadow-parity.test.sh 9744
 tests/jg-muse-signals-live-e2e.test.sh 61
 tests/jg-omp-primary-live-e2e.test.sh 58
@@ -1617,6 +1618,10 @@ families_for_changed_path() {
       printf '%s\n' "__unmapped__:$path"
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
+      ;;
+    policy/gate/*)
+      # The merge gate's rules and their data: the test that drives them through the real gate scripts.
+      printf '%s\n' "__script__:jg-merge-gate-policy.test.sh"
       ;;
     journeys/*)
       # A done-done journey is owned by the test that names it: a direct

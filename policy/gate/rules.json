@@ -1,0 +1,35 @@
+{
+  "rules": {
+    "checks_lint": {
+      "required_fields": [
+        "outcome",
+        "repro",
+        "proof",
+        "evidence"
+      ],
+      "size_guidance": 1000,
+      "size_refuse_mode": "refuse",
+      "bot_authors": [
+        "^(dependabot|renovate)(\\[bot\\])?$",
+        "^app/(dependabot|renovate)$"
+      ],
+      "proof_command_pattern": "[/`]|\\.\\w{2,4}\\b|\\b(npm|pnpm|yarn|npx|bash|sh|python3?|node|cargo|go|gradle|make|adb|xcrun|bin/)\\b",
+      "verify_skill_marker": "verify-",
+      "no_verify_skill_pattern": "(?i)no verify skill",
+      "repro_na_pattern": "(?i)^n/?a\\b",
+      "repro_debug_marker": "systematic-debugging",
+      "fix_title_pattern": "(?i)^(fix|bugfix|hotfix)\\b",
+      "not_proven_pattern": "(?i)^not proven\\s*:\\s*\\S",
+      "not_proven_keep": 120,
+      "evidence_name_pattern": "\\.\\w{1,10}$"
+    },
+    "lint_row": {
+      "pass_verdict": "pass",
+      "skipped_verdicts": [
+        "card"
+      ],
+      "no_value": "-",
+      "url_pattern": "^https?:"
+    }
+  }
+}
