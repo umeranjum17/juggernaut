@@ -1247,10 +1247,11 @@ FIELDS
   # Consumed by bin/jg-crew-state.sh passed_pr_detail.
   # shellcheck disable=SC2034
   JG_PR_RECORD_STATE=$state
-  # Consumed by bin/jg-crew-state.sh passed_pr_detail and bin/jg-teardown.sh.
+  # Consumed by bin/jg-crew-state.sh passed_pr_detail.
   # shellcheck disable=SC2034
   JG_PR_RECORD_MERGED=$merged
-  # Consumed by bin/jg-teardown.sh pr_is_merged.
+  # Consumed by bin/jg-dod-lib.sh's Forgejo live-head read. The shell teardown test
+  # that also read it is gone: core/teardown asks the forge for its own answer.
   # shellcheck disable=SC2034
   JG_PR_RECORD_HEAD=$head
 }
