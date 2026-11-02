@@ -64,6 +64,7 @@ jg_ci_scope_cheap_path() {
 jg_ci_scope_bus_path() {
   case $1 in
     core/bus/*|bin/jg-bus*.sh|bin/jg-wake-bus.sh|bin/jg-reply-bus.sh|install.sh) return 0 ;;
+    core/escalation-workflow/*|bin/jg-dapr-workflow.sh|tests/jg-dapr-workflow.test.sh) return 0 ;;
     bin/jg-bootstrap*|bin/fm-bootstrap*) return 0 ;;
     # The three suites the Bus service lane runs.
     tests/jg-bus-service.test.sh|tests/jg-bus-machine-service.test.sh|tests/jg-stack.test.sh|tests/jg-bus.test.sh) return 0 ;;
