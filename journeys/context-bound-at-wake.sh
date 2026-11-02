@@ -24,7 +24,7 @@ vault() { printf 'VAULT-%s-%s' "$1" "$(printf '%s' "$1" | md5sum | cut -c1-6)"; 
 
 ask() {  # <dir> <resume-flags> <prompt>
   # shellcheck disable=SC2086
-  (cd "$1" && timeout 300 claude -p --settings "$1/lab-settings.json" --model claude-haiku-5-5 --output-format json $2 "$3") 2>&1
+  (cd "$1" && timeout 300 claude -p --settings "$1/lab-settings.json" --model claude-haiku-5-5 --output-format json $2 "$3") 2>/dev/null
 }
 lab() {  # <name> <window or empty>: nine captain notes then one wake, in one session
   local dir=$T/$1 sid i body flags
