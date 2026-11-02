@@ -19,6 +19,9 @@
 #               only on a ship or scout lane; on a squad_lead lane the answered
 #               decision stayed open, so its wait-timer episode kept its source and
 #               the escalation ladder kept climbing.
+#
+# This is also the test that owns journeys/wake-batching.sh (the done-done journey
+# runs this file), so the changed-test map selects it for a change to that journey.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
