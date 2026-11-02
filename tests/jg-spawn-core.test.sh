@@ -103,6 +103,15 @@ check "an allow-list with a bad name is refused with 1" "$(rc "$core" launch-env
 check "a stripped credential is named and an allow-listed one is not" "$(env -i PATH="$PATH" JG_SPAWN_CORE_GO="${JG_SPAWN_CORE_GO:-go}" JG_STATE_OVERRIDE="$JG_STATE_OVERRIDE" JG_T_API_KEY=x JG_U_API_KEY=y "$core" launch-env-strip $'JG_U_API_KEY\n')" "unset JG_T_API_KEY; "
 check "a filtered launch forwards names by reference and ends in the quoted launch" "$(printf %s "it's" | "$core" launch-env-wrap FOO 1 | sed 's/.* COMPACT_ADVISER_DISABLE=1//')" " \${TRACEPARENT+\"TRACEPARENT=\$TRACEPARENT\"} /bin/sh -c 'it'\\''s'"
 
+# The launch templates: the verified command per adapter, with its placeholders, by kind.
+check "a claude ship worker is launched with the dialog tool off and the worker statement" "$("$core" launch-template claude ship | grep -o -e '--disallowedTools=AskUserQuestion' -e 'You are a task worker launched by Juggernaut' | wc -l)" 2
+check "a claude squad_lead gets neither" "$("$core" launch-template claude squad_lead | grep -c -e AskUserQuestion -e 'task worker')" 0
+check "a codex worker disables hooks and a codex squad_lead keeps them" "$("$core" launch-template codex scout | grep -c -e '--disable hooks')|$("$core" launch-template codex squad_lead | grep -c -e '--disable hooks')" "1|0"
+check "an opencode worker denies the question tool and a squad_lead keeps it" "$("$core" launch-template opencode ship | grep -cF 'question":"deny')|$("$core" launch-template opencode squad_lead | grep -cF 'question":"deny')" "1|0"
+check "pi and pi-signed share one template" "$("$core" launch-template pi ship)" "$("$core" launch-template pi-signed ship)"
+check "a name that is not a verified adapter prints nothing and exits 1" "$("$core" launch-template bogus ship)|$(rc "$core" launch-template bogus ship)" "|1"
+check "no kind means a ship" "$("$core" launch-template grok)" "$("$core" launch-template grok ship)"
+
 # A home whose bin/ is a symlink to a checkout (the session-start suite's fake root, a relocated home)
 # builds from the checkout the link points into, not from a core/ the link's parent lacks.
 mkdir -p "$lab/linked/root"

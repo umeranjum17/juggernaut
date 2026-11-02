@@ -36,7 +36,10 @@ a parity replay of the shell it deletes against the Go that replaces it.
    longer needs `jq` on the machine, and the strip lists its names sorted where the shell listed
    them in its variable table's order. One difference is known and left: `jq` reads the non-JSON
    literal `NaN` in `auth.json`, which opencode never writes, and the Go side does not.
-4. Launch templates per harness.
+4. Done. Launch templates per harness (`launch-template`): the verified launch command with its
+   placeholders for each of the fourteen adapters, by kind (a Claude, Codex, OpenCode or Pi
+   squad_lead differs from a ship or Recon worker). `bin/jg-spawn.sh` keeps the placeholder
+   substitution, which reads the task's own state.
 5. Worktree, endpoint and metadata effects: locks, treehouse leases, backend adapters, the task
    record, rollback.
 
@@ -77,6 +80,10 @@ against this command:
   finding the data directory; 7,429 allow-list files; 3,240 environments against allow-lists; and
   240 launch commands. Standard output and exit code are compared byte for byte, and for the strip
   the set of names (the shell's order is its variable table's).
+
+- **Launch templates:** `launch_template()` of the base commit against `launch-template` over the
+  fourteen adapters and 16 invalid names against ten kinds, 330 cases, stdout and exit code byte
+  for byte. The control, with the Codex hooks flag and the OpenCode question denial removed, fails.
 
 A control run with a corrupted Go side (the gerrit refusal removed) must fail the replay.
 `tests/jg-spawn-core.test.sh` keeps the interesting shapes as an end-to-end suite.
