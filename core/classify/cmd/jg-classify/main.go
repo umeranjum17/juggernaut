@@ -18,6 +18,10 @@
 //	jg-classify key-closing-verb <status-file> <key>   the verb that last moved a decision key
 //	jg-classify fold-line|drop|open-set-has|open-set-verb ...     one step of the decision fold
 //	jg-classify kind|event-recorded|transition-allowed|pending-reply-escalation|stamp-width ...
+//	jg-classify open-decisions-incremental <status-file> [<captured-end>]
+//	jg-classify scan-open-decisions[-incremental] <state> [<exclude-file>]
+//	jg-classify cursor-path|file-ident|file-size|file-mtime <file>
+//	jg-classify read-span <file> <start> <length>             bytes of a status-file span
 //
 // The tests answer by exit status: 0 yes, 1 no. Anything else (2) is a usage or read fault, so a
 // caller never reads a broken classifier as an answer. Overrides come from the environment:
@@ -48,6 +52,9 @@ func run(args []string, in *os.File, out, errw *os.File) int {
 	}
 	cmd, rest := args[0], args[1:]
 	if code, handled := decideCommand(cmd, rest, out); handled {
+		return code
+	}
+	if code, handled := cursorCommand(cmd, rest, out); handled {
 		return code
 	}
 	arg := ""
