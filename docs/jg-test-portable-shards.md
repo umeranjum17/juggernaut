@@ -130,7 +130,7 @@ No fast mode, path skips, or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the watcher-lock floor alone exceeds that objective.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
-The layout uses ten long-lived Linux jobs (six serial, two parallel, Herdr, two lint), plus short checks and macOS; the heavy ten run in `behavior.yml` and only the two lint partitions plus the short checks gate a pull request, so insufficient shared account capacity can still delay a merge's backstop.
+The layout uses eleven long-lived Linux jobs (seven serial, two parallel, Herdr, two lint), plus short checks and macOS; the heavy ten run in `behavior.yml` and only the two lint partitions plus the short checks gate a pull request, so insufficient shared account capacity can still delay a merge's backstop.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
 
