@@ -20,7 +20,7 @@ cat >"$WORK/bin/lfm" <<'EOF'
 [ "$2" = --help ] && exit 0
 out=${!#}
 mkdir -p "$out"
-printf '{"metrics":{"tokens_per_day":%s.4}}\n' "$(cat "$FAKE_LFM_DIR/per-day")" >"$out/tokens.json"
+printf '{"total":9000,"requests":30,"metrics":{"tokens_per_day":%s.4,"floor_tokens_median":50000.2,"ctx_over_200k_share":0.4}}\n' "$(cat "$FAKE_LFM_DIR/per-day")" >"$out/tokens.json"
 printf 'tokens report\n' >"$out/tokens.txt"
 EOF
 chmod 755 "$WORK/bin/lfm"
@@ -48,6 +48,13 @@ wait_for "$out_dir/$today/tokens.json" || fail "the background retro never lande
 wait_for_gone() { for _ in $(seq 50); do [ ! -e "$1" ] && return 0; sleep 0.1; done; return 1; }
 wait_for_gone "$out_dir/.$today.running" || fail "a finished retro must release its lock"
 pass "a missing day starts one background retro that lands a complete report"
+
+check >/dev/null
+[ "$(sed -n 2p "$out_dir/per-call.tsv" | cut -f1,4,5,6)" = "$(printf '%s\t300\t50000\t40' "$today")" ] || fail "per-call row wrong: $(cat "$out_dir/per-call.tsv")"
+check >/dev/null
+[ "$(wc -l <"$out_dir/per-call.tsv")" = 2 ] || fail "a day must add one per-call row only"
+JG_HOME="$home" "$ROOT/bin/jg-tokens-retro.sh" show | grep -q tokens_per_call || fail "show must print the per-call record"
+pass "each day records tokens per call once and show prints it"
 
 week_ago=$(date -u -d '7 days ago' +%F 2>/dev/null || date -u -v-7d +%F)
 mkdir -p "$out_dir/$week_ago"
