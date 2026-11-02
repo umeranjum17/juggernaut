@@ -1602,6 +1602,10 @@ families_for_changed_path() {
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
       ;;
+    policy/gate/*)
+      # The merge gate's rules and their data: the test that drives them through the real gate scripts.
+      printf '%s\n' "__script__:jg-merge-gate-policy.test.sh"
+      ;;
     journeys/*)
       # A done-done journey is owned by the test that names it: a direct
       # reference is per-script evidence, so select that script, not its family.
