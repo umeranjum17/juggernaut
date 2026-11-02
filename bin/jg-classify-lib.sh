@@ -435,321 +435,56 @@ status_scan_parent_channel_exclude() {  # <state>
   printf '%s\n' "$exclude"
 }
 
-# Fleet-wide wrapper around status_open_decisions: scans every task's status
-# log under <state> and prefixes each still-open decision with its owning task
-# id, so a per-wake or per-session surface can print the consolidated open set
-# without re-walking the fold itself. A thin directory scan only - the fold
-# above remains the ONE place the open/resolved semantics are decided. Prints
-# one "<task>\t<key>\t<verb>\t<note>" line per open decision, in glob (task id)
-# order; prints nothing when none are open.
+# Fleet-wide wrapper around status_open_decisions: scans every task's status log under <state>
+# and prefixes each still-open decision with its owning task id, so a per-wake or per-session
+# surface can print the consolidated open set without re-walking the fold. A thin directory walk
+# only - core/classify/cmd/jg-classify/cursor.go owns the fold and the cursor contract behind it.
 scan_open_decisions() {  # <state>
-  local state=$1 f task open line exclude
-  exclude=$(status_scan_parent_channel_exclude "$state")
-  for f in "$state"/*.status; do
-    [ -e "$f" ] || continue
-    [ "$f" = "$exclude" ] && continue
-    task=$(basename "$f"); task="${task%.status}"
-    open=$(status_open_decisions "$f") || continue
-    [ -n "$open" ] || continue
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      printf '%s\t%s\n' "$task" "$line"
-    done <<EOF
-$open
-EOF
-  done
-  return 0
+  _jg_classify_go scan-open-decisions "$1" "$(status_scan_parent_channel_exclude "$1")"
 }
 
 # --- incremental (cursor-backed) open-decisions fold ------------------------
-#
-# status_open_decisions above re-reads and re-folds a status file's ENTIRE
-# lifetime on every call, so its cost grows with total log size. A per-drain
-# fleet-wide scan using that whole-file function would pay that cost for every
-# task on every wake, which grows unbounded as tasks run longer and accumulate
-# status history. status_open_decisions_incremental and scan_open_decisions_incremental
-# below are the bounded-cost siblings used for that per-drain path: each call
-# reads only the bytes appended to a status file since its own last call (a
-# persisted per-file byte cursor) and folds just those new lines into a
-# persisted running open-set, via the exact same _jg_decision_fold_line rule
-# status_open_decisions uses - so the two strategies can never disagree on what
-# is open. Cost is bounded by NEW appends since the last drain, not by the
-# status file's total lifetime size.
-#
-# Correctness invariant (unchanged from the whole-file fold): cursor advancement,
-# age, and being buried under later appends never drop an open decision - the
-# persisted open-set carries every still-open key forward across calls regardless
-# of how much new unrelated log content has since been folded in. Only a line the
-# shared fold rule retires removes one.
-#
-# The cursor format is `version` (JG_OPEN_DECISIONS_FOLD_VERSION plus the task
-# kind, as `<n>:<kind>`), `offset`, `ident`, then the folded open set.
-# JG_OPEN_DECISIONS_FOLD_VERSION must be bumped whenever
-# _jg_decision_fold_line semantics change, so persisted state from an older
-# interpretation is discarded and rebuilt from byte 0; the kind suffix does the
-# same when a task kind changes, because kind changes the fold below.
-#
-# Cursor invalidation is deliberately minimal, matching how status files are
-# ACTUALLY used in this repo: every one is created once (`>`) and only ever
-# appended to (`>>`) - never replaced, renamed, or rewritten in place. So the
-# ways a cursor can go stale are a fold-version mismatch, a shrink (truncated),
-# or the file at this path being a different file than before
-# (replaced/rotated/recreated), which a changed device+inode makes an O(1) check
-# via a single `stat` call - no content hashing, no re-reading the consumed
-# prefix. Any signal falls back to a full re-fold of the whole current file from
-# byte 0 - byte for byte what status_open_decisions itself would compute - and
-# rewrites the cursor from that clean baseline. A same-inode, same-size,
-# in-place byte edit is NOT detected; that is a deliberately accepted gap
-# because no code path in this repo ever does that to a status file.
-#
-# The other real failure mode is OUR OWN read failing (a stat/wc/tail I/O
-# error), not a malformed writer: every such read here is checked, and on
-# failure this reports the already-trusted persisted set unchanged rather than
-# risking a silent invalidation that would wipe it - never a bare "empty" as if
-# nothing were open.
-#
-# Not a pure status-file read: this writes/rewrites the sibling cursor file as a
-# side effect (state/.<task>.open-decisions-cursor), the library's second
-# documented exception to the pure-read rule after crew_absorb_class. The write
-# is atomic (temp file + rename), so a crash between calls leaves either the
-# prior cursor or the new one, never a partial one. bin/jg-wake-drain.sh calls
-# this only after releasing the wake-queue lock, so a hypothetical race between
-# two overlapping drains can at worst redo a little folding work twice - never
-# drop an open decision - because a losing writer's offset can only ever be
-# equal to or behind an already-recorded byte position, and the next call
-# re-derives from whatever offset actually landed on disk.
+# status_open_decisions_incremental reads only the bytes a status file gained since its own last
+# call, folds those into a persisted open set through the same rule status_open_decisions uses,
+# and rewrites its byte cursor. A per-drain fleet-wide scan is therefore bounded by new appends
+# rather than by total lifetime log size. cursor.go owns the cursor format, the fold version, the
+# invalidation and read-failure rules, and the atomic write; each function below forwards to it.
 _jg_open_decisions_cursor_path() {  # <status-file>
-  local f=$1 dir base
-  dir=$(dirname "$f")
-  base=$(basename "$f")
-  printf '%s/.%s.open-decisions-cursor' "$dir" "${base%.status}"
+  _jg_classify_go cursor-path "$1"
 }
 
-# 4: verb parsing ends at the first "[name=value]" tag rather than only at a
-# "[key=...]" one, so lines carrying another bracketed tag first became opens
-# and closes.
-# 5: status_line_verb now also reads through an UNBRACKETED correlation token,
-# so lines that previously folded as ordinary status become opens and closes.
-# 6: a done/failed line on a ship or scout closes every open decision, and the
-# persisted version now carries the task kind, so cursors folded without that
-# terminal rule are discarded.
-# 7: that terminal rule now fires only for a line carrying a colon, so a cursor
-# folded when bare prose could close every open decision is discarded.
-# 8: a colonless line without a complete "[key=...]" token is no longer a
-# transition at all, so a cursor holding a phantom decision that bare prose
-# opened - which no later line could close - is discarded.
-# 9: the two colon tests read the line with its time tag stripped, so a
-# malformed worker stamp whose colons used to pose as the head/note separator
-# no longer opens or closes anything; cursors folded under that reading are
-# discarded.
-# Version 4 was already spent on the bracketed-tag parser change above, and a
-# cursor persisted under that reading predates this one, so it must still be
-# discarded and rebuilt from byte 0 under the new reading.
-JG_OPEN_DECISIONS_FOLD_VERSION=9
-
-# Portable device:inode identity for the rotation/recreation check below.
 _jg_open_decisions_file_ident() {  # <file> -> strongest available identity
-  local f=$1 epoch birth ident
-  if [ -n "${JG_STATUS_IDENTITY_READER:-}" ]; then
-    "$JG_STATUS_IDENTITY_READER" "$f"
-    return
-  fi
-  if [ "$_JG_CLASSIFY_UNAME_S" = Darwin ]; then
-    ident=$(LC_ALL=C /usr/bin/stat -f '%d:%i' "$f" 2>/dev/null) || return 1
-    epoch=$(LC_ALL=C /usr/bin/stat -f '%B' "$f" 2>/dev/null) || epoch=0
-    if [ "$epoch" != 0 ]; then birth=$(LC_ALL=C /usr/bin/stat -f '%FB' "$f" 2>/dev/null) || birth=''; else birth=''; fi
-  else
-    ident=$(LC_ALL=C stat -c '%d:%i' "$f" 2>/dev/null) || return 1
-    epoch=$(LC_ALL=C stat -c '%W' "$f" 2>/dev/null) || epoch=0
-    if [ "$epoch" != 0 ]; then birth=$(LC_ALL=C stat -c '%w' "$f" 2>/dev/null) || birth=''; else birth=''; fi
-  fi
-  case "$ident$birth" in *$'\t'*|*$'\n'*|'') return 1 ;; esac
-  if [ -n "$birth" ]; then printf 'strong:%s:%s' "$ident" "$birth"; else printf 'weak:%s' "$ident"; fi
+  _jg_classify_go file-ident "$1"
 }
 
 _jg_status_file_size() {  # <status-file>
-  local f=$1
-  if [ -n "${JG_STATUS_SIZE_READER:-}" ]; then
-    "$JG_STATUS_SIZE_READER" "$f"
-    return
-  fi
-  if [ "$_JG_CLASSIFY_UNAME_S" = Darwin ]; then
-    LC_ALL=C /usr/bin/stat -f '%z' "$f" 2>/dev/null
-  else
-    LC_ALL=C stat -c '%s' "$f" 2>/dev/null
-  fi
+  _jg_classify_go file-size "$1"
 }
 
 _jg_status_file_mtime() {  # <status-file>
-  local f=$1
-  if [ "$_JG_CLASSIFY_UNAME_S" = Darwin ]; then
-    LC_ALL=C /usr/bin/stat -f '%m' "$f" 2>/dev/null
-  else
-    LC_ALL=C stat -c '%Y' "$f" 2>/dev/null
-  fi
+  _jg_classify_go file-mtime "$1"
 }
 
-# Private scratch path for a one-shot span read, alongside the status file the
-# same way the cursor above is, and PID-scoped so concurrent readers of one log
-# (the watcher and the away-mode daemon both classify the same stream) never
-# truncate each other's chunk.
+# Private scratch path for a one-shot span read, alongside the status file the same way the cursor
+# above is, and PID-scoped so concurrent readers of one log (the watcher and the away-mode daemon
+# both classify the same stream) never truncate each other's chunk.
 _jg_status_span_scratch() {  # <status-file>
   printf '%s.span.%s' "$(_jg_open_decisions_cursor_path "$1")" "$$"
 }
 
 _jg_status_read_span() {  # <status-file> <start-offset> <byte-length>
-  local f=$1 start=$2 length=$3
-  if [ -n "${JG_STATUS_SPAN_READER:-}" ]; then
-    "$JG_STATUS_SPAN_READER" "$f" "$start" "$length"
-    return
-  fi
-  perl -MFcntl=:DEFAULT -e '
-    my ($path, $start, $length) = @ARGV;
-    sysopen(my $file, $path, O_RDONLY | O_NOFOLLOW) or exit 1;
-    sysseek($file, $start, 0) == $start or exit 1;
-    while ($length > 0) {
-      my $want = $length > 65536 ? 65536 : $length;
-      my $read = sysread($file, my $chunk, $want);
-      defined($read) && $read > 0 or exit 1;
-      print $chunk or exit 1;
-      $length -= $read;
-    }
-  ' "$f" "$start" "$length"
+  _jg_classify_go read-span "$1" "$2" "$3"
 }
 
 status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
-  local f=$1 captured_end=${2:-} cf offset ident open='' trusted_open='' cursor_data first rest offset_line ident_line
-  local version='' size actual_size cur_ident resolve held chunk_file chunk_size line cursor_dirty=0
-  local target_cursor kind fold_version
-  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
-  kind=$(_jg_status_kind "$f")
-  fold_version="$JG_OPEN_DECISIONS_FOLD_VERSION:$kind"
-  cf=$(_jg_open_decisions_cursor_path "$f")
-  offset=0
-  ident=''
-  if [ -f "$cf" ] && [ -r "$cf" ] && [ ! -L "$cf" ]; then
-    cursor_data=$(LC_ALL=C command cat "$cf" 2>/dev/null) || cursor_data=''
-  fi
-  if [ -n "${cursor_data:-}" ]; then
-      first=${cursor_data%%$'\n'*}
-      case "$first" in
-        version=*)
-          version=${first#version=}
-          [ "$version" = "$fold_version" ] || version=''
-          rest=${cursor_data#*$'\n'}
-          offset_line=${rest%%$'\n'*}
-          case "$offset_line" in
-            offset=*) offset=${offset_line#offset=} ;;
-            *) offset=0; version='' ;;
-          esac
-          case "$offset" in
-            ''|*[!0-9]*) offset=0; version='' ;;
-            *)
-              case "$rest" in
-                *$'\n'*)
-                  rest=${rest#*$'\n'}
-                  ident_line=${rest%%$'\n'*}
-                  case "$ident_line" in
-                    ident=*)
-                      ident=${ident_line#ident=}
-                      case "$rest" in
-                        *$'\n'*) open=${rest#*$'\n'} ;;
-                      esac
-                      if [ -n "$version" ] && [ -n "$ident" ]; then trusted_open=$open; fi
-                      ;;
-                    *) offset=0; version='' ;;
-                  esac
-                  ;;
-                *) offset=0; version='' ;;
-              esac
-              ;;
-          esac
-          ;;
-      esac
-  fi
-
-  # A stat/size-read failure is a genuine I/O error, not "the file is empty" -
-  # report the already-trusted persisted set unchanged rather than risking a
-  # silent invalidation that would wipe it.
-  cur_ident=$(_jg_open_decisions_file_ident "$f") || { printf '%s' "$trusted_open"; return 0; }
-  [ -n "$cur_ident" ] || { printf '%s' "$trusted_open"; return 0; }
-  actual_size=$(_jg_status_file_size "$f") \
-    || { printf '%s' "$trusted_open"; return 0; }
-  actual_size=${actual_size//[[:space:]]/}
-  case "$actual_size" in ''|*[!0-9]*) printf '%s' "$trusted_open"; return 0 ;; esac
-  if [ -n "$captured_end" ]; then
-    case "$captured_end" in
-      ''|*[!0-9]*) printf '%s' "$trusted_open"; return 0 ;;
-    esac
-    [ "$captured_end" -le "$actual_size" ] || { printf '%s' "$trusted_open"; return 0; }
-    size=$captured_end
-  else
-    size=$actual_size
-  fi
-
-  if [ -z "$version" ] || [ -z "$ident" ] || [ "$ident" != "$cur_ident" ] || [ "$offset" -gt "$actual_size" ]; then
-    offset=0
-    open=''
-    trusted_open=''
-    cursor_dirty=1
-  fi
-
-  if [ "$offset" -lt "$size" ]; then
-    chunk_file="$cf.read.$$"
-    _jg_status_read_span "$f" "$offset" "$((size - offset))" > "$chunk_file" 2>/dev/null \
-      || { rm -f "$chunk_file"; printf '%s' "$trusted_open"; return 0; }
-    chunk_size=$(LC_ALL=C wc -c < "$chunk_file" 2>/dev/null) \
-      || { rm -f "$chunk_file"; printf '%s' "$trusted_open"; return 0; }
-    chunk_size=${chunk_size//[[:space:]]/}
-    case "$chunk_size" in
-      ''|*[!0-9]*) rm -f "$chunk_file"; printf '%s' "$trusted_open"; return 0 ;;
-    esac
-    # Test-only observability seam (off by default, no production behavior
-    # change): when set, records exactly how many bytes THIS call folded, so a
-    # test can assert the incremental path stays bounded by new appends rather
-    # than re-reading the whole file, without relying on timing or source text.
-    [ -n "${JG_OPEN_DECISIONS_READ_PROBE:-}" ] \
-      && printf '%s\t%s\n' "$f" "$chunk_size" >> "$JG_OPEN_DECISIONS_READ_PROBE"
-    open=$(_jg_classify_go fold-stream "$open" "$kind" < "$chunk_file")
-    rm -f "$chunk_file"
-    offset=$size
-    cursor_dirty=1
-  fi
-  if [ "$cursor_dirty" -eq 1 ]; then
-    target_cursor="$cf.tmp.$$"
-    {
-      printf 'version=%s\n' "$fold_version"
-      printf 'offset=%s\n' "$offset"
-      printf 'ident=%s\n' "$cur_ident"
-      if [ -n "$open" ]; then printf '%s' "$open"; fi
-    } > "$target_cursor" || return 1
-    mv -f "$target_cursor" "$cf" || return 1
-  fi
-  printf '%s' "$open"
+  _jg_classify_go open-decisions-incremental "$@"
 }
 
-# Incremental sibling of scan_open_decisions: same fleet-wide directory walk and
-# output shape ("<task>\t<key>\t<verb>\t<note>" per open decision), but folds
-# each task's status log through status_open_decisions_incremental instead of
-# the whole-file status_open_decisions, so a fleet-wide per-drain scan stays
-# bounded by new appends rather than total lifetime log size across every task.
+# Incremental sibling of scan_open_decisions: the same fleet-wide walk and output shape
+# ("<task>\t<key>\t<verb>\t<note>" per open decision), folding each task's status log through
+# the cursor-backed fold instead of the whole-file one.
 scan_open_decisions_incremental() {  # <state>
-  local state=$1 f task open line exclude
-  exclude=$(status_scan_parent_channel_exclude "$state")
-  for f in "$state"/*.status; do
-    [ -e "$f" ] || continue
-    [ "$f" = "$exclude" ] && continue
-    task=$(basename "$f"); task="${task%.status}"
-    open=$(status_open_decisions_incremental "$f") || continue
-    [ -n "$open" ] || continue
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      printf '%s\t%s\n' "$task" "$line"
-    done <<EOF
-$open
-EOF
-  done
-  return 0
+  _jg_classify_go scan-open-decisions-incremental "$1" "$(status_scan_parent_channel_exclude "$1")"
 }
 
 status_presentation_snapshot() {  # <state>
@@ -1239,68 +974,7 @@ EOF
 # mismatch, or offset past the current size falls back to 0. Never writes unless
 # a caller explicitly requests a migration snapshot.
 status_open_decisions_cursor_offset() {  # <status-file>
-  local f=$1 cf offset=0 ident='' version='' cursor_data first rest open=''
-  local offset_line ident_line cur_ident size fold_version
-  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
-  fold_version="$JG_OPEN_DECISIONS_FOLD_VERSION:$(_jg_status_kind "$f")"
-  cf=$(_jg_open_decisions_cursor_path "$f")
-  if [ -e "$cf" ] || [ -L "$cf" ]; then
-    [ -f "$cf" ] && [ -r "$cf" ] && [ ! -L "$cf" ] || return 1
-    if cursor_data=$(LC_ALL=C command cat "$cf" 2>/dev/null); then
-      first=${cursor_data%%$'\n'*}
-      case "$first" in
-        version=*)
-          version=${first#version=}
-          [ "$version" = "$fold_version" ] || version=''
-          rest=${cursor_data#*$'\n'}
-          offset_line=${rest%%$'\n'*}
-          case "$offset_line" in
-            offset=*) offset=${offset_line#offset=} ;;
-            *) offset=0; version='' ;;
-          esac
-          case "$offset" in
-            ''|*[!0-9]*) offset=0; version='' ;;
-            *)
-              case "$rest" in
-                *$'\n'*)
-                  rest=${rest#*$'\n'}
-                  ident_line=${rest%%$'\n'*}
-                  case "$ident_line" in
-                    ident=*)
-                      ident=${ident_line#ident=}
-                      case "$rest" in *$'\n'*) open=${rest#*$'\n'} ;; esac
-                      ;;
-                    *) offset=0; version='' ;;
-                  esac
-                  ;;
-                *) offset=0; version='' ;;
-              esac
-              ;;
-          esac
-          ;;
-      esac
-    else
-      return 1
-    fi
-  fi
-  cur_ident=$(_jg_open_decisions_file_ident "$f") || return 1
-  [ -n "$cur_ident" ] || return 1
-  size=$(_jg_status_file_size "$f") || return 1
-  size=${size//[[:space:]]/}
-  case "$size" in ''|*[!0-9]*) return 1 ;; esac
-  if [ -z "$version" ] || [ -z "$ident" ] || [ "$ident" != "$cur_ident" ] || [ "$offset" -gt "$size" ]; then
-    offset=0
-    open=''
-  fi
-  if [ -n "${JG_STATUS_CURSOR_SNAPSHOT_FILE:-}" ]; then
-    {
-      printf 'version=%s\n' "$fold_version"
-      printf 'offset=%s\n' "$offset"
-      printf 'ident=%s\n' "$cur_ident"
-      if [ -n "$open" ]; then printf '%s' "$open"; fi
-    } > "$JG_STATUS_CURSOR_SNAPSHOT_FILE" || return 1
-  fi
-  printf '%s' "$offset"
+  _jg_classify_go legacy-cursor-offset "$1"
 }
 
 # Print every non-blank status line whose bytes begin at or after the persisted

@@ -427,11 +427,7 @@ func decideCommand(cmd string, a []string, out *os.File) (code int, handled bool
 		if err != nil {
 			return 2, true
 		}
-		open := arg(0)
-		for _, l := range splitLines(data) {
-			open = foldLine(open, l, arg(1))
-		}
-		return put(open), true
+		return put(foldData(arg(0), arg(1), data)), true
 	case "drop":
 		return put(strings.Join(setDrop(arg(0), arg(1)), "\n")), true
 	case "open-set-has":
@@ -457,6 +453,15 @@ func decideCommand(cmd string, a []string, out *os.File) (code int, handled bool
 		return put(keyClosingVerb(arg(0), arg(1))), true
 	}
 	return 0, false
+}
+
+// foldData folds a block of status bytes into an open set, one line at a time. The cursor-backed
+// fold and the whole-file fold both come through foldLine, so the two can never disagree.
+func foldData(open, kind string, data []byte) string {
+	for _, l := range splitLines(data) {
+		open = foldLine(open, l, kind)
+	}
+	return open
 }
 
 // lineFacts answers every line reader for each line on stdin, one unit-separator row each, so a
