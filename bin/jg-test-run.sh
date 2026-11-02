@@ -1426,6 +1426,11 @@ families_for_changed_path() {
     bin/jg-quota-axi-lib.sh)
       printf '%s\n' session-bootstrap
       ;;
+    bin/jg-toon-lib.sh)
+      # The TOON renderer sourced by juggernaut-axi and jg-bearings-snapshot.sh.
+      printf '%s\n' "__script__:juggernaut-axi.test.sh"
+      printf '%s\n' "__script__:juggernaut-axi-serve.test.sh"
+      ;;
     bin/jg-procevent-quota.sh)
       ;;
     bin/jg-quota-choose.sh)
