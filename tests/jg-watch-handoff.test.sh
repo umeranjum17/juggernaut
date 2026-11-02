@@ -44,6 +44,7 @@ healthy() { # <dir>
 test_handoff() (
   local dir pid='' monitor='' i stamp
   dir=$(make_case handoff)
+  # shellcheck disable=SC2030 # Each case runs in its own subshell by design.
   export JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state"
   # shellcheck source=bin/jg-wake-lib.sh
   . "$ROOT/bin/jg-wake-lib.sh"
@@ -141,6 +142,7 @@ test_takeover_first_scan() (
   local dir state arm1='' arm2='' i n p out max=0 age marks banners warnings
   dir=$(make_case takeover)
   state="$dir/state"
+  # shellcheck disable=SC2031 # This case runs in its own subshell by design.
   export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
     JG_CHECK_INTERVAL=0 JG_HEARTBEAT=999999 JG_GUARD_GRACE=3 JG_SUPERVISION_MODEL=persistent
   export PATH="$dir/fakebin:$PATH"
