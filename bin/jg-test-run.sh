@@ -718,6 +718,7 @@ tests/jg-grok-continuity-live-e2e.test.sh 53
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 57
 tests/jg-harness-quirks.test.sh 321
 tests/jg-herdr-lead-label.test.sh 99
+tests/jg-classify-go.test.sh 3000
 tests/jg-herdr-go.test.sh 3000
 tests/jg-guard-host.test.sh 829
 tests/jg-herdr-names.test.sh 1061
@@ -734,6 +735,7 @@ tests/jg-merge-on-green.test.sh 900
 tests/jg-lint-root-memory.test.sh 4747
 tests/jg-mail.test.sh 21000
 tests/jg-merge-gate-lib.test.sh 83
+tests/jg-merge-gate-policy.test.sh 15000
 tests/jg-metrics-shadow-parity.test.sh 9744
 tests/jg-muse-signals-live-e2e.test.sh 61
 tests/jg-omp-primary-live-e2e.test.sh 58
@@ -782,6 +784,7 @@ tests/jg-squad-lead-lifecycle-e2e.test.sh 15675
 tests/jg-supervision-host-live-e2e.test.sh 58
 tests/jg-supervision-host.test.sh 1162449
 tests/jg-status-digest.test.sh 1569
+tests/jg-stack-owner.test.sh 1000
 tests/jg-tangle-guard.test.sh 12088
 tests/jg-tasks-axi.test.sh 42685
 tests/jg-teardown-core.test.sh 3000
@@ -1618,6 +1621,10 @@ families_for_changed_path() {
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
       ;;
+    policy/gate/*)
+      # The merge gate's rules and their data: the test that drives them through the real gate scripts.
+      printf '%s\n' "__script__:jg-merge-gate-policy.test.sh"
+      ;;
     journeys/*)
       # A done-done journey is owned by the test that names it: a direct
       # reference is per-script evidence, so select that script, not its family.
@@ -2382,6 +2389,17 @@ cleanup_run() {
 }
 
 trap cleanup_run EXIT
+
+# Build the status classifier once for the whole run. Its launcher builds on first use into the
+# calling home's state directory, and every test makes a fresh state directory, so without this
+# each watcher test would pay a cold Go build inside its own timing window. A run that sets
+# JG_CLASSIFY_BIN itself, or has no Go toolchain, keeps the launcher's own behaviour.
+if [ -z "${JG_CLASSIFY_BIN:-}" ] && command -v "${JG_CLASSIFY_GO:-go}" >/dev/null 2>&1; then
+  if JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify" "$ROOT/bin/jg-classify.sh" is-terminal x >/dev/null 2>&1 \
+    || [ -x "$RUN_TMP/classify/jg-classify" ]; then
+    export JG_CLASSIFY_BIN="$RUN_TMP/classify/jg-classify"
+  fi
+fi
 
 RUN_ID="jg-test-run-${RUN_STARTED_MS}-$$"
 TOTAL=0
