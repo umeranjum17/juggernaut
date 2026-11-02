@@ -32,3 +32,21 @@ branch, no origin, GitHub origin with an unreadable forge). A difference in the 
 refusal sentence or the resolved PR URL fails the replay, and a control run with a corrupted Go side
 must fail it. `tests/jg-teardown-core.test.sh` keeps the interesting shapes as an end-to-end suite,
 and `tests/jg-teardown.test.sh` drives the same test through teardown itself.
+
+## Slices 3 and 4
+
+Slice 3 is `reap`: the process reaping that runs before teardown discards a directory.
+It finds every process whose working directory is under the task's roots with one `lsof -a -d cwd` scan, tracks each by its kernel start time, ends it with TERM and then KILL, and repeats up to three passes.
+Without `lsof` it falls back to the tmux pane's process group.
+A scan that fails, a process that cannot be identified, or processes that remain refuse the teardown.
+`--caller-pid` is the teardown script's own pid, which is never a leak.
+
+Slice 4 is the removal validators: `validate-removal`, `validate-child`, `validate-home` and `worktree-registered`.
+They answer whether a path is safe to remove, never remove anything, and print the canonical path on success.
+`validate-home` carries the Squad Lead registry check (`bin/jg-squad-lead-registry-lib.sh` still owns it for every other caller): entries parse, routes are safe, no home or id is bound twice, and no home contains another.
+The shell keeps `safe_rm_rf`, which asks the validator and then removes.
+
+Two behaviours differ from the shell on purpose.
+The shell reported a failed scan when the last `lsof` line was the teardown script's own working directory under a root, because a `&&` list returned false at the end of the loop; the command does not.
+A core that cannot run refuses the removal with its own sentence.
+The parity replays for both slices (generated process, lsof, identity and registry situations, and their corrupted controls) are kept with the task's evidence.

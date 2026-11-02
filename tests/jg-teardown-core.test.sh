@@ -77,5 +77,72 @@ check "no binary and no toolchain exits 2, never 0" "$rc" 2
 check "a request with no worktree exits 2" "$("$core" landed --project "$lab/proj" >/dev/null 2>&1; echo $?)" 2
 check "an unknown command exits 2" "$("$core" nonsense >/dev/null 2>&1; echo $?)" 2
 
+
+# ---- process reaping (needs lsof; the tmux process-group fallback needs none) -------------------
+reap() { "$core" reap --label worktree --task-id tid --backend "${BACKEND:-tmux}" --target %7 --caller-pid $$ -- "$@"; }
+mkdir -p "$lab/leak"
+if command -v lsof >/dev/null 2>&1; then
+  ( cd "$lab/leak" && exec perl -e 'sleep 300' ) & leaked=$!; disown
+  sleep 0.3
+  out=$(reap "$lab/leak" 2>&1); rc=$?
+  sleep 0.1
+  check "a process left under a directory is ended" "$rc|$(kill -0 "$leaked" 2>/dev/null && echo alive || echo gone)|$(printf '%s' "$out" | grep -c "reaping leaked worktree process(es) for tid: $leaked")" "0|gone|1"
+  ( cd "$lab/leak" && exec perl -e '$SIG{TERM}="IGNORE"; sleep 300' ) & leaked=$!; disown
+  sleep 0.3
+  out=$(reap "$lab/leak" 2>&1); rc=$?
+  check "a process that ignores TERM is force-killed" "$rc|$(printf '%s' "$out" | grep -c "force-killing leaked worktree process(es) for tid: $leaked")" "0|1"
+  kill -KILL "$leaked" 2>/dev/null
+  check "an empty directory and a missing directory reap nothing" "$(reap "$lab/leak" "$lab/none" "" >/dev/null 2>&1; echo $?)" 0
+  mkdir -p "$lab/nolsof"
+  for c in perl sed tr sort ps; do ln -sf "$(command -v $c)" "$lab/nolsof/$c"; done
+  out=$(PATH=$lab/nolsof "$lab/state/bin/jg-teardown-core" reap --label worktree --task-id tid --backend herdr --target x --caller-pid $$ -- "$lab/leak" 2>&1); rc=$?
+  check "without lsof the fallback only warns, and never for another backend's group" "$rc|$out" "0|warning: lsof is unavailable; cannot resolve a process-group fallback for herdr task tid"
+else
+  printf 'skip: no lsof on PATH; the process-reaping checks need it\n'
+fi
+check "a reap request with a bad caller pid exits 2" "$("$core" reap --caller-pid x -- "$lab/leak" >/dev/null 2>&1; echo $?)" 2
+
+# ---- removal validators ------------------------------------------------------------------------
+mkdir -p "$lab/rhome" "$lab/rrepo" "$lab/scratch" "$lab/seeded/data" "$lab/seeded/state"
+rem() { "$core" validate-removal --jg-home "$lab/rhome" --jg-root "$lab/rrepo" --label scratch -- "$@"; }
+check "a directory outside the home and repo may be removed and is printed canonically" "$(rem "$lab/scratch/")" "$lab/scratch"
+check "an empty target and a missing target have nothing to remove" "$(rem ""; rem "$lab/none")|$(rem "" >/dev/null 2>&1; echo $?)" "|0"
+out=$(rem "$lab/rhome" 2>&1); rc=$?
+check "the active home is never removed" "$rc|$out" "1|REFUSED: unsafe scratch removal target $lab/rhome is the active juggernaut home"
+out=$(rem "$lab" 2>&1); rc=$?
+check "an ancestor of the home is never removed" "$rc|$(printf '%s' "$out" | grep -c 'is an ancestor of the active juggernaut home')" "1|1"
+out=$(rem "$lab/rrepo" 2>&1); rc=$?
+check "the repo is never removed" "$rc|$(printf '%s' "$out" | grep -c 'is the juggernaut repo')" "1|1"
+check "the filesystem root is never removed" "$(rem / 2>&1 | grep -c 'unsafe scratch removal target /')" 1
+
+home_check() { "$core" validate-home --jg-home "$lab/rhome" --jg-root "$lab/rrepo" --label "squad_lead home" --registry "$lab/registry.md" --marker .marker "$@"; }
+out=$(home_check --expected-id sl1 -- "$lab/seeded" 2>&1); rc=$?
+check "a directory without the seeded-home marker is not a Squad Lead home" "$rc|$out" "1|REFUSED: unsafe squad_lead home removal target $lab/seeded is not a seeded squad_lead home"
+printf 'sl1\n' > "$lab/seeded/.marker"
+check "a seeded home with no registry is removable" "$(home_check --expected-id sl1 -- "$lab/seeded" 2>&1)" "$lab/seeded"
+out=$(home_check --expected-id sl2 -- "$lab/seeded" 2>&1)
+check "a home marked for another Squad Lead is refused" "$out" "REFUSED: unsafe squad_lead home removal target $lab/seeded is marked for squad_lead sl1, expected sl2"
+printf -- '- sl1 - lead (home: %s; scope: x; projects: p; added 2026-10-01)\n- kid - child (home: %s/kid; scope: x; projects: p; added 2026-10-01)\n' "$lab/seeded" "$lab/seeded" > "$lab/registry.md"
+mkdir -p "$lab/seeded/kid"
+out=$(home_check --expected-id sl1 -- "$lab/seeded" 2>&1); rc=$?
+check "a home that holds another registered home is refused as overlapping" "$rc|$(printf '%s' "$out" | grep -c 'overlapping squad_lead home assignment')" "1|1"
+printf -- '- sl1 - lead (home: %s; scope: x; projects: p; added 2026-10-01)\n' "$lab/seeded" > "$lab/registry.md"
+printf -- '- kid - child (home: %s/kid; scope: x; projects: p; added 2026-10-01)\n' "$lab/seeded" > "$lab/seeded/data/squad_leads.md"
+out=$(home_check --expected-id sl1 -- "$lab/seeded" 2>&1); rc=$?
+check "a child registered in the home's own registry is refused" "$rc|$out" "1|REFUSED: unsafe squad_lead home removal target $lab/seeded contains registered squad_lead home $lab/seeded/kid for kid"
+rm "$lab/seeded/data/squad_leads.md"; ln -s "$lab/scratch" "$lab/seeded/config"
+out=$(home_check --expected-id sl1 -- "$lab/seeded" 2>&1); rc=$?
+check "an operational directory that leaves the home is refused" "$rc|$(printf '%s' "$out" | grep -c 'config directory .* resolves outside the squad_lead home')" "1|1"
+rm "$lab/seeded/config"
+check "a clean seeded home passes and prints its canonical path" "$(home_check --expected-id sl1 -- "$lab/seeded" 2>&1)" "$lab/seeded"
+
+child_check() { "$core" validate-child --jg-home "$lab/rhome" --jg-root "$lab/rrepo" --project "$lab/proj" -- "$@"; }
+( cd "$lab/proj" && g worktree add -q -b childwt "$lab/childwt" )
+check "a worktree git lists for the project may be removed" "$(child_check "$lab/childwt" 2>&1)" "$lab/childwt"
+out=$(child_check "$lab/scratch" 2>&1); rc=$?
+check "a directory git does not list is not a child worktree" "$rc|$out" "1|REFUSED: unsafe child worktree removal target $lab/scratch is not a git worktree for $lab/proj"
+check "worktree-registered answers by exit code" "$("$core" worktree-registered --project "$lab/proj" -- "$lab/childwt"; echo $?)$("$core" worktree-registered --project "$lab/proj" -- "$lab/scratch"; echo $?)" "01"
+check "a validator with no target exits 2" "$("$core" validate-removal --jg-home x --jg-root y >/dev/null 2>&1; echo $?)" 2
+
 [ "$fails" -eq 0 ] || { printf '%d check(s) failed\n' "$fails"; exit 1; }
 printf 'all jg-teardown-core tests passed\n'
