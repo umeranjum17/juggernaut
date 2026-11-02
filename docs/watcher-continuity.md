@@ -207,7 +207,11 @@ Reminders preserve the queued reason except that a signal payload marked `needs-
 ### Wake urgency classes
 
 Every event gets one class from the routing rule file, and the same three apply to a wake aimed at a model as to an alert aimed at the captain: `now` wakes at once for a captain decision, security, a failed release, a stuck worker past its threshold, or a finished task; `batch` waits for a turn that happens anyway; `silent` is recorded and wakes nobody.
-`bin/jg-wake-lib.sh` decides the class where the event is recorded, from `defaults/wake-routing` or the home's `config/wake-routing`.
+`bin/jg-wake-lib.sh` decides the class where the event is recorded, from the one shared `defaults/wake-routing` that every home reads.
+A home's small `config/wake-routing` is read first, so its rules and `set` values win and everything it does not name falls through to the shared file.
+The shared rules settle what asks Main for nothing: a fleet-heartbeat gap that is only open waits (`silent`), a gap with ready work, a recovery, a progress, resolved or paused status line, the ledger copy of a PR a lead already reported, a task merge notice, a paused wait at the owning lead and a declared pause being rechecked (`batch`), a re-arm after Main's own restart pass (`silent`), and the sentinel's old-beacon doorbell while a live watcher holds the lock (`silent`).
+A decision, blocker, failure, done line, stall, release and security event keep `now`.
+The same status line delivered again inside `re-alert-minutes` is a repeat and rides the digest, because a status row's identity is its newest line.
 A board ask that carries no must category is one of the batched events: `bin/jg-board-gate.sh` routes it to Overwatch and Main answers it there, so it rides the next digest rather than waking a model of its own, while a merge with no proof and a must ask waiting over 48 hours keep waking at once.
 The shipped rules hold the tickets checks `batch` as well: a board row the work has already settled, or a pass summary, is bookkeeping rather than a decision, so `bin/jg-ticket.sh` writes the state where the work happens and the check that reports any remainder never wakes the captain by itself.
 A `batch` event is an ordinary durable row that does not leave the watcher cycle by itself, so it arrives with the next wake of any kind or with the queue-resurface cadence, and a run of routine events costs one turn.

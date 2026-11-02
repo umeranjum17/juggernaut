@@ -25,7 +25,7 @@ case "${1:-}" in
     since=$(cat "$STATE/.wake-settled.cursor" 2>/dev/null || echo 0)
     case "$since" in ''|*[!0-9]*) since=0 ;; esac
     printf '\n--- wake classes (%s) ---\nnow     the row(s) above are the wakes this turn exists for\n' \
-      "$(jg_wake_routing_file)"
+      "$(jg_wake_routing_files | paste -sd, -)"
     silent_n=$(awk -F '\t' -v c="$since" 'NF >= 5 && $1 > c { n++ } END { print n + 0 }' \
       "$STATE/.wake-settled" 2>/dev/null) && [ -n "$silent_n" ] || silent_n=0
     printf 'batch   any other queued row waits for a turn, so routine events cost no turn of their own\n'

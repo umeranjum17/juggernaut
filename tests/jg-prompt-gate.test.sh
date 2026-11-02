@@ -219,7 +219,9 @@ test_prompt_still_up_is_acted_on_every_interval() {
     || fail "a rejection that did not take was not reported: $(cat "$TMP_ROOT/s.out")"
 
   show "$TMP_ROOT/outside.txt"
-  watch_until "$TMP_ROOT/b.out" "check: waiting-state lead1 (prompt, .*level=owner; still open" 2
+  # Anchored to this scenario's own prompt path: an earlier scenario's leftover rung
+  # rows must not end the wait before this prompt's first-sight wake and re-alerts land.
+  watch_until "$TMP_ROOT/b.out" "check: waiting-state lead1 (prompt, .*level=owner; still open.* source=\[prompt: Access external directory $lab/projects" 2
   n=$(grep -c "stale: $w (permission prompt: .*not answered: outside this fleet's own roots" "$TMP_ROOT/b.out" || true)
   [ "$n" -eq 1 ] || fail "an unanswered prompt did not wake Main exactly once at first sight (wakes=$n): $(cat "$TMP_ROOT/b.out")"
   n=$(grep -c "check: waiting-state lead1 (prompt, .*level=owner; still open.* source=\[prompt: Access external directory $lab/projects" "$TMP_ROOT/b.out" || true)

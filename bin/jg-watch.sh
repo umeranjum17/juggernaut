@@ -3731,6 +3731,7 @@ resurface_after_downtime() {
   host_memory_surface_queued
   # defaults/wake-routing decides whether a resurface with nothing waiting costs a turn.
   if [ "$(jg_wake_route_class check rearm-resurface 'check: rearm-resurface')" != now ]; then
+    jg_wake_settle check rearm-resurface 'check: rearm-resurface' || true
     triage_log "rearm-resurface settled without a wake (defaults/wake-routing)"
     return 0
   fi
