@@ -116,7 +116,7 @@ Treat the ~1h access-token lifetime as an ordinary operational fact rather than 
 ## Effort and model
 
 `agent.efficiencyLevel` accepts `low|medium|high|max` live via `--config-override`; a requested `xhigh` (unsupported) is recorded in task metadata but omitted from that JSON object, both verified against the fake-binary suite.
-`--config-override` is single-value - a second occurrence silently discards the first rather than merging, confirmed live by reversing the order of two `--config-override` flags and observing the earlier one's effect disappear - so `jg-spawn.sh`'s `rovo_config_override_flag` folds `agent.efficiencyLevel` into the SAME JSON object as the mandatory `allowedExternalPaths` grant below rather than emitting two flags; the fake-binary suite pins that exactly one `--config-override` occurrence carries both.
+`--config-override` is single-value - a second occurrence silently discards the first rather than merging, confirmed live by reversing the order of two `--config-override` flags and observing the earlier one's effect disappear - so the spawn core's `rovo-override` (called by `jg-spawn.sh`) folds `agent.efficiencyLevel` into the SAME JSON object as the mandatory `allowedExternalPaths` grant below rather than emitting two flags; the fake-binary suite pins that exactly one `--config-override` occurrence carries both.
 Model discovery is per-account (`/models` or ACP `session/new`); the observed live list is recorded in `references/harness/rovo.md` and must never be hardcoded.
 
 ## Worktree confinement and the allowedExternalPaths fix
@@ -177,7 +177,7 @@ $ ls "$LAB/outside/inbox/handled"
 001.msg
 ```
 
-`jg-spawn.sh`'s `rovo_config_override_flag` builds one merged JSON object per rovo launch (see "Effort and model" above for why it must be one), always granting `toolPermissions.allowedExternalPaths` for exactly three real (symlink-resolved) paths scoped to this task: the brief directory (`data/<id>/`, covering `brief.md`/`launch-brief.md`/`report.md`), the steering inbox directory (`state/<id>.inbox/`, covering every steer and its `handled/` acknowledgement), and the status file itself (`state/<id>.status`).
+the spawn core's `rovo-override` (called by `jg-spawn.sh`) builds one merged JSON object per rovo launch (see "Effort and model" above for why it must be one), always granting `toolPermissions.allowedExternalPaths` for exactly three real (symlink-resolved) paths scoped to this task: the brief directory (`data/<id>/`, covering `brief.md`/`launch-brief.md`/`report.md`), the steering inbox directory (`state/<id>.inbox/`, covering every steer and its `handled/` acknowledgement), and the status file itself (`state/<id>.status`).
 `tests/jg-rovo-signals-live-e2e.test.sh` extends the launch-then-send live guard with exactly this shape end to end: a real rovo process launched with the production `--config-override` grant reads an external brief and appends to an external status file (preserving its prior content), and the same brief and status file, launched WITHOUT the grant, are left untouched while the transcript shows rovo's own refusal - proving the fix closes the gap rather than merely adding an untested flag.
 `tests/jg-rovo-harness.test.sh` pins the portable half against the fake-binary suite: the grant's three paths appear in every rovo launch (including when the requested effort is unsupported and omitted), and exactly one `--config-override` occurrence ever appears.
 

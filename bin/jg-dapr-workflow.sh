@@ -4,7 +4,7 @@
 #   bin/jg-dapr-workflow.sh up                       build the worker, start the three processes, report
 #   bin/jg-dapr-workflow.sh status                   report them and change nothing
 #   bin/jg-dapr-workflow.sh down                     stop what `up` started
-#   bin/jg-dapr-workflow.sh start <class> <task> <key>   schedule one wait episode (the key is its id)
+#   bin/jg-dapr-workflow.sh start <class> <task> <key> [payload]   schedule one wait episode (the key is its id)
 #   bin/jg-dapr-workflow.sh clear <key>              the owner cleared the wait: stop its ladder
 #   bin/jg-dapr-workflow.sh episode <key>            runtime status and the rungs that fired
 #   bin/jg-dapr-workflow.sh install                  the OWNER path: tools, worker, systemd user units
@@ -22,6 +22,10 @@
 #            Ports are chosen free on the first run and kept, so a restart finds the same ones.
 #   argv     `argv <part>` prints one process's command line. `up` and the systemd units both run
 #            exactly that line, so a detached run proves what the service will run.
+#   rules    the worker applies priority, budget, back-off, coalescing and auto-resolve from
+#            core/bus/workflows/escalation-optimization.json (a home's config copy, or
+#            JG_ESCALATION_OPT, wins), the same file and the same state/.escalation-opt files the
+#            shell tick reads; a home with no such file runs the bare ladder.
 #   delivery a fired rung is delivered by `bin/jg-escalation-workflows.sh deliver`, the same wake
 #            line and queue key the shell ladder uses.
 #   install  never runs from a session start or an update. It refuses when the installed worker
@@ -109,7 +113,7 @@ argv() {
 
 worker_env() {
   printf '%s\n' "DAPR_GRPC_PORT=$(port 7)" "JG_ESCALATION_WORKFLOW=$(definition)" "JG_HOME=$JG_HOME" \
-    "JG_STATE_OVERRIDE=$STATE" "JG_WORKFLOW_DELIVER=$SCRIPT_DIR/jg-escalation-workflows.sh deliver"
+    "JG_STATE_OVERRIDE=$STATE" "JG_ESCALATION_OPT=${JG_ESCALATION_OPT:-}" "JG_WORKFLOW_DELIVER=$SCRIPT_DIR/jg-escalation-workflows.sh deliver"
 }
 
 ensure_tool() {  # <tool>: at the pin or newer, installed from the pinned release when not
@@ -198,7 +202,8 @@ cmd_down() {
 # Run the worker's own CLI against this home's sidecar.
 via_worker() {
   [ -x "$WORKER" ] || die "the worker is not built: run bin/jg-dapr-workflow.sh up"
-  DAPR_GRPC_PORT=$(port 7) JG_ESCALATION_WORKFLOW=$(definition) "$WORKER" "$@"
+  DAPR_GRPC_PORT=$(port 7) JG_ESCALATION_WORKFLOW=$(definition) JG_ESCALATION_OPT=${JG_ESCALATION_OPT:-} \
+    JG_STATE_OVERRIDE=$STATE "$WORKER" "$@"
 }
 
 unit_text() {  # <part>

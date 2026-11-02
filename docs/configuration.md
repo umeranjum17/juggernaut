@@ -1377,7 +1377,7 @@ _CREDENTIAL  _CREDENTIALS  _ACCESS_KEY  _ACCESS_KEY_ID  _PRIVATE_KEY
 
 A name that merely contains `KEY` is not a credential and is never stripped, so `STARSHIP_SESSION_KEY` and `GIT_CONFIG_KEY_0` reach the worker unchanged.
 The list is a shape rule rather than a list of provider names, so a credential a later provider introduces is stripped without a code change.
-[`bin/jg-launch-env-lib.sh`](../bin/jg-launch-env-lib.sh) owns the shapes and is the only implementation.
+`launchEnvStrip` in [`core/spawn/cmd/jg-spawn-core/builders.go`](../core/spawn/cmd/jg-spawn-core/builders.go) owns the shapes and is the only implementation; `bin/jg-spawn-core.sh launch-env-strip` prints the prefix a launch would carry.
 
 Listing a name in `config/launch-env-allowlist` is the way to keep it, and it is the only way; an allowlisted credential reaches the worker as described above.
 A home whose workers authenticate a provider through an environment variable therefore names that variable in the allowlist file, which also opts the home into the full filter described above.
@@ -1585,7 +1585,7 @@ This single-provider table is separate from the frozen legacy mapping used by `j
   That read-only limit is partial: the shell is not sandboxed, so a command can still write to those directories.
   This adds no new trust, because leads already append to the parent home through the shell for status lines.
   `data/`, `config/`, `.env`, and `projects/` stay behind OpenCode's prompt.
-  This per-launch permission policy is retained with or without model and effort selections; `bin/jg-spawn.sh`'s `launch_template()` owns the exact configuration, and `tests/jg-spawn-dispatch-profile.test.sh` covers its generated launches.
+  This per-launch permission policy is retained with or without model and effort selections; the spawn core's launch templates (`core/spawn/cmd/jg-spawn-core/templates.go`) own the exact configuration, and `tests/jg-spawn-dispatch-profile.test.sh` covers its generated launches.
 - OpenCode receives the effort as its default `build` agent's `variant`, keyed to the resolved model, inside the `OPENCODE_CONFIG_CONTENT` JSON its launch already writes (the per-model reasoning-effort field of the config schema, verified on opencode 1.18.32); with no model resolved, the effort is recorded in task metadata but omitted from the launch.
 - A Juggernaut OpenCode launch with a model from a provider other than `opencode` gets its own session store, `juggernaut-<12-hex home token>-<task id>.db`, inside OpenCode's data directory, so concurrent workers stop locking one shared `opencode.db`.
   A relaunch of the same task in the same home reopens that store.
