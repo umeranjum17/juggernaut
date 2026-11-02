@@ -3777,6 +3777,28 @@ resurface_after_downtime() {
   wake "check: rearm-resurface"
 }
 
+# Publish liveness at one progress point inside a running supervision scan.
+# The beacon's age must bound the gap between progress points, not the length
+# of a whole scan: the due-check sweep (each check bounded by CHECK_TIMEOUT, and
+# a busy home registers many) and the ready-PR record pass can each outlast the
+# stale grace on a perfectly healthy cycle. Publishing only at the end of the
+# scan therefore let a live, working cycle read as a dead watcher, which is the
+# false "the watcher beacon is Ns old and no turn is running" alarm. A cycle
+# that is killed or wedged reaches no further progress point, so its beacon
+# still ages past the grace and the real detector still fires. Best-effort: a
+# transient write failure must not abort a running scan, and the next progress
+# point retries it.
+# Only a cycle that has already proven one complete scan publishes mid-scan: a
+# first scan still announces nothing until it finishes, so the arm's startup
+# confirmation keeps requiring resumed supervision and a first scan that hangs
+# in its first check is still not reported healthy. The supervision read covers
+# that first scan through its live-holder rule instead
+# (bin/jg-supervision-lib.sh).
+watcher_beat() {
+  [ "${WATCH_SCAN_COMPLETE:-0}" = 1 ] || return 0
+  touch "$STATE/.last-watcher-beat" 2>/dev/null || true
+}
+
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
 # Time-based via .last-check mtime so the cadence survives watcher restarts.
 # A due check runs on every cycle that reaches it, including a cycle whose
@@ -3905,6 +3927,10 @@ EOF
         wake "$reason"
       fi
       pr_poll_control_release || exit 1
+      # This bounded unit of the sweep is done, so the scan has made progress:
+      # publish liveness here (watcher_beat's header owns why). A check that
+      # hangs or a cycle that dies never reaches this point, so it still ages.
+      watcher_beat
     done
     if [ -n "$rejected_checks" ]; then
       reason="check: rejected unauthenticated state checks:$rejected_checks"
@@ -4160,6 +4186,10 @@ EOF
         [ -n "$sf" ] || continue
         reportable_signal_path "$f" || continue
         ready_pr_record "$f"
+        # The ready-PR record pass is one bounded unit of this scan; publish
+        # liveness after it so a batch of them cannot outrun the grace
+        # (watcher_beat's header owns why).
+        watcher_beat
         file_reason="$reason"
         case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$signal_files" ;; esac
         jg_wake_append signal "$(basename "$f")" "$file_reason" || exit 1
@@ -4587,6 +4617,9 @@ EOF
   # beacon stays readable during handoff but keeps its original age while
   # checks block. Actionable wakes stamp in watcher_cleanup after lock release.
   touch "$STATE/.last-watcher-beat" || exit 1
+  # This cycle has now proven one whole scan, so the bounded units of every
+  # later scan may publish liveness themselves (watcher_beat's header).
+  WATCH_SCAN_COMPLETE=1
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
   # else the blind poll sleep. See event_wait_or_sleep.
