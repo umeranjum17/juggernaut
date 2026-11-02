@@ -69,10 +69,21 @@ jg_receipts_next_pr_of_lane_ok() {  # <state> <id> <meta-pr> <receipt-pr>
   )
 }
 
+_JG_RECEIPTS_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+
+# The receipt publisher a refusal tells a worker to run. It lives in this checkout's
+# core/receipts/bin; JG_ADDONS_DIR overrides the publisher only
+# when it really holds one, so a stale value never prints a path that does not exist.
+jg_receipts_tool() {
+  local over=${JG_ADDONS_DIR:-}/receipts/bin/jg-run-receipt.sh
+  if [ -n "${JG_ADDONS_DIR:-}" ] && [ -x "$over" ]; then printf '%s\n' "$over"; else printf '%s\n' "$_JG_RECEIPTS_LIB_DIR/jg-run-receipt.sh"; fi
+}
+
 jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
   local state=$1 id=$2 meta=$3 head=$4 receipt required mode gen count pr receipt_pr
   [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] || return 0
   receipt="$state/$id.run-receipt.json"
+  pr=$(jg_dod_meta_value "$meta" pr)
   required=$(jg_dod_meta_value "$meta" receipt_required)
   count=$(awk -F= '$1 == "receipt_required" { n++ } END { print n+0 }' "$meta") || return 1
   if [ "$count" -gt 1 ] || { [ "$count" -eq 1 ] && [ "$required" != 1 ]; }; then
@@ -81,12 +92,11 @@ jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
   fi
   if [ ! -e "$receipt" ] && [ ! -L "$receipt" ]; then
     [ "$required" != 1 ] && return 0
-    echo "completion receipt missing for $id: publish one with: JG_HOME=${JG_HOME:-${JG_ROOT:-}} ${JG_ADDONS_DIR:-${JG_HOME:-${JG_ROOT:-}}/projects/juggernaut-addons}/receipts/bin/jg-run-receipt.sh $id PASS <evidence-file>"
+    echo "completion receipt missing for $id: publish one with: JG_HOME=${JG_HOME:-${JG_ROOT:-}} JG_RECEIPT_PR=${pr:-<PR url>} $(jg_receipts_tool) $id PASS <evidence-file>"
     return 1
   fi
   mode=$(jg_dod_meta_value "$meta" mode)
   gen=$(jg_dod_meta_value "$meta" spawn_gen)
-  pr=$(jg_dod_meta_value "$meta" pr)
   if jg_pr_head_valid "$head" && [ -f "$receipt" ] && [ ! -L "$receipt" ] && command -v jq >/dev/null 2>&1 \
     && jq -se --arg task "$id" --arg mode "$mode" --arg gen "$gen" --arg head "$head" '
       length == 1 and (.[0] | .schema == 1 and .task == $task and .mode == $mode and
@@ -100,7 +110,7 @@ jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
       return 0
     fi
   fi
-  echo "completion receipt refused for $id: FAIL, mismatched candidate/incarnation, malformed or absent evidence; publish one for this head with: JG_HOME=${JG_HOME:-${JG_ROOT:-}}${pr:+ JG_RECEIPT_PR=$pr} ${JG_ADDONS_DIR:-${JG_HOME:-${JG_ROOT:-}}/projects/juggernaut-addons}/receipts/bin/jg-run-receipt.sh $id PASS <evidence-file>"
+  echo "completion receipt refused for $id: FAIL, mismatched candidate/incarnation, malformed or absent evidence; publish one for this head with: JG_HOME=${JG_HOME:-${JG_ROOT:-}} JG_RECEIPT_PR=${pr:-<PR url>} $(jg_receipts_tool) $id PASS <evidence-file>"
   return 1
 }
 
@@ -109,10 +119,10 @@ jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
 jg_receipts_brief() {  # <id>
   local receipt_home_q receipt_tool_q
   receipt_home_q=$(printf '%q' "${JG_HOME:-${JG_ROOT:-}}")
-  receipt_tool_q=$(printf '%q' "${JG_ADDONS_DIR:-${JG_HOME:-${JG_ROOT:-}}/projects/juggernaut-addons}/receipts/bin/jg-run-receipt.sh")
+  receipt_tool_q=$(printf '%q' "$(jg_receipts_tool)")
   cat <<EOF
 Completion receipt: required
-Before the final ready report (after validation in no-mistakes mode), write a nonempty evidence file containing commands run, results and limitations, then run \`JG_HOME=$receipt_home_q $receipt_tool_q $1 PASS <evidence-file>\` from the clean candidate checkout.
+Before the final ready report (after validation in no-mistakes mode), write a nonempty evidence file containing commands run, results and limitations, then run \`JG_HOME=$receipt_home_q JG_RECEIPT_PR=<PR url> $receipt_tool_q $1 PASS <evidence-file>\` from the clean candidate checkout; a receipt for a PR needs JG_RECEIPT_PR.
 Use FAIL when verification failed; never label failed or unperformed checks PASS.
 The evidence file may be a task-owned temporary file outside your worktree; that write and the helper's completion-receipt write into its supervising state directory are authorized.
 Regenerate the receipt after any candidate change, including validation fixes or a rebase.
