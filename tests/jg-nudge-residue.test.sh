@@ -4,7 +4,7 @@
 # The captain saw a doorbell line stay in his message box, and his own next
 # sentence joined it into one unsent message. This drives the real doorbell ring
 # (bin/jg-task-inbox-lib.sh) against a real tmux pane (private socket) running
-# tests/fixtures/fake-composer.sh, a Claude-shaped input box that can swallow
+# tests/fixtures/composer/fake-composer.sh, a Claude-shaped input box that can swallow
 # Enter, and then types the captain's sentence into the same box:
 #   1. an empty box whose Enter is swallowed ends EMPTY, and his sentence is
 #      alone in it afterward;
@@ -55,7 +55,7 @@ LINE=$(jg_task_inbox_doorbell_line "$RECORD") || fail "no doorbell line for the 
 # Start the input box in <mode>; <log> collects every line the box submits.
 start_box() {  # <mode> <log> [text-to-type-first]
   : > "$2"
-  tmux respawn-pane -k -t "$TARGET" "exec '$WORK/bin/claude' '$ROOT/tests/fixtures/fake-composer.sh' '$2' $1" || fail "could not start the input box"
+  tmux respawn-pane -k -t "$TARGET" "exec '$WORK/bin/claude' '$ROOT/tests/fixtures/composer/fake-composer.sh' '$2' $1" || fail "could not start the input box"
   sleep 0.5
   [ -z "${3:-}" ] || { tmux send-keys -t "$TARGET" -l "$3"; sleep 0.3; }
 }
