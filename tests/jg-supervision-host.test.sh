@@ -403,22 +403,30 @@ test_report_after_the_return_is_queued_for_main() {
 # --- dispatch entry -----------------------------------------------------------
 
 test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
-  local home state out rc
+  local home state out rc seq1 seq2 seqs
   home="$TMP_ROOT/dispatch"
   state="$home/state"
   mkdir -p "$state"
   printf 'project=demo\nwindow=jg-demo\n' > "$state/demo.meta"
   append_wake "$state" signal demo.status "signal: $state/demo.status"
   append_wake "$state" check merge "check: merge landed: fixture"
+  # A row's sequence number is the bus's: opaque and ordered, not 1 and 2. Read
+  # the two assigned to the rows so the scope is asserted exactly.
+  # They are not ordered by the order the rows were appended in, so name each row by
+  # its kind, and read the away scan's expected order from the queue itself.
+  seq1=$(awk -F '\t' '$3 == "signal" { print $2 }' "$state/.wake-queue")
+  seq2=$(awk -F '\t' '$3 == "check" { print $2 }' "$state/.wake-queue")
+  seqs=$(awk -F '\t' '{ printf "%s%s", sep, $2; sep = " " }' "$state/.wake-queue")
+  case "$seq1$seq2" in ''|*[!0-9]*) fail "the queue rows carried no sequence numbers: $(cat "$state/.wake-queue")" ;; esac
 
   out=$(JG_HOME="$home" node "$DISPATCH" scope)
   assert_contains "$out" "status=safe" "an attended scan with a resolvable row must be safe"
-  assert_contains "$out" "rows=1" "an attended scan must leave the check row to main"
+  assert_contains "$out" "rows=$seq1"$'\n' "an attended scan must claim the signal row alone and leave the check row to main"
   assert_contains "$out" "tasks=demo" "the signal row must resolve to its task"
   assert_contains "$out" "unscoped=0" "a task-local claim must be scoped"
 
   out=$(JG_HOME="$home" node "$DISPATCH" scope --afk)
-  assert_contains "$out" "rows=1 2" "an away scan must claim the check row too"
+  assert_contains "$out" "rows=$seqs" "an away scan must claim the check row too"
   assert_contains "$out" "unscoped=1" "a claimed check row names no task, so the claim is unscoped"
 
   out=$(printf 'check: merge landed: fixture\n' | JG_HOME="$home" node "$DISPATCH" offer)
@@ -427,7 +435,7 @@ test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
   assert_contains "$out" "eligible=1" "an away check trigger must be the branch's"
   out=$(printf 'signal: %s\n' "$state/demo.status" | JG_HOME="$home" node "$DISPATCH" offer)
   assert_contains "$out" "eligible=1" "an attended signal trigger with a claimable row must be the branch's"
-  assert_contains "$out" "rows=1" "the offer must carry the scope it judged"
+  assert_contains "$out" "rows=$seq1" "the offer must carry the scope it judged"
 
   printf '[captain] keep it small\n[main] Will do.\n' > "$home/mirror"
   out=$(printf 'signal: demo.status\n' | JG_HOME="$home" node "$DISPATCH" wake-prompt --report 'the bin/jg-branch-report.sh command' --mirror-file "$home/mirror")
@@ -1166,6 +1174,10 @@ make_primary_home() {  # <name>
   git init -q "$home"
   : > "$home/AGENTS.md"
   ln -s "$ROOT/bin" "$home/bin"
+  # The watcher's wait-timer tick reads the escalation workflow definition from
+  # core/ beside bin/ (bin/jg-escalation-workflows.sh roots itself at the home's
+  # own bin path); without it the tick fails and every watcher cycle exits.
+  ln -s "$ROOT/core" "$home/core"
   printf '%s\n' "$home"
 }
 
@@ -1849,14 +1861,25 @@ quiet_pass_through_successor() {  # <home>
     || fail "fixture: could not acknowledge the successor downtime"
 }
 
+# The first park after a stop resurfaces the recovery to main when an
+# unacknowledged wake is queued, and settles it without a wake, parking on a live
+# watcher, when nothing is: defaults/wake-routing owns the choice
+# (silent@queue-quiet, #409), so the fixture follows what the queue holds.
 park_after_stop() {  # <home>
+  local waiting=0
+  [ ! -s "$1/state/.wake-queue" ] || waiting=1
   rm -f "$1/host.rc"
   : > "$1/park.go"
-  wait_until 150 host_exited "$1" || fail "the watcher's downtime resurface did not reach main: $(cat "$1/host.out")"
-  assert_re '^check: rearm-resurface' "$1/host.out" "fixture: the first close after the watcher stopped was not its resurface"
-  main_drain_and_ack "$1"
-  quiet_pass_through_successor "$1"
-  park_again "$1"
+  if [ "$waiting" -eq 1 ]; then
+    wait_until 150 host_exited "$1" || fail "the watcher's downtime resurface did not reach main: $(cat "$1/host.out")"
+    assert_re '^check: rearm-resurface' "$1/host.out" "fixture: the first close after the watcher stopped was not its resurface"
+    main_drain_and_ack "$1"
+    quiet_pass_through_successor "$1"
+    park_again "$1"
+  else
+    wait_until 150 watcher_live "$1" || fail "the park after a stop never started a watcher cycle: $(cat "$1/host.out")"
+    assert_no_re 'rearm-resurface' "$1/host.out" "fixture: a quiet park resurfaced to main"
+  fi
 }
 
 # Dialog counts as delivered only once the turn that carried it is accepted

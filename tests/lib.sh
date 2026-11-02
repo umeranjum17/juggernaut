@@ -51,6 +51,17 @@ export JG_GATE_REFUSE_BYPASS=1
 # JG_TEST_HARNESS harness pin). Normal primary launches do not arm it, so a
 # leaked harness pin alone stays inert outside a suite.
 export JG_TEST_SEAM=1
+# A fixture binds no port and installs no service: bin/jg-stack.sh up is a no-op under this.
+# tests/jg-stack.test.sh unsets it, because starting the stack is what it proves.
+export JG_STACK_SKIP=1
+# A fixture never reaches the machine's real message bus: with no address set, the wake, key-value
+# and state paths fall back to nats://127.0.0.1:4222, which on a host running the bus is the real
+# server (accounts enforced, other homes' streams), so a test would publish into it or be refused by
+# it. Port 1 answers nothing, so those paths take their no-bus behaviour, as in CI. A test that runs
+# its own server sets these to that server's address (jg_test_bus_start does).
+export JG_KV_URL="${JG_KV_URL:-nats://127.0.0.1:1}"
+export JG_WAKE_BUS_URL="${JG_WAKE_BUS_URL:-nats://127.0.0.1:1}"
+export JG_STATE_BUS_URL="${JG_STATE_BUS_URL:-nats://127.0.0.1:1}"
 # A host-installed task-priority feature must not change what test fixtures can add.
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 
@@ -119,12 +130,17 @@ jg_test_launch_git_prefix() {  # <launch>
 }
 
 # The command a pane runs after the launch's Git configuration prefix and its
-# leading export statements, for suites that split it into arguments.
+# leading statements, for suites that split it into arguments. Only the launches
+# this suite builds reach here, and after this strip each one is a single simple
+# command, so the `set --` these callers eval cannot run part of the launch.
 jg_test_launch_command() {  # <launch>
   local command=$1 end=' || return 1 2>/dev/null || exit 1; '
   case "$command" in *"$end"*) command=${command#*"$end"} ;; esac
-  while [[ "$command" == export\ *\;* ]]; do
-    command=${command#*; }
+  while [[ "$command" == *\;* ]]; do
+    case "$command" in
+    export\ *\;* | unset\ *\;* | :) command=${command#*; } ;;
+    *) break ;;
+    esac
   done
   printf '%s' "$command"
 }

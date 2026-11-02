@@ -230,6 +230,60 @@ has "m: plain PASS merges" "$out" "merged t12 https://github.com/ex/r/pull/12"
 check "m: merged once" "$(wc -l < "$STUB_DIR/merge-calls")" 7
 rm "$FM/state/t12.meta" "$FM/state/t12.run-receipt.json"
 
+# (n) the done-to-merged minutes are recorded for every merge, and a merge over the five-minute
+# target is called out in the wake line the lead relays. The forge's merge time comes from the gh
+# stub, so the number is the one the record holds rather than the moment the sweep ran.
+cat > "$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+# stub: only the mergedAt read matters here.
+case "$*" in *mergedAt*) printf '%s\n' "${STUB_MERGED_AT:-}" ;; esac
+exit 0
+EOF
+chmod +x "$STUB_DIR/gh"
+meta t13 on "$H1" s13
+now=$(date +%s)
+printf 'working [at=%s]: implementing\n' "$((now - 1200))" > "$FM/state/t13.status"
+printf 'done [at=%s]: PR https://github.com/ex/r/pull/13\n' "$((now - 780))" >> "$FM/state/t13.status"
+STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
+export STUB_MERGED_AT
+out=$(mog)
+check "n: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
+has "n: the line names the measured minutes" "$out" "it took 13m from its done line to merged"
+has "n: over the target raises the over-target alert" "$out" "over the 5-minute target"
+check "n: the row is recorded with the real gap" \
+  "$(awk -F '\t' '$1 == "t13" { print $3, $4, $5 }' "$FM/data/merge-latency.tsv")" \
+  "$((now - 780)) $now 13"
+check "n: the table has one header row" "$(sed -n 1p "$FM/data/merge-latency.tsv")" \
+  "$(printf 'task\tpr\tdone_epoch\tmerged_epoch\tminutes')"
+rm "$FM/state/t13.meta" "$FM/state/t13.run-receipt.json"
+
+# (o) a merge inside the target is recorded and reported without the over-target wording.
+meta t14 on "$H2" s14
+now=$(date +%s)
+printf 'done [at=%s]: PR https://github.com/ex/r/pull/14\n' "$((now - 120))" > "$FM/state/t14.status"
+STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
+export STUB_MERGED_AT
+out=$(mog)
+check "o: one merged line" "$(printf '%s\n' "$out" | wc -l)" 1
+has "o: the line names the fast minutes" "$out" "in 2m from its done line"
+check "o: no over-target wording inside the target" \
+  "$(printf '%s' "$out" | grep -c 'over the 5-minute target' || true)" 0
+rm "$FM/state/t14.meta" "$FM/state/t14.run-receipt.json"
+
+# (p) the captain's own recorded word is authority too: merge=approved with no yolo meta lands the
+# change, and merge=manual still holds it.
+meta t15 off "$H1" s15
+echo merge=approved >> "$FM/state/t15.meta"
+out=$(mog)
+has "p: recorded approval merges without yolo" "$out" "merged t15 https://github.com/ex/r/pull/15"
+rm "$FM/state/t15.meta" "$FM/state/t15.run-receipt.json"
+meta t16 off "$H1" s16
+echo merge=manual >> "$FM/state/t16.meta"
+check "p: merge=manual with no yolo stays silent" "$(mog)" ""
+check "p: merge=manual not merged" "$([ -e "$FM/data/jg-merge-on-green/t16.head" ] && echo attempted || echo never)" never
+rm "$FM/state/t16.meta" "$FM/state/t16.run-receipt.json"
+rm -f "$STUB_DIR/gh"
+
 # (g) install --dry-run lists the steps and writes nothing.
 cat > "$FM/bin/jg-check-register.sh" <<'EOF'
 #!/bin/sh
@@ -257,4 +311,78 @@ check "h: shim execs the check" "$(sed -n 2p "$FM/state/merge-on-green.check.sh"
 check "h: shim mode 0700" "$(stat -c %a "$FM/state/merge-on-green.check.sh")" 700
 check "h: installed script runs from the shim" "$(JG_CHECK_TIMEOUT=30 "$FM/state/merge-on-green.check.sh")" ""
 
-[ "$fails" -eq 0 ] && echo "PASS: merge-on-green e2e" || { echo "FAIL: $fails check(s)"; exit 1; }
+# (i) A home still running the retired add-on copy: install migrates it instead of installing beside it.
+OLD=$d/data/fm-merge-on-green
+mkdir -p "$OLD"
+printf '#!/bin/sh\n# retired add-on copy\n' > "$OLD/merge-on-green.sh"
+printf '#!/bin/sh\n# retired adapter\n' > "$OLD/checks-lint.sh"
+printf '#!/usr/bin/env python3\n# retired 1,000-line rule\n' > "$OLD/fm-checks-lint.sh"
+printf 'x: 1\n' > "$OLD/.done-done.yaml"
+for f in merge-on-green.sh checks-lint.sh jg-checks-lint.sh .done-done.yaml; do rm -f -- "$d/data/jg-merge-on-green/$f"; done
+printf '#!/usr/bin/env bash\nexec %q check %q\n' "$OLD/merge-on-green.sh" "$FM" > "$FM/state/merge-on-green.check.sh"
+chmod 700 "$FM/state/merge-on-green.check.sh"
+rm -f "$FM/reg-calls"
+out=$("$SRC/wiring.sh" "$FM" 2>&1) && rc=0 || rc=$?
+check "i: migration exits 0" "$rc" 0
+has "i: names the retired copy it replaced" "$out" "migrated the retired add-on copy at $OLD"
+check "i: the retired 1,000-line rule is gone" "$([ -e "$OLD/fm-checks-lint.sh" ] && echo present || echo gone)" gone
+check "i: the retired adapter is gone" "$([ -e "$OLD/checks-lint.sh" ] && echo present || echo gone)" gone
+check "i: the retired path redirects to the feature gate" "$(tail -n 1 "$OLD/merge-on-green.sh")" "exec $d/data/jg-merge-on-green/merge-on-green.sh \"\$@\""
+check "i: the home's shim now execs the feature gate" "$(sed -n 2p "$FM/state/merge-on-green.check.sh")" "exec $d/data/jg-merge-on-green/merge-on-green.sh check $FM"
+check "i: the retired path still runs the gate" "$(JG_CHECK_TIMEOUT=30 "$OLD/merge-on-green.sh" check "$FM")" ""
+check "i: the check was registered" "$(cat "$FM/reg-calls")" "register merge-on-green"
+before_retired=$(find "$OLD" -mindepth 1 | sort)
+out=$("$SRC/wiring.sh" "$FM" 2>&1) && rc=0 || rc=$?
+check "i: a re-run exits 0" "$rc" 0
+has "i: a re-run reports nothing changed" "$out" "already wired $FM (nothing changed)"
+check "i: a re-run leaves the retired redirect alone" "$(find "$OLD" -mindepth 1 | sort)" "$before_retired"
+
+# (j) A shim that execs some other gate: refused before the first write, nothing half-wired.
+FM2=$d/fm2
+mkdir -p "$FM2/state" "$FM2/bin" "$d/data2"
+cp "$FM/bin/jg-check-register.sh" "$FM2/bin/"
+printf '#!/usr/bin/env bash\nexec /opt/other/gate.sh check %q\n' "$FM2" > "$FM2/state/merge-on-green.check.sh"
+chmod 700 "$FM2/state/merge-on-green.check.sh"
+before2=$(find "$d/data2" -mindepth 1 | sort)
+out=$(XDG_DATA_HOME=$d/data2 "$SRC/wiring.sh" "$FM2" 2>&1) && rc=0 || rc=$?
+check "j: an unknown shim refuses" "$rc" 1
+has "j: the refusal names the shim it will not replace" "$out" "is not the merge gate this installer writes"
+check "j: the refusal wrote nothing" "$(find "$d/data2" -mindepth 1 | sort)" "$before2"
+check "j: the refusal left the shim alone" "$(sed -n 2p "$FM2/state/merge-on-green.check.sh")" "exec /opt/other/gate.sh check $FM2"
+check "j: the refusal did not register" "$([ -e "$FM2/reg-calls" ] && echo called || echo no)" no
+
+# (k) A retired directory holding something else: refused, never overwritten or half-replaced.
+FM3=$d/fm3
+mkdir -p "$FM3/state" "$FM3/bin" "$d/data3/fm-merge-on-green"
+cp "$FM/bin/jg-check-register.sh" "$FM3/bin/"
+printf '#!/bin/sh\n# somebody else gate\n' > "$d/data3/fm-merge-on-green/other-gate.sh"
+before3=$(find "$d/data3" -mindepth 1 | sort)
+out=$(XDG_DATA_HOME=$d/data3 "$SRC/wiring.sh" "$FM3" 2>&1) && rc=0 || rc=$?
+check "k: an unknown retired directory refuses" "$rc" 1
+has "k: the refusal names the retired copy it will not replace" "$out" "does not hold the retired add-on copy"
+check "k: the refusal wrote nothing" "$(find "$d/data3" -mindepth 1 | sort)" "$before3"
+check "k: the refusal left the home with no shim" "$([ -e "$FM3/state/merge-on-green.check.sh" ] && echo present || echo absent)" absent
+
+# (l) A home wired at another install path keeps that share: the installer follows the shim instead of
+# moving the home to XDG_DATA_HOME, and a shim that runs another home's gate is refused.
+FM4=$d/fm4
+OTHER=$d/other-share
+mkdir -p "$FM4/state" "$FM4/bin" "$OTHER/fm-merge-on-green"
+cp "$FM/bin/jg-check-register.sh" "$FM4/bin/"
+printf '#!/bin/sh\n# retired adapter\n' > "$OTHER/fm-merge-on-green/checks-lint.sh"
+printf '#!/usr/bin/env python3\n# retired rule\n' > "$OTHER/fm-merge-on-green/fm-checks-lint.sh"
+printf '#!/bin/sh\n# retired copy\n' > "$OTHER/fm-merge-on-green/merge-on-green.sh"
+printf '#!/usr/bin/env bash\nexec %q check %q\n' "$OTHER/fm-merge-on-green/merge-on-green.sh" "$FM4" > "$FM4/state/merge-on-green.check.sh"
+chmod 700 "$FM4/state/merge-on-green.check.sh"
+out=$(XDG_DATA_HOME=$d/data4 "$SRC/wiring.sh" "$FM4" 2>&1) && rc=0 || rc=$?
+check "l: install exits 0" "$rc" 0
+check "l: the gate lands in the share the shim names" "$([ -x "$OTHER/jg-merge-on-green/jg-checks-lint.sh" ] && echo yes)" yes
+check "l: XDG_DATA_HOME is untouched" "$(mkdir -p "$d/data4"; find "$d/data4" -mindepth 1 | sort)" ""
+check "l: the old copy in that share now redirects" "$(tail -n 1 "$OTHER/fm-merge-on-green/merge-on-green.sh")" "exec $OTHER/jg-merge-on-green/merge-on-green.sh \"\$@\""
+printf '#!/usr/bin/env bash\nexec %q check %q\n' "$OTHER/jg-merge-on-green/merge-on-green.sh" "$FM" > "$FM4/state/merge-on-green.check.sh"
+chmod 700 "$FM4/state/merge-on-green.check.sh"
+out=$(XDG_DATA_HOME=$d/data4 "$SRC/wiring.sh" "$FM4" 2>&1) && rc=0 || rc=$?
+check "l: a shim running another home's gate refuses" "$rc" 1
+has "l: the refusal names the home it runs for" "$out" "not for this home"
+
+if [ "$fails" -eq 0 ]; then echo "PASS: merge-on-green e2e"; else echo "FAIL: $fails check(s)"; exit 1; fi

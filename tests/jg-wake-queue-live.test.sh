@@ -106,10 +106,70 @@ test_inbox_is_raised_at_the_writer_and_acknowledged_on_the_move() {
   pass "an inbox record is raised at its writer and acknowledged on the move"
 }
 
+# One server serves every home on the machine, so a stream made for the first home's
+# prefix alone must not turn the next home's raise into an owed outbox row: that
+# is how a queue "on the bus" kept all its wakes in a file.
+test_a_second_home_reaches_the_same_stream() {
+  local h2="$DIR/home2" url="$JG_WAKE_BUS_URL" subjects
+  mkdir -p "$h2/state" "$h2/config"
+  # The captain channel's stream overlaps a wildcard over the home part, as on the real server.
+  "$NATS_BIN" -s "$url" stream add CAPTAIN --subjects 'jg.captain.>' --storage file --defaults >/dev/null 2>&1 || true
+  "$NATS_BIN" -s "$url" stream edit JG_WAKE --subjects 'jg.home_.wake.>' --force >/dev/null 2>&1 \
+    || fail "could not narrow the stream to one home, the way an earlier build left it"
+  JG_HOME="$h2" JG_STATE_OVERRIDE="$h2/state" "$ROOT/bin/jg-wake-bus.sh" raise check second "check: from home two" now \
+    || fail "the second home's raise failed"
+  assert_equals 0 "$(cat "$h2/state/.wake-bus.outbox.jsonl" 2>/dev/null | wc -l | tr -d ' ')" \
+    "the second home's raise must reach the bus, not wait in its outbox"
+  subjects=$("$NATS_BIN" -s "$url" stream info JG_WAKE --json | jq -r '.config.subjects | join(",")')
+  assert_contains "$subjects" 'jg.home2' "the stream must carry the second home's wake subject"
+  assert_contains "$subjects" 'jg.home_.wake.>' "the stream must keep the first home's wake subject"
+  pass "a second home's raise reaches the one stream"
+}
+
+test_an_inbox_acknowledgement_lands_on_the_inbox_stream() {
+  local before after
+  before=$("$NATS_BIN" -s "$JG_WAKE_BUS_URL" stream info JG_INBOX --json | jq -r '.state.messages')
+  bus ack "inbox/$(basename "$HOME_DIR"):$(printf '%s' "$HOME_DIR" | sha256sum | cut -c1-8)/ghost/1" >/dev/null 2>&1 || true
+  after=$("$NATS_BIN" -s "$JG_WAKE_BUS_URL" stream info JG_INBOX --json | jq -r '.state.messages')
+  assert_equals "$((before + 1))" "$after" "an inbox acknowledgement must be a message on JG_INBOX"
+  pass "an inbox acknowledgement lands on the inbox stream"
+}
+
+# An acknowledgement the bus could not take waits in the outbox and is published by
+# the next render. It carries its raise's id, so it needs its own message id or the
+# server drops it as a duplicate and the settled row comes back from the stream.
+test_an_acknowledgement_owed_by_the_outbox_still_settles() {
+  local id
+  bus raise check owed "check: owed ack" now
+  id=$(bus ids check owed)
+  JG_WAKE_BUS_URL=nats://127.0.0.1:1 bus ack "$id" >/dev/null 2>&1 || true
+  bus render || fail "the render that flushes the outbox failed"
+  rm -f "$STATE_DIR/.wake-bus.cursor" "$STATE_DIR/.wake-bus.events.jsonl"
+  bus render || fail "the rebuild from the stream failed"
+  assert_not_contains "$(cat "$STATE_DIR/.wake-queue")" "owed" \
+    "a flushed acknowledgement must settle its row when the replica is rebuilt from the stream"
+  pass "an acknowledgement flushed from the outbox settles its row"
+}
+
+# The done-done journey (journeys/wake-bus-live.sh) is this suite's whole-path proof: its own
+# throwaway server, two homes, and the probe that must PASS in each.
+test_the_journey_proves_the_probe_in_two_homes() {
+  local out
+  mkdir -p "$DIR/evidence"
+  out=$(DONE_DONE_EVIDENCE_ROOT="$DIR/evidence" RUN_ID=journey bash "$ROOT/journeys/wake-bus-live.sh" 2>&1) \
+    || fail "the journey failed: $out"
+  assert_contains "$out" "journey rc=0" "the journey must end clean"
+  pass "the journey proves the probe in two homes"
+}
+
 result=0
 test_raise_reaches_the_read_model || result=1
 test_acknowledgement_removes_the_row_everywhere || result=1
 test_record_only_row_lands_in_the_record_model || result=1
 test_withdraw_takes_only_its_own_row || result=1
 test_inbox_is_raised_at_the_writer_and_acknowledged_on_the_move || result=1
+test_a_second_home_reaches_the_same_stream || result=1
+test_an_inbox_acknowledgement_lands_on_the_inbox_stream || result=1
+test_an_acknowledgement_owed_by_the_outbox_still_settles || result=1
+test_the_journey_proves_the_probe_in_two_homes || result=1
 exit "$result"

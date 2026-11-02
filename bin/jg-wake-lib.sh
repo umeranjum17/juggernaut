@@ -2487,9 +2487,81 @@ jg_wake_route_class() {
     # shellcheck disable=SC2254  # the rule file's key and payload fields are globs
     case "$key" in $rkey) ;; *) continue ;; esac
     # shellcheck disable=SC2254
-    case "$payload" in $rpay) printf '%s\n' "$class"; return 0 ;; esac
+    case "$payload" in $rpay) ;; *) continue ;; esac
+    # `class@condition` holds only while a fact about the event is true.
+    case "$class" in
+      *@*) _jg_wake_cond "${class#*@}" "$key" "$payload" || continue; class=${class%@*} ;;
+    esac
+    printf '%s\n' "$class"
+    return 0
   done < "$file"
   printf 'now\n'
+}
+
+# _jg_wake_rule_set <name> <default>: a `set <name> <value>` number from the rule file.
+_jg_wake_rule_set() {
+  local file tag name value rest out=$2
+  file=$(jg_wake_routing_file)
+  [ -n "$file" ] || { printf '%s\n' "$out"; return 0; }
+  while read -r tag name value rest; do
+    [ "$tag:$name" = "set:$1" ] || continue
+    case "$value" in ''|*[!0-9]*) continue ;; esac
+    out=$value
+  done < "$file"
+  printf '%s\n' "$out"
+}
+
+# _jg_wake_cond <condition> <key> <payload>: the fact a `class@condition` rule names:
+# parked (a lane of a parked home), restart-pass (a lead the restart pass just restarted,
+# stamped in state/.squad-lead-restart-pass), queue-quiet (no queued row routes to `now`).
+_jg_wake_cond() {
+  local cond=$1 key=$2 payload=$3 word prev='' secs now stamp id row_kind row_key row_pay
+  case "$cond" in
+    parked|restart-pass)
+      for word in ${key%.status} $payload; do
+        id=''
+        case "$prev" in squad_lead|waiting-state) id=${word%%[,;:)(]*} ;; esac
+        [ -n "$id" ] || { [ "$word" != "${key%.status}" ] || id=$word; }
+        prev=$word
+        case "$id" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
+        if [ "$cond" = parked ]; then
+          # shellcheck source=/dev/null
+          [ -r "$JG_WAKE_LIB_DIR/jg-parked-homes-lib.sh" ] && . "$JG_WAKE_LIB_DIR/jg-parked-homes-lib.sh" || return 1
+          jg_parked_meta "$STATE/$id.meta" "$id" 2>/dev/null && return 0
+          jg_parked_home "$id" && return 0
+        else
+          secs=$(_jg_wake_rule_set restart-pass-seconds 600)
+          now=$(date +%s)
+          [ -f "$STATE/.squad-lead-restart-pass" ] || continue
+          while read -r stamp row_key; do
+            [ "$row_key" = "$id" ] && [ "$((now - stamp))" -le "$secs" ] 2>/dev/null && return 0
+          done < "$STATE/.squad-lead-restart-pass"
+        fi
+      done
+      return 1 ;;
+    queue-quiet)
+      [ -s "${JG_WAKE_QUEUE:-}" ] || return 0
+      while IFS=$'\t' read -r _ _ row_kind row_key row_pay _; do
+        [ -n "$row_key" ] || continue
+        [ "$(jg_wake_route_class "$row_kind" "$row_key" "$row_pay")" = now ] || continue
+        return 1
+      done < "$JG_WAKE_QUEUE"
+      return 0 ;;
+  esac
+  return 1
+}
+
+# _jg_wake_silence_charge: count one settled event against `set silence-cap-per-hour`;
+# non-zero once the hour is spent, and the caller then sends it to the digest as `batch`.
+_jg_wake_silence_charge() {
+  local cap now log="$STATE/.wake-silenced" used=0
+  cap=$(_jg_wake_rule_set silence-cap-per-hour 0)
+  [ "$cap" -gt 0 ] || return 0
+  now=$(date +%s)
+  [ ! -f "$log" ] || used=$(awk -v c="$((now - 3600))" '$1 > c' "$log" 2>/dev/null | wc -l)
+  [ "$used" -lt "$cap" ] || return 1
+  printf '%s\n' "$now" >> "$log" 2>/dev/null || true
+  return 0
 }
 
 # _jg_wake_realert_record <kind> <key> <payload>: remember a delivered event for the
@@ -2551,6 +2623,7 @@ jg_wake_append_locked() {
       class='batch'
     fi ;;
   esac
+  if [ "$class" = silent ] && ! _jg_wake_silence_charge; then class='batch'; fi
   if [ "$class" = silent ]; then
     _jg_wake_settled_locked "$kind" "$clean_key" "$clean_payload" || true
     JG_WAKE_LAST="silent:$clean_key"

@@ -1,0 +1,43 @@
+{
+  "schema": "juggernaut-rules/1",
+  "rules": [
+    {
+      "id": "proof-merged-is-not-released",
+      "when": "You report a user-visible change as fixed or done.",
+      "use": { "text": "Name the released version that runs and where it is observable, or say plainly that the change is merged but not released." },
+      "why": "A merge is not a release, and an unmarked merge report misleads.",
+      "kind": "checkable",
+      "enforcedBy": "bin/jg-live-claim.sh"
+    },
+    {
+      "id": "proof-at-the-head-you-merge",
+      "when": "You decide a pull request is ready to merge.",
+      "use": { "text": "Take the proof at the exact head you merge, after the last commit, and merge only through the guarded merge path." },
+      "why": "Any later commit moves the head and voids the proof.",
+      "kind": "checkable",
+      "enforcedBy": "bin/jg-merge-gate-lib.sh"
+    },
+    {
+      "id": "tests-integration-only",
+      "when": "You write or change a test.",
+      "use": { "text": "Add an integration or end-to-end test that drives the real product, and extend the journey test the change touches. Do not add unit, snapshot or mock-heavy tests." },
+      "why": "Only a test that drives the real product proves the user's path.",
+      "kind": "judgement"
+    },
+    {
+      "id": "ci-one-push-per-change",
+      "when": "The pull request is open and its checks run.",
+      "use": { "text": "Do not push again while the checks run. Put every follow-up fix into one push, and run the CI lint locally before the first push." },
+      "why": "Each push restarts every check, so a lint fix after opening costs a full run.",
+      "kind": "judgement"
+    },
+    {
+      "id": "naming-skill-prefix",
+      "when": "You name or rename a skill that a tool or project ships.",
+      "use": { "text": "Prefix it with its source: done-done-, lfm-, sign-off-, first-draft-, byokit-, muxr-, crewhouse-, takeone-." },
+      "why": "The prefix is how a user knows which tool owns the skill.",
+      "kind": "judgement"
+    }
+  ],
+  "default": { "use": { "text": "" }, "why": "No rule matched. Follow the project's own convention, then add a rule here when it should hold across projects." }
+}

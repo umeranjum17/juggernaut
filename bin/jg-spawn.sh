@@ -38,16 +38,24 @@
 #   prints a one-line deviation notice and continues, because the registered
 #   prefix is the captain's standing preference and the brief agreement above
 #   already guarantees the worker's instructions match the branch.
-#   --base-branch is the optional branch selected at intake for a ship or scout
-#   to start from and target instead of origin's default branch. A fresh launch
-#   resets its pooled copy to origin/<branch>, refusing when the project has no
-#   origin or origin lacks that branch, or when the project's registered forge
-#   cannot carry it. It must agree with every Setup "Base branch:" line in the
-#   brief (bin/jg-brief.sh --base-branch writes one; other such lines are prose),
-#   and a brief with such a line refuses a spawn without the flag. The spawn records it as
-#   base_branch= in state/<id>.meta, which a relaunch reuses and later review and
-#   cleanup read; it is refused on squad_leads and relaunches, and without it
-#   nothing changes.
+#   --base-branch is the branch selected at intake for a ship or scout to start
+#   from and target instead of origin's default branch. A fresh launch resets its
+#   pooled copy to origin/<branch>, refusing when the project has no origin or
+#   origin lacks that branch, or when the project's registered forge cannot carry
+#   it. It must agree with every Setup "Base branch:" line in the brief
+#   (bin/jg-brief.sh --base-branch writes one; other such lines are prose).
+#   With neither the flag nor any such line, the base is the project's current
+#   version branch, its newest release/c-<N> (bin/jg-version-branch-lib.sh owns
+#   that read), so a feature starts there and its pull request targets it instead
+#   of the default branch; a project with no version branch keeps the default
+#   branch, and a brief that records no base while the project carries one is
+#   refused by name rather than launched onto the default branch.
+#   A mode that publishes nothing, and a project whose registered forge carries
+#   no pull request, keep no default base, because bin/jg-dod-lib.sh's
+#   jg_base_branch_valid refuses one there.
+#   The spawn records the base as base_branch= in state/<id>.meta, which a
+#   relaunch reuses and later review and cleanup read; it is refused on
+#   squad_leads and relaunches.
 #   When config/launch-env-hook is an executable file, every local launch runs
 #   it in the pane at the worktree as `config/launch-env-hook <out-file>` and
 #   sources the one export statement it writes before the AI-trailer step; a
@@ -359,6 +367,16 @@
 #   This is an exec environment boundary, not a sandbox for the pane's startup
 #   shell, credential files, same-user processes, or later shell initialization.
 #   See docs/configuration.md for provider/Git setup and supported limits.
+# Provider credentials (bin/jg-launch-env-lib.sh):
+#   Independently of the allowlist above, every launch strips the
+#   credential-shaped variables this process carries - provider keys, tokens,
+#   secrets, passwords, and access keys - unless config/launch-env-allowlist
+#   names them. The shapes live in one place in that library, so a credential a
+#   later provider introduces is stripped with no change here, and the emitted
+#   launch text carries names only, never a value. docs/configuration.md
+#   "Provider credentials stripped from every launch" owns the contract and its
+#   limit: a variable present only in the destination pane, not in this
+#   process, is not stripped.
 # Claude permission mode (config/claude-permission-mode):
 #   One token selecting the permission flag every claude launch (ship, scout,
 #   squad_lead, and relaunch) carries. Absent or `bypass` keeps today's
@@ -629,6 +647,8 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 . "$SCRIPT_DIR/jg-config-inherit-lib.sh"
 # shellcheck source=bin/jg-exclude-tools-lib.sh
 . "$SCRIPT_DIR/jg-exclude-tools-lib.sh"
+# shellcheck source=bin/jg-launch-env-lib.sh
+. "$SCRIPT_DIR/jg-launch-env-lib.sh"
 if ! LAUNCH_ENV_ENABLED=$(jg_config_source_present "$CONFIG/launch-env-allowlist"); then
   exit 1
 fi
@@ -732,6 +752,8 @@ jg_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/jg-pr-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
+# shellcheck source=bin/jg-version-branch-lib.sh
+. "$SCRIPT_DIR/jg-version-branch-lib.sh"
 # shellcheck source=bin/jg-role-lib.sh
 . "$SCRIPT_DIR/jg-role-lib.sh"
 # shellcheck source=bin/jg-trace-context-lib.sh
@@ -3496,9 +3518,32 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
       echo "error: $BRIEF must record Base branch: $BASE_BRANCH and no other Base branch line to spawn with --base-branch $BASE_BRANCH; scaffold it with bin/jg-brief.sh --base-branch $BASE_BRANCH" >&2
       exit 1
     fi
-  elif jg_brief_base_branches "$BRIEF" >/dev/null; then
-    echo "error: $BRIEF records a Base branch line but the spawn has no --base-branch; pass the brief's base with --base-branch or re-scaffold the brief without one" >&2
-    exit 1
+  elif [ "$BASE_BRANCH_SET" -eq 0 ]; then
+    # No flag on a project that carries a version branch means the version
+    # branch: new work starts from it and its pull request targets it, so a
+    # feature can no longer reach the default branch by accident.
+    # bin/jg-version-branch-lib.sh owns which branch that is, and a project
+    # without one keeps the default-branch copy and the refusal below exactly as
+    # before. A mode that publishes nothing keeps no base, because
+    # jg_base_branch_valid refuses one there.
+    PROJ_FORGE=
+    if [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ]; then
+      PROJ_FORGE=$("$JG_ROOT/bin/jg-project-mode.sh" --forge "$(basename "$PROJ_ABS")" 2>/dev/null) || PROJ_FORGE=
+      if [ -z "$PROJ_FORGE" ] || [ "$PROJ_FORGE" = none ]; then
+        BASE_BRANCH=$(jg_current_version_branch "$PROJ_ABS") || BASE_BRANCH=
+      fi
+    fi
+    if [ -n "$BASE_BRANCH" ]; then
+      jg_base_branch_valid "$BASE_BRANCH" "$MODE" "${PROJ_FORGE:-none}" "jg-spawn.sh" || exit 1
+      if ! jg_brief_base_branches "$BRIEF" >/dev/null \
+        || jg_brief_base_branches "$BRIEF" | grep -vxF -- "$BASE_BRANCH" >/dev/null; then
+        echo "error: $(basename "$PROJ_ABS")'s current version branch is $BASE_BRANCH, so this spawn starts there and its pull request targets it; $BRIEF must record Base branch: $BASE_BRANCH and no other Base branch line - scaffold it with bin/jg-brief.sh --project <project-dir>, which records the version branch itself, or pass --base-branch $BASE_BRANCH to the brief and to this spawn" >&2
+        exit 1
+      fi
+    elif jg_brief_base_branches "$BRIEF" >/dev/null; then
+      echo "error: $BRIEF records a Base branch line but the spawn has no --base-branch; pass the brief's base with --base-branch or re-scaffold the brief without one" >&2
+      exit 1
+    fi
   fi
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
@@ -6084,6 +6129,18 @@ if [ -n "$SPAWN_TRACEPARENT" ]; then
     fi
     LAUNCH="unset TRACEPARENT; $LAUNCH"
   fi
+fi
+# Provider-credential strip (bin/jg-launch-env-lib.sh; docs/configuration.md
+# "Provider credentials stripped from every launch" owns the contract). Every
+# launch - ship, scout, squad_lead, local and remote, raw command, and relaunch -
+# drops the credential-shaped variables this process would otherwise pass on
+# unless config/launch-env-allowlist names them. The prefix is pinned in front of
+# every other statement so nothing later can re-export a stripped name, and it
+# runs in the pane, where the inheritance actually happens. Names only: the
+# emitted text can never carry a value.
+LAUNCH_ENV_STRIP=$(jg_launch_env_strip_prefix "$LAUNCH_ENV_NAMES") || exit 1
+if [ -n "$LAUNCH_ENV_STRIP" ]; then
+  LAUNCH="$LAUNCH_ENV_STRIP$LAUNCH"
 fi
 if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   LAUNCH_ENV_PREFIX='/usr/bin/env -i'

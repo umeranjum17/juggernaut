@@ -68,7 +68,7 @@ That tag is the record this fleet already keeps for "he told us how to work", so
 
 Either artefact captures it, and both are commands that already exist:
 
-- A rule: `data/owner-rules.md` was written at or after the correction, which `bin/jg-owner-rules.sh add` does.
+- A rule: `data/owner-rules.md` was written at or after the correction, which `bin/jg-owner-rules.sh add` does, and that same call files the rule's enforcement ticket so the work does not sit in the surface alone.
 - A ticket: the backlog holds a row created on or after the correction's UTC date, or `data/ticket-counters.tsv` was written at or after it, which `bin/jg-tasks-axi.sh add` does.
 
 A turn that writes either artefact ends normally, and the charge (`state/.owner-correction-flagged`) keeps every harness bounded to one block per correction; a home whose harness records no captain message records no correction, exactly as for the KPI rule.

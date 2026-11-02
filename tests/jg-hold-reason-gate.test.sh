@@ -14,7 +14,7 @@ TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
 
 setup() {  # <name> -> the case dir
   local d=$TMP_ROOT/$1
-  mkdir -p "$d/home/data" "$d/home/state" "$d/home/config" "$d/empty-addons" "$d/fakebin"
+  mkdir -p "$d/home/data" "$d/home/state" "$d/home/config" "$d/fakebin"
   jg_test_tasks_toml "$d/home/.tasks.toml"
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$d/home/data/backlog.md"
   cat > "$d/fakebin/sign-off-axi" <<'SH'
@@ -30,7 +30,7 @@ run() {  # <case dir> <command...>
   local d=$1
   shift
   env PATH="$d/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" JG_CODE_ROOT="$ROOT" \
-    JG_ADDONS_DIR="$d/empty-addons" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$ROOT" \
+    JG_HOME="$d/home" JG_ROOT_OVERRIDE="$ROOT" \
     JG_STATE_OVERRIDE="$d/home/state" JG_DATA_OVERRIDE="$d/home/data" \
     JG_CONFIG_OVERRIDE="$d/home/config" SIGNOFF_LOG="$d/signoff.log" "$@" 2>&1
 }
@@ -63,7 +63,10 @@ test_a_real_reason_reaches_the_board_with_its_ticket() {
     || fail "the fixture could not create its task"
   mkdir -p "$d/home/state/procevent"
   : > "$d/home/state/procevent/signoff.source"
-  out=$(run "$d" "$ROOT/bin/jg-captain-hold.sh" hold ship-a --must design-pick --reason "Pick the launch word or it waits") \
+  # core/signoff is the default card path and posts only an authored owner ask, so
+  # this test names the one card path (bin/jg-question-card.sh post) through the
+  # JG_SIGNOFF_SCRIPT seam that bin/jg-captain-hold.sh documents.
+  out=$(run "$d" env JG_SIGNOFF_SCRIPT="$ROOT/bin/jg-procevent-signoff.sh" "$ROOT/bin/jg-captain-hold.sh" hold ship-a --must design-pick --reason "Pick the launch word or it waits") \
     || fail "a real reason was refused: $out"
   log=$(cat "$d/signoff.log" 2>/dev/null)
   assert_contains "$log" 'Pick the launch word or it waits' "the hold's reason did not reach the board"

@@ -58,6 +58,15 @@
 # workflow lint and backend-purity checks, keeping either invocation
 # independently useful.
 #
+# --changed-base <ref> is the CI changed-file set: the canonical roots that
+# differ between <ref> and HEAD, linted with the same full source-aware
+# analysis a canonical root gets on main. It is what makes a pull request's
+# required lint seconds long instead of a full-tree pass, and main still lints
+# the whole tree on push, so a root nobody touched in this change keeps its
+# full-tree coverage. It combines with --partition, which then splits only the
+# changed roots across the runners, and an unreadable diff refuses rather than
+# linting nothing.
+#
 # With JG_LINT_REQUIRE_BOUNDS=1, which CI sets, every per-root ShellCheck
 # process runs under an enforced envelope: a wall deadline
 # (JG_LINT_ROOT_SECONDS, default 1200), a terminate-then-kill cleanup grace
@@ -111,6 +120,8 @@
 #   jg-lint.sh <path>...               lint explicit roots with the same config
 #   jg-lint.sh --jobs <1|2> [path]...  override concurrent worker count
 #   jg-lint.sh --partition <k>of<n> lint one canonical CI partition (see fallback above)
+#   jg-lint.sh --changed-base <ref> [--partition <k>of<n>]
+#                                      lint only the canonical files changed since <ref>
 #   jg-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
 #   jg-lint.sh --required-version      print the ShellCheck pin
 #   jg-lint.sh --list-files            print the file set that would be linted
@@ -807,6 +818,7 @@ FAST=0
 ANALYSIS_MODE=full
 PARTITION=
 PARTITION_REQUESTED=0
+CHANGED_BASE=
 LIST_FILES=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -837,6 +849,15 @@ while [ "$#" -gt 0 ]; do
     --partition=*)
       PARTITION=${1#*=}
       PARTITION_REQUESTED=1
+      shift
+      ;;
+    --changed-base)
+      [ "$#" -ge 2 ] || { printf 'jg-lint.sh: --changed-base requires a git ref.\n' >&2; exit 2; }
+      CHANGED_BASE=$2
+      shift 2
+      ;;
+    --changed-base=*)
+      CHANGED_BASE=${1#*=}
       shift
       ;;
     --fast)
@@ -898,6 +919,11 @@ if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true
   exit 2
 fi
 
+if [ -n "$CHANGED_BASE" ] && [ "$FAST" -eq 1 ]; then
+  printf 'jg-lint.sh: --changed-base lints with full analysis; omit --fast.\n' >&2
+  exit 2
+fi
+
 # jg_lint_changed_base_ref prints the ref to diff the working branch against:
 # the local origin/main tracking ref when present, else local main. Returns
 # nonzero when neither is resolvable, which the caller treats as "no
@@ -934,12 +960,36 @@ jg_lint_is_canonical_root() {
 }
 
 CHANGED_MODE=0
+CHANGED_BASE_MODE=0
 EXPLICIT_PATHS=0
 FOLLOW_SOURCES=1
 EXCLUDE_CODES=
 if [ "$#" -gt 0 ]; then
   EXPLICIT_PATHS=1
+  if [ -n "$CHANGED_BASE" ]; then
+    printf 'jg-lint.sh: --changed-base and explicit paths are alternatives; pass one.\n' >&2
+    exit 2
+  fi
   ROOTS=("$@")
+elif [ -n "$CHANGED_BASE" ]; then
+  # Changed-file mode at CI parity: full source-aware analysis of only the
+  # canonical roots this change touched. A ref that cannot be resolved, or a
+  # diff that cannot be read, refuses: an empty set from an unreadable diff
+  # would report a clean lint for a change nobody looked at.
+  CHANGED_BASE_MODE=1
+  git rev-parse --verify -q "$CHANGED_BASE^{commit}" >/dev/null 2>&1 \
+    || { printf 'jg-lint.sh: --changed-base ref not found: %s\n' "$CHANGED_BASE" >&2; exit 2; }
+  changed_paths=$(git diff --name-only --diff-filter=ACMR -z "$CHANGED_BASE" HEAD 2>/dev/null | tr '\0' '\n') \
+    || { printf 'jg-lint.sh: could not read the diff against %s\n' "$CHANGED_BASE" >&2; exit 2; }
+  ROOTS=()
+  while IFS= read -r changed_path; do
+    [ -n "$changed_path" ] || continue
+    jg_lint_is_canonical_root "$changed_path" || continue
+    [ -f "$changed_path" ] || continue
+    ROOTS+=("$changed_path")
+  done <<EOF
+$changed_paths
+EOF
 else
   full_lint=1
   if [ -z "$PARTITION" ] && [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ] \
@@ -1062,7 +1112,7 @@ else
   printf 'jg-lint.sh: full ShellCheck extended analysis enabled\n' >&2
 fi
 
-if [ "$CHANGED_MODE" -eq 1 ] && [ "$ROOT_COUNT" -eq 0 ]; then
+if { [ "$CHANGED_MODE" -eq 1 ] || [ "$CHANGED_BASE_MODE" -eq 1 ]; } && [ "$ROOT_COUNT" -eq 0 ]; then
   printf 'jg-lint.sh: no changed lint targets\n'
   overall_rc=0
   jg_lint_run_backend_purity || overall_rc=$?

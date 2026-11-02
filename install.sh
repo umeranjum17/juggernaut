@@ -78,11 +78,14 @@ fi
 # leaves alone, so writing afterwards would silently drop our rules from every fresh home.
 # A template's name is its destination inside the home, spelled out here because the home's own
 # config/ and data/ directories are gitignored and must never hold the template itself.
-for src in "$root"/defaults/*.md; do
+# A defaults/*.json seeds config/ by its own name, once, for a home that has none. defaults/crew-dispatch.json
+# is deliberately absent: a home's routing is private, and docs/examples/crew-dispatch.json is the example.
+for src in "$root"/defaults/*.md "$root"/defaults/*.json; do
   [ -e "$src" ] || continue
   case ${src##*/} in
     brief-include.md) rel=config/brief-include.md ;;
     owner-rules.md) rel=data/owner-rules.md ;;
+    *.json) rel=config/${src##*/} ;;
     *) say "defaults: skipped ${src##*/}, which names no destination"; continue ;;
   esac
   if [ -e "$HOME_DIR/$rel" ]; then
@@ -139,6 +142,13 @@ while read -r tool spec _; do
   bash "$root/bin/jg-bootstrap.sh" install "$tool"
   changed=$((changed + 1))
 done < "$(jg_pin_file)"
+
+# 4b. The services: the bus, the sidecar and ntfy, installed, enabled and started by the one command.
+if [ "$DRY" = yes ]; then
+  say "stack: would run bin/jg-stack.sh up"
+else
+  bash "$root/bin/jg-stack.sh" up || say "needs you: fix the line above, then run: bash $root/bin/jg-stack.sh up"
+fi
 
 # 5. Only the user can type these; this installer never holds or copies a login.
 gh auth status >/dev/null 2>&1 || say "needs you: gh auth login   (GitHub access for projects and pull requests)"

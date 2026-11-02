@@ -47,6 +47,16 @@ gate commands start only before 80% of the bound, a merge only when it fits insi
 so the watcher's kill can at worst cut a gate command (harmlessly retried next sweep), never a
 merge.
 
+## Proof line
+
+The `## Checks` block's `proof:` line names the verify skill of the repository under test — the clone
+the pull request belongs to, taken from the lane's recorded worktree, else this home's clone of that
+repository — and never from the folder the lint happens to run in, because a caller's own skill list
+says nothing about someone else's pull request. A repository that has a verify skill (hand-written
+`verify-<app>` or one done-done wrote as `done-done-verify-<app>`) needs that skill named, and the
+phrase `no verify skill` is refused there; a repository without one passes the phrase. When neither
+clone is on disk the lint cannot judge the repository, so both forms are accepted rather than guessed.
+
 ## Size rule
 
 The added non-generated lines of a PR are measured against a 1,000-line guidance, and the size is
@@ -68,11 +78,24 @@ is reachable the full file-list count stands, so an API failure can never lower 
 
 ## Install
 
-`merge-on-green/wiring.sh [--dry-run] <jg-home>` copies `merge-on-green.sh`, `checks-lint.sh`, `jg-checks-lint.sh` and its `.done-done.yaml` to
+`merge-on-green/wiring.sh [--dry-run] <jg-home>` is the one installer path for this gate. It copies
+`merge-on-green.sh`, `checks-lint.sh`, `jg-checks-lint.sh` and its `.done-done.yaml` to
 `${XDG_DATA_HOME:-~/.local/share}/jg-merge-on-green/`, writes the shim
-`state/merge-on-green.check.sh` (mode 0700), and registers it with `bin/jg-check-register.sh`.
-It is idempotent; `--dry-run` prints the steps and writes nothing. Run it once per home; the lead
-installs it from merged main, never from a branch.
+`state/merge-on-green.check.sh` (mode 0700), and registers it with `bin/jg-check-register.sh`. The
+install share comes from the shim the home already runs, so a re-run keeps a home at its own install
+path instead of moving it to `XDG_DATA_HOME`.
+
+A home that still runs the retired install of this gate in `${XDG_DATA_HOME:-~/.local/share}/fm-merge-on-green`
+is migrated in the same run: that directory's `fm-checks-lint.sh`, whose size rule refused every pull
+request over 1,000 added lines, and its adapter are removed, and its `merge-on-green.sh` is left as one
+redirect line to the installed gate. The redirect is why a machine's other homes keep working when only
+one of them has been migrated yet, and it is never overwritten back.
+
+Every expected shape is proved before the first write: a shim that execs neither copy, a shim that runs
+another home's gate, or a retired directory holding neither the old install nor the redirect refuses the
+whole run and writes nothing. A refused registration puts the home's previous shim back. Re-running
+changes nothing and says so; `--dry-run` prints the same steps and writes nothing. Run it once per home;
+the lead installs it from merged main, never from a branch.
 
 ## Test
 
@@ -85,4 +108,8 @@ merge and one wake line, receipt head mismatch -> no merge, all gates pass -> `j
 once with exactly the task and PR URL and the merged line written, the same head never retried after a merge or a refusal, a
 gate refusal waking once per task+head+reason+receipt state with repeats silent and a changed
 reason, receipt or head waking again, and `wiring.sh` in both `--dry-run` and real mode (register
-runs with `JG_STATE_OVERRIDE` unset, the shim execs the installed script with the home).
+runs with `JG_STATE_OVERRIDE` unset, the shim execs the installed script with the home). It also covers
+the migration of the retired install (its rule file gone, the retired path redirecting and still running
+the gate, a re-run changing nothing), a home wired at another install path keeping that path, and both
+refusals: an unknown shim target, a shim running another home's gate, and an unknown retired directory,
+each refused with nothing written.

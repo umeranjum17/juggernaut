@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # Watch the GitHub run of a head this home merged ahead of CI, and open exactly
-# one fix item if it goes red. This is an alarm, never a gate: the merge already
-# happened, so nothing here can refuse or undo it.
+# one fix-forward item if it goes red. This is an alarm, never a gate: the merge
+# already happened, so nothing here can refuse or undo it.
+#
+# Nothing is ever reverted. A red main is fixed by a change that moves forward,
+# because a revert costs the time it takes to land it plus the time it takes to
+# land the fix again, and the follow-up this alarm files is that fix. Every other
+# pull request keeps merging while that item is open: the alarm never blocks the
+# merge path, it only names the owner of the failure.
 #
 # Usage: jg-post-merge-ci.sh <task-id> <PR URL> <merged head>
 #        jg-post-merge-ci.sh --main [<workflow name>]

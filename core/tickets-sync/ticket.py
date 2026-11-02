@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record one task's ticket truth on the fleet board now, from a lifecycle step.
 
-Usage: ticket.py <task> [--stage WORD] [--state WORD] [--pr URL] [--release TEXT]
+Usage: ticket.py <task> [--stage WORD] [--state WORD] [--pr URL] [--release TEXT] [--hold-reason TEXT]
 
 JG_HOME names the home whose config/fleet-board owns this task, and the task is
 its backlog item id, published as the ticket for main/<task> (the sync's own
@@ -18,6 +18,10 @@ sync's own completion rule does.
 last-event-at is not written here: lane.py derives it from the lane's own status
 stamps and the next poll owns it, so a writer-supplied time would only make the
 poll rewrite the row once.
+
+A hold travels with the state: sign-off refuses a ticket held for no reason, so
+`--state "on hold"` needs `--hold-reason <why it waits>`, and any other state
+releases a hold the row still carries, as the poll's completion rule does.
 """
 import argparse
 import hashlib
@@ -47,11 +51,12 @@ def main(argv):
     parser.add_argument('--state', choices=STATES)
     parser.add_argument('--pr', default=None, help='the delivered PR URL, or "" to clear it')
     parser.add_argument('--release', default=None, help='the target release, up to 40 characters')
+    parser.add_argument('--hold-reason', default=None, help='why an `on hold` state waits')
     options = parser.parse_args(argv)
     if not options.task or '/' in options.task:
         return die('task must be one backlog item id')
-    if (options.stage, options.state, options.pr, options.release) == (None, None, None, None):
-        return die('nothing to record: pass --stage, --state, --pr or --release')
+    if (options.stage, options.state, options.pr, options.release, options.hold_reason) == (None, None, None, None, None):
+        return die('nothing to record: pass --stage, --state, --pr, --hold-reason or --release')
     home = Path(os.environ.get('JG_HOME') or '.').resolve()
     pointer = home / 'config/fleet-board'
     if not pointer.exists():
@@ -92,6 +97,17 @@ def main(argv):
             write[key] = value
     if options.state == 'done' and ticket.get('progress') != 100:
         write['progress'] = '100'
+    if options.state == 'on hold':
+        # The board refuses a hold nobody can read, so a reasonless hold stays with
+        # the poll, which publishes the item's own words or the parking behind it.
+        if not options.hold_reason:
+            return 0
+        if (ticket.get('hold_reason') or '') != options.hold_reason:
+            write['hold-reason'] = options.hold_reason
+        if not ticket.get('hold'):
+            write['hold'] = 'yes'
+    elif options.state and ticket.get('hold'):
+        write['hold'] = 'no'
     if not write:
         return 0
     command = ['sign-off-axi', 'ticket', str(board), '--id', ticket_id]

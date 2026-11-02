@@ -350,15 +350,13 @@ jg_operational_record_kind() {  # <record-path> <result-var>
 # Whether <message>'s first line starts with the doorbell prefix. No filesystem
 # access and no record check: shape alone.
 jg_operational_doorbell_shaped() {  # <message>
-  local message=${1-} first
-  case "$message" in
-    "$JG_OPERATIONAL_DOORBELL_PREFIX"*) return 0 ;;
-    *$'\n'*)
-      first=${message%%$'\n'*}
-      case "$first" in
-        "$JG_OPERATIONAL_DOORBELL_PREFIX"*) return 0 ;;
-      esac
-      ;;
+  local first=${1-}
+  first=${first%%$'\n'*}
+  # A stray leading colon or space must not hide a doorbell: drop them first.
+  first=${first#"${first%%[![:space:]:]*}"}
+  case "$first" in
+    "${JG_OPERATIONAL_DOORBELL_PREFIX#: }"*) return 0 ;;
+    'Juggernaut instruction waiting: list '*) return 0 ;;
   esac
   return 1
 }

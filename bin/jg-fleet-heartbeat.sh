@@ -17,8 +17,11 @@
 #                   line is not paused, blocked, needs-decision, done or failed;
 #          target   config/lane-target (one positive integer);
 #          ready    ready_work in state/home-summary.json;
-#          waits    open wait-timer episodes in state/.waiting-timers/, each
-#                   already climbing its own owner, lead, Main, card ladder;
+#          waits    open wait-timer episodes in state/.waiting-timers/ that are
+#                   climbing a ladder. A wait that is a declared pause, and any
+#                   wait inside a home with a pause record (bin/jg-pause-lib.sh),
+#                   is not climbing: it is named as paused in the why and is
+#                   never itself the reason for a GAP;
 #          beacon   jg_watcher_progress_age (bin/jg-wake-lib.sh): the watcher
 #                   beacon, or a starting watcher's lock while it has none.
 #        Verdict, first match wins:
@@ -26,11 +29,18 @@
 #                   older than JG_FLEET_HEARTBEAT_BEACON_SECS (default 900): no
 #                   supervision is moving this home;
 #          GAP      ready work with lanes free (working below the target, or
-#                   none working when no target is set), or an open wait;
+#                   none working when no target is set), or an open wait that is
+#                   not a pause;
 #          IDLE     no working lane and no ready work;
 #          MOVING   otherwise;
 #          DORMANT  stopped by bin/jg-squad-lead-dormant.sh with no open work;
 #                   it wakes when work is routed to it, so it is no gap.
+#          PAUSED   a home under a declared pause record (bin/jg-pause-lib.sh)
+#                   dispatches nothing by design, and the ready-work check
+#                   already stays silent for it, so it is no gap either; its
+#                   ready count and its waits are named in the why. A dead
+#                   supervision beat is still STALLED, because a paused home
+#                   still needs a live watcher to lift its own pause.
 #        A remote Squad Lead is UNREAD, and a registered home that is not a
 #        directory is STALLED.
 # check  Prints one line per home that turns GAP or STALLED, again every
@@ -59,6 +69,12 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
+# The pause verb and the declared wait line: classification owns what a paused
+# wait is, bin/jg-pause-lib.sh owns the home's own pause record.
+# shellcheck source=bin/jg-classify-lib.sh
+. "$SCRIPT_DIR/jg-classify-lib.sh"
+# shellcheck source=bin/jg-pause-lib.sh
+. "$SCRIPT_DIR/jg-pause-lib.sh"
 STATE="$JG_HOME/state"
 BEACON_SECS=${JG_FLEET_HEARTBEAT_BEACON_SECS:-900}
 REFIRE_SECS=${JG_FLEET_HEARTBEAT_REFIRE_SECS:-600}
@@ -66,15 +82,26 @@ NOW=$(date +%s)
 
 die() { printf 'jg-fleet-heartbeat: %s\n' "$1" >&2; exit "${2:-1}"; }
 
+# 0 when <task> in <state-dir> waits on a declared pause rather than on a
+# blocker, decision, prompt or other wait source. bin/jg-classify-lib.sh owns
+# both reads, so the heartbeat names exactly the waits the timer treats as
+# paused.
+wait_is_paused() {  # <state-dir> <task>
+  local line
+  line=$(status_declared_wait_line "$1/$2.status" 2>/dev/null) || return 1
+  status_is_paused "$line"
+}
+
 # home_row <id> <home-dir>: one TSV row.
 home_row() {
-  local id=$1 home=$2 st meta kind last working=0 target=- ready='?' waits=0 age why verdict
+  local id=$1 home=$2 st meta kind last working=0 target=- ready='?' waits=0 paused_waits=0 paused=0 age why verdict
   [ -d "$home" ] || { printf '%s\tSTALLED\t0\t-\t?\t0\t-\thome %s is not a directory\n' "$id" "$home"; return; }
   if [ "$id" != overwatch ] && squad_lead_dormant "$STATE" "$id"; then
     printf '%s\tDORMANT\t0\t-\t-\t0\t-\tno open work; stopped, wakes on routed work\n' "$id"
     return
   fi
   st=$home/state
+  fleet_paused "$home" && paused=1
   for meta in "$st"/*.meta; do
     [ -f "$meta" ] || continue
     kind=$(sed -n 's/^kind=//p' "$meta" | head -1)
@@ -87,7 +114,12 @@ home_row() {
   ready=$(jq -r '.ready_work // empty | numbers' "$st/home-summary.json" 2>/dev/null) || ready=
   [ -n "$ready" ] || ready='?'
   for meta in "$st"/.waiting-timers/*; do
-    [ -f "$meta" ] && waits=$((waits + 1))
+    [ -f "$meta" ] || continue
+    if wait_is_paused "$st" "${meta##*/}"; then
+      paused_waits=$((paused_waits + 1))
+    else
+      waits=$((waits + 1))
+    fi
   done
   age=$(jg_watcher_progress_age "$st")
   if [ "$working" -gt 0 ] || { [ "$ready" != '?' ] && [ "$ready" -gt 0 ]; }; then
@@ -106,6 +138,18 @@ home_row() {
     verdict=GAP why="$waits open wait(s) climbing their ladder"
   else
     verdict=IDLE why="no ready work and no working lane"
+  fi
+  # A home under its own pause record dispatches nothing by design, so it is no
+  # gap: the one owner of that record decides, and the row still says what it
+  # holds so a paused home is never invisible. Every other home names a paused
+  # wait for what it is, never merged into the climbing count.
+  if [ "$paused" -eq 1 ] && [ "$verdict" != STALLED ]; then
+    verdict=PAUSED why="paused by its own pause record"
+    [ "$ready" = '?' ] || [ "$ready" -eq 0 ] || why="$why, $ready ready"
+    [ "$paused_waits" -eq 0 ] || why="$why, $paused_waits paused wait(s)"
+    [ "$waits" -eq 0 ] || why="$why, $waits wait(s) still climbing"
+  elif [ "$paused_waits" -gt 0 ] && [ "$verdict" != STALLED ]; then
+    why="$why, $paused_waits paused wait(s)"
   fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$verdict" "$working" "$target" "$ready" "$waits" "$age" "$why"
 }

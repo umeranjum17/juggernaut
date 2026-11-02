@@ -63,21 +63,30 @@
 //	         the same marked answer line and decision close it sends, so a reply reaching
 //	         the bus routes to the lead a board answer routes to. An unrouted card is
 //	         refused, exactly as today, and its answer stays with Main.
+//	stream   Exit 0 when the stream exists on the server, 1 when not; creates nothing.
+//	account  Print this home's bus account and its credentials file, tab separated.
+//	         The account is the home's unique id (its Squad Lead id, else a hash of its
+//	         absolute path), never its folder name. `accounts [home...]` prints the
+//	         server block for these homes, Main and every data/squad_leads.md entry;
+//	         two homes on one account name are refused with a line naming both.
 //	ensure   Start the server when it is not listening and create the stream, then say
 //	         one line. What a bootstrap step and docs/bus-service.md run.
-//	unit     Print the systemd user service a home installs once, which runs the server
-//	         itself and creates the stream after it starts. The config it runs is ONE
-//	         merged file (the base config in force plus this machine's accounts, no
-//	         includes), and its JetStream budget is the per-account reservation times the
-//	         number of accounts, because a global cap below that sum makes the server
-//	         refuse JetStream outright (10047).
+//	unit     Print the systemd user service a home installs once for one part: nats
+//	         (the default) runs the server itself and creates the stream after it
+//	         starts; dapr and ntfy run their binary in the foreground.
+//	deliver  The CAPTAIN stream's consumer, and the one path that delivers a captain-bound
+//	         event the bus accepted to ntfy: a durable pull consumer (captain-ntfy) reads
+//	         each message, posts it to the captain's topic, and writes the delivery to
+//	         state/captain-channel-delivered.jsonl with ntfy's own message id. `--once`
+//	         drains what waits and exits; otherwise it runs as the service (the `deliver`
+//	         unit). `publish` delivers directly only for an event the bus did not accept.
 //	install-service
 //	         Make that service real: write the unit when it is missing or names another
 //	         home, reload systemd, enable it now, and verify. Without a user manager it
 //	         falls back to `ensure`. One line either way, and never a failed boot - this
 //	         is what bin/jg-bootstrap.sh and bin/jg-update.sh run so a release cannot go
 //	         live without its bus and a reboot brings it back.
-//	serve    Start the three services from their files, every one of them read as config
+//	serve    Start the services from their files (nats, dapr, ntfy, and the deliver consumer), every one of them read as config
 //	         and none re-implemented here: nats-server (core/bus/nats.conf), the
 //	         JetStream stream it carries (core/bus/stream.json), the slim Dapr runtime
 //	         over NATS (core/bus/dapr/components/pubsub.yaml) and ntfy
@@ -92,7 +101,7 @@
 //	jg-bus publish <kind> <key> <text> [--link <url>]
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus serve | ensure | unit | install-service | stop | status | bootstrap
+//	jg-bus stream | serve | ensure | unit [nats|dapr|ntfy|deliver] | install-service | deliver [--once] | stop | status | bootstrap
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
 // JG_CAPTAIN_CHANNEL.
@@ -118,6 +127,7 @@ type app struct {
 	runtime     string
 	record      string
 	undelivered string
+	delivered   string
 	log         string
 	configFiles []string
 }
@@ -144,16 +154,22 @@ func run(args []string) int {
 		return a.reply(rest)
 	case "serve":
 		return a.serve()
+	case "deliver":
+		return a.deliver(rest)
 	case "unit":
-		return a.unit()
+		return a.unit(rest)
 	case "install-service":
 		return a.installService()
 	case "accounts":
 		return a.accounts(rest)
+	case "account":
+		return a.account()
 	case "ensure":
 		return a.ensure()
 	case "stop":
 		return a.stop()
+	case "stream":
+		return a.streamExists()
 	case "bootstrap":
 		return a.bootstrap()
 	case "status":
@@ -194,6 +210,7 @@ func resolve() *app {
 		runtime:     filepath.Join(state, "bus"),
 		record:      filepath.Join(state, "captain-channel.jsonl"),
 		undelivered: filepath.Join(state, "captain-channel-undelivered.jsonl"),
+		delivered:   filepath.Join(state, "captain-channel-delivered.jsonl"),
 		log:         filepath.Join(state, "captain-channel.log"),
 	}
 	files := []string{os.Getenv("JG_CAPTAIN_CHANNEL"), filepath.Join(home, "config", "captain-channel"),

@@ -249,11 +249,31 @@ tick_reason() {  # <task> <key> <since> <verb> <source>
     "$1" "$4" "$((WF_NOW - $3))" "$(actor_text)" "$2" "$5"
 }
 
+# Escalation optimisation (core/escalation-optimize): the owner wake carries its
+# evidence and the one action wanted, and the optimiser decides whether it wakes a
+# model now. A home without the feature delivers as before.
+OPTIMIZER="$ROOT/core/escalation-optimize/bin/jg-escalation-optimize.sh"
+opt_available() { [ -x "$OPTIMIZER" ] && [ -z "${JG_ESCALATION_OPT_OFF:-}" ]; }
+opt_envelope() {  # <task> <verb> <since>
+  printf ' evidence=[%s declared %s, unchanged for %ss] action=[recheck %s and unblock it or declare why it waits]' \
+    "$1" "$2" "$((WF_NOW - $3))" "$1"
+}
+
 cmd_tick() {
   local dir="$STATE/.waiting-timers" now record task sig since owner key
   local wait_secs pause_secs class _src window decl verb source rungsecs reason
   local _sig _owner _parent _misses _card _last
   [ -d "$dir" ] || return 0
+  if opt_available; then
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" "$OPTIMIZER" resolve >/dev/null 2>&1 || true
+    # Held rows leave as one wake per group, with a one-line digest.
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      jg_wake_append check "escalation-digest-$(printf '%s' "$line" | awk '{ print $3 }')" "$line" || return 1
+    done <<DIGEST_END
+$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" "$OPTIMIZER" flush 2>/dev/null)
+DIGEST_END
+  fi
   # The wait-source table is read once per tick, not once per lane.
   WF_SOURCES=$(wf '.spec.sources[] | select(.facts == "wait-source") | [.name, (if .fresh then "fresh" else "any" end)] | @tsv') || return 1
   wait_secs=$(ladder_rung_secs wait owner 2>/dev/null) || wait_secs=''
@@ -287,6 +307,14 @@ cmd_tick() {
     [ -n "$rungsecs" ] || continue
     [ "$now" -ge "$((since + rungsecs))" ] || continue
     reason=$(tick_reason "$task" "$key" "$since" "$verb" "$source")
+    if opt_available; then
+      reason="$reason$(opt_envelope "$task" "$verb" "$since")"
+      case "$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" \
+        "$OPTIMIZER" decide check "$key-owner" "$reason" "$task" "$now")" in
+        deliver*) ;;
+        *) continue ;;
+      esac
+    fi
     if ! jg_wake_queued_keys check | grep -Fx "$key-owner" >/dev/null; then
       jg_wake_append check "$key-owner" "$reason" || return 1
     fi

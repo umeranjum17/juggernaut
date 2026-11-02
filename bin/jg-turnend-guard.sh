@@ -270,9 +270,9 @@ owner_correction_block() {  # <seq> <kind> <text>
     printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     printf '●  HE CORRECTED THE FLEET, AND NOTHING CAPTURED IT\n'
     printf '●  A correction that stays in this conversation is repeated in the next session.\n'
-    printf '●  Write the rule the whole system reads, in his own words:\n'
-    printf '●    %s/jg-owner-rules.sh add --words "<his exact words>" --scope "<where it applies>" --enforce "<script or contract that enforces it>"\n' "$SCRIPT_DIR"
-    printf '●  When it cannot be a rule yet, file the enforcement ticket instead:\n'
+    printf '●  Write the rule the whole system reads, in his own words, when it is his own taste or authority:\n'
+    printf '●    %s/jg-owner-rules.sh add --kind owner --words "<his exact words>" --scope "<where it applies>" --enforce "<script or contract that enforces it>"\n' "$SCRIPT_DIR"
+    printf '●  When it is an engineering default every Juggernaut user should get, or cannot be a rule yet, file the ticket instead:\n'
     printf '●    %s/jg-tasks-axi.sh add <id> "[feature] <what changes>" --body "<summary of what changes and why>"\n' "$SCRIPT_DIR"
     printf '●  His message (%s): %.160s\n' "$2" "$3"
     printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'

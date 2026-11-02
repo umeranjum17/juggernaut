@@ -9,12 +9,13 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), and [host memory guard](#host-memory-guard-confighost-memory) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
-| Release branch that follows main | [Version branch](#version-branch-configversion-branch) |
+| Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
 | Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
+| A release that pushes its own readiness | [Release readiness](#release-readiness-configrelease-readiness) |
 | Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) and [checks size rule](#checks-size-rule-configchecks-size) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
@@ -475,10 +476,22 @@ The brief records the reason on a `Delivery risk (no-mistakes): <reason>` line, 
 `--risk` is refused on a `--scout` brief and on a `--squad-lead` charter.
 The local presence flag `config/delivery-risk-loose` turns the question off for this home; an unlisted value is still refused.
 
-## Version branch (config/version-branch)
+## Migration card (config/migration-card)
 
-The optional local, gitignored `config/version-branch` names the long-lived release branch pull requests for the next release target, for example `release/c-1`.
-It holds the branch name and nothing else, and an absent or blank file means this home carries no version branch.
+The optional local `config/migration-card` holds `key=value` lines: `branch` (the release branch), `target` (lines to delete), `board` (a board file, else `JG_PROOF_BOARD`), `project`, `card` (the key now posted; the script rewrites it), `baseline-deleted`, `baseline-added` and `filer`.
+With it, `bin/jg-merge-outcome-lib.sh` runs `bin/jg-migration-card.sh merge` after each merge into `branch`; the script header owns the card, key and milestone rules.
+
+## Version branch (config/version-branch, release/c-<N>)
+
+A project's current version branch is its newest `release/c-<N>` branch, read from the project's own refs by `bin/jg-version-branch-lib.sh`.
+It belongs to the repository rather than to this home's config, so every home that clones the project resolves the same one with nothing to set, and a project with no such branch keeps the default branch exactly as before.
+The newest wins because a release cycle only moves forward: the previous cycle's branch stays behind, and a default that picked it would send new work to the branch a release already came from.
+With it, a ship task's copy starts from that branch and its pull request targets it: `bin/jg-spawn.sh` defaults `--base-branch` to it when no base is given, `bin/jg-brief.sh --project <dir>` records it in the brief as the base, and `bin/jg-pr-check.sh` refuses a feature pull request whose base is the default branch, naming the version branch to use.
+The one allowed exception is the release pull request itself, whose head is the version branch.
+
+The optional local, gitignored `config/version-branch` names the branch this home carries the default branch into, for example `release/c-1`.
+It holds the branch name and nothing else, and an absent or blank file means this home runs no carry.
+The file is what turns the carry on; which branch is current for spawn and pull requests is always read from the repository, so a stale value here never moves new work onto an older release branch.
 When it exists, `bin/jg-merge-outcome-lib.sh` runs `bin/jg-version-branch-sync.sh run` as part of recording a merge, so the branch moves with no human step and no home-owned hook to write.
 That pass covers a merge this home performed and a merge its poll detected, because both record through that one operation.
 
@@ -486,6 +499,11 @@ The carry is a push of the default branch's commit onto the version ref, with no
 A version branch holding its own commits is reported and left exactly as it is, because closing that gap needs a real merge toward the default branch, which is a human decision rather than something a post-merge pass may invent.
 A dirty copy is skipped and each path is named.
 One line per outcome prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
+
+The same record then runs `bin/jg-version-branch-sync.sh features <pr-url> <project-dir>`, which carries the version branch into every open feature pull request that targets it, but only when the merge just recorded was the release pull request (base the default branch, head the version branch).
+A feature branch carries its own commits, so the carry is a real merge commit built with git plumbing and pushed as an ordinary fast-forward of that branch; no working tree is touched and nothing is forced.
+A feature branch whose merge conflicts is reported and left exactly as it is, and a fork pull request is skipped because its branch is not in this repository.
+One line per branch prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
 
 ## Fleet autosync (config/fleet-autosync-off)
 
@@ -1219,6 +1237,27 @@ The optional local, gitignored presence flag `config/fleet-heartbeat-off` opts a
 
 If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`core/wait-timers/README.md`](../core/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
 
+## Batch digest cadence (config/status-digest)
+
+The optional local, gitignored `config/status-digest` holds one line, `every-hours=<N>`: the fewest hours between two cadence pushes of the batch digest that [`bin/jg-status-digest.sh`](../bin/jg-status-digest.sh) builds from the effort, task outcome and release records.
+A milestone records its outcome and pushes at once, and a cadence push waits until the newest push is N hours old.
+An absent, malformed, or zero value falls back to 4 hours, and an unchanged digest is never pushed twice.
+The script's own header owns the five lines, the records it reads, and the delivery it chooses.
+Its release line is `bin/jg-release-readiness.sh` `show`, so the digest answers "did we make releases?" every time it is pushed.
+
+## Release readiness (config/release-readiness)
+
+A release that waits for someone to notice it does not ship, so [`bin/jg-release-readiness.sh`](../bin/jg-release-readiness.sh) pushes the release branch's own readiness on three paths this repository already owns.
+The optional local, gitignored `config/release-readiness` holds `key=value` lines, all optional: `wait-hours` (the limit in whole hours, default 24), `project-dir` (the checkout to measure, default the home, which is the self repository), `board` (a board file, else the one `sign-off-axi` walks), `filer` (default `release-readiness`), and `branch` (only for a checkout that carries no `release/c-<N>` ref).
+The release is ready when the version branch carries at least one change, no open pull request targets it, it carries the default branch, and the checks on its tip are green; a fact that cannot be read leaves it not ready with the reason named, so an unreadable check never produces a card.
+Every line count it prints is `git diff --shortstat <default> <version>` over the whole tree, measured after both refs are fetched, and the command is printed beside the number: the forge's compare list stops at 300 files, so a sum of it undercounts a bigger release and once reported a net removal for a release that only added lines.
+Beside the numbers the card and the digest line carry the release's live state, so "are we live yet?" is answered without asking: the release pull request and its address, the checks and the smoke job's own result on its head, whether it is merged, and how many registered homes already carry the merge commit.
+A release whose pull request is merged prints as shipped and is counted from the merge itself; a home whose checkout cannot be read is counted as not checked rather than assumed current.
+A ready release raises exactly one board question through [`bin/jg-question-card.sh`](../bin/jg-question-card.sh), carrying what ships, the measured numbers, the risks and one Approve, and the board holds one release card at a time: an unchanged release is never raised again and a changed one replaces the previous card.
+Past `wait-hours` with no answer, one `bin/jg-inbox.sh` note queues one check so the wait reaches the supervisor, and the same wait is never alerted twice.
+`bin/jg-status-digest.sh` prints the same state as its release line every time, so the captain digest always says whether a release is ready, waiting, or held and by what.
+A scheduled home check runs `tick`; its own header owns the verbs, the records and the exact rules.
+
 ## Launch environment hook (config/launch-env-hook)
 
 The optional local, gitignored `config/launch-env-hook` is an executable that adds environment to every local launch: ship, Recon, Squad Lead, and relaunch.
@@ -1250,6 +1289,7 @@ The gate's content is home-local policy; `bin/jg-tool-wiring.sh` places done-don
 The merge gate's checks lint measures a pull request's added non-generated lines against a 1,000-line guidance and treats that size as advice, never a refusal: a run over the guidance prints the size and says it is over the guidance, then checks the remaining rules and exits on those alone.
 A home that wants the refusal back writes `refuse` in the local, gitignored `config/checks-size`; an absent, empty or unrecognised value is `advisory`, the default, and `advisory` may also be written out.
 `core/merge-on-green/jg-checks-lint.sh` owns the rule and the setting, and `core/merge-on-green/checks-lint.sh` hands a size-only FAIL from the pinned `done-done` lint to it, because that CLI hardcodes the same limit with no config key.
+`core/merge-on-green/wiring.sh <jg-home>` is how a home gets this rule: it installs the feature's copy, and a home still running the retired install of the gate has that copy's refusing rule file removed and its `merge-on-green.sh` left as one redirect to the installed gate.
 Worker briefs still tell a worker to prefer a small slice; that wording is instruction only and enforces nothing.
 
 ## Worker launch environment (config/launch-env-allowlist)
@@ -1313,6 +1353,33 @@ The filter runs at the worker command boundary, after the terminal daemon and pa
 This is not a sandbox: it cannot revoke same-user access to credential files, prevent tools or later shells from loading credentials again, or isolate processes from the same user's other processes.
 
 Regression coverage executes emitted launch commands with synthetic nonsecret values in [`tests/jg-spawn-dispatch-profile.test.sh`](../tests/jg-spawn-dispatch-profile.test.sh).
+
+### Provider credentials stripped from every launch
+
+Every launch drops the credential-shaped variables the launching process carries, whether or not that home opted into the allowlist above.
+This is the default, with no file and no flag to turn it off, and it covers ship, Recon, squad_lead, local and remote, raw commands, and relaunches.
+Stripped shapes are matched on the name's ending, case-insensitively:
+
+```text
+_API_KEY  _APIKEY  _TOKEN  _SECRET  _SECRET_KEY  _PASSWORD  _PASSWD
+_CREDENTIAL  _CREDENTIALS  _ACCESS_KEY  _ACCESS_KEY_ID  _PRIVATE_KEY
+```
+
+A name that merely contains `KEY` is not a credential and is never stripped, so `STARSHIP_SESSION_KEY` and `GIT_CONFIG_KEY_0` reach the worker unchanged.
+The list is a shape rule rather than a list of provider names, so a credential a later provider introduces is stripped without a code change.
+[`bin/jg-launch-env-lib.sh`](../bin/jg-launch-env-lib.sh) owns the shapes and is the only implementation.
+
+Listing a name in `config/launch-env-allowlist` is the way to keep it, and it is the only way; an allowlisted credential reaches the worker as described above.
+A home whose workers authenticate a provider through an environment variable therefore names that variable in the allowlist file, which also opts the home into the full filter described above.
+
+An allowlisted name keeps the value the destination pane supplies; a stripped name is reported nowhere.
+Diagnostics print names only, and no value is copied, logged, written to a record, or sent anywhere.
+
+Limit: this is not a sandbox, and the strip is computed from the process that builds the launch.
+A variable that exists only inside the destination pane, not in that process, survives, and tools or later shells can still create or reload credentials.
+For the population side of the same problem, [`addons/key-in-env-check`](../addons/key-in-env-check/README.md) scans running processes for provider keys.
+
+Regression coverage plants a synthetic credential name and runs the real launch-environment builder in a subshell in [`tests/jg-launch-env-strip.test.sh`](../tests/jg-launch-env-strip.test.sh).
 
 ### Compact adviser setting
 

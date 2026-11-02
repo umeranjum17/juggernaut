@@ -214,6 +214,28 @@ sign-off-axi ticket "$work/board.json" --id jg-history-fixture --state "done" >/
 test -z "$("$JG_HOME/state/tickets-stale.check.sh")"
 echo 'PASS: the stale check flags a contradicting and an orphaned ticket, writes nothing, and silences a settled board'
 
+# The full reconcile is the backfill for a board that drifted, so it must settle a drifted row and finish a settled
+# board without writing; the seconds are printed so a slow pass is visible in the transcript.
+timed_reconcile() {  # <sync.py>: prints "<seconds> <exit> <stdout bytes>"
+  JG_HOME="$JG_HOME" python3 -c 'import subprocess, sys, time
+started = time.monotonic()
+done = subprocess.run([sys.executable, sys.argv[1], "--reconcile"], capture_output=True, text=True)
+print(f"{time.monotonic() - started:.2f}", done.returncode, len(done.stdout.strip()))' "$1"
+}
+drifted=$(ticket_id main/inferred)
+sign-off-axi ticket "$work/board.json" --id "$drifted" --state "in progress" >/dev/null
+read -r secs rc _ <<<"$(timed_reconcile "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py")"
+test "$rc" = 0
+sign-off-axi ticket "$work/board.json" --id "$drifted" --json | jq -e '.ticket.state == "done"' >/dev/null
+echo "reconcile: drifted board settled in ${secs}s"
+before=$(sha256sum "$work/board.tickets.jsonl")
+read -r secs rc quiet <<<"$(timed_reconcile "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py")"
+test "$rc" = 0
+test "$quiet" = 0
+test "$before" = "$(sha256sum "$work/board.tickets.jsonl")"
+echo "reconcile: settled board in ${secs}s, ${quiet} bytes of output"
+echo 'PASS: --reconcile corrects a drifted ticket and settles a true board without writing'
+
 # The daily clean-up flags what needs a keep/remove call, back-fills a captain quote's
 # date and source from the steer record, raises one card and prints one line a day.
 (cd "$JG_HOME"; tasks-axi add ask3 '[captain-ask] P2 Umer ask three' --repo alpha --priority 2 --body 'type: captain-ask: "Umer wants the board to show quotes always"' >/dev/null

@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# Recommendation-only stack and layout preferences.
+# Recommendation-only stack, layout and engineering rules.
 #
 # config/preferred-stack.json names a stack per medium; config/architecture.json
-# names a layout and practices per language. Both use the crew-dispatch rule
-# shape (when / use / why) and both are advice, never a gate: nothing here
-# refuses a build, and a project that already has its own stack wins because the
-# caller passes that project in and its own stack is what the brief names.
+# names a layout and practices per language; config/engineering-rules.json names
+# this home's testing, CI, release, proof and naming rules. All three use the
+# crew-dispatch rule shape (when / use / why) and all three are advice, never a
+# gate: nothing here refuses a build, and a project that already has its own
+# stack wins because the caller passes that project in and its own stack is what
+# the brief names.
+#
+# Every rules file may carry kind ("checkable": a script or CI check decides it,
+# "judgement": a person reads it and decides) and, for a checkable rule, the
+# exact enforcedBy check as a path in this checkout that must exist. Both are
+# optional, so an older file keeps working; a judgement rule names no check,
+# because a rule nothing checks is a wish. An engineering rule's use object
+# carries `text`, the instruction itself.
 #
 # A malformed file, an unknown medium, or an unknown language is one warning and
 # a fall back to the file's neutral `default`, never a hard failure.
@@ -51,8 +60,9 @@ jg_stack_advice() {  # <config-dir> <file> <kind> <key>
   local file="$1/$2" label="config/$2" warn
   [ -f "$file" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  if ! jq -e . "$file" >/dev/null 2>&1; then
-    echo "PREFERRED_STACK: invalid $label - malformed JSON; using the neutral default" >&2
+  warn=$(jg_rules_problem "$file")
+  if [ -n "$warn" ]; then
+    echo "PREFERRED_STACK: invalid $label - $warn; using the neutral default" >&2
     return 0
   fi
   warn=$(jg_stack_validate "$file" "$3")
@@ -100,6 +110,73 @@ jg_stack_project_stack() {  # <dir>
   elif grep -qs '"electron"' "$dir/package.json"; then echo "Electron"
   elif [ -d "$dir/src-tauri" ]; then echo "Tauri"
   fi
+}
+
+JG_RULES_FILE=engineering-rules.json
+_jg_rules_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# First problem with one rules file, or nothing. Every rules file shares one
+# shape: kind is checkable or judgement; a checkable rule names the check that
+# enforces it, as a path in this checkout that must exist; a judgement rule
+# names none, because advice nothing checks is advice and a rule nothing checks
+# is a wish.
+jg_rules_problem() {  # <file>
+  local problem token path
+  jq -e . "$1" >/dev/null 2>&1 || { printf 'malformed JSON'; return 0; }
+  problem=$(jq -r '
+    def rules: (.rules // [])[]?;
+    def bad_kind: [rules | select(has("kind"))
+      | select(.kind != "checkable" and .kind != "judgement")] | length;
+    def missing_enforcement: [rules | select(.kind? == "checkable")
+      | select(((.enforcedBy? // "") | tostring | length) == 0)] | length;
+    def unused_enforcement: [rules | select(.kind? == "judgement")
+      | select(((.enforcedBy? // "") | tostring | length) > 0)] | length;
+    def bad_id: [rules | select(has("id")) | .id
+      | select(if type != "string" then true else (test("^[a-z0-9][a-z0-9-]*$") | not) end)] | length;
+    def dup_id: ([rules | select(has("id")) | .id] | length)
+      != ([rules | select(has("id")) | .id] | unique | length);
+    if bad_kind > 0 then "kind must be checkable or judgement"
+    elif missing_enforcement > 0 then "a checkable rule needs enforcedBy"
+    elif unused_enforcement > 0 then "a judgement rule must not name enforcedBy"
+    elif bad_id > 0 then "an id is lower-case words joined by dashes"
+    elif dup_id then "an id is used twice in one file"
+    else empty end
+  ' "$1" 2>/dev/null)
+  if [ -n "$problem" ]; then printf '%s' "$problem"; return 0; fi
+  while IFS= read -r token; do
+    [ -n "$token" ] || continue
+    path=${token%%#*}
+    case "$path" in
+      /*) ;;
+      */*) path="$_jg_rules_root/$path" ;;
+      *) printf 'enforcedBy names %s, which is not a path in this checkout' "$token"; return 0 ;;
+    esac
+    [ -e "$path" ] || { printf 'enforcedBy names %s, which does not exist in this checkout' "$token"; return 0; }
+  done < <(jq -r '(.rules // [])[]? | select(.kind? == "checkable") | .enforcedBy // empty' "$1" 2>/dev/null)
+}
+
+# The brief's engineering-rule section, or nothing when the file is absent.
+# A judgement rule prints as advice; a checkable one prints as the check that
+# decides it, so a worker never treats a mechanical check as a suggestion.
+jg_rules_section() {  # <config-dir>
+  local file="$1/$JG_RULES_FILE" label="config/$JG_RULES_FILE" problem rows checked
+  [ -f "$file" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  problem=$(jg_rules_problem "$file")
+  if [ -n "$problem" ]; then
+    echo "FLEET_RULES: invalid $label - $problem; the brief carries no rule advice" >&2
+    return 0
+  fi
+  rows=$(jq -r '(.rules // [])[]? | select(.kind? == "judgement")
+    | "- **\(.when)** \(.use.text // "") \(.why)"' "$file" 2>/dev/null | sed 's/  */ /g')
+  checked=$(jq -r '(.rules // [])[]? | select(.kind? == "checkable")
+    | "- \(.id // "rule"): `\(.enforcedBy)`"' "$file" 2>/dev/null)
+  [ -n "$rows$checked" ] || return 0
+  printf '# Engineering rules (recommendation, never a gate)\n\n'
+  printf '%s\n' "\`$label\` holds this home's testing, CI, release, proof and naming rules." \
+    'Follow the judgement rules below. A checked rule is enforced by the named check, not by you.'
+  [ -z "$rows" ] || printf '\n%s\n' "$rows"
+  [ -z "$checked" ] || printf '\nChecked by a script or CI:\n%s\n' "$checked"
 }
 
 # The brief's preference section, or nothing when the files give no advice.

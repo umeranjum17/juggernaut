@@ -1,28 +1,28 @@
 name: Core suites
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+  # Post-merge, never a pull request gate. This suite takes around ten minutes,
+  # and a pull request merges on the fast set in .github/workflows/ci.yml; every
+  # heavier suite runs on the push that follows the merge. A red run here files
+  # one fix-forward item through bin/jg-post-merge-ci.sh, so the failure reaches
+  # an owner instead of waiting for someone to notice.
+  push:
+    branches: [main, 'release/**']
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Per-PR supersession: a new push to the same pull request replaces that PR's
-# in-flight run instead of leaving a superseded head holding one of the shared
-# runners until it finishes. The group is keyed on the workflow plus the pull
-# request number, so every run of one PR shares a group and a different PR
-# never does. Cancellation is limited to pull_request events, so if a push
-# trigger is ever added here a main run is still never cancelled mid-way. The
-# jobs a run performs are unchanged; only a superseded run stops early.
+# Per-ref supersession: a superseded run stops early instead of holding one of
+# the shared runners until it finishes. A push is keyed by its own run id, so a
+# post-merge run is never cancelled mid-way.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Pull requests only: these checks exist so a pull request can be concluded
-# (no-mistakes waits for registered checks on the PR head), and every change
-# reaches main through a pull request, so a separate push run on main would
-# only repeat the verdict the PR already reported.
+# Post-merge only: these journeys are the broad coverage a merge earns, not a
+# wait it pays, so they run on the push that follows a merge into main or a
+# release branch.
 jobs:
   self-check:
     name: Core self-checks

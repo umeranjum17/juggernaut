@@ -58,7 +58,7 @@ test_a_correction_with_no_artefact_is_flagged() {
   assert_contains "$out" "feedback" "the pending line does not carry the recorded kind"
   stop "$home"; rc=$?
   assert_equals 2 "$rc" "a turn that followed an owner correction with neither artefact ended"
-  for want in 'HE CORRECTED THE FLEET, AND NOTHING CAPTURED IT' 'jg-owner-rules.sh add --words' \
+  for want in 'HE CORRECTED THE FLEET, AND NOTHING CAPTURED IT' 'jg-owner-rules.sh add --kind owner --words' \
     'jg-tasks-axi.sh add' 'one time fix'; do
     grep -qF "$want" "$home/guard.err" || fail "the block did not name '$want': $(cat "$home/guard.err")"
   done
@@ -76,7 +76,7 @@ test_an_owner_rule_captures_the_correction() {
   make_home "$home"
   submit "$home" "$CORRECTION"
   kpi "$home" tag feedback https://github.com/acme/juggernaut/pull/41 >/dev/null || fail "tagging failed"
-  in_home "$home" bash "$home/bin/jg-owner-rules.sh" add --words "$CORRECTION" \
+  in_home "$home" bash "$home/bin/jg-owner-rules.sh" add --kind owner --words "$CORRECTION" \
     --scope "every owner correction" --enforce "bin/jg-turnend-guard.sh" >/dev/null \
     || fail "adding the owner rule failed"
   pending "$home" >/dev/null && fail "a recorded rule still reads as pending"

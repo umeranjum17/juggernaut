@@ -8,6 +8,9 @@
 # definition does not carry yet - the escalation to Main, the board card and the
 # re-alert cadence - riding the owner time the definition stamps.
 # Each recorded task owns one durable episode under state/.waiting-timers/.
+# A home with a pause record (bin/jg-pause-lib.sh, the one owner) silences its
+# stalled ready backlog as well: no episode, no escalation, and the clock starts
+# again when the pause lifts. A paused wait is not a climbing wait.
 # The effective declaration is, first to last: admitted Herdr agent.list
 # blocked (recorded panes only, Cursor excluded), an unanswered permission
 # prompt, a Squad Lead whose own supervision is not running, or a green PR left
@@ -45,6 +48,10 @@ _JG_WAIT_TIMER_DIR="${SCRIPT_DIR:-${JG_PUSH_TRANSITION_LIB_DIR:-$JG_HOME/bin}}"
 . "$_JG_WAIT_TIMER_DIR/jg-parent-channel-lib.sh"
 # shellcheck source=bin/jg-timeout-lib.sh
 . "$_JG_WAIT_TIMER_DIR/jg-timeout-lib.sh"
+# The pause record has one owner (bin/jg-pause-lib.sh): a paused home's ready
+# backlog is not a stall.
+# shellcheck source=bin/jg-pause-lib.sh
+[ ! -r "$_JG_WAIT_TIMER_DIR/jg-pause-lib.sh" ] || . "$_JG_WAIT_TIMER_DIR/jg-pause-lib.sh"
 
 jg_wait_timer_save() {  # <record> <signature> <since> <owner> <parent> <key> <misses> [card] [last]
   local file=$1 temp="${1%/*}/.${1##*/}.tmp.$$"
@@ -257,6 +264,9 @@ EOF
 # While ready work waits but the condition does not hold, state/.waiting-timers/
 # .ready-backlog-why records why (since, reason, open/target), so a quiet
 # backlog is explainable from disk.
+# A home with a pause record (bin/jg-pause-lib.sh) dispatches nothing by design,
+# so it arms and escalates nothing: an episode reported before the pause is
+# closed and the record dropped, and the clock starts again when the pause lifts.
 jg_wait_timers_backlog() {  # <now> <interval>
   local now=$1 interval=$2 stall=${JG_READY_STALL_SECS:-600} every=${JG_READY_STALL_POLL_SECS:-60}
   local record="$STATE/.waiting-timers/.ready-backlog" mark="$STATE/.waiting-timers/.ready-backlog-checked"
@@ -268,6 +278,21 @@ jg_wait_timers_backlog() {  # <now> <interval>
   [ ! -e "$mark" ] || [ "$(age_of "$mark")" -ge "$every" ] || return 0
   touch "$mark" || return 1
   lead=$(jg_parent_channel_home_id "$JG_HOME") || return 0
+  # A home the captain paused is silent: the same rule the ready-work check
+  # already honours for a declared pause, read from its one owner. A report left
+  # open by the pause is resolved, and the record goes, so the backlog rings
+  # again from a fresh clock once the pause lifts.
+  if declare -F fleet_paused >/dev/null && fleet_paused; then
+    if [ -f "$record" ] && [ ! -L "$record" ]; then
+      IFS=$'\t' read -r since lanes key reported last < "$record" || since=
+      case "${reported:-0}" in ''|*[!0-9]*) reported=0 ;; esac
+      if [ "$reported" -gt 0 ]; then
+        jg_wait_timer_report "resolved [key=$key]: waiting-timer-cleared: $lead ready backlog: the home is paused" || return 0
+      fi
+    fi
+    rm -f "$record" "$whyfile" || return 1
+    return 0
+  fi
   if [ -f "$record" ] && [ ! -L "$record" ]; then
     IFS=$'\t' read -r since lanes key reported last < "$record" || since=
     case "$since:${reported:-0}:${last:-0}" in *[!0-9:]*|:*) since= ;; esac

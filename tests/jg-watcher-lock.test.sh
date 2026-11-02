@@ -256,7 +256,7 @@ test_live_stalled_watch_lock_is_replaced_past_hard_bound() {
 # Drive the real watcher and arm in a private home, including a stopped holder
 # blocked on a TERM-resistant check child. Never signal a discovered real home.
 test_rearm_proves_resumed_supervision() (
-  local dir state fakebin oldarm='' holder='' sleeper='' arm='' unrelated='' parent='' i id status age bound
+  local dir state fakebin oldarm='' holder='' sleeper='' arm='' unrelated='' parent='' i id status age bound stamp
   local mode=${1:-beacon}
   dir=$(make_case "rearm-proves-resume-$mode")
   state="$dir/state"
@@ -329,11 +329,19 @@ SH
   is_live_non_zombie "$sleeper" || fail "detached child did not survive timeout and reparenting"
   grep -q "^$sleeper$(printf '\t')" "$state/.watch.lock/children" \
     || fail "the holder did not retain the detached child's pre-timeout identity"
-  while :; do
-    age=$(bash -c '. "$1"; jg_watcher_progress_age "$2"' _ "$LIB" "$state")
-    [ "$age" -lt "$bound" ] || break
-    sleep 1
-  done
+  # The holder is stopped, so its progress clock is frozen and ages by wall time
+  # alone. Backdate that clock past the stall bound instead of sleeping the
+  # bound out: the age the replacement reads is identical, and the proof no
+  # longer spends 900 real seconds (twice, in parallel) in CI.
+  stamp=$(date -d "@$(($(date +%s) - bound - 5))" +%Y%m%d%H%M.%S 2>/dev/null \
+    || date -r "$(($(date +%s) - bound - 5))" +%Y%m%d%H%M.%S)
+  if [ -e "$state/.last-watcher-beat" ]; then
+    touch -t "$stamp" "$state/.last-watcher-beat"
+  else
+    touch -t "$stamp" "$state/.watch.lock/pid"
+  fi
+  age=$(bash -c '. "$1"; jg_watcher_progress_age "$2"' _ "$LIB" "$state")
+  [ "$age" -ge "$bound" ] || fail "stopped holder's progress age $age did not pass the stall bound $bound"
   if [ "$mode" = no-beacon ]; then
     cat > "$fakebin/ps" <<'SH'
 #!/usr/bin/env bash
@@ -371,7 +379,10 @@ SH
   [ -z "$status" ] || fail "$status"
   # A new task event must still leave the watcher through its public arm path.
   printf 'done: Umer task completed\n' > "$state/one.status"
-  wait_for_exit "$arm" 100 || fail "replacement did not surface the resumed task"
+  # The arm leaves only after the watcher's wake pipeline classifies and delivers
+  # the event, which measured 12s on a loaded host. Wait for the exit by
+  # condition under the shared failure ceiling, which a passing run never spends.
+  wait_for_exit "$arm" "$ARM_FAIL_EXIT_POLLS" || fail "replacement did not surface the resumed task"
   grep -q '^signal:.*one' "$dir/new-arm.out" || fail "resumed task wake missing"
   pass "delayed re-arm removes hung holder and orphaned child, protects unrelated process, and supervises five tasks before confirmation ($mode)"
 )
@@ -973,12 +984,22 @@ test_lock_paused_mid_acquire_claim_fails_during_steal() {
   pass "paused mid-acquire claimant backs off to active stealer"
 }
 
-test_watch_restart_rejects_reused_pid() {
-  local dir state fakebin out live pid i
-  dir=$(make_case restart-reused-pid)
+# A restart that replaces a lock whose pid was reused by an unrelated process
+# must never signal that process and must keep the recovery. defaults/wake-routing
+# settles a re-arm with nothing waiting without a wake (#409), so the case runs
+# under both routings: a rule file that routes the resurface to a wake, where the
+# arm exits with `check: rearm-resurface`; and the default, where the arm stays
+# attached to its replacement watcher and the triage log records the settlement.
+run_watch_restart_rejects_reused_pid() {  # <now|settled>
+  local mode=$1 dir state fakebin out live pid i routing='' new_pid
+  dir=$(make_case "restart-reused-pid-$mode")
   state="$dir/state"
   fakebin="$dir/fakebin"
   out="$dir/restart.out"
+  if [ "$mode" = now ]; then
+    routing="$dir/wake-routing"
+    printf '%s\n' 'now * * *' > "$routing"
+  fi
   sleep 300 &
   live=$!
   mkdir "$state/.watch.lock"
@@ -986,21 +1007,46 @@ test_watch_restart_rejects_reused_pid() {
   printf '%s\n' "$dir" > "$state/.watch.lock/jg-home"
   printf '%s\n' "$WATCH" > "$state/.watch.lock/watcher-path"
   printf '%s\n' "stale watcher identity" > "$state/.watch.lock/pid-identity"
-  PATH="$fakebin:$PATH" JG_HOME="$dir" JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH_ARM" --restart > "$out" &
+  PATH="$fakebin:$PATH" JG_HOME="$dir" JG_WAKE_ROUTING="$routing" JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH_ARM" --restart > "$out" &
   pid=$!
   i=0
-  while [ "$i" -lt 80 ] && is_live_non_zombie "$pid"; do
-    sleep 0.1
-    i=$((i + 1))
-  done
-  is_live_non_zombie "$pid" \
-    && fail "restart did not surface recovery after replacing a reused-pid lock"
-  wait "$pid" 2>/dev/null || true
-  grep -F 'check: rearm-resurface' "$out" >/dev/null \
-    || fail "restart replaced reused-pid lock without surfacing recovery: $(cat "$out")"
+  if [ "$mode" = now ]; then
+    while [ "$i" -lt 80 ] && is_live_non_zombie "$pid"; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    is_live_non_zombie "$pid" \
+      && fail "restart did not surface recovery after replacing a reused-pid lock"
+    wait "$pid" 2>/dev/null || true
+    grep -F 'check: rearm-resurface' "$out" >/dev/null \
+      || fail "restart replaced reused-pid lock without surfacing recovery: $(cat "$out")"
+  else
+    while [ "$i" -lt 80 ] && ! grep -qF 'rearm-resurface settled without a wake' "$state/.watch-triage.log" 2>/dev/null; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    grep -qF 'rearm-resurface settled without a wake' "$state/.watch-triage.log" 2>/dev/null \
+      || fail "restart did not settle the recovery by the default wake routing: $(cat "$out")"
+    is_live_non_zombie "$pid" \
+      || fail "restart arm exited instead of staying attached to its replacement watcher: $(cat "$out")"
+    grep -F 'check: rearm-resurface' "$out" >/dev/null \
+      && fail "restart surfaced a wake that the default wake routing settles: $(cat "$out")"
+    new_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+    [ -n "$new_pid" ] && [ "$new_pid" != "$live" ] \
+      || fail "restart did not replace the reused-pid lock (lock pid '$new_pid')"
+    kill "$new_pid" 2>/dev/null || true
+    wait_for_exit "$pid" 80 || true
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  fi
   is_live_non_zombie "$live" || fail "restart killed a reused unrelated pid"
   kill "$live" 2>/dev/null || true
   wait "$live" 2>/dev/null || true
+}
+
+test_watch_restart_rejects_reused_pid() {
+  run_watch_restart_rejects_reused_pid now
+  run_watch_restart_rejects_reused_pid settled
   pass "watch restart preserves recovery without signaling a reused pid"
 }
 
@@ -1291,14 +1337,25 @@ test_arm_starts_and_self_heals() {
   # before reporting 'started' - whether the lock is empty (clean start) or held
   # by a dead pid with a fresh-looking leftover beacon (self-heal). It must never
   # report 'healthy' off a dead pid. One row per pre-state, one assertion block.
-  local row dir state fakebin armout armpid i lock_pid dead_pid
-  for row in clean dead-pid; do
+  # defaults/wake-routing settles a re-arm that finds nothing waiting without a
+  # wake (#409), so the dead-pid recovery runs under both routings, as the
+  # reused-pid restart case does: dead-pid-now, a rule file routing the resurface
+  # to a wake, where the arm exits with `check: rearm-resurface`; and dead-pid,
+  # the default, where the arm stays attached to the watcher it started and the
+  # triage log records the settlement.
+  local row dir state fakebin armout armpid i lock_pid dead_pid routing new_pid
+  for row in clean dead-pid-now dead-pid; do
     dir=$(make_case "arm-$row")
     state="$dir/state"
     fakebin="$dir/fakebin"
     armout="$dir/arm.out"
     dead_pid=
-    if [ "$row" = dead-pid ]; then
+    routing=
+    if [ "$row" = dead-pid-now ]; then
+      routing="$dir/wake-routing"
+      printf '%s\n' 'now * * *' > "$routing"
+    fi
+    if [ "$row" != clean ]; then
       dead_pid=999999
       while kill -0 "$dead_pid" 2>/dev/null; do dead_pid=$((dead_pid + 1)); done
       mkdir "$state/.watch.lock"
@@ -1308,23 +1365,40 @@ test_arm_starts_and_self_heals() {
       printf '%s\n' "dead watcher identity" > "$state/.watch.lock/pid-identity"
       touch "$state/.last-watcher-beat"
     fi
-    PATH="$fakebin:$PATH" JG_HOME="$dir" JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" &
+    PATH="$fakebin:$PATH" JG_HOME="$dir" JG_WAKE_ROUTING="$routing" JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" &
     armpid=$!
     i=0
     while [ "$i" -lt 80 ]; do
-      if [ "$row" = dead-pid ]; then
-        is_live_non_zombie "$armpid" || break
-      else
-        grep -qF 'watcher: started pid=' "$armout" 2>/dev/null && break
-      fi
+      case "$row" in
+        dead-pid-now) is_live_non_zombie "$armpid" || break ;;
+        dead-pid) grep -qF 'rearm-resurface settled without a wake' "$state/.watch-triage.log" 2>/dev/null && break ;;
+        *) grep -qF 'watcher: started pid=' "$armout" 2>/dev/null && break ;;
+      esac
       sleep 0.1; i=$((i + 1))
     done
-    if [ "$row" = dead-pid ]; then
+    if [ "$row" = dead-pid-now ]; then
       is_live_non_zombie "$armpid" \
         && fail "arm did not surface recovery after reclaiming a dead-pid lock"
       wait "$armpid" 2>/dev/null || true
       grep -F 'check: rearm-resurface' "$armout" >/dev/null \
         || fail "arm reclaimed dead-pid lock without surfacing recovery: $(cat "$armout")"
+      continue
+    fi
+    if [ "$row" = dead-pid ]; then
+      grep -qF 'rearm-resurface settled without a wake' "$state/.watch-triage.log" 2>/dev/null \
+        || fail "arm did not settle the recovery by the default wake routing: $(cat "$armout")"
+      is_live_non_zombie "$armpid" \
+        || fail "arm exited instead of staying attached to its replacement watcher: $(cat "$armout")"
+      grep -F 'check: rearm-resurface' "$armout" >/dev/null \
+        && fail "arm surfaced a wake that the default wake routing settles: $(cat "$armout")"
+      new_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+      if [ -z "$new_pid" ] || [ "$new_pid" = "$dead_pid" ] || ! kill -0 "$new_pid" 2>/dev/null; then
+        fail "arm did not replace the dead-pid lock with a live watcher (lock pid '$new_pid')"
+      fi
+      kill "$new_pid" 2>/dev/null || true
+      wait_for_exit "$armpid" 80 || true
+      kill "$armpid" 2>/dev/null || true
+      wait "$armpid" 2>/dev/null || true
       continue
     fi
     grep -qF 'watcher: started pid=' "$armout" || fail "arm ($row) did not report a started watcher"
@@ -1338,7 +1412,7 @@ test_arm_starts_and_self_heals() {
     kill "$armpid" "$lock_pid" 2>/dev/null || true
     wait "$armpid" 2>/dev/null || true
   done
-  pass "arm starts cleanly and resurfaces recovery after a dead-pid lock"
+  pass "arm starts cleanly and handles recovery after a dead-pid lock under both wake routings"
 }
 
 test_arm_hup_cleans_child_and_temp_output() {
@@ -1635,7 +1709,7 @@ test_actionable_exit_leaves_a_fresh_beacon() (
   printf 'done: first scan event\n' > "$state/task.status"
   PATH="$fakebin:$PATH" "$WATCH_ARM" > "$dir/exit.out" 2>&1 &
   arm=$!
-  wait_for_exit "$arm" 100 || fail "watcher did not exit on the actionable signal: $(cat "$dir/exit.out")"
+  wait_for_exit "$arm" "$ARM_FAIL_EXIT_POLLS" || fail "watcher did not exit on the actionable signal: $(cat "$dir/exit.out")"
   arm=''
   grep -q '^signal:' "$dir/exit.out" || fail "actionable signal missing: $(cat "$dir/exit.out")"
   [ ! -e "$state/.watch.lock/pid" ] || fail "exited watcher kept the singleton lock"

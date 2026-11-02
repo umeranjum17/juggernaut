@@ -18,6 +18,13 @@ BEARINGS="$ROOT/bin/jg-bearings-snapshot.sh"
 TMP_ROOT=$(jg_test_tmproot jg-captain-hold)
 TASKS_AXI_BIN=$(command -v tasks-axi || true)
 
+# The PR merge runs the merge-gate evidence lint itself (#424). These cases
+# prove the captain-hold authority record, not the evidence folder, so the lint
+# is a stub that passes; tests/jg-pr-merge.test.sh proves the lint refusal.
+PASS_LINT="$TMP_ROOT/pass-lint.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "checks-lint: PASS"' > "$PASS_LINT"
+chmod +x "$PASS_LINT"
+
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 
@@ -141,7 +148,8 @@ run_pr_merge() {  # <home> <id> <url>
   PATH="$home/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
     JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
     JG_CONFIG_OVERRIDE="$home/config" JG_TEST_GH_LOG="$home/gh.log" \
-    JG_TEST_GH_AXI_LOG="$home/gh-axi.log" "$ROOT/bin/jg-pr-merge.sh" "$@"
+    JG_TEST_GH_AXI_LOG="$home/gh-axi.log" JG_PR_MERGE_CHECKS_LINT="$PASS_LINT" \
+    "$ROOT/bin/jg-pr-merge.sh" "$@"
 }
 
 wait_for_test_file() {  # <path> <pid>
@@ -4569,4 +4577,25 @@ test_hold_creates_a_captain_row_when_beads_requires_due_without_custom_type
 test_hold_reaches_the_core_signoff_card_path
 test_a_hold_that_is_the_captains_own_instruction_raises_no_card
 test_a_parked_hold_raises_no_card
+# A created captain row must carry its priority through the installed
+# task-priority feature: the hold path calls that feature's add with the new
+# task, its title, its kind and the --priority it was given, and a missing
+# feature is a no-op. This is the case the release fold left as a bare call.
+test_hold_create_honors_the_task_priority_check() {
+  local home stub out rc=0 id=hold-create-priority
+  home=$(make_home hold-create-priority)
+  stub="$home/priority-check.sh"
+  cat > "$stub" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$(dirname "$0")/priority-calls"
+SH
+  chmod +x "$stub"
+  out=$(JG_TASK_PRIORITY_CHECK="$stub" run_captain "$home" hold "$id" \
+    --title "Route the priority" --reason "who signs off the release" --priority 2 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a hold create with an installed task-priority check was refused: $out"
+  assert_grep "add $id Route the priority --kind captain --priority 2" "$home/priority-calls" \
+    "the installed task-priority check was not told the new task, its kind and its priority"
+  pass "hold create honors the task priority check"
+}
+
 test_hold_create_honors_the_task_priority_check

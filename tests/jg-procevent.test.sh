@@ -502,12 +502,19 @@ pe_adapter() {  # <home> <command>...: run the runner against the fixture adapte
 HPUBLISH="$TMP_ROOT/hpublish"; new_home "$HPUBLISH"
 jg_test_track_procevent_home "$HPUBLISH"
 pe_adapter "$HPUBLISH" register applying publish-src -- /bin/echo "apply after publish" >/dev/null
-mkdir "$HPUBLISH/state/.wake-queue"
+# The wake queue is the bus's: a raise publishes, and a publish the bus cannot take
+# is owed in the home's own outbox (bin/jg-wake-bus.sh live_publish), so a wake
+# fails to publish only when neither can record it. Point this home at an address
+# nothing listens on, so a bus on the machine cannot take the event, and make the
+# outbox unwritable to prove exactly that.
+mkdir -p "$HPUBLISH/config"
+printf 'nats-url nats://127.0.0.1:1\n' > "$HPUBLISH/config/wake-bus"
+mkdir "$HPUBLISH/state/.wake-bus.outbox.jsonl"
 out=$(pe_adapter "$HPUBLISH" start publish-src 2>&1)
 assert_contains "$out" "not-autohandled: publish-src" "failed publication did not suppress automatic application"
 assert_absent "$HPUBLISH/state/applied" "a result was applied before its wake was durably published"
 assert_absent "$HPUBLISH/state/procevent-inbox/publish-src.1.handled" "a result was acknowledged before its wake was durably published"
-rmdir "$HPUBLISH/state/.wake-queue"
+rmdir "$HPUBLISH/state/.wake-bus.outbox.jsonl"
 # This source's child returns instantly, so leaving it registered would have the
 # recovery reconcile below start a detached poll that races every assertion after
 # it for the source claim, the next sequence, and this home's applied record.

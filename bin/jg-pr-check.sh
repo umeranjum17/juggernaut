@@ -20,11 +20,24 @@
 # Mark the pull request ready for review, then arm again; a lane that keeps a
 # draft on purpose declares a wait instead of reporting done. An unreadable
 # draft state does not refuse, matching how the head read below is optional.
+# A GitHub pull request whose base is the project's default branch is refused
+# when that project carries a version branch (release/c-<N>): its features
+# target the version branch, and the one pull request that targets the default
+# branch is the release pull request from the version branch into it.
+# bin/jg-version-branch-lib.sh owns which branch that is, the refusal names it,
+# and a project with no version branch is unchanged.
+# An unreadable base does not refuse.
+# bin/jg-pr-merge.sh records through this script too, so the same refusal stops a
+# main-based feature pull request being merged by a path that never armed it.
 # bin/jg-pr-merge.sh records through this script with JG_PR_CHECK_MERGE=1 and
 # skips this refusal, because its own merge-time draft refusal is authoritative.
 # The recorded pr= also frees the task's place in a declared project capacity
 # (bin/jg-project-capacity-lib.sh), and a new review-ready PR moves the task's
-# ticket to the review stage (bin/jg-ticket.sh).
+# ticket to the review stage (bin/jg-ticket.sh). A newly recorded GitHub pull
+# request also says on its own page what it is waiting for, through the
+# juggernaut/waiting-for commit status bin/jg-pr-lib.sh jg_pr_wait_status
+# publishes; bin/jg-pr-merge.sh replaces that line when its gate names another
+# wait and clears it before merging.
 # --from-status is the watcher's call on every status change: it records the PR
 # named by the task's newest status line only when that line is the ship ready
 # report its mode gives (jg_dod_should_gate_ship_done) and that PR is not
@@ -63,6 +76,10 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 
 # shellcheck source=bin/jg-pr-lib.sh
 . "$SCRIPT_DIR/jg-pr-lib.sh"
+# shellcheck source=bin/jg-ff-lib.sh
+. "$SCRIPT_DIR/jg-ff-lib.sh"
+# shellcheck source=bin/jg-version-branch-lib.sh
+. "$SCRIPT_DIR/jg-version-branch-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-parent-channel-lib.sh
@@ -174,6 +191,42 @@ if [ "$PROVIDER" = github ] && [ "${JG_PR_CHECK_MERGE:-}" != 1 ] && command -v g
     exit 1
   fi
 fi
+
+# A feature pull request belongs on the project's current version branch, never
+# on the default branch: the default branch moves only when a release lands on
+# it, so a feature that goes there lands outside the release it belongs to and
+# skips the branch that release is built from.
+# The one pull request allowed to target the default branch is the release pull
+# request itself, whose head is the version branch.
+# bin/jg-version-branch-lib.sh owns which branch that is, and a project that
+# carries none is unchanged.
+# An unreadable base leaves arming alone, exactly as the draft read above does,
+# because a forge that cannot answer must not block the watch.
+jg_pr_check_version_branch_base() {  # <meta> <url>
+  local meta=$1 url=$2 project version default fields base head_ref
+  [ "$PROVIDER" = github ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  project=$(jg_dod_meta_value "$meta" project)
+  [ -n "$project" ] && [ -d "$project" ] || return 0
+  version=$(jg_current_version_branch "$project") || version=
+  [ -n "$version" ] || return 0
+  default=$(default_branch "$project" 2>/dev/null) || default=
+  [ -n "$default" ] || default=main
+  fields=$(gh pr view "$url" --json baseRefName,headRefName \
+    --jq 'select(.baseRefName != null and .headRefName != null) | .baseRefName + "\t" + .headRefName' 2>/dev/null) || return 0
+  case "$fields" in *$'\t'*) ;; *) return 0 ;; esac
+  base=${fields%%$'\t'*}
+  head_ref=${fields#*$'\t'}
+  [ -n "$base" ] && [ -n "$head_ref" ] || return 0
+  [ "$base" = "$default" ] || return 0
+  [ "$head_ref" != "$version" ] || return 0
+  echo "error: $url targets the default branch $base, but this project's current version branch is $version" >&2
+  echo "  a feature pull request targets $version; only the release pull request from $version into $base may target $base" >&2
+  echo "  change this pull request's base to $version (gh-axi pr edit <number> --base $version), then arm again" >&2
+  return 1
+}
+
+jg_pr_check_version_branch_base "$META" "$URL" || exit 1
 
 "$JG_ROOT/bin/jg-guard.sh" || true
 
@@ -332,6 +385,20 @@ case "$READY_RC" in
   0|1) ;;
   *) printf 'actionable: PR %s is registered but its ready line did not reach the parent channel (rc=%s)\n' "$URL" "$READY_RC" >&2 ;;
 esac
+# A newly ready pull request is waiting from this moment on, so it says what for
+# on its own page (bin/jg-pr-lib.sh jg_pr_wait_status). The merge path replaces
+# this line when its gate names a different wait and clears it before merging.
+# The merge-time re-record is not a new wait start, so it writes nothing. A
+# publish that fails is reported and never refuses the registration.
+if [ "${JG_PR_CHECK_MERGE:-}" != 1 ] && [ "$PROVIDER" = github ]; then
+  if [ "$PR_YOLO" = on ]; then
+    jg_pr_wait_status "$URL" pending 'merge gate: automatic merge when green' \
+      || printf 'warning: could not publish the waiting-for status on %s\n' "$URL" >&2
+  else
+    jg_pr_wait_status "$URL" pending 'merge gate: lead turn' \
+      || printf 'warning: could not publish the waiting-for status on %s\n' "$URL" >&2
+  fi
+fi
 # A new review-ready PR moves the ticket to review; the merge-time re-record does not.
 [ "${JG_PR_CHECK_MERGE:-}" = 1 ] \
   || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$ID" --stage review --pr "$URL" >/dev/null || true

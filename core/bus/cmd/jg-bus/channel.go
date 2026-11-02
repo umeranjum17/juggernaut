@@ -92,12 +92,12 @@ func (a *app) noteFailure(what, why string) {
 	appendQuiet(a.log, fmt.Sprintf("%s failed: %s", what, detail(why)))
 }
 
-// post sends one body to one URL and reports a transport failure. It is the same curl
-// call this path has always made, so the timeout, the empty response sink and the rule
-// that an HTTP status is not a failure (no -f) are unchanged; the body goes in on
-// stdin, so a long event never reaches an argument list.
-func post(target, body string, headers map[string]string) (string, error) {
-	args := []string{"-sS", "-o", "/dev/null", "--max-time", "5", "-X", "POST", "--data-binary", "@-"}
+// post sends one body to one URL and returns the HTTP status and the response body. A
+// transport failure is the error; an HTTP status is the caller's to judge. It is the same
+// curl call this path has always made (timeout 5s), and the body goes in on stdin, so a
+// long event never reaches an argument list.
+func post(target, body string, headers map[string]string) (int, string, error) {
+	args := []string{"-sS", "--max-time", "5", "-X", "POST", "--data-binary", "@-", "-w", "\n%{http_code}"}
 	for k, v := range headers {
 		args = append(args, "-H", k+": "+v)
 	}
@@ -105,10 +105,47 @@ func post(target, body string, headers map[string]string) (string, error) {
 	cmd := exec.Command("curl", args...)
 	cmd.Stdin = strings.NewReader(body)
 	out, err := cmd.CombinedOutput()
+	text := strings.TrimRight(string(out), "\n")
 	if err != nil {
-		return strings.TrimSpace(string(out)), err
+		return 0, strings.TrimSpace(text), err
 	}
-	return "", nil
+	i := strings.LastIndexByte(text, '\n')
+	status := 0
+	fmt.Sscanf(text[i+1:], "%d", &status)
+	if i < 0 {
+		return status, "", nil
+	}
+	return status, text[:i], nil
+}
+
+// ok2xx reports an accepted HTTP status.
+func ok2xx(status int) bool { return status >= 200 && status < 300 }
+
+// deliverToNtfy sends one event to the captain's topic and returns ntfy's own answer (its
+// message id). It is the one delivery call: the consumer on the CAPTAIN stream makes it for
+// every event the bus accepted, and publish makes it only for an event the bus did not.
+func (a *app) deliverToNtfy(text string) (target, id string, err error) {
+	target = a.ntfyURL()
+	headers := map[string]string{"Title": clampChars(firstLine(text), 120),
+		"Tags": a.cfgOr("ntfy-tag", "")}
+	status, out, perr := post(target, text, headers)
+	if perr != nil {
+		return target, "", fmt.Errorf("%s", detail(out))
+	}
+	if !ok2xx(status) {
+		return target, "", fmt.Errorf("ntfy answered HTTP %d: %s", status, detail(out))
+	}
+	var reply struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal([]byte(out), &reply)
+	return target, reply.ID, nil
+}
+
+// noteUndelivered names a delivery that did not arrive, with its error.
+func (a *app) noteUndelivered(target, why, doc string) {
+	appendQuiet(a.undelivered, fmt.Sprintf(`{"at":%d,"target":%s,"error":%s,"event":%s}`,
+		time.Now().Unix(), toJSON(target), toJSON(detail(why)), doc))
 }
 
 // publish tees one captain-facing event. It never fails its emitter: both callers are
@@ -146,19 +183,24 @@ func (a *app) publish(args []string) int {
 	}
 	target := strings.TrimRight(a.cfgOr("dapr-http-url", ""), "/") +
 		"/v1.0/publish/" + a.cfgOr("dapr-pubsub", "") + "/" + subject
-	if out, err := post(target, doc, nil); err != nil {
+	status, out, err := post(target, doc, map[string]string{"Content-Type": "application/json"})
+	accepted := err == nil && ok2xx(status)
+	if !accepted {
+		if err == nil {
+			out = fmt.Sprintf("HTTP %d %s", status, out)
+		}
 		a.noteFailure("bus "+subject, out)
 	}
-	if mode != "live" {
+	if mode != "live" || accepted {
+		// Live and accepted: the event is on the CAPTAIN stream, and the stream's
+		// consumer (`jg-bus deliver`) is the one path that delivers it to ntfy.
 		return 0
 	}
-	delivery := a.ntfyURL()
-	headers := map[string]string{"Title": clampChars(firstLine(text), 120),
-		"Tags": a.cfgOr("ntfy-tag", "")}
-	if out, err := post(delivery, text, headers); err != nil {
-		a.noteFailure("ntfy", out)
-		appendQuiet(a.undelivered, fmt.Sprintf(`{"at":%d,"target":%s,"error":%s,"event":%s}`,
-			time.Now().Unix(), toJSON(delivery), toJSON(detail(out)), doc))
+	// The bus did not take the event, so no consumer will see it: deliver it directly
+	// rather than lose a captain-facing event.
+	if delivery, _, err := a.deliverToNtfy(text); err != nil {
+		a.noteFailure("ntfy", err.Error())
+		a.noteUndelivered(delivery, err.Error(), doc)
 	}
 	return 0
 }
@@ -251,7 +293,7 @@ func (a *app) status() int {
 	}
 	fmt.Printf("mode %s, relay %s, delivery %s\n", a.channelMode(), a.cfgOr("ntfy-relay", ""), target)
 	fmt.Printf("record %s: %d event(s), %d undelivered\n", a.record, countLines(a.record), countLines(a.undelivered))
-	for _, name := range []string{"nats", "dapr", "ntfy"} {
+	for _, name := range []string{"nats", "dapr", "ntfy", "deliver"} {
 		state := "down"
 		if pid, ok := a.runningPid(name); ok {
 			state = fmt.Sprintf("up (%d)", pid)
@@ -265,12 +307,17 @@ func (a *app) status() int {
 	return 0
 }
 
-// unit prints the systemd user service a home installs once, so the server is up
-// after every boot and restart without anyone typing a command. It runs the server
-// itself (not `serve`, which only starts services and exits) and creates the stream
-// right after it starts.
-func (a *app) unit() int {
-	text, err := a.buildUnit()
+// unit prints the systemd user service for one part of the stack a home installs once,
+// so it is up after every boot and restart without anyone typing a command: `nats`
+// (the default) runs the server itself, not `serve`, which only starts services and
+// exits, and creates the stream right after it starts; `dapr` and `ntfy` run their
+// own binary in the foreground, the same argv `serve` starts them with.
+func (a *app) unit(args []string) int {
+	part := "nats"
+	if len(args) > 0 {
+		part = args[0]
+	}
+	text, err := a.buildUnit(part)
 	if err != nil {
 		return die("%v", err)
 	}
@@ -278,35 +325,15 @@ func (a *app) unit() int {
 	return 0
 }
 
-// buildUnit writes the machine's server config and accounts, and returns the unit
-// text that runs them. The config is ONE file with no `include` lines: nats-server
-// resolves an include path against the config's own directory, so an absolute one
-// becomes state/bus/home/... and the server refuses to start. One merged file is also
-// what lets the JetStream budget be sized for the number of accounts instead of
-// staying below what those accounts reserve.
-func (a *app) buildUnit() (string, error) {
+// buildUnit returns the unit text for one part. For nats it first writes the machine's
+// server config and accounts: the config is ONE file with no `include` lines, because
+// nats-server resolves an include path against the config's own directory, so an
+// absolute one becomes state/bus/home/... and the server refuses to start. One merged
+// file is also what lets the JetStream budget be sized for the number of accounts
+// instead of staying below what those accounts reserve.
+func (a *app) buildUnit(part string) (string, error) {
 	if err := os.MkdirAll(a.runtime, 0o755); err != nil {
 		return "", fmt.Errorf("cannot create %s", a.runtime)
-	}
-	natsServer := "nats-server"
-	if path, err := exec.LookPath("nats-server"); err == nil {
-		natsServer = path
-	}
-	// One server per machine: the config carries this machine's per-home accounts, so
-	// every home on the machine shares one JetStream and no account can reach another
-	// home's subjects.
-	homes := a.machineHomes()
-	accounts := filepath.Join(a.runtime, "accounts.conf")
-	if err := a.unitAccounts(accounts, homes); err != nil {
-		return "", fmt.Errorf("cannot write %s: %v", accounts, err)
-	}
-	conf := filepath.Join(a.runtime, "bus.conf")
-	text, err := a.machineConfig(len(homes))
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(conf, []byte(text), 0o600); err != nil {
-		return "", fmt.Errorf("cannot write %s: %v", conf, err)
 	}
 	quote := func(value string) string {
 		value = strings.ReplaceAll(value, `\`, `\\`)
@@ -317,18 +344,88 @@ func (a *app) buildUnit() (string, error) {
 	percent := func(value string) string { return strings.ReplaceAll(value, "%", "%%") }
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\n")
-	fmt.Fprintf(&b, "Description=Juggernaut message bus for this machine (NATS JetStream, one account per home)\n")
-	fmt.Fprintf(&b, "After=network.target\n\n")
-	fmt.Fprintf(&b, "[Service]\n")
-	fmt.Fprintf(&b, "Type=simple\n")
-	fmt.Fprintf(&b, "WorkingDirectory=%s\n", percent(a.runtime))
-	fmt.Fprintf(&b, "Environment=%s\n", quote("JG_HOME="+a.home))
-	fmt.Fprintf(&b, "Environment=%s\n", quote("PATH="+os.Getenv("PATH")))
-	fmt.Fprintf(&b, "ExecStart=%s -c %s\n", quote(natsServer), quote(conf))
-	fmt.Fprintf(&b, "ExecStartPost=%s bootstrap\n", quote(filepath.Join(a.root, "bin", "jg-bus.sh")))
-	fmt.Fprintf(&b, "Restart=always\n")
-	fmt.Fprintf(&b, "RestartSec=5\n\n")
-	fmt.Fprintf(&b, "[Install]\n")
-	fmt.Fprintf(&b, "WantedBy=default.target\n")
+	switch part {
+	case "nats":
+		natsServer := "nats-server"
+		if path, err := exec.LookPath("nats-server"); err == nil {
+			natsServer = path
+		}
+		// One server per machine: the config carries this machine's per-home accounts, so
+		// every home on the machine shares one JetStream and no account can reach another
+		// home's subjects.
+		homes := a.machineHomes()
+		accounts := filepath.Join(a.runtime, "accounts.conf")
+		if err := a.unitAccounts(accounts, homes); err != nil {
+			return "", fmt.Errorf("cannot write %s: %v", accounts, err)
+		}
+		conf := filepath.Join(a.runtime, "bus.conf")
+		text, err := a.machineConfig(len(homes))
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(conf, []byte(text), 0o600); err != nil {
+			return "", fmt.Errorf("cannot write %s: %v", conf, err)
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut message bus for this machine (NATS JetStream, one account per home)\n")
+		fmt.Fprintf(&b, "After=network.target\n\n")
+		a.unitService(&b, quote, percent, fmt.Sprintf("%s -c %s", quote(natsServer), quote(conf)))
+		fmt.Fprintf(&b, "ExecStartPost=%s bootstrap\n", quote(filepath.Join(a.root, "bin", "jg-bus.sh")))
+	case "dapr":
+		path, err := exec.LookPath("daprd")
+		if err != nil {
+			return "", fmt.Errorf("no daprd on PATH")
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut message bus sidecar (Dapr over NATS)\n")
+		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
+		a.unitService(&b, quote, percent, quoteAll(quote, a.daprArgv(path)))
+	case "ntfy":
+		path, err := exec.LookPath("ntfy")
+		if err != nil {
+			return "", fmt.Errorf("no ntfy on PATH")
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut captain channel delivery (ntfy, loopback)\n")
+		fmt.Fprintf(&b, "After=network.target\n\n")
+		a.unitService(&b, quote, percent, quoteAll(quote, a.ntfyArgv(path)))
+	case "deliver":
+		self, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("cannot find the jg-bus binary: %v", err)
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut captain channel consumer (CAPTAIN stream to ntfy)\n")
+		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
+		a.unitService(&b, quote, percent, quoteAll(quote, []string{self, "deliver"}))
+		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_BUS_ROOT="+a.root))
+		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_STATE_OVERRIDE="+a.state))
+	default:
+		return "", fmt.Errorf("unit: unknown part %q (nats, dapr, ntfy, deliver)", part)
+	}
+	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	return b.String(), nil
+}
+
+// natsUnit is the name of the unit that runs the server, which the sidecar's unit
+// requires; JG_STACK_UNIT_PREFIX is how a second stack on one machine stays apart.
+func natsUnit() string {
+	prefix := os.Getenv("JG_STACK_UNIT_PREFIX")
+	if prefix == "" {
+		prefix = "jg"
+	}
+	return prefix + "-bus.service"
+}
+
+// unitService writes the [Service] lines every part shares, ending at its ExecStart.
+func (a *app) unitService(b *strings.Builder, quote, percent func(string) string, execStart string) {
+	fmt.Fprintf(b, "[Service]\nType=simple\n")
+	fmt.Fprintf(b, "WorkingDirectory=%s\n", percent(a.runtime))
+	fmt.Fprintf(b, "Environment=%s\n", quote("JG_HOME="+a.home))
+	fmt.Fprintf(b, "Environment=%s\n", quote("PATH="+os.Getenv("PATH")))
+	fmt.Fprintf(b, "ExecStart=%s\n", execStart)
+}
+
+func quoteAll(quote func(string) string, argv []string) string {
+	out := make([]string, len(argv))
+	for i, v := range argv {
+		out[i] = quote(v)
+	}
+	return strings.Join(out, " ")
 }

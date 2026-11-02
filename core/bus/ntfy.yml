@@ -12,3 +12,9 @@ cache-file: "./ntfy-cache.db"
 cache-duration: "24h"
 behind-proxy: false
 enable-signup: false
+# ntfy's own delivery log: one DEBUG "Received message" line per publish, carrying the
+# message_id that state/captain-channel-delivered.jsonl records, so bin/jg-captain-probe.sh can
+# show the same event in both. It goes to stdout: state/bus/ntfy.log, or the unit's journal.
+log-level: info
+log-level-overrides:
+  - "tag=publish -> debug"

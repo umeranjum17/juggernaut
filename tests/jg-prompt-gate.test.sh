@@ -181,9 +181,9 @@ test_prompt_still_up_is_acted_on_every_interval() {
     "$w" "$TMP_ROOT/lead" "$TMP_ROOT/lead" > "$lab/state/lead1.meta"
   show() { tmux respawn-pane -k -t "$w" "stty -echo; cat '$1'; exec sleep 999999" 2>/dev/null \
     || tmux new-session -d -s jglab -n jg-lead1 -x 220 -y 60 "stty -echo; cat '$1'; exec sleep 999999"; sleep 1; }
-  watch_until() {  # <out> <pattern> <count>: rerun the watcher, which exits on each wake
+  watch_until() {  # <out> <pattern> <count> [approvals]: rerun the watcher, which exits on each wake
     : > "$1"
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
       JG_HOME="$lab" SIGN_OFF_HOME="$lab/signoff" JG_POLL=1 JG_PROMPT_REALERT_SECS=3 \
         JG_WAIT_ALERT_SECS=1 JG_WAIT_ESCALATE_SECS=999998 JG_WAIT_CARD_SECS=999999 \
         JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 timeout 20 "$ROOT/bin/jg-watch.sh" >> "$1" 2>&1
@@ -193,16 +193,21 @@ test_prompt_still_up_is_acted_on_every_interval() {
       read -ra ack_args <<< "${ack#*jg-wake-drain.sh}"
       [ -z "$ack" ] || JG_HOME="$lab" JG_STATE_OVERRIDE="$lab/state" "$ROOT/bin/jg-wake-drain.sh" \
         "${ack_args[@]}" >/dev/null 2>&1 || fail "the wake acknowledgement failed: $(cat "$TMP_ROOT/drain.err")"
-      [ "$(grep -c "$2" "$1")" -lt "$3" ] || return 0
+      [ "$(grep -c "$2" "$1")" -lt "$3" ] \
+        || [ "$(grep -c '"root":"inbox"' "$lab/state/prompt-approvals.jsonl" 2>/dev/null || true)" -lt "${4:-0}" ] || return 0
     done
   }
 
+  # An identical urgent wake inside the re-alert window is downgraded to batch
+  # (jg_wake_append_locked), so Main is woken at first sight and the later rungs
+  # are the wait-timers chain's check wakes, as for any other prompt.
   show "$TMP_ROOT/approvable.txt"
-  watch_until "$TMP_ROOT/a.out" "stale: $w (permission prompt" 3
+  watch_until "$TMP_ROOT/a.out" "check: waiting-state lead1 (prompt, .*level=owner; still open" 3 3
   approvals=$(grep -c '"root":"inbox"' "$lab/state/prompt-approvals.jsonl" 2>/dev/null || true)
   wakes=$(grep -c "stale: $w (permission prompt: .*not answered: inbox; the approval sent under a minute ago did not take" "$TMP_ROOT/a.out" || true)
-  [ "${approvals:-0}" -ge 3 ] && [ "$wakes" -ge 3 ] \
-    || fail "an approvable prompt left on screen was not re-approved and re-alerted each interval (approvals=$approvals wakes=$wakes): $(cat "$TMP_ROOT/a.out")"
+  n=$(grep -c "check: waiting-state lead1 (prompt, .*level=owner; still open.* source=\[prompt: Access external directory $lab/state/lead1.inbox" "$TMP_ROOT/a.out" || true)
+  [ "${approvals:-0}" -ge 3 ] && [ "$wakes" -ge 1 ] && [ "$n" -ge 2 ] \
+    || fail "an approvable prompt left on screen was not re-approved every interval, woken at first sight, and re-alerted by the chain (approvals=$approvals wakes=$wakes re-alerts=$n): $(cat "$TMP_ROOT/a.out")"
 
   show "$TMP_ROOT/secret.txt"
   watch_until "$TMP_ROOT/s.out" "stale: $w (permission prompt" 1

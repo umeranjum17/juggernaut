@@ -5,8 +5,11 @@
 # Needs under "## Checks": outcome:, repro:, proof:, evidence:. proof names a command or path; repro is
 # not n/a on a fix PR; evidence files exist, are non-empty, are newer than the lane's first launch
 # (data/<task>/ birth), and at least one has a hash no other PR used, and no two are identical. "evidence: not proven: <cause>"
-# passes (file the proof gap as a task). proof names the repo's verify-<app> skill (or "no verify skill" when
-# the repo has none); a real repro names systematic-debugging (captain 6 Oct). Bot PRs pass. 1,000+ added non-generated lines
+# passes (file the proof gap as a task). proof names the verify skill of the repository under test - the clone
+# the PR belongs to (the lane's recorded worktree, else this home's clone of it), never the folder this lint runs
+# from, whose own skill list is not evidence about that PR (two green PRs, 392 and 405, needed a hand-edited
+# description because the caller's folder decided it) - and says "no verify skill" only when that repository has
+# none; a real repro names systematic-debugging (captain 6 Oct). Bot PRs pass. 1,000+ added non-generated lines
 # are ADVICE, not a refusal (captain, release c-1: the ceiling slowed work down): the run prints the size and says it is over
 # the guidance, then checks the rest and exits on those rules alone. A home that wants the refusal back writes `refuse` in
 # config/checks-size; absent, empty or any other value is advisory (deletions, moved lines and a fork PR's merged-in upstream lines do not count;
@@ -268,11 +271,34 @@ miss = [k for k in ('outcome', 'repro', 'proof', 'evidence') if not F.get(k)]
 if miss: done(False, 'missing or empty Checks line: ' + ', '.join(miss), head)
 if not re.search(r'[/`]|\.\w{2,4}\b|\b(npm|pnpm|yarn|npx|bash|sh|python3?|node|cargo|go|gradle|make|adb|xcrun|bin/)\b', F['proof']):
     done(False, 'proof: names no command or path', head)
-repo = re.search(r'github\.com/[^/]+/([^/]+)/pull/', src)
-vdir = f'{home}/projects/{repo.group(1)}/.agents/skills' if repo else ''
-has_verify = bool(vdir) and os.path.isdir(vdir) and any(d.startswith('verify-') for d in os.listdir(vdir))
-if 'verify-' not in F['proof'] and (has_verify or not re.search(r'no verify skill', F['proof'], re.I)):
-    done(False, 'proof: does not name the verify-<app> skill run' + ('' if has_verify else ' (or "no verify skill")'), head)
+def repo_under_test():
+    """The clone this pull request belongs to, never the folder this lint runs from: the lane's recorded
+    worktree first, else this home's clone of the pull request's repository. '' when neither is on disk, so a
+    repository that is not here is never judged to have no verify skill."""
+    meta = f'{home}/state/{task}.meta'
+    wt = ''
+    if task and os.path.isfile(meta):
+        try:
+            wt = ([l[9:].strip() for l in open(meta) if l.startswith('worktree=')] or [''])[-1]
+        except OSError:
+            wt = ''
+    if wt and os.path.isdir(wt):
+        return wt
+    m = re.search(r'github\.com/[^/]+/([^/]+)/pull/', src)
+    clone = f'{home}/projects/{m.group(1)}' if m else ''
+    return clone if clone and os.path.isdir(clone) else ''
+
+root = repo_under_test()
+vdir = f'{root}/.agents/skills' if root else ''
+# A done-done run writes its own verify skill as done-done-verify-<app>, which is a verify skill of this
+# repository too; naming it and naming the hand-written verify-<app> both satisfy the rule.
+skills = sorted(d for d in (os.listdir(vdir) if os.path.isdir(vdir) else [])
+                if d.startswith('verify-') or d.startswith('done-done-verify-'))
+if skills:
+    if not any(s in F['proof'] for s in skills):
+        done(False, f'proof: does not name the verify skill this repository has ({", ".join(skills)}); name the skill you ran', head)
+elif 'verify-' not in F['proof'] and not re.search(r'no verify skill', F['proof'], re.I):
+    done(False, 'proof: does not name the verify-<app> skill run (or "no verify skill")', head)
 if not re.match(r'n/?a\b', F['repro'], re.I) and 'systematic-debugging' not in F['repro']:
     done(False, 'repro: a real repro must say "systematic-debugging used" (brief step 2)', head)
 if re.match(r'(fix|bugfix|hotfix)\b', title, re.I) and re.match(r'n/?a\b', F['repro'], re.I):

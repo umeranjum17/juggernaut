@@ -23,32 +23,53 @@ user-local bin directory every other tool lands in (`~/.local/bin` by default).
 `bin/jg-bootstrap.sh install nats-server nats` is that step on its own, and
 `install.sh` runs it with everything else on a clean machine.
 
-## How a home starts it
+## Accounts: one per home, named by the home's id
 
-A home runs the bus as a **systemd user service**, so the server is up after a
-reboot and comes back if it dies. `bin/jg-bus.sh install-service` is the one
-command that makes that true, and it is what a release runs:
+Each home has its own account, user and credentials file in `state/bus/<account>.pass`.
+The account is the home's unique id, never its folder name, because every Squad Lead
+home folder can share one basename: a registered Squad Lead uses its `data/squad_leads.md`
+id, and any other home (Main included) uses `home-<12 hex of sha256 of its resolved
+absolute path>`. `bin/jg-bus.sh account` prints this home's account and credentials file.
+The generated accounts file holds Main plus every `data/squad_leads.md` entry. Two homes
+that land on one name are refused with one line naming both, so rename a Squad Lead id.
+
+Upgrading an existing install: a home whose folder name is unique keeps its old
+password, moved once from `<folder>.pass` to its new account. A folder name shared by
+several homes named no single home, so each of those homes gets a new password and the
+old shared file is left unused. Either way, re-run `bin/jg-bus.sh unit` and
+`systemctl --user restart jg-bus.service` once so the server reads the new accounts.
+
+## How a home starts it: one command
 
 ```sh
-export PATH=$HOME/.local/bin:$PATH           # where the install put both tools
-JG_HOME=<home> bin/jg-bus.sh install-service  # write the unit if missing, reload, enable --now
-JG_HOME=<home> bin/jg-bus.sh status          # nats: up (systemd user service jg-bus.service)
+bin/jg-stack.sh up          # install what is missing, start what is stopped, report every part
+bin/jg-stack.sh status      # the same report, changing nothing
 ```
 
-- with a systemd user session it writes `jg-bus.service` when the unit is missing
-  or names another home, reloads systemd, enables it now, and checks it is active;
-- without one (CI, a container, a stripped session) it falls back to
-  `bin/jg-bus.sh ensure`, which starts the same server detached from the home's
-  `state/bus` directory;
-- either way it prints exactly one line - `bus: up ...`, `bus: installed and
-  started ...`, or a `bus: cannot start ...` line naming what to fix - and it never
-  fails its caller, because a home whose bus cannot start still has to come up.
+On a fresh clone this one command brings the whole stack up: it builds the Go
+command, installs the four pinned tools, and installs, enables and starts the
+NATS unit, the Dapr sidecar, ntfy and the `deliver` consumer that carries the `CAPTAIN` stream to ntfy, then checks the stream. It prints one line
+per part, for example `nats  installed 2.10.22, enabled enabled (jg-bus.service),
+running pid 123, listening 127.0.0.1:4222`, and a second run prints the same lines.
+The first part that cannot be made whole stops the run with one line,
+`STACK_FAILED: <part>: <what is missing>; blocks <what depends on it>`.
 
-`bin/jg-bootstrap.sh` runs it at every session start, so a home whose code just
-arrived with the bus in it, or a machine that rebooted, has its server up without
-anyone starting it by hand. `bin/jg-update.sh` runs it right after the primary
-home's fast-forward, so a release can never go live with no message server. `bin/jg-bus.sh
-unit` still prints the unit alone, for a hand install.
+`bin/jg-bootstrap.sh` (every session start), `bin/jg-update.sh` (after the
+fast-forward) and `install.sh` all run it, so a release never lands without its
+services. Each service is a **systemd user service** (`jg-bus`, `jg-dapr`,
+`jg-ntfy`, `jg-deliver`) when this account has a user session whose unit directory is this
+HOME's; otherwise (CI, a container, a throwaway HOME) the same commands start
+detached from the home's `state/bus` through `bin/jg-bus.sh serve`. The units
+come from `bin/jg-bus.sh unit [nats|dapr|ntfy]`. The NATS unit runs the server
+itself, not `serve`, which starts services and exits; `ExecStartPost` runs
+`bin/jg-bus.sh bootstrap`, which waits for the port and creates the stream from
+`core/bus/stream.json`.
+
+`bin/jg-bus.sh install-service` is the bus alone: it writes `jg-bus.service` when missing
+or naming another home, reloads systemd, enables it now, and falls back to `ensure` without a
+user session. It prints one line, `bus: up ...`, `bus: installed and started ...` or a
+`bus: cannot start ...` line, and never fails its caller. `bin/jg-update.sh` runs it when the
+stack run is skipped, so a release never goes live with no message server.
 
 One config file, sized for the machine. `bin/jg-bus.sh unit` writes
 `state/bus/bus.conf` as ONE file: the server config in force plus this machine's
@@ -65,11 +86,11 @@ it - authenticates as the home that owns the state directory, with the name and 
 password in `state/bus/<account>.pass`. A client that connects as the empty user is
 refused, and that is what a release without this shipped.
 
-The unit runs the server itself, not `serve`: `serve` starts services and exits,
-which a unit would restart forever. `ExecStartPost` runs
-`bin/jg-bus.sh bootstrap`, which creates the JetStream stream from
-`core/bus/stream.json` (name, subjects, retention) when it is not there, so a
-fresh home has its stream before anything publishes.
+Three config faults made the first unit fail on a real machine and are fixed:
+includes were absolute (nats resolves them against the including file), the
+server store caps sat below the per-account reservations (so the server refused
+its own accounts), and the stream client and the sidecar connected with an empty
+user (the accounts file refuses that; both now log in as the home's account).
 
 A home may override any file the services read under `config/bus/`, and the
 client address lives in `defaults/captain-channel` (`nats-url`) or the home's
@@ -78,7 +99,7 @@ own server on its own port and its own store.
 
 ## What CI proves
 
-`.github/workflows/ci.yml`'s `Bus service` lane installs both tools through the
+`.github/workflows/ci.yml`'s `Bus service` lane also runs `tests/jg-stack.test.sh`: one command on a clean HOME brings every part up, a second run changes nothing, and a broken part stops the run with one line. It installs both tools through the
 command above - the repository's own install path, not a hand-written download -
 and then runs `tests/jg-bus-service.test.sh`. That test starts a throwaway home,
 runs `ensure` twice, and asserts:
@@ -98,6 +119,6 @@ or the stream cannot merge green.
 
 No path switches. The bus exists, is installed, is started and is proven; the
 paths that will run their events on it switch one at a time, each with its own
-parity replay and its own deletion of the code it replaces. `docs/bus-shadow.md`
-holds the wake queue and inbox parity work, `docs/captain-channel.md` the captain
+parity replay and its own deletion of the code it replaces. `docs/bus-live.md`
+holds the wake queue and inbox switch, `docs/captain-channel.md` the captain
 channel.

@@ -12,13 +12,28 @@
 #    other step, because bin/jg-merge-outcome-lib.sh runs the pass itself.
 # T5 No config/version-branch is silence, not an error, so an unconfigured home
 #    is unchanged.
+# T6 The project's current version branch is the newest release/c-<N> in its own
+#    refs, compared as a number, and a project with none resolves to nothing.
+# T7 The features pass carries the released version branch into an open feature
+#    pull request as a merge commit that keeps the feature's own work, and a
+#    second pass changes nothing.
+# T8 A merge that was not the release pull request is silent, because the pass
+#    runs after every recorded merge.
+# T9 A feature branch whose merge conflicts is reported and left exactly as it
+#    is; nothing is forced.
+# T10 The recorded release merge runs the features pass itself, so no home needs
+#    an editable hook for it.
+# T11 A ship brief scaffolded with a project directory records that project's
+#    version branch as its base, and the spawn with no --base-branch lands the
+#    copy there; a brief that records no base is refused by name.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 SYNC="$ROOT/bin/jg-version-branch-sync.sh"
 OUTCOME_LIB="$ROOT/bin/jg-merge-outcome-lib.sh"
+VERSION_LIB="$ROOT/bin/jg-version-branch-lib.sh"
 
 jg_git_identity fmtest fmtest@example.com
 
@@ -146,9 +161,220 @@ test_unconfigured_home_is_silent() {
   pass "T5 a home with no version branch is silent"
 }
 
+# Cut a feature branch from the version branch and push it, leaving the seed
+# clone back on the default branch.
+add_feature_branch() {  # <world> <branch> <file>
+  local w=$1 branch=$2 file=$3
+  git -C "$w/seed" checkout -q -B "$branch" origin/release/c-1
+  printf '%s\n' "$branch" > "$w/seed/$file"
+  git -C "$w/seed" add -A
+  git -C "$w/seed" commit -qm "feature work on $branch"
+  git -C "$w/seed" push -q origin "$branch"
+  git -C "$w/seed" checkout -q main
+}
+
+# Land work on the version branch, then merge it into the default branch the way
+# the release pull request does, and refresh the copy's origin refs.
+release_lands() {  # <world> <file>
+  local w=$1 file=$2
+  git -C "$w/seed" checkout -q -B release/c-1 origin/release/c-1
+  printf 'release\n' > "$w/seed/$file"
+  git -C "$w/seed" add -A
+  git -C "$w/seed" commit -qm "release work"
+  git -C "$w/seed" push -q origin HEAD:refs/heads/release/c-1
+  git -C "$w/seed" checkout -q main
+  git -C "$w/seed" merge -q --no-ff -m 'merge release/c-1 into main' release/c-1
+  git -C "$w/seed" push -q origin main
+  git -C "$w/copy" fetch -q --prune origin
+}
+
+# The features pass makes exactly two forge reads: the merged pull request's base
+# and head, and the open pull requests that target the version branch. Each case
+# writes both answers to files, so no test reaches the network.
+make_features_gh() {  # <dir>
+  local dir=$1
+  mkdir -p "$dir"
+  cat > "$dir/gh" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-} ${2:-}" in
+  "pr view") cat "$FAKE_GH_VIEW"; exit 0 ;;
+  "pr list") cat "$FAKE_GH_LIST"; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$dir/gh"
+  printf '%s\n' "$dir"
+}
+
+features_run() {  # <world> <view-file> <list-file> [<repo-dir>]
+  local w=$1 view=$2 list=$3 repo=${4:-}
+  [ -n "$repo" ] || repo=$w/copy
+  PATH="$w/fake:$PATH" FAKE_GH_VIEW=$view FAKE_GH_LIST=$list \
+    JG_HOME="$w/home" "$SYNC" features https://github.com/o/r/pull/1 "$repo" 2>&1
+}
+
+test_current_version_branch_is_the_newest() {
+  local w out rc
+  w=$(new_world t6)
+  git -C "$w/seed" branch -q release/c-2 main
+  git -C "$w/seed" branch -q release/c-10 main
+  git -C "$w/seed" branch -q release/hotfix main
+  out=$(cd "$w/seed" && bash -c '. "$1"; jg_current_version_branch .' _ "$VERSION_LIB" 2>&1)
+  assert_equals release/c-10 "$out" "the newest release branch, compared as a number, is the current one"
+
+  mkdir -p "$w/plain"
+  git -C "$w/plain" init -q -b main
+  out=$(cd "$w/plain" && bash -c '. "$1"; jg_current_version_branch .' _ "$VERSION_LIB" 2>&1)
+  rc=$?
+  assert_equals "" "$out" "a project with no release branch resolves to nothing"
+  [ "$rc" -ne 0 ] || fail "a project with no release branch must report that it has none"
+  out=$(cd "$w" && bash -c '. "$1"; jg_current_version_branch "$2"' _ "$VERSION_LIB" "$w/not-a-repo" 2>&1)
+  rc=$?
+  assert_equals "" "$out" "a directory that is not a checkout resolves to nothing"
+  [ "$rc" -ne 0 ] || fail "a non-checkout must report that it has no version branch"
+  pass "T6 the current version branch is the newest release/c-<N>";
+}
+
+test_features_carries_the_release_into_a_feature_branch() {
+  local w release_tip feature_tip main_tip parents out
+  w=$(new_world t7)
+  make_features_gh "$w/fake" >/dev/null
+  add_feature_branch "$w" fm/x feature.txt
+  feature_tip=$(git -C "$w/seed" rev-parse fm/x)
+  release_lands "$w" release.txt
+  release_tip=$(git -C "$w/seed" rev-parse release/c-1)
+  main_tip=$(remote_tip "$w" main)
+  printf 'main\trelease/c-1\n' > "$w/view"
+  printf '7\tfm/x\tfalse\n' > "$w/list"
+
+  out=$(features_run "$w" "$w/view" "$w/list")
+  assert_contains "$out" "fm/x: updated " "the feature branch is carried forward"
+  git -C "$w/origin.git" merge-base --is-ancestor "$release_tip" fm/x \
+    || fail "the released version branch is not in the feature branch"
+  git -C "$w/origin.git" merge-base --is-ancestor "$feature_tip" fm/x \
+    || fail "the carry dropped the feature branch's own work"
+  parents=$(git -C "$w/origin.git" rev-list --parents -n 1 fm/x | cut -d' ' -f2- | wc -w | tr -d '[:space:]')
+  assert_equals 2 "$parents" "the carry is a merge commit, not a rewrite"
+  assert_equals "$main_tip" "$(remote_tip "$w" main)" "the default branch is untouched"
+
+  out=$(features_run "$w" "$w/view" "$w/list")
+  assert_contains "$out" "fm/x: already current" "a second pass changes nothing"
+  pass "T7 the features pass carries the release into an open feature branch once"
+}
+
+test_non_release_merge_is_silent() {
+  local w out before
+  w=$(new_world t8)
+  make_features_gh "$w/fake" >/dev/null
+  add_feature_branch "$w" fm/x feature.txt
+  release_lands "$w" release.txt
+  before=$(remote_tip "$w" fm/x)
+  printf 'release/c-1\tfm/x\n' > "$w/view"
+  printf '7\tfm/x\tfalse\n' > "$w/list"
+
+  out=$(features_run "$w" "$w/view" "$w/list")
+  assert_equals "" "$out" "a merge that was not the release pull request is silent"
+  assert_equals "$before" "$(remote_tip "$w" fm/x)" "a feature merge moves no feature branch"
+  pass "T8 a merge that is not the release pull request is silent"
+}
+
+test_conflicting_feature_branch_is_left_alone() {
+  local w out before
+  w=$(new_world t9)
+  make_features_gh "$w/fake" >/dev/null
+  add_feature_branch "$w" fm/x shared.txt
+  release_lands "$w" shared.txt
+  before=$(remote_tip "$w" fm/x)
+  printf 'main\trelease/c-1\n' > "$w/view"
+  printf '7\tfm/x\tfalse\n' > "$w/list"
+
+  out=$(features_run "$w" "$w/view" "$w/list")
+  assert_contains "$out" "fm/x: skipped: merging release/c-1 conflicts" "a conflict is reported"
+  assert_contains "$out" "left as it is" "the report says the branch is untouched"
+  assert_equals "$before" "$(remote_tip "$w" fm/x)" "a conflicting branch is not forced"
+  pass "T9 a feature branch whose merge conflicts is left exactly as it is"
+}
+
+test_recorded_release_merge_runs_the_features_pass() {
+  local w out
+  w=$(new_world t10)
+  configure "$w"
+  make_features_gh "$w/fake" >/dev/null
+  add_feature_branch "$w" fm/x feature.txt
+  release_lands "$w" release.txt
+  printf 'main\trelease/c-1\n' > "$w/view"
+  printf '7\tfm/x\tfalse\n' > "$w/list"
+  mkdir -p "$w/home/state"
+  printf 'project=%s\n' "$w/copy" > "$w/home/state/task-v2.meta"
+
+  out=$(cd "$w/home" && PATH="$w/fake:$PATH" FAKE_GH_VIEW="$w/view" FAKE_GH_LIST="$w/list" \
+    JG_HOME="$w/home" JG_STATE_OVERRIDE="$w/home/state" \
+    JG_ROOT_OVERRIDE="$w/copy" JG_CONFIG_OVERRIDE="$w/home/config" bash -c '
+      . "$1"
+      jg_merge_outcome_report "$2" "$2/state" task-v2 \
+        https://github.com/o/r/pull/1 self attended
+    ' _ "$OUTCOME_LIB" "$w/home" 2>&1)
+  assert_contains "$out" "features: fm/x: updated " \
+    "recording the release merge runs the features pass itself"
+  pass "T10 a recorded release merge runs the features pass with no other step"
+}
+
+test_spawn_and_brief_default_to_the_version_branch() {
+  local w home proj wt fakebin out status brief tip
+  w=$(new_world t11)
+  home="$w/home"
+  proj="$w/proj"
+  wt="$w/wt"
+  jg_test_spawn_home "$home"
+  git clone -q "$w/origin.git" "$proj" 2>/dev/null
+  git -C "$proj" remote set-head origin main >/dev/null 2>&1 || true
+  # A real scaffold, so the default is proven on the brief the spawn then reads.
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" t11 proj --mode direct-PR --project "$proj" >/dev/null 2>&1 \
+    || fail "jg-brief.sh with a project directory did not scaffold"
+  brief="$home/data/t11/brief.md"
+  awk '{ gsub(/\{TASK\}/, "Ship the version-branch default."); gsub(/\{JUGGERNAUT_SPEC\}/, "Exercise the default base end to end."); print }' \
+    "$brief" > "$brief.filled" || fail "could not fill the scaffolded brief"
+  mv "$brief.filled" "$brief" || fail "could not fill the scaffolded brief"
+  assert_grep 'Base branch: release/c-1' "$brief" \
+    "the brief did not record the project's version branch as its base"
+
+  # An isolated copy of the project at its default branch, which the spawn must
+  # move to the version branch because no base flag is passed.
+  git -C "$proj" worktree add -q --detach "$wt" origin/main >/dev/null 2>&1 \
+    || fail "could not prepare the isolated worktree"
+  fakebin=$(make_spawn_fakebin "$w/fake-spawn")
+  jg_test_fake_sleep_noop "$fakebin"
+  out=$(jg_test_run_spawn "$home" "$wt" "$fakebin" \
+    t11 "$proj" codex --mode direct-PR --yolo off)
+  status=$?
+  expect_code 0 "$status" "a ship spawn with no --base-branch should launch: $out"
+  assert_grep 'base_branch=release/c-1' "$home/state/t11.meta" \
+    "the spawned task did not record the version branch as its base"
+  tip=$(git -C "$proj" rev-parse origin/release/c-1)
+  assert_equals "$tip" "$(git -C "$wt" rev-parse HEAD)" \
+    "the copy did not start from the version branch"
+
+  # The other half: a brief that records no base is refused by name rather than
+  # launched onto the default branch.
+  jg_test_spawn_brief "$home" t12
+  out=$(jg_test_run_spawn "$home" "$wt" "$fakebin" \
+    t12 "$proj" codex --mode direct-PR --yolo off)
+  status=$?
+  expect_code 1 "$status" "a brief with no base on a version-branch project should be refused"
+  assert_contains "$out" "release/c-1" "the refusal does not name the version branch"
+  pass "T11 the spawn and the brief default to the project's version branch"
+}
+
 test_behind_is_carried_forward
 test_diverged_is_reported_not_forced
 test_dirty_copy_is_skipped
 test_recorded_merge_carries_the_branch
 test_unconfigured_home_is_silent
+test_current_version_branch_is_the_newest
+test_features_carries_the_release_into_a_feature_branch
+test_non_release_merge_is_silent
+test_conflicting_feature_branch_is_left_alone
+test_recorded_release_merge_runs_the_features_pass
+test_spawn_and_brief_default_to_the_version_branch
 echo "all jg-version-branch-sync tests passed"

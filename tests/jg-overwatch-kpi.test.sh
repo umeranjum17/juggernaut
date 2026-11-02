@@ -67,6 +67,14 @@ test_a_doorbell_is_not_a_captain_message() {
   # A reworded doorbell must not leak through the exact-line check either.
   submit "$home" ": Juggernaut operational input waiting: read '/tmp/x/operational-inbox/1-aa.msg' now."
   [ ! -e "$home/data/overwatch-kpi.jsonl" ] || fail "a reworded doorbell was counted as a captain message"
+  # The steering-inbox doorbell, with and without its leading colon, for any inbox name.
+  local steer
+  # shellcheck disable=SC2016 # the doorbell carries a literal $JG_TASK_INBOX
+  for steer in ': Juggernaut instruction waiting: list "$JG_TASK_INBOX"/*.msg in your '"'"'a-b.inbox'"'"' steering inbox, read and act on each in numeric order, then mv each into its handled/.' \
+    'Juggernaut instruction waiting: list "$JG_TASK_INBOX"/*.msg in your '"'"'other.inbox'"'"' steering inbox, read and act on each in numeric order, then mv each into its handled/.'; do
+    submit "$home" "$steer"
+    [ ! -e "$home/data/overwatch-kpi.jsonl" ] || fail "a steering doorbell was counted as a captain message"
+  done
   submit "$home" "why is the export PR still not open?"
   assert_equals "$(printf '1\twhy is the export PR still not open?')" "$(in_home "$home" "$KPI" pending)" \
     "the real captain message is not the pending one"

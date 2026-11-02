@@ -37,15 +37,16 @@ STATE_DIR="$HOME_DIR/state"
 BUS="$ROOT/bin/jg-bus.sh"
 
 # free_port: an unused local port, so a real bus on the default port never
-# collides with this fixture and two runs never collide with each other.
+# collides with this fixture and two runs never collide with each other. The kernel
+# hands out the port (bind to 0), so another test or another home's fixture asking at
+# the same moment gets a different one; a fixed scan from 45800 gave every concurrent
+# caller the same first free port and the loser failed with "address already in use".
 free_port() {
-  local p
-  for p in $(seq 45800 45899); do
-    (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null && continue
-    printf '%s\n' "$p"
-    return 0
-  done
-  return 1
+  python3 -c 'import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()' 2>/dev/null
 }
 
 # A pinned binary may arrive by path, and bin/jg-bus.sh resolves both tools on

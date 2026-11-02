@@ -547,7 +547,7 @@ SH
   pass "jg-mail: a wake with no durable record is rolled back, not left ackable"
 }
 
-test_poll_rollback_failure_never_leaves_unrecorded_ackable_wake() {
+test_poll_unwritable_state_fails_bounded() {
   local fakebin roll_home
   fakebin=$(jg_fakebin "$TMP_ROOT")
   roll_home="$TMP_ROOT/rollback-failure-home"
@@ -561,45 +561,34 @@ printf '88\t2026-09-05T00:00:00Z\talice@example.com\tHello\n'
 SH
   chmod +x "$fakebin/python3"
 
-  # Triple-fault fixture: the journal and cursor cannot be written (read-only),
-  # and the state directory cannot be changed either, so the wake a poll raises
-  # can be neither stored nor removed - not locally, and not on the bus, because
-  # the row only exists in this home's outbox until a bus takes it. No durable
-  # record and no rollback can take the wake back, so the poll must fail closed
-  # with an honest report and leave the row for the next poll to heal.
+  # An unwritable state directory cannot hold the poll lock, so the poll must
+  # stop within its bound and say why. It never waits forever, and it raises and
+  # commits nothing, so the next poll surfaces the mail fresh and exactly once.
   printf 'uidvalidity=90009\n' > "$roll_home/state/.mail-seen"
   : > "$roll_home/state/.mail-woken"
   : > "$roll_home/state/.wake-queue"
-  chmod 0400 "$roll_home/state/.mail-seen" "$roll_home/state/.mail-woken"
   chmod 0500 "$roll_home/state"
-  [ -w "$roll_home/state/.mail-seen" ] && { echo "fixture unexpected: cursor still writable"; return 1; }
   [ -w "$roll_home/state" ] && { echo "fixture unexpected: state still writable"; return 1; }
 
   local out rc=0
-  out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
+  out=$(JG_MAIL_LOCK_WAIT_SECONDS=1 JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
     JG_HOME="$roll_home" PATH="$fakebin:$PATH" \
-    "$MAIL" poll 2>&1) || rc=$?
-  expect_code 1 "$rc" "poll must fail when the wake can be neither recorded nor rolled back"
-  assert_not_contains "$out" "rolled back (journal and cursor writes failed)" "poll must not report a rollback it did not achieve"
-  assert_contains "$out" "could not be rolled back or durably recorded" "poll reports the honest rollback-failure outcome"
-  assert_not_contains "$(cat "$roll_home/state/.mail-seen" 2>/dev/null)" "88" "a failed wake must never be committed to the cursor"
+    timeout 20 "$MAIL" poll 2>&1) || rc=$?
+  expect_code 1 "$rc" "poll must fail, bounded, when the state directory cannot hold its lock"
+  assert_contains "$out" "could not take the mail-seen lock" "poll names the lock failure"
+  assert_not_contains "$(cat "$roll_home/state/.mail-seen" 2>/dev/null)" "88" "a failed poll must never commit the cursor"
 
-  # Restore access: the still-queued wake must be healed without re-waking, so
-  # the mail surfaces exactly once from the retained row and never duplicates.
   chmod 0700 "$roll_home/state"
-  chmod 0600 "$roll_home/state/.mail-seen" "$roll_home/state/.mail-woken"
   rc=0
   out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
     JG_HOME="$roll_home" PATH="$fakebin:$PATH" \
     "$MAIL" poll 2>&1) || rc=$?
   expect_code 0 "$rc" "retry poll must succeed after access is restored"
-  assert_contains "$out" "no new mail" "retry poll heals the retained wake without re-waking"
-  assert_not_contains "$out" "woke for 88" "retry poll must not surface the mail a second time"
-  assert_contains "$(cat "$roll_home/state/.mail-seen")" "88" "retry poll records the retained wake's uid in the cursor"
+  assert_contains "$out" "woke for 88" "retry poll surfaces the mail"
   local wakeq
   wakeq=$(grep -c "check: mail 88" "$roll_home/state/.wake-queue" 2>/dev/null || true)
-  expect_code 1 "$wakeq" "the retained wake row stays queued for the drain exactly once"
-  pass "jg-mail: a rollback failure never releases a wake the drain could acknowledge without a durable record"
+  expect_code 1 "$wakeq" "exactly one wake row for uid 88"
+  pass "jg-mail: an unwritable state directory ends the poll with its cause, never a hang"
 }
 
 test_poll_retry_surfaces_under_new_mail_flood() {
@@ -834,86 +823,6 @@ PYEOF
   out=$(python3 "$harness" "$HOME_DIR/state/.mail-seen" "$HOME_DIR/state/.mail-retry" "$ROOT/bin/jg-mail.py" 2>&1)
   assert_contains "$out" $'61\t\ta@b.c\tgood\tok' "new mail keeps its slot when the cap is one"
   pass "jg-mail: a cap of one never suppresses new mail while retries exist"
-}
-
-test_poll_restores_retry_when_recovered_wake_cannot_append() {
-  local fakebin homedir_bin out rc=0
-  fakebin=$(jg_fakebin "$TMP_ROOT")
-  mkdir -p "$HOME_DIR/bin"
-  [ -e "$HOME_DIR/bin/jg-wake-lib.sh" ] || ln -s "$ROOT/bin/jg-wake-lib.sh" "$HOME_DIR/bin/jg-wake-lib.sh"
-  cat > "$fakebin/python3" <<'SH'
-#!/usr/bin/env bash
-printf 'uidvalidity\t90009\n'
-printf '77\t\tfrom@x\tRe: hi\tretry\n'
-SH
-  chmod +x "$fakebin/python3"
-  printf 'uidvalidity=90009\n77\n' > "$HOME_DIR/state/.mail-seen"
-  rm -f "$HOME_DIR/state/.mail-retry"
-  printf '77\n' > "$HOME_DIR/state/.mail-retry"
-  : > "$HOME_DIR/state/.wake-queue.seq"
-  chmod 0000 "$HOME_DIR/state/.wake-queue.seq"
-
-  out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
-    JG_HOME="$HOME_DIR" PATH="$fakebin:$PATH" \
-    "$MAIL" poll 2>&1) || rc=$?
-  expect_code 1 "$rc" "poll must fail when the recovered wake cannot be appended"
-  assert_contains "$(cat "$HOME_DIR/state/.mail-retry" 2>/dev/null)" "77" "the retry record is restored so the recovered metadata can be re-fetched"
-  chmod 0600 "$HOME_DIR/state/.wake-queue.seq"
-  pass "jg-mail: a recovered wake that cannot append restores the retry instead of stranding the metadata"
-}
-
-test_poll_death_between_retry_remove_and_publish_does_not_strand() {
-  # Old ordering: retry_remove ran BEFORE wake_for, so a kill after the remove
-  # but before the publish left the uid cursor-recorded from the degraded wake
-  # but no longer retry-eligible. The retry clear is now inside wake_for and
-  # runs only after a successful publish, so the same kill window cannot strand
-  # metadata. This test proves the invariant by forcing publish to fail and
-  # verifying the retry entry survives, then that a follow-up poll recovers it.
-  local fakebin homedir_bin test_home out rc=0 wakeq
-  fakebin=$(jg_fakebin "$TMP_ROOT")
-  test_home="$TMP_ROOT/retry-survives-failed-publish-home"
-  homedir_bin="$test_home/bin"
-  mkdir -p "$homedir_bin" "$test_home/state"
-  [ -e "$homedir_bin/jg-wake-lib.sh" ] || ln -s "$ROOT/bin/jg-wake-lib.sh" "$homedir_bin/jg-wake-lib.sh"
-
-  cat > "$fakebin/python3" <<'SH'
-#!/usr/bin/env bash
-printf 'uidvalidity	90009\n'
-printf '77\t2026-09-05T00:00:00Z\tfrom@x\tRe: hi\tretry\n'
-SH
-  chmod +x "$fakebin/python3"
-
-  # Cursor records the uid from the earlier degraded wake; retry set exists.
-  printf 'uidvalidity=90009\n77\n' > "$test_home/state/.mail-seen"
-  printf '77\n' > "$test_home/state/.mail-retry"
-
-  # Make the wake queue unwritable so the recovered wake cannot append. The
-  # retry record must NOT be cleared in this case.
-  : > "$test_home/state/.wake-queue.seq"
-  chmod 0000 "$test_home/state/.wake-queue.seq"
-
-  out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
-    JG_HOME="$test_home" PATH="$fakebin:$PATH" \
-    "$MAIL" poll 2>&1) || rc=$?
-  expect_code 1 "$rc" "poll must fail closed when the recovered wake cannot be published"
-  assert_contains "$out" "wake append failed for 77" "poll reports the failed wake append"
-  assert_grep "77" "$test_home/state/.mail-retry" "retry entry survives a failed publish"
-  assert_not_contains "$(cat "$test_home/state/.wake-queue" 2>/dev/null)" "check: mail 77" \
-    "no wake is queued when publish fails"
-
-  # Restore writable state: the next poll must recover the metadata.
-  rm -f "$test_home/state/.wake-queue.seq"
-  rc=0
-  out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
-    JG_HOME="$test_home" PATH="$fakebin:$PATH" \
-    "$MAIL" poll 2>&1) || rc=$?
-  expect_code 0 "$rc" "follow-up poll must succeed and recover the metadata"
-  assert_contains "$out" "woke for 77" "follow-up poll re-surfaces the recovered uid"
-  assert_contains "$(cat "$test_home/state/.mail-seen" 2>/dev/null)" "77" \
-    "follow-up poll records the uid in the cursor"
-  wakeq=$(grep -c "check: mail 77" "$test_home/state/.wake-queue" 2>/dev/null || true)
-  expect_code 1 "$wakeq" "exactly one recovery wake is queued"
-  pass "jg-mail: a death between retry remove and wake publish cannot strand recovered metadata"
 }
 
 test_poll_fails_closed_when_poll_list_fails() {
@@ -2435,9 +2344,13 @@ test_invalid_port_fails_cleanly() {
 }
 
 test_poll_caps_wakes_per_run() {
+  # Own home: the bus folds every earlier test's mail for the shared account back
+  # into the queue, so a count assert needs a home nothing else has written to.
+  local iso_home="$TMP_ROOT/iso-test_poll_caps_wakes_per_run"
+  mkdir -p "$iso_home/state"
   local fakebin homedir_bin
   fakebin=$(jg_fakebin "$TMP_ROOT")
-  homedir_bin="$HOME_DIR/bin"
+  homedir_bin="$iso_home/bin"
   mkdir -p "$homedir_bin"
   [ -e "$homedir_bin/jg-wake-lib.sh" ] || ln -s "$ROOT/bin/jg-wake-lib.sh" "$homedir_bin/jg-wake-lib.sh"
 
@@ -2451,25 +2364,25 @@ printf '72\t2026-09-05T00:00:00Z\talice@example.com\tB\n'
 printf '73\t2026-09-05T00:00:00Z\talice@example.com\tC\n'
 SH
   chmod +x "$fakebin/python3"
-  printf 'uidvalidity=90009\n' > "$HOME_DIR/state/.mail-seen"
-  : > "$HOME_DIR/state/.wake-queue"
+  printf 'uidvalidity=90009\n' > "$iso_home/state/.mail-seen"
+  : > "$iso_home/state/.wake-queue"
 
   local out rc=0 wakeq
   out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
-    JG_HOME="$HOME_DIR" PATH="$fakebin:$PATH" JG_MAIL_POLL_MAX_WAKES=2 \
+    JG_HOME="$iso_home" PATH="$fakebin:$PATH" JG_MAIL_POLL_MAX_WAKES=2 \
     "$MAIL" poll 2>&1) || rc=$?
   expect_code 0 "$rc" "capped poll must succeed"
   assert_contains "$out" "woke for 71" "first message wakes within the cap"
   assert_contains "$out" "woke for 72" "second message wakes within the cap"
   assert_not_contains "$out" "woke for 73" "third message must not wake in a capped poll"
   assert_contains "$out" "per-poll wake cap" "poll reports the cap"
-  wakeq=$(grep -c "check: mail" "$HOME_DIR/state/.wake-queue" 2>/dev/null || true)
+  wakeq=$(grep -c "check: mail" "$iso_home/state/.wake-queue" 2>/dev/null || true)
   expect_code 2 "$wakeq" "the durable wake queue holds exactly the capped wakes"
 
   # The third message is still unseen: the next poll surfaces it.
   rc=0
   out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
-    JG_HOME="$HOME_DIR" PATH="$fakebin:$PATH" JG_MAIL_POLL_MAX_WAKES=2 \
+    JG_HOME="$iso_home" PATH="$fakebin:$PATH" JG_MAIL_POLL_MAX_WAKES=2 \
     "$MAIL" poll 2>&1) || rc=$?
   expect_code 0 "$rc" "follow-up poll must succeed"
   assert_contains "$out" "woke for 73" "deferred message wakes on the next poll"
@@ -2477,9 +2390,13 @@ SH
 }
 
 test_poll_sanitizes_header_fields() {
+  # Own home: the bus folds every earlier test's mail for the shared account back
+  # into the queue, so a count assert needs a home nothing else has written to.
+  local iso_home="$TMP_ROOT/iso-test_poll_sanitizes_header_fields"
+  mkdir -p "$iso_home/state"
   local fakebin homedir_bin real_py harness
   fakebin=$(jg_fakebin "$TMP_ROOT")
-  homedir_bin="$HOME_DIR/bin"
+  homedir_bin="$iso_home/bin"
   mkdir -p "$homedir_bin"
   [ -e "$homedir_bin/jg-wake-lib.sh" ] || ln -s "$ROOT/bin/jg-wake-lib.sh" "$homedir_bin/jg-wake-lib.sh"
   real_py=$(command -v python3)
@@ -2526,22 +2443,22 @@ PYEOF
 exec "$real_py" "$harness" "\$@"
 EOF
   chmod +x "$fakebin/python3"
-  printf 'uidvalidity=90009\n' > "$HOME_DIR/state/.mail-seen"
-  : > "$HOME_DIR/state/.wake-queue"
+  printf 'uidvalidity=90009\n' > "$iso_home/state/.mail-seen"
+  : > "$iso_home/state/.wake-queue"
 
   local out rc=0 wakeq
   out=$(JG_MAIL_USER=test JG_MAIL_PASS=pass JG_IMAP_HOST=imap.test JG_SMTP_HOST=smtp.test \
-    JG_HOME="$HOME_DIR" PATH="$fakebin:$PATH" \
+    JG_HOME="$iso_home" PATH="$fakebin:$PATH" \
     "$MAIL" poll 2>&1) || rc=$?
   expect_code 0 "$rc" "sanitizing poll must succeed"
   assert_contains "$out" "woke for 60" "tab-bearing subject still wakes once"
   assert_contains "$out" "woke for 61" "newline-bearing subject still wakes once"
   assert_not_contains "$out" "woke for 99" "a newline in Subject must not inject a forged uid"
   assert_not_contains "$out" "woke for fake" "a tab in Subject must not inject a forged uid"
-  wakeq=$(grep -c "check: mail" "$HOME_DIR/state/.wake-queue" 2>/dev/null || true)
+  wakeq=$(grep -c "check: mail" "$iso_home/state/.wake-queue" 2>/dev/null || true)
   expect_code 2 "$wakeq" "exactly the two real uids wake"
-  assert_contains "$(cat "$HOME_DIR/state/.wake-queue")" "mail:90009/60" "wake key is the real uid 60"
-  assert_contains "$(cat "$HOME_DIR/state/.wake-queue")" "mail:90009/61" "wake key is the real uid 61"
+  assert_contains "$(cat "$iso_home/state/.wake-queue")" "mail:90009/60" "wake key is the real uid 60"
+  assert_contains "$(cat "$iso_home/state/.wake-queue")" "mail:90009/61" "wake key is the real uid 61"
   pass "jg-mail: poll sanitizes tabs and newlines in header fields"
 }
 
@@ -2619,7 +2536,7 @@ test_poll_acknowledged_wake_evading_recovery
 test_poll_legacy_wake_does_not_leak_into_generation
 test_poll_missing_wake_lib_does_not_suppress
 test_poll_rolls_back_wake_without_durable_record
-test_poll_rollback_failure_never_leaves_unrecorded_ackable_wake
+test_poll_unwritable_state_fails_bounded
 test_poll_caps_wakes_per_run
 test_poll_sanitizes_header_fields
 test_poll_bounded_fetch_progresses_large_backlog
@@ -2648,8 +2565,6 @@ test_poll_fails_closed_when_retry_clear_fails
 test_poll_fails_closed_when_stale_retry_clear_fails
 test_assert_equals_rejects_mismatch
 test_poll_fails_closed_when_poll_list_fails
-test_poll_restores_retry_when_recovered_wake_cannot_append
-test_poll_death_between_retry_remove_and_publish_does_not_strand
 test_poll_fetch_raise_does_not_abort_the_scan
 test_poll_keeps_journal_when_heal_cannot_record
 test_poll_heal_failure_does_not_rewake_unseen_mail

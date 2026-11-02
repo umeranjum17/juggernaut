@@ -1,5 +1,9 @@
 app: juggernaut
 journeys:
+  stack-install:
+    command: bash journeys/stack-install.sh
+  migration-card:
+    command: bash journeys/migration-card.sh
   relaunch-model-refusal:
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   receipt-candidate-hook:
@@ -11,6 +15,12 @@ journeys:
   ready-backlog-stall:
     command: bash journeys/ready-backlog-stall.sh
     timeout: 45m
+  fleet-report:
+    command: bash core/fleet-report/run-proof.sh
+  status-digest:
+    command: bash journeys/status-digest.sh
+  release-readiness:
+    command: bash journeys/release-readiness.sh
   proof-attach:
     command: bash journeys/proof-attach.sh
   design-call-gate:
@@ -34,6 +44,8 @@ journeys:
   model-gate-concurrent:
     command: bash journeys/model-gate-concurrent.sh
     core: true
+  worker-rules:
+    command: bash journeys/worker-rules.sh
   tmp-sweep:
     command: bash journeys/tmp-sweep.sh
 
@@ -49,8 +61,6 @@ journeys:
     command: bash core/fleet-pulse/tests/chat-tsv.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   fleet-pulse-newest-retro:
     command: bash core/fleet-pulse/run-proof.sh
-  fleet-report:
-    command: bash core/fleet-report/run-proof.sh
 
   limit-prompt-move:
     command: bash core/limit-prompt-move/tests/limit-prompt-move-e2e.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
@@ -100,6 +110,14 @@ journeys:
     command: bash core/kill-guard/run-device-proof.sh
   kill-guard-main-live:
     command: node core/kill-guard/run-main-proof.mjs
+  wake-bus-live:
+    command: bash journeys/wake-bus-live.sh
+  escalation-optimize:
+    command: bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+  escalation-rules-live:
+    command: bash journeys/escalation-rules-live.sh
+  token-cuts-live:
+    command: bash journeys/token-cuts-live.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

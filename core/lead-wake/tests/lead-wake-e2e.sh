@@ -18,9 +18,19 @@ addons=$(cd "$(dirname "$0")/../.." && pwd)
 : "${JG_TEST_FORK:?set JG_TEST_FORK to a Juggernaut checkout}"
 command -v tasks-axi >/dev/null || { echo "not ok - tasks-axi is required"; exit 1; }
 d=$(mktemp -d)
+watchers=()  # watcher pids this run started, stopped before the fixture is removed
 cleanup() {
   rc=$?
-  if [ "$rc" -eq 0 ]; then rm -rf -- "$d"; else printf 'fixture retained: %s\n' "$d" >&2; fi
+  local pid
+  # A watcher leaves a detached helper running that can recreate a fixture's
+  # state directory, so stop the watchers this run started and let the removal
+  # absorb any late write before the tree goes.
+  for pid in ${watchers[@]+"${watchers[@]}"}; do
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
+  if [ "$rc" -eq 0 ]; then bash "$addons/lead-wake/tests/fixture-cleanup.sh" "$d"; else printf 'fixture retained: %s\n' "$d" >&2; fi
+  exit "$rc"
 }
 trap cleanup EXIT
 export HOME=$d/user XDG_CONFIG_HOME=$d/xdg-config XDG_DATA_HOME=$d/xdg-data TMPDIR=$d/tmp
@@ -56,10 +66,14 @@ watch() {
     JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=1 JG_SQUAD_LEAD_LIVENESS_SECS=99999999 \
     bash "$d/fork/bin/jg-watch.sh" > "$2" 2>"$2.err" &
   pid=$!
+  watchers+=("$pid")
   while [ "$i" -lt "$limit" ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
   if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; return 1; fi
   wait "$pid" 2>/dev/null || true
 }
+
+# The fixture cleanup itself, on the exact race that used to fail a green run.
+bash "$addons/lead-wake/tests/fixture-cleanup.test.sh" || fail "fixture cleanup under a late writer"
 
 # Present: the fork's lead-wake cases on the staged watcher. Absent: Kun's ring text.
 JG_ADDONS_DIR=$addons bash "$d/fork/tests/jg-lead-wake.test.sh" || fail "fork lead-wake cases with the feature present"

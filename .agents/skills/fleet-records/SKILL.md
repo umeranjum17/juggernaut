@@ -32,7 +32,8 @@ Route durable knowledge to its most specific owner:
 
 - A home may declare authoritative external memory tiers in a `Memory layering` section of its captain-preference files ([`docs/configuration.md`](../../../docs/configuration.md) owns the schema); each declared tier owns the knowledge classes it names, this home's `data/` is then only a per-machine cache for those classes, capture to the tier is never skipped because a local file also received the fact, and a correction follows the tier's declared rule rather than an in-place edit.
 - When a worker's harness cannot reach a declared tier, Overwatch captures on the worker's behalf from its report.
-- A standing owner correction becomes a rule in `data/owner-rules.md` through `bin/jg-owner-rules.sh add`, with his own words, its scope, and the code or contract that enforces it; a correction that stops at one agent's memory is what `bin/jg-owner-rules.sh audit` flags.
+- A standing owner correction becomes a rule in `data/owner-rules.md` through `bin/jg-owner-rules.sh add --kind owner`, with his own words, its scope, and the code or contract that enforces it; a correction that stops at one agent's memory is what `bin/jg-owner-rules.sh audit` flags.
+- A correction that is an engineering default every Juggernaut user should get is a product rule: it never becomes an owner-rules entry, and it becomes a ticket and a change to what ships, in `AGENTS.md` where an agent needs it always, a shipped default, a doc, or the code that enforces it.
 - Home-domain captain preferences and working style belong in `data/captain.md` after inspect-then-update.
 - Captain preferences shared across Squad Lead domains belong in the primary home's `data/captain-shared.md` under the `squad-lead-provisioning` contract.
 - Fleet-local operational facts no declared tier owns belong in curated, home-local `data/learnings.md`.
