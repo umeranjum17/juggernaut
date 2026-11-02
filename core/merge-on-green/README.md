@@ -5,7 +5,7 @@ lead to notice and merge (about 21 minutes per change).
 
 `merge-on-green/merge-on-green.sh check <jg-home>` is the watcher check. For each
 `state/<task>.meta` in that home with `yolo=on` and a recorded `pr=` and `pr_head=`, it acts only
-when the task's resolved state (`bin/jg-crew-state.sh <task>`) says checks green / PR ready. It
+when the task's resolved state (`bin/jg-crew-state.sh <task>`) says checks green / PR ready, or, for a direct-PR task that has no pipeline run, says `done` from the status log and `bin/jg-pr-state.sh --all` prints nothing for its PR (open, not a draft, no conflict, every reported check green). It
 silently skips a task whose meta says `merge=manual` (the lead sets it at intake on destructive,
 irreversible or security-sensitive work, and on work waiting for your own review), and a PR
 whose evidence-gate PASS is a not-proven PASS — the installed `checks-lint.sh` reads the PR's newest `## Checks`
