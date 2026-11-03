@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -21,14 +23,15 @@ type LocalFile struct {
 	Photo      bool
 }
 
-// OutLimits: the largest file, the largest picture and the longest caption (UTF-16 units).
+// OutLimits: the largest file, the largest picture, the longest caption (UTF-16 units) and the
+// most files in one album.
 type OutLimits struct {
-	File, Photo int64
-	Caption     int
+	File, Photo    int64
+	Caption, Group int
 }
 
 func (t *telegram) Out() OutLimits {
-	return OutLimits{File: 50 << 20, Photo: 10 << 20, Caption: 1024}
+	return OutLimits{File: 50 << 20, Photo: 10 << 20, Caption: 1024, Group: 10}
 }
 
 func utf16Len(s string) int { return len(utf16.Encode([]rune(s))) }
@@ -126,18 +129,34 @@ func upload(fields map[string]string, files map[string]LocalFile) func() (io.Rea
 	}
 }
 
-// sendFiles is sendPhoto or sendDocument; a picture Telegram refuses (400) is sent as a file.
+// sendFiles is sendPhoto or sendDocument for one file and sendMediaGroup for an album (only
+// pictures or only files); a picture Telegram refuses (400) is sent as a file.
 func (t *telegram) sendFiles(ctx context.Context, out Outbound, reply string) (string, error) {
 	for photo := out.Files[0].Photo; ; photo = false {
 		kind, method := "document", "sendDocument"
 		if photo {
 			kind, method = "photo", "sendPhoto"
 		}
-		fields := map[string]string{"chat_id": out.Chat, "reply_parameters": reply}
-		if out.Text != "" {
-			fields["caption"] = out.Text
+		fields, files := map[string]string{"chat_id": out.Chat, "reply_parameters": reply}, map[string]LocalFile{}
+		if len(out.Files) == 1 {
+			files[kind] = out.Files[0]
+			if out.Text != "" {
+				fields["caption"] = out.Text
+			}
+		} else {
+			method = "sendMediaGroup"
+			items := []map[string]string{}
+			for i, f := range out.Files {
+				name := "f" + strconv.Itoa(i)
+				files[name], items = f, append(items, map[string]string{"type": kind, "media": "attach://" + name})
+			}
+			if out.Text != "" {
+				items[0]["caption"] = out.Text
+			}
+			raw, _ := json.Marshal(items)
+			fields["media"] = string(raw)
 		}
-		id, err := t.call(ctx, method, 10*time.Minute, upload(fields, map[string]LocalFile{kind: out.Files[0]}))
+		id, err := t.call(ctx, method, 10*time.Minute, upload(fields, files))
 		if se, ok := err.(*sendError); photo && ok && se.code == 400 {
 			continue
 		}

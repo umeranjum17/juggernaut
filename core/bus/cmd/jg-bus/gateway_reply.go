@@ -21,15 +21,15 @@ import (
 	"unicode/utf16"
 )
 
-// Outbound is one message to send: ReplyTo is the id of the message it answers. With Files it is
-// a picture or a file and Text is its caption.
+// Outbound is one message to send: ReplyTo is the platform id of the message it answers. With
+// Files it is a picture, a file or an album, and Text is its caption.
 type Outbound struct {
 	Chat, ReplyTo, Text string
 	Files               []LocalFile
 }
 
-// sendError carries the Bot API's error code, so a call that can never work (a blocked bot) is
-// told from one worth another try.
+// sendError carries the Bot API's own error code, so the follower can tell a call that will
+// never work (a blocked bot) from one worth another try.
 type sendError struct {
 	method string
 	code   int
@@ -40,7 +40,8 @@ func (e *sendError) Error() string { return fmt.Sprintf("%s answered %d: %s", e.
 
 func (t *telegram) Limit() int { return 4096 }
 
-// Send is sendMessage threaded on ReplyTo, or the files of out. A 429 waits and sends again.
+// Send is sendMessage threaded on ReplyTo, or the files of out (see sendFiles). A 429 waits the
+// time Telegram names and sends the same call again.
 func (t *telegram) Send(ctx context.Context, out Outbound) (string, error) {
 	reply, _ := json.Marshal(map[string]any{"message_id": json.Number(out.ReplyTo), "allow_sending_without_reply": true})
 	if len(out.Files) > 0 {
@@ -50,17 +51,15 @@ func (t *telegram) Send(ctx context.Context, out Outbound) (string, error) {
 	return t.call(ctx, "sendMessage", 30*time.Second, func() (io.Reader, string) { return bytes.NewReader(body), "application/json" })
 }
 
-// call posts one Bot API method and returns the id of the message it made.
+// call posts one Bot API method and returns the id of the message it made (the first of an album).
 func (t *telegram) call(ctx context.Context, method string, wait time.Duration, body func() (io.Reader, string)) (string, error) {
 	for try := 0; ; try++ {
 		var res struct {
-			OK          bool   `json:"ok"`
-			Code        int    `json:"error_code"`
-			Description string `json:"description"`
-			Result      struct {
-				ID int64 `json:"message_id"`
-			} `json:"result"`
-			Parameters struct {
+			OK          bool            `json:"ok"`
+			Code        int             `json:"error_code"`
+			Description string          `json:"description"`
+			Result      json.RawMessage `json:"result"`
+			Parameters  struct {
 				RetryAfter int `json:"retry_after"`
 			} `json:"parameters"`
 		}
@@ -85,13 +84,29 @@ func (t *telegram) call(ctx context.Context, method string, wait time.Duration, 
 		}
 		switch {
 		case res.OK:
-			return strconv.FormatInt(res.Result.ID, 10), nil
+			return firstID(res.Result), nil
 		case res.Code == http.StatusTooManyRequests && try < 3:
 			t.sleep(time.Duration(res.Parameters.RetryAfter) * time.Second)
 		default:
 			return "", &sendError{method, res.Code, redact(res.Description, t.token)}
 		}
 	}
+}
+
+// firstID is the message id in a Bot API result: one message, or the first of an album.
+func firstID(raw json.RawMessage) string {
+	var one struct {
+		ID int64 `json:"message_id"`
+	}
+	var many []struct {
+		ID int64 `json:"message_id"`
+	}
+	if json.Unmarshal(raw, &one) != nil || one.ID == 0 {
+		if json.Unmarshal(raw, &many) == nil && len(many) > 0 {
+			one = many[0]
+		}
+	}
+	return strconv.FormatInt(one.ID, 10)
 }
 
 // chunks splits text on line breaks into parts of at most limit UTF-16 units, the unit Telegram
@@ -148,27 +163,36 @@ type sendPart struct {
 	out Outbound
 }
 
-// replyParts is the sends one reply takes: each file that may go, then its text. The text rides
-// as the caption of the first file when it fits one. A file that must not be sent is left out and
-// named in the text, so the owner is told instead of left waiting.
+// replyParts is the sends one reply takes: its files in albums of at most Group (pictures first),
+// then its text. The text rides as the caption of the first album when it fits one. A file that
+// must not be sent is left out and named in the text, so the owner is told instead of left waiting.
 func (a *app) replyParts(ad Adapter, w where, cursor, body string, attach []string) (parts []sendPart) {
-	lim, files, refused := ad.Out(), []LocalFile{}, []string{}
+	lim, pics, docs, refused := ad.Out(), []LocalFile{}, []LocalFile{}, []string{}
 	for _, p := range attach {
-		if f, why := a.vetAttachment(lim, p); why != "" {
+		switch f, why := a.vetAttachment(lim, p); {
+		case why != "":
 			refused = append(refused, why)
-		} else {
-			files = append(files, f)
+		case f.Photo:
+			pics = append(pics, f)
+		default:
+			docs = append(docs, f)
 		}
 	}
 	if len(refused) > 0 {
 		body = strings.TrimSpace(body + "\n\n" + strings.Join(refused, "\n"))
 	}
+	var albums [][]LocalFile
+	for _, set := range [][]LocalFile{pics, docs} {
+		for ; len(set) > 0; set = set[min(lim.Group, len(set)):] {
+			albums = append(albums, set[:min(lim.Group, len(set))])
+		}
+	}
 	caption := ""
-	if len(files) > 0 && utf16Len(body) <= lim.Caption {
+	if len(albums) > 0 && utf16Len(body) <= lim.Caption {
 		caption, body = body, ""
 	}
-	for i, f := range files {
-		out := Outbound{Chat: w.chat, ReplyTo: w.message, Files: []LocalFile{f}}
+	for i, files := range albums {
+		out := Outbound{Chat: w.chat, ReplyTo: w.message, Files: files}
 		if i == 0 {
 			out.Text = caption
 		}
@@ -184,7 +208,8 @@ func (a *app) replyParts(ad Adapter, w where, cursor, body string, attach []stri
 // A reply to a note that did not come from this adapter is passed over. Each part is recorded in
 // sent.jsonl as it goes, so a restart after a part sent never sends that part again; a send that
 // fails leaves the cursor, and the next pass tries again. A call that can never work (400, 403,
-// 413) is written to the undelivered record and passed over, so one dead chat cannot hold the rest.
+// 413) is written to the undelivered record and passed over, so one dead chat cannot hold the
+// rest; when it was a file, the chat gets the caption and a line saying the file did not go.
 func (a *app) followReplies(ad Adapter) error {
 	dir := filepath.Join(a.state, "captain-chat")
 	cursorFile := filepath.Join(dir, ad.Name()+".reply-cursor")
@@ -210,15 +235,25 @@ func (a *app) followReplies(ad Adapter) error {
 	for _, r := range rec.Replies {
 		if w, ok := notes[r.ID]; ok {
 			parts := a.replyParts(ad, w, r.Cursor, r.Body, r.Attachments)
-			for _, p := range parts {
-				if sent[p.key] {
+			for i := 0; i < len(parts); i++ {
+				p := parts[i]
+				if sent[p.key] || sent[p.key+"x"] { // the "x" text told the chat this file never went
 					continue
 				}
 				id, err := ad.Send(context.Background(), p.out)
 				var se *sendError
 				if errors.As(err, &se) && (se.code == 400 || se.code == 403 || se.code == 413) {
 					a.noteUndelivered(ad.Name(), err.Error(), toJSON(map[string]string{"note": r.ID, "key": p.key}))
-					break
+					if len(p.out.Files) == 0 {
+						break
+					}
+					names := make([]string, len(p.out.Files))
+					for n, f := range p.out.Files {
+						names[n] = f.Name
+					}
+					text := strings.TrimSpace(p.out.Text + "\n\nI could not send " + strings.Join(names, ", ") + ": " + se.msg)
+					parts = append(parts, sendPart{p.key + "x", Outbound{Chat: w.chat, ReplyTo: w.message, Text: text}})
+					continue
 				} else if err != nil {
 					return err
 				}
