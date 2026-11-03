@@ -29,6 +29,8 @@
 # While config/frozen-release names a release branch that is shipping, that branch
 # is also accepted as the release pull request's head even when a newer
 # release/c-<N> exists; an absent, malformed, or unknown marker changes nothing.
+# That release pull request is itself refused while an open pull request still
+# targets an older release/c-<M> (jg_pr_check_release_orphans below).
 # An unreadable base does not refuse.
 # A pull request whose base is a frozen release branch (config/version-branch-frozen)
 # is refused too, unless the task declared a fix to that release's own red checks.
@@ -206,6 +208,43 @@ fi
 # carries none is unchanged.
 # An unreadable base leaves arming alone, exactly as the draft read above does,
 # because a forge that cannot answer must not block the watch.
+# The release pull request is refused while any open pull request still targets
+# an older release/c-<M> than its own head: that release already shipped, so the
+# pull request's work would merge into a branch no release will carry.
+# bin/jg-version-branch-lib.sh jg_release_orphans_of owns what an orphan is, and
+# bin/jg-version-branch-sync.sh retargets them when an older release lands.
+# bin/jg-pr-merge.sh records through this script with JG_PR_CHECK_MERGE=1, so the
+# same refusal covers arming and merging. Only an attended
+# bin/jg-pr-merge.sh --allow-orphans "<captain words>" passes it, as
+# JG_PR_ALLOW_ORPHANS, and only in that merge-time call; the words are kept in
+# the task record as orphans_waived=. An unreadable list does not refuse, as
+# above, because readiness reports the same orphans (bin/jg-release-readiness.sh).
+jg_pr_check_release_orphans() {  # <url> <release-head>
+  local url=$1 head=$2 repo orphans number purl base
+  repo=$PROJECT_PATH
+  [ "$HOST" = github.com ] || repo=$HOST/$PROJECT_PATH
+  orphans=$(gh pr list --repo "$repo" --state open --limit 100 \
+    --json number,url,baseRefName \
+    --jq '.[] | [(.number | tostring), .url, .baseRefName] | @tsv' 2>/dev/null \
+    | jg_release_orphans_of "$head") || return 0
+  [ -n "$orphans" ] || return 0
+  if [ "${JG_PR_CHECK_MERGE:-}" = 1 ] && [ -n "${JG_PR_ALLOW_ORPHANS:-}" ]; then
+    ORPHANS_WAIVED=$(printf '%s' "$JG_PR_ALLOW_ORPHANS" | tr -c '[:alnum:] ._,:;@/+-' '_' | cut -c1-200)
+    printf 'waived: %s has open pull requests on an older release branch (captain: %s)\n' "$url" "$ORPHANS_WAIVED" >&2
+    return 0
+  fi
+  echo "error: $url is the release pull request from $head, but open pull requests still target an older release branch:" >&2
+  while IFS=$'\t' read -r number purl base; do
+    echo "  $purl (base $base)" >&2
+    echo "    gh-axi pr edit $number --base $head, or close it" >&2
+  done <<EOF
+$orphans
+EOF
+  echo "  move or close each one, then arm again; an attended bin/jg-pr-merge.sh --allow-orphans \"<captain words>\" waives this once" >&2
+  return 1
+}
+ORPHANS_WAIVED=
+
 jg_pr_check_version_branch_base() {  # <meta> <url>
   local meta=$1 url=$2 project version default fields base head_ref
   [ "$PROVIDER" = github ] || return 0
@@ -223,10 +262,13 @@ jg_pr_check_version_branch_base() {  # <meta> <url>
   head_ref=${fields#*$'\t'}
   [ -n "$base" ] && [ -n "$head_ref" ] || return 0
   [ "$base" = "$default" ] || return 0
-  [ "$head_ref" != "$version" ] || return 0
   # The release in flight (config/frozen-release) is also a release head, even
   # when a newer release branch exists.
-  [ "$head_ref" != "$(jg_release_in_flight_branch "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" 2>/dev/null)" ] || return 0
+  if [ "$head_ref" = "$version" ] \
+    || [ "$head_ref" = "$(jg_release_in_flight_branch "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" 2>/dev/null)" ]; then
+    jg_pr_check_release_orphans "$url" "$head_ref"
+    return
+  fi
   echo "error: $url targets the default branch $base, but this project's current version branch is $version" >&2
   echo "  a feature pull request targets $version; only the release pull request from $version into $base may target $base" >&2
   echo "  change this pull request's base to $version (gh-axi pr edit <number> --base $version), then arm again" >&2
@@ -351,10 +393,12 @@ STATE_DEVICE=$(jg_pr_file_device "$STATE") || exit 1
 META_TMP=$(mktemp "$STATE/.jg-pr-meta.XXXXXX") || exit 1
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
-    pr=*|pr_head=*) ;;
+    pr=*|pr_head=*|orphans_waived=*) ;;
     *) printf '%s\n' "$line" >> "$META_TMP" || exit 1 ;;
   esac
 done < "$META"
+# The waiver row goes before pr=: the identity parser refuses an unknown row after it.
+[ -z "$ORPHANS_WAIVED" ] || printf 'orphans_waived=%s\n' "$ORPHANS_WAIVED" >> "$META_TMP" || exit 1
 printf 'pr=%s\n' "$URL" >> "$META_TMP" || exit 1
 [ -z "$PR_HEAD" ] || printf 'pr_head=%s\n' "$PR_HEAD" >> "$META_TMP" || exit 1
 chmod 0600 "$META_TMP" || exit 1

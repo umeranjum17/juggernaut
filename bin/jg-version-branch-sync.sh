@@ -36,6 +36,12 @@
 #         branch, head the project's current version branch - the version branch
 #         is carried into every open pull request that targets it, so no feature
 #         branch keeps running the gate the release replaced.
+#         A merged release whose head is an OLDER release/c-<M> (its pull
+#         request landed after a newer branch existed) carries nothing; its
+#         open pull requests are retargeted to the current version branch with
+#         `gh pr edit <n> --base <version>`, one line each, and one that
+#         conflicts after the move is named and stays open. bin/jg-pr-check.sh
+#         refuses the release pull request while such pull requests remain.
 #         bin/jg-version-branch-lib.sh owns which branch is current, <repo-dir>
 #         is the project's checkout (JG_ROOT by default), and every other merge
 #         is silent, because this runs after every recorded merge.
@@ -92,6 +98,34 @@ proof_sealed_at() {  # <body> <head>
   return 1
 }
 
+# retarget_orphans <merged-release-branch> <version>: move every open pull
+# request still based on the merged release/c-<M> to the current version branch
+# <version> (release/c-<N>) when M < N; any other head is silent. One line per
+# pull request. One that is CONFLICTING after the move stays open and is named,
+# so the retarget never hides a conflict. A fork pull request is moved too,
+# because the base is this repository's branch, not the fork's.
+retarget_orphans() {  # <merged-release-branch> <version>
+  local old=$1 version=$2 prs number url state
+  [ -n "$(printf 'x\t-\t%s\n' "$old" | jg_release_orphans_of "$version")" ] || return 0
+  prs=$(gh pr list --repo "$JG_PR_PATH" --state open --base "$old" --limit 100 \
+    --json number,url --jq '.[] | [(.number | tostring), .url] | @tsv' 2>/dev/null) || \
+    { echo "$old: skipped: the open pull requests still on it could not be read"; return 0; }
+  while IFS=$'\t' read -r number url; do
+    [ -n "$number" ] || continue
+    if ! gh pr edit "$number" --repo "$JG_PR_PATH" --base "$version" >/dev/null 2>&1; then
+      echo "$old: skipped: pull request $number could not be moved to $version: $url"
+      continue
+    fi
+    echo "$old: moved pull request $number to $version: $url"
+    state=$(gh pr view "$number" --repo "$JG_PR_PATH" --json mergeable --jq .mergeable 2>/dev/null) || state=
+    [ "$state" != CONFLICTING ] || \
+      echo "$old: pull request $number conflicts with $version after the move and stays open: $url"
+  done <<EOF
+$prs
+EOF
+  return 0
+}
+
 # features_pass <merged-pr-url> <repo-dir>: carry the version branch into the
 # open feature pull requests that target it, once the release landed.
 # Every unreadable input stays silent or names one reason and returns 0: this
@@ -120,7 +154,13 @@ features_pass() {  # <merged-pr-url> <repo-dir>
   case "$fields" in *$'\t'*) ;; *) return 0 ;; esac
   base=${fields%%$'\t'*}
   head_ref=${fields#*$'\t'}
-  [ "$base" = "$default" ] && [ "$head_ref" = "$version" ] || return 0
+  [ "$base" = "$default" ] || return 0
+  # A release whose pull request merges after a newer branch exists leaves its
+  # open pull requests on a branch that already shipped.
+  if [ "$head_ref" != "$version" ]; then
+    retarget_orphans "$head_ref" "$version"
+    return 0
+  fi
   if ! git -C "$dir" merge-tree -h 2>&1 | grep -q -- '--write-tree'; then
     echo "skipped: this git cannot merge without a working tree (merge-tree --write-tree is missing)"
     return 0

@@ -94,3 +94,22 @@ jg_frozen_base_refusal() {  # <config-dir> <project-dir> <base> <red-fix-of> <ca
   fi
   return 1
 }
+
+# An orphan is an open pull request whose base is a release/c-<M> older than the
+# release <version> (release/c-<N>, M < N): its release already shipped, so
+# whatever it merges into goes nowhere. Filter stdin lines of
+# `<number><TAB><url><TAB><base>` and print those that are orphans of <version>;
+# a line that is not that shape, or a base that is not release/c-<digits>, is
+# dropped. bin/jg-version-branch-sync.sh retargets them,
+# bin/jg-pr-check.sh refuses the release pull request while any remain, and
+# bin/jg-release-readiness.sh reports them, so the three agree on what one is.
+jg_release_orphans_of() {  # <version-branch>
+  local n=${1#release/c-}
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  awk -F '\t' -v n="$n" '
+    NF == 3 && $3 ~ /^release\/c-[0-9]+$/ {
+      m = $3
+      sub(/^release\/c-/, "", m)
+      if (m + 0 < n + 0) print
+    }'
+}
