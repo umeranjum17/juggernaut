@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -24,7 +23,9 @@ import (
 // the cursor after it; the caller commits that cursor only once every item is filed.
 type Adapter interface {
 	Name() string
+	Limit() int // the longest text one message may hold
 	Receive(ctx context.Context, cursor string) ([]Inbound, string, error)
+	Send(ctx context.Context, out Outbound) (string, error)
 }
 
 // Inbound is one platform update. A non-message update has no sender, so the access check drops it.
@@ -40,6 +41,7 @@ func redact(s, token string) string { return strings.ReplaceAll(s, token, "<toke
 type telegram struct {
 	base, token string
 	wait        time.Duration
+	sleep       func(time.Duration)
 }
 
 func (t *telegram) Name() string { return "telegram" }
@@ -106,13 +108,14 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		in.Text = "(no text: this gateway receives text only so far)"
 	}
 	id := fmt.Sprintf("tg-%s-%s", in.Chat, in.Message)
-	cmd := exec.Command(filepath.Join(a.root, "bin", "jg-inbox.sh"), "note", "--request-id", id, "--json", "-")
-	cmd.Stdin = strings.NewReader(head + "\n" + in.Text + "\n")
-	cmd.Env = append(os.Environ(), "JG_HOME="+a.home, "JG_STATE_OVERRIDE="+a.state, "JG_DATA_OVERRIDE="+a.data)
-	out, err := cmd.Output()
-	var res struct{ Outcome string }
+	out, err := a.inbox(head+"\n"+in.Text+"\n", "note", "--request-id", id, "--json", "-")
+	var res struct{ Outcome, ID string }
 	if err != nil || json.Unmarshal(out, &res) != nil {
 		return fmt.Errorf("jg-inbox note %s was not filed: %v", id, err)
+	}
+	// Where the answer goes. Written for a replay too, so a crash between the note and this line heals.
+	if err := appendLine(filepath.Join(a.state, "captain-chat", "inbound.jsonl"), toJSON(map[string]string{"adapter": ad.Name(), "note": res.ID, "chat": in.Chat, "message": in.Message})); err != nil {
+		return err
 	}
 	if res.Outcome == "created" { // a replay already announced its event
 		a.publish([]string{"inbound", id, head})
@@ -173,12 +176,25 @@ func (a *app) gateway(args []string) int {
 		return die("gateway: %s holds no token", file)
 	}
 	allow := strings.FieldsFunc(a.cfgOr("telegram-allow-user", ""), func(r rune) bool { return r == ',' || r == ' ' })
-	ad := &telegram{base: strings.TrimRight(a.cfgOr("telegram-api-url", "https://api.telegram.org"), "/"), token: token, wait: 30 * time.Second}
+	ad := &telegram{base: strings.TrimRight(a.cfgOr("telegram-api-url", "https://api.telegram.org"), "/"), token: token, wait: 30 * time.Second, sleep: time.Sleep}
 	if once {
 		ad.wait = 0
 	}
+	if !once {
+		go func() { // replies are not held behind a 30 s long poll
+			for {
+				if err := a.followReplies(ad); err != nil {
+					a.noteFailure("gateway replies", redact(err.Error(), token))
+				}
+				time.Sleep(2 * time.Second)
+			}
+		}()
+	}
 	for {
 		err := a.pollOnce(ad, allow)
+		if once && err == nil {
+			err = a.followReplies(ad)
+		}
 		if err != nil {
 			a.noteFailure("gateway", redact(err.Error(), token))
 			if once {
