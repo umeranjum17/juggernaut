@@ -86,6 +86,10 @@ batch    signal  *.status         paused*
 # (`level=main`) or to a stale wake when the pause is wedged or its clearing time passed.
 batch    check   waiting-timer-*  *(paused,*owning lead must recheck*
 batch    stale   *                *paused*declared pause, rechecked on a long cadence not a wedge*
+# A pause that names the future event it waits for (`until <time>`) is a planned wait: while that
+# time is ahead it rides the digest. Once the declared time has passed, the stale wake below keeps
+# waking, and a `blocked` wait that names no clearing condition always wakes.
+batch    stale   *                *paused*the declared time is beyond the recheck cadence*
 # A lead that was told to re-arm after Main's own restart pass reports it the same way a
 # relaunch does; a lead that stays down after that keeps waking.
 silent@restart-pass  check   squad-lead-supervision-*   *told to re-arm*

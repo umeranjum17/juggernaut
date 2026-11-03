@@ -8,6 +8,8 @@
 #   heartbeat   in away mode a heartbeat over an unchanged fleet raises no wake; a changed fleet does.
 #   done-key    a done carrying a key closes that key's wait (proved by tests/jg-wake-batching.test.sh,
 #               which the journey runs beside this file, so a key never re-pings after its done).
+#   planned     a pause that names its future event raises no wake and no re-ping, while a block
+#               with no clearing condition still escalates.
 #   immediate   a captain answer, a red gate, a host alarm, a stuck worker and a finished deliverable
 #               still wake at once, even when the digest is due.
 # This is also the test that owns journeys/wake-schedule.sh (the done-done journey runs this file),
@@ -183,7 +185,40 @@ test_urgent_stays_now() {
   pass "a captain answer, a red gate, a host alarm, a stuck worker and a finished deliverable wake at once"
 }
 
+# --- 4. a planned wait does not wake or re-ping; an unconditioned block still escalates ---
+test_planned_wait_is_quiet() {
+  local dir fut stale_beyond stale_due timer_pause timer_block
+  dir=$(new_home planned)
+  fut=$(date -u -d '+3 days' +%Y-%m-%dT%H:%MZ)
+  stale_beyond='stale: w:1 (paused 9s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)'
+  stale_due='stale: w:1 (paused 9s, awaiting external - the declared clearing time has passed, rechecked on a long cadence not a wedge; confirm the wait cleared)'
+  timer_pause='check: waiting-state lane (paused, observed 9s, level=owner; still open, owning lead must recheck and unblock) id=x'
+  timer_block='check: waiting-state lane (blocked key=held, observed 9s, level=owner; owning lead must recheck and unblock) id=x'
+
+  # A change held for the next release branch names its future event: a paused line with `until`.
+  printf 'paused [at=%s]: PR held for release/c-6 until %s\n' "$(date +%s)" "$fut" > "$dir/state/planned.status"
+  assert_equals batch "$(route "$dir" signal planned.status 'signal: planned.status')" "a planned wait must not wake on its status line"
+  assert_equals batch "$(route "$dir" stale w:1 "$stale_beyond")" "a planned wait with its time ahead must not re-ping"
+  assert_equals batch "$(route "$dir" check waiting-timer-h-planned-g1-default-owner-again "$timer_pause")" "a planned wait's timer must not re-ping"
+  # Once the declared time has passed the wait is rechecked once, so a plan that slipped is found.
+  assert_equals now "$(route "$dir" stale w:1 "$stale_due")" "a pause past its declared time must wake"
+
+  # A block that names no clearing condition is a stuck worker and keeps escalating.
+  printf 'blocked [at=%s] [key=held]: waiting, cannot continue\n' "$(date +%s)" > "$dir/state/stuck.status"
+  assert_equals now "$(route "$dir" signal stuck.status 'signal: stuck.status')" "a block with no clearing condition must wake"
+  assert_equals now "$(route "$dir" check waiting-timer-h-stuck-g1-held-owner "$timer_block")" "a block with no clearing condition must escalate"
+
+  # The real appender queues the planned wait's re-ping as routine, so no cycle wakes for it.
+  rm -f "$dir"/state/*.status
+  : > "$dir/events"
+  append "$dir" stale w:1 "$stale_beyond" >/dev/null
+  cycle "$dir"
+  [ ! -s "$dir/events" ] || fail "a planned wait woke the supervisor: $(cat "$dir/events")"
+  pass "a planned wait raises no wake and no re-ping, and a block with no clearing condition still escalates"
+}
+
 test_routine_rides_the_digest
 test_unchanged_fleet_no_heartbeat
 test_urgent_stays_now
+test_planned_wait_is_quiet
 echo "wake schedule: routine rides the digest, an unchanged fleet is silent, urgent still wakes"
