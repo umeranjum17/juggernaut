@@ -6,6 +6,8 @@ journeys:
     command: bash journeys/stack-install.sh
   wake-watcher:
     command: bash journeys/wake-watcher.sh
+  wake-batching:
+    command: bash journeys/wake-batching.sh
   watcher-window-inventory:
     command: bash journeys/watcher-window-inventory.sh
   migration-card:
@@ -31,6 +33,8 @@ journeys:
     command: bash journeys/status-digest.sh
   release-readiness:
     command: bash journeys/release-readiness.sh
+  frozen-release-base:
+    command: bash journeys/frozen-release-base.sh
   proof-attach:
     command: bash journeys/proof-attach.sh
   design-call-gate:

@@ -63,6 +63,10 @@ printf 'needs-decision [key=k]: q\nresolved [key=k]: a\ncaptain-held [key=j]: h\
 check "the closing verb of a key is the line that closed it" "$(status_key_closing_verb "$s" k)|$(status_key_closing_verb "$s" j)|$(status_key_closing_verb "$s" none)" "resolved||"
 printf 'needs-decision [key=k]: q\ndone: finished\n' > "$s"
 check "a ship's done line closes every open decision" "$(status_open_decisions "$s" ship)|$(status_open_decisions "$s" squad_lead)" "|k	needs-decision	q"
+printf 'needs-decision [key=a]: q\nblocked [key=b]: stuck\ndone [key=a]: answered\n' > "$s"
+check "a done carrying a key closes that decision on a squad_lead lane and leaves the rest open" "$(status_open_decisions "$s" squad_lead)" "b	blocked	stuck"
+printf 'needs-decision [key=a]: q\ndone [at=2]: the lead finished its own work\n' > "$s"
+check "a keyless done on a squad_lead lane closes no child wait" "$(status_open_decisions "$s" squad_lead)" "a	needs-decision	q"
 
 # The dispatcher never turns a classifier that cannot run into a yes or no answer.
 JG_CLASSIFY_BIN=$lab/none/jg-classify JG_CLASSIFY_GO=$lab/no-such-go "$ROOT/bin/jg-classify.sh" is-paused 'paused: x' 2>/dev/null

@@ -506,6 +506,16 @@ A feature branch whose merge conflicts is reported and left exactly as it is, an
 A pull request that already carries a sealed proof at its head is skipped for the same reason and left exactly as it is, because the carry moves that head and every proof, receipt and card bound to it goes stale and the change has to be proved again from scratch; a branch with no proof at its head is still carried, so the release branch keeps reaching the work in flight.
 One line per branch prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
 
+### Frozen release branches (config/version-branch-frozen)
+
+The optional local, gitignored `config/version-branch-frozen` lists release branches that take no new work, one branch name per line (blank lines and `#` comments are ignored); an absent file freezes nothing.
+`bin/jg-version-branch-lib.sh` reads it, and three places refuse a frozen base with one line that names the frozen branch and the next release branch to use: `bin/jg-brief.sh` at scaffold, `bin/jg-spawn.sh` before any brief render, endpoint or task record exists (a relaunch included), and `bin/jg-pr-check.sh` when a lane retargets its pull request at the frozen branch later.
+The one exception is a fix to that release's own red checks: pass `--red-fix-of <branch>` to the brief and to the spawn, with `<branch>` also the `--base-branch`.
+The spawn records `red_fix_of=<branch>` in the task record, which a relaunch and the pull request check read; it frees only the branch it names.
+The merge gate and the release process are unchanged.
+`config/frozen-release` (optional, one `release/c-<N>` name) names the release being shipped: `bin/jg-pr-check.sh` then accepts that branch as the head of the one pull request allowed to target the default branch even when a higher-numbered release branch exists, and every other refusal is unchanged; clear the file once the release merges. An absent, malformed, or unknown marker falls back to the highest-numbered branch.
+`journeys/frozen-release-base.sh` drives all of it.
+
 ## Fleet autosync (config/fleet-autosync-off)
 
 Every home that runs a merged change needs the new bytes, so a landed merge carries itself to `bin/jg-update.sh`, which fast-forwards this home and every live local Squad Lead home.
@@ -1464,6 +1474,19 @@ When every place is held, `bin/jg-spawn.sh` launches nothing, creates no record,
 A malformed or unreadable file refuses every fresh ship or Recon spawn until it is fixed, rather than guessing the intended limit, and so does a local home's state directory or task record that cannot be read while counting a capped project's holders.
 Juggernaut cannot see which part of a worker's life uses the resource, so the number bounds whole workers from launch to handoff, and the tightest resource every worker needs should decide it.
 [`bin/jg-project-capacity-lib.sh`](../bin/jg-project-capacity-lib.sh) owns the file format, what holds a place, and why concurrent spawns cannot both take the last one.
+
+## Preferences and owner-rule clauses (config/preferences/)
+
+A preference is one small JSON block; an owner rule's machine form is a clause. Both follow `defaults/preferences/schema.json`, and nothing here needs new code per rule.
+
+- **Blocks.** `defaults/preferences/<block>.json` ships; `config/preferences/<block>.json` in a home wins. A home block that fails the schema is one warning and the shipped block applies. `peak-hours` holds the provider peak window (default weekdays 12:00-18:00 UTC); `rules` holds clauses.
+- **One command to change one.** `bin/jg-pref.sh list|get|set|swap|reset|validate`, for example `bin/jg-pref.sh set peak-hours.utcHours 13-18`. A change is pushed to every squad_lead home by the existing config push, because every shipped block name is in `JG_INHERITABLE_CONFIG`; a new block file joins by existing.
+- **Decision points and facts are data.** The schema declares each point, its facts and its allowed actions; `utcHour`, `weekday` and `peak` are standard facts gathered once. Today `route-select` is wired (`jg-model-pool` asks before it uses a route); `spawn`, `merge`, `wake-route` and `captain-message` are declared and refuse clauses until wired.
+- **One evaluator.** `bin/jg-clause.sh decide <point> fact=value ...` matches every clause for the point and answers with the strongest action (`deny` > `skip` > `warn` > `allow`). A `when` value is a scalar, an any-of array, a `*` glob, or an `a-b` range.
+- **A new rule is one line.** `bin/jg-owner-rules.sh add --kind owner --words "..." --scope "..." --point route-select --when "provider=kimi-coding weekday=1" --then skip` records his words and the clause together. A clause naming a fact the point does not gather is refused and nothing is recorded; adding the fact to the point in the schema is the only case for code.
+- **First clauses.** `no-deepseek-at-peak` (owner-rule-3262dff8) skips DeepSeek routes in the peak window and falls to the next route. `sol-hard-only` replaces the hard-only branch that `jg-model-pool` used to carry.
+
+Proof: `bash tests/jg-clause.test.sh`. Not yet folded into blocks: `preferred-stack.json`, `architecture.json`, `engineering-rules.json`, `crew-dispatch.json`, wake batching and the other decision points.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 

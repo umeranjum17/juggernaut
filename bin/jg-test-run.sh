@@ -698,6 +698,7 @@ tests/jg-chat-answer-card.test.sh 1030
 tests/jg-ci-required.test.sh 122
 tests/jg-ci-scope.test.sh 700
 tests/jg-claude-stop-autoarm-live-e2e.test.sh 58
+tests/jg-clause.test.sh 4000
 tests/jg-codex-continuity-live-e2e.test.sh 57
 tests/jg-codex-hook-layer-live-e2e.test.sh 68
 tests/jg-comms-feed.test.sh 518
