@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
 #        jg-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
 #   --medium names the project's medium at intake, so the brief can carry this
@@ -116,6 +116,9 @@
 # task a fix to that frozen release's own red checks; <branch> must be the
 # --base-branch, and the brief records a "Red-fix of: <branch>" line after the
 # Base branch line. Refused outside ship briefs.
+# --migration-row <slug|none> and --off-critical-path <text> write a "Migration
+# row:" and a "Critical-path override:" line under `# Setup` (ship briefs only);
+# bin/jg-critical-path.sh owns the ordered critical list and the gate over them.
 # The read happens only when --project names the project directory, because a
 # brief is scaffolded before any copy exists; a brief scaffolded without it
 # keeps the default-branch setup and is refused at spawn until the base is
@@ -296,6 +299,10 @@ BASE_BRANCH=
 BASE_BRANCH_SET=0
 RED_FIX_OF=
 RED_FIX_OF_SET=0
+MIGRATION_ROW=
+MIGRATION_ROW_SET=0
+OFF_CRITICAL_PATH=
+OFF_CRITICAL_PATH_SET=0
 FORGE=none
 FORGE_SET=0
 SHAPE=
@@ -324,6 +331,8 @@ for a in "$@"; do
       branch-prefix) BRANCH_PREFIX=$a; BRANCH_PREFIX_SET=1 ;;
       base-branch) BASE_BRANCH=$a; BASE_BRANCH_SET=1 ;;
       red-fix-of) RED_FIX_OF=$a; RED_FIX_OF_SET=1 ;;
+      migration-row) MIGRATION_ROW=$a; MIGRATION_ROW_SET=1 ;;
+      off-critical-path) OFF_CRITICAL_PATH=$a; OFF_CRITICAL_PATH_SET=1 ;;
       forge) FORGE=$a; FORGE_SET=1 ;;
       shape) SHAPE=$a; SHAPE_SET=1 ;;
       upstream-consent) UPSTREAM_CONSENT=$a; UPSTREAM_CONSENT_SET=1 ;;
@@ -353,6 +362,10 @@ for a in "$@"; do
     --base-branch=*) BASE_BRANCH=${a#--base-branch=}; BASE_BRANCH_SET=1 ;;
     --red-fix-of) want_value="red-fix-of" ;;
     --red-fix-of=*) RED_FIX_OF=${a#--red-fix-of=}; RED_FIX_OF_SET=1 ;;
+    --migration-row) want_value="migration-row" ;;
+    --migration-row=*) MIGRATION_ROW=${a#--migration-row=}; MIGRATION_ROW_SET=1 ;;
+    --off-critical-path) want_value="off-critical-path" ;;
+    --off-critical-path=*) OFF_CRITICAL_PATH=${a#--off-critical-path=}; OFF_CRITICAL_PATH_SET=1 ;;
     --forge) want_value=forge ;;
     --forge=*) FORGE=${a#--forge=}; FORGE_SET=1 ;;
     --shape) want_value=shape ;;
@@ -521,6 +534,20 @@ if [ "$RED_FIX_OF_SET" -eq 1 ]; then
   fi
   if [ "$RED_FIX_OF" != "$BASE_BRANCH" ]; then
     echo "error: jg-brief.sh: --red-fix-of $RED_FIX_OF must name the base branch this task targets (${BASE_BRANCH:-the default branch}); pass --base-branch $RED_FIX_OF too" >&2
+    exit 1
+  fi
+fi
+if [ "$MIGRATION_ROW_SET" -eq 1 ] || [ "$OFF_CRITICAL_PATH_SET" -eq 1 ]; then
+  if [ "$KIND" != ship ]; then
+    echo "error: --migration-row and --off-critical-path apply only to ship briefs; a scout and a charter are never held to the migration's critical path" >&2
+    exit 1
+  fi
+  if [ "$MIGRATION_ROW_SET" -eq 1 ] && ! printf '%s' "$MIGRATION_ROW" | grep -Eq '^[a-z][a-z0-9-]*$'; then
+    echo "error: --migration-row takes a lowercase row slug (bin/jg-migration-live.sh's part names) or none" >&2
+    exit 1
+  fi
+  if [ "$OFF_CRITICAL_PATH_SET" -eq 1 ] && { [ -z "$OFF_CRITICAL_PATH" ] || [ "$(printf '%s' "$OFF_CRITICAL_PATH" | wc -l)" -ne 0 ]; }; then
+    echo "error: --off-critical-path takes the captain's words as one non-empty line" >&2
     exit 1
   fi
 fi
@@ -868,6 +895,12 @@ Red-fix of: $RED_FIX_OF (this task fixes that release's own red checks; the free
 else
   SETUP_BASE="You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch."
 fi
+[ "$MIGRATION_ROW_SET" -eq 0 ] || SETUP_BASE="$SETUP_BASE
+
+Migration row: $MIGRATION_ROW"
+[ "$OFF_CRITICAL_PATH_SET" -eq 0 ] || SETUP_BASE="$SETUP_BASE
+
+Critical-path override: $OFF_CRITICAL_PATH"
 
 if [ "$KIND" = scout ]; then
 SIGNOFF_LINE='A visual deliverable goes on a sign-off board report, never a retired review surface: publish or update it with sign-off-axi and return the sign-off report link only, in the report and in your done line.'
