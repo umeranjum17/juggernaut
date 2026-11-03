@@ -389,9 +389,13 @@ jobs:
   # set; the whole suite on main and release branches is
   # .github/workflows/behavior.yml, which runs post-merge.
   #
-  # The selection is split across three runners at once (bin/jg-test-run.sh
-  # --shard owns the split): the audit of the last 150 runs found this job was the
-  # longest required one, 1.4 minutes at the median and up to 13.5 on a wide change.
+  # The selection is split across eight runners at once (bin/jg-test-run.sh
+  # --shard owns the split): this job is the longest required one, 1.4 minutes at
+  # the median and 8 to 15 on a wide change such as a release pull request, where
+  # three shards kept the whole run near 16 minutes. The split is by recorded
+  # time, so more runners shorten the wide case and cost nothing on a narrow one
+  # (an empty shard passes at once). The count is only this matrix; --shard reads
+  # strategy.job-total below.
   # A shard with no scripts passes at once, and `CI required` reads the matrix as
   # one result, so a failed or cancelled shard still fails the lane.
   tests:
@@ -403,7 +407,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v6
         with:
