@@ -17,7 +17,8 @@
 # request (its URL carries the repository), except when that bound PR has
 # already merged - proven by its recorded merge notification, matching
 # bin/jg-pr-merge.sh - and the receipt names a different open PR of the same
-# repository (the lane's next PR). Only the receipt file counts; a posted
+# repository (the lane's next PR), or when the bound PR was closed unmerged and the receipt names an open PR of the
+# same repository that carries a patch-equivalent of every commit it had (a rebased copy). Only the receipt file counts; a posted
 # evidence card or PR comment is never a substitute.
 # This is evidence supplied by the worker, not a replacement for forge checks,
 # no-mistakes validation or merge authority. Both landing entrypoints consume
@@ -36,30 +37,66 @@ for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
 done
 unset _jg_old _jg_new 2>/dev/null || true
 
-jg_receipts_next_pr_of_lane_ok() {  # <state> <id> <meta-pr> <receipt-pr>
-  local state=$1 id=$2 meta_pr=$3 receipt_pr=$4
+# 0 when the meta pr was closed without merging and every commit it carried has a patch-equivalent in <candidate-head>
+# (git cherry shows no "+" line, at least one commit): a rebased or cherry-picked copy of the same work. The objects
+# are fetched into a throwaway repo that borrows the project clone's objects, so the clone is never written.
+# A predecessor with no commit of its own, an unreadable ref, or one commit the candidate does not carry refuses.
+jg_receipts_superseded_copy_ok() {  # <meta> <candidate-head>
+  local meta=$1 cand=$2 project base pred url t limit out rc=1
+  project=$(jg_dod_meta_value "$meta" project)
+  base=$(jg_dod_meta_value "$meta" base_branch)
+  pred=$(jg_dod_meta_value "$meta" pr_head)
+  [ -n "$project" ] && [ -n "$base" ] && [ -n "$cand" ] && jg_pr_head_valid "$pred" || return 1
+  url=$(git -C "$project" remote get-url origin 2>/dev/null) || return 1
+  t=$(mktemp -d "${TMPDIR:-/tmp}/jg-supersede.XXXXXX") || return 1
+  git init -q --bare "$t" 2>/dev/null \
+    && printf '%s/objects\n' "$(git -C "$project" rev-parse --absolute-git-dir)" > "$t/objects/info/alternates" \
+    && git -C "$t" fetch -q "$url" "+refs/heads/$base:refs/jg/base" "$pred" "$cand" 2>/dev/null \
+    && git -C "$t" update-ref refs/jg/cand "$cand" && git -C "$t" update-ref refs/jg/pred "$pred" \
+    && limit=$(git -C "$t" merge-base refs/jg/pred refs/jg/base 2>/dev/null) && [ -n "$limit" ] \
+    && out=$(git -C "$t" cherry refs/jg/cand refs/jg/pred "$limit" 2>/dev/null) && [ -n "$out" ] \
+    && ! printf '%s\n' "$out" | grep -q '^+' && rc=0
+  rm -rf -- "$t"
+  return $rc
+}
+
+# 0 when <receipt-pr> may stand for <meta-pr>: the lane's next open PR after the meta pr merged, or, given the
+# candidate head, a patch-equivalent copy of a meta pr that was closed unmerged.
+jg_receipts_next_pr_of_lane_ok() {  # <state> <id> <meta-pr> <receipt-pr> [<meta> <candidate-head>]
+  local state=$1 id=$2 meta_pr=$3 receipt_pr=$4 meta=${5:-} cand=${6:-}
   [ -n "$meta_pr" ] && [ -n "$receipt_pr" ] && [ "$meta_pr" != "$receipt_pr" ] || return 1
   (
     m_provider='' m_host='' m_path='' m_number='' state_lc=''
+    _jg_receipts_read() {
+      case "$JG_PR_PROVIDER" in
+        github) jg_pr_github_read_record "$JG_PR_OWNER" "$JG_PR_REPO" "$JG_PR_NUMBER" ;;
+        gitlab) jg_pr_gitlab_read_record "$JG_PR_HOST" "$JG_PR_PATH" "$JG_PR_NUMBER" ;;
+        forgejo) jg_pr_forgejo_read_record "$JG_PR_HOST" "$JG_PR_PATH" "$JG_PR_NUMBER" ;;
+        gerrit) jg_pr_gerrit_read_record "$JG_PR_HOST" "$JG_PR_NUMBER" ;;
+        *) return 1 ;;
+      esac
+    }
     jg_pr_url_parse "$meta_pr" || exit 1
     m_provider=$JG_PR_PROVIDER
     m_host=$JG_PR_HOST
     m_path=$JG_PR_PATH
     m_number=$JG_PR_NUMBER
-    jg_pr_poll_merge_already_notified "$state" "$id" \
-      "$m_provider" "$m_host" "$m_path" "$m_number" || exit 1
+    if ! jg_pr_poll_merge_already_notified "$state" "$id" \
+      "$m_provider" "$m_host" "$m_path" "$m_number"; then
+      # Not merged: only a closed, never-merged predecessor whose every commit the candidate carries.
+      [ -n "$meta" ] || exit 1
+      _jg_receipts_read || exit 1
+      [ "$JG_PR_RECORD_MERGED" = false ] || exit 1
+      state_lc=$(printf '%s' "$JG_PR_RECORD_STATE" | tr '[:upper:]' '[:lower:]')
+      case "$state_lc" in closed) ;; *) exit 1 ;; esac
+      jg_receipts_superseded_copy_ok "$meta" "$cand" || exit 1
+    fi
     jg_pr_url_parse "$receipt_pr" || exit 1
     [ "$JG_PR_PROVIDER" = "$m_provider" ] \
       && [ "$JG_PR_HOST" = "$m_host" ] \
       && [ "$JG_PR_PATH" = "$m_path" ] \
       && [ "$JG_PR_NUMBER" != "$m_number" ] || exit 1
-    case "$JG_PR_PROVIDER" in
-      github) jg_pr_github_read_record "$JG_PR_OWNER" "$JG_PR_REPO" "$JG_PR_NUMBER" || exit 1 ;;
-      gitlab) jg_pr_gitlab_read_record "$JG_PR_HOST" "$JG_PR_PATH" "$JG_PR_NUMBER" || exit 1 ;;
-      forgejo) jg_pr_forgejo_read_record "$JG_PR_HOST" "$JG_PR_PATH" "$JG_PR_NUMBER" || exit 1 ;;
-      gerrit) jg_pr_gerrit_read_record "$JG_PR_HOST" "$JG_PR_NUMBER" || exit 1 ;;
-      *) exit 1 ;;
-    esac
+    _jg_receipts_read || exit 1
     [ "$JG_PR_RECORD_MERGED" = false ] || exit 1
     state_lc=$(printf '%s' "$JG_PR_RECORD_STATE" | tr '[:upper:]' '[:lower:]')
     case "$state_lc" in
@@ -104,7 +141,7 @@ jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
   fi
   if [ "$(jq -r '.need // ""' <<<"$verdict")" = next_pr ]; then
     local ok=false
-    jg_receipts_next_pr_of_lane_ok "$state" "$id" "$pr" "$(jq -r 'if (.docs[0].pr | type) == "string" then .docs[0].pr else "" end' <<<"$facts")" && ok=true
+    jg_receipts_next_pr_of_lane_ok "$state" "$id" "$pr" "$(jq -r 'if (.docs[0].pr | type) == "string" then .docs[0].pr else "" end' <<<"$facts")" "$meta" "$head" && ok=true
     verdict=$(printf '%s' "$facts" | jq -c --argjson ok "$ok" '.next_pr_ok = $ok' | "$_JG_RECEIPTS_LIB_DIR/../../../bin/jg-guard-host.sh" eval gate.receipt 2>&1) || { echo "completion receipt cannot be checked for $id: ${verdict:-no answer}"; return 1; }
   fi
   [ "$(jq -r '.ok' <<<"$verdict")" != true ] || return 0
