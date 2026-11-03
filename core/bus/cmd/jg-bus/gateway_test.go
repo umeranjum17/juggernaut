@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -148,4 +149,54 @@ func TestGatewayAnswers(t *testing.T) {
 		t.Fatalf("long answer: %d sends, want 2 more", len(sends))
 	}
 	t.Logf("long answer: %d + %d characters, both threaded on message %v", len(sends[1]["text"].(string)), len(sends[2]["text"].(string)), sends[1]["reply_parameters"].(map[string]any)["message_id"])
+}
+
+// Pairing records the first person to send the code, status asks getMe, and no token file means the
+// gateway is off without a word. Fake ids only.
+func TestGatewayPairAndStatus(t *testing.T) {
+	home, state, batch, sent := t.TempDir(), t.TempDir(), "", ""
+	bot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/getUpdates"):
+			fmt.Fprintf(w, `{"ok":true,"result":[%s]}`, batch)
+		case strings.HasSuffix(r.URL.Path, "/getMe"):
+			fmt.Fprint(w, `{"ok":true,"result":{"username":"fake_bot"}}`)
+		default:
+			b, _ := io.ReadAll(r.Body)
+			sent = string(b)
+			fmt.Fprint(w, `{"ok":true,"result":{"message_id":9}}`)
+		}
+	}))
+	defer bot.Close()
+	conf, tokenPath := filepath.Join(home, "config", "captain-channel"), filepath.Join(home, "config", "captain-chat", "telegram.token")
+	os.MkdirAll(filepath.Dir(tokenPath), 0o700)
+	os.WriteFile(conf, []byte("set telegram-api-url "+bot.URL+"\nset keep me\n"), 0o600)
+	a := &app{root: ".", home: home, state: state, data: home, configFiles: []string{conf}}
+
+	if a.gateway([]string{"enabled"}) != 1 || a.gateway([]string{"serve"}) != 0 {
+		t.Fatal("with no token file enabled must say no and serve must return 0")
+	}
+	t.Logf("no bot token file: gateway enabled=no, serve exits 0 with no output, so no unit is installed and nothing fails")
+	os.WriteFile(tokenPath, []byte(tok+"\n"), 0o644)
+	if _, _, _, err := a.readTokenFile(); err == nil || strings.Contains(err.Error(), tok) {
+		t.Fatalf("a group-readable token file must be refused without naming the token: %v", err)
+	}
+	os.Chmod(tokenPath, 0o600)
+
+	// A wrong text, a bot with the code, then a person with it: that person is the owner.
+	pairCode = func() string { return "123456" }
+	batch = strings.Join([]string{upd(20, "private", 5, 5, false, "hi"), upd(21, "private", 6, 6, true, "123456"), upd(22, "private", 77, 77, false, "123456"), upd(23, "private", 8, 8, false, "later")}, ",")
+	if a.gateway([]string{"status"}) != 0 || a.gateway([]string{"pair"}) != 0 || a.gateway([]string{"enabled"}) != 0 {
+		t.Fatal("status, pair and enabled must all succeed with a working bot and a token file")
+	}
+	off, _ := os.ReadFile(state + "/captain-chat/telegram.offset")
+	if got := fileGet(conf, "telegram-allow-user"); got != "77" || fileGet(conf, "keep") != "me" || string(off) != "23\n" {
+		t.Fatalf("allow-user %q offset %q: want 77 and 23 (past the code, not past what follows), other keys kept", got, off)
+	}
+	if !strings.Contains(sent, `"chat_id":77`) || strings.Contains(sent, tok) {
+		t.Fatalf("pairing confirmation = %q", sent)
+	}
+	if unit, err := (&app{root: ".", home: home, state: state, runtime: home}).buildUnit("gateway"); err != nil || !strings.Contains(unit, `"gateway" "serve"`) || strings.Contains(unit, tok) {
+		t.Fatalf("gateway unit = %q, %v", unit, err)
+	}
 }

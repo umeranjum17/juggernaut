@@ -623,6 +623,9 @@ func (a *app) serve() int {
 		a.startOne(false, "wake-watcher", self, "wake-watcher")
 		a.startOne(false, "router", self, "router")
 	}
+	if self, err := os.Executable(); err == nil && a.gateway([]string{"enabled"}) == 0 { // optional: no token file, nothing starts and nothing is said
+		a.startOne(false, "gateway", self, "gateway", "serve")
+	}
 	if path, err := exec.LookPath("daprd"); err == nil {
 		a.startOne(false, "dapr", a.daprArgv(path)...)
 	} else {
@@ -634,7 +637,7 @@ func (a *app) serve() int {
 // stop stops the services this home started from their recorded pids. ntfy and deliver are no
 // longer started, but a pid an earlier release recorded is still stopped here.
 func (a *app) stop() int {
-	for _, name := range []string{"nats", "wake-engine", "wake-watcher", "router", "dapr", "ntfy", "deliver"} {
+	for _, name := range []string{"nats", "wake-engine", "wake-watcher", "router", "dapr", "ntfy", "deliver", "gateway"} {
 		pidPath := filepath.Join(a.runtime, name+".pid")
 		data, err := os.ReadFile(pidPath)
 		if err != nil {

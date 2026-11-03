@@ -492,8 +492,18 @@ func (a *app) buildUnit(part string) (string, error) {
 		fmt.Fprintf(&b, "Description=Juggernaut captain channel delivery (ntfy, loopback)\n")
 		fmt.Fprintf(&b, "After=network.target\n\n")
 		a.unitService(&b, quote, percent, quoteAll(quote, a.ntfyArgv(path)))
+	case "gateway":
+		self, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("cannot find the jg-bus binary: %v", err)
+		}
+		fmt.Fprintf(&b, "Description=Juggernaut captain chat gateway (Telegram text in and out)\n")
+		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
+		a.unitService(&b, quote, percent, quoteAll(quote, []string{self, "gateway", "serve"}))
+		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_BUS_ROOT="+a.root))
+		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_STATE_OVERRIDE="+a.state))
 	default:
-		return "", fmt.Errorf("unit: unknown part %q (nats, wake-engine, wake-watcher, router, dapr, ntfy)", part)
+		return "", fmt.Errorf("unit: unknown part %q (nats, wake-engine, wake-watcher, router, dapr, ntfy, gateway)", part)
 	}
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	return b.String(), nil
