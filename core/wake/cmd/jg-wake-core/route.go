@@ -276,6 +276,10 @@ func (e env) cond(cond, key, payload string, depth int) bool {
 		return true
 	case "fleet-unchanged":
 		return e.fleetUnchanged()
+	case "gap-long":
+		return e.gapLong(payload)
+	case "lead-restarted":
+		return e.leadRestarted(key, payload)
 	case "watcher-alive":
 		// A live watcher holds this home's watcher lock, so an old beacon is its predecessor's and
 		// nothing is left unwatched.
@@ -376,6 +380,58 @@ func (e env) watcherLockMatches(pid string) bool {
 	}
 	current, ok := e.identOf(pid)
 	return ok && current == recorded
+}
+
+// gapLong: a fleet heartbeat line reports a gap open for at least `set gap-wake-seconds` (default
+// 3600). A gap just opened is routine, so only one that stayed open past the threshold wakes.
+func (e env) gapLong(payload string) bool {
+	limit := e.ruleSet("gap-wake-seconds", 3600)
+	for rest := payload; ; {
+		i := strings.Index(rest, "GAP for ")
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len("GAP for "):]
+		n := 0
+		for n < len(rest) && rest[n] >= '0' && rest[n] <= '9' {
+			n++
+		}
+		if n > 0 && n < len(rest) && rest[n] == 's' {
+			if secs, err := strconv.ParseInt(rest[:n], 10, 64); err == nil && secs >= limit {
+				return true
+			}
+		}
+	}
+}
+
+// leadRestarted: the lead named in the event was restarted a moment ago, either by Main's own
+// restart pass or by the watcher's relaunch (a `relaunched` row in the lead's relaunch ledger within
+// `set lead-restart-grace-seconds`, default 300). A lead that stays down past the window is no longer
+// covered, so its notice keeps waking.
+func (e env) leadRestarted(key, payload string) bool {
+	if e.cond("restart-pass", key, payload, 0) {
+		return true
+	}
+	grace := e.ruleSet("lead-restart-grace-seconds", 300)
+	now := e.epoch()
+	prev := ""
+	for _, word := range strings.Fields(payload) {
+		id := ""
+		if prev == "squad_lead" {
+			id = word
+		}
+		prev = word
+		if id == "" || strings.Trim(id, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-") != "" {
+			continue
+		}
+		for _, line := range readLines(filepath.Join(e.state, ".squad-lead-relaunch-"+id)) {
+			f := splitFields(line, 2)
+			if stamp, err := strconv.ParseInt(f[0], 10, 64); err == nil && f[1] == "relaunched" && now-stamp <= grace {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // restartPass: the lead id was restarted by Main's own pass within restart-pass-seconds.
