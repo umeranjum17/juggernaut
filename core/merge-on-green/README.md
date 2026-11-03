@@ -35,6 +35,20 @@ A task is judged on its own PR's checks alone: a red PR elsewhere, including ano
 After the merges, the check counts each repo's open PRs (the repos named by the tasks' recorded `pr=` URLs) and prints one alert when a count passes `config/open-pr-cap` (a whole number, default 8).
 The alert is remembered per repo and count in `<home>/data/jg-merge-on-green/open-pr-cap/`, so it repeats only when the count changes, and a repo back under the cap forgets it; a forge failure is silent and retried next sweep.
 
+## Stale-PR alarm
+
+`stale-pr-alarm.sh check <jg-home>` runs at the end of every `merge-on-green.sh check`, so the same installed
+watcher check carries it and no model turn is spent. For each project in `data/projects.md` whose clone
+under `projects/` has a github.com `origin`, it lists the open PRs with `gh-axi` and prints one line per PR,
+`stale-pr-alarm: <PR URL>: <reason>`, for either reason:
+
+- `no checks and no update for 24 h`: the head has no check run and no commit status, and the PR was last updated 24 hours ago or more.
+- `base branch <release/...> is a release branch already merged into main`: the PR points at a `release/*` branch that a merged PR already carried into `main`, so it can never land where it points.
+
+The alert is remembered per PR and reason in `<home>/data/jg-merge-on-green/stale-pr-alarm/`, so the next
+poll stays silent. A PR that closes, heals or changes reason forgets it, and a new stall alerts again. A forge
+failure is silent and retried next sweep. The check never closes or rebases a PR, and the open-PR cap above is unchanged.
+
 Any refusal or FAIL prints one wake line naming the task, the PR URL and the first refusal reason,
 so the lead acts (the line ends with the routing: the lead merges through `bin/jg-pr-merge.sh` once it clears, and only a genuine hold — owner review, red CI, missing proof, security, destructive — goes to Main); the refusal is remembered per task+head+reason+receipt state in
 `<home>/data/jg-merge-on-green/<task>.refused` (never in `state/`), and repeats stay silent until
@@ -102,6 +116,8 @@ changes nothing and says so; `--dry-run` prints the same steps and writes nothin
 the lead installs it from merged main, never from a branch.
 
 ## Test
+
+`merge-on-green/tests/stale-pr-alarm.test.sh` drives the alarm against recorded PR fixtures (`tests/fixtures/stale-pr-alarm/`) behind a `gh-axi` stub: both reasons, a healthy PR and a recent one silent, no repeat on the second poll, a re-stall alerting again, a forge failure silent, and the alarm running from `merge-on-green.sh check`.
 
 `merge-on-green/tests/merge-on-green.test.sh` drives the check end to end against a fixture home
 with a stub `jg-crew-state.sh` and `jg-pr-merge.sh` in the home's `bin/` and a stub
