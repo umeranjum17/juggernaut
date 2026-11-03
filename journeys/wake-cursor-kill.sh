@@ -4,7 +4,8 @@
 # raises a wake while a client shim parks the render, the render is killed (kill -9 on its
 # own process group), then restarted. The transcript prints the queue after each step:
 # the killed wake must appear exactly once, an earlier wake still once, and an ordinary
-# run once each. Fails on any count other than 1.
+# run once each, and a wake raised after the server made the stream again once too.
+# Fails on any count other than 1.
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
@@ -57,13 +58,17 @@ chmod +x "$T/shim"
   echo "== ordinary run of three wakes"
   for w in ord1 ord2 ord3; do "$BUS" raise check "$w" "check: $w" now; done
   "$BUS" render; once ord1; once ord2; once ord3
+  echo "== the server makes the wake stream again, then one more wake"
+  "$NATS" -s "$JG_WAKE_BUS_URL" stream rm -f JG_WAKE >/dev/null
+  "$BUS" raise check remade "check: remade" now; once remade
+  echo "  cursor on the remade stream: $(tr '\t\n' '  ' < "$T/home/state/.wake-bus.cursor")"
   echo "journey rc=$rc"
 } > "$LOG" 2>&1
 cat > "$OUT/steps.json" <<JSON
 {"target": {"version": "jg-wake-bus.sh at $(git -C "$REPO" rev-parse --short HEAD)"},
  "start": "a throwaway home and JetStream server with one wake already delivered",
- "steps": ["raise a wake whose render is parked after reading the wake stream", "kill that render with kill -9", "restart the reader with a render", "render again and raise one more wake", "raise three wakes in an ordinary run and render"],
- "result": "every wake, including the one whose render was killed, appears in the queue exactly once: no gap and no repeat (journey rc=$rc)"}
+ "steps": ["raise a wake whose render is parked after reading the wake stream", "kill that render with kill -9", "restart the reader with a render", "render again and raise one more wake", "raise three wakes in an ordinary run and render", "remove and remake the wake stream on the server, then raise one more wake"],
+ "result": "every wake, including the one whose render was killed and the one raised on the remade stream, appears in the queue exactly once: no gap and no repeat (journey rc=$rc)"}
 JSON
 cat "$LOG"
 exit "$rc"
