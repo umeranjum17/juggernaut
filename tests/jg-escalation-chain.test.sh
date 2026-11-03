@@ -971,8 +971,42 @@ settle_silent_seen() {  # <home>
   fail "the watcher never settled its pane records: $(ls -la "$m"/state/.silent-* 2>&1; cat "$m/err")"
 }
 
+# Keep every CPU of the runner busy, the way a full CI shard does. Each burner
+# stops itself after <secs> or once this test shell is gone, and burners_stop
+# ends the ones this test started.
+burners_start() {  # <secs>
+  local n=0 cpus
+  cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+  BURNERS=''
+  while [ "$n" -lt "$cpus" ]; do
+    # shellcheck disable=SC2016 # the burner expands its own argument when run
+    timeout "$1" sh -c 'while kill -0 "$1" 2>/dev/null; do :; done' _ "$$" &
+    BURNERS="$BURNERS $!"
+    n=$((n + 1))
+  done
+}
+
+burners_stop() {
+  local pid
+  for pid in $BURNERS; do kill -TERM "$pid" 2>/dev/null || true; done
+  for pid in $BURNERS; do wait "$pid" 2>/dev/null || true; done
+  BURNERS=''
+}
+
+# Run cycles over all six panes until <command> holds or <secs> of wall clock
+# have passed, whatever one cycle costs on this runner; the caller's assertion
+# reports a miss.
+cycle_for() {  # <home> <secs> <command...>
+  local h=$1 end=$((SECONDS + $2))
+  shift 2
+  while ! "$@"; do
+    [ "$SECONDS" -lt "$end" ] || return 0
+    PANES='1 2 3 4 5 6' cycle "$h"
+  done
+}
+
 test_silent_worker_climbs_whatever_it_declared() {
-  local m w n=0 hold
+  local m w n=0 hold quiet
   # Six windows per poll: a loaded runner needs far longer than the default cycle budget.
   local CYCLE_POLLS=300
   m=$(home silent)
@@ -991,24 +1025,34 @@ test_silent_worker_climbs_whatever_it_declared() {
   for n in 1 2 3 4 5; do touch -d '-20 minutes' "$m/state/.silent-seen-fake_$n"; done
   for w in sb sp sf sd ld; do touch -d '-20 minutes' "$m/state/$w.status"; prime_status_seen "$m/state" "$m/state/$w.status"; done
   # A cycle that ends on a wake skips the rest of its poll, so repeat until both are recorded.
-  for n in 1 2 3 4 5 6 7 8; do
-    [ -e "$m/state/.wait-sources/sb.silent" ] && [ -e "$m/state/.wait-sources/sp.silent" ] || PANES='1 2 3 4 5 6' cycle "$m"
-  done
+  cycle_for "$m" 120 test -e "$m/state/.wait-sources/sb.silent" -a -e "$m/state/.wait-sources/sp.silent"
   for w in sb sp; do
     grep -q '^silent: no status line or pane change' "$m/state/.wait-sources/$w.silent" 2>/dev/null || fail "$w silent 20 minutes raised no silent source: $(ls -a "$m/state/.wait-sources" 2>&1; ls -la --time-style=+%T "$m"/state/.silent-* ; cat "$m/err")"
   done
   for w in sf sd ld sw; do
     [ ! -e "$m/state/.wait-sources/$w.silent" ] || fail "$w was flagged silent"
   done
+  # The climb runs on a runner whose every CPU is busy. A loaded runner reaches
+  # each pane later than three polls and thirty seconds after its last read, so
+  # every silent record is older than that when the next poll reads it. The
+  # silence has not ended: the wait keeps its clock and its rung, and never falls
+  # back to the line the worker declared before it went quiet, which would start
+  # it over as a fresh two-second wait.
+  burners_start 300
+  for w in sb sp; do touch -d '-60 seconds' "$m/state/.wait-sources/$w.silent"; done
+  quiet=$(wc -l < "$m/events")
   backdate "$m" sp 3
-  for n in 1 2 3 4 5 6 7 8; do grep -q 'waiting-state sp (silent, .*level=owner' "$m/events" || PANES='1 2 3 4 5 6' cycle "$m"; done
+  cycle_for "$m" 120 grep -q 'waiting-state sp (silent, .*level=owner' "$m/events"
   grep -q 'check: waiting-state sp (silent, .*level=owner' "$m/events" || fail "a silent paused worker never reached the owner rung: $(cat "$m/events")"
   # One wake ends a cycle, so give the other silent worker's rung its own cycles.
   backdate "$m" sp 5
-  for n in 1 2 3 4 5 6 7 8; do grep -q 'waiting-state sp (silent, .*level=main' "$m/events" || PANES='1 2 3 4 5 6' cycle "$m"; done
+  cycle_for "$m" 120 grep -q 'waiting-state sp (silent, .*level=main' "$m/events"
   grep -q 'check: waiting-state sp (silent, .*level=main' "$m/events" || fail "a silent paused worker never reached Main: $(cat "$m/events"; cat "$m/state/.waiting-timers/sp")"
+  ! tail -n +"$((quiet + 1))" "$m/events" | grep -qE 'waiting-state s[bp] \((blocked|paused)' \
+    || fail "a late scan handed a silent worker back to the wait it declared: $(cat "$m/events")"
+  burners_stop
   printf 'working [at=2]: back\n' >> "$m/state/sp.status"
-  for n in 1 2 3 4 5 6 7 8; do [ ! -e "$m/state/.wait-sources/sp.silent" ] || PANES='1 2 3 4 5 6' cycle "$m"; done
+  cycle_for "$m" 120 test ! -e "$m/state/.wait-sources/sp.silent"
   [ ! -e "$m/state/.wait-sources/sp.silent" ] || fail "a status line did not end the silence"
   pass "a silent blocked or paused worker climbs the chain; a dated pause, a finished worker, an idle lead and a worker with fresh progress do not"
 }

@@ -41,7 +41,8 @@
       {
         "name": "silent",
         "facts": "wait-source",
-        "fresh": true
+        "lapse": "silence",
+        "note": "rewritten on every scan of its pane and cleared by the first scan that sees progress, so a late scan has not ended the silence: it lapses only after the silence timer unread"
       },
       {
         "name": "supervision",
@@ -83,6 +84,10 @@
       "realert": {
         "seconds": 600,
         "env": "JG_PROMPT_REALERT_SECS"
+      },
+      "silence": {
+        "seconds": 900,
+        "env": "JG_SILENT_SECS"
       }
     },
     "rungs": {

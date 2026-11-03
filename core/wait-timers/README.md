@@ -97,6 +97,11 @@ provenance table now records history, not the current bytes.
   finished worker, an idle lead and a running validation are exempt), from
   `bin/jg-stuck-gate-lib.sh`. They are fresh-bounded like the prompt source and
   ride the same rungs, so a worker that ignores its own question still climbs.
+  The silent source is the exception to the bound: a late scan on a loaded host
+  has not ended the silence, so its record lapses only after the definition's
+  `silence` timer (`JG_SILENT_SECS`) unread, for the ladder and the owner rung
+  alike, and its episode keys on the window alone, keeping its clock and rung
+  while the stated silence age grows on every scan.
   The library itself writes `<task>.greenpr` for a green PR left unmerged under
   yolo (see "Green PR left unmerged").
 - Episode record: one tab-separated line per lane at
