@@ -36,3 +36,19 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
 - The owner can send a photo, document, voice note, audio or video. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
+
+## The migration card row
+
+The migration card has a `chat` row, "captain chat (Telegram)".
+A home with no token file shows it `absent`, silently, and the probe builds and sends nothing.
+With a token file, `bin/jg-bus.sh gateway status --row` measures it.
+It makes one `getMe` call and never sends a message.
+
+- The gateway records each leg it completes in `state/captain-chat/roundtrip.tsv` (epoch, leg, id).
+  The inbound legs are the owner's text, picture and file, filed as notes.
+  The outbound legs are a plain text, a picture and a file sent with `jg-inbox.sh reply` and accepted by Telegram.
+  A caption on an album does not count as the text leg.
+- `pending` names why: the service is not running (its heartbeat in `state/captain-chat/telegram.alive` is over two minutes old), `getMe` failed, or legs are missing.
+  A missing-legs detail reads `in: text image - out: text - missing in file, out image file`.
+- `live` needs all six legs inside the last 7 days: `6 of 6 legs, last <date>, <n> notes, <n> replies`.
+  A merge alone never shows it live.

@@ -64,11 +64,11 @@ card_page() { find "$T/board/reports" -mindepth 1 -maxdepth 1 -type d 2>/dev/nul
 card_count() { find "$T/board/reports" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l; }
 
 "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the probe did not run"
-assert_equals 18 "$(wc -l <"$ROWS")" "every part the captain named has a row"
+assert_equals 19 "$(wc -l <"$ROWS")" "every part the captain named has a row"
 for part in 'NATS server' 'per-home accounts' 'wake queue' 'task inbox' leases \
   Dapr 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' deletions 'rules JSON' \
   'juggernaut-axi' 'add-on removal' 'Rego policy' 'pending-replies cleanup' 'lead-wake cleanup' \
-  'line counts from git'; do
+  'line counts from git' 'captain chat (Telegram)'; do
   case $(awk -F'\t' -v p="$part" '$1 == p { print $2 }' "$ROWS") in
     live | pending | absent) ;;
     *) fail "part '$part' has no measured state, so the card would leave it blank" ;;
@@ -80,6 +80,26 @@ assert_contains "$(row 'NATS server')" "pid " "the live server is named by pid"
 assert_contains "$(row 'NATS server')" "a real message went out and came back" "the bus carried a real message"
 assert_contains "$(row 'per-home accounts')" "pending|the server runs without accounts" "a server started without accounts is pending, and says why"
 assert_contains "$(row 'wake queue')" "pending|the server carries no JG_WAKE stream" "a path with no stream on the server is pending"
+
+# The chat row: a home with no bot token is off and the probe starts nothing; with one, the row is
+# whatever `jg-bus gateway status --row` measured, and a command that fails is pending, never live.
+CHAT='captain chat (Telegram)'
+assert_contains "$(row "$CHAT")" "absent|off: no bot token on this machine" "a home with no bot token reports the chat off"
+mkdir -p "$HOME_DIR/config/captain-chat"
+: >"$HOME_DIR/config/captain-chat/telegram.token"
+cat >"$T/chat-stub.sh" <<'F'
+#!/usr/bin/env bash
+echo "$JG_HOME $*" >>"$FAKE_LOG.chat"
+[ "${CHAT_STUB:-live}" = fail ] && exit 3
+printf 'live\t6 of 6 legs, last 2026-11-03, 2 notes, 3 replies\n'
+F
+chmod +x "$T/chat-stub.sh"
+JG_BUS_CMD=$T/chat-stub.sh "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the chat probe did not run"
+assert_equals "live|6 of 6 legs, last 2026-11-03, 2 notes, 3 replies" "$(row "$CHAT")" "the chat row is what the gateway measured"
+assert_equals "$HOME_DIR gateway status --row" "$(tail -n 1 "$FAKE_LOG.chat")" "the probe asks the gateway for its row, in this home"
+CHAT_STUB=fail JG_BUS_CMD=$T/chat-stub.sh "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the failing chat probe did not run"
+assert_equals "pending|the gateway status could not be read" "$(row "$CHAT")" "a gateway that cannot answer is pending, never live"
+rm -f "$HOME_DIR/config/captain-chat/telegram.token"
 
 "$NATS_BIN" -s "$URL" stream add JG_WAKE --subjects 'jg.wake.>' --storage file --defaults >/dev/null 2>&1 ||
   fail "the test could not create the wake stream"

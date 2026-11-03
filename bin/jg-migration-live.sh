@@ -30,7 +30,8 @@
 #   parts   the names are the captain's own words, in his order, so the card reads
 #           the way he asked the question.
 #   owner   bin/jg-bus.sh, bin/jg-wake-bus.sh, core/bus/ and core/merge-on-green/
-#           own the names, addresses and switches read here, and bin/jg-kv-lib.sh owns
+#           own the names, addresses and switches read here (`jg-bus gateway status --row`
+#           owns the chat row's measurement), and bin/jg-kv-lib.sh owns
 #           the home's login every bus call here makes; this file re-spells none of
 #           them without this header changing too.
 #   cost    one pass runs a bounded handful of processes, one real message and one
@@ -48,10 +49,10 @@ DIR=${JG_DATA_OVERRIDE:-$JG_HOME/data}/migration-card
 # shellcheck source=bin/jg-kv-lib.sh
 . "$SCRIPT_DIR/jg-kv-lib.sh"
 
-PART_SLUGS=(nats accounts wake inbox leases dapr godaemons gate escalation fiveminute deletions rules axi addons policy pendingreplies leadwake linecounts)
-PART_NAMES=('NATS server' 'per-home accounts' 'wake queue' 'task inbox' 'leases' 'Dapr' 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' 'deletions' 'rules JSON' 'juggernaut-axi' 'add-on removal' 'Rego policy' 'pending-replies cleanup' 'lead-wake cleanup' 'line counts from git')
+PART_SLUGS=(nats accounts wake inbox leases dapr godaemons gate escalation fiveminute deletions rules axi addons policy pendingreplies leadwake linecounts chat)
+PART_NAMES=('NATS server' 'per-home accounts' 'wake queue' 'task inbox' 'leases' 'Dapr' 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' 'deletions' 'rules JSON' 'juggernaut-axi' 'add-on removal' 'Rego policy' 'pending-replies cleanup' 'lead-wake cleanup' 'line counts from git' 'captain chat (Telegram)')
 # Per part: a case-insensitive pattern over open pull request titles.
-PART_PR_RE=('nats|bus server|machine bus' 'account' 'wake queue|wake engine|wake' 'inbox|wake queue' 'lease' 'dapr|wait ladder' ' go\b|in go|go consumer|go wake' 'merge gate' 'wait ladder|escalation' 'merge-on-green|five-minute|merge path' 'delet|release c-' 'rules json|crew-dispatch|rego' 'juggernaut-axi' 'add-on|addon' 'rego|opa|policy' 'pending-repl' 'lead-wake|leadwake' 'line count')
+PART_PR_RE=('nats|bus server|machine bus' 'account' 'wake queue|wake engine|wake' 'inbox|wake queue' 'lease' 'dapr|wait ladder' ' go\b|in go|go consumer|go wake' 'merge gate' 'wait ladder|escalation' 'merge-on-green|five-minute|merge path' 'delet|release c-' 'rules json|crew-dispatch|rego' 'juggernaut-axi' 'add-on|addon' 'rego|opa|policy' 'pending-repl' 'lead-wake|leadwake' 'line count' 'chat gateway|telegram|captain chat')
 
 # cfg <key>: the captain channel's value in force, in bin/jg-bus.sh's own order -
 # JG_CAPTAIN_CHANNEL, then this home's file, then the shipped defaults - so the
@@ -478,6 +479,25 @@ probe_leadwake() {
   fi
 }
 
+# probe_chat: the captain's Telegram chat. A home with no token file is off and nothing else runs
+# (no build, no network); with one, `jg-bus gateway status --row` measures the service, one getMe
+# and the six-leg round-trip record, and sends no message.
+probe_chat() {
+  local tok out
+  tok=$(cfg telegram-token-file)
+  tok=${tok:-config/captain-chat/telegram.token}
+  case $tok in /*) ;; *) tok=$JG_HOME/$tok ;; esac
+  if [ ! -e "$tok" ]; then
+    printf 'absent\toff: no bot token on this machine; connect your own with jg-bus gateway setup\n'
+    return 0
+  fi
+  if out=$(JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE timeout 30 "${JG_BUS_CMD:-$ROOT/bin/jg-bus.sh}" gateway status --row 2>/dev/null) && [ -n "$out" ]; then
+    printf '%s\n' "$out" | head -n 1
+  else
+    printf 'pending\tthe gateway status could not be read\n'
+  fi
+}
+
 probe_linecounts() {
   local ref head del add
   ref=$(sed -n 's/^baseline-ref=//p' "$CFG/migration-card" 2>/dev/null | tail -n 1)
@@ -517,6 +537,7 @@ probe() {  # <slug>: one row, "state<TAB>detail"
     pendingreplies) probe_pendingreplies ;;
     leadwake) probe_leadwake ;;
     linecounts) probe_linecounts ;;
+    chat) probe_chat ;;
     *) printf 'pending\tunknown part %s\n' "$1" ;;
   esac
 }
