@@ -58,8 +58,6 @@ grep -q '16,546 of 31,832' "$LOG" || fails=1
   echo "card now: $(sed -n 's/^card=//p' "$JG_HOME/config/migration-card")"
   echo "== the push record (epoch, sha1 of part and state, kind)"
   cat "$JG_HOME/data/migration-card/push.tsv"
-  echo "== the board entry that says whether the phone was reached"
-  sign-off-axi list "$B" --full | grep -o 'Phone push is off[^"]*' | sort -u
   echo "== the part table as the captain reads it"
   grep -o '<tr><td>[^<]*</td><td>[^<]*</td><td>[^<]*' "$T/board/reports/$(sed -n 's/^card=//p' "$JG_HOME/config/migration-card")/index.html"
 } >> "$LOG" 2>&1
