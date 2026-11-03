@@ -114,12 +114,16 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return nil
 	}
 	head := fmt.Sprintf("[chat %s %s:%s]", ad.Name(), in.Chat, in.Message)
-	files := a.fetchMedia(ad, in)
+	files, stored := a.fetchMedia(ad, in)
 	if in.Text == "" && len(files) == 0 {
 		in.Text = "(no text: this message has nothing the gateway can read yet)"
 	}
 	id := fmt.Sprintf("tg-%s-%s", in.Chat, in.Message)
-	out, err := a.inbox(strings.Join(append([]string{head, in.Text}, files...), "\n")+"\n", "note", "--request-id", id, "--json", "-")
+	lines := append([]string{head}, files...)
+	if in.Text != "" {
+		lines = slices.Insert(lines, 1, in.Text)
+	}
+	out, err := a.inbox(strings.Join(lines, "\n")+"\n", "note", "--request-id", id, "--json", "-")
 	var res struct{ Outcome, ID string }
 	if err != nil || json.Unmarshal(out, &res) != nil {
 		return fmt.Errorf("jg-inbox note %s was not filed: %v", id, err)
@@ -129,7 +133,8 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return err
 	}
 	if res.Outcome == "created" { // a replay already announced its event
-		a.publish([]string{"inbound", id, head})
+		a.emit("inbound", id, head, "", stored)
+		a.refuseLarge(ad, in)
 	}
 	return nil
 }
@@ -141,6 +146,7 @@ func (a *app) pollOnce(ad Adapter, allow []string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	a.pruneMedia()
 	file := filepath.Join(dir, ad.Name()+".offset")
 	prev, _ := os.ReadFile(file)
 	items, next, err := ad.Receive(context.Background(), strings.TrimSpace(string(prev)))
