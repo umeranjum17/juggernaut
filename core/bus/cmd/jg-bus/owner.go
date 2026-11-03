@@ -187,3 +187,15 @@ func (a *app) joinMachine(o unitOwner, say func(string, ...any)) int {
 	say("bus: this home's account is %s the shared accounts of the bus owned by %s; this home does not own or change %s (to move the bus here, set JG_BUS_TAKE_OWNERSHIP=1 once)", state, o.home, unitName())
 	return 0
 }
+
+// owner is `jg-bus owner`: exit 0 and "self" when this home owns the machine's bus unit (or
+// may take it, because none is installed), exit 3 and the owner's home when another does.
+// bin/jg-stack.sh asks it before it installs or starts any part that is one per machine.
+func (a *app) owner() int {
+	if o, foreign := a.foreignOwner(); foreign {
+		fmt.Println(o.home)
+		return 3
+	}
+	fmt.Println("self")
+	return 0
+}
