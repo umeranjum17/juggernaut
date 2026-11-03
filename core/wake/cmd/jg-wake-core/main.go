@@ -29,7 +29,7 @@
 //	    missing rule file never hides an event. A `<task>.status` key is matched against the newest
 //	    line of that status file. A class may carry `@condition`: parked (a lane of a parked home),
 //	    restart-pass (a lead Main's restart pass just restarted) or queue-quiet (no queued row
-//	    routes to `now`).
+//	    routes to `now`) or fleet-unchanged (nothing changed since the last heartbeat that woke).
 //	jg-wake-core [flags] classify <kind> <key> <payload>
 //	    the class jg_wake_append_locked acts on: route, then a repeated `now` event inside the
 //	    re-alert window and a `silent` event past the hourly cap both become `batch`. Counting a
@@ -37,6 +37,11 @@
 //	    cleaned of tabs and newlines.
 //	jg-wake-core [flags] realert <kind> <key> <payload>
 //	    record a delivered `now` event in state/.wake-realert for the re-alert window.
+//	jg-wake-core [flags] digest [mark]
+//	    exit 0 and print how many queued rows wait for a turn when `set digest-minutes` has passed
+//	    since the last digest and at least one is queued; exit 1 otherwise. mark records the digest.
+//	jg-wake-core [flags] fleet-fp-record
+//	    record the fleet's fingerprint, which the `@fleet-unchanged` condition compares against.
 //	jg-wake-core [flags] routing-file
 //	    print the rule file in force, nothing when there is none.
 //
@@ -124,6 +129,15 @@ func run(args []string, out, errw io.Writer) int {
 		}
 		fmt.Fprintln(out, e.ruleSet(rest[0], def))
 		return 0
+	case "digest":
+		return e.digestDue(rest, out, errw)
+	case "fleet-fp-record":
+		return none(rest, errw, "fleet-fp-record", func() int {
+			if os.WriteFile(e.fleetFingerprintFile(), []byte(e.fleetFingerprint()+"\n"), 0o644) != nil {
+				return 2
+			}
+			return 0
+		})
 	case "realert-record", "realert":
 		return e.routeCommand("realert-record", rest, out, errw)
 	}

@@ -18,6 +18,9 @@ set re-alert-minutes 30
 set silence-cap-per-hour 30
 # How long Main's own restart pass counts as the cause of a relaunch notice.
 set restart-pass-seconds 600
+# The batched digest: the longest a routine event waits for a model turn, in minutes. 0 turns
+# the digest off, and routine rows then wait for the next wake of any kind.
+set digest-minutes 30
 
 # class  kind    key              payload
 # A squad_lead's status log is a relay channel for its child work, not a record of its
@@ -90,4 +93,45 @@ silent@restart-pass  check   squad-lead-supervision-*   *told to re-arm*
 # live watcher still holds the watcher lock, the beacon is only its predecessor's, so the
 # doorbell settles; with no live watcher it keeps waking.
 silent@watcher-alive check   sentinel-beacon-old   *beacon*old*
-now      *       *                *
+# A finished or blocked deliverable: ready, PR ready, and any status line the rows above did not call routine.
+now      signal  *.status         ready*
+now      signal  *.status         *PR ready*
+now      signal  *.status         *
+# The digest wake itself, and the five reasons to wake at once beyond the status words above.
+now      check   wake-digest      *
+# A captain answer: a note the captain left in the inbox, and mail addressed to this home.
+now      check   inbox:*          *
+now      check   mail:*           *
+now      check   captain-*        *
+# A red gate: any check that reports a failure (a red CI run says failed).
+now      check   *                *failed*
+now      check   *                *FAILED*
+# A host alarm: memory, the delete guard, a model outage, a lost host, an unauthenticated
+# state check, and the network check when it found something actionable.
+now      check   host-memory      *
+now      check   delete-guard     *
+now      check   model-outage-*   *
+now      check   supervision-host-return:*   *
+now      check   unauthenticated-state-checks   *
+now      check   *key-in-env-check.check.sh   *
+now      check   startup*         *
+now      check   sentinel-*       *
+# A worker stuck past its ladder: every stale event, and the stall, owner and escalation checks.
+now      stale   *                *
+now      check   *-stall          *
+now      check   *migration-watch.check.sh   *no status chang*
+now      check   waiting-timer-*  *
+now      check   *-owner          *
+now      check   *-escalation     *
+# A lead that died or lost its supervision: the rows above settle only the ones Main's own restart caused.
+now      check   squad-lead-relaunch-*       *
+now      check   squad-lead-supervision-*    *
+# A re-arm that finds an urgent row waiting for a turn (the quiet case is settled above).
+now      check   rearm-resurface  *
+# A result an adapter owns (Relay, process-to-event) is routed to that adapter, not delayed.
+now      check   procevent:*      *
+# A heartbeat over a fleet that did not change since the last one that woke asks for nothing.
+silent@fleet-unchanged heartbeat *  *
+now      heartbeat *              *
+# Everything else is routine and rides the digest. Nothing is dropped: the row stays queued.
+batch    *       *                *

@@ -812,6 +812,7 @@ tests/jg-wake-route.test.sh 24386
 tests/token-cuts-live.test.sh 30146
 tests/jg-wake-drain-open-decisions-cursor.test.sh 148819
 tests/jg-wake-next.test.sh 4641
+tests/jg-planned-wait.test.sh 12000
 tests/jg-watch-inventory.test.sh 4395
 tests/jg-watch-handoff.test.sh 51760
 tests/jg-watcher-lock.test.sh 210766

@@ -256,6 +256,9 @@ status_declared_wait_line() {  # <status-file>
 # resolved lines share a phase key with. Returns 1 when every event is a
 # resolved line, so a caller reading a bounded window knows to widen it.
 
+# A `blocked:` line that names a clearing time still ahead the same way is a planned wait on a known
+# future event (a change held for the next release branch): the classifier reads it as a declared pause
+# until that time passes (core/classify/cmd/jg-classify/classify.go plannedBlocked), then as a blocker.
 # A condition-aware declared wait: a `paused:` line may say WHEN it expects to
 # clear with `until <YYYY-MM-DDTHH:MM[:SS]Z>` anywhere in its text (UTC only, so
 # no local-zone guess is ever recorded). Prints that time as epoch seconds so a

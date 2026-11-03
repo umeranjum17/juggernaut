@@ -76,7 +76,7 @@ import (
 // 10: a done or failed line carrying an explicit key closes that key on every kind of lane, not
 // only through the ship/scout terminal rule, so a cursor holding a squad_lead decision its own
 // `done` had answered is discarded.
-const openDecisionsFoldVersion = "10"
+const openDecisionsFoldVersion = "11"
 
 // cursorPath is the sibling cursor file for a status file.
 func cursorPath(statusFile string) string {

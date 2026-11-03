@@ -190,6 +190,17 @@ func setVerb(set, key string) string {
 	return ""
 }
 
+// supersedes: a working or paused line that states a [key=] is the newest word on that key, so it
+// closes the key's open blocked or needs-decision wait. A keyless working line says nothing about a key.
+func supersedes(line string) bool {
+	v := lineVerb(line)
+	if v != "working" && v != pausedVerb() {
+		return false
+	}
+	k, ok := decisionKey(line, "")
+	return ok && k != ""
+}
+
 // foldLine folds one status line into an open set: needs-decision or blocked opens a keyed
 // decision, a resolve or captain-held line for its key closes it, a done or failed line on a
 // ship or scout closes them all, and a done or failed line carrying an explicit key closes that
@@ -204,7 +215,7 @@ func foldLine(open, line, kind string) string {
 	if terminal && (kind == "ship" || kind == "scout") {
 		return ""
 	}
-	if !terminal && verb != "needs-decision" && verb != "blocked" && verb != resolveVerb() && verb != captainHeldVerb() {
+	if !terminal && verb != "needs-decision" && verb != "blocked" && verb != resolveVerb() && verb != captainHeldVerb() && !supersedes(line) {
 		return open
 	}
 	// A terminal line closes a decision only when it states the key to close. A keyless
@@ -277,7 +288,7 @@ func openDecisions(file, kind string) string {
 	open := ""
 	for _, l := range lines {
 		switch lineVerb(l) {
-		case "needs-decision", "blocked", "done", "failed", resolveVerb(), captainHeldVerb():
+		case "needs-decision", "blocked", "done", "failed", "working", pausedVerb(), resolveVerb(), captainHeldVerb():
 			open = foldLine(open, l, kind)
 		}
 	}
@@ -358,7 +369,7 @@ func keyClosingVerb(file, want string) string {
 		// or scout, and on any other kind only when it names the key it closes.
 		terminal := (event == "done" || event == "failed") && ((kind == "ship" || kind == "scout") || named)
 		if !terminal {
-			if event != "needs-decision" && event != "blocked" && event != resolveVerb() && event != captainHeldVerb() {
+			if event != "needs-decision" && event != "blocked" && event != resolveVerb() && event != captainHeldVerb() && !supersedes(l) {
 				continue
 			}
 			if want != "default" && !named {

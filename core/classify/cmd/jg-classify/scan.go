@@ -149,6 +149,10 @@ func pausedUntil(line string) (int64, bool) {
 	if !isPaused(line) {
 		return 0, false
 	}
+	return untilEpoch(line)
+}
+
+func untilEpoch(line string) (int64, bool) {
 	m := untilMinute.FindStringSubmatch(line)
 	if m == nil {
 		m = untilSecond.FindStringSubmatch(line)

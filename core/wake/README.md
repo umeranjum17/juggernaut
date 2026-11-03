@@ -65,3 +65,22 @@ Two differences are deliberate. `queue-quiet` routes every queued row, so a rule
 row's own kind and key made the shell recurse until it died; the port stops after eight levels and
 treats the queue as not quiet. A non-numeric stamp in `state/.squad-lead-restart-pass` made the
 shell abort under `set -u`; the port treats the line as no match.
+
+## The wake schedule
+
+`defaults/wake-routing` decides who is woken at once. The `now` rows are limited to a captain answer
+(`inbox:*`, `mail:*`, a decision or blocked status line), a red gate (a `failed` check), a host alarm
+(`host-memory`, `delete-guard`, model outage, supervision-host return, startup and sentinel checks), a
+worker stuck past its ladder (`stale`, `*-stall`, `*-owner`, `*-escalation`, `waiting-timer-*`), and a
+finished deliverable (a ready or PR-ready status line). The catch-all is `batch`, so an unknown event
+waits instead of waking, and is never dropped.
+
+`schedule.go` adds two decisions, both read from the rule file. `jg_wake_digest_due mark` answers the
+batched digest: a window opens with the first routine row, one digest wake is due `set digest-minutes`
+later naming the count, and none is sent when no routine row waits. `silent@fleet-unchanged heartbeat`
+keeps an away-mode heartbeat silent while the sorted status, meta and hold file names and sizes match the
+fingerprint recorded by the last heartbeat that woke. A `done` carrying a key already closes that key's
+wait (`tests/jg-wake-batching.test.sh`), so an answered key never re-pings.
+
+`bin/jg-context-bound.py rates <transcript>...` reports wakes per hour from session records, so the
+rate is measured the same way before and after. `tests/jg-wake-schedule.test.sh` proves the journeys.

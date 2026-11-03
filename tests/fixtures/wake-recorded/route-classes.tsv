@@ -1,7 +1,7 @@
-check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one - start the top ready item now, or record why it waits	now
-check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one beta-two - start the top ready item now, or record why it waits	now
-check	jg-bus-probe	check: bus probe	now
-signal	task1	watcher fired	now
+check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one - start the top ready item now, or record why it waits	batch
+check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one beta-two - start the top ready item now, or record why it waits	batch
+check	jg-bus-probe	check: bus probe	batch
+signal	task1	watcher fired	batch
 check	mail:10001/42	check: mail 42 - mail from alice@example.com - Hello	now
 check	mail:30003/77	check: mail 77 - mail from alice@example.com - Hello	now
 check	mail:40004/77	check: mail 77 - mail from bob@example.com - Again	now
@@ -17,7 +17,7 @@ signal	lane.status	signal: /tmp/jg-test-run.ZGUoYr/w3/tmp/jg-watch-handoff.Yg2tV
 signal	task-w1.status	signal: /tmp/jg-test-run.ZGUoYr/w5/tmp/jg-wake-daemon-e2e.Hv8Omw/wd-lifecycle/state/task-w1.status	now
 stale	crew:gone	stale: crew:gone	now
 signal	lane.status	signal: /tmp/jg-test-run.ZGUoYr/w3/tmp/jg-watch-handoff.Yg2tVU/cleaned/state/lane.status	now
-signal	crew.remote	signal: crew.remote	now
+signal	crew.remote	signal: crew.remote	batch
 signal	lane-b.status	signal: lane-b finished	now
 signal	lane.status	signal: lane.status	now
 stale	crew:live	stale: crew:live	now
@@ -50,6 +50,6 @@ signal	task-r	done: queued after the re-emit too	now
 check	procevent:symlinked-src:1	check: procevent blocking symlinked-src 1	now
 signal	task-w1.status	signal: /tmp/jg-wake-daemon-e2e.tqDkZh/wd-lifecycle/state/task-w1.status	now
 check	merged-sample-missing-pr-authority-https://github.com/sample/sample/pull/43	check: merge landed: sample-missing-pr-authority https://github.com/sample/sample/pull/43	batch
-check	fleet-autosync-stale-primary	check: fleet autosync left primary 1 behind: on fm/fix-behavior-watcher-lock-hold, expected main	now
+check	fleet-autosync-stale-primary	check: fleet autosync left primary 1 behind: on fm/fix-behavior-watcher-lock-hold, expected main	batch
 check	merged-sample-teardown-race-pr-https://github.com/sample/sample/pull/33	check: merge landed: sample-teardown-race-pr https://github.com/sample/sample/pull/33	batch
 check	merged-sample-released-merge-https://github.com/sample/sample/pull/32	check: merge landed: sample-released-merge https://github.com/sample/sample/pull/32	batch

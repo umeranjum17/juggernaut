@@ -4588,6 +4588,15 @@ EOF
     fi
   fi
 
+  # The batched digest: rows the routing rules class `batch` wait for a turn that happens anyway,
+  # so on a quiet fleet nothing would ever deliver them. Once `set digest-minutes` has passed and
+  # at least one row waits, one digest wake carries them all; with none waiting there is no wake.
+  if digest_waiting=$(jg_wake_digest_due mark); then
+    reason="check: digest - $digest_waiting routine events wait in the queue; none needs a decision now"
+    jg_wake_append check wake-digest "$reason" || exit 1
+    wake "$reason"
+  fi
+
   # Asks the ask-default feature recorded are decided on the check cadence.
   if ask_default_tick; then
     jg_wake_append check ask-default "$ASK_DEFAULT_REASON" || exit 1
@@ -4609,9 +4618,17 @@ EOF
     # without exiting); the away-mode daemon, when present, owns triage and wants
     # every heartbeat.
     if afk_present; then
+      # The rule file decides: an unchanged fleet (`silent@fleet-unchanged heartbeat`) is recorded
+      # and never wakes, a changed one wakes and records what it saw.
+      hb_class=$(jg_wake_route_class heartbeat heartbeat heartbeat)
       jg_wake_append heartbeat heartbeat heartbeat || exit 1
       touch "$STATE/.last-heartbeat"
-      wake "heartbeat"
+      if [ "$hb_class" = now ]; then
+        jg_wake_fleet_fp_record
+        wake "heartbeat"
+      fi
+      echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak"
+      triage_log "absorbed away heartbeat (fleet unchanged)"
     elif heartbeat_scan_finds_actionable; then
       # Backstop: a captain-relevant event the per-wake path absorbed by mistake.
       # Enqueue first, then record every status log surfaced through its end so the
