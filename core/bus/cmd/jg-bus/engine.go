@@ -24,6 +24,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -75,6 +76,8 @@ type part struct {
 	env    []string // NATS_USER and NATS_PASSWORD, so the secret is never in an argument list
 	handle func(body []byte) error
 	fresh  bool // the part holds no state of its own yet: its consumer replays the stream from the start
+
+	deliver string // where a new consumer starts: "all" (the default) or "new"
 }
 
 func (a *app) tallyPath(name string) string { return filepath.Join(a.runtime, name+".counts.json") }
@@ -168,8 +171,9 @@ func (p *part) ensureConsumer() error {
 			return fmt.Errorf("cannot reset consumer %s on %s: %s", p.name, p.stream, strings.TrimSpace(errText))
 		}
 	}
+	from := cmp.Or(p.deliver, "all")
 	_, errText, err := p.nats("consumer", "add", p.stream, p.name, "--pull", "--filter", p.filter,
-		"--ack", "explicit", "--wait", "10s", "--deliver", "all", "--replay", "instant", "--defaults")
+		"--ack", "explicit", "--wait", "10s", "--deliver", from, "--replay", "instant", "--defaults")
 	if err != nil {
 		return fmt.Errorf("cannot create consumer %s on %s: %s", p.name, p.stream, strings.TrimSpace(errText))
 	}
