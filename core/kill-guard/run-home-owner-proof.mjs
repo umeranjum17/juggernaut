@@ -43,7 +43,7 @@ try {
 
   // Lane harness. The harness backgrounds a replay loop in another session and cwd, then ends.
   const harness = join(temp, 'harness.sh'), marker = join(temp, 'pids');
-  fs.writeFileSync(harness, `#!/bin/sh\n(cd / && setsid sleep 130 </dev/null >/dev/null 2>&1 & echo $! >> '${marker}')\nsleep 131 </dev/null >/dev/null 2>&1 &\necho $! >> '${marker}'\nif [ "$1" = stay ]; then sleep 132; fi\nexit 7\n`, { mode: 0o755 });
+  fs.writeFileSync(harness, `#!/bin/sh\n(cd / && setsid sh -c 'echo $$ >> "${marker}"; exec sleep 130' </dev/null >/dev/null 2>&1 &)\nwhile [ ! -s '${marker}' ]; do sleep 0.05; done\nsleep 131 </dev/null >/dev/null 2>&1 &\necho $! >> '${marker}'\nif [ "$1" = stay ]; then sleep 132; fi\nexit 7\n`, { mode: 0o755 });
   const env = { ...process.env, JG_HOME: temp, JG_STATE_OVERRIDE: state, JG_ROOT_OVERRIDE: repo };
   const lane = spawnSync(join(repo, 'bin', 'jg-lane-run.sh'), ['proof-task', '--', harness], { env, encoding: 'utf8' }); assert.equal(lane.status, 7);
   await sleepMs(300); const left1 = fs.readFileSync(marker, 'utf8').split('\n').filter(Boolean).map(Number); assert.equal(left1.length, 2);

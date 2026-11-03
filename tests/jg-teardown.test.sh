@@ -3960,7 +3960,8 @@ test_lane_harness_dies_with_its_lane() {
   # The harness backgrounds a loop in its own group (a "replay") and, unless told to stay, ends at once.
   cat > "$harness" <<'HARNESS'
 #!/bin/sh
-(cd / && setsid sleep 302 </dev/null >/dev/null 2>&1 & echo $! >> "$LANE_MARKER")
+(cd / && setsid sh -c 'echo $$ >> "$LANE_MARKER"; exec sleep 302' </dev/null >/dev/null 2>&1 &)
+while [ "$(wc -l < "$LANE_MARKER" 2>/dev/null || echo 0)" -lt 1 ]; do sleep 0.05; done
 sleep 303 </dev/null >/dev/null 2>&1 &
 echo $! >> "$LANE_MARKER"
 if [ "$1" = stay ]; then sleep 304; fi
