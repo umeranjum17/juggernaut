@@ -1216,6 +1216,34 @@ EOF
   pass "status tail lines are capped with a truncation marker while the full log stays reachable"
 }
 
+# A finished lane is one juggernaut-axi row in the digest, not a meta block, endpoint read and status tail;
+# a running lane is printed whole; the supervision block points the agent at the same command.
+# Driven by journeys/axi-digest.sh.
+test_finished_lanes_fold_into_one_axi_row() {
+  local rec root home fakebin out
+  rec=$(new_world axi-folded-lanes)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  printf 'kind=ship\n' > "$home/state/lane-done.meta"
+  printf 'working [at=1]: early step of the finished lane\ndone [at=2]: PR https://example.invalid/o/r/pull/7\n' > "$home/state/lane-done.status"
+  printf 'kind=ship\n' > "$home/state/lane-live.meta"
+  printf 'working [at=3]: step of the lane still running\n' > "$home/state/lane-live.status"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" 'lane-done,ship,unknown,done,null,"PR https://example.invalid/o/r/pull/7"' "finished lane has no juggernaut-axi row"
+  assert_not_contains "$out" "--- lane-done ---" "finished lane still printed its meta block"
+  assert_not_contains "$out" "early step of the finished lane" "finished lane still printed its status tail"
+  assert_contains "$out" "--- lane-live ---" "running lane lost its meta block"
+  assert_contains "$out" "step of the lane still running" "running lane lost its status tail"
+  assert_contains "$out" 'run juggernaut-axi status, then juggernaut-axi lanes' "supervision block does not point at juggernaut-axi"
+  pass "a finished lane folds into one juggernaut-axi row"
+}
+
 test_orphan_status_logs_are_printed() {
   local rec root home fakebin out matched_count orphan_count
   rec=$(new_world orphan-status)
@@ -3094,6 +3122,13 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
+# JG_SESSION_START_ONLY="<test function> ..." runs just those cases (journeys/axi-digest.sh uses it).
+if [ -n "${JG_SESSION_START_ONLY:-}" ]; then
+  for case_name in $JG_SESSION_START_ONLY; do "$case_name"; done
+  echo "# jg-session-start.test.sh: selected cases passed"
+  exit 0
+fi
+
 test_context_digest_absent_empty_present
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
@@ -3116,6 +3151,7 @@ test_session_start_relaunches_herdr_husk_squad_lead
 test_status_tail_bounding
 test_status_tail_line_cap
 test_orphan_status_logs_are_printed
+test_finished_lanes_fold_into_one_axi_row
 test_endpoint_liveness_tmux
 test_endpoint_liveness_herdr
 test_endpoint_read_death_is_isolated_and_reported

@@ -419,6 +419,9 @@ STATUS_TAIL=${JG_SESSION_START_STATUS_TAIL:-3}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=3 ;; esac
 QUEUED_LIMIT=${JG_SESSION_START_QUEUED_LIMIT:-20}
 case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
+LANES_TIMEOUT=${JG_SESSION_START_LANES_TIMEOUT:-30}
+case "$LANES_TIMEOUT" in ''|*[!0-9]*) LANES_TIMEOUT=30 ;; esac
+[ "$LANES_TIMEOUT" -gt 0 ] 2>/dev/null || LANES_TIMEOUT=30
 # One per-task endpoint read may never outlive this bound: a hung backend CLI
 # becomes that task's endpoint: error line instead of the digest's whole
 # runtime budget.
@@ -954,7 +957,8 @@ fi
 stage read-once
 section "READ-ONCE CONTRACT"
 cat <<'EOF'
-Everything below is printed in full for this session start: every state/*.meta,
+Everything below is printed in full for this session start: every state/*.meta
+(a finished lane is one juggernaut-axi row instead),
 a compact data/backlog.md listing, a bounded tail of every state/*.status,
 data/projects.md, data/squad_leads.md, data/captain.md, data/captain-shared.md,
 data/learnings.md, and data/owner-rules.md.
@@ -985,11 +989,27 @@ section "FLEET STATE"
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
 
 subsection "Work under way (state/*.meta)"
+# A lane the fleet snapshot already calls finished needs no meta dump, endpoint read or status tail:
+# `juggernaut-axi lanes` (the one agent surface) gives it one row, and a failed or slow call folds nothing.
+FOLDED_LANES=" "
+lanes_out=$(jg_run_timed "$LANES_TIMEOUT" "$SCRIPT_DIR/juggernaut-axi" lanes --limit 100 2>/dev/null) || lanes_out=
+folded_rows=$(printf '%s\n' "$lanes_out" | awk -F, '
+  /^[^ ]/ { inrows = 0 }
+  /^lanes\[[0-9]+\]\{/ { inrows = 1; next }
+  inrows && /^  [^ ]/ && ($3 == "done" || ($3 == "unknown" && ($4 == "done" || $4 == "resolved"))) { print }')
+if [ -n "$folded_rows" ]; then
+  while IFS= read -r row; do
+    row=${row#  }
+    FOLDED_LANES="$FOLDED_LANES${row%%,*} "
+  done <<< "$folded_rows"
+  printf 'finished lanes, one row each from juggernaut-axi (id,kind,state,reported,project,note); their meta, endpoint and status tail are not printed here - read state/<id>.meta or run: juggernaut-axi lanes --state done - when one is needed:\n%s\n' "$folded_rows"
+fi
 META_FOUND=0
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
-  META_FOUND=1
   id=$(basename "$meta" .meta)
+  case "$FOLDED_LANES" in *" $id "*) META_FOUND=1; continue ;; esac
+  META_FOUND=1
   printf '\n--- %s ---\n' "$id"
   cat "$meta"
 
