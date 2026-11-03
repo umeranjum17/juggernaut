@@ -1,23 +1,21 @@
 #!/usr/bin/env bash
 # tests/jg-bus.test.sh - the captain channel, live, proved end to end.
 #
-# What it proves, in order: an event the fleet emits is recorded, published and
-# delivered to the captain while the path that emitted it does what it always
-# did; the shipped mode is live, and `mode shadow` is the one line that reverses
-# it; ntfy delivery targets the local server while the relay switch is off, and
-# only the relay when it is on; a live delivery that does not arrive is named in
-# the undelivered record; the parity replay reports what is sent against every
+# What it proves, in order: an event the fleet emits is recorded and published to the
+# bus while the path that emitted it does what it always did; the shipped mode is
+# live, and `mode shadow` is the one line that reverses it; a live event the bus
+# does not take is named in the undelivered record; the parity replay reports what is sent against every
 # recorded event with zero differences, and its tampered run reports a difference
 # so a green run is never vacuous; a reply event from the captain routes to the
 # lead the board's own route sends board answers to; and no failure of this path
-# can fail its emitter. Skipped when python3 is absent, because the delivery proof
-# needs a local HTTP sink rather than a real ntfy, and skipped when the Go toolchain or
+# can fail its emitter. Skipped when python3 is absent, because the publish proof
+# needs a local HTTP sink rather than a real sidecar, and skipped when the Go toolchain or
 # the two bus binaries are absent, because the command is Go and the reply leg settles a
 # task lease on a bus of its own.
 set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-command -v python3 >/dev/null 2>&1 || { printf 'skip: no python3; the local delivery sink needs it\n'; exit 0; }
+command -v python3 >/dev/null 2>&1 || { printf 'skip: no python3; the local publish sink needs it\n'; exit 0; }
 
 # The command is Go now, per the stack decision that new long-running parts are Go, so
 # this test builds the command at this head and runs the real dispatcher in front of
@@ -71,8 +69,8 @@ start_bus() {
 }
 start_bus
 
-# The sink stands in for the Dapr sidecar and for ntfy: it records the path,
-# title and body of every POST so the test can see where each event went.
+# The sink stands in for the Dapr sidecar: it records the path and body of every
+# POST so the test can see where each event went.
 start_sink() {
   local portfile=$TMP_ROOT/port
   python3 - "$SINK_OUT" "$portfile" >/dev/null 2>&1 <<'PY' &
@@ -83,8 +81,8 @@ class H(http.server.BaseHTTPRequestHandler):
         n = int(self.headers.get('content-length') or 0)
         body = self.rfile.read(n).decode('utf-8', 'replace')
         with open(out, 'a') as f:
-            f.write(json.dumps({'path': self.path, 'title': self.headers.get('Title'), 'body': body, 'auth': self.headers.get('Authorization')}) + '\n')
-        # A sidecar that cannot take the event answers 503, so publish delivers it directly;
+            f.write(json.dumps({'path': self.path, 'body': body}) + '\n')
+        # A sidecar that cannot take the event answers 503, so publish names it undelivered;
         # only the pub/sub name `accepted` stands for a bus that took it onto the stream.
         refused = self.path.startswith('/v1.0/publish/') and not self.path.startswith('/v1.0/publish/accepted/')
         self.send_response(503 if refused else 204)
@@ -98,12 +96,12 @@ PY
   SINK_PID=$!
   local _
   for _ in $(seq 100); do [ -s "$portfile" ] && { cat "$portfile"; return 0; }; sleep 0.1; done
-  fail "the delivery sink never started"
+  fail "the publish sink never started"
 }
 PORT=$(start_sink)
 [ -n "$PORT" ] || fail "no sink port"
 
-# A home with the two captain-facing paths' fakes and one card route.
+# A home with the captain-facing path's fakes and one card route.
 setup() {  # <name> -> echoes the case dir
   local d=$TMP_ROOT/$1
   mkdir -p "$d/home/state" "$d/home/config" "$d/fakebin" "$d/so/.sign-off"
@@ -124,13 +122,9 @@ SH
   jg_write_squad_lead_meta "$d/home/state/muxr.meta" "$d/home" "sess:jg-muxr"
   printf 'needs-decision [key=put-the-key-into-muxr]: use the key?\n' >"$d/home/state/muxr.status"
   : >"$d/so/.sign-off/decisions.answers.jsonl"
-  # The one home override: point both surfaces at the sink. The mode comes from
-  # the shipped defaults, so nothing here turns delivery on.
-  cat >"$d/home/config/captain-channel" <<EOF
-set dapr-http-url http://127.0.0.1:$PORT
-set ntfy-server http://127.0.0.1:$PORT
-set ntfy-relay-server http://127.0.0.1:$PORT/relay
-EOF
+  # The one home override: point the sidecar at the sink. The mode comes from
+  # the shipped defaults, so nothing here turns publishing on.
+  printf 'set dapr-http-url http://127.0.0.1:%s\n' "$PORT" >"$d/home/config/captain-channel"
   : >"$SINK_OUT"
   printf '%s\n' "$d"
 }
@@ -154,49 +148,32 @@ assert_contains "$(events "$d")" '"kind":"card"' "the teed event names the card"
 assert_contains "$(events "$d")" '"key":"put-the-key-into-muxr"' "the teed event carries the card key"
 assert_contains "$(requests)" '/v1.0/publish/captain-channel/jg.captain.card' "the event reached the bus transport"
 assert_contains "$(requests)" 'Which key should the muxr use?' "the bus event carries the captain's text"
-assert_contains "$(requests)" '/juggernaut-captain' "ntfy delivered to the local topic"
 assert_equals "1" "$(jq -s 'length' "$d/so/.sign-off/decisions.json")" "the board gained exactly the one card, as before"
 
 # --- the shipped mode is live, so a home needs no delivery key at all ----------
 d=$(setup live-default)
-printf 'set dapr-http-url http://127.0.0.1:%s\nset ntfy-server http://127.0.0.1:%s\n' "$PORT" "$PORT" \
-  >"$d/home/config/captain-channel"
+printf 'set dapr-http-url http://127.0.0.1:%s\nset dapr-pubsub accepted\n' "$PORT" >"$d/home/config/captain-channel"
 : >"$SINK_OUT"
 run_quiet "$d" "$BUS" publish card k-live "A decision waits for you."
 assert_equals "live" "$(run_quiet "$d" "$BUS" config mode)" "the shipped mode is live"
-assert_contains "$(requests)" '"path": "/juggernaut-captain"' "a live event reaches the captain with no delivery key set"
-assert_equals "0" "$(cat "$d/home/state/captain-channel-undelivered.jsonl" 2>/dev/null | wc -l | tr -d ' ')" "nothing is undelivered when the delivery arrives"
-
-# --- ntfy behind a login: the owner's publisher password is sent, and only when it exists ---
-d=$(setup login)
-mkdir -p "$d/home/state/bus"
-printf 'secret-pass\n' >"$d/home/state/bus/ntfy-juggernaut.pass"
-: >"$SINK_OUT"
-run_quiet "$d" "$BUS" publish card k-login "Behind a login."
-want="Basic $(printf 'juggernaut:secret-pass' | base64)"
-assert_contains "$(grep '"path": "/juggernaut-captain"' <<<"$(requests)")" "\"auth\": \"$want\"" "the delivery carries the publisher login"
-d=$(setup open-ntfy)
-: >"$SINK_OUT"
-run_quiet "$d" "$BUS" publish card k-open "No login made."
-assert_contains "$(grep '"path": "/juggernaut-captain"' <<<"$(requests)")" '"auth": null' "an open server gets no login"
+assert_contains "$(requests)" '/v1.0/publish/accepted/jg.captain.card' "a live event reaches the bus with no delivery key set"
+assert_equals "0" "$(cat "$d/home/state/captain-channel-undelivered.jsonl" 2>/dev/null | wc -l | tr -d ' ')" "nothing is undelivered when the bus takes the event"
 
 # --- one line reverses it, and off still means nothing at all -----------------
 d=$(setup reversed)
-printf 'set mode shadow\nset dapr-http-url http://127.0.0.1:%s\nset ntfy-server http://127.0.0.1:%s\n' "$PORT" "$PORT" \
+printf 'set mode shadow\nset dapr-http-url http://127.0.0.1:%s\n' "$PORT" \
   >"$d/home/config/captain-channel"
 : >"$SINK_OUT"
 run_quiet "$d" "$BUS" publish card k-shadow "Recorded, not delivered."
 assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "the reversal still records the event"
-assert_equals "0" "$(grep -c '"path": "/juggernaut-captain"' <<<"$(requests)" || true)" "the reversal delivers nothing"
+assert_equals "0" "$(cat "$d/home/state/captain-channel-undelivered.jsonl" 2>/dev/null | wc -l | tr -d ' ')" "the reversal names nothing undelivered"
 assert_equals "0" "$(run_quiet "$d" "$BUS" parity | head -1 | sed -n 's/.* deliveries=\([0-9]*\).*/\1/p')" "shadow parity reports no delivery"
 assert_equals "0" "$(run_quiet "$d" "$BUS" parity | head -1 | sed -n 's/.* differences=\([0-9]*\)/\1/p')" "the reversal changes nothing that is sent"
 
-# --- a live delivery that does not arrive is named, never lost quietly -------
+# --- a live event the bus does not take is named, never lost quietly --------
 d=$(setup undelivered)
-printf 'set dapr-http-url http://127.0.0.1:%s\nset ntfy-server http://127.0.0.1:1\n' "$PORT" \
-  >"$d/home/config/captain-channel"
 run_quiet "$d" "$BUS" publish card k-lost "This one does not arrive."
-assert_equals "1" "$(wc -l <"$d/home/state/captain-channel-undelivered.jsonl" | tr -d ' ')" "a failed live delivery is recorded as undelivered"
+assert_equals "1" "$(wc -l <"$d/home/state/captain-channel-undelivered.jsonl" | tr -d ' ')" "a live event the bus refused is recorded as undelivered"
 assert_contains "$(run_quiet "$d" "$BUS" status)" "1 event(s), 1 undelivered" "status counts what did not arrive"
 
 # --- parity replays what is sent against every recorded event ----------------
@@ -226,23 +203,12 @@ assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "a captain outcome is tee
 assert_contains "$(events "$d")" '"kind":"outcome"' "the teed event names the outcome"
 assert_equals "2" "$(wc -l <"$d/home/state/branch-outcomes.jsonl" | tr -d ' ')" "the outcome store still holds both rows"
 
-# --- the relay switch is off, and turning it on is the only way it is used ----
-d=$(setup relay)
-run_quiet "$d" "$BUS" publish card k1 "A decision waits."
-assert_equals "http://127.0.0.1:$PORT/juggernaut-captain" "$(run_quiet "$d" "$BUS" config | awk '$1 == "ntfy-server" {print $2}')/juggernaut-captain" "relay off targets the local server"
-assert_equals "0" "$(grep -c '"path": "/relay/' <<<"$(requests)" || true)" "relay off never touches the relay host"
-printf 'set ntfy-relay on\n' >>"$d/home/config/captain-channel"
-: >"$SINK_OUT"
-run_quiet "$d" "$BUS" publish card k2 "A decision waits."
-assert_contains "$(requests)" '"path": "/relay/juggernaut-captain"' "relay on is the only thing that sends through the relay"
-
 # --- the CAPTAIN stream carries what the bus took, and nothing delivers it a second time ------
 d=$(setup stream)
-printf 'set dapr-http-url http://127.0.0.1:%s\nset dapr-pubsub accepted\nset ntfy-server http://127.0.0.1:%s\nset nats-url %s\n' \
-  "$PORT" "$PORT" "$JG_KV_URL" >"$d/home/config/captain-channel"
+printf 'set dapr-http-url http://127.0.0.1:%s\nset dapr-pubsub accepted\nset nats-url %s\n' \
+  "$PORT" "$JG_KV_URL" >"$d/home/config/captain-channel"
 : >"$SINK_OUT"
 run_quiet "$d" "$BUS" publish card k-stream "The stream carries this one."
-assert_equals "0" "$(grep -c '"path": "/juggernaut-captain"' <<<"$(requests)" || true)" "an event the bus took is not also delivered directly"
 assert_contains "$(events "$d")" '"key":"k-stream"' "the event is still recorded"
 
 # --- off, and an unreachable bus, both leave the emitter alone ----------------
@@ -288,7 +254,7 @@ assert_contains "$out" "exit=0" "publish still exits 0, so no emitter is broken 
 
 # --- the away-mode wedge alert arrives by this path, and only this path -------
 # The daemon has no notifier of its own: a max-defer wedge sends one alert
-# event here, so the record, the delivery and the undelivered accounting are all
+# event here, so the record, the publish and the undelivered accounting are all
 # the channel's (bin/jg-supervise-daemon.sh wedge_alarm_notify).
 d=$(setup wedge)
 : >"$SINK_OUT"
@@ -300,10 +266,9 @@ assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "the same wedge window tw
 assert_contains "$(events "$d")" '"kind":"alert"' "the alert event names its kind"
 assert_contains "$(events "$d")" '"key":"away-mode-wedge"' "the alert event carries the wedge key"
 assert_contains "$(events "$d")" 'away-mode escalations WEDGED 601s undelivered' "the alert text is the one the daemon always sent"
-assert_equals "1" "$(grep -c '"path": "/juggernaut-captain"' <<<"$(requests)" || true)" "the alert reached the captain once, by this path"
 assert_equals "1" "$(grep -c '"path": "/v1.0/publish/captain-channel/jg.captain.alert"' <<<"$(requests)" || true)" "the alert was published to the bus once"
 assert_grep "away-mode escalation undelivered 601s" "$d/home/state/.supervise-daemon.log" "the daemon still logs the wedge it reported"
 [ -s "$d/home/state/.subsuper-inject-wedged" ] || fail "the durable wedge marker was not written"
 pass "the away-mode wedge alert reaches the captain by this one path, once per window"
 
-printf 'jg-bus: live delivery, the one-line reversal, undelivered records, and parity proved\n'
+printf 'jg-bus: live publish, the one-line reversal, undelivered records, and parity proved\n'
