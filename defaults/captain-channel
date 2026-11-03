@@ -38,3 +38,4 @@ set ntfy-relay-server https://ntfy.sh
 # bot, storing its token and pairing; `jg-bus gateway pair` alone sets telegram-allow-user.
 #   set gateway-adapters telegram
 #   set telegram-token-file config/captain-chat/telegram.token
+#   set chat-media-days 30       # inbound chat files are kept this many days, then deleted

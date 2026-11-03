@@ -24,6 +24,7 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
 ## How it works
 
 - The owner's private text becomes an inbox note whose first line is `[chat telegram <chat>:<message>]`. Anyone else is dropped and counted by time and update id, never by text.
-- A photo, document or voice note is downloaded (20 MB limit) into `state/captain-chat/media/<day>/<sha256>.<ext>` (0600, same file kept once). The note names it on a `[file ...]` line; a larger or missing file gets a line that says so.
 - `bin/jg-inbox.sh reply <id>` is the only way an answer reaches the chat. It is sent as a threaded reply, split at 4096 characters, and sent once.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
+- The owner can send a photo, document, voice note, audio or video. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
+- A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
