@@ -133,6 +133,7 @@ func TestGatewayAnswers(t *testing.T) {
 	if len(sends) != 1 {
 		t.Fatalf("restart sent %d messages, want 1", len(sends))
 	}
+	t.Logf("note %s (message 100, chat 42) answered once: sendMessage chat_id=%v text=%q reply_to=%v; restart sent nothing more", id, sends[0]["chat_id"], sends[0]["text"], rp["message_id"])
 	// A second note, answered with more than one message holds: two parts, each under the limit.
 	batch = upd(11, "private", 42, 42, false, "again")
 	once()
@@ -146,4 +147,5 @@ func TestGatewayAnswers(t *testing.T) {
 	if len(sends) != 3 || len(sends[1]["text"].(string)) > 4096 || len(sends[2]["text"].(string)) > 4096 {
 		t.Fatalf("long answer: %d sends, want 2 more", len(sends))
 	}
+	t.Logf("long answer: %d + %d characters, both threaded on message %v", len(sends[1]["text"].(string)), len(sends[2]["text"].(string)), sends[1]["reply_parameters"].(map[string]any)["message_id"])
 }
