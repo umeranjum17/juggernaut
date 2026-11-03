@@ -276,7 +276,7 @@ opt_envelope() {  # <task> <verb> <since>
 cmd_tick() {
   local dir="$STATE/.waiting-timers" now record task sig since owner key
   local wait_secs pause_secs class _src window decl verb source rungsecs reason
-  local _sig _owner _parent _misses _card _last rows name rule
+  local _sig _owner _parent misses _card _last rows name rule
   [ -d "$dir" ] || return 0
   if opt_available; then
     JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" "$OPTIMIZER" resolve >/dev/null 2>&1 || true
@@ -308,8 +308,11 @@ EOF
   for record in "$dir"/*; do
     [ -f "$record" ] && [ ! -L "$record" ] || continue
     task=${record##*/}
-    IFS=$'\t' read -r sig since owner _parent key _misses _card _last <"$record" || continue
+    IFS=$'\t' read -r sig since owner _parent key misses _card _last <"$record" || continue
     case "$since" in '' | *[!0-9]*) continue ;; esac
+    # A miss is a poll that saw the lane out of its wait: the timers keep its clock for one
+    # flicker, and the owner rung waits for a poll that still sees the wait.
+    [ "${misses:-0}" = 0 ] || continue
     # The ladder normalizes a legacy owner level of 1 to "no owner delivery yet".
     case "${owner:-0}" in 0 | 1) ;; *) continue ;; esac
     [ -n "$key" ] || continue

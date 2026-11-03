@@ -58,11 +58,10 @@ cycle() {
   [ -z "$seq" ] || JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$DRAIN" --ack-through "$seq" --recovery-generation "$gen" >/dev/null
 }
 
-# Arms the lane's episode and ends that arming cycle on a real signal from a second
-# lane, appended once the episode is recorded. The signal scan runs before the
-# wait-timer tick, so a signal present before the tick would end the cycle before
-# the episode existed; a quiet arming cycle would instead alert once its threshold
-# matured. Ending it on the signal keeps the arming cycle silent, as before.
+# Arms the lane's episode beside a second lane whose status moves on once the episode is
+# recorded. That status line is a routine row that waits for the digest, so it does not
+# end the arming cycle: the cycle runs to its first urgent wake, and on a loaded host that
+# is the episode's own owner alert once the alert threshold has passed.
 arm_episode() {  # <dir>
   printf 'kind=ship\nbackend=tmux\nwindow=fake:2\n' > "$1/state/lane-b.meta"
   printf 'working: building\n' > "$1/state/lane-b.status"
@@ -77,6 +76,16 @@ arm_episode() {  # <dir>
   ) &
   cycle
   wait
+}
+
+# Rewinds the lane's episode to an aged wait that nobody has been told about yet, and
+# drops the arming cycle's wakes along with the delivery that rewrite erases, so every
+# count after it starts from that state.
+age_episode() {  # <dir> [lane]
+  local file="$1/state/.waiting-timers/${2:-lane}" sig since key
+  IFS=$'\t' read -r sig since _ _ key _ < "$file"
+  printf '%s\t%s\t0\t0\t%s\t0\n' "$sig" "$((since - 900))" "$key" > "$file"
+  : > "$1/events"
 }
 
 if [ "${JG_WAIT_TIMERS_MAIN_ESCALATION_ONLY:-0}" != 1 ]; then
@@ -94,10 +103,7 @@ for verb in blocked needs-decision; do
   printf '%s [at=%s] [key=wait]: external condition\n' "$verb" "$(date +%s)" > "$dir/state/lane.status"
   prime_status_seen "$dir/state" "$dir/state/lane.status"
   arm_episode "$dir"
-  if [ "$verb" = blocked ]; then
-    IFS=$'\t' read -r sig since owner _parent key _misses < "$dir/state/.waiting-timers/lane"
-    printf '%s\t%s\t0\t0\t%s\t0\n' "$sig" "$((since - 900))" "$key" > "$dir/state/.waiting-timers/lane"
-  fi
+  [ "$verb" != blocked ] || age_episode "$dir"
   cycle
   if [ "$verb" = blocked ]; then
     [ ! -s "$channel" ] || fail 'restart escalated before owner response interval'
@@ -135,8 +141,7 @@ printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
 printf 'blocked [at=%s] [key=wait]: external condition\n' "$(date +%s)" > "$dir/state/lane.status"
 prime_status_seen "$dir/state" "$dir/state/lane.status"
 arm_episode "$dir"
-IFS=$'\t' read -r sig since _owner _parent key _misses < "$dir/state/.waiting-timers/lane"
-printf '%s\t%s\t0\t0\t%s\t0\n' "$sig" "$((since - 900))" "$key" > "$dir/state/.waiting-timers/lane"
+age_episode "$dir"
 cycle
 [ "$(grep -c 'level=owner' "$dir/events")" -eq 1 ] || fail 'Main-owned wait did not alert Main'
 grep -q 'waiting-state lane (blocked key=wait, .*level=owner' "$dir/events" || fail 'owner recheck did not name the decision key'
@@ -178,7 +183,7 @@ case "$key" in
   waiting-timer-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-lane-g[0-9]*-cur-wait) ;;
   *) fail "wait identity is not home/task/generation/key: $key" ;;
 esac
-printf '%s\t%s\t0\t0\t%s\t0\n' "$sig" "$((since - 900))" "$key" > "$dir/state/.waiting-timers/lane"
+age_episode "$dir"
 cycle
 grep -F "id=$key source=[blocked [key=cur-wait]: current dependency]" "$dir/events" >/dev/null || fail 'escalation did not print the exact unresolved source'
 printf 'resolved [key=cur-wait]: dependency arrived\nworking: resumed\n' >> "$dir/state/lane.status"
@@ -389,10 +394,8 @@ printf 'working: building\n' > "$dir/state/lane-b.status"
 prime_status_seen "$dir/state" "$dir/state/lane-a.status"
 prime_status_seen "$dir/state" "$dir/state/lane-b.status"
 cycle
-IFS=$'\t' read -r sig since owner _parent key _misses < "$dir/state/.waiting-timers/lane-a"
-printf '%s\t%s\t0\t0\t%s\t0\n' "$sig" "$((since - 900))" "$key" > "$dir/state/.waiting-timers/lane-a"
+age_episode "$dir" lane-a
 printf 'done: fix complete, PR open\n' >> "$dir/state/lane-b.status"
-: > "$dir/events"
 cycle
 grep -q '^signal:' "$dir/out" || fail "a due wait alert outran the signal wake: $(cat "$dir/out")"
 ! grep -q 'waiting-state' "$dir/out" || fail 'the wait-timer step ran before the signal scan'
