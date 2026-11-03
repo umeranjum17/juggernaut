@@ -114,6 +114,7 @@ test_recorded_wakes() (
     got=$(route "$dir" "$dir/state" "$kind" "$key" "$payload")
     assert_equals "$got" "$want" "recorded wake $kind $key: $payload"
     case "$payload" in
+      *"fleet-pulse 2h"*) ;;  # a trend report that names others' alarms; it rides the digest by rule
       *"needs-decision"*|*"STALLED"*|*"failed"*|*"security"*|*"merge landed with no board"*)
         assert_equals "$got" now "a decision, stall, failure or security wake must stay now: $payload" ;;
     esac

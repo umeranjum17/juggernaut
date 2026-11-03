@@ -15,7 +15,7 @@ deletes shell rather than adding a second owner beside it.
    library keeps the function names, the queue lock around the key read, and the "a broken reader is
    one pending row" rule.
 2. **Wake urgency routing.** The rule files in force and their priority, the shell pattern grammar,
-   the `@parked`, `@restart-pass`, `@queue-quiet` and `@watcher-alive` conditions, the re-alert dedupe
+   the `@parked`, `@restart-pass`, `@queue-quiet`, `@watcher-alive`, `@gap-long` (a heartbeat gap open at least `set gap-wake-seconds`) and `@lead-restarted` (the lead restarted within the restart pass or `set lead-restart-grace-seconds`) conditions, the re-alert dedupe
    on an event's own identity, and the hourly silence cap. `jg_wake_route_class`, `jg_wake_routing_files`,
    `_jg_wake_rule_set` and `_jg_wake_realert_record` stay as the names callers use, and
    `jg_wake_append_locked` asks the command once for the class it acts on. Where the command cannot

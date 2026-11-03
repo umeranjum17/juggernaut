@@ -83,3 +83,8 @@ now	stale	default:w2YB:pKZ	stale: default:w2YB:pKZ
 now	stale	default:w2YB:pM1	stale: default:w2YB:pM1
 now	stale	default:w2YB:pM6	stale: default:w2YB:pM6 (herdr: agent blocked - waiting on human, escalated immediately, not via wedge timer)
 batch	stale	default:w2YR:p5	stale: default:w2YR:p5 (paused 216556s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: crewhouse GAP for 0s - 2 ready, 1 of 4 lanes working, 6 paused wait(s)
+now	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: crewhouse GAP for 3720s - 2 ready, 1 of 4 lanes working, 6 paused wait(s)
+batch	check	fleet-pulse.check.sh	check: fleet-pulse.check.sh: fleet-pulse 2h (landings = merged PRs; open target 4, ! = over, UNDER = free slots with ready work; rule words 8602): crewhouse:landed1/open2(w1 done0 asks>2h0 dry=0) STALLED GATE-BYPASS1 - answer lead asks over 2 h, steer STALLED, UNDER, GATE-BYPASS (merged without a passing checks-lint) and over-4 leads per A2.3 | alarm: 1 lane failed
+now	check	squad-lead-relaunch-failed-crewhouse-1793600000	check: squad_lead crewhouse auto-relaunch failed after dead (pane): error: another spawn is already creating task crewhouse
+now	check	squad-lead-supervision-crewhouse-1793600000	check: squad_lead crewhouse supervision not running while it has work under way; it was told to re-arm, and the wait escalates until it does
