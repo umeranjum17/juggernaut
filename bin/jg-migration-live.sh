@@ -423,8 +423,11 @@ probe_rules() {
 probe_axi() {
   local bin version
   if bin=$(command -v juggernaut-axi 2>/dev/null); then
-    version=$(timeout "$PROBE_TIMEOUT" "$bin" --version 2>/dev/null | head -n 1)
-    printf 'live\t%s%s\n' "$bin" "${version:+ ($version)}"
+    if version=$(timeout "$PROBE_TIMEOUT" "$bin" --version 2>/dev/null | head -n 1) && [ -n "$version" ]; then
+      printf 'live\t%s (%s)\n' "$bin" "$version"
+    else
+      printf 'pending\t%s is on PATH and does not answer --version; run bin/jg-axi-link.sh\n' "$bin"
+    fi
   elif [ -x "$ROOT/bin/juggernaut-axi" ]; then
     printf 'absent\tbin/juggernaut-axi ships in this checkout and no juggernaut-axi is installed on PATH\n'
   else

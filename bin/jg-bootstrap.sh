@@ -24,6 +24,7 @@
 #                 "BOOTSTRAP_INFO: nudged jg-<id> with '<message>'",
 #                 "SQUAD_LEAD_LIVENESS: squad_lead <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "SQUAD_LEAD_HANDOFF: squad_lead <id>: pending delivery: <n> item(s)",
+#                 "AXI_LINK: <why juggernaut-axi could not be put on PATH>",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
 #          When a RUNNING squad_lead home is fast-forwarded, its target is
 #          juggernaut's own current default-branch commit. A local worktree uses
@@ -1570,6 +1571,18 @@ companion_tool_wiring() {
   done
 }
 
+# Puts juggernaut-axi on PATH for this checkout; bin/jg-axi-link.sh owns the launcher.
+# JG_AXI_LINK_SKIP=1 skips it, so a test of another part never writes the real ~/.local/bin.
+axi_link() {
+  local out
+  [ "${JG_AXI_LINK_SKIP:-0}" != 1 ] || return 0
+  if out=$("$SCRIPT_DIR/jg-axi-link.sh" 2>&1); then
+    [ -z "$out" ] || echo "BOOTSTRAP_INFO: $out"
+    return 0
+  fi
+  echo "AXI_LINK: ${out:-juggernaut-axi could not be linked} (fix, then run: bin/jg-axi-link.sh)"
+}
+
 if [ "${1:-}" = "version" ]; then
   # The one owner of version parsing, so the installer never carries its own copy.
   parts=$(tool_version_parts "${2:?usage: jg-bootstrap.sh version <tool>}") || exit 1
@@ -1661,6 +1674,7 @@ if [ "${JG_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase; then
   fi
   startup_memory_budget_setup
   companion_tool_wiring
+  axi_link
   bus_service
   if backlog_record_reconcile; then
     :

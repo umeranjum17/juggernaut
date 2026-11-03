@@ -1820,6 +1820,9 @@ This section is the single owner of that universal toolchain list; backend guide
 [`toolchain.versions`](../toolchain.versions) is the single owner of the exact version of every tool the toolchain installs, and every floor these checks enforce derives from its rows; its header owns the bump ritual.
 [`install.sh`](../install.sh) is the one command for a clean machine: it clones this repo into a home, writes [`defaults/`](../defaults) into the home once without overwriting an existing file, merges the shared account picker into `~/.learn-from-mistakes/config.yaml` only when that key is missing, and installs those pins into `~/.local/bin`, the same prefix [`bin/jg-bootstrap.sh`](../bin/jg-bootstrap.sh) installs into, so no install needs sudo and no tool ends up installed twice in two directories.
 
+Both `install.sh` and every session start also run [`bin/jg-axi-link.sh`](../bin/jg-axi-link.sh), which writes one launcher, `~/.local/bin/juggernaut-axi`, that runs `bin/juggernaut-axi` of the home named by `JG_HOME`, of the checkout the current directory is in, or of the home that wrote it.
+A file already there that is not the launcher is left alone and named.
+
 In that list, no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
 A visual report or decision surface is a sign-off board report, published with sign-off-axi; nothing in this list provides a separate review server.
 

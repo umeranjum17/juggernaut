@@ -150,6 +150,13 @@ else
   bash "$root/bin/jg-stack.sh" up || say "needs you: fix the line above, then run: bash $root/bin/jg-stack.sh up"
 fi
 
+# 4c. juggernaut-axi on PATH, for this home and any other home on the machine.
+if [ "$DRY" = yes ]; then
+  bash "$root/bin/jg-axi-link.sh" --dry-run
+else
+  bash "$root/bin/jg-axi-link.sh" || say "needs you: fix the line above, then run: bash $root/bin/jg-axi-link.sh"
+fi
+
 # 5. Only the user can type these; this installer never holds or copies a login.
 gh auth status >/dev/null 2>&1 || say "needs you: gh auth login   (GitHub access for projects and pull requests)"
 say "needs you: sign in to your harness the way you normally do; the installer never keeps a login"

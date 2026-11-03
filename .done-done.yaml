@@ -16,6 +16,8 @@ journeys:
     command: bash journeys/watcher-window-inventory.sh
   migration-card:
     command: bash journeys/migration-card.sh
+  axi-on-path:
+    command: bash journeys/axi-on-path.sh
   dapr-workflow:
     command: bash journeys/dapr-workflow.sh
   relaunch-model-refusal:
