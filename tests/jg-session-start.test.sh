@@ -1240,8 +1240,9 @@ EOF
   assert_not_contains "$out" "early step of the finished lane" "finished lane still printed its status tail"
   assert_contains "$out" "--- lane-live ---" "running lane lost its meta block"
   assert_contains "$out" "step of the lane still running" "running lane lost its status tail"
+  pass "a finished lane folds into one juggernaut-axi row, a running lane is printed whole"
   assert_contains "$out" 'run juggernaut-axi status, then juggernaut-axi lanes' "supervision block does not point at juggernaut-axi"
-  pass "a finished lane folds into one juggernaut-axi row"
+  pass "the supervision block tells the agent to read the fleet with juggernaut-axi"
 }
 
 test_orphan_status_logs_are_printed() {
