@@ -299,6 +299,21 @@ func say(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }
 
+// writePid records a service's pid so a reader sees the old pid or the new one, never an empty
+// file: a plain truncating write leaves a gap in which the stack's report reads no pid at all and
+// calls a service that is starting "not running". The rename replaces the file in one step.
+func writePid(path string, pid int) error {
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // runningPid reads one service's pid when that process is still alive.
 func (a *app) runningPid(name string) (int, bool) {
 	data, err := os.ReadFile(filepath.Join(a.runtime, name+".pid"))

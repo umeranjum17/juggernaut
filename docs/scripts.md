@@ -183,6 +183,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-tmux-lib.sh`         | Shared tmux pane primitives for composer capture, verified submit, and the submit-time busy check |
 | `jg-peek.sh`             | Print a bounded tail of an operator endpoint                                          |
 | `jg-check-register.sh`   | Bind an intentional custom watcher check to its current bytes                       |
+| `jg-lane-run.sh`         | Run a replay or measurement harness in its own process group so it dies with its lane; teardown reaps by the recorded run token |
 | `jg-scratch.sh`          | Record a task's scratch directories so teardown reaps exactly those paths           |
 | `jg-check-unregister.sh` | Retire a custom watcher check and its trust binding by validated task id            |
 | `jg-check-lib.sh`        | Validate custom-check registrations and prepare private execution snapshots          |

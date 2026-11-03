@@ -257,6 +257,11 @@
 #     its home after child cleanup. Scratch or retained-data roots require lsof;
 #     failed inspection, scanning or scratch removal preserves task ownership
 #     for a teardown retry. Idempotent: nothing left to find is a silent no-op.
+#   A replay or measurement harness started through bin/jg-lane-run.sh carries
+#   a run token in its environment, recorded in state/<id>.lane-groups before it
+#   starts. The same reap stops every process still carrying a recorded token,
+#   wherever its working directory is and whatever group it moved to, so a
+#   finished lane leaves no loop behind.
 #   Fix 3 - sweep abandoned remote job workers. A remote job worker started
 #     from a worktree's own bin/ outlives that worktree's removal without
 #     being reachable by Fix 2, because its working directory is wherever it
@@ -1877,7 +1882,7 @@ reap_task_worktree_processes() {  # <label> <dir>...
   local label=$1 rc=0
   shift
   "$SCRIPT_DIR/jg-teardown-core.sh" reap --label "$label" --task-id "$ID" --backend "$BACKEND" \
-    --target "$T" --caller-pid "$$" -- "$@" || rc=$?
+    --target "$T" --caller-pid "$$" --lane-groups "$STATE/$ID.lane-groups" -- "$@" || rc=$?
   case "$rc" in
     0) return 0 ;;
     1) return 1 ;;
@@ -3257,7 +3262,7 @@ else
 fi
 status_retire_presentation_task "$STATE" "$ID" || exit 1
 jg_wake_queue_prune_task "$STATE" "$ID" "$T" 2>/dev/null || true
-rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
+rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" "$STATE/$ID.lane-groups" \
   "$(jg_wake_signal_seen_path "$STATE" "$STATE/$ID.turn-ended")" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.omp-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.muse-session" \

@@ -175,6 +175,7 @@ jobs:
         run: |
           node kill-guard/tests/main-allowance.test.mjs
           node kill-guard/tests/lead-project-worktree.test.mjs
+          node kill-guard/tests/home-owner-tree.test.mjs
           bash kill-guard/tests/kill-guard.test.sh --guard-only
       # Fixture throwaway HOME, XDG and home with a stub opencode and a stub fleet check: nothing real is touched.
       - name: Model gate test
@@ -274,6 +275,9 @@ jobs:
       # Fixture home, real publisher, no network: a PASS receipt for a pull-request mode must name its PR.
       - name: Completion-receipt publisher test
         run: bash receipts/tests/run-receipt-publisher.test.sh
+      # Real commits in real repositories, forge read stubbed: a closed-unmerged predecessor's rebased copy is rebindable, an altered or incomplete copy is not.
+      - name: Completion-receipt superseded-copy test
+        run: bash receipts/tests/receipt-superseded-copy.test.sh
       - name: No old receipt path test
         run: bash merge-on-green/tests/no-old-receipt-path.test.sh
       # Fixture home and gate logs; no merge runs.

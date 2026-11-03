@@ -7,6 +7,7 @@ The publisher reads fork libraries from `$JG_FORK_BIN`, else `$JG_HOME/bin`.
 The fork's done-acceptance hook delegates to `jg_receipts_accept_done`.
 Its local merge and both PR merge paths delegate to `jg_dod_receipt_accept`.
 The feature owns brief rendering, receipt inheritance, promotion and publishing; `policy/gate/receipt.rego` decides whether a receipt is accepted, and `jg_dod_receipt_accept` reads the task record and the receipt file into facts and prints the message for the reason it gives.
+A task bound to a pull request that was closed without merging may take a receipt for another open pull request of the same repository only when `git cherry` shows every commit the closed one carried has a patch-equivalent in the candidate head (`jg_receipts_superseded_copy_ok`); `tests/receipt-superseded-copy.test.sh` proves both directions.
 `jg_receipts_pr_candidate` is the receipt-candidate hook `bin/jg-pr-check.sh` calls: for a pull request outside the worktree's origin repository it prints the verified PR head, otherwise nothing, so the worker HEAD stands. It prints nothing when the head is unverified and always exits 0.
 
 `tests/receipts-hook-e2e.sh` (set `JG_TEST_FORK`) copies the real fork scripts,

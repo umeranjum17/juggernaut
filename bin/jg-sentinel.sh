@@ -404,7 +404,7 @@ wake_primary() {  # <body>
   [ "$(jg_backend_busy_state herdr "$target")" != busy ] || { say "primary: $target mid-turn; wake deferred"; return 1; }
   [ "$(jg_backend_composer_state herdr "$target")" = empty ] || { say "primary: $target composer not empty; wake deferred"; return 1; }
   jg_operational_record_write "$STATE" watcher "$1" doorbell || { say "primary: could not write the wake record"; return 1; }
-  verdict=$(jg_backend_send_text_submit herdr "$target" "$doorbell" 3 0.5 0.5 2>/dev/null)
+  verdict=$(jg_backend_send_nudge herdr "$target" "$doorbell" 3 0.5 0.5 2>/dev/null)
   if [ "$verdict" != empty ]; then
     # The record stays: typed text that was not confirmed can still be submitted,
     # and a ring whose record is gone sends its reader to a missing file.
