@@ -47,18 +47,18 @@ classify() { bash "$OPT" classify "$@" 2>&1; }
 step "priority classes come from the definition"
 expect "a board key is batched into a digest" digest "$(classify check board-1 'plain payload')"
 expect "a security payload is urgent" urgent "$(classify check anything 'a *security* event')"
-expect "an unmatched event stays now" now "$(classify check plain 'plain payload')"
+expect "an unmatched event rides the digest" batch "$(classify check plain 'plain payload')"
 
 step "every escalation carries its evidence and the one action wanted, or is refused"
-expect "no envelope is refused" "refuse missing-evidence" "$(decide check lane-key 'no envelope here' lane "$now")"
+expect "no envelope is refused" "refuse missing-evidence" "$(decide check lane-stall 'no envelope here' lane "$now")"
 expect "an envelope delivers" "deliver now" \
-  "$(decide check lane-key 'evidence=[the lane is blocked] action=[recheck the lane]' lane "$now")"
+  "$(decide check lane-stall 'evidence=[the lane is blocked] action=[recheck the lane]' lane "$now")"
 
 step "back-off holds the repeat and a changed payload resets it"
 expect "the same payload is deferred" "defer backoff" \
-  "$(decide check lane-key 'evidence=[the lane is blocked] action=[recheck the lane]' lane "$((now + 5))")"
+  "$(decide check lane-stall 'evidence=[the lane is blocked] action=[recheck the lane]' lane "$((now + 5))")"
 expect "a changed payload delivers again" "deliver now" \
-  "$(decide check lane-key 'evidence=[the lane is blocked again] action=[recheck the lane]' lane "$((now + 10))")"
+  "$(decide check lane-stall 'evidence=[the lane is blocked again] action=[recheck the lane]' lane "$((now + 10))")"
 
 step "one batched wake per group, with a one-line digest"
 for i in 1 2 3; do
@@ -72,7 +72,7 @@ say "$digest"
 step "a hop that cannot act is never woken"
 printf 'held\n' >"$STATE/lane.captain-hold"
 expect "a captain hold stops the climb" "drop not-actionable:captain-hold" \
-  "$(decide check lane-key 'evidence=[the lane is blocked] action=[recheck the lane]' lane "$((now + 30))")"
+  "$(decide check lane-stall 'evidence=[the lane is blocked] action=[recheck the lane]' lane "$((now + 30))")"
 rm -f -- "$STATE/lane.captain-hold"
 
 step "a per-target wake budget, and urgent events ignore it"
@@ -83,12 +83,12 @@ done
 expect "the fifth captain wake is held by the budget" "defer over-budget:captain" \
   "$(decide check captain-item-5 'evidence=[item 5] action=[decide item 5]' '' "$((now + 41))")"
 expect "an urgent event wakes even over budget" "deliver urgent" \
-  "$(decide check captain-breach 'a *security* breach evidence=[breach] action=[stop the line]' '' "$((now + 42))")"
+  "$(decide check captain-escalation 'a *security* breach evidence=[breach] action=[stop the line]' '' "$((now + 42))")"
 
 step "an escalation closes when the state it was raised about changes"
 printf 'working: building\n' >"$STATE/lane.status"
 resolved=$(bash "$OPT" resolve "$((now + 50))" 2>&1)
-contains "the open escalation closes on a status change" "$resolved" "resolved check lane-key (state changed)"
+contains "the open escalation closes on a status change" "$resolved" "resolved check lane-stall (state changed)"
 
 step "the live rung the watcher runs delivers an owner wake into the real queue"
 printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' >"$STATE/lane.meta"

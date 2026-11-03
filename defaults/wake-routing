@@ -93,14 +93,16 @@ silent@restart-pass  check   squad-lead-supervision-*   *told to re-arm*
 # live watcher still holds the watcher lock, the beacon is only its predecessor's, so the
 # doorbell settles; with no live watcher it keeps waking.
 silent@watcher-alive check   sentinel-beacon-old   *beacon*old*
-# A finished deliverable that is not a plain `done`: a PR or branch the worker marks ready.
+# A finished or blocked deliverable: ready, PR ready, and any status line the rows above did not call routine.
 now      signal  *.status         ready*
 now      signal  *.status         *PR ready*
+now      signal  *.status         *
 # The digest wake itself, and the five reasons to wake at once beyond the status words above.
 now      check   wake-digest      *
 # A captain answer: a note the captain left in the inbox, and mail addressed to this home.
 now      check   inbox:*          *
 now      check   mail:*           *
+now      check   captain-*        *
 # A red gate: any check that reports a failure (a red CI run says failed).
 now      check   *                *failed*
 now      check   *                *FAILED*
