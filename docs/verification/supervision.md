@@ -850,7 +850,7 @@ tests/jg-branch-supervision.test.sh
 
 The max-defer wedge alert reaches the captain by the one captain channel, `bin/jg-bus.sh publish alert away-mode-wedge`, and no per-channel notifier exists beside it.
 The channels this section previously recorded (macOS Notification Center, herdr, a captain-supplied `command:`) are deleted with `config/wedge-alarm`: the slice that removed the duplicate notifier records its own dated proof, and [`captain-channel.md`](../captain-channel.md) owns how the surviving path runs, reverses and replays.
-`tests/jg-afk-inject-herdr-e2e.test.sh` Scenario D still proves the wedge itself end to end: the durable marker is written and the buffer is preserved while the daemon keeps running, and its channel config is `set mode off` so no test reaches a bus or the captain's iPad.
+`tests/jg-afk-inject-herdr-e2e.test.sh` Scenario D still proves the wedge itself end to end: the durable marker is written and the buffer is preserved while the daemon keeps running, and its channel config is `set mode off` so no test reaches a bus.
 
 ## Owner-correction capture at the turn boundary, 2026-10-30
 

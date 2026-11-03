@@ -1,7 +1,7 @@
 # The captain channel
 
-The captain reaches the fleet through one channel: events on a bus, delivered to his iPad, with his replies coming back as events routed to the lead that owns them.
-Migration step 5a built that channel in shadow, and this path is now **live**: a captain-facing change of state is recorded, published and delivered to him by this path.
+The captain reaches the fleet through one channel: events on a bus, read by the chat gateway, with his replies coming back as events routed to the lead that owns them.
+Migration step 5a built that channel in shadow, and this path is now **live**: a captain-facing change of state is recorded and published to the bus by this path.
 
 The header of the Go command at [`core/bus/cmd/jg-bus`](../core/bus/cmd/jg-bus/main.go) is the owner of the shape.
 `bin/jg-bus.sh` is the dispatcher that builds that command once and runs it, so every command below keeps its name and this file holds no behaviour of its own.
@@ -15,8 +15,6 @@ This page owns how to run it, how to reverse it, and what its replay proves.
 | --- | --- | --- |
 | `nats-server` with JetStream | [`core/bus/nats.conf`](../core/bus/nats.conf) | messages, history, a week of them |
 | `daprd` (slim, no Docker) | [`core/bus/dapr/components/pubsub.yaml`](../core/bus/dapr/components/pubsub.yaml) | the transport binding over NATS |
-| `ntfy` | [`core/bus/ntfy.yml`](../core/bus/ntfy.yml) | the captain's iPad surface, on the local server |
-| `jg-bus deliver` | the `captain-ntfy` durable consumer on the `CAPTAIN` stream | reads each captain event off the stream and posts it to ntfy |
 
 The server itself is not started by hand on a real home: a home installs it once
 as a systemd user service and `bin/jg-bootstrap.sh` keeps it up. [The message bus](bus-service.md)
@@ -27,10 +25,9 @@ Every one of them is configured by file and none by code.
 The Dapr component decides what the bus really is, so swapping NATS for another broker is a component swap.
 A home overrides any of them under `config/bus/`.
 
-`bin/jg-bus.sh status` reports the mode, the delivery target, how many events the record holds, how many did not arrive, and which services are up, read from each service's own unit state in the service manager; a state it cannot read is reported `unknown`, never down.
+`bin/jg-bus.sh status` reports the mode, the bus target, how many events the record holds, how many did not arrive, and which services are up, read from each service's own unit state in the service manager; a state it cannot read is reported `unknown`, never down.
 `bin/jg-bus.sh stop` stops them.
 The metric server stays off: a metrics port is shared machine surface and nothing scrapes it yet.
-Delivery needs `ntfy` and the `deliver` consumer running; the record and the bus need their own services only.
 
 ## The path
 
@@ -41,63 +38,26 @@ A routine or silent outcome is not captain-facing, so it is not sent.
 Every event is written to `state/captain-channel.jsonl` **before** anything is published, so an unreachable bus or a stopped service loses nothing.
 A transport failure is logged once to `state/captain-channel.log` and the emitter still exits 0: this path runs inside today's own delivery paths and must never break them.
 
-A live delivery that does not arrive is appended to `state/captain-channel-undelivered.jsonl` with its error, and `status` counts them, so a missing notification is named instead of lost.
+A live event the bus does not take is appended to `state/captain-channel-undelivered.jsonl` with its error, and `status` counts them, so a missing event is named instead of lost.
 Nothing retries on its own: the record holds the event and that file names the one that did not arrive.
 
-## Delivery: bus to ntfy
+## The bus
 
-The `CAPTAIN` stream is the delivery path.
+The `CAPTAIN` stream is the path.
 `publish` records the event, then publishes it through the sidecar onto the stream.
-When the sidecar accepts it (HTTP 2xx), the `captain-ntfy` consumer (`bin/jg-bus.sh deliver`, the `jg-deliver` unit) reads it off the stream, posts it to the captain's own topic, and writes one line to `state/captain-channel-delivered.jsonl`: the subject, the event key and ntfy's own message id.
-ntfy logs the same id as `Received message` (`state/bus/ntfy.log`, or the unit's journal), so the stream, the record and ntfy's log name one event.
-The consumer starts at the first message, so an event published while it was down is delivered when it returns.
-When the sidecar does not accept the event, no consumer will ever see it, so `publish` delivers it directly and names a failure in the undelivered record as before.
-So one event is never delivered twice, and none is dropped.
-
-`bin/jg-captain-probe.sh` is the live proof on a machine: it prints the stack's processes, the stream and consumer counts, publishes one real event to the captain's own topic, prints the counts again, then the delivery record line and ntfy's own log line for that message id.
-It waits by blocking on the delivery record and exits non-zero unless the stream count rose and both records name the event.
-
-## Reaching his iPad: logins and address
-
-The shipped `core/bus/ntfy.yml` turns on an auth file and `deny-all`, so nobody reads or writes the captain's topic anonymously.
-The bus owner's `bin/jg-stack.sh up` runs `bin/jg-bus.sh ntfy-provision` after ntfy starts, which makes two logins once:
-
-| Login | Right on the topic | Used by |
-| --- | --- | --- |
-| `juggernaut` | write only | `jg-bus deliver`, which posts with it |
-| `captain` | read only | his iPad's ntfy app |
-
-Each password is generated into the owner's `state/bus/ntfy-<login>.pass` (mode 0600) and kept on a second run.
-A server config with no `auth-file` is an open local server: nothing is made and the delivery sends no login.
-The login travels in a private header file, never on the command line.
-
-The shipped listener is loopback, which his iPad cannot reach.
-A home that serves him sets two lines of its own, never a shipped public endpoint:
-
-```sh
-# config/bus/ntfy.yml: a copy of core/bus/ntfy.yml with these two keys set to the host's tailnet address
-base-url: "http://<tailnet-ip>:2586"
-listen-http: "<tailnet-ip>:2586"
-# config/captain-channel
-set ntfy-server http://<tailnet-ip>:2586
-```
-
-In the iPad's ntfy app he adds that server, the topic `juggernaut-captain`, and the `captain` login with the password from `state/bus/ntfy-captain.pass`.
-Instant delivery to an iPad from a self-hosted server needs ntfy's `upstream-base-url: https://ntfy.sh`, which sends a poll request through ntfy.sh.
-That is the relay question below, so it is not set.
-Without it the app still shows the topic when he opens it.
-
-`bin/jg-captain-probe.sh` proves the three rights over that address: the `captain` login reads the event, and neither an anonymous request nor the read-only login can publish.
+When the sidecar accepts it (HTTP 2xx), the event is on the stream, where the chat gateway reads it ([the captain chat](captain-chat.md)).
+When the sidecar does not accept the event, it is not on the stream, and in live mode the undelivered record names it.
+Nothing else posts the event anywhere, so one event is never sent twice.
 
 ## The mode switch and its one-step reversal
 
-`defaults/captain-channel` carries the routing and the mode: addresses, subject prefix, stream name, the mode, and the relay switch.
+`defaults/captain-channel` carries the routing and the mode: addresses, subject prefix, stream name and the mode.
 A home overrides any single key at `config/captain-channel`, and `bin/jg-bus.sh config` prints what is in force.
 
 `set mode live` is the shipped value:
 
-- `live` records, publishes and delivers to his iPad.
-- `shadow` records and publishes only, so the path observes and nothing he sees changes.
+- `live` records and publishes, and names an event the bus does not take in the undelivered record.
+- `shadow` records and publishes only.
 - `off` does nothing at all.
 
 To reverse the switch in one step, put this line in `config/captain-channel`:
@@ -106,14 +66,13 @@ To reverse the switch in one step, put this line in `config/captain-channel`:
 set mode shadow
 ```
 
-That is the whole reversal: the path goes back to recording and publishing with no delivery, and the record keeps every event that arrives while it is shadow.
+That is the whole reversal: the path stops naming a refused event in the undelivered record, and the record keeps every event that arrives while it is shadow.
 Deleting the line, or setting `set mode live`, restores it.
-`mode` is the only switch: the shadow tee's own `shadow` and `ntfy-deliver` keys are gone, so no home can turn delivery on without also turning the path live.
 
 ## The replay
 
 `bin/jg-bus.sh parity` replays every event in the record through the builder the live path sends with, and compares it with the event the record holds: kind, key, subject, text and link must be identical, so "what he would have seen" and "what he will get" are one diff.
-Where an event goes is the one decision the switch flips, so parity reports the delivery target and the delivery count instead of diffing them.
+Where an event goes is the one decision the switch flips, so parity reports the bus target and the count instead of diffing them.
 
 ```
 captain channel parity: record=<path> events=2 instants=1 decisions=4 deliveries=2 differences=0
@@ -129,15 +88,9 @@ One row per event per side, and each event makes two decisions the replay compar
 What it does not prove: that the emitters still call this path, because their own tests own that.
 The replay covers the record this path wrote, which is what a switch can change.
 
-## The relay switch
-
-`set ntfy-relay off` is the shipped value, and it is the only thing that decides where a delivery goes.
-Off delivers to `ntfy-server`, the local server this home runs; on would send the same event through `ntfy-relay-server`.
-The captain has not answered the relay question, so the local path is the only path built, and turning the relay on is a one-line config change made when he does answer.
-
 ## Replies
 
-A reply event is one JSON object, `{"key","at","answer"[,"label"]}`, arriving from his iPad:
+A reply event is one JSON object, `{"key","at","answer"[,"label"]}`, arriving from the chat gateway:
 
 ```sh
 bin/jg-bus.sh reply reply-event.json
@@ -150,10 +103,9 @@ A card with no route is refused, and that answer stays with Main as it does toda
 ## What this proves, and what is still on the old path
 
 `tests/jg-bus.test.sh` proves the claims.
-An event the fleet emits is recorded, published and delivered while the emitting path does what it always did.
+An event the fleet emits is recorded and published while the emitting path does what it always did.
 The shipped mode is live, and `mode shadow` is the one line that reverses it.
-ntfy delivery targets the local server while the relay switch is off, and only the relay when it is on.
-A live delivery that fails is named in the undelivered record.
+A live event the bus refuses is named in the undelivered record.
 The replay reports what is sent against every recorded event with zero differences, and its tampered run reports one, so a green run is never vacuous.
 A reply event routes to the correct lead.
 No failure of this path fails its emitter.
@@ -163,7 +115,7 @@ No failure of this path fails its emitter.
 Still on the old path, deliberately:
 
 - Every existing delivery route.
-  The board, the chat outcome, the status wake, the inbox and the parent channels stay as they are; this path delivers his notification, and those surfaces still hold the record and the decision.
+  The board, the chat outcome, the status wake, the inbox and the parent channels stay as they are; this path puts his notification on the bus, and those surfaces still hold the record and the decision.
 - The live reply loop.
   The router is proven with a reply event handed to it; consuming replies from the bus and arming that loop is a later step.
 - Workflows, timers and escalation through Dapr.
