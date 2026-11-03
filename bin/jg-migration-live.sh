@@ -48,10 +48,10 @@ DIR=${JG_DATA_OVERRIDE:-$JG_HOME/data}/migration-card
 # shellcheck source=bin/jg-kv-lib.sh
 . "$SCRIPT_DIR/jg-kv-lib.sh"
 
-PART_SLUGS=(nats accounts wake inbox leases captain dapr godaemons gate escalation fiveminute deletions rules axi addons policy pendingreplies leadwake linecounts)
-PART_NAMES=('NATS server' 'per-home accounts' 'wake queue' 'task inbox' 'leases' 'captain channel/ntfy' 'Dapr' 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' 'deletions' 'rules JSON' 'juggernaut-axi' 'add-on removal' 'Rego policy' 'pending-replies cleanup' 'lead-wake cleanup' 'line counts from git')
+PART_SLUGS=(nats accounts wake inbox leases dapr godaemons gate escalation fiveminute deletions rules axi addons policy pendingreplies leadwake linecounts)
+PART_NAMES=('NATS server' 'per-home accounts' 'wake queue' 'task inbox' 'leases' 'Dapr' 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' 'deletions' 'rules JSON' 'juggernaut-axi' 'add-on removal' 'Rego policy' 'pending-replies cleanup' 'lead-wake cleanup' 'line counts from git')
 # Per part: a case-insensitive pattern over open pull request titles.
-PART_PR_RE=('nats|bus server|machine bus' 'account' 'wake queue|wake engine|wake' 'inbox|wake queue' 'lease' 'ntfy|captain channel' 'dapr|wait ladder' ' go\b|in go|go consumer|go wake' 'merge gate' 'wait ladder|escalation' 'merge-on-green|five-minute|merge path' 'delet|release c-' 'rules json|crew-dispatch|rego' 'juggernaut-axi' 'add-on|addon' 'rego|opa|policy' 'pending-repl' 'lead-wake|leadwake' 'line count')
+PART_PR_RE=('nats|bus server|machine bus' 'account' 'wake queue|wake engine|wake' 'inbox|wake queue' 'lease' 'dapr|wait ladder' ' go\b|in go|go consumer|go wake' 'merge gate' 'wait ladder|escalation' 'merge-on-green|five-minute|merge path' 'delet|release c-' 'rules json|crew-dispatch|rego' 'juggernaut-axi' 'add-on|addon' 'rego|opa|policy' 'pending-repl' 'lead-wake|leadwake' 'line count')
 
 # cfg <key>: the captain channel's value in force, in bin/jg-bus.sh's own order -
 # JG_CAPTAIN_CHANNEL, then this home's file, then the shipped defaults - so the
@@ -327,33 +327,6 @@ probe_leases() {
   esac
 }
 
-probe_captain() {
-  local mode stream events msgs ntfy='' server topic
-  mode=$(cfg mode)
-  mode=${mode:-live}
-  stream=$(channel_stream)
-  stream=${stream:-CAPTAIN}
-  events=$(count_lines "$STATE/captain-channel.jsonl")
-  msgs=$(stream_msgs "$(nats_url)" "$stream")
-  command -v ntfy >/dev/null 2>&1 && ntfy=installed
-  server=$(cfg ntfy-server)
-  topic=$(cfg ntfy-topic)
-  if [ "$mode" != live ]; then
-    printf 'pending\tmode %s, so nothing reaches the captain; %s events recorded, %s on %s\n' \
-      "$mode" "$events" "${msgs:-0}" "$stream"
-  elif [ -z "$ntfy" ]; then
-    printf 'pending\tmode live, ntfy is not installed, so nothing is delivered; %s events recorded, %s on %s\n' \
-      "$events" "${msgs:-0}" "$stream"
-  elif ! curl -fsS -m "$PROBE_TIMEOUT" "$server/v1/health" 2>/dev/null | grep -q '"healthy": *true'; then
-    printf 'pending\tntfy is installed and nothing answers at %s, so nothing is delivered; %s events recorded, %s on %s\n' \
-      "${server:-no ntfy-server set}" "$events" "${msgs:-0}" "$stream"
-  else
-    printf 'live\tntfy answers at %s; %s messages on topic %s, %s events recorded, %s on %s\n' \
-      "$server" "$(curl -fsS -m "$PROBE_TIMEOUT" "$server/${topic:-juggernaut-captain}/json?poll=1&since=all" 2>/dev/null | grep -c '"event": *"message"')" \
-      "${topic:-juggernaut-captain}" "$events" "${msgs:-0}" "$stream"
-  fi
-}
-
 probe_dapr() {
   local pid url n
   pid=$(pgrep -x daprd 2>/dev/null | head -n 1)
@@ -531,7 +504,6 @@ probe() {  # <slug>: one row, "state<TAB>detail"
     wake) probe_queue 'wake queue' "$(wake_stream WAKE_STREAM JG_WAKE)" wake-bus ;;
     inbox) probe_queue 'task inbox' "$(wake_stream INBOX_STREAM JG_INBOX)" wake-bus ;;
     leases) probe_leases ;;
-    captain) probe_captain ;;
     dapr) probe_dapr ;;
     godaemons) probe_godaemons ;;
     gate) probe_gate ;;

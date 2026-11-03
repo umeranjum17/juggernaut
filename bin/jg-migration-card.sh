@@ -47,8 +47,8 @@
 #        first (config `critical=`, read by jg-critical-path.sh), then a count of
 #        the rest. When nothing changed for `push-hours` (default 24) it posts one
 #        card and one digest saying so, so a quiet day is a line, not silence. When
-#        the bus mode or the captain row is not live the card is the only delivery
-#        and its text ends "Phone push is off". Seams: JG_MIGRATION_LIVE_BIN,
+#        the bus mode is not live the card is the only delivery and its text ends
+#        "Push is off". Seams: JG_MIGRATION_LIVE_BIN,
 #        JG_BUS_CMD, JG_MIGRATION_CARD_NOW. `arm` writes state/migration-card.check.sh, binds it with
 #        jg-check-register.sh and runs one pass; `disarm` removes them.
 set -u
@@ -258,10 +258,10 @@ cmd_live() {
   if [ -n "$kind" ]; then
     PUSH=$(push_text "$kind")
     [ "$kind" != daily ] || step="no part changed since the last push"
-    if [ "$("$BUS_BIN" config mode 2>/dev/null)" = live ] && [ "$("$LIVE_BIN" captain 2>/dev/null | cut -f2)" = live ]; then
+    if [ "$("$BUS_BIN" config mode 2>/dev/null)" = live ]; then
       "$BUS_BIN" publish digest "migration-live-$(($(grep -c . "$PUSHES" 2>/dev/null) + 1))" "$PUSH" >/dev/null \
         || echo "jg-migration-card: the captain channel refused the push" >&2
-    else PUSH="$PUSH Phone push is off: the captain channel is not live."; fi
+    else PUSH="$PUSH Push is off: the captain channel is not live."; fi
   fi
   if [ "$changed" -eq 1 ] || [ -n "$kind" ]; then post_card "$step" "" "" >/dev/null; fi
   [ -z "$kind" ] || printf '%s\t%s\t%s\n' "$NOW" "$HASH" "$kind" >> "$PUSHES"

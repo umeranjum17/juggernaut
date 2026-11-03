@@ -179,7 +179,7 @@ assert_contains "$(cat "$D/unit2.err")" "owned by $H1" "the bootstrap path must 
 [ "$(snap)" = "$before" ] || fail "a non-owner changed the owner's unit file or bus.conf"
 [ "$(cat "$D/service.pid")" = "$pid_before" ] || fail "a non-owner restarted the shared bus"
 grep -q reload "$D/systemctl.log" || fail "the server was never asked to reload the new account"
-# `owner` is what bin/jg-stack.sh asks before it installs dapr, ntfy or the consumer.
+# `owner` is what bin/jg-stack.sh asks before it installs dapr.
 assert_equals "self" "$(bus "$H1" owner)" "the home that owns the unit is told it owns it"
 other_owner=$(bus "$H2" owner); rc=$?
 assert_equals "$H1" "$other_owner" "a joined home is told who owns the unit"
@@ -350,21 +350,17 @@ pass "a lab home is refused by the machine's real registry, which stays byte-ide
 # own state from the manager. Active units read up, one stopped unit reads down on its own
 # line with the others still up, and a manager that cannot be asked reads unknown.
 UNITS="$XDG_CONFIG_HOME/systemd/user"; mkdir -p "$D/units"
-for part in dapr ntfy deliver; do
-  : > "$UNITS/$JG_STACK_UNIT_PREFIX-$part.service"
-  : > "$D/units/$JG_STACK_UNIT_PREFIX-$part.service.active"
-done
+: > "$UNITS/$JG_STACK_UNIT_PREFIX-dapr.service"
+: > "$D/units/$JG_STACK_UNIT_PREFIX-dapr.service.active"
 unit_of() { case $1 in nats) echo "$JG_BUS_UNIT" ;; *) echo "$JG_STACK_UNIT_PREFIX-$1.service" ;; esac; }
 status_out=$(bus "$H1" status 2>&1)
-for part in nats dapr ntfy deliver; do
+for part in nats dapr; do
   assert_contains "$status_out" "$part: up (unit $(unit_of "$part"))" "an active $part unit must read up: $status_out"
 done
-rm -f -- "$D/units/$(unit_of ntfy).active"
+rm -f -- "$D/units/$(unit_of dapr).active"
 status_out=$(bus "$H1" status 2>&1)
-assert_contains "$status_out" "ntfy: down (unit $(unit_of ntfy) inactive)" "a stopped unit must read down: $status_out"
-for part in nats dapr deliver; do
-  assert_contains "$status_out" "$part: up (unit $(unit_of "$part"))" "one stopped unit must not read the others down: $status_out"
-done
+assert_contains "$status_out" "dapr: down (unit $(unit_of dapr) inactive)" "a stopped unit must read down: $status_out"
+assert_contains "$status_out" "nats: up (unit $(unit_of nats))" "one stopped unit must not read the other down: $status_out"
 pass "status reads each service's unit state: active units read up, and a stopped one reads down alone"
 
 # The manager is the only owner of that truth, so a probe that cannot ask it says unknown
@@ -375,7 +371,7 @@ BLIND="$D/blind"; mkdir -p "$BLIND"
 printf '#!/usr/bin/env bash\necho "Failed to connect to bus: no medium found" >&2\nexit 1\n' > "$BLIND/systemctl"
 chmod +x "$BLIND/systemctl"
 status_out=$(PATH="$BLIND:$PATH" bus "$H1" status 2>&1)
-for part in nats dapr ntfy deliver; do
+for part in nats dapr; do
   assert_contains "$status_out" "$part: unknown (cannot read the service manager for $(unit_of "$part"))" \
     "a probe that cannot ask the manager must say unknown for $part: $status_out"
 done

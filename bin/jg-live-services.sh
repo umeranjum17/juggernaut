@@ -10,8 +10,6 @@
 #   nats     the JetStream server (nats-server)
 #   dapr     the sidecar every publish goes through (daprd); the Go bus header
 #            (core/bus/cmd/jg-bus) names it as the publish path, so it is required
-#   ntfy     the delivery server
-#   deliver  the Go consumer (`jg-bus deliver`) that reads the CAPTAIN stream and posts to ntfy
 # A wake engine (jg-wake-engine) and a router (jg-router) are required only when this
 # checkout ships them under core/*/cmd/. When it does not, the output says plainly
 # that they are not part of the chosen design, and they never fail the check.
@@ -55,11 +53,10 @@ real_probe() {
   pid=$([ -r "$STATE/bus/$svc.pid" ] && tr -cd '0-9' < "$STATE/bus/$svc.pid")
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then printf 'pid %s, detached\n' "$pid"; return 0; fi
   case $svc in
-    nats) proc=nats-server ;; dapr) proc=daprd ;; ntfy) proc=ntfy ;;
+    nats) proc=nats-server ;; dapr) proc=daprd ;;
     wake-engine) proc=jg-wake-engine ;; router) proc=jg-router ;;
-    deliver) pid=$(pgrep -f 'jg-bus deliver|jg-bus.* deliver' 2>/dev/null | head -n 1) ;;
   esac
-  [ "$svc" = deliver ] || pid=$(pgrep -x "$proc" 2>/dev/null | head -n 1)
+  pid=$(pgrep -x "$proc" 2>/dev/null | head -n 1)
   if [ -n "$pid" ]; then printf 'pid %s, started by hand (no unit)\n' "$pid"; return 0; fi
   printf 'not running (no active unit %s, no live pid)\n' "$unit"
   return 1
@@ -75,7 +72,7 @@ probe() {  # <service>
   real_probe "$1"
 }
 
-required=(nats dapr ntfy deliver)
+required=(nats dapr)
 absent=()
 for opt in wake-engine router; do
   if compgen -G "$ROOT/core/*/cmd/jg-$opt" >/dev/null 2>&1; then required+=("$opt")
