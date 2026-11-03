@@ -80,6 +80,7 @@ printf '#!/bin/sh\nexit 1\n' >"$w/b/pool-cmd"
 chmod +x "$w/b/pool-cmd"
 # The fixture names its own two-route chain, so this proves the gate skipping a refused route for the next one and
 # not which order the shipped chain happens to carry.
+# The clock is pinned to a Sunday: the no-deepseek-at-peak owner rule skips the DeepSeek route on weekdays 12:00-17:59 UTC.
 {
   printf 'state=%s\ncommand=%s\n' "$w/pool" "$w/b/pool-cmd"
   printf 'route={"id":"route:openai-codex/gpt-6.1-sol","provider":"codex","harness":"codex","model":"openai-codex/gpt-6.1-sol","billing":"plan"}\n'
@@ -91,6 +92,7 @@ jq -n --argjson at "$(date +%s)" '{schema:1,generated_at:$at,accounts:[{id:"pa_u
 out=$(jq -nc --arg p "$w/home/config/account-pool" '{v:1,purpose:"work",pool_config:$p,capabilities:["text"],attempted:[]}' | \
   env PATH="$w/b:/usr/bin:/bin" HOME="$w/home" JG_HOME="$w/home" TMPDIR="$w" JG_CLAUDE_ACCOUNTS_REGISTRY="$w/registry.json" \
   JG_MODEL_GATE="$gate" JG_MODEL_GATE_LIST="$w/gate-list.json" JG_MODEL_POOL_FLOOR=15 JG_CLAUDE_ACCOUNTS_FRESH=999999 \
+  JG_CLAUSE_NOW="${JG_CLAUSE_NOW:-1793538000}" \
   "$addons/account-pool/bin/jg-model-pool" pick --json 2>"$w/log/pool.err")
 is "off-list route refused, next route emitted" "$(jq -r .id <<<"$out")" "route:deepseek/deepseek-goat"
 is "pool logs the model-gate refusal" "$(grep -c 'model-gate refuse provider=codex model=openai-codex/gpt-6.1-sol' "$w/log/pool.err")" 1
