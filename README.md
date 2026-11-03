@@ -50,7 +50,7 @@ An agent distro is a portable directory of instructions, skills, tooling, polici
 
 - **One liaison** — you talk only to the Overwatch; it dispatches, supervises, escalates only real decisions, and reports plain objectives secured.
 - **A visible squad** — every operator works in its own tmux window or Herdr tab, or in an experimental Zellij, cmux, or worker-runtime terminal you can watch or type into; the Overwatch reconciles.
-- **Explicit project modes** — each project ships via `no-mistakes`, `direct-PR`, or `local-only`, with optional `+yolo` merge autonomy, a `branch=<prefix>` override for the default `fm/` ship-branch prefix, and a `forge=gerrit` binding that publishes a Gerrit change instead of a pull request.
+- **Explicit project modes** — each project ships via `no-mistakes`, `direct-PR`, or `local-only`, with optional `+yolo` merge autonomy, a `branch=<prefix>` override for the kind-named (`feature/`, `fix/`, `chore/`) ship-branch prefix, and a `forge=gerrit` binding that publishes a Gerrit change instead of a pull request.
 
 ### Mission
 

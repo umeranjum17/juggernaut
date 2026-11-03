@@ -2749,7 +2749,10 @@ if [ "$KIND" = ship ]; then
   # The registry holds the captain's standing posture and its ship-branch prefix, so dropping
   # below the one or shipping past the other is allowed (a current explicit captain
   # instruction wins) but never silent: the Go spawn core prints the notices.
-  STANDING_BRANCH=$("$JG_ROOT/bin/jg-project-mode.sh" --branch-prefix "$PROJ_NAME" 2>/dev/null) || STANDING_BRANCH=
+  # Only a prefix the captain REGISTERED is a standing one; a project with none accepts the
+  # kind-named default (feature/, fix/, chore/) or the legacy fm/ without a notice.
+  STANDING_BRANCH=$("$JG_ROOT/bin/jg-project-mode.sh" --branch-prefix --registered "$PROJ_NAME" 2>/dev/null) \
+    || STANDING_BRANCH=${BRANCH%"$ID"}
   "$SCRIPT_DIR/jg-spawn-core.sh" delivery-notices --id "$ID" --mode "$MODE" --branch "$BRANCH" \
     --project "$PROJ_NAME" --standing-mode "$STANDING_MODE" --standing-branch "$STANDING_BRANCH" || exit 1
 fi
