@@ -175,6 +175,7 @@ jobs:
         run: |
           node kill-guard/tests/main-allowance.test.mjs
           node kill-guard/tests/lead-project-worktree.test.mjs
+          node kill-guard/tests/home-owner-tree.test.mjs
           bash kill-guard/tests/kill-guard.test.sh --guard-only
       # Fixture throwaway HOME, XDG and home with a stub opencode and a stub fleet check: nothing real is touched.
       - name: Model gate test
