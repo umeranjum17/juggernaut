@@ -73,7 +73,10 @@ import (
 // transition at all, so a cursor holding a phantom decision that bare prose opened is discarded.
 // 9: the two colon tests read the line with its time tag stripped, so a malformed worker stamp
 // whose colons used to pose as the head/note separator no longer opens or closes anything.
-const openDecisionsFoldVersion = "9"
+// 10: a done or failed line carrying an explicit key closes that key on every kind of lane, not
+// only through the ship/scout terminal rule, so a cursor holding a squad_lead decision its own
+// `done` had answered is discarded.
+const openDecisionsFoldVersion = "10"
 
 // cursorPath is the sibling cursor file for a status file.
 func cursorPath(statusFile string) string {

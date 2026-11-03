@@ -952,6 +952,25 @@ test_question_and_quota_ride_the_chain_whatever_the_terminal_says() {
   pass "a question dialog, a provider quota wall and a repeating provider error climb owner and Main, are recorded for Main to decide, and clear with the cause"
 }
 
+# The watcher records each pane's last change in state/.silent-seen-<window> on its
+# first complete read of it. A cycle that ends on a wake, or is stopped at its
+# limit, can end before that read; backdating a file the watcher has not written
+# yet only creates an empty one, which the next read rewrites with a fresh time and
+# so restarts the silence clock. Cycle until every pane is recorded and one more
+# cycle rewrites none of them, so the backdating below ages a real record.
+settle_silent_seen() {  # <home>
+  local m=$1 n k missing rewritten mark="$1/tmp/silent-mark"
+  for n in 1 2 3 4 5 6 7 8; do
+    touch "$mark"
+    PANES='1 2 3 4 5 6' cycle "$m"
+    missing=0
+    for k in 1 2 3 4 5 6; do [ -s "$m/state/.silent-seen-fake_$k" ] || missing=1; done
+    rewritten=$(find "$m/state" -maxdepth 1 -name '.silent-seen-fake_*' -newer "$mark" | wc -l)
+    [ "$missing" = 0 ] && [ "$rewritten" -eq 0 ] && return 0
+  done
+  fail "the watcher never settled its pane records: $(ls -la "$m"/state/.silent-* 2>&1; cat "$m/err")"
+}
+
 test_silent_worker_climbs_whatever_it_declared() {
   local m w n=0 hold
   # Six windows per poll: a loaded runner needs far longer than the default cycle budget.
@@ -967,7 +986,7 @@ test_silent_worker_climbs_whatever_it_declared() {
     prime_status_seen "$m/state" "$m/state/${w%%:*}.status"
   done
   printf 'kind=squad_lead\nmode=squad_lead\nbackend=tmux\nwindow=fake:5\nharness=claude\nhome=%s\n' "$m/lead-home" > "$m/state/ld.meta"
-  PANES='1 2 3 4 5 6' cycle "$m"
+  settle_silent_seen "$m"
   # Everything has been silent for 20 minutes except the worker with fresh progress.
   for n in 1 2 3 4 5; do touch -d '-20 minutes' "$m/state/.silent-seen-fake_$n"; done
   for w in sb sp sf sd ld; do touch -d '-20 minutes' "$m/state/$w.status"; prime_status_seen "$m/state" "$m/state/$w.status"; done

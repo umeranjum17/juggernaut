@@ -98,8 +98,10 @@ jg_reaper_table() { # print "pid age ppid comm profile" rows, TAB separated
     dir=''
     while IFS= read -r -d '' arg; do
       case $arg in --user-data-dir=?*) dir=${arg#--user-data-dir=} && break ;; esac
-    done <"$d/cmdline" 2>/dev/null
-    printf '%s\t%s\t%s\t%s\t%s\n' "$pid" "$age" "$ppid" "$comm" "$dir"
+    done 2>/dev/null <"$d/cmdline" # stderr first: a process that exits mid-scan must not print its open error
+    # The reader going away (the sweep was stopped) ends the table: a runner that
+    # ignores SIGPIPE would otherwise walk every remaining process, one write error each.
+    { printf '%s\t%s\t%s\t%s\t%s\n' "$pid" "$age" "$ppid" "$comm" "$dir"; } 2>/dev/null || return 0
   done
 }
 
