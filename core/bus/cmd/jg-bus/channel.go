@@ -99,21 +99,7 @@ func (a *app) noteFailure(what, why string) {
 func post(target, body string, headers map[string]string) (int, string, error) {
 	args := []string{"-sS", "--max-time", "5", "-X", "POST", "--data-binary", "@-", "-w", "\n%{http_code}"}
 	for k, v := range headers {
-		if k != "Authorization" {
-			args = append(args, "-H", k+": "+v)
-		}
-	}
-	// A login never goes on the argument list, where any process on the host can read it:
-	// curl reads those headers from a private file.
-	if login := headers["Authorization"]; login != "" {
-		file, err := os.CreateTemp("", "jg-bus-auth-*")
-		if err != nil {
-			return 0, "", err
-		}
-		defer os.Remove(file.Name())
-		fmt.Fprintf(file, "Authorization: %s\n", login)
-		file.Close()
-		args = append(args, "-H", "@"+file.Name())
+		args = append(args, "-H", k+": "+v)
 	}
 	args = append(args, target)
 	cmd := exec.Command("curl", args...)
@@ -135,24 +121,9 @@ func post(target, body string, headers map[string]string) (int, string, error) {
 // ok2xx reports an accepted HTTP status.
 func ok2xx(status int) bool { return status >= 200 && status < 300 }
 
-// deliverToNtfy sends one event to the captain's topic and returns ntfy's own answer (its
-// message id). publish makes it for an event the bus did not take.
-func (a *app) deliverToNtfy(text string) (target, id string, err error) {
-	target = a.ntfyURL()
-	headers := map[string]string{"Title": clampChars(firstLine(text), 120),
-		"Tags": a.cfgOr("ntfy-tag", ""), "Authorization": a.ntfyAuthHeader()}
-	status, out, perr := post(target, text, headers)
-	if perr != nil {
-		return target, "", fmt.Errorf("%s", detail(out))
-	}
-	if !ok2xx(status) {
-		return target, "", fmt.Errorf("ntfy answered HTTP %d: %s", status, detail(out))
-	}
-	var reply struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal([]byte(out), &reply)
-	return target, reply.ID, nil
+// busTarget is the sidecar's publish address, which the subject follows.
+func (a *app) busTarget() string {
+	return strings.TrimRight(a.cfgOr("dapr-http-url", ""), "/") + "/v1.0/publish/" + a.cfgOr("dapr-pubsub", "")
 }
 
 // noteUndelivered names a delivery that did not arrive, with its error.
@@ -194,8 +165,7 @@ func (a *app) publish(args []string) int {
 	} else if err := appendLine(a.record, doc); err != nil {
 		a.noteFailure("record", err.Error())
 	}
-	target := strings.TrimRight(a.cfgOr("dapr-http-url", ""), "/") +
-		"/v1.0/publish/" + a.cfgOr("dapr-pubsub", "") + "/" + subject
+	target := a.busTarget() + "/" + subject
 	status, out, err := post(target, doc, map[string]string{"Content-Type": "application/json"})
 	accepted := err == nil && ok2xx(status)
 	if !accepted {
@@ -204,16 +174,10 @@ func (a *app) publish(args []string) int {
 		}
 		a.noteFailure("bus "+subject, out)
 	}
-	if mode != "live" || accepted || isChatEvent(subject) {
-		// Live and accepted: the event is on the CAPTAIN stream, which is where a
-		// reader of the captain's channel takes it from.
-		return 0
-	}
-	// The bus did not take the event, so the stream never holds it: deliver it directly
-	// rather than lose a captain-facing event.
-	if delivery, _, err := a.deliverToNtfy(text); err != nil {
-		a.noteFailure("ntfy", err.Error())
-		a.noteUndelivered(delivery, err.Error(), doc)
+	if mode == "live" && !accepted && !isChatEvent(subject) {
+		// The bus did not take the event, so the stream never holds it: name it, with the
+		// event itself, so a reader of the undelivered record can send it again.
+		a.noteUndelivered(target, out, doc)
 	}
 	return 0
 }
@@ -307,9 +271,9 @@ func (a *app) config(args []string) int {
 func (a *app) status() int {
 	target := "none"
 	if a.channelMode() == "live" {
-		target = a.ntfyURL()
+		target = a.busTarget()
 	}
-	fmt.Printf("mode %s, relay %s, delivery %s\n", a.channelMode(), a.cfgOr("ntfy-relay", ""), target)
+	fmt.Printf("mode %s, delivery %s\n", a.channelMode(), target)
 	fmt.Printf("record %s: %d event(s), %d undelivered\n", a.record, countLines(a.record), countLines(a.undelivered))
 	for _, name := range []string{"nats", "dapr"} {
 		fmt.Printf("%s: %s\n", name, a.serviceState(name))
@@ -391,8 +355,8 @@ func unitState(unit string) (load, active string, ok bool) {
 // unit prints the systemd user service for one part of the stack a home installs once,
 // so it is up after every boot and restart without anyone typing a command: `nats`
 // (the default) runs the server itself, not `serve`, which only starts services and
-// exits, and creates the stream right after it starts; `dapr` and `ntfy` run their
-// own binary in the foreground, the same argv `serve` starts them with.
+// exits, and creates the stream right after it starts; `dapr` runs its
+// own binary in the foreground, the same argv `serve` starts it with.
 func (a *app) unit(args []string) int {
 	part := "nats"
 	if len(args) > 0 {
@@ -484,14 +448,6 @@ func (a *app) buildUnit(part string) (string, error) {
 		fmt.Fprintf(&b, "Description=Juggernaut message bus sidecar (Dapr over NATS)\n")
 		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
 		a.unitService(&b, quote, percent, quoteAll(quote, a.daprArgv(path)))
-	case "ntfy":
-		path, err := exec.LookPath("ntfy")
-		if err != nil {
-			return "", fmt.Errorf("no ntfy on PATH")
-		}
-		fmt.Fprintf(&b, "Description=Juggernaut captain channel delivery (ntfy, loopback)\n")
-		fmt.Fprintf(&b, "After=network.target\n\n")
-		a.unitService(&b, quote, percent, quoteAll(quote, a.ntfyArgv(path)))
 	case "gateway":
 		self, err := os.Executable()
 		if err != nil {
@@ -503,7 +459,7 @@ func (a *app) buildUnit(part string) (string, error) {
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_BUS_ROOT="+a.root))
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_STATE_OVERRIDE="+a.state))
 	default:
-		return "", fmt.Errorf("unit: unknown part %q (nats, wake-engine, wake-watcher, router, dapr, ntfy, gateway)", part)
+		return "", fmt.Errorf("unit: unknown part %q (nats, wake-engine, wake-watcher, router, dapr, gateway)", part)
 	}
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	return b.String(), nil

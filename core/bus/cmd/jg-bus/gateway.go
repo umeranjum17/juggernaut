@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,8 +24,10 @@ import (
 // the cursor after it; the caller commits that cursor only once every item is filed.
 type Adapter interface {
 	Name() string
-	Limit() int // the longest text one message may hold
+	Limit() int        // the longest text one message may hold
+	FetchLimit() int64 // the largest file Fetch can download
 	Receive(ctx context.Context, cursor string) ([]Inbound, string, error)
+	Fetch(ctx context.Context, m MediaRef, w io.Writer) (int64, error)
 	Send(ctx context.Context, out Outbound) (string, error)
 }
 
@@ -32,6 +35,7 @@ type Adapter interface {
 type Inbound struct {
 	UpdateID, Chat, From, Message, Text string
 	Private, FromBot                    bool
+	Media                               []MediaRef
 }
 
 // redact hides the bot token: the Bot API puts it in the URL and a Go *url.Error prints the URL,
@@ -68,7 +72,9 @@ func (t *telegram) Receive(ctx context.Context, cursor string) ([]Inbound, strin
 			Message  *struct {
 				MessageID int64  `json:"message_id"`
 				Text      string `json:"text"`
-				From      struct {
+				Caption   string `json:"caption"`
+				tgMedia
+				From struct {
 					ID    int64 `json:"id"`
 					IsBot bool  `json:"is_bot"`
 				} `json:"from"`
@@ -88,6 +94,10 @@ func (t *telegram) Receive(ctx context.Context, cursor string) ([]Inbound, strin
 		if m := u.Message; m != nil {
 			in.Chat, in.From, in.FromBot = strconv.FormatInt(m.Chat.ID, 10), strconv.FormatInt(m.From.ID, 10), m.From.IsBot
 			in.Message, in.Text, in.Private = strconv.FormatInt(m.MessageID, 10), m.Text, m.Chat.Type == "private"
+			if in.Text == "" {
+				in.Text = m.Caption
+			}
+			in.Media = m.refs()
 		}
 		out, cursor = append(out, in), strconv.FormatInt(u.UpdateID+1, 10)
 	}
@@ -104,11 +114,12 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return nil
 	}
 	head := fmt.Sprintf("[chat %s %s:%s]", ad.Name(), in.Chat, in.Message)
-	if in.Text == "" {
-		in.Text = "(no text: this gateway receives text only so far)"
+	files := a.fetchMedia(ad, in)
+	if in.Text == "" && len(files) == 0 {
+		in.Text = "(no text: this message has nothing the gateway can read yet)"
 	}
 	id := fmt.Sprintf("tg-%s-%s", in.Chat, in.Message)
-	out, err := a.inbox(head+"\n"+in.Text+"\n", "note", "--request-id", id, "--json", "-")
+	out, err := a.inbox(strings.Join(append([]string{head, in.Text}, files...), "\n")+"\n", "note", "--request-id", id, "--json", "-")
 	var res struct{ Outcome, ID string }
 	if err != nil || json.Unmarshal(out, &res) != nil {
 		return fmt.Errorf("jg-inbox note %s was not filed: %v", id, err)
@@ -236,7 +247,7 @@ func (a *app) gateway(args []string) int {
 	}
 }
 
-// isChatEvent is a chat event's subject: it stays on the stream and is never sent to ntfy.
+// isChatEvent is a chat event's subject: it stays on the stream and is never named undelivered.
 func isChatEvent(subject string) bool {
 	return strings.HasSuffix(subject, ".inbound") || strings.HasSuffix(subject, ".chat")
 }
