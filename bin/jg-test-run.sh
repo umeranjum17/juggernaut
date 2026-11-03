@@ -693,6 +693,7 @@ tests/jg-bus-leaf-parity.test.sh 10999
 tests/jg-bus.test.sh 86
 tests/jg-bootstrap.test.sh 129297
 tests/jg-browser-reaper.test.sh 2004
+tests/jg-stray-nats-reap.test.sh 2117
 tests/jg-calm-home-links.test.sh 525
 tests/jg-chat-answer-card.test.sh 1536
 tests/jg-ci-required.test.sh 465
