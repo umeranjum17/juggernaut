@@ -143,7 +143,7 @@ while read -r tool spec _; do
   changed=$((changed + 1))
 done < "$(jg_pin_file)"
 
-# 4b. The services: the bus, the sidecar and ntfy, installed, enabled and started by the one command.
+# 4b. The services: the bus and the sidecar, installed, enabled and started by the one command.
 if [ "$DRY" = yes ]; then
   say "stack: would run bin/jg-stack.sh up"
 else

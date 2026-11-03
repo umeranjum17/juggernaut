@@ -58,7 +58,7 @@ snapshot() { # <label>
 }
 
 echo "== processes"
-ps -eo pid=,comm=,args= | awk '$2 ~ /^(nats-server|jg-bus|jg-wake-engine|jg-router|ntfy|daprd)$/' \
+ps -eo pid=,comm=,args= | awk '$2 ~ /^(nats-server|jg-bus|jg-wake-engine|jg-router|daprd)$/' \
   | cut -c1-150 || true
 echo "== server $URL, home $HOME_DIR"
 before=$(snapshot before); echo "$before"
