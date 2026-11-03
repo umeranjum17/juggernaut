@@ -32,6 +32,7 @@ type mediaFile struct {
 	SHA256 string `json:"sha256"`
 	Mime   string `json:"mime"`
 	Bytes  int64  `json:"bytes"`
+	kind   string // image, file, audio or video; for the round-trip record, not the event
 }
 
 type tgFile struct {
@@ -186,7 +187,7 @@ func (a *app) storeMedia(ad Adapter, m MediaRef) (mediaFile, error) {
 	} else if err := os.Rename(tmp.Name(), final); err != nil {
 		return mediaFile{}, err
 	}
-	return mediaFile{Path: final, SHA256: hash, Mime: m.Mime, Bytes: n}, nil
+	return mediaFile{Path: final, SHA256: hash, Mime: m.Mime, Bytes: n, kind: m.Kind}, nil
 }
 
 // mediaExt is the stored file's extension: the sender's own, else one for the type, else bin.

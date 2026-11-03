@@ -133,11 +133,25 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 	if err := appendLine(filepath.Join(a.state, "captain-chat", "inbound.jsonl"), toJSON(map[string]string{"adapter": ad.Name(), "note": res.ID, "chat": in.Chat, "message": in.Message})); err != nil {
 		return err
 	}
+	a.recordInboundLegs(res.ID, in, stored)
 	if res.Outcome == "created" { // a replay already announced its event
 		a.emit("inbound", id, head, "", stored)
 		a.refuseLarge(ad, in)
 	}
 	return nil
+}
+
+// recordInboundLegs notes which legs of the round trip this filed message proves: a text-only
+// message is the text leg, and each stored picture or file is its own leg.
+func (a *app) recordInboundLegs(note string, in Inbound, stored []mediaFile) {
+	if len(in.Media) == 0 && in.Text != "" {
+		a.recordLeg("in-text", note)
+	}
+	for _, f := range stored {
+		if f.kind == "image" || f.kind == "file" {
+			a.recordLeg("in-"+f.kind, note)
+		}
+	}
 }
 
 // pollOnce files every update from the committed cursor, then commits the cursor: a crash replays
@@ -194,8 +208,11 @@ func (a *app) readTokenFile() (token, file string, present bool, err error) {
 // records the owner's id, `setup` is the guided first-time path, `status` reports, `enabled` is the service wiring's silent question.
 // With no token file every subcommand but `status` does nothing.
 func (a *app) gateway(args []string) int {
+	if len(args) == 2 && args[0] == "status" && args[1] == "--row" {
+		return a.gatewayRow()
+	}
 	if len(args) != 1 || !slices.Contains([]string{"--once", "serve", "pair", "status", "enabled", "setup"}, args[0]) {
-		return die("gateway needs --once, serve, pair, status, enabled or setup")
+		return die("gateway needs --once, serve, pair, status [--row], enabled or setup")
 	}
 	if args[0] == "setup" { // opt-in only: nothing but the user's own command reaches it
 		return a.setup(os.Stdin)
@@ -237,6 +254,9 @@ func (a *app) gateway(args []string) int {
 		}()
 	}
 	for {
+		if !once {
+			a.beat(ad)
+		}
 		err := a.pollOnce(ad, allow)
 		if once && err == nil {
 			err = a.followReplies(ad)
