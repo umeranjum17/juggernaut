@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -446,19 +447,48 @@ func (a *app) ensureStream() error {
 }
 
 // natsAuth is the client login for this home's account when its credentials exist (the
-// unit's server refuses an empty user), and nothing for a bare server.
-func (a *app) natsAuth() []string {
+// unit's server refuses an empty user), and nothing for a bare server. The login is a nats
+// context file beside the password file, mode 0600, rewritten from that file whenever it
+// differs, and the client reads it at start: on the argument list the password showed in
+// `ps` to every user on the machine for each 30-second wait of the captain-ntfy consumer.
+func (a *app) natsAuth() ([]string, error) {
 	name, pass, ok := a.credentials()
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	// The `=` form keeps a password that begins with a dash from being read as a flag.
-	return []string{"--user=" + name, "--password=" + pass}
+	path := filepath.Join(a.runtime, "nats-context.json")
+	text, err := json.Marshal(map[string]string{"user": name, "password": pass})
+	if err != nil {
+		return nil, err
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 || readFileString(path) != string(text) {
+		tmp, err := os.CreateTemp(a.runtime, ".nats-context-*") // CreateTemp makes it 0600
+		if err != nil {
+			return nil, fmt.Errorf("cannot write the nats login to %s: %v", path, err)
+		}
+		_, werr := tmp.Write(text)
+		cerr := tmp.Close()
+		if werr == nil && cerr == nil {
+			werr = os.Rename(tmp.Name(), path)
+		}
+		if werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			os.Remove(tmp.Name())
+			return nil, fmt.Errorf("cannot write the nats login to %s: %v", path, werr)
+		}
+	}
+	return []string{"--context=" + path}, nil
 }
 
 // streamExists is the read-only check: 0 when the stream is on the server, else 1.
 func (a *app) streamExists() int {
-	args := append(a.natsAuth(), "-s", a.cfgOr("nats-url", ""), "stream", "info", a.streamName())
+	args, err := a.natsArgs("stream", "info", a.streamName())
+	if err != nil {
+		say("stream: %v", err)
+		return 1
+	}
 	if exec.Command("nats", args...).Run() != nil {
 		return 1
 	}

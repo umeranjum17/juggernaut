@@ -32,9 +32,10 @@ stream=$("$BUS" config stream) || exit 1
 nats_url=$("$BUS" config nats-url)
 ntfy_server=$("$BUS" config ntfy-server)
 topic=$("$BUS" config ntfy-topic)
-auth=(); acct=$("$BUS" account 2>/dev/null | cut -f1)
-[ -z "$acct" ] || [ ! -s "$STATE/bus/$acct.pass" ] || auth=(--user "$acct" --password "$(tr -d '\n' < "$STATE/bus/$acct.pass")")
-nats_cli() { nats "${auth[@]}" -s "$nats_url" "$@"; }
+# The login travels in NATS_USER and NATS_PASSWORD, never on the argument list, where `ps` shows it.
+nats_user=${NATS_USER:-} nats_pass=${NATS_PASSWORD:-}; acct=$("$BUS" account 2>/dev/null | cut -f1)
+[ -z "$acct" ] || [ ! -s "$STATE/bus/$acct.pass" ] || { nats_user=$acct; nats_pass=$(tr -d '\n' < "$STATE/bus/$acct.pass"); }
+nats_cli() { NATS_USER=$nats_user NATS_PASSWORD=$nats_pass nats -s "$nats_url" "$@"; }
 
 counts() {  # one line: stream messages, consumer delivered / acked / pending
   local s c
