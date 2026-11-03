@@ -689,6 +689,7 @@ tests/jg-behavior-determinism.test.sh 22547
 tests/jg-board-answers.test.sh 6382
 tests/jg-board-asks.test.sh 643
 tests/jg-board-gate.test.sh 2029
+tests/jg-bus-gateway.test.sh 8000
 tests/jg-bus-leaf-parity.test.sh 10999
 tests/jg-bus.test.sh 86
 tests/jg-bootstrap.test.sh 129297
