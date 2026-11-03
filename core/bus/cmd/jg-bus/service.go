@@ -364,7 +364,7 @@ func (a *app) startOne(quiet bool, name string, argv ...string) {
 	}
 	pid := cmd.Process.Pid
 	_ = cmd.Process.Release()
-	_ = os.WriteFile(filepath.Join(a.runtime, name+".pid"), []byte(fmt.Sprintf("%d\n", pid)), 0o644)
+	_ = writePid(filepath.Join(a.runtime, name+".pid"), pid)
 	if !quiet {
 		say("%s: started (%d), log %s", name, pid, logPath)
 	}
