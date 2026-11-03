@@ -2,6 +2,7 @@
 """Bound Main's context at wake time without losing the record (docs/context-bound.md).
 
   turns <transcript>      one JSON line per turn (the token audit's counter), then a summary line
+  rates [--since EPOCH] [--until EPOCH] <transcript>...   wakes per hour of one home, from its session records
   emit [--state DIR]      SessionStart(compact) payload on stdin: history path + captain's words verbatim
   settings [--window N]   a lab --settings file with the shipped bound;  find <session-id>: its transcript
 """
@@ -83,6 +84,40 @@ def cmd_turns(args):
                       "compactions": sum(r["compacted"] for r in rows)}))
 
 
+def stamp(rec):
+    """The record's time as epoch seconds, or None."""
+    value = rec.get("timestamp")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return time.mktime(time.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone
+        except ValueError:
+            return None
+    return None
+
+
+def cmd_rates(args):
+    """Wake turns per hour, counted with the same marker as `turns`. The hours are the span in
+    which the home was running (first to last record in the window), minus idle gaps over an hour,
+    so a session that sat closed overnight does not dilute the rate."""
+    wakes, times = 0, []
+    for path in args.transcripts:
+        for rec in records(path):
+            at = stamp(rec)
+            if at is None or (args.since and at < args.since) or (args.until and at > args.until):
+                continue
+            times.append(at)
+            text = turn_text(rec)
+            if text is not None and kind(text) == "wake":
+                wakes += 1
+    times.sort()
+    active = sum(min(b - a, 3600) for a, b in zip(times, times[1:]))
+    hours = active / 3600
+    print(json.dumps({"files": len(args.transcripts), "wakes": wakes, "active_hours": round(hours, 2),
+                      "wakes_per_hour": round(wakes / hours, 2) if hours else 0}))
+
+
 def cmd_emit(args):
     try:
         path = json.loads(sys.stdin.read() or "{}").get("transcript_path") or ""
@@ -136,6 +171,11 @@ def main():
     p = sub.add_parser("turns")
     p.add_argument("transcript")
     p.set_defaults(fn=cmd_turns)
+    p = sub.add_parser("rates")
+    p.add_argument("--since", type=float)
+    p.add_argument("--until", type=float)
+    p.add_argument("transcripts", nargs="+")
+    p.set_defaults(fn=cmd_rates)
     p = sub.add_parser("emit")
     p.add_argument("--state")
     p.add_argument("--max-chars", type=int, default=4000)

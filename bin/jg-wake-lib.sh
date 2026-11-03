@@ -2444,6 +2444,19 @@ _jg_wake_realert_record() {
   jg_wake_core realert-record "$1" "$2" "$3" 2>/dev/null || true
 }
 
+# jg_wake_digest_due [mark]: the batched digest. Prints how many queued rows wait for a turn and
+# exits 0 once the rule file's `set digest-minutes` has passed since the last digest and at least
+# one row waits; exits 1 otherwise, so an empty digest is never sent. `mark` records this digest.
+jg_wake_digest_due() {
+  jg_wake_core digest "$@" 2>/dev/null
+}
+
+# jg_wake_fleet_fp_record: remember what the fleet looks like now, which the `@fleet-unchanged`
+# rule condition compares the next heartbeat against.
+jg_wake_fleet_fp_record() {
+  jg_wake_core fleet-fp-record 2>/dev/null || true
+}
+
 # _jg_wake_settled_locked <kind> <key> <payload>: the record-only class, readable with
 # bin/jg-wake.sh settled. It never reaches the queue.
 _jg_wake_settled_locked() {

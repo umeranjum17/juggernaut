@@ -274,6 +274,8 @@ func (e env) cond(cond, key, payload string, depth int) bool {
 			}
 		}
 		return true
+	case "fleet-unchanged":
+		return e.fleetUnchanged()
 	case "watcher-alive":
 		// A live watcher holds this home's watcher lock, so an old beacon is its predecessor's and
 		// nothing is left unwatched.

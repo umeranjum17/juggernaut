@@ -1455,7 +1455,7 @@ test_arm_propagates_immediate_wake_before_confirmation() {
   check_file="$state/task.check.sh"
   cat > "$check_file" <<'SH'
 #!/usr/bin/env bash
-printf 'merged: https://example.test/pr/7\n'
+printf 'failed: https://example.test/pr/7\n'
 SH
   chmod 0700 "$check_file"
   JG_STATE_OVERRIDE="$state" "$ROOT/bin/jg-check-register.sh" task >/dev/null \
@@ -1469,10 +1469,10 @@ SH
   # settles (issue #2844).
   PATH="$fakebin:$PATH" JG_STATE_OVERRIDE="$state" JG_GUARD_GRACE=0 JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=0 JG_HEARTBEAT=999999 JG_ARM_CONFIRM_TIMEOUT=60 "$WATCH_ARM" > "$armout" || rc=$?
   [ "$rc" -eq 0 ] || fail "arm returned non-zero for an immediate wake (status $rc): $(cat "$armout")"
-  grep -F "check: $check_file: merged: https://example.test/pr/7" "$armout" >/dev/null || fail "arm did not propagate the immediate check wake"
+  grep -F "check: $check_file: failed: https://example.test/pr/7" "$armout" >/dev/null || fail "arm did not propagate the immediate check wake"
   ! grep -qF 'watcher: FAILED' "$armout" || fail "arm printed FAILED after a valid immediate wake"
   JG_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" || fail "drain after immediate arm wake failed"
-  grep "$(printf '\tcheck\t')" "$drain_out" | grep -F "$check_file" | grep -F 'merged: https://example.test/pr/7' >/dev/null || fail "immediate check wake was not queued"
+  grep "$(printf '\tcheck\t')" "$drain_out" | grep -F "$check_file" | grep -F 'failed: https://example.test/pr/7' >/dev/null || fail "immediate check wake was not queued"
   pass "arm propagates an immediate watcher wake before confirmation"
 }
 
@@ -1626,7 +1626,7 @@ test_cycle_exit_ledger_links_successor_and_stays_bounded() {
   check_file="$state/task.check.sh"
   cat > "$check_file" <<'SH'
 #!/usr/bin/env bash
-printf 'done: synthetic cycle\n'
+printf 'failed: synthetic cycle\n'
 SH
   chmod 0700 "$check_file"
   JG_STATE_OVERRIDE="$state" "$ROOT/bin/jg-check-register.sh" task >/dev/null \

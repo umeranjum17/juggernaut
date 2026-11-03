@@ -1,7 +1,7 @@
-check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one - start the top ready item now, or record why it waits	now
-check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one beta-two - start the top ready item now, or record why it waits	now
-check	jg-bus-probe	check: bus probe	now
-signal	task1	watcher fired	now
+check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one - start the top ready item now, or record why it waits	batch
+check	ready-work	check: ready work waiting with free lane slots (0/4 open): alpha-one beta-two - start the top ready item now, or record why it waits	batch
+check	jg-bus-probe	check: bus probe	batch
+signal	task1	watcher fired	batch
 check	mail:10001/42	check: mail 42 - mail from alice@example.com - Hello	now
 check	mail:30003/77	check: mail 77 - mail from alice@example.com - Hello	now
 check	mail:40004/77	check: mail 77 - mail from bob@example.com - Again	now
@@ -13,13 +13,13 @@ check	mail:90009/44	check: mail 44 - mail from alice@example.com - Hello	now
 check	mail:90009/42	check: mail 42 - mail from alice@example.com - Hello	now
 check	mail:90009/66	check: mail 66 - mail from  - no subject	now
 check	mail:90009/alice@example.com	check: mail alice@example.com - mail from  - no subject	now
-signal	lane.status	signal: /tmp/jg-test-run.ZGUoYr/w3/tmp/jg-watch-handoff.Yg2tVU/handoff/state/lane.status	now
-signal	task-w1.status	signal: /tmp/jg-test-run.ZGUoYr/w5/tmp/jg-wake-daemon-e2e.Hv8Omw/wd-lifecycle/state/task-w1.status	now
+signal	lane.status	signal: /tmp/jg-test-run.ZGUoYr/w3/tmp/jg-watch-handoff.Yg2tVU/handoff/state/lane.status	batch
+signal	task-w1.status	signal: /tmp/jg-test-run.ZGUoYr/w5/tmp/jg-wake-daemon-e2e.Hv8Omw/wd-lifecycle/state/task-w1.status	batch
 stale	crew:gone	stale: crew:gone	now
-signal	lane.status	signal: /tmp/jg-test-run.ZGUoYr/w3/tmp/jg-watch-handoff.Yg2tVU/cleaned/state/lane.status	now
-signal	crew.remote	signal: crew.remote	now
-signal	lane-b.status	signal: lane-b finished	now
-signal	lane.status	signal: lane.status	now
+signal	lane.status	signal: /tmp/jg-test-run.ZGUoYr/w3/tmp/jg-watch-handoff.Yg2tVU/cleaned/state/lane.status	batch
+signal	crew.remote	signal: crew.remote	batch
+signal	lane-b.status	signal: lane-b finished	batch
+signal	lane.status	signal: lane.status	batch
 stale	crew:live	stale: crew:live	now
 check	waiting-timer-home-lane-g1793547195-wait-owner	check: waiting-state lane (blocked key=wait, observed 900s, level=owner; Main must recheck and unblock) id=waiting-timer-home-lane-g1793547195-wait source=[blocked [key=wait]: external condition]	now
 check	waiting-timer-home-paused-g1793528095-default-owner	check: waiting-state paused (paused, observed 20003s, level=owner; Main must recheck and unblock) id=waiting-timer-home-paused-g1793528095-default source=[paused [at=1793528095]: waiting on the pipeline run]	now
@@ -32,9 +32,9 @@ check	mail:90009/94	check: mail 94 - mail from alice@example.com - M	now
 check	mail:90009/95	check: mail 95 - mail from alice@example.com - M	now
 check	mail:90009/78	check: mail 78 - mail from from@x - Hello	now
 check	mail:90009/7	check: mail 7 - mail from from@x - new mail	now
-signal	lane.status	signal: /tmp/jg-test-run.Qxb9Tp/w8/tmp/jg-watch-handoff.teKb2W/handoff/state/lane.status	now
-signal	lane.status	signal: /tmp/jg-test-run.Qxb9Tp/w8/tmp/jg-watch-handoff.teKb2W/cleaned/state/lane.status	now
-signal	task-w1.status	signal: /tmp/jg-test-run.Qxb9Tp/w10/tmp/jg-wake-daemon-e2e.4pYwI0/wd-lifecycle/state/task-w1.status	now
+signal	lane.status	signal: /tmp/jg-test-run.Qxb9Tp/w8/tmp/jg-watch-handoff.teKb2W/handoff/state/lane.status	batch
+signal	lane.status	signal: /tmp/jg-test-run.Qxb9Tp/w8/tmp/jg-watch-handoff.teKb2W/cleaned/state/lane.status	batch
+signal	task-w1.status	signal: /tmp/jg-test-run.Qxb9Tp/w10/tmp/jg-wake-daemon-e2e.4pYwI0/wd-lifecycle/state/task-w1.status	batch
 check	waiting-timer-home-lane-g1793548602-wait-owner	check: waiting-state lane (blocked key=wait, observed 900s, level=owner; Main must recheck and unblock) id=waiting-timer-home-lane-g1793548602-wait source=[blocked [key=wait]: external condition]	now
 check	waiting-timer-home-paused-g1793529502-default-owner	check: waiting-state paused (paused, observed 20005s, level=owner; Main must recheck and unblock) id=waiting-timer-home-paused-g1793529502-default source=[paused [at=1793529502]: waiting on the pipeline run]	now
 check	waiting-timer-home-blocked-g1793548602-herdr-blocked-owner	check: waiting-state blocked (herdr-blocked, observed 909s, level=owner; Main must recheck and unblock) id=waiting-timer-home-blocked-g1793548602-herdr-blocked source=[herdr-blocked]	now
@@ -48,8 +48,8 @@ signal	task-z.status	needs-decision: pick a library	now
 signal	task-r	done: queued after startup	now
 signal	task-r	done: queued after the re-emit too	now
 check	procevent:symlinked-src:1	check: procevent blocking symlinked-src 1	now
-signal	task-w1.status	signal: /tmp/jg-wake-daemon-e2e.tqDkZh/wd-lifecycle/state/task-w1.status	now
+signal	task-w1.status	signal: /tmp/jg-wake-daemon-e2e.tqDkZh/wd-lifecycle/state/task-w1.status	batch
 check	merged-sample-missing-pr-authority-https://github.com/sample/sample/pull/43	check: merge landed: sample-missing-pr-authority https://github.com/sample/sample/pull/43	batch
-check	fleet-autosync-stale-primary	check: fleet autosync left primary 1 behind: on fm/fix-behavior-watcher-lock-hold, expected main	now
+check	fleet-autosync-stale-primary	check: fleet autosync left primary 1 behind: on fm/fix-behavior-watcher-lock-hold, expected main	batch
 check	merged-sample-teardown-race-pr-https://github.com/sample/sample/pull/33	check: merge landed: sample-teardown-race-pr https://github.com/sample/sample/pull/33	batch
 check	merged-sample-released-merge-https://github.com/sample/sample/pull/32	check: merge landed: sample-released-merge https://github.com/sample/sample/pull/32	batch

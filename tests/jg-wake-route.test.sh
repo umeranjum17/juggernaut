@@ -18,7 +18,7 @@ test_classes() {
   mkdir -p "$state"
   assert_equals "$(route "$home" "$state" signal crew.turn-ended 'signal: x')" batch \
     "a turn-end must be batched, not woken on"
-  assert_equals "$(route "$home" "$state" check startup 'check: MISSING')" now \
+  assert_equals "$(route "$home" "$state" check startup-network 'check: MISSING')" now \
     "a startup failure must wake at once"
   assert_equals "$(route "$home" "$state" check "$state/board-gate.check.sh" \
     "check: $state/board-gate.check.sh: board ask routed to Overwatch, not a must: ask-mac-screen-grant - Allow screen recording? (record owd-1)")" batch \

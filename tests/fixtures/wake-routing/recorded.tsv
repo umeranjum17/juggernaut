@@ -1,4 +1,4 @@
-now	check	contributions.check.sh	check: contributions.check.sh: contributions: observation unavailable for https://github.com/umeranjum17/takeone/pull/280
+batch	check	contributions.check.sh	check: contributions.check.sh: contributions: observation unavailable for https://github.com/umeranjum17/takeone/pull/280
 silent	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 0s - 1 open wait(s) climbing their ladder, 20 paused wait(s)
 batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 0s - 1 ready, 2 of 6 lanes working, 18 paused wait(s)
 batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons GAP for 0s - 1 ready, 5 of 6 lanes working, 17 paused wait(s)
@@ -12,12 +12,12 @@ batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet hear
 batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: firstmate-addons MOVING again
 batch	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: overwatch PAUSED again fleet heartbeat: takeone PAUSED again fleet heartbeat: sign-off PAUSED again fleet heartbeat: firstmate-addons MOVING again
 silent	check	fleet-heartbeat.check.sh	check: fleet-heartbeat.check.sh: fleet heartbeat: sign-off GAP for 2873s - 1 open wait(s) climbing their ladder
-now	check	fleet-pulse.check.sh	check: fleet-pulse.check.sh: fleet-pulse 2h (landings = merged PRs; open target 4, ! = over, UNDER = free slots with ready work; rule words 8602): crewhouse:landed0/open1(w0 done0 asks>2h0 dry=1) writ
-now	check	fleet-pulse.check.sh	check: fleet-pulse.check.sh: fleet-retro due: last report report.md; spawn the next strong-model fleet retro scout (captain-shared A5)
+batch	check	fleet-pulse.check.sh	check: fleet-pulse.check.sh: fleet-pulse 2h (landings = merged PRs; open target 4, ! = over, UNDER = free slots with ready work; rule words 8602): crewhouse:landed0/open1(w0 done0 asks>2h0 dry=1) writ
+batch	check	fleet-pulse.check.sh	check: fleet-pulse.check.sh: fleet-retro due: last report report.md; spawn the next strong-model fleet retro scout (captain-shared A5)
 now	check	key-in-env-check.check.sh	check: key-in-env-check.check.sh: key-in-env: 2272 process(es) in 11 home(s) carry a provider API key in their environment (names only): pid 1095 firstmate-cff959/4 captain-ask-go-port-the-wake-lib-an
 now	check	migration-watch.check.sh	check: migration-watch.check.sh: migration-watch: lane port-shell-core-part1-classify-wake has no status change for 129 min - inspect and unblock
 now	check	migration-watch.check.sh	check: migration-watch.check.sh: migration-watch: lane port-shell-core-part1-classify-wake has no status change for 44 min - inspect and unblock
-now	check	migration-watch.check.sh	check: migration-watch.check.sh: migration-watch: no live migration lane on release/c-2 or a feature branch - check whether steps are dispatched or the version branch is ready to merge
+batch	check	migration-watch.check.sh	check: migration-watch.check.sh: migration-watch: no live migration lane on release/c-2 or a feature branch - check whether steps are dispatched or the version branch is ready to merge
 now	check	squad-lead-relaunch-failed-crewhouse-N	check: squad_lead crewhouse auto-relaunch failed after confirmed agent absence on existing endpoint: error: another spawn is already creating task crewhouse
 now	check	squad-lead-supervision-firstmate-addons-N	check: squad_lead firstmate-addons supervision not running while it has work under way; it was told to re-arm, and the wait escalates until it does
 now	check	startup-network	check: startup-network: deferred startup network checks finished (done); read them with jg-startup-network.sh report
