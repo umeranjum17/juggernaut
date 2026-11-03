@@ -91,7 +91,7 @@ for verb in blocked needs-decision; do
     channel="$dir/state/parent-replies.status"
   fi
   printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
-  printf '%s [at=%s] [key=wait]: external condition until 2099-01-01T00:00Z\n' "$verb" "$(date +%s)" > "$dir/state/lane.status"
+  printf '%s [at=%s] [key=wait]: external condition\n' "$verb" "$(date +%s)" > "$dir/state/lane.status"
   prime_status_seen "$dir/state" "$dir/state/lane.status"
   arm_episode "$dir"
   if [ "$verb" = blocked ]; then
@@ -132,7 +132,7 @@ fi
 dir=$(make_case main-escalation)
 mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
 printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
-printf 'blocked [at=%s] [key=wait]: external condition until 2099-01-01T00:00Z\n' "$(date +%s)" > "$dir/state/lane.status"
+printf 'blocked [at=%s] [key=wait]: external condition\n' "$(date +%s)" > "$dir/state/lane.status"
 prime_status_seen "$dir/state" "$dir/state/lane.status"
 arm_episode "$dir"
 IFS=$'\t' read -r sig since _owner _parent key _misses < "$dir/state/.waiting-timers/lane"
@@ -152,6 +152,18 @@ IFS=$'\t' read -r _sig _since _owner parent _key _misses < "$dir/state/.waiting-
 cycle
 [ "$(grep -c 'level=main' "$dir/events")" -eq 1 ] || fail 'Main-owned escalation repeated on a later poll'
 pass 'a Main-owned overdue wait escalates once to Main without paging the captain'
+# A blocked wait that names a clearing time still ahead is a planned wait (the wake classifier's
+# plannedBlocked): the timers arm no episode for it, the same as for a timed pause, and the
+# fixtures above name no time because they stand for a wait with none.
+dir=$(make_case planned-wait)
+mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
+printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
+printf 'blocked [at=%s] [key=wait]: held for the next release until 2099-01-01T00:00Z\n' "$(date +%s)" > "$dir/state/lane.status"
+prime_status_seen "$dir/state" "$dir/state/lane.status"
+cycle
+[ ! -e "$dir/state/.waiting-timers/lane" ] || fail 'a planned blocked wait armed a wait episode'
+! grep -q 'check: waiting-state lane' "$dir/events" || fail 'a planned blocked wait raised a wait alert'
+pass 'a blocked wait with a clearing time still ahead arms no wait episode'
 # Every wait carries a stable identity (home, task, generation, source key); a
 # resolution closes only the wait it names, and escalations print that source.
 dir=$(make_case identity)
@@ -371,7 +383,7 @@ pass 'an immediate native push wake is the episode owner delivery, with no dupli
 dir=$(make_case signals-first)
 mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
 printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane-a.meta"
-printf 'blocked [at=%s] [key=wait]: external condition until 2099-01-01T00:00Z\n' "$(date +%s)" > "$dir/state/lane-a.status"
+printf 'blocked [at=%s] [key=wait]: external condition\n' "$(date +%s)" > "$dir/state/lane-a.status"
 printf 'kind=ship\nbackend=tmux\nwindow=fake:2\n' > "$dir/state/lane-b.meta"
 printf 'working: building\n' > "$dir/state/lane-b.status"
 prime_status_seen "$dir/state" "$dir/state/lane-a.status"
