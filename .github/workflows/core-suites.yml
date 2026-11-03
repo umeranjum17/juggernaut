@@ -275,6 +275,9 @@ jobs:
       # Fixture home, real publisher, no network: a PASS receipt for a pull-request mode must name its PR.
       - name: Completion-receipt publisher test
         run: bash receipts/tests/run-receipt-publisher.test.sh
+      # Real commits in real repositories, forge read stubbed: a closed-unmerged predecessor's rebased copy is rebindable, an altered or incomplete copy is not.
+      - name: Completion-receipt superseded-copy test
+        run: bash receipts/tests/receipt-superseded-copy.test.sh
       - name: No old receipt path test
         run: bash merge-on-green/tests/no-old-receipt-path.test.sh
       # Fixture home and gate logs; no merge runs.
