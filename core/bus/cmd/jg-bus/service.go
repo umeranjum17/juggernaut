@@ -371,7 +371,7 @@ func (a *app) startOne(quiet bool, name string, argv ...string) {
 	}
 }
 
-// daprArgv and ntfyArgv are the one argv each service starts with, shared by `serve`
+// daprArgv is the one argv the sidecar starts with, shared by `serve`
 // and the unit, so a detached start and a supervised one run the same command.
 func (a *app) daprArgv(path string) []string {
 	return []string{path,
@@ -400,10 +400,6 @@ func (a *app) daprResources() string {
 		return shipped
 	}
 	return dir
-}
-
-func (a *app) ntfyArgv(path string) []string {
-	return []string{path, "serve", "-c", a.busFile("ntfy.yml")}
 }
 
 // streamName is the JetStream stream the shipped config file names.
@@ -571,8 +567,8 @@ func (a *app) bootstrap() int {
 }
 
 // ensure starts the server when it is not listening and creates the stream, then says
-// one line. It is idempotent, and it starts nothing but the server: the sidecar and
-// ntfy stay opt-in.
+// one line. It is idempotent, and it starts nothing but the server: the sidecar stays
+// opt-in.
 func (a *app) ensure() int {
 	natsURL := a.cfgOr("nats-url", "")
 	if err := os.MkdirAll(a.runtime, 0o755); err != nil {
@@ -634,10 +630,9 @@ func (a *app) serve() int {
 	return 0
 }
 
-// stop stops the services this home started from their recorded pids. ntfy and deliver are no
-// longer started, but a pid an earlier release recorded is still stopped here.
+// stop stops the services this home started from their recorded pids.
 func (a *app) stop() int {
-	for _, name := range []string{"nats", "wake-engine", "wake-watcher", "router", "dapr", "ntfy", "deliver", "gateway"} {
+	for _, name := range []string{"nats", "wake-engine", "wake-watcher", "router", "dapr", "gateway"} {
 		pidPath := filepath.Join(a.runtime, name+".pid")
 		data, err := os.ReadFile(pidPath)
 		if err != nil {

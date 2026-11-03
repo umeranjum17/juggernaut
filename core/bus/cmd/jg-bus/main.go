@@ -7,8 +7,8 @@
 // WHY THIS EXISTS (migration step 5a, switched live). The fleet reaches the captain
 // through files and alerts scattered across the tree. The decided shape is one captain
 // channel on a bus: the events that are his to see (a decision waiting, an outcome
-// released with its proof link, a blocker, an alert) are published once, delivered to
-// his iPad by ntfy, and his replies come back as events routed to the lead that owns
+// released with its proof link, a blocker, an alert) are published once, to the
+// CAPTAIN stream, and his replies come back as events routed to the lead that owns
 // them. That channel ran in shadow while its parity was proven; `set mode live` is the
 // shipped value now, so a change of state reaches the captain by this path.
 //
@@ -28,22 +28,22 @@
 //	         `config <key>` prints the value in force.
 //	mode     `set mode live` is the one switch that decides what this path does, and
 //	         live is what ships:
-//	           live    record it, publish it, and deliver it to his iPad.
-//	           shadow  record and publish only, so the path observes and nothing he
-//	                   sees changes. This is the one-step reversal.
+//	           live    record it, publish it, and name it undelivered when the bus does not take it.
+//	           shadow  record and publish only, and name nothing undelivered. This is the
+//	                   one-step reversal.
 //	           off     do nothing at all.
 //	record   $STATE/captain-channel.jsonl, one JSON event per line, appended before
 //	         anything is published. An event is never lost to an unreachable bus or an
 //	         absent service, and it is what a replay and a resend read.
 //	publish  Tee one event: record it, publish it to the bus through the Dapr sidecar
 //	         (the component file picks the backend; the code does not know NATS from
-//	         anything else), and, when the mode is live, deliver it to the captain. It
+//	         anything else), and, when the mode is live and the bus does not take it, name it undelivered. It
 //	         never breaks its emitter, because the two callers are today's own delivery
 //	         paths: every transport failure is logged once to $STATE/captain-channel.log
 //	         and the command still exits 0.
-//	undelivered  A live delivery that fails is also appended, with its error, to
+//	undelivered  A live publish the bus does not take is also appended, with its error, to
 //	         $STATE/captain-channel-undelivered.jsonl, and `status` counts them. A live
-//	         path must not lose an event it was going to deliver without saying so.
+//	         path must not lose an event it was going to publish without saying so.
 //	         Nothing retries on its own: the record holds the event and this file names
 //	         the one that did not arrive.
 //	parity   Replay every recorded event through the builder the live path sends with
@@ -52,11 +52,6 @@
 //	         switch flips, so parity reports it instead of diffing it. `--corrupt`
 //	         tampers with one replayed event on the new side only, which the same diff
 //	         must then report, so a green run is never vacuous.
-//	ntfy     Delivery to the captain, at the configured topic. `set ntfy-relay off` is
-//	         the relay switch: off delivers only to the configured local server, on
-//	         sends the same event through ntfy-relay-server. The captain has not
-//	         answered the relay question, so the shipped value is off and no code path
-//	         needs it on.
 //	reply    One captain reply event, JSON {"key","at","answer"[,"label"]}, on stdin or
 //	         in a file. Routing is NOT re-decided here: it is the route
 //	         bin/jg-board-answers.sh already keeps (state/board-routes/<card-key>) and
@@ -77,12 +72,6 @@
 //	owner    Print "self" and exit 0 when this home owns the machine's bus unit (or may take
 //	         it, none being installed); print the owner's home and exit 3 when another
 //	         does. bin/jg-stack.sh asks it before it installs or starts a per-machine part.
-//	ntfy-provision
-//	         The bus owner's one-time ntfy logins, when the server config names an
-//	         auth-file (the shipped one does, with deny-all): `juggernaut` write-only, what
-//	         `deliver` posts with, and `captain` read-only, what his iPad subscribes with.
-//	         Passwords are generated into state/bus/ntfy-<user>.pass (0600) and kept on a
-//	         second run. A config with no auth-file is an open server; nothing is made.
 //	check-limits <config>
 //	         Exit 1, naming the shortfall, when a server config's global JetStream caps
 //	         are below what its accounts reserve. `unit` runs the same check on the
@@ -91,8 +80,8 @@
 //	         one line. What a bootstrap step and docs/bus-service.md run.
 //	unit     Print the systemd user service a home installs once for one part: nats
 //	         (the default) runs the server itself and creates the stream after it
-//	         starts; wake-engine, wake-watcher and router run this command's own consumers; dapr and
-//	         ntfy run their binary in the foreground.
+//	         starts; wake-engine, wake-watcher and router run this command's own consumers; dapr
+//	         runs its binary in the foreground.
 //	registry The machine's member homes live in one list, the owner's state/bus/homes.
 //	         A home that joins appends one line; a temp or worktree test home never
 //	         joins a real machine's list, and a test or a lab names its own list with
@@ -108,8 +97,7 @@
 //	serve    Start the services from their files (nats, wake-engine, wake-watcher, router, dapr), every one of them read as config
 //	         and none re-implemented here: nats-server (core/bus/nats.conf), the
 //	         JetStream stream it carries (core/bus/stream.json), the slim Dapr runtime
-//	         over NATS (core/bus/dapr/components/pubsub.yaml) and ntfy
-//	         (core/bus/ntfy.yml). A home may override any of them under config/bus/.
+//	         over NATS (core/bus/dapr/components/pubsub.yaml). A home may override any of them under config/bus/.
 //	         Pids and logs live in $STATE/bus/, so `stop` and `status` are per home. A
 //	         service whose binary is missing is named and not started; the others still
 //	         run, because the record never depends on them.
@@ -127,7 +115,7 @@
 //	jg-bus gateway --once | serve | pair | status | enabled   (gateway.go and gateway_pair.go own this)
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|ntfy|gateway] | install-service | stop | status | bootstrap
+//	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|gateway] | install-service | stop | status | bootstrap
 //	jg-bus wake-engine | router | probe [wake-engine|wake-watcher|router]   (engine.go owns these)
 //	jg-bus wake-watcher | watcher oldest|resurfaced|latest|rows|replay|rebuild   (watcher.go owns these)
 //
@@ -155,7 +143,6 @@ type app struct {
 	runtime     string
 	record      string
 	undelivered string
-	delivered   string
 	log         string
 	configFiles []string
 	// set by buildUnit for the nats part: what it just rewrote.
@@ -210,8 +197,6 @@ func run(args []string) int {
 		return a.login()
 	case "owner":
 		return a.owner()
-	case "ntfy-provision":
-		return a.ntfyProvision()
 	case "check-limits":
 		return a.checkLimitsCommand(rest)
 	case "ensure":
@@ -260,7 +245,6 @@ func resolve() *app {
 		runtime:     filepath.Join(state, "bus"),
 		record:      filepath.Join(state, "captain-channel.jsonl"),
 		undelivered: filepath.Join(state, "captain-channel-undelivered.jsonl"),
-		delivered:   filepath.Join(state, "captain-channel-delivered.jsonl"),
 		log:         filepath.Join(state, "captain-channel.log"),
 	}
 	a.configFiles = configFilesFor(home, root)
@@ -372,11 +356,6 @@ func (a *app) cfgOr(key, fallback string) string {
 	return fallback
 }
 
-// isOn reports whether one switch key is `on`.
-func (a *app) isOn(key string) bool {
-	return a.cfgOr(key, "") == "on"
-}
-
 // channelMode is what this path does: live, shadow or off. Mode is the one switch.
 func (a *app) channelMode() string {
 	return a.cfgOr("mode", "live")
@@ -389,14 +368,4 @@ func (a *app) busFile(name string) string {
 		return override
 	}
 	return filepath.Join(a.root, "core", "bus", name)
-}
-
-// ntfyURL is the one owner of the relay rule: the local server, or the relay when
-// the captain turns that switch on.
-func (a *app) ntfyURL() string {
-	server := a.cfgOr("ntfy-server", "")
-	if a.isOn("ntfy-relay") {
-		server = a.cfgOr("ntfy-relay-server", "")
-	}
-	return strings.TrimRight(server, "/") + "/" + a.cfgOr("ntfy-topic", "")
 }
