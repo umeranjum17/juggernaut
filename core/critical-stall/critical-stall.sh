@@ -26,7 +26,7 @@ DIR=$FMH/data/critical-stall SEEN=$DIR/seen.tsv ALERTS=$DIR/alerts.jsonl
 ALARM=$FMH/data/jg-merge-on-green/stale-pr-alarm
 NOW=${JG_STALL_NOW:-$(date +%s)}
 BUDGET=$(( ${JG_CHECK_TIMEOUT:-30} / 4 )); [ "$BUDGET" -ge 5 ] || BUDGET=5
-HOURS=$(cat "$FMH/config/critical-stall-hours" 2>/dev/null | tr -dc 0-9); [ "${HOURS:-0}" -gt 0 ] || HOURS=24
+HOURS=$(tr -dc 0-9 2>/dev/null < "$FMH/config/critical-stall-hours"); [ "${HOURS:-0}" -gt 0 ] || HOURS=24
 TAB=$'\t'
 umask 077
 
@@ -72,7 +72,7 @@ while IFS="$TAB" read -r slug first; do
       && record "note.$key"
   }
 
-  board=$(cat "$FMH/config/fleet-board" 2>/dev/null | tr -d "\n")
+  board=$(tr -d "\n" 2>/dev/null < "$FMH/config/fleet-board")
   [ -n "$board" ] && ! recorded "card.$key" || continue
   alarm=$ALARM/$(printf '%s' "${url#https://github.com/}" | sed 's#/pull/#.#; s#/#__#')
   if [ "$url" != - ] && [ -f "$alarm" ] && [ "$(stat -c %Y "$alarm" 2>/dev/null || echo 0)" -gt "$newest" ]; then
