@@ -6,4 +6,10 @@ out=${DONE_DONE_EVIDENCE_ROOT:?}/${DONE_DONE_RUN_ID:-run}.log
 JG_SESSION_START_ONLY=test_finished_lanes_fold_into_one_axi_row bash "$root/tests/jg-session-start.test.sh" > "$out" 2>&1
 rc=$?
 cat "$out"
+cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
+{"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
+ "start": "a throwaway fleet home with one finished lane (done status) and one running lane",
+ "steps": ["run the real session-start digest for that home", "look for the finished lane's juggernaut-axi row", "look for its meta block and status tail", "look for the running lane's meta block and status tail", "look for the juggernaut-axi line in the supervision block"],
+ "result": "the finished lane is one row with no meta block or status tail, the running lane is printed whole, and the supervision block names juggernaut-axi"}
+JSON
 exit "$rc"
