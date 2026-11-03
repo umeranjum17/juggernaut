@@ -576,3 +576,31 @@ run_inbox "$home" drain --ack "$did" >/dev/null || fail "drain --ack failed"
 assert_absent "$home/state/inbox/$did.note" "acked note leaves pending"
 assert_present "$home/state/inbox/handled/$did.note" "acked note is in handled"
 pass "drain --ack still moves the note to handled"
+
+# --- reply --attach ---------------------------------------------------------
+
+home=$(make_home attach)
+mkdir -p "$home/state/inbox"
+printf 'id=1700000000-aaaaaa\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nask\n' > "$home/state/inbox/1700000000-aaaaaa.note"
+printf 'id=1700000000-bbbbbb\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nask\n' > "$home/state/inbox/1700000000-bbbbbb.note"
+printf 'one' > "$home/shot.png"
+printf 'two' > "$home/report file.pdf"
+(cd "$home" && run_inbox "$home" reply 1700000000-aaaaaa --attach shot.png --attach "$home/report file.pdf" -- "with files" >/dev/null) \
+  || fail "reply --attach failed"
+run_inbox "$home" reply 1700000000-bbbbbb "plain" >/dev/null || fail "plain reply failed"
+rec=$(run_inbox "$home" receipts --all-replies) || fail "receipts failed"
+assert_equals "$home/shot.png|$home/report file.pdf" \
+  "$(printf '%s' "$rec" | python3 -c 'import json,sys; print("|".join(json.load(sys.stdin)["replies"][0]["attachments"]))')" \
+  "attachments are recorded absolute, in order, and shown in receipts"
+assert_equals "with files" "$(printf '%s' "$rec" | json_get replies 0 body)" "the text stays the body"
+assert_equals "no" "$(printf '%s' "$rec" | python3 -c 'import json,sys; print("yes" if "attachments" in json.load(sys.stdin)["replies"][1] else "no")')" \
+  "a reply without files has no attachments key"
+printf 'id=1700000000-cccccc\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nask\n' > "$home/state/inbox/1700000000-cccccc.note"
+set +e
+missing=$(run_inbox "$home" reply 1700000000-cccccc --attach "$home/nope.png" "x" 2>&1)
+missing_code=$?
+set -e
+expect_code 1 "$missing_code" "a missing attachment is refused"
+assert_contains "$missing" "nope.png" "the refusal names the file"
+run_inbox "$home" reply 1700000000-cccccc --attach "$home/shot.png" >/dev/null || fail "an attachment alone should be a reply"
+pass "reply --attach records files for the gateway and shows them in receipts"
