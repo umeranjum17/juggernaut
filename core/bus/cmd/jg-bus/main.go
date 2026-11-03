@@ -112,7 +112,7 @@
 //
 //	jg-bus config [<key>]
 //	jg-bus publish <kind> <key> <text> [--link <url>]
-//	jg-bus gateway --once | serve | pair | status | enabled   (gateway.go and gateway_pair.go own this)
+//	jg-bus gateway --once | serve | pair | status | enabled | push <text>   (gateway.go, gateway_pair.go and gateway_push.go own this)
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
 //	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|gateway] | install-service | stop | status | bootstrap
