@@ -105,7 +105,7 @@ func (a *app) pair(ad *telegram) int {
 // It exits non-zero only when a token exists and does not work.
 func (a *app) gatewayStatus(token, file string, present bool, tokErr error) int {
 	if !present || a.channelMode() != "live" {
-		say("gateway: off (no token file at %s, or channel mode is not live)", file)
+		say("gateway: off (no token file at %s, or channel mode is not live); to connect your own Telegram bot run `jg-bus gateway setup`", file)
 		return 0
 	}
 	paired := "not paired; run `jg-bus gateway pair` with the service stopped"

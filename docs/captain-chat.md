@@ -2,12 +2,24 @@
 
 The captain can text Overwatch from Telegram. The channel is optional: a home with no bot token file has no gateway, no service, and no message about it.
 
-## Set up
+## Bring your own bot
 
-1. Make a bot with BotFather. Save its token in `config/captain-chat/telegram.token` (mode 600; a group-readable file is refused).
-2. With the gateway service stopped, run `bin/jg-bus.sh gateway pair`. Send the printed code to the bot in a private chat within 10 minutes. The first person to do so becomes the owner: their id is written as `telegram-allow-user` in `config/captain-channel`. No id is typed or shipped.
-3. Run `bin/jg-stack.sh up`. It installs and starts the `jg-gateway` unit only where the token file exists.
-4. `bin/jg-bus.sh gateway status` shows the owner, the bot (via `getMe`) and the answers sent.
+Every user makes their own Telegram bot. Juggernaut ships no bot, no token and no user id. Setup is a command you choose to run; install and session start never run it or ask for it.
+
+Run `bin/jg-bus.sh gateway setup` (stop the gateway service first if it runs). It takes about two minutes:
+
+1. It explains the BotFather steps: open @BotFather in Telegram, send `/newbot`, choose a name and a username that ends in `bot`, copy the token.
+2. You paste the token. Nothing shows as you type, and the token is never put in a command line, an environment variable or a log.
+3. It asks Telegram `getMe` and prints your bot's username. If Telegram refuses the token, nothing is saved.
+4. It stores the token in `config/captain-chat/telegram.token` with mode 600 (a group-readable file is refused). A token already stored is kept when you press Enter alone.
+5. It pairs you: open the bot, send the printed code in a private chat within 10 minutes. The first person to do so becomes the owner, and their id is written as `telegram-allow-user` in `config/captain-channel`. No id is typed or shipped.
+6. Run `bin/jg-stack.sh up`. It installs and starts the `jg-gateway` unit only where the token file exists.
+
+`bin/jg-bus.sh gateway status` shows the owner, the bot (via `getMe`) and the answers sent. `gateway pair` repeats step 5 alone, for example to change the owner.
+
+## Set up by hand
+
+Save the token in `config/captain-chat/telegram.token` (mode 600), then run steps 5 and 6 above.
 
 ## How it works
 
