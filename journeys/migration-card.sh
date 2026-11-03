@@ -56,6 +56,10 @@ grep -q '16,546 of 31,832' "$LOG" || fails=1
   echo "stdout: '$cadence_out'"
   echo "cards now: $(find "$T/board/reports" -mindepth 1 -maxdepth 1 -type d | wc -l)"
   echo "card now: $(sed -n 's/^card=//p' "$JG_HOME/config/migration-card")"
+  echo "== the push record (epoch, sha1 of part and state, kind)"
+  cat "$JG_HOME/data/migration-card/push.tsv"
+  echo "== the board entry that says whether the phone was reached"
+  sign-off-axi list "$B" --full | grep -o 'Phone push is off[^"]*' | sort -u
   echo "== the part table as the captain reads it"
   grep -o '<tr><td>[^<]*</td><td>[^<]*</td><td>[^<]*' "$T/board/reports/$(sed -n 's/^card=//p' "$JG_HOME/config/migration-card")/index.html"
 } >> "$LOG" 2>&1
@@ -66,6 +70,7 @@ sed -n '/^== live rows/,/^== the cadence/p' "$LOG" | grep -q $'^wake queue\t' ||
 sed -n '/^== live rows/,/^== the cadence/p' "$LOG" | awk -F'\t' 'NF >= 3 && $2 !~ /^(live|pending|absent)$/ { found=1 } END { exit !found }' &&
   { echo "FAIL: a part has no measured state, so the card would leave it blank" >> "$LOG"; fails=1; }
 grep -q "^stdout: ''" "$LOG" || { echo "FAIL: the cadence pass printed a line, which would cost a wake" >> "$LOG"; fails=1; }
+[ "$(cut -f3 "$JG_HOME/data/migration-card/push.tsv" | sort -u | paste -sd,)" = change ] || { echo "FAIL: the first and the changed pass should each record a change push" >> "$LOG"; fails=1; }
 grep -q 'What runs on this machine' "$LOG" || { echo "FAIL: the card carries no live section" >> "$LOG"; fails=1; }
 [ "$fails" = 0 ] || { echo "FAIL: see log" >> "$LOG"; exit 1; }
 {
@@ -82,4 +87,4 @@ grep -q 'What runs on this machine' "$LOG" || { echo "FAIL: the card carries no 
   echo "cadence passes that printed nothing: $(grep -c "^stdout: ''" "$LOG")"
 } > "$T/result"
 cat "$T/result" >> "$LOG"
-jq -n --arg v "$(git -C "$REPO" rev-parse --short HEAD)" '{target: {version: $v}, start: "a board with no migration card posted yet and a release branch with 9,446 lines deleted", steps: ["merge three changes into the release branch, one after another", "read the board and the captain digests after each merge", "probe every part of the stack on this machine and read the card", "run the watcher cadence pass with nothing changed, then with one part changed"], result: "each merge posted a fresh card with the running total against 31,832, the previous card shows as replaced, and a milestone recorded a three-line digest; the card also shows every part of this machine as runs here, pending or not installed, with what was measured, and the cadence pass refreshed it while printing nothing so it costs no wake and no model turn"}' > "$OUT/steps.json"
+jq -n --arg v "$(git -C "$REPO" rev-parse --short HEAD)" '{target: {version: $v}, start: "a board with no migration card posted yet and a release branch with 9,446 lines deleted", steps: ["merge three changes into the release branch, one after another", "read the board and the captain digests after each merge", "probe every part of the stack on this machine and read the card", "run the watcher cadence pass with nothing changed, then with one part changed", "read the push record and whether the card says the phone was reached"], result: "each merge posted a fresh card with the running total against 31,832, the previous card shows as replaced, and a milestone recorded a three-line digest; the card also shows every part of this machine as runs here, pending or not installed, with what was measured, and the cadence pass refreshed it while printing nothing so it costs no wake and no model turn"}' > "$OUT/steps.json"
