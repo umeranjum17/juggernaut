@@ -876,6 +876,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/critical-stall/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/docs/media/README.md",
       "audience": "operator-current"
     },
