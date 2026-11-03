@@ -896,7 +896,6 @@ bus_release_asset() {
     # The workflow engine's timer service; its archive holds a binary named `scheduler`.
     dapr-scheduler) printf 'https://github.com/dapr/dapr/releases/download/v%s/scheduler_%s_%s.tar.gz .tar.gz\n' \
       "$version" "$os" "$arch"; return 0 ;;
-    ntfy) repo=binwiederhier/ntfy; stem="ntfy_${version}_${os}_$arch"; ext=tar.gz ;;
     # The policy engine ships as one bare binary, not an archive; the second field "-.bin" says so.
     opa)
       stem="opa_${os}_$arch"
@@ -979,7 +978,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
-    nats-server|nats|daprd|dapr-scheduler|ntfy|opa) bus_install_hint "$1" ;;
+    nats-server|nats|daprd|dapr-scheduler|opa) bus_install_hint "$1" ;;
     learn-from-mistakes) echo "npm install -g $(jg_pin_npm learn-from-mistakes) && ln -sf learn-from-mistakes-axi \"\$(dirname \"\$(command -v learn-from-mistakes-axi)\")/learn-from-mistakes\"" ;;
     *)
       # Every npm tool installs the exact build its toolchain.versions row names, so this
@@ -1546,7 +1545,7 @@ startup_memory_budget_setup() {
 # it wrote, including sign-off's one-line arming reminder; arming itself stays
 # per home and is never done here.
 # bus_service: run the one install command (bin/jg-stack.sh), which installs, enables and
-# starts the message bus, the sidecar and ntfy and reports each part. Its first failure is one
+# starts the message bus and the sidecar and reports each part. Its first failure is one
 # MISSING line, and it never fails the boot. It talks to the network (pinned releases), so it
 # belongs to the network half of a split run; JG_STACK_SKIP=1 turns it off for a fixture.
 bus_service() {
@@ -1590,7 +1589,7 @@ if [ "${1:-}" = "install" ]; then
     # they install through the one function that owns those rules rather than
     # through a command string.
     case $t in
-      nats-server|nats|daprd|dapr-scheduler|ntfy|opa)
+      nats-server|nats|daprd|dapr-scheduler|opa)
         bus_tool_install "$t" || { echo "error: installing $t failed" >&2; exit 1; }
         continue
         ;;
