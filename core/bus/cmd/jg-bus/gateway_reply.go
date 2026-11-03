@@ -204,6 +204,23 @@ func (a *app) replyParts(ad Adapter, w where, cursor, body string, attach []stri
 	return parts
 }
 
+// recordOutboundLeg notes a part the platform accepted: a plain text, a picture or a file. The
+// "could not send" text that stands in for a refused file proves nothing, and neither does a
+// platform that answered with no message id.
+func (a *app) recordOutboundLeg(p sendPart, id string) {
+	if id == "0" || strings.HasSuffix(p.key, "x") {
+		return
+	}
+	leg := "out-text"
+	if len(p.out.Files) > 0 {
+		leg = "out-file"
+		if p.out.Files[0].Photo {
+			leg = "out-image"
+		}
+	}
+	a.recordLeg(leg, id)
+}
+
 // followReplies sends every reply made since the committed cursor to the chat its note came from.
 // A reply to a note that did not come from this adapter is passed over. Each part is recorded in
 // sent.jsonl as it goes, so a restart after a part sent never sends that part again; a send that
@@ -260,6 +277,7 @@ func (a *app) followReplies(ad Adapter) error {
 				if err := appendLine(filepath.Join(dir, "sent.jsonl"), toJSON(map[string]string{"key": p.key, "note": r.ID, "chat": w.chat, "message": id})); err != nil {
 					return err
 				}
+				a.recordOutboundLeg(p, id)
 			}
 		}
 		if err := os.WriteFile(cursorFile+".tmp", []byte(r.Cursor+"\n"), 0o600); err != nil {
