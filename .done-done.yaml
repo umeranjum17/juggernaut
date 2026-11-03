@@ -143,6 +143,8 @@ journeys:
   bus-machine-service:
     command: bash journeys/bus-machine-service.sh
     timeout: 5m
+  stray-nats-reap:
+    command: bash journeys/stray-nats-reap.sh
   escalation-optimize:
     command: bash core/escalation-optimize/tests/jg-escalation-optimize.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   escalation-rules-live:
