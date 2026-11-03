@@ -33,6 +33,8 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
 - A file is never sent when it is under `config/`, the bus state or `~/.ssh`, is named `.env*` or ends `.token`, `.pass`, `.key` or `.pem` (checked after symlinks), is over 50 MB, or is gone.
   The owner gets a text line saying which file was not sent and why.
   A file Telegram refuses is named in text too.
+- When the gateway files a note it puts a 👀 reaction on the owner's message (`setMessageReaction`), so the owner sees it arrived. A reaction Telegram refuses is logged and never stops the note.
+- A message that is only `/status` is answered by the gateway itself, threaded on it: the owner, the answers sent and that the bot is answering. It files no note and wakes no one. It is the only command.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
 - The owner can send a photo, document, voice note, audio or video. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).

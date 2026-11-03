@@ -108,11 +108,7 @@ func (a *app) gatewayStatus(token, file string, present bool, tokErr error) int 
 		say("gateway: off (no token file at %s, or channel mode is not live); to connect your own Telegram bot run `jg-bus gateway setup`", file)
 		return 0
 	}
-	paired := "not paired; run `jg-bus gateway pair` with the service stopped"
-	if a.cfgOr("telegram-allow-user", "") != "" {
-		paired = "paired"
-	}
-	say("gateway: telegram, token file %s, owner %s, %d answers sent", file, paired, countLines(filepath.Join(a.state, "captain-chat", "sent.jsonl")))
+	say("%s", a.statusLine(file))
 	if tokErr != nil {
 		say("bot: %v", tokErr)
 		return 1

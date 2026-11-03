@@ -29,7 +29,8 @@ type Adapter interface {
 	Receive(ctx context.Context, cursor string) ([]Inbound, string, error)
 	Fetch(ctx context.Context, m MediaRef, w io.Writer) (int64, error)
 	Send(ctx context.Context, out Outbound) (string, error)
-	Out() OutLimits // what Send can carry: file, picture, caption and album sizes
+	Out() OutLimits                                        // what Send can carry: file, picture, caption and album sizes
+	React(ctx context.Context, chat, message string) error // mark a message as received
 }
 
 // Inbound is one platform update. A non-message update has no sender, so the access check drops it.
@@ -121,6 +122,10 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		appendQuiet(filepath.Join(a.state, "captain-chat", "dropped.tsv"), fmt.Sprintf("%d\t%s\t%s", time.Now().Unix(), in.UpdateID, in.From))
 		return nil
 	}
+	if isStatusCommand(in) { // the gateway answers this itself: no card, no note, no wake
+		a.answerStatus(ad, in)
+		return nil
+	}
 	if card := a.cardAnswered(in); card != "" { // the owner answered a card in the chat: the board takes it, not the inbox
 		a.emitReply(card, in.Text)
 		return nil
@@ -145,6 +150,9 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return err
 	}
 	a.recordInboundLegs(res.ID, in, stored)
+	if err := ad.React(context.Background(), in.Chat, in.Message); err != nil { // the note is filed; a missing reaction costs nothing
+		a.noteFailure("gateway reaction", err.Error())
+	}
 	if res.Outcome == "created" { // a replay already announced its event
 		a.emit("inbound", id, head, "", stored)
 		a.refuseLarge(ad, in)
