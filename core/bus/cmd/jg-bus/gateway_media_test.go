@@ -162,5 +162,7 @@ func TestGatewayMedia(t *testing.T) {
 		}
 		return nil
 	})
+	t.Logf("old events replay unchanged: the old event rebuilds byte for byte and parity finds no difference; the replay sent and published nothing twice")
+	t.Logf("the inbound event names the owner's files, first one: %s", strings.SplitN(string(rec), "\n", 2)[0])
 	t.Logf("owner sent 6 files and a stranger 1: %d getFile calls, 3 files stored once each, 1 over-limit file refused in chat (%s), the prune removed the 40-day-old voice file", len(fetched), sends[0])
 }
