@@ -248,3 +248,7 @@ for repo in $repos; do
   echo "merge-on-green: $open open pull requests in $repo, over the cap of $CAP; lead: merge the green ones now, a red pull request elsewhere never holds them"
   mkdir -p "$DATA/open-pr-cap" 2>/dev/null && printf '%s\n' "$open" > "$seen" 2>/dev/null || :
 done
+
+# Stale-PR alarm: an open PR with no checks and no update for 24 h, or based on an already merged release
+# branch, raises one alert per PR. It lives in stale-pr-alarm.sh beside this script and is skipped when absent.
+[ ! -x "$SRC/stale-pr-alarm.sh" ] || JG_STALE_PR_LIMIT=$DEADLINE "$SRC/stale-pr-alarm.sh" check "$FMH"

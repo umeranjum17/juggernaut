@@ -1,0 +1,7 @@
+[
+  {"number": 101, "html_url": "https://github.com/ex/r/pull/101", "state": "open", "draft": false, "base": {"ref": "main"}, "head": {"sha": "sha101", "ref": "lane-101"}, "updated_at": "@STALE@"},
+  {"number": 102, "html_url": "https://github.com/ex/r/pull/102", "state": "open", "draft": false, "base": {"ref": "release/c-5"}, "head": {"sha": "sha102", "ref": "lane-102"}, "updated_at": "@FRESH@"},
+  {"number": 103, "html_url": "https://github.com/ex/r/pull/103", "state": "open", "draft": false, "base": {"ref": "main"}, "head": {"sha": "sha103", "ref": "lane-103"}, "updated_at": "@FRESH@"},
+  {"number": 104, "html_url": "https://github.com/ex/r/pull/104", "state": "open", "draft": false, "base": {"ref": "main"}, "head": {"sha": "sha104", "ref": "lane-104"}, "updated_at": "@STALE@"},
+  {"number": 105, "html_url": "https://github.com/ex/r/pull/105", "state": "open", "draft": false, "base": {"ref": "release/c-6"}, "head": {"sha": "sha105", "ref": "lane-105"}, "updated_at": "@FRESH@"}
+]
