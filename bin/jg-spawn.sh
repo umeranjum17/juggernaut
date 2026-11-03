@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a operator in a treehouse or Orca worktree, or a
 # squad_lead in its isolated juggernaut home.
-# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> [<juggernaut-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --squad-lead
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -63,6 +63,14 @@
 #   exception is --red-fix-of <branch>, which declares the task a fix to that
 #   frozen release's own red checks; <branch> must be the base, and the spawn
 #   records it as red_fix_of= for bin/jg-pr-check.sh and for relaunches.
+#   A ship never runs off the migration's critical path (bin/jg-critical-path.sh
+#   owns the ordered list in config/migration-card and the gate): while a
+#   critical part is not live, a ship brief needs a `Migration row:` line naming
+#   that part or `none`, and the spawn stops before any worktree or record
+#   exists otherwise. --off-critical-path "<captain's words>" admits it anyway,
+#   only when the brief's Setup quotes the same words on a `Critical-path
+#   override:` line; the spawn records critical_override= and migration_row= in
+#   the task record, and a relaunch reuses both and is not gated again.
 #   When config/launch-env-hook is an executable file, every local launch runs
 #   it in the pane at the worktree as `config/launch-env-hook <out-file>` and
 #   sources the one export statement it writes before the AI-trailer step; a
@@ -794,6 +802,7 @@ jg_refuse_if_gate_agent
 eval "$(jg_account_hook argv "$@")"
 INTAKE_CODE=$("$SCRIPT_DIR/jg-spawn-core.sh" intake "$@") || exit $?
 eval "$INTAKE_CODE"
+MIGRATION_ROW=
 unset INTAKE_CODE
 jg_account_hook spawn-validate || exit 1
 [ -z "$INTAKE_REFUSAL" ] || {
@@ -1445,6 +1454,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ "$BRANCH_PREFIX_SET" -eq 0 ] || shared_args+=(--branch-prefix "$BRANCH_PREFIX")
   [ "$BASE_BRANCH_SET" -eq 0 ] || shared_args+=(--base-branch "$BASE_BRANCH")
   [ "$RED_FIX_OF_SET" -eq 0 ] || shared_args+=(--red-fix-of "$RED_FIX_OF")
+  [ "$OFF_CRITICAL_PATH_SET" -eq 0 ] || shared_args+=(--off-critical-path "$OFF_CRITICAL_PATH")
   [ "$HERDR_RESUME_LOCK_WAIT" -eq 0 ] || shared_args+=(--herdr-resume-lock-wait)
   for pair in "${POS[@]}"; do
     case "$pair" in
@@ -2627,6 +2637,8 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if [ "$RELAUNCH" -eq 1 ]; then
     BASE_BRANCH=$(jg_meta_get "$RELAUNCH_META" base_branch)
     RED_FIX_OF=$(jg_meta_get "$RELAUNCH_META" red_fix_of)
+    OFF_CRITICAL_PATH=$(jg_meta_get "$RELAUNCH_META" critical_override)
+    MIGRATION_ROW=$(jg_meta_get "$RELAUNCH_META" migration_row)
   elif [ "$BASE_BRANCH_SET" -eq 1 ]; then
     [ -n "$BASE_BRANCH" ] || {
       echo "error: --base-branch requires a branch name" >&2
@@ -2675,6 +2687,12 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
       exit 1
     fi
     jg_frozen_base_refusal "$CONFIG" "$PROJ_ABS" "$BASE_BRANCH" "$RED_FIX_OF" "jg-spawn.sh" || exit 1
+    # The migration's critical path: a later step does not start while an earlier
+    # one is not live. A relaunch continues the task already admitted.
+    if [ "$RELAUNCH" -eq 0 ]; then
+      JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" "$JG_ROOT/bin/jg-critical-path.sh" gate "$BRIEF" "$PROJ_ABS" "$OFF_CRITICAL_PATH" "jg-spawn.sh" || exit 1
+      MIGRATION_ROW=$("$JG_ROOT/bin/jg-critical-path.sh" brief-row "$BRIEF")
+    fi
   fi
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
@@ -4628,7 +4646,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch upstream_consent model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id cleanup_recovery worktree project harness kind mode yolo branch receipt_required design_call demo_call ui_change tasktmp base_branch migration_row critical_override upstream_consent model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4647,6 +4665,8 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
   [ -z "$RED_FIX_OF" ] || echo "red_fix_of=$RED_FIX_OF"
+  [ -z "$MIGRATION_ROW" ] || echo "migration_row=$MIGRATION_ROW"
+  [ -z "$OFF_CRITICAL_PATH" ] || echo "critical_override=$OFF_CRITICAL_PATH"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"

@@ -9,6 +9,9 @@
 # count is taken from), board (sign-off board.json, else
 # $JG_PROOF_BOARD), card (the key of the card already posted), baseline-deleted
 # and baseline-added (totals before the first recorded merge), filer.
+# Two more keys serve bin/jg-critical-path.sh: critical (comma-separated part
+# slugs in the order they must go live, for example nats,accounts,wake,inbox) and
+# project (the project directory name they apply to); neither changes the card.
 # bin/jg-merge-outcome-lib.sh calls `merge` after every confirmed merge.
 #
 # merge  A PR whose base is the watched branch is added once to the ledger
