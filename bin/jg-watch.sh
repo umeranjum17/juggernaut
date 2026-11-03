@@ -3698,6 +3698,15 @@ watcher_stop_signals
 WATCHER_PID=${BASHPID:-$$}
 # Retain the last proven scan through handoff. Do not renew it until this
 # cycle makes progress: a stalled successor must still age past grace.
+# A cycle that starts over a beacon still fresh took over from a healthy
+# predecessor (a --take-over, or a hand-off after a delivered wake), so its
+# first scan may publish at each finished unit like any later scan
+# (watcher_beat's header). One that starts over a stale or absent beacon is
+# recovering a lapse and keeps proving it with a whole scan.
+WATCH_BEAT_INHERITED=0
+_beat_age=$(jg_path_age "$STATE/.last-watcher-beat" 2>/dev/null || echo)
+case "$_beat_age" in ''|*[!0-9]*) ;; *) [ "$_beat_age" -lt "$WATCHER_STALE_GRACE" ] && WATCH_BEAT_INHERITED=1 ;; esac
+unset _beat_age
 printf '%s\n' "$JG_HOME" > "$WATCH_LOCK/jg-home" || true
 printf '%s\n' "$WATCH_PATH" > "$WATCH_LOCK/watcher-path" || true
 # shellcheck disable=SC2034 # Consumed by wake() in the separately linted transition owner.
@@ -3797,14 +3806,16 @@ resurface_after_downtime() {
 # still ages past the grace and the real detector still fires. Best-effort: a
 # transient write failure must not abort a running scan, and the next progress
 # point retries it.
-# Only a cycle that has already proven one complete scan publishes mid-scan: a
-# first scan still announces nothing until it finishes, so the arm's startup
-# confirmation keeps requiring resumed supervision and a first scan that hangs
-# in its first check is still not reported healthy. The supervision read covers
-# that first scan through its live-holder rule instead
+# Only a cycle that has already proven one complete scan, or that started over
+# a still-fresh beacon from a healthy predecessor (a take-over; its first scan
+# can outlast the grace while the retained beacon ages), publishes mid-scan.
+# Any other first scan announces nothing until it finishes, so the arm's
+# startup confirmation keeps requiring resumed supervision and a first scan
+# that hangs in its first check is still not reported healthy. The supervision
+# read covers that first scan through its live-holder rule instead
 # (bin/jg-supervision-lib.sh).
 watcher_beat() {
-  [ "${WATCH_SCAN_COMPLETE:-0}" = 1 ] || return 0
+  [ "${WATCH_SCAN_COMPLETE:-0}" = 1 ] || [ "${WATCH_BEAT_INHERITED:-0}" = 1 ] || return 0
   touch "$STATE/.last-watcher-beat" 2>/dev/null || true
 }
 
@@ -4322,6 +4333,9 @@ EOF
   # remembers the hash already classified, or the declaration a busy pane's
   # crossed turn bound already handed to the away-mode daemon).
   while IFS= read -r w; do
+    # Everything before this window is done: a bounded unit of the scan, and
+    # the loop has early exits, so the top is the one point every window hits.
+    watcher_beat
     kind=$(window_kind "$w")
     task=$(window_to_task "$w" "$STATE")
     # Steering-inbox loss detection runs before the squad_lead stale
