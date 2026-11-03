@@ -124,6 +124,8 @@ journeys:
     command: bash core/kill-guard/run-device-proof.sh
   kill-guard-main-live:
     command: node core/kill-guard/run-main-proof.mjs
+  kill-guard-home-owner:
+    command: node core/kill-guard/run-home-owner-proof.mjs
   wake-bus-live:
     command: bash journeys/wake-bus-live.sh
   wake-cursor-kill:
