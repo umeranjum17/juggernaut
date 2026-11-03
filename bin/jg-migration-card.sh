@@ -21,7 +21,9 @@
 #        with the board's own forms: system colours, no cards, short text
 #        blocks, a viewport tag, a dark-mode block, one picture, one tap-through
 #        element and a details block.
-# milestone  A switch live, a Go port done, each 5,000 deleted lines and the
+# milestone  A switch live (with `critical=` set in config/migration-card, only a live
+#        row counts, see bin/jg-critical-path.sh; its Live line leads the outcome and the
+#        Done text reads "merged, not a live measure"), a Go port done, each 5,000 deleted lines and the
 #        release pull request ready record a captain outcome of three lines
 #        (done / left / release blockers) plus the card link. `merge` finds the
 #        first three by the PR title and the line count; the release pull
@@ -124,10 +126,26 @@ document.getElementById('b').onclick=function(){i=(i+1)%R.length;d()};d()</scrip
 HTML
 }
 
+# crit <args>: bin/jg-critical-path.sh against this home; prints nothing without `critical=`.
+crit() { JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="${CFG%/migration-card}" "$SCRIPT_DIR/jg-critical-path.sh" "$@" 2>/dev/null; }
+
+# switch_kind <title>: a merged switch is a milestone only when its row is live now.
+switch_kind() {
+  local slug
+  if [ -z "$(crit list)" ]; then echo 'a switch is live'; return 0; fi
+  slug=$(crit title-row "$1")
+  if [ -z "$slug" ]; then echo 'merged; not on the critical path'
+  elif [ "$(crit row "$slug" | cut -f2)" = live ]; then echo 'a switch is live'
+  else echo "merged; $slug still pending"; fi
+}
+
 milestone() {  # <kind> <done> <left> <blockers> <card-key>
-  local link summary
+  local link summary live done=Done
   link=$(jg_board_link reports "$5" 2>/dev/null) || link="card $5"
-  summary=$(printf 'Done (%s): %s\nLeft: %s\nRelease blockers: %s. Card: %s' "$1" "$2" "$3" "$4" "$link")
+  live=$(crit summary)
+  [ -z "$live" ] || done='Merged, not a live measure'
+  summary=$(printf '%s%s (%s): %s\nLeft: %s\nRelease blockers: %s. Card: %s' "${live:+$live
+}" "$done" "$1" "$2" "$3" "$4" "$link")
   "$SCRIPT_DIR/jg-branch-outcome.sh" append --task migration-card --verdict captain --summary "$summary" >/dev/null \
     || echo "jg-migration-card: captain outcome not recorded" >&2
 }
@@ -219,7 +237,7 @@ case "${1-}" in
     printf '%s\t%s\t%s\t%s\n' "$URL" "$(jq .deletions <<<"$info")" "$(jq .additions <<<"$info")" "$title" >> "$LEDGER"
     read -r after _ _ <<<"$(totals)"
     kind=''
-    if grep -qiE 'switch.*(live|on)|live.*switch' <<<"$title"; then kind='a switch is live'
+    if grep -qiE 'switch.*(live|on)|live.*switch' <<<"$title"; then kind=$(switch_kind "$title")
     elif grep -qiE 'go port.*(done|complete|landed)' <<<"$title"; then kind='a Go port is done'
     elif [ $((after / 5000)) -gt $((before / 5000)) ]; then kind="$((after / 5000 * 5000)) lines deleted"; fi
     post_card "$title" "$URL" "$kind" ;;

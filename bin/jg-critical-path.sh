@@ -7,11 +7,17 @@
 # Usage: jg-critical-path.sh list
 #        jg-critical-path.sh rows
 #        jg-critical-path.sh first-pending
+#        jg-critical-path.sh row <slug> | parts | title-row <title> | summary [--short]
 #        jg-critical-path.sh brief-row <brief>
 #        jg-critical-path.sh gate <brief> <project-dir> [<override-text>] [<caller>]
 #   list           the critical slugs, one per line, in order
 #   rows           slug<TAB>state<TAB>pr for each critical slug, from a fresh one-part probe
 #   first-pending  the first critical slug that is not live, or nothing
+#   row            slug<TAB>state<TAB>detail<TAB>pr for any part, from a fresh one-part probe
+#   parts          slug<TAB>name<TAB>title pattern for every part, from the probe's part table
+#   title-row      the first critical slug whose title pattern matches <title>, or nothing
+#   summary        `Live: n of m critical rows (slugs). Pending: slug - detail pr`; --short is
+#                  `migration: n of m critical rows live; first pending slug`
 #   brief-row      the brief's `Migration row:` value, or nothing (Setup section only)
 #   gate           exit 0 to admit a ship, or exit 1 with one error on stderr
 #
@@ -39,12 +45,14 @@
 # run as `<bin> <slug>` and prints `NAME<TAB>state<TAB>detail<TAB>pr`; `<bin> --link` prints
 # the card's link. Only the state column is read. A probe that cannot run or prints no
 # state counts as pending, the safe direction. This file never edits the probe.
+# JG_MIGRATION_TABLE (default: the probe file beside this one) is read, never run, for `parts`.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$ROOT}}"
 CFG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}/migration-card"
 PROBE="${JG_MIGRATION_LIVE_BIN:-$ROOT/bin/jg-migration-live.sh}"
+TABLE="${JG_MIGRATION_TABLE:-$ROOT/bin/jg-migration-live.sh}"
 TAB=$'\t'
 
 cfg() { sed -n "s/^$1=//p" "$CFG" 2>/dev/null | tail -n 1; }
@@ -82,6 +90,40 @@ brief_values() {
     /^# / { setup = ($0 == "# Setup"); next }
     setup && index($0, label ": ") == 1 { print substr($0, length(label) + 3) }
   ' "$1"
+}
+
+# parts: the probe's part table, one `slug<TAB>name<TAB>title pattern` per part.
+parts() {
+  local PART_SLUGS=() PART_NAMES=() PART_PR_RE=() i
+  eval "$(grep -E '^PART_(SLUGS|NAMES|PR_RE)=\(' "$TABLE" 2>/dev/null)"
+  for i in "${!PART_SLUGS[@]}"; do printf '%s\t%s\t%s\n' "${PART_SLUGS[$i]}" "${PART_NAMES[$i]}" "${PART_PR_RE[$i]-}"; done
+}
+
+cmd_title_row() {  # <title>: the first critical slug whose title pattern matches
+  local slug re
+  while IFS= read -r slug; do
+    re=$(parts | awk -F'\t' -v s="$slug" '$1 == s { print $3 }')
+    if [ -n "$re" ] && printf '%s\n' "${1:-}" | grep -qiE -- "$re"; then printf '%s\n' "$slug"; return 0; fi
+  done < <(critical_list)
+  return 0
+}
+
+cmd_summary() {  # [--short]
+  local slug row n=0 live=0 names='' pend=''
+  while IFS= read -r slug; do
+    row=$(probe_row "$slug"); n=$((n + 1))
+    if [ "${row%%"$TAB"*}" = live ]; then live=$((live + 1)); names="$names${names:+, }$slug"
+    elif [ -z "$pend" ]; then pend="$slug$TAB$row"; fi
+  done < <(critical_list)
+  [ "$n" -gt 0 ] || return 0
+  slug=${pend%%"$TAB"*}; row=${pend#*"$TAB"}; row=${row#*"$TAB"}
+  if [ "${1:-}" = --short ]; then
+    printf 'migration: %d of %d critical rows live; ' "$live" "$n"
+    if [ -n "$pend" ]; then printf 'first pending %s\n' "$slug"; else printf 'no row pending\n'; fi
+    return 0
+  fi
+  printf 'Live: %d of %d critical rows (%s).' "$live" "$n" "${names:-none}"
+  if [ -n "$pend" ]; then printf ' Pending: %s - %s %s\n' "$slug" "${row%%"$TAB"*}" "${row##*"$TAB"}"; else printf ' Pending: none\n'; fi
 }
 
 cmd_rows() {
@@ -151,5 +193,9 @@ case ${1:-} in
   first-pending) first_pending | cut -f1 ;;
   brief-row) [ -r "${2:-}" ] || { echo "usage: jg-critical-path.sh brief-row <brief>" >&2; exit 2; }; brief_values "$2" "Migration row" | head -n 1 ;;
   gate) shift; cmd_gate "$@" ;;
-  *) echo "usage: jg-critical-path.sh list|rows|first-pending|brief-row <brief>|gate <brief> <project-dir> [<override-text>] [<caller>]" >&2; exit 2 ;;
+  row) probe_row "${2:?usage: jg-critical-path.sh row <slug>}" | sed "s/^/$2\t/" ;;
+  parts) parts ;;
+  title-row) cmd_title_row "${2:-}" ;;
+  summary) cmd_summary "${2:-}" ;;
+  *) echo "usage: jg-critical-path.sh list|rows|row <slug>|parts|title-row <title>|summary [--short]|first-pending|brief-row <brief>|gate <brief> <project-dir> [<override-text>] [<caller>]" >&2; exit 2 ;;
 esac
