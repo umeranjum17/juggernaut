@@ -12,19 +12,24 @@ import (
 	"time"
 )
 
-// chatLab is a scratch home with a fake Bot API (the owner's chat) and a fake Dapr sidecar (the bus).
+// chatLab is a scratch home with a fake Bot API (the owner's chat), a fake Dapr sidecar (the bus) and
+// a stub board route that records the answers it is given.
 type chatLab struct {
 	a         *app
 	sends     []map[string]any // sendMessage bodies the chat took
 	published []string         // bus subjects posted
 	botCodes  []int            // status codes for the next sendMessage calls, then 200
 	daprDown  bool
+	batch     string
+	routed    string
 }
 
 func newChatLab(t *testing.T, withToken bool) *chatLab {
 	l, home := &chatLab{}, t.TempDir()
 	bot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/getUpdates"):
+			fmt.Fprintf(w, `{"ok":true,"result":[%s]}`, l.batch)
 		case len(l.botCodes) > 0:
 			w.WriteHeader(l.botCodes[0])
 			fmt.Fprintf(w, `{"ok":false,"error_code":%d,"description":"refused"}`, l.botCodes[0])
@@ -45,12 +50,15 @@ func newChatLab(t *testing.T, withToken bool) *chatLab {
 	}))
 	t.Cleanup(bot.Close)
 	t.Cleanup(dapr.Close)
-	state, tokenFile, conf := filepath.Join(home, "state"), filepath.Join(home, "tg.token"), filepath.Join(home, "conf")
+	root, state, tokenFile, conf := filepath.Join(home, "root"), filepath.Join(home, "state"), filepath.Join(home, "tg.token"), filepath.Join(home, "conf")
+	l.routed = filepath.Join(home, "routed")
+	os.MkdirAll(filepath.Join(root, "bin"), 0o755)
+	os.WriteFile(filepath.Join(root, "bin", "jg-board-answers.sh"), []byte("#!/bin/sh\necho \"$2|$4\" >> "+l.routed+"\n"), 0o755)
 	if withToken {
 		os.WriteFile(tokenFile, []byte(tok+"\n"), 0o600)
 	}
 	os.WriteFile(conf, []byte(fmt.Sprintf("set mode live\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset dapr-http-url %s\nset dapr-pubsub p\nset subject-prefix jg.captain\n", tokenFile, bot.URL, dapr.URL)), 0o600)
-	l.a = &app{home: home, state: state, data: filepath.Join(home, "data"), configFiles: []string{conf},
+	l.a = &app{root: root, home: home, state: state, data: filepath.Join(home, "data"), configFiles: []string{conf},
 		record: state + "/rec", log: state + "/log", undelivered: state + "/undelivered.jsonl"}
 	t.Cleanup(func() { // the token reaches no file the run wrote
 		filepath.Walk(home, func(p string, _ os.FileInfo, _ error) error {
@@ -129,5 +137,32 @@ func TestGatewayConsumer(t *testing.T) {
 	}
 	if err := p.handle(ev("alert", "c")); err == nil || l.lost() != 2 {
 		t.Fatalf("chat down: err %v, undelivered %d: want undelivered after the window", err, l.lost())
+	}
+}
+
+// A card reaches the chat; the owner's reply to that message is published as the card's answer, and
+// with the bus down the board's own route takes it.
+func TestGatewayCardReply(t *testing.T) {
+	l := newChatLab(t, true)
+	ad, owner, _ := l.a.chatTarget()
+	if err := l.a.sendEvent(ad, owner, event{At: 1000, Kind: "card", Key: "card-7", Text: "Merge the PR?"}); err != nil || len(l.sends) != 1 ||
+		!strings.HasSuffix(l.sends[0]["text"].(string), "Reply to this message to answer.") {
+		t.Fatalf("card: %v, sends %v", err, l.sends)
+	}
+	reply := func(id int, text string) { // a reply to message 501, the card
+		l.batch = fmt.Sprintf(`{"update_id":%d,"message":{"message_id":%d,"text":%q,"reply_to_message":{"message_id":501},"from":{"id":42},"chat":{"id":42,"type":"private"}}}`, id, id*10, text)
+		if err := l.a.pollOnce(ad, []string{"42"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reply(30, "approve")
+	if rec := readFileString(l.a.record); len(l.published) != 1 || !strings.HasSuffix(l.published[0], "/jg.captain.reply") ||
+		!strings.Contains(rec, `"key":"card-7"`) || !strings.Contains(rec, `"answer":"approve"`) || readFileString(l.routed) != "" {
+		t.Fatalf("published %v, record %q: want one reply event for card-7, not yet routed", l.published, rec)
+	}
+	l.daprDown = true
+	reply(31, "yes, merge")
+	if got := readFileString(l.routed); got != "card-7|yes, merge\n" {
+		t.Fatalf("routed %q: want the board route to take the answer with the bus down", got)
 	}
 }

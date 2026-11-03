@@ -2,7 +2,8 @@ package main
 
 // gateway_events.go is the gateway's outbound side. Card, outcome, alert and digest events on
 // CAPTAIN reach the owner's private chat through the durable consumer `captain-gateway`. When the
-// bus refuses a publish, `emit` sends the same event through the same adapter in-process.
+// bus refuses a publish, `emit` sends the same event through the same adapter in-process. A card
+// shown in the chat is remembered in sent.jsonl, so the owner's reply to it can answer the card.
 
 import (
 	"context"
@@ -36,6 +37,9 @@ func (a *app) chatTarget() (*telegram, string, error) {
 // it goes, so a repeat of the event (a redelivery) sends only what is still missing.
 func (a *app) sendEvent(ad Adapter, owner string, ev event) error {
 	text := strings.TrimSpace(ev.Text + "\n" + ev.Link)
+	if ev.Kind == "card" {
+		text += "\n\nReply to this message to answer."
+	}
 	dir := filepath.Join(a.state, "captain-chat")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -51,7 +55,11 @@ func (a *app) sendEvent(ad Adapter, owner string, ev event) error {
 		if err != nil {
 			return err
 		}
-		if err := appendLine(filepath.Join(dir, "sent.jsonl"), toJSON(map[string]string{"key": key, "chat": owner, "message": id})); err != nil {
+		line := map[string]string{"key": key, "chat": owner, "message": id}
+		if ev.Kind == "card" {
+			line["card"] = ev.Key
+		}
+		if err := appendLine(filepath.Join(dir, "sent.jsonl"), toJSON(line)); err != nil {
 			return err
 		}
 	}
