@@ -8,6 +8,8 @@ journeys:
     command: bash journeys/wake-watcher.sh
   wake-batching:
     command: bash journeys/wake-batching.sh
+  wake-schedule:
+    command: bash journeys/wake-schedule.sh
   watcher-window-inventory:
     command: bash journeys/watcher-window-inventory.sh
   migration-card:
