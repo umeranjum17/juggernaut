@@ -439,4 +439,18 @@ test_frozen_release_base_is_refused() {
 }
 
 test_frozen_release_base_is_refused
+
+# A release cut moves the pull requests left on the shipped release branch, and the
+# release pull request is refused until none are left. This also owns
+# journeys/release-cut-orphans.sh, which drives the check, the sync and readiness.
+test_release_cut_retargets_orphans() {
+  local ev
+  ev=$(mktemp -d) || fail "cannot create the evidence folder"
+  DONE_DONE_EVIDENCE_ROOT=$ev bash "$ROOT/journeys/release-cut-orphans.sh" > "$ev/out" 2>&1 \
+    || { cat "$ev/out"; rm -rf -- "$ev"; fail "T14 the release-cut orphans journey failed"; }
+  rm -rf -- "$ev"
+  pass "T14 a release cut retargets orphans and the release pull request waits for them"
+}
+
+test_release_cut_retargets_orphans
 echo "all jg-version-branch-sync tests passed"

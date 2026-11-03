@@ -65,10 +65,12 @@ new_world() {  # <name> [wait-hours] -> prints the world directory
   printf '0\n' > "$w/gh-open"
   printf 'completed success @Smoke,completed success @Build\n' > "$w/gh-checks"
   : > "$w/gh-pr"
+  : > "$w/gh-orphans"
   cat > "$w/bin/gh" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
   *state=all*) cat "$GH_PR" ;;
+  *pulls\?state=open\&per_page*) cat "$GH_ORPHANS" 2>/dev/null; true ;;
   */pulls\?*) cat "$GH_OPEN" ;;
   */check-runs*) cat "$GH_CHECKS" ;;
   *) exit 1 ;;
@@ -106,8 +108,8 @@ SH
 run() {  # <world> <verb> <now>
   local w=$1
   POST_LOG=$w/posted.log ALERT_LOG=$w/alerted.log
-  GH_OPEN=$w/gh-open GH_CHECKS=$w/gh-checks GH_PR=$w/gh-pr
-  export POST_LOG ALERT_LOG GH_OPEN GH_CHECKS GH_PR PATH="$w/bin:$PATH"
+  GH_OPEN=$w/gh-open GH_CHECKS=$w/gh-checks GH_PR=$w/gh-pr GH_ORPHANS=$w/gh-orphans
+  export POST_LOG ALERT_LOG GH_OPEN GH_CHECKS GH_PR GH_ORPHANS PATH="$w/bin:$PATH"
   OUT=$(JG_RELEASE_CARD_POST=$w/bin/poster JG_RELEASE_ALERT_NOTE=$w/bin/alert \
     bash "$RR" "$w/home" "$2" --now "$3" 2>&1)
   RC=$?
@@ -186,6 +188,23 @@ test_an_open_feature_holds_the_release() {
   run "$w" show 1800000000
   assert_contains "$OUT" "Release: not ready, 1 change still open" "the digest line names the open feature"
   pass "an open feature holds the release instead of asking for approval"
+}
+
+test_a_pull_request_left_on_a_shipped_release_holds_the_release() {
+  local w
+  w=$(new_world orphan)
+  printf '7\thttps://github.com/acme/thing/pull/7\trelease/c-1\n9\thttps://github.com/acme/thing/pull/9\trelease/c-2\n' > "$w/gh-orphans"
+  run "$w" tick 1800000000
+  expect_code 0 "$RC" "a held release is not a failure"
+  assert_equals 0 "$(posts "$w")" "an orphan holds the card"
+  assert_equals orphaned "$(field "$w" .state)" "the recorded state names the orphan"
+  run "$w" show 1800000000
+  assert_contains "$OUT" "Release: not ready, 1 pull request still targets release/c-1: https://github.com/acme/thing/pull/7" \
+    "the digest line names the pull request on the shipped release and not the one on the current release"
+  printf '' > "$w/gh-orphans"
+  run "$w" tick 1800000100
+  assert_equals 1 "$(posts "$w")" "the card is raised once no pull request is left on a shipped release"
+  pass "a pull request left on a shipped release holds the release and names it"
 }
 
 test_a_release_that_does_not_carry_the_live_version_is_held() {
@@ -337,6 +356,7 @@ test_a_home_with_no_release_branch_says_so() {
 test_a_finished_release_raises_one_card_with_numbers_and_risks
 test_a_second_run_inside_the_wait_resends_nothing
 test_an_open_feature_holds_the_release
+test_a_pull_request_left_on_a_shipped_release_holds_the_release
 test_a_release_that_does_not_carry_the_live_version_is_held
 test_a_red_or_running_or_unreadable_check_holds_the_release
 test_the_count_is_fetched_before_it_is_measured
