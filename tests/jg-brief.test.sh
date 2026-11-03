@@ -232,6 +232,7 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep "any later commit moves the PR head and voids the proof" "$brief" \
       "$id: brief missing the rule that a commit after the seal voids it"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
+    echo "capture: $mode ship brief carries the merge-gate recipe: $(grep -m1 -o 'follow this recipe in order[^.]*' "$brief")"
   done
   # A scout opens no pull request, so its brief carries no merge-gate recipe.
   JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-scout-a4 some-proj --scout >/dev/null 2>&1
@@ -239,6 +240,7 @@ test_ship_modes_generate_clean_briefs() {
   assert_present "$brief" "scout brief was not scaffolded"
   assert_no_grep "follow this recipe in order" "$brief" "scout brief carries the merge-gate recipe"
   assert_no_grep "## Checks" "$brief" "scout brief carries the Checks block recipe"
+  echo "capture: scout brief carries no merge-gate recipe ($(grep -c 'follow this recipe in order' "$brief") matches for the recipe line)"
   pass "jg-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
