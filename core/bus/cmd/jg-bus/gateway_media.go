@@ -15,14 +15,23 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
-// MediaRef is one file an inbound message carries, before it is fetched. Kind is image, file or audio.
+// MediaRef is one file an inbound message carries, before it is fetched. Kind is image, file, audio or video.
 type MediaRef struct {
 	Kind, ID, Name, Mime string
 	Bytes                int64
+}
+
+// mediaFile is a stored file as the inbound event names it.
+type mediaFile struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Mime   string `json:"mime"`
+	Bytes  int64  `json:"bytes"`
 }
 
 type tgFile struct {
@@ -37,6 +46,7 @@ type tgMedia struct {
 	Document *tgFile  `json:"document"`
 	Voice    *tgFile  `json:"voice"`
 	Audio    *tgFile  `json:"audio"`
+	Video    *tgFile  `json:"video"`
 }
 
 func (m tgMedia) refs() (out []MediaRef) {
@@ -51,6 +61,7 @@ func (m tgMedia) refs() (out []MediaRef) {
 	add("file", "", m.Document)
 	add("audio", "audio/ogg", m.Voice)
 	add("audio", "", m.Audio)
+	add("video", "", m.Video)
 	return out
 }
 
@@ -101,48 +112,61 @@ func (t *telegram) Fetch(ctx context.Context, m MediaRef, w io.Writer) (int64, e
 }
 
 func humanSize(n int64) string {
-	if n < 1<<10 {
-		return fmt.Sprintf("%d B", n)
-	} else if n < 1<<20 {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
 		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
 	}
-	return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	return fmt.Sprintf("%d B", n)
 }
 
-// fetchMedia stores every file of one update and returns the note's file lines. A file that
-// cannot be had still gets a line saying why, so the owner's text is never lost.
-func (a *app) fetchMedia(ad Adapter, in Inbound) (lines []string) {
+// fetchMedia stores every file of one update and returns the note's file lines and the stored
+// files. A file that cannot be had still gets a line saying why, so the owner's text is never lost.
+func (a *app) fetchMedia(ad Adapter, in Inbound) (lines []string, stored []mediaFile) {
 	for _, m := range in.Media {
 		if m.Bytes > ad.FetchLimit() {
 			lines = append(lines, fmt.Sprintf("[file too large to fetch (%s, limit %d MB)]", humanSize(m.Bytes), ad.FetchLimit()>>20))
 			continue
 		}
-		path, n, err := a.storeMedia(ad, m)
+		f, err := a.storeMedia(ad, m)
 		if err != nil {
 			a.noteFailure("gateway media", err.Error())
 			lines = append(lines, "[file could not be fetched: "+detail(err.Error())+"]")
 			continue
 		}
-		line := fmt.Sprintf("[file %s %s %s %s", m.Kind, path, humanSize(n), m.Mime)
+		line := fmt.Sprintf("[file %s %s %s %s", m.Kind, f.Path, humanSize(f.Bytes), f.Mime)
 		if m.Name != "" {
 			line += " " + toJSON(m.Name) // quoted, so a hostile name cannot add lines to the note
 		}
-		lines = append(lines, line+"]")
+		lines, stored = append(lines, line+"]"), append(stored, f)
 	}
-	return lines
+	return lines, stored
+}
+
+// refuseLarge tells the owner, in the chat, about each file over the fetch limit.
+func (a *app) refuseLarge(ad Adapter, in Inbound) {
+	for _, m := range in.Media {
+		if m.Bytes > ad.FetchLimit() {
+			text := fmt.Sprintf("That file is %s. I can fetch files up to %d MB, so I did not download it.", humanSize(m.Bytes), ad.FetchLimit()>>20)
+			if _, err := ad.Send(context.Background(), Outbound{Chat: in.Chat, ReplyTo: in.Message, Text: text}); err != nil {
+				a.noteFailure("gateway media", err.Error())
+			}
+		}
+	}
 }
 
 // storeMedia downloads one file to state/captain-chat/media/<day>/<sha256>.<ext> (folders 0700,
 // files 0600). The hash names the file, so the same file sent again is kept once.
-func (a *app) storeMedia(ad Adapter, m MediaRef) (string, int64, error) {
+func (a *app) storeMedia(ad Adapter, m MediaRef) (mediaFile, error) {
 	root := filepath.Join(a.state, "captain-chat", "media")
 	day := filepath.Join(root, time.Now().UTC().Format("2006-01-02"))
 	if err := os.MkdirAll(day, 0o700); err != nil {
-		return "", 0, err
+		return mediaFile{}, err
 	}
 	tmp, err := os.CreateTemp(day, ".fetch-*")
 	if err != nil {
-		return "", 0, err
+		return mediaFile{}, err
 	}
 	defer os.Remove(tmp.Name())
 	sum := sha256.New()
@@ -151,24 +175,48 @@ func (a *app) storeMedia(ad Adapter, m MediaRef) (string, int64, error) {
 		err = cerr
 	}
 	if err != nil {
-		return "", 0, err
+		return mediaFile{}, err
 	}
 	hash := hex.EncodeToString(sum.Sum(nil))
 	final := filepath.Join(day, hash+"."+mediaExt(m))
 	if old, _ := filepath.Glob(filepath.Join(root, "*", hash+".*")); len(old) > 0 {
-		return old[0], n, nil
+		final = old[0]
+		now := time.Now()
+		_ = os.Chtimes(final, now, now) // a file sent again is recent again
+	} else if err := os.Rename(tmp.Name(), final); err != nil {
+		return mediaFile{}, err
 	}
-	return final, n, os.Rename(tmp.Name(), final)
+	return mediaFile{Path: final, SHA256: hash, Mime: m.Mime, Bytes: n}, nil
 }
 
 // mediaExt is the stored file's extension: the sender's own, else one for the type, else bin.
 func mediaExt(m MediaRef) string {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(m.Name), "."))
 	if ext == "" {
-		ext = map[string]string{"image/jpeg": "jpg", "audio/ogg": "ogg", "application/pdf": "pdf"}[m.Mime]
+		ext = map[string]string{"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "audio/ogg": "ogg",
+			"audio/mpeg": "mp3", "video/mp4": "mp4", "application/pdf": "pdf", "text/plain": "txt"}[m.Mime]
 	}
-	if ext == "" || len(ext) > 8 || strings.Trim(ext, "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
+	if len(ext) > 8 || strings.Trim(ext, "abcdefghijklmnopqrstuvwxyz0123456789") != "" || ext == "" {
 		return "bin"
 	}
 	return ext
+}
+
+// pruneMedia deletes stored files older than chat-media-days (default 30), then empty day folders.
+func (a *app) pruneMedia() {
+	days, _ := strconv.Atoi(a.cfgOr("chat-media-days", "30"))
+	if days <= 0 {
+		days = 30
+	}
+	cutoff, root := time.Now().AddDate(0, 0, -days), filepath.Join(a.state, "captain-chat", "media")
+	dirs, _ := os.ReadDir(root)
+	for _, d := range dirs {
+		files, _ := os.ReadDir(filepath.Join(root, d.Name()))
+		for _, f := range files {
+			if info, err := f.Info(); err == nil && info.ModTime().Before(cutoff) {
+				_ = os.Remove(filepath.Join(root, d.Name(), f.Name()))
+			}
+		}
+		_ = os.Remove(filepath.Join(root, d.Name())) // fails while a file is left
+	}
 }

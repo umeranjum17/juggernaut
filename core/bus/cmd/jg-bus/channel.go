@@ -24,6 +24,8 @@ type event struct {
 	Subject string `json:"subject"`
 	Text    string `json:"text"`
 	Link    string `json:"link,omitempty"`
+	// Media is set by the chat gateway's inbound event only; old events do not have it.
+	Media []mediaFile `json:"media,omitempty"`
 }
 
 // toJSON renders one value without HTML escaping, so a text with `&` or `<` keeps the
@@ -39,9 +41,9 @@ func toJSON(v any) string {
 }
 
 // eventJSON builds the one event document for a fact.
-func (a *app) eventJSON(at int64, kind, key, text, link string) string {
+func (a *app) eventJSON(at int64, kind, key, text, link string, media ...mediaFile) string {
 	return toJSON(event{At: at, Kind: kind, Key: key,
-		Subject: a.cfgOr("subject-prefix", "") + "." + kind, Text: text, Link: link})
+		Subject: a.cfgOr("subject-prefix", "") + "." + kind, Text: text, Link: link, Media: media})
 }
 
 // appendLine appends one line to a record and reports why when it cannot.
@@ -154,11 +156,17 @@ func (a *app) publish(args []string) int {
 			return die("publish: unknown flag %s", rest[i])
 		}
 	}
+	return a.emit(kind, key, text, link, nil)
+}
+
+// emit is publish for a caller that holds the event's parts, such as the chat gateway's inbound
+// event with its stored files.
+func (a *app) emit(kind, key, text, link string, media []mediaFile) int {
 	mode := a.channelMode()
 	if mode == "off" {
 		return 0
 	}
-	doc := a.eventJSON(time.Now().Unix(), kind, key, text, link)
+	doc := a.eventJSON(time.Now().Unix(), kind, key, text, link, media...)
 	subject := a.cfgOr("subject-prefix", "") + "." + kind
 	if err := os.MkdirAll(a.state, 0o755); err != nil {
 		a.noteFailure("record", err.Error())
