@@ -183,8 +183,13 @@ case "${1:-}" in
         printf '%s\n' '  compact-startup,in_flight,ship,juggernaut,Compact startup digest,none,captain,captain choice pending'
         ;;
       *'--state held'*)
-        task_header 1
+        task_header $((1 + ${JG_FAKE_TASKS_AXI_HELD_FUTURE:-0}))
         printf '%s\n' '  held-queued,queued,ship,juggernaut,Held queued work,none,captain,captain choice pending'
+        i=1
+        while [ "$i" -le "${JG_FAKE_TASKS_AXI_HELD_FUTURE:-0}" ]; do
+          printf '  gated-%s,queued,task,"-",Date gated %s,none,future,"parked until later"\n' "$i" "$i"
+          i=$((i + 1))
+        done
         ;;
       *'--state queued'*'--blocked'*)
         task_header 1
@@ -1157,8 +1162,8 @@ EOF
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_contains "$out" "working: step 7" "default status tail missing the most recent line"
-  assert_contains "$out" "working: step 3" "default status tail (5 lines) missing an expected recent line"
-  assert_not_contains "$out" "working: step 1" "default status tail (5 lines) leaked an older line"
+  assert_contains "$out" "working: step 5" "default status tail (3 lines) missing an expected recent line"
+  assert_not_contains "$out" "working: step 4" "default status tail (3 lines) leaked an older line"
   assert_contains "$out" "$home/state/task-a.status" "digest did not print the full status log path for a deeper read"
   assert_contains "$out" "a bounded tail of every state/*.status" "read-once contract does not distinguish bounded status tails"
 
@@ -2051,7 +2056,7 @@ EOF
   out=$(JG_FAKE_TASKS_AXI_LOG="$log" JG_FAKE_TASKS_AXI_READY=3 \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
-  assert_contains "$out" "compact backlog listing (tasks-axi; done rows omitted; every in-flight, held, and blocked row shown in full; ready queued bounded to 20; task bodies omitted)" \
+  assert_contains "$out" "compact backlog listing (tasks-axi; done rows omitted; every in-flight, captain-held, and blocked row shown in full; other held rows bounded to 10; ready queued bounded to 20; task bodies omitted)" \
     "compatible tasks-axi backend did not render the compact backlog listing"
   assert_contains "$out" "tasks[1]{id,state,kind,repo,title,blocked_by,hold_kind,hold_reason}:" \
     "tasks-axi compact listing omitted the expected structured field header"
@@ -2093,6 +2098,57 @@ EOF
 
 # The bound may only ever cut the dispatchable-now listing, and whatever it cuts
 # must be disclosed with an exact count and the command that shows the rest.
+# Token diet: the digest sections that grew with fleet history are bounded, each
+# discloses how to see the rest, and the ones carrying an action stay whole.
+test_digest_sections_stay_under_their_caps() {
+  local rec root home fakebin out held learn i
+  rec=$(new_world digest-caps)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_tasks_axi_compact "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  write_long_body_backlog "$home/data/backlog.md"
+  {
+    printf '# Learnings\n'
+    i=1
+    while [ "$i" -le 400 ]; do
+      printf 'learned fact number %s with some padding text to take bytes\n' "$i"
+      i=$((i + 1))
+    done
+    printf '## Late heading\nlate body\n'
+  } > "$home/data/learnings.md"
+
+  out=$(JG_FAKE_TASKS_AXI_HELD_FUTURE=30 JG_SESSION_START_HELD_LIMIT=4 JG_SESSION_START_CONTEXT_FILE_CAP=2000 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  # Held: the captain-held row stays whole, gated rows are cut at the limit.
+  assert_contains "$out" "held-queued,queued,ship,juggernaut,Held queued work,none,captain,captain choice pending" \
+    "the held bound dropped a captain-held row"
+  assert_contains "$out" "gated-4,queued" "the held bound dropped a row inside its limit"
+  assert_not_contains "$out" "gated-5,queued" "the held bound did not bound date-gated rows"
+  assert_contains "$out" "(26 more held row(s) not listed;" "the held bound did not disclose its exact remainder"
+  assert_contains "$out" "bin/jg-tasks-axi.sh list --state held" "the held bound did not name the command for the rest"
+  held=$(printf '%s\n' "$out" | awk '/^held [(]/{f=1} /^blocked queued:/{f=0} f' | wc -c)
+  [ "$held" -le 1500 ] || fail "held group passed its cap: $held bytes"
+
+  # Curated memory: cut at the cap, with the range, the command, and the headings.
+  assert_contains "$out" "[cut at 2000 bytes: lines " "learnings.md was not cut at its cap"
+  assert_contains "$out" "line 402: ## Late heading" "the cut did not index the headings it left out"
+  assert_not_contains "$out" "learned fact number 400 " "learnings.md body passed its cap"
+  learn=$(printf '%s\n' "$out" | awk '/^data[/]learnings.md$/{f=1} /^data[/]owner-rules.md/{f=0} f' | wc -c)
+  [ "$learn" -le 3500 ] || fail "learnings section passed its cap: $learn bytes"
+
+  # Defaults keep a small file whole.
+  printf 'short learning\n' > "$home/data/learnings.md"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "short learning" "a file under the cap was not printed whole"
+  assert_not_contains "$out" "are not printed; read them with sed" "a file under the cap was cut"
+
+  pass "held rows and curated memory are bounded, disclose the rest, and keep captain-held rows whole"
+}
+
 test_backlog_queued_bound_discloses_its_remainder() {
   local rec root home fakebin out
   rec=$(new_world backlog-queued-bound)
@@ -3072,6 +3128,7 @@ test_branch_outcome_replay_respects_captain_barrier_and_lease_sweep
 test_non_pi_session_start_leaves_branch_state_untouched
 test_session_start_seeds_the_outcome_display_tail_while_away
 test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
+test_digest_sections_stay_under_their_caps
 test_backlog_queued_bound_discloses_its_remainder
 test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
