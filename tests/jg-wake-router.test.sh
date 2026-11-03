@@ -51,7 +51,7 @@ test_pattern_grammar() (
   assert_equals "$(r check litXstar p)" now "a literal star is not a wildcard"
   assert_equals "$(r check cls-7z p)" batch "a character class matches"
   assert_equals "$(r check tab anything)" batch "tabs separate fields"
-  assert_equals "$(r check final p)" now "a final rule line with no newline is not read, as read -r skips it"
+  assert_equals "$(r check final p)" silent "a final rule line with no newline still counts: the shell cats each file and adds one"
   assert_equals "$(r heartbeat unknown p)" now "no matching rule is now"
   pass "rule patterns follow the shell's case grammar"
 )
