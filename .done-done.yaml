@@ -157,6 +157,8 @@ journeys:
     command: bash journeys/token-cuts-live.sh
   context-bound-at-wake:
     command: bash journeys/context-bound-at-wake.sh
+  axi-digest:
+    command: bash journeys/axi-digest.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
