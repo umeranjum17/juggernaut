@@ -12,5 +12,6 @@ The captain can text Overwatch from Telegram. The channel is optional: a home wi
 ## How it works
 
 - The owner's private text becomes an inbox note whose first line is `[chat telegram <chat>:<message>]`. Anyone else is dropped and counted by time and update id, never by text.
+- A photo, document or voice note is downloaded (20 MB limit) into `state/captain-chat/media/<day>/<sha256>.<ext>` (0600, same file kept once). The note names it on a `[file ...]` line; a larger or missing file gets a line that says so.
 - `bin/jg-inbox.sh reply <id>` is the only way an answer reaches the chat. It is sent as a threaded reply, split at 4096 characters, and sent once.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
