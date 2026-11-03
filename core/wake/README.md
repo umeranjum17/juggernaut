@@ -80,7 +80,10 @@ batched digest: a window opens with the first routine row, one digest wake is du
 later naming the count, and none is sent when no routine row waits. `silent@fleet-unchanged heartbeat`
 keeps an away-mode heartbeat silent while the sorted status, meta and hold file names and sizes match the
 fingerprint recorded by the last heartbeat that woke. A `done` carrying a key already closes that key's
-wait (`tests/jg-wake-batching.test.sh`), so an answered key never re-pings.
+wait (`tests/jg-wake-batching.test.sh`), so an answered key never re-pings. A pause that names its future
+event with `until <time>` is a planned wait: its status line, its recheck before that time and its timer
+ride the digest, while a `blocked` wait with no clearing condition and a pause past its declared time
+keep waking.
 
 `bin/jg-context-bound.py rates <transcript>...` reports wakes per hour from session records, so the
 rate is measured the same way before and after. `tests/jg-wake-schedule.test.sh` proves the journeys.

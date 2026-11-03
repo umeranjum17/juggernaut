@@ -52,9 +52,9 @@ now	check	waiting-timer-8a88d6fd-firstmate-addons-gN-bus-unit-writer-owner	check
 now	check	waiting-timer-8a88d6fd-firstmate-addons-gN-s08-dependency-owner	check: waiting-state firstmate-addons (needs-decision key=s08-dependency, observed 449s, level=owner; Main must recheck and unblock) id=waiting-timer-8a88d6fd-firstmate-addons-gN-s08-dependency source
 now	check	waiting-timer-9d008e40-takeone-gN-ready-backlog-stall	check: ready backlog stalled: work-the-ready-queue-now-dispatch-every-0b t1-aud-a06 jg-watcher-beacon-churn t1-aud-a49 t1-aud-a69 t1-aud-a70 t1-aud-a74 t1-aud-a75 t1-aud-a77 t1-aud-a78 t1-aud-a83 t1-a
 now	stale	default:w2Y8:pA9	stale: default:w2Y8:pA9 (paused 158041s, awaiting external - the declared clearing time has passed, rechecked on a long cadence not a wedge; confirm the wait cleared)
-now	stale	default:w2Y8:pAX	stale: default:w2Y8:pAX (paused 129771s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)
-now	stale	default:w2Y8:pB4	stale: default:w2Y8:pB4 (paused 129738s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)
-now	stale	default:w2Y8:pB5	stale: default:w2Y8:pB5 (paused 129700s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)
+batch	stale	default:w2Y8:pAX	stale: default:w2Y8:pAX (paused 129771s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)
+batch	stale	default:w2Y8:pB4	stale: default:w2Y8:pB4 (paused 129738s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)
+batch	stale	default:w2Y8:pB5	stale: default:w2Y8:pB5 (paused 129700s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)
 batch	stale	default:w2YB:pGA	stale: default:w2YB:pGA (paused 117217s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
 batch	stale	default:w2YB:pGC	stale: default:w2YB:pGC (paused 132127s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
 batch	stale	default:w2YB:pGD	stale: default:w2YB:pGD (paused 116860s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
