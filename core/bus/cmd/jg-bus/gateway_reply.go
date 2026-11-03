@@ -47,7 +47,11 @@ func (t *telegram) Send(ctx context.Context, out Outbound) (string, error) {
 	if len(out.Files) > 0 {
 		return t.sendFiles(ctx, out, string(reply))
 	}
-	body, _ := json.Marshal(map[string]any{"chat_id": json.Number(out.Chat), "text": out.Text, "reply_parameters": json.RawMessage(reply)})
+	msg := map[string]any{"chat_id": json.Number(out.Chat), "text": out.Text}
+	if out.ReplyTo != "" { // a push answers nothing, so it is not threaded
+		msg["reply_parameters"] = json.RawMessage(reply)
+	}
+	body, _ := json.Marshal(msg)
 	return t.call(ctx, "sendMessage", 30*time.Second, func() (io.Reader, string) { return bytes.NewReader(body), "application/json" })
 }
 

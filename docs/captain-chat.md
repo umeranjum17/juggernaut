@@ -37,6 +37,13 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
 - The owner can send a photo, document, voice note, audio or video. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
 
+## Pushes to the owner
+
+`bin/jg-bus.sh gateway push <text>` (or the text on stdin) sends one message to the owner's private chat without a question.
+It is not threaded, and a long text is split at 4096 characters.
+With no token file, no paired owner or a channel that is not live it sends nothing and prints nothing.
+`bin/jg-migration-card.sh live --quiet` uses it to send the migration live table whenever a row changes, and once a day when none did.
+
 ## The migration card row
 
 The migration card has a `chat` row, "captain chat (Telegram)".

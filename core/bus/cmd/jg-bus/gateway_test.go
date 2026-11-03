@@ -200,3 +200,46 @@ func TestGatewayPairAndStatus(t *testing.T) {
 		t.Fatalf("gateway unit = %q, %v", unit, err)
 	}
 }
+
+// A push is one unprompted message to the owner's private chat, split when long and not threaded.
+// A home with no token file, or a channel that is not live, sends nothing and says nothing.
+func TestGatewayPush(t *testing.T) {
+	home := t.TempDir()
+	var sends []map[string]any
+	bot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		json.NewDecoder(r.Body).Decode(&m)
+		if strings.HasSuffix(r.URL.Path, "/sendMessage") {
+			sends = append(sends, m)
+		}
+		fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, 900+len(sends))
+	}))
+	defer bot.Close()
+	tokenFile, conf, state := filepath.Join(home, "tg.token"), filepath.Join(home, "conf"), filepath.Join(home, "state")
+	write := func(extra string) {
+		os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\n%s", tokenFile, bot.URL, extra)), 0o600)
+	}
+	write("set mode live\n")
+	a := &app{root: ".", home: home, state: state, data: filepath.Join(home, "data"), configFiles: []string{conf}, record: state + "/rec", log: state + "/log"}
+	push := func(args ...string) int { return a.gateway(append([]string{"push"}, args...)) }
+
+	if code := push("NATS server: live"); code != 0 || len(sends) != 0 {
+		t.Fatalf("no token file: exit %d, %d sends; want a silent no-op", code, len(sends))
+	}
+	os.WriteFile(tokenFile, []byte(tok+"\n"), 0o600)
+	if code := push("NATS server:", "live"); code != 0 || len(sends) != 1 {
+		t.Fatalf("exit %d, %d sends; want one", code, len(sends))
+	}
+	if sends[0]["chat_id"] != float64(42) || sends[0]["text"] != "NATS server: live" || sends[0]["reply_parameters"] != nil {
+		t.Fatalf("push = %v; want owner 42, the text, no thread", sends[0])
+	}
+	sends = nil
+	if push(strings.Repeat("row\n", 2000)) != 0 || len(sends) != 2 {
+		t.Fatalf("a long push went as %d messages, want 2", len(sends))
+	}
+	sends = nil
+	write("set mode off\n")
+	if code := push("hello"); code != 0 || len(sends) != 0 {
+		t.Fatalf("channel off: exit %d, %d sends; want none", code, len(sends))
+	}
+}

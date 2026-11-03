@@ -3,6 +3,6 @@
 # script header owns what each does.
 #   branch  target  board  project  card  baseline-deleted  baseline-added  filer
 #   critical    slugs of the parts that must go live first, in order (bin/jg-critical-path.sh).
-#   push-hours  hours without a row change before the card and the captain digest say so
+#   push-hours  hours without a row change before the card and the captain chat say so
 #               in one line (default 24). Every row change is pushed at once, with no wait.
 # push-hours=24
