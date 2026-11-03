@@ -1,0 +1,8 @@
+# Migration card keys: copy the keys you want to config/migration-card (key=value lines).
+# bin/jg-migration-card.sh reads that file; this one only documents the keys, and the
+# script header owns what each does.
+#   branch  target  board  project  card  baseline-deleted  baseline-added  filer
+#   critical    slugs of the parts that must go live first, in order (bin/jg-critical-path.sh).
+#   push-hours  hours without a row change before the card and the captain digest say so
+#               in one line (default 24). Every row change is pushed at once, with no wait.
+# push-hours=24
