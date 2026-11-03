@@ -173,10 +173,10 @@ func TestGatewayPairAndStatus(t *testing.T) {
 	os.WriteFile(conf, []byte("set telegram-api-url "+bot.URL+"\nset keep me\n"), 0o600)
 	a := &app{root: ".", home: home, state: state, data: home, configFiles: []string{conf}}
 
-	// Silent off: no token file, nothing wanted, nothing written.
 	if a.gateway([]string{"enabled"}) != 1 || a.gateway([]string{"serve"}) != 0 {
 		t.Fatal("with no token file enabled must say no and serve must return 0")
 	}
+	t.Logf("no bot token file: gateway enabled=no, serve exits 0 with no output, so no unit is installed and nothing fails")
 	os.WriteFile(tokenPath, []byte(tok+"\n"), 0o644)
 	if _, _, _, err := a.readTokenFile(); err == nil || strings.Contains(err.Error(), tok) {
 		t.Fatalf("a group-readable token file must be refused without naming the token: %v", err)
