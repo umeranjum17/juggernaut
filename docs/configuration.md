@@ -679,7 +679,7 @@ Selecting any other supervisor backend, including `zellij`, `orca`, or `cmux`, r
 ## Away-mode wedge alert
 
 When away-mode injection wedges past `JG_MAX_DEFER_SECS`, the sub-supervisor raises a loud, rate-limited alert so the stall never stays invisible.
-It goes to the captain by the one captain channel, `bin/jg-bus.sh publish alert away-mode-wedge`, and by nothing else: that path owns the record, the delivery to his iPad, the undelivered accounting and the `mode` switch ([`captain-channel.md`](captain-channel.md)), so there is no notifier to configure beside it and no `config/wedge-alarm` file.
+It goes to the captain by the one captain channel, `bin/jg-bus.sh publish alert away-mode-wedge`, and by nothing else: that path owns the record, the publish to the bus, the undelivered accounting and the `mode` switch ([`captain-channel.md`](captain-channel.md)), so there is no notifier to configure beside it and no `config/wedge-alarm` file.
 The alert fires at most once per max-defer window after a genuine wedge, and the durable `state/.subsuper-inject-wedged` marker and the tmux status-line flash stay exactly as they were: the marker is the record whether or not a delivery arrives.
 A bus that cannot be reached is logged by the channel and never crashes the daemon loop.
 

@@ -22,7 +22,7 @@ fi
 
 # Captain-channel quiet seam. The away-mode wedge alert reaches the captain by
 # the one captain channel (bin/jg-bus.sh, docs/captain-channel.md), whose live
-# mode posts to a bus and an iPad that no test has business reaching. Point every
+# mode posts to a bus that no test has business reaching. Point every
 # daemon and wake suite at a `mode off` channel config, so a sourced or spawned
 # daemon records and delivers nothing: it is impossible to forget, because
 # sourcing this harness installs it (an explicit JG_CAPTAIN_CHANNEL still wins).
