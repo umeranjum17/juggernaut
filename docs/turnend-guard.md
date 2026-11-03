@@ -18,6 +18,7 @@ Do not infer this guard's scope, loop safety, or compatibility tradeoffs for tho
 | --- | --- |
 | What the guard enforces | [Current invariant](#current-invariant) |
 | A correction no rule or ticket captured | [Owner-correction capture rule](#owner-correction-capture-rule) |
+| A message that calls a migration part live with no live row | [Migration progress rule](#migration-progress-rule) |
 | Which sessions are in scope and what counts as supervision need | [Primary scope](#primary-scope) and [supervision need](#supervision-need) |
 | How the turn-end check and the mid-turn pull warning judge watcher health | [Strict watcher check at the turn boundary](#strict-watcher-check-at-the-turn-boundary) and [pull-warning verdict by supervision model](#pull-warning-verdict-by-supervision-model) |
 | Away and quiet mode | [Away and quiet mode daemon ownership](#away-and-quiet-mode-daemon-ownership) |
@@ -73,6 +74,16 @@ Either artefact captures it, and both are commands that already exist:
 
 A turn that writes either artefact ends normally, and the charge (`state/.owner-correction-flagged`) keeps every harness bounded to one block per correction; a home whose harness records no captain message records no correction, exactly as for the KPI rule.
 The check ships from this repository's own `bin/` with the guard, so a home that fast-forwards gets both, and a home whose guard runs without `bin/jg-owner-correction.sh` - or whose copy cannot answer - is never read as "nothing pending": the guard prints a `THIS HOME HAS NOT PICKED UP OWNER-CORRECTION CAPTURE` banner once (`state/.owner-correction-unavailable`) instead of pretending it ran.
+
+## Migration progress rule
+
+A migration part merged is not a part live, so the turn that says a part is live must have a live row behind it.
+After the owner-correction rule, the guard asks `bin/jg-progress-claim.sh` whether the last message calls a part live while `bin/jg-migration-live.sh` says it is not.
+A claim is a sentence that names a part (a slug or name from the probe's part table) and says live, switched, landed, shipped, done, running, "is on" or "turned on".
+A sentence that also says pending, not live, not yet, not running or "is not" is not a claim, and "working on" is effort, so neither is blocked.
+The guard blocks once per message (`state/.progress-claim-flagged`), names the part and what the probe measured, and asks for "merged, not live" or for the row to be proved live.
+A home with no `critical=` in `config/migration-card`, a missing `jq`, or a copy of the guard without `bin/jg-progress-claim.sh` checks nothing and is never blocked.
+The captain-facing numbers come from the same rows: the milestone outcome in `bin/jg-migration-card.sh` and the `Live now` line in `bin/jg-status-digest.sh` lead with the count from `bin/jg-critical-path.sh summary`, and a merged switch is recorded as a milestone only when its row is live.
 
 ## Guard predicates
 
@@ -597,6 +608,8 @@ That warning uses `bin/jg-supervision-instructions.sh --repair-line`, so it alwa
 - Exactly-one-path safety.
 
 `tests/jg-owner-correction.test.sh` covers the correction rule: an uncaptured correction is flagged once with both exact commands named, an owner rule ends the turn, an enforcement ticket ends the turn, new work is never read as a correction, and a home without the shared check says so once.
+
+`tests/jg-progress-claim.test.sh` covers the progress rule: an unsupported live claim is blocked once with the part and its measurement, honest wording and live parts pass, a merged switch with a pending row is recorded as merged, and the digest carries the live count.
 
 `tests/jg-turnend-foreign-owner-arm-fix.test.sh` runs the extracted isolated executable reproduction against real auto-arm and turn-end guard scripts.
 It proves that a live foreign owner still prevents arming while repeated non-owner Stops receive a diagnostic and exit safely.

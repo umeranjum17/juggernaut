@@ -108,7 +108,7 @@ clean() { printf '%s' "${1-}" | sed -e 's/[[:space:]]*$//' -e 's/\.$//'; }
 # Build the five lines into DONE, LEFT, BLOCKERS, RELEASE and LIVE, or die with no
 # record.
 render() {
-  local rec start live merged leftw blockw unit=task
+  local rec start live merged leftw blockw migration unit=task
   [ -s "$REC" ] || die "no batch outcome is recorded yet: run record first"
   rec=$(tail -n 1 "$REC")
   start=$(jq -s 'map(.since // .at) | min' "$REC")
@@ -124,6 +124,9 @@ render() {
   LEFT="Left: $leftw"
   BLOCKERS="Release blockers: $blockw"
   if [ -n "$live" ]; then LIVE="Live now: $live"; else LIVE='Live now: no release is recorded yet'; fi
+  migration=
+  [ ! -x "$home/bin/jg-critical-path.sh" ] || migration=$(JG_HOME="$home" JG_CONFIG_OVERRIDE="$CFG" "$home/bin/jg-critical-path.sh" summary --short 2>/dev/null) || migration=
+  [ -z "$migration" ] || LIVE="$LIVE - $migration"
 }
 
 # The release line, owned by bin/jg-release-readiness.sh so the two never drift.

@@ -758,6 +758,7 @@ tests/jg-post-merge-ci-main.test.sh 357
 tests/jg-pr-state-live-e2e.test.sh 81
 tests/jg-pr-wait.test.sh 284
 tests/jg-pre-push.test.sh 17156
+tests/jg-progress-claim.test.sh 2500
 tests/jg-procevent.test.sh 233712
 tests/jg-project-mode.test.sh 134
 tests/jg-prompt-gate-live-e2e.test.sh 179
