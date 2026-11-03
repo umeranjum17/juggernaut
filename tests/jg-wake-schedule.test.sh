@@ -10,6 +10,8 @@
 #               which the journey runs beside this file, so a key never re-pings after its done).
 #   immediate   a captain answer, a red gate, a host alarm, a stuck worker and a finished deliverable
 #               still wake at once, even when the digest is due.
+# This is also the test that owns journeys/wake-schedule.sh (the done-done journey runs this file),
+# so the changed-test map selects it for a change to that journey.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
