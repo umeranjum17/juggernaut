@@ -179,24 +179,54 @@ test_a_planned_wait_raises_no_wake_and_an_open_blocker_still_does() {
   for w in "pa:paused [at=1]: change held for the release/c-6 branch until $future" \
     "bl:blocked [at=1] [key=held]: change held for the next release branch until $future" \
     "bo:blocked [at=1] [key=vendor]: waiting on the vendor" \
-    "bp:blocked [at=1] [key=late]: change held for the next release branch until $past"; do
+    "bp:blocked [at=1] [key=late]: change held for the next release branch until $past" \
+    "sk:blocked [at=1] [key=release-c4-to-main]: waiting on the release branch"$'\n'"working [at=2] [key=release-c4-to-main]: the release branch landed, building" \
+    "sp:blocked [at=1] [key=release-c4-to-main]: waiting on the release branch"$'\n'"paused [at=2] [key=release-c4-to-main]: held until the next window"; do
     n=$((n + 1))
     printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\nharness=claude\n' "$n" > "$m/state/${w%%:*}.meta"
     printf '%s\n' "${w#*:}" > "$m/state/${w%%:*}.status"
     touch -d '-20 minutes' "$m/state/${w%%:*}.status"
     prime_status_seen "$m/state" "$m/state/${w%%:*}.status"
   done
-  for n in 1 2 3; do
-    PANES='1 2 3 4' cycle "$m"
-    for w in pa bl bo bp; do [ ! -f "$m/state/.waiting-timers/$w" ] || backdate "$m" "$w" 700; done
+  for n in 1 2 3 4 5; do
+    PANES='1 2 3 4 5 6' cycle "$m"
+    for w in pa bl bo bp sk sp; do [ ! -f "$m/state/.waiting-timers/$w" ] || backdate "$m" "$w" 700; done
   done
   printf "events: %s\n" "$(cat "$m/events")" >&2
-  for w in pa:1 bl:2; do
+  for w in pa:1 bl:2 sk:5 sp:6; do
     ! grep -q -E "(^|[^a-z])${w%:*}([^a-z]|$)|fake:${w#*:}" "$m/events" || fail "a planned wait on ${w%:*} raised a wake: $(cat "$m/events")"
   done
   grep -q -E "waiting-state bo .*level=owner" "$m/events" || fail "a blocked wait with no clearing condition did not escalate: $(cat "$m/events")"
   grep -q -E "waiting-state bp .*level=owner" "$m/events" || fail "a planned wait past its clearing time did not escalate: $(cat "$m/events")"
-  pass "a planned wait is silent until its clearing time, and an open blocker escalates"
+  pass "a newer working or paused line under the same key clears the older blocked wait; a planned wait is silent until its clearing time, and an open blocker escalates"
+}
+
+# The wait is already armed from a blocked line when a newer line under the same key arrives: the
+# newest line is authoritative, so the armed timer drops and nothing escalates. A lane whose blocked
+# line stays the newest still escalates.
+test_a_newer_line_under_the_same_key_clears_an_armed_wait() {
+  local m w n=0
+  m=$(home newer)
+  for w in "nw:working" "np:paused" "nb:blocked"; do
+    n=$((n + 1))
+    printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\nharness=claude\n' "$n" > "$m/state/${w%%:*}.meta"
+    printf 'blocked [at=1] [key=release-c4-to-main]: waiting on the release branch\n' > "$m/state/${w%%:*}.status"
+    touch -d '-20 minutes' "$m/state/${w%%:*}.status"
+    prime_status_seen "$m/state" "$m/state/${w%%:*}.status"
+  done
+  PANES='1 2 3' cycle "$m"
+  for w in nw np nb; do [ ! -f "$m/state/.waiting-timers/$w" ] || backdate "$m" "$w" 300; done
+  printf 'working [at=2] [key=release-c4-to-main]: the release branch landed, building\n' >> "$m/state/nw.status"
+  printf 'paused [at=2] [key=release-c4-to-main]: held until the next window\n' >> "$m/state/np.status"
+  for n in 1 2 3 4 5; do
+    PANES='1 2 3' cycle "$m"
+    for w in nw np nb; do [ ! -f "$m/state/.waiting-timers/$w" ] || backdate "$m" "$w" 700; done
+  done
+  printf "events: %s\n" "$(cat "$m/events")" >&2
+  ! grep -q -E "waiting-state (nw|np) " "$m/events" || fail "a newer line under the same key did not clear the armed wait: $(cat "$m/events")"
+  grep -q -E "waiting-state nb .*level=owner" "$m/events" || fail "a blocked line with no newer line did not escalate: $(cat "$m/events")"
+  pass "a newer working or paused line under the same key drops the armed wait; an unchanged blocker still escalates"
 }
 
 test_a_planned_wait_raises_no_wake_and_an_open_blocker_still_does
+test_a_newer_line_under_the_same_key_clears_an_armed_wait
