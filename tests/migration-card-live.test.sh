@@ -90,6 +90,13 @@ assert_contains "$(row 'wake queue')" "pending|the server carries no JG_WAKE str
   fail "the test could not create the inbox stream"
 "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the second probe did not run"
 assert_contains "$(row 'wake queue')" "live|the bus is the store, 0 records on JG_WAKE" "a wake stream on the server makes the queue live"
+# A cursor left past the stream's end by a stream the server remade reads nothing new.
+printf 'JG_WAKE\t999\n' >"$HOME_DIR/state/.wake-bus.cursor"
+"$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the stale-cursor probe did not run"
+assert_contains "$(row 'wake queue')" "pending|the renderer reads JG_WAKE from sequence 999 and the stream ends at 0" \
+  "a cursor past the stream's end is pending, never live"
+rm -f "$HOME_DIR/state/.wake-bus.cursor"
+"$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the probe after the cursor did not run"
 
 assert_contains "$(row 'captain channel/ntfy')" "pending|" "ntfy that nothing answers is pending, never live"
 assert_contains "$(awk -F'\t' '$1 == "captain channel/ntfy" { print $4 }' "$ROWS")" "https://example.test/o/r/pull/7" \
@@ -144,4 +151,102 @@ assert_contains "$(cat "$(card_page)/index.html")" "config/crew-dispatch.json pa
 
 "$ROOT/bin/jg-migration-card.sh" disarm >/dev/null || fail "disarm failed"
 [ ! -e "$HOME_DIR/state/migration-card.check.sh" ] || fail "disarm left the check shim"
+
+# The machine's server runs one account per home and refuses the empty user. A probe that
+# connected without this home's login measured that refusal as a dead bus, and one that
+# missed the bare relative include saw no accounts. The accounts come from the Go bus command.
+if [ -n "${JG_BUS_BIN:-}" ] || command -v "${JG_BUS_GO:-go}" >/dev/null 2>&1; then
+  ACC=$T/acc; BUSD=$ACC/state/bus
+  mkdir -p "$BUSD" "$ACC/config" "$ACC/data" "$T/acc-store"
+  JG_HOME=$ACC JG_STATE_OVERRIDE=$ACC/state JG_DATA_OVERRIDE=$ACC/data timeout 240 bash "$ROOT/bin/jg-bus.sh" accounts \
+    >"$BUSD/accounts.conf" 2>"$T/acc.err" || fail "the bus command did not write the accounts: $(cat "$T/acc.err")"
+  printf 'host: 127.0.0.1\nport: -1\njetstream { store_dir: "%s" }\ninclude accounts.conf\n' "$T/acc-store" >"$BUSD/bus.conf"
+  "$NATS_SERVER" -c "$BUSD/bus.conf" >"$T/acc.log" 2>&1 &
+  ACC_PID=$!
+  trap 'cleanup; kill "$ACC_PID" 2>/dev/null || true' EXIT
+  APORT=
+  for _ in $(seq 1 200); do
+    APORT=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$T/acc.log" 2>/dev/null | head -n 1)
+    [ -z "$APORT" ] || break
+    sleep 0.05
+  done
+  [ -n "$APORT" ] || fail "the accounts bus did not start: $(cat "$T/acc.log")"
+  printf 'set nats-url nats://127.0.0.1:%s\nset ntfy-server http://127.0.0.1:1\n' "$APORT" >"$ACC/config/captain-channel"
+  ROWS=$T/acc-data/migration-card/live.tsv
+  JG_HOME=$ACC JG_DATA_OVERRIDE=$T/acc-data "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the accounts probe did not run"
+  assert_contains "$(row 'NATS server')" "live|pid $ACC_PID, port $APORT, a real message went out and came back" \
+    "a server that refuses the empty user is live to this home's login"
+  assert_contains "$(row 'per-home accounts')" "live|the server loads 1 home accounts; this home logs in as home-" \
+    "a bare relative include is read, and the server holds this home's account"
+else
+  echo "skip: the accounts probe needs the Go toolchain or JG_BUS_BIN"
+fi
+# The push: a row change reaches the captain channel at once, a quiet day says so after
+# push-hours, and a home whose channel is not live gets the card with the missing push named.
+# A stub probe prints fixed rows and a stub bus records its calls, so each pass is deterministic.
+P=$T/push; PLOG=$T/push-calls.log; PUB=$T/published.log
+mkdir -p "$P/config" "$P/state" "$P/data/migration-card" "$T/board2"
+printf '{"schema":2,"items":[]}\n' >"$T/board2/board.json"
+printf 'branch=release/c-2\ntarget=100000\nboard=%s/board2/board.json\ncard=push-card\nfiler=test\nproject=Test\ncritical=nats,accounts\n' "$T" >"$P/config/migration-card"
+cat >"$T/probe-stub.sh" <<'F'
+#!/usr/bin/env bash
+case ${1-} in
+  --quiet) cp "$STUB_ROWS" "$JG_HOME/data/migration-card/live.tsv" ;;
+  nats) grep '^NATS server' "$STUB_ROWS" ;;
+  accounts) grep '^per-home accounts' "$STUB_ROWS" ;;
+  captain) grep '^captain channel' "$STUB_ROWS" ;;
+esac
+F
+cat >"$T/bus-stub.sh" <<'F'
+#!/usr/bin/env bash
+case "$1 ${2-}" in
+  'config mode') echo "$BUS_MODE" ;;
+  'publish digest') printf '%s\n' "$4" | paste -s -d '|' >>"$PUBLISHED" ;;
+esac
+F
+chmod +x "$T/probe-stub.sh" "$T/bus-stub.sh"
+export STUB_ROWS=$T/stub-rows.tsv BUS_MODE=live PUBLISHED=$PUB
+set_rows() {  # <accounts-state> <captain-state>
+  printf 'NATS server\tlive\tpid 1\t-\nper-home accounts\t%s\tthe server runs without accounts\thttps://example.test/o/r/pull/9\ncaptain channel/ntfy\t%s\tntfy answers\t-\nwake queue\tpending\tno stream\t-\n' \
+    "$1" "$2" >"$STUB_ROWS"
+}
+push_pass() { JG_HOME=$P FAKE_LOG=$PLOG JG_MIGRATION_LIVE_BIN=$T/probe-stub.sh JG_BUS_CMD=$T/bus-stub.sh JG_MIGRATION_CARD_NOW=$1 "$ROOT/bin/jg-migration-card.sh" live --quiet; }
+posts() { grep -c '^post ' "$PLOG" 2>/dev/null || true; }
+last_post() { awk '/^post /{b=""} /^dismiss /{next} {b=b $0 "\n"} END{printf "%s", b}' "$PLOG"; }
+published() { grep -c . "$PUB" 2>/dev/null || true; }
+T0=1000000000
+set_rows pending live
+out=$(push_pass "$T0" 2>&1)
+assert_equals "" "$out" "a push pass prints nothing"
+assert_equals 1 "$(posts)" "a row change posts one card"
+assert_equals 1 "$(published)" "a row change publishes one digest"
+assert_contains "$(cat "$PUB")" "NATS server: live" "the digest names the first critical row"
+assert_contains "$(cat "$PUB")" "per-home accounts: pending - the server runs without accounts https://example.test/o/r/pull/9" "a pending critical row carries its detail and pull request"
+assert_contains "$(cat "$PUB")" "Other rows: 1 of 2 live." "the digest counts the rows that are not critical"
+push_pass "$((T0 + 3600))"
+assert_equals 1 "$(posts)" "a pass an hour later with no change posts no card"
+assert_equals 1 "$(published)" "a pass an hour later with no change publishes nothing"
+push_pass "$((T0 + 86400))"
+assert_equals 2 "$(posts)" "a quiet day posts one card"
+assert_equals 2 "$(published)" "a quiet day publishes one digest"
+assert_contains "$(tail -n 1 "$PUB")" "No migration row changed since 2001-09-09 01:46 UTC. Live: 1 of 2 critical rows. First pending: per-home accounts - the server runs without accounts." \
+  "the quiet day says nothing moved, how many critical rows are live and what is first pending"
+push_pass "$((T0 + 86400 + 3600))"
+assert_equals 2 "$(published)" "the daily line restarts the quiet clock"
+set_rows live live
+push_pass "$((T0 + 90000))"
+assert_contains "$(tail -n 1 "$PUB")" "per-home accounts: live" "a row going live is pushed at once"
+assert_equals "change daily change" "$(cut -f3 "$P/data/migration-card/push.tsv" | paste -s -d ' ')" "the push record keeps the kind of every push"
+BUS_MODE=shadow
+set_rows pending live
+push_pass "$((T0 + 91000))"
+assert_equals 3 "$(published)" "a bus that is not live gets no publish"
+assert_equals 4 "$(posts)" "the card is still posted when the bus is not live"
+assert_contains "$(last_post | tail -n 1)" "Phone push is off: the captain channel is not live." "the card text ends by saying the phone push is off"
+BUS_MODE=live
+set_rows live pending
+push_pass "$((T0 + 92000))"
+assert_equals 3 "$(published)" "a captain row that is not live gets no publish"
+assert_contains "$(last_post | tail -n 1)" "Phone push is off" "a captain row that is not live is named on the card"
+
 pass "the migration card measures every part on this machine and keeps itself current"

@@ -297,6 +297,28 @@ case "$OWNER_CORRECTION_STATUS" in
   *) owner_correction_unavailable "bin/jg-owner-correction.sh could not answer (exit $OWNER_CORRECTION_STATUS)" ;;
 esac
 
+# --- the migration progress rule --------------------------------------------
+# A migration part merged is not a part live. bin/jg-progress-claim.sh reads the last
+# message from the payload and names the first part it calls live while the probe says
+# otherwise. It is charged once per message (the sha1 in $STATE/.progress-claim-flagged),
+# and a predicate that is missing or cannot answer is skipped.
+if [ -x "$SCRIPT_DIR/jg-progress-claim.sh" ]; then
+  PROGRESS_CLAIM=$(printf '%s' "$PAYLOAD" | "$SCRIPT_DIR/jg-progress-claim.sh" pending 2>/dev/null) || PROGRESS_CLAIM=
+  PROGRESS_SHA=${PROGRESS_CLAIM%%$'\t'*}
+  if [ -n "$PROGRESS_CLAIM" ] && [ "$PROGRESS_SHA" != "$(cat "$STATE/.progress-claim-flagged" 2>/dev/null)" ]; then
+    printf '%s\n' "$PROGRESS_SHA" > "$STATE/.progress-claim-flagged" 2>/dev/null || true
+    PROGRESS_REST=${PROGRESS_CLAIM#*$'\t'}
+    {
+      printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+      printf '●  MIGRATION PROGRESS CLAIM WITH NO LIVE ROW\n'
+      printf '●  The message calls "%s" live, and the probe says it is not: %s\n' "${PROGRESS_REST%%$'\t'*}" "${PROGRESS_REST#*$'\t'}"
+      printf '●  Say merged, not live, or prove the row live: %s/jg-migration-live.sh %s\n' "$SCRIPT_DIR" "${PROGRESS_REST%%$'\t'*}"
+      printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    } >&2
+    exit 2
+  fi
+fi
+
 # --- the actual predicate ----------------------------------------------------
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"

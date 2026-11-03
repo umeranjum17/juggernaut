@@ -4780,6 +4780,39 @@ test_unreadable_required_set_refuses() {
   pass "jg-pr-merge refuses when the required checks cannot be read, and tells a plan without rules apart"
 }
 
+test_allow_orphans_is_attended_only_and_needs_the_captain_words() {
+  local case_dir rc head
+  head=acacacacacacacacacacacacacacacacacacacac
+  case_dir=$(make_case github-allow-orphans-away)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/83 \
+    --allow-orphans 'ship it' \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "github-allow-orphans-away: --allow-orphans must be refused while away"
+  assert_grep '--allow-orphans is attended-only' "$case_dir/stderr" \
+    "github-allow-orphans-away: refusal did not name attended-only"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "github-allow-orphans-away: gh pr merge ran despite away --allow-orphans"
+
+  case_dir=$(make_case github-allow-orphans-bare)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/84 --allow-orphans \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "github-allow-orphans-bare: --allow-orphans without words must be refused"
+  assert_grep "requires the captain's words" "$case_dir/stderr" \
+    "github-allow-orphans-bare: refusal did not ask for the captain's words"
+  pass "jg-pr-merge keeps --allow-orphans attended-only and requires the captain's words"
+}
+
 test_allow_missing_waives_only_the_named_unreported_check() {
   local case_dir head
   head=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5
@@ -4976,6 +5009,7 @@ test_required_check_that_never_reported_refuses
 test_required_checks_reported_and_green_merge
 test_red_and_unreported_checks_are_reported_together
 test_unreadable_required_set_refuses
+test_allow_orphans_is_attended_only_and_needs_the_captain_words
 test_allow_missing_waives_only_the_named_unreported_check
 test_allow_missing_follows_the_allow_red_rules
 

@@ -60,10 +60,12 @@ host-memory wakers - keeps working unchanged.
 Three files hold the live path's own state, and all three are caches of the bus:
 
 - `state/.wake-bus.events.jsonl` - this home's unsettled events, each with its
-  stream sequence. An acknowledgement drops its raise with it, so the fold stays
-  small.
-- `state/.wake-bus.cursor` - the last sequence already applied, per stream, which
-  is what makes a render cost nothing when nothing new arrived. It moves only after
+  stream sequence; an inbox record keeps its own number, its file's in the task's inbox.
+  An acknowledgement drops its raise with it, so the fold stays small.
+- `state/.wake-bus.cursor` - the last sequence already applied, per stream, with
+  the creation time of the stream it was taken on, which is what makes a render cost
+  nothing when nothing new arrived. A stream the server made again, or a cursor past
+  the stream's last sequence, starts the read again at the stream's first message. It moves only after
   the replica holding what it passed is written, each file by rename, so a render
   killed at any point leaves the old position (a re-read the fold absorbs) or the new one.
 - `state/.wake-bus.outbox.jsonl` - events a failed publish still owes the bus. A
@@ -86,7 +88,7 @@ Losing all three is safe: the next render rebuilds them from the stream.
   to find a new steer. A worker still acknowledges a steer by moving its record
   into `handled/`, so the watcher's poll carries that move to the bus with
   `bin/jg-wake-bus.sh inbox-settle`: a record missing from its inbox is
-  acknowledged, a record still there is left alone.
+  acknowledged under its own id, a record still there is left alone.
 
 ## The one-step reversal
 
@@ -128,5 +130,6 @@ first render after the file is gone.
 that matters: a raise reaches the read model with the server's sequence, the drain
 presents it and its acknowledgement removes it from the bus and from the read
 model, a record-only row lands in the record model, a withdraw removes only its
-own row, and an inbox record is raised at the writer and acknowledged when its
-file leaves the inbox. It gate-skips when the server or the client is missing.
+own row, an inbox record is raised at the writer and acknowledged when its
+file leaves the inbox, and a wake raised on a stream the server remade still reaches
+the read model. It gate-skips when the server or the client is missing.

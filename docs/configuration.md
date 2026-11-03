@@ -479,7 +479,7 @@ The local presence flag `config/delivery-risk-loose` turns the question off for 
 
 ## Migration card (config/migration-card)
 
-The optional local `config/migration-card` holds `key=value` lines: `branch` (the release branch), `target` (lines to delete), `board` (a board file, else `JG_PROOF_BOARD`), `project`, `card` (the key now posted; the script rewrites it), `baseline-deleted`, `baseline-added` and `filer`.
+The optional local `config/migration-card` holds `key=value` lines: `branch` (the release branch), `target` (lines to delete), `board` (a board file, else `JG_PROOF_BOARD`), `project`, `card` (the key now posted; the script rewrites it), `baseline-deleted`, `baseline-added`, `filer` and `push-hours` (hours of quiet before the daily "no row changed" push, default 24; `defaults/migration-card` lists every key).
 With it, `bin/jg-merge-outcome-lib.sh` runs `bin/jg-migration-card.sh merge` after each merge into `branch`; the script header owns the card, key and milestone rules.
 
 ## Version branch (config/version-branch, release/c-<N>)
@@ -523,6 +523,16 @@ The spawn records `red_fix_of=<branch>` in the task record, which a relaunch and
 The merge gate and the release process are unchanged.
 `config/frozen-release` (optional, one `release/c-<N>` name) names the release being shipped: `bin/jg-pr-check.sh` then accepts that branch as the head of the one pull request allowed to target the default branch even when a higher-numbered release branch exists, and every other refusal is unchanged; clear the file once the release merges. An absent, malformed, or unknown marker falls back to the highest-numbered branch.
 `journeys/frozen-release-base.sh` drives all of it.
+
+### Release cut and pull requests left on a shipped release
+
+An open pull request whose base is an older `release/c-<M>` than the newest `release/c-<N>` is an orphan: it targets a release that already shipped.
+When a release pull request merges, the recorded-merge pass in `bin/jg-version-branch-sync.sh` runs `gh pr edit --base` to move every orphan to the current version branch, and prints one line per move.
+Until then, `bin/jg-pr-check.sh` refuses to arm the release pull request and lists each orphan with the command that moves it.
+`bin/jg-release-readiness.sh` reports the release as `orphaned` and names the pull requests, so the digest line shows the problem before the cut.
+A pull request that cannot be moved is closed or retargeted by hand.
+The one override is `bin/jg-pr-merge.sh --allow-orphans "<captain words>"`, which only an attended merge accepts, and which records the reason as `orphans_waived=` in the task record.
+`journeys/release-cut-orphans.sh` drives all of it.
 
 ## Fleet autosync (config/fleet-autosync-off)
 

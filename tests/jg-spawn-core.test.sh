@@ -73,6 +73,10 @@ check "an upstream consent with a dot-dot is refused" "$(intake t1 proj --mode d
 check "a relaunch may not restate the recorded mode" "$(intake --relaunch t1 --mode direct-PR | var INTAKE_REFUSAL)" "'error: --relaunch reuses the task'\\''s recorded delivery mode; --mode cannot override it'"
 check "a scout may not carry a mode" "$(intake --scout t1 proj --mode direct-PR | var INTAKE_REFUSAL | head_is "'error: --mode applies only to ship spawns")" "'error: --mode applies only to ship spawns"
 check "a squad_lead may not carry a base branch, a scout may" "$(intake --squad-lead t1 --base-branch x | var INTAKE_REFUSAL | head_is "'error: --base-branch applies only")|$(intake --scout t1 proj --base-branch x | var INTAKE_REFUSAL)" "'error: --base-branch applies only|''"
+check "an off-critical-path decision is parsed for a ship" "$(intake t1 proj --mode direct-PR --yolo off --off-critical-path "captain: run it" | var OFF_CRITICAL_PATH)|$(intake t1 proj --mode direct-PR --yolo off --off-critical-path "captain: run it" | var OFF_CRITICAL_PATH_SET)" "'captain: run it'|'1'"
+check "an empty off-critical-path decision is refused" "$(intake t1 proj --mode direct-PR --yolo off --off-critical-path=)" "error: --off-critical-path requires the captain's words as a non-empty value"
+check "a relaunch may not restate the critical-path decision" "$(intake --relaunch t1 --off-critical-path x | var INTAKE_REFUSAL)" "'error: --relaunch reuses the task'\\''s recorded critical-path decision; --off-critical-path cannot override it'"
+check "a scout may not carry a critical-path decision" "$(intake --scout t1 proj --off-critical-path x | var INTAKE_REFUSAL | head_is "'error: --off-critical-path applies only to ship spawns")" "'error: --off-critical-path applies only to ship spawns"
 check "a quote in a positional survives the round trip" "$(eval "$("$core" intake "it's here" proj)"; printf %s "${POS[0]}")" "it's here"
 
 # The launch builders: the grants and settings that depend only on the task's own directories, the

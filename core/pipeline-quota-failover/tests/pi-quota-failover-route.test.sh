@@ -132,6 +132,10 @@ export PI_QUOTA_FAILOVER_MODEL_POOL=$helper
 export HOME="$home" XDG_STATE_HOME="$work/state" JG_HOME="$home"
 export JG_CLAUDE_ACCOUNTS_REGISTRY=$work/registry.json
 export JG_MODEL_POOL_FLOOR=15 JG_ACCOUNT_POOL_REST_FLOOR=15 JG_CLAUDE_ACCOUNTS_LOW=5 JG_CLAUDE_ACCOUNTS_FRESH=999999
+# The no-deepseek-at-peak owner rule skips every DeepSeek route on weekdays 12:00-17:59 UTC, so the Goat step of the
+# chain below passes or fails with the wall clock. Pin the clock to a Sunday (the same default the account-pool tests
+# use) so the chain is judged on its own; tests/jg-clause.test.sh owns the peak-hour skip itself.
+export JG_CLAUSE_NOW="${JG_CLAUSE_NOW:-1793538000}"
 PATH="$stub:$PATH"
 export PI_QUOTA_FAILOVER_PROBE=0
 # Empty pool path keeps the static chain for cases 1-4 (live homes must not leak in).

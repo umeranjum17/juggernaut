@@ -72,7 +72,11 @@
 # refused while the away-posture record exists, and neither
 # applies on GitLab, where a merge already requires the head pipeline to have
 # succeeded, or on Forgejo, where a merge already requires the head's combined
-# commit status to have succeeded. After gh returns success, GitHub's live
+# commit status to have succeeded. A release pull request is refused while an
+# open pull request still targets an older release/c-<M> (bin/jg-pr-check.sh);
+# an attended --allow-orphans "<captain words>" waives that once on GitHub, is
+# recorded as orphans_waived= in the task record, and is refused under the
+# away-posture record, so merge-on-green never passes it. After gh returns success, GitHub's live
 # state is read back and
 # accepted only when the pull request is merged or in the merge queue. gh's
 # GraphQL API supplies that queue-aware read; when that read fails, gh-axi's
@@ -193,7 +197,7 @@
 # explicit captain instruction and never skips the live green check, the
 # away-record read, or a captain hold.
 #
-# Usage: jg-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [-- <extra forge merge args>]
+# Usage: jg-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--allow-orphans "<captain words>"] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -277,6 +281,10 @@ shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
 ALLOW_MISSING=()
+# The waiver is read from the flag only, never from the caller's environment, so
+# an unattended caller cannot inherit it.
+unset JG_PR_ALLOW_ORPHANS
+ALLOW_ORPHANS=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --attended-override)
@@ -307,10 +315,24 @@ while [ "$#" -gt 0 ]; do
       echo "error: --allow-missing requires a separate check name argument" >&2
       exit 2
       ;;
+    --allow-orphans)
+      [ -n "${2:-}" ] || { echo "error: --allow-orphans requires the captain's words" >&2; exit 2; }
+      [ -z "$ALLOW_ORPHANS" ] || { echo "error: --allow-orphans may be specified only once" >&2; exit 2; }
+      ALLOW_ORPHANS=$2
+      shift 2
+      ;;
+    --allow-orphans=*)
+      echo "error: --allow-orphans requires a separate argument with the captain's words" >&2
+      exit 2
+      ;;
     --) shift; break ;;
     *) break ;;
   esac
 done
+if [ -n "$ALLOW_ORPHANS" ] && [ "$PROVIDER" != github ]; then
+  echo "error: --allow-orphans applies only to a GitHub release pull request" >&2
+  exit 2
+fi
 # --allow-red names one check run to waive, which only GitHub's per-check
 # reading can match. GitLab and Forgejo each collapse their checks into a
 # single head verdict - a head pipeline status and a combined commit status -
@@ -1506,7 +1528,7 @@ METHODS
 }
 
 record_pr_metadata() {
-  if ! JG_PR_CHECK_MERGE=1 "$SCRIPT_DIR/jg-pr-check.sh" "$ID" "$URL"; then
+  if ! JG_PR_CHECK_MERGE=1 JG_PR_ALLOW_ORPHANS=$ALLOW_ORPHANS "$SCRIPT_DIR/jg-pr-check.sh" "$ID" "$URL"; then
     return 1
   fi
   grep -qxF "pr=$URL" "$META" || {
@@ -1578,6 +1600,10 @@ require_current_away_authority() {
   resolve_merge_authority || return 1
   if [ "$JG_PR_AWAY_POSTURE" = true ] && [ "${#ALLOW_RED[@]}" -gt 0 ]; then
     echo "error: --allow-red is attended-only; while the away-posture record exists the green check is absolute" >&2
+    return 2
+  fi
+  if [ "$JG_PR_AWAY_POSTURE" = true ] && [ -n "$ALLOW_ORPHANS" ]; then
+    echo "error: --allow-orphans is attended-only; while the away-posture record exists a release pull request waits for its orphans to move" >&2
     return 2
   fi
   if [ "$JG_PR_AWAY_POSTURE" = true ] && [ "${#ALLOW_MISSING[@]}" -gt 0 ]; then

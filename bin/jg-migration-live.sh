@@ -30,11 +30,13 @@
 #   parts   the names are the captain's own words, in his order, so the card reads
 #           the way he asked the question.
 #   owner   bin/jg-bus.sh, bin/jg-wake-bus.sh, core/bus/ and core/merge-on-green/
-#           own the names, addresses and switches read here; this file re-spells
-#           none of them without this header changing too.
+#           own the names, addresses and switches read here, and bin/jg-kv-lib.sh owns
+#           the home's login every bus call here makes; this file re-spells none of
+#           them without this header changing too.
 #   cost    one pass runs a bounded handful of processes, one real message and one
-#           read of the open pull requests, and writes nothing outside $DIR. A probe
-#           never starts, restarts or reloads a service.
+#           read of the open pull requests, and writes nothing outside $DIR except the
+#           bus command bin/jg-bus.sh builds when it is missing or older than its source.
+#           A probe never starts, restarts or reloads a service.
 set -u
 PROBE_TIMEOUT=${PROBE_TIMEOUT:-4}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,6 +45,8 @@ JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$ROOT}}
 STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 CFG=${JG_CONFIG_OVERRIDE:-$JG_HOME/config}
 DIR=${JG_DATA_OVERRIDE:-$JG_HOME/data}/migration-card
+# shellcheck source=bin/jg-kv-lib.sh
+. "$SCRIPT_DIR/jg-kv-lib.sh"
 
 PART_SLUGS=(nats accounts wake inbox leases captain dapr godaemons gate escalation fiveminute deletions rules axi addons policy pendingreplies leadwake linecounts)
 PART_NAMES=('NATS server' 'per-home accounts' 'wake queue' 'task inbox' 'leases' 'captain channel/ntfy' 'Dapr' 'Go daemons' 'merge gate' 'escalation ladder' 'five-minute merge' 'deletions' 'rules JSON' 'juggernaut-axi' 'add-on removal' 'Rego policy' 'pending-replies cleanup' 'lead-wake cleanup' 'line counts from git')
@@ -105,6 +109,23 @@ port_open() {
   timeout 2 bash -c "exec 3<>/dev/tcp/$1/$2" >/dev/null 2>&1
 }
 
+# nats_call <client> <url> [args...]: one client call as this home's account, bounded
+# by PROBE_TIMEOUT. The machine's server runs one account per home and refuses the
+# empty user, so a probe that connects without a login measures only that refusal;
+# bin/jg-kv-lib.sh owns the login and keeps the password off the argument list.
+nats_call() { # <client> <url> [args...]
+  local client=$1 url=$2
+  shift 2
+  JG_KV_DEADLINE=$PROBE_TIMEOUT jg_kv_run "$client" "$url" "$STATE" "$@"
+}
+
+# home_account: the account this home logs in as, empty when it holds none.
+home_account() {
+  local login
+  login=$(jg_kv_login "$STATE") || return 0
+  printf '%s\n' "${login%%$'\t'*}"
+}
+
 # bus_roundtrip <url>: send one real message and read it back. 0 carried, 2 no client.
 bus_roundtrip() {
   local url=$1 client sub out pid body="jg-live-probe-$$"
@@ -112,10 +133,10 @@ bus_roundtrip() {
   [ -n "$client" ] || return 2
   sub="jg.probe.$$"
   out=$(mktemp "${TMPDIR:-/tmp}/jg-live.XXXXXX") || return 2
-  timeout "$PROBE_TIMEOUT" "$client" -s "$url" sub --count 1 --timeout "${PROBE_TIMEOUT}s" "$sub" >"$out" 2>/dev/null &
+  nats_call "$client" "$url" sub --count 1 "$sub" >"$out" 2>/dev/null &
   pid=$!
   sleep 0.3
-  timeout "$PROBE_TIMEOUT" "$client" -s "$url" pub "$sub" "$body" >/dev/null 2>&1
+  nats_call "$client" "$url" pub "$sub" "$body" >/dev/null 2>&1
   wait "$pid" 2>/dev/null
   local rc=1
   grep -q "$body" "$out" && rc=0
@@ -127,7 +148,7 @@ bus_roundtrip() {
 stream_msgs() {
   local url=$1 stream=$2 client
   client=$(nats_client) || return 1
-  timeout "$PROBE_TIMEOUT" "$client" -s "$url" stream info "$stream" --json 2>/dev/null \
+  nats_call "$client" "$url" stream info "$stream" --json 2>/dev/null \
     | sed -n 's/.*"messages":[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1
 }
 
@@ -139,7 +160,7 @@ bus_traffic() {
     [ -n "$name" ] || continue
     n=$(stream_msgs "$url" "$name")
     total=$((total + ${n:-0})); streams=$((streams + 1))
-  done < <(timeout "$PROBE_TIMEOUT" "$client" -s "$url" stream ls -n 2>/dev/null)
+  done < <(nats_call "$client" "$url" stream ls -n 2>/dev/null)
   printf '%s messages held in %s streams' "$total" "$streams"
 }
 
@@ -153,14 +174,17 @@ channel_stream() {
   sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/core/bus/stream.json" 2>/dev/null | head -n 1
 }
 
-# config_chain <file>: that NATS config and the files it includes, one per line.
+# config_chain <file>: that NATS config and the files it includes, one per line. An
+# include may be quoted or bare, and a relative one names a file beside the config that
+# includes it, which is how nats-server reads it.
 config_chain() {
   local file=$1 inc
   [ -r "$file" ] || return 0
   printf '%s\n' "$file"
   while IFS= read -r inc; do
+    case $inc in /*) ;; *) inc=$(dirname -- "$file")/$inc ;; esac
     printf '%s\n' "$inc"
-  done < <(sed -n 's/^[[:space:]]*include[[:space:]]*"\([^"]*\)".*/\1/p' "$file" 2>/dev/null)
+  done < <(sed -n 's/^[[:space:]]*include[[:space:]]\{1,\}"\{0,1\}\([^";[:space:]]*\).*/\1/p' "$file" 2>/dev/null)
 }
 
 # count_lines <file>: newline count, zero when the file is absent.
@@ -187,7 +211,7 @@ probe_nats() {
   case $? in
     0) detail='a real message went out and came back' ;;
     2) detail='no nats client is installed, so no message could be sent' ;;
-    *) state=pending detail='the port answers but a message did not come back' ;;
+    *) state=pending detail="the port answers but a message did not come back (login: $(home_account | grep . || echo 'none for this home'))" ;;
   esac
   [ "$state" = live ] || { printf 'pending\t%s\n' "$detail"; return 0; }
   traffic=$(bus_traffic "$url")
@@ -198,37 +222,85 @@ probe_nats() {
   fi
 }
 
+# probe_accounts: the server's own config names the accounts it loaded, and this home
+# logging in proves the server holds its account: the server reports the account a
+# connection landed on, so a login it ignored or refused is not counted as one.
 probe_accounts() {
-  local pid conf blocks=0 file n written
+  local pid conf blocks=0 homes=0 file n account client landed
   pid=$(pidfile_pid nats || port_pid "$(host_port "$(nats_url)" | sed 's/.*://')")
   conf=$(server_conf "${pid:-}")
   if [ -n "${conf:-}" ]; then
     while IFS= read -r file; do
       n=$(grep -cE '^[[:space:]]*accounts[[:space:]]*\{' "$file" 2>/dev/null)
-      blocks=$((blocks + ${n:-0}))
+      [ "${n:-0}" -gt 0 ] || continue
+      blocks=$((blocks + n))
+      # One account per two-space block; the system account carries no home.
+      n=$(grep -E '^[[:space:]]{2}[A-Za-z0-9_.-]+[[:space:]]*\{' "$file" 2>/dev/null | grep -cvE '^[[:space:]]*SYS[[:space:]]*\{')
+      homes=$((homes + ${n:-0}))
     done < <(config_chain "$conf")
   fi
-  written=$(grep -cE '^[[:space:]]{2}[A-Za-z0-9_.-]+[[:space:]]*\{' "$STATE/bus/accounts.conf" 2>/dev/null)
-  [ "${written:-0}" -eq 0 ] || written=$((written - 1))  # the system account carries no home
-  if [ "${blocks:-0}" -gt 0 ]; then
-    printf 'live\t%s accounts are loaded by the server\n' "$written"
-  elif [ -n "${pid:-}" ]; then
-    printf 'pending\tthe server runs without accounts; accounts.conf names %s homes and the server must be restarted from the unit to load it\n' "${written:-0}"
+  if [ -z "${pid:-}" ]; then
+    printf 'pending\tno server is running to carry them\n'
+    return 0
+  fi
+  if [ "$blocks" -eq 0 ]; then
+    printf 'pending\tthe server runs without accounts (pid %s, config %s); it must be restarted from the unit to load them\n' \
+      "$pid" "${conf:-not readable}"
+    return 0
+  fi
+  account=$(home_account)
+  if [ -z "$account" ]; then
+    printf 'pending\tthe server loads %s home accounts and none is this home'"'"'s, so it has no login here\n' "$homes"
+    return 0
+  fi
+  client=$(nats_client) || client=
+  [ -n "$client" ] || { printf 'pending\tthe server loads %s home accounts; no nats client to log in as %s\n' "$homes" "$account"; return 0; }
+  landed=$(nats_call "$client" "$(nats_url)" account info 2>/dev/null | sed -n 's/^[[:space:]]*Account:[[:space:]]*//p' | head -n 1)
+  if [ "$landed" = "$account" ]; then
+    printf 'live\tthe server loads %s home accounts; this home logs in as %s, its own account\n' "$homes" "$account"
   else
-    printf 'pending\tno server is running to carry them; accounts.conf names %s homes\n' "${written:-0}"
+    printf 'pending\tthe server loads %s home accounts and refused this home'"'"'s login as %s\n' "$homes" "$account"
   fi
 }
 
-# probe_queue <part-label> <stream> <switch-key>: the bus-backed path.
+# stream_field <url> <stream> <field>: one top-level value of the stream's info.
+stream_field() {
+  local client
+  client=$(nats_client) || return 1
+  nats_call "$client" "$1" stream info "$2" --json 2>/dev/null \
+    | sed -n "s/^[[:space:]]*\"$3\":[[:space:]]*\"\{0,1\}\([^\",]*\).*/\\1/p" | head -n 1
+}
+
+# probe_queue <part-label> <stream> <switch-key>: the bus-backed path. The stream is
+# the store, and the read model is current only while bin/jg-wake-bus.sh's cursor
+# (state/.wake-bus.cursor) sits inside the stream it reads: a cursor past the stream's
+# last sequence was left by a stream the server has since remade, and a render that
+# trusts it reads nothing new.
 probe_queue() {
-  local label=$1 stream=$2 key=$3 count owed
+  local label=$1 stream=$2 key=$3 count owed url cursor last made
   if grep -qw off "$CFG/$key" 2>/dev/null; then
     printf 'pending\tthe %s is on the files: config/%s says off\n' "$label" "$key"
     return 0
   fi
-  count=$(stream_msgs "$(nats_url)" "$stream")
+  url=$(nats_url)
+  count=$(stream_msgs "$url" "$stream")
   if [ -z "$count" ]; then
-    printf 'pending\tthe server carries no %s stream, so the %s is not on the bus\n' "$stream" "$label"
+    printf 'pending\tthe server carries no %s stream for this home'"'"'s account (%s), so the %s is not on the bus\n' \
+      "$stream" "$(home_account)" "$label"
+    return 0
+  fi
+  cursor=$(awk -v s="$stream" '$1 == s && $2 ~ /^[0-9]+$/ { print $2 }' "$STATE/.wake-bus.cursor" 2>/dev/null | tail -n 1)
+  last=$(stream_field "$url" "$stream" last_seq)
+  case ${last:-x} in *[!0-9]*) last='' ;; esac
+  if [ -n "${cursor:-}" ] && [ -n "$last" ] && [ "$cursor" -gt "$last" ]; then
+    printf 'pending\tthe renderer reads %s from sequence %s and the stream ends at %s, so %s records are not in the read model\n' \
+      "$stream" "$cursor" "$last" "$count"
+    return 0
+  fi
+  made=$(awk -v s="$stream" '$1 == s { print $3 }' "$STATE/.wake-bus.cursor" 2>/dev/null | tail -n 1)
+  if [ -n "${made:-}" ] && [ "$made" != "$(stream_field "$url" "$stream" created)" ]; then
+    printf 'pending\tthe renderer'"'"'s cursor was taken on an earlier %s than the server holds, so its %s records are not all in the read model\n' \
+      "$stream" "$count"
     return 0
   fi
   owed=$(count_lines "$STATE/.wake-bus.outbox.jsonl")
@@ -237,12 +309,13 @@ probe_queue() {
       "$owed" "$count" "$stream"
     return 0
   fi
-  printf 'live\tthe bus is the store, %s records on %s\n' "$count" "$stream"
+  printf 'live\tthe bus is the store, %s records on %s, rendered through sequence %s of %s\n' \
+    "$count" "$stream" "${cursor:-0}" "${last:-0}"
 }
 
 probe_leases() {
   local out rc
-  leases_held() { timeout "$PROBE_TIMEOUT" "$(nats_client)" -s "$(nats_url)" kv ls JG_LEASES 2>/dev/null | grep -c . || true; }
+  leases_held() { nats_call "$(nats_client)" "$(nats_url)" kv ls JG_LEASES 2>/dev/null | grep -c . || true; }
   [ -x "$ROOT/bin/jg-lease.sh" ] || { printf 'absent\tbin/jg-lease.sh is not in this checkout\n'; return 0; }
   out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CFG" \
     timeout 20 "$ROOT/bin/jg-lease.sh" check jg-live-probe 2>&1)
@@ -543,6 +616,8 @@ card_link() {
 
 main() {
   local quiet=0 part='' i
+  # One login per pass, kept for every probe below (bin/jg-kv-lib.sh caches it per shell).
+  jg_kv_login "$STATE" >/dev/null || true
   while [ "$#" -gt 0 ]; do
     case $1 in
       --quiet) quiet=1 ;;
