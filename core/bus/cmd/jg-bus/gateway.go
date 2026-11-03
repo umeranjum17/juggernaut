@@ -173,11 +173,14 @@ func (a *app) readTokenFile() (token, file string, present bool, err error) {
 }
 
 // gateway receives chat for the captain: `--once` is one pass, `serve` polls until stopped, `pair`
-// records the owner's id, `status` reports, `enabled` is the service wiring's silent question.
+// records the owner's id, `setup` is the guided first-time path, `status` reports, `enabled` is the service wiring's silent question.
 // With no token file every subcommand but `status` does nothing.
 func (a *app) gateway(args []string) int {
-	if len(args) != 1 || !slices.Contains([]string{"--once", "serve", "pair", "status", "enabled"}, args[0]) {
-		return die("gateway needs --once, serve, pair, status or enabled")
+	if len(args) != 1 || !slices.Contains([]string{"--once", "serve", "pair", "status", "enabled", "setup"}, args[0]) {
+		return die("gateway needs --once, serve, pair, status, enabled or setup")
+	}
+	if args[0] == "setup" { // opt-in only: nothing but the user's own command reaches it
+		return a.setup(os.Stdin)
 	}
 	once := args[0] == "--once"
 	token, file, present, err := a.readTokenFile()
