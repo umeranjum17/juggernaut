@@ -32,31 +32,29 @@ mkdir -p "$HOME" "$JG_HOME/config/bus/dapr/components"
 PATH="$(dirname "$(command -v go)"):/usr/bin:/bin"; export PATH
 # Below the kernel's ephemeral range (32768+), so no outgoing connection can be sitting on a port a service binds.
 free_port() { local p; for p in $(seq "$1" $(($1 + 90))); do (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null || { echo "$p"; return; }; done; }
-NATS=$(free_port 26100) DAPR=$(free_port 26200) GRPC=$(free_port 26300) NTFY=$(free_port 26400)
+NATS=$(free_port 26100) DAPR=$(free_port 26200) GRPC=$(free_port 26300)
 cleanup() { "$ROOT/bin/jg-bus.sh" stop >/dev/null 2>&1; jg_test_cleanup; }
 trap cleanup EXIT
 
-printf 'set nats-url nats://127.0.0.1:%s\nset dapr-http-port %s\nset dapr-http-url http://127.0.0.1:%s\nset dapr-grpc-port %s\nset ntfy-server http://127.0.0.1:%s\n' \
-  "$NATS" "$DAPR" "$DAPR" "$GRPC" "$NTFY" > "$JG_HOME/config/captain-channel"
+printf 'set nats-url nats://127.0.0.1:%s\nset dapr-http-port %s\nset dapr-http-url http://127.0.0.1:%s\nset dapr-grpc-port %s\n' \
+  "$NATS" "$DAPR" "$DAPR" "$GRPC" > "$JG_HOME/config/captain-channel"
 sed "s/4222/$NATS/" "$ROOT/core/bus/nats.conf" > "$JG_HOME/config/bus/nats.conf"
-sed "s/2586/$NTFY/g" "$ROOT/core/bus/ntfy.yml" > "$JG_HOME/config/bus/ntfy.yml"
 sed "s/4222/$NATS/" "$ROOT/core/bus/dapr/components/pubsub.yaml" > "$JG_HOME/config/bus/dapr/components/pubsub.yaml"
 
 first=$("$ROOT/bin/jg-stack.sh" up 2>&1); rc=$?
 [ "$rc" = 0 ] || fail "the first run exited $rc: $first"
 printf '%s\n' "$first" | grep -q '^jg-bus built, state ' || fail "the Go command was not reported built: $first"
 [ -s "$ROOT/core/bus/accounts.conf" ] || fail "the accounts file is missing"
-for part in nats dapr ntfy; do
+for part in nats dapr; do
   printf '%s\n' "$first" | grep -Eq "^$part +installed [0-9.]+, enabled .*, running pid [0-9]+, listening 127.0.0.1:" \
     || fail "$part was not reported installed, enabled, running with a pid and listening: $first"
 done
-printf '%s\n' "$first" | grep -Eq '^deliver +enabled .*, running pid [0-9]+, consuming CAPTAIN$' \
-  || fail "the CAPTAIN stream consumer was not reported running with a pid: $first"
+printf '%s\n' "$first" | grep -Eqi 'ntfy|deliver' && fail "the first run still reports ntfy or the delivery consumer: $first"
 for part in wake-engine wake-watcher router; do
   printf '%s\n' "$first" | grep -Eq "^$part +installed jg-bus, enabled .*, running pid [0-9]+, consuming (JG_WAKE|CAPTAIN)/$part\$" \
     || fail "$part was not reported running with a pid and its consumer: $first"
 done
-pass "stack: the first run reports nats, dapr and ntfy installed, enabled, running with a pid, listening, and the stream consumers (deliver, wake engine, wake watcher, router) running"
+pass "stack: the first run reports nats and dapr installed, enabled, running with a pid, listening, and the stream consumers (wake engine, wake watcher, router) running"
 printf '%s\n' "$first" | grep -q '^stream CAPTAIN exists' || fail "the CAPTAIN stream was not confirmed: $first"
 for pid in $(printf '%s\n' "$first" | sed -n 's/.*running pid \([0-9]*\),.*/\1/p'); do
   kill -0 "$pid" 2>/dev/null || fail "reported pid $pid is not a live process"
@@ -68,25 +66,25 @@ second=$("$ROOT/bin/jg-stack.sh" up 2>&1); rc=$?
 [ "$first" = "$second" ] || fail "the second run changed something: $(diff <(printf '%s\n' "$first") <(printf '%s\n' "$second"))"
 pass "stack: a second run prints the same lines and the same pids, changing nothing"
 
-# The stack carries a real captain event bus -> ntfy: the probe publishes one through the sidecar, and
-# exits 0 only when the stream count rose and both the delivery record and ntfy's own log name it.
-probe=$("$ROOT/bin/jg-captain-probe.sh" 2>&1); rc=$?
-[ "$rc" = 0 ] || fail "the live probe exited $rc: $probe"
-printf '%s\n' "$probe" | grep -Eq '^probe: PASS bus -> ntfy, stream [0-9]+ -> [0-9]+, message [A-Za-z0-9]+$' || fail "the probe did not prove bus -> ntfy: $probe"
-pass "stack: a real captain event travels the CAPTAIN stream to ntfy, with a delivery record and ntfy's own log line"
-# The server denies everyone by default and the owner's stack made the two logins: the probe read the event
-# back as the captain and saw an anonymous publish and the read-only login's publish refused.
-printf '%s\n' "$probe" | grep -q '^captain login read the event: ' || fail "the captain login did not read the event back: $probe"
-printf '%s\n' "$probe" | grep -Eq '^anonymous publish: HTTP 40[13]; captain \(read-only\) publish: HTTP 40[13]$' || fail "ntfy did not refuse the anonymous and the read-only publish: $probe"
-[ "$(stat -c %a "$JG_HOME/state/bus/ntfy-captain.pass")" = 600 ] || fail "the captain's ntfy password file is not private"
-pass "stack: ntfy denies anonymous access; the publisher login delivers, the captain login reads, and its own publish is refused"
+# A home that still has the old ntfy wiring: the next run retires it and reports the rest unchanged.
+mkdir -p "$JG_HOME/state/bus"
+: > "$JG_HOME/state/bus/ntfy.log"; : > "$JG_HOME/state/bus/ntfy-captain.pass"; echo 999999 > "$JG_HOME/state/bus/deliver.pid"
+old=$("$ROOT/bin/jg-stack.sh" up 2>&1); rc=$?
+[ "$rc" = 0 ] || fail "the run over the old wiring exited $rc: $old"
+printf '%s\n' "$old" | grep -q '^retired ntfy: runtime files removed' || fail "the old ntfy files were not retired: $old"
+printf '%s\n' "$old" | grep -q '^retired deliver: runtime files removed' || fail "the old consumer files were not retired: $old"
+[ -z "$(find "$JG_HOME/state/bus" \( -name 'ntfy*' -o -name 'deliver*' \) 2>/dev/null)" ] || fail "files of the old wiring are still there"
+[ "$first" = "$(printf '%s\n' "$old" | grep -v '^retired ')" ] || fail "retiring the old wiring changed another part: $old"
+again=$("$ROOT/bin/jg-stack.sh" up 2>&1)
+[ "$first" = "$again" ] || fail "a run after the retirement was not the same as before: $again"
+pass "stack: a home with the old ntfy wiring ends clean, and the retirement runs once"
 
 # A part that cannot run stops the run with one line naming it and what it blocks.
 "$ROOT/bin/jg-bus.sh" stop >/dev/null 2>&1
-printf 'this is not valid ntfy config: [\n' > "$JG_HOME/config/bus/ntfy.yml"
+printf 'this is not valid nats config: [\n' > "$JG_HOME/config/bus/nats.conf"
 broken=$("$ROOT/bin/jg-stack.sh" up 2>&1); rc=$?
 [ "$rc" = 1 ] || fail "a part that cannot start exited $rc, not 1: $broken"
 [ "$(printf '%s\n' "$broken" | grep -c '^STACK_FAILED:')" = 1 ] || fail "not exactly one failure line: $broken"
-printf '%s\n' "$broken" | grep -q '^STACK_FAILED: ntfy: .*; blocks delivery to the captain' || fail "the failure did not name ntfy and what it blocks: $broken"
+printf '%s\n' "$broken" | grep -q '^STACK_FAILED: nats: .*; blocks dapr, the stream and every live path' || fail "the failure did not name nats and what it blocks: $broken"
 printf '%s\n' "$broken" | grep -q '^stack: up' && fail "a failed run still claimed the stack is up: $broken"
 pass "stack: a part that cannot start stops the run with one line naming it and what it blocks"

@@ -590,7 +590,7 @@ func (a *app) ensure() int {
 	return 0
 }
 
-// serve starts the three services from their files. A service whose binary is missing
+// serve starts the services from their files. A service whose binary is missing
 // is named and not started; the others still run, because the record never depends on
 // them.
 func (a *app) serve() int {
@@ -619,18 +619,11 @@ func (a *app) serve() int {
 	} else {
 		say("dapr: not started, no daprd on PATH")
 	}
-	if path, err := exec.LookPath("ntfy"); err == nil {
-		a.startOne(false, "ntfy", a.ntfyArgv(path)...)
-	} else {
-		say("ntfy: not started, no ntfy on PATH")
-	}
-	if self, err := os.Executable(); err == nil {
-		a.startOne(false, "deliver", self, "deliver")
-	}
 	return 0
 }
 
-// stop stops the services this home started from their recorded pids.
+// stop stops the services this home started from their recorded pids. ntfy and deliver are no
+// longer started, but a pid an earlier release recorded is still stopped here.
 func (a *app) stop() int {
 	for _, name := range []string{"nats", "wake-engine", "wake-watcher", "router", "dapr", "ntfy", "deliver"} {
 		pidPath := filepath.Join(a.runtime, name+".pid")

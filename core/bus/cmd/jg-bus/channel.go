@@ -312,7 +312,7 @@ func (a *app) status() int {
 	}
 	fmt.Printf("mode %s, relay %s, delivery %s\n", a.channelMode(), a.cfgOr("ntfy-relay", ""), target)
 	fmt.Printf("record %s: %d event(s), %d undelivered\n", a.record, countLines(a.record), countLines(a.undelivered))
-	for _, name := range []string{"nats", "dapr", "ntfy", "deliver"} {
+	for _, name := range []string{"nats", "dapr"} {
 		fmt.Printf("%s: %s\n", name, a.serviceState(name))
 	}
 	return 0
