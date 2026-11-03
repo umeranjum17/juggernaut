@@ -92,6 +92,10 @@ func TestGatewayAnswers(t *testing.T) {
 			fmt.Fprintf(w, `{"ok":true,"result":[%s]}`, batch)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/setMessageReaction") { // the receipt for a filed note, not an answer
+			fmt.Fprint(w, `{"ok":true,"result":true}`)
+			return
+		}
 		var m map[string]any
 		json.NewDecoder(r.Body).Decode(&m)
 		if limited { // the first send is rate limited once
