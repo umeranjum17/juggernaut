@@ -145,13 +145,19 @@ func (a *app) pollOnce(ad Adapter, allow []string) error {
 	return err
 }
 
-// readTokenFile is the one reader of a bot token file. A missing file is "not present", not an
-// error (the channel is optional); a file that group or others can read is refused.
-func (a *app) readTokenFile() (token, file string, present bool, err error) {
-	file = a.cfgOr("telegram-token-file", "config/captain-chat/telegram.token")
+// tokenPath is where this home keeps its bot token.
+func (a *app) tokenPath() string {
+	file := a.cfgOr("telegram-token-file", "config/captain-chat/telegram.token")
 	if !filepath.IsAbs(file) {
 		file = filepath.Join(a.home, file)
 	}
+	return file
+}
+
+// readTokenFile is the one reader of a bot token file. A missing file is "not present", not an
+// error (the channel is optional); a file that group or others can read is refused.
+func (a *app) readTokenFile() (token, file string, present bool, err error) {
+	file = a.tokenPath()
 	info, statErr := os.Stat(file)
 	if statErr != nil {
 		return "", file, false, nil
