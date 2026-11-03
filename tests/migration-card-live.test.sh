@@ -181,4 +181,72 @@ if [ -n "${JG_BUS_BIN:-}" ] || command -v "${JG_BUS_GO:-go}" >/dev/null 2>&1; th
 else
   echo "skip: the accounts probe needs the Go toolchain or JG_BUS_BIN"
 fi
+# The push: a row change reaches the captain channel at once, a quiet day says so after
+# push-hours, and a home whose channel is not live gets the card with the missing push named.
+# A stub probe prints fixed rows and a stub bus records its calls, so each pass is deterministic.
+P=$T/push; PLOG=$T/push-calls.log; PUB=$T/published.log
+mkdir -p "$P/config" "$P/state" "$P/data/migration-card" "$T/board2"
+printf '{"schema":2,"items":[]}\n' >"$T/board2/board.json"
+printf 'branch=release/c-2\ntarget=100000\nboard=%s/board2/board.json\ncard=push-card\nfiler=test\nproject=Test\ncritical=nats,accounts\n' "$T" >"$P/config/migration-card"
+cat >"$T/probe-stub.sh" <<'F'
+#!/usr/bin/env bash
+case ${1-} in
+  --quiet) cp "$STUB_ROWS" "$JG_HOME/data/migration-card/live.tsv" ;;
+  nats) grep '^NATS server' "$STUB_ROWS" ;;
+  accounts) grep '^per-home accounts' "$STUB_ROWS" ;;
+  captain) grep '^captain channel' "$STUB_ROWS" ;;
+esac
+F
+cat >"$T/bus-stub.sh" <<'F'
+#!/usr/bin/env bash
+case "$1 ${2-}" in
+  'config mode') echo "$BUS_MODE" ;;
+  'publish digest') printf '%s\n' "$4" | paste -s -d '|' >>"$PUBLISHED" ;;
+esac
+F
+chmod +x "$T/probe-stub.sh" "$T/bus-stub.sh"
+export STUB_ROWS=$T/stub-rows.tsv BUS_MODE=live PUBLISHED=$PUB
+set_rows() {  # <accounts-state> <captain-state>
+  printf 'NATS server\tlive\tpid 1\t-\nper-home accounts\t%s\tthe server runs without accounts\thttps://example.test/o/r/pull/9\ncaptain channel/ntfy\t%s\tntfy answers\t-\nwake queue\tpending\tno stream\t-\n' \
+    "$1" "$2" >"$STUB_ROWS"
+}
+push_pass() { JG_HOME=$P FAKE_LOG=$PLOG JG_MIGRATION_LIVE_BIN=$T/probe-stub.sh JG_BUS_CMD=$T/bus-stub.sh JG_MIGRATION_CARD_NOW=$1 "$ROOT/bin/jg-migration-card.sh" live --quiet; }
+posts() { grep -c '^post ' "$PLOG" 2>/dev/null || true; }
+last_post() { awk '/^post /{b=""} /^dismiss /{next} {b=b $0 "\n"} END{printf "%s", b}' "$PLOG"; }
+published() { grep -c . "$PUB" 2>/dev/null || true; }
+T0=1000000000
+set_rows pending live
+out=$(push_pass "$T0" 2>&1)
+assert_equals "" "$out" "a push pass prints nothing"
+assert_equals 1 "$(posts)" "a row change posts one card"
+assert_equals 1 "$(published)" "a row change publishes one digest"
+assert_contains "$(cat "$PUB")" "NATS server: live" "the digest names the first critical row"
+assert_contains "$(cat "$PUB")" "per-home accounts: pending - the server runs without accounts https://example.test/o/r/pull/9" "a pending critical row carries its detail and pull request"
+assert_contains "$(cat "$PUB")" "Other rows: 1 of 2 live." "the digest counts the rows that are not critical"
+push_pass "$((T0 + 3600))"
+assert_equals 1 "$(posts)" "a pass an hour later with no change posts no card"
+assert_equals 1 "$(published)" "a pass an hour later with no change publishes nothing"
+push_pass "$((T0 + 86400))"
+assert_equals 2 "$(posts)" "a quiet day posts one card"
+assert_equals 2 "$(published)" "a quiet day publishes one digest"
+assert_contains "$(tail -n 1 "$PUB")" "No migration row changed since 2001-09-09 01:46 UTC. Live: 1 of 2 critical rows. First pending: per-home accounts - the server runs without accounts." \
+  "the quiet day says nothing moved, how many critical rows are live and what is first pending"
+push_pass "$((T0 + 86400 + 3600))"
+assert_equals 2 "$(published)" "the daily line restarts the quiet clock"
+set_rows live live
+push_pass "$((T0 + 90000))"
+assert_contains "$(tail -n 1 "$PUB")" "per-home accounts: live" "a row going live is pushed at once"
+assert_equals "change daily change" "$(cut -f3 "$P/data/migration-card/push.tsv" | paste -s -d ' ')" "the push record keeps the kind of every push"
+BUS_MODE=shadow
+set_rows pending live
+push_pass "$((T0 + 91000))"
+assert_equals 3 "$(published)" "a bus that is not live gets no publish"
+assert_equals 4 "$(posts)" "the card is still posted when the bus is not live"
+assert_contains "$(last_post | tail -n 1)" "Phone push is off: the captain channel is not live." "the card text ends by saying the phone push is off"
+BUS_MODE=live
+set_rows live pending
+push_pass "$((T0 + 92000))"
+assert_equals 3 "$(published)" "a captain row that is not live gets no publish"
+assert_contains "$(last_post | tail -n 1)" "Phone push is off" "a captain row that is not live is named on the card"
+
 pass "the migration card measures every part on this machine and keeps itself current"

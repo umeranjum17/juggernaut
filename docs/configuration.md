@@ -479,7 +479,7 @@ The local presence flag `config/delivery-risk-loose` turns the question off for 
 
 ## Migration card (config/migration-card)
 
-The optional local `config/migration-card` holds `key=value` lines: `branch` (the release branch), `target` (lines to delete), `board` (a board file, else `JG_PROOF_BOARD`), `project`, `card` (the key now posted; the script rewrites it), `baseline-deleted`, `baseline-added` and `filer`.
+The optional local `config/migration-card` holds `key=value` lines: `branch` (the release branch), `target` (lines to delete), `board` (a board file, else `JG_PROOF_BOARD`), `project`, `card` (the key now posted; the script rewrites it), `baseline-deleted`, `baseline-added`, `filer` and `push-hours` (hours of quiet before the daily "no row changed" push, default 24; `defaults/migration-card` lists every key).
 With it, `bin/jg-merge-outcome-lib.sh` runs `bin/jg-migration-card.sh merge` after each merge into `branch`; the script header owns the card, key and milestone rules.
 
 ## Version branch (config/version-branch, release/c-<N>)
