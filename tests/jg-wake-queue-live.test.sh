@@ -114,20 +114,26 @@ test_withdraw_takes_only_its_own_row() {
   pass "a withdraw removes exactly its own row"
 }
 
+inbox_replica() { # <task>: how many unsettled records of this task the replica holds
+  jq -c --arg task "$1" 'select(.task == $task)' "$STATE_DIR/.wake-bus.events.jsonl" | awk 'END { print NR + 0 }'
+}
+
+# A record's file is numbered by its own inbox, the stream by every record of the home,
+# so a second task's record makes the two numbers differ.
 test_inbox_is_raised_at_the_writer_and_acknowledged_on_the_move() {
   local rec
   # shellcheck source=/dev/null
   . "$ROOT/bin/jg-task-inbox-lib.sh"
+  jg_task_inbox_write "$STATE_DIR" task-b "first steer" >/dev/null || fail "the inbox write failed"
   rec=$(jg_task_inbox_write "$STATE_DIR" task-a "hello steer") || fail "the inbox write failed"
-  assert_contains "$(cat "$STATE_DIR/.wake-bus.events.jsonl")" '"task":"task-a"' \
-    "the writer must publish the record it made durable"
+  assert_equals 1 "$(inbox_replica task-a)" "the writer must publish the record it made durable"
   bus inbox-settle || fail "the settle pass failed"
-  assert_not_contains "$(cat "$STATE_DIR/.wake-bus.events.jsonl")" '"task":"task-a"' \
-    "a record still in its inbox must stay unacknowledged"
+  assert_equals 1 "$(inbox_replica task-a)" "a record still in its inbox must stay unacknowledged"
+  assert_equals 1 "$(inbox_replica task-b)" "a record still in its inbox must stay unacknowledged"
   mv "$rec" "$STATE_DIR/task-a.inbox/handled/" || fail "the handled move failed"
   bus inbox-settle || fail "the settle pass failed"
-  assert_not_contains "$(cat "$STATE_DIR/.wake-bus.events.jsonl")" '"task":"task-a"' \
-    "a handled record must be acknowledged on the bus"
+  assert_equals 0 "$(inbox_replica task-a)" "a handled record must be acknowledged on the bus"
+  assert_equals 1 "$(inbox_replica task-b)" "only the handled record may be acknowledged"
   pass "an inbox record is raised at its writer and acknowledged on the move"
 }
 
@@ -294,6 +300,34 @@ test_a_remade_stream_still_reaches_the_read_model() {
   pass "a wake raised on a remade stream reaches the read model"
 }
 
+# A home's cursor can sit far past both stream ends, as a cursor taken before the
+# streams were remade does (6347 and 1630 against streams that end near 190 and 311).
+# Each stream is then read again from its start, an inbox record keeps its own number,
+# and a replica an older render wrote with the stream's sequence still settles.
+test_a_cursor_past_both_stream_ends_reads_both_from_the_start() {
+  local rec
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/jg-task-inbox-lib.sh"
+  bus raise check stale-cursor "check: stale-cursor" now || fail "setup raise failed"
+  rec=$(jg_task_inbox_write "$STATE_DIR" task-c "steer past the cursor") || fail "the inbox write failed"
+  : > "$STATE_DIR/.wake-bus.events.jsonl"
+  printf 'JG_WAKE\t6347\nJG_INBOX\t1630\n' > "$STATE_DIR/.wake-bus.cursor"
+  bus render || fail "the render past the stale cursor failed"
+  assert_once stale-cursor
+  assert_equals 1 "$(inbox_replica task-c)" "the inbox stream must be read again from its start"
+  assert_equals 1 "$(inbox_replica task-b)" "a record still waiting must come back with it"
+  awk '$1 == "JG_INBOX" { exit !($2 < 1630) }' "$STATE_DIR/.wake-bus.cursor" \
+    || fail "the inbox cursor must move back onto the stream"
+  jq -c 'if .task == "task-c" then .seq = 99 else . end' "$STATE_DIR/.wake-bus.events.jsonl" > "$DIR/replica" \
+    && mv "$DIR/replica" "$STATE_DIR/.wake-bus.events.jsonl"
+  bus inbox-settle || fail "the settle pass failed"
+  assert_equals 1 "$(inbox_replica task-c)" "a record still in its inbox must stay unacknowledged"
+  mv "$rec" "$STATE_DIR/task-c.inbox/handled/" || fail "the handled move failed"
+  bus inbox-settle || fail "the settle pass failed"
+  assert_equals 0 "$(inbox_replica task-c)" "a handled record must settle whatever number the replica gave it"
+  pass "a cursor past both stream ends reads both from the start"
+}
+
 result=0
 test_raise_reaches_the_read_model || result=1
 test_acknowledgement_removes_the_row_everywhere || result=1
@@ -308,6 +342,7 @@ test_a_render_killed_after_reading_one_stream_loses_no_wake || result=1
 test_a_render_killed_mid_read_loses_no_wake || result=1
 test_an_ordinary_run_delivers_each_wake_once || result=1
 test_a_remade_stream_still_reaches_the_read_model || result=1
+test_a_cursor_past_both_stream_ends_reads_both_from_the_start || result=1
 test_the_kill_journey_delivers_each_wake_once || result=1
 test_the_journey_proves_the_probe_in_two_homes || result=1
 exit "$result"
