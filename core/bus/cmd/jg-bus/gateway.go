@@ -29,6 +29,7 @@ type Adapter interface {
 	Receive(ctx context.Context, cursor string) ([]Inbound, string, error)
 	Fetch(ctx context.Context, m MediaRef, w io.Writer) (int64, error)
 	Send(ctx context.Context, out Outbound) (string, error)
+	Out() OutLimits // what Send can carry: file, picture, caption and album sizes
 }
 
 // Inbound is one platform update. A non-message update has no sender, so the access check drops it.
