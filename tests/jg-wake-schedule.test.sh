@@ -175,7 +175,7 @@ test_urgent_stays_now() {
   # The watcher re-delivers a queued row once it is JG_SQUAD_LEAD_WAKE_STALL_SECS (1) old, so let it age.
   sleep 2
   cycle "$dir"
-  grep -q 'inbox:9\|captain inbox note 9' "$dir/events" || fail "a captain answer did not wake at once: $(cat "$dir/events")"
+  grep -q 'inbox:9\|captain inbox note 9' "$dir/events" || fail "a captain answer did not wake at once: events=$(cat "$dir/events") out=$(cat "$dir/out") err=$(cat "$dir/err") queue=$(cat "$dir/state/.wake-queue" 2>/dev/null) class=$(route "$dir" check 'inbox:9' 'check: captain inbox note 9 - answer')"
   pass "a captain answer, a red gate, a host alarm, a stuck worker and a finished deliverable wake at once"
 }
 
