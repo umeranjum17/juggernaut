@@ -6,9 +6,13 @@
 # prefix, "fm/" when the project registers none, is unregistered, or the registry
 # is absent, so every existing installation keeps its current "fm/<task-id>"
 # branch names unchanged.
-# With --forge it prints one word instead: the project's registered forge,
-# none|gerrit|forgejo. The forge is asked for explicitly, so the default output
-# stays the same two words for every project, bound or not.
+# --kind <kind> beside --branch-prefix names the unregistered default by the kind
+# of work: feature gives "feature/", bug or fix-like (bugfix, fix, hotfix, defect,
+# regression) gives "fix/", and any other kind (chore, docs, test, ...) gives
+# "chore/". A registry prefix always wins and no --kind keeps "fm/".
+# --registered prints only an EXPLICIT registry prefix, and exits 1 with nothing
+# when the project registers none, so bin/jg-spawn.sh does not report a
+# kind-named branch as drifting from a prefix nobody registered.
 #
 # MECHANICAL CONSUMERS ONLY. This answers "what posture did the captain register
 # for this project", never "how does this task ship". A task's delivery mode,
@@ -104,7 +108,7 @@
 # to the forge binding, so it prints even when the forge token is malformed;
 # every path that reads the forge binding (default, --forge, and spawn's
 # forge-agreement check) still refuses.
-# Usage: jg-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>
+# Usage: jg-project-mode.sh [--raw|--branch-prefix [--kind <kind>] [--registered]|--forge] <project-name>
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -136,28 +140,62 @@ REG="$DATA/projects.md"
 RAW=0
 BRANCH_PREFIX_QUERY=0
 WANT_FORGE=0
+KIND=
+REGISTERED_ONLY=0
 case "${1:-}" in
   --raw) RAW=1; shift ;;
-  --branch-prefix) BRANCH_PREFIX_QUERY=1; shift ;;
+  --branch-prefix)
+    BRANCH_PREFIX_QUERY=1; shift
+    while [ "$#" -gt 1 ]; do
+      case "$1" in
+        --kind) KIND=${2:-}; shift 2 ;;
+        --registered) REGISTERED_ONLY=1; shift ;;
+        *) break ;;
+      esac
+    done
+    ;;
   --forge) WANT_FORGE=1; shift ;;
 esac
-NAME=${1:?usage: jg-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>}
+NAME=${1:?usage: jg-project-mode.sh [--raw|--branch-prefix [--kind <kind>] [--registered]|--forge] <project-name>}
+
+# The unregistered ship-branch prefix: "fm/" without a kind, else named by kind.
+default_prefix() {
+  local k
+  k=$(printf '%s' "$KIND" | tr '[:upper:]' '[:lower:]' | tr -d '[]')
+  case "$k" in
+    '') echo "fm/" ;;
+    feature) echo "feature/" ;;
+    bug|bugfix|fix|hotfix|defect|regression) echo "fix/" ;;
+    *) echo "chore/" ;;
+  esac
+}
+# The prefix to print: a registered one wins; the sentinel means none was registered.
+unset_prefix='(default prefix)'
+prefix_answer() {  # <registered-or-sentinel>
+  if [ "$1" != "$unset_prefix" ]; then
+    echo "$1"
+  elif [ "$REGISTERED_ONLY" -eq 0 ]; then
+    default_prefix
+  else
+    return 1
+  fi
+}
 
 if [ ! -f "$REG" ]; then
   echo "warn: no registry at $REG; defaulting $NAME to direct-PR off" >&2
   if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
-    echo "fm/"
+    prefix_answer "$unset_prefix" || exit 1
   elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "direct-PR off"; fi
   exit 0
 fi
 
 # awk emits one "near <token>" line per keyed token whose key is a near miss of
 # `forge`, then "posture <mode> <yolo> <branch-prefix> <forge>" (branch-prefix is
-# the raw prefix, defaulting to "fm/"; forge is `none` or the whole `forge=<value>`
+# the raw prefix, or "(default prefix)" when none is registered; forge is `none` or the whole `forge=<value>`
 # token, so an empty value survives the split), or nothing if the project is
 # absent. Every other token beside the mode is ignored, exactly as before either
 # annotation existed.
-parsed=$(awk -v n="$NAME" '
+parsed=$(awk -v n="$NAME" -v sentinel="$unset_prefix" '
   function dist(x, y,   i, j, lx, ly, d, c, v) {
     lx = length(x); ly = length(y);
     for (i=0; i<=lx; i++) d[i,0] = i;
@@ -181,7 +219,7 @@ parsed=$(awk -v n="$NAME" '
     if (substr($0, 1, plen) != prefix) next
     after = substr($0, plen + 1);
     if (after != "" && substr(after, 1, 2) != " [" && substr(after, 1, 3) != " - ") next
-    mode="no-mistakes"; yolo="off"; branch="fm/"; forge="none";
+    mode="no-mistakes"; yolo="off"; branch=sentinel; forge="none";
     if (substr(after, 1, 2) == " [") {
       s="";
       nk = split(after, rest, " ");
@@ -216,7 +254,7 @@ parsed=$(awk -v n="$NAME" '
 if [ -z "$parsed" ]; then
   echo "warn: project \"$NAME\" not in registry; defaulting to direct-PR off" >&2
   if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
-    echo "fm/"
+    prefix_answer "$unset_prefix" || exit 1
   elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "direct-PR off"; fi
   exit 0
 fi
@@ -238,11 +276,11 @@ EOF
 forge=${rest_forge:-none}
 case "$mode" in
   no-mistakes|direct-PR|local-only|no-mistakes-prod-only) ;;
-  *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=fm/ ;;
+  *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=$unset_prefix ;;
 esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
 if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
-  echo "$branch"
+  prefix_answer "$branch" || exit 1
   exit 0
 fi
 

@@ -37,5 +37,30 @@ test_a_registered_posture_is_never_lowered() {
   pass "a registered posture is never lowered by the default"
 }
 
+# The branch prefix comes from the kind of work unless the registry names one.
+test_the_branch_prefix_follows_the_kind_and_a_registered_prefix_wins() {
+  local home=$TMP_ROOT/prefix k
+  mkdir -p "$home/data"
+  {
+    printf -- '- plain [direct-PR] - no prefix registered (added 2026-11-03)\n'
+    printf -- '- own [direct-PR branch=cap/] - prefix registered (added 2026-11-03)\n'
+  } > "$home/data/projects.md"
+  prefix_of() { JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" "$MODE" --branch-prefix "$@" 2>/dev/null; }
+  assert_equals "fm/" "$(prefix_of plain)" "no kind keeps the legacy prefix"
+  assert_equals "feature/" "$(prefix_of --kind '[feature]' plain)" "a feature gets feature/"
+  for k in bug fix hotfix; do
+    assert_equals "fix/" "$(prefix_of --kind "$k" plain)" "$k gets fix/"
+  done
+  for k in chore docs test; do
+    assert_equals "chore/" "$(prefix_of --kind "$k" plain)" "$k gets chore/"
+  done
+  assert_equals "feature/" "$(prefix_of --kind feature stranger)" "an unregistered project follows the kind too"
+  assert_equals "cap/" "$(prefix_of --kind feature own)" "an explicit registry prefix wins over the kind"
+  assert_equals "" "$(prefix_of --registered plain)" "a project with no registered prefix reports none"
+  assert_equals "cap/" "$(prefix_of --registered own)" "a registered prefix is reported as registered"
+  pass "the branch prefix follows the kind and a registered prefix wins"
+}
+
 test_an_unregistered_project_defaults_to_a_direct_pr
 test_a_registered_posture_is_never_lowered
+test_the_branch_prefix_follows_the_kind_and_a_registered_prefix_wins
