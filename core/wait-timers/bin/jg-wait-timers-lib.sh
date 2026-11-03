@@ -433,15 +433,17 @@ jg_wait_timers_tick() {
   # from the owner alert: the escalation runs <escalate> seconds from the
   # episode's start and a declared pause rechecks at the pause cadence. Neither
   # number is written down again here.
-  local alert paused_alert numbers
+  local alert paused_alert silence numbers
   numbers=$(jg_wait_timers_definition_timers) || {
     echo "waiting timers: the escalation workflow definition is unreadable" >&2
     return 1
   }
   alert=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "owner" { print $2 }')
   paused_alert=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "pause" { print $2 }')
+  # The silent source lapses on the definition's silence timer, not the poll bound.
+  silence=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "silence" { print $2 }')
   local meta task backend window session native sessions='|' blocked='|' unknown='|' rows actor=Main lead=''
-  local dir="$STATE/.waiting-timers" now record declaration verb signature old since owner parent key misses age reason until bound rc
+  local dir="$STATE/.waiting-timers" now record declaration verb signature old since owner parent key misses age reason until bound lapse rc
   local pause_key dkey src source card last wsrc fresh session_id fired every level pending=''
   for native in "$alert" "$paused_alert" "$escalate" "$card_secs" "$interval"; do
     case "$native" in ''|*[!0-9]*|0* ) echo "waiting timers: thresholds must be positive decimal seconds" >&2; return 1 ;; esac
@@ -550,7 +552,11 @@ EOF
       [ -z "$declaration" ] || break
       record="$STATE/.wait-sources/$task.$src"
       [ -f "$record" ] && [ ! -L "$record" ] || continue
-      [ "$src" = supervision ] || [ "$(age_of "$record")" -lt "$fresh" ] || continue
+      # A silent record is rewritten on every scan of its pane and cleared by the first
+      # scan that sees progress, so a late scan (a loaded host) has not ended the silence:
+      # it lapses only after a whole silence window unread, never after a few polls.
+      lapse=$fresh; [ "$src" != silent ] || lapse=${silence:-$fresh}
+      [ "$src" = supervision ] || [ "$(age_of "$record")" -lt "$lapse" ] || continue
       declaration=$(head -n 1 "$record" | tr '\t' ' ' | cut -c1-300)
       [ -z "$declaration" ] || wsrc=$src
     done
@@ -606,6 +612,10 @@ EOF
       # different wait and re-arms.
       pause_key=$(_jg_decision_key "$declaration") || pause_key=default
       signature=$(printf '%s' "$window|$(status_line_verb "$declaration")|$pause_key" | hash_pane)
+    elif [ "$wsrc" = silent ]; then
+      # The silent source restates its age on every scan ("... for 1205s"); the
+      # wait is the silence, not the count, so it keeps its clock as the count grows.
+      signature=$(printf '%s' "$window|silent" | hash_pane)
     else
       signature=$(printf '%s' "$window|$declaration" | hash_pane)
     fi

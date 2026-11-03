@@ -145,7 +145,13 @@ wf_facts() {  # <task>
   while read -r name rule; do
     record="$STATE/.wait-sources/$task.$name"
     [ -f "$record" ] && [ ! -L "$record" ] || continue
-    [ "$rule" = any ] || [ "$(age_of "$record")" -lt "$fresh" ] || continue
+    # A rule is any (never lapses), fresh (three polls and thirty seconds), or
+    # the seconds of the timer the source's lapse names.
+    case "$rule" in
+      any) ;;
+      fresh) [ "$(age_of "$record")" -lt "$fresh" ] || continue ;;
+      *) [ "$(age_of "$record")" -lt "$rule" ] || continue ;;
+    esac
     decl=$(head -n 1 "$record" | tr '\t' ' ' | cut -c1-300)
     wsrc=$name
     [ -z "$decl" ] || break
@@ -270,7 +276,7 @@ opt_envelope() {  # <task> <verb> <since>
 cmd_tick() {
   local dir="$STATE/.waiting-timers" now record task sig since owner key
   local wait_secs pause_secs class _src window decl verb source rungsecs reason
-  local _sig _owner _parent _misses _card _last
+  local _sig _owner _parent _misses _card _last rows name rule
   [ -d "$dir" ] || return 0
   if opt_available; then
     JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" "$OPTIMIZER" resolve >/dev/null 2>&1 || true
@@ -282,8 +288,18 @@ cmd_tick() {
 $(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" "$OPTIMIZER" flush 2>/dev/null)
 DIGEST_END
   fi
-  # The wait-source table is read once per tick, not once per lane.
-  WF_SOURCES=$(wf '.spec.sources[] | select(.facts == "wait-source") | [.name, (if .fresh then "fresh" else "any" end)] | @tsv') || return 1
+  # The wait-source table is read once per tick, not once per lane, with each
+  # named lapse timer resolved to its seconds.
+  rows=$(wf '.spec.sources[] | select(.facts == "wait-source") | [.name, (if .lapse then .lapse elif .fresh then "fresh" else "any" end)] | @tsv') || return 1
+  WF_SOURCES=''
+  while IFS=$'\t' read -r name rule; do
+    [ -n "$name" ] || continue
+    case "$rule" in any | fresh) ;; *) rule=$(timer_secs "$rule") || return 1 ;; esac
+    WF_SOURCES="$WF_SOURCES$(printf '%s\t%s' "$name" "$rule")
+"
+  done <<EOF
+$rows
+EOF
   wait_secs=$(ladder_rung_secs wait owner 2>/dev/null) || wait_secs=''
   pause_secs=$(ladder_rung_secs pause owner 2>/dev/null) || pause_secs=''
   [ -n "$wait_secs$pause_secs" ] || return 0
