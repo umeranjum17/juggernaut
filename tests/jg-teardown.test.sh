@@ -3958,7 +3958,15 @@ test_lane_harness_dies_with_its_lane() {
   marker="$case_dir/harness-pids"
   harness="$case_dir/harness.sh"
   # The harness backgrounds a loop in its own group (a "replay") and, unless told to stay, ends at once.
-  printf '#!/bin/sh\n(cd / && setsid sleep 302 </dev/null >/dev/null 2>&1 & echo $! >> "%s")\nsleep 303 </dev/null >/dev/null 2>&1 &\necho $! >> "%s"\n[ "$1" = stay ] && sleep 304\nexit 7\n' "$marker" "$marker" > "$harness"
+  cat > "$harness" <<'HARNESS'
+#!/bin/sh
+(cd / && setsid sleep 302 </dev/null >/dev/null 2>&1 & echo $! >> "$LANE_MARKER")
+sleep 303 </dev/null >/dev/null 2>&1 &
+echo $! >> "$LANE_MARKER"
+if [ "$1" = stay ]; then sleep 304; fi
+exit 7
+HARNESS
+  export LANE_MARKER="$marker"
   chmod +x "$harness"
 
   # 1. A lane that starts a harness and finishes leaves no surviving process, and the harness status comes through.
@@ -3976,8 +3984,8 @@ test_lane_harness_dies_with_its_lane() {
   wrapper=$!
   sleep 1
   kill -KILL "$wrapper" 2>/dev/null || true
-  [ "$(wc -l < "$marker")" -eq 2 ] && pid=$(head -n1 "$marker") && kill -0 "$pid" 2>/dev/null \
-    || fail "lane-harness-reap: setup harness did not start"
+  pid=$(head -n1 "$marker")
+  if [ "$(wc -l < "$marker")" -ne 2 ] || ! kill -0 "$pid" 2>/dev/null; then fail "lane-harness-reap: setup harness did not start"; fi
   rc=0
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
   expect_code 0 "$rc" "lane-harness-reap: teardown should succeed: $(cat "$case_dir/stderr")"
