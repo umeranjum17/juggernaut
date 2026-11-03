@@ -98,18 +98,21 @@ jg_kv_login() { # <state-dir>
 # jg_kv_run <client> <url> <state-dir> [args...]: one client call, authenticated as the
 # home that owns <state-dir> when the machine keeps credentials for it. The password
 # travels in NATS_PASSWORD, never on the argument list, so it never shows in `ps`.
+# JG_KV_DEADLINE, when set, is the whole call's limit in seconds: the client's own
+# --timeout bounds a request, not a subscription waiting for its message.
 jg_kv_run() { # <client> <url> <state-dir> [args...]
-  local client=$1 url=$2 state=$3 login account cred pass
+  local client=$1 url=$2 state=$3 login account cred pass deadline=()
   shift 3
+  [ -z "${JG_KV_DEADLINE:-}" ] || deadline=(timeout "$JG_KV_DEADLINE")
   if login=$(jg_kv_login "$state"); then
     account=${login%%$'\t'*}
     cred=${login#*$'\t'}
     if [ -s "$cred" ] && pass=$(tr -d '\n' < "$cred"); then
-      NATS_USER=$account NATS_PASSWORD=$pass "$client" -s "$url" --timeout 10s "$@"
+      NATS_USER=$account NATS_PASSWORD=$pass ${deadline[@]+"${deadline[@]}"} "$client" -s "$url" --timeout 10s "$@"
       return
     fi
   fi
-  "$client" -s "$url" --timeout 10s "$@"
+  ${deadline[@]+"${deadline[@]}"} "$client" -s "$url" --timeout 10s "$@"
 }
 
 # jg_kv_call <args...>: one client call, with the server named explicitly.

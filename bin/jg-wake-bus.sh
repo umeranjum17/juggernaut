@@ -133,7 +133,7 @@ home_key() { # <state-dir>
 LIVE_QUEUE=$STATE/.wake-queue                  # read model: queued rows, oldest first
 LIVE_SOLID=$STATE/.wake-settled                # read model: record-only rows, newest last
 LIVE_EVENTS=$STATE/.wake-bus.events.jsonl      # this home's unsettled events, with their sequence
-LIVE_CURSOR=$STATE/.wake-bus.cursor            # "<stream>\t<sequence>" already applied
+LIVE_CURSOR=$STATE/.wake-bus.cursor            # "<stream>\t<sequence>\t<stream created>" already applied
 LIVE_OUTBOX=$STATE/.wake-bus.outbox.jsonl      # events a failed publish still owes the bus
 
 live_home_key() { home_key "$STATE"; }
@@ -161,9 +161,15 @@ live_cursor_get() { # <stream>
   awk -v s="$1" '$1 == s && $2 ~ /^[0-9]+$/ { print $2; found = 1 } END { if (!found) print 0 }' "$LIVE_CURSOR" 2>/dev/null
 }
 
-live_cursor_set() { # <stream> <sequence>
+# live_cursor_made <stream>: the creation time of the stream the cursor was taken on,
+# empty for a cursor written before the cursor carried it.
+live_cursor_made() { # <stream>
+  awk -v s="$1" '$1 == s { print $3 }' "$LIVE_CURSOR" 2>/dev/null | tail -n 1
+}
+
+live_cursor_set() { # <stream> <sequence> [<stream created>]
   local tmp=$LIVE_CURSOR.tmp.$$ out
-  out=$({ awk -v s="$1" '$1 != s' "$LIVE_CURSOR" 2>/dev/null; printf '%s\t%s\n' "$1" "$2"; })
+  out=$({ awk -v s="$1" '$1 != s' "$LIVE_CURSOR" 2>/dev/null; printf '%s\t%s%s\n' "$1" "$2" "${3:+$'\t'$3}"; })
   if printf '%s\n' "$out" > "$tmp" && mv -f "$tmp" "$LIVE_CURSOR"; then
     return 0
   fi
@@ -178,13 +184,34 @@ live_cursor_set() { # <stream> <sequence>
 # killed before the commit leaves the old cursor, so the next render re-reads the
 # same messages (the fold keys on the event id, so a re-read changes nothing); a
 # cursor moved first would skip them for good.
+#
+# A stream the server has made again - a restart onto fresh storage, a lost store -
+# numbers its messages from 1. A cursor taken on the old stream is past the new one's
+# end, so a render that trusted it would read nothing until the new stream overtook
+# it, and every wake in between would sit on the server and never reach the read
+# model. The cursor therefore carries the creation time of the stream it was taken
+# on: a different stream, or a cursor past this one's last sequence, starts again at
+# the stream's first message.
 LIVE_PENDING=()
 live_apply() { # <stream> <file>
-  local stream=$1 out=$2 from seq last raw body
+  local stream=$1 out=$2 from seq first last made was info raw body fresh=0
+  info=$(bus stream info "$stream" --json 2>/dev/null) || return 0
+  read -r first last made < <(printf '%s' "$info" \
+    | jq -r '[(.state.first_seq // 0), (.state.last_seq // 0), (.created // "-")] | map(tostring) | join(" ")' 2>/dev/null)
+  case "${first:-}" in ''|*[!0-9]*) first=0 ;; esac
+  case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac
+  [ "${made:--}" != - ] || made=
   from=$(( $(live_cursor_get "$stream") + 1 ))
-  last=$(bus stream info "$stream" --json 2>/dev/null | jq -r '.state.last_seq // 0' 2>/dev/null)
-  case "$last" in ''|*[!0-9]*) last=0 ;; esac
-  [ "$last" -ge "$from" ] || return 0
+  was=$(live_cursor_made "$stream")
+  if { [ -n "$was" ] && [ -n "$made" ] && [ "$was" != "$made" ]; } || [ "$from" -gt $((last + 1)) ]; then
+    from=1 fresh=1
+  fi
+  [ "$from" -ge "$first" ] || from=$first   # the stream's age limit dropped the ones before
+  [ "$from" -ge 1 ] || from=1
+  # Nothing new: no read and no write, unless the cursor must move onto this stream.
+  if [ "$last" -lt "$from" ] && [ "$fresh" = 0 ] && { [ -n "$was" ] || [ -z "$made" ]; }; then
+    return 0
+  fi
   seq=$from
   while [ "$seq" -le "$last" ]; do
     raw=$(bus stream get "$stream" "$seq" --json 2>/dev/null) || { seq=$((seq + 1)); continue; }
@@ -195,7 +222,7 @@ live_apply() { # <stream> <file>
     fi
     seq=$((seq + 1))
   done
-  LIVE_PENDING+=("$stream $last")
+  LIVE_PENDING+=("$stream $last $made")
 }
 
 # live_flush_outbox: publish what an earlier failed publish still owes, and keep
@@ -275,7 +302,7 @@ live_render() {
   # The replica now holds everything read, so the cursor may pass it. Each step is
   # one rename(2): a kill leaves the previous file or the new one, never a torn one.
   for pending in ${LIVE_PENDING[@]+"${LIVE_PENDING[@]}"}; do
-    # shellcheck disable=SC2086  # "<stream> <sequence>", split on purpose
+    # shellcheck disable=SC2086  # "<stream> <sequence> <created>", split on purpose
     live_cursor_set $pending || return 1
   done
   jq -r 'select(.where == "queue") | [.at, (.seq // .rseq), .kind, .key, .payload] | @tsv' "$LIVE_EVENTS" 2>/dev/null \

@@ -272,6 +272,28 @@ test_the_kill_journey_delivers_each_wake_once() {
   pass "the kill journey delivers each wake once"
 }
 
+# A stream the server made again numbers its messages from 1. A cursor taken on the old
+# stream is past the new one's end, and a render that trusted it read nothing, so every
+# wake raised after the remake sat on the server and never reached the read model. The
+# cursor carries the stream's creation time, and an older two-field cursor past the end
+# starts again at the stream's first message.
+test_a_remade_stream_still_reaches_the_read_model() {
+  local made
+  bus raise check before-remake "check: before-remake" now || fail "setup raise failed"
+  "$NATS_BIN" -s "$JG_WAKE_BUS_URL" stream rm -f JG_WAKE >/dev/null 2>&1 || fail "the test could not remove the wake stream"
+  bus raise check after-remake "check: after-remake" now || fail "the raise onto the remade stream failed"
+  assert_once after-remake
+  made=$("$NATS_BIN" -s "$JG_WAKE_BUS_URL" stream info JG_WAKE --json | jq -r .created)
+  assert_equals "$made" "$(awk '$1 == "JG_WAKE" { print $3 }' "$STATE_DIR/.wake-bus.cursor")" \
+    "the cursor must name the stream it was taken on"
+  printf 'JG_WAKE\t999999\nJG_INBOX\t999999\n' > "$STATE_DIR/.wake-bus.cursor"
+  bus raise check old-cursor "check: old-cursor" now || fail "the raise past an old cursor failed"
+  assert_once after-remake old-cursor
+  assert_equals "$made" "$(awk '$1 == "JG_WAKE" { print $3 }' "$STATE_DIR/.wake-bus.cursor")" \
+    "an old cursor must be rewritten onto the stream it now reads"
+  pass "a wake raised on a remade stream reaches the read model"
+}
+
 result=0
 test_raise_reaches_the_read_model || result=1
 test_acknowledgement_removes_the_row_everywhere || result=1
@@ -285,6 +307,7 @@ test_an_acknowledgement_owed_by_the_outbox_still_settles || result=1
 test_a_render_killed_after_reading_one_stream_loses_no_wake || result=1
 test_a_render_killed_mid_read_loses_no_wake || result=1
 test_an_ordinary_run_delivers_each_wake_once || result=1
+test_a_remade_stream_still_reaches_the_read_model || result=1
 test_the_kill_journey_delivers_each_wake_once || result=1
 test_the_journey_proves_the_probe_in_two_homes || result=1
 exit "$result"
