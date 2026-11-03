@@ -227,7 +227,7 @@ func (a *app) gateway(args []string) int {
 	}
 }
 
-// isChatEvent is a chat event's subject: it stays on the stream and is never sent to ntfy.
+// isChatEvent is a chat event's subject: it stays on the stream and is never named undelivered.
 func isChatEvent(subject string) bool {
 	return strings.HasSuffix(subject, ".inbound") || strings.HasSuffix(subject, ".chat")
 }
