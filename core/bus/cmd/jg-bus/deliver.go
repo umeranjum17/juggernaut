@@ -13,8 +13,12 @@ import (
 const consumerName = "captain-ntfy"
 
 // natsArgs is the client login and server every stream command shares.
-func (a *app) natsArgs(rest ...string) []string {
-	return append(append(a.natsAuth(), "-s", a.cfgOr("nats-url", "")), rest...)
+func (a *app) natsArgs(rest ...string) ([]string, error) {
+	login, err := a.natsAuth()
+	if err != nil {
+		return nil, err
+	}
+	return append(append(login, "-s", a.cfgOr("nats-url", "")), rest...), nil
 }
 
 // ensureConsumer creates the durable consumer when it is not on the stream. It starts at
@@ -22,11 +26,19 @@ func (a *app) natsArgs(rest ...string) []string {
 // comes back instead of lost.
 func (a *app) ensureConsumer() error {
 	stream := a.streamName()
-	if exec.Command("nats", a.natsArgs("consumer", "info", stream, consumerName)...).Run() == nil {
+	info, err := a.natsArgs("consumer", "info", stream, consumerName)
+	if err != nil {
+		return err
+	}
+	if exec.Command("nats", info...).Run() == nil {
 		return nil
 	}
-	out, err := exec.Command("nats", a.natsArgs("consumer", "add", stream, consumerName,
-		"--pull", "--deliver", "all", "--ack", "explicit", "--defaults")...).CombinedOutput()
+	add, err := a.natsArgs("consumer", "add", stream, consumerName,
+		"--pull", "--deliver", "all", "--ack", "explicit", "--defaults")
+	if err != nil {
+		return err
+	}
+	out, err := exec.Command("nats", add...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", detail(string(out)))
 	}
@@ -83,9 +95,12 @@ func (a *app) deliverOne(payload []byte) {
 // pull fetches the next message with a server-side wait. It returns the payload, whether one
 // came, and an error only for a real failure: an empty wait is not one.
 func (a *app) pull(wait string) ([]byte, bool, error) {
-	cmd := exec.Command("nats", a.natsArgs("--timeout", wait, "consumer", "next",
-		a.streamName(), consumerName, "--raw", "--count", "1")...)
-	out, err := cmd.CombinedOutput()
+	args, err := a.natsArgs("--timeout", wait, "consumer", "next",
+		a.streamName(), consumerName, "--raw", "--count", "1")
+	if err != nil {
+		return nil, false, err
+	}
+	out, err := exec.Command("nats", args...).CombinedOutput()
 	if err == nil {
 		return []byte(strings.TrimRight(string(out), "\n")), true, nil
 	}
