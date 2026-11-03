@@ -4,6 +4,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // The vocabulary and the line-level tests of the shared wake classifier. Each test reads one
@@ -106,7 +107,7 @@ func lineIsEvent(line, legacy string) bool {
 }
 
 func isTerminalVerb(line string) bool {
-	if line == "" {
+	if line == "" || plannedBlocked(line) {
 		return false
 	}
 	switch lineVerb(line) {
@@ -120,7 +121,7 @@ func isTerminalVerb(line string) bool {
 // match from prose; an unrecognized prefix surfaces as itself; bare legacy lines may match a
 // free-text token.
 func isCaptainRelevant(line string) bool {
-	if line == "" {
+	if line == "" || plannedBlocked(line) {
 		return false
 	}
 	verb := lineVerb(line)
@@ -140,7 +141,22 @@ func isCaptainRelevant(line string) bool {
 	return matches(unstamped(line), envOr("JG_CAPTAIN_RE", defaultCaptainRE))
 }
 
-func isPaused(line string) bool { return line != "" && lineVerb(line) == pausedVerb() }
+// plannedBlocked is a blocked line that names, with `until <UTC time>`, a clearing time still ahead:
+// a wait on a known future event (a change held for the next release branch). It is a declared wait
+// like a paused one, so it is neither terminal nor captain-relevant and every reader that lets a
+// paused lane rest lets it rest too; the moment the time passes it is an open blocker again. A
+// blocked line that names no time stays a blocker.
+func plannedBlocked(line string) bool {
+	if lineVerb(line) != "blocked" {
+		return false
+	}
+	t, ok := untilEpoch(line)
+	return ok && t > time.Now().Unix()
+}
+
+func isPaused(line string) bool {
+	return line != "" && (lineVerb(line) == pausedVerb() || plannedBlocked(line))
+}
 
 func isCaptainHeld(line string) bool { return lineVerb(line) == captainHeldVerb() }
 

@@ -92,7 +92,7 @@ contains "the open escalation closes on a status change" "$resolved" "resolved c
 
 step "the live rung the watcher runs delivers an owner wake into the real queue"
 printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' >"$STATE/lane.meta"
-printf 'working: building\nblocked [at=%s] [key=wait]: external condition until 2099-01-01T00:00Z\n' \
+printf 'working: building\nblocked [at=%s] [key=wait]: external condition with no clearing time\n' \
   "$((now - 600))" >"$STATE/lane.status"
 printf '1\t%s\t0\t0\twaiting-timer-0000aaaa-lane-g1-cur-wait\t0\t0\t0\n' "$((now - 600))" \
   >"$STATE/.waiting-timers/lane"
