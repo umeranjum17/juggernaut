@@ -160,13 +160,21 @@ func (a *app) publish(args []string) int {
 }
 
 // emit is publish for a caller that holds the event's parts, such as the chat gateway's inbound
-// event with its stored files.
+// event with its stored files. When the bus refuses a card, outcome, alert or digest, the chat
+// gateway's adapter sends it in-process, so the owner still hears it.
 func (a *app) emit(kind, key, text, link string, media []mediaFile) int {
+	at := time.Now().Unix()
+	ev := event{At: at, Kind: kind, Key: key, Text: text, Link: link}
+	return a.emitDoc(kind, a.eventJSON(at, kind, key, text, link, media...), func() error { return a.sendToChat(ev) })
+}
+
+// emitDoc records one event document and posts it to the bus. fallback delivers it another way
+// when the bus does not take it; an event neither path took is named in the undelivered record.
+func (a *app) emitDoc(kind, doc string, fallback func() error) int {
 	mode := a.channelMode()
 	if mode == "off" {
 		return 0
 	}
-	doc := a.eventJSON(time.Now().Unix(), kind, key, text, link, media...)
 	subject := a.cfgOr("subject-prefix", "") + "." + kind
 	if err := os.MkdirAll(a.state, 0o755); err != nil {
 		a.noteFailure("record", err.Error())
@@ -183,8 +191,13 @@ func (a *app) emit(kind, key, text, link string, media []mediaFile) int {
 		a.noteFailure("bus "+subject, out)
 	}
 	if mode == "live" && !accepted && !isChatEvent(subject) {
-		// The bus did not take the event, so the stream never holds it: name it, with the
-		// event itself, so a reader of the undelivered record can send it again.
+		if ferr := fallback(); ferr == nil {
+			return 0
+		} else {
+			out += "; fallback: " + ferr.Error()
+		}
+		// Neither path took the event, so name it, with the event itself, so a reader of the
+		// undelivered record can send it again.
 		a.noteUndelivered(target, out, doc)
 	}
 	return 0

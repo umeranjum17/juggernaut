@@ -55,6 +55,11 @@ It makes one `getMe` call and never sends a message.
   The inbound legs are the owner's text, picture and file, filed as notes.
   The outbound legs are a plain text, a picture and a file sent with `jg-inbox.sh reply` and accepted by Telegram.
   A caption on an album does not count as the text leg.
+- A running gateway also sends the owner every card, outcome, alert and digest event from the bus, through the durable consumer `captain-gateway`.
+  It starts at new events, so a first start sends no old ones.
+  A send that fails is tried again for 10 minutes, and one the bot can never take (blocked, bad request) is not.
+  An event not sent is named in `state/captain-channel-undelivered.jsonl`.
+  When the bus refuses an event, the gateway's adapter sends it in-process, so the owner still hears it.
 - `pending` names why: the service is not running (its heartbeat in `state/captain-chat/telegram.alive` is over two minutes old), `getMe` failed, or legs are missing.
   A missing-legs detail reads `in: text image - out: text - missing in file, out image file`.
 - `live` needs all six legs inside the last 7 days: `6 of 6 legs, last <date>, <n> notes, <n> replies`.
