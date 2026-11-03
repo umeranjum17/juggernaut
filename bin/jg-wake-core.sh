@@ -3,7 +3,9 @@
 #
 # The queue read-model decisions - what makes two rows one row, the keys queued for a kind, which
 # sequence numbers are still queued, how many rows an actor could act on, and whether a branch
-# grant's row snapshot is well formed - are owned by the Go command at core/wake/cmd/jg-wake-core,
+# grant's row snapshot is well formed - and the urgency routing (the class now, batch or silent an
+# event gets from the rule file, the re-alert dedupe and the hourly silence cap) are owned by the Go
+# command at core/wake/cmd/jg-wake-core,
 # and its header is the one owner of that contract. bin/jg-wake-lib.sh keeps the function names the
 # watcher, the drain, the guard and the producers call and forwards each to this dispatcher; the
 # shell readers those functions held are deleted, so this file adds no behaviour. The binary is
@@ -22,7 +24,8 @@
 #           on stderr and exits 2, never 0 or 1, so a caller can tell a broken reader from an
 #           empty queue.
 #
-# Usage: jg-wake-core.sh [flags] dedupe|keys|queued|count|grant-valid - see
+# Usage: jg-wake-core.sh [flags] dedupe|keys|queued|count|grant-valid|route|classify|realert|
+# routing-file - see
 # core/wake/cmd/jg-wake-core/main.go.
 set -u
 
@@ -60,7 +63,7 @@ build() {
 }
 
 if stale && ! build; then
-  printf 'jg-wake-core: no runnable wake core at %s, and no Go toolchain to build one (set JG_WAKE_CORE_GO, or install go): refusing to guess what the wake queue holds\n' "$BIN" >&2
+  printf 'jg-wake-core: no runnable wake core at %s, and no Go toolchain to build one (set JG_WAKE_CORE_GO, or install go): refusing to guess what the wake queue holds or what class an event has\n' "$BIN" >&2
   exit 2
 fi
 

@@ -6,30 +6,34 @@ the user's cache, keyed by the checkout, the way `bin/jg-classify.sh` builds the
 `bin/jg-wake-lib.sh` keeps the function names its callers use and forwards each one, so a slice
 deletes shell rather than adding a second owner beside it.
 
-Wake urgency routing is not part of this port; it keeps its own change.
-
 ## Port plan
 
-1. **This slice.** The queue read model, from `bin/jg-wake-lib.sh`: what a queued row is
-   (`jg_wake_print_deduped`), the keys queued for a kind (`jg_wake_queued_keys`), which sequence
-   numbers are still queued (`jg_wake_rows_queued`), how many rows an actor could act on
-   (`jg_wake_actor_pending_count`), and whether a branch grant's row snapshot is well formed
-   (`jg_wake_grant_rows_valid`). About 55 shell lines are deleted; the library keeps the function
-   names, the queue lock around the key read, and the "a broken reader is one pending row" rule.
-2. The queue writers: `jg_wake_queue_prune_task` and the `jg_wake_withdraw` bookkeeping that retires
+1. **The queue read model.** What a queued row is (`jg_wake_print_deduped`), the keys queued for a
+   kind (`jg_wake_queued_keys`), which sequence numbers are still queued (`jg_wake_rows_queued`), how
+   many rows an actor could act on (`jg_wake_actor_pending_count`), and whether a branch grant's row
+   snapshot is well formed (`jg_wake_grant_rows_valid`). About 55 shell lines were deleted; the
+   library keeps the function names, the queue lock around the key read, and the "a broken reader is
+   one pending row" rule.
+2. **Wake urgency routing.** The rule files in force and their priority, the shell pattern grammar,
+   the `@parked`, `@restart-pass`, `@queue-quiet` and `@watcher-alive` conditions, the re-alert dedupe
+   on an event's own identity, and the hourly silence cap. `jg_wake_route_class`, `jg_wake_routing_files`,
+   `_jg_wake_rule_set` and `_jg_wake_realert_record` stay as the names callers use, and
+   `jg_wake_append_locked` asks the command once for the class it acts on. Where the command cannot
+   run, an event is `now`, never hidden.
+3. The queue writers: `jg_wake_queue_prune_task` and the `jg_wake_withdraw` bookkeeping that retires
    rows on the bus.
-3. Presentation: `jg_wake_annotation_manifest`, `jg_wake_print_annotations`, `jg_wake_unread_events`,
+4. Presentation: `jg_wake_annotation_manifest`, `jg_wake_print_annotations`, `jg_wake_unread_events`,
    and the open-decisions sections the drain prints.
-4. Signal-seen and status-commit bookkeeping (`jg_wake_signal_*`, `jg_wake_status_*`).
-5. Locks, recovery markers and the auto-arm ledger (`jg_lock_*`, `_jg_recovery_marker_*`,
+5. Signal-seen and status-commit bookkeeping (`jg_wake_signal_*`, `jg_wake_status_*`).
+6. Locks, recovery markers and the auto-arm ledger (`jg_lock_*`, `_jg_recovery_marker_*`,
    `jg_autoarm_*`).
-6. Process and watcher health helpers (`jg_pid_*`, `jg_watcher_*`, the supervision verdicts).
-7. The rest of `bin/jg-watch.sh`, then deleting it and the library.
+7. Process and watcher health helpers (`jg_pid_*`, `jg_watcher_*`, the supervision verdicts).
+8. The rest of `bin/jg-watch.sh`, then deleting it and the library.
 
 ## Parity replay
 
-The replay runs the library's own entry points from the base commit's shell and from the port over
-the same rows: every queue row of the 123 events recorded on a real `JG_WAKE` stream
+The queue replay runs the library's own entry points from the base commit's shell and from the port
+over the same rows: every queue row of the 123 events recorded on a real `JG_WAKE` stream
 (`tests/fixtures/wake-recorded/queue-rows.tsv`) plus the shapes that stream lacks - a repeated
 kind and key, heartbeats with moving keys, a payload holding a tab, a line too short to be a row, a
 row whose sequence is not a number - and a live branch grant built on the test's own process.
@@ -45,3 +49,19 @@ Two differences are deliberate. The shell reader answered a queue it could not o
 message and exit 2; the command answers with its own message and the same exit 2, because stderr is
 not part of the contract. A home with no Go toolchain has no reader: the dispatcher says so and
 exits 2, so a broken reader is never read as an empty queue.
+
+The routing replay runs `jg_wake_route_class` and `jg_wake_append_locked` from the base commit's shell
+and from the port over the same cases: every raise of the 241 events recorded on a real `JG_WAKE`
+stream plus the shapes that stream lacks, in 27 scenarios (the default rules, 14 generated rule
+files covering the pattern grammar, parked homes, restart passes and queue states, a rule file that
+matches nothing with and without the shared defaults behind it, a missing rule file, an override
+file). A difference in any class fails the replay; a control run with one
+corrupted answer must fail it. `tests/fixtures/wake-recorded/route-classes.tsv` keeps the classes
+the shell gave the distinct recorded events, and `tests/jg-wake-core.test.sh` checks the port
+against them. `tests/jg-wake-route.test.sh` drives the classes through the library's own entry
+points, so the wiring the watcher and the producers use is covered too.
+
+Two differences are deliberate. `queue-quiet` routes every queued row, so a rule that names a queued
+row's own kind and key made the shell recurse until it died; the port stops after eight levels and
+treats the queue as not quiet. A non-numeric stamp in `state/.squad-lead-restart-pass` made the
+shell abort under `set -u`; the port treats the line as no match.

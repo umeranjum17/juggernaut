@@ -207,7 +207,7 @@ Reminders preserve the queued reason except that a signal payload marked `needs-
 ### Wake urgency classes
 
 Every event gets one class from the routing rule file, and the same three apply to a wake aimed at a model as to an alert aimed at the captain: `now` wakes at once for a captain decision, security, a failed release, a stuck worker past its threshold, or a finished task; `batch` waits for a turn that happens anyway; `silent` is recorded and wakes nobody.
-`bin/jg-wake-lib.sh` decides the class where the event is recorded, from the one shared `defaults/wake-routing` that every home reads.
+`bin/jg-wake-lib.sh` asks the Go command `core/wake/cmd/jg-wake-core` (through `bin/jg-wake-core.sh`) for the class where the event is recorded, from the one shared `defaults/wake-routing` that every home reads.
 A home's small `config/wake-routing` is read first, so its rules and `set` values win and everything it does not name falls through to the shared file.
 The shared rules settle what asks Main for nothing: a fleet-heartbeat gap that is only open waits (`silent`), a gap with ready work, a recovery, a progress, resolved or paused status line, a squad_lead's routine parent-channel report of a child's outcome (its PR-ready, ledger and merge lines, which the parent-channel libraries alone write), a paused wait at the owning lead and a declared pause being rechecked (`batch`), a re-arm after Main's own restart pass (`silent`), and the sentinel's old-beacon doorbell while a live watcher holds the lock (`silent`).
 A decision, blocker, failure, a finished task's own done line, stall, release and security event keep `now`.
