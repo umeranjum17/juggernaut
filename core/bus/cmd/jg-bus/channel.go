@@ -203,6 +203,19 @@ func (a *app) emitDoc(kind, doc string, fallback func() error) int {
 	return 0
 }
 
+// emitReply publishes the owner's answer to a card, in the shape the router reads. When the bus
+// refuses it, the board's own route takes it now, which is what the router would have done.
+func (a *app) emitReply(card, answer string) int {
+	doc := toJSON(map[string]string{"at": time.Now().UTC().Format("2006-01-02T15:04:05Z"), "kind": "reply",
+		"key": card, "subject": a.cfgOr("subject-prefix", "") + ".reply", "answer": answer})
+	return a.emitDoc("reply", doc, func() error {
+		if code := a.routeReply([]byte(doc)); code != 0 {
+			return fmt.Errorf("the board route exited %d", code)
+		}
+		return nil
+	})
+}
+
 // reply routes one captain reply event by the rule in force: the board's own route.
 func (a *app) reply(args []string) int {
 	src := "-"

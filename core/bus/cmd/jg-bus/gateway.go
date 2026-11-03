@@ -35,6 +35,7 @@ type Adapter interface {
 // Inbound is one platform update. A non-message update has no sender, so the access check drops it.
 type Inbound struct {
 	UpdateID, Chat, From, Message, Text string
+	ReplyTo                             string // the message this one answers, if any
 	Private, FromBot                    bool
 	Media                               []MediaRef
 }
@@ -71,9 +72,12 @@ func (t *telegram) Receive(ctx context.Context, cursor string) ([]Inbound, strin
 		Result []struct {
 			UpdateID int64 `json:"update_id"`
 			Message  *struct {
-				MessageID int64  `json:"message_id"`
-				Text      string `json:"text"`
-				Caption   string `json:"caption"`
+				MessageID int64 `json:"message_id"`
+				ReplyTo   *struct {
+					MessageID int64 `json:"message_id"`
+				} `json:"reply_to_message"`
+				Text    string `json:"text"`
+				Caption string `json:"caption"`
 				tgMedia
 				From struct {
 					ID    int64 `json:"id"`
@@ -99,6 +103,9 @@ func (t *telegram) Receive(ctx context.Context, cursor string) ([]Inbound, strin
 				in.Text = m.Caption
 			}
 			in.Media = m.refs()
+			if m.ReplyTo != nil {
+				in.ReplyTo = strconv.FormatInt(m.ReplyTo.MessageID, 10)
+			}
 		}
 		out, cursor = append(out, in), strconv.FormatInt(u.UpdateID+1, 10)
 	}
@@ -112,6 +119,10 @@ func (t *telegram) Receive(ctx context.Context, cursor string) ([]Inbound, strin
 func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 	if !slices.Contains(allow, in.From) || !in.Private || in.Chat != in.From || in.FromBot {
 		appendQuiet(filepath.Join(a.state, "captain-chat", "dropped.tsv"), fmt.Sprintf("%d\t%s\t%s", time.Now().Unix(), in.UpdateID, in.From))
+		return nil
+	}
+	if card := a.cardAnswered(in); card != "" { // the owner answered a card in the chat: the board takes it, not the inbox
+		a.emitReply(card, in.Text)
 		return nil
 	}
 	head := fmt.Sprintf("[chat %s %s:%s]", ad.Name(), in.Chat, in.Message)
@@ -284,4 +295,18 @@ func (a *app) gateway(args []string) int {
 // isChatEvent is a chat event's subject: it stays on the stream and is never named undelivered.
 func isChatEvent(subject string) bool {
 	return strings.HasSuffix(subject, ".inbound") || strings.HasSuffix(subject, ".chat")
+}
+
+// cardAnswered is the card key when the update is a text reply to a card the chat showed, and ""
+// otherwise (the update then becomes a note).
+func (a *app) cardAnswered(in Inbound) (card string) {
+	if in.ReplyTo == "" || in.Text == "" || len(in.Media) > 0 {
+		return ""
+	}
+	readLines(filepath.Join(a.state, "captain-chat", "sent.jsonl"), func(v map[string]string) {
+		if v["card"] != "" && v["chat"] == in.Chat && v["message"] == in.ReplyTo {
+			card = v["card"]
+		}
+	})
+	return card
 }
