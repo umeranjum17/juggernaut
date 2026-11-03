@@ -446,11 +446,20 @@ func (a *app) ensureStream() error {
 	return cmd.Run()
 }
 
+// natsArgs is the client login and server every stream command shares.
+func (a *app) natsArgs(rest ...string) ([]string, error) {
+	login, err := a.natsAuth()
+	if err != nil {
+		return nil, err
+	}
+	return append(append(login, "-s", a.cfgOr("nats-url", "")), rest...), nil
+}
+
 // natsAuth is the client login for this home's account when its credentials exist (the
 // unit's server refuses an empty user), and nothing for a bare server. The login is a nats
 // context file beside the password file, mode 0600, rewritten from that file whenever it
 // differs, and the client reads it at start: on the argument list the password showed in
-// `ps` to every user on the machine for each 30-second wait of the captain-ntfy consumer.
+// `ps` to every user on the machine for each stream call.
 func (a *app) natsAuth() ([]string, error) {
 	name, pass, ok := a.credentials()
 	if !ok {
