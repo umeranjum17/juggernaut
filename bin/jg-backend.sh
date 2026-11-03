@@ -59,7 +59,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -905,6 +904,63 @@ jg_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
   esac
   jg_composer_dialog_sink_release
   return "$rc"
+}
+
+# jg_backend_send_nudge: deliver one machine-typed line (a doorbell or a wake)
+# without ever leaving it behind in a human's input box. Nothing is typed unless
+# the line could be taken back out: the backend must have a clear-line key, and
+# a composer that already holds text is never touched (verdict `holds-text`,
+# `not-withdrawable`). After the submit, a line that is still sitting in the
+# composer - read back and proven to be exactly what we typed, nothing before
+# or after it - is withdrawn with the clear key until the composer reads empty
+# (verdict `withdrawn`; `stuck` when it still will not clear). Any other content
+# is a human's and is left alone. Echoes the verdict: `empty` is the only
+# confirmed delivery, and `withdrawn` means the line was taken back, so the
+# durable record is still undelivered and a later ring is right.
+# Callers must treat `holds-text`, `not-withdrawable`, and `withdrawn` as
+# "nothing was delivered or left behind".
+jg_backend_send_nudge() {  # <backend> <target> <text> <retries> <enter-sleep> <settle> [expected-label]
+  local backend=$1 target=$2 text=$3 label=${7:-} verdict held
+  case "$backend" in
+    tmux|herdr|zellij|cmux) ;;
+    *) printf 'not-withdrawable'; return 0 ;;
+  esac
+  jg_backend_source "$backend" || return 1
+  if [ "$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null)" = pending ]; then
+    printf 'holds-text'
+    return 0
+  fi
+  verdict=$(jg_backend_send_text_submit "$backend" "$target" "$text" "$4" "$5" "$6" "$label") || return $?
+  case "$verdict" in
+    empty|record-missing|send-failed|dead|missing) printf '%s' "$verdict"; return 0 ;;
+  esac
+  held=$(jg_backend_withdraw_typed "$backend" "$target" "$text" "$label")
+  case "$held" in
+    empty|foreign) printf '%s' "$verdict" ;;
+    *) printf '%s' "$held" ;;
+  esac
+}
+
+# jg_backend_withdraw_typed: take <text> back out of the composer if, and only
+# if, the composer holds exactly that text (ignoring whitespace and wrapping).
+# Echoes `empty` (nothing there to withdraw), `withdrawn`, `foreign` (other
+# content: a human's, never keyed), or `stuck` (ours, but it will not clear).
+jg_backend_withdraw_typed() {  # <backend> <target> <text> [expected-label]
+  local backend=$1 target=$2 want=${3//[[:space:]]/} label=${4:-} held i=0
+  while [ "$i" -lt 6 ]; do
+    held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) \
+      && held=$(jg_composer_extract_selected_content styled=0 "$held") || held=
+    held=${held//[[:space:]]/}
+    if [ -z "$held" ]; then
+      if [ "$i" -eq 0 ]; then printf 'empty'; else printf 'withdrawn'; fi
+      return 0
+    fi
+    [ "$held" = "$want" ] || { printf 'foreign'; return 0; }
+    jg_backend_send_key "$backend" "$target" C-u "$label" >/dev/null 2>&1 || break
+    sleep 0.2
+    i=$((i + 1))
+  done
+  printf 'stuck'
 }
 
 # jg_backend_kill: remove the task's session endpoint. An already-gone target

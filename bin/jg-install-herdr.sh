@@ -10,7 +10,7 @@
 #
 # Pins Herdr v0.7.4 (protocol 16), the suite-verified protocol-16 release.
 # Selects the official GitHub Releases asset for the host OS/arch, downloads
-# with a bounded max size, verifies SHA-256 before install, then refuses to
+# with a bounded max size and a bounded retry, verifies SHA-256 before install, then refuses to
 # finish unless the binary reports the exact pin version and a client protocol
 # at or above the required floor (16 for the real-Herdr family).
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
@@ -26,7 +26,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -80,10 +79,33 @@ URL="https://github.com/${JG_HERDR_CI_REPO}/releases/download/${JG_HERDR_CI_TAG}
 TMP=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/jg-herdr.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
-printf 'jg-install-herdr.sh: downloading %s from %s\n' "$ASSET" "$URL" >&2
-# --fail: HTTP errors; --location: follow redirects; --max-filesize: bound.
-curl -fsSL --max-filesize "$JG_HERDR_CI_MAX_BYTES" "$URL" -o "$TMP/$ASSET" \
-  || die "download failed for $URL (bounded at $JG_HERDR_CI_MAX_BYTES bytes)"
+# Bounded retry around the download only. A transient network or runner failure
+# (the GitHub release CDN, a dropped connection) must not fail the required
+# lane, so the fetch is attempted at most JG_HERDR_CI_DOWNLOAD_ATTEMPTS times
+# with a short linear backoff (default 5s, then 10s: a 15s ceiling of waiting).
+# The SHA-256 pin and protocol floor below run once, on the downloaded file; a
+# hash mismatch is never retried and fails on the first attempt.
+JG_HERDR_CI_DOWNLOAD_ATTEMPTS=3
+JG_HERDR_CI_RETRY_DELAY=${JG_HERDR_CI_RETRY_DELAY:-5}
+attempt=1
+while :; do
+  printf 'jg-install-herdr.sh: downloading %s from %s (attempt %s of %s)\n' \
+    "$ASSET" "$URL" "$attempt" "$JG_HERDR_CI_DOWNLOAD_ATTEMPTS" >&2
+  # --fail: HTTP errors; --location: follow redirects; --max-filesize: bound.
+  if curl -fsSL --max-filesize "$JG_HERDR_CI_MAX_BYTES" "$URL" -o "$TMP/$ASSET"; then
+    break
+  else
+    curl_status=$?
+  fi
+  [ "$attempt" -lt "$JG_HERDR_CI_DOWNLOAD_ATTEMPTS" ] \
+    || die "download failed for $URL after $JG_HERDR_CI_DOWNLOAD_ATTEMPTS attempts (last curl exit status $curl_status; bounded at $JG_HERDR_CI_MAX_BYTES bytes)"
+  delay=$((JG_HERDR_CI_RETRY_DELAY * attempt))
+  printf 'jg-install-herdr.sh: download attempt %s failed (curl exit status %s); retrying in %ss\n' \
+    "$attempt" "$curl_status" "$delay" >&2
+  rm -f "$TMP/$ASSET"
+  sleep "$delay"
+  attempt=$((attempt + 1))
+done
 
 if command -v sha256sum >/dev/null 2>&1; then
   ACTUAL_SHA256=$(sha256sum "$TMP/$ASSET" | awk '{print $1}')

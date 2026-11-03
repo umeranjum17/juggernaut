@@ -25,7 +25,7 @@ exit 1
 POOL
 cat >"$work/bin/pi" <<'PI'
 #!/usr/bin/env bash
-echo 'commandcode deepseek/deepseek-v4.1-flash 262K'
+printf 'ollama-cloud    deepseek-v4.1-flash    1M\ncommandcode     deepseek/deepseek-v4.1-flash  262K\n'
 PI
 cat >"$work/bin/quota-axi" <<'QUOTA'
 #!/usr/bin/env bash
@@ -39,7 +39,7 @@ case $1 in
     [ "${2:-}" != --help ] || { echo '--citation-base'; exit 0; }
     model=$(python3 -c 'import os,yaml; print(yaml.safe_load(open(os.environ["DONE_DONE_HOME"]+"/config.yaml"))["judge"]["model"])')
     echo "judge boundary: $* model=$model" >>"$JUDGE_LOG"
-    if [ "${SOL_LIMIT:-0}" = 1 ] && [ "$model" = openai-codex/gpt-6.1-sol ]; then
+    if [ "${LIMIT_MODEL:-}" = "$model" ]; then
       echo '{"error":"429 quota exhausted"}'; exit 2
     fi
     echo '{"claim":"Umer can check a merge with a dry Claude pool","result":"pass","evidence":[]}' ;;
@@ -56,11 +56,12 @@ export JUDGE_LOG=$work/judges
   echo 'Action: merge-card check --judge answerer:pi Umer <isolated worktree> HEAD -'
   bash "$repo/merge-card/merge-card" check --judge answerer:pi Umer "$work/wt" HEAD -
   test "$(jq -r .verdict "$JG_HOME/data/Umer/merge-card.json")" = pass
-  echo 'Action: merge-card check Umer <isolated worktree> HEAD - (Sol quota error)'
-  SOL_LIMIT=1 bash "$repo/merge-card/merge-card" check Umer "$work/wt" HEAD -
+  echo 'Action: merge-card check Umer <isolated worktree> HEAD - (the fleet route answers 429 once)'
+  LIMIT_MODEL=ollama-cloud/deepseek-v4.1-flash bash "$repo/merge-card/merge-card" check Umer "$work/wt" HEAD -
   test "$(jq -r .verdict "$JG_HOME/data/Umer/merge-card.json")" = pass
   cat "$JUDGE_LOG"
+  grep -q 'model=ollama-cloud/deepseek-v4.1-flash' "$JUDGE_LOG"
   grep -q 'model=commandcode/deepseek/deepseek-v4.1-flash' "$JUDGE_LOG"
-  echo 'PASS: explicit non-Claude and dry-pool Sol-to-Goat checks complete.'
+  echo 'PASS: explicit non-Claude and dry-pool route-chain checks complete.'
 } >"$evidence/merge-card-transcript.txt" 2>&1
-jq -n '{target:{version:"merge-card check"},start:"Isolated home with a dry Claude pool; fixture judge boundary, no inference.",steps:["Run merge-card check with an explicit answerer:pi judge.","Run merge-card check without a route, reject Sol with a quota error, and answer on listed Command Code DeepSeek.","Read saved pass verdicts and judge invocations."],result:"Both merge checks pass despite a dry Claude pool; fallback tries Sol then Goat without changing global config."}' >"$evidence/steps.json"
+jq -n '{target:{version:"merge-card check"},start:"Isolated home with a dry Claude pool; fixture judge boundary, no inference.",steps:["Run merge-card check with an explicit answerer:pi judge.","Run merge-card check without a route: the first listed route of the shared route chain judges, then a 429 on that route moves to the next chain route.","Read saved pass verdicts and judge invocations."],result:"Both merge checks pass despite a dry Claude pool; the judge routes come from the fleet route chain and the next route is tried only after a quota failure, without changing global config."}' >"$evidence/steps.json"

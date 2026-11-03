@@ -3,6 +3,8 @@
 #
 # Usage: jg-home-summary-refresh.sh [--best-effort]
 #
+# After each publication it also renders state/whats-left.md (bin/jg-whats-left.sh).
+#
 # The published state/home-summary.json is the exact
 # `jg-fleet-snapshot.sh --squad-lead-home-summary` document for this JG_HOME.
 # Its schema remains `jg-squad-lead-home-summary.v1`, declares the current hold
@@ -38,7 +40,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -207,6 +208,9 @@ home_summary_refresh_once() {
   jg_lock_release "$REFRESH_LOCK"
   HOME_SUMMARY_LOCK_HELD=0
   trap - EXIT HUP INT TERM
+  # The standing view of what is left follows every publication; its own failure never fails this one.
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
+    "$SCRIPT_DIR/jg-whats-left.sh" write >/dev/null 2>&1 || true
   return 0
 }
 

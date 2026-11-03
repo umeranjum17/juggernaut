@@ -7,6 +7,9 @@
 # Size rule: a change is a small tweak, free to be hand-rolled, when its UI files
 # (.html .htm .css .scss .sass .less .svg .jsx .tsx .vue .svelte .astro) change at most
 # 40 lines, added plus deleted, against the merge base, and it adds no new UI file.
+# Both halves detect renames, so a file that only moved is neither a changed line nor a
+# new file: moving a page or an image is not design work. A file that really is added, or
+# really gains lines, still counts and still refuses on its own merits.
 # Past that it is design work, as is every task briefed `--design-call yes`.
 # `size` prints `design|tweak <ui-lines> <new-ui-files>` and exits 2 when it cannot measure.
 #

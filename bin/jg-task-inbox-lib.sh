@@ -406,7 +406,8 @@ jg_task_inbox_doorbell_line() {  # <record-path>
 # budget, verdict discarded.
 # Returns 0 rang, 1 skipped because the composer PROVENLY holds pending text
 # other than our own doorbell (the watcher re-rings later), 2 the backend send
-# failed, 3 skipped because the endpoint is positively dead or missing (nothing
+# failed or the line could not be left out of the composer (withdrawn, or not
+# typed because the backend has no clear-line key; the reason says which), 3 skipped because the endpoint is positively dead or missing (nothing
 # typed; recovery owns the record). No return value is delivery proof; the
 # acknowledgement move is the only delivery signal.
 # The skip is deliberately narrow: only an exact `pending` verdict can defer,
@@ -418,7 +419,9 @@ jg_task_inbox_doorbell_line() {  # <record-path>
 # A pending composer holding exactly our own doorbell line is a previous ring
 # whose Enter never landed, so on an agent not reported busy it is submitted
 # rather than skipped; skipping it would block every later ring. On both paths
-# a lost first Enter gets one confirmed retry.
+# a lost first Enter gets one confirmed retry. No doorbell is ever left in a
+# composer: an unsubmitted line is withdrawn (jg_backend_send_nudge), so a
+# human's next keystroke cannot join it.
 # On return 2, JG_TASK_INBOX_RING_REASON holds the backend's refusal
 # diagnostics on one line, for callers to log; it is empty otherwise.
 jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
@@ -441,6 +444,12 @@ jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
       sleep 0.3
       jg_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
       jg_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
+      sleep 0.3
+      # Enter did not take twice: our own stuck line must not stay for a human.
+      case "$(jg_backend_withdraw_typed "$backend" "$target" "$line" "$label")" in
+        withdrawn) JG_TASK_INBOX_RING_REASON="the stuck doorbell was withdrawn from the composer"; return 2 ;;
+        stuck) JG_TASK_INBOX_RING_REASON="the doorbell is still in the composer and could not be cleared"; return 2 ;;
+      esac
       return 0
       ;;
   esac
@@ -449,7 +458,7 @@ jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   # shell only a suffix; the `: ` prefix protects complete lines only. Do not
   # add process-bound atomic delivery here unless an incident reopens this.
   errf=$(mktemp "${TMPDIR:-/tmp}/jg-ring-err.XXXXXX" 2>/dev/null) || errf=/dev/null
-  verdict=$(jg_backend_send_text_submit "$backend" "$target" "$line" 2 0.4 0.3 "$label" 2>"$errf") || verdict=send-failed
+  verdict=$(jg_backend_send_nudge "$backend" "$target" "$line" 2 0.4 0.3 "$label" 2>"$errf") || verdict=send-failed
   if [ "$errf" != /dev/null ]; then
     JG_TASK_INBOX_RING_REASON=$(LC_ALL=C tr -c '[:print:]\n' ' ' < "$errf" | sed '/^ *$/d' | paste -sd ';' - | cut -c1-300)
     rm -f "$errf"
@@ -460,6 +469,15 @@ jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
     JG_TASK_INBOX_RING_REASON=${JG_TASK_INBOX_RING_REASON:-the backend reported send-failed without a reason}
     return 2
   fi
+  # A line that was taken back out of the composer (or never typed because it
+  # could not be) delivered nothing: the record stays undelivered for a later
+  # ring, and no doorbell text is left for a human's next keystroke to join.
+  case "$verdict" in
+    withdrawn) JG_TASK_INBOX_RING_REASON="the unsubmitted doorbell was withdrawn from the composer"; return 2 ;;
+    holds-text) return 1 ;;
+    not-withdrawable) JG_TASK_INBOX_RING_REASON="the $backend backend has no clear-line key, so the doorbell was not typed"; return 2 ;;
+    stuck) JG_TASK_INBOX_RING_REASON="the doorbell is still in the composer and could not be cleared"; return 2 ;;
+  esac
   JG_TASK_INBOX_RING_REASON=
   return 0
 }
@@ -636,7 +654,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }

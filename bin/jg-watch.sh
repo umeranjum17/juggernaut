@@ -239,7 +239,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -607,38 +606,87 @@ window_is_busy() {  # <window> <tail40>
   return 0
 }
 
-window_kind() {
-  local w=$1 meta kind
-  meta=$(jg_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
-  if [ -n "$meta" ]; then
-    kind=$(grep '^kind=' "$meta" | cut -d= -f2- || true)
-    [ -n "$kind" ] || kind=ship
-    echo "$kind"
-    return 0
+# The window inventory: every state/<id>.meta record, read once per cycle into the four
+# parallel lists below. core/watch/cmd/jg-watch-core owns the field rules (which record is
+# watched, which window it names, and the kind, backend and harness it answers), and
+# bin/jg-watch-core.sh builds and runs it. The shell reader those rules replaced re-walked
+# every record for every single answer below, forking grep, cut and a subshell each time.
+# A cycle that cannot read its inventory stops in the main loop rather than supervising
+# blind: an empty fleet and an unreadable one must never look alike.
+_W_NAMES=()
+_W_KIND=()
+_W_BACKEND=()
+_W_HARNESS=()
+_W_ORDER=()
+_W_LOADED=0
+_W_FIELD=
+
+watch_inventory_load() {
+  local metas=("$STATE"/*.meta) type name f1 f2 f3 inv
+  _W_LOADED=0
+  # A temp file, never a command substitution: watcher_stop_signals documents why a
+  # stop signal that lands inside one can be dropped or mis-parsed, and a supervision
+  # cycle must never survive a stop request.
+  inv="$STATE/.watch-inventory.$$"
+  if ! "$SCRIPT_DIR/jg-watch-core.sh" inventory "${metas[@]}" > "$inv"; then
+    rm -f -- "$inv"
+    return 1
   fi
-  echo unknown
+  _W_NAMES=(); _W_KIND=(); _W_BACKEND=(); _W_HARNESS=(); _W_ORDER=()
+  while IFS=$'\x1f' read -r type name f1 f2 f3; do
+    case "$type" in
+      r)
+        [ -n "$name" ] || continue
+        _W_ORDER+=("$name")
+        ;;
+      w)
+        [ -n "$name" ] || continue
+        _W_NAMES+=("$name")
+        _W_KIND+=("$f1")
+        _W_BACKEND+=("$f2")
+        _W_HARNESS+=("$f3")
+        ;;
+    esac
+  done < "$inv"
+  rm -f -- "$inv"
+  _W_LOADED=1
 }
 
-# window_backend: the backend recorded in the meta whose window= matches <w>,
-# defaulting to tmux (absent backend= means tmux; the P1 compatibility
-# contract) when no matching meta carries the field, or none matches at all.
-window_backend() {
-  local w=$1 meta backend
-  meta=$(jg_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
-  if [ -n "$meta" ]; then
-    backend=$(grep '^backend=' "$meta" | cut -d= -f2- || true)
-    [ -n "$backend" ] || backend=tmux
-    echo "$backend"
+# Answer one field for one window from this cycle's inventory. Sets _W_FIELD and returns 0
+# when a record names that window; returns 1 otherwise, which is the caller's cue to use
+# the no-record answer the deleted shell also gave.
+watch_window_field() {  # <kind|backend|harness> <window>
+  local i
+  _W_FIELD=
+  [ "$_W_LOADED" -eq 1 ] || watch_inventory_load || return 1
+  for ((i = 0; i < ${#_W_NAMES[@]}; i++)); do
+    [ "${_W_NAMES[$i]}" = "$2" ] || continue
+    case "$1" in
+      kind) _W_FIELD=${_W_KIND[$i]} ;;
+      backend) _W_FIELD=${_W_BACKEND[$i]} ;;
+      harness) _W_FIELD=${_W_HARNESS[$i]} ;;
+    esac
     return 0
-  fi
-  echo tmux
+  done
+  return 1
 }
 
-window_harness() {
-  local w=$1 meta
-  meta=$(jg_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
-  [ -n "$meta" ] || return 0
-  grep '^harness=' "$meta" | cut -d= -f2- || true
+window_kind() {  # <window>
+  watch_window_field kind "$1" || { printf '%s' unknown; return 0; }
+  printf '%s' "${_W_FIELD:-ship}"
+}
+
+# window_backend: the backend recorded in the record that names <w>, defaulting to tmux
+# (absent backend= means tmux; the P1 compatibility contract) when that record carries no
+# field, or when no record names the window at all.
+window_backend() {  # <window>
+  watch_window_field backend "$1" || { printf '%s' tmux; return 0; }
+  printf '%s' "${_W_FIELD:-tmux}"
+}
+
+window_harness() {  # <window>
+  watch_window_field harness "$1" || return 0
+  printf '%s' "$_W_FIELD"
 }
 
 window_label() {
@@ -1020,22 +1068,13 @@ signal_turnend_panes_churned() {  # <file> ...
   return 0
 }
 
+# The watched windows, in the order the meta-record glob produced them and with a repeated
+# target dropped. A lane stopped by a verified `jg-control.sh exit` keeps its window= for
+# relaunch and teardown but its endpoint may be dead, so the inventory leaves it out.
 recorded_windows() {
-  local meta w seen=
-  for meta in "$STATE"/*.meta; do
-    [ -e "$meta" ] || continue
-    # A lane stopped by a verified `jg-control.sh exit` keeps its window= for
-    # relaunch and teardown, but its endpoint may be dead; watching it would
-    # emit stale on every arm and keep supervision from holding the lock.
-    ! jg_meta_exited_on_purpose "$meta" || continue
-    w=$(jg_backend_target_of_meta "$meta")
-    [ -n "$w" ] || continue
-    case "$seen" in
-      *"|$w|"*) continue ;;
-    esac
-    seen="$seen|$w|"
-    printf '%s\n' "$w"
-  done
+  [ "$_W_LOADED" -eq 1 ] || watch_inventory_load || return 1
+  [ "${#_W_ORDER[@]}" -eq 0 ] || printf '%s\n' "${_W_ORDER[@]}"
+  return 0
 }
 
 # Print the oldest structurally valid ACTIONABLE row in a local squad_lead's
@@ -1387,6 +1426,15 @@ EOF
     esac
     break
   done
+  # A row the routing rules class `batch` waits for a turn that happens anyway, so
+  # re-delivering it here is what turned a routine event into a Stop-owned wake.
+  # resurface_after_downtime asks the same owner (jg_wake_route_class) before it wakes,
+  # so both arm paths use one rule for which queued row is worth a turn. A row that
+  # classes `now` still re-delivers exactly as before.
+  case "$(jg_wake_route_class "$kind" "$key" "$reason")" in
+    now) ;;
+    *) return 0 ;;
+  esac
   [ "$idle" -ge "$SQUAD_LEAD_WAKE_STALL_SECS" ] || return 0
   squad_lead_in_active_turn '' "$idle" "$JG_HOME" "$seq" && return 0
   watcher_queue resurfaced "$epoch-$seq" >/dev/null || return 1
@@ -3650,6 +3698,15 @@ watcher_stop_signals
 WATCHER_PID=${BASHPID:-$$}
 # Retain the last proven scan through handoff. Do not renew it until this
 # cycle makes progress: a stalled successor must still age past grace.
+# A cycle that starts over a beacon still fresh took over from a healthy
+# predecessor (a --take-over, or a hand-off after a delivered wake), so its
+# first scan may publish at each finished unit like any later scan
+# (watcher_beat's header). One that starts over a stale or absent beacon is
+# recovering a lapse and keeps proving it with a whole scan.
+WATCH_BEAT_INHERITED=0
+_beat_age=$(jg_path_age "$STATE/.last-watcher-beat" 2>/dev/null || echo)
+case "$_beat_age" in ''|*[!0-9]*) ;; *) [ "$_beat_age" -lt "$WATCHER_STALE_GRACE" ] && WATCH_BEAT_INHERITED=1 ;; esac
+unset _beat_age
 printf '%s\n' "$JG_HOME" > "$WATCH_LOCK/jg-home" || true
 printf '%s\n' "$WATCH_PATH" > "$WATCH_LOCK/watcher-path" || true
 # shellcheck disable=SC2034 # Consumed by wake() in the separately linted transition owner.
@@ -3731,10 +3788,35 @@ resurface_after_downtime() {
   host_memory_surface_queued
   # defaults/wake-routing decides whether a resurface with nothing waiting costs a turn.
   if [ "$(jg_wake_route_class check rearm-resurface 'check: rearm-resurface')" != now ]; then
+    jg_wake_settle check rearm-resurface 'check: rearm-resurface' || true
     triage_log "rearm-resurface settled without a wake (defaults/wake-routing)"
     return 0
   fi
   wake "check: rearm-resurface"
+}
+
+# Publish liveness at one progress point inside a running supervision scan.
+# The beacon's age must bound the gap between progress points, not the length
+# of a whole scan: the due-check sweep (each check bounded by CHECK_TIMEOUT, and
+# a busy home registers many) and the ready-PR record pass can each outlast the
+# stale grace on a perfectly healthy cycle. Publishing only at the end of the
+# scan therefore let a live, working cycle read as a dead watcher, which is the
+# false "the watcher beacon is Ns old and no turn is running" alarm. A cycle
+# that is killed or wedged reaches no further progress point, so its beacon
+# still ages past the grace and the real detector still fires. Best-effort: a
+# transient write failure must not abort a running scan, and the next progress
+# point retries it.
+# Only a cycle that has already proven one complete scan, or that started over
+# a still-fresh beacon from a healthy predecessor (a take-over; its first scan
+# can outlast the grace while the retained beacon ages), publishes mid-scan.
+# Any other first scan announces nothing until it finishes, so the arm's
+# startup confirmation keeps requiring resumed supervision and a first scan
+# that hangs in its first check is still not reported healthy. The supervision
+# read covers that first scan through its live-holder rule instead
+# (bin/jg-supervision-lib.sh).
+watcher_beat() {
+  [ "${WATCH_SCAN_COMPLETE:-0}" = 1 ] || [ "${WATCH_BEAT_INHERITED:-0}" = 1 ] || return 0
+  touch "$STATE/.last-watcher-beat" 2>/dev/null || true
 }
 
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
@@ -3865,6 +3947,10 @@ EOF
         wake "$reason"
       fi
       pr_poll_control_release || exit 1
+      # This bounded unit of the sweep is done, so the scan has made progress:
+      # publish liveness here (watcher_beat's header owns why). A check that
+      # hangs or a cycle that dies never reaches this point, so it still ages.
+      watcher_beat
     done
     if [ -n "$rejected_checks" ]; then
       reason="check: rejected unauthenticated state checks:$rejected_checks"
@@ -3917,6 +4003,11 @@ while :; do
   if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" != "$WATCHER_PID" ]; then
     exit 0
   fi
+
+  # One window inventory serves this whole cycle: the stale ladder, the busy reads
+  # and the event wait all read it instead of re-walking every meta record per
+  # question. A cycle that cannot read its own fleet stops here with a named reason.
+  watch_inventory_load || { echo "watcher: window inventory read failed" >&2; exit 1; }
 
   if declare -F jg_memory_sampler_ensure >/dev/null; then jg_memory_sampler_ensure || triage_log "host memory sampler failed to restart"; fi
   host_memory_surface_queued
@@ -4115,6 +4206,10 @@ EOF
         [ -n "$sf" ] || continue
         reportable_signal_path "$f" || continue
         ready_pr_record "$f"
+        # The ready-PR record pass is one bounded unit of this scan; publish
+        # liveness after it so a batch of them cannot outrun the grace
+        # (watcher_beat's header owns why).
+        watcher_beat
         file_reason="$reason"
         case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$signal_files" ;; esac
         jg_wake_append signal "$(basename "$f")" "$file_reason" || exit 1
@@ -4238,6 +4333,9 @@ EOF
   # remembers the hash already classified, or the declaration a busy pane's
   # crossed turn bound already handed to the away-mode daemon).
   while IFS= read -r w; do
+    # Everything before this window is done: a bounded unit of the scan, and
+    # the loop has early exits, so the top is the one point every window hits.
+    watcher_beat
     kind=$(window_kind "$w")
     task=$(window_to_task "$w" "$STATE")
     # Steering-inbox loss detection runs before the squad_lead stale
@@ -4490,6 +4588,15 @@ EOF
     fi
   fi
 
+  # The batched digest: rows the routing rules class `batch` wait for a turn that happens anyway,
+  # so on a quiet fleet nothing would ever deliver them. Once `set digest-minutes` has passed and
+  # at least one row waits, one digest wake carries them all; with none waiting there is no wake.
+  if digest_waiting=$(jg_wake_digest_due mark); then
+    reason="check: digest - $digest_waiting routine events wait in the queue; none needs a decision now"
+    jg_wake_append check wake-digest "$reason" || exit 1
+    wake "$reason"
+  fi
+
   # Asks the ask-default feature recorded are decided on the check cadence.
   if ask_default_tick; then
     jg_wake_append check ask-default "$ASK_DEFAULT_REASON" || exit 1
@@ -4511,9 +4618,17 @@ EOF
     # without exiting); the away-mode daemon, when present, owns triage and wants
     # every heartbeat.
     if afk_present; then
+      # The rule file decides: an unchanged fleet (`silent@fleet-unchanged heartbeat`) is recorded
+      # and never wakes, a changed one wakes and records what it saw.
+      hb_class=$(jg_wake_route_class heartbeat heartbeat heartbeat)
       jg_wake_append heartbeat heartbeat heartbeat || exit 1
       touch "$STATE/.last-heartbeat"
-      wake "heartbeat"
+      if [ "$hb_class" = now ]; then
+        jg_wake_fleet_fp_record
+        wake "heartbeat"
+      fi
+      echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak"
+      triage_log "absorbed away heartbeat (fleet unchanged)"
     elif heartbeat_scan_finds_actionable; then
       # Backstop: a captain-relevant event the per-wake path absorbed by mistake.
       # Enqueue first, then record every status log surfaced through its end so the
@@ -4542,6 +4657,9 @@ EOF
   # beacon stays readable during handoff but keeps its original age while
   # checks block. Actionable wakes stamp in watcher_cleanup after lock release.
   touch "$STATE/.last-watcher-beat" || exit 1
+  # This cycle has now proven one whole scan, so the bounded units of every
+  # later scan may publish liveness themselves (watcher_beat's header).
+  WATCH_SCAN_COMPLETE=1
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
   # else the blind poll sleep. See event_wait_or_sleep.

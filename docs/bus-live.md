@@ -63,7 +63,9 @@ Three files hold the live path's own state, and all three are caches of the bus:
   stream sequence. An acknowledgement drops its raise with it, so the fold stays
   small.
 - `state/.wake-bus.cursor` - the last sequence already applied, per stream, which
-  is what makes a render cost nothing when nothing new arrived.
+  is what makes a render cost nothing when nothing new arrived. It moves only after
+  the replica holding what it passed is written, each file by rename, so a render
+  killed at any point leaves the old position (a re-read the fold absorbs) or the new one.
 - `state/.wake-bus.outbox.jsonl` - events a failed publish still owes the bus. A
   home whose bus is briefly unreachable loses no wake: the event waits here and
   the next render publishes it.

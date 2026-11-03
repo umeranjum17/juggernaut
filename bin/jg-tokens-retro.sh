@@ -6,6 +6,7 @@
 # Usage:
 #   jg-tokens-retro.sh [check]
 #   jg-tokens-retro.sh arm
+#   jg-tokens-retro.sh show
 #   jg-tokens-retro.sh disarm
 #   jg-tokens-retro.sh --help
 #
@@ -21,6 +22,8 @@
 # watcher's per-check bound, and stays silent. When today's report and the one
 # from seven days earlier both exist, it prints one line, once, if tokens per
 # day moved by JG_TOKENS_RETRO_CHANGE_PCT percent (default 20) or more.
+# Each day's report also adds one row to data/tokens-retro/per-call.tsv, read
+# with `show`. Bootstrap arms the check on every primary home, so no one has to.
 # The retro reads only the session stores and makes no model calls.
 # A host whose learn-from-mistakes-axi has no tokens mode (before 0.12.0)
 # stays silent; bootstrap already reports the pin.
@@ -48,6 +51,7 @@ usage() {
   cat <<'EOF'
 Usage:
   jg-tokens-retro.sh [check]   run today's token retro if due; print one line on a week-over-week change
+  jg-tokens-retro.sh show      print data/tokens-retro/per-call.tsv: tokens per call, floor, share over 200k, by day and commit
   jg-tokens-retro.sh arm       write and register state/tokens-retro.check.sh
   jg-tokens-retro.sh disarm    remove the check shim and its trust binding (reports stay)
   jg-tokens-retro.sh --help    print this help
@@ -59,6 +63,26 @@ EOF
 day() { date -u -d "@$1" +%F 2>/dev/null || date -u -r "$1" +%F; }
 
 per_day() { jq -r '.metrics.tokens_per_day // empty | floor' "$1" 2>/dev/null; }
+
+# One row a day in data/tokens-retro/per-call.tsv: tokens per model call (the
+# number a context-size change moves), the instruction floor, the share of calls
+# above 200k, and the commit this home runs, so a cut shows as a before/after pair.
+record_per_call() {
+  local f="$OUT/per-call.tsv" j="$OUT/$1/tokens.json" row
+  [ -f "$j" ] || return 0
+  grep -q "^$1	" "$f" 2>/dev/null && return 0
+  row=$(jq -r --arg d "$1" --arg c "$(git -C "$JG_HOME" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+    'select((.requests // 0) > 0) | [$d, $c, (.requests), ((.total / .requests) | floor),
+     (.metrics.floor_tokens_median // 0 | floor), ((.metrics.ctx_over_200k_share // 0) * 100 | floor)] | @tsv' "$j" 2>/dev/null) || return 0
+  [ -n "$row" ] || return 0
+  [ -f "$f" ] || printf 'date\tcommit\tcalls\ttokens_per_call\tfloor_median\tpct_calls_over_200k\n' >"$f"
+  printf '%s\n' "$row" >>"$f"
+}
+
+action_show() {
+  [ -f "$OUT/per-call.tsv" ] || { printf 'jg-tokens-retro: no per-call record yet (%s)\n' "$OUT/per-call.tsv" >&2; return 1; }
+  column -t -s "$(printf '\t')" "$OUT/per-call.tsv"
+}
 
 action_check() {
   local now today week_ago lock started cur old pct
@@ -89,6 +113,7 @@ action_check() {
         && rm -rf -- "$lock"' jg-tokens-retro "$LFM" "$OUT" "$lock" "$today" </dev/null >/dev/null 2>&1 &
     return 0
   fi
+  record_per_call "$today"
   [ -f "$OUT/$week_ago/tokens.json" ] || return 0
   [ ! -e "$OUT/$today/.reported" ] || return 0
   cur=$(per_day "$OUT/$today/tokens.json")
@@ -145,6 +170,7 @@ action_disarm() {
 case "${1:-check}" in
   check) action_check ;;
   arm) action_arm ;;
+  show) action_show ;;
   disarm) action_disarm ;;
   -h|--help) usage ;;
   *) printf 'jg-tokens-retro: unknown action: %s\n' "$1" >&2; usage >&2; exit 2 ;;

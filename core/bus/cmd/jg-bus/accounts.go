@@ -96,9 +96,9 @@ func resolveHome(path string) string {
 	return filepath.Clean(path)
 }
 
-// registeredHomes reads Main's Squad Lead registry: resolved home path -> id.
+// registeredHomes reads the machine's Squad Lead registry: resolved home path -> id.
 func (a *app) registeredHomes() map[string]string {
-	data := a.data
+	data := a.registryData()
 	raw, err := os.ReadFile(filepath.Join(data, "squad_leads.md"))
 	if err != nil {
 		raw, _ = os.ReadFile(filepath.Join(data, "secondmates.md"))
@@ -295,6 +295,65 @@ func captureStdout(run func() int) string {
 	return text
 }
 
+// machineOwner is the home that owns this machine's bus when it is another home that keeps a
+// record of this one, and nil otherwise: this home owns the bus, no unit is installed, or (as
+// in a lab on a machine that runs a real bus) the unit belongs to a machine this home never
+// joined. Every record the server keeps, and every client that logs in to it, reads that one
+// home's copy and never its own leftover.
+func (a *app) machineOwner() *app {
+	o, ok := a.foreignOwner()
+	if !ok {
+		return nil
+	}
+	owner := a.ownerApp(o)
+	if !owner.recordsHome(resolveHome(a.home)) {
+		return nil
+	}
+	return owner
+}
+
+// recordsHome reports whether this app's home, as the machine's bus owner, holds a record of
+// <home>: a member line in its registry or an entry in its Squad Lead registry.
+func (a *app) recordsHome(home string) bool {
+	if _, ok := a.registeredStates()[home]; ok {
+		return true
+	}
+	_, ok := a.registeredHomes()[home]
+	return ok
+}
+
+// registryData is the ONE data directory that names this home's account: the bus owner's
+// when another home owns it, because that is the registry its accounts file is written from,
+// else this home's own. A joined home usually keeps no registry of its own, and reading that
+// empty one named it home-<hash of its path> while the server held its registered id, so
+// every stream create and publish was refused (Authorization Violation, the 18 refusals that
+// made Main fall back to the no-accounts config).
+func (a *app) registryData() string {
+	if o := a.machineOwner(); o != nil {
+		return o.data
+	}
+	return a.data
+}
+
+// accountsFile is the machine's one accounts file: the owner's when another home owns the
+// bus, this home's own otherwise. The server loads it and every client is checked against it.
+func (a *app) accountsFile() string {
+	if o := a.machineOwner(); o != nil {
+		return filepath.Join(o.runtime, "accounts.conf")
+	}
+	return filepath.Join(a.runtime, "accounts.conf")
+}
+
+// accountsCarry reports whether the machine's accounts file holds an account <name>.
+func (a *app) accountsCarry(name string) bool {
+	for _, line := range strings.Split(readFileString(a.accountsFile()), "\n") {
+		if strings.Contains(line, "{ user: "+name+",") {
+			return true
+		}
+	}
+	return false
+}
+
 // myAccount is the ONE place a client learns who it is on the server: this home's
 // account name and the credentials file the accounts block was written from. The
 // server's block (accounts), `account`, the stream client, the sidecar login and the
@@ -340,6 +399,23 @@ func (a *app) account() int {
 	name, cred, err := a.myAccount()
 	if err != nil {
 		return die("%v", err)
+	}
+	fmt.Printf("%s\t%s\n", name, cred)
+	return 0
+}
+
+// login prints what a client about to connect must present: this home's account name and
+// its credentials file, and nothing at all when the machine's accounts file does not hold
+// that account. A client that logs in with a name the server does not hold is refused on
+// every call (Authorization Violation), so it asks here first and connects as nobody
+// instead, exactly as it does on a server that runs no accounts.
+func (a *app) login() int {
+	name, cred, err := a.myAccount()
+	if err != nil {
+		return die("%v", err)
+	}
+	if !a.accountsCarry(name) {
+		return die("the machine's accounts file %s has no account %q for %s: run `bin/jg-bus.sh install-service` here (or in the home that owns the bus) to add it", a.accountsFile(), name, resolveHome(a.home))
 	}
 	fmt.Printf("%s\t%s\n", name, cred)
 	return 0

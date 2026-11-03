@@ -27,7 +27,7 @@ Every one of them is configured by file and none by code.
 The Dapr component decides what the bus really is, so swapping NATS for another broker is a component swap.
 A home overrides any of them under `config/bus/`.
 
-`bin/jg-bus.sh status` reports the mode, the delivery target, how many events the record holds, how many did not arrive, and which services are up.
+`bin/jg-bus.sh status` reports the mode, the delivery target, how many events the record holds, how many did not arrive, and which services are up, read from each service's own unit state in the service manager; a state it cannot read is reported `unknown`, never down.
 `bin/jg-bus.sh stop` stops them.
 The metric server stays off: a metrics port is shared machine surface and nothing scrapes it yet.
 Delivery needs `ntfy` and the `deliver` consumer running; the record and the bus need their own services only.

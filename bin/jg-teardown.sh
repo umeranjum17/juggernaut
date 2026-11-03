@@ -43,48 +43,13 @@
 # lift the deferral (it authorizes discarding unlanded WORK, never the
 # captain's question), and bin/jg-captain-hold.sh answer stays the only act
 # that closes the call.
-# The landed-work test below is Go (core/teardown, through bin/jg-teardown-core.sh); the rules
-# in this header are the ones that command keeps, and a test that cannot run refuses.
+# The landed-work test is Go (core/teardown/cmd/jg-teardown, through bin/jg-teardown-core.sh),
+# and that command's header is its one owner: the forge proof, the PR discovery and content
+# legs, the dirty, unpushed and local-only refusals, and what a check that cannot run costs are
+# documented where they are decided, so this file does not restate them.
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
 # hard-resets/removes the worktree, kills its processes, and closes its backlog
-# item. For a PR-delivered ship task (every mode but local-only) work has landed
-# only when the forge proves it: GitHub reports its PR merged at a head that
-# contains the current local work, or its content is already present in origin's
-# up-to-date default branch. A pushed branch is never proof - an open, green PR's
-# branch is pushed too - and neither is a done or merged status line, a pipeline
-# state, or a summary; those are claims, so a supervisor that acts on one still
-# meets this refusal. A PR the forge reports open or closed refuses outright, with
-# no content fallback, and a GitHub forge that cannot be read refuses unless this
-# exact HEAD is already on origin's up-to-date default branch. The content leg
-# recognizes the common squash-merge-then-delete-branch flow, where the branch's
-# own commits live nowhere on a remote yet the change is fully in main, and is the
-# provider-agnostic proof on forges gh cannot read. A task whose meta records
-# base_branch= (bin/jg-spawn.sh) runs that content check against origin's copy of
-# its base branch instead of the default branch. A local-only task has no PR: its
-# work has landed when it is reachable from any remote-tracking branch (a fork
-# counts as a remote) or merged into the local default branch.
-# Squash merges collapse the branch's commits, so per-commit patch ids against main
-# no longer match, and a pipeline rebase can leave the local worktree diverged from
-# the PR head. A diverged copy is not treated as landed: path-set coverage, git
-# cherry, and merge-tree containment each fail to prove content landed without also
-# accepting unlanded edits to the same paths. Teardown still accepts a merged PR
-# whose head contains the current local work (ancestor or equivalent patch ids),
-# or a clean content-in-default tree match. Anything else refuses.
-# The PR itself is resolved from the task's recorded pr= when present, or - when
-# no pr= was ever recorded (e.g. a yolo-authorized merge on a repo with no PR CI,
-# where the usual "checks green" jg-pr-check.sh trigger never fires) - by looking
-# up a merged PR whose head branch matches the worktree's branch, fetching its head
-# via refs/pull/<n>/head when the branch itself was deleted. So a missing pr= never
-# by itself causes a false refusal of landed work.
-# A gh lookup error on a GitHub forge accepts only that exact-HEAD leg; on any
-# other forge it falls back to the content check, and if that is also inconclusive,
-# teardown refuses rather than risk discarding unlanded work. The refusal names
-# what the forge did not prove.
-# Uncommitted changes are never landed; dirty refusals distinguish untracked-only
-# leftovers from tracked edits and list at most ten non-exempt untracked paths.
-# local-only projects additionally accept work merged into the local default
-# branch (juggernaut performs that merge after configured approval) as a fallback
-# for the common case where there is no remote at all.
+# item.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
@@ -292,6 +257,11 @@
 #     its home after child cleanup. Scratch or retained-data roots require lsof;
 #     failed inspection, scanning or scratch removal preserves task ownership
 #     for a teardown retry. Idempotent: nothing left to find is a silent no-op.
+#   A replay or measurement harness started through bin/jg-lane-run.sh carries
+#   a run token in its environment, recorded in state/<id>.lane-groups before it
+#   starts. The same reap stops every process still carrying a recorded token,
+#   wherever its working directory is and whatever group it moved to, so a
+#   finished lane leaves no loop behind.
 #   Fix 3 - sweep abandoned remote job workers. A remote job worker started
 #     from a worktree's own bin/ outlives that worktree's removal without
 #     being reachable by Fix 2, because its working directory is wherever it
@@ -321,7 +291,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -1913,7 +1882,7 @@ reap_task_worktree_processes() {  # <label> <dir>...
   local label=$1 rc=0
   shift
   "$SCRIPT_DIR/jg-teardown-core.sh" reap --label "$label" --task-id "$ID" --backend "$BACKEND" \
-    --target "$T" --caller-pid "$$" -- "$@" || rc=$?
+    --target "$T" --caller-pid "$$" --lane-groups "$STATE/$ID.lane-groups" -- "$@" || rc=$?
   case "$rc" in
     0) return 0 ;;
     1) return 1 ;;
@@ -3293,7 +3262,7 @@ else
 fi
 status_retire_presentation_task "$STATE" "$ID" || exit 1
 jg_wake_queue_prune_task "$STATE" "$ID" "$T" 2>/dev/null || true
-rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
+rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" "$STATE/$ID.lane-groups" \
   "$(jg_wake_signal_seen_path "$STATE" "$STATE/$ID.turn-ended")" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.omp-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.muse-session" \

@@ -221,8 +221,26 @@ test_ship_modes_generate_clean_briefs() {
       "$id: brief missing the light gate every PR opens behind"
     assert_grep "needs that pull request's checks green" "$brief" \
       "$id: brief missing the rule that a done line needs the PR's checks green"
+    assert_grep "must be a file your own done-done run wrote, inside that run's capture folder" "$brief" \
+      "$id: brief missing the binding rule that evidence is run-owned"
+    assert_grep "by hand is not evidence" "$brief" \
+      "$id: brief missing the rule that a hand-copied file is not evidence"
+    assert_grep "still needs \`screen: none\` alone on its own line in the Checks block" "$brief" \
+      "$id: brief missing the screen: none rule for a tooling change"
+    assert_grep "follow this recipe in order, each step at the head you will push" "$brief" \
+      "$id: brief missing the merge-gate recipe"
+    assert_grep "any later commit moves the PR head and voids the proof" "$brief" \
+      "$id: brief missing the rule that a commit after the seal voids it"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
+    echo "capture: $mode ship brief carries the merge-gate recipe: $(grep -m1 -o 'follow this recipe in order[^.]*' "$brief")"
   done
+  # A scout opens no pull request, so its brief carries no merge-gate recipe.
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" brief-scout-a4 some-proj --scout >/dev/null 2>&1
+  brief="$home/data/brief-scout-a4/brief.md"
+  assert_present "$brief" "scout brief was not scaffolded"
+  assert_no_grep "follow this recipe in order" "$brief" "scout brief carries the merge-gate recipe"
+  assert_no_grep "## Checks" "$brief" "scout brief carries the Checks block recipe"
+  echo "capture: scout brief carries no merge-gate recipe ($(grep -c 'follow this recipe in order' "$brief") matches for the recipe line)"
   pass "jg-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 

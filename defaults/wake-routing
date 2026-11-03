@@ -18,8 +18,21 @@ set re-alert-minutes 30
 set silence-cap-per-hour 30
 # How long Main's own restart pass counts as the cause of a relaunch notice.
 set restart-pass-seconds 600
+# The batched digest: the longest a routine event waits for a model turn, in minutes. 0 turns
+# the digest off, and routine rows then wait for the next wake of any kind.
+set digest-minutes 30
 
 # class  kind    key              payload
+# A squad_lead's status log is a relay channel for its child work, not a record of its
+# own completion, so its `done` lines report a child's outcome and are routine. They ride
+# the digest: the parent-channel libraries alone write these reserved keys
+# (bin/jg-pr-check.sh's child-pr-, bin/jg-inactive-reconcile.sh's child-outcome-,
+# bin/jg-merge-outcome-lib.sh's merged-), so no worker's own `done` can match them, and a
+# `failed` child line keeps waking. The `[at=]` stamp sits after the key tag, so the glob
+# cannot anchor on the colon.
+batch    signal  *.status         done*key=child-pr-*
+batch    signal  *.status         done*key=child-outcome-*
+batch    signal  *.status         done*key=merged-*
 now      *       *                needs-decision*
 now      *       *                failed*
 now      *       *                blocked*
@@ -53,4 +66,72 @@ silent@queue-quiet   check   rearm-resurface  *
 # when the turn ends; the watcher says so in its own words. A doorbell that is still
 # unhandled with an idle pane, or a dead endpoint, keeps the default and wakes a model.
 silent   stale   *                *unread juggernaut instruction*no interrupt is needed unless the worker is wedged*
-now      *       *                *
+# The fleet heartbeat repeats facts other owners already carry. A stall and a finished
+# lane nobody closed keep waking. A gap that is only open waits (the wait timers
+# escalate those themselves) is settled. A gap with ready work and free lanes is
+# the ready-work check's fact, and a recovery asks for nothing, so both ride the digest.
+now      check   *fleet-heartbeat.check.sh   *STALLED*
+now      check   *fleet-heartbeat.check.sh   *still open - land it*
+batch    check   *fleet-heartbeat.check.sh   *GAP for*ready*lanes working*
+silent   check   *fleet-heartbeat.check.sh   *GAP for*climbing their ladder*
+batch    check   *fleet-heartbeat.check.sh   *again*
+# A status line that reports progress or a closed question asks Main for nothing: the
+# decision, blocker, failure and done lines above keep waking, and a stuck worker is a
+# `stale` event. A declared pause is a wait the wait timers already own.
+batch    signal  *.status         working*
+batch    signal  *.status         resolved*
+batch    signal  *.status         paused*
+# A declared-pause timer that fires at the owning lead (a blocker keeps waking) and a worker's declared pause that is only
+# being rechecked are waits the timers already own; each escalates by itself to Main
+# (`level=main`) or to a stale wake when the pause is wedged or its clearing time passed.
+batch    check   waiting-timer-*  *(paused,*owning lead must recheck*
+batch    stale   *                *paused*declared pause, rechecked on a long cadence not a wedge*
+# A lead that was told to re-arm after Main's own restart pass reports it the same way a
+# relaunch does; a lead that stays down after that keeps waking.
+silent@restart-pass  check   squad-lead-supervision-*   *told to re-arm*
+# The sentinel's "watcher beacon old" doorbell is typed into the primary's pane. While a
+# live watcher still holds the watcher lock, the beacon is only its predecessor's, so the
+# doorbell settles; with no live watcher it keeps waking.
+silent@watcher-alive check   sentinel-beacon-old   *beacon*old*
+# A finished or blocked deliverable: ready, PR ready, and any status line the rows above did not call routine.
+now      signal  *.status         ready*
+now      signal  *.status         *PR ready*
+now      signal  *.status         *
+# The digest wake itself, and the five reasons to wake at once beyond the status words above.
+now      check   wake-digest      *
+# A captain answer: a note the captain left in the inbox, and mail addressed to this home.
+now      check   inbox:*          *
+now      check   mail:*           *
+now      check   captain-*        *
+# A red gate: any check that reports a failure (a red CI run says failed).
+now      check   *                *failed*
+now      check   *                *FAILED*
+# A host alarm: memory, the delete guard, a model outage, a lost host, an unauthenticated
+# state check, and the network check when it found something actionable.
+now      check   host-memory      *
+now      check   delete-guard     *
+now      check   model-outage-*   *
+now      check   supervision-host-return:*   *
+now      check   unauthenticated-state-checks   *
+now      check   *key-in-env-check.check.sh   *
+now      check   startup*         *
+now      check   sentinel-*       *
+# A worker stuck past its ladder: every stale event, and the stall, owner and escalation checks.
+now      stale   *                *
+now      check   *-stall          *
+now      check   *migration-watch.check.sh   *no status chang*
+now      check   waiting-timer-*  *
+now      check   *-owner          *
+now      check   *-escalation     *
+# A lead that died or lost its supervision: the rows above settle only the ones Main's own restart caused.
+now      check   squad-lead-relaunch-*       *
+now      check   squad-lead-supervision-*    *
+# A re-arm that finds an urgent row waiting for a turn (the quiet case is settled above).
+now      check   rearm-resurface  *
+# A result an adapter owns (Relay, process-to-event) is routed to that adapter, not delayed.
+now      check   procevent:*      *
+# A heartbeat over a fleet that did not change since the last one that woke asks for nothing.
+silent@fleet-unchanged heartbeat *  *
+now      heartbeat *              *
+# Everything else is routine and rides the digest. Nothing is dropped: the row stays queued.
+batch    *       *                *

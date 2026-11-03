@@ -779,6 +779,71 @@ test_stalled_backlog_quiet_when_project_is_at_capacity() {
   pass "an item whose project is at capacity cannot start, so it never arms the chain"
 }
 
+# A line a test printed is never a live condition. The detector read
+# "disk quota exceeded; with TMPDIR on disk they pass." out of a finished lane's
+# scrollback and woke the fleet three times. A quota wait now comes from the
+# lane's own status line, or from a limit banner at the bottom of the screen.
+test_a_printed_assertion_never_raises_a_quota_wait() {
+  local m pane
+  pane=$'● Running the classifier suites with TMPDIR on disk.\nnot ok 3 - the temp dir refuses a write\n  disk quota exceeded; with TMPDIR on disk they pass.\n● Done. 13 checks green, the PR is open.\n> '
+  # The incident: a finished lane whose transcript holds the printed assertion.
+  m=$(home printed-assertion)
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nharness=pi\n' > "$m/state/w1.meta"
+  printf '%s\n' "$pane" > "$m/panes/1"
+  printf 'done [at=1]: PR https://example.invalid/o/r/pull/1\n' > "$m/state/w1.status"
+  prime_status_seen "$m/state" "$m/state/w1.status"
+  PANES=1 cycle "$m"
+  [ ! -e "$m/state/.wait-sources/w1.quota" ] \
+    || fail "a finished lane's printed test assertion became a live quota wait: $(cat "$m/state/.wait-sources/w1.quota")"
+  ! grep -q 'waiting-state w1 (quota' "$m/events" 2>/dev/null \
+    || fail "a printed test assertion woke the fleet as a quota wait: $(cat "$m/events")"
+  # The same sentence in a working lane's transcript is history too: the footer
+  # below it is the live screen, and it shows no limit.
+  m=$(home printed-assertion-working)
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nharness=pi\n' > "$m/state/w1.meta"
+  printf '%s\n' "$pane" > "$m/panes/1"
+  printf 'working [at=1]: reading the failures\n' > "$m/state/w1.status"
+  prime_status_seen "$m/state" "$m/state/w1.status"
+  PANES=1 cycle "$m"
+  [ ! -e "$m/state/.wait-sources/w1.quota" ] \
+    || fail "transcript text still raised a quota wait: $(cat "$m/state/.wait-sources/w1.quota")"
+  # A provider banner at the bottom of the screen is a real wait: kept working.
+  printf '● Working.\n■ You'"'"'ve hit your usage limit. Try again at 9:41 PM.\n> \n' > "$m/panes/1"
+  PANES=1 cycle "$m"
+  [ -e "$m/state/.wait-sources/w1.quota" ] \
+    || fail "a usage-limit banner at the bottom of the pane raised no quota wait: $(ls -a "$m/state/.wait-sources" 2>&1)"
+  grep -q "You've hit your usage limit" "$m/state/.wait-sources/w1.quota" \
+    || fail "the quota wait did not name the banner it read: $(cat "$m/state/.wait-sources/w1.quota")"
+  pass "a printed test assertion in a pane is never a live quota wait, and a usage-limit banner at the bottom of the screen still raises one"
+}
+
+# The other direction: a lane that declares the quota wait in its own status
+# line is a wait, with no banner left on screen. The declaration is the source.
+test_a_declared_quota_pause_is_a_wait() {
+  local m n
+  m=$(home declared-quota)
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nharness=pi\n' > "$m/state/w1.meta"
+  printf '● Stopped; no more turns until the reset.\n> \n' > "$m/panes/1"
+  printf 'paused [at=1]: provider quota exhausted, resets 09:41Z\n' > "$m/state/w1.status"
+  prime_status_seen "$m/state" "$m/state/w1.status"
+  PANES=1 cycle "$m"
+  [ ! -e "$m/state/.wait-sources/w1.quota" ] \
+    || fail "pane text raised a quota wait with no banner on screen: $(cat "$m/state/.wait-sources/w1.quota")"
+  # The declaration is the source: the lane still raises a wait, and it is never
+  # counted as a gap.
+  for n in 1 2 3 4 5 6 7 8; do
+    [ -e "$m/state/.wait-sources/w1.silent" ] && break
+    touch -d '-20 minutes' "$m/state/.silent-seen-fake_1" "$m/state/w1.status"
+    prime_status_seen "$m/state" "$m/state/w1.status"
+    PANES=1 cycle "$m"
+  done
+  [ -e "$m/state/.wait-sources/w1.silent" ] \
+    || fail "a lane that declared a quota wait raised no wait at all: $(ls -a "$m/state/.wait-sources" 2>&1; cat "$m/err")"
+  [ ! -e "$m/state/.wait-sources/w1.quota" ] \
+    || fail "a declared quota wait was re-read out of pane text: $(cat "$m/state/.wait-sources/w1.quota")"
+  pass "a lane that declares a quota wait in its status line is a wait from that declaration, with no banner on screen"
+}
+
 # Pane renderings per harness: the claude one is captured from a real Claude
 # Code worker (tests/captures/claude-askuserquestion); the rest are the dialog hints each
 # harness documents, pinned here so the harness-neutral matcher is exercised
@@ -814,6 +879,7 @@ pi-errors|errors|Error: Provider returned error\nretrying\nError: Provider retur
 errors-once|none|┃  User not found.\n┃\nI will look at the key next.\n> 
 errors-prose|none|I will check the config.\nI will check the config.\nI will check the config.\n> 
 claude-idle|none|● Done. All checks pass.\n\n> 
+printed-assertion|none|● Running the classifier suites with TMPDIR on disk.\nnot ok 3 - the temp dir refuses a write\n  disk quota exceeded; with TMPDIR on disk they pass.\n● Done. 13 checks green, the PR is open.\n> 
 worker-prose|none|I will press Enter to select the file, then continue.\n> 
 code-output|none|ok - 12 tests passed\nEnter the value of x\n> 
 TABLE
@@ -886,6 +952,25 @@ test_question_and_quota_ride_the_chain_whatever_the_terminal_says() {
   pass "a question dialog, a provider quota wall and a repeating provider error climb owner and Main, are recorded for Main to decide, and clear with the cause"
 }
 
+# The watcher records each pane's last change in state/.silent-seen-<window> on its
+# first complete read of it. A cycle that ends on a wake, or is stopped at its
+# limit, can end before that read; backdating a file the watcher has not written
+# yet only creates an empty one, which the next read rewrites with a fresh time and
+# so restarts the silence clock. Cycle until every pane is recorded and one more
+# cycle rewrites none of them, so the backdating below ages a real record.
+settle_silent_seen() {  # <home>
+  local m=$1 n k missing rewritten mark="$1/tmp/silent-mark"
+  for n in 1 2 3 4 5 6 7 8; do
+    touch "$mark"
+    PANES='1 2 3 4 5 6' cycle "$m"
+    missing=0
+    for k in 1 2 3 4 5 6; do [ -s "$m/state/.silent-seen-fake_$k" ] || missing=1; done
+    rewritten=$(find "$m/state" -maxdepth 1 -name '.silent-seen-fake_*' -newer "$mark" | wc -l)
+    [ "$missing" = 0 ] && [ "$rewritten" -eq 0 ] && return 0
+  done
+  fail "the watcher never settled its pane records: $(ls -la "$m"/state/.silent-* 2>&1; cat "$m/err")"
+}
+
 test_silent_worker_climbs_whatever_it_declared() {
   local m w n=0 hold
   # Six windows per poll: a loaded runner needs far longer than the default cycle budget.
@@ -901,7 +986,7 @@ test_silent_worker_climbs_whatever_it_declared() {
     prime_status_seen "$m/state" "$m/state/${w%%:*}.status"
   done
   printf 'kind=squad_lead\nmode=squad_lead\nbackend=tmux\nwindow=fake:5\nharness=claude\nhome=%s\n' "$m/lead-home" > "$m/state/ld.meta"
-  PANES='1 2 3 4 5 6' cycle "$m"
+  settle_silent_seen "$m"
   # Everything has been silent for 20 minutes except the worker with fresh progress.
   for n in 1 2 3 4 5; do touch -d '-20 minutes' "$m/state/.silent-seen-fake_$n"; done
   for w in sb sp sf sd ld; do touch -d '-20 minutes' "$m/state/$w.status"; prime_status_seen "$m/state" "$m/state/$w.status"; done
@@ -985,6 +1070,18 @@ test_a_fleet_pause_silences_ready_work_but_not_a_blocker() {
   cycle "$m"
   grep -q '^check: ready work waiting with no worker working: alpha' "$m/events" \
     || fail "an unpaused primary home got no ready-work wake: $(cat "$m/events")"
+  # A lane list parked under the home's own old pause record name is not a pause
+  # declaration (bin/jg-pause-lib.sh), so ready-work intake still rings and the
+  # live work keeps its alarm.
+  printf '# Paused lanes for the Juggernaut-only push\n\nNo new work; nothing merged.\n- beta: parked\n' \
+    > "$m/data/paused-for-juggernaut.md"
+  before=$(grep -c '^check: ready work waiting' "$m/events")
+  backlog "$m" add beta "second item" --priority 2
+  touch -d '-15 days' "$m/state/.last-ready-work-check"
+  cycle "$m"
+  [ "$(grep -c '^check: ready work waiting' "$m/events")" -gt "$before" ] \
+    || fail "a lane list under a pause record's name silenced ready-work intake: $(cat "$m/events")"
+  rm -f "$m/data/paused-for-juggernaut.md"
   # Main declares the fleet pause in this home: ready-work intake goes silent.
   printf '# Fleet pause for the Juggernaut migration - 31 Oct 2026\n\nStop new work.\n- Resume rule: Main sends an explicit resume order.\n' \
     > "$m/data/fleet-pause-2026-10-31.md"
@@ -1031,6 +1128,8 @@ test_memory_refused_launch_reraises_when_admission_clears() {
 
 test_lead_idle_is_steered_without_interrupt
 test_stuck_verdict_table
+test_a_printed_assertion_never_raises_a_quota_wait
+test_a_declared_quota_pause_is_a_wait
 # A cycle is bounded by the scan, not by a fixed delay: the wake found on the
 # last pane of a slow scan still reaches the queue.
 test_a_slow_scan_reports_the_wake_it_found

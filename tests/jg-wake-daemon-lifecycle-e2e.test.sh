@@ -2,8 +2,8 @@
 # tests/jg-wake-daemon-lifecycle-e2e.test.sh - the watcher + supervise-daemon
 # lifecycle, end to end, over one shared state root and a shimmed tmux:
 #
-#   routine status -> self-handled, queued
-#   terminal status written while the watcher is DOWN -> caught on restart (catch-up)
+#   routine status -> batched, queued, self-handled with no wake turn
+#   terminal status written while the watcher is DOWN -> wakes and is caught on restart (catch-up)
 #   drain queued records -> exactly ONE captain-relevant digest is buffered
 #   housekeeping catch-all scan -> NO duplicate digest
 #   buffered digest flushes to the supervisor pane as exactly ONE submission
@@ -48,6 +48,24 @@ run_watcher_once() {
   wait_for_exit "$!" 50
 }
 
+# Run the watcher once, but prove it keeps waiting: a `batch` row is queued and does not
+# end the wait by itself, so it costs no turn (defaults/wake-routing). Stops it before returning.
+run_watcher_still_waiting() {  # <state> <fakebin> <out>
+  local state=$1 fakebin=$2 out=$3 pid i
+  mkdir -p "$state"
+  date '+%s' > "$state/.afk"
+  PATH="$fakebin:$PATH" JG_STATE_OVERRIDE="$state" JG_POLL=1 JG_SIGNAL_GRACE=1 \
+    JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  for i in $(seq 1 50); do
+    is_live_non_zombie "$pid" || return 1
+    sleep 0.1
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+  wait_for_exit "$pid" 20 >/dev/null 2>&1 || true
+  return 0
+}
+
 ack_handled_wakes() {  # <state> <drain-stderr>
   local state=$1 drain_err=$2 sequence generation
   sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$drain_err")
@@ -59,7 +77,7 @@ ack_handled_wakes() {  # <state> <drain-stderr>
 
 # --- Phase 1: routine self-handled, queued; terminal caught after restart ---
 test_routine_then_terminal_after_restart() {
-  local dir state fakebin out drain_out drain_err status_file
+  local dir state fakebin out drain_out drain_err status_file terminal_file
   dir=$(make_supercase wd-lifecycle)
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -67,11 +85,12 @@ test_routine_then_terminal_after_restart() {
   drain_out="$dir/drain.out"
   drain_err="$dir/drain.err"
   status_file="$state/task-w1.status"
+  terminal_file="$state/task-w2.status"
 
-  # A routine status fires a signal; the watcher queues it and exits.
+  # A routine status is a batched wake: it is queued and the watcher keeps waiting, so
+  # the line costs no turn of its own.
   printf 'working: building\n' > "$status_file"
-  run_watcher_once "$state" "$fakebin" "$out" || fail "watcher did not exit for the routine signal"
-  grep -F "signal: $status_file" "$out" >/dev/null || fail "watcher did not report the routine signal"
+  run_watcher_still_waiting "$state" "$fakebin" "$out" || fail "watcher exited for a routine status line"
 
   # Drain it and route through the daemon: a routine status self-handles.
   JG_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" \
@@ -82,20 +101,21 @@ test_routine_then_terminal_after_restart() {
   ack_handled_wakes "$state" "$drain_err" || fail "routine wake acknowledgement failed"
   [ ! -s "$state/.subsuper-escalations" ] || fail "routine status was escalated by the daemon"
 
-  # The watcher is now DOWN (one-shot exit). A terminal status lands while it is
-  # down; the next watcher run must catch it up (losslessness across restart).
-  printf 'done: PR https://example.test/pr/900\n' >> "$status_file"
+  # The watcher is now DOWN. A terminal status lands while it is down; the next
+  # watcher run must catch it up (losslessness across restart).
+  printf 'done: PR https://example.test/pr/900\n' > "$terminal_file"
   : > "$out"
   run_watcher_once "$state" "$fakebin" "$out" || fail "restarted watcher did not exit for the terminal signal"
-  grep -F "signal: $status_file" "$out" >/dev/null || fail "terminal signal written while watcher down was not caught on restart"
+  grep -F "$terminal_file" "$out" >/dev/null || fail "terminal signal written while watcher down was not caught on restart"
 
   # Drain and route the terminal: exactly ONE digest is buffered.
   : > "$drain_out"
   JG_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" \
     || fail "drain after terminal signal failed"
-  JG_STATE_OVERRIDE="$state" handle_wake "signal: $status_file" "$state"
+  JG_STATE_OVERRIDE="$state" handle_wake "signal: $terminal_file" "$state"
   ack_handled_wakes "$state" "$drain_err" || fail "terminal wake acknowledgement failed"
   [ -s "$state/.subsuper-escalations" ] || fail "captain-relevant terminal status was not buffered"
+
   [ "$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')" -eq 1 ] \
     || fail "expected exactly one buffered digest after the terminal signal"
 

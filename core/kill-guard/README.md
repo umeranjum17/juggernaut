@@ -13,6 +13,10 @@ A missing, malformed, symlinked, dead or uncertain lock never grants it.
 Environment variables and `--caller` alone cannot select Main.
 The lock is same-user writable: this is a cooperative hook preventing accidental kills, not a security boundary against hostile programs running as that user.
 
+A home's own session may also stop a process whose resolved cwd is under that home's `data/<task>/` or under a worktree a `state/*.meta` record names.
+The home is proved by the guard's ancestry reaching the harness whose pid that home's `state/.lock` records (found from the harness cwd upward); a data entry linked outside `data/`, the account home or a parent of it never qualifies.
+Everything else keeps the final refusal, and nothing is matched by name or pattern.
+
 Fleet ownership uses resolved cwd or absolute command-line paths under the primary home, `~/.treehouse/<pool>[/<slot>]/juggernaut*`, or `~/.local/{share,bin}/jg-*` feature tools.
 Project worktrees also qualify when their resolved Git common directory is under the primary home's `projects/`.
 Symlinks resolve before comparison and directory boundaries matter.

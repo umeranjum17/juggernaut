@@ -207,10 +207,15 @@ Reminders preserve the queued reason except that a signal payload marked `needs-
 ### Wake urgency classes
 
 Every event gets one class from the routing rule file, and the same three apply to a wake aimed at a model as to an alert aimed at the captain: `now` wakes at once for a captain decision, security, a failed release, a stuck worker past its threshold, or a finished task; `batch` waits for a turn that happens anyway; `silent` is recorded and wakes nobody.
-`bin/jg-wake-lib.sh` decides the class where the event is recorded, from `defaults/wake-routing` or the home's `config/wake-routing`.
+`bin/jg-wake-lib.sh` asks the Go command `core/wake/cmd/jg-wake-core` (through `bin/jg-wake-core.sh`) for the class where the event is recorded, from the one shared `defaults/wake-routing` that every home reads.
+A home's small `config/wake-routing` is read first, so its rules and `set` values win and everything it does not name falls through to the shared file.
+The shared rules settle what asks Main for nothing: a fleet-heartbeat gap that is only open waits (`silent`), a gap with ready work, a recovery, a progress, resolved or paused status line, a squad_lead's routine parent-channel report of a child's outcome (its PR-ready, ledger and merge lines, which the parent-channel libraries alone write), a paused wait at the owning lead and a declared pause being rechecked (`batch`), a re-arm after Main's own restart pass (`silent`), and the sentinel's old-beacon doorbell while a live watcher holds the lock (`silent`).
+A decision, blocker, failure, a finished task's own done line, stall, release and security event keep `now`.
+The same status line delivered again inside `re-alert-minutes` is a repeat and rides the digest, because a status row's identity is its newest line.
 A board ask that carries no must category is one of the batched events: `bin/jg-board-gate.sh` routes it to Overwatch and Main answers it there, so it rides the next digest rather than waking a model of its own, while a merge with no proof and a must ask waiting over 48 hours keep waking at once.
+The gate also records the set of offending keys it alerted on and stays silent until that set changes, so a card the board will not remove cannot wake Main on every pass.
 The shipped rules hold the tickets checks `batch` as well: a board row the work has already settled, or a pass summary, is bookkeeping rather than a decision, so `bin/jg-ticket.sh` writes the state where the work happens and the check that reports any remainder never wakes the captain by itself.
-A `batch` event is an ordinary durable row that does not leave the watcher cycle by itself, so it arrives with the next wake of any kind or with the queue-resurface cadence, and a run of routine events costs one turn.
+A `batch` event is an ordinary durable row that neither leaves the watcher cycle by itself nor re-delivers itself past the queue-resurface backstop; the next wake of any kind drains the queue and presents it, so a run of routine events costs one turn and none is dropped.
 A `silent` event is written to `state/.wake-settled` and never queued, and no class drops an event: a record that cannot be written falls back to the ordinary queue row.
 The rule file owns the threshold, never a constant in code: a repeated identical event inside `re-alert-minutes` cannot wake again, a changed payload still wakes, and the drain already groups rows of one kind and key.
 `bin/jg-wake.sh next` drains, classifies, and reports in one call, returning the drain's own exit code.
@@ -317,7 +322,7 @@ Acknowledgement invocations and every other mutation-critical queue-lock acquire
 
 Because the main drain's exclusion makes branch-granted rows invisible to main, `bin/jg-guard.sh`'s queued-wake warning counts only the rows the calling actor can itself present or retire.
 So an actor is never sent to a drain that provably has nothing for it.
-`bin/jg-wake-lib.sh` owns that per-actor count (`jg_wake_actor_pending_count`) alongside the grant row-list and owner-record reads that the drain and `bin/jg-wake-grant.sh` share.
+`bin/jg-wake-lib.sh` owns that per-actor count (`jg_wake_actor_pending_count`) alongside the grant row-list and owner-record reads that the drain and `bin/jg-wake-grant.sh` share, and asks the Go command `core/wake/cmd/jg-wake-core` for the count itself.
 
 A row a live grant reserves is therefore never counted as drainable for main.
 Rather than going silent about a visibly non-empty queue, the guard prints a distinct advisory.

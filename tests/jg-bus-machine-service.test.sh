@@ -55,8 +55,10 @@ ln -sf "$NATS_SERVER" "$LAB_BIN/nats-server"
 ln -sf "$NATS_BIN" "$LAB_BIN/nats"
 cat > "$LAB_BIN/systemctl" <<'EOF'
 #!/usr/bin/env bash
-# Lab systemctl: only the verbs install-service uses, over one unit, run as a plain process.
-unit="$XDG_CONFIG_HOME/systemd/user/$JG_BUS_UNIT"
+# Lab systemctl: only the verbs install-service and status use, over the lab's own
+# units, run as plain processes.
+unitdir="$XDG_CONFIG_HOME/systemd/user"
+unit="$unitdir/$JG_BUS_UNIT"
 pidfile="$LAB_DIR/service.pid"
 alive() { [ -s "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
 start() {
@@ -73,6 +75,15 @@ stop() { alive && kill "$(cat "$pidfile")"; for _ in $(seq 50); do alive || retu
 [ "${1:-}" != --user ] || shift
 case "${1:-}" in
   show-environment|daemon-reload|enable-only) exit 0 ;;
+  show) # `status` reads one unit's own state from the manager, and only that.
+    name=${!#}
+    if [ -f "$unitdir/$name" ]; then load=loaded; else load=not-found; fi
+    if [ "$name" = "$JG_BUS_UNIT" ]; then
+      alive && active=active || active=inactive
+    elif [ -f "$LAB_DIR/units/$name.active" ]; then active=active
+    else active=inactive; fi
+    printf 'LoadState=%s\nActiveState=%s\n' "$load" "$active"
+    ;;
   enable) alive || start ;;
   is-active) alive ;;
   restart) stop; start ;;
@@ -81,7 +92,8 @@ case "${1:-}" in
 esac
 EOF
 chmod +x "$LAB_BIN/systemctl"
-export LAB_DIR="$D" LAB_PORT="$PORT" XDG_CONFIG_HOME="$D/xdg" JG_BUS_UNIT="jg-bus-lab-$$.service"
+export LAB_DIR="$D" LAB_PORT="$PORT" XDG_CONFIG_HOME="$D/xdg" JG_STACK_UNIT_PREFIX="jg-lab-$$" \
+  JG_BUS_UNIT="jg-lab-$$-bus.service"
 PATH="$LAB_BIN:$PATH"; export PATH
 
 # stop_lab: stop only the server this lab's systemctl started, by the pid it recorded.
@@ -111,6 +123,10 @@ bus() { local h=$1; shift; JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_DATA_OVE
 # --- 1. two homes, one server, one owner ------------------------------------------
 H1="$D/homes/one"; H2="$D/homes/two"; H3="$D/homes/three"; H4="$D/homes/four"; H5="$D/homes/five"
 make_home "$H1"
+# One of the registered Squad Leads is a real home, as on a machine: Main's registry names it,
+# and it keeps no registry of its own.
+LEAD2="$D/leads/lead-2"
+make_home "$LEAD2"
 # Four registered Squad Leads make the owner's machine six accounts, so the caps hold eight
 # (six accounts, one of headroom, rounded up to a step of eight) and the ninth is refused.
 for i in 1 2 3 4; do
@@ -158,6 +174,56 @@ case "$a1" in home-????????????) ;; *) fail "home one is not named by its unique
 for n in "$a1" "$a2"; do grep -q "user: $n," "$H1/state/bus/accounts.conf" || fail "the shared accounts have no account $n"; done
 ! grep -Eq 'authentication error|Authorization Violation|insufficient' "$D/server.log" \
   || { cat "$D/server.log"; fail "the server logged an authentication or resource refusal"; }
+
+# --- 1a. a home the machine's registry names presents that name ---------------------
+# The production refusal: Main's accounts file named this home by the id its registry holds,
+# while the home's own client - it keeps no registry of its own - hashed its path and
+# presented home-<hash>, so every stream create and publish was refused with Authorization
+# Violation and Main fell back to the no-accounts config. A home's name must come from the
+# one registry the accounts file is written from, so server and client cannot drift.
+assert_equals "lead-2" "$(bus "$LEAD2" account | cut -f1)" \
+  "a home the machine's registry names must present that name, not a hash of its path"
+grep -q 'user: lead-2,' "$H1/state/bus/accounts.conf" || fail "the shared accounts have no account lead-2"
+joined=$(bus "$LEAD2" install-service 2>&1)
+case "$joined" in *"cannot"*) fail "the home the registry names could not join: $joined" ;; esac
+wake() { # <home> <wake client arguments...>, on this lab's server
+  local h=$1
+  shift
+  JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_DATA_OVERRIDE="$h/data" \
+    JG_WAKE_BUS_URL="nats://127.0.0.1:$PORT" timeout 120 "$ROOT/bin/jg-wake-bus.sh" "$@"
+}
+for h in "$H1" "$LEAD2"; do
+  key="proof-$(basename "$h")"
+  one=$(bus "$h" ensure 2>&1)
+  assert_contains "$one" "bus: up nats://127.0.0.1:$PORT stream CAPTAIN" "$h must create its own stream: $one"
+  wake "$h" raise check "$key" "check: one message from $(basename "$h")" now || fail "the raise from $h failed"
+  [ ! -s "$h/state/.wake-bus.outbox.jsonl" ] \
+    || fail "the bus refused the raise from $h: $(cat "$h/state/.wake-bus.outbox.jsonl")"
+  wake "$h" ids check "$key" | grep -q . || fail "$h could not read its own raise back"
+  IFS=$'\t' read -r ep_url ep_stream _ ep_user ep_cred < <(wake "$h" endpoint)
+  [ -n "$ep_user" ] && [ -n "$ep_cred" ] || fail "$h's client published with no account at all"
+  assert_equals "$(bus "$h" account | cut -f1)" "$ep_user" "$h's client logged in as a name the server does not hold"
+  # The message really crossed to the server on that account: read the last event back with
+  # the very credentials the client published with.
+  last=$(NATS_USER=$ep_user NATS_PASSWORD=$(cat "$ep_cred") "$NATS_BIN" -s "$ep_url" \
+    stream info "$ep_stream" --json | jq -r '.state.last_seq // 0')
+  [ "${last:-0}" -ge 1 ] || fail "$h's message never reached the server"
+  body=$(NATS_USER=$ep_user NATS_PASSWORD=$(cat "$ep_cred") "$NATS_BIN" -s "$ep_url" \
+    stream get "$ep_stream" "$last" --json | jq -r '.data' | base64 -d)
+  printf '%s' "$body" | grep -q "$key" || fail "$h could not read its own message off the server: $body"
+done
+! grep -Eq 'Authorization Violation|authentication error' "$D/server.log" \
+  || { cat "$D/server.log"; fail "the server refused a home's own account"; }
+# The production refusal itself, kept as the control it was reproduced with: the pre-fix
+# client presented home-<hash> while the accounts file held the registry id, and the server
+# refused it. A passing run above is only meaningful while this still fails.
+if NATS_USER="home-0123456789ab" NATS_PASSWORD=$(cat "$LEAD2/state/bus/lead-2.pass") "$NATS_BIN" \
+  -s "nats://127.0.0.1:$PORT" --timeout 10s stream list >/dev/null 2>"$D/mismatch.err"; then
+  fail "the server accepted a client whose name its accounts file does not hold"
+fi
+grep -q 'Authorization Violation' "$D/mismatch.err" \
+  || { cat "$D/mismatch.err"; fail "a mismatched name was not refused the way production refused it"; }
+pass "a home the machine's registry names logs in as that account from every client, creates its stream and round-trips one message; the server refuses nothing, and still refuses a name its accounts file does not hold"
 
 # The owner's own unchanged install touches nothing; a third home joins by reload too.
 bus "$H1" install-service >/dev/null 2>&1
@@ -211,6 +277,45 @@ JG_BUS_HOMES="$LAB_REGISTRY" bus "$H6" install-service >/dev/null 2>&1
   || fail "a lab home was not recorded in the registry JG_BUS_HOMES named"
 [ "$(sha256sum "$OWNER_REGISTRY")" = "$registry_before" ] || fail "a lab home with its own registry still changed the machine's real one"
 pass "a lab home is refused by the machine's real registry, which stays byte-identical; the registry JG_BUS_HOMES names holds it instead"
+
+# --- 1c. status reads the service manager itself ------------------------------------
+# The probe used to call a service down unless this home had written its own pid file, so
+# a machine whose four units were all active read three of them down: a reader chased a
+# fault that was not there, and a real outage looked the same. It now reads each unit's
+# own state from the manager. Active units read up, one stopped unit reads down on its own
+# line with the others still up, and a manager that cannot be asked reads unknown.
+UNITS="$XDG_CONFIG_HOME/systemd/user"; mkdir -p "$D/units"
+for part in dapr ntfy deliver; do
+  : > "$UNITS/$JG_STACK_UNIT_PREFIX-$part.service"
+  : > "$D/units/$JG_STACK_UNIT_PREFIX-$part.service.active"
+done
+unit_of() { case $1 in nats) echo "$JG_BUS_UNIT" ;; *) echo "$JG_STACK_UNIT_PREFIX-$1.service" ;; esac; }
+status_out=$(bus "$H1" status 2>&1)
+for part in nats dapr ntfy deliver; do
+  assert_contains "$status_out" "$part: up (unit $(unit_of "$part"))" "an active $part unit must read up: $status_out"
+done
+rm -f -- "$D/units/$(unit_of ntfy).active"
+status_out=$(bus "$H1" status 2>&1)
+assert_contains "$status_out" "ntfy: down (unit $(unit_of ntfy) inactive)" "a stopped unit must read down: $status_out"
+for part in nats dapr deliver; do
+  assert_contains "$status_out" "$part: up (unit $(unit_of "$part"))" "one stopped unit must not read the others down: $status_out"
+done
+pass "status reads each service's unit state: active units read up, and a stopped one reads down alone"
+
+# The manager is the only owner of that truth, so a probe that cannot ask it says unknown
+# instead of guessing down - with the server stopped too, so nothing answers and a wrong
+# down would be very plausible.
+stop_lab
+BLIND="$D/blind"; mkdir -p "$BLIND"
+printf '#!/usr/bin/env bash\necho "Failed to connect to bus: no medium found" >&2\nexit 1\n' > "$BLIND/systemctl"
+chmod +x "$BLIND/systemctl"
+status_out=$(PATH="$BLIND:$PATH" bus "$H1" status 2>&1)
+for part in nats dapr ntfy deliver; do
+  assert_contains "$status_out" "$part: unknown (cannot read the service manager for $(unit_of "$part"))" \
+    "a probe that cannot ask the manager must say unknown for $part: $status_out"
+done
+case "$status_out" in *": down"*) fail "a probe that cannot read the manager guessed down: $status_out" ;; esac
+pass "a probe that cannot read the service manager reports unknown, never down"
 stop_lab
 rm -f -- "$UNIT"   # the lab's unit: the 21-account home below installs a machine of its own
 

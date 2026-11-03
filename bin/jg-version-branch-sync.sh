@@ -47,6 +47,14 @@
 #         A branch whose merge conflicts is reported and left exactly as it is,
 #         and a fork pull request is skipped because its branch is not in this
 #         repository.
+#         A branch whose pull request already carries a sealed proof at its
+#         head is left exactly as it is: the carry rewrites that head, which
+#         voids the proof, its receipt and its card until the change is proved
+#         again, so a sealed pull request keeps the head it was proved at and
+#         waits for its merge. Every other branch is carried, so the release
+#         branch still reaches the work in flight. bin/jg-proof-attach.sh owns
+#         the proof block the body carries, and the done-done run id in it names
+#         the commit the proof was sealed at.
 #
 # Environment: JG_HOME, JG_ROOT_OVERRIDE, JG_CONFIG_OVERRIDE.
 set -u
@@ -65,13 +73,32 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 
 usage() { echo "usage: jg-version-branch-sync.sh run | features <merged-pr-url> [<repo-dir>]" >&2; }
 
+# proof_sealed_at <pull-request-body> <head>: the pull request carries a sealed
+# proof at <head>. bin/jg-proof-attach.sh writes the proof block into the body
+# and names the done-done run that proved the head; a run id is
+# <time>-<commit8>-<tail>, so a receipt whose commit is this head's is proof bound
+# to this head, and the card it posted names the same head.
+proof_sealed_at() {  # <body> <head>
+  local receipt sealed
+  receipt=$(printf '%s\n' "$1" | \
+    sed -n '/<!-- jg-proof -->/,/<!-- \/jg-proof -->/s/^receipt:[[:space:]]*//p' | head -n 1)
+  sealed=${receipt#*-}
+  sealed=${sealed%%-*}
+  case $sealed in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    *) return 1 ;;
+  esac
+  case $2 in "$sealed"*) return 0 ;; esac
+  return 1
+}
+
 # features_pass <merged-pr-url> <repo-dir>: carry the version branch into the
 # open feature pull requests that target it, once the release landed.
 # Every unreadable input stays silent or names one reason and returns 0: this
 # runs inside the merge record, which must never fail because a carry could not
 # be attempted.
 features_pass() {  # <merged-pr-url> <repo-dir>
-  local url=$1 dir=$2 version default fields base head_ref tip prs number branch cross ref tree commit out
+  local url=$1 dir=$2 version default fields base head_ref tip prs number branch cross ref tree commit out body
   jg_pr_url_parse "$url" || return 0
   [ "$JG_PR_PROVIDER" = github ] || \
     { echo "skipped: only GitHub release merges are carried"; return 0; }
@@ -119,6 +146,14 @@ features_pass() {  # <merged-pr-url> <repo-dir>
     [ -n "$ref" ] || { echo "$branch: skipped: origin has no such branch"; continue; }
     if git -C "$dir" merge-base --is-ancestor "$tip" "$ref" 2>/dev/null; then
       echo "$branch: already current"
+      continue
+    fi
+    # The carry moves this branch's head, and every proof, receipt and card
+    # bound to the old head goes stale with it, so a sealed pull request keeps
+    # the head it was proved at and waits for its merge.
+    body=$(gh pr view "$number" --repo "$JG_PR_PATH" --json body --jq .body 2>/dev/null) || body=
+    if proof_sealed_at "$body" "$ref"; then
+      echo "$branch: skipped: its proof is sealed at ${ref:0:8}; it was left as it is"
       continue
     fi
     if ! tree=$(git -C "$dir" merge-tree --write-tree --no-messages "$ref" "$tip" 2>/dev/null); then

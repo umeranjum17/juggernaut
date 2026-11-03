@@ -8,7 +8,7 @@ set -u
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 lab=$(mktemp -d "${TMPDIR:-/tmp}/jg-classify-go.XXXXXX")
 trap 'rm -rf -- "$lab"' EXIT
-export JG_STATE_OVERRIDE=$lab/state TMPDIR=$lab
+export JG_STATE_OVERRIDE=$lab/state TMPDIR=$lab XDG_CACHE_HOME=$lab/cache
 unset JG_CAPTAIN_RE JG_CLASSIFY_PAUSED_VERB JG_CLASSIFY_RESOLVE_VERB JG_CLASSIFY_CAPTAIN_HELD_VERB
 if ! command -v "${JG_CLASSIFY_GO:-go}" >/dev/null 2>&1; then
   printf 'skip: no Go toolchain on PATH; install go to build the classifier\n'
@@ -44,6 +44,29 @@ printf 'paused [key=rel]: wait\nresolved [key=rel]: answered\n' > "$s"
 check "a resolved line for the pause's own key ends it" "$(status_declared_wait_line "$s")" ""
 printf 'paused: wait\ndone: finished\n' > "$s"
 check "a later event ends a pause" "$(status_declared_wait_line "$s")" ""
+
+# Slice 2: the line grammar and the keyed-decision fold, through the same library.
+check "the verb drops a correlation token and the note drops a note-head key" "$(status_line_verb 'needs-decision corr=0123456789abcdef [key=k]: pick')|$(status_line_note 'needs-decision: [key=k] pick one')" "needs-decision|pick one"
+check "a stated key in either position names the decision; a bad slug is refused" "$(_jg_decision_key 'blocked [key=a.b]: x')|$(_jg_decision_key 'blocked: [key=c] x')|$(_jg_decision_key 'blocked: x')|$(yn _jg_decision_key 'blocked [key=a b]: x')" "a.b|c|default|no"
+check "the stamp reader takes one canonical epoch and refuses a duplicate or a leading zero" "$(status_line_at_epoch 'done [at=1788576000]: x')|$(yn status_line_at_epoch 'done [at=01]: x')|$(yn status_line_at_epoch 'done [at=1] [at=2]: x')" "1788576000|no|no"
+untimed_line=''
+_jg_status_untimed 'done [at=1]: x' untimed_line
+check "stamping keeps an existing tag and untimed removes a well-formed one" "$(status_stamp_line 'done [at=1]: x')|$untimed_line" "done [at=1]: x|done: x"
+s=$lab/dec.status
+printf 'needs-decision [key=a]: pick\nblocked [key=b]: stuck\nresolved [key=a]: ok\nneeds-decision [key=pending-reply-1]: unrelated\n' > "$s"
+check "a resolved line closes only its key and a reserved key needs its own vocabulary" "$(status_open_decisions "$s" scout)" "b	blocked	stuck"
+check "the current line is the most recently opened decision" "$(status_current_line "$s" ship)" "blocked [key=b]: stuck"
+check "an open needs-decision is found by run id, a blocker is not" "$(yn status_has_open_needs_decision "$s")" no
+printf 'needs-decision [key=nm-r1-review]: gate\nblocked [key=captain-hold-x]: relayed\n' > "$s"
+check "a gate decision is found by its run id and a relayed hold is not the task's own" "$(yn status_has_open_needs_decision "$s" r1)|$(yn status_has_open_needs_decision "$s" r2)|$(status_own_open_decisions "$s" | cut -f1)" "yes|no|nm-r1-review"
+printf 'needs-decision [key=k]: q\nresolved [key=k]: a\ncaptain-held [key=j]: h\n' > "$s"
+check "the closing verb of a key is the line that closed it" "$(status_key_closing_verb "$s" k)|$(status_key_closing_verb "$s" j)|$(status_key_closing_verb "$s" none)" "resolved||"
+printf 'needs-decision [key=k]: q\ndone: finished\n' > "$s"
+check "a ship's done line closes every open decision" "$(status_open_decisions "$s" ship)|$(status_open_decisions "$s" squad_lead)" "|k	needs-decision	q"
+printf 'needs-decision [key=a]: q\nblocked [key=b]: stuck\ndone [key=a]: answered\n' > "$s"
+check "a done carrying a key closes that decision on a squad_lead lane and leaves the rest open" "$(status_open_decisions "$s" squad_lead)" "b	blocked	stuck"
+printf 'needs-decision [key=a]: q\ndone [at=2]: the lead finished its own work\n' > "$s"
+check "a keyless done on a squad_lead lane closes no child wait" "$(status_open_decisions "$s" squad_lead)" "a	needs-decision	q"
 
 # The dispatcher never turns a classifier that cannot run into a yes or no answer.
 JG_CLASSIFY_BIN=$lab/none/jg-classify JG_CLASSIFY_GO=$lab/no-such-go "$ROOT/bin/jg-classify.sh" is-paused 'paused: x' 2>/dev/null

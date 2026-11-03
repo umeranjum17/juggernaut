@@ -225,7 +225,7 @@ function statusLineVerb(line: string): string {
   return words.filter((word, index) => index === 0 || !/^corr=[0-9a-f]{16}$/i.test(word)).join(" ");
 }
 
-// bin/jg-classify-lib.sh's _jg_status_unstamped: drop every time-tag-shaped
+// core/classify/cmd/jg-classify/line.go's unstamped: drop every time-tag-shaped
 // run before the head ends, so a readable stamp like [at=10:30] cannot move the
 // head/note separator the key and note readers below look for.
 function statusLineUnstamped(line: string): string {

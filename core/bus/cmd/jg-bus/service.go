@@ -25,10 +25,12 @@ func (a *app) natsCommand(url string, rest ...string) *exec.Cmd {
 }
 
 // credentials: this home's account name and the password the machine's accounts file
-// carries for it, from the one resolver the server's block also uses (myAccount).
+// carries for it, from the one resolver the server's block also uses (myAccount), and only
+// when that file really holds the account. A client that logs in with a name the server does
+// not hold is refused on every call, so it connects as nobody instead.
 func (a *app) credentials() (string, string, bool) {
 	name, cred, err := a.myAccount()
-	if err != nil {
+	if err != nil || !a.accountsCarry(name) {
 		return "", "", false
 	}
 	data, err := os.ReadFile(cred)
@@ -362,7 +364,7 @@ func (a *app) startOne(quiet bool, name string, argv ...string) {
 	}
 	pid := cmd.Process.Pid
 	_ = cmd.Process.Release()
-	_ = os.WriteFile(filepath.Join(a.runtime, name+".pid"), []byte(fmt.Sprintf("%d\n", pid)), 0o644)
+	_ = writePid(filepath.Join(a.runtime, name+".pid"), pid)
 	if !quiet {
 		say("%s: started (%d), log %s", name, pid, logPath)
 	}

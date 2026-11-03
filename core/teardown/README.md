@@ -16,7 +16,7 @@ answers "landed". A command that cannot run exits 2 and teardown refuses with th
 `bin/jg-teardown.sh` was 4,083 lines. Each slice switches live only after a parity replay against
 the shell it deletes, and deletes that shell in the same change.
 
-1. **This slice.** The landed-work test: the forge proof (GitHub through `gh`, Forgejo through
+1. **Done.** The landed-work test: the forge proof (GitHub through `gh`, Forgejo through
    `tea api`), the PR lookup by branch, the patch-id containment that survives squash and rebase,
    the default-branch content check, and the default-branch read. 29 shell lines remain in
    `bin/jg-teardown.sh` to marshal the facts the command cannot read from the worktree.
@@ -24,8 +24,15 @@ the shell it deletes, and deletes that shell in the same change.
    local-only rule, the untracked-path report and the lock-blocked answer (exit 3). The wait for a
    lock to clear and the stale-lock proof stay in `bin/jg-teardown.sh` with the shared
    `bin/jg-lock-lib.sh` proof, because the treehouse return uses them too; they go with that slice.
-3. Process reaping and the endpoint close.
-4. Squad Lead and home removal, and the scratch and Herdr cleanup.
+3. **Done for the reap.** Process reaping. The endpoint close and its refusal stay in
+   `bin/jg-teardown.sh`, which is what `reap` runs before.
+4. **Done for the validators.** The removal validators (`validate-removal`, `validate-child`,
+   `validate-home`, `worktree-registered`). The Squad Lead and home removal, and the scratch and
+   Herdr cleanup, stay in `bin/jg-teardown.sh`.
+
+The shell copies of the landed-work test, the safety check, the reap and the validators are
+deleted; `bin/jg-teardown.sh` now holds only the orchestration around them, which is where every
+refusal is still decided.
 
 ## Parity replay
 

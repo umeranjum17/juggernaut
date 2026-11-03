@@ -193,7 +193,7 @@ func (a *app) serveConsumer(p *part) int {
 	}
 	stopOnSignal()
 	pidPath := filepath.Join(a.runtime, p.name+".pid")
-	_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644)
+	_ = writePid(pidPath, os.Getpid())
 	if err := p.ensureConsumer(); err != nil {
 		return die("%s: %v", p.name, err)
 	}

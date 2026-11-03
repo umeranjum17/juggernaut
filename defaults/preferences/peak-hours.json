@@ -1,0 +1,7 @@
+{
+  "schema": "jg-preference/1",
+  "block": "peak-hours",
+  "about": "When provider peak hours run. The standard fact peak is true inside this window; clauses read peak, so changing this block changes every rule that mentions it.",
+  "values": {"utcHours": "12-17", "weekdays": "1-5"},
+  "valueTypes": {"utcHours": "range", "weekdays": "range"}
+}

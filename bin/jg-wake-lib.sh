@@ -755,56 +755,6 @@ jg_lock_remove_path() {
   rmdir "$lockdir" 2>/dev/null
 }
 
-# jg_lock_owner_dir_is_stale <owner-dir>: 0 iff an owner directory is provably
-# abandoned - a dead recorded pid, or no usable pid record at all while nothing
-# but link entries and known scratch remain inside, past the same
-# JG_LOCK_STALE_AFTER floor that protects a half-written owner. A live pid, an
-# unreadable age, or an unrecognized regular file answers "not stale".
-jg_lock_owner_dir_is_stale() {
-  local dir=$1 pid floor age
-  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
-  pid=$(cat "$dir/pid" 2>/dev/null || true)
-  case "$pid" in
-    '' | *[!0-9]*) ;;
-    *)
-      jg_pid_alive "$pid" && return 1
-      return 0
-      ;;
-  esac
-  if find "$dir" -mindepth 1 -maxdepth 1 -type f ! -name pid ! -name task 2>/dev/null | grep -q .; then
-    return 1
-  fi
-  floor=$JG_LOCK_STALE_AFTER
-  case "$floor" in '' | *[!0-9]* | 0 | 1) floor=2 ;; esac
-  age=$(jg_path_age "$dir")
-  case "$age" in '' | *[!0-9]*) return 1 ;; esac
-  [ "$age" -ge "$floor" ]
-}
-
-# jg_lock_sweep_stale_scratch <lockdir>: remove one lock's provably abandoned
-# owner directories and its abandoned steal mutex, printing each path removed.
-# Single owner of lock-scratch hygiene: the bounded lease-command acquire runs it
-# once past its wait bound and bin/jg-lease.sh sweep runs it on demand. A live
-# holder's directories are never touched.
-jg_lock_sweep_stale_scratch() {
-  local lockdir=$1 path owner
-  for path in "$lockdir".steal "$lockdir".steal.owner.* "$lockdir".owner.*; do
-    [ -e "$path" ] || [ -L "$path" ] || continue
-    if [ -L "$path" ]; then
-      owner=$(jg_lock_link_owner "$path" 2>/dev/null || true)
-      [ -n "$owner" ] || continue
-      jg_lock_owner_dir_is_stale "$owner" || continue
-      rm -f -- "$path" 2>/dev/null || continue
-      jg_lock_discard_owner "$owner"
-    else
-      jg_lock_owner_dir_is_stale "$path" || continue
-      jg_lock_discard_owner "$path"
-    fi
-    [ -e "$path" ] || [ -L "$path" ] || printf '%s\n' "$path"
-  done
-  return 0
-}
-
 jg_lock_mid_acquire_is_fresh() {
   local lockdir=$1 pid=$2 mid_acquire_stale
   case "$pid" in
@@ -2456,141 +2406,68 @@ jg_wake_append() {
 }
 
 # --- wake urgency routing -----------------------------------------------------
-# One rule file gives every event a class: `now` wakes at once, `batch` waits for a turn
-# that happens anyway, and `silent` is recorded only. defaults/wake-routing owns the
-# classes, the threshold, and the rationale; a home or JG_WAKE_ROUTING overrides it.
-jg_wake_routing_file() {
-  local file
-  for file in "${JG_WAKE_ROUTING:-}" "${JG_HOME:-$JG_WAKE_DEFAULT_ROOT}/config/wake-routing" \
-    "$JG_WAKE_DEFAULT_ROOT/defaults/wake-routing"; do
-    [ -n "$file" ] && [ -f "$file" ] && { printf '%s\n' "$file"; return 0; }
-  done
-  return 0
+# One shared rule file gives every event a class, in every home: `now` wakes at once,
+# `batch` waits for a turn that happens anyway, and `silent` is recorded only.
+# defaults/wake-routing owns the classes, the threshold, and the rationale. A home's small
+# config/wake-routing is read first, so its rules and `set` values win and everything it
+# does not name falls through to the shared file; JG_WAKE_ROUTING replaces both.
+# The decisions - matching, the `@condition` facts, the re-alert dedupe and the hourly
+# silence cap - are Go (core/wake/cmd/jg-wake-core, through bin/jg-wake-core.sh), whose header
+# owns the contract. Where that command cannot run an event is `now`, never hidden.
+# jg_wake_core <command...>: the Go command, told this home's resolved paths.
+jg_wake_core() {
+  JG_STATE_OVERRIDE="$STATE" "$JG_WAKE_LIB_DIR/jg-wake-core.sh" \
+    --state "$STATE" --home "$JG_HOME" --root "$JG_WAKE_DEFAULT_ROOT" --queue "$JG_WAKE_QUEUE" \
+    --routing "${JG_WAKE_ROUTING:-}" --config "${JG_CONFIG_OVERRIDE:-}" \
+    --lib "$JG_WAKE_LIB_DIR" --proc "${JG_PROC_ROOT_OVERRIDE:-/proc}" "$@"
 }
 
-# jg_wake_route_class <kind> <key> <payload>: now, batch, or silent. First rule wins
-# and no match answers `now`, so a missing rule file can never hide an event. A
-# status-file event is matched against its newest line so a rule can name the state
-# word; an unreadable log falls back to the recorded payload.
+# jg_wake_routing_files: the rule files in force, in priority order, one per line.
+jg_wake_routing_files() {
+  jg_wake_core routing-files 2>/dev/null || true
+}
+
+# jg_wake_route_class <kind> <key> <payload>: now, batch, or silent.
 jg_wake_route_class() {
-  local kind=$1 key=$2 payload=$3 file class rkind rkey rpay line
-  file=$(jg_wake_routing_file)
-  [ -n "$file" ] || { printf 'now\n'; return 0; }
-  case "$key" in
-    *.status) [ ! -f "$STATE/$key" ] || [ -L "$STATE/$key" ] || {
-      line=$(tail -n 1 -- "$STATE/$key" 2>/dev/null) && [ -n "$line" ] && payload=$line
-    } ;;
-  esac
-  while read -r class rkind rkey rpay; do
-    case "$class" in ''|'#'*|set) continue ;; esac
-    case "$rkind" in '*'|"$kind") ;; *) continue ;; esac
-    # shellcheck disable=SC2254  # the rule file's key and payload fields are globs
-    case "$key" in $rkey) ;; *) continue ;; esac
-    # shellcheck disable=SC2254
-    case "$payload" in $rpay) ;; *) continue ;; esac
-    # `class@condition` holds only while a fact about the event is true.
-    case "$class" in
-      *@*) _jg_wake_cond "${class#*@}" "$key" "$payload" || continue; class=${class%@*} ;;
-    esac
-    printf '%s\n' "$class"
-    return 0
-  done < "$file"
-  printf 'now\n'
+  jg_wake_core route "$1" "$2" "$3" 2>/dev/null || printf 'now\n'
 }
 
-# _jg_wake_rule_set <name> <default>: a `set <name> <value>` number from the rule file.
+# _jg_wake_rule_set <name> <default>: the `set <name> <value>` the rule files give, the first file
+# that names it first, else the default.
 _jg_wake_rule_set() {
-  local file tag name value rest out=$2
-  file=$(jg_wake_routing_file)
-  [ -n "$file" ] || { printf '%s\n' "$out"; return 0; }
-  while read -r tag name value rest; do
-    [ "$tag:$name" = "set:$1" ] || continue
-    case "$value" in ''|*[!0-9]*) continue ;; esac
-    out=$value
-  done < "$file"
-  printf '%s\n' "$out"
+  jg_wake_core rule-set "$1" "$2" 2>/dev/null || printf '%s\n' "$2"
 }
 
-# _jg_wake_cond <condition> <key> <payload>: the fact a `class@condition` rule names:
-# parked (a lane of a parked home), restart-pass (a lead the restart pass just restarted,
-# stamped in state/.squad-lead-restart-pass), queue-quiet (no queued row routes to `now`).
-_jg_wake_cond() {
-  local cond=$1 key=$2 payload=$3 word prev='' secs now stamp id row_kind row_key row_pay
-  case "$cond" in
-    parked|restart-pass)
-      for word in ${key%.status} $payload; do
-        id=''
-        case "$prev" in squad_lead|waiting-state) id=${word%%[,;:)(]*} ;; esac
-        [ -n "$id" ] || { [ "$word" != "${key%.status}" ] || id=$word; }
-        prev=$word
-        case "$id" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
-        if [ "$cond" = parked ]; then
-          # shellcheck source=/dev/null
-          [ -r "$JG_WAKE_LIB_DIR/jg-parked-homes-lib.sh" ] && . "$JG_WAKE_LIB_DIR/jg-parked-homes-lib.sh" || return 1
-          jg_parked_meta "$STATE/$id.meta" "$id" 2>/dev/null && return 0
-          jg_parked_home "$id" && return 0
-        else
-          secs=$(_jg_wake_rule_set restart-pass-seconds 600)
-          now=$(date +%s)
-          [ -f "$STATE/.squad-lead-restart-pass" ] || continue
-          while read -r stamp row_key; do
-            [ "$row_key" = "$id" ] && [ "$((now - stamp))" -le "$secs" ] 2>/dev/null && return 0
-          done < "$STATE/.squad-lead-restart-pass"
-        fi
-      done
-      return 1 ;;
-    queue-quiet)
-      [ -s "${JG_WAKE_QUEUE:-}" ] || return 0
-      while IFS=$'\t' read -r _ _ row_kind row_key row_pay _; do
-        [ -n "$row_key" ] || continue
-        [ "$(jg_wake_route_class "$row_kind" "$row_key" "$row_pay")" = now ] || continue
-        return 1
-      done < "$JG_WAKE_QUEUE"
-      return 0 ;;
-  esac
-  return 1
-}
-
-# _jg_wake_silence_charge: count one settled event against `set silence-cap-per-hour`;
-# non-zero once the hour is spent, and the caller then sends it to the digest as `batch`.
-_jg_wake_silence_charge() {
-  local cap now log="$STATE/.wake-silenced" used=0
-  cap=$(_jg_wake_rule_set silence-cap-per-hour 0)
-  [ "$cap" -gt 0 ] || return 0
-  now=$(date +%s)
-  [ ! -f "$log" ] || used=$(awk -v c="$((now - 3600))" '$1 > c' "$log" 2>/dev/null | wc -l)
-  [ "$used" -lt "$cap" ] || return 1
-  printf '%s\n' "$now" >> "$log" 2>/dev/null || true
-  return 0
-}
-
-# _jg_wake_realert_record <kind> <key> <payload>: remember a delivered event for the
-# rule file's re-alert-minutes only, so the same unchanged event cannot wake again.
+# _jg_wake_realert_record <kind> <key> <payload>: remember a delivered event for the rule file's
+# re-alert-minutes only, so the same unchanged event cannot wake again inside that window.
 _jg_wake_realert_record() {
-  local kind=$1 key=$2 payload=$3 rules="$STATE/.wake-realert" tmp cutoff window=30
-  local tag name value rest file
-  file=$(jg_wake_routing_file)
-  if [ -n "$file" ]; then
-    while read -r tag name value rest; do
-      [ "$tag:$name" = set:re-alert-minutes ] || continue
-      case "$value" in ''|*[!0-9]*) continue ;; esac
-      window=$value
-    done < "$file"
-  fi
-  [ "$window" -gt 0 ] || return 0
-  jg_epoch_seconds_to cutoff
-  cutoff=$((cutoff - window * 60))
-  printf '%s\t%s\t%s\t%s\n' "$((cutoff + window * 60))" "$kind" "$key" "$payload" \
-    >> "$rules" 2>/dev/null || return 0
-  tmp="$rules.tmp.$$"
-  awk -F '\t' -v c="$cutoff" '$1 >= c' "$rules" 2>/dev/null > "$tmp" && mv -f "$tmp" "$rules" 2>/dev/null
-  rm -f "$tmp" 2>/dev/null || true
+  jg_wake_core realert-record "$1" "$2" "$3" 2>/dev/null || true
+}
+
+# jg_wake_digest_due [mark]: the batched digest. Prints how many queued rows wait for a turn and
+# exits 0 once the rule file's `set digest-minutes` has passed since the last digest and at least
+# one row waits; exits 1 otherwise, so an empty digest is never sent. `mark` records this digest.
+jg_wake_digest_due() {
+  jg_wake_core digest "$@" 2>/dev/null
+}
+
+# jg_wake_fleet_fp_record: remember what the fleet looks like now, which the `@fleet-unchanged`
+# rule condition compares the next heartbeat against.
+jg_wake_fleet_fp_record() {
+  jg_wake_core fleet-fp-record 2>/dev/null || true
 }
 
 # _jg_wake_settled_locked <kind> <key> <payload>: the record-only class, readable with
 # bin/jg-wake.sh settled. It never reaches the queue.
 _jg_wake_settled_locked() {
   jg_wake_bus settle "$1" "$2" "$3"
+}
+
+# jg_wake_settle <kind> <key> <payload>: record an event that a caller settled itself
+# after jg_wake_route_class answered something other than `now`, so it is counted
+# with the rest (bin/jg-wake.sh settled) instead of vanishing from the tally.
+jg_wake_settle() {
+  _jg_wake_settled_locked "$1" "$(printf '%s' "$2" | jg_wake_clean_field)" "$(printf '%s' "$3" | jg_wake_clean_field)"
 }
 
 # jg_wake_append_locked <kind> <key> <payload>
@@ -2612,18 +2489,9 @@ jg_wake_append_locked() {
 
   clean_key=$(printf '%s' "$key" | jg_wake_clean_field)
   clean_payload=$(printf '%s' "$payload" | jg_wake_clean_field)
-  class=$(jg_wake_route_class "$kind" "$clean_key" "$clean_payload")
-  # A status-file row records only the file list, so two different status events look
-  # identical: re-alert dedupe applies where the payload is the event itself.
-  case "$clean_key" in
-    *.status) ;;
-    *) if [ "$class" = now ] && [ -s "$STATE/.wake-realert" ] \
-      && grep -qF -- "$(printf '\t%s\t%s\t%s' "$kind" "$clean_key" "$clean_payload")" \
-        "$STATE/.wake-realert" 2>/dev/null; then
-      class='batch'
-    fi ;;
-  esac
-  if [ "$class" = silent ] && ! _jg_wake_silence_charge; then class='batch'; fi
+  # Route, drop a repeated `now` to `batch` inside the re-alert window, and charge a settled event
+  # against the hourly cap: one answer from the Go command, `now` where it cannot run.
+  class=$(jg_wake_core classify "$kind" "$clean_key" "$clean_payload" 2>/dev/null) || class=now
   if [ "$class" = silent ]; then
     _jg_wake_settled_locked "$kind" "$clean_key" "$clean_payload" || true
     JG_WAKE_LAST="silent:$clean_key"
@@ -2640,7 +2508,7 @@ jg_wake_append_locked() {
   JG_WAKE_LAST="$class:$clean_key"
   if [ "$class" = now ]; then
     JG_WAKE_CYCLE_URGENT=1
-    _jg_wake_realert_record "$kind" "$clean_key" "$clean_payload" || true
+    jg_wake_core realert "$kind" "$clean_key" "$clean_payload" 2>/dev/null || true
   fi
   # #fleet: the same event, in plain words, on the fleet chat channel. This is
   # the call site that already records the wake, so the channel needs no scan of
@@ -2651,6 +2519,15 @@ jg_wake_append_locked() {
       "$kind: $clean_key $clean_payload" >/dev/null 2>&1 || true
   fi
   return 0
+}
+
+# --- the queue read model ----------------------------------------------------
+# What a queued row is, and the questions every reader below asks of the render,
+# is owned by core/wake/cmd/jg-wake-core and answered through bin/jg-wake-core.sh,
+# built on first use. The awk bodies these functions held are deleted, so one
+# implementation owns the row grammar instead of a copy per reader.
+_jg_wake_core() {
+  "$JG_WAKE_LIB_DIR/jg-wake-core.sh" "$@"
 }
 
 # jg_wake_queued_keys <kind>
@@ -2671,9 +2548,7 @@ jg_wake_queued_keys() {
 }
 
 jg_wake_queued_keys_locked() {
-  local kind=$1
-  awk -F '\t' -v kind="$kind" 'NF >= 5 && $3 == kind && !seen[$4]++ { print $4 }' \
-    "$JG_WAKE_QUEUE" 2>/dev/null || true
+  _jg_wake_core --queue "$JG_WAKE_QUEUE" keys "$1" 2>/dev/null || true
 }
 
 # jg_wake_withdraw <kind> <key>
@@ -2827,26 +2702,11 @@ jg_wake_queue_prune_task() {  # <state> <task-id> [target]
   jg_lock_release "$lock"
 }
 
+# Print a rows file as one row per event: a repeated kind and key is the same fact
+# delivered again and the newest line wins, every heartbeat is one row, and the
+# rows keep the order they first appeared in.
 jg_wake_print_deduped() {
-  local file=$1
-  awk -F '\t' '
-    NF >= 5 {
-      dedupe = $3 SUBSEP $4
-      if ($3 == "heartbeat") {
-        dedupe = "heartbeat"
-      }
-      if (!(dedupe in seen)) {
-        order[++count] = dedupe
-        seen[dedupe] = 1
-      }
-      line[dedupe] = $0
-    }
-    END {
-      for (i = 1; i <= count; i++) {
-        print line[order[i]]
-      }
-    }
-  ' "$file"
+  _jg_wake_core --queue "$JG_WAKE_QUEUE" dedupe "$1"
 }
 
 # --- branch grant evidence and per-actor pending rows ------------------------
@@ -2858,7 +2718,8 @@ jg_wake_print_deduped() {
 
 # 0 when <rows-file> is a non-empty list of distinct sequence numbers.
 jg_wake_grant_rows_valid() {  # <rows-file>
-  [ -s "$1" ] && awk 'BEGIN { ok=1 } !/^[0-9]+$/ || seen[$0]++ { ok=0 } END { exit !ok }' "$1"
+  [ -s "$1" ] || return 1
+  _jg_wake_core grant-valid "$1"
 }
 
 # 0 when <owner-file> holds the supported record, names a live process whose
@@ -2908,24 +2769,14 @@ jg_wake_actor_pending_count() {  # <actor> [<rows-file> <owner-file>]
   fi
   if [ "$actor" = branch ]; then
     [ -n "$grant" ] || { printf '0\n'; return 0; }
-    count=$(awk -F '\t' -v seqs="$grant" '
-      BEGIN { while ((getline line < seqs) > 0) keep[line] = 1 }
-      NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 in keep) { n++ }
-      END { print n + 0 }
-    ' "$JG_WAKE_QUEUE") || count=''
-  else
-    count=$(awk -F '\t' -v seqs="$grant" '
-      BEGIN { if (seqs != "") while ((getline line < seqs) > 0) reserved[line] = 1 }
-      NF < 5 || $2 !~ /^[0-9]+$/ { n++; next }
-      !($2 in reserved) { n++ }
-      END { print n + 0 }
-    ' "$JG_WAKE_QUEUE") || count=''
   fi
+  count=$(_jg_wake_core --queue "$JG_WAKE_QUEUE" --actor "$actor" --grant "$grant" count) || count=''
   # A queue that exists but cannot be counted (unreadable file, unreadable
   # state/) is not evidence of an empty queue: report a pending row so callers
   # still raise the alarm on a queue nobody can prove is drained. A failed count
-  # is decided by awk's exit status, not by what it printed, because an awk that
-  # reaches END after failing to open the queue would otherwise report 0 rows.
+  # is decided by the command's exit status, not by what it printed, because a
+  # reader that reaches its answer after failing to open the queue would
+  # otherwise report 0 rows.
   case "$count" in ''|*[!0-9]*) count=1 ;; esac
   printf '%s\n' "$count"
 }
@@ -2936,10 +2787,7 @@ jg_wake_actor_pending_count() {  # <actor> [<rows-file> <owner-file>]
 # Fails when the queue exists but cannot be read.
 jg_wake_rows_queued() {  # <seq>...
   [ -f "$JG_WAKE_QUEUE" ] || return 0
-  awk -F '\t' -v seqs="$*" '
-    BEGIN { n = split(seqs, list, " "); for (i = 1; i <= n; i++) want[list[i]] = 1 }
-    NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 in want) { print $2 }
-  ' "$JG_WAKE_QUEUE"
+  _jg_wake_core --queue "$JG_WAKE_QUEUE" queued "$@"
 }
 
 # --- signal announcement signatures -----------------------------------------
@@ -3243,10 +3091,6 @@ jg_wake_unread_events() {  # <validated-status-path> <unused-tail-byte-cap> <min
   JG_WAKE_EVENT_LINE=$(printf '%s' "$JG_WAKE_EVENT_LINE" | LC_ALL=C tr '\t\r' '  ')
 }
 
-jg_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
-  jg_wake_unread_events "$1" "$2" 0
-}
-
 # Print supplemental drain-time context only after the caller has committed the
 # raw queue consumption and released the append lock.
 jg_wake_print_annotations() {  # <deduped-raw-rows> [<presentation-snapshot>]
@@ -3349,7 +3193,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }

@@ -22,6 +22,8 @@ REGISTRY=${JG_CLAUDE_ACCOUNTS_REGISTRY:-${HOME}/.muxr/plans/accounts-v1.json}
 # A provider limit from the model-gate feature holds here too: its list is the one owner, and a route it refuses is
 # never emitted. Not installed (or not on PATH) means no limit, so this feature stays usable on its own.
 MODEL_GATE=${JG_MODEL_GATE:-jg-model-gate}
+# The generic clause evaluator (owner-rule clauses at decision points); absent means no clauses apply.
+CLAUSE=${JG_CLAUSE_BIN:-$here/../../../bin/jg-clause.sh}
 
 # Normal-work fallovers after every eligible Claude account is under the floor: the shared route chain in
 # bin/jg-route-chain-lib.sh (a home's config/account-pool route= lines, else the captain's approved free-route order).
@@ -187,6 +189,24 @@ emit_route() {
   '
 }
 
+# clause_allows <route json> <hard>: 0 unless a route-select clause skips or denies this route. A warn clause is logged.
+clause_allows() {
+  local route=$1 hard=$2 verdict action
+  [ -x "$CLAUSE" ] || return 0
+  verdict=$("$CLAUSE" decide route-select "route=$(jq -r .id <<<"$route")" "provider=$(jq -r .provider <<<"$route")" \
+    "harness=$(jq -r .harness <<<"$route")" "model=$(jq -r .model <<<"$route")" "billing=$(jq -r '.billing // ""' <<<"$route")" \
+    "only=$(jq -r '.only // ""' <<<"$route")" "hard=$hard") || return 0
+  action=$(jq -r .action <<<"$verdict")
+  case $action in
+  skip | deny)
+    log "route $(jq -r .id <<<"$route") $action by clause $(jq -r .clause <<<"$verdict"): $(jq -r .reason <<<"$verdict")"
+    return 1
+    ;;
+  warn) log "route $(jq -r .id <<<"$route") warned by clause $(jq -r .clause <<<"$verdict"): $(jq -r .reason <<<"$verdict")" ;;
+  esac
+  return 0
+}
+
 pick_work() {
   local req=$1 command=$2 state=$3 attempted model hard ranked first id folder account i n route skipped
   attempted=$(jq -c '.attempted // []' <<<"$req")
@@ -213,8 +233,9 @@ pick_work() {
     route=$(jq -c --argjson i "$i" '.[$i]' <<<"$CHAIN_JSON")
     id=$(jq -r .id <<<"$route")
     jq -e --arg id "$id" 'index($id) != null' <<<"$attempted" >/dev/null && continue
-    if [ "$(jq -r '.only // ""' <<<"$route")" = hard ] && [ "$hard" != true ]; then
-      log "route $id is kept for hard steps only; request did not ask for one"
+    # Owner-rule clauses decide here (bin/jg-clause.sh, point route-select): the hard-only Sol route and the
+    # peak-hour DeepSeek rule are clauses in the rules block, not code in this loop.
+    if ! clause_allows "$route" "$hard"; then
       continue
     fi
     if jg_route_down "$id"; then

@@ -44,6 +44,41 @@ function primaryMain(caller, table) {
 	} catch {} // missing/stale lock or uncertain ancestry keeps the ordinary ownership rule
 	return false;
 }
+// The home whose session holds this guard's ancestry: an ancestor harness whose pid its home's state/.lock records, found
+// from that harness's cwd upward. Reaching the caller first keeps --caller alone from being authority. Null when unproved.
+const HARNESS = /^(claude|codex|pi|pi-signed|omp|opencode|grok|kimi|cursor-agent)$/;
+function lockedHome(caller, table) {
+	try {
+		const seen = new Set(); let reachedCaller = false;
+		for (let p = table.get(process.pid); p && !seen.has(p.pid); p = table.get(p.ppid)) {
+			seen.add(p.pid); reachedCaller ||= p.pid === caller;
+			if (!reachedCaller || !HARNESS.test(p.comm) || !p.cwd || /[ZX]/.test(p.state)) continue;
+			for (let dir = p.cwd; dir !== "/" && under(ACCOUNT_HOME, dir) && dir !== ACCOUNT_HOME; dir = dirname(dir)) {
+				const lock = `${dir}/state/.lock`;
+				if (!existsSync(lock) || !lstatSync(lock).isFile() || readFileSync(lock, "utf8").trim() !== String(p.pid)) continue;
+				if (!lstatSync(`${dir}/data`).isDirectory() || statOf(p.pid)[19] !== p.starttime) return null;
+				return realpathSync(dir);
+			}
+		}
+	} catch {} // no lock, a stale one or uncertain ancestry leaves the ordinary rule
+	return null;
+}
+// A home's own session may stop what runs under that home's task data or under a worktree its task records name: the
+// owner path for trees reparented away from every caller. Only the record decides; no name or pattern is read.
+function homeOwned(p, home) {
+	const roots = [];
+	try { for (const t of readdirSync(`${home}/data`)) { const r = realpathSync(`${home}/data/${t}`); if (r !== `${home}/data` && under(`${home}/data`, r)) roots.push(r); } } catch {} // a task dir linked outside data/ is no owner path
+	try {
+		for (const f of readdirSync(`${home}/state`).filter((f) => f.endsWith(".meta"))) {
+			try {
+				const wt = readFileSync(`${home}/state/${f}`, "utf8").match(/^worktree=(\/.+)$/m)?.[1];
+				const real = wt && realpathSync(wt);
+				if (real && real !== "/" && !under(real, ACCOUNT_HOME)) roots.push(real); // never the account home or a parent of it
+			} catch {}
+		}
+	} catch {}
+	return roots.some((r) => under(r, p.cwd));
+}
 function fleetPath(path) {
 	try {
 		const resolved = realpathSync(path);
@@ -203,7 +238,9 @@ function reasonFor(p, own, caller, procs, text) {
 		procs.approvals.push({ ...p, reason: text });
 		return null;
 	}
-	return own.has(p.pid) || inCallerWorktree(p.cwd, caller) ? null : `PID ${p.pid} (${p.comm}), which this task did not start`;
+	if (own.has(p.pid) || inCallerWorktree(p.cwd, caller)) return null;
+	if (procs.home && homeOwned(p, procs.home)) return null;
+	return `PID ${p.pid} (${p.comm}), which this task did not start`;
 }
 
 // The block for one kill, pkill or killall, or null when every process it would signal is the caller's own.
@@ -339,7 +376,7 @@ function blockedBy(command, caller, procs) {
 export function guard(command, { caller = process.pid, reason = process.env.JG_KILL_REASON } = {}) {
 	let table, target;
 	const procs = () => {
-		if (!table) { table = procTable(); procs.main = primaryMain(caller, table); }
+		if (!table) { table = procTable(); procs.main = primaryMain(caller, table); procs.home = lockedHome(caller, table); }
 		return table;
 	};
 	procs.approvals = [];

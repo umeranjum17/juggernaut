@@ -31,15 +31,21 @@ func readLines(path string) (lines []string, ok bool) {
 	if err != nil {
 		return nil, false
 	}
+	return splitLines(data), true
+}
+
+// splitLines is data as the shell's read loop saw it: split on newline, a final unterminated
+// line kept, NUL bytes dropped.
+func splitLines(data []byte) []string {
 	data = bytes.ReplaceAll(data, []byte{0}, nil)
 	if len(data) == 0 {
-		return nil, true
+		return nil
 	}
-	lines = strings.Split(string(data), "\n")
+	lines := strings.Split(string(data), "\n")
 	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
-	return lines, true
+	return lines
 }
 
 func blank(s string) bool { return strings.IndexFunc(s, func(r rune) bool { return !isSpace(r) }) < 0 }
@@ -143,6 +149,10 @@ func pausedUntil(line string) (int64, bool) {
 	if !isPaused(line) {
 		return 0, false
 	}
+	return untilEpoch(line)
+}
+
+func untilEpoch(line string) (int64, bool) {
 	m := untilMinute.FindStringSubmatch(line)
 	if m == nil {
 		m = untilSecond.FindStringSubmatch(line)

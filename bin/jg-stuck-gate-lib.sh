@@ -10,7 +10,8 @@
 #   question  a picker or question dialog on screen (Pi ask_user_question,
 #             Claude AskUserQuestion, OpenCode question, Codex request_user_input),
 #             whatever status the terminal shows for the pane
-#   quota     a provider rate-limit or usage-limit banner at the bottom of the pane
+#   quota     a provider rate-limit or usage-limit banner as the bottom of the
+#             visible screen (the banner and the prompt or status line under it)
 #   errors    one provider or API error line repeated on screen (a bad key, an
 #             unknown user or model): a runtime failing every turn keeps the pane
 #             changing, so neither the silence nor the quota detector fires
@@ -40,10 +41,15 @@ jg_stuck_error_loop() {
 # harness-neutral so a new adapter is covered; every picker pairs a select/
 # confirm hint with an escape hint, so worker prose alone does not match.
 jg_stuck_verdict() {
-  local buf tail12 line
+  local buf tail12 footer line
   buf=$(cat)
   tail12=$(printf '%s\n' "$buf" | grep -v '^[[:space:]]*$' | tail -12)
-  line=$(printf '%s\n' "$tail12" | grep -iE "${JG_STUCK_QUOTA_REGEX:-(you.ve hit your|usage (limit|exceeded)|rate.?limit(ed| exceeded| reached)|quota (exceeded|exhausted|reached)|insufficient[_ ]quota|too many requests|credit balance is too low|limit resets)}" | head -1) || true
+  # A limit banner counts only as the bottom of the visible screen, where every
+  # TUI renders it: the banner itself and the prompt or status line under it.
+  # A line higher up is transcript, and a transcript can hold any sentence a
+  # test printed, so it is never read as a live condition.
+  footer=$(printf '%s\n' "$tail12" | tail -2)
+  line=$(printf '%s\n' "$footer" | grep -iE "${JG_STUCK_QUOTA_REGEX:-(you.ve hit your|usage (limit|exceeded)|rate.?limit(ed| exceeded| reached)|quota (exceeded|exhausted|reached)|insufficient[_ ]quota|too many requests|credit balance is too low|limit resets)}" | head -1) || true
   if [ -n "$line" ]; then
     printf 'quota\t%s\n' "$(printf '%s' "$line" | tr -s '[:space:]' ' ' | cut -c1-200)"
     return 0
@@ -69,17 +75,22 @@ stuck_source_set() {  # <task> <source> [text]
 
 # stuck_gate_check: one poll of one window. <tail40> is its capture.
 stuck_gate_check() {  # <window> <task> <key> <tail40> <kind>
-  local task=$2 key=$3 tail40=$4 kind=$5 verdict h seen last declared until okf
+  local task=$2 key=$3 tail40=$4 kind=$5 verdict h seen last declared until okf quota='' finished=
   [ -n "$task" ] || return 0
+  last=$(last_status_line "$STATE/$task.status")
+  case "$(status_line_verb "$last")" in done | failed) finished=1 ;; esac
   verdict=$(printf '%s' "$tail40" | jg_stuck_verdict)
   stuck_source_set "$task" question ''
-  stuck_source_set "$task" quota ''
   stuck_source_set "$task" errors ''
   case "$verdict" in
     question$'\t'*) stuck_source_set "$task" question "${verdict#*$'\t'}" ;;
-    quota$'\t'*) stuck_source_set "$task" quota "${verdict#*$'\t'}" ;;
+    # A wait comes from the lane's own record. A lane whose status line says done
+    # or failed declares no wait, so a banner left in its pane is history, never a
+    # live condition that keeps waking the fleet.
+    quota$'\t'*) [ -n "$finished" ] || quota=${verdict#*$'\t'} ;;
     errors$'\t'*) stuck_source_set "$task" errors "${verdict#*$'\t'}" ;;
   esac
+  stuck_source_set "$task" quota "$quota"
   # Silence: a pane text change (spinner glyphs and counters ignored) or a
   # status line is progress. An idle lead is healthy by design.
   seen="$STATE/.silent-seen-$key"
@@ -87,8 +98,7 @@ stuck_gate_check() {  # <window> <task> <key> <tail40> <kind>
   if [ "$(cat "$seen" 2>/dev/null)" != "$h" ]; then printf '%s' "$h" > "$seen"; fi
   stuck_source_set "$task" silent ''
   [ "$kind" != squad_lead ] || return 0
-  last=$(last_status_line "$STATE/$task.status")
-  case "$(status_line_verb "$last")" in done | failed) return 0 ;; esac
+  [ -z "$finished" ] || return 0
   [ "$(age_of "$seen")" -ge "${JG_SILENT_SECS:-900}" ] && [ "$(age_of "$STATE/$task.status")" -ge "${JG_SILENT_SECS:-900}" ] || return 0
   [ "$(age_of "$STATE/$task.progress")" -ge "${JG_SILENT_SECS:-900}" ] || return 0
   declared=$(status_declared_wait_line "$STATE/$task.status")

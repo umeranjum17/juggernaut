@@ -164,11 +164,13 @@ test_fleet_pause() {
   cycle "a declared fleet pause still woke the lead"
   ! grep -F "$(printf '\tcheck\t')" "$state/.wake-queue" >/dev/null 2>&1 || fail "a paused home kept a ready-work row queued"
   ack_stopped_cycle "$state" >/dev/null 2>&1 || true
-  # A home's own paused-lane list is the same declaration.
-  printf '# Paused lanes for the Juggernaut-only push\n\nNo new work; nothing merged.\n' \
+  # A home's own pause order is the same declaration. A report or a lane list
+  # parked under a pause record's name is refused by bin/jg-pause-lib.sh and
+  # named by the fleet heartbeat, so it never silences the home.
+  printf '# Paused for the Juggernaut-only push\n\nStop new work.\n- Resume rule: Main sends an explicit resume order.\n' \
     > "$dir/data/paused-for-juggernaut.md"
   rm -f "$dir/data/fleet-pause-2026-10-31.md"
-  cycle "a home's own paused-lane list still woke the lead"
+  cycle "a home's own pause order still woke the lead"
   ack_stopped_cycle "$state" >/dev/null 2>&1 || true
   # A record whose first line declares the lift is not a pause: the same ready set
   # rings at once on the resume order.

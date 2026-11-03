@@ -1682,22 +1682,6 @@ jg_pending_reply_tick() {  # <state-dir>
   return 0
 }
 
-# True when any open (non-resolved) pending reply exists for a task.
-jg_pending_reply_task_has_open() {  # <state-dir> <task_id>
-  local state=$1 task_id=$2 dir rec phase tid
-  dir=$(jg_pending_reply_dir "$state")
-  [ -d "$dir" ] || return 1
-  for rec in "$dir"/*; do
-    [ -f "$rec" ] || continue
-    tid=$(jg_pending_reply_get "$rec" task_id)
-    [ "$tid" = "$task_id" ] || continue
-    phase=$(jg_pending_reply_get "$rec" phase)
-    [ "$phase" != resolved ] || continue
-    return 0
-  done
-  return 1
-}
-
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -1711,7 +1695,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }

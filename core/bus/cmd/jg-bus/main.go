@@ -66,9 +66,14 @@
 //	stream   Exit 0 when the stream exists on the server, 1 when not; creates nothing.
 //	account  Print this home's bus account and its credentials file, tab separated.
 //	         The account is the home's unique id (its Squad Lead id, else a hash of its
-//	         absolute path), never its folder name. `accounts [home...]` prints the
+//	         absolute path), never its folder name, and it is read from the registry the
+//	         machine's accounts file is written from (the bus owner's, when another home owns
+//	         it). `accounts [home...]` prints the
 //	         server block for these homes, Main and every data/squad_leads.md entry;
 //	         two homes on one account name are refused with a line naming both.
+//	login    The same two fields for a client about to connect, and nothing when the
+//	         machine's accounts file does not hold this home's account: a client that logs in
+//	         with a name the server does not hold is refused on every call.
 //	owner    Print "self" and exit 0 when this home owns the machine's bus unit (or may take
 //	         it, none being installed); print the owner's home and exit 3 when another
 //	         does. bin/jg-stack.sh asks it before it installs or starts a per-machine part.
@@ -114,6 +119,12 @@
 //	         Pids and logs live in $STATE/bus/, so `stop` and `status` are per home. A
 //	         service whose binary is missing is named and not started; the others still
 //	         run, because the record never depends on them.
+//	status   What the channel holds and which of its services run: the mode, the
+//	         delivery target, the record counts, then one line per service read from the
+//	         service manager's own state for the unit that runs it. A service this home
+//	         started detached is read from its pid. A state this probe could not read is
+//	         `unknown`, never down: a wrong down sends a reader after a fault that is not
+//	         there, and a real outage then looks like a healthy fleet.
 //
 // Usage:
 //
@@ -200,6 +211,8 @@ func run(args []string) int {
 		return a.accounts(rest)
 	case "account":
 		return a.account()
+	case "login":
+		return a.login()
 	case "owner":
 		return a.owner()
 	case "ntfy-provision":
@@ -284,6 +297,21 @@ func die(format string, args ...any) int {
 // say writes one informational line to stderr, as the shell did.
 func say(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+// writePid records a service's pid so a reader sees the old pid or the new one, never an empty
+// file: a plain truncating write leaves a gap in which the stack's report reads no pid at all and
+// calls a service that is starting "not running". The rename replaces the file in one step.
+func writePid(path string, pid int) error {
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // runningPid reads one service's pid when that process is still alive.

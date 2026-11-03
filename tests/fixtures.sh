@@ -6,14 +6,9 @@
 #   . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 #
 # Generic reporters, temp roots, git fixtures, and fail/pass/jg_test_cleanup
-# come from tests/lib.sh, pulled in below. This file owns the shared fake
-# no-mistakes, gh, gh-axi, tmux, ssh, and spawn-world helpers. Wake-queue mocks
-# stay in wake-helpers.sh; squad-lead-lifecycle mocks stay in
-# squad-lead-helpers.sh.
-#
-# JG_TEST_NO_MISTAKES_VERSION is the single default version for the shared fake
-# no-mistakes banner. Override a single case with JG_FAKE_NO_MISTAKES_VERSION
-# rather than editing a stub body.
+# come from tests/lib.sh, pulled in below. This file owns the shared tmux and
+# spawn-world helpers. Wake-queue mocks stay in wake-helpers.sh;
+# squad-lead-lifecycle mocks stay in squad-lead-helpers.sh.
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -23,79 +18,7 @@ if [ -n "${JG_TEST_FIXTURES_SOURCED:-}" ]; then
 fi
 JG_TEST_FIXTURES_SOURCED=1
 
-# Fixture version defaults derive from toolchain.versions, the one pin table, so a bump
-# moves these fakes with the floor they are checked against instead of leaving a stale copy.
-# Override a single case with the JG_FAKE_* variable rather than editing a stub body.
-JG_TEST_FIXTURES_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-# shellcheck source=bin/jg-pin-lib.sh
-. "$JG_TEST_FIXTURES_ROOT/bin/jg-pin-lib.sh"
-JG_TEST_NO_MISTAKES_VERSION=$(jg_pin_version no-mistakes 2>/dev/null) || JG_TEST_NO_MISTAKES_VERSION=1.46.0
-export JG_TEST_NO_MISTAKES_VERSION
-export JG_TEST_NO_MISTAKES_FAKE_VERSION="no-mistakes version v${JG_TEST_NO_MISTAKES_VERSION} (fake)"
-export JG_TEST_NO_MISTAKES_FAKE_VERSION_TS="${JG_TEST_NO_MISTAKES_FAKE_VERSION} 2026-06-27T00:02:18Z"
-JG_TEST_GH_AXI_VERSION=$(jg_pin_version gh-axi 2>/dev/null) || JG_TEST_GH_AXI_VERSION=0.1.44
-export JG_TEST_GH_AXI_VERSION
-
-# --- fake no-mistakes -------------------------------------------------------
-
-# jg_test_fake_no_mistakes <fakebin>
-# Drops a no-mistakes stub that answers --version with
-# JG_TEST_NO_MISTAKES_FAKE_VERSION (or JG_FAKE_NO_MISTAKES_VERSION when set)
-# and exits 0 for every other invocation.
-jg_test_fake_no_mistakes() {
-  local fakebin=$1
-  cat > "$fakebin/no-mistakes" <<SH
-#!/usr/bin/env bash
-if [ "\${1:-}" = --version ]; then
-  printf '%s\\n' "\${JG_FAKE_NO_MISTAKES_VERSION:-$JG_TEST_NO_MISTAKES_FAKE_VERSION}"
-  exit 0
-fi
-exit 0
-SH
-  chmod +x "$fakebin/no-mistakes"
-}
-
-# jg_test_fake_no_mistakes_init_doctor <fakebin>
-# SquadLead-lifecycle stub: init/doctor touch marker files; other verbs exit 2.
-# Does not answer --version (those suites never probe the floor).
-jg_test_fake_no_mistakes_init_doctor() {
-  local fakebin=$1
-  cat > "$fakebin/no-mistakes" <<'SH'
-#!/usr/bin/env bash
-set -eu
-case "${1:-}" in
-  init) touch .no-mistakes-init ;;
-  doctor) touch .no-mistakes-doctor ;;
-  *) exit 2 ;;
-esac
-SH
-  chmod +x "$fakebin/no-mistakes"
-}
-
-# --- fake gh / gh-axi -------------------------------------------------------
-
-# jg_test_fake_gh <fakebin>
-# Authenticates (`gh auth status` exits 0) and otherwise exits 0.
-jg_test_fake_gh() {
-  local fakebin=$1
-  cat > "$fakebin/gh" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = auth ] && [ "${2:-}" = status ]; then
-  exit 0
-fi
-exit 0
-SH
-  chmod +x "$fakebin/gh"
-}
-
-# jg_test_fake_gh_axi <fakebin>
-# Answers --version with JG_FAKE_GH_AXI_VERSION or JG_TEST_GH_AXI_VERSION.
-jg_test_fake_gh_axi() {
-  local fakebin=$1
-  jg_fake_version_tool "$fakebin" gh-axi JG_FAKE_GH_AXI_VERSION "$JG_TEST_GH_AXI_VERSION"
-}
-
-# --- fake tmux / ssh / sleep ------------------------------------------------
+# --- fake tmux / sleep -----------------------------------------------------
 
 # jg_test_fake_tmux_spawn <fakebin>
 # Spawn-world tmux: pane_current_path from JG_FAKE_PANE_PATH, session named
@@ -232,38 +155,11 @@ SH
   chmod +x "$fakebin/tmux"
 }
 
-# jg_test_fake_ssh <fakebin> [name]
-# Records argv to JG_SSH_LOG, consumes stdin, exits JG_FAKE_SSH_RC (default 0).
-# Default name is fake-ssh so tests can point JG_SSH_BIN at it without
-# shadowing a real ssh on PATH.
-jg_test_fake_ssh() {
-  local fakebin=$1 name=${2:-fake-ssh}
-  cat > "$fakebin/$name" <<'SH'
-#!/usr/bin/env bash
-cat > /dev/null
-printf '%s\n' "$*" >> "${JG_SSH_LOG:-/dev/null}"
-exit "${JG_FAKE_SSH_RC:-0}"
-SH
-  chmod +x "$fakebin/$name"
-}
-
 # jg_test_fake_sleep_noop <fakebin>
 jg_test_fake_sleep_noop() {
   local fakebin=$1
   cat > "$fakebin/sleep" <<'SH'
 #!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fakebin/sleep"
-}
-
-# jg_test_fake_sleep_log <fakebin>
-# Records each requested duration to JG_SLEEP_LOG instead of sleeping.
-jg_test_fake_sleep_log() {
-  local fakebin=$1
-  cat > "$fakebin/sleep" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "${1:-}" >> "${JG_SLEEP_LOG:-/dev/null}"
 exit 0
 SH
   chmod +x "$fakebin/sleep"
@@ -358,8 +254,7 @@ jg_test_run_spawn() {
 
 # make_stubs <dir>
 # Send-world fakebin: send tmux + no-op sleep. Echoes the fakebin path.
-# Suites that need recording sleep, herdr, or ssh add those on top of this
-# fakebin (or replace sleep via jg_test_fake_sleep_log).
+# Suites that need a recording herdr add that on top of this fakebin.
 make_stubs() {
   local dir=$1 fakebin
   fakebin=$(jg_fakebin "$dir")

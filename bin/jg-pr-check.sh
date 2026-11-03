@@ -26,7 +26,12 @@
 # branch is the release pull request from the version branch into it.
 # bin/jg-version-branch-lib.sh owns which branch that is, the refusal names it,
 # and a project with no version branch is unchanged.
+# While config/frozen-release names a release branch that is shipping, that branch
+# is also accepted as the release pull request's head even when a newer
+# release/c-<N> exists; an absent, malformed, or unknown marker changes nothing.
 # An unreadable base does not refuse.
+# A pull request whose base is a frozen release branch (config/version-branch-frozen)
+# is refused too, unless the task declared a fix to that release's own red checks.
 # bin/jg-pr-merge.sh records through this script too, so the same refusal stops a
 # main-based feature pull request being merged by a path that never armed it.
 # bin/jg-pr-merge.sh records through this script with JG_PR_CHECK_MERGE=1 and
@@ -58,7 +63,6 @@ else
     jg_compat_legacy_product() { printf "%s\n" "${1-}"; }
     jg_compat_record_ok() { [ "${1-}" = "${2-}" ]; }
     jg_compat_label_ok() { [ -n "${1-}" ] && [ "${1-}" = "${2-}" ]; }
-    jg_compat_marker_ok() { [ "${1-}" = JUGGERNAUT_OP ]; }
     jg_compat_marker() { printf "%s\n" "${1-}/.jg-squad-lead-home"; }
     jg_compat_parent_marker() { printf "%s\n" "${1-}/.jg-squad-lead-parent"; }
     jg_compat_claims_root() { printf "%s\n" "${1-}"; }
@@ -220,6 +224,9 @@ jg_pr_check_version_branch_base() {  # <meta> <url>
   [ -n "$base" ] && [ -n "$head_ref" ] || return 0
   [ "$base" = "$default" ] || return 0
   [ "$head_ref" != "$version" ] || return 0
+  # The release in flight (config/frozen-release) is also a release head, even
+  # when a newer release branch exists.
+  [ "$head_ref" != "$(jg_release_in_flight_branch "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" 2>/dev/null)" ] || return 0
   echo "error: $url targets the default branch $base, but this project's current version branch is $version" >&2
   echo "  a feature pull request targets $version; only the release pull request from $version into $base may target $base" >&2
   echo "  change this pull request's base to $version (gh-axi pr edit <number> --base $version), then arm again" >&2
@@ -227,6 +234,31 @@ jg_pr_check_version_branch_base() {  # <meta> <url>
 }
 
 jg_pr_check_version_branch_base "$META" "$URL" || exit 1
+
+# A pull request that names a frozen release branch as its base is refused, so a
+# lane cannot reach a frozen release by retargeting after it started elsewhere.
+# The task's red_fix_of= record (bin/jg-spawn.sh --red-fix-of) is the one
+# exception, and only for the branch it names. bin/jg-version-branch-lib.sh owns
+# the freeze record. An unreadable base leaves arming alone, as above.
+jg_pr_check_frozen_base() {  # <meta> <url>
+  local meta=$1 url=$2 project base config fields
+  [ "${JG_PR_CHECK_MERGE:-}" != 1 ] || return 0
+  [ "$PROVIDER" = github ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  config="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
+  [ -n "$(jg_frozen_branches "$config")" ] || return 0
+  project=$(jg_dod_meta_value "$meta" project)
+  fields=$(gh pr view "$url" --json baseRefName,headRefName \
+    --jq 'select(.baseRefName != null and .headRefName != null) | .baseRefName + "\t" + .headRefName' 2>/dev/null) || return 0
+  base=${fields%%$'\t'*}
+  [ -n "$base" ] || return 0
+  jg_frozen_base_refusal "$config" "$project" "$base" "$(jg_dod_meta_value "$meta" red_fix_of)" "jg-pr-check.sh" || {
+    echo "  $url retargets a frozen release; change this pull request's base (gh-axi pr edit <number> --base <branch>), then arm again" >&2
+    return 1
+  }
+}
+
+jg_pr_check_frozen_base "$META" "$URL" || exit 1
 
 "$JG_ROOT/bin/jg-guard.sh" || true
 
