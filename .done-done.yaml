@@ -141,6 +141,8 @@ journeys:
     command: bash journeys/escalation-rules-live.sh
   token-cuts-live:
     command: bash journeys/token-cuts-live.sh
+  context-bound-at-wake:
+    command: bash journeys/context-bound-at-wake.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

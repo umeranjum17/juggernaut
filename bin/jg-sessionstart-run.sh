@@ -27,7 +27,10 @@
 #   startup, new            full digest - this process has not taken the helm
 #   clear, compact          `--reemit` digest only when this lock owner recorded
 #                           a completed full startup; otherwise a full digest,
-#                           so a startup killed mid-sweep is finished first
+#                           so a startup killed mid-sweep is finished first;
+#                           after a compact it also prints the captain's own
+#                           words verbatim and the history path
+#                           (bin/jg-context-bound.py, docs/context-bound.md)
 #   resume, reload, fork    delegate to the nudge wrapper. Prior context is
 #                           restored on these, so re-running is redundant when
 #                           this process still holds the lock (the nudge stays
@@ -84,6 +87,7 @@ COMPLETION_FILE="$STATE/.session-start-complete"
 . "$SCRIPT_DIR/jg-hook-host-lib.sh"
 
 SOURCE=
+PAYLOAD=
 PI_PREREQUISITE=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -168,6 +172,10 @@ case "$SOURCE" in
     else
       "$SCRIPT_DIR/jg-session-start.sh" --source "$SOURCE" || true
     fi
+    # A compaction summary paraphrases the captain; put his own words back verbatim
+    # and point at the full history on disk (docs/context-bound.md).
+    [ "$SOURCE" != compact ] || [ -z "$PAYLOAD" ] ||
+      printf '%s' "$PAYLOAD" | python3 "$SCRIPT_DIR/jg-context-bound.py" emit --state "$STATE" || true
     ;;
   *)
     "$SCRIPT_DIR/jg-session-start.sh" --source "$SOURCE" || true

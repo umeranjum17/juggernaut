@@ -63,6 +63,7 @@ The run wrapper learns the source in one of two ways:
 - It takes `--source <name>` when the adapter knows the source natively.
 - Otherwise it reads the `source` field from a Claude/Codex-shaped JSON hook payload on stdin.
 
+After a `compact` it also prints the captain's own words and the history path (`docs/context-bound.md`).
 A re-emit (`--reemit`) reprints the digest for a process that already has the helm and lost only its context.
 
 | Source | Action | Why |

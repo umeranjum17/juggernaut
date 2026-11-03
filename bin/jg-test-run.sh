@@ -738,6 +738,7 @@ tests/jg-lint-partitions.test.sh 4361
 tests/jg-local-suite-tree.test.sh 420
 tests/jg-merge-on-green.test.sh 900
 tests/jg-lint-root-memory.test.sh 4747
+tests/jg-context-bound.test.sh 300
 tests/jg-mail.test.sh 21000
 tests/jg-merge-gate-lib.test.sh 83
 tests/jg-merge-gate-policy.test.sh 15000
