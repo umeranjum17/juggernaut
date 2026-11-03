@@ -34,7 +34,8 @@ set ntfy-tag juggernaut
 set ntfy-relay off
 set ntfy-relay-server https://ntfy.sh
 # Chat gateway (jg-bus gateway, docs/captain-chat.md). Optional: with no token file at the path
-# below (mode 600) it is off, silently. `jg-bus gateway pair` sets telegram-allow-user.
+# below (mode 600) it is off, silently. `jg-bus gateway setup` guides you through making your own
+# bot, storing its token and pairing; `jg-bus gateway pair` alone sets telegram-allow-user.
 #   set gateway-adapters telegram
 #   set telegram-token-file config/captain-chat/telegram.token
 #   set chat-media-days 30       # inbound chat files are kept this many days, then deleted
