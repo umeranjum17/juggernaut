@@ -124,7 +124,7 @@ machine's own bus. Each home keeps its password in its own `state/bus`, and the 
 writes a sibling home's account from that home's file. A client that connects as the
 empty user is refused.
 No client puts the login on the nats argument list, where `ps` shows it to every user on the machine.
-Every other client passes it in `NATS_USER` and `NATS_PASSWORD`; the captain-ntfy consumer and the stream checks write it from the password file to `state/bus/nats-context.json` (mode 0600) and name that file with `--context`.
+Every other client passes it in `NATS_USER` and `NATS_PASSWORD`; the stream checks write it from the password file to `state/bus/nats-context.json` (mode 0600) and name that file with `--context`.
 
 Three config faults made the first unit fail on a real machine and are fixed:
 includes were absolute (nats resolves them against the including file), the

@@ -136,8 +136,7 @@ func post(target, body string, headers map[string]string) (int, string, error) {
 func ok2xx(status int) bool { return status >= 200 && status < 300 }
 
 // deliverToNtfy sends one event to the captain's topic and returns ntfy's own answer (its
-// message id). It is the one delivery call: the consumer on the CAPTAIN stream makes it for
-// every event the bus accepted, and publish makes it only for an event the bus did not.
+// message id). publish makes it for an event the bus did not take.
 func (a *app) deliverToNtfy(text string) (target, id string, err error) {
 	target = a.ntfyURL()
 	headers := map[string]string{"Title": clampChars(firstLine(text), 120),
@@ -206,11 +205,11 @@ func (a *app) publish(args []string) int {
 		a.noteFailure("bus "+subject, out)
 	}
 	if mode != "live" || accepted || isChatEvent(subject) {
-		// Live and accepted: the event is on the CAPTAIN stream, and the stream's
-		// consumer (`jg-bus deliver`) is the one path that delivers it to ntfy.
+		// Live and accepted: the event is on the CAPTAIN stream, which is where a
+		// reader of the captain's channel takes it from.
 		return 0
 	}
-	// The bus did not take the event, so no consumer will see it: deliver it directly
+	// The bus did not take the event, so the stream never holds it: deliver it directly
 	// rather than lose a captain-facing event.
 	if delivery, _, err := a.deliverToNtfy(text); err != nil {
 		a.noteFailure("ntfy", err.Error())
@@ -493,18 +492,8 @@ func (a *app) buildUnit(part string) (string, error) {
 		fmt.Fprintf(&b, "Description=Juggernaut captain channel delivery (ntfy, loopback)\n")
 		fmt.Fprintf(&b, "After=network.target\n\n")
 		a.unitService(&b, quote, percent, quoteAll(quote, a.ntfyArgv(path)))
-	case "deliver":
-		self, err := os.Executable()
-		if err != nil {
-			return "", fmt.Errorf("cannot find the jg-bus binary: %v", err)
-		}
-		fmt.Fprintf(&b, "Description=Juggernaut captain channel consumer (CAPTAIN stream to ntfy)\n")
-		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
-		a.unitService(&b, quote, percent, quoteAll(quote, []string{self, "deliver"}))
-		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_BUS_ROOT="+a.root))
-		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_STATE_OVERRIDE="+a.state))
 	default:
-		return "", fmt.Errorf("unit: unknown part %q (nats, wake-engine, wake-watcher, router, dapr, ntfy, deliver)", part)
+		return "", fmt.Errorf("unit: unknown part %q (nats, wake-engine, wake-watcher, router, dapr, ntfy)", part)
 	}
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	return b.String(), nil

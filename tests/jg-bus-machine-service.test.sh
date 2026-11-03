@@ -114,7 +114,6 @@ stop_lab() {
   for f in "$D"/reap-*.pid; do
     [ ! -s "$f" ] || kill "$(cat "$f")" 2>/dev/null || true
   done
-  if [ -s "$D/sink.pid" ]; then kill "$(cat "$D/sink.pid")" 2>/dev/null || true; fi
 }
 # The servers stop before the shared cleanup removes $D (and the pid files in it): a signal
 # used to remove the directory first, so the stop found no pid and the server outlived the run.
@@ -247,48 +246,22 @@ grep -q 'Authorization Violation' "$D/mismatch.err" \
   || { cat "$D/mismatch.err"; fail "a mismatched name was not refused the way production refused it"; }
 pass "a home the machine's registry names logs in as that account from every client, creates its stream and round-trips one message; the server refuses nothing, and still refuses a name its accounts file does not hold"
 
-# --- 1d. the captain-ntfy consumer logs in without its password on the command line ------
-# The live consumer ran `nats --password=...` for every 30-second wait, so any user on the
-# machine read the password in `ps`. Home two's password begins with a dash, the case a
-# flag parser misreads. The consumer delivers one event from its stream to a stand-in
-# ntfy, and no call any bus command made in this lab carried a password flag or value.
-SINK="$D/ntfy-requests.jsonl"
-python3 - "$SINK" "$D/sink.port" >/dev/null 2>&1 <<'PY' &
-import http.server, json, sys
-out, portfile = sys.argv[1], sys.argv[2]
-class H(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        body = self.rfile.read(int(self.headers.get('content-length') or 0)).decode('utf-8', 'replace')
-        with open(out, 'a') as f:
-            f.write(json.dumps({'path': self.path, 'body': body}) + '\n')
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'{"id":"lab-ntfy-1"}')
-    def log_message(self, *a):
-        pass
-srv = http.server.HTTPServer(('127.0.0.1', 0), H)
-open(portfile, 'w').write(str(srv.server_address[1]))
-srv.serve_forever()
-PY
-echo $! > "$D/sink.pid"
-for _ in $(seq 100); do [ -s "$D/sink.port" ] && break; sleep 0.1; done
-[ -s "$D/sink.port" ] || fail "the stand-in ntfy never started"
-printf 'set ntfy-server http://127.0.0.1:%s\nset ntfy-topic lab-captain\n' "$(cat "$D/sink.port")" >> "$H2/config/captain-channel"
-printf '{"at":1,"kind":"card","key":"k-argv","subject":"jg.captain.card","text":"Delivered with the login off the command line."}' |
-  NATS_USER=$name2 NATS_PASSWORD=$(cat "$cred2") "$NATS_BIN" -s "nats://127.0.0.1:$PORT" \
-    pub jg.captain.card --force-stdin >/dev/null 2>&1 || fail "the lab could not publish to home two's stream"
-out=$(bus "$H2" deliver --once 2>&1) || fail "home two's consumer did not drain its stream: $out"
-assert_contains "$(cat "$SINK" 2>/dev/null)" "Delivered with the login off the command line." "home two's consumer must deliver the event to ntfy"
-assert_contains "$(cat "$H2/state/captain-channel-delivered.jsonl" 2>/dev/null)" '"ntfy_id":"lab-ntfy-1"' "the delivery record must carry ntfy's id"
-grep -q -- 'consumer next' "$D/nats-argv.log" || fail "the consumer's wait never went through the lab client, so the check below would prove nothing"
+# --- 1d. a stream call logs in without its password on the command line ------------------
+# The old live consumer ran `nats --password=...` for every 30-second wait, so any user on
+# the machine read the password in `ps`. Home two's password begins with a dash, the case
+# a flag parser misreads. A stream check from home two goes through the logging client, and
+# no call any bus command made in this lab carried a password flag or value.
+: > "$D/nats-argv.log"
+bus "$H2" stream >/dev/null 2>&1 || fail "home two could not check its own stream"
+grep -q -- 'stream info' "$D/nats-argv.log" || fail "the stream check never went through the lab client, so the check below would prove nothing"
 ! grep -q -- '--password' "$D/nats-argv.log" || fail "a nats call passed a password flag on its command line"
 for p in "$D"/homes/*/state/bus/*.pass "$LEAD2"/state/bus/*.pass; do
   [ -s "$p" ] || continue
   ! grep -qF -- "$(tr -d '\n' < "$p")" "$D/nats-argv.log" || fail "a nats call carried the password in $p on its command line"
 done
 assert_equals "600" "$(stat -c %a "$H2/state/bus/nats-context.json" 2>/dev/null || stat -f %Lp "$H2/state/bus/nats-context.json")" \
-  "the consumer's login file must be readable by its owner only"
-pass "the captain-ntfy consumer delivers with its login in a 0600 context file, and no nats call any bus command made carried a password flag or value"
+  "the login file must be readable by its owner only"
+pass "a stream call logs in with a 0600 context file, and no nats call any bus command made carried a password flag or value"
 
 # The owner's own unchanged install touches nothing; a third home joins by reload too.
 bus "$H1" install-service >/dev/null 2>&1
