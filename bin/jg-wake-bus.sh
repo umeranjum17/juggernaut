@@ -192,6 +192,9 @@ live_cursor_set() { # <stream> <sequence> [<stream created>]
 # model. The cursor therefore carries the creation time of the stream it was taken
 # on: a different stream, or a cursor past this one's last sequence, starts again at
 # the stream's first message.
+#
+# A wake event's number is its rseq. An inbox record already carries its own number, the
+# record's file in the task's inbox, so the stream sequence never replaces it.
 LIVE_PENDING=()
 live_apply() { # <stream> <file>
   local stream=$1 out=$2 from seq first last made was info raw body fresh=0
@@ -218,7 +221,7 @@ live_apply() { # <stream> <file>
     body=$(printf '%s' "$raw" | jq -r '.data // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$body" ]; then
       printf '%s' "$body" | jq -c --argjson seq "$seq" --arg home "$(live_home_key)" \
-        'select(.home == $home) | . + {seq: (.rseq // $seq)}' >> "$out" 2>/dev/null || true
+        'select(.home == $home) | .seq = (.rseq // .seq // $seq)' >> "$out" 2>/dev/null || true
     fi
     seq=$((seq + 1))
   done
@@ -285,7 +288,7 @@ live_render() {
   # An event a failed publish still owes the bus is part of the read model: a home
   # whose bus is down keeps queueing and keeps draining, and the outbox hands the
   # event to the stream on the next render that can reach it.
-  if [ -s "$LIVE_OUTBOX" ]; then jq -c 'del(.subject) | .seq = (.rseq // 0)' "$LIVE_OUTBOX" >> "$model" 2>/dev/null || true; fi
+  if [ -s "$LIVE_OUTBOX" ]; then jq -c 'del(.subject) | .seq = (.rseq // .seq // 0)' "$LIVE_OUTBOX" >> "$model" 2>/dev/null || true; fi
   if [ "$have_bus" = 1 ]; then
     live_apply "$WAKE_STREAM" "$model" || true
     live_apply "$INBOX_STREAM" "$model" || true
@@ -394,14 +397,17 @@ live_inbox_raise() { # <task> <seq> <delivery> <body-sha>
 # live_inbox_settle: a worker acknowledges a steer by moving its record into
 # handled/, so this is the one observer that carries that move to the bus. A
 # record still in its inbox is left alone; one that is gone is acknowledged.
-# Cheap: it reads the local replica, not the bus.
+# Cheap: it reads the local replica, not the bus. The record's number is the last part
+# of its own id, and its file is that number padded the way bin/jg-task-inbox-lib.sh
+# names it, so a replica an older render wrote with the stream's sequence still settles.
 live_inbox_settle() {
-  local task seq
+  local id task seq
   bus_gate >/dev/null 2>&1 || return 0
-  live_events | jq -r 'select((.ack // false) != true and .task != null) | [.task, .seq] | @tsv' 2>/dev/null | while IFS=$'\t' read -r task seq; do
+  live_events | jq -r 'select((.ack // false) != true and .task != null) | [.id, .task, (.id | split("/") | last)] | @tsv' 2>/dev/null | while IFS=$'\t' read -r id task seq; do
       [ -n "${task:-}" ] || continue
-      [ -e "$STATE/$task.inbox/$seq.msg" ] && continue
-      printf 'inbox/%s/%s/%s\n' "$(live_home_key)" "$task" "$seq"
+      case "$seq" in ''|*[!0-9]*) continue ;; esac
+      [ -e "$STATE/$task.inbox/$(printf '%03d' "$((10#$seq))").msg" ] && continue
+      printf '%s\n' "$id"
     done > "$STATE/.wake-bus.inbox-acks.$$" || return 0
   if [ -s "$STATE/.wake-bus.inbox-acks.$$" ]; then
     # shellcheck disable=SC2046  # one id per line, each one event id
@@ -422,7 +428,7 @@ live_count() {
 # events to the stream when the bus answers again.
 live_events() {
   if [ -s "$LIVE_EVENTS" ]; then cat "$LIVE_EVENTS"; fi
-  if [ -s "$LIVE_OUTBOX" ]; then jq -c 'del(.subject) | .seq = (.rseq // 0)' "$LIVE_OUTBOX" 2>/dev/null || true; fi
+  if [ -s "$LIVE_OUTBOX" ]; then jq -c 'del(.subject) | .seq = (.rseq // .seq // 0)' "$LIVE_OUTBOX" 2>/dev/null || true; fi
 }
 
 # live_ids <kind> <key>: the queued, unsettled ids for exactly this kind and key.
