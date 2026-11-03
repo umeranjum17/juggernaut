@@ -55,3 +55,4 @@ The five goals, scored together:
 - Report measured results only, never forecast dates.
 - A status line that says working names a live worker.
 - A finished report sends its conclusion at once; a bookkeeping gate never hides a finished result.
+- While a part named in `critical=` of `config/migration-card` is not live, a ship names its `Migration row:` (the first part not live, or `none`) or the spawn refuses it; `bin/jg-critical-path.sh` owns the order and the refusal.
