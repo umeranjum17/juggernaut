@@ -124,10 +124,10 @@
 //
 //	jg-bus config [<key>]
 //	jg-bus publish <kind> <key> <text> [--link <url>]
-//	jg-bus gateway --once | serve   (gateway.go owns this)
+//	jg-bus gateway --once | serve | pair | status | enabled   (gateway.go and gateway_pair.go own this)
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|ntfy] | install-service | stop | status | bootstrap
+//	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|ntfy|gateway] | install-service | stop | status | bootstrap
 //	jg-bus wake-engine | router | probe [wake-engine|wake-watcher|router]   (engine.go owns these)
 //	jg-bus wake-watcher | watcher oldest|resurfaced|latest|rows|replay|rebuild   (watcher.go owns these)
 //

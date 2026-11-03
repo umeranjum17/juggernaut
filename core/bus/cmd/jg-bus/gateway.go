@@ -145,38 +145,57 @@ func (a *app) pollOnce(ad Adapter, allow []string) error {
 	return err
 }
 
-// gateway receives chat for the captain: `--once` is one pass, `serve` polls until stopped. The
-// adapter, token file and owner id are keys of the captain-channel config.
-func (a *app) gateway(args []string) int {
-	if len(args) != 1 || (args[0] != "--once" && args[0] != "serve") {
-		return die("gateway needs --once or serve")
-	}
-	once := args[0] == "--once"
-	if mode := a.channelMode(); mode != "live" || a.cfgOr("gateway-adapters", "") == "" {
-		say("gateway: nothing to receive (mode %s, gateway-adapters %q)", mode, a.cfgOr("gateway-adapters", ""))
-		return 0
-	}
-	if a.cfgOr("gateway-adapters", "") != "telegram" {
-		return die("gateway-adapters can only name telegram so far")
-	}
-	file := a.cfgOr("telegram-token-file", "config/captain-chat/telegram.token")
+// readTokenFile is the one reader of a bot token file. A missing file is "not present", not an
+// error (the channel is optional); a file that group or others can read is refused.
+func (a *app) readTokenFile() (token, file string, present bool, err error) {
+	file = a.cfgOr("telegram-token-file", "config/captain-chat/telegram.token")
 	if !filepath.IsAbs(file) {
 		file = filepath.Join(a.home, file)
 	}
-	info, err := os.Stat(file)
-	if err != nil {
-		return die("gateway: no telegram token file at %s", file)
+	info, statErr := os.Stat(file)
+	if statErr != nil {
+		return "", file, false, nil
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return die("gateway: %s is readable by group or others; run chmod 600 on it", file)
+		return "", file, true, fmt.Errorf("%s is readable by group or others; run chmod 600 on it", file)
 	}
 	raw, _ := os.ReadFile(file)
-	token := strings.TrimSpace(string(raw))
-	if token == "" {
-		return die("gateway: %s holds no token", file)
+	if token = strings.TrimSpace(string(raw)); token == "" {
+		return "", file, true, fmt.Errorf("%s holds no token", file)
+	}
+	return token, file, true, nil
+}
+
+// gateway receives chat for the captain: `--once` is one pass, `serve` polls until stopped, `pair`
+// records the owner's id, `status` reports, `enabled` is the service wiring's silent question.
+// With no token file every subcommand but `status` does nothing.
+func (a *app) gateway(args []string) int {
+	if len(args) != 1 || !slices.Contains([]string{"--once", "serve", "pair", "status", "enabled"}, args[0]) {
+		return die("gateway needs --once, serve, pair, status or enabled")
+	}
+	once := args[0] == "--once"
+	token, file, present, err := a.readTokenFile()
+	wanted := a.channelMode() == "live" && present && a.cfgOr("gateway-adapters", "telegram") == "telegram"
+	if args[0] == "enabled" {
+		if wanted {
+			return 0
+		}
+		return 1
+	}
+	if args[0] == "status" {
+		return a.gatewayStatus(token, file, present, err)
+	}
+	if !wanted {
+		return 0
+	}
+	if err != nil {
+		return die("gateway: %v", err)
 	}
 	allow := strings.FieldsFunc(a.cfgOr("telegram-allow-user", ""), func(r rune) bool { return r == ',' || r == ' ' })
 	ad := &telegram{base: strings.TrimRight(a.cfgOr("telegram-api-url", "https://api.telegram.org"), "/"), token: token, wait: 30 * time.Second, sleep: time.Sleep}
+	if args[0] == "pair" {
+		return a.pair(ad)
+	}
 	if once {
 		ad.wait = 0
 	}

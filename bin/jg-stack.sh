@@ -249,4 +249,19 @@ for part in nats wake-engine wake-watcher router dapr; do
     echo "stream $stream exists"
   fi
 done
+# The chat gateway is optional: it runs only where this home has a bot token file. A home without one gets
+# no unit, no line and no failure; a token file removed later retires the unit it had.
+if "$BUS" gateway enabled; then
+  gw=$(unit_name gateway)
+  if [ "$mode" = up ] && [ "$sup" = systemd ]; then
+    changed=0; install_unit gateway && changed=1
+    [ "$changed" = 0 ] || systemctl --user daemon-reload || fail gateway "systemctl daemon-reload failed" "the captain's chat"
+    systemctl --user enable "$gw" >/dev/null 2>&1 || fail gateway "cannot enable $gw" "the captain's chat"
+    if [ "$changed" = 1 ] && systemctl --user is-active --quiet "$gw"; then systemctl --user restart "$gw"; else systemctl --user start "$gw"; fi \
+      || fail gateway "cannot start $gw, see journalctl --user -u $gw" "the captain's chat"
+  fi
+  echo "gateway     enabled ($gw)"
+elif [ "$mode" = up ]; then
+  retire_part gateway
+fi
 echo "stack: up ($sup)"
