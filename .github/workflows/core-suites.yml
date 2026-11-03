@@ -285,6 +285,8 @@ jobs:
         run: bash merge-on-green/tests/merge-on-green.test.sh
       - name: Merge-on-green uninstall test
         run: bash merge-on-green/tests/merge-on-green-uninstall.test.sh
+      - name: Stale-PR alarm test
+        run: bash merge-on-green/tests/stale-pr-alarm.test.sh
       # Fixture home, stub gh and receipts; no merge runs.
       - name: Owner-rules gate test
         run: bash owner-rules/tests/owner-rules-gate.test.sh

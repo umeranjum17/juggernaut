@@ -766,6 +766,7 @@ tests/jg-proof-attach.test.sh 980
 tests/jg-public-followup.test.sh 478002
 tests/jg-quota-array-dispatch-live-e2e.test.sh 85
 tests/jg-release-readiness.test.sh 11877
+tests/jg-release-tag.test.sh 1500
 tests/jg-remote-reply.test.sh 236030
 tests/jg-remote-squad-lead-lifecycle-e2e.test.sh 680926
 tests/jg-reply-bus-parity.test.sh 102

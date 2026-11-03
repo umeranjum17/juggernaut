@@ -35,6 +35,8 @@ if [ -z "${JG_BUS_BIN:-}" ] && ! command -v go >/dev/null 2>&1; then
 fi
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# Servers an earlier run left behind after its directory went (a hard kill skips every trap).
+"$ROOT/bin/jg-bus-reap.sh" >/dev/null 2>&1 || true
 D=$(jg_test_tmproot jg-bus-machine)
 BUS="$ROOT/bin/jg-bus.sh"
 
@@ -101,8 +103,20 @@ PATH="$LAB_BIN:$PATH"; export PATH
 stop_lab() {
   if [ -s "$D/service.pid" ]; then kill "$(cat "$D/service.pid")" 2>/dev/null || true; fi
   if [ -s "$D/solo.pid" ]; then kill "$(cat "$D/solo.pid")" 2>/dev/null || true; fi
+  local f
+  for f in "$D"/reap-*.pid; do
+    [ ! -s "$f" ] || kill "$(cat "$f")" 2>/dev/null || true
+  done
 }
-trap stop_lab EXIT
+# The servers stop before the shared cleanup removes $D (and the pid files in it): a signal
+# used to remove the directory first, so the stop found no pid and the server outlived the run.
+# shellcheck disable=SC2329 # Registered by the traps below.
+lab_exit() { stop_lab; jg_test_cleanup; }
+trap lab_exit EXIT
+trap 'lab_exit; exit 130' INT
+trap 'lab_exit; exit 143' TERM
+trap 'lab_exit; exit 129' HUP
+trap 'lab_exit; exit 131' QUIT
 
 make_home() { # <dir>
   mkdir -p "$1/state" "$1/data" "$1/config/bus"
@@ -341,7 +355,10 @@ grep -q '^include accounts.conf$' "$CONF" || fail "the server config does not in
 bus "$H21" check-limits "$CONF" >/dev/null || fail "check-limits refused the generated config"
 
 # The server really starts on it: JetStream up, no resource refusal.
-( cd "$D" && setsid "$NATS_SERVER" -c "$CONF" > "$D/many.log" 2>&1 < /dev/null & echo $! > "$D/solo.pid" )
+# The pid is the server's own: `cd && cmd &` would background the whole list, and the pid file
+# would name the subshell, so the stop below missed the server and it outlived the run.
+( cd "$D" && exec setsid "$NATS_SERVER" -c "$CONF" > "$D/many.log" 2>&1 < /dev/null ) &
+echo $! > "$D/solo.pid"
 for _ in $(seq 100); do (: < "/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break; sleep 0.1; done
 bus "$H21" ensure 2>&1 | grep -q "bus: up" || { cat "$D/many.log"; fail "the server did not come up on the generated 21-account config"; }
 ! grep -q 'insufficient' "$D/many.log" || fail "the server refused the generated caps"
@@ -359,3 +376,29 @@ sed -i -e "s/^port: .*/port: $PORT2/" "$D/broken.conf"
 ( cd "$D" && timeout 20 "$NATS_SERVER" -c "$D/broken.conf" > "$D/broken.log" 2>&1 < /dev/null ) || true
 grep -q 'insufficient' "$D/broken.log" || fail "the incident config no longer reproduces the server refusal"
 pass "a config the server cannot start with is refused with the shortfall named (it reproduces 10028 on a real server)"
+
+# --- 4. the reaper stops a stale lab server and nothing else -------------------------
+# A server whose jg-bus-machine config directory is gone is stopped; a live one, and a server
+# whose config path holds no jg-bus-machine directory (another home's bus) are left running,
+# even with the config directory removed. The reaper is told to look only below the temp base.
+REAP="$D/reap"
+OTHER=$(jg_test_tmproot jg-reapother)
+reap_start() { # <config dir> <pid file>
+  mkdir -p "$1"; printf 'host: "127.0.0.1"\nport: -1\n' > "$1/bus.conf"
+  ( cd "$1" && exec setsid "$NATS_SERVER" -c "$1/bus.conf" > "$1/log" 2>&1 < /dev/null ) &
+  echo $! > "$2"
+}
+reap_start "$REAP/jg-bus-machine.STALE1/state/bus" "$D/reap-stale.pid"
+reap_start "$REAP/jg-bus-machine.LIVE01/state/bus" "$D/reap-live.pid"
+reap_start "$OTHER/state/bus" "$D/reap-other.pid"
+sleep 0.5
+rm -rf -- "$REAP/jg-bus-machine.STALE1" "$OTHER/state"
+reap_out=$("$ROOT/bin/jg-bus-reap.sh" --under "$(dirname "$D")")
+assert_contains "$reap_out" "reaped $(cat "$D/reap-stale.pid") " "the reaper must stop the server whose directory is gone: $reap_out"
+sleep 0.3
+! kill -0 "$(cat "$D/reap-stale.pid")" 2>/dev/null || fail "the stale lab server is still running"
+kill -0 "$(cat "$D/reap-live.pid")" 2>/dev/null || fail "the reaper stopped a live lab server"
+kill -0 "$(cat "$D/reap-other.pid")" 2>/dev/null || fail "the reaper stopped a server that is not a jg-bus-machine lab"
+assert_equals "" "$("$ROOT/bin/jg-bus-reap.sh" --under "$(dirname "$D")")" "a second pass has nothing left to stop"
+kill "$(cat "$D/reap-live.pid")" "$(cat "$D/reap-other.pid")" 2>/dev/null || true
+pass "the reaper stops a lab server whose directory is gone and leaves a live one and another home's server alone"

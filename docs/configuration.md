@@ -507,6 +507,13 @@ A feature branch whose merge conflicts is reported and left exactly as it is, an
 A pull request that already carries a sealed proof at its head is skipped for the same reason and left exactly as it is, because the carry moves that head and every proof, receipt and card bound to it goes stale and the change has to be proved again from scratch; a branch with no proof at its head is still carried, so the release branch keeps reaching the work in flight.
 One line per branch prints beside the merge record: `<branch>: updated <before>..<after>`, `<branch>: already current`, or `<branch>: skipped: ...` with the reason.
 
+### Release tag and release page
+
+Every recorded merge runs `bin/jg-release-tag.sh <pr-url> <project-dir>`, with no config to set.
+When the merged pull request had head `release/<name>` and base the default branch, it creates tag and GitHub release `<name>` (release/c-6 gives `c-6`) through `gh release create` only; the notes carry the release pull request and the pull requests merged into the release branch.
+It is idempotent, never forces, moves or deletes a tag, and leaves a repository that already holds a tag not of the form `c-<N>` on its own scheme.
+To backfill an old release, run the script by hand with its pull request URL.
+
 ### Frozen release branches (config/version-branch-frozen)
 
 The optional local, gitignored `config/version-branch-frozen` lists release branches that take no new work, one branch name per line (blank lines and `#` comments are ignored); an absent file freezes nothing.
@@ -2952,6 +2959,7 @@ JG_LOG_MAX_BYTES=1048576           # daemon log size that triggers trimming
 JG_LOG_KEEP_LINES=2000             # daemon log lines kept when trimming
 # supervision host (bin/jg-supervision-host.sh); read only in a home that runs it
 JG_SUPERVISION_HOST_PARK_SECONDS=27000   # the host ends its park with a cycle-boundary wake after this long, under the Stop hook's 28800 s timeout
+JG_BRANCH_OUTCOME_DEFER_SECS=600        # a finished task's captain outcome waits this long for a turn main takes anyway before the host wakes main for it; 0 wakes main at once
 JG_SUPERVISION_HOST_TURN_TIMEOUT=1200    # bound on one engine turn; a turn that hits it hands its wake to main
 JG_SUPERVISION_HOST_ROTATE_TURNS=20      # the engine conversation starts fresh after this many turns (and at every main session start)
 JG_SUPERVISION_ENGINE_GRACE=30           # seconds between TERM and KILL when an engine turn is stopped

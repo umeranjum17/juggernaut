@@ -8,6 +8,13 @@
 #   heartbeat   in away mode a heartbeat over an unchanged fleet raises no wake; a changed fleet does.
 #   done-key    a done carrying a key closes that key's wait (proved by tests/jg-wake-batching.test.sh,
 #               which the journey runs beside this file, so a key never re-pings after its done).
+#   planned     a pause that names its future event raises no wake and no re-ping, while a block
+#               with no clearing condition still escalates.
+#   misses      the four notices that cost a turn for nothing after c-5 (a gap just opened, the fleet-pulse
+#               2h report, a relaunch that lost the race to another spawn during a restart pass, a
+#               lead's supervision notice seconds after its own restart) raise no wake, and the same
+#               notices still wake once the gap is long, the failure is not a restart pass, or the lead
+#               stayed down past the grace window.
 #   immediate   a captain answer, a red gate, a host alarm, a stuck worker and a finished deliverable
 #               still wake at once, even when the digest is due.
 # This is also the test that owns journeys/wake-schedule.sh (the done-done journey runs this file),
@@ -183,7 +190,101 @@ test_urgent_stays_now() {
   pass "a captain answer, a red gate, a host alarm, a stuck worker and a finished deliverable wake at once"
 }
 
+# --- 4. a planned wait does not wake or re-ping; an unconditioned block still escalates ---
+test_planned_wait_is_quiet() {
+  local dir fut stale_beyond stale_due timer_pause timer_block
+  dir=$(new_home planned)
+  fut=$(date -u -d '+3 days' +%Y-%m-%dT%H:%MZ)
+  stale_beyond='stale: w:1 (paused 9s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds)'
+  stale_due='stale: w:1 (paused 9s, awaiting external - the declared clearing time has passed, rechecked on a long cadence not a wedge; confirm the wait cleared)'
+  timer_pause='check: waiting-state lane (paused, observed 9s, level=owner; still open, owning lead must recheck and unblock) id=x'
+  timer_block='check: waiting-state lane (blocked key=held, observed 9s, level=owner; owning lead must recheck and unblock) id=x'
+
+  # A change held for the next release branch names its future event: a paused line with `until`.
+  printf 'paused [at=%s]: PR held for release/c-6 until %s\n' "$(date +%s)" "$fut" > "$dir/state/planned.status"
+  assert_equals batch "$(route "$dir" signal planned.status 'signal: planned.status')" "a planned wait must not wake on its status line"
+  assert_equals batch "$(route "$dir" stale w:1 "$stale_beyond")" "a planned wait with its time ahead must not re-ping"
+  assert_equals batch "$(route "$dir" check waiting-timer-h-planned-g1-default-owner-again "$timer_pause")" "a planned wait's timer must not re-ping"
+  # Once the declared time has passed the wait is rechecked once, so a plan that slipped is found.
+  assert_equals now "$(route "$dir" stale w:1 "$stale_due")" "a pause past its declared time must wake"
+
+  # A block that names no clearing condition is a stuck worker and keeps escalating.
+  printf 'blocked [at=%s] [key=held]: waiting, cannot continue\n' "$(date +%s)" > "$dir/state/stuck.status"
+  assert_equals now "$(route "$dir" signal stuck.status 'signal: stuck.status')" "a block with no clearing condition must wake"
+  assert_equals now "$(route "$dir" check waiting-timer-h-stuck-g1-held-owner "$timer_block")" "a block with no clearing condition must escalate"
+
+  # The real appender queues the planned wait's re-ping as routine, so no cycle wakes for it.
+  rm -f "$dir"/state/*.status
+  : > "$dir/events"
+  append "$dir" stale w:1 "$stale_beyond" >/dev/null
+  cycle "$dir"
+  [ ! -s "$dir/events" ] || fail "a planned wait woke the supervisor: $(cat "$dir/events")"
+  pass "a planned wait raises no wake and no re-ping, and a block with no clearing condition still escalates"
+}
+
+# --- 5. the four notices that cost Main a turn for nothing after c-5 ---------------
+test_wake_misses_after_c5() {
+  local dir state now hb pre pulse lead
+  dir=$(new_home misses)
+  state="$dir/state"
+  now=$(date +%s)
+  hb="$state/fleet-heartbeat.check.sh"
+  pre="check: $hb: fleet heartbeat:"
+
+  # (a) A gap that has only just opened rides the digest; a gap open past the threshold wakes.
+  assert_equals batch "$(route "$dir" check "$hb" "$pre homeA GAP for 0s - 1 ready, 2 of 6 lanes working, 18 paused wait(s)")" "a gap just opened must ride the digest"
+  assert_equals batch "$(route "$dir" check "$hb" "$pre homeA GAP for 0s - 2 ready, 0 of ? lanes working, pause declaration failed in config/x")" "a failure word in a fresh gap's side note must not wake"
+  assert_equals batch "$(route "$dir" check "$hb" "$pre homeA GAP for 3599s - 1 ready, 1 of 6 lanes working")" "a gap just under the threshold still rides the digest"
+  assert_equals batch "$(route "$dir" check "$hb" "$pre homeA GAP for 0s - work waits in a new shape")" "an unknown gap shape rides the digest"
+  assert_equals now "$(route "$dir" check "$hb" "$pre homeA GAP for 3600s - 1 ready, 1 of 6 lanes working, 20 paused wait(s)")" "a gap open at the threshold must wake"
+  assert_equals now "$(route "$dir" check "$hb" "$pre homeA GAP for 0s - 1 ready, 2 of 6 lanes working $pre homeB GAP for 7200s - 3 ready, 0 of 4 lanes working")" "a long gap in any home of the report must wake"
+  assert_equals now "$(route "$dir" check "$hb" "$pre homeA STALLED for 9s - work waits but no supervision beat for 999s")" "a stall keeps waking"
+  printf 'set gap-wake-seconds 600\n' > "$dir/config/wake-routing"
+  assert_equals now "$(route "$dir" check "$hb" "$pre homeA GAP for 700s - 1 ready, 1 of 6 lanes working")" "a home can lower the gap threshold"
+  rm -f "$dir/config/wake-routing"
+
+  # (b) The fleet-pulse 2h report rides the digest whatever words it carries; another fleet-pulse
+  # failure keeps waking.
+  pulse="$state/fleet-pulse.check.sh"
+  assert_equals batch "$(route "$dir" check "$pulse" "check: $pulse: fleet-pulse 2h (landings = merged PRs; open target 4, ! = over, UNDER = free slots with ready work; rule words 8602): crewhouse:landed0/open1(w0 done0 asks>2h0 dry=1) STALLED GATE-BYPASS1 - steer STALLED, GATE-BYPASS (merged without a passing checks-lint) | alarm: 2 lanes failed FAILED")" "the 2h report must ride the digest even when it names a stall or a failure"
+  assert_equals now "$(route "$dir" check "$pulse" "check: $pulse: setup sync failed: credential shape refused")" "another fleet-pulse failure must wake"
+  : > "$dir/events"
+  assert_equals batch:fleet-pulse.check.sh "$(append "$dir" check fleet-pulse.check.sh "check: fleet-pulse.check.sh: fleet-pulse 2h (landings = merged PRs): crewhouse:landed0/open1 STALLED failed")" "the production appender must batch the 2h report"
+  cycle "$dir"
+  [ ! -s "$dir/events" ] || fail "the 2h report woke the supervisor: $(cat "$dir/events")"
+
+  # (c) A relaunch that lost the race to another spawn is noise only during Main's restart pass.
+  lead="check: squad_lead beta auto-relaunch failed after dead (pane): error: another spawn is already creating task beta"
+  assert_equals now "$(route "$dir" check "squad-lead-relaunch-failed-beta-$now" "$lead")" "the same notice outside a restart pass must wake"
+  printf '%s\tbeta\n' "$now" > "$state/.squad-lead-restart-pass"
+  assert_equals silent "$(route "$dir" check "squad-lead-relaunch-failed-beta-$now" "$lead")" "the notice during a restart pass must settle"
+  assert_equals now "$(route "$dir" check "squad-lead-relaunch-failed-gamma-$now" "${lead//beta/gamma}")" "a lead outside the restart pass keeps waking"
+  assert_equals now "$(route "$dir" check "squad-lead-relaunch-failed-beta-$now" "check: squad_lead beta auto-relaunch failed after dead (pane): error: no such backend")" "any other relaunch failure keeps waking in a pass"
+  printf '%s\tbeta\n' "$((now - 9999))" > "$state/.squad-lead-restart-pass"
+  assert_equals now "$(route "$dir" check "squad-lead-relaunch-failed-beta-$now" "$lead")" "the notice long after the pass must wake"
+  rm -f "$state/.squad-lead-restart-pass"
+
+  # (d) 'supervision not running' seconds after the lead's own restart is noise; a lead still down
+  # after the grace window keeps waking.
+  lead="check: squad_lead beta supervision not running while it has work under way; it was told to re-arm, and the wait escalates until it does"
+  assert_equals now "$(route "$dir" check "squad-lead-supervision-beta-$now" "$lead")" "a lead with no recent restart must wake"
+  printf '%s\trelaunched\n' "$((now - 20))" > "$state/.squad-lead-relaunch-beta"
+  assert_equals silent "$(route "$dir" check "squad-lead-supervision-beta-$now" "$lead")" "seconds after its relaunch the notice must settle"
+  assert_equals now "$(route "$dir" check "squad-lead-supervision-gamma-$now" "${lead//beta/gamma}")" "another lead's restart does not cover this lead"
+  printf '%s\trelaunched\n' "$((now - 400))" > "$state/.squad-lead-relaunch-beta"
+  assert_equals now "$(route "$dir" check "squad-lead-supervision-beta-$now" "$lead")" "a lead still down after the grace window must wake"
+  printf '%s\tfailed\n' "$((now - 20))" > "$state/.squad-lead-relaunch-beta"
+  assert_equals now "$(route "$dir" check "squad-lead-supervision-beta-$now" "$lead")" "a failed relaunch is no restart"
+  rm -f "$state/.squad-lead-relaunch-beta"
+  printf '%s\tbeta\n' "$now" > "$state/.squad-lead-restart-pass"
+  assert_equals silent "$(route "$dir" check "squad-lead-supervision-beta-$now" "$lead")" "Main's restart pass still covers the lead"
+  rm -f "$state/.squad-lead-restart-pass"
+  pass "the four c-5 wake misses settle in their quiet case and still wake in the real one"
+}
+
 test_routine_rides_the_digest
 test_unchanged_fleet_no_heartbeat
 test_urgent_stays_now
-echo "wake schedule: routine rides the digest, an unchanged fleet is silent, urgent still wakes"
+test_planned_wait_is_quiet
+test_wake_misses_after_c5
+echo "wake schedule: routine rides the digest, an unchanged fleet is silent, urgent still wakes, the c-5 misses settle"

@@ -2,6 +2,7 @@
 # The machine bus after a stack up or update: two homes install the service in a lab and both log in, 21 accounts get caps they fit under, and the 384Mb incident config is refused.
 set -u
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+"$root/bin/jg-bus-reap.sh" >/dev/null 2>&1 || true
 out=${DONE_DONE_EVIDENCE_ROOT:?}/${DONE_DONE_RUN_ID:-run}.log
 ( bash "$root/tests/jg-bus-machine-service.test.sh"; rc=$?; bash "$root/tests/jg-stack-owner.test.sh" || rc=1; exit "$rc" ) > "$out" 2>&1
 rc=$?

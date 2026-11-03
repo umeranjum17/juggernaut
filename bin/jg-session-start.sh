@@ -154,6 +154,14 @@
 #     deep queue costs a counter rather than kilobytes.
 #     (This replaces JG_SESSION_START_BACKLOG_LIMIT, which bounded the whole
 #     listing indiscriminately and so could drop a held or blocked row.)
+#   - Held rows the captain owes an answer on (hold_kind captain) stay whole.
+#     Date-gated, parked, and external holds are bounded by
+#     JG_SESSION_START_HELD_LIMIT (default 10) with a count and the
+#     command that lists them (a real home carried 132 of them, 42KB).
+# CURATED MEMORY: captain-shared.md, learnings.md and owner-rules.md print up to
+# JG_SESSION_START_CONTEXT_FILE_CAP bytes (default 10000), then a cut marker
+# with the line range, the exact sed command, and an index of the headings in
+# the unprinted part.
 # When compatible tasks-axi is selected and available, the shared tasks-axi
 # backend probe remains the compatibility owner and this script asks
 # `tasks-axi list` for the compact identity fields plus blocked_by, hold_kind,
@@ -171,7 +179,7 @@
 # compatible tasks-axi is available, or `data/backlog.md` when the file body is
 # truly needed.
 #
-# STATUS TAILS: JG_SESSION_START_STATUS_TAIL bounds how many lines each task's
+# STATUS TAILS: JG_SESSION_START_STATUS_TAIL (default 3) bounds how many lines each task's
 # tail prints, and bin/jg-line-cap-lib.sh bounds how long each of those lines
 # may be. Both bounds are safe because the section prints every task's full
 # status log path, and AGENTS.md section 8 treats a status line as a wake EVENT
@@ -407,8 +415,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/jg-harness.sh" 2>/dev/null || printf unknown)
 # agent's environment.
 if jg_tasks_axi_compatible; then TASKS_AXI_COMPATIBLE=1; else TASKS_AXI_COMPATIBLE=0; fi
 
-STATUS_TAIL=${JG_SESSION_START_STATUS_TAIL:-5}
-case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
+STATUS_TAIL=${JG_SESSION_START_STATUS_TAIL:-3}
+case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=3 ;; esac
 QUEUED_LIMIT=${JG_SESSION_START_QUEUED_LIMIT:-20}
 case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
 # One per-task endpoint read may never outlive this bound: a hung backend CLI
@@ -417,6 +425,15 @@ case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
 ENDPOINT_TIMEOUT=${JG_SESSION_START_ENDPOINT_TIMEOUT:-10}
 case "$ENDPOINT_TIMEOUT" in ''|*[!0-9]*) ENDPOINT_TIMEOUT=10 ;; esac
 [ "$ENDPOINT_TIMEOUT" -gt 0 ] 2>/dev/null || ENDPOINT_TIMEOUT=10
+# Token diet (measured on a real home: 227KB re-emit, of which 148 held rows
+# were 50KB and three curated memory files were 98KB). Both bounds below
+# disclose their remainder and the command that shows it; neither touches a
+# section that carries an action (wake queue, lock, network checks, captain-held
+# rows).
+HELD_LIMIT=${JG_SESSION_START_HELD_LIMIT:-10}
+case "$HELD_LIMIT" in ''|*[!0-9]*) HELD_LIMIT=10 ;; esac
+CONTEXT_FILE_CAP=${JG_SESSION_START_CONTEXT_FILE_CAP:-10000}
+case "$CONTEXT_FILE_CAP" in ''|*[!0-9]*|0) CONTEXT_FILE_CAP=10000 ;; esac
 BACKLOG_FIELDS=blocked_by,hold_kind,hold_reason
 
 RULE='================'
@@ -443,6 +460,28 @@ print_file_or_absent() {
   else
     printf 'ABSENT\n'
   fi
+}
+
+# print_file_capped <path> <label>: print_file_or_absent for the long curated
+# memory files. A file over CONTEXT_FILE_CAP bytes prints its first lines up to
+# the cap, then discloses the remainder (line range, byte count) with an index of
+# its headings so the session can read exactly the part it needs.
+print_file_capped() {
+  local path=$1 label=$2 size keep lines headings
+  if [ ! -s "$path" ] || [ "$(wc -c < "$path")" -le "$CONTEXT_FILE_CAP" ]; then
+    print_file_or_absent "$path" "$label"
+    return 0
+  fi
+  size=$(wc -c < "$path")
+  subsection "$label"
+  keep=$(head -c "$CONTEXT_FILE_CAP" "$path" | wc -l)
+  lines=$(wc -l < "$path")
+  head -n "$keep" "$path"
+  headings=$(tail -n +"$((keep + 1))" "$path" | grep -n '^#' | awk -F: -v off="$keep" '{ n = $1 + off; sub(/^[0-9]+:/, ""); printf "  line %d: %s\n", n, substr($0, 1, 100) }' | head -40)
+  printf '\n[cut at %s bytes: lines %s-%s (%s bytes in all) are not printed; read them with sed -n %s,%sp %s%s]\n' \
+    "$CONTEXT_FILE_CAP" "$((keep + 1))" "$lines" "$size" "$((keep + 1))" "$lines" "$path" \
+    "${headings:+. Headings in the unprinted part:}"
+  [ -z "$headings" ] || printf '%s\n' "$headings"
 }
 
 print_backlog_pointer() {
@@ -534,6 +573,25 @@ print_ready_queued_bounded() {
   '
 }
 
+# Held rows the captain owes an answer on (hold_kind captain) are actionable at
+# startup and stay whole. Date-gated, parked, and external holds are waiting on
+# time or someone else: the first HELD_LIMIT print, the rest become a count by
+# kind plus the command that lists them. A title that merely contains ",captain,"
+# is kept whole, which errs toward showing more.
+bound_held_rows() {
+  awk -v max="$HELD_LIMIT" '
+    /^  / && $0 !~ /,captain,/ {
+      n++
+      if (n > max) next
+    }
+    { print }
+    END {
+      if (n > max) {
+        printf "(%d more held row(s) not listed; the captain-held rows above are complete - bin/jg-tasks-axi.sh list --state held shows every row)\n", n - max
+      }
+    }'
+}
+
 print_backlog_tasks_axi_compact() {
   local path=$1 in_flight held blocked ready err
   if ! in_flight=$(tasks-axi list --file "$path" --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
@@ -545,12 +603,12 @@ print_backlog_tasks_axi_compact() {
   elif ! ready=$(tasks-axi ready --file "$path" 2>&1); then
     err=$ready
   else
-    printf 'compact backlog listing (tasks-axi; done rows omitted; every in-flight, held, and blocked row shown in full; ready queued bounded to %s; task bodies omitted)\n' \
-      "$QUEUED_LIMIT"
+    printf 'compact backlog listing (tasks-axi; done rows omitted; every in-flight, captain-held, and blocked row shown in full; other held rows bounded to %s; ready queued bounded to %s; task bodies omitted)\n' \
+      "$HELD_LIMIT" "$QUEUED_LIMIT"
     printf '\nin flight:\n'
     printf '%s\n' "$in_flight" | jg_hold_reason_decode_stream | strip_axi_help
     printf '\nheld (captain- or time-gated; an in-flight item that is also held appears in both groups):\n'
-    printf '%s\n' "$held" | jg_hold_reason_decode_stream | strip_axi_help
+    printf '%s\n' "$held" | jg_hold_reason_decode_stream | strip_axi_help | bound_held_rows
     printf '\nblocked queued:\n'
     printf '%s\n' "$blocked" | jg_hold_reason_decode_stream | strip_axi_help
     printf '\nready queued (dispatchable now):\n'
@@ -912,6 +970,7 @@ Go to a source directly only when:
     printed with its tail),
   - a full task body is needed (bin/jg-tasks-axi.sh show <id> --full, or data/backlog.md),
   - the backlog listing disclosed omitted queued items and this turn needs them,
+  - a held-row or curated-memory section printed a "not listed" or "[cut at" line and this turn needs the rest (the line names the command or line range),
   - the NETWORK CHECKS section reported its checks still IN PROGRESS and this
     turn needs their verdict (bin/jg-startup-network.sh report),
   - or a STARTUP TRUNCATED banner named the stage that would have printed it, in
@@ -1059,9 +1118,9 @@ section "CONTEXT"
 print_file_or_absent "$DATA/projects.md" "data/projects.md"
 print_file_or_absent "$(jg_compat_pick "$DATA/squad_leads.md")" "data/squad_leads.md"
 print_file_or_absent "$DATA/captain.md" "data/captain.md"
-print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in squad_lead homes)"
-print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
-print_file_or_absent "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
+print_file_capped "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in squad_lead homes)"
+print_file_capped "$DATA/learnings.md" "data/learnings.md"
+print_file_capped "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
 
 # --- 9. closing reminder -----------------------------------------------
 stage next-step

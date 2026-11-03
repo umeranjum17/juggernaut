@@ -239,6 +239,12 @@ PARK_LIMIT=$(numeric_or "${JG_SUPERVISION_HOST_PARK_LIMIT:-}" "$PARK_SECONDS")
 TURN_TIMEOUT=$(numeric_or "${JG_SUPERVISION_HOST_TURN_TIMEOUT:-}" 1200)
 ROTATE_TURNS=$(numeric_or "${JG_SUPERVISION_HOST_ROTATE_TURNS:-}" 20)
 POLL=$(numeric_or "${JG_SUPERVISION_HOST_POLL:-}" 1)
+# How long a settled captain outcome may wait for a turn main takes anyway
+# before the host wakes main for it; 0 wakes main at once, as before.
+case "${JG_BRANCH_OUTCOME_DEFER_SECS:-}" in
+  0) DEFER_SECS=0 ;;
+  *) DEFER_SECS=$(numeric_or "${JG_BRANCH_OUTCOME_DEFER_SECS:-}" 600) ;;
+esac
 COOLDOWN=$JG_SUPERVISION_HOST_COOLDOWN
 COOLDOWN_MAX=3600
 AUTOARM_GEN=${JG_SUPERVISION_HOST_AUTOARM_GEN:-}
@@ -523,7 +529,7 @@ turn_crosses_boundary() {
 # End the park at the boundary: stop the current and successor arms and this
 # home's watcher, print any close already read so main drains it, then the
 # boundary line.
-boundary_exit() {
+boundary_exit() {  # [line]
   retire_arm "$ARM_PID" "$ARM_OUT"
   retire_arm "$SUCCESSOR_PID" "$SUCCESSOR_OUT"
   ARM_PID=
@@ -533,8 +539,58 @@ boundary_exit() {
   "$SCRIPT_DIR/jg-watch-arm.sh" --stop >/dev/null 2>&1 || true
   park_elapsed
   log_line "boundary	after ${PARK_ELAPSED}s"
-  emit 'supervision-host: cycle boundary - the host ended its park at its bound; drain, acknowledge, and end the turn, and the next park starts on its own'
+  emit "${1:-supervision-host: cycle boundary - the host ended its park at its bound; drain, acknowledge, and end the turn, and the next park starts on its own}"
   exit 0
+}
+
+# A settled captain outcome waits in the store for a turn main takes anyway
+# instead of costing a turn of its own; this marker holds when the oldest
+# waiting one was deferred and the newest row it covers ("<epoch> <seq>"), and
+# the deadline check below wakes main when that wait outlives DEFER_SECS.
+DEFERRED="$STATE/.branch-outcome-deferred"
+DEFER_DUE=0
+
+# True when every captain row <turn> recorded is a finished task's report: the
+# wake was a status signal, and the task's newest status line says done, so the
+# outcome tells the captain what finished and asks main for nothing that cannot
+# wait. A decision, a blocker, a failure, a stale or check or heartbeat close, a
+# task that is not named, and a status that cannot be read all stay at once.
+settled_captain_turn() {  # <turn>
+  local seq task line rows=0
+  [ "$DEFER_SECS" -gt 0 ] || return 1
+  case "$(printf '%s\n' "$REASON" | head -n 1)" in signal:*) ;; *) return 1 ;; esac
+  while IFS=$'\t' read -r seq task; do
+    case "$task" in ''|fleet|*[!A-Za-z0-9._-]*) return 1 ;; esac
+    line=$(awk 'NF { l = $0 } END { print l }' "$STATE/$task.status" 2>/dev/null)
+    case "${line%%[ :]*}" in done) ;; *) return 1 ;; esac
+    rows=$((rows + 1))
+  done < <(awk -F '\t' -v turn="$1" '$1 == turn && $3 == "captain" { print $2 "\t" $4 }' "$RECEIPTS" 2>/dev/null)
+  [ "$rows" -gt 0 ]
+}
+
+# Record the deferral, keeping the oldest waiting one's time; false when the
+# marker cannot be written, so the outcome then reaches main at once.
+defer_outcomes() {  # <newest-seq>
+  local since=
+  [ ! -e "$DEFERRED" ] || read -r since _ < "$DEFERRED" 2>/dev/null || true
+  case "$since" in ''|*[!0-9]*) since=$(date +%s) ;; esac
+  printf '%s %s\n' "$since" "$1" > "$DEFERRED" 2>/dev/null
+}
+
+# True when deferred outcomes are still unacknowledged past their bound, while
+# the captain is present. An acknowledged set clears the marker.
+deferral_due() {
+  local since seq done_through
+  [ -e "$DEFERRED" ] || return 1
+  read -r since seq < "$DEFERRED" 2>/dev/null || return 1
+  case "$since$seq" in *[!0-9]*|'') rm -f "$DEFERRED"; return 1 ;; esac
+  done_through=$(numeric_or "$(cat "$STATE/.branch-outcomes-processed" 2>/dev/null)" 0)
+  if [ "$done_through" -ge "$seq" ]; then
+    rm -f "$DEFERRED"
+    return 1
+  fi
+  jg_afk_contract_away_present "$STATE" && return 1
+  [ $(( $(date +%s) - since )) -ge "$DEFER_SECS" ]
 }
 
 # Print the first cycle's status line once the arm has written it in full.
@@ -557,6 +613,7 @@ await_close() {
     refresh_process "$ARM_PID"
     [ "$READY_PENDING" -eq 0 ] || stream_ready_line
     boundary_reached && return 1
+    if deferral_due; then DEFER_DUE=1; return 1; fi
     # Probe the arm's exit twice a second between POLL-cadence checks, without
     # changing the outer identity refresh, readiness, or boundary cadence.
     i=$((POLL * 2))
@@ -1094,7 +1151,15 @@ ARM_OUT=$STARTED_ARM_OUT
 
 while :; do
   boundary_reached && boundary_exit
-  await_close || boundary_exit
+  if ! await_close; then
+    if [ "$DEFER_DUE" -eq 1 ]; then
+      read -r _ DEFER_SEQ < "$DEFERRED" 2>/dev/null || DEFER_SEQ=
+      rm -f "$DEFERRED"
+      log_line "deferred-due	through=$DEFER_SEQ"
+      boundary_exit "supervision-host: branch-outcome: settled captain outcomes the supervision session recorded wait for you (through store row $DEFER_SEQ); run bin/jg-wake-drain.sh, act on its BRANCH OUTCOMES section, and acknowledge them as it prints"
+    fi
+    boundary_exit
+  fi
   REASON=$(printf '%s\n' "$ARM_TEXT" | grep -E '^(signal:|stale:|check:|heartbeat($|:))' || true)
 
   # The away daemon owns triage while its flag exists; the owner stands down.
@@ -1197,7 +1262,10 @@ while :; do
   # itself was handled, so only the host's lines reach main.
   if [ -n "$LAST_TURN" ] && ! jg_afk_contract_away_present "$STATE"; then
     CAPTAIN_SEQS=$(turn_captain_seqs "$LAST_TURN")
-    if [ -n "$CAPTAIN_SEQS" ]; then
+    if [ -n "$CAPTAIN_SEQS" ] && settled_captain_turn "$LAST_TURN" && defer_outcomes "${CAPTAIN_SEQS##*, }"; then
+      log_line "deferred	rows=$CAPTAIN_SEQS"
+    elif [ -n "$CAPTAIN_SEQS" ]; then
+      rm -f "$DEFERRED"
       ARM_TEXT=
       exit_to_main "branch-outcome: the supervision session handled this wake and recorded captain outcomes for you (store rows $CAPTAIN_SEQS); run bin/jg-wake-drain.sh, act on its BRANCH OUTCOMES section, and acknowledge them as it prints" \
         "$HEALTH_NOTE"

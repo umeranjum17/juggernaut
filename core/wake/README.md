@@ -15,7 +15,7 @@ deletes shell rather than adding a second owner beside it.
    library keeps the function names, the queue lock around the key read, and the "a broken reader is
    one pending row" rule.
 2. **Wake urgency routing.** The rule files in force and their priority, the shell pattern grammar,
-   the `@parked`, `@restart-pass`, `@queue-quiet` and `@watcher-alive` conditions, the re-alert dedupe
+   the `@parked`, `@restart-pass`, `@queue-quiet`, `@watcher-alive`, `@gap-long` (a heartbeat gap open at least `set gap-wake-seconds`) and `@lead-restarted` (the lead restarted within the restart pass or `set lead-restart-grace-seconds`) conditions, the re-alert dedupe
    on an event's own identity, and the hourly silence cap. `jg_wake_route_class`, `jg_wake_routing_files`,
    `_jg_wake_rule_set` and `_jg_wake_realert_record` stay as the names callers use, and
    `jg_wake_append_locked` asks the command once for the class it acts on. Where the command cannot
@@ -80,7 +80,10 @@ batched digest: a window opens with the first routine row, one digest wake is du
 later naming the count, and none is sent when no routine row waits. `silent@fleet-unchanged heartbeat`
 keeps an away-mode heartbeat silent while the sorted status, meta and hold file names and sizes match the
 fingerprint recorded by the last heartbeat that woke. A `done` carrying a key already closes that key's
-wait (`tests/jg-wake-batching.test.sh`), so an answered key never re-pings.
+wait (`tests/jg-wake-batching.test.sh`), so an answered key never re-pings. A pause that names its future
+event with `until <time>` is a planned wait: its status line, its recheck before that time and its timer
+ride the digest, while a `blocked` wait with no clearing condition and a pause past its declared time
+keep waking.
 
 `bin/jg-context-bound.py rates <transcript>...` reports wakes per hour from session records, so the
 rate is measured the same way before and after. `tests/jg-wake-schedule.test.sh` proves the journeys.
