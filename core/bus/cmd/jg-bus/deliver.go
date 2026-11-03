@@ -82,6 +82,9 @@ func (a *app) deliverOne(payload []byte) {
 		a.noteUndelivered("", "stream message is not a captain event", toJSON(string(payload)))
 		return
 	}
+	if isChatEvent(ev.Subject) { // the captain's own chat never echoes back to his phone
+		return
+	}
 	target, id, err := a.deliverToNtfy(ev.Text)
 	if err != nil {
 		a.noteFailure("ntfy", err.Error())

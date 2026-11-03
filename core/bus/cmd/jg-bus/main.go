@@ -130,6 +130,7 @@
 //
 //	jg-bus config [<key>]
 //	jg-bus publish <kind> <key> <text> [--link <url>]
+//	jg-bus gateway --once | serve   (gateway.go owns this)
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
 //	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|ntfy|deliver] | install-service | deliver [--once] | stop | status | bootstrap
@@ -185,6 +186,8 @@ func run(args []string) int {
 		return a.config(rest)
 	case "publish":
 		return a.publish(rest)
+	case "gateway":
+		return a.gateway(rest)
 	case "parity":
 		return a.parity(rest)
 	case "reply":

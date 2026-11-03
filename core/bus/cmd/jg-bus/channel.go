@@ -205,7 +205,7 @@ func (a *app) publish(args []string) int {
 		}
 		a.noteFailure("bus "+subject, out)
 	}
-	if mode != "live" || accepted {
+	if mode != "live" || accepted || isChatEvent(subject) {
 		// Live and accepted: the event is on the CAPTAIN stream, and the stream's
 		// consumer (`jg-bus deliver`) is the one path that delivers it to ntfy.
 		return 0

@@ -33,3 +33,8 @@ set ntfy-topic juggernaut-captain
 set ntfy-tag juggernaut
 set ntfy-relay off
 set ntfy-relay-server https://ntfy.sh
+# Chat gateway (jg-bus gateway). It ships with no adapter, so nothing is received until a
+# home sets these in its own config/captain-channel; the token file must be mode 600.
+#   set gateway-adapters telegram
+#   set telegram-token-file config/captain-chat/telegram.token
+#   set telegram-allow-user <numeric Telegram user id>
