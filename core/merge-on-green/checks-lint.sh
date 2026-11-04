@@ -2,8 +2,9 @@
 # Run done-done's pinned merge-gate lint, or the Juggernaut lint when the pinned CLI is unavailable or the PR
 # has more than one page (100 files) of changes for done-done's truncated file list to measure.
 # Usage: JG_HOME=<home> checks-lint.sh <PR URL | report file> <evidence folder>
-# A size-only FAIL from the pinned lint is handed to the feature lint instead, before any row is logged:
-# done-done hardcodes its 1,000-line limit with no config key, while size is advice only (owner, 1 Nov).
+# A size-only or skill-name-only FAIL from the pinned lint is handed to the feature lint instead, before any row
+# is logged: done-done hardcodes its 1,000-line limit and its verify-skill wording with no config key, while size
+# and wording are not judged (owner, 1 Nov).
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -105,7 +106,7 @@ why=$(printf '%s' "$row" | cut -f5-)
 [ "$logged_src" = "$source" ] || { echo "checks-lint: FAIL: done-done produced no matching lint record: $out"; exit 1; }
 # Size is advice (owner, 1 Nov): a size-only FAIL row is never logged. The feature lint prints the size and its
 # advisory line, checks the remaining rules, and exits on those alone; its row is this head's verdict.
-if [ "$rc" -ne 0 ] && printf '%s' "$why" | grep -Eq '^[0-9]+ added non-generated lines \(moved lines excluded\): split it \(limit [0-9]+\)$'; then
+if [ "$rc" -ne 0 ] && printf '%s' "$why" | grep -Eq '^([0-9]+ added non-generated lines \(moved lines excluded\): split it \(limit [0-9]+\)|proof: does not name the done-done-verify-[^ ]+ skill run( \(or "no verify skill"\))?)$'; then
   exec "$LEGACY" "$source" "$evidence"
 fi
 mkdir -p "$JG_HOME/data"

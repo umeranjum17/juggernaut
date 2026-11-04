@@ -31,7 +31,8 @@ case "$1 $2" in
   'pr view'*)
     id=${3##*/}
     n=10; [ "$id" != 1004 ] || n=1000  # the feature lint measures size from this list
-    printf '{"author":{"login":"umeranjum17"},"body":"## Checks\\noutcome: fixture\\nrepro: n/a: no bug\\nproof: no verify skill - bash fixture\\nevidence: not proven: fixture\\n","title":"feat: fixture","files":[{"path":"src/change.txt","additions":%s,"deletions":0}],"headRefOid":"head-%s","headRefName":"fixture/%s","baseRefOid":"base-%s"}\n' "$n" "$id" "$id" "$id"
+    proof='no verify skill - bash fixture'; [ "$id" != 1005 ] || proof='bash fixture.sh passed'  # 1005 names no verify skill
+    printf '{"author":{"login":"umeranjum17"},"body":"## Checks\\noutcome: fixture\\nrepro: n/a: no bug\\nproof: %s\\nevidence: not proven: fixture\\n","title":"feat: fixture","files":[{"path":"src/change.txt","additions":%s,"deletions":0}],"headRefOid":"head-%s","headRefName":"fixture/%s","baseRefOid":"base-%s"}\n' "$proof" "$n" "$id" "$id" "$id"
     ;;
   'api -H'*)
     case "$*" in
@@ -112,6 +113,16 @@ set -e
   || { echo "FAIL size-only FAIL was not handed to the advisory rule: rc=$big_rc ($big)"; exit 1; }
 ! awk -F '\t' '$4 == "fail" { found = 1 } END { exit !found }' "$d/jg-big/data/checks-gate.log" || { echo 'FAIL a size-only FAIL left a fail row in checks-gate.log'; exit 1; }
 echo 'PASS a size-only FAIL from the pinned lint ends as an advisory line and a PASS'
+# The pinned lint alone refuses a proof line that names no verify skill. Wording is not judged (owner, 1 Nov), so the
+# adapter hands that FAIL to the feature lint too and logs no fail row.
+mkdir -p "$d/jg-wording/state" "$d/jg-wording/data"
+printf 'pr=https://github.com/owner/repo/pull/1005\n' > "$d/jg-wording/state/fixture.meta"
+set +e
+wording=$(JG_HOME="$d/jg-wording" JG_LEGACY_CHECKS_LINT="$ROOT/merge-on-green/jg-checks-lint.sh" "$ROOT/merge-on-green/checks-lint.sh" 'https://github.com/owner/repo/pull/1005' "$d/fm/data/evidence" 2>&1); wording_rc=$?
+set -e
+[ "$wording_rc" -eq 0 ] && [[ "$wording" == *'checks-lint: PASS:'* ]] || { echo "FAIL a proof line without a skill name was refused: rc=$wording_rc ($wording)"; exit 1; }
+! awk -F '\t' '$4 == "fail" { found = 1 } END { exit !found }' "$d/jg-wording/data/checks-gate.log" 2>/dev/null || { echo 'FAIL a wording-only FAIL left a fail row in checks-gate.log'; exit 1; }
+echo 'PASS a proof line without a skill name is not judged'
 # A caller-relative evidence directory must survive the adapter's temporary cwd.
 printf 'evidence fixture\n' > "$d/cwd/data/evidence/result.txt"
 printf 'pr=https://github.com/owner/repo/pull/1001\n' > "$d/jg-good/state/fixture.meta"
