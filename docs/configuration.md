@@ -2995,7 +2995,7 @@ JG_LOG_MAX_BYTES=1048576           # daemon log size that triggers trimming
 JG_LOG_KEEP_LINES=2000             # daemon log lines kept when trimming
 # supervision host (bin/jg-supervision-host.sh); read only in a home that runs it
 JG_SUPERVISION_HOST_PARK_SECONDS=27000   # the host ends its park with a cycle-boundary wake after this long, under the Stop hook's 28800 s timeout
-JG_BRANCH_OUTCOME_DEFER_SECS=600        # a finished task's captain outcome waits this long for a turn main takes anyway before the host wakes main for it; 0 wakes main at once
+JG_BRANCH_OUTCOME_DEFER_SECS=1800       # a captain outcome that asks main for no reply waits this long for a turn main takes anyway before the host wakes main for it; 0 wakes main at once
 JG_SUPERVISION_HOST_TURN_TIMEOUT=1200    # bound on one engine turn; a turn that hits it hands its wake to main
 JG_SUPERVISION_HOST_ROTATE_TURNS=20      # the engine conversation starts fresh after this many turns (and at every main session start)
 JG_SUPERVISION_ENGINE_GRACE=30           # seconds between TERM and KILL when an engine turn is stopped
