@@ -91,9 +91,10 @@ make_seeded_squad_lead_home() {
 }
 
 task_inbox_export() {  # <home> <id>
-  local state
+  local state home
   state=$(CDPATH='' cd -- "$1/state" && pwd -P) || fail "cannot resolve state dir $1/state"
-  printf "export JG_TASK_INBOX='%s'; " "$state/$2.inbox"
+  home=$(CDPATH='' cd -- "$1" && pwd -P) || fail "cannot resolve home dir $1"
+  printf "export JG_HOME='%s' JG_TASK_INBOX='%s'; " "$home" "$state/$2.inbox"
 }
 
 
@@ -1772,6 +1773,41 @@ SH
   done
 }
 
+# The home's launch-env-hook (core/pane-titles) runs in the pane before the agent
+# and reads JG_HOME; a pane or shared server without one must still hand it the
+# launching home, on a plain launch and across the allowlist env -i wrapper.
+test_launch_exports_jg_home_to_hook_and_agent() {
+  local setting rec id out status probe hook launch real_home seen
+  for setting in absent allowlist; do
+    id="home-$setting"
+    rec=$(make_spawn_case "$id" codex "$id")
+    read_case_record "$rec"
+    real_home=$(cd "$HOME_DIR" && pwd -P)
+    [ "$setting" = allowlist ] && : > "$HOME_DIR/config/launch-env-allowlist"
+    hook="$HOME_DIR/config/launch-env-hook"
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\nprintf "%%s\\n" "${JG_HOME-unset}" > %q\nprintf "export HOOK_RAN=1\\n" > "$1"\n' "$CASE_DIR/hook.seen" > "$hook"
+    chmod +x "$hook"
+    probe="$CASE_DIR/probe.sh"
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\nprintf "%%s|%%s\\n" "${JG_HOME-unset}" "${HOOK_RAN-unset}"\n' > "$probe"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness "/bin/sh '$probe'")
+    status=$?
+    expect_code 0 "$status" "$setting spawn should succeed: $out"
+    launch=$(cat "$LAUNCH_LOG")
+    # The allowlist wrapper quotes the text inside sh -c, so only the plain launch is checked verbatim.
+    [ "$setting" != absent ] || assert_contains "$launch" "export JG_HOME='$real_home' " "launch text does not export the home's real path"
+    # The shared server's pane has no JG_HOME of its own.
+    out=$(env -u JG_HOME -u JG_ROOT_OVERRIDE HOME="$CASE_DIR/user-home" PATH=/usr/bin:/bin TERM=xterm /bin/sh -c "$launch") ||
+      fail "$setting emitted launch failed in a pane without JG_HOME"
+    [ "$out" = "$real_home|1" ] || fail "$setting agent saw '$out', expected '$real_home|1'"
+    seen=$(cat "$CASE_DIR/hook.seen" 2>/dev/null || true)
+    [ "$seen" = "$real_home" ] || fail "$setting launch-env-hook saw JG_HOME='$seen', expected '$real_home'"
+    pass "$setting launch exports JG_HOME to the launch-env-hook and the agent"
+  done
+}
+
 test_launch_environment_invalid_config_refuses() {
   local rec id bad out status
   id=env-invalid
@@ -1940,6 +1976,7 @@ SH
 }
 
 test_launch_environment_allowlist
+test_launch_exports_jg_home_to_hook_and_agent
 test_launch_environment_invalid_config_refuses
 test_launch_environment_inaccessible_config_refuses
 test_launch_environment_inherited_by_squad_lead
