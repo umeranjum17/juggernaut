@@ -39,7 +39,9 @@ The alert is remembered per repo and count in `<home>/data/jg-merge-on-green/ope
 
 `stale-pr-alarm.sh check <jg-home>` runs at the end of every `merge-on-green.sh check`, so the same installed
 watcher check carries it and no model turn is spent. For each project in `data/projects.md` whose clone
-under `projects/` has a github.com `origin`, it lists the open PRs with `gh-axi` and prints one line per PR,
+under `projects/` has a github.com `origin`, it lists the open PRs with `gh-axi` and prints one line per PR
+we own, meaning the author is the home's gh login or the PR URL is recorded as `pr=` in a task meta (an outside
+author's PR on an upstream repo is ignored; with no login from the forge the sweep is skipped and retried),
 `stale-pr-alarm: <PR URL>: <reason>`, for either reason:
 
 - `no checks and no update for 24 h`: the head has no check run and no commit status, and the PR was last updated 24 hours ago or more.
