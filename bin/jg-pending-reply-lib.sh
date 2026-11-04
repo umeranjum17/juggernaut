@@ -12,9 +12,15 @@
 # Safety property (captain direction 2026-07-22): a squad_lead agent may ignore
 # the marker and answer only in its visible conversation. The parent must notice
 # the missing correlated report without scraping that conversation, send exactly
-# one automatic recovery request asking for a repost through the parent channel
-# (held back, when config/wait-no-turns is present, while the mate waits on its
-# own open decision or blocker), and
+# one automatic recovery, held back when config/wait-no-turns is present while
+# the mate waits on its own open decision or blocker. The recovery is first a
+# correlated `note` line the parent itself appends to the mate's parent status
+# log when the turn ends with no reply: it carries the same corr= token, says
+# only that the turn ended and names the last status the mate itself reported
+# (resolved_via=turn-end), so no second mate turn is spent. Only when no such
+# honest note can be built (the log holds no line of the mate's own) does the
+# recovery stay a repost request asking the mate to reply through the parent
+# channel. Then
 # escalate once if the recovery turn also completes without a correlated
 # report. Never loop, never repeatedly inject, never silently expire unresolved
 # records, and never treat wrong-home or structured-home heuristics as
@@ -62,7 +68,7 @@
 #                           escalation was closed again (see the escalation
 #                           lifecycle note below); empty until then
 #   resolved_epoch=
-#   resolved_via=           status | document | helper | empty
+#   resolved_via=           status | document | helper | turn-end | empty
 #   wrong_home_hits=        count of corr sightings under the squad_lead home
 #   wrong_home_first_sighting= encoded path:line identity of the first sighting
 #   wrong_home_sightings=   comma-separated encoded path:line identities
@@ -642,6 +648,9 @@ jg_pending_reply_status_set_signature() {  # <status-dir>
 jg_pending_reply_resolve_via_of_line() {  # <line>
   local line=$1
   case "$line" in
+    *via-turn-end*)
+      printf 'turn-end'
+      ;;
     *data/*report*|*report.md*|*document*|*pointer*)
       printf 'document'
       ;;
@@ -951,6 +960,48 @@ jg_pending_reply_recovery_message() {  # <record-path>
   printf '%s' "$msg"
 }
 
+# The turn-end note: what the mate itself last reported on its status log, said
+# as a fact about that line and nothing more. Prints "<verb>: <note>" for the
+# newest line, stamped at or after the request's delivery, that carries a
+# recognised verb, skipping the parent's own escalation lines and earlier
+# turn-end lines, which are not the mate's word. A line with no time stamp
+# cannot be placed in this turn and never counts. Returns 1 with no output when
+# the log holds no such line, so the caller keeps the repost fallback rather
+# than inventing an outcome.
+jg_pending_reply_turn_end_note() {  # <status-file> <corr_id> <since-epoch>
+  local status_file=$1 corr=$2 since=$3 line last='' verb note at
+  [ -f "$status_file" ] || return 1
+  case "$since" in ''|*[!0-9]*) return 1 ;; esac
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    case "$line" in *pending-reply-missed*|*via-turn-end*) continue ;; esac
+    jg_pending_reply_text_has_corr "$line" "$corr" && continue
+    at=$(status_line_at_epoch "$line" 2>/dev/null) || continue
+    [ "$at" -ge "$since" ] || continue
+    status_line_verb "$line" verb 2>/dev/null || continue
+    case "$verb" in
+      working|note|needs-decision|blocked|done|failed|paused|resolved|captain-held) last=$line ;;
+    esac
+  done < "$status_file"
+  [ -n "$last" ] || return 1
+  status_line_verb "$last" verb
+  status_line_note "$last" note
+  note=$(printf '%s' "$note" | tr '\n\t' '  ' | sed -e 's/corr=[0-9a-fA-F]*/corr=-/g' -e 's/[[:space:]]\{2,\}/ /g' | cut -c1-160)
+  [ -n "$note" ] || return 1
+  printf '%s: %s' "$verb" "$note"
+}
+
+# Append the correlated turn-end line to the mate's parent status log. It says
+# only that the turn ended without a reply and points at the last status; it
+# is a non-captain `note`, so it raises no decision and no extra Main wake.
+# The caller holds the per-correlation lock.
+jg_pending_reply_post_turn_end_line() {  # <status-file> <corr_id> <note>
+  local status_file=$1 corr=$2 note=$3 token line
+  token=$(jg_pending_reply_corr_token "$corr")
+  printf -v line 'note [%s]: turn ended without a separate reply to the marked request; last status on record: %s (via-turn-end)' "$token" "$note"
+  printf '%s\n' "$(status_stamp_line "$line")" >> "$status_file" 2>/dev/null
+}
+
 # Deliver the recovery message once. Caller must hold phase awaiting_report with
 # turn completed and grace elapsed. Uses JG_PENDING_REPLY_SEND_HOOK when set
 # (tests), otherwise invokes jg-send with JG_PENDING_REPLY_EXISTING_CORR so a
@@ -958,7 +1009,7 @@ jg_pending_reply_recovery_message() {  # <record-path>
 jg_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   local state=$1 corr=$2
   local rec phase completed delivered attempted grace now age task_id msg parent_home send_status=0
-  local sender_pid sender_identity status_file lock
+  local sender_pid sender_identity status_file lock note
   local STATE JG_WAKE_QUEUE JG_WAKE_QUEUE_LOCK
   rec=$(jg_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
@@ -1008,8 +1059,23 @@ jg_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   # resolve that failed on a later field write has still committed resolved.
   jg_lock_acquire_wait "$lock" || return 1
   if _jg_pending_reply_try_resolve_locked "$state" "$corr" "$status_file" \
-    || [ "$(jg_pending_reply_get "$rec" phase)" != awaiting_report ] \
-    || ! jg_pending_reply_set "$rec" recovery_sender_pid "$sender_pid" \
+    || [ "$(jg_pending_reply_get "$rec" phase)" != awaiting_report ]; then
+    jg_lock_release "$lock"
+    return 1
+  fi
+  # The mate's turn ended with no correlated report. When the parent can say
+  # honestly what the mate last reported, post that as the correlated line
+  # itself: the request is answered, with no repost and no second mate turn.
+  note=$(jg_pending_reply_turn_end_note "$status_file" "$corr" "$delivered") || note=
+  if [ -n "$note" ] && jg_pending_reply_post_turn_end_line "$status_file" "$corr" "$note"; then
+    if _jg_pending_reply_try_resolve_locked "$state" "$corr" "$status_file"; then
+      jg_lock_release "$lock"
+      return 0
+    fi
+    jg_lock_release "$lock"
+    return 1
+  fi
+  if ! jg_pending_reply_set "$rec" recovery_sender_pid "$sender_pid" \
     || ! jg_pending_reply_set "$rec" recovery_sender_identity "$sender_identity" \
     || ! jg_pending_reply_set "$rec" recovery_attempted_epoch "$now" \
     || ! jg_pending_reply_set "$rec" phase recovery_sending; then
