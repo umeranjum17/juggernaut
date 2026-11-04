@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -199,6 +200,23 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		a.typing.begin(in.Chat, res.ID)
 		a.emit("inbound", id, head, "", stored)
 		a.refuseLarge(ad, in)
+	}
+	// Counted last and for a replay too, so a failure here costs the owner nothing: the note, its
+	// event and the reaction are done, and the retry only adds the missing ledger row.
+	return a.recordKPI(res.ID, in.Text)
+}
+
+// recordKPI counts the owner's note as a captain message in the Overwatch KPI ledger, exactly as
+// bin/jg-chat.sh counts one typed at the board. The note id makes it one row per note: a replay or a
+// retry finds the row and adds none, and a home whose config/overwatch-kpi reads off records nothing.
+func (a *app) recordKPI(note, text string) error {
+	if strings.TrimSpace(text) == "" {
+		text = "(chat note with no text)"
+	}
+	cmd := exec.Command(filepath.Join(a.root, "bin", "jg-overwatch-kpi.sh"), "record", "--id", note, "--", text)
+	cmd.Env = append(os.Environ(), "JG_HOME="+a.home, "JG_STATE_OVERRIDE="+a.state, "JG_DATA_OVERRIDE="+a.data)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("jg-overwatch-kpi did not record note %s: %v: %s", note, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

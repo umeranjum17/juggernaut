@@ -377,9 +377,10 @@ While the home runs the host, main's lease-checked commands read the task's leas
 
 ## Overwatch KPI (config/overwatch-kpi)
 
-Every captain message a Claude or Cursor primary receives is recorded and must be tagged in the turn it arrives; `bin/jg-overwatch-kpi.sh` owns the ledger, the kinds, and the link a miss needs, and [turnend-guard.md](turnend-guard.md#overwatch-kpi-rule) owns the turn-end refusal.
+Every captain message a Claude or Cursor primary receives is recorded and must be tagged in the turn it arrives, and so is every note the captain sends from the chat on his phone (the gateway records it once per inbox note, however often a poll replays it); `bin/jg-overwatch-kpi.sh` owns the ledger, the kinds, and the link a miss needs, and [turnend-guard.md](turnend-guard.md#overwatch-kpi-rule) owns the turn-end refusal.
 It is on by default.
 A local `config/overwatch-kpi` reading `off` stops recording, which is for a lab whose prompts are scripted rather than typed by a captain.
+`jg-overwatch-kpi.sh tag <kind> [<link>]` tags the newest message; `tag --message <seq|inbox-id> <kind> [<link>]` tags the one named, and refuses an unknown seq or inbox id with exit 2.
 
 `jg-overwatch-kpi.sh scorecard` reports the misses - feedback and micromanagement messages - per calendar day and per trailing week against a target of zero, with the link each one carries.
 The fleet view prints that scorecard on every render from the local ledger alone, so a render makes no network call; `scorecard --landed` adds whether each linked PR merged or each linked backlog ticket closed.

@@ -267,7 +267,7 @@ cmd_send() {
   # The KPI tag stays automatic: a board-typed or transcribed captain message is
   # recorded exactly as the prompt hook records a typed one, so the turn-end
   # guard asks for its tag the same way.
-  "$SCRIPT_DIR/jg-overwatch-kpi.sh" record "$text" >/dev/null 2>&1 || true
+  "$SCRIPT_DIR/jg-overwatch-kpi.sh" record -- "$text" >/dev/null 2>&1 || true
   chat_append "$thread" captain "$target" captain sent "$text" "$extra" ||
     die 'cannot record the message; nothing was sent'
   # Interrupt first: an Escape after the doorbell would cancel the turn that was
