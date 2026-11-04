@@ -21,24 +21,6 @@
 set -eu
 
 RETIRED=(addons)
-# Slice B of the one-repo fold is deferred: the catalog's images are design surface, so they stay under
-# the retired directory until that slice moves the ten project images and deletes the two catalog logos.
-# This list may only shrink, and slice B deletes it with that move. Nothing outside it may appear under
-# a retired root.
-DEFERRED=(
-  addons/docs/media/logo-dark.svg
-  addons/docs/media/logo-light.svg
-  addons/tickets-sync/icons/byokit.svg
-  addons/tickets-sync/icons/desklink.svg
-  addons/tickets-sync/icons/done-done.svg
-  addons/tickets-sync/icons/first-draft.svg
-  addons/tickets-sync/icons/herdr-runtime.svg
-  addons/tickets-sync/icons/juggernaut-addons.svg
-  addons/tickets-sync/icons/juggernaut.svg
-  addons/tickets-sync/icons/learn-from-mistakes.svg
-  addons/tickets-sync/icons/muxr-cloud.svg
-  addons/tickets-sync/icons/sign-off.svg
-)
 ROOT='' base='' self_test=0
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -51,9 +33,8 @@ while [ "$#" -gt 0 ]; do
 done
 ROOT=${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}
 
-retired_path() {  # retired_path <path>: 0 when <path> sits under a retired root and is not deferred
-  local p=${1#./} r d
-  for d in "${DEFERRED[@]}"; do [ "$p" = "$d" ] && return 1; done
+retired_path() {  # retired_path <path>: 0 when <path> sits under a retired root
+  local p=${1#./} r
   for r in "${RETIRED[@]}"; do
     case $p in "$r" | "$r"/*) return 0 ;; esac
   done
