@@ -32,7 +32,8 @@ The metric server stays off: a metrics port is shared machine surface and nothin
 ## The path
 
 The three paths that reach the captain's record today are the board (`bin/jg-question-card.sh post`), the supervision branch's captain outcome (`bin/jg-branch-outcome.sh append`), and the away-mode wedge alert (`bin/jg-supervise-daemon.sh`, kind `alert`).
-All three send their event through `bin/jg-bus.sh publish`.
+Main's own turn summary is a fourth, kind `summary`, posted with `bin/jg-captain-say.sh` (see `docs/captain-chat.md`).
+All four send their event through `bin/jg-bus.sh publish`.
 A routine or silent outcome is not captain-facing, so it is not sent.
 
 Every event is written to `state/captain-channel.jsonl` **before** anything is published, so an unreachable bus or a stopped service loses nothing.

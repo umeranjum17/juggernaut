@@ -209,8 +209,10 @@ fi
 # An unreadable base leaves arming alone, exactly as the draft read above does,
 # because a forge that cannot answer must not block the watch.
 # The release pull request is refused while any open pull request still targets
-# an older release/c-<M> than its own head: that release already shipped, so the
-# pull request's work would merge into a branch no release will carry.
+# an older release/c-<M> than its own head whose release already shipped (its
+# release pull request into the default branch merged), so the pull request's
+# work would merge into a branch no release will carry. An older branch whose
+# release has not merged still takes work and is not an orphan.
 # bin/jg-version-branch-lib.sh jg_release_orphans_of owns what an orphan is, and
 # bin/jg-version-branch-sync.sh retargets them when an older release lands.
 # bin/jg-pr-merge.sh records through this script with JG_PR_CHECK_MERGE=1, so the
@@ -219,14 +221,14 @@ fi
 # JG_PR_ALLOW_ORPHANS, and only in that merge-time call; the words are kept in
 # the task record as orphans_waived=. An unreadable list does not refuse, as
 # above, because readiness reports the same orphans (bin/jg-release-readiness.sh).
-jg_pr_check_release_orphans() {  # <url> <release-head>
-  local url=$1 head=$2 repo orphans number purl base
+jg_pr_check_release_orphans() {  # <url> <release-head> <default-branch>
+  local url=$1 head=$2 default=$3 repo orphans number purl base
   repo=$PROJECT_PATH
   [ "$HOST" = github.com ] || repo=$HOST/$PROJECT_PATH
   orphans=$(gh pr list --repo "$repo" --state open --limit 100 \
     --json number,url,baseRefName \
     --jq '.[] | [(.number | tostring), .url, .baseRefName] | @tsv' 2>/dev/null \
-    | jg_release_orphans_of "$head") || return 0
+    | jg_release_orphans_of "$head" "$repo" "$default") || return 0
   [ -n "$orphans" ] || return 0
   if [ "${JG_PR_CHECK_MERGE:-}" = 1 ] && [ -n "${JG_PR_ALLOW_ORPHANS:-}" ]; then
     ORPHANS_WAIVED=$(printf '%s' "$JG_PR_ALLOW_ORPHANS" | tr -c '[:alnum:] ._,:;@/+-' '_' | cut -c1-200)
@@ -264,9 +266,8 @@ jg_pr_check_version_branch_base() {  # <meta> <url>
   [ "$base" = "$default" ] || return 0
   # The release in flight (config/frozen-release) is also a release head, even
   # when a newer release branch exists.
-  if [ "$head_ref" = "$version" ] \
-    || [ "$head_ref" = "$(jg_release_in_flight_branch "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" 2>/dev/null)" ]; then
-    jg_pr_check_release_orphans "$url" "$head_ref"
+  if jg_is_release_head "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" "$head_ref"; then
+    jg_pr_check_release_orphans "$url" "$head_ref" "$default"
     return
   fi
   echo "error: $url targets the default branch $base, but this project's current version branch is $version" >&2

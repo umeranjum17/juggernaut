@@ -106,7 +106,7 @@ proof_sealed_at() {  # <body> <head>
 # because the base is this repository's branch, not the fork's.
 retarget_orphans() {  # <merged-release-branch> <version>
   local old=$1 version=$2 prs number url state
-  [ -n "$(printf 'x\t-\t%s\n' "$old" | jg_release_orphans_of "$version")" ] || return 0
+  jg_release_older_than "$old" "$version" || return 0
   prs=$(gh pr list --repo "$JG_PR_PATH" --state open --base "$old" --limit 100 \
     --json number,url --jq '.[] | [(.number | tostring), .url] | @tsv' 2>/dev/null) || \
     { echo "$old: skipped: the open pull requests still on it could not be read"; return 0; }

@@ -231,6 +231,8 @@ That plane refuses a remotely placed Squad Lead by name, because its agent runs 
 Move a REMOTE one with `bin/jg-remote-squad-lead-relaunch.sh <id> <harness> <model|default|-> <effort|default|->`, which runs that same control-plane relaunch on its host and then republishes this primary's own route metadata from the identity the host confirmed; pass the profile explicitly and use `default` for an absent pin, because neither the global nor the per-mate Squad Lead pin is inherited and any copy on that host belongs to a different home ([`docs/remote-squad-leads.md`](../../../docs/remote-squad-leads.md)).
 Never call `jg-remote-squad-lead-control.sh relaunch` through `jg-on.sh` directly for this: it leaves this primary's own record naming the runtime the mate used to run.
 A successful update restarts every live mate of both placements on its own, including one already on the target commit; the `/resupply` skill owns that pass, and `bin/jg-squad-lead-restart.sh` owns its persist gate and failure vocabulary.
+A local mate with no open work, no open request and no queued message is stopped and marked dormant instead of relaunched (`bin/jg-squad-lead-dormant.sh stop-idle`), so no model session is spent on an idle replacement.
+Its first routed message starts it on the new code.
 
 Do not reconstruct a Squad Lead's whole tree from the main home.
 The main Juggernaut reconciles only direct reports.

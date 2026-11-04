@@ -41,8 +41,12 @@ func (e env) fleetFingerprintFile() string { return filepath.Join(e.state, ".hea
 // fleetUnchanged is the `@fleet-unchanged` condition: the fleet looks the way it did when the last
 // heartbeat that woke was recorded. With no record the fleet counts as changed, so the first
 // heartbeat is never hidden.
-func (e env) fleetUnchanged() bool {
-	stored := wholeFile(e.fleetFingerprintFile())
+func (e env) fleetUnchanged() bool { return e.fleetUnchangedSince(e.fleetFingerprintFile()) }
+
+// fleetUnchangedSince is the same test against any recorded fingerprint, so the settled-wake check
+// asks the question the heartbeat asks, about its own baseline.
+func (e env) fleetUnchangedSince(file string) bool {
+	stored := wholeFile(file)
 	return stored != "" && stored == e.fleetFingerprint()
 }
 

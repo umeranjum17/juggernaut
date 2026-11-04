@@ -39,7 +39,9 @@ The alert is remembered per repo and count in `<home>/data/jg-merge-on-green/ope
 
 `stale-pr-alarm.sh check <jg-home>` runs at the end of every `merge-on-green.sh check`, so the same installed
 watcher check carries it and no model turn is spent. For each project in `data/projects.md` whose clone
-under `projects/` has a github.com `origin`, it lists the open PRs with `gh-axi` and prints one line per PR,
+under `projects/` has a github.com `origin`, it lists the open PRs with `gh-axi` and prints one line per PR
+we own, meaning the author is the home's gh login or the PR URL is recorded as `pr=` in a task meta (an outside
+author's PR on an upstream repo is ignored; with no login from the forge the sweep is skipped and retried),
 `stale-pr-alarm: <PR URL>: <reason>`, for either reason:
 
 - `no checks and no update for 24 h`: the head has no check run and no commit status, and the PR was last updated 24 hours ago or more.
@@ -48,6 +50,22 @@ under `projects/` has a github.com `origin`, it lists the open PRs with `gh-axi`
 The alert is remembered per PR and reason in `<home>/data/jg-merge-on-green/stale-pr-alarm/`, so the next
 poll stays silent. A PR that closes, heals or changes reason forgets it, and a new stall alerts again. A forge
 failure is silent and retried next sweep. The check never closes or rebases a PR, and the open-PR cap above is unchanged.
+
+## Red-CI ticket
+
+A red CI run produces a root-cause ticket, never a re-run. `red-ci-ticket.sh check <jg-home>` runs at the end of every
+`merge-on-green.sh check` (after the stale-PR alarm), so the same installed watcher check carries it and no model turn is spent.
+For each project in `data/projects.md` whose clone has a github.com `origin`, it reads the newest completed run of each workflow on
+the default branch, on every `release/*` branch an open PR targets, and on the head of every open PR. A run that ended `failure`,
+`timed_out` or `startup_failure` and has no ticket yet files one backlog item through `bin/jg-tasks-axi.sh`:
+
+- id `ci-red-run-<run id>`, so a run files once, and title `[blocker] CI red: <workflow> <failing job>: find the root cause`.
+- body: the run id and URL, the failing job, the first failing line of its log, and `Never re-run; fix the root cause`.
+
+The ticket is ordinary ready work for the owning lead. It prints `red-ci-ticket: <run URL>: ...; filed <id>` once, remembers the run
+in `<home>/data/jg-merge-on-green/red-ci-ticket/`, and stays silent on the next poll. A green run, and a red run that a newer run of the
+same workflow superseded, file nothing. A refused add or a forge failure is silent and retried next sweep. Fixing the run is the
+ticket's work; this check never re-runs, cancels or edits a run.
 
 Any refusal or FAIL prints one wake line naming the task, the PR URL and the first refusal reason,
 so the lead acts (the line ends with the routing: the lead merges through `bin/jg-pr-merge.sh` once it clears, and only a genuine hold — owner review, red CI, missing proof, security, destructive — goes to Main); the refusal is remembered per task+head+reason+receipt state in
@@ -65,6 +83,15 @@ gate commands start only before 80% of the bound, a merge only when it fits insi
 so the watcher's kill can at worst cut a gate command (harmlessly retried next sweep), never a
 merge.
 
+When the record has no `pr=` or `pr_head=` yet, the check records them from the worker's `done: PR <url>` line through `bin/jg-pr-check.sh --from-status`, once per distinct last status line, so a done line the lead has not handled still gets its merge with no lead turn.
+`bin/jg-update.sh` runs `bin/jg-host-wiring.sh` after each update, so the installed copy of this check equals core again.
+
+A worker's `done: PR <url>` line does not wake the lead's model when this check owns the PR.
+`defaults/wake-routing` settles it with `silent@merge-owned`.
+That needs `yolo=on` or `merge=approved`, a recorded `pr=` and `pr_head=`, no `merge=manual`, and no earlier attempt on that head in `data/jg-merge-on-green/<task>.head`.
+The lead then hears about the PR from this check's `done: merged` line or its `NOT merging` wake line.
+`core/wake/README.md` owns the condition.
+
 ## Proof line
 
 The `## Checks` block's `proof:` line names the verify skill of the repository under test — the clone
@@ -80,10 +107,9 @@ clone is on disk the lint cannot judge the repository, so both forms are accepte
 The added non-generated lines of a PR are measured against a 1,000-line guidance, and the size is
 **advice, not a refusal** (captain, release c-1: the ceiling slowed work down). A run over the guidance
 prints one `checks-lint: advisory: <n> added non-generated lines ... is over the 1,000-line guidance`
-line and then checks the remaining rules, so only those can fail it. A home that wants the refusal back
-writes `refuse` in `config/checks-size`; an absent, empty or unrecognised value is advisory, the default.
-The pinned `done-done` lint hardcodes the same limit with no config key, so `checks-lint.sh` hands a
-size-only FAIL from it to this feature's lint, which owns the rule and the setting.
+line and then checks the remaining rules, so only those can fail it. No setting brings the refusal back (owner, 1 Nov).
+The pinned `done-done` lint hardcodes the same limit, so `checks-lint.sh` hands a size-only FAIL from it to
+this feature's lint before logging anything, and a size-only run writes no FAIL row.
 Deleted lines, generated paths, the PR's
 merged-in upstream lines and a moved file's own lines do not count: the lines it still shares with the
 file it came from, and the path rewrites, in a move git resolves as a rename at 50% similarity or more

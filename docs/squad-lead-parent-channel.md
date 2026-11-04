@@ -42,6 +42,7 @@ Other correlated mate-home status lines remain wrong-home evidence, while a remo
 The mate home's own status scans treat that remote channel the same way: `status_scan_parent_channel_exclude` in `bin/jg-classify-lib.sh` resolves the outbound path through the same `bin/jg-parent-channel-lib.sh` binding, and the watcher's signal scan and heartbeat backstop, the away-mode daemon's catch-all scan, and the fleet-wide folds skip exactly that resolved path, never a file name.
 The remote reply adapter already mirrors every channel line into the parent home, so folding the channel again here would only spin spurious wakes and a phantom `parent-replies` task, while a `parent-replies.status` in a main home or in a local mate is an ordinary task log that keeps folding and waking.
 A missed-reply escalation includes the complete first sighting path and line number in readable shell-escaped form.
+Every line passes through the captain voice file in `jg_parent_channel_append_once`: plain terms are rewritten, the status framing stays, and a line is never held back ([captain-voice.md](captain-voice.md)).
 
 ## What is deliberately not built
 

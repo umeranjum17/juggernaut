@@ -181,13 +181,13 @@ func TestGatewayEnvelope(t *testing.T) {
 	}
 	outcome := wrap("jg.captain.outcome", l.a.eventJSON(1793763937, "outcome", "o-1", "The fix is merged.", ""))
 	asString, _ := json.Marshal(l.a.eventJSON(1793763938, "alert", "a-1", "Disk is full.", ""))
-	for _, body := range [][]byte{outcome, outcome, wrap("jg.captain.inbound", l.a.eventJSON(1, "inbound", "i", "hello", "")), wrap("jg.captain.alert", string(asString))} {
+	for _, body := range [][]byte{outcome, outcome, wrap("jg.captain.inbound", l.a.eventJSON(1, "inbound", "i", "hello", "")), wrap("jg.captain.alert", string(asString)), wrap("jg.captain.summary", l.a.eventJSON(1793763939, "summary", "main-turn", "Main finished the turn.", ""))} {
 		if err := p.handle(body); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(l.sends) != 2 || l.sends[0]["text"] != "The fix is merged." || l.sends[1]["text"] != "Disk is full." || l.lost() != 0 {
-		t.Fatalf("sends %v, undelivered %d: want the enveloped outcome once and the alert, not the inbound event", l.sends, l.lost())
+	if len(l.sends) != 3 || l.sends[0]["text"] != "The fix is merged." || l.sends[1]["text"] != "Disk is full." || l.sends[2]["text"] != "Main finished the turn." || l.lost() != 0 {
+		t.Fatalf("sends %v, undelivered %d: want the enveloped outcome once, the alert and Main's summary, not the inbound event", l.sends, l.lost())
 	}
 	if code := l.a.routeReply(wrap("jg.captain.reply", `{"at":"2026-11-04T10:00:00Z","kind":"reply","key":"card-9","subject":"jg.captain.reply","answer":"yes"}`)); code != 0 || readFileString(l.routed) != "card-9|yes\n" {
 		t.Fatalf("reply router exit %d, routed %q: want the enveloped answer routed to card-9", code, readFileString(l.routed))

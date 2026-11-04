@@ -36,6 +36,15 @@ continues to run its own readers, and the lock-library line of
   file lock: `JG_BIN` when set, else `$JG_HOME/bin`. The library is not copied
   into this feature; a missing file prints one error naming the path and exits 2.
 
+- `bin/jg-retro-metrics.sh` - the retro metrics (not moved from the fork;
+  new here). `definitions` prints one written definition per metric, with
+  `first_pass` defined once. `compute --home <dir> --retro <id>` reads
+  `data/metrics/prs.tsv` and `daily.tsv`, prints the last N UTC days beside
+  the N before, and stores the result as one line in
+  `data/metrics/retro-index.jsonl`; `show` reads a stored line back. The
+  collectors that fill `prs.tsv` and `daily.tsv` are not in it.
+  Test: `tests/retro-metrics.test.sh`.
+
 ## Frozen contract (identical to the fork)
 
 - Readers: `JG_HOME=<home> jg-model-stats.sh --json [--now <unix-seconds>]`

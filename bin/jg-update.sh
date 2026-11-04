@@ -65,7 +65,8 @@
 # jg-procevent-when.sh rebind-all to republish those bindings against the new
 # bytes; a failure there is swallowed rather than failing the update.
 #
-# After the fast-forward it runs bin/jg-stack.sh up, so the release arrives with its services.
+# After the fast-forward it runs bin/jg-stack.sh up, so the release arrives with its services, and
+# bin/jg-host-wiring.sh, so every installed host copy (the merge watcher included) equals core again.
 #
 # Usage: jg-update.sh [--help]
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
@@ -160,6 +161,16 @@ if [ "${JG_STACK_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-stack.sh" ]; then
 else
   # No stack run (JG_STACK_SKIP or an older checkout): the bus alone still comes up.
   ensure_bus_service "$JG_ROOT"
+fi
+
+# The host wiring comes with the release too: every fleet check a core feature installs outside the
+# checkout (the merge watcher is the one that drifted, three days behind core, so no merge in that home
+# got a no-model merge) is rewritten from the updated checkout, so an installed copy never outlives the
+# core it was copied from. Each fragment is idempotent; a step that fails is named by the wiring itself
+# and is reported here, never fatal to the update. JG_HOST_WIRING_SKIP=1 turns it off for a fixture.
+if [ "${JG_HOST_WIRING_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-host-wiring.sh" ]; then
+  env JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$JG_ROOT/bin/jg-host-wiring.sh" "$JG_HOME" >&2 \
+    || echo "host wiring: not whole after the update (see the jg-host-wiring lines above)" >&2
 fi
 
 # --- squad_leads -----------------------------------------------------------

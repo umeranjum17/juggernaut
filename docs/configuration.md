@@ -16,7 +16,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
 | Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
 | A release that pushes its own readiness | [Release readiness](#release-readiness-configrelease-readiness) |
-| Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) and [checks size rule](#checks-size-rule-configchecks-size) |
+| Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## JG_HOME
@@ -527,7 +527,9 @@ The merge gate and the release process are unchanged.
 
 ### Release cut and pull requests left on a shipped release
 
-An open pull request whose base is an older `release/c-<M>` than the newest `release/c-<N>` is an orphan: it targets a release that already shipped.
+A release branch is shipped only when its release pull request into the default branch merged.
+A newer `release/c-<N>` existing says only that the next cycle was cut, so the older branch still takes work, red-fixes included, until its own release lands (`jg_release_shipped` in `bin/jg-version-branch-lib.sh` is the one definition).
+An open pull request whose base is a shipped `release/c-<M>` older than the newest `release/c-<N>` is an orphan: it targets a release that already shipped.
 When a release pull request merges, the recorded-merge pass in `bin/jg-version-branch-sync.sh` runs `gh pr edit --base` to move every orphan to the current version branch, and prints one line per move.
 Until then, `bin/jg-pr-check.sh` refuses to arm the release pull request and lists each orphan with the command that moves it.
 `bin/jg-release-readiness.sh` reports the release as `orphaned` and names the pull requests, so the digest line shows the problem before the cut.
@@ -536,7 +538,8 @@ The one override is `bin/jg-pr-merge.sh --allow-orphans "<captain words>"`, whic
 `journeys/release-cut-orphans.sh` drives all of it.
 
 A merge into a release branch that already shipped is refused too.
-`release/c-<M>` counts as shipped when a newer `release/c-<N>` exists (`bin/jg-version-branch-lib.sh` decides which branch is current), or when a pull request from `release/c-<M>` into the default branch is merged.
+`release/c-<M>` counts as shipped only when a pull request from `release/c-<M>` into the default branch is merged, and a newer `release/c-<N>` existing does not change that.
+A read the forge cannot answer is a refusal here, because an unproved merge is not allowed.
 `bin/jg-pr-merge.sh`, which merge-on-green also uses, reads the base live and refuses before it runs the merge.
 The refusal names the open release branch and prints the exact `gh pr edit <n> --base <branch>` command; when no newer branch is open it says so and prints no command.
 A merge into the open release branch or the default branch is unchanged.
@@ -942,6 +945,7 @@ These controls reduce risk but cannot guarantee avoidance of an out-of-memory ki
   After successful alert output, the watcher records that row's identity so its unacknowledged alert cannot immediately close the handling successor; later reminders use the [local queue backstop](watcher-continuity.md#durable-queue-and-turn-end-backstop), and only post-handling acknowledgement retires the row.
   Interrupt delivery runs independently of subsequent samples and appends its completion result to the interrupt log.
   A WAIT or OK sample ends the episode, so a later ALERT wakes Main and attempts its interrupt again.
+  An ALERT is one machine-wide event, so only the root Overwatch home's sampler queues the wake. A Squad Lead home under a local root still logs the episode in its `state/host-memory-interrupts.tsv`, counts it as a settled wake, and attempts its own owned-task interrupt, but it queues no wake and so costs its model no turn. A home with no readable local parent record (the root itself, a remote-routed lead, or a damaged record) wakes as before.
 - Local Squad Lead liveness recovery checks admission before consuming its retry budget or removing a dead endpoint, so memory deferral leaves recovery eligible when pressure eases.
   Memory deferral and a no-longer-relaunchable endpoint keep the watcher polling rather than failing supervision.
 
@@ -1288,6 +1292,10 @@ Two knobs decide when the held rows are released, and whichever fires first wins
 The defaults live in `defaults/wake-routing`.
 The optional local, gitignored `config/wake-routing` is read first, so a `set` line there wins and every rule it does not name falls through to the shared file; `JG_WAKE_ROUTING` replaces both.
 Urgent classes never wait: a captain inbox note, a failed or red check, `blocked`, `needs-decision`, `done` and `ready` lines, host and security alarms, and every stale escalation are `now` rows that wake at once, and an unreleased batch is never held back by them.
+A ship's PR-ready `done` line is the one `done` line that does not wake.
+When the task record names that PR and [`core/merge-on-green`](../core/merge-on-green/README.md) owns the merge (`yolo=on` or `merge=approved`, never `merge=manual`), the `silent@merge-owned` row records the line in the wake log and no model runs.
+The watcher's own `done: merged` line or `NOT merging` alert wakes the lead instead.
+A `done` line with no recorded PR, a PR the watcher does not own, a head it already tried, and every Recon result, `failed`, `blocked` and `needs-decision` line keep waking at once.
 Nothing is dropped: the next drain presents every held row.
 [`core/wake/README.md`](../core/wake/README.md) owns the rule grammar, and `journeys/wake-batch-threshold.sh` proves both triggers and the urgent bypass.
 
@@ -1337,14 +1345,6 @@ A nonzero exit refuses that merge and prints the gate's own reason; an absent fi
 A home that wants the retired-catalog rule in its own gate adds one line to `config/merge-gate`: `bin/jg-retired-catalog-check.sh --base "${3:--}"` (or the whole-tree form with no `--base`), which refuses a landing that restores a path under the retired catalog directory (the check names it); the repo's own invariants job runs the same check on every pull request.
 The gate's content is home-local policy; `bin/jg-tool-wiring.sh` places done-done's gate only in a home that has none.
 `core/owner-guard/wiring.sh` and `core/owner-rules/wiring.sh` write one gate file holding both checks, and `core/lib/merge-gate-lib.sh` owns that file, the steps it records, and the home's own gate kept at `config/merge-gate.pre-chain`.
-
-## Checks size rule (config/checks-size)
-
-The merge gate's checks lint measures a pull request's added non-generated lines against a 1,000-line guidance and treats that size as advice, never a refusal: a run over the guidance prints the size and says it is over the guidance, then checks the remaining rules and exits on those alone.
-A home that wants the refusal back writes `refuse` in the local, gitignored `config/checks-size`; an absent, empty or unrecognised value is `advisory`, the default, and `advisory` may also be written out.
-`core/merge-on-green/jg-checks-lint.sh` owns the rule and the setting, and `core/merge-on-green/checks-lint.sh` hands a size-only FAIL from the pinned `done-done` lint to it, because that CLI hardcodes the same limit with no config key.
-`core/merge-on-green/wiring.sh <jg-home>` is how a home gets this rule: it installs the feature's copy, and a home still running the retired install of the gate has that copy's refusing rule file removed and its `merge-on-green.sh` left as one redirect to the installed gate.
-Worker briefs still tell a worker to prefer a small slice; that wording is instruction only and enforces nothing.
 
 ## Open pull request cap (config/open-pr-cap)
 

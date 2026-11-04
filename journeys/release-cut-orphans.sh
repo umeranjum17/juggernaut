@@ -4,7 +4,8 @@
 # bin/jg-pr-check.sh, bin/jg-version-branch-sync.sh and
 # bin/jg-release-readiness.sh.
 #
-# The fixture project has main, release/c-5 (shipped) and release/c-6 (current).
+# The fixture project has main, release/c-5 (shipped: its release pull request
+# into main merged) and release/c-6 (current).
 # Pull request 10 still targets release/c-5, pull request 11 is an ordinary
 # feature on release/c-6, and pull request 20 is the release pull request from
 # release/c-6 into main. The journey shows that:
@@ -18,7 +19,9 @@
 #   4. arming pull request 20 then passes and the release is no longer orphaned;
 #   5. with a pull request orphaned again, a bare environment waiver changes
 #      nothing at arm time, and only the merge-time waiver passes and is
-#      recorded in the task record.
+#      recorded in the task record;
+#   6. a pull request left on an older release whose own release pull request has
+#      NOT merged is no orphan: that branch still takes work, so arming passes.
 # The forge is a recording `gh` that keeps the pull request table in a file, so
 # the proof needs no network: a retarget is the stub rewriting a base.
 set -u
@@ -89,6 +92,10 @@ case "$1 $2" in
     esac ;;
   "pr list")
     case "$*" in
+      *"--state merged"*)
+        h=
+        while [ "$#" -gt 0 ]; do [ "$1" = --head ] && { h=$2; break; }; shift; done
+        if grep -qxF "$h" "$MERGED_HEADS"; then echo 1; else echo 0; fi ;;
       *--base*)
         b=
         while [ "$#" -gt 0 ]; do [ "$1" = --base ] && { b=$2; break; }; shift; done
@@ -113,7 +120,9 @@ esac
 exit 0
 EOF
 chmod +x "$T/fakebin/gh"
-export PRS=$T/prs.tsv GH_LOG=$T/gh.log
+# The release heads whose pull request into main merged: only these have shipped.
+printf 'release/c-5\n' > "$T/merged-heads"
+export PRS=$T/prs.tsv GH_LOG=$T/gh.log MERGED_HEADS=$T/merged-heads
 
 env_run() {
   env JG_ROOT_OVERRIDE='' JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
@@ -197,7 +206,17 @@ out=$(pr_check cut-e 20 JG_PR_CHECK_MERGE=1); rc=$?
 [ "$rc" -ne 0 ] || fail "the merge-time record passed without a waiver"
 log "merge-time record without a waiver (rc=$rc): refused"
 
+# 6. release/c-5 never shipped (no merged release pull request): PR 10 on it is no orphan.
+: > "$T/merged-heads"
+mkmeta cut-f
+out=$(pr_check cut-f 20); rc=$?
+log "arm PR 20 with PR 10 on release/c-5 that never shipped (rc=$rc): $(printf '%s' "$out" | tail -n 1)"
+[ "$rc" -eq 0 ] || fail "a pull request on an unshipped older release blocked the release pull request: $out"
+out=$(rr show)
+case "$out" in *orphan*|*"still target"*) fail "readiness reported an orphan on an unshipped release: $out" ;; esac
+log "readiness line with c-5 unshipped: $out"
+
 cat > "$OUT/steps.json" <<'JSON'
-{"target":{"version":"jg-pr-check.sh, jg-version-branch-sync.sh, jg-release-readiness.sh"},"start":"a fixture project with release/c-5 shipped, release/c-6 current, a pull request still on c-5 and the c-6 release pull request","steps":["arm the release pull request: refused, naming the pull request on release/c-5 and the gh-axi pr edit fix","readiness tick and show: orphaned, naming one pull request and release/c-5","the c-5 release pull request merges: the sync pass runs gh pr edit 10 --base release/c-6; a feature merge edits nothing","arm the release pull request again: passes; readiness no longer reports an orphan","orphaned again: a bare environment waiver changes nothing at arm time; the merge-time waiver passes and is recorded as orphans_waived"],"result":"a release cut moves the pull requests left on the shipped branch, and the release pull request is refused until they are moved"}
+{"target":{"version":"jg-pr-check.sh, jg-version-branch-sync.sh, jg-release-readiness.sh"},"start":"a fixture project with release/c-5 shipped, release/c-6 current, a pull request still on c-5 and the c-6 release pull request","steps":["arm the release pull request: refused, naming the pull request on release/c-5 and the gh-axi pr edit fix","readiness tick and show: orphaned, naming one pull request and release/c-5","the c-5 release pull request merges: the sync pass runs gh pr edit 10 --base release/c-6; a feature merge edits nothing","arm the release pull request again: passes; readiness no longer reports an orphan","orphaned again: a bare environment waiver changes nothing at arm time; the merge-time waiver passes and is recorded as orphans_waived","a pull request on an older release whose own release pull request has not merged: not an orphan, arming passes"],"result":"a release cut moves the pull requests left on the shipped branch, and the release pull request is refused until they are moved"}
 JSON
 log "PASS: the release cut retargets orphans and the release pull request waits for them"

@@ -78,7 +78,7 @@ jg_ci_scope_bus_path() {
   return 1
 }
 jg_ci_scope_shell_path() { case $1 in *.sh|.github/*) return 0 ;; esac; return 1; }
-jg_ci_scope_evals_path() { case $1 in bin/*|core/*|toolchain.versions|.github/*) return 0 ;; esac; return 1; }
+jg_ci_scope_evals_path() { case $1 in bin/*|core/*|defaults/captain-voice*.md|toolchain.versions|.github/*) return 0 ;; esac; return 1; }
 
 jg_ci_scope_main() {
   local seen=false cheap=true bus=false shell=false evals=false path line

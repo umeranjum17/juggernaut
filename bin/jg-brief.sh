@@ -632,8 +632,21 @@ _bi=$SCRIPT_DIR/../core/brief-inherit/bin/jg-brief-inherit-lib.sh
 # shellcheck disable=SC1090 # The optional feature source is installed outside this repository.
 [ ! -f "$_bi" ] || { . "$_bi" && jg_brief_inherit_shared "$CONFIG" "$KIND"; }
 
+# The worker personality file (defaults/captain-voice-worker.md, or the home's config copy)
+# adds tone to the worker's own lines; the shared rules stay in captain-voice.md (bin/jg-voice.py).
+append_worker_voice() {
+  local persona
+  persona=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" python3 "$SCRIPT_DIR/jg-voice.py" persona --role worker 2>/dev/null) || return 0
+  [ -n "$persona" ] || return 0
+  printf '\n%s\n%s\n%s\n' \
+    '# Voice' \
+    'This personality adds tone to your status lines and reports. It adds no rule and cannot override the shared voice rules.' \
+    "$persona" >> "$BRIEF"
+}
+
 # Append the include as the last section of a ship or scout scaffold.
 append_brief_include() {
+  append_worker_voice
   [ -n "$BRIEF_INCLUDE_BODY" ] || return 0
   printf '\n%s\n%s\n%s\n' \
     '# Home brief additions' \
@@ -1108,9 +1121,9 @@ $SHARED_INFRA_RULE
 8. When the merge gate needs done-done proof, follow this recipe in order, each step at the head you will push with a clean tree. Commit nothing afterward, not even the receipt, because any later commit moves the PR head and voids the proof; if you must commit again, redo steps a to e at the new head.
    a. Run the repository's verify skill sealed under done-done at the final head (for Juggernaut itself the skill is \`done-done-verify-suites\`: \`done-done run -- <the suite command it names>\`), and keep the sealed run record.
    b. Build the Evidence card with \`$JG_ROOT/core/merge-card/merge-card\` (\`check <id> <worktree> <head> <PR url>\` runs the gate's own check, and \`merge-card receipt <id> <head>\` must exit 0).
-   c. Put a \`## Checks\` block in the PR body with four lines: \`outcome:\` (what a user can now do), \`repro:\` (the command that failed before and passes now, or \`repro: n/a: no bug\`), \`proof:\` (it must name the verify skill run, for Juggernaut itself \`done-done-verify-suites\`, and the run id; with no verify skill write \`no verify skill\`), and \`evidence:\` (file names the sealed run itself wrote; see the binding rule below).
+   c. Put a \`## Checks\` block in the PR body with four lines: \`outcome:\` (what a user can now do), \`repro:\` (the command that failed before and passes now, or \`repro: n/a: no bug\`), \`proof:\` (the command or file that proves it, with the run id of the sealed run), and \`evidence:\` (file names the sealed run itself wrote; see the binding rule below).
    Binding evidence rule: every file the \`evidence:\` line cites must be a file your own done-done run wrote, inside that run's capture folder under \`$DATA/$ID/\`, so the run record ties it to the commit it sealed. A file you copied or saved into \`$DATA/\` by hand is not evidence: nothing ties it to a commit, the judge is never asked, and the PR cannot merge. A tooling change with no user-visible screen still needs \`screen: none\` alone on its own line in the Checks block, and still needs the run-owned text captures (the run's own log or output files) cited in \`evidence:\`.
-   d. Run \`JG_HOME=$JG_HOME $JG_ROOT/core/merge-on-green/checks-lint.sh <PR url> <evidence folder>\` until it prints PASS.
+   d. Before the PR exists, write the same \`## Checks\` block to a draft file (for example \`$DATA/$ID/checks-draft.md\`) and run \`JG_HOME=$JG_HOME $JG_ROOT/core/merge-on-green/checks-lint.sh <draft file> <evidence folder>\` until it prints PASS, so a lint failure shows before the PR is open. Paste the passing block into the PR body, then run the same command with \`<PR url>\` in place of the draft file until it prints PASS.
    e. Publish the receipt bound to the PR head with the Completion receipt command under Definition of done, with \`JG_RECEIPT_PR=<PR url>\` set to the PR's full URL: a receipt for a PR needs it.
 
 $WAIT_BLOCK$INBOX_SECTION

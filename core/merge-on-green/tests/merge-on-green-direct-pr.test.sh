@@ -104,5 +104,37 @@ touch "$STUB_DIR/status-log/t21"
 check "d: yolo off still holds a done direct-PR task" "$(mog)" ""
 check "d: the forge was not read for either" "$(called "$STUB_DIR/pr-state-calls")" never
 
+# (e) a PR 617-style done line with no pr=/pr_head= in the record: the watcher records both through
+# jg-pr-check.sh --from-status, then merges with no lead turn. The stub records like the real script does.
+cat > "$FM/bin/jg-pr-check.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s|%s\n' "$JG_HOME" "$*" >> "$STUB_DIR/check-calls"
+[ "$1" = --from-status ] || exit 2
+url=$(sed -n 's/^done \[at=[0-9]*\]: PR \(https[^ ]*\)$/\1/p' "$JG_HOME/state/$2.status" | tail -1)
+[ -n "$url" ] || exit 0
+grep -v '^pr=\|^pr_head=' "$JG_HOME/state/$2.meta" > "$JG_HOME/state/$2.meta.new" || true
+printf 'pr=%s\npr_head=%s\n' "$url" "$STUB_HEAD" >> "$JG_HOME/state/$2.meta.new"
+mv "$JG_HOME/state/$2.meta.new" "$JG_HOME/state/$2.meta"
+STUB
+chmod +x "$FM/bin/jg-pr-check.sh"
+export STUB_HEAD=$H1
+rm -f "$STUB_DIR/merge-calls"
+printf 'yolo=on\nspawn_gen=s617\n' > "$FM/state/t617.meta"
+printf '{\n  "verdict": "PASS",\n  "head": "%s",\n  "spawn_gen": "s617"\n}\n' "$H1" > "$FM/state/t617.run-receipt.json"
+printf 'working [at=1]: x\ndone [at=2]: PR https://github.com/ex/r/pull/617\n' > "$FM/state/t617.status"
+touch "$STUB_DIR/status-log/t617"
+out=$(mog)
+has "e: a done line with no recorded PR is recorded and merged with no lead turn" "$out" "merged t617 https://github.com/ex/r/pull/617"
+has "e: pr= was written into the record" "$(cat "$FM/state/t617.meta")" "pr=https://github.com/ex/r/pull/617"
+has "e: pr_head= was written into the record" "$(cat "$FM/state/t617.meta")" "pr_head=$H1"
+check "e: recorded through jg-pr-check --from-status for this home" "$(head -1 "$STUB_DIR/check-calls")" "$FM|--from-status t617"
+# a task that is still working and unrecorded: the record call is not repeated for the same status line.
+printf 'yolo=on\nspawn_gen=s620\n' > "$FM/state/t620.meta"
+printf 'working [at=1]: x\n' > "$FM/state/t620.status"
+rm -f "$STUB_DIR/check-calls"
+mog >/dev/null; mog >/dev/null
+check "e: an unrecorded task is looked up once per distinct status line" "$(grep -c 't620' "$STUB_DIR/check-calls")" 1
+rm -f "$FM/state/t617."* "$FM/state/t620."* "$STUB_DIR/status-log/t617"
+
 [ "$fails" -eq 0 ] || { echo "FAIL: $fails check(s)"; exit 1; }
 echo "PASS: merge-on-green direct-PR e2e"

@@ -328,6 +328,59 @@ test_a_cursor_past_both_stream_ends_reads_both_from_the_start() {
   pass "a cursor past both stream ends reads both from the start"
 }
 
+# A row whose first acknowledgement the cursor passed without settling it (a replica
+# write that lost to a concurrent render) could never be acknowledged again: the second
+# acknowledgement reused the first one's message id, the server dropped it as a duplicate,
+# and every retry exited 0 with the row still queued. Each acknowledgement is its own
+# message now, so the retry settles the row.
+test_a_repeated_acknowledgement_settles_a_row_the_cursor_passed() {
+  local id keep
+  bus raise check stuck "check: stuck" now || fail "setup raise failed"
+  id=$(bus ids check stuck | head -n 1)
+  keep=$DIR/replica-before-ack
+  cp "$STATE_DIR/.wake-bus.events.jsonl" "$keep"
+  bus ack "$id" || fail "the first acknowledgement failed"
+  assert_equals 0 "$(grep -c 'check: stuck' "$STATE_DIR/.wake-queue")" "the first acknowledgement must settle the row"
+  cp "$keep" "$STATE_DIR/.wake-bus.events.jsonl"
+  bus ack "$id" || fail "the repeated acknowledgement must settle the row, not exit 0 with it queued"
+  assert_equals 0 "$(grep -c 'check: stuck' "$STATE_DIR/.wake-queue")" \
+    "a repeated acknowledgement must remove the row from the read model"
+  pass "a repeated acknowledgement settles a row the cursor already passed"
+}
+
+# An acknowledgement the bus reports stored but that never reaches the replica cannot remove
+# its row. It must say so and exit non-zero, not exit 0 beside a row that stays.
+test_an_acknowledgement_that_cannot_remove_its_row_fails_loudly() {
+  local d=$DIR/liar id out rc
+  mkdir -p "$d"
+  cat > "$d/nats-shim" <<SHIM
+#!/usr/bin/env bash
+case " \$* " in *" pub "*wake.ack*) echo "Stored in Stream: JG_WAKE Sequence: 1"; exit 0 ;; esac
+exec "$NATS_BIN" "\$@"
+SHIM
+  chmod +x "$d/nats-shim"
+  bus raise check liar "check: liar" now || fail "setup raise failed"
+  id=$(bus ids check liar | head -n 1)
+  out=$(JG_NATS_BIN="$d/nats-shim" bus ack "$id" 2>&1); rc=$?
+  assert_equals 1 "$rc" "an acknowledgement that leaves its row queued must exit non-zero"
+  echo "$out" | grep -q "still queued" || fail "the failure must say why, got: $out"
+  bus ack "$id" || fail "cleanup acknowledgement failed"
+  pass "an acknowledgement that cannot remove its row exits non-zero with the reason"
+}
+
+# A row the bus never received sits in the outbox and in the replica; acknowledging it
+# must drop both.
+test_a_row_owed_by_the_outbox_is_acknowledged_once() {
+  local id
+  JG_WAKE_BUS_URL=nats://127.0.0.1:1 bus raise check owed-row "check: owed-row" now || fail "setup raise failed"
+  id=$(JG_WAKE_BUS_URL=nats://127.0.0.1:1 bus ids check owed-row | head -n 1)
+  JG_WAKE_BUS_URL=nats://127.0.0.1:1 bus ack "$id" || fail "acknowledging an owed row failed"
+  assert_equals 0 "$(grep -c 'check: owed-row' "$STATE_DIR/.wake-queue")" "an owed row must leave the read model"
+  bus render >/dev/null 2>&1 || true
+  assert_equals 0 "$(grep -c 'check: owed-row' "$STATE_DIR/.wake-queue")" "an owed row must not come back"
+  pass "a row owed by the outbox is acknowledged once"
+}
+
 result=0
 test_raise_reaches_the_read_model || result=1
 test_acknowledgement_removes_the_row_everywhere || result=1
@@ -343,6 +396,9 @@ test_a_render_killed_mid_read_loses_no_wake || result=1
 test_an_ordinary_run_delivers_each_wake_once || result=1
 test_a_remade_stream_still_reaches_the_read_model || result=1
 test_a_cursor_past_both_stream_ends_reads_both_from_the_start || result=1
+test_a_repeated_acknowledgement_settles_a_row_the_cursor_passed || result=1
+test_an_acknowledgement_that_cannot_remove_its_row_fails_loudly || result=1
+test_a_row_owed_by_the_outbox_is_acknowledged_once || result=1
 test_the_kill_journey_delivers_each_wake_once || result=1
 test_the_journey_proves_the_probe_in_two_homes || result=1
 exit "$result"

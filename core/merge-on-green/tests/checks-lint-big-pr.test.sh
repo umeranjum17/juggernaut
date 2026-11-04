@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # E2E: the 1,000-line size guidance measures a PR past gh's 100-file view cap and its 300-file diff cap,
-# advises on the size instead of refusing it (config/checks-size=refuse keeps the refusal).
+# advises on the size and never refuses it (owner, 1 Nov: a retired config/checks-size=refuse changes nothing).
 # gh pr view still lists only 100 files and gh pr diff still refuses >300 files here; the gate must read
 # every pull-files page and learn the diff from the compare API, never from a refusal (no network).
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
@@ -110,11 +110,12 @@ run move
 [[ "$out" != *'checks-lint: advisory:'* ]] || { echo "FAIL 200 authored lines drew an advisory: ($out)"; exit 1; }
 echo 'PASS moved-from byte match clears the import and stays under the guidance'
 
-# 4. config/checks-size: refuse keeps the refusal for a home that wants it.
+# 4. Size never refuses (owner, 1 Nov): the retired config/checks-size=refuse is ignored and the same PR still passes.
 export BIGPR_BODY=$d/body.txt
 mkdir -p "$d/fm/config" && printf 'refuse\n' > "$d/fm/config/checks-size"
 run diff
-[ "$rc" -ne 0 ] && [[ "$out" == *'checks-lint: FAIL: 1500 added non-generated lines'*'split it (limit 1000)'* ]] \
-  || { echo "FAIL config/checks-size=refuse: rc=$rc ($out)"; exit 1; }
-echo 'PASS config/checks-size=refuse makes the same PR a refusal'
-echo 'PASS: size is measured above the 100-file and 300-file API caps, advisory by default, a refusal on request'
+[ "$rc" -eq 0 ] && [[ "$out" == *'checks-lint: advisory: 1500 added'* ]] && [[ "$out" == *'checks-lint: PASS:'* ]] && [[ "$out" != *'checks-lint: FAIL'* ]] \
+  || { echo "FAIL config/checks-size=refuse still changed the verdict: rc=$rc ($out)"; exit 1; }
+! awk -F '\t' '$4 == "fail" { found = 1 } END { exit !found }' "$d/fm/data/checks-gate.log" || { echo 'FAIL size advice logged a fail row'; exit 1; }
+echo 'PASS config/checks-size=refuse no longer refuses and logs no fail row'
+echo 'PASS: size is measured above the 100-file and 300-file API caps and is advice only'

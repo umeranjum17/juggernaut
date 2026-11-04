@@ -2,7 +2,7 @@
 # End-to-end: drive stale-pr-alarm.sh against a fixture home whose clone has a github origin, with a gh-axi
 # stub that answers from recorded PR fixtures in tests/fixtures/stale-pr-alarm/. Covers both reasons, a healthy
 # PR that stays silent, no repeat alert on the second poll, a fresh alert after a PR heals and stalls again,
-# a forge failure staying silent, and the alarm running from merge-on-green.sh check.
+# an outside author's PR silent unless a task meta records it, a forge failure staying silent, and the alarm running from merge-on-green.sh check.
 # Usage: merge-on-green/tests/stale-pr-alarm.test.sh
 set -euo pipefail
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -19,6 +19,7 @@ export STUB_FIX=$d/fix STUB_FAIL=$d/fail
 mkdir -p "$STUB_FIX"
 sed -e "s/@STALE@/$(date -u -d '-30 hours' +%Y-%m-%dT%H:%M:%SZ)/" -e "s/@FRESH@/$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)/" \
   "$FIX/pulls-open.json" > "$STUB_FIX/pulls-open.json"
+echo '{"login": "me"}' > "$STUB_FIX/user.json"
 cp "$FIX"/check-runs-*.json "$FIX"/status-none.json "$FIX"/pulls-closed-*.json "$STUB_FIX/"
 cat > "$d/gh-axi" <<'STUB'
 #!/usr/bin/env bash
@@ -26,6 +27,7 @@ cat > "$d/gh-axi" <<'STUB'
 [ ! -e "$STUB_FAIL" ] || { echo "error: forge unreachable" >&2; exit 1; }
 [ "$1" = api ] && [ "$3" = --jq ] || exit 2
 case $2 in
+  user) f=user ;;
   repos/ex/r/pulls\?state=open*) f=pulls-open ;;
   repos/ex/r/pulls\?state=closed\&base=main\&head=ex:release/c-5*) f=pulls-closed-merged ;;
   repos/ex/r/pulls\?state=closed*) f=pulls-closed-none ;;
@@ -50,7 +52,13 @@ check "base is a release branch already merged" "$(printf '%s\n' "$out" | grep "
 check "fresh PR without checks stays silent" "$(printf '%s\n' "$out" | grep -c "$U/103" || true)" 0
 check "stale PR with checks stays silent" "$(printf '%s\n' "$out" | grep -c "$U/104" || true)" 0
 check "unmerged release base stays silent" "$(printf '%s\n' "$out" | grep -c "$U/105" || true)" 0
+check "an outside author's stale PR raises no alarm" "$(printf '%s\n' "$out" | grep -c "$U/10[67]" || true)" 0
 check "second poll repeats nothing" "$(alarm)" ""
+
+# A PR by an outside author alerts once a task meta records its URL as pr=.
+printf 'pr=%s/107\n' "$U" > "$FM/state/t.meta"
+check "an outside PR recorded as a task pr= alerts" "$(alarm)" "stale-pr-alarm: $U/107: no checks and no update for 24 h"
+rm "$FM/state/t.meta"; alarm >/dev/null
 
 # 101 gets a head with checks and heals, then returns to a head without: the forgotten alert fires again.
 sed -i 's#sha101#sha104#' "$STUB_FIX/pulls-open.json"

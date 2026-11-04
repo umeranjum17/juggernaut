@@ -82,6 +82,12 @@
 #                          agent, for human inspection only - never an automatic
 #                          interrupt, signal, or restart of the worker or its
 #                          tool process.
+#                          Every stale reason ends in " [task=<id> reason=<kind>]"
+#                          (stale_wake_decorate in bin/jg-classify-lib.sh adds it when the
+#                          wake is queued and printed). A quiet pane whose ship task's
+#                          latest status is done is first cleaned up with no wake by
+#                          bin/jg-teardown.sh (no --force; finished_cleanup_gate); only a
+#                          refusal surfaces, with its words and reason=finished.
 #   stale: <window> (unread juggernaut instruction: ...)
 #                          the steering-inbox ladder spent its delivery-attempt
 #                          budget on an idle pane without an acknowledgement, or
@@ -129,7 +135,9 @@
 #                          payload names what to check. These three kinds are
 #                          joined with `;` when more than one surfaces in a cycle
 #   check: rejected unauthenticated state checks: <paths>
-#                          unsafe state checks were refused without execution
+#                          unsafe state checks were refused without execution;
+#                          each file alerts once, and again only when its content
+#                          or identity changes or it is fixed and rejected again
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
 #                          invalid pending retirements were preserved without
 #                          running a check or removing poll artifacts
@@ -3387,6 +3395,57 @@ post_merge_cleanup() {  # <id>
   ) </dev/null >/dev/null 2>&1 &
 }
 
+# A worker whose latest status is done and whose pane then went quiet may already have
+# landed, and cleaning it up then needs no model turn. This runs bin/jg-teardown.sh with
+# no --force on the first sight of that quiet pane, so its own landed-work test and every
+# refusal stay in charge: unlanded work, an open captain call and an owed public reply are
+# all refused before any destructive step. The teardown runs detached (its landed-work read
+# may call the forge) and leaves a marker the next scan reads:
+#   running  the teardown is still going, so the scan surfaces nothing yet;
+#   refused  the teardown stopped, and the scan surfaces the stale wake with its words.
+# A success removes the marker along with the task. Scouts keep their report for
+# Overwatch to relay and Squad Leads own a child tree, so neither is cleaned up here.
+# Returns 0 when nothing should be surfaced now, 1 to surface (STALE_CLEANUP_NOTE is set
+# to the refusal when there was one).
+STALE_CLEANUP_WAIT_SECS=${JG_STALE_CLEANUP_WAIT_SECS:-180}
+finished_cleanup_gate() {  # <window> <key> <hash> <task>
+  local key=$2 h=$3 task=$4 mf last verb st mh at note now
+  STALE_CLEANUP_NOTE=''
+  mf="$STATE/.stale-cleanup-$key"
+  [ -n "$task" ] && [ -e "$STATE/$task.meta" ] || return 1
+  case "$(jg_meta_get "$STATE/$task.meta" kind)" in scout|squad_lead) return 1 ;; esac
+  last=$(last_status_line "$STATE/$task.status")
+  verb=''
+  [ -z "$last" ] || status_line_verb "$last" verb
+  [ "$verb" = "done" ] || return 1
+  now=$(date +%s)
+  if [ -r "$mf" ]; then
+    IFS=$'\t' read -r st mh at note < "$mf" || true
+    if [ "$mh" = "$h" ]; then
+      case "$st" in
+        refused) STALE_CLEANUP_NOTE=$note; return 1 ;;
+        running)
+          case "$at" in ''|*[!0-9]*) at=0 ;; esac
+          [ $((now - at)) -ge "$STALE_CLEANUP_WAIT_SECS" ] || return 0
+          STALE_CLEANUP_NOTE="the cleanup did not finish within ${STALE_CLEANUP_WAIT_SECS}s"
+          return 1 ;;
+      esac
+    fi
+  fi
+  printf 'running\t%s\t%s\t\n' "$h" "$now" > "$mf" 2>/dev/null || return 1
+  (
+    log="$mf.log"
+    if env JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-teardown.sh" "$task" > "$log" 2>&1; then
+      rm -f "$mf" "$log"
+    else
+      note=$(grep -m1 -E '^(REFUSED|error:)' "$log" 2>/dev/null) || note=
+      printf 'refused\t%s\t%s\t%s\n' "$h" "$(date +%s)" "${note:-the cleanup was refused: see $log}" > "$mf.next" \
+        && mv -f "$mf.next" "$mf"
+    fi
+  ) </dev/null >/dev/null 2>&1 &
+  return 0
+}
+
 # --- Main entry: the runtime below runs only when this file is executed as a
 # script. When sourced (unit tests loading the functions above), return here
 # before acquiring the singleton lock or entering the blocking loop.
@@ -3819,6 +3878,49 @@ watcher_beat() {
   touch "$STATE/.last-watcher-beat" 2>/dev/null || true
 }
 
+# A rejected state check stays rejected every sweep until someone fixes or
+# removes it, so the alert is raised once per file, not once per sweep. The
+# fingerprint (content hash, inode, mode) is kept in $STATE/.rejected-state-checks/
+# <file name>. A file alerts when it has no record or its fingerprint differs.
+# A file that is no longer rejected loses its record, so rejecting it again
+# later alerts again. The device number is left out on purpose: it is not
+# stable across a volume remount (jg_pr_file_identity).
+rejected_check_fingerprint() {
+  local sum
+  sum=$(jg_custom_check_sha256 "$1") || sum=unreadable
+  printf '%s %s %s\n' "$sum" "$(jg_pr_file_inode "$1")" "$(jg_pr_file_mode "$1")"
+}
+
+# rejected_checks_unalerted <paths...>: print, space-led, the paths with no
+# matching record.
+rejected_checks_unalerted() {
+  local c
+  for c in "$@"; do
+    [ "$(cat "$STATE/.rejected-state-checks/$(basename "$c")" 2>/dev/null)" \
+      = "$(rejected_check_fingerprint "$c")" ] || printf ' %s' "$c"
+  done
+}
+
+# rejected_checks_record <paths...>: the records become exactly this set. An
+# unchanged record is left alone and a changed one is replaced by rename, so a
+# watcher stopped mid-sweep never leaves an empty record that alerts twice.
+rejected_checks_record() {
+  local dir="$STATE/.rejected-state-checks" c rec fp tmp="$STATE/.rejected-state-checks/.record.$$"
+  mkdir -p "$dir" || return 1
+  for rec in "$dir"/*; do
+    [ -e "$rec" ] || continue
+    case " $* " in *"/$(basename "$rec") "*) ;; *) rm -f -- "$rec" ;; esac
+  done
+  for c in "$@"; do
+    fp=$(rejected_check_fingerprint "$c")
+    [ "$(cat "$dir/$(basename "$c")" 2>/dev/null)" = "$fp" ] && continue
+    if ! { printf '%s\n' "$fp" > "$tmp" && mv -f -- "$tmp" "$dir/$(basename "$c")"; }; then
+      rm -f -- "$tmp"
+      return 1
+    fi
+  done
+}
+
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
 # Time-based via .last-check mtime so the cadence survives watcher restarts.
 # A due check runs on every cycle that reaches it, including a cycle whose
@@ -3830,7 +3932,7 @@ watcher_beat() {
 run_due_checks() {
   local c id out reason is_pr_poll provider url host path number custom_snapshot
   local merge_authority merge_authority_record_identity merge_outcome_rc
-  local rejected_checks contribution_check_output contribution_check_diagnostics contribution_check_line
+  local rejected_checks unalerted_checks contribution_check_output contribution_check_diagnostics contribution_check_line
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
     rejected_checks=
     contribution_check_output=
@@ -3952,9 +4054,17 @@ EOF
       # hangs or a cycle that dies never reaches this point, so it still ages.
       watcher_beat
     done
-    if [ -n "$rejected_checks" ]; then
-      reason="check: rejected unauthenticated state checks:$rejected_checks"
+    # shellcheck disable=SC2086 # rejected_checks is a space-separated path list.
+    unalerted_checks=$(rejected_checks_unalerted $rejected_checks)
+    if [ -n "$unalerted_checks" ]; then
+      reason="check: rejected unauthenticated state checks:$unalerted_checks"
       jg_wake_append check unauthenticated-state-checks "$reason" || exit 1
+    fi
+    # Recorded after the durable append, so a failed append alerts again next sweep.
+    # shellcheck disable=SC2086
+    rejected_checks_record $rejected_checks \
+      || triage_log "could not record rejected state checks; they alert again next sweep"
+    if [ -n "$unalerted_checks" ]; then
       touch "$STATE/.last-check"
       wake "$reason"
     fi
@@ -4440,8 +4550,13 @@ EOF
               rm -f "$ssf"
               clear_write_tracking "$key"
               triage_log "absorbed stale (open captain call already surfaced for this status): $w"
+            elif finished_cleanup_gate "$w" "$key" "$h" "$(window_to_task "$w" "$STATE")"; then
+              # A finished worker's cleanup is running; it queues no wake unless it is refused.
+              triage_log "finished worker cleanup under way, nothing to surface yet: $w"
             else
-              jg_wake_append stale "$w" "stale: $w" || exit 1
+              stale_text="stale: $w"
+              [ -z "$STALE_CLEANUP_NOTE" ] || stale_text="stale: $w (finished but not cleaned up: $STALE_CLEANUP_NOTE)"
+              jg_wake_append stale "$w" "$stale_text" || exit 1
               stale_wait_record "$key"
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
@@ -4453,7 +4568,7 @@ EOF
                 *) stale_end=''; stale_ident='' ;;
               esac
               mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
-              wake "stale: $w"
+              wake "$stale_text"
             fi
           elif [ -e "$ssf" ]; then
             # This exact hash was already overridden as provably-working (a

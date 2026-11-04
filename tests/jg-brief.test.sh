@@ -1777,8 +1777,6 @@ test_operator_scaffolds_forbid_pool_administration() {
       "$mode ship brief gave the prohibition no exit for a genuine second-checkout need"
   done
 
-  assert_grep "no verify skill" "$home/data/brief-pool-no-mistakes/brief.md" \
-    "ship brief did not require the proof line to say no verify skill"
   assert_grep "Commit nothing afterward" "$home/data/brief-pool-no-mistakes/brief.md" \
     "ship brief did not forbid commits after the final-head done-done run"
   # The merge-gate recipe: real tool paths of this checkout, the verify skill run named in the proof line, and the PR variable.
@@ -1787,7 +1785,8 @@ test_operator_scaffolds_forbid_pool_administration() {
     assert_grep "$ROOT/$tool" "$b" "ship brief did not name $tool at this checkout's path"
     [ -x "$ROOT/$tool" ] || fail "the brief names $tool but it is not an executable of this checkout"
   done
-  assert_grep "done-done-verify-suites" "$b" "ship brief did not require the proof line to name the done-done-verify-suites run"
+  assert_grep "checks-draft.md" "$b" "ship brief did not tell the worker to lint a draft Checks block before the PR opens"
+  assert_grep "Before the PR exists" "$b" "ship brief did not put the Checks lint before the PR"
   assert_grep "JG_RECEIPT_PR=<PR url>" "$b" "ship brief did not give the receipt command the PR variable"
   assert_grep "## Checks" "$b" "ship brief did not describe the ## Checks block of the merge gate"
   assert_grep "receipts/bin/jg-run-receipt.sh" "$b" "ship brief did not name the receipt publisher"

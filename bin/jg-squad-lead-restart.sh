@@ -59,6 +59,18 @@
 # request text, the bound, the failure vocabulary, and this report are all
 # computed here in the primary and are identical for both.
 #
+# An idle local mate is the exception to that replacement: one whose home has
+# no open backlog item, no worker record, no unread message or queued wake, and
+# no marked request still awaiting its report has nothing to resume, and a fresh
+# agent would only read its digest and idle. After its persist answer lands it is
+# stopped and marked dormant instead (bin/jg-squad-lead-dormant.sh stop-idle),
+# and the first message routed to it (bin/jg-send.sh) relaunches it on the
+# current code with that message already recorded. It is reported as
+# `restarted: <id> (idle: stopped, starts on its first routed work)`. A mate with
+# work, an open request, a remote placement, or the dormant rule off
+# (config/squad-lead-dormant-secs 0) is relaunched at once as before, and a stop
+# that fails falls back to that same relaunch.
+#
 # Nothing here forces, stashes, or discards anything. bin/jg-control.sh owns the
 # restart transaction, its checkpoint, its journal, and its rollback; a refusal
 # before the agent is stopped leaves the mate running exactly as it was.
@@ -105,7 +117,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
-  sed -n '2,72{s/^# \{0,1\}//;p;}' "$0"
+  sed -n '2,92{s/^# \{0,1\}//;p;}' "$0"
 }
 
 case "${1:-}" in
@@ -215,6 +227,15 @@ restart_mate() {  # <array-index>
   id=${IDS[$i]}
   # The watcher's own relaunch notice for this restart is not news (defaults/wake-routing).
   printf '%s\t%s\n' "$(date +%s)" "$id" >> "$STATE/.squad-lead-restart-pass" 2>/dev/null || true
+  if [ "${PLACEMENT[i]}" != remote ] \
+    && JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
+      "$SCRIPT_DIR/jg-squad-lead-dormant.sh" stop-idle "$id" >/dev/null 2>&1; then
+    # Nothing to resume: its home has no open work and no request awaits it. A
+    # replacement agent would only read its digest and idle, so it stays stopped
+    # and its first routed message starts it on the current code.
+    printf 'restarted: %s (idle: stopped, starts on its first routed work) at %s\n' "$id" "$(date +%s)"
+    return
+  fi
   if [ "${PLACEMENT[i]}" = remote ]; then
     restart_out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
       "$SCRIPT_DIR/jg-remote-squad-lead-relaunch.sh" \
