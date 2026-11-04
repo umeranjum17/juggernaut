@@ -97,7 +97,7 @@ test_routine_rides_the_digest() {
   [ ! -s "$dir/events" ] || fail "a routine item woke the supervisor: $(cat "$dir/events")"
   [ -e "$dir/state/.wake-digest-at" ] || fail "the first routine item did not open a digest window"
 
-  # Thirty-one minutes later the digest is due; a real cycle delivers one wake naming the count,
+  # Thirty-one minutes later (past the 15-minute delay) the digest is due; a real cycle delivers one wake naming the count,
   # and the drain the next turn runs still presents the routine item itself.
   printf '%s\n' "$((now - 1860))" > "$dir/state/.wake-digest-at"
   core "$dir" digest | grep -qx 1 || fail "the digest was not due after the window"
@@ -282,9 +282,108 @@ test_wake_misses_after_c5() {
   pass "the four c-5 wake misses settle in their quiet case and still wake in the real one"
 }
 
+# --- 6. routine wakes batch by count or delay; urgent classes bypass the batch -------
+# `set digest-count` (default 5) and `set digest-minutes` (default 15) in defaults/wake-routing,
+# overridable by a home's config/wake-routing. Whichever trigger fires first releases the routine
+# rows as ONE wake.
+merged_row() { append "$1" check "merged-$2" "check: merged-$2: PR merged" >/dev/null; }  # <dir> <n>
+
+test_batch_threshold() {
+  local dir n now
+  dir=$(new_home batch-threshold)
+  now=$(date +%s)
+  : > "$dir/events"
+  assert_equals batch "$(route "$dir" check merged-1 'check: merged-1: PR merged')" "a merge notice is routine"
+
+  # (a) Count trigger, shipped default of 5: four routine rows wait, the fifth releases them as one wake.
+  for n in 1 2 3 4; do merged_row "$dir" "$n"; done
+  core "$dir" digest mark >/dev/null && fail "four routine rows released a batch before the threshold"
+  cycle "$dir"
+  [ ! -s "$dir/events" ] || fail "four routine rows woke the supervisor: $(cat "$dir/events")"
+  merged_row "$dir" 5
+  assert_equals 5 "$(core "$dir" digest)" "the fifth routine row did not release the batch"
+  cycle "$dir"
+  grep -q 'digest - 5 routine' "$dir/events" || fail "the count trigger never woke: $(cat "$dir/events") $(cat "$dir/err")"
+  [ "$(grep -c 'digest - ' "$dir/events")" = 1 ] || fail "the batch woke more than once: $(cat "$dir/events")"
+  grep -q 'merged-5' "$dir/drain" || fail "the batch wake's drain did not carry the held rows"
+
+  # The count starts again from zero after a release: four more rows are held, the fifth releases.
+  : > "$dir/events"
+  for n in 6 7 8 9; do merged_row "$dir" "$n"; done
+  cycle "$dir"
+  [ ! -s "$dir/events" ] || fail "rows after a release woke early: $(cat "$dir/events")"
+  merged_row "$dir" 10
+  cycle "$dir"
+  grep -q 'digest - 5 routine' "$dir/events" || fail "the second batch never woke: $(cat "$dir/events")"
+
+  # (b) Delay trigger, shipped default of 15 minutes: two rows wait, due only once the delay passed.
+  cycle "$dir"; : > "$dir/events"
+  merged_row "$dir" 11; merged_row "$dir" 12
+  printf '%s\n' "$((now - 14 * 60))" > "$dir/state/.wake-digest-at"
+  core "$dir" digest >/dev/null && fail "a batch was released before 15 minutes"
+  printf '%s\n' "$((now - 16 * 60))" > "$dir/state/.wake-digest-at"
+  assert_equals 2 "$(core "$dir" digest)" "the delay trigger did not release the batch after 15 minutes"
+  cycle "$dir"
+  grep -q 'digest - 2 routine' "$dir/events" || fail "the delay trigger never woke: $(cat "$dir/events")"
+
+  # (c) The knob: a home's config/wake-routing wins over the shipped default.
+  cycle "$dir"; : > "$dir/events"
+  printf 'set digest-count 2\n' > "$dir/config/wake-routing"
+  merged_row "$dir" 13
+  core "$dir" digest mark >/dev/null && fail "one row released a batch under digest-count 2"
+  merged_row "$dir" 14
+  assert_equals 2 "$(core "$dir" digest)" "digest-count 2 did not release two rows"
+  printf 'set digest-count 0\n' > "$dir/config/wake-routing"
+  merged_row "$dir" 15; merged_row "$dir" 16; merged_row "$dir" 17
+  core "$dir" digest >/dev/null && fail "digest-count 0 did not turn the count trigger off"
+  rm -f "$dir/config/wake-routing"
+  pass "routine rows are held and released as one wake at 5 rows or 15 minutes, and the knobs override"
+}
+
+test_batch_urgent_bypass() {
+  local dir n
+  dir=$(new_home batch-urgent)
+  for n in 1 2 3; do merged_row "$dir" "$n"; done
+  printf 'blocked [at=%s]: stuck\n' "$(date +%s)" > "$dir/state/b.status"
+  printf 'done [at=%s]: PR https://example.test/pr/1\n' "$(date +%s)" > "$dir/state/d.status"
+  printf 'needs-decision [at=%s]: pick\n' "$(date +%s)" > "$dir/state/n.status"
+  printf 'failed [at=%s]: broke\n' "$(date +%s)" > "$dir/state/f.status"
+  assert_equals now "$(route "$dir" check inbox:3 'check: captain inbox note 3')" "a captain note bypasses the batch"
+  assert_equals now "$(route "$dir" check ci.check.sh 'check: PR 12 checks failed')" "a failed check bypasses the batch"
+  assert_equals now "$(route "$dir" signal b.status 'signal: b.status')" "blocked bypasses the batch"
+  assert_equals now "$(route "$dir" signal n.status 'signal: n.status')" "needs-decision bypasses the batch"
+  assert_equals now "$(route "$dir" signal d.status 'signal: d.status')" "done bypasses the batch"
+  assert_equals now "$(route "$dir" signal f.status 'signal: f.status')" "failed bypasses the batch"
+  assert_equals now "$(route "$dir" stale crew:w1 'stale: crew:w1 (no output for 20 minutes)')" "a stale escalation bypasses the batch"
+  assert_equals now "$(route "$dir" check delete-guard 'check: delete guard blocked a command')" "a security alarm bypasses the batch"
+
+  # With three routine rows held and the batch not due, a blocked status line is found by the
+  # watcher's own scan and wakes at once, by itself, leaving the held rows for the next drain.
+  rm -f "$dir"/state/*.status
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
+  printf 'working [at=%s]: building\n' "$(date +%s)" > "$dir/state/lane.status"
+  prime_status_seen "$dir/state" "$dir/state/lane.status"
+  printf 'blocked [at=%s] [key=stuck]: waiting on the captain\n' "$(date +%s)" >> "$dir/state/lane.status"
+  : > "$dir/events"
+  cycle "$dir"
+  grep -q 'lane\.status' "$dir/events" || fail "a blocked line did not bypass the held batch: events=$(cat "$dir/events") err=$(cat "$dir/err")"
+  ! grep -q 'digest - ' "$dir/events" || fail "the urgent wake was reported as a digest"
+  grep -q 'merged-3' "$dir/drain" || fail "the held routine rows were not presented by the urgent wake's drain"
+  pass "captain, failed, blocked, needs-decision, done, security and stale events bypass the batch"
+}
+
+if [ "${WAKE_SCHEDULE_ONLY:-}" = batch-threshold ]; then
+  test_batch_threshold
+  test_batch_urgent_bypass
+  echo "wake batch threshold: count trigger, delay trigger, knob override and urgent bypass"
+  exit 0
+fi
+
 test_routine_rides_the_digest
 test_unchanged_fleet_no_heartbeat
 test_urgent_stays_now
 test_planned_wait_is_quiet
 test_wake_misses_after_c5
+test_batch_threshold
+test_batch_urgent_bypass
 echo "wake schedule: routine rides the digest, an unchanged fleet is silent, urgent still wakes, the c-5 misses settle"
