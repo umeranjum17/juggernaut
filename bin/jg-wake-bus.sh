@@ -14,7 +14,7 @@
 #            the bus is on.
 #   streams  JG_WAKE carries jg.<home>.wake.> and JG_INBOX jg.<home>.inbox.> for every
 #            home, file storage, kept JG_BUS_MAX_AGE (default 168h). One server serves
-#            every home on the machine, so bus_ensure_stream adds this home's subject to
+#            every home on the machine, so the Go command (wakebus.go) adds this home's subject to
 #            a stream an earlier build made for another home; a home reads only its own events
 #            (the event's `home`).
 #   outbox   an event the server refuses waits in state/.wake-bus.outbox.jsonl and is
@@ -42,7 +42,6 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/jg-kv-lib.sh"
 
 WAKE_STREAM=JG_WAKE
-INBOX_STREAM=JG_INBOX
 # One subject prefix per home on the machine's one server: jg.<home>.> owns the
 # wakes, the inboxes and the captain channel of exactly one home, and the account
 # that carries them can publish nowhere else (core/bus/accounts.conf).
@@ -84,30 +83,6 @@ bus_gate() {
   fi
 }
 
-# bus_ensure_stream <stream> <subject>: the stream exists and carries this home's
-# subject. The machine runs ONE JetStream, so one stream serves every home on it:
-# a stream made for the first home's prefix alone refuses every other home's
-# publish, and those wakes sit in the home's outbox while the file read model
-# looks like the queue. A wildcard over the home part is refused where another
-# stream (the captain channel's jg.captain.>) overlaps it, so each home adds its
-# own subject to the list; the stream keeps its messages.
-bus_ensure_stream() { # <stream> <subject> [<max-age>]
-  local have
-  have=$(bus stream info "$1" --json 2>/dev/null | jq -r '(.config.subjects // []) | join(",")' 2>/dev/null)
-  if [ -z "$have" ]; then
-    bus stream add "$1" --subjects "$2" --storage file \
-      --retention limits --max-age "${3:-$BUS_MAX_AGE}" --dupe-window 24h --defaults >/dev/null 2>&1
-  else
-    case ",$have," in *",$2,"*) return 0 ;; esac
-    bus stream edit "$1" --subjects "$have,$2" --force >/dev/null 2>&1
-  fi
-}
-
-bus_ensure_streams() {
-  bus_ensure_stream "$WAKE_STREAM" "$SUBJECT_PREFIX.wake.>" "${1:-}"
-  bus_ensure_stream "$INBOX_STREAM" "$SUBJECT_PREFIX.inbox.>" "${1:-}"
-}
-
 # --- helpers -----------------------------------------------------------------
 sha256_of() { # stdin
   if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
@@ -131,9 +106,7 @@ home_key() { # <state-dir>
 # withdraw rewrite, the record-only file and the queue's own append-recovery
 # marker all go with the path they served. docs/bus-live.md owns the contract.
 LIVE_QUEUE=$STATE/.wake-queue                  # read model: queued rows, oldest first
-LIVE_SOLID=$STATE/.wake-settled                # read model: record-only rows, newest last
 LIVE_EVENTS=$STATE/.wake-bus.events.jsonl      # this home's unsettled events, with their sequence
-LIVE_CURSOR=$STATE/.wake-bus.cursor            # "<stream>\t<sequence>\t<stream created>" already applied
 LIVE_OUTBOX=$STATE/.wake-bus.outbox.jsonl      # events a failed publish still owes the bus
 
 live_home_key() { home_key "$STATE"; }
@@ -146,214 +119,29 @@ live_enabled() {
   ! grep -qw off "$HOME_DIR/config/wake-bus" 2>/dev/null
 }
 
-# bus_pub_seq <subject> <message-id> <json>: publish, then print the sequence the
-# server stored it at, or 0 when it was not stored. The sequence is the row's
-# ordering number, so it comes from the server rather than from a counter a crash
-# could rewind.
-bus_pub_seq() { # <subject> <message-id> <json>
-  local out seq
-  out=$(bus pub --jetstream -H "Nats-Msg-Id:$2" "$1" "$3" 2>&1) || return 0
-  seq=$(printf '%s' "$out" | sed -n 's/.*Sequence: \([0-9][0-9]*\).*/\1/p' | head -n 1)
-  printf '%s\n' "${seq:-0}"
+# wake_go: the Go command builds, delivers and renders the wake engine's events
+# (core/bus/cmd/jg-bus/wakebus.go, wakerender.go, wake.go). It is handed what this script
+# resolved: the home, its key, the bus address, the client, the subject prefix and the
+# stream age. NATS_USER and NATS_PASSWORD, exported below when the machine runs accounts,
+# reach it through the environment.
+wake_go() {
+  JG_HOME=$HOME_DIR JG_STATE_OVERRIDE=${HOMES[0]} JG_WAKE_HOME_KEY=$(live_home_key) JG_WAKE_BUS_URL=$BUS_URL \
+    JG_NATS_BIN=${BUS_NATS:-} JG_BUS_SUBJECT_PREFIX=$SUBJECT_PREFIX JG_BUS_MAX_AGE=$BUS_MAX_AGE \
+    "$SCRIPT_DIR/jg-bus.sh" wake "$@"
 }
 
-live_cursor_get() { # <stream>
-  awk -v s="$1" '$1 == s && $2 ~ /^[0-9]+$/ { print $2; found = 1 } END { if (!found) print 0 }' "$LIVE_CURSOR" 2>/dev/null
-}
+# live_render: make the streams, publish what the outbox owes, apply the streams from the
+# cursor and write the read models the rest of the fleet reads. The cursor moves only
+# after the replica holding what was read is durable.
+live_render() { wake_go render "$STATE"; }
 
-# live_cursor_made <stream>: the creation time of the stream the cursor was taken on,
-# empty for a cursor written before the cursor carried it.
-live_cursor_made() { # <stream>
-  awk -v s="$1" '$1 == s { print $3 }' "$LIVE_CURSOR" 2>/dev/null | tail -n 1
-}
-
-live_cursor_set() { # <stream> <sequence> [<stream created>]
-  local tmp=$LIVE_CURSOR.tmp.$$ out
-  out=$({ awk -v s="$1" '$1 != s' "$LIVE_CURSOR" 2>/dev/null; printf '%s\t%s%s\n' "$1" "$2" "${3:+$'\t'$3}"; })
-  if printf '%s\n' "$out" > "$tmp" && mv -f "$tmp" "$LIVE_CURSOR"; then
-    return 0
-  fi
-  rm -f -- "$tmp"
-  return 1
-}
-
-# live_apply <stream> <file>: append every message since the cursor that belongs
-# to this home, each carrying the sequence it was stored at. It never moves the
-# cursor: it records the position it read to in LIVE_PENDING, and live_render
-# commits that only after the replica holding those messages is durable. A render
-# killed before the commit leaves the old cursor, so the next render re-reads the
-# same messages (the fold keys on the event id, so a re-read changes nothing); a
-# cursor moved first would skip them for good.
-#
-# A stream the server has made again - a restart onto fresh storage, a lost store -
-# numbers its messages from 1. A cursor taken on the old stream is past the new one's
-# end, so a render that trusted it would read nothing until the new stream overtook
-# it, and every wake in between would sit on the server and never reach the read
-# model. The cursor therefore carries the creation time of the stream it was taken
-# on: a different stream, or a cursor past this one's last sequence, starts again at
-# the stream's first message.
-#
-# A wake event's number is its rseq. An inbox record already carries its own number, the
-# record's file in the task's inbox, so the stream sequence never replaces it.
-LIVE_PENDING=()
-live_apply() { # <stream> <file>
-  local stream=$1 out=$2 from seq first last made was info raw body fresh=0
-  info=$(bus stream info "$stream" --json 2>/dev/null) || return 0
-  read -r first last made < <(printf '%s' "$info" \
-    | jq -r '[(.state.first_seq // 0), (.state.last_seq // 0), (.created // "-")] | map(tostring) | join(" ")' 2>/dev/null)
-  case "${first:-}" in ''|*[!0-9]*) first=0 ;; esac
-  case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac
-  [ "${made:--}" != - ] || made=
-  from=$(( $(live_cursor_get "$stream") + 1 ))
-  was=$(live_cursor_made "$stream")
-  if { [ -n "$was" ] && [ -n "$made" ] && [ "$was" != "$made" ]; } || [ "$from" -gt $((last + 1)) ]; then
-    from=1 fresh=1
-  fi
-  [ "$from" -ge "$first" ] || from=$first   # the stream's age limit dropped the ones before
-  [ "$from" -ge 1 ] || from=1
-  # Nothing new: no read and no write, unless the cursor must move onto this stream.
-  if [ "$last" -lt "$from" ] && [ "$fresh" = 0 ] && { [ -n "$was" ] || [ -z "$made" ]; }; then
-    return 0
-  fi
-  seq=$from
-  while [ "$seq" -le "$last" ]; do
-    raw=$(bus stream get "$stream" "$seq" --json 2>&1) || {
-      # Only a message the stream no longer holds (aged out, deleted) is passed over. Any other
-      # refusal - a timeout, a bus that answers the API half-way - stops the read before this
-      # message, so the cursor stays on the last one read and the next render reads it again;
-      # skipping it would lose an acknowledgement for good and leave its row queued.
-      case "$raw" in *"no message found"*) seq=$((seq + 1)); continue ;; esac
-      last=$((seq - 1))
-      break
-    }
-    body=$(printf '%s' "$raw" | jq -r '.data // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
-    if [ -n "$body" ]; then
-      printf '%s' "$body" | jq -c --argjson seq "$seq" --arg home "$(live_home_key)" \
-        'select(.home == $home) | .seq = (.rseq // .seq // $seq)' >> "$out" 2>/dev/null || true
-    fi
-    seq=$((seq + 1))
-  done
-  LIVE_PENDING+=("$stream $last $made")
-}
-
-# live_flush_outbox: publish what an earlier failed publish still owes, and keep
-# only what the server refused again. A home whose bus is briefly down therefore
-# loses no wake: the event waits here until the next render.
-live_flush_outbox() {
-  local line seq keep
-  [ -s "$LIVE_OUTBOX" ] || return 0
-  keep=$LIVE_OUTBOX.tmp.$$
-  : > "$keep" || return 1
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    # An acknowledgement carries its raise's id and its own message id (`mid`, set
-    # by live_ack); under the raise's own id the server would drop it as a
-    # duplicate and the row would never settle.
-    seq=$(bus_pub_seq "$(printf '%s' "$line" | jq -r '.subject')" \
-      "$(printf '%s' "$line" | jq -r '.mid // (.id + (if .ack == true then "/ack" else "" end))')" \
-      "$(printf '%s' "$line" | jq -c 'del(.subject)')")
-    [ "${seq:-0}" -gt 0 ] || printf '%s\n' "$line" >> "$keep"
-  done < "$LIVE_OUTBOX"
-  mv -f "$keep" "$LIVE_OUTBOX" || { rm -f -- "$keep"; return 1; }
-}
-
-live_outbox_add() { # <subject> <json>
-  mkdir -p "$STATE" 2>/dev/null || return 1
-  jq -nc --arg subject "$1" --argjson event "$2" '{subject: $subject} + $event' >> "$LIVE_OUTBOX" 2>/dev/null
-}
+# A raise and a record-only wake are built and delivered by the Go command, which owes an
+# event it cannot publish; the read model follows.
+live_raise() { wake_go raise "$STATE" "$@" || return 1; live_render; return 0; } # <kind> <key> <payload> <class>
+live_settle() { wake_go settle "$STATE" "$@" || return 1; live_render; } # <kind> <key> <payload>
 
 # live_publish <subject> <id> <json>: publish one event, or owe it in the outbox.
-live_publish() { # <subject> <id> <json>
-  local seq
-  live_enabled || { live_outbox_add "$1" "$3"; return 0; }
-  seq=$(bus_pub_seq "$1" "$2" "$3")
-  if [ "${seq:-0}" -le 0 ]; then
-    # The first raise on a fresh home arrives before the streams exist, and a
-    # subject no stream carries is refused; making them and retrying once keeps
-    # that first event instead of owing it.
-    bus_ensure_streams || true
-    seq=$(bus_pub_seq "$1" "$2" "$3")
-  fi
-  [ "${seq:-0}" -gt 0 ] && return 0
-  live_outbox_add "$1" "$3"
-}
-
-# live_render: bring the local replica up to date, then write the read models the
-# rest of the fleet reads. The replica holds only unsettled events, so a fold
-# stays small: an acknowledgement drops its raise with it.
-live_render() {
-  local model have_bus=0 pending
-  LIVE_PENDING=()
-  mkdir -p "$STATE" || return 1
-  if live_enabled && bus_gate >/dev/null 2>&1; then
-    have_bus=1
-    bus_ensure_streams || true
-    live_flush_outbox || true
-  fi
-  model=$STATE/.wake-bus.fold.$$
-  : > "$model" || return 1
-  if [ -s "$LIVE_EVENTS" ]; then cat "$LIVE_EVENTS" >> "$model" || return 1; fi
-  # An event a failed publish still owes the bus is part of the read model: a home
-  # whose bus is down keeps queueing and keeps draining, and the outbox hands the
-  # event to the stream on the next render that can reach it.
-  if [ -s "$LIVE_OUTBOX" ]; then jq -c 'del(.subject) | .seq = (.rseq // .seq // 0)' "$LIVE_OUTBOX" >> "$model" 2>/dev/null || true; fi
-  if [ "$have_bus" = 1 ]; then
-    live_apply "$WAKE_STREAM" "$model" || true
-    live_apply "$INBOX_STREAM" "$model" || true
-  fi
-  if ! jq -c -s 'reduce .[] as $e ({};
-        if ($e.ack // false) then (if has($e.id) then .[$e.id].ack = true else . end)
-        else .[$e.id] = $e end)
-      | [to_entries[].value] | map(select((.ack // false) != true)) | .[]' "$model" > "$model.keep" 2>/dev/null; then
-    rm -f -- "$model" "$model.keep"
-    return 1
-  fi
-  mv -f "$model.keep" "$LIVE_EVENTS" || { rm -f -- "$model" "$model.keep"; return 1; }
-  rm -f -- "$model"
-  # The replica now holds everything read, so the cursor may pass it. Each step is
-  # one rename(2): a kill leaves the previous file or the new one, never a torn one.
-  for pending in ${LIVE_PENDING[@]+"${LIVE_PENDING[@]}"}; do
-    # shellcheck disable=SC2086  # "<stream> <sequence> <created>", split on purpose
-    live_cursor_set $pending || return 1
-  done
-  jq -r 'select(.where == "queue") | [.at, (.seq // .rseq), .kind, .key, .payload] | @tsv' "$LIVE_EVENTS" 2>/dev/null \
-    | LC_ALL=C sort -t "$(printf '\t')" -k2,2n > "$model.queue" || : > "$model.queue"
-  chmod 0600 "$model.queue" 2>/dev/null || true
-  _jg_atomic_replace "$model.queue" "$LIVE_QUEUE" || { rm -f -- "$model.queue"; return 1; }
-  jq -r 'select(.where == "settled") | [.at, "silent", .kind, .key, .payload] + (if (.word // "") == "" then [] else [.word] end) | @tsv' "$LIVE_EVENTS" 2>/dev/null \
-    | LC_ALL=C sort -t "$(printf '\t')" -k1,1n > "$model.settled" || : > "$model.settled"
-  chmod 0600 "$model.settled" 2>/dev/null || true
-  _jg_atomic_replace "$model.settled" "$LIVE_SOLID" || { rm -f -- "$model.settled"; return 1; }
-}
-
-live_raise() { # <kind> <key> <payload> <class>
-  local id at rseq event
-  at=$(date -u +%s)
-  id="wake/$(live_home_key)/$at-$$-$RANDOM"
-  # The row's number is fixed here, before any publish: a home whose bus is not
-  # reachable still writes read-model rows, and the number must not change when
-  # the event later reaches the stream.
-  rseq=$(( at * 1000 + (RANDOM % 1000) ))
-  event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --arg class "$4" --arg word "${JG_WAKE_WORD:-}" --argjson at "$at" --argjson rseq "$rseq" \
-    '{v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}
-     + (if $word == "" then {} else {word:$word} end)') || return 1
-  live_publish "$SUBJECT_PREFIX".wake.raise "$id" "$event" || return 1
-  live_render
-  return 0
-}
-
-live_settle() { # <kind> <key> <payload>
-  local id at event
-  at=$(date -u +%s)
-  id="settled/$(live_home_key)/$at-$$-$RANDOM"
-  event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --arg word "${JG_WAKE_WORD:-}" --argjson at "$at" --argjson rseq "$(( at * 1000 + (RANDOM % 1000) ))" \
-    '{v:1,id:$id,home:$home,where:"settled",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:"silent"}
-     + (if $word == "" then {} else {word:$word} end)') || return 1
-  live_publish "$SUBJECT_PREFIX".wake.settled "$id" "$event" || return 1
-  live_render
-}
+live_publish() { wake_go deliver "$STATE" "$@"; }
 
 # live_ack <id>...: acknowledge each row, then prove it left the replica. Every
 # acknowledgement is its own bus message (a message id unique to this attempt): the
