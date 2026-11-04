@@ -143,6 +143,7 @@ jobs:
         run: bash host-memory/tests/jg-mem-gate.test.sh
       # Fixture /proc and fixture homes: a Squad Lead home records the host memory alert without a wake.
       - name: Host memory alert routing test
+        if: ${{ !cancelled() }}
         run: bash host-memory/tests/jg-host-memory-alert-routing.test.sh
       # Fixture home and config, stub quota-axi and pi: nothing real is touched.
       - name: Route change test
