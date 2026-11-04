@@ -147,6 +147,8 @@ type app struct {
 	configFiles []string
 	// set by buildUnit for the nats part: what it just rewrote.
 	accountsChanged, confChanged bool
+	// typing is the chat's "typing…" indicator while a serving gateway has open notes; nil otherwise.
+	typing *typer
 	// data is the home's data directory, which holds the Squad Lead registry.
 	data string
 }

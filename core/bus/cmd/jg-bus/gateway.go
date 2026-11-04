@@ -31,6 +31,7 @@ type Adapter interface {
 	Send(ctx context.Context, out Outbound) (string, error)
 	Out() OutLimits                                        // what Send can carry: file, picture, caption and album sizes
 	React(ctx context.Context, chat, message string) error // mark a message as received
+	Typing(ctx context.Context, chat string) error         // show that an answer is being written
 }
 
 // Inbound is one platform update. A non-message update has no sender, so the access check drops it.
@@ -154,6 +155,7 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		a.noteFailure("gateway reaction", err.Error())
 	}
 	if res.Outcome == "created" { // a replay already announced its event
+		a.typing.begin(in.Chat, res.ID)
 		a.emit("inbound", id, head, "", stored)
 		a.refuseLarge(ad, in)
 	}
@@ -267,6 +269,9 @@ func (a *app) gateway(args []string) int {
 		ad.wait = 0
 	}
 	if !once {
+		a.typing = a.typerFor(ad)
+		a.typing.stopOnSignal()
+		go a.typing.run()
 		if len(allow) > 0 {
 			go a.serveGatewayEvents(ad, allow[0]) // cards, outcomes, alerts and digests out to the chat
 		}
