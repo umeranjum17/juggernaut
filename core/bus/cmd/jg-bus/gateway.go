@@ -167,7 +167,16 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return nil
 	}
 	head := fmt.Sprintf("[chat %s %s:%s]", ad.Name(), in.Chat, in.Message)
-	files, stored := a.fetchMedia(ad, in)
+	reacted := false
+	react := func() { // the note is filed or about to be; a missing reaction costs nothing
+		if !reacted {
+			reacted = true
+			if err := ad.React(context.Background(), in.Chat, in.Message); err != nil {
+				a.noteFailure("gateway reaction", err.Error())
+			}
+		}
+	}
+	files, stored := a.fetchMedia(ad, in, react)
 	if in.Text == "" && len(files) == 0 {
 		in.Text = "(no text: this message has nothing the gateway can read yet)"
 	}
@@ -186,9 +195,7 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return err
 	}
 	a.recordInboundLegs(res.ID, in, stored)
-	if err := ad.React(context.Background(), in.Chat, in.Message); err != nil { // the note is filed; a missing reaction costs nothing
-		a.noteFailure("gateway reaction", err.Error())
-	}
+	react()
 	if res.Outcome == "created" { // a replay already announced its event
 		a.typing.begin(in.Chat, res.ID)
 		a.emit("inbound", id, head, "", stored)
