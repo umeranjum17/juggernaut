@@ -51,6 +51,18 @@ JG_HOME="$FMH" JG_TASK_ID=muxr "$FMH/config/launch-env-hook" "$T/worker.exports"
 [ "$(bash -c '. "$1"; printf "%s|%s" "$KEEP_VALUE" "$CLAUDE_CODE_DISABLE_TERMINAL_TITLE"' _ "$T/worker.exports")" = 'chain|1' ]
 grep -Fq $'\033]0;muxr: Scroll fix\007' "$T/worker.osc"
 grep -Fq -- '--session fixture tab rename w1:t1 muxr: Scroll fix' "$HERDR_LOG"
+# A pane without JG_HOME (the shared Herdr server carries none) must not fail the launch over a cosmetic title.
+env -u JG_HOME -u JG_TASK_INBOX JG_TASK_ID=muxr "$FMH/config/launch-env-hook" "$T/nohome.exports" > "$T/nohome.osc" 2> "$T/nohome.err"
+[ "$(bash -c '. "$1"; printf "%s|%s" "$KEEP_VALUE" "$CLAUDE_CODE_DISABLE_TERMINAL_TITLE"' _ "$T/nohome.exports")" = 'chain|1' ]
+grep -Fq $'\033]0;muxr\007' "$T/nohome.osc"
+grep -Fq -- '--session fixture tab rename w1:t1 muxr' "$HERDR_LOG"
+grep -Fq 'no backlog helper' "$T/nohome.err"
+# Without JG_HOME the home still resolves from the absolute inbox path jg-spawn.sh exports.
+env -u JG_HOME JG_TASK_ID=muxr JG_TASK_INBOX="$FMH/state/muxr.inbox" "$FMH/config/launch-env-hook" "$T/inbox.exports" > "$T/inbox.osc"
+grep -Fq $'\033]0;muxr: Scroll fix\007' "$T/inbox.osc"
+# A JG_HOME with no backlog helper degrades the same way.
+env -u JG_TASK_INBOX JG_HOME="$T/empty" JG_TASK_ID=muxr "$FMH/config/launch-env-hook" "$T/empty.exports" > "$T/empty.osc" 2>/dev/null
+grep -Fq $'\033]0;muxr\007' "$T/empty.osc"
 env -u JG_TASK_ID JG_HOME="$LEAD" "$FMH/config/launch-env-hook" "$T/lead.exports" > "$T/lead.osc"
 [ "$(bash -c '. "$1"; printf "%s" "$CLAUDE_CODE_DISABLE_TERMINAL_TITLE"' _ "$T/lead.exports")" = '1' ]
 grep -Fq $'\033]0;Crewhouse lead\007' "$T/lead.osc"

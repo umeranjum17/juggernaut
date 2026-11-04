@@ -133,6 +133,33 @@ for fields in '{}' '{"run":{"commit":"wrong"}}' '{"evidence":{"commit":"wrong"}}
   is "refusal: invalid card commit fields $fields" "$(gate | tail -1)" "rc=1"
 done
 jq --arg k "$cardkey" --arg h "$head" '.items = [{kind:"evidence",key:$k,run:{commit:$h}}]' "$work/board.json" > "$work/board.tmp" && mv "$work/board.tmp" "$work/board.json"
+# A real fleet board holds hundreds of items (800 KB); one argv string is capped near 128 KB, so the gate must read the board by file.
+big=$work/big-board.json
+jq -n --arg k "$cardkey" --arg h "$head" '{schema:1,answers_only:false,items:([range(700) | {kind:"decision",key:("filler-\(.)"),title:([range(400) | "x"] | add)}] + [{kind:"evidence",key:$k,run:{commit:$h}}])}' > "$big"
+jq '.items |= map(select(.kind == "decision"))' "$big" > "$work/big-board-nocard.json"
+[ "$(wc -c < "$work/big-board-nocard.json")" -gt 200000 ] && ok "oversized board fixture is over 200 KB" || no "oversized board fixture is under 200 KB"
+is "pass: oversized board with the card" "$(gate "$head" "$pr" "$big")" "prev gate ran: lane - $head $pr
+rc=0"
+big_missing=$(gate "$head" "$pr" "$work/big-board-nocard.json")
+case $big_missing in
+  "owner-rules: no passed-proof Evidence card for $pr; post it with: "*"
+rc=1") ok "refusal: oversized board without the card names the missing card" ;;
+  *) no "oversized board without the card: $big_missing" ;;
+esac
+case $big_missing in *"jq:"*|*"Argument list too long"*) no "oversized board leaked a tool error: $big_missing" ;; *) ok "oversized board leaks no tool error" ;; esac
+# An evaluator that cannot run or answers non-JSON refuses with its real reason, never with the missing-card text.
+printf '#!/bin/sh\necho "opa-stub: policy store is corrupt" >&2\nexit 1\n' > "$work/opa-fail"
+printf '#!/bin/sh\necho "not json at all"\n' > "$work/opa-text"
+chmod +x "$work/opa-fail" "$work/opa-text"
+for stub in opa-fail:"opa-stub: policy store is corrupt" opa-text:"not json at all"; do
+  failed=$(OPA=$work/${stub%%:*} gate)
+  case $failed in
+    "owner-rules: cannot evaluate the merge gate for $pr at $head: "*"${stub#*:}"*"
+rc=1") ok "refusal: evaluator ${stub%%:*} prints its real reason" ;;
+    *) no "evaluator ${stub%%:*}: $failed" ;;
+  esac
+  case $failed in *"no passed-proof Evidence card"*|*"jq:"*) no "evaluator ${stub%%:*} printed the missing-card text or a tool error: $failed" ;; *) ok "evaluator ${stub%%:*} is not reported as a missing card" ;; esac
+done
 rm -f "$run"; printf 'screen: none\noutcome: checks passed\nevidence: sealed receipt\n' > "$work/body"
 printf '{"schema":1,"answers_only":false,"items":[]}\n' > "$work/board.json"
 is "refusal: screen: none without receipt refuses" "$(gate | tail -1)" "rc=1"
