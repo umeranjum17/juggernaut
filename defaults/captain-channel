@@ -30,3 +30,6 @@ set stream CAPTAIN
 #   set gateway-adapters telegram
 #   set telegram-token-file config/captain-chat/telegram.token
 #   set chat-media-days 30       # inbound chat files are kept this many days, then deleted
+#   set chat-transcribe-timeout 120      # seconds before a voice note's transcript is given up (engine: bin/jg-chat-transcribe.sh setup)
+#   set chat-transcribe-max-seconds 300  # a longer voice note is cut here, and the transcript line says so
+#   set chat-transcribe-cmd <program>    # another engine: takes a 16 kHz wav, prints the words
