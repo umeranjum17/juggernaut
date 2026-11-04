@@ -35,7 +35,7 @@ SHARE=${XDG_DATA_HOME:-$HOME/.local/share}
 ID=merge-on-green
 STATE=$FMH/state
 SHIM=$STATE/$ID.check.sh
-FILES=(merge-on-green.sh checks-lint.sh jg-checks-lint.sh stale-pr-alarm.sh red-ci-ticket.sh .done-done.yaml)
+FILES=(merge-on-green.sh checks-lint.sh jg-checks-lint.sh stale-pr-alarm.sh red-ci-ticket.sh backlog-shipped-reconcile.sh .done-done.yaml)
 STUB_MARK='# Retired add-on path: this one line runs the juggernaut merge gate at'
 
 refuse() { printf 'merge-on-green: refused: %s\n' "$*" >&2; exit 1; }
@@ -110,6 +110,7 @@ install -m 755 "$SRC/checks-lint.sh" "$DEST/checks-lint.sh"
 install -m 755 "$SRC/jg-checks-lint.sh" "$DEST/jg-checks-lint.sh"
 install -m 755 "$SRC/stale-pr-alarm.sh" "$DEST/stale-pr-alarm.sh"
 install -m 755 "$SRC/red-ci-ticket.sh" "$DEST/red-ci-ticket.sh"
+install -m 755 "$SRC/backlog-shipped-reconcile.sh" "$DEST/backlog-shipped-reconcile.sh"
 install -m 644 "$SRC/.done-done.yaml" "$DEST/.done-done.yaml"
 # The retired path before the shim: a home still pointing at it runs the new gate the moment the
 # redirect lands, never a script this run has not installed yet.
