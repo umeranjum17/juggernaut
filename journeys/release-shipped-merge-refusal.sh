@@ -18,7 +18,7 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
 T=$(mktemp -d)
 trap 'rm -rf -- "$T"' EXIT
-LOG=$OUT/release-shipped-merge-guard.txt
+LOG=$OUT/release-shipped-merge-refusal.txt
 : > "$LOG"
 log() { printf '%s\n' "$*" | tee -a "$LOG"; }
 fail() { log "FAIL: $*"; exit 1; }

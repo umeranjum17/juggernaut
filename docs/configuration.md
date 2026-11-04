@@ -539,7 +539,7 @@ A merge into a release branch that already shipped is refused too.
 `bin/jg-pr-merge.sh`, which merge-on-green also uses, reads the base live and refuses before it runs the merge.
 The refusal names the open release branch and prints the exact `gh pr edit <n> --base <branch>` command; when no newer branch is open it says so and prints no command.
 A merge into the open release branch or the default branch is unchanged.
-`journeys/release-shipped-merge-guard.sh` drives the refusal and a normal merge.
+`journeys/release-shipped-merge-refusal.sh` drives the refusal and a normal merge.
 
 ## Fleet autosync (config/fleet-autosync-off)
 
