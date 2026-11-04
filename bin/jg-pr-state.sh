@@ -10,6 +10,13 @@
 # is failing or pending; it does not mean the pull request is ready to merge.
 # When nothing has reported, or nothing required has, that is printed rather
 # than read as ready. Advisory checks do not block and are omitted.
+# One exception: gh answers "no required checks reported" both for a base branch
+# that requires nothing and for a required check that has not started, and cannot
+# tell them apart. GitHub's mergeStateStatus can, because it is BLOCKED while a
+# required check is unmet. CLEAN, UNSTABLE or HAS_HOOKS therefore confirm that
+# nothing required is outstanding, and the verdict is then every reported check,
+# printed as `CHECK: <name> (<state>)`, so a repository with no required check
+# passes once everything that did report is green.
 # A pull request that only awaits an approval (reviewDecision REVIEW_REQUIRED)
 # is not reported as blocked. GitHub's reviewDecision owns whether reviews
 # block; review history is printed only to explain CHANGES_REQUESTED, naming
@@ -37,7 +44,8 @@
 # red or unfinished check, so a lane fixes it or waits instead of reporting done
 # early; the default stays required-only, because that is what blocks a merge.
 # The juggernaut/waiting-for status (bin/jg-pr-lib.sh JG_PR_WAIT_CONTEXT) is never
-# reported: it is pending while the pull request waits for its own merge.
+# reported by any read, required or not: it is pending while the pull request
+# waits for its own merge.
 # Advisory checks an ordinary run does not need are still omitted from the
 # default read, and a skipping or cancelled check is reported by neither.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
@@ -105,13 +113,14 @@ NUMBER=$JG_PR_NUMBER
 ENDPOINT="/repos/$PATH_PART/pulls/$NUMBER"
 
 CORE=$(gh pr view "$URL" \
-  --json state,mergedAt,isDraft,headRefOid,author,mergeable,reviewDecision --jq '
+  --json state,mergedAt,isDraft,headRefOid,author,mergeable,mergeStateStatus,reviewDecision --jq '
   "state=\(.state | ascii_downcase)",
   "merged_at=\(.mergedAt // "")",
   "draft=\(.isDraft)",
   "head=\(.headRefOid)",
   "author=\(.author.login)",
   "mergeability=\(if .mergeable == null or .mergeable == "UNKNOWN" then "unknown" else (.mergeable | ascii_downcase) end)",
+  "merge_state=\(.mergeStateStatus // "")",
   "review_decision=\(.reviewDecision // "")"') || die "could not read $URL"
 
 STATE=
@@ -121,6 +130,7 @@ MERGEABILITY=
 HEAD=
 AUTHOR=
 REVIEW_DECISION=
+MERGE_STATE=
 while IFS= read -r row; do
   case "$row" in
     state=*) STATE=${row#state=} ;;
@@ -129,6 +139,7 @@ while IFS= read -r row; do
     head=*) HEAD=${row#head=} ;;
     author=*) AUTHOR=${row#author=} ;;
     mergeability=*) MERGEABILITY=${row#mergeability=} ;;
+    merge_state=*) MERGE_STATE=${row#merge_state=} ;;
     review_decision=*) REVIEW_DECISION=${row#review_decision=} ;;
   esac
 done <<EOF_CORE
@@ -168,19 +179,22 @@ esac
 GH_STDERR=$(mktemp "${TMPDIR:-/tmp}/jg-pr-state.XXXXXX") \
   || die "could not create temporary file"
 trap 'rm -f "$GH_STDERR"' EXIT INT TERM
-if [ "$ALL" = 1 ]; then
-  CHECK_SCOPE=''
-  # juggernaut/waiting-for is the one-line wait this repo publishes on the pull
-  # request (JG_PR_WAIT_CONTEXT), pending exactly while the PR waits for this
-  # very merge; counting it would refuse the merge it describes.
-  CHECK_JQ='.[]
+# juggernaut/waiting-for is the one-line wait this repo publishes on the pull
+# request (JG_PR_WAIT_CONTEXT), pending exactly while the PR waits for this
+# very merge; counting it would refuse the merge it describes, even in a
+# repository that requires every check.
+ALL_JQ='.[]
   | select(.name != "'"$JG_PR_WAIT_CONTEXT"'")
   | select(.bucket == "fail" or .bucket == "pending")
   | "CHECK: \(.name) (\(.state))"'
+if [ "$ALL" = 1 ]; then
+  CHECK_SCOPE=''
+  CHECK_JQ=$ALL_JQ
   CHECK_DIE="could not read checks for $URL"
 else
   CHECK_SCOPE=--required
   CHECK_JQ='.[]
+  | select(.name != "'"$JG_PR_WAIT_CONTEXT"'")
   | select(.bucket != "pass" and .bucket != "skipping")
   | "REQUIRED CHECK: \(.name) (\(.state))"'
   CHECK_DIE="could not read required checks for $URL"
@@ -196,6 +210,19 @@ if ! REQUIRED=$(gh pr checks "$URL" $CHECK_SCOPE --json name,state,bucket --jq "
     REQUIRED="CHECKS: none reported yet"
   elif grep -q "^no required checks reported on the '" "$GH_STDERR"; then
     REQUIRED="CHECKS: no required check has reported; readiness unconfirmed"
+    case "$MERGE_STATE" in
+      CLEAN|UNSTABLE|HAS_HOOKS)
+        # Nothing required is outstanding, so the verdict is every reported check.
+        if ! REQUIRED=$(gh pr checks "$URL" --json name,state,bucket --jq "$ALL_JQ" 2>"$GH_STDERR"); then
+          if grep -q "^no checks reported on the '" "$GH_STDERR"; then
+            REQUIRED="CHECKS: none reported yet"
+          else
+            cat "$GH_STDERR" >&2
+            die "could not read checks for $URL"
+          fi
+        fi
+        ;;
+    esac
   else
     cat "$GH_STDERR" >&2
     die "$CHECK_DIE"
@@ -210,6 +237,11 @@ if [ "$WAITING" = 1 ]; then
       WAIT_CHECKS=$(printf '%s\n' "$REQUIRED" | sed -n 's/^REQUIRED CHECK: //p' | head -n 1)
       WAIT_CHECKS=${WAIT_CHECKS%% (*}
       WAIT_REASON="a required check is not passing: $WAIT_CHECKS"
+      ;;
+    *'CHECK: '*)
+      WAIT_CHECKS=$(printf '%s\n' "$REQUIRED" | sed -n 's/^CHECK: //p' | head -n 1)
+      WAIT_CHECKS=${WAIT_CHECKS%% (*}
+      WAIT_REASON="a check is not passing: $WAIT_CHECKS"
       ;;
     *'CHECKS: '*) WAIT_REASON='the required checks have not reported yet' ;;
   esac

@@ -762,6 +762,7 @@ tests/jg-pi-seeded-home-trust-live-e2e.test.sh 102
 tests/jg-pi-wake-replay.test.sh 1972
 tests/jg-post-merge-ci-main.test.sh 357
 tests/jg-pr-state-live-e2e.test.sh 81
+tests/jg-pr-state.test.sh 400
 tests/jg-pr-wait.test.sh 284
 tests/jg-pre-push.test.sh 17156
 tests/jg-progress-claim.test.sh 2500
