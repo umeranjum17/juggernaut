@@ -25,6 +25,7 @@ Do not infer this guard's scope, loop safety, or compatibility tradeoffs for tho
 | How long a beacon stays fresh | [Guard grace and the poll cadence](#guard-grace-and-the-poll-cadence) |
 | How each harness blocks or follows up | [Harness integrations](#harness-integrations) |
 | Claude's Stop auto-arm cooperation, block budget, and fail-open | [Claude cooperative mode](#claude-cooperative-mode) |
+| Why a handled wake is not followed by another turn | [Settled wake](#settled-wake) |
 | Cursor's parked hook | [Cursor park](#cursor-park) |
 | Known gaps | [Compatibility limits](#compatibility-limits) |
 | Tests and live evidence | [Regression coverage](#regression-coverage) |
@@ -423,6 +424,37 @@ A legacy build's lock-holding claim (recognizable by its `autoarm` role file) st
 A live identity-verified stuck legacy owner is retired via TERM before its lock is removed, and an unverified pid is never signalled.
 An upgrade mid-session can therefore neither double-arm nor deadlock, and a failed reclaim re-blocks rather than allowing a blind stop.
 
+#### Settled wake
+
+A turn that handles a wake ends with its acknowledgement.
+The close of a watcher cycle can still reach the Stop auto-arm afterwards, and a re-prompt for it spends a turn that finds nothing to do.
+`bin/jg-wake-settled.sh check` decides whether the close is already settled.
+It exits 0 when all of these hold, and exits 1 naming the first one that does not:
+
+- Queue: no wake row waits for the main actor.
+- Recovery: no recovery episode waits for its acknowledgement, so the marker is absent or `acked`.
+- Decision: no status log holds an open decision.
+- Unread: no unread informational status line waits.
+- Captain: no captain message waits to be tagged.
+- Fleet: the fleet fingerprint equals the one recorded when the last main acknowledgement left the queue empty.
+
+The settled check reuses the existing predicates and adds one file.
+`bin/jg-wake-drain.sh --ack-through` records the fingerprint in `state/.wake-ack-fleet-fp` through `jg-wake-core fleet-fp-record`.
+`jg-wake-core fleet-unchanged` compares against it, and the heartbeat's own `state/.heartbeat-fleet-fp` never moves.
+A missing baseline or an unreadable source counts as open, so the check never settles a wake by guessing.
+
+When the close is actionable and settled, the auto-arm starts the handling successor as usual, and only a confirmed successor lets it skip the rewake.
+The hook then takes the healthy path: it resets its episode state and exits 0 with no banner.
+An unconfirmed successor leaves the rewake to fire as before, so supervision never goes dark for a quiet turn.
+A close whose recovery episode is `acked` was already silent.
+The settled check adds the case with no episode marker, which used to end in the auto-arm failure notice.
+
+What stays the same:
+
+- The guard still blocks a turn end with a dead or missing supervision cycle, and a settled wake does not relax that.
+- The captain-message rule and the other guard rules run before the supervision check, unchanged.
+- Away mode, the supervision host, other wake kinds, and the other harness adapters are not changed.
+
 #### Failure progression and block budget
 
 Fresh `failed` and `failed-suppressed` outcomes enter or advance the failure progression instead of acting as unconditional recovery proof.
@@ -596,6 +628,7 @@ That warning uses `bin/jg-supervision-instructions.sh --repair-line`, so it alwa
 - Bounded attended fail-open.
 - The same bound against a ledger frozen by an inert auto-arm with and without a verified failure episode.
 - Post-alarm continuation suppression.
+- Settled wake: a handled and acknowledged wake ends with no re-prompt and the next cycle armed, while a queued wake, an unacknowledged recovery episode, an open decision, an unread status line, a pending captain message, a changed or unrecorded fleet, and a dead or missing cycle each keep the re-prompt or the block.
 - Positive recovery reset.
 - Generation and legacy claim cases that must block or clear instead of allowing a blind stop.
 - Away-mode daemon ownership between watcher cycles and over a watcher lock left behind by an exited watcher, plus its dead, pid-reused, absent, stale-beacon, and away-mode-off negatives.

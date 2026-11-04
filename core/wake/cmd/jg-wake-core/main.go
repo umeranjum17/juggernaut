@@ -41,8 +41,13 @@
 //	    exit 0 and print how many queued rows wait for a turn when `set digest-count` rows have queued
 //	    or `set digest-minutes` has passed
 //	    since the last digest and at least one is queued; exit 1 otherwise. mark records the digest.
-//	jg-wake-core [flags] fleet-fp-record
+//	jg-wake-core [flags] fleet-fp-record [file]
 //	    record the fleet's fingerprint, which the `@fleet-unchanged` condition compares against.
+//	    With a file, record it there instead: the settled-wake check keeps its own baseline, so the
+//	    heartbeat's is never moved by an acknowledgement.
+//	jg-wake-core [flags] fleet-unchanged <file>
+//	    exit 0 when the fleet looks the way the fingerprint in that file says, and 1 when it does
+//	    not or the file holds none, so an unrecorded baseline never reads as an unchanged fleet.
 //	jg-wake-core [flags] routing-file
 //	    print the rule file in force, nothing when there is none.
 //
@@ -133,11 +138,24 @@ func run(args []string, out, errw io.Writer) int {
 	case "digest":
 		return e.digestDue(rest, out, errw)
 	case "fleet-fp-record":
-		return none(rest, errw, "fleet-fp-record", func() int {
-			if os.WriteFile(e.fleetFingerprintFile(), []byte(e.fleetFingerprint()+"\n"), 0o644) != nil {
-				return 2
+		if len(rest) > 1 {
+			fmt.Fprintln(errw, "jg-wake-core: fleet-fp-record takes at most one file")
+			return 2
+		}
+		file := e.fleetFingerprintFile()
+		if len(rest) == 1 {
+			file = rest[0]
+		}
+		if os.WriteFile(file, []byte(e.fleetFingerprint()+"\n"), 0o644) != nil {
+			return 2
+		}
+		return 0
+	case "fleet-unchanged":
+		return one(rest, errw, "fleet-unchanged", "a fingerprint file", func(file string) int {
+			if e.fleetUnchangedSince(file) {
+				return 0
 			}
-			return 0
+			return 1
 		})
 	case "realert-record", "realert":
 		return e.routeCommand("realert-record", rest, out, errw)
