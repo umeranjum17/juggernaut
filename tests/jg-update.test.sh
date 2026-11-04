@@ -627,6 +627,32 @@ test_primary_update_rebinds_local_watch() {
   pass "T12 a self-update rebinds a locally armed watch on the primary"
 }
 
+# --- T13: the update rewrites every installed host copy from the updated checkout -------
+# The installed merge watcher once sat three days behind core because nothing on the update
+# path re-ran the wiring. The fixture release ships a host-wiring stub that records the checkout
+# it ran from and the home it was given; a failing wiring is reported and never fails the update.
+test_update_runs_host_wiring() {
+  local w out log
+  w=$(new_world t13)
+  log="$w/fake/host-wiring.log"
+  printf '#!/usr/bin/env bash\nprintf "%%s|%%s|%%s\\n" "$(cat "$(dirname "$0")/tool.sh")" "$JG_HOME" "$*" >> "%s"\n[ ! -e "%s.fail" ] || exit 1\n' "$log" "$log" > "$w/seed/bin/jg-host-wiring.sh"
+  chmod +x "$w/seed/bin/jg-host-wiring.sh"
+  bump_origin "$w" bin
+  # shellcheck disable=SC2016
+  out=$(env -u JG_HOST_WIRING_SKIP bash -c 'PATH="$1/fakebin:$PATH" JG_FAKE_DIR="$1/fake" JG_ROOT_OVERRIDE="$1/main" JG_HOME="$1/home" "$2" 2>&1' _ "$w" "$UPDATE")
+  assert_contains "$out" "juggernaut: updated " "the primary advanced"
+  [ "$(wc -l < "$log")" -eq 1 ] || fail "the host wiring ran $(wc -l < "$log" 2>/dev/null) times, not once"
+  assert_contains "$(cat "$log")" "|$w/home|$w/home" "the wiring ran for this home"
+  assert_contains "$(cat "$log")" "echo b-" "the wiring ran from the UPDATED checkout, after the fast-forward"
+  touch "$log.fail"
+  bump_origin "$w" bin
+  # shellcheck disable=SC2016
+  out=$(env -u JG_HOST_WIRING_SKIP bash -c 'PATH="$1/fakebin:$PATH" JG_FAKE_DIR="$1/fake" JG_ROOT_OVERRIDE="$1/main" JG_HOME="$1/home" "$2" 2>&1; echo "rc=$?"' _ "$w" "$UPDATE")
+  assert_contains "$out" "host wiring: not whole after the update" "a failing wiring is reported"
+  assert_contains "$out" "rc=0" "a failing wiring never fails the update"
+  pass "T13 the update runs the host wiring from the updated checkout"
+}
+
 test_updates_main_and_squad_lead
 test_reread_gate_is_instruction_only
 test_bin_only_advance_restarts
@@ -645,5 +671,6 @@ test_juggernaut_detached_head_advances
 test_juggernaut_detached_head_with_unique_commit_skipped
 test_unsafe_squad_lead_home_skipped_before_git_update
 test_primary_update_rebinds_local_watch
+test_update_runs_host_wiring
 
 echo "# all jg-update tests passed"
