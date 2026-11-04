@@ -245,6 +245,10 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 . "$SCRIPT_DIR/jg-merge-authority-lib.sh"
 # shellcheck source=bin/jg-afk-contract.sh
 . "$SCRIPT_DIR/jg-afk-contract.sh"
+# shellcheck source=bin/jg-version-branch-lib.sh
+. "$SCRIPT_DIR/jg-version-branch-lib.sh"
+# shellcheck source=bin/jg-ff-lib.sh
+. "$SCRIPT_DIR/jg-ff-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -1064,11 +1068,52 @@ github_required_checks_missing() {
 # A refusal also leaves its own text in JG_PR_GITHUB_REFUSAL, because that text
 # is what the caller publishes as the pull request's wait.
 JG_PR_GITHUB_REFUSAL=
+# A merge into a release branch that already shipped lands nowhere: the release
+# left the default branch without it. release/c-<M> counts as shipped when a
+# newer release/c-<N> exists (bin/jg-version-branch-lib.sh owns which branch is
+# current), or when a pull request from release/c-<M> into the default branch is
+# merged. Prints the refusal text and returns 1 when <base> is shipped; returns 0
+# for any other base, for the open release branch, and for the default branch.
+# A merged-release read that fails refuses, as every other live read here does.
+github_shipped_release_refusal() {  # <base> <pr-number>
+  local base=$1 number=$2 project open default merged shipped_by=''
+  case "$base" in release/c-[0-9]*) ;; *) return 0 ;; esac
+  case "${base#release/c-}" in *[!0-9]*) return 0 ;; esac
+  project=$(jg_dod_meta_value "$META" project 2>/dev/null) || project=
+  open=
+  default=
+  if [ -n "$project" ] && [ -d "$project" ]; then
+    open=$(jg_current_version_branch "$project" 2>/dev/null) || open=
+    default=$(default_branch "$project" 2>/dev/null) || default=
+  fi
+  if [ -n "$open" ] && [ "$open" != "$base" ] \
+    && [ "${open#release/c-}" -gt "${base#release/c-}" ] 2>/dev/null; then
+    shipped_by="$open is newer"
+  else
+    [ -n "$default" ] || default=$(gh repo view "$PR_OWNER/$PR_REPO" --json defaultBranchRef \
+      --jq '.defaultBranchRef.name' 2>/dev/null) || default=
+    if [ -z "$default" ] || ! merged=$(gh pr list --repo "$PR_OWNER/$PR_REPO" --state merged \
+      --head "$base" --base "$default" --limit 1 --json number --jq 'length' 2>/dev/null); then
+      printf '%s\n' "  - could not read whether $base already shipped to the default branch"
+      return 1
+    fi
+    [ "${merged:-0}" -gt 0 ] 2>/dev/null || return 0
+    shipped_by="its pull request into $default is merged"
+    open=
+  fi
+  if [ -n "$open" ]; then
+    printf '%s\n' "  - $base already shipped ($shipped_by), so a merge into it never reaches the default branch; the open release branch is $open - run: gh pr edit $number --base $open"
+  else
+    printf '%s\n' "  - $base already shipped ($shipped_by) and no newer release branch is open, so a merge into it never reaches the default branch; open the next release branch, then retarget this pull request"
+  fi
+  return 1
+}
+
 github_verify_mergeable() {
   local json fields line red name covered missing unreported producers runs
   local total=0 named=0 refusals='' mergeable_refusal=''
   local local_suite_proven=false local_suite_proof='' local_suite_verify_rc=0
-  local state='' draft='' mergeable='' merge_state='' live_head='' base=''
+  local shipped='' state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
   JG_PR_GITHUB_REFUSAL='could not read the GitHub pull request state before merging'
 
@@ -1147,6 +1192,10 @@ FIELDS
   [ "$draft" = false ] \
     || refusals="$refusals  - the pull request is a draft
 "
+  if shipped=$(github_shipped_release_refusal "$base" "$PR_NUMBER"); then :; else
+    refusals="$refusals$shipped
+"
+  fi
   [ "$mergeable" = MERGEABLE ] \
     || mergeable_refusal="  - mergeable is \"${mergeable:-unreadable}\", not MERGEABLE
 "

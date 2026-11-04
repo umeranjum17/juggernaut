@@ -43,6 +43,8 @@ journeys:
     command: bash journeys/frozen-release-base.sh
   release-cut-orphans:
     command: bash journeys/release-cut-orphans.sh
+  release-shipped-merge-refusal:
+    command: bash journeys/release-shipped-merge-refusal.sh
   critical-path:
     command: bash journeys/critical-path.sh
   proof-attach:
