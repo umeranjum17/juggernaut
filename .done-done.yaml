@@ -2,6 +2,8 @@ app: juggernaut
 journeys:
   live-services:
     command: bash journeys/live-services.sh
+  ci-rerun-guard:
+    command: bash journeys/ci-rerun-guard.sh
   stack-install:
     command: bash journeys/stack-install.sh
   wake-watcher:
