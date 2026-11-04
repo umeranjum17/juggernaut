@@ -19,7 +19,8 @@
 # decided  Replace that record's open line with Main's decision.
 # waiting  Print the count of waiting asks that carry a must category. It is the
 #          only waiting count this home owns: the gate keeps every non-must ask
-#          off the board, so the board's own waiting count is this one. A key the
+#          off the board, so the board's own waiting count is this one. A card
+#          whose hold is no longer open is not counted. A key the
 #          board's dismissal record settles is not counted, and a card whose
 #          detail field lost its category to a rebuild is counted from the
 #          category's own record (bin/jg-board-record-lib.sh).
@@ -28,6 +29,10 @@
 #            dismissed stays dismissed when a rebuild puts the card back, and a
 #            card keeps the must category it was filed with even after a rebuild
 #            dropped its detail field (bin/jg-board-record-lib.sh);
+#          - a hold's own card (key `jg-<tag>-<task-id>-<stamp>`, this home's tag)
+#            whose hold is no longer open - answered, released, or its task
+#            done, or re-held under a newer stamp - is dismissed as
+#            done-elsewhere, because nobody is waiting on it any more;
 #          - every open ask with no must category is recorded for Overwatch and
 #            dismissed from the captain's board, since it is not his to answer;
 #          - every must ask waiting over 48 hours is re-pinged once;
@@ -174,6 +179,29 @@ cmd_decided() {
   printf 'decided: %s\n' "$id"
 }
 
+# 0 when this card is a hold card of this home whose hold is no longer open:
+# the hold was answered or released, its task is done, or a newer hold on the
+# same task carries another stamp. The hold is the card's only reason to wait,
+# so a card that outlives it is a stale ask. Every other case is 1 and leaves
+# the card alone: a key that is not this home's, a hold that is still open on
+# the stamp the card was posted with, and a hold state `open` cannot establish.
+hold_card_settled() {  # <card key>
+  local prefix rest id stamp identity rc
+  prefix=$(jg_question_key_prefix)
+  case "$1" in "$prefix"?*) ;; *) return 1 ;; esac
+  rest=${1#"$prefix"}
+  case "$rest" in *-*) ;; *) return 1 ;; esac
+  id=${rest%-*}
+  stamp=${rest##*-}
+  [ -n "$id" ] && [ -n "$stamp" ] || return 1
+  identity=$("$SCRIPT_DIR/jg-captain-hold.sh" open "$id" --identity --distinguish-absent 2>/dev/null) && rc=0 || rc=$?
+  case "$rc" in
+    0) [ "$(jg_question_key_stamp "$identity")" != "$stamp" ] ;;
+    1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 cmd_waiting() {
   local board json count
   board=$(board_file)
@@ -185,6 +213,7 @@ cmd_waiting() {
         # A card its owner dismissed is not waiting on anyone, however often a
         # rebuild puts it back (bin/jg-board-record-lib.sh).
         jg_board_dismissed "$board" "$key" && continue
+        hold_card_settled "$key" && continue
         # The category a card was filed with outlives a rebuild that dropped its
         # detail field, so the count reads it from the record as well.
         cat=$(jg_ask_card_category "$detail")
@@ -253,6 +282,17 @@ ask_sweep() {  # <board json> <board>
         # and a rebuild put back has nobody waiting on it, so the gate neither
         # routes it again nor re-pings it.
         jg_board_dismissed "$2" "$key" && continue
+        # A hold's card outlives its hold only by accident: the answer came
+        # through chat or the task closed elsewhere, so nothing on the board
+        # was answered. The card leaves the board, and a failed dismissal is
+        # reported once through the same alert-once record as any other.
+        if hold_card_settled "$key"; then
+          if ! sign-off-axi dismiss "$key" "$2" --reason done-elsewhere >/dev/null 2>&1; then
+            printf '%s\n' "$key" >> "$keys"
+            printf 'board card of a settled hold could not be dismissed: %s - %s\n' "$key" "$title" >> "$lines"
+          fi
+          continue
+        fi
         cat=$(jg_ask_card_category "$detail")
         [ -n "$cat" ] || cat=$(jg_ask_card_category "$(jg_board_detail_of "$2" "$key")")
         if [ -z "$cat" ]; then

@@ -293,6 +293,39 @@ test_dismiss_sends_a_fitting_reason_and_odd_titles_make_valid_tags() {
   pass "a dismissal sends one of the three reasons it fits, and an odd title makes a valid tag file"
 }
 
+# A hold's card must leave the board when its hold does. The answer in this case
+# came through the hold command (chat, not the board), so the board never saw an
+# answer and the card waited as a must ask for days.
+test_check_dismisses_the_card_of_a_settled_hold() {
+  local d out key other
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skip: tasks-axi not found"; return 0; }
+  d=$(setup settled-hold)
+  jg_test_tasks_toml "$d/home/.tasks.toml"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$d/home/data/backlog.md"
+  mkdir -p "$d/home/state/procevent" "$d/home/projects"
+  : > "$d/home/state/procevent/signoff.source"
+  printf '{"decision":"yes"}\n' > "$d/decision.json"
+  hold() { with_env "$d" env JG_SIGNOFF_SCRIPT="$ROOT/bin/jg-procevent-signoff.sh" JG_STATE_OVERRIDE="$d/home/state" \
+    JG_DATA_OVERRIDE="$d/home/data" JG_CONFIG_OVERRIDE="$d/home/config" "$ROOT/bin/jg-captain-hold.sh" "$@"; }
+  hold hold nm-live --title "Keep the work?" --reason "Keep the unlanded work?" --repo sample --must discard-unlanded >/dev/null 2>&1 \
+    || fail "the live hold was not posted"
+  hold hold nm-done --title "Discard the work?" --reason "Discard the unlanded work?" --repo sample --must discard-unlanded >/dev/null 2>&1 \
+    || fail "the hold to answer was not posted"
+  assert_equals "2" "$(open_cards "$d")" "the two hold cards were not posted"
+  assert_equals "2" "$(run "$d" "$GATE" waiting)" "two open holds were not both waiting"
+  hold answer nm-done --decision-file "$d/decision.json" >/dev/null 2>&1 || fail "the hold was not answered"
+  key=$(jq -r '.items[] | select(.key | contains("-nm-done-")) | .key' "$d/so/.sign-off/decisions.json")
+  other=$(jq -r '.items[] | select(.key | contains("-nm-live-")) | .key' "$d/so/.sign-off/decisions.json")
+  assert_equals "1" "$(run "$d" "$GATE" waiting)" "the card of an answered hold still counts as waiting"
+  : > "$d/signoff.log"
+  out=$(run "$d" "$GATE" check)
+  assert_equals "" "$out" "dismissing a settled hold's card woke the board owner"
+  assert_grep "reason $key done-elsewhere" "$d/signoff.log" "the card of an answered hold was not dismissed"
+  assert_no_grep "dismiss $other" "$d/signoff.log" "the card of a hold that is still open was dismissed"
+  assert_equals "1" "$(open_cards "$d")" "the answered hold's card still waits on the board"
+  pass "the card of an answered hold leaves the board and the card of an open hold stays"
+}
+
 test_non_must_ask_is_refused_and_routed
 test_dismiss_sends_a_fitting_reason_and_odd_titles_make_valid_tags
 test_must_ask_is_posted_and_counted
@@ -304,3 +337,4 @@ test_check_reads_the_category_record
 test_decided_writes_mains_decision
 test_check_alerts_once_for_an_unchanged_set
 test_check_reads_one_ask_from_a_many_line_detail
+test_check_dismisses_the_card_of_a_settled_hold
