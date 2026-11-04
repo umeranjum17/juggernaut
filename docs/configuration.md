@@ -534,6 +534,13 @@ A pull request that cannot be moved is closed or retargeted by hand.
 The one override is `bin/jg-pr-merge.sh --allow-orphans "<captain words>"`, which only an attended merge accepts, and which records the reason as `orphans_waived=` in the task record.
 `journeys/release-cut-orphans.sh` drives all of it.
 
+A merge into a release branch that already shipped is refused too.
+`release/c-<M>` counts as shipped when a newer `release/c-<N>` exists (`bin/jg-version-branch-lib.sh` decides which branch is current), or when a pull request from `release/c-<M>` into the default branch is merged.
+`bin/jg-pr-merge.sh`, which merge-on-green also uses, reads the base live and refuses before it runs the merge.
+The refusal names the open release branch and prints the exact `gh pr edit <n> --base <branch>` command; when no newer branch is open it says so and prints no command.
+A merge into the open release branch or the default branch is unchanged.
+`journeys/release-shipped-merge-guard.sh` drives the refusal and a normal merge.
+
 ## Fleet autosync (config/fleet-autosync-off)
 
 Every home that runs a merged change needs the new bytes, so a landed merge carries itself to `bin/jg-update.sh`, which fast-forwards this home and every live local Squad Lead home.
