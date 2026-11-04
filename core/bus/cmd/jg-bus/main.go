@@ -118,6 +118,7 @@
 //	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|gateway] | install-service | stop | status | bootstrap
 //	jg-bus wake-engine | router | probe [wake-engine|wake-watcher|router]   (engine.go owns these)
 //	jg-bus wake-watcher | watcher oldest|resurfaced|latest|rows|replay|rebuild   (watcher.go owns these)
+//	jg-bus wake render|raise|settle|deliver <state> ...   (wake.go, wakebus.go, wakerender.go own the wake queue's fold, bus and replica)
 //
 // Env: JG_BUS_ROOT (this checkout, set by bin/jg-bus.sh), JG_HOME, JG_STATE_OVERRIDE,
 // JG_CAPTAIN_CHANNEL, JG_BUS_HOMES (the machine member list, for a test or a lab).
@@ -193,6 +194,8 @@ func run(args []string) int {
 		return a.installService()
 	case "accounts":
 		return a.accounts(rest)
+	case "wake":
+		return a.wake(rest)
 	case "account":
 		return a.account()
 	case "login":

@@ -357,6 +357,10 @@ jobs:
       - name: Red-CI ticket test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/red-ci-ticket.test.sh
+      # Real tasks-axi against a fixture home; no forge and no worker is touched.
+      - name: Backlog shipped-reconcile test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/backlog-shipped-reconcile.test.sh
       - name: Critical-stall test
         if: ${{ !cancelled() }}
         run: bash critical-stall/tests/critical-stall.test.sh

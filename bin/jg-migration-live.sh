@@ -443,10 +443,8 @@ probe_addons() {
   done
   if [ -n "$found" ]; then
     printf 'pending\ta separate add-on checkout is still here:%s\n' "$found"
-  elif [ -d "$ROOT/addons" ]; then
-    printf 'live\tthe add-ons live in addons/ of this checkout and no separate copy is left\n'
   else
-    printf 'absent\tno add-on copy is here at all\n'
+    printf 'live\tthe add-ons live in core/ and no separate copy is left\n'
   fi
 }
 

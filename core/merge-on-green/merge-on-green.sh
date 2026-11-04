@@ -271,3 +271,7 @@ done
 # Red-CI ticket: a red run on the default branch, a version branch or an open PR files one root-cause ticket, once
 # per run id. It lives in red-ci-ticket.sh beside this script and is skipped when absent.
 [ ! -x "$SRC/red-ci-ticket.sh" ] || JG_RED_CI_LIMIT=$DEADLINE "$SRC/red-ci-ticket.sh" check "$FMH"
+
+# Shipped-backlog reconcile: an In flight row whose PR merged or whose release shipped, with no live worker, moves
+# to Done. It lives in backlog-shipped-reconcile.sh beside this script and is skipped when absent.
+[ ! -x "$SRC/backlog-shipped-reconcile.sh" ] || JG_SHIPPED_RECONCILE_LIMIT=$DEADLINE "$SRC/backlog-shipped-reconcile.sh" check "$FMH"

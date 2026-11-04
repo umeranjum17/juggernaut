@@ -5,6 +5,8 @@
 # PR 394 sat two days on release/c-5, conflicting and with no checks, and nothing alerted. For every
 # project in <home>/data/projects.md whose clone (<home>/projects/<name>) has a github.com origin, this
 # lists the open PRs with gh-axi and raises one alert line per PR naming its URL and the reason:
+#   - a release PR (its base or its head is release/c-N) with no started CI 30 minutes after it opened
+#     (no check run past queued and no commit status on the head; PR 644 sat 80 minutes with none), or
 #   - no checks and no update for 24 hours (no check run and no commit status on the head, and
 #     updated_at older than 24 h), or
 #   - its base is a release/* branch that already merged into the default branch (a closed, merged PR
@@ -16,6 +18,7 @@
 # A forge failure is silent and retried next sweep. Closing or rebasing the PR is out of scope, and so
 # is the open-PR cap, which merge-on-green.sh owns. Nothing is printed when nothing happened.
 # merge-on-green.sh runs this after its own work and hands over its remaining time in JG_STALE_PR_LIMIT.
+# JG_RELEASE_CI_MINUTES (default 30) sets the release-PR wait.
 # JG_STALE_PR_GH names the gh-axi binary (tests point it at recorded fixtures).
 set -u
 [ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: stale-pr-alarm.sh check <jg-home>" >&2; exit 2; }
@@ -25,6 +28,8 @@ MEM=$FMH/data/jg-merge-on-green/stale-pr-alarm
 umask 077
 BUDGET=$(( ${JG_CHECK_TIMEOUT:-30} / 3 )); [ "$BUDGET" -ge 5 ] || BUDGET=5
 START=$(date +%s)
+RELEASE_WAIT_MIN=${JG_RELEASE_CI_MINUTES:-30}; case $RELEASE_WAIT_MIN in ''|*[!0-9]*) RELEASE_WAIT_MIN=30 ;; esac
+RELEASE_WAIT=$(( RELEASE_WAIT_MIN * 60 ))
 LIMIT=${JG_STALE_PR_LIMIT:-$(( START + ${JG_CHECK_TIMEOUT:-30} * 4 / 5 ))}
 api() { timeout "$BUDGET" "$GH" api "$1" --jq "$2" 2>/dev/null; } # <path> <jq> -> jq text, nonzero on failure
 
@@ -39,15 +44,23 @@ done | sort -u)
 
 for repo in $repos; do
   [ "$(date +%s)" -lt "$LIMIT" ] || break
-  prs=$(api "repos/$repo/pulls?state=open&per_page=100" '.[]|[.number,.html_url,.base.ref,.updated_at,.head.sha,.user.login]|@tsv') || continue
+  prs=$(api "repos/$repo/pulls?state=open&per_page=100" '.[]|[.number,.html_url,.base.ref,.updated_at,.head.sha,.user.login,.created_at,.head.ref]|@tsv') || continue
   key=${repo//\//__}; flagged=' '; cut=0
-  while IFS=$'\t' read -r num url base updated sha author; do
+  while IFS=$'\t' read -r num url base updated sha author created headref; do
     [ -n "$num" ] || continue
     [ "$author" = "$me" ] || printf '%s\n' "$owned" | grep -qxF -- "$url" || continue
     [ "$(date +%s)" -lt "$LIMIT" ] || { cut=1; break; }
     reasons=''
     ts=$(date -u -d "$updated" +%s 2>/dev/null) || ts=
-    if [ -n "$ts" ] && [ "$(( START - ts ))" -ge 86400 ]; then
+    # A release PR whose head has no started CI run after RELEASE_WAIT seconds; this subsumes the 24 h reason below.
+    case "$base $headref" in *release/c-[0-9]*)
+      cts=$(date -u -d "$created" +%s 2>/dev/null) || cts=
+      if [ -n "$cts" ] && [ "$(( START - cts ))" -ge "$RELEASE_WAIT" ]; then
+        runs=$(api "repos/$repo/commits/$sha/check-runs" '[.check_runs[]|select((.status // "completed") != "queued")]|length') && stat=$(api "repos/$repo/commits/$sha/status" '.statuses|length') \
+          && [ "$runs" = 0 ] && [ "$stat" = 0 ] && reasons="release PR: no CI started ${RELEASE_WAIT_MIN} min after it opened"
+      fi ;;
+    esac
+    if [ -z "$reasons" ] && [ -n "$ts" ] && [ "$(( START - ts ))" -ge 86400 ]; then
       runs=$(api "repos/$repo/commits/$sha/check-runs" .total_count) && stat=$(api "repos/$repo/commits/$sha/status" '.statuses|length') \
         && [ "$runs" = 0 ] && [ "$stat" = 0 ] && reasons='no checks and no update for 24 h'
     fi

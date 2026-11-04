@@ -63,7 +63,11 @@ func (a *app) transcript(f mediaFile, argv []string) (line, text string) {
 	if err != nil {
 		return fail(reason(ctx, err, "the engine", "the engine failed", limit))
 	}
-	if text = strings.Join(strings.Fields(string(out)), " "); text == "" { // one line: no word can add a line to the note
+	text = strings.Join(strings.Fields(string(out)), " ")
+	if isInventedSilence(text) { // a silent note: the model made the words up, so they count as none
+		text = ""
+	}
+	if text == "" { // one line: no word can add a line to the note
 		return fail("no speech found")
 	}
 	text = clampChars(text, 8000)

@@ -6,7 +6,8 @@ The rules live in one markdown file the captain edits, never in this code:
 It is read on every run, so an edit changes behaviour at once.
 Its `## Settings` list holds `mode` (rewrite|warn|block|off, with `mode.<channel>`
 overrides) and `max-sentence-words`; its `## Internal terms` table holds the banned
-patterns and what to say instead (a cell starting with `?` is advice only).
+patterns and the plain wording to use instead. The wording is guidance for a rewrite, never a
+swap: a word swapped into a sentence breaks the sentence ("its whether it can merge").
 
   jg-voice.py check [--channel C] [--role R] [--line] [text...]   exit 1 when the text breaks a rule
   jg-voice.py apply [--channel C] [--role R] [--line] [text...]   print the text to send, as the mode says
@@ -22,25 +23,43 @@ file. Any other section or setting in a role file is ignored, reported on stderr
 `check` exit 1, so a role file cannot weaken the shared rules. `persona` prints the personality
 for the agent that writes the message; bin/jg-session-start.sh and bin/jg-brief.sh call it.
 
-The text comes from the arguments, else stdin. `apply` exits 1 with nothing on stdout only
-when the mode is `block` and the text breaks a rule; findings go to stderr. A missing or
-unreadable voice file steps aside: the text passes unchanged. `--line` treats the text as a
-status line (`verb [key=..]: note`) and only checks the note after the first colon.
+The text comes from the arguments, else stdin. A text with no banned term passes unchanged, except
+for its layout: `apply` puts every list item on its own line and a blank line between a list and
+the prose around it, and a rewrite that runs list items together is refused (not with `--line`).
+In mode `rewrite`, `apply` asks a model to rewrite the whole text in plain sentences, checks the
+result again, and prints it only when no banned term remains and every URL, code span and
+key=value token survived. The rewrite command is JG_VOICE_REWRITE_CMD, else the first line of
+<home>/config/voice-rewrite-command, else `claude -p` on Haiku; it reads the request on stdin and
+prints the new text. In mode `block`, or when the rewrite is missing, fails, times out or still
+holds a banned term, `apply` exits 1 with nothing on stdout and a re-draft instruction on
+stderr: a banned term is never sent and a half-swapped sentence is never printed. Findings go to
+stderr. A missing or unreadable voice file steps aside: the text passes unchanged. `--line`
+treats the text as a status line (`verb [key=..]: note`) and only checks the note after the
+first colon.
 Send points: bin/jg-voice-lib.sh (chat reply, parent channel) and the Telegram send in core/bus.
 """
 import os
 import re
+import shlex
+import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # What a rewrite must never touch: code spans, URLs, [..=..] tags and key=value tokens.
 PROTECTED = re.compile(r"(`[^`\n]*`|\S+://\S+|\[[^\]\n]*=[^\]\n]*\]|[\w.-]+=\S+)")
 STATUS_LINE = re.compile(r"^([A-Za-z-]+(?: \[[^\]\n]*\])*:)(.*)$", re.S)
+# A list item line (`1. x`, `2) x`, `- x`, `* x`, a bullet), and a numbered marker inside a line of prose.
+ITEM = re.compile(r"^\s*(?:\d{1,3}[.)]|[-*\u2022])\s+\S")
+INLINE_MARK = re.compile(r"(?:(?<=\s)|^)(\d{1,2})[.)]\s+(?=\S)")
 
 
 ROLES = ("overwatch", "squad-lead", "worker")
 CHANNEL_ROLE = {"parent-channel": "squad-lead", "telegram": "overwatch", "chat-reply": "overwatch"}
 PERSONA_MAX_LINES = 40
+DEFAULT_REWRITE = ("claude -p --model claude-haiku-5-5 --tools '' --no-session-persistence "
+                   "--disable-slash-commands --setting-sources project")
+REWRITE_SECONDS = 45
 
 
 def home_root():
@@ -98,7 +117,7 @@ def load_role(role):
 
 
 def load(path):
-    """-> (settings, rules); a rule is (compiled regex, replacement or None, advice)."""
+    """-> (settings, rules); a rule is (compiled regex, the plain wording to use instead)."""
     settings, rules, section = {}, [], ""
     for raw in open(path, encoding="utf-8"):
         line = raw.rstrip("\n")
@@ -117,8 +136,7 @@ def load(path):
             except re.error as e:
                 sys.stderr.write("voice: skipping bad pattern %s (%s)\n" % (cells[0], e))
                 continue
-            say = cells[1]
-            rules.append((rx, None, say[1:].strip()) if say.startswith("?") else (rx, say, say))
+            rules.append((rx, cells[1].lstrip("?").strip()))
     return settings, rules
 
 
@@ -137,29 +155,131 @@ def plain_segments(text):
     yield True, text[pos:]
 
 
-def review(text, rules, max_words, fix):
-    """-> (text with plain replacements when fix, findings). Rows run in order and the first
-    row to claim a stretch of text keeps it, so an advice-only phrase is never half-rewritten."""
-    findings, out = [], []
+def review(text, rules, max_words):
+    """-> (term findings, length findings). The first row to claim a stretch of text keeps it."""
+    terms, lengths = [], []
     for is_plain, piece in plain_segments(text):
         claims = []
-        for rx, rep, advice in rules if is_plain else ():
+        for rx, say in rules if is_plain else ():
             for m in rx.finditer(piece):
-                if m.end() > m.start() and not any(m.start() < e and s < m.end() for s, e, *_ in claims):
-                    claims.append((m.start(), m.end(), rep, advice))
-        pos = 0
-        for s, e, rep, advice in sorted(claims):
-            findings.append('"%s" - %s' % (piece[s:e], ("say: " + advice) if rep is not None else advice))
-            if fix and rep is not None:
-                out.append(piece[pos:s] + (rep[:1].upper() + rep[1:] if piece[s].isupper() else rep))
-                pos = e
-        out.append(piece[pos:])
-    result = "".join(out)
+                if m.end() > m.start() and not any(m.start() < e and s < m.end() for s, e, _ in claims):
+                    claims.append((m.start(), m.end(), say))
+        terms += ['"%s" - plain wording: %s' % (piece[s:e], say) for s, e, say in sorted(claims)]
     if max_words:
         for s in re.split(r"(?<=[.!?])\s+|\n+", PROTECTED.sub(lambda m: "x" if "://" in m.group(0) else m.group(0), text)):
             if len(s.split()) > int(max_words):
-                findings.append('sentence of %d words (limit %s): "%s..."' % (len(s.split()), max_words, " ".join(s.split()[:6])))
-    return result, findings
+                lengths.append('sentence of %d words (limit %s): "%s..."' % (len(s.split()), max_words, " ".join(s.split()[:6])))
+    return terms, lengths
+
+
+def split_inline_list(line):
+    """'Two things: 1. A 2. B' -> ['Two things:', '1. A', '2. B']. Only a run that counts up from 1 with words in each item splits."""
+    marks, want = [], 1
+    for m in INLINE_MARK.finditer(line):
+        if int(m.group(1)) == want:
+            marks.append(m)
+            want += 1
+    if len(marks) < 2:
+        return [line]
+    bounds = [m.start() for m in marks] + [len(line)]
+    items = [line[bounds[i]:bounds[i + 1]].strip() for i in range(len(marks))]
+    if not all(re.search(r"[^\W\d_]", re.sub(r"^\d+[.)]\s*", "", item)) for item in items):
+        return [line]
+    lead = line[:bounds[0]].rstrip()
+    return ([lead] if lead else []) + items
+
+
+def layout(text):
+    """The text with its list one item per line and a blank line between blocks (prose and list).
+
+    A list a writer or the rewrite model ran into one line is split; a fenced code block and the
+    lines of an item's continuation stay as written. Text with no list comes back unchanged.
+    """
+    lines, fenced = [], False
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        if raw.lstrip().startswith("```"):
+            fenced = not fenced
+            lines.append(raw)
+        else:
+            lines.extend([raw] if fenced else split_inline_list(raw))
+    out, kind, fenced = [], "blank", False
+    for line in lines:
+        if line.lstrip().startswith("```") or fenced:
+            fenced = fenced != line.lstrip().startswith("```")
+            out.append(line)
+            kind = "blank"
+            continue
+        if not line.strip():
+            now = "blank"
+        elif ITEM.match(line):
+            now = "item"
+        elif line[0].isspace() and kind == "item":
+            now = "item"
+        else:
+            now = "prose"
+        if (kind, now) in (("prose", "item"), ("item", "prose")):
+            out.append("")
+        out.append(line)
+        kind = now
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+
+
+def rewrite_command():
+    cmd = os.environ.get("JG_VOICE_REWRITE_CMD")
+    if cmd is None:
+        config = os.environ.get("JG_CONFIG_OVERRIDE") or os.path.join(home_root(), "config")
+        try:
+            cmd = open(os.path.join(config, "voice-rewrite-command"), encoding="utf-8").readline().strip()
+        except OSError:
+            cmd = ""
+    return shlex.split(cmd or DEFAULT_REWRITE)
+
+
+def rewrite_request(rules_text, text, findings):
+    return (
+        "Rewrite the message below for the captain, a busy reader who wants plain words.\n"
+        "Write whole, natural sentences that say the same thing. Never swap one word for another inside a sentence;\n"
+        "recast the sentence so it reads right. Put the outcome first. Do not add facts. Do not use any banned term.\n"
+        "Copy every URL, `code span`, [tag=value] and key=value token exactly as written.\n"
+        "Keep the layout: every list item stays on its own line, in the same order, and a blank line stays between blocks.\n"
+        "Print only the new message: no preface, no quotes, no notes.\n\n"
+        "Voice rules:\n%s\n\nTerms found in the message, each with a plain idea to say instead (express the idea; never paste the words into the sentence):\n- %s\n\n"
+        "Message:\n%s\n" % (rules_text, "\n- ".join(findings), text))
+
+
+def ask_model(request):
+    """-> (rewritten text or None, why not)."""
+    try:
+        cmd = rewrite_command()
+        secs = float(os.environ.get("JG_VOICE_REWRITE_TIMEOUT") or REWRITE_SECONDS)
+        # Run from an empty directory so the model reads no project instructions and fires no project hooks.
+        with tempfile.TemporaryDirectory() as cwd:
+            run = subprocess.run(cmd, input=request, capture_output=True, text=True, timeout=secs, cwd=cwd)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        return None, "the rewrite step did not run (%s)" % (e.__class__.__name__ if isinstance(e, subprocess.TimeoutExpired) else e)
+    out = run.stdout.strip()
+    if run.returncode != 0 or not out:
+        return None, "the rewrite step failed (exit %d)" % run.returncode
+    return out, ""
+
+
+def rewritten(text, rules, rules_text):
+    """-> (plain text, why not): the model's rewrite of the whole text, only if it re-checks clean."""
+    terms, _ = review(text, rules, None)
+    out, why = ask_model(rewrite_request(rules_text, text, terms))
+    if out is None:
+        return None, why
+    out = layout(out)
+    again, _ = review(out, rules, None)
+    if again:
+        return None, "the rewrite still holds a banned term: " + "; ".join(again)
+    lost = [m.group(0) for m in PROTECTED.finditer(text) if m.group(0) not in out]
+    if lost:
+        return None, "the rewrite lost %s" % ", ".join(lost)
+    items, kept = sum(bool(ITEM.match(l)) for l in text.split("\n")), sum(bool(ITEM.match(l)) for l in out.split("\n"))
+    if kept < items:
+        return None, "the rewrite turned a list of %d items into %d; keep one item per line" % (items, kept)
+    return out, ""
 
 
 def report_role(role, path, ignored):
@@ -198,16 +318,22 @@ def main(argv):
     if not rules and not settings or (mode == "off" and cmd == "apply"):
         sys.stdout.write(text)
         return 0
+    if not line:
+        text = layout(text)
     head, note = split_status(text, line)
-    fixed, findings = review(note, rules, settings.get("max-sentence-words"), cmd == "apply" and mode == "rewrite")
-    for f in findings:
+    terms, lengths = review(note, rules, settings.get("max-sentence-words"))
+    for f in terms + lengths:
         sys.stderr.write("voice: %s: %s\n" % (channel or "message", f))
     if cmd == "check":
-        return 1 if findings or role_ignored else 0
-    if findings and mode == "block":
-        sys.stderr.write("voice: not sent; rewrite it in plain words (rules: %s)\n" % path)
+        return 1 if terms or lengths or role_ignored else 0
+    if not terms or mode == "warn":
+        sys.stdout.write(text)
+        return 0
+    fixed, why = (None, "mode is block") if mode == "block" else rewritten(note, rules, open(path, encoding="utf-8").read())
+    if fixed is None:
+        sys.stderr.write("voice: not sent (%s). Re-draft it yourself in whole plain sentences, then send it again (rules: %s)\n" % (why, path))
         return 1
-    sys.stdout.write(head + fixed)
+    sys.stdout.write(head + note[:len(note) - len(note.lstrip())] + fixed + note[len(note.rstrip()):])
     return 0
 
 

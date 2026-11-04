@@ -14,7 +14,7 @@ import (
 // The owner sends voice notes, an audio longer than the limit and a round video note against a fake
 // Bot API, a real ffmpeg and engines that are small scripts: the words reach the filed note and the
 // event, the reaction does not wait for the engine, and a timeout, a missing engine, a failing engine
-// and an unreadable file each leave the note filed with a line that says why and prints no words.
+// an unreadable file and a silent note (the engine's made-up words are dropped) each leave the note filed with a line that says why and prints no words.
 func TestGatewayTranscript(t *testing.T) {
 	for _, tool := range []string{"python3", "ffmpeg"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -31,7 +31,12 @@ func TestGatewayTranscript(t *testing.T) {
 		raw, _ := os.ReadFile(out)
 		return string(raw)
 	}
-	content := map[string]string{"short": tone("1"), "long": tone("5"), "junk": "not audio at all"}
+	silent := filepath.Join(home, "silence.wav")
+	if b, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "1", "-y", silent).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v %s", err, b)
+	}
+	silentRaw, _ := os.ReadFile(silent)
+	content := map[string]string{"silent": string(silentRaw), "short": tone("1"), "long": tone("5"), "junk": "not audio at all"}
 	engineDone := filepath.Join(home, "engine-done")
 	script := func(name, body string) string {
 		p := filepath.Join(home, name)
@@ -44,6 +49,8 @@ sleep 1
 touch `+engineDone+`
 printf 'Hello   from\nthe fake engine\n'`)
 	slow := script("slow", "sleep 30")
+	// What a speech model makes up from silence.
+	invented := script("invented", `printf 'Thanks for watching!\n'`)
 	broken := script("broken", "echo SECRETWORDS; echo SECRETWORDS >&2; exit 1")
 
 	var reactedBeforeEngine, reacted int
@@ -126,6 +133,7 @@ printf 'Hello   from\nthe fake engine\n'`)
 		{"timeout", "set chat-transcribe-cmd " + slow + "\nset chat-transcribe-timeout 1\n", "short", "transcript: unavailable (timed out after 1 s)"},
 		{"missing engine", "set chat-transcribe-cmd " + filepath.Join(home, "nowhere") + "\n", "short", "transcript: unavailable (the engine is not installed)"},
 		{"failing engine", "set chat-transcribe-cmd " + broken + "\n", "short", "transcript: unavailable (the engine failed)"},
+		{"silent note", "set chat-transcribe-cmd " + invented + "\n", "silent", "transcript: unavailable (no speech found)"},
 		{"unreadable audio", "set chat-transcribe-cmd " + good + "\n", "junk", "transcript: unavailable (the audio could not be read)"},
 	} {
 		note := pass(c.extra, voice(c.file))

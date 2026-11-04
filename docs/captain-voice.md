@@ -9,14 +9,41 @@ A home copies it to `config/captain-voice.md` to change the style for that home;
 
 - Prose rules: STE100 sentence shape, outcome first, full pull request URLs, and who to address.
 - A `## Settings` list: `mode` (`rewrite`, `warn`, `block` or `off`), `mode.<channel>` for one send point, and `max-sentence-words`.
-- An `## Internal terms` table: a regular expression and the plain words that replace it.
-  A replacement that starts with `?` is advice only: the checker reports the term and leaves it.
+- An `## Internal terms` table: a regular expression and the plain idea to say instead.
+  The checker never swaps that wording into a sentence.
+  It gives it to the rewrite step as guidance and shows it to an author whose message is refused.
 
 `bin/jg-voice.py` reads the file on every run.
 Editing a row, a setting or a mode changes the next message, with no code change.
 The checker never touches a URL, a code span, a `[key=value]` tag or a `key=value` token.
 A status line (`verb [key=..]: note`) keeps its framing, and only the note is checked.
 If the voice file or python3 is missing, the message goes out as written.
+
+## The rewrite step
+
+A message with no banned term goes out unchanged.
+A message with a banned term, in mode `rewrite`, is rewritten whole by a model against the voice file.
+The checker then reads the result again.
+It sends the result only when no banned term remains and every URL, code span and `key=value` token is still there.
+Otherwise nothing is sent.
+The checker then exits 1 with an instruction to re-draft the message in whole plain sentences.
+A word is never swapped inside a sentence, so a message never ships half rewritten.
+
+The rewrite command is `JG_VOICE_REWRITE_CMD`, else the first line of `config/voice-rewrite-command`, else `claude -p` on Haiku with no tools, run from an empty directory.
+It reads the request on stdin and prints the new message.
+`JG_VOICE_REWRITE_TIMEOUT` sets its limit in seconds (45 by default).
+A test sets the command to a stub, so no test calls a real model.
+
+## Layout
+
+A chat message keeps its layout, so the checker sets it right on every send, in any mode except `off`.
+It puts each list item on its own line.
+It splits a numbered list that was run into one line when the numbers count up from 1.
+It puts a blank line between a list and the prose around it.
+It leaves a fenced code block and prose with no list as written.
+The rewrite step is told to keep the layout, and a rewrite that turns a list of items into fewer items is refused with the same re-draft instruction.
+A status line sent with `--line` keeps its one line.
+A home with its own `config/captain-voice.md` keeps its own banned terms, so it copies new rows from `defaults/captain-voice.md` by hand.
 
 ## Role personality files
 
@@ -53,9 +80,9 @@ Covered, each calling the same checker:
 
 | Send point | Where | Default mode | What a break does |
 |---|---|---|---|
-| Telegram, every text the gateway sends (replies, cards, outcomes, alerts, pushes) | `telegram.Send` in `core/bus/cmd/jg-bus/gateway_reply.go`, through `gateway_voice.go` | `rewrite` | Plain terms are replaced; the message is always sent |
+| Telegram, every text the gateway sends (replies, cards, outcomes, alerts, pushes) | `telegram.Send` in `core/bus/cmd/jg-bus/gateway_reply.go`, through `gateway_voice.go` | `rewrite` | The message is rewritten whole, or refused: the send fails with the re-draft instruction and the gateway records it as undelivered. A banned term is never sent |
 | Chat reply | `jg-inbox.sh reply` | `block` | Refused with the list of terms to fix, so the author rewrites it |
-| Squad Lead parent channel | `jg_parent_channel_append_once` in `bin/jg-parent-channel-lib.sh`, which every parent-channel publisher uses | `rewrite` | The note is rewritten before the dedupe check, so a retry stays one line; a line is never held back |
+| Squad Lead parent channel | `jg_parent_channel_append_once` in `bin/jg-parent-channel-lib.sh`, which every parent-channel publisher uses | `rewrite` | The note is rewritten whole before the dedupe check, so a retry stays one line; if the rewrite fails the line is still written as it is, because a line is never held back |
 
 Not covered:
 
@@ -68,4 +95,5 @@ Not covered:
 
 `tests/jg-voice.test.sh` runs the real checker through `jg-inbox.sh reply` and the parent-channel append.
 The same test proves each role file, the role choice per send point, that a role file with settings or rules cannot weaken the shared rules, and that a worker brief carries the worker personality.
-`go test ./cmd/jg-bus -run TestGatewayVoice` (in `core/bus`) proves the Telegram send and an edited file.
+The test runs both messages from the captain's screenshot through the path with a stub rewrite and asserts that no flagged term and no broken phrase reaches the captain.
+`go test ./cmd/jg-bus -run TestGatewayVoice` (in `core/bus`) proves the Telegram send, a refused send and an edited file.

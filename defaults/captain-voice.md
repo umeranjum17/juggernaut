@@ -33,9 +33,13 @@ A role file adds tone only. It cannot change any rule or setting in this file.
 Each setting is one line, `- name: value`.
 `mode` says what the checker does when a message breaks a rule:
 
-- `rewrite` - replace what has a plain replacement, report the rest, and send the message anyway.
+- `rewrite` - when the message holds a banned term, a model rewrites the whole message in plain sentences and the result is checked again.
+  Nothing is sent with a banned term in it.
+  If the rewrite fails, the message is refused with an instruction to re-draft it.
+  A word is never swapped inside a sentence.
 - `warn` - report only. The message goes out unchanged.
-- `block` - refuse the message and list what to fix. Only a sender that can rewrite itself (a chat reply) honours this.
+- `block` - refuse the message and list what to fix, with no model rewrite.
+  A sender that can rewrite itself (a chat reply) uses this.
 - `off` - do nothing.
 
 A line `mode.<channel>` overrides `mode` for one send point: `chat-reply`, `parent-channel` or `telegram`.
@@ -48,8 +52,10 @@ A line `mode.<channel>` overrides `mode` for one send point: `chat-reply`, `pare
 
 The checker finds each pattern in the text of a message, ignoring case, and never inside a URL, a `key=value` token or a code span.
 The first column is a Python regular expression. Write `\|` for an alternative.
-The second column is the plain wording that replaces it.
-A second column that starts with `?` is advice only: the checker reports the term and leaves it, because only the author can say what it means.
+The second column is the plain idea to say instead.
+The checker gives it to the rewriting model as guidance, and shows it to an author whose message is refused.
+It is never pasted into the sentence, so a term never breaks the grammar around it.
+A second column that starts with `?` says only the author or the model can judge what the term means in the sentence.
 Rows run top to bottom, so put a long phrase above the short word inside it.
 Delete a row to allow a term. Add a row to ban one.
 
@@ -65,6 +71,8 @@ Delete a row to allow a term. Add a row to ban one.
 | `\blanes\b` | workers |
 | `\blane\b` | worker |
 | `\bworktrees?\b\|\bprimary checkout\b\|\blocal-main\b\|\bcheckout\b` | local copy |
+| `\bcleanups? (is \|was \|are \|were \|gets \|got )?(refused\|refuses\|blocked)\b\|\brefus(ed\|es\|al)\b[^.\n]{0,20}\b(cleanup\|teardown)\b\|\bteardown (is \|was )?refus\w*` | ? say what keeps the work from being cleaned up, for example "the change is not merged yet" |
+| `\bsignatures?\b` | ? say who must approve, and what they approve |
 | `\bteardown\b` | cleanup |
 | `\bbriefs?\b` | instructions |
 | `\btask ids?\b\|\bstatus files?\b\|\bmetadata\b` | ? leave it out unless the captain needs it to act |
@@ -84,5 +92,5 @@ Delete a row to allow a term. Add a row to ban one.
 | `\barmed\b` | ? say "switched on" or "ready" |
 | `\bmergeability\b` | whether it can merge |
 | `\bmerge commits?\b` | ? say "the merged change" |
-| `\brelease/c-\d+\b` | ? say "the release", and name its number only if the captain needs it |
+| `\brelease[ /]c-\d+\b\|\bc-\d+\b` | ? say "the release", and name its number only if the captain needs it |
 | `\bpending checks?\b` | checks still running |
