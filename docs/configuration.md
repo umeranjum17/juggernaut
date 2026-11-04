@@ -377,9 +377,10 @@ While the home runs the host, main's lease-checked commands read the task's leas
 
 ## Overwatch KPI (config/overwatch-kpi)
 
-Every captain message a Claude or Cursor primary receives is recorded and must be tagged in the turn it arrives; `bin/jg-overwatch-kpi.sh` owns the ledger, the kinds, and the link a miss needs, and [turnend-guard.md](turnend-guard.md#overwatch-kpi-rule) owns the turn-end refusal.
+Every captain message a Claude or Cursor primary receives is recorded and must be tagged in the turn it arrives, and so is every note the captain sends from the chat on his phone (the gateway records it once per inbox note, however often a poll replays it); `bin/jg-overwatch-kpi.sh` owns the ledger, the kinds, and the link a miss needs, and [turnend-guard.md](turnend-guard.md#overwatch-kpi-rule) owns the turn-end refusal.
 It is on by default.
 A local `config/overwatch-kpi` reading `off` stops recording, which is for a lab whose prompts are scripted rather than typed by a captain.
+`jg-overwatch-kpi.sh tag <kind> [<link>]` tags the newest message; `tag --message <seq|inbox-id> <kind> [<link>]` tags the one named, and refuses an unknown seq or inbox id with exit 2.
 
 `jg-overwatch-kpi.sh scorecard` reports the misses - feedback and micromanagement messages - per calendar day and per trailing week against a target of zero, with the link each one carries.
 The fleet view prints that scorecard on every render from the local ledger alone, so a render makes no network call; `scorecard --landed` adds whether each linked PR merged or each linked backlog ticket closed.
@@ -2979,7 +2980,7 @@ GROK_HOME=              # optional Grok config home for Juggernaut's global grok
 JG_SEND_RETRIES=3       # jg-send typed-plane Enter-retry attempts after typing the line once; agy typed targets use a longer per-harness default owned by bin/jg-send.sh
 JG_SEND_SLEEP=0.4       # seconds between jg-send typed-plane submit checks
 JG_SEND_SETTLE=1        # seconds jg-send waits after a successful typed-plane submit; 0 disables
-JG_PENDING_REPLY_GRACE_SECS=120   # seconds after the request turn completes without a correlated parent report before its one recovery repost is eligible, and after the recovery turn completes before the missed-report escalation is eligible; never counted from delivery
+JG_PENDING_REPLY_GRACE_SECS=120   # seconds after the request turn completes without a correlated parent report before its one turn-end correlated line (or, when no honest note can be built, its one recovery repost) is eligible, and after the recovery turn completes before the missed-report escalation is eligible; never counted from delivery
 # sub-supervisor (bin/jg-supervise-daemon.sh); presence-gated via /watchover
 JG_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
 JG_SUPERVISOR_TARGET=              # optional supervisor pane target override; tmux target or herdr <session>:<pane-id>, otherwise auto-detected
@@ -2999,7 +3000,7 @@ JG_LOG_MAX_BYTES=1048576           # daemon log size that triggers trimming
 JG_LOG_KEEP_LINES=2000             # daemon log lines kept when trimming
 # supervision host (bin/jg-supervision-host.sh); read only in a home that runs it
 JG_SUPERVISION_HOST_PARK_SECONDS=27000   # the host ends its park with a cycle-boundary wake after this long, under the Stop hook's 28800 s timeout
-JG_BRANCH_OUTCOME_DEFER_SECS=600        # a finished task's captain outcome waits this long for a turn main takes anyway before the host wakes main for it; 0 wakes main at once
+JG_BRANCH_OUTCOME_DEFER_SECS=1800       # a captain outcome that asks main for no reply waits this long for a turn main takes anyway before the host wakes main for it; 0 wakes main at once
 JG_SUPERVISION_HOST_TURN_TIMEOUT=1200    # bound on one engine turn; a turn that hits it hands its wake to main
 JG_SUPERVISION_HOST_ROTATE_TURNS=20      # the engine conversation starts fresh after this many turns (and at every main session start)
 JG_SUPERVISION_ENGINE_GRACE=30           # seconds between TERM and KILL when an engine turn is stopped

@@ -37,6 +37,7 @@ Each delivery is keyed with the first eight hexadecimal characters of its receip
 A duplicate line is harmless and a missed one is not, so the mate may still append its own judgement about a delivered outcome, and the parent reads the script's line as the fact and the mate's line as commentary.
 For marked replies, the report helper accepts no caller-selected destination and uses the channel resolver for both local and remote homes; its script header owns the exact invocation contract.
 The pending-reply guard may restate only the correlated line from a local mate's `state/<mate-id>.status` onto the parent channel, which repairs the common parent-home versus mate-home mixup without accepting arbitrary mate-home sightings as acknowledgement.
+When a marked turn ends with no correlated report, the guard instead appends its own correlated `note` line on that channel naming the lead's last status from the turn, so the lead is not asked to repost.
 Other correlated mate-home status lines remain wrong-home evidence, while a remote home's routed `state/parent-replies.status` is already the parent channel and is not classified as wrong-home.
 The mate home's own status scans treat that remote channel the same way: `status_scan_parent_channel_exclude` in `bin/jg-classify-lib.sh` resolves the outbound path through the same `bin/jg-parent-channel-lib.sh` binding, and the watcher's signal scan and heartbeat backstop, the away-mode daemon's catch-all scan, and the fleet-wide folds skip exactly that resolved path, never a file name.
 The remote reply adapter already mirrors every channel line into the parent home, so folding the channel again here would only spin spurious wakes and a phantom `parent-replies` task, while a `parent-replies.status` in a main home or in a local mate is an ordinary task log that keeps folding and waking.
@@ -56,7 +57,7 @@ A missed-reply escalation includes the complete first sighting path and line num
 `tests/jg-pr-merge.test.sh` covers the PR-ready line at registration and the merge outcome's upward report.
 `tests/jg-teardown.test.sh` covers teardown delivering a child's final line and refusing when the channel cannot be written.
 `tests/jg-brief.test.sh` pins the charter's channel rule.
-`tests/jg-pending-reply.test.sh` covers helper-selected local routing, remote-channel classification, same-basename restatement before false escalation, readable wrong-home diagnostics, and the rule that arbitrary mate-home sightings never acknowledge a reply.
+`tests/jg-pending-reply-turn-end.test.sh` covers the parent-posted turn-end line, the unchanged answered case and the repost fallback.
 `tests/jg-parent-channel-scan-exclusion.test.sh` covers the home-shape-aware scan exclusion against real remote, main-home, and local-mate fixtures: the watcher signal scan, both heartbeat backstops, the fleet-wide folds, and the real `jg-wake-drain.sh` end to end.
 
 ## Live verification

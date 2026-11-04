@@ -32,7 +32,9 @@ type mediaFile struct {
 	SHA256 string `json:"sha256"`
 	Mime   string `json:"mime"`
 	Bytes  int64  `json:"bytes"`
-	kind   string // image, file, audio or video; for the round-trip record, not the event
+	// Transcript is the words of a voice or audio note, when the gateway could make them; older events have none.
+	Transcript string `json:"transcript,omitempty"`
+	kind       string // image, file, audio or video; for the round-trip record, not the event
 }
 
 type tgFile struct {
@@ -43,11 +45,12 @@ type tgFile struct {
 }
 
 type tgMedia struct {
-	Photo    []tgFile `json:"photo"` // the sizes of one picture, smallest first
-	Document *tgFile  `json:"document"`
-	Voice    *tgFile  `json:"voice"`
-	Audio    *tgFile  `json:"audio"`
-	Video    *tgFile  `json:"video"`
+	Photo     []tgFile `json:"photo"` // the sizes of one picture, smallest first
+	Document  *tgFile  `json:"document"`
+	Voice     *tgFile  `json:"voice"`
+	Audio     *tgFile  `json:"audio"`
+	Video     *tgFile  `json:"video"`
+	VideoNote *tgFile  `json:"video_note"` // the round clip
 }
 
 func (m tgMedia) refs() (out []MediaRef) {
@@ -63,6 +66,7 @@ func (m tgMedia) refs() (out []MediaRef) {
 	add("audio", "audio/ogg", m.Voice)
 	add("audio", "", m.Audio)
 	add("video", "", m.Video)
+	add("video", "video/mp4", m.VideoNote)
 	return out
 }
 
@@ -124,7 +128,10 @@ func humanSize(n int64) string {
 
 // fetchMedia stores every file of one update and returns the note's file lines and the stored
 // files. A file that cannot be had still gets a line saying why, so the owner's text is never lost.
-func (a *app) fetchMedia(ad Adapter, in Inbound) (lines []string, stored []mediaFile) {
+// An audio or video file is read aloud by the engine, if one is installed; early runs once before the
+// first transcript starts, so the owner's reaction does not wait for the engine.
+func (a *app) fetchMedia(ad Adapter, in Inbound, early func()) (lines []string, stored []mediaFile) {
+	argv, engine := a.engine()
 	for _, m := range in.Media {
 		if m.Bytes > ad.FetchLimit() {
 			lines = append(lines, fmt.Sprintf("[file too large to fetch (%s, limit %d MB)]", humanSize(m.Bytes), ad.FetchLimit()>>20))
@@ -140,7 +147,14 @@ func (a *app) fetchMedia(ad Adapter, in Inbound) (lines []string, stored []media
 		if m.Name != "" {
 			line += " " + toJSON(m.Name) // quoted, so a hostile name cannot add lines to the note
 		}
-		lines, stored = append(lines, line+"]"), append(stored, f)
+		lines = append(lines, line+"]")
+		if engine && (f.kind == "audio" || f.kind == "video") {
+			early()
+			var l string
+			l, f.Transcript = a.transcript(f, argv)
+			lines = append(lines, l)
+		}
+		stored = append(stored, f)
 	}
 	return lines, stored
 }

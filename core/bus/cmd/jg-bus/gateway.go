@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -166,7 +167,16 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return nil
 	}
 	head := fmt.Sprintf("[chat %s %s:%s]", ad.Name(), in.Chat, in.Message)
-	files, stored := a.fetchMedia(ad, in)
+	reacted := false
+	react := func() { // the note is filed or about to be; a missing reaction costs nothing
+		if !reacted {
+			reacted = true
+			if err := ad.React(context.Background(), in.Chat, in.Message); err != nil {
+				a.noteFailure("gateway reaction", err.Error())
+			}
+		}
+	}
+	files, stored := a.fetchMedia(ad, in, react)
 	if in.Text == "" && len(files) == 0 {
 		in.Text = "(no text: this message has nothing the gateway can read yet)"
 	}
@@ -185,13 +195,28 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return err
 	}
 	a.recordInboundLegs(res.ID, in, stored)
-	if err := ad.React(context.Background(), in.Chat, in.Message); err != nil { // the note is filed; a missing reaction costs nothing
-		a.noteFailure("gateway reaction", err.Error())
-	}
+	react()
 	if res.Outcome == "created" { // a replay already announced its event
 		a.typing.begin(in.Chat, res.ID)
 		a.emit("inbound", id, head, "", stored)
 		a.refuseLarge(ad, in)
+	}
+	// Counted last and for a replay too, so a failure here costs the owner nothing: the note, its
+	// event and the reaction are done, and the retry only adds the missing ledger row.
+	return a.recordKPI(res.ID, in.Text)
+}
+
+// recordKPI counts the owner's note as a captain message in the Overwatch KPI ledger, exactly as
+// bin/jg-chat.sh counts one typed at the board. The note id makes it one row per note: a replay or a
+// retry finds the row and adds none, and a home whose config/overwatch-kpi reads off records nothing.
+func (a *app) recordKPI(note, text string) error {
+	if strings.TrimSpace(text) == "" {
+		text = "(chat note with no text)"
+	}
+	cmd := exec.Command(filepath.Join(a.root, "bin", "jg-overwatch-kpi.sh"), "record", "--id", note, "--", text)
+	cmd.Env = append(os.Environ(), "JG_HOME="+a.home, "JG_STATE_OVERRIDE="+a.state, "JG_DATA_OVERRIDE="+a.data)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("jg-overwatch-kpi did not record note %s: %v: %s", note, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

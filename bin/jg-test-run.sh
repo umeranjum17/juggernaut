@@ -436,7 +436,7 @@ family_for_basename() {
     jg-wake-next.test.sh|jg-pi-wake-replay.test.sh|\
     jg-wake-core.test.sh|jg-wake-router.test.sh|\
     jg-state-bus-parity.test.sh|jg-lease-live.test.sh|jg-reply-bus-parity.test.sh|\
-    jg-reply-engine.test.sh|\
+    jg-reply-engine.test.sh|jg-pending-reply-turn-end.test.sh|\
     jg-metrics-shadow-parity.test.sh|\
     jg-bus-service.test.sh|\
     jg-wake-queue-live.test.sh|jg-wake-engine.test.sh|jg-wake-watcher.test.sh|\
@@ -754,6 +754,7 @@ tests/jg-opencode-primary-live-e2e.test.sh 80
 tests/jg-overwatch-kpi.test.sh 2289
 tests/jg-owner-correction.test.sh 2003
 tests/jg-owner-rules.test.sh 4142
+tests/jg-pending-reply-turn-end.test.sh 3000
 tests/jg-pi-branch-live-e2e.test.sh 140
 tests/jg-pi-primary-live-e2e.test.sh 83
 tests/jg-pi-seeded-home-trust-live-e2e.test.sh 102

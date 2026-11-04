@@ -58,6 +58,7 @@ The guard remains a backstop.
 
 The captain should come only for a major decision only he can take or to file new work, so every captain message is tagged in the turn it arrives.
 At the same boundary, before the supervision predicate, the guard blocks while the newest captain message `bin/jg-overwatch-kpi.sh` recorded is untagged, with one exit-2 banner naming its `tag` command.
+A note the captain sends from the chat counts as a captain message too: the gateway records it, so a Telegram note is never missed and the tag lands on it rather than on an older message.
 It is charged once per message, recorded in `state/.overwatch-kpi-flagged`, and a primary whose harness has no prompt hook records nothing, so it is never blocked.
 
 ## Owner-correction capture rule
