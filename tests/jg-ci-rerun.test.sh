@@ -2,7 +2,7 @@
 # End-to-end: bin/jg-ci-rerun.sh over the real jg-tasks-axi.sh backlog and a recorded forge. A red run is refused
 # with no ticket, refused with a ticket that has no root-cause note (the filed text only mentions the word), and
 # re-run once the ticket body holds a "root-cause:" line; a green run re-runs without a ticket; --failed passes on.
-# journeys/ci-rerun-guard.sh is the done-done journey for the same script and is selected with this file.
+# journeys/ci-rerun-refusal.sh is the done-done journey for the same script and is selected with this file.
 # Usage: tests/jg-ci-rerun.test.sh
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
