@@ -150,6 +150,9 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		}
 		return nil
 	}
+	if strings.HasPrefix(in.Data, "c:") { // a tap on a card's option answers the card
+		return a.tapCard(ad, in)
+	}
 	if in.Callback != "" { // a button tap answers an option set, not a message
 		return a.pick(ad, in)
 	}
@@ -158,7 +161,8 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return nil
 	}
 	if card := a.cardAnswered(in); card != "" { // the owner answered a card in the chat: the board takes it, not the inbox
-		a.emitReply(card, in.Text)
+		a.emitReply(card, in.Text, "")
+		a.closeAnswered(ad, card, in.Text) // the card's buttons go, as for a tap
 		return nil
 	}
 	head := fmt.Sprintf("[chat %s %s:%s]", ad.Name(), in.Chat, in.Message)

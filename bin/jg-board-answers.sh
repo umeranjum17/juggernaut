@@ -42,6 +42,7 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 ROUTES="$STATE/board-routes"
 SEEN="$STATE/.board-answers-seen"
+CLOSED="$STATE/.board-answers-card-closed"
 SHIM="$STATE/board-answers.check.sh"
 # shellcheck source=bin/jg-compat.sh
 . "$SCRIPT_DIR/jg-compat.sh"
@@ -85,7 +86,7 @@ answer_text() {  # <key> <at> <answer> <label> <note> <link>
 }
 
 cmd_check() {
-  local json board key answer label note at lead dk link text id out first=0 report=''
+  local json board key answer label note at lead dk link text id out first=0 report='' shown
   jg_question_signoff_available || { say "board answers cannot be read: sign-off-axi is not on PATH"; return 0; }
   board=$(jg_question_board)
   json=$(sign-off-axi answers ${board:+"$board"} --json 2>/dev/null) || { say "board answers cannot be read: sign-off-axi answers failed"; return 0; }
@@ -93,6 +94,12 @@ cmd_check() {
   mkdir -p "$ROUTES"
   while IFS=$'\037' read -r key at answer label note; do
     key_ok "$key" && [ -n "$at" ] && [ -n "$answer" ] || continue
+    # The chat message for this card shows the board's answer and drops its buttons. A repeat is a no-op there.
+    if ! grep -qxF "$key" "$CLOSED" 2>/dev/null; then
+      printf '%s\n' "$key" >> "$CLOSED"
+      case "$label" in ''|"Answered in chat") shown=$answer ;; *) shown=$label ;; esac
+      [ "$first" = 1 ] || "$SCRIPT_DIR/jg-bus.sh" publish card-close "$key" "answered" --answer "$shown" >/dev/null 2>&1 || true
+    fi
     link=$(JG_HOME="$JG_HOME" jg_board_link answered "$key" 2>/dev/null)
     lead=$(rget "$key" lead)
     if [ -z "$lead" ]; then
