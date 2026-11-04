@@ -113,29 +113,37 @@ canary_readable=false canary_listed=false
 if [ -r "$canary" ]; then canary_readable=true; ! grep -Fqx -- "$JG_HOME" "$canary" || canary_listed=true; fi
 [ ! -r "$JG_HOME/config/owner-rules-canary-waiver" ] || IFS= read -r waiver < "$JG_HOME/config/owner-rules-canary-waiver"
 # Only PRs have board keys: where the fleet board is, whether it holds an items list, and the card's key.
-board=${JG_FLEET_BOARD:-} board_state=ok items='[]'
+# The board is read by file, never through argv: a real board is hundreds of KB and one argument is capped near 128 KB.
+board=${JG_FLEET_BOARD:-} board_state=ok board_file=/dev/null
 main_home=${JG_MAIN_HOME:-$HOME/juggernaut}
 if [ -z "$board" ] && [ -r "$JG_HOME/config/fleet-board" ]; then IFS= read -r board < "$JG_HOME/config/fleet-board"; fi
 if [ -z "$board" ] && [ -r "$main_home/config/fleet-board" ]; then IFS= read -r board < "$main_home/config/fleet-board"; fi
 read_board() {
+  board_state=ok board_file=/dev/null
   if [ -z "$board" ]; then board_state="unset"
   elif [ ! -r "$board" ] || ! jq -e '.items | type == "array"' "$board" >/dev/null 2>&1; then board_state=unreadable
-  else items=$(jq -c '.items' "$board"); fi
+  else board_file=$board; fi
 }
 key=merge-$(printf '%s' "${4#*://}" | sed 's|^[^/]*/||' | tr -c 'A-Za-z0-9._-' -)
 key=${key:0:128}
-decide() { # <posted: true|false>: the policy's answer for the facts above
-  jq -nc --arg pr "$pr" --arg head "$head" --argjson none "$none" --argjson receipt_ok "$receipt_ok" --arg sig "$sig" --arg lint "$lint" \
+decide() { # <posted: true|false>: the policy's answer for the facts above; the evaluator's own stderr is left on stderr
+  local input
+  input=$(jq -nc --arg pr "$pr" --arg head "$head" --argjson none "$none" --argjson receipt_ok "$receipt_ok" --arg sig "$sig" --arg lint "$lint" \
     --argjson readable "$canary_readable" --argjson listed "$canary_listed" --arg waiver "$waiver" --arg now "$(date -u +%Y-%m-%dT%H:%MZ)" \
-    --arg board "$board_state" --argjson items "$items" --arg key "$key" --argjson posted "$1" \
+    --arg board "$board_state" --slurpfile board_doc "$board_file" --arg key "$key" --argjson posted "$1" \
     '{pr: $pr, head: $head, none: $none, receipt_ok: $receipt_ok, signature: $sig, lint: $lint, canary: {readable: $readable, listed: $listed},
-      waiver: $waiver, now: $now, board: $board, items: $items, key: $key, posted: $posted}' | "$guard_host" eval gate.owner_proof
+      waiver: $waiver, now: $now, board: $board, items: ($board_doc[0].items // []), key: $key, posted: $posted}') || return 1
+  printf '%s' "$input" | "$guard_host" eval gate.owner_proof
 }
 read_board
 posted=false
+errs=$(mktemp "${TMPDIR:-/tmp}/owner-gate-err.XXXXXX") || exit 1
+trap 'rm -f -- "$errs"' EXIT
 while :; do
-  if ! verdict=$(decide $posted 2>&1); then
-    echo "owner-rules: cannot evaluate the merge gate for $what at $3: ${verdict:-no answer}"
+  # The verdict is stdout only. A failure or a non-JSON answer refuses with the real reason from stderr, never as a missing card.
+  if ! verdict=$(decide $posted 2>"$errs") || ! jq -e 'type == "object"' <<<"$verdict" >/dev/null 2>&1; then
+    reason=$(head -c 2000 "$errs")
+    echo "owner-rules: cannot evaluate the merge gate for $what at $3: ${reason:-${verdict:-no answer}}"
     exit 1
   fi
   [ "$(jq -r '.ok' <<<"$verdict")" != true ] || exit 0
