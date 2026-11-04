@@ -14,6 +14,9 @@
 #
 # The durable wake row is written for the first rejection only, so the drain
 # presents one row, and the second sweep presents none.
+#
+# This is also the test that owns journeys/rejected-state-check-once.sh (the done-done
+# journey runs this file), so the changed-test map selects it for a change to that journey.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
