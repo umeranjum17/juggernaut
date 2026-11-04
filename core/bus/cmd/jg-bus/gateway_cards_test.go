@@ -226,7 +226,7 @@ func TestGatewayCardButtons(t *testing.T) {
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
 // `jg-bus publish card --option value=label` puts the options in the event, and `card-close --answer`
-// carries the board's answer; a bad option is refused.
+// carries the board's answer; an empty option is refused, a bare one is its own label.
 func TestPublishCardOptions(t *testing.T) {
 	l := newChatLab(t, true)
 	if code := l.a.publish([]string{"card", "k1", "Merge?", "--option", "yes=Yes", "--option", "no=No", "--link", "https://x.test/c"}); code != 0 {
@@ -237,7 +237,11 @@ func TestPublishCardOptions(t *testing.T) {
 	if !strings.Contains(rec, `"options":[{"value":"yes","label":"Yes"},{"value":"no","label":"No"}]`) || !strings.Contains(rec, `"kind":"card-close","key":"k1"`) || !strings.Contains(rec, `"answer":"Yes"`) {
 		t.Fatalf("record %q: want the options and the board's answer", rec)
 	}
-	if code := l.a.publish([]string{"card", "k2", "Q?", "--option", "nolabel"}); code == 0 {
-		t.Fatal("an option with no label was accepted")
+	if code := l.a.publish([]string{"card", "k2", "Q?", "--option", ""}); code == 0 {
+		t.Fatal("an empty option was accepted")
+	}
+	l.a.publish([]string{"card", "k3", "Q?", "--option", "Key it"})
+	if rec := readFileString(l.a.record); !strings.Contains(rec, `"options":[{"value":"Key it","label":"Key it"}]`) {
+		t.Fatalf("record %q: a bare option is its own label", rec)
 	}
 }

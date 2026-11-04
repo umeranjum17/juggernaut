@@ -85,7 +85,7 @@ It makes one `getMe` call and never sends a message.
   A card with no options ends with "Reply to this message to answer."
   A text reply to that message is published as the card's answer, and the router sends it to the board.
   When the bus refuses the reply, the board's own route takes it at once.
-- A card with options (every card `jg-question-card.sh post` makes: its `--option value=label` entries, or Yes and No) is sent with one button per option, and a text reply still works.
+- A card with options (every card `jg-question-card.sh post` makes: its `--option value=label` entries, where a bare option is its own label, or Yes and No) is sent with one button per option, and a text reply still works.
   The two sides stay in step:
   - A tap on a button publishes the reply event with the option's value as the answer (the label rides along), like a text reply. The gateway answers the tap and edits the message to `Answered: <label>` with no buttons.
   - An answer on the board edits the message to `Answered on the board: <answer>` and removes the buttons. `jg-board-answers.sh` and `jg-question-card.sh answer` publish `jg-bus publish card-close <key> answered --answer <words>`. A text reply edits the message the same way.

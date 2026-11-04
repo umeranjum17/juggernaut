@@ -152,13 +152,16 @@ func (a *app) publish(args []string) int {
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
 		case "--option", "--answer":
-			if i+1 >= len(rest) || (rest[i] == "--option" && !strings.Contains(rest[i+1], "=")) {
-				return die("publish %s needs value=label (--option) or the answer (--answer)", rest[i])
+			if i+1 >= len(rest) || rest[i+1] == "" {
+				return die("publish %s needs a value (--option value=label) or the answer (--answer)", rest[i])
 			}
 			if rest[i] == "--answer" {
 				answer = rest[i+1]
 			} else {
-				v, l, _ := strings.Cut(rest[i+1], "=")
+				v, l, ok := strings.Cut(rest[i+1], "=")
+				if !ok { // a bare option is its own label
+					l = v
+				}
 				options = append(options, cardOption{v, l})
 			}
 			i++
