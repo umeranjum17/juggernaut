@@ -23,7 +23,9 @@ file. Any other section or setting in a role file is ignored, reported on stderr
 `check` exit 1, so a role file cannot weaken the shared rules. `persona` prints the personality
 for the agent that writes the message; bin/jg-session-start.sh and bin/jg-brief.sh call it.
 
-The text comes from the arguments, else stdin. A text with no banned term passes unchanged.
+The text comes from the arguments, else stdin. A text with no banned term passes unchanged, except
+for its layout: `apply` puts every list item on its own line and a blank line between a list and
+the prose around it, and a rewrite that runs list items together is refused (not with `--line`).
 In mode `rewrite`, `apply` asks a model to rewrite the whole text in plain sentences, checks the
 result again, and prints it only when no banned term remains and every URL, code span and
 key=value token survived. The rewrite command is JG_VOICE_REWRITE_CMD, else the first line of
@@ -47,6 +49,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # What a rewrite must never touch: code spans, URLs, [..=..] tags and key=value tokens.
 PROTECTED = re.compile(r"(`[^`\n]*`|\S+://\S+|\[[^\]\n]*=[^\]\n]*\]|[\w.-]+=\S+)")
 STATUS_LINE = re.compile(r"^([A-Za-z-]+(?: \[[^\]\n]*\])*:)(.*)$", re.S)
+# A list item line (`1. x`, `2) x`, `- x`, `* x`, a bullet), and a numbered marker inside a line of prose.
+ITEM = re.compile(r"^\s*(?:\d{1,3}[.)]|[-*\u2022])\s+\S")
+INLINE_MARK = re.compile(r"(?:(?<=\s)|^)(\d{1,2})[.)]\s+(?=\S)")
 
 
 ROLES = ("overwatch", "squad-lead", "worker")
@@ -167,6 +172,58 @@ def review(text, rules, max_words):
     return terms, lengths
 
 
+def split_inline_list(line):
+    """'Two things: 1. A 2. B' -> ['Two things:', '1. A', '2. B']. Only a run that counts up from 1 with words in each item splits."""
+    marks, want = [], 1
+    for m in INLINE_MARK.finditer(line):
+        if int(m.group(1)) == want:
+            marks.append(m)
+            want += 1
+    if len(marks) < 2:
+        return [line]
+    bounds = [m.start() for m in marks] + [len(line)]
+    items = [line[bounds[i]:bounds[i + 1]].strip() for i in range(len(marks))]
+    if not all(re.search(r"[^\W\d_]", re.sub(r"^\d+[.)]\s*", "", item)) for item in items):
+        return [line]
+    lead = line[:bounds[0]].rstrip()
+    return ([lead] if lead else []) + items
+
+
+def layout(text):
+    """The text with its list one item per line and a blank line between blocks (prose and list).
+
+    A list a writer or the rewrite model ran into one line is split; a fenced code block and the
+    lines of an item's continuation stay as written. Text with no list comes back unchanged.
+    """
+    lines, fenced = [], False
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        if raw.lstrip().startswith("```"):
+            fenced = not fenced
+            lines.append(raw)
+        else:
+            lines.extend([raw] if fenced else split_inline_list(raw))
+    out, kind, fenced = [], "blank", False
+    for line in lines:
+        if line.lstrip().startswith("```") or fenced:
+            fenced = fenced != line.lstrip().startswith("```")
+            out.append(line)
+            kind = "blank"
+            continue
+        if not line.strip():
+            now = "blank"
+        elif ITEM.match(line):
+            now = "item"
+        elif line[0].isspace() and kind == "item":
+            now = "item"
+        else:
+            now = "prose"
+        if (kind, now) in (("prose", "item"), ("item", "prose")):
+            out.append("")
+        out.append(line)
+        kind = now
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+
+
 def rewrite_command():
     cmd = os.environ.get("JG_VOICE_REWRITE_CMD")
     if cmd is None:
@@ -184,6 +241,7 @@ def rewrite_request(rules_text, text, findings):
         "Write whole, natural sentences that say the same thing. Never swap one word for another inside a sentence;\n"
         "recast the sentence so it reads right. Put the outcome first. Do not add facts. Do not use any banned term.\n"
         "Copy every URL, `code span`, [tag=value] and key=value token exactly as written.\n"
+        "Keep the layout: every list item stays on its own line, in the same order, and a blank line stays between blocks.\n"
         "Print only the new message: no preface, no quotes, no notes.\n\n"
         "Voice rules:\n%s\n\nTerms found in the message, each with a plain idea to say instead (express the idea; never paste the words into the sentence):\n- %s\n\n"
         "Message:\n%s\n" % (rules_text, "\n- ".join(findings), text))
@@ -211,12 +269,16 @@ def rewritten(text, rules, rules_text):
     out, why = ask_model(rewrite_request(rules_text, text, terms))
     if out is None:
         return None, why
+    out = layout(out)
     again, _ = review(out, rules, None)
     if again:
         return None, "the rewrite still holds a banned term: " + "; ".join(again)
     lost = [m.group(0) for m in PROTECTED.finditer(text) if m.group(0) not in out]
     if lost:
         return None, "the rewrite lost %s" % ", ".join(lost)
+    items, kept = sum(bool(ITEM.match(l)) for l in text.split("\n")), sum(bool(ITEM.match(l)) for l in out.split("\n"))
+    if kept < items:
+        return None, "the rewrite turned a list of %d items into %d; keep one item per line" % (items, kept)
     return out, ""
 
 
@@ -256,6 +318,8 @@ def main(argv):
     if not rules and not settings or (mode == "off" and cmd == "apply"):
         sys.stdout.write(text)
         return 0
+    if not line:
+        text = layout(text)
     head, note = split_status(text, line)
     terms, lengths = review(note, rules, settings.get("max-sentence-words"))
     for f in terms + lengths:

@@ -71,6 +71,8 @@ Delete a row to allow a term. Add a row to ban one.
 | `\blanes\b` | workers |
 | `\blane\b` | worker |
 | `\bworktrees?\b\|\bprimary checkout\b\|\blocal-main\b\|\bcheckout\b` | local copy |
+| `\bcleanups? (is \|was \|are \|were \|gets \|got )?(refused\|refuses\|blocked)\b\|\brefus(ed\|es\|al)\b[^.\n]{0,20}\b(cleanup\|teardown)\b\|\bteardown (is \|was )?refus\w*` | ? say what keeps the work from being cleaned up, for example "the change is not merged yet" |
+| `\bsignatures?\b` | ? say who must approve, and what they approve |
 | `\bteardown\b` | cleanup |
 | `\bbriefs?\b` | instructions |
 | `\btask ids?\b\|\bstatus files?\b\|\bmetadata\b` | ? leave it out unless the captain needs it to act |
@@ -90,5 +92,5 @@ Delete a row to allow a term. Add a row to ban one.
 | `\barmed\b` | ? say "switched on" or "ready" |
 | `\bmergeability\b` | whether it can merge |
 | `\bmerge commits?\b` | ? say "the merged change" |
-| `\brelease/c-\d+\b` | ? say "the release", and name its number only if the captain needs it |
+| `\brelease[ /]c-\d+\b\|\bc-\d+\b` | ? say "the release", and name its number only if the captain needs it |
 | `\bpending checks?\b` | checks still running |
