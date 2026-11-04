@@ -114,7 +114,7 @@ Shape is not varying *with* mode there, it is varying *inside* every value of mo
 
 Shape already exists on GitHub, it predates Gerrit entirely, and it is load-bearing in four places today:
 
-- `bin/jg-pr-merge.sh` defaults a GitHub merge to `--squash` when the caller selects no method.
+- `bin/jg-pr-merge.sh` defaults a GitHub merge to `--squash` when the caller selects no method, except for a release pull request, which defaults to `--merge`.
 - `bin/jg-fleet-sync.sh`'s branch pruning reasons about it explicitly, dropping the ancestry check on the grounds that pull requests in this fleet are squash-merged, so a merged branch is never an ancestor and such a check would prune nothing.
 - `bin/jg-teardown.sh`'s landed-work test accepts content present in the default branch precisely because a squash collapses the branch's commits and per-commit patch identities stop matching.
 - `bin/jg-ff-lib.sh` reconciles a clean Squad Lead divergence through a three-way tree proof, as happens after an upstream squash merge.

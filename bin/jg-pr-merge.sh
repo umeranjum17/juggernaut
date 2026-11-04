@@ -11,7 +11,11 @@
 # parse below owns why.
 #
 # Merge method on GitHub defaults to --squash when the caller passes none of
-# --squash, --merge, --rebase, or --method after the optional -- separator.
+# --squash, --merge, --rebase, or --method after the optional -- separator,
+# except for a release pull request (base the default branch, head the current
+# or in-flight release/c-<N> branch, as bin/jg-pr-check.sh admits it), which
+# defaults to --merge so the default branch becomes an ancestor of the next
+# release branch. A caller's explicit method always wins.
 # On Forgejo the merge style defaults to the repository's own
 # default_merge_style, read live, and a merge is refused when it cannot be read.
 # A GitHub merge is refused unless every pre-merge condition holds, each read
@@ -1068,6 +1072,28 @@ github_required_checks_missing() {
 # A refusal also leaves its own text in JG_PR_GITHUB_REFUSAL, because that text
 # is what the caller publishes as the pull request's wait.
 JG_PR_GITHUB_REFUSAL=
+# The pull request's head branch, read with the live view, so the default merge
+# method can tell a release pull request from a feature one.
+JG_PR_GITHUB_HEAD_REF=
+# The merge method used when the caller names none: a merge commit for the
+# release pull request (the default branch as base, a release head per
+# bin/jg-version-branch-lib.sh jg_is_release_head), so the default branch becomes
+# an ancestor of the next release branch, and a squash for every other pull
+# request. Run after github_verify_mergeable has read the base and head branches.
+github_default_merge_method() {
+  local project default
+  project=$(jg_dod_meta_value "$META" project 2>/dev/null) || project=
+  if [ -n "$project" ] && [ -d "$project" ]; then
+    default=$(default_branch "$project" 2>/dev/null) || default=
+    [ -n "$default" ] || default=main
+    if [ "$JG_PR_GITHUB_BASE" = "$default" ] \
+      && jg_is_release_head "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" "$JG_PR_GITHUB_HEAD_REF"; then
+      printf '%s' --merge
+      return 0
+    fi
+  fi
+  printf '%s' --squash
+}
 # A merge into a release branch that already shipped lands nowhere: the release
 # left the default branch without it. release/c-<M> counts as shipped when a
 # newer release/c-<N> exists (bin/jg-version-branch-lib.sh owns which branch is
@@ -1113,11 +1139,11 @@ github_verify_mergeable() {
   local json fields line red name covered missing unreported producers runs
   local total=0 named=0 refusals='' mergeable_refusal=''
   local local_suite_proven=false local_suite_proof='' local_suite_verify_rc=0
-  local shipped='' state='' draft='' mergeable='' merge_state='' live_head='' base=''
+  local shipped='' state='' draft='' mergeable='' merge_state='' live_head='' base='' head_ref=''
 
   JG_PR_GITHUB_REFUSAL='could not read the GitHub pull request state before merging'
 
-  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
+  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,headRefName,statusCheckRollup 2>/dev/null) \
     || [ -z "$json" ]; then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
@@ -1128,7 +1154,8 @@ github_verify_mergeable() {
         "mergeable=" + ((.mergeable // "") | tostring),
         "merge_state=" + ((.mergeStateStatus // "") | tostring),
         "head=" + ((.headRefOid // "") | tostring),
-        "base=" + ((.baseRefName // "") | tostring)
+        "base=" + ((.baseRefName // "") | tostring),
+        "head_ref=" + ((.headRefName // "") | tostring)
       else
         error("pull request payload is not an object")
       end' 2>/dev/null); then
@@ -1143,13 +1170,14 @@ github_verify_mergeable() {
       merge_state=*) merge_state=${line#merge_state=} ;;
       head=*) live_head=${line#head=} ;;
       base=*) base=${line#base=} ;;
+      head_ref=*) head_ref=${line#head_ref=} ;;
       *) continue ;;
     esac
     named=$((named + 1))
   done <<FIELDS
 $fields
 FIELDS
-  if [ "$named" -ne 5 ] || [ "$total" -ne 5 ] || [ -z "$base" ]; then
+  if [ "$named" -ne 6 ] || [ "$total" -ne 6 ] || [ -z "$base" ]; then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
   fi
@@ -1287,6 +1315,7 @@ EOF
   fi
   JG_PR_MERGE_HEAD=$live_head
   JG_PR_GITHUB_BASE=$base
+  JG_PR_GITHUB_HEAD_REF=$head_ref
   JG_PR_GITHUB_LOCAL_SUITE=$local_suite_proven
 }
 
@@ -1882,9 +1911,6 @@ case "$PROVIDER" in
   github)
     merge_output=
     merge_args=()
-    if ! caller_has_merge_method "$@"; then
-      merge_args=(--squash)
-    fi
     JG_PR_GITHUB_CALLER_METHOD=$(caller_merge_method "$@")
     # mergeable reads UNKNOWN for a short while after a push or base-branch
     # change while GitHub recomputes it; retry a bounded number of times,
@@ -1945,6 +1971,9 @@ case "$PROVIDER" in
     # the merge it is describing. A publish that fails never stops the merge.
     jg_pr_wait_status "$URL" success 'merging now' \
       || printf 'warning: could not clear the waiting-for status on %s\n' "$URL" >&2
+    if ! caller_has_merge_method "$@"; then
+      merge_args=("$(github_default_merge_method)")
+    fi
     merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
       --match-head-commit "$JG_PR_MERGE_HEAD" \
       "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
