@@ -38,7 +38,8 @@
 //	jg-wake-core [flags] realert <kind> <key> <payload>
 //	    record a delivered `now` event in state/.wake-realert for the re-alert window.
 //	jg-wake-core [flags] digest [mark]
-//	    exit 0 and print how many queued rows wait for a turn when `set digest-minutes` has passed
+//	    exit 0 and print how many queued rows wait for a turn when `set digest-count` rows have queued
+//	    or `set digest-minutes` has passed
 //	    since the last digest and at least one is queued; exit 1 otherwise. mark records the digest.
 //	jg-wake-core [flags] fleet-fp-record
 //	    record the fleet's fingerprint, which the `@fleet-unchanged` condition compares against.

@@ -76,8 +76,9 @@ finished deliverable (a ready or PR-ready status line). The catch-all is `batch`
 waits instead of waking, and is never dropped.
 
 `schedule.go` adds two decisions, both read from the rule file. `jg_wake_digest_due mark` answers the
-batched digest: a window opens with the first routine row, one digest wake is due `set digest-minutes`
-later naming the count, and none is sent when no routine row waits. `silent@fleet-unchanged heartbeat`
+batched digest: a window opens with the first routine row, and one digest wake naming the count is due
+when `set digest-count` (default 5) routine rows have queued since the last release or `set digest-minutes`
+(default 15) has passed, whichever comes first, and none is sent when no routine row waits. `silent@fleet-unchanged heartbeat`
 keeps an away-mode heartbeat silent while the sorted status, meta and hold file names and sizes match the
 fingerprint recorded by the last heartbeat that woke. A `done` carrying a key already closes that key's
 wait (`tests/jg-wake-batching.test.sh`), so an answered key never re-pings. A pause that names its future

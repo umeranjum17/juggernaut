@@ -18,9 +18,13 @@ set re-alert-minutes 30
 set silence-cap-per-hour 30
 # How long Main's own restart pass counts as the cause of a relaunch notice.
 set restart-pass-seconds 600
-# The batched digest: the longest a routine event waits for a model turn, in minutes. 0 turns
-# the digest off, and routine rows then wait for the next wake of any kind.
-set digest-minutes 30
+# The batched digest: routine (`batch`) rows are held and released as ONE wake when either trigger
+# fires first. digest-count: that many routine rows have queued since the last digest (0 turns this
+# trigger off). digest-minutes: the longest a routine event waits for a model turn (0 turns the whole
+# digest off, and routine rows then wait for the next wake of any kind). Urgent classes (`now`: captain
+# inbox, failed, blocked, needs-decision, done, security, stale escalation) never wait for either.
+set digest-count 5
+set digest-minutes 15
 # A fleet-heartbeat gap with ready work and free lanes rides the digest until it has stayed open
 # this many seconds; past that it is a real gap and wakes at once.
 set gap-wake-seconds 3600

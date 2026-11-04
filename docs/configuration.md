@@ -1274,6 +1274,22 @@ The optional local, gitignored presence flag `config/fleet-heartbeat-off` opts a
 
 If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`core/wait-timers/README.md`](../core/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
 
+## Wake batching (config/wake-routing)
+
+Overwatch wakes on every event the routing rules class `now`; everything routine is class `batch` and is held, then released as one wake.
+Two knobs decide when the held rows are released, and whichever fires first wins:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `set digest-count <N>` | 5 | Release when N routine rows have queued since the last release. 0 turns this trigger off. |
+| `set digest-minutes <N>` | 15 | Release when the oldest routine row has waited N minutes. 0 turns batching off, and routine rows then ride the next wake of any kind. |
+
+The defaults live in `defaults/wake-routing`.
+The optional local, gitignored `config/wake-routing` is read first, so a `set` line there wins and every rule it does not name falls through to the shared file; `JG_WAKE_ROUTING` replaces both.
+Urgent classes never wait: a captain inbox note, a failed or red check, `blocked`, `needs-decision`, `done` and `ready` lines, host and security alarms, and every stale escalation are `now` rows that wake at once, and an unreleased batch is never held back by them.
+Nothing is dropped: the next drain presents every held row.
+[`core/wake/README.md`](../core/wake/README.md) owns the rule grammar, and `journeys/wake-batch-threshold.sh` proves both triggers and the urgent bypass.
+
 ## Batch digest cadence (config/status-digest)
 
 The optional local, gitignored `config/status-digest` holds one line, `every-hours=<N>`: the fewest hours between two cadence pushes of the batch digest that [`bin/jg-status-digest.sh`](../bin/jg-status-digest.sh) builds from the effort, task outcome and release records.
