@@ -117,8 +117,10 @@ git -C "$clean" init -q
 : >"$clean/bin/keep.sh";
 git -C "$clean" add -A
 "$root/fleet-pulse/wiring.sh" "$clean" >/dev/null
-"$root/fleet-pulse/wiring.sh" --dry-run "$clean" | { ! grep -q chat-tsv; }
-[ -z "$(git -C "$clean" status --porcelain --untracked-files=all | grep '^??')" ] \
+dry=$("$root/fleet-pulse/wiring.sh" --dry-run "$clean")
+case $dry in *chat-tsv*) echo FAIL wiring-dry-run-mentions-chat-tsv >&2; fail=1;; esac
+untracked=$(git -C "$clean" ls-files --others --exclude-standard)
+[ -z "$untracked" ] \
   && [ ! -e "$clean/bin/chat-tsv.py" ] \
   && echo ok wiring-leaves-no-untracked-file \
   || { echo FAIL wiring-leaves-no-untracked-file >&2; fail=1; }
