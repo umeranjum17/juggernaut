@@ -65,6 +65,12 @@ gate commands start only before 80% of the bound, a merge only when it fits insi
 so the watcher's kill can at worst cut a gate command (harmlessly retried next sweep), never a
 merge.
 
+A worker's `done: PR <url>` line does not wake the lead's model when this check owns the PR.
+`defaults/wake-routing` settles it with `silent@merge-owned`.
+That needs `yolo=on` or `merge=approved`, a recorded `pr=` and `pr_head=`, no `merge=manual`, and no earlier attempt on that head in `data/jg-merge-on-green/<task>.head`.
+The lead then hears about the PR from this check's `done: merged` line or its `NOT merging` wake line.
+`core/wake/README.md` owns the condition.
+
 ## Proof line
 
 The `## Checks` block's `proof:` line names the verify skill of the repository under test — the clone

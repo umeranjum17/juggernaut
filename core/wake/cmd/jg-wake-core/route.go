@@ -276,6 +276,8 @@ func (e env) cond(cond, key, payload string, depth int) bool {
 		return true
 	case "fleet-unchanged":
 		return e.fleetUnchanged()
+	case "merge-owned":
+		return e.mergeOwned(key, payload)
 	case "gap-long":
 		return e.gapLong(payload)
 	case "lead-restarted":
@@ -287,6 +289,55 @@ func (e env) cond(cond, key, payload string, depth int) bool {
 		return e.pidAlive(pid) && e.watcherLockMatches(pid)
 	}
 	return false
+}
+
+// metaLast is the last value a task's record gives a key, the rule core/merge-on-green reads it by.
+func metaLast(lines []string, key string) string {
+	val := ""
+	for _, line := range lines {
+		if strings.HasPrefix(line, key+"=") {
+			val = line[len(key)+1:]
+		}
+	}
+	return val
+}
+
+// mergeOwned is the `@merge-owned` fact: the status line `payload` is a worker's PR-ready report and
+// core/merge-on-green will merge that PR with no model turn, so the report asks the lead for nothing
+// and the watcher's own merge or alert wakes the lead. It holds only when the task record names the
+// PR the line names and its head, a ship (never a Recon or a lead) carries the merge authority the
+// watcher honours (yolo=on or merge=approved, never merge=manual), and the watcher has not already
+// spent its one attempt on that head. Any missing fact answers false, so the line keeps waking.
+func (e env) mergeOwned(key, payload string) bool {
+	if !strings.HasSuffix(key, ".status") {
+		return false
+	}
+	task := strings.TrimSuffix(key, ".status")
+	if task == "" || strings.ContainsAny(task, "/\\") || strings.HasPrefix(task, ".") {
+		return false
+	}
+	meta := filepath.Join(e.state, task+".meta")
+	if !isFile(meta) || isLink(meta) {
+		return false
+	}
+	data, err := os.ReadFile(meta)
+	if err != nil {
+		return false
+	}
+	lines := completeLines(string(data))
+	if kind := metaLast(lines, "kind"); kind != "" && kind != "ship" {
+		return false
+	}
+	pr, head := metaLast(lines, "pr"), metaLast(lines, "pr_head")
+	if pr == "" || head == "" || !strings.Contains(payload, pr) {
+		return false
+	}
+	merge := metaLast(lines, "merge")
+	if merge == "manual" || (metaLast(lines, "yolo") != "on" && merge != "approved") {
+		return false
+	}
+	attempted := strings.TrimSpace(wholeFile(filepath.Join(e.homeOrRoot(), "data", "jg-merge-on-green", task+".head")))
+	return attempted != head
 }
 
 // wholeFile is `$(cat path)`: the file's text without one trailing newline, empty when unreadable.

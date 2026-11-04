@@ -1287,6 +1287,10 @@ Two knobs decide when the held rows are released, and whichever fires first wins
 The defaults live in `defaults/wake-routing`.
 The optional local, gitignored `config/wake-routing` is read first, so a `set` line there wins and every rule it does not name falls through to the shared file; `JG_WAKE_ROUTING` replaces both.
 Urgent classes never wait: a captain inbox note, a failed or red check, `blocked`, `needs-decision`, `done` and `ready` lines, host and security alarms, and every stale escalation are `now` rows that wake at once, and an unreleased batch is never held back by them.
+A ship's PR-ready `done` line is the one `done` line that does not wake.
+When the task record names that PR and [`core/merge-on-green`](../core/merge-on-green/README.md) owns the merge (`yolo=on` or `merge=approved`, never `merge=manual`), the `silent@merge-owned` row records the line in the wake log and no model runs.
+The watcher's own `done: merged` line or `NOT merging` alert wakes the lead instead.
+A `done` line with no recorded PR, a PR the watcher does not own, a head it already tried, and every Recon result, `failed`, `blocked` and `needs-decision` line keep waking at once.
 Nothing is dropped: the next drain presents every held row.
 [`core/wake/README.md`](../core/wake/README.md) owns the rule grammar, and `journeys/wake-batch-threshold.sh` proves both triggers and the urgent bypass.
 
