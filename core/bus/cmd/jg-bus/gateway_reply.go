@@ -26,6 +26,7 @@ import (
 type Outbound struct {
 	Chat, ReplyTo, Text string
 	Files               []LocalFile
+	Buttons             []Button // an inline keyboard of one button per row; a text message only
 }
 
 // sendError carries the Bot API's own error code, so the follower can tell a call that will
@@ -48,6 +49,9 @@ func (t *telegram) Send(ctx context.Context, out Outbound) (string, error) {
 		return t.sendFiles(ctx, out, string(reply))
 	}
 	msg := map[string]any{"chat_id": json.Number(out.Chat), "text": out.Text}
+	if len(out.Buttons) > 0 {
+		msg["reply_markup"] = keyboard(out.Buttons)
+	}
 	if out.ReplyTo != "" { // a push answers nothing, so it is not threaded
 		msg["reply_parameters"] = json.RawMessage(reply)
 	}
@@ -163,14 +167,15 @@ type where struct{ chat, message string }
 
 // sendPart is one send of a reply; its key is how sent.jsonl remembers it was done.
 type sendPart struct {
-	key string
-	out Outbound
+	key  string
+	out  Outbound
+	opts *optionSet // set when the part is a choice: its buttons are this set's options
 }
 
 // replyParts is the sends one reply takes: its files in albums of at most Group (pictures first),
 // then its text. The text rides as the caption of the first album when it fits one. A file that
 // must not be sent is left out and named in the text, so the owner is told instead of left waiting.
-func (a *app) replyParts(ad Adapter, w where, cursor, body string, attach []string) (parts []sendPart) {
+func (a *app) replyParts(ad Adapter, w where, cursor, body string, attach []string, choice bool) (parts []sendPart) {
 	lim, pics, docs, refused := ad.Out(), []LocalFile{}, []LocalFile{}, []string{}
 	for _, p := range attach {
 		switch f, why := a.vetAttachment(lim, p); {
@@ -192,7 +197,7 @@ func (a *app) replyParts(ad Adapter, w where, cursor, body string, attach []stri
 		}
 	}
 	caption := ""
-	if len(albums) > 0 && utf16Len(body) <= lim.Caption {
+	if len(albums) > 0 && !choice && utf16Len(body) <= lim.Caption { // a choice keeps its question beside the buttons
 		caption, body = body, ""
 	}
 	for i, files := range albums {
@@ -200,10 +205,10 @@ func (a *app) replyParts(ad Adapter, w where, cursor, body string, attach []stri
 		if i == 0 {
 			out.Text = caption
 		}
-		parts = append(parts, sendPart{cursor + "#f" + strconv.Itoa(i), out})
+		parts = append(parts, sendPart{key: cursor + "#f" + strconv.Itoa(i), out: out})
 	}
 	for i, text := range chunks(body, ad.Limit()) {
-		parts = append(parts, sendPart{cursor + "#" + strconv.Itoa(i), Outbound{Chat: w.chat, ReplyTo: w.message, Text: text}})
+		parts = append(parts, sendPart{key: cursor + "#" + strconv.Itoa(i), out: Outbound{Chat: w.chat, ReplyTo: w.message, Text: text}})
 	}
 	return parts
 }
@@ -241,6 +246,8 @@ func (a *app) followReplies(ad Adapter) error {
 		Replies []struct {
 			ID, Body, Cursor string
 			Attachments      []string
+			Options          []string
+			OptionsChange    bool `json:"options_change"`
 		}
 	}
 	if err != nil || json.Unmarshal(out, &rec) != nil {
@@ -256,11 +263,17 @@ func (a *app) followReplies(ad Adapter) error {
 	for _, r := range rec.Replies {
 		a.typing.end(r.ID) // the note is answered: its chat stops showing "typing…"
 		if w, ok := notes[r.ID]; ok {
-			parts := a.replyParts(ad, w, r.Cursor, r.Body, r.Attachments)
+			parts := a.replyParts(ad, w, r.Cursor, r.Body, r.Attachments, len(r.Options) > 0)
+			if len(r.Options) > 0 {
+				parts = withOptions(parts, w, r.Cursor, r.ID, r.Options, r.OptionsChange)
+			}
 			for i := 0; i < len(parts); i++ {
 				p := parts[i]
 				if sent[p.key] || sent[p.key+"x"] { // the "x" text told the chat this file never went
 					continue
+				}
+				if len(p.out.Buttons) > 0 { // the set is stored before the send, so no tap can beat its record
+					a.storeOptions(p)
 				}
 				id, err := ad.Send(context.Background(), p.out)
 				var se *sendError
@@ -274,13 +287,18 @@ func (a *app) followReplies(ad Adapter) error {
 						names[n] = f.Name
 					}
 					text := strings.TrimSpace(p.out.Text + "\n\nI could not send " + strings.Join(names, ", ") + ": " + se.msg)
-					parts = append(parts, sendPart{p.key + "x", Outbound{Chat: w.chat, ReplyTo: w.message, Text: text}})
+					parts = append(parts, sendPart{key: p.key + "x", out: Outbound{Chat: w.chat, ReplyTo: w.message, Text: text}})
 					continue
 				} else if err != nil {
 					return err
 				}
 				if err := appendLine(filepath.Join(dir, "sent.jsonl"), toJSON(map[string]string{"key": p.key, "note": r.ID, "chat": w.chat, "message": id})); err != nil {
 					return err
+				}
+				if len(p.out.Buttons) > 0 {
+					if err := a.placeOptions(p, id); err != nil {
+						return err
+					}
 				}
 				a.recordOutboundLeg(p, id)
 			}
