@@ -33,4 +33,8 @@ grep -q 'not a regular file' "$T/before.log" || { echo "FAIL: base did not show 
 if ! { grep -q 'already cleaned up' "$T/after.log" && grep -q 'exit=0' "$T/after.log"; }; then echo "FAIL: new message or exit missing"; exit 1; fi
 [ ! -e "$T/state/task-y1.run-receipt.json" ] && [ ! -e "$T/state/task-y1.probe-at" ] || { echo "FAIL: leftovers kept"; exit 1; }
 if ! { grep -q 'not a regular file' "$T/dir.log" && ! grep -q 'exit=0' "$T/dir.log"; }; then echo "FAIL: directory record accepted"; exit 1; fi
+
+cat > "$OUT/steps.json" <<'J'
+{"target":{"version":"jg-teardown.sh"},"start":"a task whose state/<id>.meta is gone, with a run-receipt and probe file left behind","steps":["run bin/jg-teardown.sh on the base branch script","run bin/jg-teardown.sh from this tree","run it again with a directory standing where the record should be"],"result":"the base script refuses with a wrong 'not a regular file' message; this tree says the task is already cleaned up, exits 0 and removes the leftovers; a directory record keeps its refusal"}
+J
 echo "PASS"
