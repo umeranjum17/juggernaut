@@ -170,6 +170,14 @@ die() { printf 'jg-inbox: %s\n' "$*" >&2; exit 1; }
 . "$SELF_DIR/jg-question-lib.sh" \
   || die "the question rule needs $SELF_DIR/jg-question-lib.sh beside this script"
 
+# The captain voice check steps aside when its library is not beside this script (a lone copy).
+if [ -r "$SELF_DIR/jg-voice-lib.sh" ]; then
+  # shellcheck source=bin/jg-voice-lib.sh
+  . "$SELF_DIR/jg-voice-lib.sh"
+else
+  jg_voice_apply() { JG_VOICE_OUT=$2; }
+fi
+
 # First non-comment, non-blank line of a config file, or nothing.
 read_setting() {  # <file-name>
   local path="$CONFIG/$1" line
@@ -739,6 +747,11 @@ cmd_reply() {
   fi
   if [ -z "${body//[[:space:]]/}" ] && [ -z "$attach" ]; then
     die "refusing to record an empty reply"
+  fi
+  if [ -n "${body//[[:space:]]/}" ]; then
+    # The captain voice file (bin/jg-voice.py) decides: rewrite plain terms, or refuse in block mode.
+    jg_voice_apply chat-reply "$body" || die "reply refused by the captain voice file; rewrite it in plain words"
+    body=$JG_VOICE_OUT
   fi
   jg_question_flag_reply "$body"
   mkdir -p "$REPLIES"

@@ -73,6 +73,11 @@ Without an engine the gateway does exactly what it did before and says nothing e
 - When the engine is missing, times out or fails, or the audio cannot be read, the note is still filed with its file line and one fixed line: `transcript: unavailable (<reason>)`.
 - The words are never written to a log, and no engine output is, only the fixed reason.
 
+## The voice file
+
+Every text the gateway sends to the owner, and every `jg-inbox.sh reply`, goes through the editable voice file ([captain-voice.md](captain-voice.md)).
+The gateway rewrites plain terms and always sends; a reply with an internal term is refused until it is rewritten.
+
 ## Pushes to the owner
 
 `bin/jg-bus.sh gateway push <text>` (or the text on stdin) sends one message to the owner's private chat without a question.

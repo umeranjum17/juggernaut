@@ -60,6 +60,13 @@ _JG_PARENT_CHANNEL_LIB_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0
 . "$_JG_PARENT_CHANNEL_LIB_DIR/jg-squad-lead-parent-lib.sh"
 # shellcheck source=bin/jg-classify-lib.sh
 . "$_JG_PARENT_CHANNEL_LIB_DIR/jg-classify-lib.sh"
+# The captain voice check steps aside when its library is not beside this one (a lone copy).
+if [ -r "$_JG_PARENT_CHANNEL_LIB_DIR/jg-voice-lib.sh" ]; then
+  # shellcheck source=bin/jg-voice-lib.sh
+  . "$_JG_PARENT_CHANNEL_LIB_DIR/jg-voice-lib.sh"
+else
+  jg_voice_apply() { JG_VOICE_OUT=$2; }
+fi
 
 # shellcheck disable=SC2034 # Output globals read by sourcing callers.
 JG_PARENT_CHANNEL_ID=
@@ -155,6 +162,9 @@ jg_parent_channel_clean_note() {  # <text>
 # the caller declaring a new event is the one that stamps it.
 jg_parent_channel_append_once() {  # <path> <line>
   local path=$1 line=$2
+  # The captain voice file rewrites the note before it is compared or written, so a retry of the
+  # same event rewrites to the same line and stays deduplicated. A line is never held back here.
+  if jg_voice_apply parent-channel "$line" --line; then line=$JG_VOICE_OUT; fi
   if [ -e "$path" ] || [ -L "$path" ]; then
     [ -f "$path" ] && [ ! -L "$path" ] || return 1
   else
