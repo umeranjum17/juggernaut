@@ -93,7 +93,7 @@ func (a *app) sendToChat(ev event) error {
 // blocked bot, a bad request) is not tried again.
 func (a *app) deliverEvent(ad *telegram, owner string, body []byte) (err error) {
 	var ev event
-	if json.Unmarshal(body, &ev) != nil || !chatKinds[ev.Kind] {
+	if json.Unmarshal(eventBody(body), &ev) != nil || !chatKinds[ev.Kind] {
 		return nil
 	}
 	for wait, spent := 2*time.Second, time.Duration(0); ; wait = min(2*wait, time.Minute) {
