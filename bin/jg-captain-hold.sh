@@ -1043,7 +1043,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
 
 command_hold() {
   local id=${1:-} priority='' priority_check title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
-  local signoff_script existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0 card_close=release must='' refusal rec own_instruction=''
+  local signoff_script existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0 card_close=release must='' refusal rec own_instruction='' raise_rc=0
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1209,8 +1209,15 @@ command_hold() {
       else
         # The installed adapter takes exactly these four arguments and authors its
         # own must class (core/signoff raise), so --must is never passed to it.
+        # Exit 3 is the adapter saying the hold is a direction with no question for
+        # the captain: no card is the right result, so the recorded hold is a success.
+        raise_rc=0
         JG_HOME=$JG_HOME JG_CODE_ROOT=${JG_CODE_ROOT:-$SCRIPT_DIR/..} "$signoff_script" raise "$id" "$(show_field_value "$show" title)" "$reason" "$card_close" \
-          || { printf 'error: task %s is held, but no sign-off card was raised for it\n' "$id" >&2; exit 1; }
+          || raise_rc=$?
+        if [ "$raise_rc" -ne 0 ] && [ "$raise_rc" -ne 3 ]; then
+          printf 'error: task %s is held, but no sign-off card was raised for it\n' "$id" >&2
+          exit 1
+        fi
       fi
     fi
   fi

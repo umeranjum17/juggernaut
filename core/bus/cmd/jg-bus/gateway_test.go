@@ -27,7 +27,7 @@ func TestGatewayIngress(t *testing.T) {
 	root, _ := filepath.Abs("../../../..")
 	home, batch, events := t.TempDir(), "", []string{}
 	bot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/bot"+tok+"/") || r.URL.Query().Get("allowed_updates") != `["message"]` {
+		if !strings.HasPrefix(r.URL.Path, "/bot"+tok+"/") || r.URL.Query().Get("allowed_updates") != `["message","callback_query"]` {
 			http.Error(w, `{"ok":false}`, 404)
 			return
 		}
@@ -48,6 +48,17 @@ func TestGatewayIngress(t *testing.T) {
 	if code := once(); code != 0 || len(events) != 1 || !strings.HasSuffix(events[0], "/jg.captain.inbound") {
 		t.Fatalf("exit %d, events %v: want one inbound event", code, events)
 	}
+	// The mirror: the owner's message shows in the wake the session reads, once, with its source;
+	// the three dropped ones show nowhere.
+	wakes := func() string { q, _ := os.ReadFile(state + "/.wake-queue"); return string(q) }
+	if w := wakes(); strings.Count(w, "captain inbox note") != 1 || !strings.Contains(w, "[chat telegram 42:100] hello overwatch") {
+		t.Fatalf("want one mirrored wake naming the source and text, got %q", w)
+	}
+	for _, dropped := range []string{"stranger", "group", "bot"} {
+		if strings.Contains(wakes(), dropped) {
+			t.Fatalf("dropped message %q was mirrored: %q", dropped, wakes())
+		}
+	}
 	if off, _ := os.ReadFile(state + "/captain-chat/telegram.offset"); string(off) != "14\n" {
 		t.Fatalf("offset = %q, want 14", off)
 	}
@@ -61,6 +72,31 @@ func TestGatewayIngress(t *testing.T) {
 	if body, _ := os.ReadFile(notes[0]); once() != 0 || len(events) != 1 || len(notes) != 1 || !strings.Contains(string(body), "[chat telegram 42:100]\nhello overwatch") {
 		t.Fatalf("replay: events %v, notes %v, body %q", events, notes, body)
 	}
+	if strings.Count(wakes(), "captain inbox note") != 1 {
+		t.Fatalf("a replay mirrored the message again: %q", wakes())
+	}
+	// The KPI ledger counts the owner's note once, with the inbox note id; the replay and the
+	// dropped updates added no row.
+	rows := func() int {
+		raw, _ := os.ReadFile(filepath.Join(home, "data", "overwatch-kpi.jsonl"))
+		return strings.Count(string(raw), "\n")
+	}
+	if raw, _ := os.ReadFile(filepath.Join(home, "data", "overwatch-kpi.jsonl")); rows() != 1 ||
+		!strings.Contains(string(raw), `"text":"hello overwatch"`) || !strings.Contains(string(raw), `"id":"`+strings.TrimSuffix(filepath.Base(notes[0]), ".note")+`"`) {
+		t.Fatalf("want one ledger row for the note with its inbox id, got %q", raw)
+	}
+	// A second note is a second row; a home whose KPI reads off records nothing.
+	batch = upd(15, "private", 42, 42, false, "second note")
+	if code := once(); code != 0 || rows() != 2 {
+		t.Fatalf("exit %d, %d rows: want a second row for a second note", code, rows())
+	}
+	os.MkdirAll(filepath.Join(home, "config"), 0o700)
+	os.WriteFile(filepath.Join(home, "config", "overwatch-kpi"), []byte("off\n"), 0o600)
+	batch = upd(16, "private", 42, 42, false, "third note, kpi off")
+	if code := once(); code != 0 || rows() != 2 {
+		t.Fatalf("exit %d, %d rows: a home with the KPI off must record nothing", code, rows())
+	}
+	os.Remove(filepath.Join(home, "config", "overwatch-kpi"))
 	// A group-readable token file is refused; a dead API's error names the token-bearing URL.
 	os.Chmod(tokenFile, 0o640)
 	failGroup := once()

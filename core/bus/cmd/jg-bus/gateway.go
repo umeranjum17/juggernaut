@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -29,8 +30,11 @@ type Adapter interface {
 	Receive(ctx context.Context, cursor string) ([]Inbound, string, error)
 	Fetch(ctx context.Context, m MediaRef, w io.Writer) (int64, error)
 	Send(ctx context.Context, out Outbound) (string, error)
+	Answer(ctx context.Context, callback, text string) error // end a button tap's spinner, with an optional line shown to the tapper
+	Edit(ctx context.Context, chat, message, text string, buttons []Button) error
 	Out() OutLimits                                        // what Send can carry: file, picture, caption and album sizes
 	React(ctx context.Context, chat, message string) error // mark a message as received
+	Typing(ctx context.Context, chat string) error         // show that an answer is being written
 }
 
 // Inbound is one platform update. A non-message update has no sender, so the access check drops it.
@@ -39,6 +43,7 @@ type Inbound struct {
 	ReplyTo                             string // the message this one answers, if any
 	Private, FromBot                    bool
 	Media                               []MediaRef
+	Callback, Data                      string // a button tap: the query to answer and the button's opaque data
 }
 
 // redact hides the bot token: the Bot API puts it in the URL and a Go *url.Error prints the URL,
@@ -55,7 +60,7 @@ func (t *telegram) Name() string { return "telegram" }
 
 // Receive is getUpdates over net/http, asking for messages only.
 func (t *telegram) Receive(ctx context.Context, cursor string) ([]Inbound, string, error) {
-	q := url.Values{"timeout": {strconv.Itoa(int(t.wait.Seconds()))}, "allowed_updates": {`["message"]`}}
+	q := url.Values{"timeout": {strconv.Itoa(int(t.wait.Seconds()))}, "allowed_updates": {`["message","callback_query"]`}}
 	if cursor != "" {
 		q.Set("offset", cursor)
 	}
@@ -89,6 +94,21 @@ func (t *telegram) Receive(ctx context.Context, cursor string) ([]Inbound, strin
 					Type string `json:"type"`
 				} `json:"chat"`
 			} `json:"message"`
+			Callback *struct {
+				ID   string `json:"id"`
+				Data string `json:"data"`
+				From struct {
+					ID    int64 `json:"id"`
+					IsBot bool  `json:"is_bot"`
+				} `json:"from"`
+				Message *struct {
+					MessageID int64 `json:"message_id"`
+					Chat      struct {
+						ID   int64  `json:"id"`
+						Type string `json:"type"`
+					} `json:"chat"`
+				} `json:"message"`
+			} `json:"callback_query"`
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || !body.OK {
@@ -108,6 +128,12 @@ func (t *telegram) Receive(ctx context.Context, cursor string) ([]Inbound, strin
 				in.ReplyTo = strconv.FormatInt(m.ReplyTo.MessageID, 10)
 			}
 		}
+		if c := u.Callback; c != nil {
+			in.Callback, in.Data, in.From, in.FromBot = c.ID, c.Data, strconv.FormatInt(c.From.ID, 10), c.From.IsBot
+			if c.Message != nil { // a tap on a message the bot cannot name has no chat, so it is dropped
+				in.Chat, in.Message, in.Private = strconv.FormatInt(c.Message.Chat.ID, 10), strconv.FormatInt(c.Message.MessageID, 10), c.Message.Chat.Type == "private"
+			}
+		}
 		out, cursor = append(out, in), strconv.FormatInt(u.UpdateID+1, 10)
 	}
 	return out, cursor, nil
@@ -120,18 +146,37 @@ func (t *telegram) Receive(ctx context.Context, cursor string) ([]Inbound, strin
 func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 	if !slices.Contains(allow, in.From) || !in.Private || in.Chat != in.From || in.FromBot {
 		appendQuiet(filepath.Join(a.state, "captain-chat", "dropped.tsv"), fmt.Sprintf("%d\t%s\t%s", time.Now().Unix(), in.UpdateID, in.From))
+		if in.Callback != "" {
+			a.answerTap(ad, in, "") // the tapper's spinner ends; nothing else shows
+		}
 		return nil
+	}
+	if strings.HasPrefix(in.Data, "c:") { // a tap on a card's option answers the card
+		return a.tapCard(ad, in)
+	}
+	if in.Callback != "" { // a button tap answers an option set, not a message
+		return a.pick(ad, in)
 	}
 	if isStatusCommand(in) { // the gateway answers this itself: no card, no note, no wake
 		a.answerStatus(ad, in)
 		return nil
 	}
 	if card := a.cardAnswered(in); card != "" { // the owner answered a card in the chat: the board takes it, not the inbox
-		a.emitReply(card, in.Text)
+		a.emitReply(card, in.Text, "")
+		a.closeAnswered(ad, card, in.Text) // the card's buttons go, as for a tap
 		return nil
 	}
 	head := fmt.Sprintf("[chat %s %s:%s]", ad.Name(), in.Chat, in.Message)
-	files, stored := a.fetchMedia(ad, in)
+	reacted := false
+	react := func() { // the note is filed or about to be; a missing reaction costs nothing
+		if !reacted {
+			reacted = true
+			if err := ad.React(context.Background(), in.Chat, in.Message); err != nil {
+				a.noteFailure("gateway reaction", err.Error())
+			}
+		}
+	}
+	files, stored := a.fetchMedia(ad, in, react)
 	if in.Text == "" && len(files) == 0 {
 		in.Text = "(no text: this message has nothing the gateway can read yet)"
 	}
@@ -150,12 +195,28 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return err
 	}
 	a.recordInboundLegs(res.ID, in, stored)
-	if err := ad.React(context.Background(), in.Chat, in.Message); err != nil { // the note is filed; a missing reaction costs nothing
-		a.noteFailure("gateway reaction", err.Error())
-	}
+	react()
 	if res.Outcome == "created" { // a replay already announced its event
+		a.typing.begin(in.Chat, res.ID)
 		a.emit("inbound", id, head, "", stored)
 		a.refuseLarge(ad, in)
+	}
+	// Counted last and for a replay too, so a failure here costs the owner nothing: the note, its
+	// event and the reaction are done, and the retry only adds the missing ledger row.
+	return a.recordKPI(res.ID, in.Text)
+}
+
+// recordKPI counts the owner's note as a captain message in the Overwatch KPI ledger, exactly as
+// bin/jg-chat.sh counts one typed at the board. The note id makes it one row per note: a replay or a
+// retry finds the row and adds none, and a home whose config/overwatch-kpi reads off records nothing.
+func (a *app) recordKPI(note, text string) error {
+	if strings.TrimSpace(text) == "" {
+		text = "(chat note with no text)"
+	}
+	cmd := exec.Command(filepath.Join(a.root, "bin", "jg-overwatch-kpi.sh"), "record", "--id", note, "--", text)
+	cmd.Env = append(os.Environ(), "JG_HOME="+a.home, "JG_STATE_OVERRIDE="+a.state, "JG_DATA_OVERRIDE="+a.data)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("jg-overwatch-kpi did not record note %s: %v: %s", note, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -267,6 +328,9 @@ func (a *app) gateway(args []string) int {
 		ad.wait = 0
 	}
 	if !once {
+		a.typing = a.typerFor(ad)
+		a.typing.stopOnSignal()
+		go a.typing.run()
 		if len(allow) > 0 {
 			go a.serveGatewayEvents(ad, allow[0]) // cards, outcomes, alerts and digests out to the chat
 		}

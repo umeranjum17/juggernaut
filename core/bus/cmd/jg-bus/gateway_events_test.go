@@ -166,3 +166,30 @@ func TestGatewayCardReply(t *testing.T) {
 		t.Fatalf("routed %q: want the board route to take the answer with the bus down", got)
 	}
 }
+
+// The Dapr sidecar wraps every event it publishes in a CloudEvent envelope, so the captain-gateway
+// consumer and the reply router read the event from the envelope's data. The outcome below is the
+// shape the CAPTAIN stream held in Main's home when no outcome ever reached the chat (2026-11-04):
+// the consumer found no kind at the top, acknowledged it and sent nothing.
+func TestGatewayEnvelope(t *testing.T) {
+	l := newChatLab(t, true)
+	ad, owner, _ := l.a.chatTarget()
+	ad.sleep = func(time.Duration) {}
+	p := l.a.gatewayPart(ad, owner)
+	wrap := func(subject, data string) []byte {
+		return []byte(`{"data":` + data + `,"datacontenttype":"application/json","id":"9431f396-4f43-4625-8400-f0f6441434fb","pubsubname":"captain-channel","source":"juggernaut-bus","specversion":"1.0","time":"2026-11-04T07:45:37+04:00","topic":"` + subject + `","traceid":"","traceparent":"","tracestate":"","type":"com.dapr.event.sent"}`)
+	}
+	outcome := wrap("jg.captain.outcome", l.a.eventJSON(1793763937, "outcome", "o-1", "The fix is merged.", ""))
+	asString, _ := json.Marshal(l.a.eventJSON(1793763938, "alert", "a-1", "Disk is full.", ""))
+	for _, body := range [][]byte{outcome, outcome, wrap("jg.captain.inbound", l.a.eventJSON(1, "inbound", "i", "hello", "")), wrap("jg.captain.alert", string(asString))} {
+		if err := p.handle(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(l.sends) != 2 || l.sends[0]["text"] != "The fix is merged." || l.sends[1]["text"] != "Disk is full." || l.lost() != 0 {
+		t.Fatalf("sends %v, undelivered %d: want the enveloped outcome once and the alert, not the inbound event", l.sends, l.lost())
+	}
+	if code := l.a.routeReply(wrap("jg.captain.reply", `{"at":"2026-11-04T10:00:00Z","kind":"reply","key":"card-9","subject":"jg.captain.reply","answer":"yes"}`)); code != 0 || readFileString(l.routed) != "card-9|yes\n" {
+		t.Fatalf("reply router exit %d, routed %q: want the enveloped answer routed to card-9", code, readFileString(l.routed))
+	}
+}

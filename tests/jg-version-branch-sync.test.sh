@@ -453,4 +453,16 @@ test_release_cut_retargets_orphans() {
 }
 
 test_release_cut_retargets_orphans
+
+# A merge into a release branch that already shipped is refused; journeys/release-shipped-merge-refusal.sh drives it.
+test_shipped_release_merge_is_refused() {
+  local ev
+  ev=$(mktemp -d) || fail "cannot create the evidence folder"
+  DONE_DONE_EVIDENCE_ROOT=$ev bash "$ROOT/journeys/release-shipped-merge-refusal.sh" > "$ev/out" 2>&1 \
+    || { cat "$ev/out"; rm -rf -- "$ev"; fail "T15 the shipped-release merge guard journey failed"; }
+  rm -rf -- "$ev"
+  pass "T15 a merge into a shipped release branch is refused"
+}
+
+test_shipped_release_merge_is_refused
 echo "all jg-version-branch-sync tests passed"

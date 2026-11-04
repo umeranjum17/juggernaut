@@ -24,20 +24,54 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
 ## How it works
 
 - The owner's private text becomes an inbox note whose first line is `[chat telegram <chat>:<message>]`. Anyone else is dropped and counted by time and update id, never by text.
+- The owner's message is mirrored into the Overwatch session by the notification Overwatch already receives for the note: `check: captain inbox note <id> - [chat telegram <chat>:<message>] <text>`.
+  It shows the source, the whole text (up to 400 characters) and each attached file as `[<kind> <size> <mime>]`, without the local path.
+  It is sent once, because a replay of the same update adds no second notification, and a dropped message has none.
+  This path needs no new channel, no typing into the pane and no model turn. Other notes keep their 100-character summary.
 - `bin/jg-inbox.sh reply <id>` is the only way an answer reaches the chat. It is sent as a threaded reply, split at 4096 characters, and sent once.
 - Add `--attach <path>` (repeatable) to `reply` to send files with the answer.
   The script only records the paths. The gateway sends them from disk, threaded on the owner's message.
   Pictures up to 10 MB go as photos, and Telegram falls back to a file if it refuses one. Other files go as files up to 50 MB.
   Up to 10 pictures, or up to 10 files, go as one album.
   The text is the caption of the first album when it fits 1024 characters.
+- Add `--option <label>` (repeatable, 2 to 8, 60 characters each) to `reply` to ask the owner to choose.
+  The pictures go as an album first. The text then goes as a message with one button per option.
+  A choice never uses the text as an album caption, so the question stays beside the buttons.
+  With no text the message reads "Choose one:".
+  The owner taps a button. The gateway answers the tap at once, edits the message to add `Picked: <label>` and removes the buttons, and files a note.
+  The note's first line is `[chat telegram <chat>:<message>]`, where the message is the one with the buttons. Its second line is `pick: <label> (<option set id>)`.
+  A reply to the pick note is threaded on the message with the buttons.
+- A button holds only `o:<option set id>:<n>`. The labels stay in `state/captain-chat/options.jsonl` and the picks in `state/captain-chat/picks.jsonl`.
+- A tap is answered and not filed when it comes from anyone but the owner, names a set the gateway does not know, comes from another message, is older than `chat-option-days` (default 7), or repeats the pick.
+  A second tap on a set that is already picked answers "Already picked: <label>" and files nothing.
+  Add `--allow-change` to `reply` to let the owner change the pick: a tap on another button files a new pick note, and the message keeps its buttons with a ✅ on the current pick.
+  A tap that Telegram sends again after a restart is the same note.
 - A file is never sent when it is under `config/`, the bus state or `~/.ssh`, is named `.env*` or ends `.token`, `.pass`, `.key` or `.pem` (checked after symlinks), is over 50 MB, or is gone.
   The owner gets a text line saying which file was not sent and why.
   A file Telegram refuses is named in text too.
 - When the gateway files a note it puts a 👀 reaction on the owner's message (`setMessageReaction`), so the owner sees it arrived. A reaction Telegram refuses is logged and never stops the note.
+- While a note is open, the chat shows "typing…" (`sendChatAction`). It starts when the gateway files the note and repeats every 4 seconds, because Telegram shows it for about 5.
+  It stops at once when `bin/jg-inbox.sh reply` answers the note, when the gateway stops, or after a hard cap of 10 minutes (`chat-typing-cap-seconds`) for a note nobody answers.
+  A chat with several open notes gets one indicator. A refused action is logged once and never stops the note or its reply.
+  A restarted gateway does not show it again for notes filed before the restart.
 - A message that is only `/status` is answered by the gateway itself, threaded on it: the owner, the answers sent and that the bot is answering. It files no note and wakes no one. It is the only command.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
-- The owner can send a photo, document, voice note, audio or video. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
+- The owner can send a photo, document, voice note, audio, video or round video note. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
+
+## Voice notes
+
+With a local speech engine installed, each voice, audio or video note the owner sends is turned into words on this machine, and the words go in the filed note on a line under the file line: `transcript: <text>`.
+The `inbound` event carries them in the file's optional `transcript` field.
+No audio leaves the machine, and nothing costs money.
+Without an engine the gateway does exactly what it did before and says nothing extra.
+
+- Install it once, by choice: `bin/jg-chat-transcribe.sh setup`. It downloads Hex (MIT, about 72 MB, checked against a pinned sha256) and its Parakeet English model (NVIDIA Open Model License, about 730 MB) into `state/captain-chat/stt`, which git ignores. Linux x64 only. Install and session start never run it. `bin/jg-chat-transcribe.sh status` says whether it is there.
+- To use another engine, set `chat-transcribe-cmd` to a program that takes a 16 kHz mono wav and prints the words on stdout. The gateway converts the audio with `ffmpeg` first.
+- The 👀 reaction is sent before the engine starts, so the owner sees the note arrived without waiting for the words.
+- The audio is cut at `chat-transcribe-max-seconds` (default 300), and the line then reads `transcript (first 300 s only, the limit): <text>`. The whole run is stopped after `chat-transcribe-timeout` seconds (default 120).
+- When the engine is missing, times out or fails, or the audio cannot be read, the note is still filed with its file line and one fixed line: `transcript: unavailable (<reason>)`.
+- The words are never written to a log, and no engine output is, only the fixed reason.
 
 ## Pushes to the owner
 
@@ -62,9 +96,18 @@ It makes one `getMe` call and never sends a message.
   A send that fails is tried again for 10 minutes, and one the bot can never take (blocked, bad request) is not.
   An event not sent is named in `state/captain-channel-undelivered.jsonl`.
   When the bus refuses an event, the gateway's adapter sends it in-process, so the owner still hears it.
-  A card ends with "Reply to this message to answer."
+  A card with no options ends with "Reply to this message to answer."
   A text reply to that message is published as the card's answer, and the router sends it to the board.
   When the bus refuses the reply, the board's own route takes it at once.
+- A card with options (every card `jg-question-card.sh post` makes: its `--option value=label` entries, where a bare option is its own label, or Yes and No) is sent with one button per option, and a text reply still works.
+  The two sides stay in step:
+  - A tap on a button publishes the reply event with the option's value as the answer (the label rides along), like a text reply. The gateway answers the tap and edits the message to `Answered: <label>` with no buttons.
+  - An answer on the board edits the message to `Answered on the board: <answer>` and removes the buttons. `jg-board-answers.sh` and `jg-question-card.sh answer` publish `jg-bus publish card-close <key> answered --answer <words>`. A text reply edits the message the same way.
+  - A card closed without an answer: `jg-bus publish card-close <key> "<why>"` edits the message to that text and removes the buttons.
+  - A card published again with the same key and other text or options is edited in place, not sent twice. A card that is answered or closed is not reopened.
+  - A late tap on an answered card answers the tap with "Already answered." and a withdrawn or unknown card with "This card is closed." Neither publishes anything. A tap from anyone but the owner, or on another message, is dropped.
+  - A button holds `c:<12 hex>:<n>` (under 20 bytes). The hash names the card in `state/captain-chat/cards.jsonl`, which maps each card to its chat and message id, so edits survive a gateway restart. The last line of a card wins.
+  - An edit that fails is tried again every 2 seconds until it works. An edit Telegram can never take (400, 403) is logged and dropped. The bot token is never stored or logged.
 - `pending` names why: the service is not running (its heartbeat in `state/captain-chat/telegram.alive` is over two minutes old), `getMe` failed, or legs are missing.
   A missing-legs detail reads `in: text image - out: text - missing in file, out image file`.
 - `live` needs all six legs inside the last 7 days: `6 of 6 legs, last <date>, <n> notes, <n> replies`.
