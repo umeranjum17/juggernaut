@@ -68,6 +68,9 @@ export JG_HOST_WIRING_SKIP=1
 export JG_KV_URL="${JG_KV_URL:-nats://127.0.0.1:1}"
 export JG_WAKE_BUS_URL="${JG_WAKE_BUS_URL:-nats://127.0.0.1:1}"
 export JG_STATE_BUS_URL="${JG_STATE_BUS_URL:-nats://127.0.0.1:1}"
+# A fixture never calls a real model: the captain voice rewrite (bin/jg-voice.py) runs this command, and `false`
+# refuses the message. tests/jg-voice.test.sh sets its own stub.
+export JG_VOICE_REWRITE_CMD="${JG_VOICE_REWRITE_CMD:-false}"
 # A host-installed task-priority feature must not change what test fixtures can add.
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 
