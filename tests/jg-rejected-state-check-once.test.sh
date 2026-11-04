@@ -47,9 +47,11 @@ write_check() {
 # cycle <dir>: one real watcher cycle, then drain and acknowledge it. Leaves the
 # cycle's output in <dir>/out and the drained wake rows in <dir>/drain.
 cycle() {
-  local dir=$1 rc=0 seq gen
-  # The sweep ends by touching .last-check, so its presence proves the watcher got
-  # as far as the due-check sweep; a silent cycle then means "swept, nothing to say".
+  local dir=$1 rc=0 seq gen pid i
+  # The sweep touches .last-check, so its presence proves the watcher got as far as the
+  # due-check sweep; a silent cycle then means "swept, nothing to say". The watcher is
+  # given as long as a slow runner needs to reach the sweep (a fixed short cap is a
+  # flake there), and a short grace after it for an alert to print and the cycle to end.
   rm -f "$dir/state/.last-check"
   env HOME="$dir/home" XDG_CONFIG_HOME="$dir/home/config" TMPDIR="$dir/tmp" \
     PATH="$dir/fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" \
@@ -57,8 +59,20 @@ cycle() {
     JG_CHECK_INTERVAL=0 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS=99999999 JG_BUSY_TURN_MAX_SECS=999999 \
     JG_STALE_ESCALATE_SECS=999999 JG_WATCH_HANDLING_SUCCESSOR=1 \
-    timeout 3 "$WATCH" > "$dir/out" 2> "$dir/err" || rc=$?
-  case "$rc" in 0|124) ;; *) fail "watcher failed (rc=$rc): $(cat "$dir/err")" ;; esac
+    timeout 60 "$WATCH" > "$dir/out" 2> "$dir/err" &
+  pid=$!
+  for ((i = 0; i < 500; i++)); do
+    [ ! -e "$dir/state/.last-check" ] || break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  for ((i = 0; i < 20; i++)); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || rc=$?
+  case "$rc" in 0|124|143) ;; *) fail "watcher failed (rc=$rc): $(cat "$dir/err")" ;; esac
   [ -e "$dir/state/.last-check" ] || fail "the watcher never reached its due-check sweep: $(cat "$dir/err")"
   JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$DRAIN" > "$dir/drain" 2> "$dir/ack"
   seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9]*\) --recovery-generation .*/\1/p' "$dir/ack")
