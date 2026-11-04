@@ -43,6 +43,8 @@ journeys:
     command: bash journeys/release-readiness.sh
   frozen-release-base:
     command: bash journeys/frozen-release-base.sh
+  red-ci-ticket:
+    command: bash journeys/red-ci-ticket.sh
   release-cut-orphans:
     command: bash journeys/release-cut-orphans.sh
   release-shipped-merge-refusal:
