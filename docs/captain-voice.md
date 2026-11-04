@@ -34,6 +34,17 @@ It reads the request on stdin and prints the new message.
 `JG_VOICE_REWRITE_TIMEOUT` sets its limit in seconds (45 by default).
 A test sets the command to a stub, so no test calls a real model.
 
+## Layout
+
+A chat message keeps its layout, so the checker sets it right on every send, in any mode except `off`.
+It puts each list item on its own line.
+It splits a numbered list that was run into one line when the numbers count up from 1.
+It puts a blank line between a list and the prose around it.
+It leaves a fenced code block and prose with no list as written.
+The rewrite step is told to keep the layout, and a rewrite that turns a list of items into fewer items is refused with the same re-draft instruction.
+A status line sent with `--line` keeps its one line.
+A home with its own `config/captain-voice.md` keeps its own banned terms, so it copies new rows from `defaults/captain-voice.md` by hand.
+
 ## Role personality files
 
 Each role has one more markdown file beside the shared voice file, which adds a personality and nothing else:
