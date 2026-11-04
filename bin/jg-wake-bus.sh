@@ -217,7 +217,15 @@ live_apply() { # <stream> <file>
   fi
   seq=$from
   while [ "$seq" -le "$last" ]; do
-    raw=$(bus stream get "$stream" "$seq" --json 2>/dev/null) || { seq=$((seq + 1)); continue; }
+    raw=$(bus stream get "$stream" "$seq" --json 2>&1) || {
+      # Only a message the stream no longer holds (aged out, deleted) is passed over. Any other
+      # refusal - a timeout, a bus that answers the API half-way - stops the read before this
+      # message, so the cursor stays on the last one read and the next render reads it again;
+      # skipping it would lose an acknowledgement for good and leave its row queued.
+      case "$raw" in *"no message found"*) seq=$((seq + 1)); continue ;; esac
+      last=$((seq - 1))
+      break
+    }
     body=$(printf '%s' "$raw" | jq -r '.data // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$body" ]; then
       printf '%s' "$body" | jq -c --argjson seq "$seq" --arg home "$(live_home_key)" \
