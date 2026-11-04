@@ -16,7 +16,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
 | Home updates after a merge | [Fleet autosync](#fleet-autosync-configfleet-autosync-off) |
 | A release that pushes its own readiness | [Release readiness](#release-readiness-configrelease-readiness) |
-| Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) and [checks size rule](#checks-size-rule-configchecks-size) |
+| Landing gates | [Home merge gate](#home-merge-gate-configmerge-gate) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## JG_HOME
@@ -1341,14 +1341,6 @@ A nonzero exit refuses that merge and prints the gate's own reason; an absent fi
 A home that wants the retired-catalog rule in its own gate adds one line to `config/merge-gate`: `bin/jg-retired-catalog-check.sh --base "${3:--}"` (or the whole-tree form with no `--base`), which refuses a landing that restores a path under the retired catalog directory (the check names it); the repo's own invariants job runs the same check on every pull request.
 The gate's content is home-local policy; `bin/jg-tool-wiring.sh` places done-done's gate only in a home that has none.
 `core/owner-guard/wiring.sh` and `core/owner-rules/wiring.sh` write one gate file holding both checks, and `core/lib/merge-gate-lib.sh` owns that file, the steps it records, and the home's own gate kept at `config/merge-gate.pre-chain`.
-
-## Checks size rule (config/checks-size)
-
-The merge gate's checks lint measures a pull request's added non-generated lines against a 1,000-line guidance and treats that size as advice, never a refusal: a run over the guidance prints the size and says it is over the guidance, then checks the remaining rules and exits on those alone.
-A home that wants the refusal back writes `refuse` in the local, gitignored `config/checks-size`; an absent, empty or unrecognised value is `advisory`, the default, and `advisory` may also be written out.
-`core/merge-on-green/jg-checks-lint.sh` owns the rule and the setting, and `core/merge-on-green/checks-lint.sh` hands a size-only FAIL from the pinned `done-done` lint to it, because that CLI hardcodes the same limit with no config key.
-`core/merge-on-green/wiring.sh <jg-home>` is how a home gets this rule: it installs the feature's copy, and a home still running the retired install of the gate has that copy's refusing rule file removed and its `merge-on-green.sh` left as one redirect to the installed gate.
-Worker briefs still tell a worker to prefer a small slice; that wording is instruction only and enforces nothing.
 
 ## Open pull request cap (config/open-pr-cap)
 

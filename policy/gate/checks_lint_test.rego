@@ -18,9 +18,8 @@ facts(over) := object.union(
 	{
 		"author": "me",
 		"title": "feat: thing",
-		"size": {"added": 10, "mode_raw": "", "mode_file": "config/checks-size"},
+		"size": {"added": 10},
 		"checks": {"fields": good_fields},
-		"verify_skills": [],
 		"evidence": {"folder": "/e", "tokens": ["a.txt"], "files": {"a.txt": file({})}},
 	},
 	over,
@@ -54,7 +53,7 @@ test_no_checks_block_is_refused if {
 }
 
 test_missing_fields_are_named_in_order if {
-	partial := {"author": "me", "title": "t", "size": {"added": 1, "mode_raw": ""}, "verify_skills": [], "evidence": {"folder": "/e", "tokens": [], "files": {}}, "checks": {"fields": {"outcome": "x", "repro": "n/a"}}}
+	partial := {"author": "me", "title": "t", "size": {"added": 1}, "evidence": {"folder": "/e", "tokens": [], "files": {}}, "checks": {"fields": {"outcome": "x", "repro": "n/a"}}}
 	d := verdict(partial)
 	d.why == "missing or empty Checks line: proof, evidence"
 }
@@ -64,28 +63,8 @@ test_proof_must_name_a_command_or_path if {
 	d.why == "proof: names no command or path"
 }
 
-test_a_repo_with_a_verify_skill_needs_it_named if {
-	d := verdict(facts({"verify_skills": ["verify-app"], "checks": {"fields": object.union(good_fields, {"proof": "bash tests/x.test.sh"})}}))
-	not d.ok
-	startswith(d.why, "proof: does not name the verify skill this repository has (verify-app)")
-}
-
-test_naming_the_repo_skill_passes if {
-	d := verdict(facts({"verify_skills": ["verify-app"], "checks": {"fields": object.union(good_fields, {"proof": "verify-app: bash x.sh"})}}))
-	d.ok
-}
-
-test_no_skill_and_no_marker_is_refused if {
-	d := verdict(with_fields({"proof": "bash tests/x.test.sh"}))
-	d.why == "proof: does not name the verify-<app> skill run (or \"no verify skill\")"
-}
-
-test_a_real_repro_names_systematic_debugging if {
-	d := verdict(with_fields({"repro": "bash tests/r.sh failed before"}))
-	startswith(d.why, "repro: a real repro must say")
-}
-
-test_a_real_repro_with_the_marker_passes if verdict(with_fields({"repro": "bash r.sh - systematic-debugging used"})).ok
+# Wording is never judged (owner, 1 Nov): no skill name in proof, no marker in repro.
+test_proof_and_repro_wording_is_not_judged if verdict(with_fields({"proof": "bash tests/x.test.sh", "repro": "bash r.sh failed before"})).ok
 
 test_na_repro_is_refused_on_a_fix_title if {
 	d := verdict(facts({"title": "Fix: broken"}))
@@ -149,27 +128,15 @@ test_identical_files_are_refused if {
 	startswith(d.why, "two evidence files are byte-identical")
 }
 
-test_size_is_advice_by_default if {
-	d := verdict(facts({"size": {"added": 1500, "mode_raw": "", "mode_file": "c"}}))
+test_size_is_advice_only if {
+	d := verdict(facts({"size": {"added": 1500}}))
 	d.ok
 	count(d.advice) == 1
 }
 
-test_size_refuses_when_the_home_says_refuse if {
-	d := verdict(facts({"size": {"added": 1500, "mode_raw": "refuse", "mode_file": "c"}}))
-	not d.ok
-	d.why == "1500 added non-generated lines (moved and upstream lines excluded): split it (limit 1000)"
+test_size_never_outranks_the_claim_rules if {
+	d := verdict(facts({"size": {"added": 1500}, "checks": null}))
+	d.why == "no \"## Checks\" block"
 }
 
-test_size_refusal_comes_before_the_claim_rules if {
-	d := verdict(facts({"size": {"added": 1500, "mode_raw": "refuse", "mode_file": "c"}, "checks": null}))
-	startswith(d.why, "1500 added")
-}
-
-test_the_guidance_itself_is_over if verdict(facts({"size": {"added": 1000, "mode_raw": "refuse", "mode_file": "c"}})).why != "1 evidence files"
-
-test_an_unknown_mode_stays_advisory_with_a_note if {
-	d := verdict(facts({"size": {"added": 1500, "mode_raw": "strict", "mode_file": "c"}}))
-	d.ok
-	count(d.advice) == 2
-}
+test_a_config_value_cannot_bring_the_refusal_back if verdict(facts({"size": {"added": 1500, "mode_raw": "refuse"}})).ok

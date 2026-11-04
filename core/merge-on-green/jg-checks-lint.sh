@@ -5,14 +5,11 @@
 # Needs under "## Checks": outcome:, repro:, proof:, evidence:. proof names a command or path; repro is
 # not n/a on a fix PR; evidence files exist, are non-empty, are newer than the lane's first launch
 # (data/<task>/ birth), and at least one has a hash no other PR used, and no two are identical. "evidence: not proven: <cause>"
-# passes (file the proof gap as a task). proof names the verify skill of the repository under test - the clone
-# the PR belongs to (the lane's recorded worktree, else this home's clone of it), never the folder this lint runs
-# from, whose own skill list is not evidence about that PR (two green PRs, 392 and 405, needed a hand-edited
-# description because the caller's folder decided it) - and says "no verify skill" only when that repository has
-# none; a real repro names systematic-debugging (captain 6 Oct). Bot PRs pass. 1,000+ added non-generated lines
-# are ADVICE, not a refusal (captain, release c-1: the ceiling slowed work down): the run prints the size and says it is over
-# the guidance, then checks the rest and exits on those rules alone. A home that wants the refusal back writes `refuse` in
-# config/checks-size; absent, empty or any other value is advisory (deletions, moved lines and a fork PR's merged-in upstream lines do not count;
+# passes (file the proof gap as a task). How proof or repro is worded is never checked (owner, 1 Nov): no skill
+# name, no "systematic-debugging" marker. Bot PRs pass. 1,000+ added non-generated lines
+# are ADVICE only, never a refusal and never a FAIL row (owner, 1 Nov: "don't fail anything, let it go"): the run
+# prints the size and says it is over the guidance, then checks the rest and exits on those rules alone
+# (deletions, moved lines and a fork PR's merged-in upstream lines do not count;
 # a cross-repo move names its source in the PR body: "moved-from: <owner>/<repo>@<ref> <dst-prefix>=<src-prefix>", same owner only).
 # A file git resolves as a rename at 50% similarity or more (the pull-files API's renamed + previous_filename, or
 # that body mapping) is counted as moved: its added lines are excused up to the lines it still shares with its
@@ -47,15 +44,7 @@ def load_rules():
             continue
     sys.exit('checks-lint: policy/gate/rules.json not found beside this lint or in ' + home)
 POLICY_BASE, RULES = load_rules()
-SIZE_GUIDANCE = RULES['size_guidance']  # the size the policy advises on; config/checks-size lets it refuse
-def size_mode():
-    """config/checks-size, the facts only: its first word lowercased ('' when absent or empty) and its path."""
-    p = f'{home}/config/checks-size'
-    try:
-        return (open(p, errors='replace').read().split() or [''])[0].lower(), p
-    except OSError:
-        return '', p
-
+SIZE_GUIDANCE = RULES['size_guidance']  # the size the policy advises on
 def gh_api(*a):  # errors=replace: the move rule also fetches binary files, which must not crash the count
     return subprocess.run(['gh', 'api', *a], capture_output=True, text=True, errors='replace', timeout=60)
 
@@ -272,30 +261,6 @@ if m:
     keys = '|'.join(RULES['required_fields'])
     checks = {'fields': {k: v.strip() for k, v in re.findall(rf'^\s*({keys})\s*:\s*(.*)$', block, re.M)}}
 
-def repo_under_test():
-    """The clone this pull request belongs to, never the folder this lint runs from: the lane's recorded
-    worktree first, else this home's clone of the pull request's repository. '' when neither is on disk, so a
-    repository that is not here is never judged to have no verify skill."""
-    meta = f'{home}/state/{task}.meta'
-    wt = ''
-    if task and os.path.isfile(meta):
-        try:
-            wt = ([l[9:].strip() for l in open(meta) if l.startswith('worktree=')] or [''])[-1]
-        except OSError:
-            wt = ''
-    if wt and os.path.isdir(wt):
-        return wt
-    m = re.search(r'github\.com/[^/]+/([^/]+)/pull/', src)
-    clone = f'{home}/projects/{m.group(1)}' if m else ''
-    return clone if clone and os.path.isdir(clone) else ''
-
-root = repo_under_test()
-vdir = f'{root}/.agents/skills' if root else ''
-# A done-done run writes its own verify skill as done-done-verify-<app>, which is a verify skill of this
-# repository too; the policy accepts a proof that names any of them.
-skills = sorted(d for d in (os.listdir(vdir) if os.path.isdir(vdir) else [])
-                if d.startswith('verify-') or d.startswith('done-done-verify-'))
-
 def ev_fix(n, p):
     """What to write instead of one evidence name that did not resolve: the evidence list takes names relative
     to the evidence folder, so a path, a doubled or missing evidence/ prefix is the slip."""
@@ -336,9 +301,8 @@ for n in toks:
     efiles[n] = {'path': p, 'present': present, 'older': bool(present and born and os.path.getmtime(p) < born),
                  'sha256': hsh, 'fresh': present and (o is None or o in (src, task) or bool(task and f'/{task}/' in o)),
                  'fix': '' if present else ev_fix(n, p)}
-mode_raw, mode_file = size_mode() if size >= SIZE_GUIDANCE else ('', '')
-facts = {'author': author, 'title': title, 'size': {'added': size, 'mode_raw': mode_raw, 'mode_file': mode_file},
-         'checks': checks, 'verify_skills': skills, 'evidence': {'folder': ev, 'tokens': toks, 'files': efiles}}
+facts = {'author': author, 'title': title, 'size': {'added': size},
+         'checks': checks, 'evidence': {'folder': ev, 'tokens': toks, 'files': efiles}}
 # The Rego rule decides. A gate that cannot be evaluated refuses: it never looks like a pass.
 evaluator = os.environ.get('JG_POLICY_EVAL') or f'{POLICY_BASE}/bin/jg-guard-host.sh'
 try:

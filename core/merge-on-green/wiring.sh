@@ -6,7 +6,7 @@
 # home that still runs the add-on's copy at ${XDG_DATA_HOME:-~/.local/share}/fm-merge-on-green keeps
 # that directory's fm-checks-lint.sh, whose size rule refused any pull request over 1,000 added lines;
 # this feature's copy installs beside it as jg-merge-on-green/jg-checks-lint.sh, where the size is
-# advice unless the home writes `refuse` in config/checks-size. The retired directory is left holding
+# advice only. The retired directory is left holding
 # one redirect line, never the old rule, so a machine whose other homes were not migrated in this run
 # keeps running the same gate instead of breaking.
 #
@@ -130,7 +130,7 @@ fi
 if [ "$wired" -eq 1 ] && [ "$retired" != old ]; then
   echo "merge-on-green: already wired $FMH (nothing changed)"
 else
-  echo "merge-on-green: wired $FMH (gate $DEST, size rule advisory unless config/checks-size says refuse)"
+  echo "merge-on-green: wired $FMH (gate $DEST, size rule advisory only)"
 fi
 if [ "$retired" = old ]; then
   echo "merge-on-green: migrated the retired add-on copy at $RETIRED: it redirects to $DEST and its 1,000-line rule is gone"
