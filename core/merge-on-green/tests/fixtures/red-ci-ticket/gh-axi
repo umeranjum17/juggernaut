@@ -11,7 +11,7 @@ case $2 in
   repos/ex/r/actions/runs\?head_sha=sha104*) out="{\"workflow_runs\":[$(run 14 CI 1 sha104 timed_out 2026-11-04T03:00:00Z)]}" ;;
   repos/ex/r/actions/runs/11/jobs) out='{"jobs":[{"id":501,"name":"build","conclusion":"success"},{"id":502,"name":"behaviour shard 2","conclusion":"failure"}]}' ;;
   repos/ex/r/actions/runs/14/jobs) out='{"jobs":[{"id":601,"name":"lint","conclusion":"timed_out"}]}' ;;
-  repos/ex/r/actions/jobs/502/logs) printf '2026-11-04T01:00:00.1Z ok 1 first\n2026-11-04T01:00:01.1Z not ok 2 journey reads the wake\n2026-11-04T01:00:02.1Z ##[error]Process completed with exit code 1.\n'; exit 0 ;;
+  repos/ex/r/actions/jobs/502/logs) printf '2026-11-04T01:00:00.1Z ok 1 first\n2026-11-04T01:00:01.1Z \033[31mnot ok 2 journey reads the wake\033[0m\n2026-11-04T01:00:02.1Z ##[error]Process completed with exit code 1.\n'; exit 0 ;;
   repos/ex/r/actions/jobs/601/logs) printf 'no failing line here\n'; exit 0 ;;
   *) echo "error: unrecorded request $2" >&2; exit 1 ;;
 esac

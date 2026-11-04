@@ -14,11 +14,12 @@
 # Each filing prints one alert line. The run is remembered in <home>/data/jg-merge-on-green/red-ci-ticket/,
 # so the next poll files and prints nothing; a failed add or a forge failure is silent and retried next
 # sweep. A green run files nothing. merge-on-green.sh runs this after its own work and hands over its
-# remaining time in JG_RED_CI_LIMIT. JG_RED_CI_GH names the gh-axi binary (tests use recorded fixtures).
+# remaining time in JG_RED_CI_LIMIT. JG_RED_CI_GH names the gh-axi binary, JG_RED_CI_LOG_GH the gh binary that reads job logs (tests use recorded fixtures).
 set -u
 [ "$#" -eq 2 ] && [ "$1" = check ] && [ -d "$2/state" ] || { echo "usage: red-ci-ticket.sh check <jg-home>" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
 GH=${JG_RED_CI_GH:-gh-axi}
+LOGGH=${JG_RED_CI_LOG_GH:-${JG_RED_CI_GH:-gh}} # gh-axi and gh refuse a log with colour codes unless gh is told to allow them
 MEM=$FMH/data/jg-merge-on-green/red-ci-ticket
 umask 077
 BUDGET=$(( ${JG_CHECK_TIMEOUT:-30} / 3 )); [ "$BUDGET" -ge 5 ] || BUDGET=5
@@ -37,8 +38,8 @@ file() {
   jid=${job%%$'\t'*}; job=${job#*$'\t'}
   case $jid in ''|*[!0-9]*) jid=''; job='(job not readable)' ;; esac
   if [ -n "$jid" ]; then
-    line=$(timeout "$BUDGET" "$GH" api "repos/$repo/actions/jobs/$jid/logs" 2>/dev/null | head -c 4000000 \
-      | sed 's/^[0-9TZ:.-]* //' | grep -m1 -E '##\[error\]|(^|[^[:alnum:]])(not ok|FAIL|Error|error:)' | head -c 300 || :)
+    line=$(timeout "$BUDGET" "$LOGGH" api "repos/$repo/actions/jobs/$jid/logs" --allow-escape-sequences 2>/dev/null | head -c 4000000 \
+      | sed 's/\x1b\[[0-9;]*m//g; s/^[0-9TZ:.-]* //' | grep -m1 -E '##\[error\]|(^|[^[:alnum:]])(not ok|FAIL|Error|error:)' | head -c 300 || :)
   fi
   [ -n "$line" ] || line='(no failing line found in the log; open the run)'
   title="[blocker] CI red: $wf $job: find the root cause"
