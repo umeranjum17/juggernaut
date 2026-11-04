@@ -74,7 +74,8 @@ provenance table now records history, not the current bytes.
 - Environment: `JG_WAIT_ESCALATE_SECS` (default 300) for Main's rung,
   `JG_WAIT_CARD_SECS` (default 600, above the escalation threshold) for the
   board card, and `JG_PROMPT_REALERT_SECS` (default 600) for how often a
-  reached rung fires again. A declared pause rechecks at the
+  reached rung is checked again; it wakes a model again only when the wait
+  changed (see "Re-raise only when the wait changed"). A declared pause rechecks at the
   `JG_PAUSE_RESURFACE_SECS` cadence instead and never escalates.
 - Wait sources: the watcher writes `state/.wait-sources/<task>.prompt` for an
   unanswered permission prompt (rewritten on every sighting; a record older
@@ -117,14 +118,15 @@ provenance table now records history, not the current bytes.
   unchanged for the fork's reserved-key fold.
 - Parent lines: `blocked [key=...]: waiting-timer-overdue: <task> (<verb>,
   observed <n>s, since=<epoch>); ...; source=[...]` on escalation and on every
-  re-fire, `resolved [key=...]: waiting-timer-cleared: ...` when the wait
+  re-fire that raises (see "Re-raise only when the wait changed"), `resolved [key=...]: waiting-timer-cleared: ...` when the wait
   ends. A top-level wait with no parent escalates as a wake to the top level
   itself, never as a parent report.
 
 ## Escalation chain
 
 A stuck worker never waits on the captain noticing it.
-Every rung fires again every `JG_PROMPT_REALERT_SECS` while the wait stays open.
+Every rung is checked again every `JG_PROMPT_REALERT_SECS` while the wait stays open.
+A check wakes a model only when the wait changed (next section).
 
 | rung | when | who acts |
 |---|---|---|
@@ -142,6 +144,40 @@ Every rung fires again every `JG_PROMPT_REALERT_SECS` while the wait stays open.
   `state/<lead>.status`, never the lead's child records.
 - The board card is raised from the main home only, even when Main has not
   read its wakes, so it still fires with Main absent.
+
+## Re-raise only when the wait changed
+
+An open wait that has not changed does not wake a model again and again.
+The same words to the same owner cost a turn and tell it nothing.
+When a re-check is due, the timer compares the wait with what its last raise said.
+
+- **A change raises.**
+  A new owner, reason, deadline or blocker text is a changed wait.
+  A move up one hop (owner, then Main, then board card) is a change too.
+  The first raise at every hop always fires.
+  A paused wait with new prose or a new deadline is changed.
+- **No change stays silent.**
+  The clock moves on and one line goes to `state/.waiting-timers/.unchanged.log` (time, task, key, hop).
+  The log keeps its last 500 lines once it passes 256 KiB.
+  No wake is queued and no parent report is sent.
+- **A long wait is not forgotten.**
+  A hop's longest interval is the pause cadence for a pause.
+  Otherwise it is the largest of `JG_WAIT_ALERT_SECS`, `JG_WAIT_ESCALATE_SECS`, `JG_WAIT_CARD_SECS` and `JG_PROMPT_REALERT_SECS`.
+  Once a hop has outlived that interval, the next re-check raises once.
+  After that the hop stays silent until the wait changes or moves up a hop.
+  At the default timers that is one extra raise per hop.
+- **A new supervisor session still hears every open wait.**
+  Its first tick re-presents them all, changed or not.
+- **The board card stays.**
+  A silent re-check still re-posts the one open card in the main home, because that is not a model wake.
+- **Not changes.**
+  The `[at=]` stamp moving and a silent wait restating its age do not count.
+
+What each raise said is kept in `state/.waiting-timers/.raised/<task>` (fingerprint, hop start, whether the backstop was spent).
+It sits beside the episode record and not in it, so the record layout above is unchanged.
+A missing or damaged file means the hop's first raise already said the current wait.
+A failed write still raises, so a broken record can cost a wake but never hides a wait.
+The file goes with the episode when the wait ends.
 
 ## Green PR left unmerged
 
