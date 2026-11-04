@@ -1,5 +1,7 @@
 app: juggernaut
 journeys:
+  teardown-missing-record:
+    command: bash journeys/teardown-missing-record.sh
   live-services:
     command: bash journeys/live-services.sh
   ci-rerun-refusal:
@@ -180,5 +182,3 @@ journeys:
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
-  teardown-missing-record:
-    command: bash journeys/teardown-missing-record.sh
