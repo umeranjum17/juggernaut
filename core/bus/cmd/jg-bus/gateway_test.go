@@ -27,7 +27,7 @@ func TestGatewayIngress(t *testing.T) {
 	root, _ := filepath.Abs("../../../..")
 	home, batch, events := t.TempDir(), "", []string{}
 	bot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/bot"+tok+"/") || r.URL.Query().Get("allowed_updates") != `["message"]` {
+		if !strings.HasPrefix(r.URL.Path, "/bot"+tok+"/") || r.URL.Query().Get("allowed_updates") != `["message","callback_query"]` {
 			http.Error(w, `{"ok":false}`, 404)
 			return
 		}

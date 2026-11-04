@@ -34,6 +34,18 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   Pictures up to 10 MB go as photos, and Telegram falls back to a file if it refuses one. Other files go as files up to 50 MB.
   Up to 10 pictures, or up to 10 files, go as one album.
   The text is the caption of the first album when it fits 1024 characters.
+- Add `--option <label>` (repeatable, 2 to 8, 60 characters each) to `reply` to ask the owner to choose.
+  The pictures go as an album first. The text then goes as a message with one button per option.
+  A choice never uses the text as an album caption, so the question stays beside the buttons.
+  With no text the message reads "Choose one:".
+  The owner taps a button. The gateway answers the tap at once, edits the message to add `Picked: <label>` and removes the buttons, and files a note.
+  The note's first line is `[chat telegram <chat>:<message>]`, where the message is the one with the buttons. Its second line is `pick: <label> (<option set id>)`.
+  A reply to the pick note is threaded on the message with the buttons.
+- A button holds only `o:<option set id>:<n>`. The labels stay in `state/captain-chat/options.jsonl` and the picks in `state/captain-chat/picks.jsonl`.
+- A tap is answered and not filed when it comes from anyone but the owner, names a set the gateway does not know, comes from another message, is older than `chat-option-days` (default 7), or repeats the pick.
+  A second tap on a set that is already picked answers "Already picked: <label>" and files nothing.
+  Add `--allow-change` to `reply` to let the owner change the pick: a tap on another button files a new pick note, and the message keeps its buttons with a ✅ on the current pick.
+  A tap that Telegram sends again after a restart is the same note.
 - A file is never sent when it is under `config/`, the bus state or `~/.ssh`, is named `.env*` or ends `.token`, `.pass`, `.key` or `.pem` (checked after symlinks), is over 50 MB, or is gone.
   The owner gets a text line saying which file was not sent and why.
   A file Telegram refuses is named in text too.
