@@ -8,6 +8,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 out=${DONE_DONE_EVIDENCE_ROOT:?}/${RUN_ID:-run}.log
 rc=0
 bash "$root/tests/jg-remote-squad-lead-lifecycle-e2e.test.sh" > "$out" 2>&1 || rc=$?
+printf 'journey result: %s checks ok, %s not ok, test exit %s\n' "$(grep -c '^ok' "$out")" "$(grep -c '^not ok' "$out")" "$rc" | tee -a "$out"
 tail -n 40 "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
