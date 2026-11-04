@@ -26,6 +26,13 @@ def require(ok, message):
         raise ValueError(message)
 
 
+class NoAuthoredAsk(Exception):
+    pass
+
+
+NO_AUTHORED_ASK_EXIT = 3  # post found no authored owner ask: a direction, not a failure
+
+
 def validate(card):
     require(card['owner_must'] in ('login', '2fa', 'physical-grant', 'own-device-test', 'destructive-ok'),
             'only login, 2fa, physical-grant, own-device-test or destructive-ok needs the owner; other calls stay with the team')
@@ -98,7 +105,8 @@ def main():
         old = next((row for row in rows if row[0] == args.id), None)
         record = path.parent / 'captain-ask-cards' / (args.id + '.json')
         if args.command == 'post':
-            require(old is not None and len(old) == 10 and record.is_file(), 'no authored owner ask; keep this call with the team or author the owner question first')
+            if not (old is not None and len(old) == 10 and record.is_file()):
+                raise NoAuthoredAsk('no authored owner ask; keep this call with the team or author the owner question first')
             card = validate(json.loads(record.read_text()))
             require(old == row_for(card, old[1], old[3]), 'authored ask differs from the list; author it again')
             require(card['id'] == args.id and args.url in ('done', 'release'), 'ask identity or close mode differs')
@@ -136,5 +144,8 @@ def main():
 
 try:
     main()
+except NoAuthoredAsk as error:
+    sys.stderr.write('owner ask not posted: ' + str(error) + '\n')
+    sys.exit(NO_AUTHORED_ASK_EXIT)
 except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
     sys.exit('owner ask refused: ' + str(error))

@@ -150,9 +150,9 @@ picked_up() {
 runner register signoff signoff -- "$ADAPTER" poll >/dev/null 2>&1 \
   || fail "could not register the sign-off source for the runner"
 hold_as '2026-10-12T10:00:00Z#0'
-if adapter raise internal-call '[captain-ask] Main42: Run a proof?' 'Needs a key from Main' release >/dev/null 2>&1; then
-  fail 'a team call without an authored owner ask reached the board'
-fi
+raise_rc=0
+adapter raise internal-call '[captain-ask] Main42: Run a proof?' 'Needs a key from Main' release >/dev/null 2>&1 || raise_rc=$?
+[ "$raise_rc" -eq 3 ] || fail "a team call without an authored owner ask exited $raise_rc, not 3 (no card, not a failure)"
 [ "$(jq 'length' "$SIGNOFF_BOARD")" = 0 ] || fail 'the refused call left a card'
 author() {
   JG_HOME="$1" python3 "$ADDONS/ask-default/bin/jg-captain-ask.py" add "$2" "${3:-Can you sign in to the release account?}" \
@@ -299,9 +299,8 @@ real_env "$real_home" "$ADAPTER" arm >/dev/null \
 board_count() { jq 'length' "$SIGNOFF_BOARD"; }
 card_for() { jq -r --arg t "$1" 'to_entries[] | select(.value.title == $t) | .key' "$SIGNOFF_BOARD"; }
 
-if real_env "$real_home" "$ROOT/bin/jg-captain-hold.sh" hold jg-sample-team --title 'Main picks' --reason 'Needs a key from Main' >/dev/null 2>&1; then
-  fail 'the real hold caller posted a team call without an authored owner ask'
-fi
+real_env "$real_home" "$ROOT/bin/jg-captain-hold.sh" hold jg-sample-team --title 'Main picks' --reason 'Needs a key from Main' >/dev/null 2>&1 \
+  || fail 'the real hold caller exited nonzero for a team call that rightly raises no card'
 [ "$(board_count)" = 0 ] || fail 'the real hold caller leaked a team card'
 author "$real_home" jg-sample-q 'Can you sign in to the release account?'
 author "$real_home" jg-sample-work 'Can you sign in to the test account?'

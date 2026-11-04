@@ -159,17 +159,24 @@ cmd_retire() {
 
 cmd_raise() {
   [ $# -eq 4 ] || usage
-  local out identity
+  local out identity rc=0
   cmd_enabled || return 0
   identity=$("$BIN/jg-captain-hold.sh" open "$1" --identity 2>/dev/null) || {
     printf 'sign-off card not raised: the hold identity of %s could not be read\n' "$1" >&2
     return 1
   }
   out=$(python3 "$SCRIPT_DIR/../../ask-default/bin/jg-captain-ask.py" post "$1" \
-    "$(home_key_prefix)$1-$(stamp_token "${identity%%#*}")" "$4" 2>&1) || {
+    "$(home_key_prefix)$1-$(stamp_token "${identity%%#*}")" "$4" 2>&1) || rc=$?
+  # Exit 3 is the ask script's "no authored owner ask": a direction with no question
+  # for him, so no card is the answer. Say so apart from a refusal; the hold treats it as success.
+  if [ "$rc" -eq 3 ]; then
+    printf 'sign-off card not raised: %s\n' "$out" >&2
+    return 3
+  fi
+  if [ "$rc" -ne 0 ]; then
     printf 'sign-off card refused: %s\n' "$out" >&2
     return 1
-  }
+  fi
   case "$out" in
     *"already answered"*)
       printf 'sign-off already holds an answered card under %s; this hold has no live card\n' "$1" >&2

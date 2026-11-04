@@ -654,11 +654,11 @@ test_hold_reaches_the_core_signoff_card_path() {
   home=$(make_home signoff-core-route)
   mkdir -p "$home/projects/sample" "$home/state/procevent"
   : > "$home/state/procevent/signoff.source"
-  out=$(signoff_hold "$home" "$id" 2>&1) || true
-  assert_contains "$out" "no sign-off card was raised" \
+  out=$(signoff_hold "$home" "$id" 2>&1) || fail "a hold with no authored ask exited nonzero: $out"
+  assert_contains "$out" "no authored owner ask" \
     "an armed hold did not reach the core sign-off card path"
   assert_grep "$id" "$home/data/backlog.md" "a hold whose card failed did not stay recorded"
-  pass "an armed hold reaches core/signoff and keeps its record when no card can be raised"
+  pass "an armed hold reaches core/signoff and keeps its record and exits 0 when it has no authored ask"
 }
 
 # A hold that is the captain's own instruction - his stop order, or a branch we
@@ -671,7 +671,7 @@ hold_with_reason() {  # <home> <addons-dir> <log> <task-id> <reason>
   env -u JG_CODE_ROOT PATH="$home/fakebin:$PATH" JG_HOME="$home" \
     JG_SIGNOFF_SCRIPT="$addons/signoff/bin/jg-procevent-signoff.sh" \
     JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
-    SIGNOFF_LOG="$log" SIGNOFF_STATUS=0 \
+    SIGNOFF_LOG="$log" SIGNOFF_STATUS="${SIGNOFF_STATUS:-0}" \
     "$ROOT/bin/jg-captain-hold.sh" hold "$id" --title "Route the card" --reason "$reason" --repo sample
 }
 
@@ -694,6 +694,31 @@ test_a_hold_that_is_the_captains_own_instruction_raises_no_card() {
     "Ship the new sign-in screen this week?" >/dev/null 2>&1 || fail "a real captain ask was refused"
   assert_grep "raise|$real|" "$log" "a real captain ask raised no card"
   pass "a stop-order hold records the hold alone, and a real ask still raises its card"
+}
+
+# A hold that is a direction with no question for the captain gets no card, and that
+# is a success: the signoff adapter says so with exit 3 and the hold exits 0. Any
+# other adapter failure still fails the command, with the hold recorded.
+test_a_direction_hold_with_no_card_exits_zero_and_a_real_card_failure_does_not() {
+  local home addons log out rc id=direction-held
+  home=$(make_home direction-held)
+  addons="$home/addons"
+  log="$home/signoff.log"
+  mkdir -p "$home/projects/sample" "$home/state/procevent"
+  : > "$home/state/procevent/signoff.source"
+  signoff_addon_stub "$addons"
+  rc=0
+  out=$(SIGNOFF_STATUS=3 hold_with_reason "$home" "$addons" "$log" "$id" \
+    "Keep the release lane parked until the new build lands" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a direction hold with no card exited $rc instead of 0: $out"
+  assert_grep "$id" "$home/data/backlog.md" "the direction hold was not recorded"
+  assert_grep "raise|$id|" "$log" "the direction hold never reached the card path"
+  rc=0
+  out=$(SIGNOFF_STATUS=1 hold_with_reason "$home" "$addons" "$log" "direction-failed" \
+    "Keep the release lane parked until the new build lands" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a real card failure exited 0: $out"
+  assert_grep "direction-failed" "$home/data/backlog.md" "the hold was not recorded before the card failed"
+  pass "a hold with no card to raise exits 0, and a real card failure still exits nonzero"
 }
 
 test_a_parked_hold_raises_no_card() {
@@ -4564,6 +4589,7 @@ test_hold_creates_a_captain_row_when_beads_requires_due_without_custom_type
 test_hold_reaches_the_core_signoff_card_path
 test_a_hold_that_is_the_captains_own_instruction_raises_no_card
 test_a_parked_hold_raises_no_card
+test_a_direction_hold_with_no_card_exits_zero_and_a_real_card_failure_does_not
 # A created captain row must carry its priority through the installed
 # task-priority feature: the hold path calls that feature's add with the new
 # task, its title, its kind and the --priority it was given, and a missing
