@@ -360,6 +360,22 @@
       "audience": "agent-runtime"
     },
     {
+      "path": "defaults/captain-voice.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "defaults/captain-voice-overwatch.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "defaults/captain-voice-squad-lead.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "defaults/captain-voice-worker.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "defaults/owner-rules.md",
       "audience": "agent-runtime"
     },

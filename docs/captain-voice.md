@@ -18,6 +18,35 @@ The checker never touches a URL, a code span, a `[key=value]` tag or a `key=valu
 A status line (`verb [key=..]: note`) keeps its framing, and only the note is checked.
 If the voice file or python3 is missing, the message goes out as written.
 
+## Role personality files
+
+Each role has one more markdown file beside the shared voice file, which adds a personality and nothing else:
+
+| Role | Default | Home copy |
+|---|---|---|
+| Overwatch | `defaults/captain-voice-overwatch.md` | `config/captain-voice-overwatch.md` |
+| Squad Lead | `defaults/captain-voice-squad-lead.md` | `config/captain-voice-squad-lead.md` |
+| Worker | `defaults/captain-voice-worker.md` | `config/captain-voice-worker.md` |
+
+The captain edits a role file to change that role's tone, with no code change.
+A home copy replaces the default whole, and `JG_VOICE_ROLE_FILE` points at any other file, for a test or a trial.
+`bin/jg-voice.py` picks the role from `--role`, else `JG_VOICE_ROLE`, else the send point: the parent channel is the Squad Lead's, and the Telegram send and the chat reply are the Overwatch's, or the Squad Lead's in a Squad Lead home.
+
+A role file cannot override or weaken the shared rules.
+The checker reads only the `## Personality` section of a role file.
+Every setting, mode, limit and banned term still comes from the shared file.
+If a role file carries any other section, the checker ignores it, reports it on stderr, and `check` exits 1.
+A personality over 40 lines is cut.
+The default personalities pass the shared rules, and a test proves it.
+
+A personality is text for the agent that writes the message, so it reaches the writer where the writer reads its context:
+
+- `bin/jg-session-start.sh` prints the Overwatch or Squad Lead personality in the context digest.
+- `bin/jg-brief.sh` adds the worker personality to every ship and Recon brief under `# Voice`.
+- `jg-voice.py persona [--role R]` prints it on demand.
+
+The checker then enforces the shared rules on whatever the writer sends, at the send points below.
+
 ## Send points
 
 Covered, each calling the same checker:
@@ -38,4 +67,5 @@ Not covered:
 ## Tests
 
 `tests/jg-voice.test.sh` runs the real checker through `jg-inbox.sh reply` and the parent-channel append.
+The same test proves each role file, the role choice per send point, that a role file with settings or rules cannot weaken the shared rules, and that a worker brief carries the worker personality.
 `go test ./cmd/jg-bus -run TestGatewayVoice` (in `core/bus`) proves the Telegram send and an edited file.
