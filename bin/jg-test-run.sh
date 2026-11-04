@@ -710,6 +710,7 @@ tests/jg-composer-matrix-live-e2e.test.sh 175
 tests/jg-control.test.sh 94076
 tests/jg-cursor-primary-live-e2e.test.sh 138
 tests/jg-dapr-workflow.test.sh 139
+tests/jg-deprecated-paths-check.test.sh 3000
 tests/jg-decisions-reconcile.test.sh 5757
 tests/jg-design-gate-first-draft.test.sh 882
 tests/jg-design-gate.test.sh 812
