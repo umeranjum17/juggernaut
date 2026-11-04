@@ -49,6 +49,22 @@ The alert is remembered per PR and reason in `<home>/data/jg-merge-on-green/stal
 poll stays silent. A PR that closes, heals or changes reason forgets it, and a new stall alerts again. A forge
 failure is silent and retried next sweep. The check never closes or rebases a PR, and the open-PR cap above is unchanged.
 
+## Red-CI ticket
+
+A red CI run produces a root-cause ticket, never a re-run. `red-ci-ticket.sh check <jg-home>` runs at the end of every
+`merge-on-green.sh check` (after the stale-PR alarm), so the same installed watcher check carries it and no model turn is spent.
+For each project in `data/projects.md` whose clone has a github.com `origin`, it reads the newest completed run of each workflow on
+the default branch, on every `release/*` branch an open PR targets, and on the head of every open PR. A run that ended `failure`,
+`timed_out` or `startup_failure` and has no ticket yet files one backlog item through `bin/jg-tasks-axi.sh`:
+
+- id `ci-red-run-<run id>`, so a run files once, and title `[blocker] CI red: <workflow> <failing job>: find the root cause`.
+- body: the run id and URL, the failing job, the first failing line of its log, and `Never re-run; fix the root cause`.
+
+The ticket is ordinary ready work for the owning lead. It prints `red-ci-ticket: <run URL>: ...; filed <id>` once, remembers the run
+in `<home>/data/jg-merge-on-green/red-ci-ticket/`, and stays silent on the next poll. A green run, and a red run that a newer run of the
+same workflow superseded, file nothing. A refused add or a forge failure is silent and retried next sweep. Fixing the run is the
+ticket's work; this check never re-runs, cancels or edits a run.
+
 Any refusal or FAIL prints one wake line naming the task, the PR URL and the first refusal reason,
 so the lead acts (the line ends with the routing: the lead merges through `bin/jg-pr-merge.sh` once it clears, and only a genuine hold — owner review, red CI, missing proof, security, destructive — goes to Main); the refusal is remembered per task+head+reason+receipt state in
 `<home>/data/jg-merge-on-green/<task>.refused` (never in `state/`), and repeats stay silent until

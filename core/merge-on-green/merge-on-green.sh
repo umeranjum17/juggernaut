@@ -252,3 +252,7 @@ done
 # Stale-PR alarm: an open PR with no checks and no update for 24 h, or based on an already merged release
 # branch, raises one alert per PR. It lives in stale-pr-alarm.sh beside this script and is skipped when absent.
 [ ! -x "$SRC/stale-pr-alarm.sh" ] || JG_STALE_PR_LIMIT=$DEADLINE "$SRC/stale-pr-alarm.sh" check "$FMH"
+
+# Red-CI ticket: a red run on the default branch, a version branch or an open PR files one root-cause ticket, once
+# per run id. It lives in red-ci-ticket.sh beside this script and is skipped when absent.
+[ ! -x "$SRC/red-ci-ticket.sh" ] || JG_RED_CI_LIMIT=$DEADLINE "$SRC/red-ci-ticket.sh" check "$FMH"
