@@ -5,6 +5,8 @@
 # fake tmux pane and a real isolated git worktree. The fake tmux captures the
 # literal launch command sent with `tmux send-keys -l`, so assertions pin the
 # command juggernaut would run without starting any real harness.
+#
+# This is also the test that owns journeys/spawn-dispatch-profile.sh (the done-done journey runs this file).
 set -u
 
 # shellcheck source=tests/fixtures.sh
