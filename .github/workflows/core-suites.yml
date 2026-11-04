@@ -132,6 +132,9 @@ jobs:
       # Stub emulator, Gradle, pgrep and memory files only: nothing heavy starts.
       - name: Memory gate test
         run: bash host-memory/tests/jg-mem-gate.test.sh
+      # Fixture /proc and fixture homes: a Squad Lead home records the host memory alert without a wake.
+      - name: Host memory alert routing test
+        run: bash host-memory/tests/jg-host-memory-alert-routing.test.sh
       # Fixture home and config, stub quota-axi and pi: nothing real is touched.
       - name: Route change test
         run: |

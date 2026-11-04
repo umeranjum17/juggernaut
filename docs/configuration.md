@@ -941,6 +941,7 @@ These controls reduce risk but cannot guarantee avoidance of an out-of-memory ki
   After successful alert output, the watcher records that row's identity so its unacknowledged alert cannot immediately close the handling successor; later reminders use the [local queue backstop](watcher-continuity.md#durable-queue-and-turn-end-backstop), and only post-handling acknowledgement retires the row.
   Interrupt delivery runs independently of subsequent samples and appends its completion result to the interrupt log.
   A WAIT or OK sample ends the episode, so a later ALERT wakes Main and attempts its interrupt again.
+  An ALERT is one machine-wide event, so only the root Overwatch home's sampler queues the wake. A Squad Lead home under a local root still logs the episode in its `state/host-memory-interrupts.tsv`, counts it as a settled wake, and attempts its own owned-task interrupt, but it queues no wake and so costs its model no turn. A home with no readable local parent record (the root itself, a remote-routed lead, or a damaged record) wakes as before.
 - Local Squad Lead liveness recovery checks admission before consuming its retry budget or removing a dead endpoint, so memory deferral leaves recovery eligible when pressure eases.
   Memory deferral and a no-longer-relaunchable endpoint keep the watcher polling rather than failing supervision.
 
