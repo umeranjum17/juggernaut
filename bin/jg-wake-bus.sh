@@ -312,7 +312,7 @@ live_render() {
     | LC_ALL=C sort -t "$(printf '\t')" -k2,2n > "$model.queue" || : > "$model.queue"
   chmod 0600 "$model.queue" 2>/dev/null || true
   _jg_atomic_replace "$model.queue" "$LIVE_QUEUE" || { rm -f -- "$model.queue"; return 1; }
-  jq -r 'select(.where == "settled") | [.at, "silent", .kind, .key, .payload] | @tsv' "$LIVE_EVENTS" 2>/dev/null \
+  jq -r 'select(.where == "settled") | [.at, "silent", .kind, .key, .payload] + (if (.word // "") == "" then [] else [.word] end) | @tsv' "$LIVE_EVENTS" 2>/dev/null \
     | LC_ALL=C sort -t "$(printf '\t')" -k1,1n > "$model.settled" || : > "$model.settled"
   chmod 0600 "$model.settled" 2>/dev/null || true
   _jg_atomic_replace "$model.settled" "$LIVE_SOLID" || { rm -f -- "$model.settled"; return 1; }
@@ -327,8 +327,9 @@ live_raise() { # <kind> <key> <payload> <class>
   # the event later reaches the stream.
   rseq=$(( at * 1000 + (RANDOM % 1000) ))
   event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --arg class "$4" --argjson at "$at" --argjson rseq "$rseq" \
-    '{v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}') || return 1
+    --arg payload "$3" --arg class "$4" --arg word "${JG_WAKE_WORD:-}" --argjson at "$at" --argjson rseq "$rseq" \
+    '{v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}
+     + (if $word == "" then {} else {word:$word} end)') || return 1
   live_publish "$SUBJECT_PREFIX".wake.raise "$id" "$event" || return 1
   live_render
   return 0
@@ -339,8 +340,9 @@ live_settle() { # <kind> <key> <payload>
   at=$(date -u +%s)
   id="settled/$(live_home_key)/$at-$$-$RANDOM"
   event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --argjson at "$at" --argjson rseq "$(( at * 1000 + (RANDOM % 1000) ))" \
-    '{v:1,id:$id,home:$home,where:"settled",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:"silent"}') || return 1
+    --arg payload "$3" --arg word "${JG_WAKE_WORD:-}" --argjson at "$at" --argjson rseq "$(( at * 1000 + (RANDOM % 1000) ))" \
+    '{v:1,id:$id,home:$home,where:"settled",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:"silent"}
+     + (if $word == "" then {} else {word:$word} end)') || return 1
   live_publish "$SUBJECT_PREFIX".wake.settled "$id" "$event" || return 1
   live_render
 }

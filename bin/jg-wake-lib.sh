@@ -2457,10 +2457,26 @@ jg_wake_fleet_fp_record() {
   jg_wake_core fleet-fp-record 2>/dev/null || true
 }
 
+# jg_wake_status_word <key>: the status word (done, blocked, paused, working, failed,
+# needs-decision, resolved) on the newest line of $STATE/<key>, for a `.status` key whose
+# file is still there; empty otherwise. A wake row is recorded with this word so a later
+# audit of wake routing still has it after cleanup removes the status file. It reads only;
+# routing never consults it.
+jg_wake_status_word() {
+  local key=$1 line word
+  case "$key" in *.status) ;; *) return 0 ;; esac
+  [ -f "$STATE/$key" ] || return 0
+  line=$(tail -n 1 -- "$STATE/$key" 2>/dev/null) || return 0
+  word=${line%%[ :[]*}
+  case "$word" in
+    done|blocked|paused|working|failed|needs-decision|resolved) printf '%s' "$word" ;;
+  esac
+}
+
 # _jg_wake_settled_locked <kind> <key> <payload>: the record-only class, readable with
 # bin/jg-wake.sh settled. It never reaches the queue.
 _jg_wake_settled_locked() {
-  jg_wake_bus settle "$1" "$2" "$3"
+  JG_WAKE_WORD=$(jg_wake_status_word "$2") jg_wake_bus settle "$1" "$2" "$3"
 }
 
 # jg_wake_settle <kind> <key> <payload>: record an event that a caller settled itself
@@ -2481,7 +2497,7 @@ jg_wake_settle() {
 # JG_WAKE_CYCLE_URGENT latches once any row this cycle was `now`.
 # shellcheck disable=SC2034 # JG_WAKE_LAST and JG_WAKE_CYCLE_URGENT are read by wake() in the separately linted transition owner.
 jg_wake_append_locked() {
-  local kind=$1 key=$2 payload=$3 clean_key clean_payload class status=0
+  local kind=$1 key=$2 payload=$3 clean_key clean_payload class word status=0
   case "$kind" in
     signal|stale|check|heartbeat) ;;
     *) printf 'jg_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
@@ -2508,7 +2524,8 @@ jg_wake_append_locked() {
   # The server assigns the row's sequence and keeps the event, so nothing here
   # allocates a number, appends to a file, or arms a recovery marker for a queue
   # whose consumer might be down.
-  jg_wake_bus raise "$kind" "$clean_key" "$clean_payload" "$class" || status=$?
+  word=$(jg_wake_status_word "$clean_key")
+  JG_WAKE_WORD=$word jg_wake_bus raise "$kind" "$clean_key" "$clean_payload" "$class" || status=$?
   if [ "$status" -ne 0 ]; then
     return "$status"
   fi
@@ -2523,7 +2540,7 @@ jg_wake_append_locked() {
   if [ -x "$JG_WAKE_LIB_DIR/jg-chat.sh" ]; then
     JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
       "$JG_WAKE_LIB_DIR/jg-chat.sh" note '#fleet' "${clean_key%.status}" - wake - \
-      "$kind: $clean_key $clean_payload" >/dev/null 2>&1 || true
+      "$kind: $clean_key $clean_payload${word:+ [status=$word]}" >/dev/null 2>&1 || true
   fi
   return 0
 }
