@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Tests for bin/jg-teardown.sh's landed-work safety and stale-lock recovery.
+# The already-cleaned-task case is also driven end to end, before and after, by journeys/teardown-missing-record.sh.
 #
 # The check refuses to tear down a worktree whose work has not LANDED, because
 # treehouse return hard-resets the worktree. For a PR-delivered ship task "landed"
