@@ -31,6 +31,8 @@ func TestGatewayVoice(t *testing.T) {
 	if len(l.sends) != 1 || l.sends[0]["text"] != want {
 		t.Fatalf("sends %v: want one message reading %q", l.sends, want)
 	}
+	t.Logf("telegram sendMessage, before: %s", text)
+	t.Logf("telegram sendMessage, after:  %v", l.sends[0]["text"])
 
 	// An edited voice file changes the send with no code change.
 	voice := filepath.Join(t.TempDir(), "voice.md")
@@ -41,6 +43,7 @@ func TestGatewayVoice(t *testing.T) {
 	if got := voiceText("The copy is clean."); got != "The copy is tidy." {
 		t.Fatalf("edited file: got %q", got)
 	}
+	t.Logf("edited voice file: %q now sends %q", "The copy is clean.", voiceText("The copy is clean."))
 
 	// No checker, no change: the text goes out as written.
 	t.Setenv("JG_BUS_ROOT", filepath.Join(t.TempDir(), "none"))
