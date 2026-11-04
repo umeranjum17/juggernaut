@@ -203,10 +203,11 @@ A captain outcome the attended engine records while the captain remains attended
 Main drains, and `bin/jg-wake-drain.sh` presents it in its `BRANCH OUTCOMES` section with the exact `bin/jg-branch-outcome.sh mark-processed --through <seq>` acknowledgement.
 That presentation is what the Pi branch's visible entry is, so it advances the store's read cursor through the rows it presents.
 Every later drain, including the session-start digest, presents unprocessed captain outcomes again until main acknowledges them, so an ignored outcome costs no extra turn and is never lost.
-A finished task's captain outcome does not wake main at once.
-It qualifies when the handled wake was a `signal:` close and every captain row that turn recorded names a task whose newest status line says `done`; a decision, a blocker, a failure, a `stale:` or `check:` or heartbeat close, and any status the host cannot read keep the immediate hand-off.
-Such an outcome stays in the store, and the next drain main takes for any other wake presents it with its acknowledgement, so it costs no turn of its own.
-The host is the timer: it records the oldest waiting outcome in `state/.branch-outcome-deferred` and, once that outcome is still unacknowledged after `JG_BRANCH_OUTCOME_DEFER_SECS` (default 600, `0` keeps the immediate hand-off), ends its park with the same `branch-outcome:` line, so no finished task waits longer than the bound for the captain to hear of it.
+A captain outcome that asks main for no reply does not wake main at once.
+It qualifies when the handled wake was a `signal:` or `stale:` close and every captain row that turn recorded names a task whose newest status line is `done` on a ship whose merge the merge watcher owns (the task record says `yolo=on` or `merge=approved`), so the PR needs no word from main.
+A decision, a blocker, a failure, a `working` line, a done ship that waits for a human merge, a done Recon (its findings), a `check:` or heartbeat close, and any status or record the host cannot read keep the immediate hand-off.
+A held outcome stays in the store, and the next drain main takes for any other wake presents it with its acknowledgement, so it costs no turn of its own.
+The host is the timer: it records the oldest waiting outcome in `state/.branch-outcome-deferred` and, once that outcome is still unacknowledged after `JG_BRANCH_OUTCOME_DEFER_SECS` (default 1800, `0` keeps the immediate hand-off for every captain outcome), ends its park with the same `branch-outcome:` line. That backstop is for a main that takes no turn, so no outcome waits longer than the bound for the captain to hear of it.
 An acknowledgement clears the marker, and the captain hears each outcome once, in main's reply to its drain.
 The drain's header owns the section's bounds; these rules keep it bounded and in order:
 

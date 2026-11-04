@@ -79,11 +79,14 @@
 # queue. A handled wake with only routine outcomes never wakes
 # main, and neither does any handled wake while away: captain outcomes wait in
 # the outcome store for the return drain's BRANCH OUTCOMES section. A handled
-# attended wake that recorded a captain outcome exits with one "supervision-host: branch-outcome:"
-# line naming its store rows, without the close it handled; main drains, where
-# the BRANCH OUTCOMES section (bin/jg-wake-drain.sh) presents every
-# unprocessed captain outcome until main acknowledges it. Otherwise the host
-# parks on the successor.
+# attended wake that recorded a captain outcome asking main for a reply (a
+# decision, a failure, a blocker, a PR or findings for a human) exits with one
+# "supervision-host: branch-outcome:" line naming its store rows, without the
+# close it handled; main drains, where the BRANCH OUTCOMES section
+# (bin/jg-wake-drain.sh) presents every unprocessed captain outcome until main
+# acknowledges it. An outcome that asks for no reply (settled_captain_turn)
+# stays in the store for main's next drain instead, and wakes main only past
+# JG_BRANCH_OUTCOME_DEFER_SECS. Otherwise the host parks on the successor.
 # Every other outcome exits with the close's own reason line plus one
 # "supervision-host:" line saying why main has this wake, after stopping the
 # successor cycle so main's next turn end starts from the same state as
@@ -239,11 +242,12 @@ PARK_LIMIT=$(numeric_or "${JG_SUPERVISION_HOST_PARK_LIMIT:-}" "$PARK_SECONDS")
 TURN_TIMEOUT=$(numeric_or "${JG_SUPERVISION_HOST_TURN_TIMEOUT:-}" 1200)
 ROTATE_TURNS=$(numeric_or "${JG_SUPERVISION_HOST_ROTATE_TURNS:-}" 20)
 POLL=$(numeric_or "${JG_SUPERVISION_HOST_POLL:-}" 1)
-# How long a settled captain outcome may wait for a turn main takes anyway
-# before the host wakes main for it; 0 wakes main at once, as before.
+# How long a held captain outcome may wait for a turn main takes anyway before
+# the host wakes main for it, a backstop for a main that takes no turn; 0 wakes
+# main at once for every captain outcome.
 case "${JG_BRANCH_OUTCOME_DEFER_SECS:-}" in
   0) DEFER_SECS=0 ;;
-  *) DEFER_SECS=$(numeric_or "${JG_BRANCH_OUTCOME_DEFER_SECS:-}" 600) ;;
+  *) DEFER_SECS=$(numeric_or "${JG_BRANCH_OUTCOME_DEFER_SECS:-}" 1800) ;;
 esac
 COOLDOWN=$JG_SUPERVISION_HOST_COOLDOWN
 COOLDOWN_MAX=3600
@@ -543,26 +547,41 @@ boundary_exit() {  # [line]
   exit 0
 }
 
-# A settled captain outcome waits in the store for a turn main takes anyway
-# instead of costing a turn of its own; this marker holds when the oldest
+# A captain outcome that asks main for no reply waits in the store for a turn
+# main takes anyway instead of costing a turn of its own; this marker holds when the oldest
 # waiting one was deferred and the newest row it covers ("<epoch> <seq>"), and
 # the deadline check below wakes main when that wait outlives DEFER_SECS.
 DEFERRED="$STATE/.branch-outcome-deferred"
 DEFER_DUE=0
 
-# True when every captain row <turn> recorded is a finished task's report: the
-# wake was a status signal, and the task's newest status line says done, so the
-# outcome tells the captain what finished and asks main for nothing that cannot
-# wait. A decision, a blocker, a failure, a stale or check or heartbeat close, a
-# task that is not named, and a status that cannot be read all stay at once.
+# The last value of <key> in a task's metadata record, the rule jg_meta_get applies.
+task_meta_value() {  # <task> <key>
+  awk -F= -v key="$2" '$1 == key { v = substr($0, length(key) + 2) } END { print v }' "$STATE/$1.meta" 2>/dev/null
+}
+
+# True when every captain row <turn> recorded asks main for no reply, so the
+# outcome can wait for the next drain. The wake was a status signal or a stale
+# close, and each row's task has a newest status line that needs nothing from
+# main: `done` on a ship whose merge the watcher owns (the project's yolo
+# posture or the lead's recorded merge=approved). A
+# decision, a blocker, a failure, a working line, a done ship that waits for a
+# human merge, a done Recon (its findings), a check or heartbeat close, a task
+# that is not named, and a status or record that cannot be read all stay at once.
 settled_captain_turn() {  # <turn>
-  local seq task line rows=0
+  local seq task line word rows=0
   [ "$DEFER_SECS" -gt 0 ] || return 1
-  case "$(printf '%s\n' "$REASON" | head -n 1)" in signal:*) ;; *) return 1 ;; esac
+  case "$(printf '%s\n' "$REASON" | head -n 1)" in signal:*|stale:*) ;; *) return 1 ;; esac
   while IFS=$'\t' read -r seq task; do
     case "$task" in ''|fleet|*[!A-Za-z0-9._-]*) return 1 ;; esac
     line=$(awk 'NF { l = $0 } END { print l }' "$STATE/$task.status" 2>/dev/null)
-    case "${line%%[ :]*}" in done) ;; *) return 1 ;; esac
+    word=${line%%[ :]*}
+    case "$word" in
+      done)
+        [ "$(task_meta_value "$task" kind)" = ship ] || return 1
+        [ "$(task_meta_value "$task" yolo)" = on ] || [ "$(task_meta_value "$task" merge)" = approved ] || return 1
+        ;;
+      *) return 1 ;;
+    esac
     rows=$((rows + 1))
   done < <(awk -F '\t' -v turn="$1" '$1 == turn && $3 == "captain" { print $2 "\t" $4 }' "$RECEIPTS" 2>/dev/null)
   [ "$rows" -gt 0 ]

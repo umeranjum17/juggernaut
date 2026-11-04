@@ -966,12 +966,14 @@ test_attended_captain_outcome_reaches_main_through_branch_outcomes() {
   pass "host: an attended captain outcome wakes main once and stays in its drain until main acknowledges it"
 }
 
-# A finished task's captain outcome asks main for nothing that cannot wait, so it
-# costs no turn of its own: it stays in the store for the next drain, and the
-# host wakes main for it only once it has waited past its bound.
+# A captain outcome that asks main for no reply (a done ship whose merge the
+# watcher owns, or a declared wait) costs no turn of its own: it stays in the
+# store for the next drain until main acknowledges it, and the host wakes main
+# for it only once it has waited past its bound.
 test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   local home drained
   home=$(make_home attended-settled attended)
+  printf 'kind=ship\nyolo=on\n' >> "$home/state/demo.meta"
   echo captain > "$home/stub-mode"
   JG_BRANCH_OUTCOME_DEFER_SECS=600 start_host "$home"
   wait_until 150 watcher_live "$home" || fail "settled: the host never started a watcher cycle"
@@ -986,11 +988,16 @@ test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   drained=$(JG_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/jg-wake-drain.sh")
   assert_contains "$drained" " ago] demo: stub escalated: " "main's next drain must carry the deferred outcome"
   assert_contains "$drained" "run bin/jg-branch-outcome.sh mark-processed --through 1" "the deferred outcome must carry its acknowledgement"
+  drained=$(JG_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/jg-wake-drain.sh")
+  assert_contains "$drained" " ago] demo: stub escalated: " "a drain must list a held outcome again until it is acknowledged"
   JG_HOME="$home" "$ROOT/bin/jg-branch-outcome.sh" mark-processed --through 1 >/dev/null || fail "the acknowledgement was refused"
+  drained=$(JG_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/jg-wake-drain.sh")
+  assert_not_contains "$drained" "BRANCH OUTCOMES" "an acknowledged held outcome must not be listed again"
   wait_until 100 test ! -e "$home/state/.branch-outcome-deferred" || fail "an acknowledged outcome kept its deferral"
   [ ! -s "$home/host.rc" ] || fail "an acknowledged deferred outcome still woke main: $(cat "$home/host.out")"
 
   home=$(make_home attended-settled-bound attended)
+  printf 'kind=ship\nyolo=on\n' >> "$home/state/demo.meta"
   echo captain > "$home/stub-mode"
   JG_BRANCH_OUTCOME_DEFER_SECS=2 start_host "$home"
   wait_until 150 watcher_live "$home" || fail "bound: the host never started a watcher cycle"
@@ -1003,13 +1010,37 @@ test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   assert_contains "$drained" " ago] demo: stub escalated: " "the drain must still present the outcome the bound woke main for"
 
   home=$(make_home attended-settled-off attended)
+  printf 'kind=ship\nyolo=on\n' >> "$home/state/demo.meta"
   echo captain > "$home/stub-mode"
   JG_BRANCH_OUTCOME_DEFER_SECS=0 start_host "$home"
   wait_until 150 watcher_live "$home" || fail "off: the host never started a watcher cycle"
   append_status "$home" 'PR ready' 'done'
   wait_until 250 host_exited "$home" || fail "off: with deferral off a captain outcome must wake main at once"
   assert_re '^supervision-host: branch-outcome: .*\(store rows 1\); run bin/jg-wake-drain.sh' "$home/host.out" "deferral off must keep the immediate hand-off"
-  pass "host: a finished task's captain outcome rides main's next drain, is bounded, and an unbounded setting keeps the old hand-off"
+  pass "host: a captain outcome that asks main for no reply rides main's next drain, is bounded, and a zero bound keeps the old hand-off"
+}
+
+# An outcome that needs an owner reply (a blocker, a failure, a PR
+# that waits for a human merge, a Recon's findings) still wakes main at once,
+# with the default bound in force.
+test_captain_outcome_needing_an_owner_reply_wakes_main_at_once() {
+  local home name word kind yolo
+  for name in blocked failed done-human-merge done-recon done-no-kind; do
+    word=${name%%-human-merge}; word=${word%%-recon}; word=${word%%-no-kind}
+    kind=ship yolo=off
+    [ "$name" != done-recon ] || kind=recon
+    home=$(make_home "attended-reply-$name" attended)
+    case "$name" in done-no-kind) ;; *) printf 'kind=%s\nyolo=%s\n' "$kind" "$yolo" >> "$home/state/demo.meta" ;; esac
+    echo captain > "$home/stub-mode"
+    start_host "$home"
+    wait_until 150 watcher_live "$home" || fail "$name: the host never started a watcher cycle"
+    append_status "$home" 'needs you' "$word"
+    wait_until 250 host_exited "$home" || fail "$name: an outcome needing an owner reply did not wake main: $(cat "$home/state/.supervision-host.log")"
+    assert_re '^supervision-host: branch-outcome: .*\(store rows 1\); run bin/jg-wake-drain.sh' "$home/host.out" "$name: the wake must name the outcome's store row"
+    [ ! -e "$home/state/.branch-outcome-deferred" ] || fail "$name: an outcome that woke main at once was also held"
+    assert_contains "$(JG_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/jg-wake-drain.sh")" " ago] demo: stub escalated: " "$name: the drain must list the outcome that woke main"
+  done
+  pass "host: a captain outcome that needs an owner reply (blocker, failure, human merge, findings) still wakes main at once"
 }
 
 test_captain_leaving_mid_turn_keeps_its_captain_outcome_for_the_return() {
@@ -3056,6 +3087,7 @@ test_superseded_host_leaves_the_owner_untouched() {
 # JG_SUPERVISION_HOST_PART=all for the complete local suite.
 if [ "${JG_SUPERVISION_HOST_PART:-}" = defer ]; then
   test_settled_captain_outcome_rides_the_next_drain_and_is_bounded
+  test_captain_outcome_needing_an_owner_reply_wakes_main_at_once
   exit 0
 fi
 case "${JG_SUPERVISION_HOST_PART:-early}" in
@@ -3088,6 +3120,7 @@ test_branch_outcomes_keep_a_drain_presented_outcome_across_an_index_repair
 test_attended_routine_wake_is_handled_on_the_engine_and_stays_off_main
 test_attended_captain_outcome_reaches_main_through_branch_outcomes
 test_settled_captain_outcome_rides_the_next_drain_and_is_bounded
+test_captain_outcome_needing_an_owner_reply_wakes_main_at_once
 test_captain_leaving_mid_turn_keeps_its_captain_outcome_for_the_return
 test_quiet_record_without_its_daemon_is_a_present_captain
 test_attended_main_only_close_passes_straight_to_main
