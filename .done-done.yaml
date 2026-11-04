@@ -180,3 +180,5 @@ journeys:
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
+  teardown-missing-record:
+    command: bash journeys/teardown-missing-record.sh
