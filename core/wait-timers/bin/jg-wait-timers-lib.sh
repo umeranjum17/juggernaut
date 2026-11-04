@@ -25,6 +25,10 @@
 # escalates. Every other rung, once reached, fires again every
 # JG_PROMPT_REALERT_SECS while the wait stays open, and a new supervisor session
 # re-presents every open wait on its first tick.
+# A re-raise wakes a model only when the wait changed since the last raise (new
+# owner, reason, deadline, blocker text, or one hop up the ladder); an unchanged
+# open wait is logged to state/.waiting-timers/.unchanged.log and the clock moves
+# on, with one backstop raise per hop once the hop's longest interval has passed.
 # Parent reports use the existing local/remote parent channel. Only the main
 # home posts a board card, so only what Main cannot settle reaches the captain.
 # An episode key is waiting-timer-<home>-<task>-g<generation>-<source key>, so a
@@ -76,6 +80,54 @@ jg_wait_timer_report() {  # <status-line>
     echo "waiting timers: parent channel publication failed (code $rc; inspect identity/binding or destination permissions)" >&2
     return 1
   }
+}
+
+# Re-raise gate (README "Re-raise only when the wait changed"). The sidecar
+# state/.waiting-timers/.raised/<task> holds what the last raise said: a
+# fingerprint of the wait, when that hop's first raise happened, and whether the
+# hop's backstop raise was spent. It lives beside the episode record, not in it,
+# so the record layout other readers parse is unchanged.
+jg_wait_timer_fingerprint() {  # <hop> <key> <window> <verb> <actor> <declaration> <wsrc> <until>
+  # The [at=] stamp moves on every refresh and a silent wait restates its age on
+  # every scan; neither is the wait changing.
+  local text
+  text=$(printf '%s' "$6" | tr '\t\n' '  ' | sed 's/\[at=[0-9]*\]//g')
+  [ "$7" != silent ] || text=silent
+  printf '%s\n' "$1|$2|$3|$4|$5|$8|$text" | hash_pane
+}
+
+jg_wait_timer_raised_save() {  # <task> <fingerprint> <hop-start> <backstop-spent>
+  local file="$STATE/.waiting-timers/.raised/$1"
+  mkdir -p "${file%/*}" && printf '%s\t%s\t%s\n' "$2" "$3" "$4" > "$file.tmp.$$" && mv "$file.tmp.$$" "$file"
+}
+
+# Exit 0 raises (wakes), 1 stays silent. A raise that cannot be recorded still
+# wakes, so a broken sidecar costs tokens and never a missed wait.
+jg_wait_timer_raise_gate() {  # <task> <fingerprint> <hop-start> <longest-interval> <now> <forced>
+  local file="$STATE/.waiting-timers/.raised/$1" sfp='' start='' spent=0
+  if [ -f "$file" ] && [ ! -L "$file" ]; then IFS=$'\t' read -r sfp start spent < "$file" || sfp=''; fi
+  case "$start:$spent" in *[!0-9:]*|:*) sfp='' ;; esac
+  # No record: the hop's first raise (the owner rung, or an escalation from before
+  # this record existed) already said what the wait says now.
+  [ -n "$sfp" ] || { sfp=$2 start=$3 spent=0; }
+  if [ "$6" = 1 ] || [ "$sfp" != "$2" ]; then
+    jg_wait_timer_raised_save "$1" "$2" "$5" 0 || true
+    return 0
+  fi
+  if [ "$spent" -eq 0 ] && [ $(($5 - start)) -ge "$4" ]; then
+    jg_wait_timer_raised_save "$1" "$2" "$start" 1 || true
+    return 0
+  fi
+  jg_wait_timer_raised_save "$1" "$2" "$start" "$spent" || true
+  return 1
+}
+
+# The durable record of a re-raise that did not wake: when, which wait, which hop.
+jg_wait_timer_unchanged_log() {  # <now> <task> <key> <hop> <age>
+  local log="$STATE/.waiting-timers/.unchanged.log"
+  printf '%s\t%s\t%s\t%s\tunchanged for %ss; not raised\n' "$1" "$2" "$3" "$4" "$5" >> "$log" || return 0
+  [ "$(wc -c < "$log" 2>/dev/null || echo 0)" -le 262144 ] \
+    || { tail -n 500 "$log" > "$log.tmp.$$" && mv "$log.tmp.$$" "$log"; } || true
 }
 
 # An immediate native push wake already told the owner about this blocked pane,
@@ -165,7 +217,7 @@ jg_wait_timer_end() {  # <record> <task> <parent> <key> <card> <why>
     jg_wait_timer_report "resolved [key=$4]: waiting-timer-cleared: $2 $6" || return 1
   fi
   [ "$5" = 0 ] || jg_wait_timer_card_dismiss "$4-card"
-  rm -f "$1"
+  rm -f "$1" "$STATE/.waiting-timers/.raised/$2"
 }
 
 # Main's side of a lead's overdue report: a waiting-timer-overdue line the lead
@@ -444,7 +496,7 @@ jg_wait_timers_tick() {
   silence=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "silence" { print $2 }')
   local meta task backend window session native sessions='|' blocked='|' unknown='|' rows actor=Main lead=''
   local dir="$STATE/.waiting-timers" now record declaration verb signature old since owner parent key misses age reason until bound lapse rc
-  local pause_key dkey src source card last wsrc fresh session_id fired every level pending=''
+  local pause_key dkey src source card last wsrc fresh session_id fired every level pending='' hop hopstart ceiling fp forced deadline
   for native in "$alert" "$paused_alert" "$escalate" "$card_secs" "$interval"; do
     case "$native" in ''|*[!0-9]*|0* ) echo "waiting timers: thresholds must be positive decimal seconds" >&2; return 1 ;; esac
     [ "${#native}" -le 9 ] || { echo "waiting timers: threshold exceeds nine digits" >&2; return 1; }
@@ -652,12 +704,18 @@ EOF
     every=$interval
     if status_is_paused "$declaration"; then every=$paused_alert; fi
     [ "$owner" -gt 1 ] || continue
+    # What this wait says now, for the re-raise gate: the hop it sits on and its
+    # fingerprint. The hop moves up the ladder as the rungs below are reached.
+    deadline=''
+    if status_is_paused "$declaration"; then deadline=$(status_paused_until "$declaration") || deadline=''; fi
     if ! status_is_paused "$declaration" && [ "$parent" -eq 0 ] \
       && [ "$((now - owner))" -ge "$((escalate - alert))" ] && [ "$age" -ge "$escalate" ]; then
       if [ -n "$lead" ]; then
         jg_wait_timer_report "blocked [key=$key]: waiting-timer-overdue: $task ($verb, observed ${age}s, since=$since); owning lead has not cleared the wait; Main must unblock or steer the lead; source=[$source]" || continue
         parent=$now
         jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
+        fp=$(jg_wait_timer_fingerprint main "$key" "$window" "$verb" "$actor" "$declaration" "$wsrc" "$deadline") || return 1
+        jg_wait_timer_raised_save "$task" "$fp" "$now" 0 || true
       else
         # The reason line's leading word is the wake kind every consumer
         # classifies by, so it must read "check:" like the kind this row is
@@ -667,6 +725,8 @@ EOF
         jg_wake_append check "$key-escalation" "$reason" || return 1
         parent=$now
         jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
+        fp=$(jg_wait_timer_fingerprint main "$key" "$window" "$verb" "$actor" "$declaration" "$wsrc" "$deadline") || return 1
+        jg_wait_timer_raised_save "$task" "$fp" "$now" 0 || true
         wake "$reason"
       fi
     fi
@@ -680,8 +740,27 @@ EOF
     fired=$owner
     for native in "$parent" "$card" "$last"; do [ "$native" -le "$fired" ] || fired=$native; done
     [ "$last" -eq 1 ] || [ "$((now - fired))" -ge "$every" ] || continue
+    forced=0; [ "$last" -ne 1 ] || forced=1
     last=$now
     jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
+    # The clock has moved on. Wake a model only if the wait changed since its last
+    # raise, or this hop has now outlived its longest interval without a backstop
+    # raise; a new supervisor session (last=1) is always told again.
+    if status_is_paused "$declaration"; then
+      hop=pause hopstart=$owner ceiling=$paused_alert
+    else
+      hop=owner hopstart=$owner ceiling=$alert
+      [ "$parent" -eq 0 ] || { hop=main hopstart=$parent; }
+      [ "$card" -eq 0 ] || { hop=card hopstart=$card; }
+      for native in "$escalate" "$card_secs" "$interval"; do [ "$native" -le "$ceiling" ] || ceiling=$native; done
+    fi
+    fp=$(jg_wait_timer_fingerprint "$hop" "$key" "$window" "$verb" "$actor" "$declaration" "$wsrc" "$deadline") || return 1
+    if ! jg_wait_timer_raise_gate "$task" "$fp" "$hopstart" "$ceiling" "$now" "$forced"; then
+      jg_wait_timer_unchanged_log "$now" "$task" "$key" "$hop" "$((now - hopstart))"
+      # Keeping the one open board card is not a wake, so it stays on its cadence.
+      if [ -z "$lead" ] && [ "$parent" -gt 0 ] && [ "$card" -ne 0 ]; then jg_wait_timer_card "$task" "$key-card" "$verb" "$source" || true; fi
+      continue
+    fi
     level=owner
     if [ "$parent" -gt 0 ] && [ -n "$lead" ]; then
       jg_wait_timer_report "blocked [key=$key]: waiting-timer-overdue: $task ($verb, observed ${age}s, since=$since); still not cleared; Main must unblock or steer the lead; source=[$source]" || true

@@ -578,6 +578,17 @@ jg_lint_run_workflows() {
   "$SELF_DIR/jg-lint-workflows.sh"
 }
 
+# A change to a path the new stack replaced is refused (defaults/deprecated-paths).
+# It needs the base this run already diffs against, so a full-tree run skips it.
+jg_lint_run_deprecated() {
+  [ "$EXPLICIT_PATHS" -eq 0 ] || return 0
+  if [ -n "$CHANGED_BASE" ]; then
+    "$SELF_DIR/jg-deprecated-paths-check.sh" --base "$CHANGED_BASE"
+  elif [ "$CHANGED_MODE" -eq 1 ]; then
+    "$SELF_DIR/jg-deprecated-paths-check.sh" --base "$merge_base" --worktree
+  fi
+}
+
 # Backend adapters belong behind tasks-axi. Keep direct Beads CLI invocations
 # out of juggernaut's core scripts so every configured backend follows the same
 # lifecycle path.
@@ -1116,6 +1127,7 @@ if { [ "$CHANGED_MODE" -eq 1 ] || [ "$CHANGED_BASE_MODE" -eq 1 ]; } && [ "$ROOT_
   overall_rc=0
   jg_lint_run_backend_purity || overall_rc=$?
   jg_lint_run_workflows || overall_rc=$?
+  jg_lint_run_deprecated || overall_rc=$?
   exit "$overall_rc"
 fi
 
@@ -1475,6 +1487,7 @@ if [ "$overall_rc" -eq 0 ]; then
 else
   jg_lint_run_workflows || true
 fi
+jg_lint_run_deprecated || overall_rc=$?
 
 if [ -n "$TELEMETRY" ]; then
   TELEMETRY_END_EPOCH=$(date +%s)

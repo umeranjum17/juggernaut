@@ -3,7 +3,8 @@
 # checks are green, so the merge wait after green (about 21 min per change) disappears.
 # Usage: merge-on-green.sh check <jg-home>
 #
-# Per home, for each state/<task>.meta with yolo=on and a recorded pr= and pr_head=, it acts only when the
+# Per home, for each state/<task>.meta with yolo=on and a recorded pr= and pr_head= (recorded here from
+# the worker's `done: PR <url>` line when the record has none), it acts only when the
 # task's resolved state (bin/jg-crew-state.sh <task>) says checks green / PR ready. It silently skips a task
 # marked merge=manual and a PR whose evidence-gate PASS is a not-proven PASS (the gate reads the PR's
 # newest "## Checks" block; the lead files the proof gap first). Then, in this order and as separate
@@ -118,6 +119,20 @@ for m in "$STATE"/*.meta; do
   # The lead marks merge=manual at intake on destructive, irreversible or security-sensitive work and
   # on work waiting for the captain's own review.
   [ "$(meta_get "$m" merge)" = manual ] && continue
+  # A worker's `done [at=..]: PR <url>` line is the only place the PR is named until something records it
+  # in the task's record. When nothing has (the lead was busy, or the line never reached a lead turn), this
+  # check records it itself through bin/jg-pr-check.sh --from-status, which keeps every refusal that
+  # script owns (a draft, a wrong base, a head not pushed) and writes pr= and pr_head= exactly as the
+  # lead's own call does. That call is made once per distinct last status line, so a refusal is not
+  # re-run against the forge every sweep.
+  if [ -z "$pr" ] || [ -z "$pr_head" ]; then
+    last=$(awk 'NF { l = $0 } END { print l }' "$STATE/$task.status" 2>/dev/null | cksum)
+    if [ -x "$FMH/bin/jg-pr-check.sh" ] && [ "$(cat "$DATA/$task.recorded" 2>/dev/null)" != "$last" ]; then
+      mkdir -p "$DATA" 2>/dev/null && printf '%s\n' "$last" > "$DATA/$task.recorded" 2>/dev/null || :
+      JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-pr-check.sh" --from-status "$task" >/dev/null 2>&1 || :
+      pr=$(meta_get "$m" pr); pr_head=$(meta_get "$m" pr_head)
+    fi
+  fi
   [ -n "$pr" ] && [ -n "$pr_head" ] || continue
   # One merge attempt per head: a head already attempted (merged or refused) is never retried.
   [ "$(cat "$DATA/$task.head" 2>/dev/null)" = "$pr_head" ] && continue
@@ -252,3 +267,7 @@ done
 # Stale-PR alarm: an open PR with no checks and no update for 24 h, or based on an already merged release
 # branch, raises one alert per PR. It lives in stale-pr-alarm.sh beside this script and is skipped when absent.
 [ ! -x "$SRC/stale-pr-alarm.sh" ] || JG_STALE_PR_LIMIT=$DEADLINE "$SRC/stale-pr-alarm.sh" check "$FMH"
+
+# Red-CI ticket: a red run on the default branch, a version branch or an open PR files one root-cause ticket, once
+# per run id. It lives in red-ci-ticket.sh beside this script and is skipped when absent.
+[ ! -x "$SRC/red-ci-ticket.sh" ] || JG_RED_CI_LIMIT=$DEADLINE "$SRC/red-ci-ticket.sh" check "$FMH"

@@ -1455,6 +1455,138 @@ SH
   chmod +x "$dir/bin/jg-watch-arm.sh"
 }
 
+# --- settled wake: a close whose wake was already handled spends no turn ------------------------
+# The checkout's whole bin/ runs in the fixture home; only the watcher arm is a stand-in:
+# a first arm closes on a heartbeat line, a handling successor confirms a live watcher.
+write_settled_arm() {
+  local dir=$1
+  cat > "$dir/bin/jg-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ -n "${JG_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
+  : > "$JG_HOME/state/.settled-successor-started"
+  printf 'watcher: started pid=%s\n' "$$"
+  exit 0
+fi
+printf 'heartbeat: fixture close\n'
+exit 0
+SH
+  chmod +x "$dir/bin/jg-watch-arm.sh"
+}
+
+settled_wake_append() {  # <dir> <payload>
+  local dir=$1
+  JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" bash -c '
+    . "$1/bin/jg-wake-lib.sh"; jg_wake_append signal task1.status "$2"' _ "$dir" "$2"
+}
+
+# Drain the queue and acknowledge it the way a handling turn does.
+settled_wake_handle() {  # <dir>
+  local dir=$1 seq gen
+  JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$dir/bin/jg-wake-drain.sh" > "$dir/drain.out" 2> "$dir/drain.err"
+  seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p' "$dir/drain.err")
+  gen=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-]*\)$/\1/p' "$dir/drain.err")
+  [ -n "$seq" ] && [ -n "$gen" ] || fail "the drain printed no acknowledgement command: $(cat "$dir/drain.err")"
+  JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$dir/bin/jg-wake-drain.sh" \
+    --ack-through "$seq" --recovery-generation "$gen" > /dev/null 2>&1 \
+    || fail "the acknowledgement was refused"
+}
+
+# The settled check reads status logs through the Go classifier: build it once for the whole file.
+ensure_classify_bin() {
+  [ -x "$TMP_ROOT/jg-classify" ] || ( cd "$ROOT/core/classify" && go build -o "$TMP_ROOT/jg-classify" ./cmd/jg-classify ) \
+    || fail "the status classifier could not be built"
+  export JG_CLASSIFY_BIN="$TMP_ROOT/jg-classify"
+}
+
+# A home with one task in flight whose wake was raised, drained, handled and acknowledged.
+make_settled_home() {  # <name>
+  local dir
+  dir=$(make_primary_dir "$TMP_ROOT/$1")
+  printf 'kind=ship\n' > "$dir/state/task1.meta"
+  install_integrated_autoarm "$dir"
+  cp -R "$ROOT/bin/." "$dir/bin/"
+  cp -R "$ROOT/defaults" "$dir/defaults"
+  write_settled_arm "$dir"
+  printf 'working [at=%s]: building\n' "$(date +%s)" > "$dir/state/task1.status"
+  settled_wake_append "$dir" "signal: task1.status: ready [at=1]: PR ready"
+  assert_absent "$dir/state/.wake-ack-fleet-fp" "the fleet baseline exists before any wake was acknowledged"
+  settled_wake_handle "$dir"
+  # A heartbeat close mints no downtime episode: dropping the marker reaches the failure notice,
+  # which is the re-prompt a settled wake used to cost.
+  rm -f "$dir/state/.watcher-down"
+  printf '%s\n' "$dir"
+}
+
+settled_baseline() {  # <dir>: record the fleet as it is now
+  JG_HOME="$1" JG_STATE_OVERRIDE="$1/state" bash -c '
+    . "$1/bin/jg-wake-lib.sh"; jg_wake_core fleet-fp-record "$2/state/.wake-ack-fleet-fp"' _ "$1" "$1"
+}
+
+test_autoarm_settled_wake_spends_no_turn() {
+  local dir out status
+  ensure_classify_bin
+  dir=$(make_settled_home settled-wake)
+  assert_present "$dir/state/.wake-ack-fleet-fp" "an acknowledgement that emptied the queue must record the fleet baseline"
+  out=$(run_integrated_autoarm "$dir"); status=$?
+  expect_code 0 "$status" "a close whose wake was handled and acknowledged must not re-prompt the model"
+  assert_not_contains "$out" "juggernaut watcher wake" "a settled wake produced a handling-turn banner"
+  assert_not_contains "$out" "auto-arm FAILED" "a settled wake produced a failure notice"
+  assert_present "$dir/state/.settled-successor-started" "a settled close must still arm the next watcher cycle"
+  assert_absent "$dir/state/.claude-autoarm-failure-notified" "a settled wake left a failure episode behind"
+  pass "jg-claude-stop-autoarm: a settled wake ends the turn with no re-prompt and the next cycle armed"
+}
+
+expect_reprompt() {  # <dir> <what>: the close must still hand the model a handling turn
+  local out status
+  out=$(run_integrated_autoarm "$1"); status=$?
+  expect_code 2 "$status" "$2 must keep the re-prompt"
+  assert_contains "$out" "juggernaut watcher wake" "$2 lost its handling-turn banner"
+}
+
+test_autoarm_unsettled_wake_still_reprompts() {
+  local dir token
+  ensure_classify_bin
+  dir=$(make_settled_home unsettled-queued)
+  settled_wake_append "$dir" "signal: task1.status: failed [at=2]: new"
+  printf 'pending:downtime:g2\n' > "$dir/state/.watcher-down"
+  expect_reprompt "$dir" "a queued wake"
+  for token in pending:downtime:gen1 announced:downtime:gen1 pending:handling:gen1 announced:handling:gen1; do
+    dir=$(make_settled_home "unsettled-recovery-${token//:/-}")
+    printf '%s\n' "$token" > "$dir/state/.watcher-down"
+    expect_reprompt "$dir" "an unacknowledged recovery episode ($token)"
+  done
+  # The next two move the fleet baseline past the new line, so only that condition is open.
+  dir=$(make_settled_home unsettled-decision)
+  printf 'needs-decision [at=%s]: pick one\n' "$(date +%s)" >> "$dir/state/task1.status"
+  settled_baseline "$dir"
+  expect_reprompt "$dir" "an open decision"
+  dir=$(make_settled_home unsettled-unread)
+  printf 'note [at=%s]: an informational line the model has not read\n' "$(date +%s)" >> "$dir/state/task1.status"
+  settled_baseline "$dir"
+  expect_reprompt "$dir" "an unread status line"
+  dir=$(make_settled_home unsettled-captain)
+  JG_HOME="$dir" "$dir/bin/jg-overwatch-kpi.sh" record "please look at this" > /dev/null 2>&1 \
+    || fail "the captain message could not be recorded"
+  expect_reprompt "$dir" "a captain message pending"
+  dir=$(make_settled_home unsettled-fleet)
+  printf 'kind=ship\n' > "$dir/state/task2.meta"
+  expect_reprompt "$dir" "a changed fleet"
+  dir=$(make_settled_home unsettled-no-baseline)
+  rm -f "$dir/state/.wake-ack-fleet-fp"
+  expect_reprompt "$dir" "a missing fleet baseline"
+  pass "jg-claude-stop-autoarm: queued wake, unacknowledged recovery, open decision, unread status, pending captain message and changed fleet each keep the re-prompt"
+}
+
+test_guard_still_blocks_settled_wake_without_a_cycle() {
+  local dir out status
+  ensure_classify_bin
+  dir=$(make_settled_home settled-no-cycle)
+  out=$(JG_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" false); status=$?
+  expect_code 2 "$status" "a settled wake with no live supervision cycle must still be blocked"
+  assert_contains "$out" "TURN WOULD END BLIND" "the guard lost its blind-turn banner for a settled wake"
+  pass "jg-turnend-guard --claude: a settled wake does not relax the block on a dead or missing cycle"
+}
+
 # The 2026-07-21 incident regression: after a spent forced continuation the old
 # one-shot loop guard ALLOWED a blind stop (stop_hook_active=true) while the
 # watcher was already dead. In --claude mode the guard must re-block instead.
@@ -2461,6 +2593,9 @@ test_hook_claude_mode_blocks_on_stuck_generation_claim
 test_hook_claude_mode_terminal_fail_open_clears_abandoned_claim
 test_hook_claude_mode_preserves_fresh_failed_progression
 test_hook_claude_mode_integrated_monotonic_fail_open
+test_autoarm_settled_wake_spends_no_turn
+test_autoarm_unsettled_wake_still_reprompts
+test_guard_still_blocks_settled_wake_without_a_cycle
 test_hook_claude_mode_frozen_epoch_reaches_bounded_fail_open
 test_hook_claude_mode_frozen_epoch_without_verified_failure_spends_budget_and_keeps_blocking
 test_hook_claude_mode_recovery_contention_is_not_ordinary_allow

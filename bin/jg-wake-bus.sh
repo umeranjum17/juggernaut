@@ -238,11 +238,11 @@ live_flush_outbox() {
   : > "$keep" || return 1
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    # An acknowledgement carries its raise's id, so its message id takes the
-    # "/ack" suffix live_ack gives it; under the raise's own id the server would
-    # drop it as a duplicate and the row would never settle.
+    # An acknowledgement carries its raise's id and its own message id (`mid`, set
+    # by live_ack); under the raise's own id the server would drop it as a
+    # duplicate and the row would never settle.
     seq=$(bus_pub_seq "$(printf '%s' "$line" | jq -r '.subject')" \
-      "$(printf '%s' "$line" | jq -r '.id + (if .ack == true then "/ack" else "" end)')" \
+      "$(printf '%s' "$line" | jq -r '.mid // (.id + (if .ack == true then "/ack" else "" end))')" \
       "$(printf '%s' "$line" | jq -c 'del(.subject)')")
     [ "${seq:-0}" -gt 0 ] || printf '%s\n' "$line" >> "$keep"
   done < "$LIVE_OUTBOX"
@@ -312,7 +312,7 @@ live_render() {
     | LC_ALL=C sort -t "$(printf '\t')" -k2,2n > "$model.queue" || : > "$model.queue"
   chmod 0600 "$model.queue" 2>/dev/null || true
   _jg_atomic_replace "$model.queue" "$LIVE_QUEUE" || { rm -f -- "$model.queue"; return 1; }
-  jq -r 'select(.where == "settled") | [.at, "silent", .kind, .key, .payload] | @tsv' "$LIVE_EVENTS" 2>/dev/null \
+  jq -r 'select(.where == "settled") | [.at, "silent", .kind, .key, .payload] + (if (.word // "") == "" then [] else [.word] end) | @tsv' "$LIVE_EVENTS" 2>/dev/null \
     | LC_ALL=C sort -t "$(printf '\t')" -k1,1n > "$model.settled" || : > "$model.settled"
   chmod 0600 "$model.settled" 2>/dev/null || true
   _jg_atomic_replace "$model.settled" "$LIVE_SOLID" || { rm -f -- "$model.settled"; return 1; }
@@ -327,8 +327,9 @@ live_raise() { # <kind> <key> <payload> <class>
   # the event later reaches the stream.
   rseq=$(( at * 1000 + (RANDOM % 1000) ))
   event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --arg class "$4" --argjson at "$at" --argjson rseq "$rseq" \
-    '{v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}') || return 1
+    --arg payload "$3" --arg class "$4" --arg word "${JG_WAKE_WORD:-}" --argjson at "$at" --argjson rseq "$rseq" \
+    '{v:1,id:$id,home:$home,where:"queue",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:$class}
+     + (if $word == "" then {} else {word:$word} end)') || return 1
   live_publish "$SUBJECT_PREFIX".wake.raise "$id" "$event" || return 1
   live_render
   return 0
@@ -339,14 +340,21 @@ live_settle() { # <kind> <key> <payload>
   at=$(date -u +%s)
   id="settled/$(live_home_key)/$at-$$-$RANDOM"
   event=$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg kind "$1" --arg key "$2" \
-    --arg payload "$3" --argjson at "$at" --argjson rseq "$(( at * 1000 + (RANDOM % 1000) ))" \
-    '{v:1,id:$id,home:$home,where:"settled",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:"silent"}') || return 1
+    --arg payload "$3" --arg word "${JG_WAKE_WORD:-}" --argjson at "$at" --argjson rseq "$(( at * 1000 + (RANDOM % 1000) ))" \
+    '{v:1,id:$id,home:$home,where:"settled",at:$at,rseq:$rseq,kind:$kind,key:$key,payload:$payload,class:"silent"}
+     + (if $word == "" then {} else {word:$word} end)') || return 1
   live_publish "$SUBJECT_PREFIX".wake.settled "$id" "$event" || return 1
   live_render
 }
 
+# live_ack <id>...: acknowledge each row, then prove it left the replica. Every
+# acknowledgement is its own bus message (a message id unique to this attempt): the
+# server drops a second message under an id it has already stored as a duplicate,
+# and a row whose first acknowledgement the cursor had already passed without
+# settling it could then never be acknowledged again, yet every retry exited 0.
+# An acknowledgement that leaves its row in the replica says so and exits 1.
 live_ack() { # <id>...
-  local id at owed subject
+  local id at owed subject mid left=''
   at=$(date -u +%s)
   for id in "$@"; do
     [ -n "$id" ] || continue
@@ -356,6 +364,11 @@ live_ack() { # <id>...
       owed=$LIVE_OUTBOX.tmp.$$
       if jq -c --arg id "$id" 'select(.id != $id)' "$LIVE_OUTBOX" > "$owed" 2>/dev/null \
         && mv -f "$owed" "$LIVE_OUTBOX"; then
+        # The replica copied the owed row at the last render; drop that copy too, or
+        # the render below puts the row back.
+        if [ -s "$LIVE_EVENTS" ] && jq -c --arg id "$id" 'select(.id != $id)' "$LIVE_EVENTS" > "$owed" 2>/dev/null; then
+          mv -f "$owed" "$LIVE_EVENTS" || rm -f -- "$owed"
+        fi
         continue
       fi
       rm -f -- "$owed"
@@ -363,11 +376,22 @@ live_ack() { # <id>...
     fi
     # An inbox record is acknowledged on the inbox stream, beside its raise.
     case "$id" in inbox/*) subject="$SUBJECT_PREFIX.inbox.ack" ;; *) subject="$SUBJECT_PREFIX.wake.ack" ;; esac
-    live_publish "$subject" "$id/ack" \
-      "$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --argjson at "$at" \
-        '{v:1,id:$id,home:$home,ack:true,at:$at}')" || return 1
+    mid="$id/ack/$at-$$-$RANDOM"
+    live_publish "$subject" "$mid" \
+      "$(jq -nc --arg id "$id" --arg mid "$mid" --arg home "$(live_home_key)" --argjson at "$at" \
+        '{v:1,id:$id,mid:$mid,home:$home,ack:true,at:$at}')" || return 1
   done
-  live_render
+  live_render || return 1
+  for id in "$@"; do
+    [ -n "$id" ] || continue
+    if live_events | jq -e --arg id "$id" 'select(.id == $id and (.ack // false) != true)' >/dev/null 2>&1; then
+      left="$left $id"
+    fi
+  done
+  if [ -n "$left" ]; then
+    printf 'jg-wake-bus.sh: acknowledged but still queued (the acknowledgement did not settle the row):%s\n' "$left" >&2
+    return 1
+  fi
 }
 
 # live_ids_through <max-seq> [<allowed-seqs-file>]: the queued ids an actor may

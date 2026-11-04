@@ -57,6 +57,9 @@ export JG_TEST_SEAM=1
 # A fixture binds no port and installs no service: bin/jg-stack.sh up is a no-op under this.
 # tests/jg-stack.test.sh unsets it, because starting the stack is what it proves.
 export JG_STACK_SKIP=1
+# A fixture never wires the machine: bin/jg-update.sh skips bin/jg-host-wiring.sh under this.
+# tests/jg-update.test.sh unsets it for the one run that proves the update calls the wiring.
+export JG_HOST_WIRING_SKIP=1
 # A fixture never reaches the machine's real message bus: with no address set, the wake, key-value
 # and state paths fall back to nats://127.0.0.1:4222, which on a host running the bus is the real
 # server (accounts enforced, other homes' streams), so a test would publish into it or be refused by

@@ -925,6 +925,11 @@ if [ -n "$ACK_THROUGH" ]; then
   fi
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
+  # A main acknowledgement that leaves nothing queued and no newer recovery episode is the
+  # baseline bin/jg-wake-settled.sh compares the fleet against (docs/turnend-guard.md).
+  if [ "$ACTOR" = main ] && [ "${ACK_QUEUE_LEFT:-0}" -eq 0 ] && [ "$RECOVERY_ACK_MOVED" != true ]; then
+    jg_wake_core fleet-fp-record "$STATE/.wake-ack-fleet-fp" >/dev/null 2>&1 || true
+  fi
   if [ "$ACK_REMOVED" -eq 0 ] && [ "$PRESENTED_MAX" -gt "$ACK_THROUGH" ]; then
     # Nothing at or below the cutoff was this actor's to consume, while a
     # presented row above it is still waiting: the caller acknowledged an

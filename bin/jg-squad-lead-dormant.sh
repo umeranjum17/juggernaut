@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # jg-squad-lead-dormant.sh - stop a local Squad Lead with nothing to do, and
 # relaunch it the moment work is routed to it.
-#   sweep        one pass over this home's local leads
-#   wake <id>    relaunch a dormant lead before delivery
+#   sweep          one pass over this home's local leads
+#   wake <id>      relaunch a dormant lead before delivery
+#   stop-idle <id> stop one idle lead now, with no persist round and no quiet
+#                  window, for a restart pass that has already asked it to persist
 #
 # Eligible: no open backlog item in its home (nothing unchecked under
 # "In flight" or "Queued": every queued, in-flight, blocked, held and in-review
@@ -21,6 +23,14 @@
 # bin/jg-fleet-heartbeat.sh, and is relaunched by bin/jg-send.sh before delivery;
 # every routed path reaches a lead through jg-send, and a sweep wakes one that
 # gained work by another route.
+# stop-idle (bin/jg-squad-lead-restart.sh): a restart replaces every lead's agent,
+# and a replacement that starts only to read its digest and idle costs a model
+# session for nothing. For a local lead that the same busy test finds idle, and
+# that has no open pending-reply request either, the restart pass stops the agent
+# and writes the dormant record instead of relaunching it, so the first routed
+# message starts it on the current code. Exit 0: stopped and marked dormant; 10:
+# not stopped because it has work, an open request or the rule is off (stdout names
+# why) and the caller relaunches it as before; 1: the stop itself failed.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -63,6 +73,17 @@ busy_reason() {  # <id> <lead-home>: why it must stay awake, or nothing when it 
   [ ! -s "$home/state/.wake-queue" ] || echo "a queued wake"
 }
 
+open_request() {  # <id>: whether a marked request to this lead still awaits its report
+  local rec dir
+  dir=$(jg_pending_reply_dir "$STATE")
+  for rec in "$dir"/*; do
+    [ -f "$rec" ] || continue
+    [ "$(jg_pending_reply_get "$rec" task_id)" = "$1" ] || continue
+    [ "$(jg_pending_reply_get "$rec" phase)" != resolved ] && return 0
+  done
+  return 1
+}
+
 quiet_secs() {  # <id> <lead-home>: seconds since its newest record changed
   local f m newest=0
   for f in "$STATE/$1.status" "$STATE/$1.inbox" "$STATE/$1.inbox/handled" "$2/data/backlog.md" "$2/state/.wake-queue"; do
@@ -84,6 +105,30 @@ cmd_wake() {  # <id>
     rm -f -- "$(squad_lead_dormant_record "$STATE" "$id")"
   fi
   jg_lock_release "$lock" || true
+}
+
+cmd_stop_idle() {  # <id>
+  local id=$1 meta lock why out rc=0
+  meta="$STATE/$id.meta"
+  if [ ! -f "$meta" ] || ! jg_compat_meta_is_squad_lead "$meta"; then die "$id is not a squad lead of this home"; fi
+  [ -z "$(jg_meta_get "$meta" remote_host)" ] || { echo "a remote lead is restarted on its host"; return 10; }
+  [ "$(idle_secs)" -gt 0 ] || { echo "the dormant rule is off (config/squad-lead-dormant-secs is 0)"; return 10; }
+  lock=$(lock_of "$id")
+  jg_lock_acquire_wait_bounded "$lock" "${JG_SQUAD_LEAD_DORMANT_LOCK_WAIT:-120}" \
+    || die "squad lead $id is mid-stop or mid-relaunch"
+  why=$(busy_reason "$id" "$(jg_meta_get "$meta" home)")
+  if [ -z "$why" ] && open_request "$id"; then why="a request still awaits its report"; fi
+  if [ -n "$why" ]; then
+    printf '%s\n' "$why"
+    rc=10
+  elif out=$(run "$JG_ROOT/bin/jg-control.sh" "$id" exit 2>&1); then
+    printf 'dormant %s\n' "$NOW" > "$(squad_lead_dormant_record "$STATE" "$id")" || rc=1
+  else
+    printf '%s\n' "$out" | tail -1 >&2
+    rc=1
+  fi
+  jg_lock_release "$lock" || true
+  return "$rc"
 }
 
 sweep_one() {  # <meta> <id>: one lead's step through asked -> answered -> dormant
@@ -149,5 +194,6 @@ valid_id() { case "${1:-}" in ''|*[!A-Za-z0-9._-]*) die "a squad lead id is requ
 case "${1:-}" in
   sweep) cmd_sweep ;;
   wake) valid_id "${2:-}"; cmd_wake "$2" ;;
-  *) die "usage: jg-squad-lead-dormant.sh sweep | wake <id>" 2 ;;
+  stop-idle) valid_id "${2:-}"; cmd_stop_idle "$2" ;;
+  *) die "usage: jg-squad-lead-dormant.sh sweep | wake <id> | stop-idle <id>" 2 ;;
 esac

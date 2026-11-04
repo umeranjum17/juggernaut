@@ -201,6 +201,99 @@ test_repeat_and_override() (
   pass "a repeated outcome line batches, and a home file layers over the shared file"
 )
 
+# A ship's PR-ready done line wakes no model when core/merge-on-green owns the PR: the watcher's own
+# merge or alert wakes the lead. Every other done line, and every other word, keeps waking.
+test_merge_owned_done() (
+  dir=$(make_case route-merge-owned)
+  state="$dir/state"
+  pr=https://example.test/o/r/pull/7
+  head=0123456789abcdef0123456789abcdef01234567
+  ready="done [at=1]: PR $pr checks green"
+  task() {  # <task> <status line> <meta rows...>
+    local t=$1 line=$2; shift 2
+    printf '%s\n' "$line" > "$state/$t.status"
+    : > "$state/$t.meta"
+    [ "$#" -eq 0 ] || printf '%s\n' "$@" > "$state/$t.meta"
+  }
+  task yolo "$ready" kind=ship yolo=on "pr=$pr" "pr_head=$head"
+  assert_equals "$(route "$dir" "$state" signal yolo.status x)" silent "an owned PR-ready done line is settled"
+  JG_HOME="$dir" append_wake "$state" signal yolo.status "signal: yolo.status"
+  [ ! -s "$state/.wake-queue" ] || fail "a settled done line reached the queue"
+  assert_grep "yolo.status" "$state/.wake-settled" "a settled done line must stay in the durable wake log"
+  task appr "$ready" yolo=off "pr=$pr" "pr_head=$head" merge=approved
+  assert_equals "$(route "$dir" "$state" signal appr.status x)" silent "a lead-recorded merge approval is owned too"
+  task nokind "$ready" yolo=on "pr=$pr" "pr_head=$head"
+  assert_equals "$(route "$dir" "$state" signal nokind.status x)" silent "a record with no kind is a ship"
+  task off "$ready" yolo=off "pr=$pr" "pr_head=$head"
+  assert_equals "$(route "$dir" "$state" signal off.status x)" now "a PR the watcher does not own keeps waking"
+  task manual "$ready" yolo=on "pr=$pr" "pr_head=$head" merge=manual
+  assert_equals "$(route "$dir" "$state" signal manual.status x)" now "merge=manual keeps waking"
+  task nopr "$ready" kind=ship yolo=on
+  assert_equals "$(route "$dir" "$state" signal nopr.status x)" now "a done line with no recorded PR keeps waking"
+  task nohead "$ready" kind=ship yolo=on "pr=$pr"
+  assert_equals "$(route "$dir" "$state" signal nohead.status x)" now "a PR with no recorded head is not the watcher's yet"
+  : > "$state/nometa.status"; printf '%s\n' "$ready" > "$state/nometa.status"
+  assert_equals "$(route "$dir" "$state" signal nometa.status x)" now "a task with no record keeps waking"
+  task other "done [at=1]: PR https://example.test/o/r/pull/8" kind=ship yolo=on "pr=$pr" "pr_head=$head"
+  assert_equals "$(route "$dir" "$state" signal other.status x)" now "a done line naming another PR keeps waking"
+  task noreport "done [at=1]: ready branch wf5, nothing pushed" kind=ship yolo=on "pr=$pr" "pr_head=$head"
+  assert_equals "$(route "$dir" "$state" signal noreport.status x)" now "a done line that reports no PR keeps waking"
+  task merged "done [at=1]: merged $pr" kind=ship yolo=on "pr=$pr" "pr_head=$head"
+  assert_equals "$(route "$dir" "$state" signal merged.status x)" now "the merge outcome keeps waking"
+  task scout "done [at=1]: PR $pr" kind=scout yolo=on "pr=$pr" "pr_head=$head"
+  assert_equals "$(route "$dir" "$state" signal scout.status x)" now "a Recon result keeps waking"
+  task recon "done [at=1]: findings in data/recon/report.md" kind=scout
+  assert_equals "$(route "$dir" "$state" signal recon.status x)" now "a Recon report keeps waking"
+  task spent "$ready" kind=ship yolo=on "pr=$pr" "pr_head=$head"
+  mkdir -p "$dir/data/jg-merge-on-green"; printf '%s\n' "$head" > "$dir/data/jg-merge-on-green/spent.head"
+  assert_equals "$(route "$dir" "$state" signal spent.status x)" now "a head the watcher already attempted keeps waking"
+  printf 'done [at=3]: PR %s checks green\n' "$pr" > "$state/spent.status"
+  printf 'cafe\n' > "$dir/data/jg-merge-on-green/spent.head"
+  assert_equals "$(route "$dir" "$state" signal spent.status x)" silent "a new head is the watcher's again"
+  assert_equals "$(route "$dir" "$state" check "$state/merge-on-green.check.sh" "check: $state/merge-on-green.check.sh: merge-on-green: NOT merging yolo $pr: checks lint refused: x; lead: act")" now \
+    "the watcher's refusal alert wakes the lead, since the done line no longer does"
+  for word in failed blocked needs-decision; do
+    task "w$word" "$word [at=1]: PR $pr" kind=ship yolo=on "pr=$pr" "pr_head=$head"
+    assert_equals "$(route "$dir" "$state" signal "w$word.status" x)" now "a $word line on an owned PR keeps waking"
+  done
+  pass "an owned PR-ready done line is settled; unowned, PR-less, failed and Recon lines keep waking"
+)
+
+# A signal row keeps the status word of the line that woke it, so an audit of wake routing can read
+# it after cleanup removed the status file and the queue row. Routing never reads the word.
+test_status_word_is_kept() (
+  dir=$(make_case route-word)
+  state="$dir/state"
+  mkdir -p "$dir/config"
+  printf 'silent signal *.status working*\nnow * * *\n' > "$dir/config/wake-routing"
+  printf 'blocked [at=2]: stuck on a decision\n' > "$state/urgent.status"
+  printf 'working [at=1]: editing\n' > "$state/quiet.status"
+  JG_HOME="$dir" append_wake "$state" signal urgent.status 'signal: x'
+  JG_HOME="$dir" append_wake "$state" signal quiet.status 'signal: x'
+  JG_HOME="$dir" append_wake "$state" check rearm-resurface 'check: rearm-resurface'
+  assert_grep '"key":"urgent.status","payload":"signal: x","class":"now","word":"blocked"' "$state/.wake-bus.events.jsonl" \
+    "a queued signal event must carry its status word"
+  assert_grep '"class":"silent","word":"working"' "$state/.wake-bus.events.jsonl" "a settled signal event must carry its status word"
+  assert_equals "$(awk -F '\t' '$4 == "quiet.status" { print NF ":" $6 }' "$state/.wake-settled")" "6:working" \
+    "a settled row must list the word after its payload"
+  assert_equals "$(awk -F '\t' '$4 == "urgent.status" { print NF }' "$state/.wake-queue")" 5 \
+    "the queue row keeps its five fields, so every reader of it is unchanged"
+  assert_grep 'signal: urgent.status signal: x [status=blocked]' "$state/chat.jsonl" "the fleet note must name the word"
+  # Cleanup removes the status file and prunes the task's queue row; the word stays on record.
+  rm -f "$state/urgent.status"
+  JG_STATE_OVERRIDE="$state" bash -c '. "$1/bin/jg-wake-lib.sh"; jg_wake_queue_prune_task "$2" urgent' _ "$ROOT" "$state"
+  [ -z "$(awk -F '\t' '$4 == "urgent.status"' "$state/.wake-queue")" ] || fail "the cleanup left the queue row"
+  assert_grep '"class":"now","word":"blocked"' "$state/.wake-bus.events.jsonl" "the word must outlive the status file"
+  assert_grep '[status=blocked]' "$state/chat.jsonl" "the word must outlive the queue row"
+  # Old records without a word still read, and a key with no status line gets none.
+  assert_equals "$(awk -F '\t' '$3 == "check" { print NF }' "$state/.wake-queue")" 5 "a row with no word stays five fields"
+  printf '{"v":1,"id":"settled/old/1","home":"old","where":"settled","at":1,"rseq":1000,"kind":"signal","key":"old.status","payload":"signal: x","class":"silent"}\n' >> "$state/.wake-bus.events.jsonl"
+  JG_HOME="$dir" JG_STATE_OVERRIDE="$state" "$ROOT/bin/jg-wake-bus.sh" render
+  assert_equals "$(awk -F '\t' '$4 == "old.status" { print NF }' "$state/.wake-settled")" 5 "an old settled row must still read"
+  assert_contains "$(JG_HOME="$dir" JG_STATE_OVERRIDE="$state" "$ROOT/bin/jg-wake.sh" settled 5)" old.status "an old row must list"
+  pass "a signal wake keeps its status word through cleanup, and old rows without one still read"
+)
+
 result=0
 test_classes || result=1
 test_no_model_wakes || result=1
@@ -210,4 +303,6 @@ test_recorded_wakes || result=1
 test_heartbeat_and_status_classes || result=1
 test_restart_and_beacon_classes || result=1
 test_repeat_and_override || result=1
+test_merge_owned_done || result=1
+test_status_word_is_kept || result=1
 exit "$result"

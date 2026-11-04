@@ -157,6 +157,68 @@ IFS=$'\t' read -r _sig _since _owner parent _key _misses < "$dir/state/.waiting-
 cycle
 [ "$(grep -c 'level=main' "$dir/events")" -eq 1 ] || fail 'Main-owned escalation repeated on a later poll'
 pass 'a Main-owned overdue wait escalates once to Main without paging the captain'
+
+# Re-raise only when the wait changed. The wait above sits at the Main hop; its
+# re-fire comes due again and again, and an unchanged wait must stay silent, with
+# the durable log (not a wake) recording each skipped raise.
+raised="$dir/state/.waiting-timers/.raised/lane"
+unchanged_log="$dir/state/.waiting-timers/.unchanged.log"
+[ -f "$raised" ] || fail 'the Main escalation left no record of what it said'
+due_refire() {  # <dir>: the Main hop's re-fire interval has passed since its last raise
+  local file="$1/state/.waiting-timers/lane" past
+  past=$(( $(date +%s) - 2000 ))
+  IFS=$'\t' read -r sig since _ _ key _ < "$file"
+  printf '%s\t%s\t%s\t%s\t%s\t0\t0\t0\n' "$sig" "$since" "$past" "$past" "$key" > "$file"
+}
+due_refire "$dir"
+: > "$dir/events"
+cycle
+[ "$(grep -c 'waiting-state lane' "$dir/events")" -eq 0 ] || fail 'an unchanged wait woke a model on its re-fire'
+grep -q 'lane.*main.*unchanged' "$unchanged_log" || fail 'the unchanged re-raise left no durable log line'
+IFS=$'\t' read -r _sig _since _owner _parent _key _misses _card last < "$dir/state/.waiting-timers/lane"
+[ "$last" -gt 1 ] || fail 'a silent re-raise did not move the clock on'
+# The hop outlives its longest interval (the fixture sets the card time to 999999): one backstop raise, then silence again.
+IFS=$'\t' read -r sfp sstart sspent < "$raised"
+printf '%s\t%s\t%s\n' "$sfp" "$((sstart - 2000000))" "$sspent" > "$raised"
+due_refire "$dir"
+cycle
+[ "$(grep -c 'level=main; still open' "$dir/events")" -eq 1 ] || fail 'a wait that outlived its hop did not raise once'
+due_refire "$dir"
+: > "$dir/events"
+cycle
+[ "$(grep -c 'waiting-state lane' "$dir/events")" -eq 0 ] || fail 'the hop raised again after its backstop'
+# A changed wait raises at once.
+printf 'blocked [at=%s] [key=wait]: external condition, new blocker text\n' "$(date +%s)" >> "$dir/state/lane.status"
+prime_status_seen "$dir/state" "$dir/state/lane.status"
+cycle
+cycle
+[ "$(grep -c 'level=owner' "$dir/events")" -ge 1 ] || fail 'a changed wait did not raise'
+pass 'an unchanged re-raise is silent and logged, a changed wait and a hop backstop still raise'
+
+# A refreshed [at=] stamp is not a change; a new supervisor session still hears the wait.
+dir=$(make_case reraise-forced)
+mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
+printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
+printf 'blocked [at=%s] [key=wait]: external condition\n' "$(date +%s)" > "$dir/state/lane.status"
+prime_status_seen "$dir/state" "$dir/state/lane.status"
+arm_episode "$dir"
+age_episode "$dir"
+cycle
+[ "$(grep -c 'level=owner' "$dir/events")" -eq 1 ] || fail 'the first raise at the owner hop did not fire'
+due_refire "$dir"
+: > "$dir/events"
+cycle
+[ "$(grep -c 'waiting-state lane' "$dir/events")" -eq 0 ] || fail 'the owner hop re-raised an unchanged wait'
+printf 'blocked [at=%s] [key=wait]: external condition\n' "$(( $(date +%s) + 1 ))" >> "$dir/state/lane.status"
+due_refire "$dir"
+cycle
+cycle
+[ "$(grep -c 'waiting-state lane' "$dir/events")" -eq 0 ] || fail 'a refreshed time stamp counted as a changed wait'
+IFS=$'\t' read -r sig since owner parent key misses card _ < "$dir/state/.waiting-timers/lane"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t1\n' "$sig" "$since" "$owner" "$parent" "$key" "$misses" "$card" > "$dir/state/.waiting-timers/lane"
+cycle
+grep -q 'waiting-state lane .*still open' "$dir/events" || fail 'a new supervisor session was not told about the open wait'
+pass 'a refreshed stamp stays silent and a new supervisor session still hears the open wait'
 # A blocked wait that names a clearing time still ahead is a planned wait (the wake classifier's
 # plannedBlocked): the timers arm no episode for it, the same as for a timed pause, and the
 # fixtures above name no time because they stand for a wait with none.

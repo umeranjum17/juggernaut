@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # tests/jg-bus.test.sh - the captain channel, live, proved end to end.
 #
+# This is also the test that owns journeys/wedge-marker.sh (the done-done journey runs this file).
+#
 # What it proves, in order: an event the fleet emits is recorded and published to the
 # bus while the path that emitted it does what it always did; the shipped mode is
 # live, and `mode shadow` is the one line that reverses it; a live event the bus
@@ -270,5 +272,28 @@ assert_equals "1" "$(grep -c '"path": "/v1.0/publish/captain-channel/jg.captain.
 assert_grep "away-mode escalation undelivered 601s" "$d/home/state/.supervise-daemon.log" "the daemon still logs the wedge it reported"
 [ -s "$d/home/state/.subsuper-inject-wedged" ] || fail "the durable wedge marker was not written"
 pass "the away-mode wedge alert reaches the captain by this one path, once per window"
+
+# --- a reader never meets the wedge marker half-written ---------------------------
+# Every re-alarm rewrites the marker. A reader that tests `-s` (the Herdr wedge scenario, the
+# return check) must see the old marker or the new one, never the empty file a direct
+# redirect leaves while the body is built. A max-defer of 0 lets every call rewrite.
+d=$(setup wedge-race)
+: >"$d/empty-reads"
+JG_HOME="$d/home" JG_STATE_OVERRIDE="$d/home/state" JG_SUPERVISOR_BACKEND=herdr \
+  JG_SUPERVISOR_TARGET=nonexistent:0 LOG="$d/home/state/.supervise-daemon.log" JG_MAX_DEFER_SECS=0 \
+  bash -c '
+    . "$1"; marker=$2/.subsuper-inject-wedged
+    inject_wedge_alarm "$2" 601
+    ( while [ ! -e "$2/stop" ]; do
+        if [ -e "$marker" ] && [ ! -s "$marker" ]; then echo empty >>"$3"; fi
+      done ) &
+    reader=$!
+    for _ in $(seq 1 60); do inject_wedge_alarm "$2" 601; done
+    : >"$2/stop"; wait "$reader"' \
+  _ "$ROOT/bin/jg-supervise-daemon.sh" "$d/home/state" "$d/empty-reads"
+assert_equals "0" "$(wc -l <"$d/empty-reads" | tr -d ' ')" "60 rewrites of the wedge marker never showed a reader an empty file"
+[ -s "$d/home/state/.subsuper-inject-wedged" ] || fail "the wedge marker was empty after the rewrites"
+assert_equals "" "$(find "$d/home/state" -name '.subsuper-inject-wedged.tmp.*' | head -1)" "no temporary marker is left behind"
+pass "the wedge marker is replaced whole, so a reader never sees it empty"
 
 printf 'jg-bus: live publish, the one-line reversal, undelivered records, and parity proved\n'

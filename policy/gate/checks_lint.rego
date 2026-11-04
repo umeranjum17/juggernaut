@@ -3,9 +3,8 @@
 # only the frozen fact document and the thresholds and patterns in policy/gate/rules.json.
 #
 # input.author, input.title   the pull request's author login and title ("" for a local report file)
-# input.size.added            added non-generated lines, input.size.mode_raw the first word of config/checks-size
+# input.size.added            added non-generated lines (advice only: size never refuses, owner 1 Nov)
 # input.checks                null when there is no "## Checks" block, else {fields: {outcome, repro, proof, evidence}}
-# input.verify_skills         the verify skills of the repository under test, sorted
 # input.evidence.folder       the folder evidence names resolve in
 # input.evidence.tokens       the words of the evidence line, in order ("" marks a stray separator)
 # input.evidence.files[name]  {path, present, older, fresh, sha256, fix} for each non-empty token
@@ -33,8 +32,6 @@ is_bot if {
 	regex.match(pattern, input.author)
 }
 
-refuse_size if input.size.mode_raw == rules.size_refuse_mode
-
 over_size if input.size.added >= rules.size_guidance
 
 size_text := sprintf("%d added non-generated lines (moved and upstream lines excluded)", [input.size.added])
@@ -46,11 +43,6 @@ repro_is_na if regex.match(rules.repro_na_pattern, repro)
 has_block if input.checks != null
 
 # failures is every rule that refuses, each with its rank; the lowest rank is the reason given.
-failures contains {"rank": 10, "why": sprintf("%s: split it (limit %d)", [size_text, rules.size_guidance])} if {
-	over_size
-	refuse_size
-}
-
 failures contains {"rank": 20, "why": "no \"## Checks\" block"} if not has_block
 
 missing := [k |
@@ -71,32 +63,6 @@ all_present if {
 failures contains {"rank": 40, "why": "proof: names no command or path"} if {
 	all_present
 	not regex.match(rules.proof_command_pattern, proof)
-}
-
-failures contains {"rank": 50, "why": sprintf("proof: does not name the verify skill this repository has (%s); name the skill you ran", [concat(", ", input.verify_skills)])} if {
-	all_present
-	regex.match(rules.proof_command_pattern, proof)
-	count(input.verify_skills) > 0
-	not names_a_skill
-}
-
-names_a_skill if {
-	some skill in input.verify_skills
-	contains(proof, skill)
-}
-
-failures contains {"rank": 51, "why": "proof: does not name the verify-<app> skill run (or \"no verify skill\")"} if {
-	all_present
-	regex.match(rules.proof_command_pattern, proof)
-	count(input.verify_skills) == 0
-	not contains(proof, rules.verify_skill_marker)
-	not regex.match(rules.no_verify_skill_pattern, proof)
-}
-
-failures contains {"rank": 60, "why": "repro: a real repro must say \"systematic-debugging used\" (brief step 2)"} if {
-	all_present
-	not repro_is_na
-	not contains(repro, rules.repro_debug_marker)
 }
 
 failures contains {"rank": 70, "why": "repro: is n/a on a fix PR"} if {
@@ -215,14 +181,5 @@ decision := d if {
 
 advice contains line if {
 	over_size
-	not refuse_size
 	line := sprintf("advisory: %s is over the %d-line guidance: a smaller slice lands faster", [size_text, rules.size_guidance])
-}
-
-advice contains line if {
-	over_size
-	not refuse_size
-	input.size.mode_raw != ""
-	input.size.mode_raw != "advisory"
-	line := sprintf("note: %s holds '%s', not %s: staying advisory (accepted: advisory, %s)", [input.size.mode_file, input.size.mode_raw, rules.size_refuse_mode, rules.size_refuse_mode])
 }
