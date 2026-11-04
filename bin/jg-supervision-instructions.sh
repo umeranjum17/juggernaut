@@ -293,6 +293,7 @@ if [ -n "$HOST_SNIPPET" ]; then
   printf '%s\n' '- Supervision host: on; it takes away-posture wakes and, where the dialog mirror is verified, eligible attended wakes itself, and hands the rest to you (protocol at the end of this block).'
 fi
 ordinary_wake_line
+printf '%s\n' '- Fleet reads: for a heartbeat or any look at the fleet, run juggernaut-axi status, then juggernaut-axi lanes, wakes, holds or tasks for the part you need (one bounded table each); the raw scripts remain the writers and the fallback when the command is absent.'
 printf '\n'
 render_snippet
 printf '\n'

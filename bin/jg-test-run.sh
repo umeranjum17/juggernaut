@@ -455,7 +455,7 @@ family_for_basename() {
     jg-remote-squad-lead-lifecycle-e2e.test.sh|jg-squad-lead-lifecycle-e2e.test.sh)
       printf '%s\n' squad_lead
       ;;
-    jg-bootstrap.test.sh|jg-fleet-sync.test.sh|jg-gate-refuse.test.sh|\
+    jg-axi-link.test.sh|jg-bootstrap.test.sh|jg-fleet-sync.test.sh|jg-gate-refuse.test.sh|\
     jg-session-start.test.sh|jg-tangle-guard.test.sh|jg-update.test.sh)
       printf '%s\n' session-bootstrap
       ;;
@@ -689,8 +689,10 @@ tests/jg-behavior-determinism.test.sh 22547
 tests/jg-board-answers.test.sh 6382
 tests/jg-board-asks.test.sh 643
 tests/jg-board-gate.test.sh 2029
+tests/jg-bus-gateway.test.sh 8000
 tests/jg-bus-leaf-parity.test.sh 10999
 tests/jg-bus.test.sh 86
+tests/jg-axi-link.test.sh 900
 tests/jg-bootstrap.test.sh 129297
 tests/jg-browser-reaper.test.sh 2004
 tests/jg-stray-nats-reap.test.sh 2117
@@ -1475,6 +1477,10 @@ families_for_changed_path() {
       # install path reads. The table and its reader also set the floors
       # bin/jg-bootstrap.sh enforces, so the bootstrap family comes too.
       printf '%s\n' session-bootstrap
+      ;;
+    bin/jg-axi-link.sh)
+      printf '%s\n' session-bootstrap
+      printf '%s\n' "__script__:jg-axi-link.test.sh"
       ;;
     bin/jg-quota-axi-lib.sh)
       printf '%s\n' session-bootstrap

@@ -679,7 +679,7 @@ Selecting any other supervisor backend, including `zellij`, `orca`, or `cmux`, r
 ## Away-mode wedge alert
 
 When away-mode injection wedges past `JG_MAX_DEFER_SECS`, the sub-supervisor raises a loud, rate-limited alert so the stall never stays invisible.
-It goes to the captain by the one captain channel, `bin/jg-bus.sh publish alert away-mode-wedge`, and by nothing else: that path owns the record, the delivery to his iPad, the undelivered accounting and the `mode` switch ([`captain-channel.md`](captain-channel.md)), so there is no notifier to configure beside it and no `config/wedge-alarm` file.
+It goes to the captain by the one captain channel, `bin/jg-bus.sh publish alert away-mode-wedge`, and by nothing else: that path owns the record, the publish to the bus, the undelivered accounting and the `mode` switch ([`captain-channel.md`](captain-channel.md)), so there is no notifier to configure beside it and no `config/wedge-alarm` file.
 The alert fires at most once per max-defer window after a genuine wedge, and the durable `state/.subsuper-inject-wedged` marker and the tmux status-line flash stay exactly as they were: the marker is the record whether or not a delivery arrives.
 A bus that cannot be reached is logged by the channel and never crashes the daemon loop.
 
@@ -1819,6 +1819,9 @@ The two companion tools install at the exact published npm version their `toolch
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
 [`toolchain.versions`](../toolchain.versions) is the single owner of the exact version of every tool the toolchain installs, and every floor these checks enforce derives from its rows; its header owns the bump ritual.
 [`install.sh`](../install.sh) is the one command for a clean machine: it clones this repo into a home, writes [`defaults/`](../defaults) into the home once without overwriting an existing file, merges the shared account picker into `~/.learn-from-mistakes/config.yaml` only when that key is missing, and installs those pins into `~/.local/bin`, the same prefix [`bin/jg-bootstrap.sh`](../bin/jg-bootstrap.sh) installs into, so no install needs sudo and no tool ends up installed twice in two directories.
+
+Both `install.sh` and every session start also run [`bin/jg-axi-link.sh`](../bin/jg-axi-link.sh), which writes one launcher, `~/.local/bin/juggernaut-axi`, that runs `bin/juggernaut-axi` of the home named by `JG_HOME`, of the checkout the current directory is in, or of the home that wrote it.
+A file already there that is not the launcher is left alone and named.
 
 In that list, no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
 A visual report or decision surface is a sign-off board report, published with sign-off-axi; nothing in this list provides a separate review server.

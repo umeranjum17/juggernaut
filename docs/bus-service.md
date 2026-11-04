@@ -47,26 +47,26 @@ bin/jg-stack.sh status      # the same report, changing nothing
 ```
 
 On a fresh clone this one command brings the whole stack up: it builds the Go
-command, installs the four pinned tools, and installs, enables and starts the
-NATS unit, the wake engine, the reply router, the Dapr sidecar, ntfy and the `deliver` consumer that carries the `CAPTAIN` stream to ntfy, then checks the stream. It prints one line
+command, installs the pinned tools, and installs, enables and starts the
+NATS unit, the wake engine, the reply router, the Dapr sidecar, then checks the stream. It prints one line
 per part, for example `nats  installed 2.10.22, enabled enabled (jg-bus.service),
 running pid 123, listening 127.0.0.1:4222` and `wake-engine installed jg-bus, enabled enabled
 (jg-wake-engine.service), running pid 456, consuming JG_WAKE/wake-engine`, and a second run prints the same lines.
 The first part that cannot be made whole stops the run with one line,
 `STACK_FAILED: <part>: <what is missing>; blocks <what depends on it>`.
 
-The Dapr sidecar, ntfy and the `deliver` consumer are one per machine, like the bus unit, so the same owner rule governs them.
-Only the home that owns the bus unit (`bin/jg-bus.sh owner` prints `self` there) installs the pinned `daprd` and `ntfy`, writes, enables and starts their units, and makes the ntfy logins (`bin/jg-bus.sh ntfy-provision`, [the captain channel](captain-channel.md#reaching-his-ipad-logins-and-address)).
+The Dapr sidecar is one per machine, like the bus unit, so the same owner rule governs them.
+Only the home that owns the bus unit (`bin/jg-bus.sh owner` prints `self` there) installs the pinned `daprd`, and writes, enables and starts its unit.
 Any other home prints `<part>: owned by <home>, which installs and runs it; this home changes nothing` and reports the part as it finds it, so a second home's session start can no longer rewrite the owner's units or ports.
 `tests/jg-stack-owner.test.sh` proves it.
 
 `bin/jg-bootstrap.sh` (every session start), `bin/jg-update.sh` (after the
 fast-forward) and `install.sh` all run it, so a release never lands without its
 services. Each service is a **systemd user service** (`jg-bus`, `jg-wake-engine`,
-`jg-router`, `jg-dapr`, `jg-ntfy`, `jg-deliver`) when this account has a user session whose unit directory is this
+`jg-router`, `jg-dapr`) when this account has a user session whose unit directory is this
 HOME's; otherwise (CI, a container, a throwaway HOME) the same commands start
 detached from the home's `state/bus` through `bin/jg-bus.sh serve`. The units
-come from `bin/jg-bus.sh unit [nats|dapr|ntfy]`. The NATS unit runs the server
+come from `bin/jg-bus.sh unit [nats|dapr]`. The NATS unit runs the server
 itself, not `serve`, which starts services and exits; `ExecStartPost` runs
 `bin/jg-bus.sh bootstrap`, which waits for the port and creates the stream from
 `core/bus/stream.json`.
@@ -124,7 +124,7 @@ machine's own bus. Each home keeps its password in its own `state/bus`, and the 
 writes a sibling home's account from that home's file. A client that connects as the
 empty user is refused.
 No client puts the login on the nats argument list, where `ps` shows it to every user on the machine.
-Every other client passes it in `NATS_USER` and `NATS_PASSWORD`; the captain-ntfy consumer and the stream checks write it from the password file to `state/bus/nats-context.json` (mode 0600) and name that file with `--context`.
+Every other client passes it in `NATS_USER` and `NATS_PASSWORD`; the stream checks write it from the password file to `state/bus/nats-context.json` (mode 0600) and name that file with `--context`.
 
 Three config faults made the first unit fail on a real machine and are fixed:
 includes were absolute (nats resolves them against the including file), the

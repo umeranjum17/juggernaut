@@ -6,7 +6,7 @@
 #
 # THE PARTS, in the order each one needs the one before it.
 #   jg-bus   the Go command that owns the channel, built from core/bus (needs a Go toolchain)
-#   tools    nats-server, nats, daprd and ntfy at the versions toolchain.versions pins, installed
+#   tools    nats-server, nats and daprd at the versions toolchain.versions pins, installed
 #            user-local by bin/jg-bootstrap.sh, the one owner of how a release archive lands
 #   nats     the JetStream server and its CAPTAIN stream
 #   wake-engine  the Go consumer that brings a home's wake read model up to date for every wake
@@ -15,9 +15,6 @@
 #            observation (core/bus/cmd/jg-bus/watcher.go), which needs nats
 #   router   the Go consumer that routes captain replies by the board's own route, which needs nats
 #   dapr     the sidecar, which needs nats
-#   ntfy     the delivery server
-#   deliver  the CAPTAIN stream's consumer: reads each captain event off the stream and posts it
-#            to ntfy, writing state/captain-channel-delivered.jsonl (needs nats and ntfy)
 # Each service runs as a systemd user service (installed, enabled, started) when this account has a
 # user session whose unit directory is this HOME's; otherwise (CI, a container, a throwaway HOME) the
 # same argv is started detached from the home's state/bus directory by `jg-bus.sh serve`.
@@ -31,9 +28,11 @@
 #   stop     the first part that cannot be made whole stops the run with exit 1 and ONE line,
 #            `STACK_FAILED: <part>: <what is missing>; blocks <what depends on it>`. No later part
 #            is attempted, so a half state is never reported as healthy.
-#   owner    dapr, ntfy and the consumer are one per machine: only the home that owns the machine's
-#            bus unit installs, enables and starts them (and the ntfy logins, `jg-bus.sh
-#            ntfy-provision`); any other home reports them and changes nothing.
+#   owner    dapr is one per machine: only the home that owns the machine's bus unit installs,
+#            enables and starts it; any other home reports it and changes nothing.
+#   retire   `up` removes a part an earlier release ran and this one does not (RETIRED below): its
+#            unit is disabled, stopped and deleted, a detached process it recorded is stopped, and its
+#            runtime files go, so a home upgraded across that release ends with nothing of it left.
 #   callers  bin/jg-bootstrap.sh and bin/jg-update.sh run `up`, so a release never lands on a machine
 #            without its services; install.sh runs it last.
 # Env: JG_HOME, JG_STATE_OVERRIDE; JG_STACK_UNIT_PREFIX (unit names, default jg); JG_STACK_SUPERVISOR
@@ -68,7 +67,6 @@ listen_addr() {
   case $1 in
     nats) url=$("$BUS" config nats-url) ;;
     dapr) printf '127.0.0.1:%s\n' "$("$BUS" config dapr-http-port)"; return ;;
-    ntfy) url=$("$BUS" config ntfy-server) ;;
   esac
   url=${url#*://}; url=${url%%/*}
   case $url in *:*) printf '%s\n' "$url" ;; *) printf '%s:4222\n' "$url" ;; esac
@@ -98,7 +96,7 @@ supervisor() {
 }
 
 unit_name() { case $1 in nats) echo "$PREFIX-bus.service" ;; *) echo "$PREFIX-$1.service" ;; esac; }
-bin_of() { case $1 in nats|deliver) echo nats-server ;; dapr) echo daprd ;; ntfy) echo ntfy ;; esac; }
+bin_of() { case $1 in nats) echo nats-server ;; dapr) echo daprd ;; esac; }
 
 # ensure_tool <tool>: at or above its pin, installed from the pinned release when not.
 ensure_tool() {
@@ -132,7 +130,7 @@ report() {  # <part> <supervisor>
   name=$(unit_name "$part")
   if consumer_part "$part"; then ver=jg-bus; else ver=$(bash "$BOOT" version "$(bin_of "$part")" 2>/dev/null) || ver=unknown; fi
   # the consumers listen on nothing; their pid proves them
-  { consumer_part "$part" || [ "$part" = deliver ]; } || addr=$(listen_addr "$part")
+  consumer_part "$part" || addr=$(listen_addr "$part")
   if [ "$sup" = systemd ]; then
     enabled="$(systemctl --user is-enabled "$name" 2>/dev/null) ($name)"
     pid=$(systemctl --user show -p MainPID --value "$name" 2>/dev/null)
@@ -142,10 +140,6 @@ report() {  # <part> <supervisor>
   fi
   if [ -z "$pid" ] || [ "$pid" = 0 ] || ! kill -0 "$pid" 2>/dev/null; then
     fail "$part" "not running (pid ${pid:-none}), see $STATE/bus/$part.log: $(tail -n 2 "$STATE/bus/$part.log" 2>/dev/null | tr '\n' ' ')" "$(blocks "$part")"
-  fi
-  if [ "$part" = deliver ]; then
-    printf '%-7s enabled %s, running pid %s, consuming %s\n' "$part" "$enabled" "$pid" "$("$BUS" config stream)"
-    return
   fi
   if consumer_part "$part"; then
     # A part that resets its consumer on start (the watcher, when it holds no state yet) has none for an
@@ -167,7 +161,7 @@ report() {  # <part> <supervisor>
 
 consumer_part() { case $1 in wake-engine|wake-watcher|router) return 0 ;; *) return 1 ;; esac; }
 
-blocks() { case $1 in nats) echo "dapr, the stream and every live path" ;; wake-engine) echo "the wake read model fed by the bus" ;; wake-watcher) echo "the watcher's own-queue observation" ;; router) echo "routing of the captain's replies" ;; dapr) echo "publishing through the sidecar" ;; *) echo "delivery to the captain" ;; esac; }
+blocks() { case $1 in nats) echo "dapr, the stream and every live path" ;; wake-engine) echo "the wake read model fed by the bus" ;; wake-watcher) echo "the watcher's own-queue observation" ;; router) echo "routing of the captain's replies" ;; *) echo "publishing through the sidecar" ;; esac; }
 
 mkdir -p "$STATE/bus" || fail state "cannot create $STATE/bus" "everything"
 
@@ -176,19 +170,45 @@ mkdir -p "$STATE/bus" || fail state "cannot create $STATE/bus" "everything"
   || fail jg-bus "the Go command is not built and there is no Go toolchain (install go), see $STATE/bus/build.log" "every service"
 printf 'jg-bus built, state %s\n' "$STATE/bus"
 
-# 2. The pinned tools. dapr, ntfy and the consumer are one per machine, so only the home that owns
-# the machine's bus unit installs and runs them; every other home adds its account to the bus and
-# changes nothing else (the rule the nats unit already follows, core/bus/cmd/jg-bus/owner.go).
+# 2. The pinned tools. dapr is one per machine, so only the home that owns the machine's bus unit
+# installs and runs it; every other home adds its account to the bus and changes nothing else
+# (the rule the nats unit already follows, core/bus/cmd/jg-bus/owner.go).
 sup=$(supervisor)
 owner=self
 [ "$sup" != systemd ] || owner=$("$BUS" owner 2>/dev/null) || true
 [ -n "$owner" ] || owner=self
 tools="nats-server nats"
-[ "$owner" != self ] || tools="$tools daprd ntfy"
+[ "$owner" != self ] || tools="$tools daprd"
 for t in $tools; do ensure_tool "$t"; done
 
+# retire_part <part>: remove a part this release no longer runs, once and quietly when nothing is left.
+RETIRED="ntfy deliver"
+retire_part() {
+  local part=$1 name dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user pid what=''
+  name=$(unit_name "$part")
+  if [ "$sup" = systemd ] && [ "$owner" = self ] && [ -e "$dir/$name" ]; then
+    systemctl --user disable --now "$name" >/dev/null 2>&1 || true
+    rm -f -- "$dir/$name"
+    systemctl --user daemon-reload || fail "$part" "systemctl daemon-reload failed" "retiring $name"
+    systemctl --user reset-failed "$name" >/dev/null 2>&1 || true
+    what="$name removed"
+  fi
+  # A detached process is stopped only when the pid this stack recorded still runs this part.
+  pid=$([ -r "$STATE/bus/$part.pid" ] && tr -cd '0-9' < "$STATE/bus/$part.pid")
+  if [ -n "$pid" ] && ps -o args= -p "$pid" 2>/dev/null | grep -Eq "[ /]$part( |\$)"; then
+    kill "$pid" 2>/dev/null || true
+    what="${what:+$what, }process $pid stopped"
+  fi
+  if compgen -G "$STATE/bus/$part*" >/dev/null || compgen -G "$STATE/bus/install-$part.log" >/dev/null; then
+    rm -f -- "$STATE/bus/$part".* "$STATE/bus/$part"-* "$STATE/bus/install-$part.log"
+    what="${what:+$what, }runtime files removed"
+  fi
+  [ -z "$what" ] || echo "retired $part: $what"
+}
+if [ "$mode" = up ]; then for part in $RETIRED; do retire_part "$part"; done; fi
+
 started=0
-for part in nats wake-engine wake-watcher router dapr ntfy deliver; do
+for part in nats wake-engine wake-watcher router dapr; do
   mine=1
   # The wake engine, watcher and router read this home's own wakes, so every home runs its own; the rest
   # are the machine's shared services, which only the bus owner installs and runs.
@@ -218,14 +238,9 @@ for part in nats wake-engine wake-watcher router dapr ntfy deliver; do
   if consumer_part "$part"; then
     [ "$mode" = status ] || wait_consumer "$part" || true
   else
-    [ "$mode" = status ] || [ "$part" = deliver ] || [ "$mine" = 0 ] || wait_listening "$(listen_addr "$part")" || true
+    [ "$mode" = status ] || [ "$mine" = 0 ] || wait_listening "$(listen_addr "$part")" || true
   fi
   report "$part" "$sup"
-  if [ "$part" = ntfy ] && [ "$mode" = up ] && [ "$mine" = 1 ]; then
-    "$BUS" ntfy-provision 2>"$STATE/bus/ntfy-provision.log" \
-      || fail ntfy "the captain's logins could not be made, see $STATE/bus/ntfy-provision.log" "delivery to the captain"
-    tail -n 1 "$STATE/bus/ntfy-provision.log"
-  fi
   if [ "$part" = nats ]; then
     [ "$mode" = status ] || "$BUS" bootstrap >/dev/null 2>&1
     stream=$(sed -n 's/.*"name"[^"]*"\([^"]*\)".*/\1/p' "$ROOT/core/bus/stream.json" | head -n 1)
@@ -234,4 +249,19 @@ for part in nats wake-engine wake-watcher router dapr ntfy deliver; do
     echo "stream $stream exists"
   fi
 done
+# The chat gateway is optional: it runs only where this home has a bot token file. A home without one gets
+# no unit, no line and no failure; a token file removed later retires the unit it had.
+if "$BUS" gateway enabled; then
+  gw=$(unit_name gateway)
+  if [ "$mode" = up ] && [ "$sup" = systemd ]; then
+    changed=0; install_unit gateway && changed=1
+    [ "$changed" = 0 ] || systemctl --user daemon-reload || fail gateway "systemctl daemon-reload failed" "the captain's chat"
+    systemctl --user enable "$gw" >/dev/null 2>&1 || fail gateway "cannot enable $gw" "the captain's chat"
+    if [ "$changed" = 1 ] && systemctl --user is-active --quiet "$gw"; then systemctl --user restart "$gw"; else systemctl --user start "$gw"; fi \
+      || fail gateway "cannot start $gw, see journalctl --user -u $gw" "the captain's chat"
+  fi
+  echo "gateway     enabled ($gw)"
+elif [ "$mode" = up ]; then
+  retire_part gateway
+fi
 echo "stack: up ($sup)"

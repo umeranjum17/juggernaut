@@ -23,7 +23,7 @@
 #   jg-inbox.sh note [--request-id <id>] [--json] [--] <text>...
 #   jg-inbox.sh note [--request-id <id>] [--json] -   (body from stdin)
 #   jg-inbox.sh announce [--json] <id>
-#   jg-inbox.sh reply [--json] <id> <text>... | reply [--json] <id> -
+#   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--] <text>... | reply [--json] <id> [--attach <path>]... -
 #   jg-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]
 #   jg-inbox.sh ready
 #   jg-inbox.sh say  [<file.wav>]       (default: audio on stdin)
@@ -68,6 +68,11 @@
 # Each reply is stamped with a durable per-home sequence, so the receipts cursor
 # is a strict total order and two replies recorded in the same second are both
 # readable. One reply per note: a second one is refused.
+# `reply --attach <path>` (repeatable) names a file the answer carries. The path
+# is recorded absolute in the reply and shown as `attachments` in `receipts`; this
+# script only checks the file is a readable regular file and never sends it. The
+# channel that delivers the reply (the chat gateway) owns every send decision,
+# including the refusal of a secret path. With an attachment the text may be empty.
 # `ready` is the read-only primary-readiness projection (lock, wake-consumer
 # health, away posture, observation time). It never acquires the session lock
 # and never infers liveness from a lock file, a session, or a pane.
@@ -655,26 +660,50 @@ next_reply_seq() {
 }
 
 cmd_reply() {
-  local json=0 id body path staging seq
+  local json=0 id body path staging seq usage attach="" file text_args=() rest=0
+  usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--] <text>... (or: ... -)"
   if [ "${1:-}" = "--json" ]; then
     json=1
     shift
   fi
   id=${1:-}
-  [ -n "$id" ] || die "usage: jg-inbox.sh reply [--json] <id> <text>... (or: reply [--json] <id> -)"
+  [ -n "$id" ] || die "$usage"
   shift
   valid_note_id "$id" || die "invalid note id"
   path=$(note_path "$id") || die "no such note: $id"
-  if [ "$#" -eq 0 ]; then
-    die "usage: jg-inbox.sh reply [--json] <id> <text>... (or: reply [--json] <id> -)"
-  elif [ "$1" = "-" ]; then
-    [ "$#" -eq 1 ] || die "usage: jg-inbox.sh reply [--json] <id> -"
+  while [ "$#" -gt 0 ]; do
+    if [ "$rest" -eq 0 ] && [ "$1" = "--attach" ]; then
+      [ "$#" -ge 2 ] || die "--attach needs a file path"
+      file=$2
+      case "$file" in
+        *$'\n'*|*$'\r'*) die "refusing an attachment path with a line break" ;;
+        /*) ;;
+        *) file="$PWD/$file" ;;
+      esac
+      [ -f "$file" ] && [ -r "$file" ] || die "attachment is not a readable file: $2"
+      attach="$attach$file"$'\n'
+      shift 2
+    elif [ "$rest" -eq 0 ] && [ "$1" = "--" ]; then
+      rest=1
+      shift
+    else
+      text_args+=("$1")
+      shift
+    fi
+  done
+  if [ "${#text_args[@]}" -eq 0 ]; then
+    [ -n "$attach" ] || die "$usage"
+    body=""
+  elif [ "${text_args[0]}" = "-" ]; then
+    [ "${#text_args[@]}" -eq 1 ] || die "usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... -"
     body=$(cat; printf .)
     body=${body%.}
   else
-    body="$*"
+    body="${text_args[*]}"
   fi
-  [ -n "${body//[[:space:]]/}" ] || die "refusing to record an empty reply"
+  if [ -z "${body//[[:space:]]/}" ] && [ -z "$attach" ]; then
+    die "refusing to record an empty reply"
+  fi
   jg_question_flag_reply "$body"
   mkdir -p "$REPLIES"
   load_wake_lib || die "the reply sequence needs $JG_ROOT/bin/jg-wake-lib.sh"
@@ -692,6 +721,9 @@ cmd_reply() {
     printf 'id=%s\n' "$id"
     printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'seq=%s\n' "$seq"
+    while IFS= read -r file; do
+      [ -z "$file" ] || printf 'attach=%s\n' "$file"
+    done <<<"$attach"
     printf -- '--\n'
     printf '%s' "$body"
     case "$body" in
@@ -819,12 +851,18 @@ def reply_record(note_id):
     if not (raw_seq.isascii() and raw_seq.isdigit()):
         malformed_replies.append(note_id)
         return None
-    return {
+    out = {
         "id": note_id,
         "at": meta.get("at"),
         "body": body,
         "cursor": "%012d" % int(raw_seq),
     }
+    # attach= lines sit in the header; parse_record keeps one value per key.
+    head = path.read_bytes().decode("utf-8", errors="replace").partition("\n--")[0]
+    attachments = [l[len("attach="):] for l in head.splitlines() if l.startswith("attach=")]
+    if attachments:
+        out["attachments"] = attachments
+    return out
 
 # announced is null - not false - for a note written before this home tracked
 # announcement markers: it appended its own wake at creation and left no record

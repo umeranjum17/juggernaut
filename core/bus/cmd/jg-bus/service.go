@@ -371,7 +371,7 @@ func (a *app) startOne(quiet bool, name string, argv ...string) {
 	}
 }
 
-// daprArgv and ntfyArgv are the one argv each service starts with, shared by `serve`
+// daprArgv is the one argv the sidecar starts with, shared by `serve`
 // and the unit, so a detached start and a supervised one run the same command.
 func (a *app) daprArgv(path string) []string {
 	return []string{path,
@@ -400,10 +400,6 @@ func (a *app) daprResources() string {
 		return shipped
 	}
 	return dir
-}
-
-func (a *app) ntfyArgv(path string) []string {
-	return []string{path, "serve", "-c", a.busFile("ntfy.yml")}
 }
 
 // streamName is the JetStream stream the shipped config file names.
@@ -446,11 +442,20 @@ func (a *app) ensureStream() error {
 	return cmd.Run()
 }
 
+// natsArgs is the client login and server every stream command shares.
+func (a *app) natsArgs(rest ...string) ([]string, error) {
+	login, err := a.natsAuth()
+	if err != nil {
+		return nil, err
+	}
+	return append(append(login, "-s", a.cfgOr("nats-url", "")), rest...), nil
+}
+
 // natsAuth is the client login for this home's account when its credentials exist (the
 // unit's server refuses an empty user), and nothing for a bare server. The login is a nats
 // context file beside the password file, mode 0600, rewritten from that file whenever it
 // differs, and the client reads it at start: on the argument list the password showed in
-// `ps` to every user on the machine for each 30-second wait of the captain-ntfy consumer.
+// `ps` to every user on the machine for each stream call.
 func (a *app) natsAuth() ([]string, error) {
 	name, pass, ok := a.credentials()
 	if !ok {
@@ -562,8 +567,8 @@ func (a *app) bootstrap() int {
 }
 
 // ensure starts the server when it is not listening and creates the stream, then says
-// one line. It is idempotent, and it starts nothing but the server: the sidecar and
-// ntfy stay opt-in.
+// one line. It is idempotent, and it starts nothing but the server: the sidecar stays
+// opt-in.
 func (a *app) ensure() int {
 	natsURL := a.cfgOr("nats-url", "")
 	if err := os.MkdirAll(a.runtime, 0o755); err != nil {
@@ -590,7 +595,7 @@ func (a *app) ensure() int {
 	return 0
 }
 
-// serve starts the three services from their files. A service whose binary is missing
+// serve starts the services from their files. A service whose binary is missing
 // is named and not started; the others still run, because the record never depends on
 // them.
 func (a *app) serve() int {
@@ -614,25 +619,20 @@ func (a *app) serve() int {
 		a.startOne(false, "wake-watcher", self, "wake-watcher")
 		a.startOne(false, "router", self, "router")
 	}
+	if self, err := os.Executable(); err == nil && a.gateway([]string{"enabled"}) == 0 { // optional: no token file, nothing starts and nothing is said
+		a.startOne(false, "gateway", self, "gateway", "serve")
+	}
 	if path, err := exec.LookPath("daprd"); err == nil {
 		a.startOne(false, "dapr", a.daprArgv(path)...)
 	} else {
 		say("dapr: not started, no daprd on PATH")
-	}
-	if path, err := exec.LookPath("ntfy"); err == nil {
-		a.startOne(false, "ntfy", a.ntfyArgv(path)...)
-	} else {
-		say("ntfy: not started, no ntfy on PATH")
-	}
-	if self, err := os.Executable(); err == nil {
-		a.startOne(false, "deliver", self, "deliver")
 	}
 	return 0
 }
 
 // stop stops the services this home started from their recorded pids.
 func (a *app) stop() int {
-	for _, name := range []string{"nats", "wake-engine", "wake-watcher", "router", "dapr", "ntfy", "deliver"} {
+	for _, name := range []string{"nats", "wake-engine", "wake-watcher", "router", "dapr", "gateway"} {
 		pidPath := filepath.Join(a.runtime, name+".pid")
 		data, err := os.ReadFile(pidPath)
 		if err != nil {

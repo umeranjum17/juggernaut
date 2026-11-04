@@ -24,6 +24,7 @@
 #                 "BOOTSTRAP_INFO: nudged jg-<id> with '<message>'",
 #                 "SQUAD_LEAD_LIVENESS: squad_lead <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "SQUAD_LEAD_HANDOFF: squad_lead <id>: pending delivery: <n> item(s)",
+#                 "AXI_LINK: <why juggernaut-axi could not be put on PATH>",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
 #          When a RUNNING squad_lead home is fast-forwarded, its target is
 #          juggernaut's own current default-branch commit. A local worktree uses
@@ -896,7 +897,6 @@ bus_release_asset() {
     # The workflow engine's timer service; its archive holds a binary named `scheduler`.
     dapr-scheduler) printf 'https://github.com/dapr/dapr/releases/download/v%s/scheduler_%s_%s.tar.gz .tar.gz\n' \
       "$version" "$os" "$arch"; return 0 ;;
-    ntfy) repo=binwiederhier/ntfy; stem="ntfy_${version}_${os}_$arch"; ext=tar.gz ;;
     # The policy engine ships as one bare binary, not an archive; the second field "-.bin" says so.
     opa)
       stem="opa_${os}_$arch"
@@ -979,7 +979,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
-    nats-server|nats|daprd|dapr-scheduler|ntfy|opa) bus_install_hint "$1" ;;
+    nats-server|nats|daprd|dapr-scheduler|opa) bus_install_hint "$1" ;;
     learn-from-mistakes) echo "npm install -g $(jg_pin_npm learn-from-mistakes) && ln -sf learn-from-mistakes-axi \"\$(dirname \"\$(command -v learn-from-mistakes-axi)\")/learn-from-mistakes\"" ;;
     *)
       # Every npm tool installs the exact build its toolchain.versions row names, so this
@@ -1546,7 +1546,7 @@ startup_memory_budget_setup() {
 # it wrote, including sign-off's one-line arming reminder; arming itself stays
 # per home and is never done here.
 # bus_service: run the one install command (bin/jg-stack.sh), which installs, enables and
-# starts the message bus, the sidecar and ntfy and reports each part. Its first failure is one
+# starts the message bus and the sidecar and reports each part. Its first failure is one
 # MISSING line, and it never fails the boot. It talks to the network (pinned releases), so it
 # belongs to the network half of a split run; JG_STACK_SKIP=1 turns it off for a fixture.
 bus_service() {
@@ -1571,6 +1571,18 @@ companion_tool_wiring() {
   done
 }
 
+# Puts juggernaut-axi on PATH for this checkout; bin/jg-axi-link.sh owns the launcher.
+# JG_AXI_LINK_SKIP=1 skips it, so a test of another part never writes the real ~/.local/bin.
+axi_link() {
+  local out
+  [ "${JG_AXI_LINK_SKIP:-0}" != 1 ] || return 0
+  if out=$("$SCRIPT_DIR/jg-axi-link.sh" 2>&1); then
+    [ -z "$out" ] || echo "BOOTSTRAP_INFO: $out"
+    return 0
+  fi
+  echo "AXI_LINK: ${out:-juggernaut-axi could not be linked} (fix, then run: bin/jg-axi-link.sh)"
+}
+
 if [ "${1:-}" = "version" ]; then
   # The one owner of version parsing, so the installer never carries its own copy.
   parts=$(tool_version_parts "${2:?usage: jg-bootstrap.sh version <tool>}") || exit 1
@@ -1590,7 +1602,7 @@ if [ "${1:-}" = "install" ]; then
     # they install through the one function that owns those rules rather than
     # through a command string.
     case $t in
-      nats-server|nats|daprd|dapr-scheduler|ntfy|opa)
+      nats-server|nats|daprd|dapr-scheduler|opa)
         bus_tool_install "$t" || { echo "error: installing $t failed" >&2; exit 1; }
         continue
         ;;
@@ -1662,6 +1674,7 @@ if [ "${JG_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase; then
   fi
   startup_memory_budget_setup
   companion_tool_wiring
+  axi_link
   bus_service
   if backlog_record_reconcile; then
     :

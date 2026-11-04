@@ -21,7 +21,7 @@ TMP_ROOT=$(jg_test_tmproot jg-live-claim)
 # Fake service probes: every required service up, unless a case removes one.
 PROBES="$TMP_ROOT/probes"
 mkdir -p "$PROBES"
-for svc in nats dapr ntfy deliver; do
+for svc in nats dapr; do
   printf '#!/bin/sh\necho "pid 4242"\n' > "$PROBES/$svc"; chmod +x "$PROBES/$svc"
 done
 export JG_LIVE_SERVICES_PROBES="$PROBES"
@@ -141,19 +141,19 @@ test_the_lead_report_path_keeps_a_live_claim() {
 test_a_down_service_refuses_the_live_claim() {
   local dir claim='Fixed it; live: v1.2.3 @ https://app.test' out rc=0
   dir=$(home down-service 'v1.2.3 2026-11-01T09:00Z app.test')
-  mv "$PROBES/dapr" "$PROBES/dapr.off"; rm -f "$PROBES/ntfy"
+  mv "$PROBES/dapr" "$PROBES/dapr.off"; mv "$PROBES/nats" "$PROBES/nats.off"
   out=$(bash "$LIVE_SERVICES" 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "the service check must exit 1 with services down, got $rc"
-  assert_contains "$out" 'UP nats pid 4242' 'a running service prints its pid'
-  assert_contains "$out" 'DOWN dapr' 'a stopped service is named'
-  assert_contains "$out" 'LIVE_SERVICES: DOWN dapr ntfy' 'the verdict lists every down service'
+  assert_contains "$out" 'DOWN nats' 'a stopped service is named'
+  assert_contains "$out" 'DOWN dapr' 'every stopped service is named'
+  assert_contains "$out" 'LIVE_SERVICES: DOWN nats dapr' 'the verdict lists every down service'
   assert_contains "$out" 'NOT-IN-DESIGN wake-engine' 'the output says which services are not part of the design'
   assert_contains "$out" 'NOT-IN-DESIGN router' 'the router is named as not in the design'
   verdict "$dir" 'done' "$claim"
   [ "$RC" -eq 3 ] || fail "a recorded release with services down must not stand, got $RC"
   assert_equals "merged-not-released: $claim" "$OUT" 'the claim is rewritten as merged-not-released'
-  assert_contains "$ERR" 'LIVE_SERVICES: DOWN dapr ntfy' 'the refusal names the down services'
-  mv "$PROBES/dapr.off" "$PROBES/dapr"; printf '#!/bin/sh\necho "pid 4242"\n' > "$PROBES/ntfy"; chmod +x "$PROBES/ntfy"
+  assert_contains "$ERR" 'LIVE_SERVICES: DOWN nats dapr' 'the refusal names the down services'
+  mv "$PROBES/dapr.off" "$PROBES/dapr"; mv "$PROBES/nats.off" "$PROBES/nats"
   verdict "$dir" 'done' "$claim"
   [ "$RC" -eq 0 ] || fail "with every service up the live claim must stand, got $RC: $ERR"
   pass 'a live claim is refused while a required service is down and stands when all run'

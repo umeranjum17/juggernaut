@@ -33,6 +33,9 @@ JG_TEST_LIB_SOURCED=1
 # suite's fixtures were written against.
 umask 022
 
+# No test writes the real ~/.local/bin; the one test of the link (tests/jg-axi-link.test.sh) unsets this.
+export JG_AXI_LINK_SKIP=1
+
 # Fixture Git isolation for every suite that reaches this library; the helper's
 # header owns the invariant and the layers it deliberately leaves in force.
 # shellcheck source=tests/git-config-helpers.sh

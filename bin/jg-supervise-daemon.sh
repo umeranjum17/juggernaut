@@ -864,7 +864,7 @@ escalate_flush() {  # <state>
 # --- the wedge alert goes to the captain channel ----------------------------
 # A wedged away-mode supervisor is an alert the captain must see, so it reaches
 # him by the one captain channel (bin/jg-bus.sh): that path owns the record, the
-# delivery to his iPad, the undelivered accounting and the mode switch, and no
+# publish to the bus, the undelivered accounting and the mode switch, and no
 # notifier lives here beside it. The durable marker and the tmux flash below stay
 # exactly as they were, and the alert stays best-effort - a bus that cannot be
 # reached is logged by its owner and never crashes the daemon loop.
@@ -915,7 +915,7 @@ inject_wedge_alarm() {  # <state> <age-seconds>
     tmux display-message -t "$target" "fm: away-mode escalations WEDGED ${age}s — see $marker" 2>/dev/null || true
   fi
   # The alert, by the one captain channel. Unlike the tmux flash above (skipped
-  # on every non-tmux backend), this reaches the captain's iPad even when every
+  # on every non-tmux backend), this reaches the captain's channel even when every
   # pane and its backend status-line is unreadable - the gap the 2026-07-10
   # overnight incident fell through. Best-effort; the marker above stays the
   # durable record whether or not the delivery arrives.

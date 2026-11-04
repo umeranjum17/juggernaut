@@ -114,7 +114,6 @@ stop_lab() {
   for f in "$D"/reap-*.pid; do
     [ ! -s "$f" ] || kill "$(cat "$f")" 2>/dev/null || true
   done
-  if [ -s "$D/sink.pid" ]; then kill "$(cat "$D/sink.pid")" 2>/dev/null || true; fi
 }
 # The servers stop before the shared cleanup removes $D (and the pid files in it): a signal
 # used to remove the directory first, so the stop found no pid and the server outlived the run.
@@ -179,7 +178,7 @@ assert_contains "$(cat "$D/unit2.err")" "owned by $H1" "the bootstrap path must 
 [ "$(snap)" = "$before" ] || fail "a non-owner changed the owner's unit file or bus.conf"
 [ "$(cat "$D/service.pid")" = "$pid_before" ] || fail "a non-owner restarted the shared bus"
 grep -q reload "$D/systemctl.log" || fail "the server was never asked to reload the new account"
-# `owner` is what bin/jg-stack.sh asks before it installs dapr, ntfy or the consumer.
+# `owner` is what bin/jg-stack.sh asks before it installs dapr.
 assert_equals "self" "$(bus "$H1" owner)" "the home that owns the unit is told it owns it"
 other_owner=$(bus "$H2" owner); rc=$?
 assert_equals "$H1" "$other_owner" "a joined home is told who owns the unit"
@@ -247,48 +246,22 @@ grep -q 'Authorization Violation' "$D/mismatch.err" \
   || { cat "$D/mismatch.err"; fail "a mismatched name was not refused the way production refused it"; }
 pass "a home the machine's registry names logs in as that account from every client, creates its stream and round-trips one message; the server refuses nothing, and still refuses a name its accounts file does not hold"
 
-# --- 1d. the captain-ntfy consumer logs in without its password on the command line ------
-# The live consumer ran `nats --password=...` for every 30-second wait, so any user on the
-# machine read the password in `ps`. Home two's password begins with a dash, the case a
-# flag parser misreads. The consumer delivers one event from its stream to a stand-in
-# ntfy, and no call any bus command made in this lab carried a password flag or value.
-SINK="$D/ntfy-requests.jsonl"
-python3 - "$SINK" "$D/sink.port" >/dev/null 2>&1 <<'PY' &
-import http.server, json, sys
-out, portfile = sys.argv[1], sys.argv[2]
-class H(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        body = self.rfile.read(int(self.headers.get('content-length') or 0)).decode('utf-8', 'replace')
-        with open(out, 'a') as f:
-            f.write(json.dumps({'path': self.path, 'body': body}) + '\n')
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'{"id":"lab-ntfy-1"}')
-    def log_message(self, *a):
-        pass
-srv = http.server.HTTPServer(('127.0.0.1', 0), H)
-open(portfile, 'w').write(str(srv.server_address[1]))
-srv.serve_forever()
-PY
-echo $! > "$D/sink.pid"
-for _ in $(seq 100); do [ -s "$D/sink.port" ] && break; sleep 0.1; done
-[ -s "$D/sink.port" ] || fail "the stand-in ntfy never started"
-printf 'set ntfy-server http://127.0.0.1:%s\nset ntfy-topic lab-captain\n' "$(cat "$D/sink.port")" >> "$H2/config/captain-channel"
-printf '{"at":1,"kind":"card","key":"k-argv","subject":"jg.captain.card","text":"Delivered with the login off the command line."}' |
-  NATS_USER=$name2 NATS_PASSWORD=$(cat "$cred2") "$NATS_BIN" -s "nats://127.0.0.1:$PORT" \
-    pub jg.captain.card --force-stdin >/dev/null 2>&1 || fail "the lab could not publish to home two's stream"
-out=$(bus "$H2" deliver --once 2>&1) || fail "home two's consumer did not drain its stream: $out"
-assert_contains "$(cat "$SINK" 2>/dev/null)" "Delivered with the login off the command line." "home two's consumer must deliver the event to ntfy"
-assert_contains "$(cat "$H2/state/captain-channel-delivered.jsonl" 2>/dev/null)" '"ntfy_id":"lab-ntfy-1"' "the delivery record must carry ntfy's id"
-grep -q -- 'consumer next' "$D/nats-argv.log" || fail "the consumer's wait never went through the lab client, so the check below would prove nothing"
+# --- 1d. a stream call logs in without its password on the command line ------------------
+# The old live consumer ran `nats --password=...` for every 30-second wait, so any user on
+# the machine read the password in `ps`. Home two's password begins with a dash, the case
+# a flag parser misreads. A stream check from home two goes through the logging client, and
+# no call any bus command made in this lab carried a password flag or value.
+: > "$D/nats-argv.log"
+bus "$H2" stream >/dev/null 2>&1 || fail "home two could not check its own stream"
+grep -q -- 'stream info' "$D/nats-argv.log" || fail "the stream check never went through the lab client, so the check below would prove nothing"
 ! grep -q -- '--password' "$D/nats-argv.log" || fail "a nats call passed a password flag on its command line"
 for p in "$D"/homes/*/state/bus/*.pass "$LEAD2"/state/bus/*.pass; do
   [ -s "$p" ] || continue
   ! grep -qF -- "$(tr -d '\n' < "$p")" "$D/nats-argv.log" || fail "a nats call carried the password in $p on its command line"
 done
 assert_equals "600" "$(stat -c %a "$H2/state/bus/nats-context.json" 2>/dev/null || stat -f %Lp "$H2/state/bus/nats-context.json")" \
-  "the consumer's login file must be readable by its owner only"
-pass "the captain-ntfy consumer delivers with its login in a 0600 context file, and no nats call any bus command made carried a password flag or value"
+  "the login file must be readable by its owner only"
+pass "a stream call logs in with a 0600 context file, and no nats call any bus command made carried a password flag or value"
 
 # The owner's own unchanged install touches nothing; a third home joins by reload too.
 bus "$H1" install-service >/dev/null 2>&1
@@ -350,21 +323,17 @@ pass "a lab home is refused by the machine's real registry, which stays byte-ide
 # own state from the manager. Active units read up, one stopped unit reads down on its own
 # line with the others still up, and a manager that cannot be asked reads unknown.
 UNITS="$XDG_CONFIG_HOME/systemd/user"; mkdir -p "$D/units"
-for part in dapr ntfy deliver; do
-  : > "$UNITS/$JG_STACK_UNIT_PREFIX-$part.service"
-  : > "$D/units/$JG_STACK_UNIT_PREFIX-$part.service.active"
-done
+: > "$UNITS/$JG_STACK_UNIT_PREFIX-dapr.service"
+: > "$D/units/$JG_STACK_UNIT_PREFIX-dapr.service.active"
 unit_of() { case $1 in nats) echo "$JG_BUS_UNIT" ;; *) echo "$JG_STACK_UNIT_PREFIX-$1.service" ;; esac; }
 status_out=$(bus "$H1" status 2>&1)
-for part in nats dapr ntfy deliver; do
+for part in nats dapr; do
   assert_contains "$status_out" "$part: up (unit $(unit_of "$part"))" "an active $part unit must read up: $status_out"
 done
-rm -f -- "$D/units/$(unit_of ntfy).active"
+rm -f -- "$D/units/$(unit_of dapr).active"
 status_out=$(bus "$H1" status 2>&1)
-assert_contains "$status_out" "ntfy: down (unit $(unit_of ntfy) inactive)" "a stopped unit must read down: $status_out"
-for part in nats dapr deliver; do
-  assert_contains "$status_out" "$part: up (unit $(unit_of "$part"))" "one stopped unit must not read the others down: $status_out"
-done
+assert_contains "$status_out" "dapr: down (unit $(unit_of dapr) inactive)" "a stopped unit must read down: $status_out"
+assert_contains "$status_out" "nats: up (unit $(unit_of nats))" "one stopped unit must not read the other down: $status_out"
 pass "status reads each service's unit state: active units read up, and a stopped one reads down alone"
 
 # The manager is the only owner of that truth, so a probe that cannot ask it says unknown
@@ -375,7 +344,7 @@ BLIND="$D/blind"; mkdir -p "$BLIND"
 printf '#!/usr/bin/env bash\necho "Failed to connect to bus: no medium found" >&2\nexit 1\n' > "$BLIND/systemctl"
 chmod +x "$BLIND/systemctl"
 status_out=$(PATH="$BLIND:$PATH" bus "$H1" status 2>&1)
-for part in nats dapr ntfy deliver; do
+for part in nats dapr; do
   assert_contains "$status_out" "$part: unknown (cannot read the service manager for $(unit_of "$part"))" \
     "a probe that cannot ask the manager must say unknown for $part: $status_out"
 done

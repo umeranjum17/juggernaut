@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One bus owner per machine: dapr, ntfy and the CAPTAIN consumer are one per machine, so only the home
-# that owns the machine's bus unit installs, enables and starts them and makes the ntfy logins.
-# Any other home that runs `bin/jg-stack.sh up` reports them, names the owner, and changes nothing.
+# One bus owner per machine: dapr is one per machine, so only the home that owns the machine's bus
+# unit installs, enables and starts it, and retires the ntfy and consumer units an earlier release left.
+# Any other home that runs `bin/jg-stack.sh up` reports it, names the owner, and changes nothing.
 #
 # It runs the real bin/jg-stack.sh in a copy of the repo's bin with a stand-in bus command (which
 # answers `owner`), a stand-in tool installer and a systemctl that logs every call, so no service,
@@ -62,27 +62,43 @@ EOF
 chmod +x "$T"/repo/bin/*.sh "$T/fakebin/systemctl"
 
 stack() {  # <owner or empty> -> output of one `up`; calls land in $T/calls
-  : > "$T/calls"; rm -rf "$T/xdg/systemd"; rm -f "$T"/have-*; : > "$T/have-nats-server"; : > "$T/have-nats"
+  : > "$T/calls"; [ -n "${KEEP_UNITS:-}" ] || rm -rf "$T/xdg/systemd"; rm -f "$T"/have-*; : > "$T/have-nats-server"; : > "$T/have-nats"
   env -u JG_STACK_SKIP PATH="$T/fakebin:$PATH" HOME="$T/home" XDG_CONFIG_HOME="$T/xdg" JG_HOME="$T/repo" JG_STATE_OVERRIDE="$T/state" \
     JG_STACK_SUPERVISOR=systemd FIXTURE_OWNER="${1:-}" "$T/repo/bin/jg-stack.sh" up 2>&1
 }
 
 owned=$(stack "")
 assert_contains "$owned" "stack: up (systemd)" "the owner's run did not finish: $owned"
-for part in dapr ntfy deliver; do
-  assert_contains "$(cat "$T/calls")" "systemctl --user enable jg-$part.service" "the owner did not enable $part"
-  [ -f "$T/xdg/systemd/user/jg-$part.service" ] || fail "the owner did not write the $part unit"
-done
+assert_contains "$(cat "$T/calls")" "systemctl --user enable jg-dapr.service" "the owner did not enable dapr"
+[ -f "$T/xdg/systemd/user/jg-dapr.service" ] || fail "the owner did not write the dapr unit"
 assert_contains "$(cat "$T/calls")" "install daprd" "the owner did not install daprd"
-assert_contains "$(cat "$T/calls")" "bus ntfy-provision" "the owner did not make the ntfy logins"
+! grep -Eq 'install ntfy$|bus ntfy-provision' "$T/calls" || fail "the owner still installs or provisions ntfy"
 
 other=$(stack "/another/home")
 assert_contains "$other" "stack: up (systemd)" "the non-owner's run did not finish: $other"
-for part in dapr ntfy deliver; do
-  assert_contains "$other" "$part: owned by /another/home" "the non-owner was not told who owns $part"
-  [ ! -e "$T/xdg/systemd/user/jg-$part.service" ] || fail "a non-owner wrote the $part unit"
-  ! grep -Eq "systemctl --user (enable|start|restart) jg-$part\.service" "$T/calls" || fail "a non-owner changed jg-$part.service"
+assert_contains "$other" "dapr: owned by /another/home" "the non-owner was not told who owns dapr"
+[ ! -e "$T/xdg/systemd/user/jg-dapr.service" ] || fail "a non-owner wrote the dapr unit"
+! grep -Eq "systemctl --user (enable|start|restart) jg-dapr\.service" "$T/calls" || fail "a non-owner changed jg-dapr.service"
+! grep -Eq 'install daprd$' "$T/calls" || fail "a non-owner installed a one-per-machine tool"
+pass "stack: only the bus owner installs and starts dapr; any other home reports it and changes nothing"
+
+# A home that still has the old ntfy wiring: the owner's run retires the units, a non-owner's leaves them.
+old_wiring() {
+  mkdir -p "$T/xdg/systemd/user"
+  for part in ntfy deliver; do printf '[Service]\n' > "$T/xdg/systemd/user/jg-$part.service"; done
+  mkdir -p "$T/state/bus"; : > "$T/state/bus/ntfy.log"; : > "$T/state/bus/deliver.pid"
+}
+old_wiring
+other=$(KEEP_UNITS=1 stack "/another/home")
+[ -f "$T/xdg/systemd/user/jg-ntfy.service" ] || fail "a non-owner removed the machine's ntfy unit"
+old_wiring
+owned=$(KEEP_UNITS=1 stack "")
+assert_contains "$owned" "stack: up (systemd)" "a home with the old wiring did not end clean: $owned"
+for part in ntfy deliver; do
+  assert_contains "$(cat "$T/calls")" "systemctl --user disable --now jg-$part.service" "the old $part unit was not stopped"
+  [ ! -e "$T/xdg/systemd/user/jg-$part.service" ] || fail "the old $part unit file is still there"
 done
-! grep -Eq 'install (daprd|ntfy)$' "$T/calls" || fail "a non-owner installed a one-per-machine tool"
-! grep -q 'bus ntfy-provision' "$T/calls" || fail "a non-owner made the ntfy logins"
-pass "stack: only the bus owner installs, starts and provisions dapr, ntfy and the consumer; any other home reports them and changes nothing"
+[ -z "$(find "$T/state/bus" -name 'ntfy*' -o -name 'deliver*')" ] || fail "runtime files of the old wiring are still there"
+owned=$(KEEP_UNITS=1 stack "")
+! grep -q 'retired' <<<"$owned" || fail "a second run retired something again: $owned"
+pass "stack: a home with the old ntfy wiring ends clean, the retirement runs once, and a non-owner leaves the machine's units alone"

@@ -16,6 +16,8 @@ journeys:
     command: bash journeys/watcher-window-inventory.sh
   migration-card:
     command: bash journeys/migration-card.sh
+  axi-on-path:
+    command: bash journeys/axi-on-path.sh
   dapr-workflow:
     command: bash journeys/dapr-workflow.sh
   relaunch-model-refusal:
@@ -155,6 +157,8 @@ journeys:
     command: bash journeys/token-cuts-live.sh
   context-bound-at-wake:
     command: bash journeys/context-bound-at-wake.sh
+  axi-digest:
+    command: bash journeys/axi-digest.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

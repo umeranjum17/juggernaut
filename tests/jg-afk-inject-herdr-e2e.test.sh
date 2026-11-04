@@ -97,7 +97,7 @@ jg_backend_herdr_version_check || fail "version_check failed against the real in
 STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/jg-afk-herdr-e2e.XXXXXX")
 # Scenario D sends the wedge alert to the captain channel; point that path at a
 # `mode off` config so the proof stays offline instead of posting to a bus and an
-# iPad no test may reach (docs/captain-channel.md owns the switch).
+# chat gateway no test may reach (docs/captain-channel.md owns the switch).
 CHANNEL_OFF="$STATE_DIR/captain-channel-off"
 printf 'set mode off\n' > "$CHANNEL_OFF"
 mkdir -p "$STATE_DIR"

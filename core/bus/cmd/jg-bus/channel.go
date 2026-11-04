@@ -24,6 +24,8 @@ type event struct {
 	Subject string `json:"subject"`
 	Text    string `json:"text"`
 	Link    string `json:"link,omitempty"`
+	// Media is set by the chat gateway's inbound event only; old events do not have it.
+	Media []mediaFile `json:"media,omitempty"`
 }
 
 // toJSON renders one value without HTML escaping, so a text with `&` or `<` keeps the
@@ -39,9 +41,9 @@ func toJSON(v any) string {
 }
 
 // eventJSON builds the one event document for a fact.
-func (a *app) eventJSON(at int64, kind, key, text, link string) string {
+func (a *app) eventJSON(at int64, kind, key, text, link string, media ...mediaFile) string {
 	return toJSON(event{At: at, Kind: kind, Key: key,
-		Subject: a.cfgOr("subject-prefix", "") + "." + kind, Text: text, Link: link})
+		Subject: a.cfgOr("subject-prefix", "") + "." + kind, Text: text, Link: link, Media: media})
 }
 
 // appendLine appends one line to a record and reports why when it cannot.
@@ -99,21 +101,7 @@ func (a *app) noteFailure(what, why string) {
 func post(target, body string, headers map[string]string) (int, string, error) {
 	args := []string{"-sS", "--max-time", "5", "-X", "POST", "--data-binary", "@-", "-w", "\n%{http_code}"}
 	for k, v := range headers {
-		if k != "Authorization" {
-			args = append(args, "-H", k+": "+v)
-		}
-	}
-	// A login never goes on the argument list, where any process on the host can read it:
-	// curl reads those headers from a private file.
-	if login := headers["Authorization"]; login != "" {
-		file, err := os.CreateTemp("", "jg-bus-auth-*")
-		if err != nil {
-			return 0, "", err
-		}
-		defer os.Remove(file.Name())
-		fmt.Fprintf(file, "Authorization: %s\n", login)
-		file.Close()
-		args = append(args, "-H", "@"+file.Name())
+		args = append(args, "-H", k+": "+v)
 	}
 	args = append(args, target)
 	cmd := exec.Command("curl", args...)
@@ -135,25 +123,9 @@ func post(target, body string, headers map[string]string) (int, string, error) {
 // ok2xx reports an accepted HTTP status.
 func ok2xx(status int) bool { return status >= 200 && status < 300 }
 
-// deliverToNtfy sends one event to the captain's topic and returns ntfy's own answer (its
-// message id). It is the one delivery call: the consumer on the CAPTAIN stream makes it for
-// every event the bus accepted, and publish makes it only for an event the bus did not.
-func (a *app) deliverToNtfy(text string) (target, id string, err error) {
-	target = a.ntfyURL()
-	headers := map[string]string{"Title": clampChars(firstLine(text), 120),
-		"Tags": a.cfgOr("ntfy-tag", ""), "Authorization": a.ntfyAuthHeader()}
-	status, out, perr := post(target, text, headers)
-	if perr != nil {
-		return target, "", fmt.Errorf("%s", detail(out))
-	}
-	if !ok2xx(status) {
-		return target, "", fmt.Errorf("ntfy answered HTTP %d: %s", status, detail(out))
-	}
-	var reply struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal([]byte(out), &reply)
-	return target, reply.ID, nil
+// busTarget is the sidecar's publish address, which the subject follows.
+func (a *app) busTarget() string {
+	return strings.TrimRight(a.cfgOr("dapr-http-url", ""), "/") + "/v1.0/publish/" + a.cfgOr("dapr-pubsub", "")
 }
 
 // noteUndelivered names a delivery that did not arrive, with its error.
@@ -184,19 +156,32 @@ func (a *app) publish(args []string) int {
 			return die("publish: unknown flag %s", rest[i])
 		}
 	}
+	return a.emit(kind, key, text, link, nil)
+}
+
+// emit is publish for a caller that holds the event's parts, such as the chat gateway's inbound
+// event with its stored files. When the bus refuses a card, outcome, alert or digest, the chat
+// gateway's adapter sends it in-process, so the owner still hears it.
+func (a *app) emit(kind, key, text, link string, media []mediaFile) int {
+	at := time.Now().Unix()
+	ev := event{At: at, Kind: kind, Key: key, Text: text, Link: link}
+	return a.emitDoc(kind, a.eventJSON(at, kind, key, text, link, media...), func() error { return a.sendToChat(ev) })
+}
+
+// emitDoc records one event document and posts it to the bus. fallback delivers it another way
+// when the bus does not take it; an event neither path took is named in the undelivered record.
+func (a *app) emitDoc(kind, doc string, fallback func() error) int {
 	mode := a.channelMode()
 	if mode == "off" {
 		return 0
 	}
-	doc := a.eventJSON(time.Now().Unix(), kind, key, text, link)
 	subject := a.cfgOr("subject-prefix", "") + "." + kind
 	if err := os.MkdirAll(a.state, 0o755); err != nil {
 		a.noteFailure("record", err.Error())
 	} else if err := appendLine(a.record, doc); err != nil {
 		a.noteFailure("record", err.Error())
 	}
-	target := strings.TrimRight(a.cfgOr("dapr-http-url", ""), "/") +
-		"/v1.0/publish/" + a.cfgOr("dapr-pubsub", "") + "/" + subject
+	target := a.busTarget() + "/" + subject
 	status, out, err := post(target, doc, map[string]string{"Content-Type": "application/json"})
 	accepted := err == nil && ok2xx(status)
 	if !accepted {
@@ -205,18 +190,30 @@ func (a *app) publish(args []string) int {
 		}
 		a.noteFailure("bus "+subject, out)
 	}
-	if mode != "live" || accepted {
-		// Live and accepted: the event is on the CAPTAIN stream, and the stream's
-		// consumer (`jg-bus deliver`) is the one path that delivers it to ntfy.
-		return 0
-	}
-	// The bus did not take the event, so no consumer will see it: deliver it directly
-	// rather than lose a captain-facing event.
-	if delivery, _, err := a.deliverToNtfy(text); err != nil {
-		a.noteFailure("ntfy", err.Error())
-		a.noteUndelivered(delivery, err.Error(), doc)
+	if mode == "live" && !accepted && !isChatEvent(subject) {
+		if ferr := fallback(); ferr == nil {
+			return 0
+		} else {
+			out += "; fallback: " + ferr.Error()
+		}
+		// Neither path took the event, so name it, with the event itself, so a reader of the
+		// undelivered record can send it again.
+		a.noteUndelivered(target, out, doc)
 	}
 	return 0
+}
+
+// emitReply publishes the owner's answer to a card, in the shape the router reads. When the bus
+// refuses it, the board's own route takes it now, which is what the router would have done.
+func (a *app) emitReply(card, answer string) int {
+	doc := toJSON(map[string]string{"at": time.Now().UTC().Format("2006-01-02T15:04:05Z"), "kind": "reply",
+		"key": card, "subject": a.cfgOr("subject-prefix", "") + ".reply", "answer": answer})
+	return a.emitDoc("reply", doc, func() error {
+		if code := a.routeReply([]byte(doc)); code != 0 {
+			return fmt.Errorf("the board route exited %d", code)
+		}
+		return nil
+	})
 }
 
 // reply routes one captain reply event by the rule in force: the board's own route.
@@ -308,11 +305,11 @@ func (a *app) config(args []string) int {
 func (a *app) status() int {
 	target := "none"
 	if a.channelMode() == "live" {
-		target = a.ntfyURL()
+		target = a.busTarget()
 	}
-	fmt.Printf("mode %s, relay %s, delivery %s\n", a.channelMode(), a.cfgOr("ntfy-relay", ""), target)
+	fmt.Printf("mode %s, delivery %s\n", a.channelMode(), target)
 	fmt.Printf("record %s: %d event(s), %d undelivered\n", a.record, countLines(a.record), countLines(a.undelivered))
-	for _, name := range []string{"nats", "dapr", "ntfy", "deliver"} {
+	for _, name := range []string{"nats", "dapr"} {
 		fmt.Printf("%s: %s\n", name, a.serviceState(name))
 	}
 	return 0
@@ -392,8 +389,8 @@ func unitState(unit string) (load, active string, ok bool) {
 // unit prints the systemd user service for one part of the stack a home installs once,
 // so it is up after every boot and restart without anyone typing a command: `nats`
 // (the default) runs the server itself, not `serve`, which only starts services and
-// exits, and creates the stream right after it starts; `dapr` and `ntfy` run their
-// own binary in the foreground, the same argv `serve` starts them with.
+// exits, and creates the stream right after it starts; `dapr` runs its
+// own binary in the foreground, the same argv `serve` starts it with.
 func (a *app) unit(args []string) int {
 	part := "nats"
 	if len(args) > 0 {
@@ -485,26 +482,18 @@ func (a *app) buildUnit(part string) (string, error) {
 		fmt.Fprintf(&b, "Description=Juggernaut message bus sidecar (Dapr over NATS)\n")
 		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
 		a.unitService(&b, quote, percent, quoteAll(quote, a.daprArgv(path)))
-	case "ntfy":
-		path, err := exec.LookPath("ntfy")
-		if err != nil {
-			return "", fmt.Errorf("no ntfy on PATH")
-		}
-		fmt.Fprintf(&b, "Description=Juggernaut captain channel delivery (ntfy, loopback)\n")
-		fmt.Fprintf(&b, "After=network.target\n\n")
-		a.unitService(&b, quote, percent, quoteAll(quote, a.ntfyArgv(path)))
-	case "deliver":
+	case "gateway":
 		self, err := os.Executable()
 		if err != nil {
 			return "", fmt.Errorf("cannot find the jg-bus binary: %v", err)
 		}
-		fmt.Fprintf(&b, "Description=Juggernaut captain channel consumer (CAPTAIN stream to ntfy)\n")
+		fmt.Fprintf(&b, "Description=Juggernaut captain chat gateway (Telegram text in and out)\n")
 		fmt.Fprintf(&b, "After=network.target %s\nRequires=%s\n\n", natsUnit(), natsUnit())
-		a.unitService(&b, quote, percent, quoteAll(quote, []string{self, "deliver"}))
+		a.unitService(&b, quote, percent, quoteAll(quote, []string{self, "gateway", "serve"}))
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_BUS_ROOT="+a.root))
 		fmt.Fprintf(&b, "Environment=%s\n", quote("JG_STATE_OVERRIDE="+a.state))
 	default:
-		return "", fmt.Errorf("unit: unknown part %q (nats, wake-engine, wake-watcher, router, dapr, ntfy, deliver)", part)
+		return "", fmt.Errorf("unit: unknown part %q (nats, wake-engine, wake-watcher, router, dapr, gateway)", part)
 	}
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	return b.String(), nil

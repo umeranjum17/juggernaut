@@ -1,0 +1,233 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func pngBytes(seed uint8) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{seed, 0, 0, 255})
+	var b bytes.Buffer
+	png.Encode(&b, img)
+	return b.Bytes()
+}
+
+// call is one request the fake Bot API got: its method, its form fields (or JSON keys) and the
+// files it carried, by form field.
+type call struct {
+	method   string
+	fields   map[string]string
+	filename map[string]string
+	data     map[string][]byte
+	streamed bool
+}
+
+// The owner's notes are answered with files: a picture, a picture and a file, an album, a picture
+// Telegram refuses, a file Telegram refuses, and files that must never go (a token, a link to it,
+// .env, a file over 50 MB, a file that is gone). Against a fake Bot API.
+func TestGatewayOutboundMedia(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("jg-inbox.sh needs python3")
+	}
+	root, _ := filepath.Abs("../../../..")
+	home := t.TempDir()
+	const secret = "SECRET-FILE-BYTES"
+	var calls []call
+	var batch string
+	bot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		if !strings.HasPrefix(r.URL.Path, "/bot"+tok+"/") {
+			http.Error(w, `{"ok":false}`, 404)
+			return
+		}
+		if method == "getUpdates" {
+			fmt.Fprintf(w, `{"ok":true,"result":[%s]}`, batch)
+			return
+		}
+		c := call{method: method, fields: map[string]string{}, filename: map[string]string{}, data: map[string][]byte{}, streamed: r.ContentLength == -1}
+		if mr, err := r.MultipartReader(); err == nil {
+			for p, err := mr.NextPart(); err == nil; p, err = mr.NextPart() {
+				b, _ := io.ReadAll(p)
+				if p.FileName() != "" {
+					c.filename[p.FormName()], c.data[p.FormName()] = p.FileName(), b
+				} else {
+					c.fields[p.FormName()] = string(b)
+				}
+			}
+		} else {
+			var m map[string]any
+			json.NewDecoder(r.Body).Decode(&m)
+			rp, _ := json.Marshal(m["reply_parameters"])
+			c.fields["text"], c.fields["reply_parameters"] = fmt.Sprint(m["text"]), string(rp)
+		}
+		calls = append(calls, c)
+		for _, f := range c.filename { // Telegram refuses a thin picture and a file it dislikes
+			if (method == "sendPhoto" && f == "thin.png") || (method == "sendDocument" && f == "bad.pdf") {
+				fmt.Fprint(w, `{"ok":false,"error_code":400,"description":"Bad Request: PHOTO_INVALID_DIMENSIONS"}`)
+				return
+			}
+		}
+		if method == "sendMediaGroup" {
+			fmt.Fprint(w, `{"ok":true,"result":[{"message_id":501},{"message_id":502}]}`)
+			return
+		}
+		fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, 600+len(calls))
+	}))
+	defer bot.Close()
+	dapr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer dapr.Close()
+	tokenFile, conf, state, data := filepath.Join(home, "tg.token"), filepath.Join(home, "conf"), filepath.Join(home, "state"), filepath.Join(home, "data")
+	os.WriteFile(tokenFile, []byte(tok+"\n"), 0o600)
+	os.WriteFile(conf, []byte(fmt.Sprintf("set gateway-adapters telegram\nset telegram-token-file %s\nset telegram-allow-user 42\nset telegram-api-url %s\nset dapr-http-url %s\nset dapr-pubsub p\nset subject-prefix jg.captain\n", tokenFile, bot.URL, dapr.URL)), 0o600)
+	a := &app{root: root, home: home, state: state, data: data, configFiles: []string{conf}, record: state + "/rec", log: state + "/log"}
+	once := func() {
+		if code := a.gateway([]string{"--once"}); code != 0 {
+			t.Fatalf("gateway --once exited %d", code)
+		}
+	}
+	os.MkdirAll(filepath.Join(home, "config"), 0o700)
+	os.MkdirAll(data, 0o700)
+	write := func(rel string, b []byte) string {
+		p := filepath.Join(home, rel)
+		os.WriteFile(p, b, 0o600)
+		return p
+	}
+	shot, report, thin, bad := write("data/shot.png", pngBytes(1)), write("data/report.pdf", []byte("%PDF- the report")), write("data/thin.png", pngBytes(9)), write("data/bad.pdf", []byte("%PDF- bad"))
+	tokenPath, env, gone := write("config/x.token", []byte(secret)), write(".env", []byte(secret)), write("data/gone.txt", []byte("x"))
+	link, huge := filepath.Join(data, "innocent.png"), write("data/huge.bin", nil)
+	os.Symlink(tokenPath, link)
+	os.Truncate(huge, 51<<20) // a sparse file: it costs no disk
+	albums := []string{write("data/a1.png", pngBytes(2)), write("data/a2.png", pngBytes(3)), write("data/a3.png", pngBytes(4))}
+
+	// Seven notes from the owner (messages 100 to 160); each is answered below.
+	var ups []string
+	for i := 10; i < 17; i++ {
+		ups = append(ups, upd(i, "private", 42, 42, false, fmt.Sprintf("note %d", i)))
+	}
+	batch = strings.Join(ups, ",")
+	once()
+	batch = ""
+	ids := map[string]string{} // message id -> note id
+	readLines(state+"/captain-chat/inbound.jsonl", func(v map[string]string) { ids[v["message"]] = v["note"] })
+	if len(ids) != 7 {
+		t.Fatalf("filed %d of 7 notes", len(ids))
+	}
+	calls = nil
+	reply := func(i int, text string, files ...string) {
+		args := []string{"reply", ids[fmt.Sprint(100+10*i)]}
+		for _, f := range files {
+			args = append(args, "--attach", f)
+		}
+		if text != "" {
+			args = append(args, "--", text)
+		}
+		if out, err := a.inbox("", args...); err != nil {
+			t.Fatalf("reply %d: %v %s", i, err, out)
+		}
+	}
+	reply(0, "here is the screenshot", shot)
+	reply(1, "the report and the shot", report, shot)
+	reply(2, "three pictures", albums...)
+	reply(3, "a thin picture", thin)
+	reply(4, "a bad file", bad)
+	reply(5, "files you should not get", tokenPath, link, env, huge, gone)
+	os.Remove(gone)    // recorded, then gone before the gateway looks
+	reply(6, "", shot) // a picture alone: no text at all
+	once()
+
+	mustCall := func(i int, method string) call {
+		if i >= len(calls) || calls[i].method != method {
+			t.Fatalf("call %d: want %s, calls are %v", i, method, methods(calls))
+		}
+		return calls[i]
+	}
+	// 0: one picture, threaded on the owner's message, caption is the text, bytes are the file's.
+	c := mustCall(0, "sendPhoto")
+	if c.fields["chat_id"] != "42" || c.fields["caption"] != "here is the screenshot" || !strings.Contains(c.fields["reply_parameters"], `"message_id":100`) ||
+		!bytes.Equal(c.data["photo"], pngBytes(1)) || c.filename["photo"] != "shot.png" || !c.streamed {
+		t.Errorf("sendPhoto = %+v: want chat 42, the caption, message 100, the file's bytes, streamed", c)
+	}
+	// 1, 2: a picture goes first with the caption, the PDF follows as a document.
+	if c = mustCall(1, "sendPhoto"); c.fields["caption"] != "the report and the shot" || !strings.Contains(c.fields["reply_parameters"], `"message_id":110`) {
+		t.Errorf("album 1 = %+v", c)
+	}
+	if c = mustCall(2, "sendDocument"); !bytes.Equal(c.data["document"], []byte("%PDF- the report")) || c.filename["document"] != "report.pdf" || c.fields["caption"] != "" {
+		t.Errorf("sendDocument = %+v", c)
+	}
+	// 3: three pictures are one album: media names the parts, the caption sits on the first.
+	c = mustCall(3, "sendMediaGroup")
+	var media []map[string]string
+	json.Unmarshal([]byte(c.fields["media"]), &media)
+	if len(media) != 3 || media[0]["type"] != "photo" || media[0]["media"] != "attach://f0" || media[0]["caption"] != "three pictures" || media[1]["caption"] != "" ||
+		!bytes.Equal(c.data["f0"], pngBytes(2)) || !bytes.Equal(c.data["f2"], pngBytes(4)) || len(c.data) != 3 {
+		t.Errorf("sendMediaGroup = %+v media %v", c, media)
+	}
+	// 4, 5: Telegram refused the thin picture (400), so the same file went again as a document.
+	mustCall(4, "sendPhoto")
+	if c = mustCall(5, "sendDocument"); c.filename["document"] != "thin.png" || c.fields["caption"] != "a thin picture" {
+		t.Errorf("fallback = %+v", c)
+	}
+	// 6, 7: a file Telegram refuses outright: the chat is told, with the caption it carried.
+	mustCall(6, "sendDocument")
+	if c = mustCall(7, "sendMessage"); !strings.Contains(c.fields["text"], "a bad file") || !strings.Contains(c.fields["text"], "I could not send bad.pdf") {
+		t.Errorf("failed file text = %q", c.fields["text"])
+	}
+	// 8: the secret token, the link to it, .env, the 51 MB file and the vanished file are each
+	// refused in one text; nothing of them was sent.
+	c = mustCall(8, "sendMessage")
+	for _, want := range []string{"files you should not get", "I did not send x.token: it can hold a secret", "I did not send innocent.png: it can hold a secret",
+		"I did not send .env: it can hold a secret", "I did not send huge.bin: it is 51.0 MB and the limit is 50 MB. It stays at " + huge, "I did not send gone.txt: the file is not there"} {
+		if !strings.Contains(c.fields["text"], want) {
+			t.Errorf("refusal text lacks %q:\n%s", want, c.fields["text"])
+		}
+	}
+	// 9: a picture alone has no caption.
+	if c = mustCall(9, "sendPhoto"); c.fields["caption"] != "" || len(calls) != 10 {
+		t.Errorf("picture alone = %+v, %d calls", c, len(calls))
+	}
+	for _, c := range calls {
+		for _, b := range c.data {
+			if strings.Contains(string(b), secret) {
+				t.Errorf("a %s call carried the secret", c.method)
+			}
+		}
+	}
+	// The receipts show the files a reply carries; a restart sends nothing twice.
+	if out, _ := a.inbox("", "receipts", "--all-replies"); !strings.Contains(string(out), `"attachments":["`+shot+`"]`) {
+		t.Errorf("receipts do not show the attachment: %s", out)
+	}
+	os.Remove(state + "/captain-chat/telegram.reply-cursor")
+	once()
+	if len(calls) != 10 {
+		t.Errorf("restart sent %d more calls", len(calls)-10)
+	}
+	filepath.Walk(home, func(p string, i os.FileInfo, _ error) error {
+		if b, _ := os.ReadFile(p); p != tokenFile && !i.IsDir() && i.Size() < 1<<20 && strings.Contains(string(b), tok) {
+			t.Errorf("the bot token was written to %s", p)
+		}
+		return nil
+	})
+	t.Logf("calls: %v; token, link, .env, 51 MB and vanished file refused in text, never sent; picture refused by Telegram resent as a document", methods(calls))
+}
+
+func mustRead(p string) []byte { b, _ := os.ReadFile(p); return b }
+
+func methods(cs []call) (out []string) {
+	for _, c := range cs {
+		out = append(out, c.method)
+	}
+	return out
+}
