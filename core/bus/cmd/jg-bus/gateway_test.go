@@ -75,6 +75,28 @@ func TestGatewayIngress(t *testing.T) {
 	if strings.Count(wakes(), "captain inbox note") != 1 {
 		t.Fatalf("a replay mirrored the message again: %q", wakes())
 	}
+	// The KPI ledger counts the owner's note once, with the inbox note id; the replay and the
+	// dropped updates added no row.
+	rows := func() int {
+		raw, _ := os.ReadFile(filepath.Join(home, "data", "overwatch-kpi.jsonl"))
+		return strings.Count(string(raw), "\n")
+	}
+	if raw, _ := os.ReadFile(filepath.Join(home, "data", "overwatch-kpi.jsonl")); rows() != 1 ||
+		!strings.Contains(string(raw), `"text":"hello overwatch"`) || !strings.Contains(string(raw), `"id":"`+strings.TrimSuffix(filepath.Base(notes[0]), ".note")+`"`) {
+		t.Fatalf("want one ledger row for the note with its inbox id, got %q", raw)
+	}
+	// A second note is a second row; a home whose KPI reads off records nothing.
+	batch = upd(15, "private", 42, 42, false, "second note")
+	if code := once(); code != 0 || rows() != 2 {
+		t.Fatalf("exit %d, %d rows: want a second row for a second note", code, rows())
+	}
+	os.MkdirAll(filepath.Join(home, "config"), 0o700)
+	os.WriteFile(filepath.Join(home, "config", "overwatch-kpi"), []byte("off\n"), 0o600)
+	batch = upd(16, "private", 42, 42, false, "third note, kpi off")
+	if code := once(); code != 0 || rows() != 2 {
+		t.Fatalf("exit %d, %d rows: a home with the KPI off must record nothing", code, rows())
+	}
+	os.Remove(filepath.Join(home, "config", "overwatch-kpi"))
 	// A group-readable token file is refused; a dead API's error names the token-bearing URL.
 	os.Chmod(tokenFile, 0o640)
 	failGroup := once()

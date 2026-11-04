@@ -56,8 +56,22 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   A restarted gateway does not show it again for notes filed before the restart.
 - A message that is only `/status` is answered by the gateway itself, threaded on it: the owner, the answers sent and that the bot is answering. It files no note and wakes no one. It is the only command.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
-- The owner can send a photo, document, voice note, audio or video. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
+- The owner can send a photo, document, voice note, audio, video or round video note. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
+
+## Voice notes
+
+With a local speech engine installed, each voice, audio or video note the owner sends is turned into words on this machine, and the words go in the filed note on a line under the file line: `transcript: <text>`.
+The `inbound` event carries them in the file's optional `transcript` field.
+No audio leaves the machine, and nothing costs money.
+Without an engine the gateway does exactly what it did before and says nothing extra.
+
+- Install it once, by choice: `bin/jg-chat-transcribe.sh setup`. It downloads Hex (MIT, about 72 MB, checked against a pinned sha256) and its Parakeet English model (NVIDIA Open Model License, about 730 MB) into `state/captain-chat/stt`, which git ignores. Linux x64 only. Install and session start never run it. `bin/jg-chat-transcribe.sh status` says whether it is there.
+- To use another engine, set `chat-transcribe-cmd` to a program that takes a 16 kHz mono wav and prints the words on stdout. The gateway converts the audio with `ffmpeg` first.
+- The 👀 reaction is sent before the engine starts, so the owner sees the note arrived without waiting for the words.
+- The audio is cut at `chat-transcribe-max-seconds` (default 300), and the line then reads `transcript (first 300 s only, the limit): <text>`. The whole run is stopped after `chat-transcribe-timeout` seconds (default 120).
+- When the engine is missing, times out or fails, or the audio cannot be read, the note is still filed with its file line and one fixed line: `transcript: unavailable (<reason>)`.
+- The words are never written to a log, and no engine output is, only the fixed reason.
 
 ## Main's turn summary
 

@@ -8,6 +8,7 @@
 #
 # LEDGER. $DATA/overwatch-kpi.jsonl, one JSON object per line, append-only:
 #   {"seq":N,"epoch":N,"text":"..."}                   a captain message (first 200 characters)
+#   {"seq":N,"epoch":N,"text":"...","id":"<note id>"}  the same, from the chat gateway: id is the inbox note
 #   {"tag":N,"epoch":N,"kind":"<kind>","link":"..."}   a tag of message N; its newest tag wins
 #
 # WRITERS. The prompt-submit hooks append each captain message: Claude's
@@ -15,7 +16,11 @@
 # bin/jg-host-mirror.sh. A captain message typed at the board's chat has no
 # prompt hook to catch it, so bin/jg-chat.sh records it with `record`, through
 # the same appender: either way it is one captain message and its tag is asked
-# for the same way. The hook is a silent no-op outside a genuine primary
+# for the same way. A note the captain sends from his phone reaches Main as an
+# inbox note, not as a prompt, so the chat gateway (core/bus, `ingest`) records
+# it with `record --id <inbox note id>`: the id makes the record idempotent, so
+# a replayed or retried poll never counts one note twice, and it names the
+# message for `tag --message`. The hook is a silent no-op outside a genuine primary
 # checkout, and it drops a prompt the operational-input protocol classifies
 # (bin/jg-operational-input.sh), a prompt whose first line is doorbell-shaped
 # (a record-backed doorbell carries no marker, so `classify` cannot see it; this
@@ -29,6 +34,12 @@
 # GUARD. bin/jg-turnend-guard.sh blocks a turn end once per message while the
 # newest captain message is untagged (`pending`); one block per message keeps
 # every harness bounded, and a message left untagged still counts as a miss.
+#
+# TAGGING. `tag` tags the newest captain message unless `--message <ref>` names
+# another: <ref> is a message's seq or the inbox note id the gateway recorded
+# with it. A message that arrives between the one being tagged and the tag
+# (a Telegram note landing mid-turn) is therefore never tagged by mistake, and
+# an older message can still be tagged after a newer one came in.
 #
 # KINDS. new-work and decision-answer are the captain's job and need no link.
 # feedback and micromanagement need <link>: a pull request, merge request, or
@@ -45,15 +56,21 @@
 #
 # Usage:
 #   jg-overwatch-kpi.sh hook <claude|cursor>   a prompt-submit hook payload on stdin
-#   jg-overwatch-kpi.sh tag <kind> [<link>]    tag the newest captain message
-#   jg-overwatch-kpi.sh record <text>          record a captain message typed
-#                                             outside a harness prompt hook
+#   jg-overwatch-kpi.sh tag [--message <seq|inbox-id>] <kind> [<link>]
+#                                              tag the newest captain message, or the one named
+#   jg-overwatch-kpi.sh record [--id <inbox-id>] [--] <text>
+#                                              record a captain message typed
+#                                              outside a harness prompt hook,
+#                                              or filed by the chat gateway
 #   jg-overwatch-kpi.sh pending                print "<seq>\t<text>" when the newest message is untagged
 #   jg-overwatch-kpi.sh scorecard [--json] [--landed]
 #                                              misses per day and per week, target zero
 # hook always exits 0 and prints nothing; tag exits 2 on a refused kind or
-# link and 1 when no message is recorded; pending exits 0 when a message is
-# pending and 1 otherwise; scorecard exits 0 with its report.
+# link or on a --message that names no recorded message (seq or inbox id), and 1
+# when no message is recorded; record exits 0 when the message is recorded,
+# already recorded under its --id, or the home's config/overwatch-kpi reads off;
+# pending exits 0 when a message is pending and 1 otherwise; scorecard exits 0
+# with its report.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -137,13 +154,32 @@ newest_seq() {
   jq -Rn '[inputs | fromjson? | select(type == "object") | .seq | numbers] | max // 0' "$LEDGER" 2>/dev/null
 }
 
-# Append one captain message. The prompt hook and a captain message typed at the
-# board's chat (bin/jg-chat.sh send) share this writer, so the KPI counts the
-# captain's intervention the same way whichever route it took.
-record_message() { # <text>
+# Append one captain message. The prompt hook, a captain message typed at the
+# board's chat (bin/jg-chat.sh send) and the chat gateway share this writer, so
+# the KPI counts the captain's intervention the same way whichever route it
+# took. With an inbox note id the append is idempotent: a note already in the
+# ledger under that id is left alone. The lock keeps two writers from taking the
+# same seq; a host without flock appends unlocked, as before.
+record_message() { # <text> [<inbox-id>]
   mkdir -p "$DATA" 2>/dev/null || return 1
-  printf '%s' "$1" | jq -cRs --argjson seq "$(( $(newest_seq) + 1 ))" --argjson epoch "$(date +%s)" \
-    '{seq: $seq, epoch: $epoch, text: .[0:200]}' >> "$LEDGER" 2>/dev/null
+  (
+    command -v flock >/dev/null 2>&1 && flock 9
+    if [ -n "${2:-}" ] && [ -f "$LEDGER" ] \
+      && jq -Rse --arg id "$2" 'any(split("\n")[] | fromjson? | select(type == "object"); .id == $id)' "$LEDGER" >/dev/null 2>&1; then
+      exit 0
+    fi
+    printf '%s' "$1" | jq -cRs --argjson seq "$(( $(newest_seq) + 1 ))" --argjson epoch "$(date +%s)" --arg id "${2:-}" \
+      '{seq: $seq, epoch: $epoch, text: .[0:200]} + (if $id == "" then {} else {id: $id} end)' >> "$LEDGER" 2>/dev/null
+  ) 9>>"$LEDGER.lock"
+}
+
+# The seq of the recorded message a tag names: a seq, or the inbox note id the
+# gateway recorded with it. Nothing when no message answers to it.
+message_seq() { # <ref>
+  [ -f "$LEDGER" ] || return 1
+  jq -Rrs --arg ref "$1" '[split("\n")[] | fromjson? | select(type == "object") | select(.seq | numbers)] as $m
+    | (($m | map(select((.seq | tostring) == $ref)) | last) // ($m | map(select(.id == $ref)) | last)) | .seq // empty' \
+    "$LEDGER" 2>/dev/null
 }
 
 # A link counts only when it names code work on this Juggernaut repository.
@@ -197,11 +233,18 @@ case "$1" in
     exit 0
     ;;
   record)
-    [ "$#" -ge 2 ] || usage
     shift
+    NOTE_ID=
+    if [ "${1:-}" = --id ]; then
+      [ "$#" -ge 2 ] && [ -n "$2" ] || usage
+      NOTE_ID=$2
+      shift 2
+    fi
+    [ "${1:-}" != -- ] || shift
+    [ "$#" -ge 1 ] || usage
     [ -n "${*//[[:space:]]/}" ] || usage
     [ "$(cat "$CONFIG/overwatch-kpi" 2>/dev/null)" != off ] || exit 0
-    record_message "$*" || { printf 'jg-overwatch-kpi: cannot record the message\n' >&2; exit 1; }
+    record_message "$*" "$NOTE_ID" || { printf 'jg-overwatch-kpi: cannot record the message\n' >&2; exit 1; }
     ;;
   pending)
     [ "$#" -eq 1 ] || usage
@@ -249,9 +292,16 @@ case "$1" in
     fi
     ;;
   tag)
-    [ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage
-    KIND=$2
-    LINK=${3:-}
+    shift
+    REF=
+    if [ "${1:-}" = --message ]; then
+      [ "$#" -ge 2 ] && [ -n "$2" ] || usage
+      REF=$2
+      shift 2
+    fi
+    [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
+    KIND=$1
+    LINK=${2:-}
     case " $KINDS " in *" $KIND "*) ;; *) refuse "unknown kind '$KIND' (one of: $KINDS)" ;; esac
     case "$KIND" in
       feedback|micromanagement)
@@ -259,8 +309,13 @@ case "$1" in
         link_ok "$LINK" || refuse "'$LINK' is not a pull request, merge request, or issue on this Juggernaut repository, nor a backlog id here; a memory file or note changes no code"
         ;;
     esac
-    SEQ=$(newest_seq)
-    [ "$SEQ" -gt 0 ] || { printf 'jg-overwatch-kpi: no captain message is recorded to tag\n' >&2; exit 1; }
+    if [ -n "$REF" ]; then
+      SEQ=$(message_seq "$REF")
+      [ -n "$SEQ" ] || refuse "no recorded captain message has seq or inbox id '$REF'; give a seq or the inbox note id the gateway recorded"
+    else
+      SEQ=$(newest_seq)
+      [ "$SEQ" -gt 0 ] || { printf 'jg-overwatch-kpi: no captain message is recorded to tag\n' >&2; exit 1; }
+    fi
     jq -cn --argjson tag "$SEQ" --argjson epoch "$(date +%s)" --arg kind "$KIND" --arg link "$LINK" \
       '{tag: $tag, epoch: $epoch, kind: $kind, link: $link}' >> "$LEDGER" || exit 1
     printf 'captain message %s tagged %s\n' "$SEQ" "$KIND"

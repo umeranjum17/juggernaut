@@ -2,7 +2,8 @@
 # Behavioral regressions for the Overwatch KPI (bin/jg-overwatch-kpi.sh): each
 # typed captain message is recorded, the turn-end guard refuses once to end a
 # turn while the newest one is untagged, and a feedback or micromanagement tag
-# needs a link to code work on this Juggernaut repository.
+# needs a link to code work on this Juggernaut repository. A gateway note is
+# recorded once per inbox id, and a tag can name its message by seq or inbox id.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -186,7 +187,63 @@ test_landed_asks_the_forge_and_the_backlog() {
   pass "a miss reports whether its linked PR merged or its backlog ticket closed"
 }
 
+test_record_by_inbox_id_is_idempotent_and_off_records_nothing() {
+  local home="$TMP_ROOT/record-id" off="$TMP_ROOT/record-id-off"
+  make_home "$home"
+  in_home "$home" "$KPI" record --id 1793-aaa "from the phone" || fail "recording a gateway note failed"
+  in_home "$home" "$KPI" record --id 1793-aaa "from the phone" || fail "a replayed gateway note was refused"
+  in_home "$home" "$KPI" record --id 1793-bbb "a second phone note" || fail "recording a second gateway note failed"
+  in_home "$home" "$KPI" record -- "--id typed at the board" || fail "recording a text that starts with --id failed"
+  assert_equals 3 "$(wc -l < "$home/data/overwatch-kpi.jsonl" | tr -d ' ')" \
+    "a replay added a ledger row, or a note went missing"
+  assert_equals '{"seq":1,"id":"1793-aaa"}' \
+    "$(head -1 "$home/data/overwatch-kpi.jsonl" | jq -c '{seq, id}')" "the note's row lacks its seq or inbox id"
+  assert_equals '--id typed at the board' "$(sed -n 3p "$home/data/overwatch-kpi.jsonl" | jq -r .text)" \
+    "a text that starts with --id was read as the option"
+  make_home "$off"
+  printf 'off\n' > "$off/config/overwatch-kpi"
+  in_home "$off" "$KPI" record --id 1793-aaa "from the phone" || fail "a home with the KPI off refused a record"
+  [ ! -e "$off/data/overwatch-kpi.jsonl" ] || fail "a home with the KPI off recorded a gateway note"
+  pass "a gateway note is one ledger row however often it is recorded, and an opted-out home records none"
+}
+
+test_tag_names_the_message_by_seq_or_inbox_id() {
+  local home="$TMP_ROOT/tag-ref" card rc err before after ref
+  make_home "$home"
+  submit "$home" "first, typed at the prompt"
+  in_home "$home" "$KPI" record --id 1793-aaa "second, from the phone" || fail "recording the phone note failed"
+  in_home "$home" "$KPI" record --id 1793-bbb "third, from the phone" || fail "recording the newest phone note failed"
+  # No argument: the newest message, as before.
+  in_home "$home" "$KPI" tag new-work >/dev/null || fail "tagging the newest message failed"
+  assert_equals 3 "$(tail -1 "$home/data/overwatch-kpi.jsonl" | jq .tag)" "tag with no message named did not take the newest"
+  # An older message, by seq and by inbox id, while a newer one is the newest.
+  in_home "$home" "$KPI" tag --message 1 feedback https://github.com/acme/juggernaut/pull/7 >/dev/null \
+    || fail "tagging message 1 by seq failed"
+  assert_equals 1 "$(tail -1 "$home/data/overwatch-kpi.jsonl" | jq .tag)" "tag --message 1 tagged another message"
+  in_home "$home" "$KPI" tag --message 1793-aaa micromanagement https://github.com/acme/juggernaut/pull/8 >/dev/null \
+    || fail "tagging a message by its inbox id failed"
+  assert_equals 2 "$(tail -1 "$home/data/overwatch-kpi.jsonl" | jq .tag)" "tag --message <inbox id> tagged another message"
+  # The scorecard counts the messages the tags named, not the newest.
+  card=$(in_home "$home" "$KPI" scorecard --json) || fail "the scorecard refused to run"
+  assert_equals '[1,2]' "$(printf '%s' "$card" | jq -c '[.misses[].seq] | sort')" "the scorecard counted the wrong messages"
+  assert_equals '["feedback","micromanagement"]' "$(printf '%s' "$card" | jq -c '[.misses | sort_by(.seq)[].kind]')" \
+    "the scorecard paired a kind with the wrong message"
+  assert_equals 2 "$(printf '%s' "$card" | jq .week.total)" "the newest message, tagged new-work, was counted as a miss"
+  # An unknown seq or id is refused with exit 2 and a message, and writes nothing.
+  before=$(wc -l < "$home/data/overwatch-kpi.jsonl")
+  for ref in 99 1793-zzz; do
+    err=$(in_home "$home" "$KPI" tag --message "$ref" new-work 2>&1 >/dev/null); rc=$?
+    assert_equals 2 "$rc" "tag --message $ref did not exit 2"
+    assert_contains "$err" "no recorded captain message has seq or inbox id '$ref'" "tag --message $ref gave no clear refusal"
+  done
+  after=$(wc -l < "$home/data/overwatch-kpi.jsonl")
+  assert_equals "$before" "$after" "a refused tag still wrote a row"
+  pass "tag names a message by seq or inbox id, no argument keeps the newest, an unknown one is refused, and the scorecard counts the named message"
+}
+
 test_hook_records_only_typed_captain_messages
+test_record_by_inbox_id_is_idempotent_and_off_records_nothing
+test_tag_names_the_message_by_seq_or_inbox_id
 test_a_doorbell_is_not_a_captain_message
 test_guard_refuses_an_untagged_message_once
 test_a_miss_needs_a_link_to_code_work
