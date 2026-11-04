@@ -62,7 +62,9 @@ cycle() {
     JG_WAIT_CARD_SECS=999999 JG_SQUAD_LEAD_WAKE_STALL_SECS=1 JG_WATCH_HANDLING_SUCCESSOR=1 "$@" \
     "$WATCH" > "$dir/out" 2> "$dir/err" &
   pid=$!
-  wait_for_exit "$pid" 40 || rc=$?
+  # A quiet cycle never exits on its own and is stopped at the budget; a woken one exits at once,
+  # so a case that expects a wake can give a slow host a longer budget at no cost to a fast one.
+  wait_for_exit "$pid" "${CYCLE_POLLS:-40}" || rc=$?
   case "$rc" in 0|124) ;; *) fail "watcher failed: $(cat "$dir/err")" ;; esac
   cat "$dir/out" >> "$dir/events"
   # Only a woken turn drains and acknowledges; a quiet cycle leaves the queue for the next one.
@@ -365,7 +367,7 @@ test_batch_urgent_bypass() {
   prime_status_seen "$dir/state" "$dir/state/lane.status"
   printf 'blocked [at=%s] [key=stuck]: waiting on the captain\n' "$(date +%s)" >> "$dir/state/lane.status"
   : > "$dir/events"
-  cycle "$dir"
+  CYCLE_POLLS=300 cycle "$dir"
   grep -q 'lane\.status' "$dir/events" || fail "a blocked line did not bypass the held batch: events=$(cat "$dir/events") err=$(cat "$dir/err")"
   ! grep -q 'digest - ' "$dir/events" || fail "the urgent wake was reported as a digest"
   grep -q 'merged-3' "$dir/drain" || fail "the held routine rows were not presented by the urgent wake's drain"
