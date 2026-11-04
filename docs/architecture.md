@@ -112,6 +112,11 @@ Live or inconclusive liveness remains fail-open at that initial surface, so a wo
 Its later sights are still held to that same bounded cadence rather than re-alarming on every pane-hash change, because the throttle is keyed to the declaration and not to the pane an idle parked worker keeps ticking.
 The pause path still never reads a Squad Lead's endpoint liveness - dead-or-missing recovery belongs to the dedicated liveness tick above - and a mate is admitted to that same cadence only to serve a status-declared wait's bounded re-surface, so a forgotten `paused:` declaration, or an attended `captain-held` declaration, cannot rot invisibly.
 Its initial normal-mode status signal still surfaces through the no-verb path, while a daemon-backed away posture self-handles that routine signal and owns later external-wait rechecks.
+Every stale wake ends in `[task=<id> reason=<kind>]`, where the kind is `permission`, `unread`, `wedge`, `looping`, `blocked`, `finished`, `failed`, or `stopped`.
+`stale_wake_decorate` in `bin/jg-classify-lib.sh` adds it once, from the recorded task for that endpoint and the wake's own text, where the wake queue appends and where the doorbell prints, so the two copies stay equal and an endpoint with no task record reads `task=unknown`.
+A quiet pane whose task is a ship or operator and whose latest status line is `done:` is cleaned up with no model turn: the watcher runs `bin/jg-teardown.sh` for it without `--force` (`finished_cleanup_gate` in `bin/jg-watch.sh`).
+That teardown keeps its own landed-work test and refusals, so unlanded work is never removed, and a refusal surfaces the stale wake with the refusal words and `reason=finished`.
+Recon scouts and Squad Leads are never cleaned up this way.
 Fresh stale panes use the same current-state read before trusting the status log, so an active run or a proven busy worker outranks an old captain-relevant status-log line left behind before validation.
 No-change heartbeats are also benign.
 Separately from heartbeat backoff and wedge handling, the watcher poll runs `bin/jg-inactive-reconcile.sh` on its own bounded cadence, while locked session start sends the same bounded local scan through `bin/jg-startup-network.sh`'s deferred worker so current-state reads never block the digest.

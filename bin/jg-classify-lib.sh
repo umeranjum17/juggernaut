@@ -1756,6 +1756,61 @@ stale_is_terminal() {  # <window> <state>
   [ -n "$last" ] && status_is_captain_relevant "$last"
 }
 
+# A stale wake names its task and its reason, so the primary does not spend a model turn
+# mapping a bare endpoint to a task. stale_wake_decorate prints <text> with a trailing
+# " [task=<id> reason=<kind>]" and nothing else changed, so every prefix and substring
+# match on the wake text (the routing rules, the declared-pause read) keeps working.
+# The task comes from the recorded metadata of the endpoint the text names ("unknown"
+# when none records it). The reason comes from what the text says, then from the verb of
+# the task's latest status line:
+#   permission  a permission prompt is waiting on someone
+#   unread      a steering instruction sits unhandled (or its inbox cannot be written)
+#   wedge       an idle pane past the wedge timer
+#   looping     the pane repeats the same output
+#   blocked     a blocked, needs-decision or paused status, or a declared wait
+#   finished    the latest status is done
+#   failed      the latest status is failed
+#   stopped     none of the above: an idle pane or an exited agent
+# Text that is not a stale wake, or already carries the suffix, is printed unchanged.
+stale_wake_decorate() {  # <text> [<state-dir>]
+  local text=$1 state=${2:-${STATE:-${JG_STATE_OVERRIDE:-}}} w task reason last verb
+  case "$text" in
+    'stale: '*) ;;
+    *) printf '%s' "$text"; return 0 ;;
+  esac
+  case "$text" in
+    *' [task='*' reason='*']') printf '%s' "$text"; return 0 ;;
+  esac
+  w=${text#stale: }
+  w=${w%% *}
+  task=unknown
+  if [ -n "$state" ]; then
+    task=$(window_to_task "$w" "$state")
+    [ -e "$state/$task.meta" ] || task=unknown
+  fi
+  case "$text" in
+    *'permission prompt'*) reason=permission ;;
+    *'unread juggernaut instruction'*|*'steering-inbox'*) reason=unread ;;
+    *'possible wedge'*) reason=wedge ;;
+    *[Ll]ooping*|*'repeating the same'*) reason=looping ;;
+    *'declared pause'*|*'paused '*|*'waiting on human'*|*'awaiting external'*) reason=blocked ;;
+    *)
+      reason=stopped
+      if [ "$task" != unknown ]; then
+        last=$(last_status_line "$state/$task.status")
+        verb=''
+        [ -z "$last" ] || status_line_verb "$last" verb
+        case "$verb" in
+          done) reason=finished ;;
+          failed) reason=failed ;;
+          blocked|needs-decision|paused) reason=blocked ;;
+        esac
+      fi
+      ;;
+  esac
+  printf '%s [task=%s reason=%s]' "$text" "$task" "$reason"
+}
+
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.

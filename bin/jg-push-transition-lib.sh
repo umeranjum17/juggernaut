@@ -107,6 +107,8 @@ triage_log() {
 # Exit after reporting one actionable wake. Tests override this callback.
 wake() {
   local output_status=0
+  # The doorbell line carries the same task and reason the queued row does.
+  set -- "$(stale_wake_decorate "$1" "${STATE:-}")"
   # A reason that describes only the event this cycle classed `batch` or `silent` is
   # already recorded, so it does not leave the cycle; the next drain or the resurface
   # cadence delivers it. An urgent row from the same event latches

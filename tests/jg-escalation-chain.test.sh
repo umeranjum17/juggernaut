@@ -33,6 +33,7 @@ for a in "$@"; do [ "$prev" = -t ] && t=$a; prev=$a; done
 listed() { case " ${JG_FAKE_PANES:-} " in *" ${1#fake:} "*) return 0 ;; esac; return 1; }
 case "${1:-}" in
   list-windows) for p in ${JG_FAKE_PANES:-}; do printf '%s\n' "$p"; done ;;
+  kill-window|kill-pane) exit 0 ;;
   capture-pane) listed "$t" || exit 1; cat "$JG_HOME/panes/${t#fake:}" 2>/dev/null || printf 'all quiet\n> \n' ;;
   display-message)
     listed "$t" || exit 1
@@ -236,6 +237,87 @@ backdate_green() {  # <home> <task> <secs>
   local f="$1/state/.green-pr/$2" checked since head url
   IFS=$'\t' read -r checked since head url < "$f"
   printf '%s\t%s\t%s\t%s\n' "$checked" "$((since - $3))" "$head" "$url" > "$f"
+}
+
+# A finished ship task on a local-only branch: its work is on the branch, and
+# <landed> says whether the project's main already holds it. The treehouse
+# return is a recorder; the landed-work test is the real teardown's own.
+finished_task() {  # <home> <id> <landed: yes|no>; its pane is jg-<id>, the name teardown requires
+  local h=$1 id=$2 pane=jg-$2 p="$1/proj-$2" wt="$1/wt-$2"
+  jg_git_identity fmtest fmtest@example.invalid
+  mkdir -p "$h/data"
+  git init -q -b main "$p"
+  git -C "$p" commit -q --allow-empty -m baseline
+  git -C "$p" worktree add -q -b "fm/$id" "$wt" main
+  git -C "$wt" commit -q --allow-empty -m "the work"
+  [ "$3" != yes ] || git -C "$p" merge -q --ff-only "fm/$id"
+  printf '#!/usr/bin/env bash\nprintf "return %%s\\n" "$*" >> "%s/treehouse.log"\n' "$h" > "$h/fakebin/treehouse"
+  chmod +x "$h/fakebin/treehouse"
+  printf 'kind=ship\nmode=local-only\nbackend=tmux\nharness=claude\nwindow=fake:%s\nworktree=%s\nproject=%s\nendpoint_task_id=%s\nspawn_gen=%s-gen\n' \
+    "$pane" "$wt" "$p" "$id" "$id" > "$h/state/$id.meta"
+  printf 'done [at=1]: ready branch fm/%s\n' "$id" > "$h/state/$id.status"
+  prime_status_seen "$h/state" "$h/state/$id.status"
+}
+
+# Every wake Main drained in <home>, as the reason text it was given.
+test_a_stale_wake_names_its_task_and_reason() {
+  local m
+  m=$(home stale-names)
+  # A worker stopped on a trust dialog, and a worker that exited after its last line.
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nharness=claude\n' > "$m/state/stuck1.meta"
+  printf 'working [at=1]: building\n' > "$m/state/stuck1.status"
+  prime_status_seen "$m/state" "$m/state/stuck1.status"
+  printf '%s\n' "$TRUST" > "$m/panes/1"
+  PANES=1 cycle "$m"
+  grep -qE '^stale: fake:1 \(permission prompt: .*\) \[task=stuck1 reason=permission\]$' "$m/events" \
+    || fail "the prompt wake did not name its task and reason: $(cat "$m/events")"
+  # The queued row Main drained carries the same words as the doorbell line.
+  grep -qF '[task=stuck1 reason=permission]' "$m/drain" || fail "the queued wake lacks the task and reason: $(cat "$m/drain")"
+  # An endpoint no record names still says so instead of guessing a task.
+  [ "$(stale_wake_decorate_for "$m" 'stale: default:w9:p9')" = 'stale: default:w9:p9 [task=unknown reason=stopped]' ] \
+    || fail "an unrecorded endpoint was mapped to a task"
+  pass "a stale wake names the task and the reason, on the doorbell line and in the queued row"
+}
+
+stale_wake_decorate_for() {  # <home> <text>
+  bash -c '. "$1/bin/jg-classify-lib.sh" && stale_wake_decorate "$2" "$3"' _ "$FORK" "$2" "$1/state"
+}
+
+test_a_finished_landed_worker_is_cleaned_up_without_a_wake() {
+  local m n=0
+  m=$(home cleanup-landed)
+  finished_task "$m" shipL yes
+  while [ "$n" -lt 20 ] && [ -e "$m/state/shipL.meta" ]; do
+    n=$((n + 1))
+    PANES=jg-shipL cycle "$m"
+    sleep 0.3
+  done
+  [ ! -e "$m/state/shipL.meta" ] || fail "a finished, landed worker was not cleaned up: $(cat "$m/err" "$m/events" "$m"/state/.stale-cleanup-* 2>&1)"
+  grep -q 'return --force' "$m/treehouse.log" || fail "the cleanup did not return the worker's copy: $(cat "$m/treehouse.log" 2>&1)"
+  ! grep -q '^stale:' "$m/events" || fail "Main was woken about a worker that was already landed: $(cat "$m/events")"
+  ! grep -q $'\tstale\t' "$m/drain" || fail "a stale wake was queued for a landed worker: $(cat "$m/drain")"
+  pass "a finished worker whose work has landed is cleaned up with no wake for Main"
+}
+
+test_a_finished_unlanded_worker_is_kept_and_wakes_with_its_reason() {
+  local m n=0
+  m=$(home cleanup-unlanded)
+  finished_task "$m" shipU no
+  while [ "$n" -lt 20 ] && ! grep -q '^stale:' "$m/events" 2>/dev/null; do
+    n=$((n + 1))
+    PANES=jg-shipU cycle "$m"
+    sleep 0.3
+  done
+  [ -e "$m/state/shipU.meta" ] || fail "unlanded work was torn down"
+  [ -d "$m/wt-shipU" ] || fail "the unlanded worktree was removed"
+  git -C "$m/proj-shipU" rev-parse -q --verify refs/heads/fm/shipU >/dev/null || fail "the unlanded branch was lost"
+  [ ! -e "$m/treehouse.log" ] || fail "the unlanded copy was handed back: $(cat "$m/treehouse.log")"
+  grep -qE '^stale: fake:jg-shipU \(finished but not cleaned up: REFUSED.*\) \[task=shipU reason=finished\]$' "$m/events" \
+    || fail "the refused cleanup did not wake with the task and reason: $(cat "$m/events" "$m/state/.stale-cleanup-"* 2>&1)"
+  # A refusal is reported once; the next scans neither repeat it nor retry the teardown.
+  PANES=1 cycle "$m"
+  [ "$(grep -c '^stale:' "$m/events")" -eq 1 ] || fail "the refusal woke Main again: $(cat "$m/events")"
+  pass "a finished worker with unlanded work is not torn down and still wakes Main with the task and the refusal"
 }
 
 TRUST=$'Quick safety check: Is this a project you created or one you trust?\n  1. Yes, I trust this folder\n  2. No, exit\nEnter to confirm'
@@ -1170,6 +1252,9 @@ test_memory_refused_launch_reraises_when_admission_clears() {
   pass "a memory-refused launch rings once while its record stands, and stops when it clears"
 }
 
+test_a_stale_wake_names_its_task_and_reason
+test_a_finished_landed_worker_is_cleaned_up_without_a_wake
+test_a_finished_unlanded_worker_is_kept_and_wakes_with_its_reason
 test_lead_idle_is_steered_without_interrupt
 test_stuck_verdict_table
 test_a_printed_assertion_never_raises_a_quota_wait

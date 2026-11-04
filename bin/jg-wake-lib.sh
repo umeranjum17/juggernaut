@@ -2487,6 +2487,13 @@ jg_wake_append_locked() {
     *) printf 'jg_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
   esac
 
+  # A stale wake names its task and its reason (stale_wake_decorate, bin/jg-classify-lib.sh).
+  if [ "$kind" = stale ]; then
+    _jg_wake_require_classify 2>/dev/null || true
+    if command -v stale_wake_decorate >/dev/null 2>&1; then
+      payload=$(stale_wake_decorate "$payload" "${STATE:-}")
+    fi
+  fi
   clean_key=$(printf '%s' "$key" | jg_wake_clean_field)
   clean_payload=$(printf '%s' "$payload" | jg_wake_clean_field)
   # Route, drop a repeated `now` to `batch` inside the re-alert window, and charge a settled event
