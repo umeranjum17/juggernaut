@@ -42,8 +42,9 @@ watcher check carries it and no model turn is spent. For each project in `data/p
 under `projects/` has a github.com `origin`, it lists the open PRs with `gh-axi` and prints one line per PR
 we own, meaning the author is the home's gh login or the PR URL is recorded as `pr=` in a task meta (an outside
 author's PR on an upstream repo is ignored; with no login from the forge the sweep is skipped and retried),
-`stale-pr-alarm: <PR URL>: <reason>`, for either reason:
+`stale-pr-alarm: <PR URL>: <reason>`, for any of these reasons:
 
+- `release PR: no CI started 30 min after it opened`: the PR's base or head is `release/c-N`, it opened 30 minutes ago or more (`JG_RELEASE_CI_MINUTES` changes the wait), and its head has no check run past queued and no commit status. PR 644 sat 80 minutes this way. This reason replaces the 24 h one for a release PR.
 - `no checks and no update for 24 h`: the head has no check run and no commit status, and the PR was last updated 24 hours ago or more.
 - `base branch <release/...> is a release branch already merged into main`: the PR points at a `release/*` branch that a merged PR already carried into `main`, so it can never land where it points.
 
@@ -91,6 +92,17 @@ A worker's `done: PR <url>` line does not wake the lead's model when this check 
 That needs `yolo=on` or `merge=approved`, a recorded `pr=` and `pr_head=`, no `merge=manual`, and no earlier attempt on that head in `data/jg-merge-on-green/<task>.head`.
 The lead then hears about the PR from this check's `done: merged` line or its `NOT merging` wake line.
 `core/wake/README.md` owns the condition.
+
+## Shipped-backlog reconcile
+
+A ship whose PR merged leaves its backlog row In flight when teardown never ran.
+`backlog-shipped-reconcile.sh check <jg-home>` runs at the end of every `merge-on-green.sh check` (after the red-CI ticket), so no model turn is spent.
+For each worker record with a `pr=` it moves the row to Done through `tasks-axi done --pr` when the PR is shipped, the row reads In flight and not held, and no worker is live.
+Shipped means the merge poll recorded the PR as merged (`state/<id>.pr-poll-merge-notified`), or a line of `data/releases` lists its number in `prs=`.
+No live worker means `bin/jg-crew-state.sh` reports done or failed, or reports that the endpoint or worktree is gone; working, parked, paused, blocked and unreadable states are left alone.
+A squad_lead record, a pending close (`state/<id>.backlog-close`), a held row and a queued row are never touched.
+Teardown still removes the worker record, and its `done` on the closed row only backfills links.
+It prints one `backlog-shipped-reconcile: <id> moved out of in flight: ...` line per row moved, and is silent on the next sweep.
 
 ## Proof line
 
@@ -143,7 +155,9 @@ the lead installs it from merged main, never from a branch.
 
 ## Test
 
-`merge-on-green/tests/stale-pr-alarm.test.sh` drives the alarm against recorded PR fixtures (`tests/fixtures/stale-pr-alarm/`) behind a `gh-axi` stub: both reasons, a healthy PR and a recent one silent, no repeat on the second poll, a re-stall alerting again, a forge failure silent, and the alarm running from `merge-on-green.sh check`.
+`merge-on-green/tests/backlog-shipped-reconcile.test.sh` drives the reconcile against a fixture home with a real markdown backlog and the real `tasks-axi`: shipped rows with a gone worker close, and live, unproven, held, queued, squad_lead, pending-close and no-`pr=` rows stay.
+
+`merge-on-green/tests/stale-pr-alarm.test.sh` drives the alarm against recorded PR fixtures (`tests/fixtures/stale-pr-alarm/`) behind a `gh-axi` stub: every reason, a release PR with and without started CI, a healthy PR and a recent one silent, no repeat on the second poll, a re-stall alerting again, a forge failure silent, and the alarm running from `merge-on-green.sh check`.
 
 `merge-on-green/tests/merge-on-green.test.sh` drives the check end to end against a fixture home
 with a stub `jg-crew-state.sh` and `jg-pr-merge.sh` in the home's `bin/` and a stub
