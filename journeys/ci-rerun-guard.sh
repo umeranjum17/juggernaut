@@ -6,7 +6,8 @@ set -u
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 out=${DONE_DONE_EVIDENCE_ROOT:?}/ci-rerun-guard.txt
 rc=0
-bash "$root/tests/jg-ci-rerun.test.sh" > "$out" 2>&1 || rc=$?
+echo "run: $(basename "$DONE_DONE_EVIDENCE_ROOT") at $(git -C "$root" rev-parse --short HEAD)" > "$out"
+bash "$root/tests/jg-ci-rerun.test.sh" >> "$out" 2>&1 || rc=$?
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
