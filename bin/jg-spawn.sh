@@ -376,7 +376,8 @@
 #   An enabled task trace also retains TRACEPARENT. Explicit Juggernaut launch
 #   assignments still apply inside the filtered environment, including the
 #   JG_TASK_INBOX export every launch carries (the absolute state/<id>.inbox
-#   path the steering doorbell names) and the GIT_EDITOR/GIT_SEQUENCE_EDITOR
+#   path the steering doorbell names), the JG_HOME export naming the launching
+#   home (a squad lead's own home for a lead), and the GIT_EDITOR/GIT_SEQUENCE_EDITOR
 #   exports that keep git non-interactive in worker panes. Raw commands must
 #   be POSIX sh compatible under this opt-in; the absent-file path is unchanged.
 #   This is an exec environment boundary, not a sandbox for the pane's startup
@@ -5050,7 +5051,11 @@ fi
 # "$JG_TASK_INBOX" instead of a path that grows with the home's depth. Like the
 # kill switch below it is an export statement, so it survives a compound raw
 # launch and the launch-env-allowlist `env -i` wrapper.
-LAUNCH="export JG_TASK_INBOX=$(shell_quote "$STATE_REAL/$ID.inbox"); $LAUNCH"
+# It also exports the home the launch belongs to (a squad lead's own home, else
+# this home), so a launch-env-hook such as core/pane-titles can reach the home's
+# helpers: the shared Herdr server and a bare pane carry no JG_HOME of their own.
+if [ "$KIND" = squad_lead ]; then LAUNCH_HOME_REAL=$(cd "$PROJ_ABS" && pwd -P); else LAUNCH_HOME_REAL=$(cd "$JG_HOME" && pwd -P); fi
+LAUNCH="export JG_HOME=$(shell_quote "$LAUNCH_HOME_REAL") JG_TASK_INBOX=$(shell_quote "$STATE_REAL/$ID.inbox"); $LAUNCH"
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 # Git must never open an interactive editor in a worker pane. Export inside
 # the launch so both compound commands and the cleared-env wrapper inherit it;

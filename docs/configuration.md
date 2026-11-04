@@ -2823,7 +2823,7 @@ The two read files use different parsing rules:
 Runtime tuning via environment variables (defaults shown):
 
 ```sh
-JG_HOME=                 # optional operational home for most scripts, unset means this repo root; jg-send requires it explicitly
+JG_HOME=                 # optional operational home for most scripts, unset means this repo root; jg-send requires it explicitly; jg-spawn.sh also exports the launching home (a squad lead's own home for a lead) into every launch, so a config/launch-env-hook finds the home even in a pane or shared server that carries none
 JG_ROOT_OVERRIDE=        # override the Juggernaut repo root, tangle-guard target, and zellij/cmux home-title hash; also legacy whole-root override when JG_HOME is unset
 JG_STATE_OVERRIDE=       # alternate state dir, mainly for tests
 JG_DATA_OVERRIDE=        # alternate data dir, mainly for tests
