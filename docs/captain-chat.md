@@ -59,6 +59,17 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
 - The owner can send a photo, document, voice note, audio or video. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
 
+## Main's turn summary
+
+`bin/jg-captain-say.sh [--key <slug>] [--link <url>] <text>` (or the text on stdin) lets Main post a plain-words summary of its turn to the owner's chat.
+It publishes a `summary` event to the `CAPTAIN` stream and never sends to the chat itself.
+The `captain-gateway` consumer pushes the event to Telegram when it arrives, so the path has no polling and no file scan.
+The same event is in `state/captain-channel.jsonl`, and a bus that refuses it falls back to the in-process send.
+The script refuses, with exit 1 and the reason on stderr, text that holds a secret, text that is a raw status line, and text that the captain-facing rules reject (an internal id, a path or jargon, or no short first line).
+`bin/jg-captain-card-lib.sh` owns those rules, and `AGENTS.md` section 9 owns the words.
+Exit 2 is a usage error.
+`tests/jg-captain-say-chat.test.sh` runs the whole path with a real Dapr sidecar, a real NATS server and a fake Bot API.
+
 ## Pushes to the owner
 
 `bin/jg-bus.sh gateway push <text>` (or the text on stdin) sends one message to the owner's private chat without a question.
@@ -77,7 +88,9 @@ It makes one `getMe` call and never sends a message.
   The inbound legs are the owner's text, picture and file, filed as notes.
   The outbound legs are a plain text, a picture and a file sent with `jg-inbox.sh reply` and accepted by Telegram.
   A caption on an album does not count as the text leg.
-- A running gateway also sends the owner every card, outcome, alert and digest event from the bus, through the durable consumer `captain-gateway`.
+- A running gateway also sends the owner every card, outcome, alert, digest and summary event from the bus, through the durable consumer `captain-gateway`.
+  The Dapr sidecar publishes each event inside a CloudEvent envelope, so the consumer and the reply router read the event from the envelope's `data`.
+  A body that is no envelope is read as the event itself.
   It starts at new events, so a first start sends no old ones.
   A send that fails is tried again for 10 minutes, and one the bot can never take (blocked, bad request) is not.
   An event not sent is named in `state/captain-channel-undelivered.jsonl`.

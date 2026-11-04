@@ -144,6 +144,25 @@ func (a *app) wakePart() (*part, error) {
 		handle: func([]byte) error { _, err := a.wakeScript("render"); return err }}, nil
 }
 
+// eventBody is the event a stream message carries. The Dapr sidecar publishes every event inside a
+// CloudEvent envelope ({"specversion":"1.0","data":{the event},...}), so what the owner's chat and the
+// reply router read is the envelope's data. A body that is no envelope (the bus' own CLI, a test) is
+// the event itself.
+func eventBody(body []byte) []byte {
+	var env struct {
+		SpecVersion string          `json:"specversion"`
+		Data        json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &env) != nil || env.SpecVersion == "" || len(env.Data) == 0 {
+		return body
+	}
+	var text string // a sender may carry the event as a JSON string
+	if json.Unmarshal(env.Data, &text) == nil {
+		return []byte(text)
+	}
+	return env.Data
+}
+
 func (a *app) routerPart() *part {
 	var env []string
 	if user, pass, ok := a.credentials(); ok {

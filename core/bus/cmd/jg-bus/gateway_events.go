@@ -16,8 +16,8 @@ import (
 	"time"
 )
 
-// chatKinds are the events the owner hears in the chat; probes and the chat's own events stay off it.
-var chatKinds = map[string]bool{"card": true, "card-close": true, "outcome": true, "alert": true, "digest": true}
+// chatKinds are the events the owner hears in the chat (summary is Main's own turn summary, bin/jg-captain-say.sh); probes and the chat's own events stay off it.
+var chatKinds = map[string]bool{"card": true, "card-close": true, "outcome": true, "alert": true, "digest": true, "summary": true}
 
 // retryWindow is how long a failing send is tried again, with a doubling wait, before it is named undelivered.
 var retryWindow = 10 * time.Minute
@@ -93,7 +93,7 @@ func (a *app) sendToChat(ev event) error {
 // blocked bot, a bad request) is not tried again.
 func (a *app) deliverEvent(ad *telegram, owner string, body []byte) (err error) {
 	var ev event
-	if json.Unmarshal(body, &ev) != nil || !chatKinds[ev.Kind] {
+	if json.Unmarshal(eventBody(body), &ev) != nil || !chatKinds[ev.Kind] {
 		return nil
 	}
 	for wait, spent := 2*time.Second, time.Duration(0); ; wait = min(2*wait, time.Minute) {
