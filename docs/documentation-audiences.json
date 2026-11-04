@@ -496,6 +496,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/deprecated-paths.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/readme-brand.md",
       "audience": "maintainer-architecture"
     },
@@ -914,6 +918,10 @@
     {
       "path": "core/kill-guard/README.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "core/lead-wake/DEPRECATED.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "core/lead-wake/README.md",
