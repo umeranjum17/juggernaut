@@ -5,6 +5,8 @@ Every captain-facing message obeys it: the Telegram chat, the chat replies, the 
 `bin/jg-voice.py` reads this file each time it runs, so an edit here changes behaviour at once with no code change.
 To change the style for one home, copy this file to `config/captain-voice.md` and edit the copy.
 That copy replaces this file whole.
+A role file beside this one (`captain-voice-overwatch.md`, `captain-voice-squad-lead.md`, `captain-voice-worker.md`) adds a personality for that role.
+A role file adds tone only. It cannot change any rule or setting in this file.
 
 ## How to write
 
