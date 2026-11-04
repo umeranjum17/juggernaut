@@ -388,6 +388,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/captain-voice.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/cd-guard.md",
       "audience": "maintainer-architecture"
     },
