@@ -104,10 +104,9 @@ clone is on disk the lint cannot judge the repository, so both forms are accepte
 The added non-generated lines of a PR are measured against a 1,000-line guidance, and the size is
 **advice, not a refusal** (captain, release c-1: the ceiling slowed work down). A run over the guidance
 prints one `checks-lint: advisory: <n> added non-generated lines ... is over the 1,000-line guidance`
-line and then checks the remaining rules, so only those can fail it. A home that wants the refusal back
-writes `refuse` in `config/checks-size`; an absent, empty or unrecognised value is advisory, the default.
-The pinned `done-done` lint hardcodes the same limit with no config key, so `checks-lint.sh` hands a
-size-only FAIL from it to this feature's lint, which owns the rule and the setting.
+line and then checks the remaining rules, so only those can fail it. No setting brings the refusal back (owner, 1 Nov).
+The pinned `done-done` lint hardcodes the same limit, so `checks-lint.sh` hands a size-only FAIL from it to
+this feature's lint before logging anything, and a size-only run writes no FAIL row.
 Deleted lines, generated paths, the PR's
 merged-in upstream lines and a moved file's own lines do not count: the lines it still shares with the
 file it came from, and the path rewrites, in a move git resolves as a rename at 50% similarity or more

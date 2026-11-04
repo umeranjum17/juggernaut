@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E: a file git resolves as a rename at 50% similarity or more counts as moved, not added, so a
 # history-preserving import lands; added lines past that similarity budget still count as new code, which
-# is advice unless config/checks-size asks for the refusal
+# is advice only
 # (no network: stub gh answers the PR, its pages, its diff and the moved file's previous content).
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.

@@ -82,8 +82,9 @@ for id in good:1001 generated:1002 routes:1003 bad:1004; do
   legacy=$(JG_HOME="$d/jg-$name" "$d/legacy.sh" "https://github.com/owner/repo/pull/$num" "$d/fm/data/evidence" 2>&1); legacy_rc=$?
   actual=$(JG_HOME="$d/jg-$name" "$ROOT/merge-on-green/checks-lint.sh" "https://github.com/owner/repo/pull/$num" "$d/fm/data/evidence" 2>&1); actual_rc=$?
   set -e
-  logged=$(awk -F '\t' -v src="https://github.com/owner/repo/pull/$num" '$2 == src { verdict = $4 } END { print verdict }' "$d/jg-$name/data/checks-gate.log")
+  logged=$(awk -F '\t' -v src="https://github.com/owner/repo/pull/$num" '$2 == src { verdict = $4 } END { print verdict }' "$d/jg-$name/data/checks-gate.log" 2>/dev/null || true)
   want=pass; [ "$actual_rc" -eq 0 ] || want=fail
+  [ "$name" != bad ] || want=  # a size-only FAIL is advice: the adapter logs no row for it (owner, 1 Nov)
   if [ "$legacy_rc" -ne "$actual_rc" ] || [ "${logged/warn/pass}" != "$want" ]; then printf 'FAIL %s: legacy=%s (%s), done-done=%s (%s), log=%s\n' "$name" "$legacy_rc" "$legacy" "$actual_rc" "$actual" "$logged"; failures=$((failures + 1)); else echo "PASS $name: both verdicts $([ "$actual_rc" -eq 0 ] && echo PASS || echo FAIL)"; fi
 done
 [ "$failures" -eq 0 ] || exit 1
@@ -97,7 +98,7 @@ set +e
 fallback=$(JG_HOME="$d/jg-good" JG_DONE_DONE_BIN="$d/bin/old-done-done" "$ROOT/merge-on-green/checks-lint.sh" 'https://github.com/owner/repo/pull/1001' "$d/fm/data/evidence" 2>&1); fallback_rc=$?
 set -e
 [ "$fallback_rc" -eq 0 ] && [[ "$fallback" == *'checks-lint: PASS: fixture'* ]] || { echo "FAIL fallback: rc=$fallback_rc ($fallback)"; exit 1; }
-# A size-only FAIL is handed to the feature lint, which owns config/checks-size, so the adapter publishes no
+# A size-only FAIL is handed to the feature lint, which only advises on size, so the adapter publishes no
 # receipt of its own for it: a stale FAIL receipt must never refuse a landing the size rule only advises on.
 [ ! -e "$JG_MAIN_HOME/revocations" ] || { echo 'FAIL a size-only FAIL still published a receipt'; exit 1; }
 # The pinned lint alone refuses a 1,000-line PR: its limit has no config key. The adapter hands that size-only
@@ -109,6 +110,7 @@ big=$(JG_HOME="$d/jg-big" JG_LEGACY_CHECKS_LINT="$ROOT/merge-on-green/jg-checks-
 set -e
 [ "$big_rc" -eq 0 ] && [[ "$big" == *'checks-lint: advisory: 1000 added non-generated lines'*' is over the 1000-line guidance'* ]] && [[ "$big" == *'checks-lint: PASS:'* ]] \
   || { echo "FAIL size-only FAIL was not handed to the advisory rule: rc=$big_rc ($big)"; exit 1; }
+! awk -F '\t' '$4 == "fail" { found = 1 } END { exit !found }' "$d/jg-big/data/checks-gate.log" || { echo 'FAIL a size-only FAIL left a fail row in checks-gate.log'; exit 1; }
 echo 'PASS a size-only FAIL from the pinned lint ends as an advisory line and a PASS'
 # A caller-relative evidence directory must survive the adapter's temporary cwd.
 printf 'evidence fixture\n' > "$d/cwd/data/evidence/result.txt"
