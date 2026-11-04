@@ -251,6 +251,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash fleet-report/tests/fleet-report.test.sh
 
+      # Fixture home only: no live state or metrics are read.
+      - name: Retro metrics test
+        if: ${{ !cancelled() }}
+        run: bash fleet-stats/tests/retro-metrics.test.sh
+
       - name: Account pool test
         if: ${{ !cancelled() }}
         run: bash account-pool/tests/account-pool.test.sh
