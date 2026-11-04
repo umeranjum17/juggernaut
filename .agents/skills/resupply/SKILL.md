@@ -74,6 +74,8 @@ This touches only the Juggernaut repo and its own worktrees, never anything unde
 
    Read its per-mate lines and its closing `summary:` line as the outcome:
    - `restarted: <id>` - that mate is now genuinely running the current instructions and launch-time settings.
+   - `restarted: <id> (idle: stopped, starts on its first routed work)` - the mate had no open work, request or queued message, so no agent was started for it; its first routed steer or task starts it on the current code and delivers the message.
+     A mate with work still relaunches at once.
    - `nudged: <id>: <reason>` - the restart was not safe, so the mate got the older re-read message instead and is still running the conversation and launch-time settings it started with.
      Never report one of these as a clean reload.
    - `unreached: <id>: <reason>` - no safe running outcome could be confirmed, including an ambiguous relaunch result.

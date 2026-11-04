@@ -787,6 +787,7 @@ tests/jg-ship-local.test.sh 669
 tests/jg-spawn-core.test.sh 1238
 tests/jg-spawn-dispatch-profile.test.sh 938199
 tests/jg-squad-lead-dormant.test.sh 2392
+tests/jg-squad-lead-restart-idle.test.sh 9981
 tests/jg-state-bus-parity.test.sh 164
 tests/jg-lease-live.test.sh 92
 tests/jg-bus-service.test.sh 616
