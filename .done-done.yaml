@@ -150,6 +150,8 @@ journeys:
     command: node core/kill-guard/run-home-owner-proof.mjs
   wake-bus-live:
     command: bash journeys/wake-bus-live.sh
+  wedge-marker:
+    command: bash journeys/wedge-marker.sh
   wake-cursor-kill:
     command: bash journeys/wake-cursor-kill.sh
   bus-machine-service:
