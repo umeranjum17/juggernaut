@@ -78,7 +78,7 @@ test_an_unknown_release_state_downgrades() {
 }
 
 test_a_released_fix_with_an_observation_point_passes() {
-  local dir claim='Fixed the loop; live: v9.9.9 @ https://app.test/settings (checked 12:04Z)'
+  local dir claim='Fixed the loop; live: v9.9.9 @ https://app.test/settings (checked 12:04Z); carries: #12; waiting: none'
   dir=$(home released 'v9.9.9 2026-11-01T10:00Z app.test')
   OUT=$(JG_HOME=$dir bash "$CHECK" 'done' "$claim" 2>"$dir/stderr")
   RC=$?
@@ -88,7 +88,7 @@ test_a_released_fix_with_an_observation_point_passes() {
 }
 
 test_a_recorded_commit_prefix_passes() {
-  local dir claim='Fixed the loop; live: 4f2c9ab @ https://app.test/settings'
+  local dir claim='Fixed the loop; live: 4f2c9ab @ https://app.test/settings; carries: #12; waiting: none'
   dir=$(home commit '4f2c9abd0e1 2026-11-01T11:00Z app.test')
   expect_verdict 0 "$dir" 'done' "$claim" 'a recorded commit id matches a shorter claimed id'
 }
@@ -126,7 +126,7 @@ test_the_lead_report_path_writes_the_downgrade() {
 }
 
 test_the_lead_report_path_keeps_a_live_claim() {
-  local dir claim='Fixed the refresh bug; live: v1.2.3 @ https://app.test/settings'
+  local dir claim='Fixed the refresh bug; live: v1.2.3 @ https://app.test/settings; carries: #12; waiting: none'
   dir=$(home lead-report-live 'v1.2.3 2026-11-01T09:00Z app.test')
   mkdir -p "$dir/parent/state"
   printf 'umer\n' > "$dir/.jg-squad-lead-home"
@@ -139,7 +139,7 @@ test_the_lead_report_path_keeps_a_live_claim() {
 }
 
 test_a_down_service_refuses_the_live_claim() {
-  local dir claim='Fixed it; live: v1.2.3 @ https://app.test' out rc=0
+  local dir claim='Fixed it; live: v1.2.3 @ https://app.test; carries: #12; waiting: none' out rc=0
   dir=$(home down-service 'v1.2.3 2026-11-01T09:00Z app.test')
   mv "$PROBES/dapr" "$PROBES/dapr.off"; mv "$PROBES/nats" "$PROBES/nats.off"
   out=$(bash "$LIVE_SERVICES" 2>&1) || rc=$?
@@ -159,6 +159,59 @@ test_a_down_service_refuses_the_live_claim() {
   pass 'a live claim is refused while a required service is down and stands when all run'
 }
 
+# Add a task record <id> to <home>, optionally with a merge-notified marker.
+task() {  # <home> <id> <pr-number> [merged]
+  printf 'kind=ship\npr=https://github.com/o/r/pull/%s\n' "$3" > "$1/state/$2.meta"
+  if [ "${4:-}" = merged ]; then : > "$1/state/$2.pr-poll-merge-notified"; fi
+}
+
+test_an_omitted_carries_and_waiting_clause_is_flagged_and_extended() {
+  local dir claim='Fixed the loop; live: v9.9.9 @ https://app.test/settings'
+  dir=$(home extended 'v8.0.0 2026-10-01T10:00Z app.test prs=3' 'v9.9.9 2026-11-01T10:00Z app.test prs=12,#15')
+  task "$dir" open-a 20
+  task "$dir" open-b 21
+  task "$dir" open-dup 21
+  task "$dir" merged-c 22 merged
+  task "$dir" carried-d 15
+  task "$dir" carried-old 3
+  expect_verdict 3 "$dir" 'done' "$claim" 'a live claim that omits carries and waiting is flagged'
+  assert_equals "$claim; carries: #12 #15; waiting: #20 #21" "$OUT" 'the claim is extended from the release and task records'
+  assert_contains "$ERR" 'does not name the PRs release v9.9.9 carries' 'the missing carried list is named on stderr'
+  assert_contains "$ERR" 'does not name the open PRs that wait' 'the missing waiting list is named on stderr'
+}
+
+test_one_omitted_clause_is_named_alone() {
+  local dir
+  dir=$(home one-omitted 'v9.9.9 2026-11-01T10:00Z app.test prs=12')
+  expect_verdict 3 "$dir" 'done' 'Fixed it; live: v9.9.9 @ https://app.test; carries: #12' 'a claim that omits only waiting is flagged'
+  assert_equals 'Fixed it; live: v9.9.9 @ https://app.test; carries: #12; waiting: none' "$OUT" 'only the waiting clause is added'
+  case "$ERR" in *'carries (carries'*) fail 'the carried list was named although the claim has it' ;; esac
+  expect_verdict 3 "$dir" 'done' 'Fixed it; live: v9.9.9 @ https://app.test; waiting: none' 'a claim that omits only carries is flagged'
+  assert_equals 'Fixed it; live: v9.9.9 @ https://app.test; waiting: none; carries: #12' "$OUT" 'only the carries clause is added'
+}
+
+test_a_record_without_prs_reads_unrecorded() {
+  local dir
+  dir=$(home no-prs 'v9.9.9 2026-11-01T10:00Z app.test')
+  expect_verdict 3 "$dir" 'done' 'Fixed it; live: v9.9.9 @ https://app.test; waiting: none' 'a release record with no prs= field is flagged'
+  assert_contains "$OUT" 'carries: unrecorded' 'the extension says the carried PRs are unrecorded'
+  assert_contains "$ERR" 'no prs= field' 'stderr names the missing record field'
+}
+
+test_the_lead_report_path_prints_the_extended_claim() {
+  local dir claim='Fixed the refresh bug; live: v1.2.3 @ https://app.test/settings'
+  dir=$(home lead-report-extended 'v1.2.3 2026-11-01T09:00Z app.test prs=40')
+  task "$dir" waiting-e 41
+  mkdir -p "$dir/parent/state"
+  printf 'umer\n' > "$dir/.jg-squad-lead-home"
+  printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$dir/parent" > "$dir/.jg-squad-lead-parent"
+  JG_HOME=$dir bash "$REPORT" 'done' abcdef0123456789 "$claim" 2>"$dir/stderr" \
+    || fail 'the lead report helper must append the extended claim'
+  assert_contains "$(cat "$dir/parent/state/umer.status")" "$claim; carries: #40; waiting: #41" \
+    'the parent channel carries the extended live claim'
+  pass 'the lead report path prints the extended claim'
+}
+
 test_a_merged_only_fix_is_downgraded
 test_a_down_service_refuses_the_live_claim
 test_an_unknown_release_state_downgrades
@@ -169,4 +222,8 @@ test_a_screen_free_change_passes
 test_an_ordinary_report_is_untouched
 test_the_lead_report_path_writes_the_downgrade
 test_the_lead_report_path_keeps_a_live_claim
+test_an_omitted_carries_and_waiting_clause_is_flagged_and_extended
+test_one_omitted_clause_is_named_alone
+test_a_record_without_prs_reads_unrecorded
+test_the_lead_report_path_prints_the_extended_claim
 printf 'jg-live-claim: ok\n'
