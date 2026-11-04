@@ -261,6 +261,7 @@ func (a *app) followReplies(ad Adapter) error {
 	})
 	readLines(filepath.Join(dir, "sent.jsonl"), func(v map[string]string) { sent[v["key"]] = true })
 	for _, r := range rec.Replies {
+		a.typing.end(r.ID) // the note is answered: its chat stops showing "typing…"
 		if w, ok := notes[r.ID]; ok {
 			parts := a.replyParts(ad, w, r.Cursor, r.Body, r.Attachments, len(r.Options) > 0)
 			if len(r.Options) > 0 {
