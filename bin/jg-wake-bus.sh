@@ -238,11 +238,11 @@ live_flush_outbox() {
   : > "$keep" || return 1
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    # An acknowledgement carries its raise's id, so its message id takes the
-    # "/ack" suffix live_ack gives it; under the raise's own id the server would
-    # drop it as a duplicate and the row would never settle.
+    # An acknowledgement carries its raise's id and its own message id (`mid`, set
+    # by live_ack); under the raise's own id the server would drop it as a
+    # duplicate and the row would never settle.
     seq=$(bus_pub_seq "$(printf '%s' "$line" | jq -r '.subject')" \
-      "$(printf '%s' "$line" | jq -r '.id + (if .ack == true then "/ack" else "" end)')" \
+      "$(printf '%s' "$line" | jq -r '.mid // (.id + (if .ack == true then "/ack" else "" end))')" \
       "$(printf '%s' "$line" | jq -c 'del(.subject)')")
     [ "${seq:-0}" -gt 0 ] || printf '%s\n' "$line" >> "$keep"
   done < "$LIVE_OUTBOX"
@@ -345,8 +345,14 @@ live_settle() { # <kind> <key> <payload>
   live_render
 }
 
+# live_ack <id>...: acknowledge each row, then prove it left the replica. Every
+# acknowledgement is its own bus message (a message id unique to this attempt): the
+# server drops a second message under an id it has already stored as a duplicate,
+# and a row whose first acknowledgement the cursor had already passed without
+# settling it could then never be acknowledged again, yet every retry exited 0.
+# An acknowledgement that leaves its row in the replica says so and exits 1.
 live_ack() { # <id>...
-  local id at owed subject
+  local id at owed subject mid left=''
   at=$(date -u +%s)
   for id in "$@"; do
     [ -n "$id" ] || continue
@@ -356,6 +362,11 @@ live_ack() { # <id>...
       owed=$LIVE_OUTBOX.tmp.$$
       if jq -c --arg id "$id" 'select(.id != $id)' "$LIVE_OUTBOX" > "$owed" 2>/dev/null \
         && mv -f "$owed" "$LIVE_OUTBOX"; then
+        # The replica copied the owed row at the last render; drop that copy too, or
+        # the render below puts the row back.
+        if [ -s "$LIVE_EVENTS" ] && jq -c --arg id "$id" 'select(.id != $id)' "$LIVE_EVENTS" > "$owed" 2>/dev/null; then
+          mv -f "$owed" "$LIVE_EVENTS" || rm -f -- "$owed"
+        fi
         continue
       fi
       rm -f -- "$owed"
@@ -363,11 +374,22 @@ live_ack() { # <id>...
     fi
     # An inbox record is acknowledged on the inbox stream, beside its raise.
     case "$id" in inbox/*) subject="$SUBJECT_PREFIX.inbox.ack" ;; *) subject="$SUBJECT_PREFIX.wake.ack" ;; esac
-    live_publish "$subject" "$id/ack" \
-      "$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --argjson at "$at" \
-        '{v:1,id:$id,home:$home,ack:true,at:$at}')" || return 1
+    mid="$id/ack/$at-$$-$RANDOM"
+    live_publish "$subject" "$mid" \
+      "$(jq -nc --arg id "$id" --arg mid "$mid" --arg home "$(live_home_key)" --argjson at "$at" \
+        '{v:1,id:$id,mid:$mid,home:$home,ack:true,at:$at}')" || return 1
   done
-  live_render
+  live_render || return 1
+  for id in "$@"; do
+    [ -n "$id" ] || continue
+    if live_events | jq -e --arg id "$id" 'select(.id == $id and (.ack // false) != true)' >/dev/null 2>&1; then
+      left="$left $id"
+    fi
+  done
+  if [ -n "$left" ]; then
+    printf 'jg-wake-bus.sh: acknowledged but still queued (the acknowledgement did not settle the row):%s\n' "$left" >&2
+    return 1
+  fi
 }
 
 # live_ids_through <max-seq> [<allowed-seqs-file>]: the queued ids an actor may
