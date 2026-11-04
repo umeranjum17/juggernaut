@@ -68,6 +68,15 @@ assert_contains "$out" "juggernaut will pick this up at its next check." \
   "plain note should keep its human announcement line"
 assert_equals "1" "$(count_notes "$home")" "plain note should write one record"
 assert_equals "1" "$(count_wakes "$home")" "plain note should append one wake"
+
+# --- a chat note's wake carries the source, the whole text and a one-line file description ---
+chat_home=$(make_home chat)
+printf '[chat telegram 42:7]\n%s\n[file image /x/state/m/ab.jpg 12 KB image/jpeg]\n' "$(printf 'long%.0s' $(seq 1 40))" \
+  | run_inbox "$chat_home" note - >/dev/null || fail "chat note should succeed"
+chat_wake=$(grep 'inbox:' "$chat_home/state/.wake-queue")
+assert_contains "$chat_wake" '[chat telegram 42:7] longlong' "a chat wake names its source and starts with the text"
+assert_contains "$chat_wake" '[image 12 KB image/jpeg]' "a chat wake describes the attached file in one line"
+case "$chat_wake" in *'/x/state/m/ab.jpg'*) fail "a chat wake must not carry the local file path" ;; esac
 list_out=$(run_inbox "$home" list) || fail "list should succeed"
 assert_contains "$list_out" "hello from the terminal" "list should show the body"
 pass "plain note, list, and wake stay on the historical human path"

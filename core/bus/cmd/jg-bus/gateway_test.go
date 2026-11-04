@@ -48,6 +48,17 @@ func TestGatewayIngress(t *testing.T) {
 	if code := once(); code != 0 || len(events) != 1 || !strings.HasSuffix(events[0], "/jg.captain.inbound") {
 		t.Fatalf("exit %d, events %v: want one inbound event", code, events)
 	}
+	// The mirror: the owner's message shows in the wake the session reads, once, with its source;
+	// the three dropped ones show nowhere.
+	wakes := func() string { q, _ := os.ReadFile(state + "/.wake-queue"); return string(q) }
+	if w := wakes(); strings.Count(w, "captain inbox note") != 1 || !strings.Contains(w, "[chat telegram 42:100] hello overwatch") {
+		t.Fatalf("want one mirrored wake naming the source and text, got %q", w)
+	}
+	for _, dropped := range []string{"stranger", "group", "bot"} {
+		if strings.Contains(wakes(), dropped) {
+			t.Fatalf("dropped message %q was mirrored: %q", dropped, wakes())
+		}
+	}
 	if off, _ := os.ReadFile(state + "/captain-chat/telegram.offset"); string(off) != "14\n" {
 		t.Fatalf("offset = %q, want 14", off)
 	}
@@ -60,6 +71,9 @@ func TestGatewayIngress(t *testing.T) {
 	notes, _ := filepath.Glob(state + "/inbox/*.note")
 	if body, _ := os.ReadFile(notes[0]); once() != 0 || len(events) != 1 || len(notes) != 1 || !strings.Contains(string(body), "[chat telegram 42:100]\nhello overwatch") {
 		t.Fatalf("replay: events %v, notes %v, body %q", events, notes, body)
+	}
+	if strings.Count(wakes(), "captain inbox note") != 1 {
+		t.Fatalf("a replay mirrored the message again: %q", wakes())
 	}
 	// A group-readable token file is refused; a dead API's error names the token-bearing URL.
 	os.Chmod(tokenFile, 0o640)

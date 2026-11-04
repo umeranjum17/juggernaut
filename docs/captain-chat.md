@@ -24,6 +24,10 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
 ## How it works
 
 - The owner's private text becomes an inbox note whose first line is `[chat telegram <chat>:<message>]`. Anyone else is dropped and counted by time and update id, never by text.
+- The owner's message is mirrored into the Overwatch session by the notification Overwatch already receives for the note: `check: captain inbox note <id> - [chat telegram <chat>:<message>] <text>`.
+  It shows the source, the whole text (up to 400 characters) and each attached file as `[<kind> <size> <mime>]`, without the local path.
+  It is sent once, because a replay of the same update adds no second notification, and a dropped message has none.
+  This path needs no new channel, no typing into the pane and no model turn. Other notes keep their 100-character summary.
 - `bin/jg-inbox.sh reply <id>` is the only way an answer reaches the chat. It is sent as a threaded reply, split at 4096 characters, and sent once.
 - Add `--attach <path>` (repeatable) to `reply` to send files with the answer.
   The script only records the paths. The gateway sends them from disk, threaded on the owner's message.

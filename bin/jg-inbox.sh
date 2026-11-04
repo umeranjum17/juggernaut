@@ -316,8 +316,17 @@ read_note_body() {  # <file>
   awk 'found { print; next } /^--$/ { found=1 }' "$1"
 }
 
+# A chat note (first line `[chat <channel> <chat>:<message>]`) is the wake's only text the
+# captain's session shows, so its summary keeps the source head, the whole message up to 400
+# characters, and each attached file as `[<kind> <size> <mime>]` with its local path left out.
+# Any other note keeps the 100-character summary.
 note_summary_from_body() {
-  printf '%s' "$1" | tr '\n\t' '  ' | cut -c1-100
+  case "$1" in
+    '[chat '*)
+      printf '%s' "$1" | tr '\n\t' '  ' | sed -E 's/\[file ([a-z]+) [^ ]+ /[\1 /g' | cut -c1-400
+      ;;
+    *) printf '%s' "$1" | tr '\n\t' '  ' | cut -c1-100 ;;
+  esac
 }
 
 write_note_file() {  # <path> <id> <source> <body> [extra] [request-id]
