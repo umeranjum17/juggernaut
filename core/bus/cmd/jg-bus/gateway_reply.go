@@ -5,7 +5,6 @@ package main
 // a message threaded on the note's own, so jg-inbox.sh keeps its rule of no network calls.
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,7 +40,7 @@ func (e *sendError) Error() string { return fmt.Sprintf("%s answered %d: %s", e.
 
 func (t *telegram) Limit() int { return 4096 }
 
-// Send is sendMessage threaded on ReplyTo, or the files of out (see sendFiles). A 429 waits the
+// Send is sendMessage (HTML, see gateway_html.go) threaded on ReplyTo, or the files of out (see sendFiles). A 429 waits the
 // time Telegram names and sends the same call again.
 func (t *telegram) Send(ctx context.Context, out Outbound) (string, error) {
 	reply, _ := json.Marshal(map[string]any{"message_id": json.Number(out.ReplyTo), "allow_sending_without_reply": true})
@@ -52,15 +51,14 @@ func (t *telegram) Send(ctx context.Context, out Outbound) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	msg := map[string]any{"chat_id": json.Number(out.Chat), "text": text}
+	msg := map[string]any{"chat_id": json.Number(out.Chat)}
 	if len(out.Buttons) > 0 {
 		msg["reply_markup"] = keyboard(out.Buttons)
 	}
 	if out.ReplyTo != "" { // a push answers nothing, so it is not threaded
 		msg["reply_parameters"] = json.RawMessage(reply)
 	}
-	body, _ := json.Marshal(msg)
-	return t.call(ctx, "sendMessage", 30*time.Second, func() (io.Reader, string) { return bytes.NewReader(body), "application/json" })
+	return t.textCall(ctx, "sendMessage", 30*time.Second, msg, text)
 }
 
 // call posts one Bot API method and returns the id of the message it made (the first of an album).

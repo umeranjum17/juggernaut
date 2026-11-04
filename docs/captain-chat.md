@@ -29,6 +29,12 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   It is sent once, because a replay of the same update adds no second notification, and a dropped message has none.
   This path needs no new channel, no typing into the pane and no model turn. Other notes keep their 100-character summary.
 - `bin/jg-inbox.sh reply <id>` is the only way an answer reaches the chat. It is sent as a threaded reply, split at 4096 characters, and sent once.
+- Text messages and the mark on a tapped choice go out with Telegram HTML formatting.
+  The gateway renders `**bold**`, `*italic*` or `_italic_`, `` `code` ``, fenced code, `[text](https://url)` and `> quote` lines to the matching tags.
+  All other text has `&`, `<` and `>` escaped, and a marker with no partner stays text, so model text cannot break the markup.
+  If Telegram answers "can't parse entities", the gateway sends the same text once as plain text.
+  Tables and collapsible blocks stay off.
+  File captions stay plain text.
 - Add `--attach <path>` (repeatable) to `reply` to send files with the answer.
   The script only records the paths. The gateway sends them from disk, threaded on the owner's message.
   Pictures up to 10 MB go as photos, and Telegram falls back to a file if it refuses one. Other files go as files up to 50 MB.
