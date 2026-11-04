@@ -110,5 +110,24 @@ grep -q fleet-retro-due.sh "$main/state/fleet-pulse.check.sh" \
   && echo ok install-retargets-check \
   || { echo FAIL install-retargets-check >&2; fail=1; }
 
+# Regression: wiring a clean git home leaves no untracked file (autosync stops on a dirty tree).
+clean=$(mktemp -d); trap 'rm -rf -- "$clean"' EXIT
+mkdir -p "$clean/bin" "$clean/state"
+git -C "$clean" init -q
+: >"$clean/bin/keep.sh";
+git -C "$clean" add -A
+"$root/fleet-pulse/wiring.sh" "$clean" >/dev/null
+"$root/fleet-pulse/wiring.sh" --dry-run "$clean" | { ! grep -q chat-tsv; }
+[ -z "$(git -C "$clean" status --porcelain --untracked-files=all | grep '^??')" ] \
+  && [ ! -e "$clean/bin/chat-tsv.py" ] \
+  && echo ok wiring-leaves-no-untracked-file \
+  || { echo FAIL wiring-leaves-no-untracked-file >&2; fail=1; }
+# An old installed copy is still removed harmlessly.
+: >"$clean/bin/chat-tsv.py"
+"$root/fleet-pulse/unwiring.sh" "$clean" >/dev/null && [ ! -e "$clean/bin/chat-tsv.py" ] \
+  && "$root/fleet-pulse/unwiring.sh" "$clean" >/dev/null \
+  && echo ok unwiring-removes-old-copy \
+  || { echo FAIL unwiring-removes-old-copy >&2; fail=1; }
+
 [ "$fail" -eq 0 ] || exit 1
 echo PASS newest-retro

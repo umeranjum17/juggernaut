@@ -2,5 +2,6 @@
 set -euo pipefail
 [ "$#" -eq 1 ] || { echo 'usage: unwiring.sh <home>' >&2; exit 2; }
 home=$(cd "$1" && pwd -P)
+# Older wirings installed this copy into the tracked bin/; remove it if present.
 dest=$home/bin/chat-tsv.py
 if [ -e "$dest" ]; then rm -- "$dest"; echo "removed: $dest"; else echo "not installed: $dest"; fi
