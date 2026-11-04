@@ -66,9 +66,17 @@ new_world() {  # <name> [wait-hours] -> prints the world directory
   printf 'completed success @Smoke,completed success @Build\n' > "$w/gh-checks"
   : > "$w/gh-pr"
   : > "$w/gh-orphans"
+  : > "$w/gh-merged"
   cat > "$w/bin/gh" <<'SH'
 #!/usr/bin/env bash
+# `gh pr list --state merged --head <branch>` is the shipped read: it answers 1
+# for a head named in $GH_MERGED and 0 otherwise, and fails when the file is gone.
 case "$*" in
+  "pr list "*"--state merged"*)
+    head=
+    while [ "$#" -gt 0 ]; do [ "$1" = --head ] && { head=$2; break; }; shift; done
+    [ -f "$GH_MERGED" ] || exit 1
+    if grep -qxF "$head" "$GH_MERGED"; then echo 1; else echo 0; fi ;;
   *state=all*) cat "$GH_PR" ;;
   *pulls\?state=open\&per_page*) cat "$GH_ORPHANS" 2>/dev/null; true ;;
   */pulls\?*) cat "$GH_OPEN" ;;
@@ -108,8 +116,8 @@ SH
 run() {  # <world> <verb> <now>
   local w=$1
   POST_LOG=$w/posted.log ALERT_LOG=$w/alerted.log
-  GH_OPEN=$w/gh-open GH_CHECKS=$w/gh-checks GH_PR=$w/gh-pr GH_ORPHANS=$w/gh-orphans
-  export POST_LOG ALERT_LOG GH_OPEN GH_CHECKS GH_PR GH_ORPHANS PATH="$w/bin:$PATH"
+  GH_OPEN=$w/gh-open GH_CHECKS=$w/gh-checks GH_PR=$w/gh-pr GH_ORPHANS=$w/gh-orphans GH_MERGED=$w/gh-merged
+  export POST_LOG ALERT_LOG GH_OPEN GH_CHECKS GH_PR GH_ORPHANS GH_MERGED PATH="$w/bin:$PATH"
   OUT=$(JG_RELEASE_CARD_POST=$w/bin/poster JG_RELEASE_ALERT_NOTE=$w/bin/alert \
     bash "$RR" "$w/home" "$2" --now "$3" 2>&1)
   RC=$?
@@ -194,6 +202,7 @@ test_a_pull_request_left_on_a_shipped_release_holds_the_release() {
   local w
   w=$(new_world orphan)
   printf '7\thttps://github.com/acme/thing/pull/7\trelease/c-1\n9\thttps://github.com/acme/thing/pull/9\trelease/c-2\n' > "$w/gh-orphans"
+  printf 'release/c-1\n' > "$w/gh-merged"
   run "$w" tick 1800000000
   expect_code 0 "$RC" "a held release is not a failure"
   assert_equals 0 "$(posts "$w")" "an orphan holds the card"
@@ -205,6 +214,27 @@ test_a_pull_request_left_on_a_shipped_release_holds_the_release() {
   run "$w" tick 1800000100
   assert_equals 1 "$(posts "$w")" "the card is raised once no pull request is left on a shipped release"
   pass "a pull request left on a shipped release holds the release and names it"
+}
+
+test_a_pull_request_on_an_older_release_that_has_not_shipped_holds_nothing() {
+  local w
+  w=$(new_world unshipped)
+  printf '7\thttps://github.com/acme/thing/pull/7\trelease/c-1\n' > "$w/gh-orphans"
+  # release/c-2 is the current branch and release/c-1 is older, but no pull
+  # request from release/c-1 into main has merged: c-1 still takes work.
+  run "$w" tick 1800000000
+  expect_code 0 "$RC" "a ready release ticks cleanly"
+  assert_equals 1 "$(posts "$w")" "a pull request on an unshipped older release does not hold the card"
+  assert_equals ready "$(field "$w" .state)" "the recorded state is ready, not orphaned"
+  run "$w" show 1800000000
+  assert_not_contains "$OUT" "still target" "an unshipped older release is not reported as an orphan"
+  w=$(new_world unreadable)
+  printf '7\thttps://github.com/acme/thing/pull/7\trelease/c-1\n' > "$w/gh-orphans"
+  rm -f "$w/gh-merged"
+  run "$w" tick 1800000000
+  assert_equals 0 "$(posts "$w")" "a shipped read that fails holds the card rather than guessing"
+  assert_equals unknown "$(field "$w" .state)" "an unreadable shipped read leaves the state unknown"
+  pass "a pull request on an older release holds the release only once that release's pull request merged"
 }
 
 test_a_release_that_does_not_carry_the_live_version_is_held() {
@@ -357,6 +387,7 @@ test_a_finished_release_raises_one_card_with_numbers_and_risks
 test_a_second_run_inside_the_wait_resends_nothing
 test_an_open_feature_holds_the_release
 test_a_pull_request_left_on_a_shipped_release_holds_the_release
+test_a_pull_request_on_an_older_release_that_has_not_shipped_holds_nothing
 test_a_release_that_does_not_carry_the_live_version_is_held
 test_a_red_or_running_or_unreadable_check_holds_the_release
 test_the_count_is_fetched_before_it_is_measured

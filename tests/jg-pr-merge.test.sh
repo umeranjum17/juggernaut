@@ -227,6 +227,12 @@ case "${1:-} ${2:-}" in
         ;;
     esac
     ;;
+  "pr list")
+    # The shipped-release read (jg_release_shipped): no merged release pull
+    # request, so a release branch is not shipped and still takes work.
+    case " $* " in *" --state merged "*) printf '0\n' ;; esac
+    exit 0
+    ;;
   "pr merge")
     if [ -n "${JG_TEST_META_AT_MERGE:-}" ] && [ -f "${JG_STATE_OVERRIDE:-}/task-x1.meta" ]; then
       cat "$JG_STATE_OVERRIDE/task-x1.meta" > "$JG_TEST_META_AT_MERGE"

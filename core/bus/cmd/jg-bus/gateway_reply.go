@@ -48,7 +48,7 @@ func (t *telegram) Send(ctx context.Context, out Outbound) (string, error) {
 	if len(out.Files) > 0 {
 		return t.sendFiles(ctx, out, string(reply))
 	}
-	msg := map[string]any{"chat_id": json.Number(out.Chat), "text": out.Text}
+	msg := map[string]any{"chat_id": json.Number(out.Chat), "text": voiceText(out.Text)}
 	if len(out.Buttons) > 0 {
 		msg["reply_markup"] = keyboard(out.Buttons)
 	}

@@ -527,7 +527,9 @@ The merge gate and the release process are unchanged.
 
 ### Release cut and pull requests left on a shipped release
 
-An open pull request whose base is an older `release/c-<M>` than the newest `release/c-<N>` is an orphan: it targets a release that already shipped.
+A release branch is shipped only when its release pull request into the default branch merged.
+A newer `release/c-<N>` existing says only that the next cycle was cut, so the older branch still takes work, red-fixes included, until its own release lands (`jg_release_shipped` in `bin/jg-version-branch-lib.sh` is the one definition).
+An open pull request whose base is a shipped `release/c-<M>` older than the newest `release/c-<N>` is an orphan: it targets a release that already shipped.
 When a release pull request merges, the recorded-merge pass in `bin/jg-version-branch-sync.sh` runs `gh pr edit --base` to move every orphan to the current version branch, and prints one line per move.
 Until then, `bin/jg-pr-check.sh` refuses to arm the release pull request and lists each orphan with the command that moves it.
 `bin/jg-release-readiness.sh` reports the release as `orphaned` and names the pull requests, so the digest line shows the problem before the cut.
@@ -536,7 +538,8 @@ The one override is `bin/jg-pr-merge.sh --allow-orphans "<captain words>"`, whic
 `journeys/release-cut-orphans.sh` drives all of it.
 
 A merge into a release branch that already shipped is refused too.
-`release/c-<M>` counts as shipped when a newer `release/c-<N>` exists (`bin/jg-version-branch-lib.sh` decides which branch is current), or when a pull request from `release/c-<M>` into the default branch is merged.
+`release/c-<M>` counts as shipped only when a pull request from `release/c-<M>` into the default branch is merged, and a newer `release/c-<N>` existing does not change that.
+A read the forge cannot answer is a refusal here, because an unproved merge is not allowed.
 `bin/jg-pr-merge.sh`, which merge-on-green also uses, reads the base live and refuses before it runs the merge.
 The refusal names the open release branch and prints the exact `gh pr edit <n> --base <branch>` command; when no newer branch is open it says so and prints no command.
 A merge into the open release branch or the default branch is unchanged.

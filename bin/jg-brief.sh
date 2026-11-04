@@ -632,8 +632,21 @@ _bi=$SCRIPT_DIR/../core/brief-inherit/bin/jg-brief-inherit-lib.sh
 # shellcheck disable=SC1090 # The optional feature source is installed outside this repository.
 [ ! -f "$_bi" ] || { . "$_bi" && jg_brief_inherit_shared "$CONFIG" "$KIND"; }
 
+# The worker personality file (defaults/captain-voice-worker.md, or the home's config copy)
+# adds tone to the worker's own lines; the shared rules stay in captain-voice.md (bin/jg-voice.py).
+append_worker_voice() {
+  local persona
+  persona=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" python3 "$SCRIPT_DIR/jg-voice.py" persona --role worker 2>/dev/null) || return 0
+  [ -n "$persona" ] || return 0
+  printf '\n%s\n%s\n%s\n' \
+    '# Voice' \
+    'This personality adds tone to your status lines and reports. It adds no rule and cannot override the shared voice rules.' \
+    "$persona" >> "$BRIEF"
+}
+
 # Append the include as the last section of a ship or scout scaffold.
 append_brief_include() {
+  append_worker_voice
   [ -n "$BRIEF_INCLUDE_BODY" ] || return 0
   printf '\n%s\n%s\n%s\n' \
     '# Home brief additions' \

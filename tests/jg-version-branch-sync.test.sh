@@ -30,6 +30,10 @@
 #    keeps that head, because the carry would void the proof, its receipt and its
 #    card; a branch whose proof names another head is still carried, so the
 #    release branch still reaches the work in flight.
+# T16 A release branch is shipped only when its release pull request into the
+#    default branch merged: release/c-10 with release/c-11 present and no merged
+#    c-10 release pull request is NOT shipped (it still takes work, a red-fix
+#    included), and with a merged one it IS; an unreadable forge is neither.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -465,4 +469,60 @@ test_shipped_release_merge_is_refused() {
 }
 
 test_shipped_release_merge_is_refused
+
+# The shared definition in bin/jg-version-branch-lib.sh, driven with fixture refs
+# (c-10 and the newer c-11) and a stubbed `gh` that lists merged pull requests
+# from a file. Release c-10 never reached main in the real incident, and a newer
+# c-11 existing must not make it shipped.
+test_release_shipped_means_its_release_pull_request_merged() {
+  local w rc rows
+  w=$(mktemp -d) || fail "cannot create the fixture"
+  git init -q -b main "$w/repo" || fail "cannot create the fixture project"
+  git -C "$w/repo" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m seed
+  git -C "$w/repo" branch release/c-10 main
+  git -C "$w/repo" branch release/c-11 main
+  mkdir -p "$w/bin"
+  cat > "$w/bin/gh" <<'SH'
+#!/usr/bin/env bash
+# Only the shipped read is stubbed: a merged pull request from <head> into <base>.
+[ -f "$GH_MERGED" ] || exit 1
+head= base=
+while [ "$#" -gt 0 ]; do
+  case "$1" in --head) head=$2 ;; --base) base=$2 ;; esac
+  shift
+done
+if grep -qxF "$head $base" "$GH_MERGED"; then echo 1; else echo 0; fi
+SH
+  chmod +x "$w/bin/gh"
+  shipped() { PATH="$w/bin:$PATH" GH_MERGED=$w/merged bash -c '. "$1"; jg_release_shipped o/r "$2" "$3"' _ "$VERSION_LIB" "$@"; }
+  orphans() { PATH="$w/bin:$PATH" GH_MERGED=$w/merged bash -c '. "$1"; jg_release_orphans_of release/c-11 o/r main' _ "$VERSION_LIB"; }
+  assert_equals release/c-11 "$(bash -c '. "$1"; jg_current_version_branch "$2"' _ "$VERSION_LIB" "$w/repo")" \
+    "the fixture has release/c-11 as the newer branch"
+  : > "$w/merged"
+  shipped release/c-10 main; rc=$?
+  assert_equals 1 "$rc" "release/c-10 with release/c-11 present and no merged c-10 release pull request is not shipped"
+  rows=$(printf '5\thttps://x/pull/5\trelease/c-10\n' | orphans)
+  assert_equals "" "$rows" "a pull request on a release that has not shipped is no orphan"
+  printf 'release/c-10 develop\nfm/other main\n' > "$w/merged"
+  shipped release/c-10 main; rc=$?
+  assert_equals 1 "$rc" "a merged pull request into another base, or from another head, does not ship it"
+  printf 'release/c-10 main\n' > "$w/merged"
+  shipped release/c-10 main; rc=$?
+  assert_equals 0 "$rc" "release/c-10 with a merged release pull request into the default branch is shipped"
+  rows=$(printf '5\thttps://x/pull/5\trelease/c-10\n6\thttps://x/pull/6\trelease/c-11\n7\thttps://x/pull/7\tmain\n' | orphans)
+  assert_equals "$(printf '5\thttps://x/pull/5\trelease/c-10')" "$rows" "only the pull request on the shipped older release is an orphan"
+  rm -f "$w/merged"
+  shipped release/c-10 main; rc=$?
+  assert_equals 2 "$rc" "a forge that cannot be read is neither shipped nor not shipped"
+  printf '5\thttps://x/pull/5\trelease/c-10\n' | orphans >/dev/null; rc=$?
+  assert_equals 2 "$rc" "an unreadable shipped read is reported to the caller, not guessed"
+  shipped main main; rc=$?
+  assert_equals 1 "$rc" "a name that is not release/c-<N> is never shipped"
+  bash -c '. "$1"; jg_release_older_than release/c-9 release/c-10' _ "$VERSION_LIB" || fail "c-9 is older than c-10 as a number"
+  bash -c '. "$1"; jg_release_older_than release/c-10 release/c-9' _ "$VERSION_LIB" && fail "c-10 is not older than c-9"
+  rm -rf -- "$w"
+  pass "T16 a release branch is shipped only when its release pull request merged"
+}
+
+test_release_shipped_means_its_release_pull_request_merged
 echo "all jg-version-branch-sync tests passed"
