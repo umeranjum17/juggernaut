@@ -82,9 +82,18 @@ It makes one `getMe` call and never sends a message.
   A send that fails is tried again for 10 minutes, and one the bot can never take (blocked, bad request) is not.
   An event not sent is named in `state/captain-channel-undelivered.jsonl`.
   When the bus refuses an event, the gateway's adapter sends it in-process, so the owner still hears it.
-  A card ends with "Reply to this message to answer."
+  A card with no options ends with "Reply to this message to answer."
   A text reply to that message is published as the card's answer, and the router sends it to the board.
   When the bus refuses the reply, the board's own route takes it at once.
+- A card with options (every card `jg-question-card.sh post` makes: its `--option value=label` entries, where a bare option is its own label, or Yes and No) is sent with one button per option, and a text reply still works.
+  The two sides stay in step:
+  - A tap on a button publishes the reply event with the option's value as the answer (the label rides along), like a text reply. The gateway answers the tap and edits the message to `Answered: <label>` with no buttons.
+  - An answer on the board edits the message to `Answered on the board: <answer>` and removes the buttons. `jg-board-answers.sh` and `jg-question-card.sh answer` publish `jg-bus publish card-close <key> answered --answer <words>`. A text reply edits the message the same way.
+  - A card closed without an answer: `jg-bus publish card-close <key> "<why>"` edits the message to that text and removes the buttons.
+  - A card published again with the same key and other text or options is edited in place, not sent twice. A card that is answered or closed is not reopened.
+  - A late tap on an answered card answers the tap with "Already answered." and a withdrawn or unknown card with "This card is closed." Neither publishes anything. A tap from anyone but the owner, or on another message, is dropped.
+  - A button holds `c:<12 hex>:<n>` (under 20 bytes). The hash names the card in `state/captain-chat/cards.jsonl`, which maps each card to its chat and message id, so edits survive a gateway restart. The last line of a card wins.
+  - An edit that fails is tried again every 2 seconds until it works. An edit Telegram can never take (400, 403) is logged and dropped. The bot token is never stored or logged.
 - `pending` names why: the service is not running (its heartbeat in `state/captain-chat/telegram.alive` is over two minutes old), `getMe` failed, or legs are missing.
   A missing-legs detail reads `in: text image - out: text - missing in file, out image file`.
 - `live` needs all six legs inside the last 7 days: `6 of 6 legs, last <date>, <n> notes, <n> replies`.

@@ -279,7 +279,14 @@ cmd_post() {
   # The captain channel sends this card to the captain by the new path
   # (bin/jg-bus.sh): it records and publishes the event and changes
   # nothing the board does.
-  "$SCRIPT_DIR/jg-bus.sh" publish card "$key" "$title" ${link:+--link "$link"} >/dev/null 2>&1 || true
+  # Each --option value=label becomes a button in the chat; a card with none is yes or no.
+  local opts=() i=0
+  while [ "$i" -lt "${#ARGS[@]}" ]; do
+    [ "${ARGS[$i]}" != --option ] || opts+=(--option "${ARGS[$((i + 1))]:-}")
+    i=$((i + 1))
+  done
+  [ "${#opts[@]}" -gt 0 ] || opts=(--option yes=Yes --option no=No)
+  "$SCRIPT_DIR/jg-bus.sh" publish card "$key" "$title" "${opts[@]}" ${link:+--link "$link"} >/dev/null 2>&1 || true
   return 0
 }
 
@@ -314,6 +321,7 @@ cmd_answer() {
   if [ -n "${JG_HOME:-${JG_STATE_OVERRIDE:-}}" ] && [ -f "$seen" ] && [ ! -f "$state/board-routes/$key" ]; then
     printf '%s\t%s\n' "$key" "$at" >> "$seen"
   fi
+  "$SCRIPT_DIR/jg-bus.sh" publish card-close "$key" "answered" --answer "$words" >/dev/null 2>&1 || true
   printf 'answered: %s\n' "$key"
 }
 
