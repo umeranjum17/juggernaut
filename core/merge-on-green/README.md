@@ -83,6 +83,9 @@ gate commands start only before 80% of the bound, a merge only when it fits insi
 so the watcher's kill can at worst cut a gate command (harmlessly retried next sweep), never a
 merge.
 
+When the record has no `pr=` or `pr_head=` yet, the check records them from the worker's `done: PR <url>` line through `bin/jg-pr-check.sh --from-status`, once per distinct last status line, so a done line the lead has not handled still gets its merge with no lead turn.
+`bin/jg-update.sh` runs `bin/jg-host-wiring.sh` after each update, so the installed copy of this check equals core again.
+
 A worker's `done: PR <url>` line does not wake the lead's model when this check owns the PR.
 `defaults/wake-routing` settles it with `silent@merge-owned`.
 That needs `yolo=on` or `merge=approved`, a recorded `pr=` and `pr_head=`, no `merge=manual`, and no earlier attempt on that head in `data/jg-merge-on-green/<task>.head`.
