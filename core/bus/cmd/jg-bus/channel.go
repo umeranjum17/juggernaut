@@ -276,7 +276,7 @@ func (a *app) routeReply(data []byte) int {
 		Answer string `json:"answer"`
 		Label  string `json:"label"`
 	}
-	if err := json.Unmarshal(data, &ev); err != nil {
+	if err := json.Unmarshal(eventBody(data), &ev); err != nil {
 		return die("the reply event is not JSON")
 	}
 	if ev.Key == "" || ev.Answer == "" {
