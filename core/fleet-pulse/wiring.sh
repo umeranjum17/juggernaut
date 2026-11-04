@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Install chat-tsv.py into <home>/bin and, when state/fleet-pulse.check.sh still
-# globs only main-home jg-retro-*/report.md, point its retro wake at
+# When state/fleet-pulse.check.sh still globs only main-home jg-retro-*/report.md, point its retro wake at
 # bin/fleet-retro-due.sh (newest report.md across known homes).
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
@@ -17,22 +16,15 @@ DRY=0
 [ "$#" -eq 1 ] || { echo 'usage: wiring.sh [--dry-run] <home>' >&2; exit 2; }
 home=$(cd "$1" && pwd -P)
 feature=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
-src=$feature/bin/chat-tsv.py
-dest=$home/bin/chat-tsv.py
 check=$home/state/fleet-pulse.check.sh
 due=$feature/bin/fleet-retro-due.sh
 
 if [ "$DRY" -eq 1 ]; then
-  echo "would install $src -> $dest"
   if [ -f "$check" ] && grep -q 'jg-retro-\*/report\.md' "$check"; then
     echo "would retarget retro wake in $check -> $due"
   fi
   exit 0
 fi
-
-mkdir -p "$home/bin"
-install -m 755 "$src" "$dest"
-echo "installed: $dest (schedule it periodically with JG_HOME=$home)"
 
 if [ -f "$check" ] && grep -q 'jg-retro-\*/report\.md' "$check"; then
   python3 - "$check" "$due" "$home" <<'PY'
