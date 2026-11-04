@@ -3844,16 +3844,23 @@ rejected_checks_unalerted() {
   done
 }
 
-# rejected_checks_record <paths...>: the records become exactly this set.
+# rejected_checks_record <paths...>: the records become exactly this set. An
+# unchanged record is left alone and a changed one is replaced by rename, so a
+# watcher stopped mid-sweep never leaves an empty record that alerts twice.
 rejected_checks_record() {
-  local dir="$STATE/.rejected-state-checks" c rec
+  local dir="$STATE/.rejected-state-checks" c rec fp tmp="$STATE/.rejected-state-checks/.record.$$"
   mkdir -p "$dir" || return 1
   for rec in "$dir"/*; do
     [ -e "$rec" ] || continue
     case " $* " in *"/$(basename "$rec") "*) ;; *) rm -f -- "$rec" ;; esac
   done
   for c in "$@"; do
-    rejected_check_fingerprint "$c" > "$dir/$(basename "$c")" || return 1
+    fp=$(rejected_check_fingerprint "$c")
+    [ "$(cat "$dir/$(basename "$c")" 2>/dev/null)" = "$fp" ] && continue
+    if ! { printf '%s\n' "$fp" > "$tmp" && mv -f -- "$tmp" "$dir/$(basename "$c")"; }; then
+      rm -f -- "$tmp"
+      return 1
+    fi
   done
 }
 
