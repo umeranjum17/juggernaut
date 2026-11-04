@@ -2975,7 +2975,7 @@ GROK_HOME=              # optional Grok config home for Juggernaut's global grok
 JG_SEND_RETRIES=3       # jg-send typed-plane Enter-retry attempts after typing the line once; agy typed targets use a longer per-harness default owned by bin/jg-send.sh
 JG_SEND_SLEEP=0.4       # seconds between jg-send typed-plane submit checks
 JG_SEND_SETTLE=1        # seconds jg-send waits after a successful typed-plane submit; 0 disables
-JG_PENDING_REPLY_GRACE_SECS=120   # seconds after the request turn completes without a correlated parent report before its one recovery repost is eligible, and after the recovery turn completes before the missed-report escalation is eligible; never counted from delivery
+JG_PENDING_REPLY_GRACE_SECS=120   # seconds after the request turn completes without a correlated parent report before its one turn-end correlated line (or, when no honest note can be built, its one recovery repost) is eligible, and after the recovery turn completes before the missed-report escalation is eligible; never counted from delivery
 # sub-supervisor (bin/jg-supervise-daemon.sh); presence-gated via /watchover
 JG_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
 JG_SUPERVISOR_TARGET=              # optional supervisor pane target override; tmux target or herdr <session>:<pane-id>, otherwise auto-detected
