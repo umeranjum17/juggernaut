@@ -8,9 +8,10 @@
 # bin/jg-parent-channel-lib.sh. The Telegram send in core/bus calls the same checker.
 #
 # jg_voice_apply <channel> <text> [--line]
-#   Sets JG_VOICE_OUT to the text to send. Returns 0 to send it; returns 1 when the voice
-#   file's mode for <channel> is `block` and the text breaks a rule (findings on stderr), in
-#   which case JG_VOICE_OUT is the original text. A missing checker or python3 passes the
+#   Sets JG_VOICE_OUT to the text to send. Returns 0 to send it; returns 1 when the text breaks a
+#   rule and the voice file's mode for <channel> is `block`, or the model rewrite failed or did
+#   not come out plain (findings and a re-draft instruction on stderr), in which case
+#   JG_VOICE_OUT is the original text. A missing checker or python3 passes the
 #   text through unchanged, because a style layer must never stop a captain-facing message.
 #
 # Sourced by the send points and tests. No side effects on source.

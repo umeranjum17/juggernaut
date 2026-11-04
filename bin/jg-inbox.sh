@@ -749,7 +749,7 @@ cmd_reply() {
     die "refusing to record an empty reply"
   fi
   if [ -n "${body//[[:space:]]/}" ]; then
-    # The captain voice file (bin/jg-voice.py) decides: rewrite plain terms, or refuse in block mode.
+    # The captain voice file (bin/jg-voice.py) decides: a model rewrite in plain sentences, or a refusal with the terms to fix.
     jg_voice_apply chat-reply "$body" || die "reply refused by the captain voice file; rewrite it in plain words"
     body=$JG_VOICE_OUT
   fi

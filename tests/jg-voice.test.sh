@@ -27,39 +27,94 @@ mkdir -p "$home/state" "$home/data" "$home/config"
 export JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config"
 unset JG_VOICE_FILE
 
+# The injected model: a stub rewrite command that answers only the messages it knows, so no test calls a real model.
+# It reads the real request on stdin, finds the message after the `Message:` line, and prints that message's plain version.
+cat > "$TMP_ROOT/rewrite-stub.py" <<'STUB'
+import sys
+KNOWN = {
+    "MAIN: wf-6 worker is done. The merge guard passed and the merge-card judge agreed. Lane parked, bot token here. See PR 602.":
+        "The worker finished. The merge check passed and the merge review agreed. The work waits for the sign-in key. See https://github.com/example/repo/pull/602.",
+    "Squad Lead report: the worktree is clean after teardown. The brief is filed. Details at https://github.com/example/repo/pull/602 key=worktree.":
+        "Squad Lead report: the local copy is clean after cleanup. The instructions are filed. Details at https://github.com/example/repo/pull/602 key=worktree.",
+    "The merge check is armed. The release goes through the normal gate.":
+        "The merge check is switched on. The release must pass the usual check before it lands.",
+    "GitHub is still computing its mergeability for the fix. The merge commit lands on release/c-10 when the pending checks pass.":
+        "GitHub is still working out whether the fix can merge. The merged change lands on the release when the checks that are still running pass.",
+    " the merge guard passed on the worktree; see PR 602":
+        " the merge check passed on the local copy; see https://github.com/example/repo/pull/602",
+}
+request = sys.stdin.read()
+if "Voice rules:" not in request or "Terms found in the message" not in request:
+    sys.exit(3)
+message = request.split("\nMessage:\n", 1)[1].rstrip("\n")
+reply = KNOWN.get(message)
+if reply is None:
+    sys.exit(1)
+sys.stdout.write(reply)
+STUB
+export JG_VOICE_REWRITE_CMD="python3 $TMP_ROOT/rewrite-stub.py"
+
 # --- the defaults ------------------------------------------------------------
+# A flagged message is rewritten whole by the model step and re-checked: never a word swap.
 out=$(printf '%s' "$RELAY_ONE" | python3 "$VOICE" apply --channel telegram 2>/dev/null)
-case $out in *"merge guard"* | *"merge-card judge"* | *"wf-6"*) fail "default voice left an internal term: $out" ;; esac
-case $out in *"merge check"*"merge review"*) ;; *) fail "default voice did not give the plain words: $out" ;; esac
-case $out in *"MAIN"*"bot token"*"PR 602"*) ;; *) fail "advice-only terms must stay for the author: $out" ;; esac
+case $out in *"merge guard"* | *"merge-card judge"* | *"wf-6"* | *"MAIN"* | *"bot token"* | *"Lane"*) fail "default voice left an internal term: $out" ;; esac
+case $out in *"merge check"*"merge review"*"https://github.com/example/repo/pull/602"*) ;; *) fail "default voice did not give the plain words: $out" ;; esac
 printf '%s' "$RELAY_ONE" | python3 "$VOICE" check --channel telegram 2>/dev/null && fail "check passed a message full of internal terms"
-pass "the default voice file rewrites plain-replaceable terms and flags the rest"
+printf '%s' "$out" | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "the rewritten message does not pass the check: $out"
+pass "the default voice file has a flagged message rewritten whole in plain words, and the result passes the check"
 
 out=$(printf '%s' "$RELAY_TWO" | python3 "$VOICE" apply --channel telegram 2>/dev/null)
 case $out in *"https://github.com/example/repo/pull/602 key=worktree."*) ;; *) fail "URL and key=value were not protected: $out" ;; esac
-case $out in *"local copy is clean after cleanup"*"instructions is filed"*) ;; *) fail "second message not rewritten: $out" ;; esac
-pass "URLs, key=value tokens and code spans are never rewritten"
+case $out in *"local copy is clean after cleanup"*"instructions are filed"*) ;; *) fail "second message not rewritten: $out" ;; esac
+pass "URLs and key=value tokens survive the rewrite"
 
-# The two messages from the captain's screenshot (Telegram 82 and 96) passed `check` unchanged on c-11.
+# A rewrite that dropped a URL, or that still holds a banned term, is refused instead of sent.
+rc=0; out=$(printf '%s' "$RELAY_TWO" | JG_VOICE_REWRITE_CMD="echo The local copy is clean." python3 "$VOICE" apply --channel telegram 2>"$TMP_ROOT/refuse.err") || rc=$?
+[ "$rc" -eq 1 ] && [ -z "$out" ] || fail "a rewrite that lost the URL was sent (rc=$rc): $out"
+grep -q 'Re-draft it' "$TMP_ROOT/refuse.err" || fail "the refusal carries no re-draft instruction: $(cat "$TMP_ROOT/refuse.err")"
+rc=0; out=$(printf '%s' "$RELAY_TWO" | JG_VOICE_REWRITE_CMD="echo The worktree is clean after teardown https://github.com/example/repo/pull/602 key=worktree." python3 "$VOICE" apply --channel telegram 2>/dev/null) || rc=$?
+[ "$rc" -eq 1 ] && [ -z "$out" ] || fail "a rewrite that kept a banned term was sent (rc=$rc): $out"
+for broken in false "/nonexistent/rewrite-cmd"; do
+  rc=0; out=$(printf '%s' "$RELAY_TWO" | JG_VOICE_REWRITE_CMD=$broken python3 "$VOICE" apply --channel telegram 2>/dev/null) || rc=$?
+  [ "$rc" -eq 1 ] && [ -z "$out" ] || fail "a failed rewrite step ($broken) let the flagged text through (rc=$rc): $out"
+done
+rc=0; out=$(printf '%s' "$RELAY_TWO" | JG_VOICE_REWRITE_CMD="sleep 5" JG_VOICE_REWRITE_TIMEOUT=0.2 python3 "$VOICE" apply --channel telegram 2>/dev/null) || rc=$?
+[ "$rc" -eq 1 ] && [ -z "$out" ] || fail "a slow rewrite step let the flagged text through (rc=$rc): $out"
+out=$(printf 'The fix is done.' | JG_VOICE_REWRITE_CMD=false python3 "$VOICE" apply --channel telegram 2>/dev/null) || fail "a clean message must not need the rewrite step"
+[ "$out" = "The fix is done." ] || fail "a clean message changed: $out"
+pass "a missing, failing, slow or leaky rewrite is refused with a re-draft instruction, and a clean message never reaches the model"
+
+# The two messages from the captain's screenshot (Telegram 82 and 96) passed `check` unchanged on c-11, and the
+# word-swap rewrite then gave 'GitHub is still computing its whether it can merge' and left 'armed' and 'gate'.
 # The screenshot text is elided in the brief, so each message wraps the quoted wording in plain sentences.
 SHOT_ARMED='The merge check is armed. The release goes through the normal gate.'
 SHOT_MERGEABILITY='GitHub is still computing its mergeability for the fix. The merge commit lands on release/c-10 when the pending checks pass.'
 for msg in "$SHOT_ARMED" "$SHOT_MERGEABILITY"; do
   printf '%s' "$msg" | python3 "$VOICE" check --channel telegram 2>/dev/null && fail "check passed a screenshot message: $msg"
+  out=$(printf '%s' "$msg" | python3 "$VOICE" apply --channel telegram 2>/dev/null) || fail "a screenshot message was refused: $msg"
+  shopt -s nocasematch
+  for flagged in armed gate normal\ gate mergeability merge\ commit release\ branch pending\ checks 'release/c-'; do
+    case $out in *"$flagged"*) fail "flagged term '$flagged' reached the captain: $out" ;; esac
+  done
+  for broken in 'its whether' 'its the' 'the whether'; do
+    case $out in *"$broken"*) fail "broken phrase '$broken' reached the captain: $out" ;; esac
+  done
+  shopt -u nocasematch
+  printf '%s' "$out" | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "the delivered screenshot message fails the check: $out"
 done
-out=$(printf '%s' "$SHOT_MERGEABILITY" | python3 "$VOICE" apply --channel telegram 2>/dev/null)
-case $out in *"mergeability"* | *"pending checks"*) fail "plain-replaceable screenshot terms were left: $out" ;; esac
-case $out in *"whether it can merge"*"checks still running"*) ;; *) fail "screenshot message not given plain words: $out" ;; esac
-pass "the internal words from the captain's screenshot (gate, armed, mergeability, merge commit, release branch, pending checks) are flagged"
+pass "both screenshot messages reach the captain with no flagged term and no broken grammar"
 
 # --- an edit changes behaviour with no code change ----------------------------
 # shellcheck disable=SC2016  # the backticks are literal table text
 sed 's/^| `\\bteardown\\b` | cleanup |$/| `\\bcleanup\\b` | tidy-up |/' "$ROOT/defaults/captain-voice.md" > "$TMP_ROOT/edited.md"
 grep -q 'tidy-up' "$TMP_ROOT/edited.md" || fail "fixture edit did not apply"
-out=$(printf 'We finished teardown and cleanup.' | JG_VOICE_FILE="$TMP_ROOT/edited.md" python3 "$VOICE" apply 2>/dev/null)
-[ "$out" = "We finished teardown and tidy-up." ] || fail "an edited row did not take effect at once: $out"
-out=$(printf 'We finished teardown and cleanup.' | python3 "$VOICE" apply 2>/dev/null)
-[ "$out" = "We finished cleanup and cleanup." ] || fail "the default file changed under the edit: $out"
+msg='We finished teardown and cleanup.'
+err=$(printf '%s' "$msg" | JG_VOICE_FILE="$TMP_ROOT/edited.md" python3 "$VOICE" check 2>&1) && fail "the edited file still passed 'cleanup'"
+case $err in *'"cleanup"'*"tidy-up"*) ;; *) fail "an edited row did not take effect at once: $err" ;; esac
+case $err in *'"teardown"'*) fail "the edited file still flags 'teardown': $err" ;; esac
+err=$(printf '%s' "$msg" | python3 "$VOICE" check 2>&1) && fail "the default file passed 'teardown'"
+case $err in *'"teardown"'*"cleanup"*) ;; *) fail "the default file changed under the edit: $err" ;; esac
+case $err in *'"cleanup"'*) fail "the default file flags 'cleanup': $err" ;; esac
 pass "editing the markdown changes the banned terms with no code change"
 
 cp "$ROOT/defaults/captain-voice.md" "$home/config/captain-voice.md"
@@ -91,10 +146,12 @@ line='done [at=1793000000]: the merge guard passed on the worktree; see PR 602'
 jg_parent_channel_append_once "$chan" "$line"
 jg_parent_channel_append_once "$chan" "$line"
 [ "$(wc -l < "$chan")" -eq 1 ] || fail "a retried line was written twice: $(cat "$chan")"
-case $(cat "$chan") in "done [at=1793000000]: the merge check passed on the local copy; see PR 602") ;; *) fail "parent line not rewritten with its framing kept: $(cat "$chan")" ;; esac
+case $(cat "$chan") in "done [at=1793000000]: the merge check passed on the local copy; see https://github.com/example/repo/pull/602") ;; *) fail "parent line not rewritten with its framing kept: $(cat "$chan")" ;; esac
 sed -i 's/^- mode: rewrite$/- mode: block/; s/^- mode.chat-reply: block$/- mode.parent-channel: block/' "$TMP_ROOT/edited.md"
 JG_VOICE_FILE="$TMP_ROOT/edited.md" jg_parent_channel_append_once "$chan" 'working [at=1793000001]: a lane is parked' || fail "block mode must never hold a parent-channel line back"
 grep -q 'a lane is parked' "$chan" || fail "the blocked parent line was not delivered as written"
+JG_VOICE_REWRITE_CMD=false jg_parent_channel_append_once "$chan" 'working [at=1793000002]: the worktree is busy' 2>/dev/null || fail "a failed rewrite must never hold a parent-channel line back"
+grep -q 'the worktree is busy' "$chan" || fail "the parent line was not delivered as written when the rewrite failed"
 pass "the parent channel rewrites the note, keeps its status framing, deduplicates a retry and never holds a line back"
 
 # --- role personality files ---------------------------------------------------
