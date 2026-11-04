@@ -42,6 +42,10 @@ KNOWN = {
         "GitHub is still working out whether the fix can merge. The merged change lands on the release when the checks that are still running pass.",
     " the merge guard passed on the worktree; see PR 602":
         " the merge check passed on the local copy; see https://github.com/example/repo/pull/602",
+    "Update from MAIN:\n\n1. the merge guard passed\n2. the worktree is clean":
+        "Here is the update:\n1. The merge check passed.\n2. The local copy is clean.",
+    "Update from MAIN, flat:\n\n1. the merge guard passed\n2. the worktree is clean":
+        "The merge check passed and the local copy is clean.",
 }
 request = sys.stdin.read()
 if "Voice rules:" not in request or "Terms found in the message" not in request:
@@ -103,6 +107,34 @@ for msg in "$SHOT_ARMED" "$SHOT_MERGEABILITY"; do
   printf '%s' "$out" | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "the delivered screenshot message fails the check: $out"
 done
 pass "both screenshot messages reach the captain with no flagged term and no broken grammar"
+
+# --- the captain's Telegram 113: layout and the three internal phrases -------
+# Before the fix: "release c-13", "signature" and "cleanup is refused" passed the check, and a list
+# that arrived on one line, or that the rewrite ran together, reached the chat as one block.
+for phrase in 'Release c-13 is ready.' 'It needs the signature of the owner.' 'Cleanup is refused for this task.' 'Teardown refused: the work is not merged.'; do
+  printf '%s' "$phrase" | python3 "$VOICE" check --channel telegram 2>/dev/null && fail "the check passed an internal phrase: $phrase"
+done
+printf '%s' 'The release is ready. Cleanup finished.' | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "the check refused a plain sentence"
+pass "the three internal phrases from the captain's screenshot are flagged, and a plain sentence is not"
+
+want=$(printf '%s\n' 'Three things are ready:' '' '1. The fix.' '2. The test.' '3. The notes.' '' 'Please review.')
+out=$(printf '%s\n%s\n' 'Three things are ready: 1. The fix. 2. The test. 3. The notes.' 'Please review.' | python3 "$VOICE" apply --channel telegram 2>/dev/null)
+[ "$out" = "$want" ] || fail "a list run into one line was not laid out one item per line: $out"
+out=$(printf '%s' "$want" | python3 "$VOICE" apply --channel telegram 2>/dev/null)
+[ "$out" = "$want" ] || fail "an already laid out list was changed: $out"
+out=$(printf '%s\n' 'A fix 1.5 times faster. See https://x.example/a?b=1. Then 2. Done' | python3 "$VOICE" apply --channel telegram 2>/dev/null)
+[ "$out" = 'A fix 1.5 times faster. See https://x.example/a?b=1. Then 2. Done' ] || fail "prose that is not a list was split: $out"
+out=$(printf '%s\n' 'Status of the work:' '- fix merged' '- test passed' 'Next step is yours.' | python3 "$VOICE" apply --channel telegram 2>/dev/null)
+[ "$out" = "$(printf '%s\n' 'Status of the work:' '' '- fix merged' '- test passed' '' 'Next step is yours.')" ] || fail "a bullet list was not set apart from the prose: $out"
+pass "a list arrives one item per line with a blank line between blocks, and prose is left alone"
+
+out=$(printf '%s\n%s\n%s\n' 'Update from MAIN:' '1. the merge guard passed' '2. the worktree is clean' | python3 "$VOICE" apply --channel telegram 2>/dev/null)
+[ "$out" = "$(printf '%s\n' 'Here is the update:' '' '1. The merge check passed.' '2. The local copy is clean.')" ] || fail "a rewrite did not keep the list one item per line: $out"
+if err=$(printf '%s\n%s\n%s\n' 'Update from MAIN, flat:' '1. the merge guard passed' '2. the worktree is clean' | python3 "$VOICE" apply --channel telegram 2>&1 >/dev/null); then
+  fail "a rewrite that ran the list together was sent"
+fi
+case $err in *"turned a list of 2 items into 0"*"Re-draft it"*) ;; *) fail "the refusal does not name the lost list: $err" ;; esac
+pass "a rewrite keeps the list one item per line, and one that runs the items together is refused"
 
 # --- an edit changes behaviour with no code change ----------------------------
 # shellcheck disable=SC2016  # the backticks are literal table text

@@ -51,6 +51,30 @@ func TestGatewayVoice(t *testing.T) {
 	t.Logf("telegram sendMessage, before: %s", text)
 	t.Logf("telegram sendMessage, after:  %v", l.sends[0]["text"])
 
+	// The captain's Telegram 113: a list that reached the chat as one block, and a PR notice with
+	// internal words. The list goes out one item per line, and the notice is held for a rewrite.
+	flat := "Three things are ready: 1. The fix. 2. The test. 3. The notes\nPlease review."
+	laid := "Three things are ready:\n\n1. The fix.\n2. The test.\n3. The notes\n\nPlease review."
+	before := len(l.sends)
+	if _, err := ad.Send(context.Background(), Outbound{Chat: "1", Text: flat}); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.sends) != before+1 || l.sends[before]["text"] != laid {
+		t.Fatalf("sends %v: want one message reading %q", l.sends[before:], laid)
+	}
+	t.Logf("telegram sendMessage, list before: %q", flat)
+	t.Logf("telegram sendMessage, list after:  %q", l.sends[before]["text"])
+	stubRewrite(t, "The release is ready. The owner must approve it.", 0)
+	notice := "Release c-13 needs MAIN's signature. Cleanup is refused."
+	if got, err := voiceText(notice); err != nil || got != "The release is ready. The owner must approve it." {
+		t.Fatalf("the internal notice must be rewritten, not sent as written: got %q, %v", got, err)
+	}
+	stubRewrite(t, "Release c-13 needs the owner to sign.", 0)
+	if _, err := voiceText(notice); err == nil {
+		t.Fatal("a rewrite that keeps release c-13 must be refused")
+	}
+	stubRewrite(t, want, 0)
+
 	// A rewrite that still holds a banned term, or a model that fails, sends nothing: the send fails
 	// with a 400 and the re-draft instruction, so the event is recorded as undelivered.
 	for _, bad := range []struct {
