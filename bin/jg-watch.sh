@@ -135,7 +135,9 @@
 #                          payload names what to check. These three kinds are
 #                          joined with `;` when more than one surfaces in a cycle
 #   check: rejected unauthenticated state checks: <paths>
-#                          unsafe state checks were refused without execution
+#                          unsafe state checks were refused without execution;
+#                          each file alerts once, and again only when its content
+#                          or identity changes or it is fixed and rejected again
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
 #                          invalid pending retirements were preserved without
 #                          running a check or removing poll artifacts
@@ -3876,6 +3878,49 @@ watcher_beat() {
   touch "$STATE/.last-watcher-beat" 2>/dev/null || true
 }
 
+# A rejected state check stays rejected every sweep until someone fixes or
+# removes it, so the alert is raised once per file, not once per sweep. The
+# fingerprint (content hash, inode, mode) is kept in $STATE/.rejected-state-checks/
+# <file name>. A file alerts when it has no record or its fingerprint differs.
+# A file that is no longer rejected loses its record, so rejecting it again
+# later alerts again. The device number is left out on purpose: it is not
+# stable across a volume remount (jg_pr_file_identity).
+rejected_check_fingerprint() {
+  local sum
+  sum=$(jg_custom_check_sha256 "$1") || sum=unreadable
+  printf '%s %s %s\n' "$sum" "$(jg_pr_file_inode "$1")" "$(jg_pr_file_mode "$1")"
+}
+
+# rejected_checks_unalerted <paths...>: print, space-led, the paths with no
+# matching record.
+rejected_checks_unalerted() {
+  local c
+  for c in "$@"; do
+    [ "$(cat "$STATE/.rejected-state-checks/$(basename "$c")" 2>/dev/null)" \
+      = "$(rejected_check_fingerprint "$c")" ] || printf ' %s' "$c"
+  done
+}
+
+# rejected_checks_record <paths...>: the records become exactly this set. An
+# unchanged record is left alone and a changed one is replaced by rename, so a
+# watcher stopped mid-sweep never leaves an empty record that alerts twice.
+rejected_checks_record() {
+  local dir="$STATE/.rejected-state-checks" c rec fp tmp="$STATE/.rejected-state-checks/.record.$$"
+  mkdir -p "$dir" || return 1
+  for rec in "$dir"/*; do
+    [ -e "$rec" ] || continue
+    case " $* " in *"/$(basename "$rec") "*) ;; *) rm -f -- "$rec" ;; esac
+  done
+  for c in "$@"; do
+    fp=$(rejected_check_fingerprint "$c")
+    [ "$(cat "$dir/$(basename "$c")" 2>/dev/null)" = "$fp" ] && continue
+    if ! { printf '%s\n' "$fp" > "$tmp" && mv -f -- "$tmp" "$dir/$(basename "$c")"; }; then
+      rm -f -- "$tmp"
+      return 1
+    fi
+  done
+}
+
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
 # Time-based via .last-check mtime so the cadence survives watcher restarts.
 # A due check runs on every cycle that reaches it, including a cycle whose
@@ -3887,7 +3932,7 @@ watcher_beat() {
 run_due_checks() {
   local c id out reason is_pr_poll provider url host path number custom_snapshot
   local merge_authority merge_authority_record_identity merge_outcome_rc
-  local rejected_checks contribution_check_output contribution_check_diagnostics contribution_check_line
+  local rejected_checks unalerted_checks contribution_check_output contribution_check_diagnostics contribution_check_line
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
     rejected_checks=
     contribution_check_output=
@@ -4009,9 +4054,17 @@ EOF
       # hangs or a cycle that dies never reaches this point, so it still ages.
       watcher_beat
     done
-    if [ -n "$rejected_checks" ]; then
-      reason="check: rejected unauthenticated state checks:$rejected_checks"
+    # shellcheck disable=SC2086 # rejected_checks is a space-separated path list.
+    unalerted_checks=$(rejected_checks_unalerted $rejected_checks)
+    if [ -n "$unalerted_checks" ]; then
+      reason="check: rejected unauthenticated state checks:$unalerted_checks"
       jg_wake_append check unauthenticated-state-checks "$reason" || exit 1
+    fi
+    # Recorded after the durable append, so a failed append alerts again next sweep.
+    # shellcheck disable=SC2086
+    rejected_checks_record $rejected_checks \
+      || triage_log "could not record rejected state checks; they alert again next sweep"
+    if [ -n "$unalerted_checks" ]; then
       touch "$STATE/.last-check"
       wake "$reason"
     fi
