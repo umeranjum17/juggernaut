@@ -68,6 +68,15 @@ assert_contains "$out" "juggernaut will pick this up at its next check." \
   "plain note should keep its human announcement line"
 assert_equals "1" "$(count_notes "$home")" "plain note should write one record"
 assert_equals "1" "$(count_wakes "$home")" "plain note should append one wake"
+
+# --- a chat note's wake carries the source, the whole text and a one-line file description ---
+chat_home=$(make_home chat)
+printf '[chat telegram 42:7]\n%s\n[file image /x/state/m/ab.jpg 12 KB image/jpeg]\n' "$(printf 'long%.0s' $(seq 1 40))" \
+  | run_inbox "$chat_home" note - >/dev/null || fail "chat note should succeed"
+chat_wake=$(grep 'inbox:' "$chat_home/state/.wake-queue")
+assert_contains "$chat_wake" '[chat telegram 42:7] longlong' "a chat wake names its source and starts with the text"
+assert_contains "$chat_wake" '[image 12 KB image/jpeg]' "a chat wake describes the attached file in one line"
+case "$chat_wake" in *'/x/state/m/ab.jpg'*) fail "a chat wake must not carry the local file path" ;; esac
 list_out=$(run_inbox "$home" list) || fail "list should succeed"
 assert_contains "$list_out" "hello from the terminal" "list should show the body"
 pass "plain note, list, and wake stay on the historical human path"
@@ -604,3 +613,27 @@ expect_code 1 "$missing_code" "a missing attachment is refused"
 assert_contains "$missing" "nope.png" "the refusal names the file"
 run_inbox "$home" reply 1700000000-cccccc --attach "$home/shot.png" >/dev/null || fail "an attachment alone should be a reply"
 pass "reply --attach records files for the gateway and shows them in receipts"
+
+# --- reply --option ---------------------------------------------------------
+
+home=$(make_home option)
+mkdir -p "$home/state/inbox"
+for n in aaaaaa bbbbbb cccccc dddddd; do
+  printf 'id=1700000000-%s\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nask\n' "$n" > "$home/state/inbox/1700000000-$n.note"
+done
+run_inbox "$home" reply 1700000000-aaaaaa --option "Option A" --option "Option B" --allow-change -- "Which design" >/dev/null || fail "reply --option failed"
+run_inbox "$home" reply 1700000000-bbbbbb --option "Yes" --option "No" "Ship it" >/dev/null || fail "reply --option failed"
+rec=$(run_inbox "$home" receipts --all-replies) || fail "receipts failed"
+assert_equals "Option A|Option B" "$(printf '%s' "$rec" | python3 -c 'import json,sys; print("|".join(json.load(sys.stdin)["replies"][0]["options"]))')" "options are recorded in order and shown in receipts"
+assert_equals "True|False" "$(printf '%s' "$rec" | python3 -c 'import json,sys; r=json.load(sys.stdin)["replies"]; print("%s|%s" % (r[0]["options_change"], r[1]["options_change"]))')" "--allow-change is recorded per reply"
+assert_equals "Which design" "$(printf '%s' "$rec" | json_get replies 0 body)" "the text stays the body"
+for bad in "--option Only" "--allow-change" "--option A --option A" "--option A --option"; do
+  set +e
+  # shellcheck disable=SC2086
+  out=$(run_inbox "$home" reply 1700000000-cccccc $bad "x" 2>&1)
+  code=$?
+  set -e
+  expect_code 1 "$code" "reply $bad is refused"
+done
+assert_absent "$home/state/inbox/.replies/1700000000-cccccc" "a refused choice records no reply"
+pass "reply --option records the choice for the gateway and refuses a malformed one"

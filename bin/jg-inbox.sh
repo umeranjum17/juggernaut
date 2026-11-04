@@ -23,7 +23,7 @@
 #   jg-inbox.sh note [--request-id <id>] [--json] [--] <text>...
 #   jg-inbox.sh note [--request-id <id>] [--json] -   (body from stdin)
 #   jg-inbox.sh announce [--json] <id>
-#   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--] <text>... | reply [--json] <id> [--attach <path>]... -
+#   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--option <label>]... [--allow-change] [--] <text>... | reply [--json] <id> [--attach <path>]... -
 #   jg-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]
 #   jg-inbox.sh ready
 #   jg-inbox.sh say  [<file.wav>]       (default: audio on stdin)
@@ -73,6 +73,12 @@
 # script only checks the file is a readable regular file and never sends it. The
 # channel that delivers the reply (the chat gateway) owns every send decision,
 # including the refusal of a secret path. With an attachment the text may be empty.
+# `reply --option <label>` (repeatable, 2 to 8) asks the captain to choose: the chat
+# gateway sends the answer with one button per label, and the captain's tap comes back
+# as a note whose second line is `pick: <label> (<option set id>)`. The labels are
+# recorded in the reply and shown as `options` in `receipts`; `--allow-change` lets the
+# captain change the pick by tapping another button (`options_change` is then true).
+# This script sends nothing.
 # `ready` is the read-only primary-readiness projection (lock, wake-consumer
 # health, away posture, observation time). It never acquires the session lock
 # and never infers liveness from a lock file, a session, or a pane.
@@ -316,8 +322,17 @@ read_note_body() {  # <file>
   awk 'found { print; next } /^--$/ { found=1 }' "$1"
 }
 
+# A chat note (first line `[chat <channel> <chat>:<message>]`) is the wake's only text the
+# captain's session shows, so its summary keeps the source head, the whole message up to 400
+# characters, and each attached file as `[<kind> <size> <mime>]` with its local path left out.
+# Any other note keeps the 100-character summary.
 note_summary_from_body() {
-  printf '%s' "$1" | tr '\n\t' '  ' | cut -c1-100
+  case "$1" in
+    '[chat '*)
+      printf '%s' "$1" | tr '\n\t' '  ' | sed -E 's/\[file ([a-z]+) [^ ]+ /[\1 /g' | cut -c1-400
+      ;;
+    *) printf '%s' "$1" | tr '\n\t' '  ' | cut -c1-100 ;;
+  esac
 }
 
 write_note_file() {  # <path> <id> <source> <body> [extra] [request-id]
@@ -660,8 +675,8 @@ next_reply_seq() {
 }
 
 cmd_reply() {
-  local json=0 id body path staging seq usage attach="" file text_args=() rest=0
-  usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--] <text>... (or: ... -)"
+  local json=0 id body path staging seq usage attach="" file text_args=() rest=0 options="" nopt=0 change=0 opt
+  usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--option <label>]... [--allow-change] [--] <text>... (or: ... -)"
   if [ "${1:-}" = "--json" ]; then
     json=1
     shift
@@ -683,6 +698,23 @@ cmd_reply() {
       [ -f "$file" ] && [ -r "$file" ] || die "attachment is not a readable file: $2"
       attach="$attach$file"$'\n'
       shift 2
+    elif [ "$rest" -eq 0 ] && [ "$1" = "--option" ]; then
+      [ "$#" -ge 2 ] || die "--option needs a label"
+      opt=$2
+      case "$opt" in
+        *$'\n'*|*$'\r'*) die "refusing an option label with a line break" ;;
+      esac
+      [ -n "${opt//[[:space:]]/}" ] || die "refusing an empty option label"
+      [ "${#opt}" -le 60 ] || die "an option label is at most 60 characters"
+      case $'\n'"$options" in
+        *$'\n'"$opt"$'\n'*) die "duplicate option label: $opt" ;;
+      esac
+      options="$options$opt"$'\n'
+      nopt=$((nopt + 1))
+      shift 2
+    elif [ "$rest" -eq 0 ] && [ "$1" = "--allow-change" ]; then
+      change=1
+      shift
     elif [ "$rest" -eq 0 ] && [ "$1" = "--" ]; then
       rest=1
       shift
@@ -691,6 +723,10 @@ cmd_reply() {
       shift
     fi
   done
+  if [ "$nopt" -ne 0 ] && { [ "$nopt" -lt 2 ] || [ "$nopt" -gt 8 ]; }; then
+    die "a choice needs 2 to 8 --option labels, got $nopt"
+  fi
+  [ "$change" -eq 0 ] || [ "$nopt" -gt 0 ] || die "--allow-change needs --option"
   if [ "${#text_args[@]}" -eq 0 ]; then
     [ -n "$attach" ] || die "$usage"
     body=""
@@ -724,6 +760,10 @@ cmd_reply() {
     while IFS= read -r file; do
       [ -z "$file" ] || printf 'attach=%s\n' "$file"
     done <<<"$attach"
+    while IFS= read -r opt; do
+      [ -z "$opt" ] || printf 'option=%s\n' "$opt"
+    done <<<"$options"
+    [ "$change" -eq 0 ] || printf 'option-change=1\n'
     printf -- '--\n'
     printf '%s' "$body"
     case "$body" in
@@ -862,6 +902,10 @@ def reply_record(note_id):
     attachments = [l[len("attach="):] for l in head.splitlines() if l.startswith("attach=")]
     if attachments:
         out["attachments"] = attachments
+    options = [l[len("option="):] for l in head.splitlines() if l.startswith("option=")]
+    if options:
+        out["options"] = options
+        out["options_change"] = "option-change=1" in head.splitlines()
     return out
 
 # announced is null - not false - for a note written before this home tracked
