@@ -1095,14 +1095,15 @@ github_default_merge_method() {
   printf '%s' --squash
 }
 # A merge into a release branch that already shipped lands nowhere: the release
-# left the default branch without it. release/c-<M> counts as shipped when a
-# newer release/c-<N> exists (bin/jg-version-branch-lib.sh owns which branch is
-# current), or when a pull request from release/c-<M> into the default branch is
-# merged. Prints the refusal text and returns 1 when <base> is shipped; returns 0
-# for any other base, for the open release branch, and for the default branch.
-# A merged-release read that fails refuses, as every other live read here does.
+# left the default branch without it. release/c-<M> counts as shipped only when
+# its pull request into the default branch merged (jg_release_shipped in
+# bin/jg-version-branch-lib.sh owns that one rule); a newer release/c-<N> existing
+# does not ship it, so an unshipped branch still takes work, red-fixes included.
+# Prints the refusal text and returns 1 when <base> is shipped; returns 0 for any
+# other base, for an unshipped release branch, and for the default branch.
+# A shipped read that fails refuses, as every other live read here does.
 github_shipped_release_refusal() {  # <base> <pr-number>
-  local base=$1 number=$2 project open default merged shipped_by=''
+  local base=$1 number=$2 project open default rc=0
   case "$base" in release/c-[0-9]*) ;; *) return 0 ;; esac
   case "${base#release/c-}" in *[!0-9]*) return 0 ;; esac
   project=$(jg_dod_meta_value "$META" project 2>/dev/null) || project=
@@ -1112,25 +1113,21 @@ github_shipped_release_refusal() {  # <base> <pr-number>
     open=$(jg_current_version_branch "$project" 2>/dev/null) || open=
     default=$(default_branch "$project" 2>/dev/null) || default=
   fi
-  if [ -n "$open" ] && [ "$open" != "$base" ] \
-    && [ "${open#release/c-}" -gt "${base#release/c-}" ] 2>/dev/null; then
-    shipped_by="$open is newer"
-  else
-    [ -n "$default" ] || default=$(gh repo view "$PR_OWNER/$PR_REPO" --json defaultBranchRef \
-      --jq '.defaultBranchRef.name' 2>/dev/null) || default=
-    if [ -z "$default" ] || ! merged=$(gh pr list --repo "$PR_OWNER/$PR_REPO" --state merged \
-      --head "$base" --base "$default" --limit 1 --json number --jq 'length' 2>/dev/null); then
+  [ -n "$default" ] || default=$(gh repo view "$PR_OWNER/$PR_REPO" --json defaultBranchRef \
+    --jq '.defaultBranchRef.name' 2>/dev/null) || default=
+  jg_release_shipped "$PR_OWNER/$PR_REPO" "$base" "$default" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 0 ;;
+    *)
       printf '%s\n' "  - could not read whether $base already shipped to the default branch"
-      return 1
-    fi
-    [ "${merged:-0}" -gt 0 ] 2>/dev/null || return 0
-    shipped_by="its pull request into $default is merged"
-    open=
-  fi
+      return 1 ;;
+  esac
+  jg_release_older_than "$base" "$open" || open=
   if [ -n "$open" ]; then
-    printf '%s\n' "  - $base already shipped ($shipped_by), so a merge into it never reaches the default branch; the open release branch is $open - run: gh pr edit $number --base $open"
+    printf '%s\n' "  - $base already shipped (its pull request into $default is merged), so a merge into it never reaches the default branch; the open release branch is $open - run: gh pr edit $number --base $open"
   else
-    printf '%s\n' "  - $base already shipped ($shipped_by) and no newer release branch is open, so a merge into it never reaches the default branch; open the next release branch, then retarget this pull request"
+    printf '%s\n' "  - $base already shipped (its pull request into $default is merged) and no newer release branch is open, so a merge into it never reaches the default branch; open the next release branch, then retarget this pull request"
   fi
   return 1
 }
