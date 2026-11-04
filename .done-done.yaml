@@ -29,7 +29,7 @@ journeys:
   pre-push-hook:
     command: bash tests/jg-pre-push.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   spawn-dispatch-profile:
-    command: bash tests/jg-spawn-dispatch-profile.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
+    command: bash journeys/spawn-dispatch-profile.sh
   receipt-candidate-hook:
     command: bash journeys/receipt-candidate-hook.sh
   tickets-stage-publish:
