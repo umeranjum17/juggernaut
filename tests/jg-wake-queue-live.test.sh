@@ -368,6 +368,34 @@ SHIM
   pass "an acknowledgement that cannot remove its row exits non-zero with the reason"
 }
 
+# A message the render could not read - the bus answered a `stream get` with an error rather than
+# "no message found" - was skipped and the cursor then passed it, so an acknowledgement read during
+# that render was lost to the replica for good: the row stayed queued, the retry's own message was
+# a different one, and only a restart of the bus (which made reads work again) let any later
+# acknowledgement settle anything. A render that cannot read a message must stop there and leave the
+# cursor before it, so the next render that can read it applies it.
+test_a_message_the_render_could_not_read_is_applied_by_the_next_render() {
+  local d=$DIR/unreadable id out rc
+  mkdir -p "$d"
+  cat > "$d/nats-shim" <<SHIM
+#!/usr/bin/env bash
+case " \$* " in *" stream get "*) [ ! -e "$d/refuse" ] || { echo "nats: error: context deadline exceeded" >&2; exit 1; } ;; esac
+exec "$NATS_BIN" "\$@"
+SHIM
+  chmod +x "$d/nats-shim"
+  bus raise check unreadable "check: unreadable" now || fail "setup raise failed"
+  id=$(bus ids check unreadable | head -n 1)
+  : > "$d/refuse"
+  out=$(JG_NATS_BIN="$d/nats-shim" bus ack "$id" 2>&1); rc=$?
+  assert_equals 1 "$rc" "an acknowledgement the render cannot read back must not pass as settled"
+  echo "$out" | grep -q "still queued" || fail "the failure must say why, got: $out"
+  rm -f -- "$d/refuse"
+  bus render >/dev/null 2>&1 || fail "the render after the bus recovered failed"
+  assert_equals 0 "$(grep -c 'check: unreadable' "$STATE_DIR/.wake-queue")" \
+    "the acknowledgement unreadable at first must settle the row once the bus reads again"
+  pass "a message the render could not read is applied by the next render"
+}
+
 # A row the bus never received sits in the outbox and in the replica; acknowledging it
 # must drop both.
 test_a_row_owed_by_the_outbox_is_acknowledged_once() {
@@ -399,6 +427,7 @@ test_a_cursor_past_both_stream_ends_reads_both_from_the_start || result=1
 test_a_repeated_acknowledgement_settles_a_row_the_cursor_passed || result=1
 test_an_acknowledgement_that_cannot_remove_its_row_fails_loudly || result=1
 test_a_row_owed_by_the_outbox_is_acknowledged_once || result=1
+test_a_message_the_render_could_not_read_is_applied_by_the_next_render || result=1
 test_the_kill_journey_delivers_each_wake_once || result=1
 test_the_journey_proves_the_probe_in_two_homes || result=1
 exit "$result"
