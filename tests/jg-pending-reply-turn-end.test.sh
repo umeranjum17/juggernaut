@@ -20,6 +20,7 @@ BASE=$(( $(date +%s) - 600 ))
 export JG_PENDING_REPLY_NOW=$((BASE + 100))
 HOOK_LOG="$DIR/hook.log"
 : > "$HOOK_LOG"
+# shellcheck disable=SC2016 # the hook body keeps a literal $1 for the generated script
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$1" >> "%s"\n' "$HOOK_LOG" > "$DIR/hook.sh"
 chmod +x "$DIR/hook.sh"
 export JG_PENDING_REPLY_SEND_HOOK="$DIR/hook.sh"
