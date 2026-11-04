@@ -704,6 +704,7 @@ tests/jg-claude-stop-autoarm-live-e2e.test.sh 138
 tests/jg-clause.test.sh 3826
 tests/jg-codex-continuity-live-e2e.test.sh 80
 tests/jg-codex-hook-layer-live-e2e.test.sh 87
+tests/core-suites-report-all.test.sh 158
 tests/jg-comms-feed.test.sh 1014
 tests/jg-compat-old-records.test.sh 1001
 tests/jg-composer-matrix-live-e2e.test.sh 175

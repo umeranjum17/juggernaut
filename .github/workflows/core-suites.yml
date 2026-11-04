@@ -65,14 +65,20 @@ jobs:
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi for fork lifecycle tests
         run: npm install --global tasks-axi
+      # Every step from here runs unless the run is cancelled, so one red run lists every failing
+      # suite instead of the first. tests/core-suites-report-all.test.sh refuses a step without it.
       - name: Wait-timers hook journey
+        if: ${{ !cancelled() }}
         run: |
           bash wait-timers/tests/wait-timers-hook-e2e.sh
       - name: Receipts hook journeys
+        if: ${{ !cancelled() }}
         run: bash receipts/tests/receipts-hook-e2e.sh
       - name: Lead-wake hook journeys
+        if: ${{ !cancelled() }}
         run: bash lead-wake/tests/lead-wake-e2e.sh
       - name: Report actions replay
+        if: ${{ !cancelled() }}
         run: python3 report-actions/tests/test_report_actions.py
       # A feature script is a shell script under a core/<feature>/ directory, either one level
       # down (`merge-card/merge-card`) or two levels down in its `bin/` and `tests/`
@@ -80,6 +86,7 @@ jobs:
       # so a new feature in either shape needs no edit here and a non-script file is left alone.
       # The runner image ships shellcheck, so nothing is downloaded at run time.
       - name: ShellCheck core feature scripts
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           shellcheck --version
@@ -115,6 +122,7 @@ jobs:
             exit 1
           fi
       - name: Syntax-check core feature scripts
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           found=0
@@ -131,9 +139,11 @@ jobs:
           fi
       # Stub emulator, Gradle, pgrep and memory files only: nothing heavy starts.
       - name: Memory gate test
+        if: ${{ !cancelled() }}
         run: bash host-memory/tests/jg-mem-gate.test.sh
       # Fixture home and config, stub quota-axi and pi: nothing real is touched.
       - name: Route change test
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -141,37 +151,47 @@ jobs:
           bash route-change/tests/route-change-e2e.sh
       # Stub pi and quota-axi in a throwaway HOME: the persisted pipeline route.
       - name: Pipeline quota failover route test
+        if: ${{ !cancelled() }}
         run: bash pipeline-quota-failover/tests/pi-quota-failover-route.test.sh
       # Quota JSON fixtures and a private repeat-state file: nothing real is touched.
       - name: Z.AI quota check test
+        if: ${{ !cancelled() }}
         run: bash zai-quota-check/tests/zai-quota-check-e2e.sh
       # The real watcher against a fixture home with stub harness CLIs, then its wiring step against throwaway homes
       # with the cloned fork's check registration: nothing real is touched.
       - name: Quota failover tests
+        if: ${{ !cancelled() }}
         run: |
           bash quota-failover/tests/quota-failover-e2e.sh
           bash quota-failover/tests/install.test.sh
       # Fixture fork home with stub callers and a throwaway HOME: nothing real is touched.
       - name: Fleet contract check test
+        if: ${{ !cancelled() }}
         run: bash fleet-contract-check/tests/fleet-contract-check.test.sh
       # Fixture homes, stub herdr and a temp state dir: nothing real is touched.
       # A real Claude limit-menu capture on fixture panes, stub jg-control: nothing real is touched.
       - name: Limit prompt move test
+        if: ${{ !cancelled() }}
         run: |
           bash limit-prompt-move/tests/limit-prompt-move-e2e.sh
           bash limit-prompt-move/tests/limit-prompt-move-e2e.sh --installed
       - name: Fleet stall check test
+        if: ${{ !cancelled() }}
         run: bash fleet-stall/tests/fleet-stall-e2e.sh
       # Fixture home and real fixture processes with a canary key value: nothing real is touched or signalled.
       - name: Key-in-env check test
+        if: ${{ !cancelled() }}
         run: bash key-in-env-check/tests/key-in-env-check-e2e.sh
       # Fixture Main and lead homes with stub jg-tasks-axi.sh and jg-crew-state.sh: lane slots and dry.
       - name: Home flow check test
+        if: ${{ !cancelled() }}
         run: bash fleet-flow/tests/jg-flow-check.test.sh
       - name: Home flow check wake key test
+        if: ${{ !cancelled() }}
         run: bash fleet-flow/tests/jg-flow-wake-key.test.sh
       # The real guard wiring steps in a throwaway HOME; commands run the way Codex runs them: nothing real is touched.
       - name: Kill guard Main allowance and CLI journeys
+        if: ${{ !cancelled() }}
         run: |
           node kill-guard/tests/main-allowance.test.mjs
           node kill-guard/tests/lead-project-worktree.test.mjs
@@ -179,130 +199,176 @@ jobs:
           bash kill-guard/tests/kill-guard.test.sh --guard-only
       # Fixture throwaway HOME, XDG and home with a stub opencode and a stub fleet check: nothing real is touched.
       - name: Model gate test
+        if: ${{ !cancelled() }}
         run: bash model-gate/tests/model-gate.test.sh
       # Throwaway home, HOME and XDG paths, and the fixture's own git configuration: the two feature pairs
       # that share a hook file wire three times over and must settle instead of refusing.
       - name: Host wiring re-run journey
+        if: ${{ !cancelled() }}
         run: bash ../tests/jg-host-wiring.test.sh
       # One temp home, a local bare repo standing in for GitHub and a stub gh: the wiring steps write one
       # merge gate that refuses and allows the same cases as the old chain, and the two symlinks resolve.
       - name: One merge gate test
+        if: ${{ !cancelled() }}
         run: bash ../tests/merge-gate-one-entry.test.sh
       # Fixture origin, shared clone, lane worktree and a throwaway HOME and home: nothing real is touched.
       - name: Git identity test
+        if: ${{ !cancelled() }}
         run: bash git-identity/tests/git-identity.test.sh
       # Fixture origin, clone, lane worktree and a throwaway HOME, home and patterns file: nothing real is touched.
       - name: Owner guard test
+        if: ${{ !cancelled() }}
         run: bash owner-guard/tests/owner-guard.test.sh
       # Fixture origin, plain repo and a throwaway HOME, global gitconfig, home and patterns file: nothing real is touched.
       - name: Owner guard global test
+        if: ${{ !cancelled() }}
         run: bash owner-guard/tests/owner-guard-global.test.sh
       # Fixture home, merge gate and patterns, a local bare repo standing in for GitHub and a stub gh: nothing real is touched.
       - name: Owner guard merge gate test
+        if: ${{ !cancelled() }}
         run: bash owner-guard/tests/owner-guard-merge.test.sh
       # Fixture fork clone, throwaway HOME and stub gh/gh-axi that only record argv: nothing real is touched.
       - name: Repo guard test
+        if: ${{ !cancelled() }}
         run: bash repo-guard/tests/repo-guard.test.sh
       # Sentinel user wiring proves the teardown journey cannot escape its temporary HOME/XDG paths.
       - name: Owner guard uninstall isolation test
+        if: ${{ !cancelled() }}
         run: bash owner-guard/tests/uninstall-isolation.test.sh
       # Throwaway XDG_DATA_HOME: the wiring step and the check touch nothing real.
       - name: Task priority test
+        if: ${{ !cancelled() }}
         run: bash task-priority/tests/task-priority.test.sh
       - name: Tickets sync real-board journey
+        if: ${{ !cancelled() }}
         run: command -v identify >/dev/null || sudo apt-get install -y --no-install-recommends imagemagick; npm install --global sign-off-axi@0.9.10 && bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh
       # Fixture transcripts and a throwaway home; no real chat data is read or written.
       - name: Fleet pulse test
+        if: ${{ !cancelled() }}
         run: bash fleet-pulse/tests/chat-tsv.test.sh
       # Stub byokit-accounts and a throwaway config: nothing real is touched.
       - name: Fleet report test
+        if: ${{ !cancelled() }}
         run: bash fleet-report/tests/fleet-report.test.sh
 
       - name: Account pool test
+        if: ${{ !cancelled() }}
         run: bash account-pool/tests/account-pool.test.sh
       # Fixture registry and readings only: no network, no login copy, no real model CLI.
       - name: Model pool helper test
+        if: ${{ !cancelled() }}
         run: bash account-pool/tests/model-pool.test.sh
       # Fixture pool readings and stub upstream quota-axi: Claude row follows jg-model-pool.
       - name: Quota-axi pool test
+        if: ${{ !cancelled() }}
         run: bash quota-axi-pool/tests/quota-axi-pool.test.sh
       # Wrapper first on PATH, a stub upstream and a stand-in pool tool: the reader must reach the
       # upstream without delegating, and the wrapper must refuse a call that is already inside one.
       - name: Quota-axi pool recursion test
+        if: ${{ !cancelled() }}
         run: bash quota-axi-pool/tests/quota-axi-pool-recursion.test.sh
       # Fixture muxr registry and a stub quota-axi: nothing real is touched.
       - name: Claude accounts test
+        if: ${{ !cancelled() }}
         run: bash claude-accounts/tests/claude-accounts.test.sh
       - name: Claude accounts pick test
+        if: ${{ !cancelled() }}
         run: bash claude-accounts/tests/claude-accounts-pick.test.sh
       # A throwaway HOME and XDG paths and a stub systemctl: no real timer is touched.
       - name: Claude accounts timer test
+        if: ${{ !cancelled() }}
         run: bash claude-accounts/tests/claude-accounts-timer.test.sh
       # done-done-axi 0.6.4 requires Node 22.18 and reads generated path globs in the lint fixtures.
       - uses: actions/setup-node@v4
+        if: ${{ !cancelled() }}
         with:
           node-version: 22.18.0
       # Fake GitHub responses and isolated homes; no real PRs are changed.
       - name: Checks lint parity test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-parity.test.sh
       # Same-lane follow-up may reuse its own frames; cross-task reuse still fails.
       - name: Checks lint lane-task identity test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-lane-task.test.sh
       # A lane that fixes its evidence list republishes PASS over its own stale FAIL (real receipt and acceptance).
       - name: Checks lint superseding-receipt test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-supersede-receipt.test.sh
       # A 305-file fixture above gh's 100-file list cap and 300-file diff cap; no real PRs are changed.
       - name: Checks lint big-PR size test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-big-pr.test.sh
       # Moved-with-rewrites fixtures: a rename at 50% similarity or more is moved, lines past it are new code.
       - name: Checks lint moved-similarity test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-moved-similarity.test.sh
 
       # The merge gate's Rego rules: their own contract tests, then the recorded decisions through the real lint
       # and the real owner-rules fact gathering.
       - name: Merge-gate policy contract tests
+        if: ${{ !cancelled() }}
         run: opa test ../policy
       - name: Checks lint recorded-decision cases
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-cases.test.sh
       - name: Owner-rules lint-row recorded decisions
+        if: ${{ !cancelled() }}
         run: bash owner-rules/tests/lint-row-recorded.test.sh
       - name: Owner-rules gate recorded decisions
+        if: ${{ !cancelled() }}
         run: bash owner-rules/tests/gate-matrix.test.sh
       - name: Owner-rules brief-rule recorded decisions
+        if: ${{ !cancelled() }}
         run: bash owner-rules/tests/brief-rules-cases.test.sh
       - name: Completion-receipt acceptance recorded decisions
+        if: ${{ !cancelled() }}
         run: bash receipts/tests/receipt-accept-cases.test.sh
       # Fixture home, real publisher, no network: a PASS receipt for a pull-request mode must name its PR.
       - name: Completion-receipt publisher test
+        if: ${{ !cancelled() }}
         run: bash receipts/tests/run-receipt-publisher.test.sh
       # Real commits in real repositories, forge read stubbed: a closed-unmerged predecessor's rebased copy is rebindable, an altered or incomplete copy is not.
       - name: Completion-receipt superseded-copy test
+        if: ${{ !cancelled() }}
         run: bash receipts/tests/receipt-superseded-copy.test.sh
       - name: No old receipt path test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/no-old-receipt-path.test.sh
       # Fixture home and gate logs; no merge runs.
       - name: Merge-on-green test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/merge-on-green.test.sh
       - name: Merge-on-green uninstall test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/merge-on-green-uninstall.test.sh
       - name: Stale-PR alarm test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/stale-pr-alarm.test.sh
       - name: Red-CI ticket test
+        if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/red-ci-ticket.test.sh
       - name: Critical-stall test
+        if: ${{ !cancelled() }}
         run: bash critical-stall/tests/critical-stall.test.sh
       # Fixture home, stub gh and receipts; no merge runs.
       - name: Owner-rules gate test
+        if: ${{ !cancelled() }}
         run: bash owner-rules/tests/owner-rules-gate.test.sh
       - name: Owner-rules gate repoint test
+        if: ${{ !cancelled() }}
         run: bash owner-rules/tests/gate-repoint.test.sh
       - name: Merge-card evidence-root message test
+        if: ${{ !cancelled() }}
         run: bash merge-card/tests/dd-root-message.test.sh
       - name: Owner-rules design flag test
+        if: ${{ !cancelled() }}
         run: bash owner-rules/tests/design-flag.test.sh
       - name: Pipeline route switch test
+        if: ${{ !cancelled() }}
         run: bash pipeline-quota-failover/tests/switch-route.test.sh
       - name: Owner ask real-board journey
+        if: ${{ !cancelled() }}
         run: |
           npm install --global sign-off-axi@0.6.9
           bash owner-rules/tests/no-lavish.test.sh
@@ -310,7 +376,9 @@ jobs:
           bash signoff/tests/jg-procevent-signoff.test.sh
       # Fixture home: fleet JSON for Lookout from the builder's output files; no real home is read.
       - name: Lookout adapter test
+        if: ${{ !cancelled() }}
         run: bash lookout-adapter/tests/test.sh
       # Stub upstream and fixture url file; install.sh only in --dry-run, so no unit is touched.
       - name: Lookout front and install dry-run test
+        if: ${{ !cancelled() }}
         run: bash lookout-adapter/tests/front.test.sh
