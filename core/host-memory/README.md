@@ -45,6 +45,11 @@ Kun's diagnostic guard must remain intact when the admission rule moves: the fea
   the sibling control entry beside it (`jg-control.sh <task> interrupt`;
   its output becomes the recorded action). A top consumer this home does
   not own is recorded as skipped, never interrupted.
+- Wake routing: an ALERT is one machine-wide event, so only the root Overwatch home wakes for it. A
+  Squad Lead home under a local root (a readable `.jg-squad-lead-parent` record that
+  `jg_juggernaut_root_home` resolves to another home) writes the same interrupt-log row and latch and
+  settles the alert into its wake tally (`jg_wake_settle`), but queues no wake. A home with no such
+  record, including the root and a remote-routed lead, queues the wake as before.
 - State files, all under the home's state directory: `host-memory.tsv`
   (one sample row per tick:
   `<epoch>\t<available kB>\t<swap used kB>\t<sustained pressure>\t<verdict>`,
