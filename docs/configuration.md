@@ -534,6 +534,13 @@ A pull request that cannot be moved is closed or retargeted by hand.
 The one override is `bin/jg-pr-merge.sh --allow-orphans "<captain words>"`, which only an attended merge accepts, and which records the reason as `orphans_waived=` in the task record.
 `journeys/release-cut-orphans.sh` drives all of it.
 
+A merge into a release branch that already shipped is refused too.
+`release/c-<M>` counts as shipped when a newer `release/c-<N>` exists (`bin/jg-version-branch-lib.sh` decides which branch is current), or when a pull request from `release/c-<M>` into the default branch is merged.
+`bin/jg-pr-merge.sh`, which merge-on-green also uses, reads the base live and refuses before it runs the merge.
+The refusal names the open release branch and prints the exact `gh pr edit <n> --base <branch>` command; when no newer branch is open it says so and prints no command.
+A merge into the open release branch or the default branch is unchanged.
+`journeys/release-shipped-merge-refusal.sh` drives the refusal and a normal merge.
+
 ## Fleet autosync (config/fleet-autosync-off)
 
 Every home that runs a merged change needs the new bytes, so a landed merge carries itself to `bin/jg-update.sh`, which fast-forwards this home and every live local Squad Lead home.
@@ -1266,6 +1273,22 @@ A primary home also runs the fleet heartbeat (`bin/jg-fleet-heartbeat.sh`) by de
 The optional local, gitignored presence flag `config/fleet-heartbeat-off` opts a home out, and bootstrap then leaves the check unarmed.
 
 If ready work still waits on a free lane, or at the floor with no worker provably working, and nothing starts for 10 minutes, the lead is woken again and Main is told, every 10 minutes while that holds, and Main posts a board card if it stays open; [`core/wait-timers/README.md`](../core/wait-timers/README.md) "Stalled ready backlog" owns that backstop.
+
+## Wake batching (config/wake-routing)
+
+Overwatch wakes on every event the routing rules class `now`; everything routine is class `batch` and is held, then released as one wake.
+Two knobs decide when the held rows are released, and whichever fires first wins:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `set digest-count <N>` | 5 | Release when N routine rows have queued since the last release. 0 turns this trigger off. |
+| `set digest-minutes <N>` | 15 | Release when the oldest routine row has waited N minutes. 0 turns batching off, and routine rows then ride the next wake of any kind. |
+
+The defaults live in `defaults/wake-routing`.
+The optional local, gitignored `config/wake-routing` is read first, so a `set` line there wins and every rule it does not name falls through to the shared file; `JG_WAKE_ROUTING` replaces both.
+Urgent classes never wait: a captain inbox note, a failed or red check, `blocked`, `needs-decision`, `done` and `ready` lines, host and security alarms, and every stale escalation are `now` rows that wake at once, and an unreleased batch is never held back by them.
+Nothing is dropped: the next drain presents every held row.
+[`core/wake/README.md`](../core/wake/README.md) owns the rule grammar, and `journeys/wake-batch-threshold.sh` proves both triggers and the urgent bypass.
 
 ## Batch digest cadence (config/status-digest)
 

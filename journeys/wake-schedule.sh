@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # done-done journey: the wake schedule. A supervisor wakes at once only for what needs a person;
-# everything else rides one digest at most every 30 minutes. Each case runs on a fixture home with
+# everything else rides one digest at most every 15 minutes. Each case runs on a fixture home with
 # no config/wake-routing of its own, so the shipped defaults/wake-routing is what is proved:
 #   routine    a routine item raises no wake from a real watcher cycle, appears in the next digest,
 #              the digest is sent once per window, and never when nothing waits.
@@ -24,7 +24,7 @@ cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "disposable homes with no config/wake-routing, the shipped defaults/wake-routing in force",
- "steps": ["raise a routine ready-work item, run a real bin/jg-watch.sh cycle and require no wake, rewind the digest stamp past 30 minutes and require one digest wake, then require no second digest in the window and none on an empty queue", "record the fleet fingerprint, run an away-mode heartbeat cycle over the unchanged fleet and require no wake, add a status line and require the heartbeat to wake", "answer a keyed wait with a done and require its escalation to stop climbing", "route a pause that names a future time as batch (status line, stale recheck, timer) and a blocked wait with no clearing condition as now, then require a real cycle over the planned wait to raise no wake", "route the four c-5 misses (fresh gap, 2h report, race-lost relaunch in a restart pass, supervision notice in the grace window) as batch or silent, and require now for a gap open an hour, another fleet-pulse failure, the race-lost notice outside a pass, and a lead down past the grace window", "route a captain inbox note, a failed check, a host alarm, a stale worker and ready/done status lines and require now, then raise a captain note with the digest due and require its own wake"],
+ "steps": ["raise a routine ready-work item, run a real bin/jg-watch.sh cycle and require no wake, rewind the digest stamp past 15 minutes and require one digest wake, then require no second digest in the window and none on an empty queue", "record the fleet fingerprint, run an away-mode heartbeat cycle over the unchanged fleet and require no wake, add a status line and require the heartbeat to wake", "answer a keyed wait with a done and require its escalation to stop climbing", "route a pause that names a future time as batch (status line, stale recheck, timer) and a blocked wait with no clearing condition as now, then require a real cycle over the planned wait to raise no wake", "route the four c-5 misses (fresh gap, 2h report, race-lost relaunch in a restart pass, supervision notice in the grace window) as batch or silent, and require now for a gap open an hour, another fleet-pulse failure, the race-lost notice outside a pass, and a lead down past the grace window", "route a captain inbox note, a failed check, a host alarm, a stale worker and ready/done status lines and require now, then raise a captain note with the digest due and require its own wake"],
  "result": "routine items ride one digest, an unchanged fleet is silent, a done closes its key, and every urgent class still wakes at once"}
 JSON
 exit "$rc"

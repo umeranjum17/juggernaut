@@ -26,6 +26,10 @@ type event struct {
 	Link    string `json:"link,omitempty"`
 	// Media is set by the chat gateway's inbound event only; old events do not have it.
 	Media []mediaFile `json:"media,omitempty"`
+	// Options is set by a card the owner answers with a tap: one button each. Answer is set by a
+	// card-close event for a card the board answered. Old events have neither.
+	Options []cardOption `json:"options,omitempty"`
+	Answer  string       `json:"answer,omitempty"`
 }
 
 // toJSON renders one value without HTML escaping, so a text with `&` or `<` keeps the
@@ -142,10 +146,25 @@ func (a *app) publish(args []string) int {
 		return die("publish needs <kind> <key> <text>")
 	}
 	kind, key, text := args[0], args[1], args[2]
-	link := ""
-	rest := args[3:]
+	link, rest := "", args[3:]
+	var options []cardOption
+	answer := ""
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
+		case "--option", "--answer":
+			if i+1 >= len(rest) || rest[i+1] == "" {
+				return die("publish %s needs a value (--option value=label) or the answer (--answer)", rest[i])
+			}
+			if rest[i] == "--answer" {
+				answer = rest[i+1]
+			} else {
+				v, l, ok := strings.Cut(rest[i+1], "=")
+				if !ok { // a bare option is its own label
+					l = v
+				}
+				options = append(options, cardOption{v, l})
+			}
+			i++
 		case "--link":
 			if i+1 >= len(rest) {
 				return die("publish --link needs a url")
@@ -156,16 +175,20 @@ func (a *app) publish(args []string) int {
 			return die("publish: unknown flag %s", rest[i])
 		}
 	}
-	return a.emit(kind, key, text, link, nil)
+	return a.emitEvent(event{Kind: kind, Key: key, Text: text, Link: link, Options: options, Answer: answer})
 }
 
 // emit is publish for a caller that holds the event's parts, such as the chat gateway's inbound
 // event with its stored files. When the bus refuses a card, outcome, alert or digest, the chat
 // gateway's adapter sends it in-process, so the owner still hears it.
 func (a *app) emit(kind, key, text, link string, media []mediaFile) int {
-	at := time.Now().Unix()
-	ev := event{At: at, Kind: kind, Key: key, Text: text, Link: link}
-	return a.emitDoc(kind, a.eventJSON(at, kind, key, text, link, media...), func() error { return a.sendToChat(ev) })
+	return a.emitEvent(event{Kind: kind, Key: key, Text: text, Link: link, Media: media})
+}
+
+// emitEvent stamps the event and emits it; the document is the bytes eventJSON builds.
+func (a *app) emitEvent(ev event) int {
+	ev.At, ev.Subject = time.Now().Unix(), a.cfgOr("subject-prefix", "")+"."+ev.Kind
+	return a.emitDoc(ev.Kind, toJSON(ev), func() error { return a.sendToChat(ev) })
 }
 
 // emitDoc records one event document and posts it to the bus. fallback delivers it another way
@@ -205,9 +228,13 @@ func (a *app) emitDoc(kind, doc string, fallback func() error) int {
 
 // emitReply publishes the owner's answer to a card, in the shape the router reads. When the bus
 // refuses it, the board's own route takes it now, which is what the router would have done.
-func (a *app) emitReply(card, answer string) int {
-	doc := toJSON(map[string]string{"at": time.Now().UTC().Format("2006-01-02T15:04:05Z"), "kind": "reply",
-		"key": card, "subject": a.cfgOr("subject-prefix", "") + ".reply", "answer": answer})
+func (a *app) emitReply(card, answer, label string) int {
+	reply := map[string]string{"at": time.Now().UTC().Format("2006-01-02T15:04:05Z"), "kind": "reply",
+		"key": card, "subject": a.cfgOr("subject-prefix", "") + ".reply", "answer": answer}
+	if label != "" {
+		reply["label"] = label
+	}
+	doc := toJSON(reply)
 	return a.emitDoc("reply", doc, func() error {
 		if code := a.routeReply([]byte(doc)); code != 0 {
 			return fmt.Errorf("the board route exited %d", code)

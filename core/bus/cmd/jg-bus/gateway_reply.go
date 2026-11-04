@@ -237,6 +237,7 @@ func (a *app) recordOutboundLeg(p sendPart, id string) {
 // 413) is written to the undelivered record and passed over, so one dead chat cannot hold the
 // rest; when it was a file, the chat gets the caption and a line saying the file did not go.
 func (a *app) followReplies(ad Adapter) error {
+	a.syncCards(ad) // an edit of a card that failed is tried again here
 	dir := filepath.Join(a.state, "captain-chat")
 	cursorFile := filepath.Join(dir, ad.Name()+".reply-cursor")
 	prev, _ := os.ReadFile(cursorFile)
@@ -261,6 +262,7 @@ func (a *app) followReplies(ad Adapter) error {
 	})
 	readLines(filepath.Join(dir, "sent.jsonl"), func(v map[string]string) { sent[v["key"]] = true })
 	for _, r := range rec.Replies {
+		a.typing.end(r.ID) // the note is answered: its chat stops showing "typing…"
 		if w, ok := notes[r.ID]; ok {
 			parts := a.replyParts(ad, w, r.Cursor, r.Body, r.Attachments, len(r.Options) > 0)
 			if len(r.Options) > 0 {

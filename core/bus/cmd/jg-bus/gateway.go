@@ -33,6 +33,7 @@ type Adapter interface {
 	Edit(ctx context.Context, chat, message, text string, buttons []Button) error
 	Out() OutLimits                                        // what Send can carry: file, picture, caption and album sizes
 	React(ctx context.Context, chat, message string) error // mark a message as received
+	Typing(ctx context.Context, chat string) error         // show that an answer is being written
 }
 
 // Inbound is one platform update. A non-message update has no sender, so the access check drops it.
@@ -149,6 +150,9 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		}
 		return nil
 	}
+	if strings.HasPrefix(in.Data, "c:") { // a tap on a card's option answers the card
+		return a.tapCard(ad, in)
+	}
 	if in.Callback != "" { // a button tap answers an option set, not a message
 		return a.pick(ad, in)
 	}
@@ -157,7 +161,8 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 		return nil
 	}
 	if card := a.cardAnswered(in); card != "" { // the owner answered a card in the chat: the board takes it, not the inbox
-		a.emitReply(card, in.Text)
+		a.emitReply(card, in.Text, "")
+		a.closeAnswered(ad, card, in.Text) // the card's buttons go, as for a tap
 		return nil
 	}
 	head := fmt.Sprintf("[chat %s %s:%s]", ad.Name(), in.Chat, in.Message)
@@ -191,6 +196,7 @@ func (a *app) ingest(ad Adapter, allow []string, in Inbound) error {
 	a.recordInboundLegs(res.ID, in, stored)
 	react()
 	if res.Outcome == "created" { // a replay already announced its event
+		a.typing.begin(in.Chat, res.ID)
 		a.emit("inbound", id, head, "", stored)
 		a.refuseLarge(ad, in)
 	}
@@ -304,6 +310,9 @@ func (a *app) gateway(args []string) int {
 		ad.wait = 0
 	}
 	if !once {
+		a.typing = a.typerFor(ad)
+		a.typing.stopOnSignal()
+		go a.typing.run()
 		if len(allow) > 0 {
 			go a.serveGatewayEvents(ad, allow[0]) // cards, outcomes, alerts and digests out to the chat
 		}

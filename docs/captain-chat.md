@@ -50,6 +50,10 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   The owner gets a text line saying which file was not sent and why.
   A file Telegram refuses is named in text too.
 - When the gateway files a note it puts a 👀 reaction on the owner's message (`setMessageReaction`), so the owner sees it arrived. A reaction Telegram refuses is logged and never stops the note.
+- While a note is open, the chat shows "typing…" (`sendChatAction`). It starts when the gateway files the note and repeats every 4 seconds, because Telegram shows it for about 5.
+  It stops at once when `bin/jg-inbox.sh reply` answers the note, when the gateway stops, or after a hard cap of 10 minutes (`chat-typing-cap-seconds`) for a note nobody answers.
+  A chat with several open notes gets one indicator. A refused action is logged once and never stops the note or its reply.
+  A restarted gateway does not show it again for notes filed before the restart.
 - A message that is only `/status` is answered by the gateway itself, threaded on it: the owner, the answers sent and that the bot is answering. It files no note and wakes no one. It is the only command.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
 - The owner can send a photo, document, voice note, audio, video or round video note. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
@@ -92,9 +96,18 @@ It makes one `getMe` call and never sends a message.
   A send that fails is tried again for 10 minutes, and one the bot can never take (blocked, bad request) is not.
   An event not sent is named in `state/captain-channel-undelivered.jsonl`.
   When the bus refuses an event, the gateway's adapter sends it in-process, so the owner still hears it.
-  A card ends with "Reply to this message to answer."
+  A card with no options ends with "Reply to this message to answer."
   A text reply to that message is published as the card's answer, and the router sends it to the board.
   When the bus refuses the reply, the board's own route takes it at once.
+- A card with options (every card `jg-question-card.sh post` makes: its `--option value=label` entries, where a bare option is its own label, or Yes and No) is sent with one button per option, and a text reply still works.
+  The two sides stay in step:
+  - A tap on a button publishes the reply event with the option's value as the answer (the label rides along), like a text reply. The gateway answers the tap and edits the message to `Answered: <label>` with no buttons.
+  - An answer on the board edits the message to `Answered on the board: <answer>` and removes the buttons. `jg-board-answers.sh` and `jg-question-card.sh answer` publish `jg-bus publish card-close <key> answered --answer <words>`. A text reply edits the message the same way.
+  - A card closed without an answer: `jg-bus publish card-close <key> "<why>"` edits the message to that text and removes the buttons.
+  - A card published again with the same key and other text or options is edited in place, not sent twice. A card that is answered or closed is not reopened.
+  - A late tap on an answered card answers the tap with "Already answered." and a withdrawn or unknown card with "This card is closed." Neither publishes anything. A tap from anyone but the owner, or on another message, is dropped.
+  - A button holds `c:<12 hex>:<n>` (under 20 bytes). The hash names the card in `state/captain-chat/cards.jsonl`, which maps each card to its chat and message id, so edits survive a gateway restart. The last line of a card wins.
+  - An edit that fails is tried again every 2 seconds until it works. An edit Telegram can never take (400, 403) is logged and dropped. The bot token is never stored or logged.
 - `pending` names why: the service is not running (its heartbeat in `state/captain-chat/telegram.alive` is over two minutes old), `getMe` failed, or legs are missing.
   A missing-legs detail reads `in: text image - out: text - missing in file, out image file`.
 - `live` needs all six legs inside the last 7 days: `6 of 6 legs, last <date>, <n> notes, <n> replies`.

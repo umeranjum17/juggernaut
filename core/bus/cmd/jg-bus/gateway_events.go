@@ -17,7 +17,7 @@ import (
 )
 
 // chatKinds are the events the owner hears in the chat; probes and the chat's own events stay off it.
-var chatKinds = map[string]bool{"card": true, "outcome": true, "alert": true, "digest": true}
+var chatKinds = map[string]bool{"card": true, "card-close": true, "outcome": true, "alert": true, "digest": true}
 
 // retryWindow is how long a failing send is tried again, with a doubling wait, before it is named undelivered.
 var retryWindow = 10 * time.Minute
@@ -43,6 +43,12 @@ func (a *app) sendEvent(ad Adapter, owner string, ev event) error {
 	dir := filepath.Join(a.state, "captain-chat")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	switch {
+	case ev.Kind == "card-close":
+		return a.closeCard(ad, ev)
+	case ev.Kind == "card" && len(ev.Options) > 0:
+		return a.sendCard(ad, owner, ev)
 	}
 	done := map[string]bool{}
 	readLines(filepath.Join(dir, "sent.jsonl"), func(v map[string]string) { done[v["key"]] = true })
