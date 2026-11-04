@@ -727,6 +727,29 @@ test_local_only_fork_remote_allows() {
   pass "local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed"
 }
 
+test_teardown_of_an_already_cleaned_task_says_so() {
+  local case_dir out rc
+  case_dir=$(make_case already-cleaned)
+  rm -f "$case_dir/state/task-x1.meta"
+  : > "$case_dir/state/task-x1.run-receipt.json"
+  : > "$case_dir/state/task-x1.probe-at"
+  rc=0; out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "already-cleaned teardown exited $rc: $out"
+  printf '%s\n' "$out" | grep -F 'already cleaned up' >/dev/null \
+    || fail "already-cleaned teardown did not say so: $out"
+  printf '%s\n' "$out" | grep -F 'not a regular file' >/dev/null \
+    && fail "already-cleaned teardown gave the wrong refusal: $out"
+  assert_absent "$case_dir/state/task-x1.run-receipt.json" "leftover receipt kept"
+  assert_absent "$case_dir/state/task-x1.probe-at" "leftover probe file kept"
+  # A record that exists but is not a regular file keeps its refusal.
+  mkdir "$case_dir/state/task-x1.meta"
+  rc=0; out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "non-regular task record was accepted: $out"
+  printf '%s\n' "$out" | grep -F 'not a regular file' >/dev/null \
+    || fail "non-regular task record lost its refusal: $out"
+  pass "teardown of an already-cleaned task says so and exits 0"
+}
+
 test_teardown_closes_the_backlog_item_itself() {
   local case_dir out
   case_dir=$(make_case tasks-axi-close)
@@ -5593,6 +5616,7 @@ test_forced_child_missing_adapter_sibling_refuses_before_cleanup
 test_forced_squad_lead_own_missing_adapter_sibling_refuses_before_child_cleanup
 test_retained_sources_still_reach_the_ordinary_refusal
 test_local_only_fork_remote_allows
+test_teardown_of_an_already_cleaned_task_says_so
 test_teardown_closes_the_backlog_item_itself
 test_teardown_closes_a_gerrit_task_with_its_change_url_as_a_note
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
