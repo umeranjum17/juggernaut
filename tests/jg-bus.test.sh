@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # tests/jg-bus.test.sh - the captain channel, live, proved end to end.
 #
+# This is also the test that owns journeys/wedge-marker.sh (the done-done journey runs this file).
+#
 # What it proves, in order: an event the fleet emits is recorded and published to the
 # bus while the path that emitted it does what it always did; the shipped mode is
 # live, and `mode shadow` is the one line that reverses it; a live event the bus
