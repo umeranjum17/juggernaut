@@ -133,6 +133,24 @@ printf 'Hello   from\nthe fake engine\n'`)
 			t.Errorf("%s: want the file line and %q:\n%s", c.name, c.line, note)
 		}
 	}
+	// A live pass with the installed engine, when asked: JG_TEST_STT_HOME is a home where `bin/jg-chat-transcribe.sh
+	// setup` ran and JG_TEST_STT_WAV is a recording of speech. Only the word count is logged.
+	if h, speech := os.Getenv("JG_TEST_STT_HOME"), os.Getenv("JG_TEST_STT_WAV"); h != "" && speech != "" {
+		raw, err := os.ReadFile(speech)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content["live"] = string(raw)
+		if err := os.Symlink(filepath.Join(h, "state", "captain-chat", "stt"), filepath.Join(state, "captain-chat", "stt")); err != nil {
+			t.Fatal(err)
+		}
+		note := pass("", voice("live"))
+		i := strings.Index(note, "\ntranscript: ")
+		if i < 0 || strings.Contains(note, "unavailable") {
+			t.Fatalf("the installed engine did not transcribe the recording")
+		}
+		t.Logf("live pass: the installed engine transcribed the recording through the gateway path into the filed note, %d words", len(strings.Fields(note[i+len("\ntranscript: "):])))
+	}
 	filepath.Walk(state, func(p string, i os.FileInfo, _ error) error {
 		if b, _ := os.ReadFile(p); strings.Contains(string(b), "SECRETWORDS") || strings.Contains(string(b), tok) ||
 			(p == a.log && strings.Contains(string(b), "Hello")) {
