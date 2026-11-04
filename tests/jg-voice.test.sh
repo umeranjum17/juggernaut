@@ -40,6 +40,18 @@ case $out in *"https://github.com/example/repo/pull/602 key=worktree."*) ;; *) f
 case $out in *"local copy is clean after cleanup"*"instructions is filed"*) ;; *) fail "second message not rewritten: $out" ;; esac
 pass "URLs, key=value tokens and code spans are never rewritten"
 
+# The two messages from the captain's screenshot (Telegram 82 and 96) passed `check` unchanged on c-11.
+# The screenshot text is elided in the brief, so each message wraps the quoted wording in plain sentences.
+SHOT_ARMED='The merge check is armed. The release goes through the normal gate.'
+SHOT_MERGEABILITY='GitHub is still computing its mergeability for the fix. The merge commit lands on release/c-10 when the pending checks pass.'
+for msg in "$SHOT_ARMED" "$SHOT_MERGEABILITY"; do
+  printf '%s' "$msg" | python3 "$VOICE" check --channel telegram 2>/dev/null && fail "check passed a screenshot message: $msg"
+done
+out=$(printf '%s' "$SHOT_MERGEABILITY" | python3 "$VOICE" apply --channel telegram 2>/dev/null)
+case $out in *"mergeability"* | *"pending checks"*) fail "plain-replaceable screenshot terms were left: $out" ;; esac
+case $out in *"whether it can merge"*"checks still running"*) ;; *) fail "screenshot message not given plain words: $out" ;; esac
+pass "the internal words from the captain's screenshot (gate, armed, mergeability, merge commit, release branch, pending checks) are flagged"
+
 # --- an edit changes behaviour with no code change ----------------------------
 # shellcheck disable=SC2016  # the backticks are literal table text
 sed 's/^| `\\bteardown\\b` | cleanup |$/| `\\bcleanup\\b` | tidy-up |/' "$ROOT/defaults/captain-voice.md" > "$TMP_ROOT/edited.md"

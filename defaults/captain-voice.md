@@ -80,3 +80,9 @@ Delete a row to allow a term. Add a row to ban one.
 | `\byolo\b\|\bdelivery mode\b\|\bdirect-PR\b\|\blocal-only\b` | ? say who approves the merge |
 | `\bcontext budget\b\|\bpipeline step\b` | ? say the concrete result |
 | `\bPR\s*#?\d+\b\|\bpull request #?\d+\b` | ? write the full https:// URL and what the PR does for the user |
+| `\bgates?\b` | ? say "check", or name what must pass |
+| `\barmed\b` | ? say "switched on" or "ready" |
+| `\bmergeability\b` | whether it can merge |
+| `\bmerge commits?\b` | ? say "the merged change" |
+| `\brelease/c-\d+\b` | ? say "the release", and name its number only if the captain needs it |
+| `\bpending checks?\b` | checks still running |
