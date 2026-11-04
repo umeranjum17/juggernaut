@@ -11,6 +11,8 @@
 #     from that branch into main exists, so the PR can never land where it points).
 # The alert is remembered per PR and reason in <home>/data/jg-merge-on-green/stale-pr-alarm/, so the
 # next poll stays silent; a PR that is closed, healthy or changes reason forgets or re-raises it.
+# Only PRs we own are watched: the author is the home's gh login, or the PR URL is recorded as pr= in a
+# task meta (<home>/state/*.meta). An outside author's PR on an upstream repo we only contribute to is ignored.
 # A forge failure is silent and retried next sweep. Closing or rebasing the PR is out of scope, and so
 # is the open-PR cap, which merge-on-green.sh owns. Nothing is printed when nothing happened.
 # merge-on-green.sh runs this after its own work and hands over its remaining time in JG_STALE_PR_LIMIT.
@@ -26,6 +28,9 @@ START=$(date +%s)
 LIMIT=${JG_STALE_PR_LIMIT:-$(( START + ${JG_CHECK_TIMEOUT:-30} * 4 / 5 ))}
 api() { timeout "$BUDGET" "$GH" api "$1" --jq "$2" 2>/dev/null; } # <path> <jq> -> jq text, nonzero on failure
 
+me=$(api user .login) && [ -n "$me" ] || exit 0 # no login, no ownership test: retry next sweep
+owned=$(cat "$FMH"/state/*.meta 2>/dev/null | sed -n 's/^pr=//p')
+
 repos=$(sed -n 's/^- \(.*\)$/\1/p' "$FMH/data/projects.md" 2>/dev/null | while IFS= read -r line; do
   name=${line%% \[*}; name=${name%% - *}
   url=$(git -C "$FMH/projects/$name" remote get-url origin 2>/dev/null) || continue
@@ -34,10 +39,11 @@ done | sort -u)
 
 for repo in $repos; do
   [ "$(date +%s)" -lt "$LIMIT" ] || break
-  prs=$(api "repos/$repo/pulls?state=open&per_page=100" '.[]|[.number,.html_url,.base.ref,.updated_at,.head.sha]|@tsv') || continue
+  prs=$(api "repos/$repo/pulls?state=open&per_page=100" '.[]|[.number,.html_url,.base.ref,.updated_at,.head.sha,.user.login]|@tsv') || continue
   key=${repo//\//__}; flagged=' '; cut=0
-  while IFS=$'\t' read -r num url base updated sha; do
+  while IFS=$'\t' read -r num url base updated sha author; do
     [ -n "$num" ] || continue
+    [ "$author" = "$me" ] || printf '%s\n' "$owned" | grep -qxF -- "$url" || continue
     [ "$(date +%s)" -lt "$LIMIT" ] || { cut=1; break; }
     reasons=''
     ts=$(date -u -d "$updated" +%s 2>/dev/null) || ts=

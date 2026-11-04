@@ -6,7 +6,7 @@
 # home that still runs the add-on's copy at ${XDG_DATA_HOME:-~/.local/share}/fm-merge-on-green keeps
 # that directory's fm-checks-lint.sh, whose size rule refused any pull request over 1,000 added lines;
 # this feature's copy installs beside it as jg-merge-on-green/jg-checks-lint.sh, where the size is
-# advice unless the home writes `refuse` in config/checks-size. The retired directory is left holding
+# advice only. The retired directory is left holding
 # one redirect line, never the old rule, so a machine whose other homes were not migrated in this run
 # keeps running the same gate instead of breaking.
 #
@@ -35,7 +35,7 @@ SHARE=${XDG_DATA_HOME:-$HOME/.local/share}
 ID=merge-on-green
 STATE=$FMH/state
 SHIM=$STATE/$ID.check.sh
-FILES=(merge-on-green.sh checks-lint.sh jg-checks-lint.sh stale-pr-alarm.sh .done-done.yaml)
+FILES=(merge-on-green.sh checks-lint.sh jg-checks-lint.sh stale-pr-alarm.sh red-ci-ticket.sh .done-done.yaml)
 STUB_MARK='# Retired add-on path: this one line runs the juggernaut merge gate at'
 
 refuse() { printf 'merge-on-green: refused: %s\n' "$*" >&2; exit 1; }
@@ -109,6 +109,7 @@ install -m 755 "$SRC/merge-on-green.sh" "$DEST/merge-on-green.sh"
 install -m 755 "$SRC/checks-lint.sh" "$DEST/checks-lint.sh"
 install -m 755 "$SRC/jg-checks-lint.sh" "$DEST/jg-checks-lint.sh"
 install -m 755 "$SRC/stale-pr-alarm.sh" "$DEST/stale-pr-alarm.sh"
+install -m 755 "$SRC/red-ci-ticket.sh" "$DEST/red-ci-ticket.sh"
 install -m 644 "$SRC/.done-done.yaml" "$DEST/.done-done.yaml"
 # The retired path before the shim: a home still pointing at it runs the new gate the moment the
 # redirect lands, never a script this run has not installed yet.
@@ -129,7 +130,7 @@ fi
 if [ "$wired" -eq 1 ] && [ "$retired" != old ]; then
   echo "merge-on-green: already wired $FMH (nothing changed)"
 else
-  echo "merge-on-green: wired $FMH (gate $DEST, size rule advisory unless config/checks-size says refuse)"
+  echo "merge-on-green: wired $FMH (gate $DEST, size rule advisory only)"
 fi
 if [ "$retired" = old ]; then
   echo "merge-on-green: migrated the retired add-on copy at $RETIRED: it redirects to $DEST and its 1,000-line rule is gone"

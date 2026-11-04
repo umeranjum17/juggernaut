@@ -704,12 +704,14 @@ tests/jg-claude-stop-autoarm-live-e2e.test.sh 138
 tests/jg-clause.test.sh 3826
 tests/jg-codex-continuity-live-e2e.test.sh 80
 tests/jg-codex-hook-layer-live-e2e.test.sh 87
+tests/core-suites-report-all.test.sh 158
 tests/jg-comms-feed.test.sh 1014
 tests/jg-compat-old-records.test.sh 1001
 tests/jg-composer-matrix-live-e2e.test.sh 175
 tests/jg-control.test.sh 94076
 tests/jg-cursor-primary-live-e2e.test.sh 138
 tests/jg-dapr-workflow.test.sh 139
+tests/jg-deprecated-paths-check.test.sh 3000
 tests/jg-decisions-reconcile.test.sh 5757
 tests/jg-design-gate-first-draft.test.sh 882
 tests/jg-design-gate.test.sh 812
@@ -787,6 +789,7 @@ tests/jg-ship-local.test.sh 669
 tests/jg-spawn-core.test.sh 1238
 tests/jg-spawn-dispatch-profile.test.sh 938199
 tests/jg-squad-lead-dormant.test.sh 2392
+tests/jg-squad-lead-restart-idle.test.sh 9981
 tests/jg-state-bus-parity.test.sh 164
 tests/jg-lease-live.test.sh 92
 tests/jg-bus-service.test.sh 616

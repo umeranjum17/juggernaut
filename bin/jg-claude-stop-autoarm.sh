@@ -534,6 +534,17 @@ if ! need_supervision; then
   exit 0
 fi
 
+# A close whose wake was already acknowledged, with nothing new queued, needs no handling turn
+# (docs/turnend-guard.md "Settled wake"). The next cycle still arms; a successor that does not
+# confirm leaves the rewake to fire. The host owns its own hand-back.
+if [ "$ACTIONABLE" -eq 1 ] && [ "$HOST_MODE" -eq 0 ] && [ ! -e "$FAILURE_ALARM" ] \
+  && jg_autoarm_still_owner "$STATE" "$MY_GEN" \
+  && "$SCRIPT_DIR/jg-wake-settled.sh" check >/dev/null 2>&1 \
+  && start_handling_successor "$CLOSED_ARM_PID"; then
+  ACTIONABLE=0
+  HEALTHY=1
+fi
+
 if [ "$HEALTHY" -eq 1 ]; then
   jg_autoarm_reset_owned "$STATE" "$MY_GEN"
   RESET_RC=$?

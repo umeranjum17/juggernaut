@@ -227,6 +227,12 @@ case "${1:-} ${2:-}" in
         ;;
     esac
     ;;
+  "pr list")
+    # The shipped-release read (jg_release_shipped): no merged release pull
+    # request, so a release branch is not shipped and still takes work.
+    case " $* " in *" --state merged "*) printf '0\n' ;; esac
+    exit 0
+    ;;
   "pr merge")
     if [ -n "${JG_TEST_META_AT_MERGE:-}" ] && [ -f "${JG_STATE_OVERRIDE:-}/task-x1.meta" ]; then
       cat "$JG_STATE_OVERRIDE/task-x1.meta" > "$JG_TEST_META_AT_MERGE"
@@ -2175,6 +2181,46 @@ test_explicit_merge_method_not_overridden() {
   pass "jg-pr-merge does not add default --squash when the caller passes an explicit merge method"
 }
 
+# A release pull request (base the default branch, head the version branch) must
+# merge with a merge commit, so the default branch becomes an ancestor of the
+# next release branch; a feature pull request into the release branch, and a
+# caller's explicit method, keep their method.
+test_release_pull_request_defaults_to_a_merge_commit() {
+  local case_dir head
+  head=1212121212121212121212121212121212121212
+
+  case_dir=$(make_case release-merge-commit)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-1 "$(git -C "$case_dir/project" rev-parse HEAD)"
+  sed -i 's/"baseRefName":"main"/"baseRefName":"main","headRefName":"release\/c-1"/' "$case_dir/github-view.json"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "release-merge-commit: jg-pr-merge failed"
+  assert_logged_gh_merge "$case_dir" 31 example/repo --merge
+
+  case_dir=$(make_case release-explicit-squash)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-1 "$(git -C "$case_dir/project" rev-parse HEAD)"
+  sed -i 's/"baseRefName":"main"/"baseRefName":"main","headRefName":"release\/c-1"/' "$case_dir/github-view.json"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/32 -- --squash \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "release-explicit-squash: jg-pr-merge failed"
+  assert_logged_gh_merge "$case_dir" 32 example/repo --squash
+
+  case_dir=$(make_case feature-into-release-squash)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-1 "$(git -C "$case_dir/project" rev-parse HEAD)"
+  sed -i 's/"baseRefName":"main"/"baseRefName":"release\/c-1","headRefName":"fm\/task-x1"/' "$case_dir/github-view.json"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/33 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "feature-into-release-squash: jg-pr-merge failed"
+  assert_logged_gh_merge "$case_dir" 33 example/repo --squash
+  pass "jg-pr-merge merges a release pull request with a merge commit and a feature pull request with a squash"
+}
+
 test_method_equals_merge_method_not_overridden() {
   local case_dir
   case_dir=$(make_case method-equals-merge-method)
@@ -3337,6 +3383,7 @@ test_rejects_unsafe_url_segments_before_recording
 test_repo_override_args_refuse_before_recording
 test_bundled_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
+test_release_pull_request_defaults_to_a_merge_commit
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
 test_github_still_forwards_sha_arg

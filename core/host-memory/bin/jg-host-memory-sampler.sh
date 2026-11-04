@@ -2,7 +2,8 @@
 # One memory sampler per home, started/restarted/stopped by jg-watch.sh.
 # The home-scoped .host-memory-sampler.pid stores PID and process identity.
 # Samples every JG_HOST_MEMORY_SECS (default 10) independently of supervision;
-# each ALERT episode attempts one owned-task interrupt and queues a durable wake.
+# each ALERT episode attempts one owned-task interrupt and queues a durable wake,
+# except in a Squad Lead home under a local root, which records the alert without a wake.
 # Sourced by the watcher for lifecycle functions; executable as run HOME STATE CONFIG.
 
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
@@ -64,11 +65,12 @@ jg_memory_sampler_interrupt() {
 }
 
 jg_memory_sampler_tick() {
-  local out d meta home root child_state task reason action epoch stop=0 latch="$STATE/.host-memory-alerted"
+  local out d meta home root child_state task reason action epoch stop=0 latch="$STATE/.host-memory-alerted" lead=0
   local -a dirs=(--state-dir "$JG_HOME" "$STATE")
   jg_local_juggernaut_state_dirs "$STATE" 2>/dev/null || JG_LOCAL_JUGGERNAUT_STATES=("$STATE")
   if root=$(jg_juggernaut_root_home "$JG_HOME") && [ ! "$root" -ef "$JG_HOME" ]; then
     dirs+=(--state-dir "$root" "$root/state")
+    lead=1
   fi
   for d in "${JG_LOCAL_JUGGERNAUT_STATES[@]}"; do
     for meta in "$d"/*.meta; do
@@ -102,7 +104,10 @@ jg_memory_sampler_tick() {
   epoch=$(date +%s)
   jg_lock_acquire_wait "$JG_WAKE_QUEUE_LOCK" || return 0
   trap 'stop=1' HUP INT TERM
-  if jg_wake_append_locked check host-memory "$reason; $action" \
+  # The alert is one machine-wide event. A Squad Lead home under a local root settles it into the
+  # wake tally and its own interrupt log with no wake; the root's sampler wakes Main alone. A home with
+  # no readable local parent record (Main, a remote-routed lead, a damaged record) wakes as before.
+  if { if [ "$lead" -eq 1 ]; then jg_wake_settle check host-memory "$reason; $action"; else jg_wake_append_locked check host-memory "$reason; $action"; fi; } \
     && printf '%s\t%s\t%s\n' "$epoch" "$task" "$reason; $action" >> "$STATE/host-memory-interrupts.tsv" \
     && printf '%s\n' "$reason; $action" > "$latch.$$" \
     && mv "$latch.$$" "$latch"; then

@@ -160,6 +160,18 @@ test_unchanged_fleet_no_heartbeat() {
   grep -q 'heartbeat' "$dir/events" || fail "a changed fleet raised no heartbeat: $(cat "$dir/events")"
   [ "$(route "$dir" heartbeat heartbeat heartbeat)" = silent ] \
     || fail "the heartbeat that woke did not record the fleet it saw"
+
+  # The settled-wake check keeps its own baseline: no baseline reads as changed, a recorded one reads
+  # as unchanged until a line is appended, and recording it never moves the heartbeat's.
+  rm -f "$dir/state/.wake-ack-fleet-fp"
+  core "$dir" fleet-unchanged "$dir/state/.wake-ack-fleet-fp" && fail "a missing baseline read as an unchanged fleet"
+  cp "$dir/state/.heartbeat-fleet-fp" "$dir/heartbeat-fp.before"
+  printf 'working [at=%s]: wrote the tests\n' "$(date +%s)" >> "$dir/state/lane.status"
+  core "$dir" fleet-fp-record "$dir/state/.wake-ack-fleet-fp"
+  core "$dir" fleet-unchanged "$dir/state/.wake-ack-fleet-fp" || fail "a just-recorded baseline read as a changed fleet"
+  cmp -s "$dir/heartbeat-fp.before" "$dir/state/.heartbeat-fleet-fp" || fail "recording the settled-wake baseline moved the heartbeat's"
+  printf 'working [at=%s]: wrote the docs\n' "$(date +%s)" >> "$dir/state/lane.status"
+  core "$dir" fleet-unchanged "$dir/state/.wake-ack-fleet-fp" && fail "a fleet with a new status line read as unchanged"
   pass "an unchanged fleet raises no heartbeat and a changed one does"
 }
 

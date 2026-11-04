@@ -266,8 +266,7 @@ jg_pr_check_version_branch_base() {  # <meta> <url>
   [ "$base" = "$default" ] || return 0
   # The release in flight (config/frozen-release) is also a release head, even
   # when a newer release branch exists.
-  if [ "$head_ref" = "$version" ] \
-    || [ "$head_ref" = "$(jg_release_in_flight_branch "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" 2>/dev/null)" ]; then
+  if jg_is_release_head "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$project" "$head_ref"; then
     jg_pr_check_release_orphans "$url" "$head_ref" "$default"
     return
   fi

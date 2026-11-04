@@ -55,6 +55,9 @@ For every task with a recorded `pr=` and `pr_head=`, it reads the task's resolve
 
 - a draft, conflicts, a red required check, or a required check that has not
   reported is an ordinary wait: nothing runs and nothing is raised;
+- a red run is never answered by a re-run: the same sweep files one root-cause ticket per
+  red run id (`[blocker] CI red: <workflow> <job>: find the root cause`, keyed `ci-red-run-<run id>`)
+  for the owning lead, and `core/merge-on-green/README.md` "Red-CI ticket" owns the rule;
 - each pull request is judged on its own checks alone, so a green pull request into
   a release branch merges even while another pull request into the same branch is
   red, and the release runs its checks on whatever head is current;
@@ -70,6 +73,12 @@ The alert repeats only when the count changes, and a repository back under the c
 
 A pull request still in flight carries one `juggernaut/waiting-for: <what>` line
 in the captain-facing report, taken from `bin/jg-pr-state.sh --waiting-for`.
+
+A red CI run is re-run only through `bin/jg-ci-rerun.sh <run id> [--repo <owner/repo>]`.
+For a run that ended failure, timed_out or startup_failure it refuses, with a non-zero exit, until the run's
+ticket `ci-red-run-<run id>` (filed by the watcher, `core/merge-on-green/README.md` "Red-CI ticket") holds a
+body line that starts `root-cause:` and names the cause.
+A green, cancelled or running run is re-run as `gh run rerun` would.
 
 ## 4. Post-merge failures are fixed forward
 

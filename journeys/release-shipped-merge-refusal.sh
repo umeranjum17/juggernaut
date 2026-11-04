@@ -18,7 +18,8 @@
 #   3. a pull request on release/c-6, the open release branch, merges normally;
 #   4. a branch shipped by a merged pull request into the default branch, with no
 #      newer branch yet, is refused and says no release branch is open;
-#   5. the release pull request into the default branch is not touched by the guard.
+#   5. the release pull request into the default branch is not touched by the guard,
+#      and merges with a merge commit while the feature pull request in 3 squashes.
 # The forge is a recording `gh` driven by files, so the proof needs no network.
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -65,7 +66,7 @@ case "$1 $2" in
   "pr view")
     case "$*" in
       *statusCheckRollup*)
-        printf '{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"%s","baseRefName":"%s","statusCheckRollup":[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]}\n' "$GH_HEAD" "$GH_BASE" ;;
+        printf '{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"%s","baseRefName":"%s","headRefName":"%s","statusCheckRollup":[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]}\n' "$GH_HEAD" "$GH_BASE" "${GH_HEAD_REF:-fm/feature}" ;;
       *headRefOid*) printf '%s\n' "$GH_HEAD" ;;
       *isDraft*) printf '{"isDraft":false}\n' ;;
       *baseRefName*) printf '%s\t%s\n' "$GH_BASE" "${GH_HEAD_REF:-fm/feature}" ;;
@@ -137,6 +138,8 @@ log "merge into release/c-6, the open branch (rc=$rc): $(printf '%s' "$out" | gr
 [ "$rc" -eq 0 ] || fail "a merge into the open release branch was refused: $out"
 merged_called || fail "gh pr merge never ran for the open release branch"
 case "$out" in *"already shipped"*) fail "the open release branch was called shipped: $out" ;; esac
+grep -q '^pr merge .* --squash' "$GH_LOG" || fail "a feature pull request into the release branch was not squashed: $(grep '^pr merge ' "$GH_LOG")"
+log "the feature pull request into the open release branch was squashed"
 
 # 4. Shipped by a merged release pull request, no newer branch yet.
 printf 'release/c-5\n' > "$GH_MERGED_HEADS"
@@ -153,6 +156,9 @@ out=$(GH_HEAD_REF=release/c-5 merge_case main-d 603 main "$T/p3"); rc=$?
 log "merge of the release pull request into the default branch (rc=$rc): $(printf '%s' "$out" | grep -m1 '^verified: .* is merged')"
 [ "$rc" -eq 0 ] || fail "the release pull request into the default branch was refused: $out"
 merged_called || fail "gh pr merge never ran for the default branch"
+grep -q '^pr merge .* --merge' "$GH_LOG" || fail "the release pull request was not merged with a merge commit: $(grep '^pr merge ' "$GH_LOG")"
+grep -q -- '--squash' "$GH_LOG" && fail "the release pull request was squashed: $(grep '^pr merge ' "$GH_LOG")"
+log "the release pull request was merged with a merge commit"
 
 cat > "$OUT/steps.json" <<'JSON'
 {"target":{"version":"jg-pr-merge.sh"},"start":"a fixture project with release/c-5 and release/c-6","steps":["merge a pull request into release/c-5 after its release pull request merged, while release/c-6 is open: refused before the merge runs, naming release/c-6 and the exact gh pr edit command","merge a pull request into release/c-5 while its release pull request has not merged: allowed, because c-5 has not shipped","merge a pull request into release/c-6: merges as before","merge into release/c-5 after its release pull request merged with no newer branch: refused, saying no release branch is open","merge of the release pull request into the default branch: unchanged"],"result":"a merge is refused only into a release branch whose release pull request merged"}
