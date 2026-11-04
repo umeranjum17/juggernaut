@@ -14,8 +14,9 @@
 # previous cycle's branch stays behind on origin, and a default that picked an
 # older one would send new work to the branch a release already came from.
 #
-# Sourced by bin/jg-brief.sh, bin/jg-spawn.sh, bin/jg-pr-check.sh, and
-# bin/jg-version-branch-sync.sh. No side effects on source.
+# Sourced by bin/jg-brief.sh, bin/jg-spawn.sh, bin/jg-pr-check.sh,
+# bin/jg-pr-merge.sh, bin/jg-release-readiness.sh and bin/jg-version-branch-sync.sh.
+# No side effects on source.
 
 # Print the project's current version branch, and exit 1 when it carries none.
 # <repo-dir> is a checkout of the project; its remote-tracking and local refs are
@@ -95,21 +96,72 @@ jg_frozen_base_refusal() {  # <config-dir> <project-dir> <base> <red-fix-of> <ca
   return 1
 }
 
-# An orphan is an open pull request whose base is a release/c-<M> older than the
-# release <version> (release/c-<N>, M < N): its release already shipped, so
-# whatever it merges into goes nowhere. Filter stdin lines of
-# `<number><TAB><url><TAB><base>` and print those that are orphans of <version>;
-# a line that is not that shape, or a base that is not release/c-<digits>, is
-# dropped. bin/jg-version-branch-sync.sh retargets them,
-# bin/jg-pr-check.sh refuses the release pull request while any remain, and
-# bin/jg-release-readiness.sh reports them, so the three agree on what one is.
-jg_release_orphans_of() {  # <version-branch>
-  local n=${1#release/c-}
-  case "$n" in ''|*[!0-9]*) return 0 ;; esac
-  awk -F '\t' -v n="$n" '
-    NF == 3 && $3 ~ /^release\/c-[0-9]+$/ {
-      m = $3
-      sub(/^release\/c-/, "", m)
-      if (m + 0 < n + 0) print
-    }'
+# A release branch is SHIPPED when its release pull request into the default
+# branch merged, and not before. A newer release/c-<N> existing says only that
+# the next cycle was cut; the older branch still takes work (a red-fix, a late
+# feature) until its own release lands, because a merge into it reaches the
+# default branch with that release. This is the one definition: the merge guard
+# (bin/jg-pr-merge.sh), the release pull request check (bin/jg-pr-check.sh), the
+# sync pass (bin/jg-version-branch-sync.sh) and the readiness pass
+# (bin/jg-release-readiness.sh) all ask it, directly or through
+# jg_release_orphans_of below.
+#
+# <repo> is whatever `gh --repo` takes. Return 0 when <branch> names
+# release/c-<digits> and `gh` lists a merged pull request whose head is <branch>
+# and whose base is <default>; 1 when it does not (also for any name that is not
+# a release/c-<digits> branch); 2 when it cannot be read (no repo or default, no
+# gh, or the forge failed), so every caller picks its own safe answer for an
+# unreadable read. The read is bounded where the host has `timeout`.
+jg_release_shipped() {  # <repo> <branch> <default>
+  local repo=${1:-} branch=${2:-} default=${3:-} n
+  case "$branch" in release/c-[0-9]*) ;; *) return 1 ;; esac
+  case "${branch#release/c-}" in *[!0-9]*) return 1 ;; esac
+  [ -n "$repo" ] && [ -n "$default" ] && command -v gh >/dev/null 2>&1 || return 2
+  if command -v timeout >/dev/null 2>&1; then
+    n=$(timeout 25 gh pr list --repo "$repo" --state merged --head "$branch" \
+      --base "$default" --limit 1 --json number --jq 'length' 2>/dev/null) || return 2
+  else
+    n=$(gh pr list --repo "$repo" --state merged --head "$branch" \
+      --base "$default" --limit 1 --json number --jq 'length' 2>/dev/null) || return 2
+  fi
+  case "$n" in ''|*[!0-9]*) return 2 ;; esac
+  [ "$n" -gt 0 ]
+}
+
+# Return 0 when <old> and <version> are both release/c-<digits> and <old> is
+# numbered below <version>, compared as numbers.
+jg_release_older_than() {  # <old> <version>
+  local o=${1#release/c-} n=${2#release/c-}
+  case "$1" in release/c-*) ;; *) return 1 ;; esac
+  case "$2" in release/c-*) ;; *) return 1 ;; esac
+  case "$o" in ''|*[!0-9]*) return 1 ;; esac
+  case "$n" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$((10#$o))" -lt "$((10#$n))" ]
+}
+
+# An orphan is an open pull request whose base is a SHIPPED release/c-<M> older
+# than the release <version> (release/c-<N>, M < N): that release already
+# reached the default branch, so whatever the pull request merges into goes
+# nowhere. An older base whose release pull request has not merged
+# (jg_release_shipped) is not an orphan, because it still takes work.
+# Filter stdin lines of `<number><TAB><url><TAB><base>` and print those that are
+# orphans of <version>; a line that is not that shape, or a base that is not
+# release/c-<digits>, is dropped. Returns 2 and prints nothing when a shipped
+# read was unreadable, so each caller decides what an unreadable list means.
+jg_release_orphans_of() {  # <version-branch> <repo> <default-branch>
+  local version=${1:-} repo=${2:-} default=${3:-} lines bases base shipped='' rc
+  case "${version#release/c-}" in ''|*[!0-9]*) return 0 ;; esac
+  lines=$(awk -F '\t' 'NF == 3 && $3 ~ /^release\/c-[0-9]+$/')
+  [ -n "$lines" ] || return 0
+  bases=$(printf '%s\n' "$lines" | awk -F '\t' '{ print $3 }' | sort -u)
+  for base in $bases; do
+    jg_release_older_than "$base" "$version" || continue
+    rc=0
+    jg_release_shipped "$repo" "$base" "$default" || rc=$?
+    case "$rc" in 0) shipped="$shipped $base" ;; 1) ;; *) return 2 ;; esac
+  done
+  [ -n "$shipped" ] || return 0
+  printf '%s\n' "$lines" | awk -F '\t' -v s="$shipped" '
+    BEGIN { n = split(s, a, " "); for (i = 1; i <= n; i++) ok[a[i]] = 1 }
+    $3 in ok'
 }

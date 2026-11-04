@@ -4,14 +4,21 @@
 # through the same script).
 #
 # Pull request 598 once merged into release/c-8 after c-8 had reached the default
-# branch, so its commit never shipped. The journey shows that:
-#   1. a pull request on release/c-5, with release/c-6 open, is refused before
-#      any merge command runs; the refusal names release/c-6 and the exact
-#      gh pr edit command, and the task record gets no merge;
-#   2. a pull request on release/c-6, the open release branch, merges normally;
-#   3. a branch shipped by a merged pull request into the default branch, with no
+# branch, so its commit never shipped. A release branch is shipped only when its
+# release pull request into the default branch merged, so a newer release branch
+# existing proves nothing: c-10 took no work for a while after c-11 was cut even
+# though c-10 had never reached the default branch. The journey shows that:
+#   1. a pull request on release/c-5, whose release pull request merged, with
+#      release/c-6 open, is refused before any merge command runs; the refusal
+#      names release/c-6 and the exact gh pr edit command, and the task record
+#      gets no merge;
+#   2. a pull request on release/c-5 with release/c-6 open but NO merged release
+#      pull request for c-5 is not refused: c-5 has not shipped and still takes
+#      work;
+#   3. a pull request on release/c-6, the open release branch, merges normally;
+#   4. a branch shipped by a merged pull request into the default branch, with no
 #      newer branch yet, is refused and says no release branch is open;
-#   4. the release pull request into the default branch is not touched by the guard.
+#   5. the release pull request into the default branch is not touched by the guard.
 # The forge is a recording `gh` driven by files, so the proof needs no network.
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -105,25 +112,33 @@ merge_case() {
 }
 merged_called() { grep -q '^pr merge ' "$GH_LOG"; }
 
-: > "$GH_MERGED_HEADS"
-
-# 1. release/c-5 has a newer release/c-6: the merge is refused before it runs.
+# 1. release/c-5 shipped (its release pull request merged) and release/c-6 is the
+# open branch: the merge is refused before it runs.
+printf 'release/c-5\n' > "$GH_MERGED_HEADS"
 mkproject "$T/p1" release/c-5 release/c-6
 out=$(merge_case shipped-a 598 release/c-5 "$T/p1"); rc=$?
-log "merge into release/c-5 with release/c-6 open (rc=$rc): $(printf '%s' "$out" | grep -m1 'already shipped')"
+log "merge into shipped release/c-5 with release/c-6 open (rc=$rc): $(printf '%s' "$out" | grep -m1 'already shipped')"
 [ "$rc" -ne 0 ] || fail "a merge into a shipped release branch was allowed"
 merged_called && fail "gh pr merge ran for a shipped release branch"
 case "$out" in *"release/c-5 already shipped"*"the open release branch is release/c-6"*) ;; *) fail "the refusal does not name the shipped and open branches: $out" ;; esac
 case "$out" in *"gh pr edit 598 --base release/c-6"*) ;; *) fail "the refusal does not print the exact retarget command: $out" ;; esac
 
-# 2. The open release branch merges as before.
+# 2. release/c-5 is older than release/c-6 but never shipped: it still takes work.
+: > "$GH_MERGED_HEADS"
+out=$(merge_case unshipped-e 604 release/c-5 "$T/p1"); rc=$?
+log "merge into unshipped release/c-5 with release/c-6 open (rc=$rc): $(printf '%s' "$out" | grep -m1 '^verified: .* is merged')"
+[ "$rc" -eq 0 ] || fail "a merge into a release branch that never shipped was refused: $out"
+merged_called || fail "gh pr merge never ran for the unshipped release branch"
+case "$out" in *"already shipped"*) fail "an unshipped release branch was called shipped: $out" ;; esac
+
+# 3. The open release branch merges as before.
 out=$(merge_case open-b 601 release/c-6 "$T/p1"); rc=$?
 log "merge into release/c-6, the open branch (rc=$rc): $(printf '%s' "$out" | grep -m1 '^verified: .* is merged')"
 [ "$rc" -eq 0 ] || fail "a merge into the open release branch was refused: $out"
 merged_called || fail "gh pr merge never ran for the open release branch"
 case "$out" in *"already shipped"*) fail "the open release branch was called shipped: $out" ;; esac
 
-# 3. Shipped by a merged release pull request, no newer branch yet.
+# 4. Shipped by a merged release pull request, no newer branch yet.
 printf 'release/c-5\n' > "$GH_MERGED_HEADS"
 mkproject "$T/p3" release/c-5
 out=$(merge_case shipped-c 602 release/c-5 "$T/p3"); rc=$?
@@ -133,13 +148,13 @@ merged_called && fail "gh pr merge ran for a branch shipped by a merged release 
 case "$out" in *"no newer release branch is open"*) ;; *) fail "the refusal does not say no release branch is open: $out" ;; esac
 case "$out" in *"gh pr edit 602 --base"*) fail "the refusal printed a retarget command with no branch to retarget to: $out" ;; esac
 
-# 4. The release pull request into the default branch is not touched by the guard.
+# 5. The release pull request into the default branch is not touched by the guard.
 out=$(GH_HEAD_REF=release/c-5 merge_case main-d 603 main "$T/p3"); rc=$?
 log "merge of the release pull request into the default branch (rc=$rc): $(printf '%s' "$out" | grep -m1 '^verified: .* is merged')"
 [ "$rc" -eq 0 ] || fail "the release pull request into the default branch was refused: $out"
 merged_called || fail "gh pr merge never ran for the default branch"
 
 cat > "$OUT/steps.json" <<'JSON'
-{"target":{"version":"jg-pr-merge.sh"},"start":"a fixture project with release/c-5 shipped and release/c-6 open","steps":["merge a pull request into release/c-5 while release/c-6 is open: refused before the merge runs, naming release/c-6 and the exact gh pr edit command","merge a pull request into release/c-6: merges as before","merge into release/c-5 after its release pull request merged with no newer branch: refused, saying no release branch is open","merge of the release pull request into the default branch: unchanged"],"result":"a merge into a shipped release branch is refused and points at the open one"}
+{"target":{"version":"jg-pr-merge.sh"},"start":"a fixture project with release/c-5 and release/c-6","steps":["merge a pull request into release/c-5 after its release pull request merged, while release/c-6 is open: refused before the merge runs, naming release/c-6 and the exact gh pr edit command","merge a pull request into release/c-5 while its release pull request has not merged: allowed, because c-5 has not shipped","merge a pull request into release/c-6: merges as before","merge into release/c-5 after its release pull request merged with no newer branch: refused, saying no release branch is open","merge of the release pull request into the default branch: unchanged"],"result":"a merge is refused only into a release branch whose release pull request merged"}
 JSON
-log "PASS: a merge into a shipped release branch is refused; the open branch and the default branch merge"
+log "PASS: a merge into a shipped release branch is refused, an unshipped older one is not; the open branch and the default branch merge"

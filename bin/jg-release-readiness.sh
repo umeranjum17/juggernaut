@@ -24,9 +24,12 @@
 #           cannot be read leaves the release not ready with the reason named,
 #           so an unreadable check never produces a release card.
 #   orphaned  An open pull request whose base is an older release/c-<M> than the
-#           version branch (bin/jg-version-branch-lib.sh jg_release_orphans_of)
-#           holds the release as `orphaned`, ranked worse than `open`: its release
-#           already shipped, so the work would never reach this one. The line
+#           version branch, and whose release pull request into the default
+#           branch already merged (bin/jg-version-branch-lib.sh
+#           jg_release_orphans_of), holds the release as `orphaned`, ranked worse
+#           than `open`: its release already shipped, so the work would never
+#           reach this one. An older branch that has not shipped still takes work
+#           and is not an orphan. The line
 #           names how many and their URLs. A merged release is still `merged`,
 #           and an unreadable list makes the state `unknown`.
 #   counts  Every line count printed here is `git diff --shortstat <default>
@@ -223,13 +226,14 @@ measure_tree() {  # <dir> <base-ref> <head-ref> <base-label> <head-label>
 
 # The open pull requests on a release branch older than <version>: how many, the
 # URLs, and the branches they sit on. A list the provider cannot give is -1.
-orphans_read() {  # <slug> <version>
-  local raw rows
+orphans_read() {  # <slug> <version> <default>
+  local raw rows rc=0
   ORPHAN_N=0 ORPHAN_LIST='' ORPHAN_BASES=''
   raw=$(gh_call api "repos/$1/pulls?state=open&per_page=100" \
     --jq '.[] | [(.number | tostring), .html_url, .base.ref] | @tsv' 2>/dev/null) \
     || { ORPHAN_N=-1; return 0; }
-  rows=$(printf '%s\n' "$raw" | jg_release_orphans_of "$2")
+  rows=$(printf '%s\n' "$raw" | jg_release_orphans_of "$2" "$1" "$3") || rc=$?
+  [ "$rc" -eq 0 ] || { ORPHAN_N=-1; return 0; }
   [ -n "$rows" ] || return 0
   ORPHAN_N=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
   ORPHAN_LIST=$(printf '%s\n' "$rows" | cut -f2 | paste -sd ' ' -)
@@ -282,7 +286,7 @@ measure() {
   fi
   OPEN=$(gh_call api "repos/$SLUG/pulls?state=open&base=$version&per_page=100" --jq 'length' 2>/dev/null) \
     || OPEN=-1
-  orphans_read "$SLUG" "$version"
+  orphans_read "$SLUG" "$version" "$default"
   pr=$(release_pr "$SLUG" "$default" "$version")
   if [ -n "$pr" ]; then
     IFS=$'\t' read -r _ PR_URL PR_STATE PR_SHA PR_MERGE <<<"$pr"
