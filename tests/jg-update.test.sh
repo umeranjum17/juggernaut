@@ -635,6 +635,7 @@ test_update_runs_host_wiring() {
   local w out log
   w=$(new_world t13)
   log="$w/fake/host-wiring.log"
+  # shellcheck disable=SC2016
   printf '#!/usr/bin/env bash\nprintf "%%s|%%s|%%s\\n" "$(cat "$(dirname "$0")/tool.sh")" "$JG_HOME" "$*" >> "%s"\n[ ! -e "%s.fail" ] || exit 1\n' "$log" "$log" > "$w/seed/bin/jg-host-wiring.sh"
   chmod +x "$w/seed/bin/jg-host-wiring.sh"
   bump_origin "$w" bin

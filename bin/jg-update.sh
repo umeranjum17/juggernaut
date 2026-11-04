@@ -169,7 +169,7 @@ fi
 # core it was copied from. Each fragment is idempotent; a step that fails is named by the wiring itself
 # and is reported here, never fatal to the update. JG_HOST_WIRING_SKIP=1 turns it off for a fixture.
 if [ "${JG_HOST_WIRING_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-host-wiring.sh" ]; then
-  JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$JG_ROOT/bin/jg-host-wiring.sh" "$JG_HOME" >&2 \
+  env JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$JG_ROOT/bin/jg-host-wiring.sh" "$JG_HOME" >&2 \
     || echo "host wiring: not whole after the update (see the jg-host-wiring lines above)" >&2
 fi
 
