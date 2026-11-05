@@ -82,7 +82,7 @@ func (a *app) sendEvent(ad Adapter, owner string, ev event) error {
 		if err != nil {
 			return err
 		}
-		line := map[string]string{"key": key, "chat": owner, "message": id}
+		line := map[string]string{"key": key, "chat": owner, "message": id, "text": part}
 		if ev.Kind == "card" {
 			line["card"] = ev.Key
 		}
