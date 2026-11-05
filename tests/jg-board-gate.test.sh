@@ -74,7 +74,7 @@ run() { with_env "$@" 2>&1; }  # <case dir> <command...> -> both streams
 # takes stdout alone and the refusal text keeps the merged form above.
 run_out() { with_env "$@" 2>/dev/null; }  # <case dir> <command...> -> stdout alone
 
-POST=(post --title "Rename the fleet word?" --ask-ref m1 --why "It reads oddly here."
+POST=(post --route main --title "Rename the fleet word?" --ask-ref m1 --why "It reads oddly here."
   --outcome yes="It is renamed." --outcome no="It stays." --recommend yes
   --recommend-reason "It reads better." --default no)
 

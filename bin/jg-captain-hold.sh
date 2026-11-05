@@ -367,6 +367,7 @@ raise_hold_card() {  # <task-id> <task-title> <reason> <done|release> <must>
   # beside that ticket's On hold row (bin/jg-ticket.sh owns the ticket id).
   ticket=$("$SCRIPT_DIR/jg-ticket.sh" id "$id" 2>/dev/null) || ticket=''
   out=$("$SCRIPT_DIR/jg-question-card.sh" post \
+    --route main \
     --ask-ref "$id" --key "$key" --title "$title" --about "$reason" --why "$(card_why "$reason")" \
     ${must:+--must "$must"} ${ticket:+--ticket "$ticket"} \
     --outcome yes="Answer recorded: yes." \

@@ -143,7 +143,7 @@ events() { cat "$1/home/state/captain-channel.jsonl" 2>/dev/null; }
 
 # --- the tee records and publishes, and the live path is untouched -------------
 d=$(setup tee)
-key=$(run_quiet "$d" "$CARD" post --title "Which key should the muxr use?" --option "Key it" --option "Rename it" --must money --record https://board.example/records/card-1 --ask-ref 'card[1]')
+key=$(run_quiet "$d" "$CARD" post --route main --title "Which key should the muxr use?" --option "Key it" --option "Rename it" --must money --record https://board.example/records/card-1 --ask-ref 'card[1]')
 assert_equals "put-the-key-into-muxr" "$key" "post still prints the card key alone"
 assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "the card post is teed once"
 assert_contains "$(events "$d")" '"kind":"card"' "the teed event names the card"
