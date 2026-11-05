@@ -212,6 +212,24 @@ jg_design_done_gate() {  # <state> <id> <meta> <head>
   jg_design_first_draft_ok "$state" "$id" "$meta" "$head"
 }
 
+# jg_ui_card_done_gate is the picture rule at done: a task recorded ui_change=yes
+# (bin/jg-brief.sh --ui-change) reports done only when the board already holds an
+# evidence card with pictures for its PR at this head. The lookup is
+# bin/jg-proof-attach.sh card, the same one attach uses to reuse the merge card; its
+# refusal names the one command that posts the card. ui_change=no, or a record
+# with none (an older task), passes untouched.
+jg_ui_card_done_gate() {  # <id> <meta> <head> <pr-url|->
+  local id=$1 meta=$2 head=$3 pr=${4:--} dir out
+  [ -n "$id" ] && [ -f "$meta" ] || return 0
+  [ "$(jg_dod_meta_value "$meta" ui_change)" = yes ] || return 0
+  dir=${BASH_SOURCE[0]%/*}; [ "$dir" != "${BASH_SOURCE[0]}" ] || dir=.
+  [ -x "$dir/jg-proof-attach.sh" ] || return 0
+  [ -n "$head" ] || { echo "done refused: $id is a UI change and its head commit could not be read, so its picture card cannot be found"; return 1; }
+  out=$(JG_HOME=${JG_HOME:-} "$dir/jg-proof-attach.sh" card "$id" --pr "$pr" --head "$head" 2>&1) && return 0
+  printf '%s\n' "$out"
+  return 1
+}
+
 jg_design_size() {  # <worktree> <base-branch> <head>: prints `design|tweak <ui-lines> <new-ui-files>`
   local wt=$1 base=${2:-main} head=$3 ref mb lines new
   [ -d "$wt" ] && git -C "$wt" cat-file -e "$head^{commit}" 2>/dev/null || return 2
