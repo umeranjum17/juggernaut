@@ -1,33 +1,22 @@
 # Proposal: tool models by tool and job (`config/tool-models.json`)
 
-Status: draft for approval. No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
+Status: draft for approval, revised after the owner's note that a tool gets a key only when its code starts a model. No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
 
 ## Problem
 
-Today one flat list is keyed by internal call sites (`squad-lead`, `voice-rewrite`, `model-pool`). It has hidden fallbacks: env var, then `config/*` file, then entry, then a built-in default; the done-done judge falls through the route chain. A tool such as done-done or no-mistakes cannot say "frontend work uses X, cheap verification uses Y".
+Today one flat list is keyed by internal call sites (`squad-lead`, `voice-rewrite`, `model-pool`). It has hidden fallbacks: env var, then `config/*` file, then entry, then a built-in default; the done-done judge falls through the route chain. Workers cannot name a model per job type ("frontend work uses X, cheap verification uses Y"), and a tool cannot say which of its own jobs uses which model.
 
 ## Shape
 
-Top-level key = a tool. Second level = a job type. Each job = one explicit `{harness, model, effort?}`. Each tool reads exactly its own `<tool>.<job>` entry. Call sites that are not an owner tool live under `internal`. The lead or worker picks the job by complexity; no rule picks it.
+Top-level key = a tool whose code starts a model in this repo (`done-done`, `no-mistakes`, `workers`). Second level = a job type. Each job = one explicit `{harness, model, effort?}`. Each tool reads exactly its own `<tool>.<job>` entry. Call sites that are not an owner tool live under `internal`. The lead or worker picks the job by complexity; no rule picks it.
 
 ```json
 {
-  "first-draft": {
-    "frontend": { "harness": "claude", "model": "sonnet", "effort": "high" },
-    "backend":  { "harness": "claude", "model": "sonnet", "effort": "medium" },
-    "hard":     { "harness": "claude", "model": "opus", "effort": "high" }
-  },
   "done-done": {
-    "judge":              { "harness": "claude", "model": "claude-haiku-5-5" },
-    "cheap-verification": { "harness": "pi", "model": "ollama-cloud/deepseek-v4.1-flash" }
+    "judge": { "harness": "claude", "model": "claude-haiku-5-5" }
   },
   "no-mistakes": {
-    "review":             { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" },
-    "cheap-verification": { "harness": "pi", "model": "ollama-cloud/deepseek-v4.1-flash" }
-  },
-  "sign-off": {
-    "frontend":           { "harness": "claude", "model": "sonnet", "effort": "high" },
-    "cheap-verification": { "harness": "pi", "model": "ollama-cloud/deepseek-v4.1-flash" }
+    "review": { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" }
   },
   "workers": {
     "squad-lead":         { "harness": "claude", "model": "opus", "effort": "max" },
@@ -55,18 +44,25 @@ Top-level key = a tool. Second level = a job type. Each job = one explicit `{har
 }
 ```
 
-Values copy today's built-ins where one exists (squad lead, judge, review, supervision engine, pool, voice rewrite, route chain). The `inbox-*` and `voice-relay` ids, and every `frontend`/`backend`/`hard`/`cheap-verification` row, have no built-in today: they are starting options, unverified, for you to edit.
+Values copy today's built-ins where one exists (squad lead, judge, review, supervision engine, pool, voice rewrite, route chain). The `inbox-*` and `voice-relay` ids and the four non-lead `workers` rows have no built-in today: they are starting options, unverified, for you to edit.
 
-## Job types per tool
+## Keys kept, with the line that starts the model
 
-| Tool | Jobs | Read by |
-|---|---|---|
-| `first-draft` | `frontend`, `backend`, `hard` | first-draft repo (not read here yet) |
-| `done-done` | `judge`, `cheap-verification` | `judge` by `core/merge-card/merge-card`; the other by the done-done repo |
-| `no-mistakes` | `review`, `cheap-verification` | `review` by `core/pipeline-quota-failover/pi-quota-failover`; the other by the no-mistakes repo |
-| `sign-off` | `frontend`, `cheap-verification` | sign-off repo (not read here yet) |
-| `workers` | `squad-lead`, `frontend`, `backend`, `cheap-verification`, `hard` | `squad-lead` by `bin/jg-harness.sh`; the rest are the options a lead picks from when it spawns |
-| `internal` | the seven keys above | the sites in the table below |
+A key exists only when code in this repo starts a model from it. `sign-off` reads no entry: it is a board, and the agent that files a card does the model work. `first-draft` has no key: its model start is in another repo, so add it when that repo's start line is cited. `done-done.cheap-verification` and `no-mistakes.cheap-verification` are dropped: no line here starts them.
+
+| Key | Line that starts the model |
+|---|---|
+| `done-done.judge` | `core/merge-card/merge-card:314` (`done-done check --judge answerer:pi`), `:377` (claude judge) |
+| `no-mistakes.review` | `core/pipeline-quota-failover/pi-quota-failover:375` (`exec "$real_pi"` with the chain model from `:80-95`) |
+| `workers.squad-lead` | `bin/jg-spawn.sh:4856` (`__MODELFLAG__` into the launch); model chosen at `:879` and `:2196` |
+| `workers.frontend`, `.backend`, `.cheap-verification`, `.hard` | the same `bin/jg-spawn.sh:4856` for any worker. Marked: nothing reads these rows until Phase 2; the lead picks one by complexity. Drop them if `config/crew-dispatch.json` stays the only worker choice |
+| `internal.supervision-engine` | `bin/jg-supervision-engine-lib.sh:365` (`--model "$model"`) |
+| `internal.model-pool` | `core/account-pool/bin/jg-model-pool:143,213` name the model; `pi-quota-failover:178` calls it and `:375` starts it |
+| `internal.route-chain` | `core/merge-card/merge-card:278` then `:314`; `core/account-pool/bin/jg-model-pool:314` |
+| `internal.voice-rewrite` | `bin/jg-voice.py:60` (command) and `:257` (`subprocess.run`) |
+| `internal.inbox-stt` | `bin/jg-inbox.sh:1195` (`--model-id "$STT_MODEL"`) |
+| `internal.inbox-ask` | `bin/jg-inbox.sh:1262` (`--model-id "$ASK_MODEL"`) |
+| `internal.voice-relay` | `bin/jg-voice-relay.py:548` (`model_id=self.options.model`) |
 
 ## Read rules (Phase 2)
 
@@ -98,6 +94,6 @@ OpenCode (MIT, `agent.<name>.model` as `provider/model-id`; a subagent with no m
 
 1. **Remove the other sources.** Yes: delete `JG_INBOX_*_MODEL`, `JG_VOICE_MODEL`, `config/inbox-*-model`, `config/voice-model`, the model tokens of `config/squad-lead-harness`, and the built-in model strings in code. The per-lead pin `config/squad_leads/<id>/harness` is a harness pin: recommend keeping it as the one explicit override, logged when used.
 2. **Failover.** Quota failover stays, only through the listed `internal.route-chain`, one log line per step. A judge or review that is dry then moves down that list, not through a hidden one. Say no if you want it to stop instead.
-3. **Rows with no reader here** (`first-draft`, `sign-off`, the non-lead `workers` jobs, the two `cheap-verification` rows): ship now as the options list; those repos adopt later.
+3. **Worker job rows** (`frontend`, `backend`, `cheap-verification`, `hard`) have no reader until Phase 2 and overlap `config/crew-dispatch.json`: keep them as the options list, or drop them and leave worker choice to crew-dispatch.
 4. **#668 and #669** stay open untouched; after you approve, their sites are re-done on this shape, and Overwatch decides whether to close them.
 5. `config/crew-dispatch.json` (per-task profiles) is out of scope and unchanged.
