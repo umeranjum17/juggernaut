@@ -143,7 +143,7 @@ func (a *app) sendCard(ad Adapter, owner string, ev event) error {
 	}
 	// sent.jsonl is how a text reply finds its card.
 	return appendLine(filepath.Join(a.state, "captain-chat", "sent.jsonl"), toJSON(map[string]string{
-		"key": fmt.Sprintf("ev:card:%s:%d#0", ev.Key, ev.At), "chat": owner, "message": id, "card": ev.Key}))
+		"key": fmt.Sprintf("ev:card:%s:%d#0", ev.Key, ev.At), "chat": owner, "message": id, "card": ev.Key, "text": body}))
 }
 
 // closeCard handles a card-close event: the board answered the card (ev.Answer) or withdrew it.
