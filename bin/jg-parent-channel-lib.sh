@@ -154,7 +154,12 @@ jg_parent_channel_clean_note() {  # <text>
 # Append <line> once, using jg-classify-lib.sh's retry contract. Time-insensitive:
 # the caller declaring a new event is the one that stamps it.
 jg_parent_channel_append_once() {  # <path> <line>
-  local path=$1 line=$2
+  local path=$1 line=$2 guard=$_JG_PARENT_CHANNEL_LIB_DIR/jg-path-guard.sh
+  # The captain cannot open a raw file path on his phone: withhold it at write
+  # time, so a worker's evidence path never reaches him and never blocks delivery.
+  if [ -x "$guard" ]; then
+    line=$(printf '%s\n' "$line" | "$guard" --mask) || return 1
+  fi
   if [ -e "$path" ] || [ -L "$path" ]; then
     [ -f "$path" ] && [ ! -L "$path" ] || return 1
   else
