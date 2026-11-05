@@ -44,10 +44,12 @@ func TestGatewayBoardLink(t *testing.T) {
 	if want := "The report is ready: " + board + "?token=" + secret + "#reports/card-1 Please read it."; last() != want {
 		t.Fatal("a bare board link did not get the token")
 	}
+	t.Log("Telegram send: a bare board link went out with the access token added")
 	tokened := "The report is ready: " + board + "?token=" + secret + "#reports/card-1 Please read it."
 	if err := send(tokened); err != nil || last() != tokened {
 		t.Fatalf("a tokened link must go out unchanged (err %v)", err)
 	}
+	t.Log("Telegram send: a link that already had the token went out unchanged")
 
 	// No token to add: the send is refused with a plain reason and nothing goes out.
 	if err := os.WriteFile(urlFile, []byte(board+"\n"), 0o600); err != nil {
@@ -61,4 +63,5 @@ func TestGatewayBoardLink(t *testing.T) {
 	if strings.Contains(err.Error(), secret) || len(l.sends) != before {
 		t.Fatal("a refused message must not leak or send anything")
 	}
+	t.Log("Telegram send: a bare link with no token available was refused and nothing was sent")
 }
