@@ -89,7 +89,7 @@ set telegram-token-file $HOME_DIR/config/tg.token
 set telegram-allow-user 42
 set telegram-api-url http://127.0.0.1:$BOT_PORT
 EOF
-export JG_HOME=$HOME_DIR JG_STATE_OVERRIDE=$HOME_DIR/state JG_BUS_ROOT=$ROOT
+export JG_HOME=$HOME_DIR JG_CAPTAIN_CHANNEL=$HOME_DIR/config/captain-channel JG_STATE_OVERRIDE=$HOME_DIR/state JG_BUS_ROOT=$ROOT
 
 "$JG_BUS_BIN" gateway serve >"$TMP_ROOT/gateway.log" 2>&1 &
 PIDS+=($!)
