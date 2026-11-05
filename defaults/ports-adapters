@@ -1,0 +1,12 @@
+# Outside dependencies that must sit behind one port and one adapter, so each can be ripped out.
+# bin/jg-ports-check.sh reads this file; docs/ports-and-adapters.md owns the rule.
+#
+# One row per dependency, five fields split by " | ":
+#   name | plan terms (ERE) | client regex (ERE, one source line) | port module | adapter file(s)
+# - plan terms: words that show a plan or PR text uses the dependency; such a text must name the port and an adapter.
+# - client regex: a line that imports or runs the dependency's client. Only an adapter file may carry one.
+# - port: the module or contract that says what the repo needs from the dependency.
+# - adapter: comma-separated; a path ending in / covers a directory.
+# Add a dependency here in the same change that first uses it. defaults/ports-adapters-legacy lists the old users.
+pi-engine-kit | pi-coding-agent|pi-tui|@earendil-works/pi-ai|Pi (engine )?kit | (from|import|require\()[[:space:]]*\(?['"]@earendil-works/pi-[a-z-]+['"] | core/ports/pi-engine/PORT.md | core/ports/pi-engine/adapter.ts
+message-bus | NATS|nats-server|JetStream|message bus | nats-io/nats|(from|import|require\()[[:space:]]*\(?['"]nats['"]|(^|[;&|(]|exec|command)[[:space:]]*["]?(nats-server|nats)["]?[[:space:]]+(-|pub|sub|req|stream|server|kv) | core/ports/message-bus/PORT.md | core/bus/cmd/jg-bus/

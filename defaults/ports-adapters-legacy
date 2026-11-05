@@ -1,0 +1,21 @@
+# Files that used an outside dependency's client before the port and adapter rule (docs/ports-and-adapters.md).
+# One row per use: the file, then the dependency name from defaults/ports-adapters.
+# bin/jg-ports-check.sh reads this list at the base ref, so a change cannot add a row for itself.
+# Remove a row when the file moves behind its adapter. Never add one.
+bin/jg-bootstrap.sh message-bus
+core/delete-guard/pi-extension.ts pi-engine-kit
+core/kill-guard/pi-extension.ts pi-engine-kit
+core/pipeline-literal-delete/pi-literal-delete.ts pi-engine-kit
+core/read-guard/pi-extension.ts pi-engine-kit
+journeys/wake-bus-live.sh message-bus
+journeys/wake-cursor-kill.sh message-bus
+.pi/extensions/jg-branch-supervision.ts pi-engine-kit
+.pi/extensions/jg-calm.ts pi-engine-kit
+.pi/extensions/jg-primary-pi-watch.ts pi-engine-kit
+.pi/extensions/jg-primary-turnend-guard.ts pi-engine-kit
+.pi/extensions/lib/jg-calm-assistant-layout.ts pi-engine-kit
+.pi/extensions/lib/jg-calm-operational-user-layout.ts pi-engine-kit
+.pi/extensions/lib/jg-calm-pending-operational-layout.ts pi-engine-kit
+.pi/extensions/lib/jg-calm-visibility.ts pi-engine-kit
+.pi/extensions/lib/jg-calm-working-ship.ts pi-engine-kit
+.pi/extensions/lib/jg-native-contract.ts pi-engine-kit
