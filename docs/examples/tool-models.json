@@ -22,6 +22,17 @@
       "tool": "supervision-engine",
       "when": "Which model the supervision engine uses when its engine has no model of its own.",
       "use": { "harness": "claude", "model": "claude-haiku-5-5" }
+    },
+    {
+      "tool": "voice-rewrite",
+      "when": "Which model rewrites a captain-facing message in plain words.",
+      "use": { "harness": "claude", "model": "claude-haiku-5-5" }
+    },
+    {
+      "tool": "inbox-ask",
+      "when": "Which Bedrock model answers a side question. Add inbox-stt and voice-relay the same way.",
+      "use": { "harness": "pi", "model": "amazon-bedrock/your-model-id" },
+      "why": "These models run on Bedrock, so the harness is pi and the model carries the amazon-bedrock/ prefix."
     }
   ]
 }

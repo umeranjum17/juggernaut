@@ -243,14 +243,23 @@ need_region() {
   [ -n "$REGION" ] || REGION=$(require_setting inbox-region JG_INBOX_REGION "AWS region")
 }
 
+# A model config/tool-models.json names for a tool (bin/jg-tool-models.sh) outranks the one-line config
+# file and yields to the environment variable. These models run on Bedrock, so the entry names harness pi
+# and a model with the provider prefix amazon-bedrock/; no entry keeps the config file.
+tool_model() {  # <tool>
+  JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" "$SELF_DIR/jg-tool-models.sh" model "$1" pi amazon-bedrock/
+}
+
 need_stt_model() {
   need_region
+  [ -n "$STT_MODEL" ] || STT_MODEL=$(tool_model inbox-stt)
   [ -n "$STT_MODEL" ] || STT_MODEL=$(require_setting inbox-stt-model \
     JG_INBOX_STT_MODEL "speech-to-text model")
 }
 
 need_ask_model() {
   need_region
+  [ -n "$ASK_MODEL" ] || ASK_MODEL=$(tool_model inbox-ask)
   [ -n "$ASK_MODEL" ] || ASK_MODEL=$(require_setting inbox-ask-model \
     JG_INBOX_ASK_MODEL "side-question model")
 }
