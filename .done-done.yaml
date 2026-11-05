@@ -90,6 +90,8 @@ journeys:
     command: bash journeys/worker-rules.sh
   tmp-sweep:
     command: bash journeys/tmp-sweep.sh
+  browser-sweep:
+    command: bash journeys/browser-sweep.sh
   wake-routing:
     command: bash journeys/wake-routing.sh
 
