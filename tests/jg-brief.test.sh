@@ -1104,6 +1104,10 @@ test_scout_brief_names_sign_off_only() {
     'scout brief did not send a visual deliverable to a sign-off board report'
   assert_grep 'return the sign-off report link only' "$brief" \
     'scout brief did not ask for the sign-off report link only'
+  assert_grep 'first section is `## 1. Answer (five lines)`' "$brief" \
+    'scout brief did not make the report open with its Answer'
+  assert_grep 'jg-report-opening-check.sh' "$brief" \
+    'scout brief did not name the report page opening check'
   assert_no_grep 'Lavish' "$brief" 'scout brief still named the retired review surface'
   assert_no_grep 'lavish-axi' "$brief" 'scout brief still named the retired tool'
   pass 'jg-brief.sh: a scout brief names the sign-off board and no retired review surface'

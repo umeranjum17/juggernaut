@@ -2839,6 +2839,15 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
     echo "Inventory its report and any visual review through bin/jg-captain-hold.sh before teardown." >&2
     exit 1
   fi
+  # A report page the Recon posted must open with the report's Answer, not a
+  # finding. No page on the board passes (bin/jg-report-opening-check.sh).
+  if ! OPENING_CHECK=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" \
+      "$SCRIPT_DIR/jg-report-opening-check.sh" "$REPORT" --filer "$ID" 2>&1 >/dev/null); then
+    echo "REFUSED: scout task $ID posted a report page that does not open with its Answer." >&2
+    printf '%s\n' "$OPENING_CHECK" | sed 's/^/  /' >&2
+    echo "Repost the page under the same key with the Answer in the picture heading, then retry." >&2
+    exit 1
+  fi
 fi
 
 # A public commitment is not kept until its final reply lands in the ORIGINAL
