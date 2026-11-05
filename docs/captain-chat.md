@@ -68,6 +68,14 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
 - A message that is only `/status` is answered by the gateway itself, threaded on it: the owner, the answers sent and that the bot is answering. It files no note and wakes no one. It is the only command.
   The reply ends with the owner's open asks in his own words, grouped Needs you / Not done / Done (verified), from `bin/jg-owner-asks.sh`, which builds them from the records with no model. Done needs a recorded release that runs; a merge alone is Not done.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
+- The gateway sends the owner only what a real home published.
+  Every event carries a `home` field, set by the publishing command.
+  A card, outcome, alert, digest or summary is sent when that home is the gateway's own home, or a member of the machine registry (`state/bus/homes`) whose home and state directories are not a throw-away location.
+  Any other event is named once in `state/captain-channel.log` and dropped.
+  A `card-close` from such a home cannot close a real card.
+  A test home reaches the machine's one bus when its config falls back to the shipped `live` default, so this rule, not each suite's discipline, keeps a test card off the chat.
+  An event with no `home` is from a publisher older than the field and is still sent.
+  `TestGatewayRefusesCardsFromTestHomes` proves it.
 - The owner can send a photo, document, voice note, audio, video or round video note. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
 
