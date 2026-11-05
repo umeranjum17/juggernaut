@@ -139,6 +139,25 @@ test_question_card_route_records_the_owner() {
   pass "jg-question-card post --route records the owning lead and refuses an unknown one before posting"
 }
 
+test_card_posted_without_a_route_finds_its_lead_and_the_answer_skips_main() {
+  local d out rec
+  d=$(setup autoroute)
+  out=$(run_key "$d" "$CARD" post --title "Q4 for the key?" --ask-ref "$KEY" --must design-pick \
+    --outcome yes="It is." --outcome no="It is not.")
+  assert_equals $'lead=muxr\ndecision='"$KEY" "$(cat "$d/home/state/board-routes/$out")" "the lead was not found from the open decision"
+  run "$d" "$CARD" post --title "Q5 for nobody?" --ask-ref m1 --must design-pick --outcome yes="It is." --outcome no="It is not." \
+    | grep -q -- "--route <lead>.*--route main" || fail "an unownable card was not refused with the flag to pass"
+  out=$(run_key "$d" "$CARD" post --route main --title "Q6 for the owner?" --ask-ref m1 --must design-pick \
+    --outcome yes="It is." --outcome no="It is not.")
+  [ -n "$out" ] && [ ! -e "$d/home/state/board-routes/$out" ] || fail "a Main-owned card was not posted, or got a lead route: $out"
+  answer "$d" "$(run_key "$d" "$CARD" keys | head -1)" yes
+  out=$(run "$d" "$BA" check)
+  rec=$d/home/state/muxr.inbox/001.msg
+  [ -f "$rec" ] || fail "the answer never reached the lead's inbox: $out"
+  case "$out" in "info: "*"went to muxr; nothing for Main to do") : ;; *) fail "Main got more than the info line: $out" ;; esac
+  pass "a card posted without --route finds its lead from its open decision and the answer reaches the lead with no Main wake"
+}
+
 test_arm_registers_a_check_the_watcher_trusts() {
   local d
   d=$(setup arm)
@@ -155,4 +174,5 @@ test_card_archives_after_the_lead_acknowledges
 test_unrouted_answer_wakes_main_with_the_answer_first
 test_failed_delivery_is_retried_and_reported_once
 test_question_card_route_records_the_owner
+test_card_posted_without_a_route_finds_its_lead_and_the_answer_skips_main
 test_arm_registers_a_check_the_watcher_trusts

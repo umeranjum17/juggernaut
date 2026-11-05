@@ -196,6 +196,7 @@ jg_wait_timer_card() {  # <task> <card-key> <verb> <source> [title] [why]
   # the captain's alone.
   case "$3" in prompt*) guard=(--guard security); must=(--must credential-login) ;; esac
   (cd "$JG_HOME" && SIGN_OFF_FILER=juggernaut-watch "$_JG_WAIT_TIMER_DIR/jg-question-card.sh" post \
+    --route main \
     --ask-ref "waiting-$1" --key "$2" --title "$title" --why "$why" \
     --detail "Task $1, wait $3. Card $2. It closes by itself when the wait ends." \
     --outcome yes="Main clears or answers the wait now." --outcome no="It stays stuck until you steer it." \
