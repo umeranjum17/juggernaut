@@ -3,13 +3,15 @@
 # tests/jg-tool-models.test.sh runs the real squad lead launch lookup and the supervision engine lookup on a
 # disposable home and prints each answer before and after the edit. core/merge-card/tests/merge-card-e2e.sh
 # does the same for the done-done judge, with a stub that records which model judged.
+# core/pipeline-quota-failover/tests/pi-quota-failover-route.test.sh does it for the no-mistakes review chain.
 set -u
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 out=${DONE_DONE_EVIDENCE_ROOT:?}/${RUN_ID:-run}.log
 rc=0
 {
   bash "$root/tests/jg-tool-models.test.sh" &&
-    bash "$root/core/merge-card/tests/merge-card-e2e.sh"
+    bash "$root/core/merge-card/tests/merge-card-e2e.sh" &&
+    bash "$root/core/pipeline-quota-failover/tests/pi-quota-failover-route.test.sh"
 } > "$out" 2>&1 || rc=$?
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON

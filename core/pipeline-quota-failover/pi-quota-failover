@@ -31,6 +31,7 @@
 # Knobs (environment):
 #   PI_QUOTA_FAILOVER_REAL_PI  absolute path to the real pi binary
 #   PI_QUOTA_FAILOVER_CHAIN    space-separated ordered model chain
+#   PI_QUOTA_FAILOVER_JG_HOME  juggernaut home whose config/tool-models.json names the review model (default $JG_HOME, then ~/juggernaut)
 #   PI_QUOTA_FAILOVER_ACCOUNT_POOL  a juggernaut config/account-pool file (default ~/juggernaut/config/account-pool when it
 #                              exists; empty turns it off): route and account come from jg-model-pool pick/next (Claude
 #                              above the eligibility floor, else Sol then Goat then Cursor auto); a limit calls next
@@ -75,7 +76,22 @@ ROUTE_FAIL_RE='WaitDelay|parse events|extension.*(warning|failed|error)|(warning
 
 # The default chain is the pipeline route: Claude Haiku through claude-bridge on the subscription
 # accounts, never extra credits. A pinned model outside the chain does not run, so the chain's route is the route that runs.
-chain=${PI_QUOTA_FAILOVER_CHAIN:-'claude-bridge/claude-haiku-5-5'}
+default_model=claude-bridge/claude-haiku-5-5
+# An entry tagged no-mistakes-review in config/tool-models.json (bin/jg-tool-models.sh) replaces that default model, on
+# the chain below and on the pool route that names no model. The wrapper runs from an install dir, so it finds the
+# juggernaut home through PI_QUOTA_FAILOVER_JG_HOME, then JG_HOME, then ~/juggernaut. The file is read at every call, so an
+# edit applies to the next pipeline call. No home, no file, no entry or a bad entry keeps the default; the helper prints one
+# TOOL_MODELS: line for a bad entry. The review runs on pi, so another harness is refused.
+tm_home=${PI_QUOTA_FAILOVER_JG_HOME:-${JG_HOME:-$HOME/juggernaut}}
+if [ -x "$tm_home/bin/jg-tool-models.sh" ] && tm=$(JG_HOME=$tm_home "$tm_home/bin/jg-tool-models.sh" resolve no-mistakes-review) && [ -n "$tm" ]; then
+  read -r tm_harness tm_model _ <<<"$tm"
+  if [ "$tm_harness" = pi ] && [ "${tm_model:-default}" != default ]; then
+    default_model=$tm_model
+  else
+    echo "TOOL_MODELS: no-mistakes-review needs harness pi and a model; the review chain keeps its default" >&2
+  fi
+fi
+chain=${PI_QUOTA_FAILOVER_CHAIN:-$default_model}
 # The chain is the fleet's one route list: route-change reads it from here.
 [ -z "${PI_QUOTA_FAILOVER_PRINT_CHAIN:-}" ] || { printf '%s\n' "$chain"; exit 0; }
 
@@ -185,7 +201,7 @@ pool_apply() {
   case $provider in
     claude)
       case $model in
-        '' ) pool_model=claude-bridge/claude-haiku-5-5 ;;
+        '' ) pool_model=$default_model ;;
         */*) pool_model=$model ;;
         *) pool_model=claude-bridge/$model ;;
       esac

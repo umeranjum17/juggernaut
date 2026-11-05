@@ -13,6 +13,12 @@
       "why": "The judge runs on the harness pi, so the model carries its provider prefix."
     },
     {
+      "tool": "no-mistakes-review",
+      "when": "Which model the no-mistakes review chain uses.",
+      "use": { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" },
+      "why": "The review runs on the harness pi, so the model carries its provider prefix."
+    },
+    {
       "tool": "supervision-engine",
       "when": "Which model the supervision engine uses when its engine has no model of its own.",
       "use": { "harness": "claude", "model": "claude-haiku-5-5" }
