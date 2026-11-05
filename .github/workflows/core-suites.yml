@@ -303,6 +303,10 @@ jobs:
       - name: Checks lint superseding-receipt test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-supersede-receipt.test.sh
+      # The merge-time lint republishes the receipt without erasing its `first-draft receipt:` design record.
+      - name: Checks lint keeps design record test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/checks-lint-keeps-design-record.test.sh
       # A 305-file fixture above gh's 100-file list cap and 300-file diff cap; no real PRs are changed.
       - name: Checks lint big-PR size test
         if: ${{ !cancelled() }}

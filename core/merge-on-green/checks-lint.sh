@@ -127,6 +127,14 @@ for meta in "$JG_HOME"/state/*.meta; do
     report=$(mktemp) || exit 1
     printf 'checks-lint %s %s head %s: %s\n' "$receipt_verdict" "$source" "$head" "${why:-$out}" > "$report"
     worktree=$(awk -F= '$1 == "worktree" { value = $2 } END { print value }' "$meta")
+    # Publishing replaces the receipt's whole evidence, and the design gate that runs next reads its
+    # `first-draft receipt:` line from that evidence. Carry the line over from a receipt for this same
+    # candidate, so the lint's own report never erases the design record (it adds nothing when there is none).
+    cand=$(git -C "${worktree:-$JG_HOME}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)
+    if [ -n "$cand" ] && [ -f "$JG_HOME/state/$task.run-receipt.json" ]; then
+      jq -r --arg head "$cand" 'select(.head == $head) | .evidence // "" | split("\n")[] | select(startswith("first-draft receipt: "))' \
+        "$JG_HOME/state/$task.run-receipt.json" 2>/dev/null >> "$report" || true
+    fi
     receipt=$(env JG_HOME="$JG_HOME" "$helper" "$task" "$receipt_verdict" "$report" "${worktree:-$JG_HOME}" 2>&1); receipt_rc=$?
     [ "$receipt_rc" -eq 0 ] || echo "checks-lint: receipt not published: ${receipt:-jg-run-receipt.sh failed}" >&2
     rm -f -- "$report"
