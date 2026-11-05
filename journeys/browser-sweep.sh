@@ -5,7 +5,7 @@ set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${DONE_DONE_EVIDENCE_ROOT:?run through done-done}
 LOG=$OUT/${DONE_DONE_RUN_ID:-${RUN_ID:-browser-sweep}}.log
-bash "$REPO/tests/jg-browser-sweep.test.sh" >"$LOG" 2>&1
+{ echo "run ${DONE_DONE_RUN_ID:-local} at $(git -C "$REPO" rev-parse --short HEAD)"; bash "$REPO/tests/jg-browser-sweep.test.sh"; } >"$LOG" 2>&1
 st=$?
 grep -q '^not ok' "$LOG" && st=1
 [ "$(grep -c '^ok - ' "$LOG")" -ge 7 ] || st=1
