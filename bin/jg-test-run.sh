@@ -857,6 +857,7 @@ tests/jg-launch-env-strip.test.sh 462
 tests/jg-lavish-guard.test.sh 361
 tests/jg-lavish-session-check.test.sh 365
 tests/jg-licence-check.test.sh 131
+tests/jg-path-guard.test.sh 60
 tests/jg-live-claim.test.sh 568
 tests/jg-loss-claim-check.test.sh 400
 tests/jg-prior-art-gate.test.sh 468

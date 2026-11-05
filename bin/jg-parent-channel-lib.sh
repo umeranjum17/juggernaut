@@ -161,7 +161,7 @@ jg_parent_channel_clean_note() {  # <text>
 # Append <line> once, using jg-classify-lib.sh's retry contract. Time-insensitive:
 # the caller declaring a new event is the one that stamps it.
 jg_parent_channel_append_once() {  # <path> <line>
-  local path=$1 line=$2
+  local path=$1 line=$2 guard=$_JG_PARENT_CHANNEL_LIB_DIR/jg-path-guard.sh
   # The captain voice file rewrites the note before it is compared or written, so a retry of the
   # same event rewrites to the same line and stays deduplicated. A line is never held back here.
   # A machine close line (`resolved [key=waiting-timer-...]: waiting-timer-...: ...`) is a marker the
@@ -172,6 +172,11 @@ jg_parent_channel_append_once() {  # <path> <line>
     && case $mkey in waiting-timer-*) _jg_decision_key_transition_allowed "$mkey" "$mnote" ;; *) false ;; esac; then
     :
   elif jg_voice_apply parent-channel "$line" --line; then line=$JG_VOICE_OUT; fi
+  # The captain cannot open a raw file path on his phone: withhold it at write
+  # time, so a worker's evidence path never reaches him and never blocks delivery.
+  if [ -x "$guard" ]; then
+    line=$(printf '%s\n' "$line" | "$guard" --mask) || return 1
+  fi
   if [ -e "$path" ] || [ -L "$path" ]; then
     [ -f "$path" ] && [ ! -L "$path" ] || return 1
   else
