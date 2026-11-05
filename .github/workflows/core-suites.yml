@@ -345,6 +345,10 @@ jobs:
       - name: Completion-receipt superseded-copy test
         if: ${{ !cancelled() }}
         run: bash receipts/tests/receipt-superseded-copy.test.sh
+      # Real commits in real repositories, forge read stubbed: one lane lands several pull requests, each with the receipt for its own head.
+      - name: Completion-receipt multi-PR lane test
+        if: ${{ !cancelled() }}
+        run: bash receipts/tests/receipt-multi-pr-lane.test.sh
       - name: No old receipt path test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/no-old-receipt-path.test.sh
