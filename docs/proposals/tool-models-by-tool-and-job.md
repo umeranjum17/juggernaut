@@ -1,6 +1,6 @@
 # Proposal: tool models by tool and job (`config/tool-models.json`)
 
-Status: draft for approval, revised four times: a tool gets a key only when its code starts a model; only a tool with an AI engine gets a key, and the file overrides that engine's own default (owner, Telegram 276-277); first-draft, no-mistakes, learn-from-mistakes and done-done each get a key with their own jobs (owner, Telegram 279); every job value may be one entry or an ordered array of entries, picked by quota and spread across signed-in accounts (owner, Telegram 288-289). No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
+Status: draft for approval, revised five times: a tool gets a key only when its code starts a model; only a tool with an AI engine gets a key, and the file overrides that engine's own default (owner, Telegram 276-277); first-draft, no-mistakes, learn-from-mistakes and done-done each get a key with their own jobs (owner, Telegram 279); every job value may be one entry or an ordered array of entries, picked by quota and spread across signed-in accounts (owner, Telegram 288-289); the owner approved the JSON design (Telegram 301), and speech-to-text defaults to a local on-device model, never cloud (owner rule of 4 Nov, Telegram 303). No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
 
 ## Problem
 
@@ -45,9 +45,9 @@ The file lists overrides. The example below is the shipped example: it shows tod
     "supervision-engine": { "harness": "claude", "model": "sonnet" },
     "model-pool":         { "harness": "claude", "model": "claude-haiku-5-5" },
     "voice-rewrite":      { "harness": "claude", "model": "claude-haiku-5-5" },
-    "inbox-stt":          { "harness": "pi", "model": "amazon-bedrock/amazon.nova-lite-v1:0" },
+    "inbox-stt":          { "harness": "hex", "model": "parakeet-unified-en-0.6b-Q8_0" },
     "inbox-ask":          { "harness": "pi", "model": "amazon-bedrock/amazon.nova-pro-v1:0" },
-    "voice-relay":        { "harness": "pi", "model": "amazon-bedrock/amazon.nova-sonic-v1:0" },
+    "voice-relay":        { "harness": "hex", "model": "parakeet-unified-en-0.6b-Q8_0" },
     "route-chain": [
       { "id": "route:ollama-cloud/deepseek-v4.1-flash", "provider": "ollama-cloud", "harness": "opencode", "model": "ollama-cloud/deepseek-v4.1-flash", "billing": "plan" },
       { "id": "route:commandcode/deepseek/deepseek-v4.1-flash", "provider": "commandcode", "harness": "pi", "model": "commandcode/deepseek/deepseek-v4.1-flash", "billing": "plan" },
@@ -60,7 +60,7 @@ The file lists overrides. The example below is the shipped example: it shows tod
 }
 ```
 
-Values copy each tool's own default where one exists (squad lead, done-done, first-draft, learn-from-mistakes judge, supervision engine, pool, voice rewrite, route chain). The `no-mistakes` fix and after-round rows copy the review row because Juggernaut pins one model today. The `learn-from-mistakes.worker` row has no default in that tool today (see the engines section). The `inbox-*` and `voice-relay` ids and the four non-lead `workers` rows have no built-in today: they are starting options, unverified, for you to edit.
+Values copy each tool's own default where one exists (squad lead, done-done, first-draft, learn-from-mistakes judge, supervision engine, pool, voice rewrite, route chain). The `no-mistakes` fix and after-round rows copy the review row because Juggernaut pins one model today. The `learn-from-mistakes.worker` row has no default in that tool today (see the engines section). The `inbox-ask` id and the four non-lead `workers` rows have no built-in today: they are starting options, unverified, for you to edit. The `inbox-stt` and `voice-relay` rows are local on-device (see the speech-to-text section); the `hex` row for `inbox-stt` was run here.
 
 ## Arrays: pick by quota, spread across accounts
 
@@ -102,6 +102,18 @@ How an array resolves in one run:
 What "round robin" means here, stated plainly: the account pool picks the account with the most room and rests an account that hits its limit. Load therefore spreads over the accounts without a counter, but it is not a strict turn-by-turn rotation. A strict rotation would need new code in `jg-model-pool`; see decision 9.
 
 The lead or worker still chooses the job (`workers.frontend`, `workers.hard`). The array lists options for that job. No rule picks the job.
+
+## Speech-to-text is local, on-device
+
+Owner rule (4 Nov, Telegram 303): speech-to-text runs on the device, never in the cloud. So the defaults of `internal.inbox-stt` and `internal.voice-relay` are no longer `amazon-bedrock/...`. They are `{ "harness": "hex", "model": "parakeet-unified-en-0.6b-Q8_0" }`.
+
+- **Runtime:** Hex 3.1.1 (`~/.local/bin/hex`, Linux beta), command `hex model transcribe <wav> [--model <id>]`. It loads the model in the CLI process and does not need the Hex app to be running.
+- **Model:** Parakeet Unified English 0.6B, Q8_0 GGUF, 731 MB, already installed and checksum-verified here (`hex model status`). Voice-activity model: `silero-vad-v6.2-F32`.
+- **Device:** `hex model check` reports `ready` on the NVIDIA RTX 3090 (vulkan). The host also lists the CPU and the AMD iGPU (`hex model devices`).
+- **Verified here (not only read):** I made a 4.4-second 16 kHz mono WAV with a local text-to-speech voice (piper, `en_US-lessac-medium`) from the sentence "Please check the status of the open pull request and tell me when the checks are green." `hex model transcribe` returned exactly that sentence in 0.8 s wall time. A silent chime WAV returned an empty line, which `jg-inbox.sh` already treats as "transcription came back empty". One synthetic sample on one host is proof that it runs here. It is not an accuracy measure on the captain's voice.
+- **`harness` value `hex`:** `hex` is not an agent harness. It is an STT-only runtime, valid only for the `inbox-stt` and `voice-relay` keys. Phase 2 adds it to the entry check for those two keys and nowhere else, and the check refuses it for any agent job. Other STT runtimes are not listed because I did not verify them (a `faster-whisper-base` cache exists under `~/.cache/huggingface`, but the Python package is not installed).
+- **What changes in code (Phase 2):** `bin/jg-inbox.sh` `say` stops calling `aws bedrock-runtime converse` for audio and calls `hex model transcribe` on the WAV it already builds. The region and AWS profile settings then apply to `ask` only.
+- **`voice-relay` caveat:** it is a speech-in, speech-out session (Nova Sonic). A local default covers only the listening half (`hex`, same model). The speaking half and the reasoning step have no local engine here yet, and I did not test one. Until you pick one, `voice-relay` has no complete local default. Decision 11.
 
 ## Keys kept, with the line that starts the model
 
@@ -190,11 +202,13 @@ OpenCode (MIT, `agent.<name>.model` as `provider/model-id`; a subagent with no m
 
 1. **The latest steers replace earlier rules.** The cuts of `first-draft` (and my earlier answer on its engine) are replaced by the engines section above.  The earlier "the default file lists every entry, and a missing entry stops" is replaced by "no entry = the tool's own default, logged". Say if you still want a visible full file copied into `config/` at bootstrap; I recommend not, because the log line already shows what ran.
 2. **Remove the other sources.** Yes: delete `JG_INBOX_*_MODEL`, `JG_VOICE_MODEL`, `config/inbox-*-model`, `config/voice-model` and the model tokens of `config/squad-lead-harness`. The built-in model string stays once in each tool as that tool's own default (this part of the earlier "remove the built-in strings" is replaced). The per-lead pin `config/squad_leads/<id>/harness` is a harness pin: recommend keeping it as the one explicit override, logged when used.
-3. **Failover.** Quota failover stays, only through the listed `internal.route-chain` (built-in list when no entry), one log line per step. A judge or review that is dry then moves down that list, not through a hidden one. Say no if you want it to stop instead.
+3. **Failover.** Quota failover stays, only through the listed `internal.route-chain` (built-in list when no entry), one log line per step. Open point: decision 10 may remove `route-chain`. A judge or review that is dry then moves down that list, not through a hidden one. Say no if you want it to stop instead.
 4. **Worker job rows** (`frontend`, `backend`, `cheap-verification`, `hard`) have no reader until Phase 2, no default of their own, and overlap `config/crew-dispatch.json`: keep them as the options list, or drop them and leave worker choice to crew-dispatch.
 5. **Log file.** I propose `state/tool-models.log` for the metrics reader. Say if the metrics use another place.
 6. **Arrays reuse our own picker.** Arrays use the existing quota-array selection and account pool, with no new picker (see "Arrays"). I recommend this. The one gap is strict round robin (decision 9).
 7. **#668 and #669** stay open untouched; after you approve, their sites are re-done on this shape, and Overwatch decides whether to close them.
 8. **No eligible entry in an array.** I recommend the tool stops with a plain line and does not fall to its own default, because a silent fall is the hidden behaviour the owner refused. Say if you want the default as the last resort.
 9. **Round robin.** Today the pool picks the most room and rests a full account; it does not rotate in turns. I recommend keeping that. If you want strict turns, it is a small change in `jg-model-pool` in Phase 2, and I need your word first.
-10. `config/crew-dispatch.json` (per-task profiles) is out of scope and unchanged.
+10. **Remove `internal.route-chain`? (open, you have not said yes.)** You asked what it is. It is the ordered list of fallback routes (provider, harness, model, plan billing) that `core/account-pool/bin/jg-route-chain-lib.sh` walks when a judge or review has no quota left: ollama-cloud, commandcode, codex, kimi, cursor, then codex sol for hard jobs only. It does the one thing a job's array now does. I recommend removing the key: each job's own array becomes its fallback list, walked by the same quota pick, and the shared hidden list goes. Cost: every job that relies on the chain today must get its own array in the file, or it has only its default. Phase 2 would then re-do #668 on that basis.
+11. **`voice-relay` local default.** Listening is local (`hex`, above). Speaking and reasoning are not. Options: (a) keep `voice-relay` off until a local speech-out engine is chosen; (b) split it into `voice-relay.listen` (hex), `voice-relay.think` (any agent harness) and `voice-relay.speak` (a local text-to-speech engine, for example piper, which ran here when I made the test sample). I recommend (b), but it is a bigger change than a model swap, so I need your word.
+12. `config/crew-dispatch.json` (per-task profiles) is out of scope and unchanged.
