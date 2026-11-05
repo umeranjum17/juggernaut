@@ -8,9 +8,11 @@
 # on whoever remembers to write a status line before the next poll.
 #
 # Usage: jg-ticket.sh <task-id> [--stage WORD] [--state WORD] [--pr URL] [--release TEXT] [--hold-reason TEXT]
-#        jg-ticket.sh id <task-id>
+#        jg-ticket.sh id <task-id> [home]
 #   id         Print the ticket id this home's sync publishes for a task, so a
 #              card can name its ticket (--ticket) and the board shows it there.
+#              home names the registered home that owns the task (default main);
+#              a lead's ticket hashes <home>/<task>, as core/tickets-sync/sync.py does.
 #   --stage    queued | building | review | merging | done
 #   --state    queued | "in progress" | "on hold" | done   (done also sets 100%)
 #   --pr       the delivered PR's full URL; "" clears the linked PRs
@@ -68,12 +70,16 @@ case "$TASK" in
 esac
 # The sync publishes main/<task> as `jg-<sha256 32>` (core/tickets-sync/ticket.py
 # owns that rule); id prints it without touching the board.
-if [ "$TASK" = id ] && [ "$#" -eq 1 ]; then
+if [ "$TASK" = id ] && [ "$#" -ge 1 ] && [ "$#" -le 2 ]; then
   TASK=${1:-}
+  TICKET_HOME=${2:-main}
   case "$TASK" in
     ''|*[!A-Za-z0-9._-]*) echo "jg-ticket: invalid task id: $TASK" >&2; exit 2 ;;
   esac
-  printf 'jg-%s\n' "$(printf 'main/%s' "$TASK" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-32)"
+  case "$TICKET_HOME" in
+    ''|*[!A-Za-z0-9._-]*) echo "jg-ticket: invalid home name: $TICKET_HOME" >&2; exit 2 ;;
+  esac
+  printf 'jg-%s\n' "$(printf '%s/%s' "$TICKET_HOME" "$TASK" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-32)"
   exit 0
 fi
 [ "$#" -eq 0 ] || case "$1" in
