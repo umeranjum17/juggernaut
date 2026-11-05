@@ -117,6 +117,22 @@ done
 printf '%s' 'The release is ready. Cleanup finished.' | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "the check refused a plain sentence"
 pass "the three internal phrases from the captain's screenshot are flagged, and a plain sentence is not"
 
+# A ticket id beside its full link (the captain's Telegram 408 and 409): `revert-pr678` carries a PR number, which the
+# check refused even when the message linked that PR. Smallest rule: a PR number passes only when the same message
+# holds a full link to that same PR; with no link, or a link to another PR, it stays refused, and other terms are untouched.
+PR_URL='https://github.com/example/repo/pull/678'
+printf '%s' "Ticket revert-pr678 is ready: $PR_URL" | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "a ticket id beside its full link was refused"
+printf '%s' "The fix is in PR 678: $PR_URL" | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "a PR number beside its full link was refused"
+for bad in 'Ticket revert-pr678 is ready.' 'The fix is in PR 678.' "Ticket revert-pr679 is ready: $PR_URL"; do
+  printf '%s' "$bad" | python3 "$VOICE" check --channel telegram 2>/dev/null && fail "a PR number with no link to that PR passed: $bad"
+done
+if err=$(printf '%s' "Ticket revert-pr678 is ready: $PR_URL The worktree is clean after teardown." | python3 "$VOICE" check --channel telegram 2>&1 >/dev/null); then
+  fail "other internal terms passed beside a linked ticket id"
+fi
+case $err in *'"worktree"'*'"teardown"'*) ;; *) fail "the other internal terms were not named: $err" ;; esac
+case $err in *'"pr678"'*) fail "the linked ticket id was still named: $err" ;; esac
+pass "a ticket id passes beside its full link, is refused with no link, and other internal terms are still refused"
+
 want=$(printf '%s\n' 'Three things are ready:' '' '1. The fix.' '2. The test.' '3. The notes.' '' 'Please review.')
 out=$(printf '%s\n%s\n' 'Three things are ready: 1. The fix. 2. The test. 3. The notes.' 'Please review.' | python3 "$VOICE" apply --channel telegram 2>/dev/null)
 [ "$out" = "$want" ] || fail "a list run into one line was not laid out one item per line: $out"
