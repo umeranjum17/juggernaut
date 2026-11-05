@@ -1,6 +1,6 @@
 # Proposal: tool models by tool and job (`config/tool-models.json`)
 
-Status: draft for approval, revised after the owner's note that a tool gets a key only when its code starts a model. No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
+Status: draft for approval, revised twice: a tool gets a key only when its code starts a model, and (owner, Telegram 276-277) only a tool with an AI engine gets a key, with the file as an override of that engine's own default. No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
 
 ## Problem
 
@@ -8,7 +8,11 @@ Today one flat list is keyed by internal call sites (`squad-lead`, `voice-rewrit
 
 ## Shape
 
-Top-level key = a tool whose code starts a model in this repo (`done-done`, `no-mistakes`, `workers`). Second level = a job type. Each job = one explicit `{harness, model, effort?}`. Each tool reads exactly its own `<tool>.<job>` entry. Call sites that are not an owner tool live under `internal`. The lead or worker picks the job by complexity; no rule picks it.
+Rule from the owner: a tool that has an AI engine can be configured here; a tool without one needs no key. Every tool that uses AI owns its own engine with its own default model. `config/tool-models.json` only overrides that default, per job.
+
+Top-level key = a tool with an AI engine whose code starts a model (`done-done`, `no-mistakes`, `first-draft`, `workers`). Second level = a job type. Each job = one explicit `{harness, model, effort?}`. Each tool reads exactly its own `<tool>.<job>` entry. AI call sites that are not an owner tool live under `internal`. The lead or worker picks the job by complexity; no rule picks it.
+
+The file lists overrides. The example below is the shipped example: it shows today's default of each tool, so you can copy a block and edit it. Delete a block and that tool uses its own default again.
 
 ```json
 {
@@ -17,6 +21,10 @@ Top-level key = a tool whose code starts a model in this repo (`done-done`, `no-
   },
   "no-mistakes": {
     "review": { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" }
+  },
+  "first-draft": {
+    "generate": { "harness": "claude", "model": "claude-sonnet-5-5" },
+    "judge":    { "harness": "codex", "model": "gpt-6.1-sol" }
   },
   "workers": {
     "squad-lead":         { "harness": "claude", "model": "opus", "effort": "max" },
@@ -44,11 +52,11 @@ Top-level key = a tool whose code starts a model in this repo (`done-done`, `no-
 }
 ```
 
-Values copy today's built-ins where one exists (squad lead, judge, review, supervision engine, pool, voice rewrite, route chain). The `inbox-*` and `voice-relay` ids and the four non-lead `workers` rows have no built-in today: they are starting options, unverified, for you to edit.
+Values copy each tool's own default where one exists (squad lead, judge, review, first-draft, supervision engine, pool, voice rewrite, route chain). The `inbox-*` and `voice-relay` ids and the four non-lead `workers` rows have no built-in today: they are starting options, unverified, for you to edit.
 
 ## Keys kept, with the line that starts the model
 
-A key exists only when code in this repo starts a model from it. `sign-off` reads no entry: it is a board, and the agent that files a card does the model work. `first-draft` has no key: its model start is in another repo, so add it when that repo's start line is cited. `done-done.cheap-verification` and `no-mistakes.cheap-verification` are dropped: no line here starts them.
+A key exists only when code starts a model from it: code in this repo, or for `first-draft` the installed package named in its row. `sign-off` reads no entry: it is a board, and the agent that files a card does the model work. `first-draft` has a key: see the next section. `done-done.cheap-verification` and `no-mistakes.cheap-verification` are dropped: no line here starts them.
 
 | Key | Line that starts the model |
 |---|---|
@@ -56,6 +64,7 @@ A key exists only when code in this repo starts a model from it. `sign-off` read
 | `no-mistakes.review` | `core/pipeline-quota-failover/pi-quota-failover:375` (`exec "$real_pi"` with the chain model from `:80-95`) |
 | `workers.squad-lead` | `bin/jg-spawn.sh:4856` (`__MODELFLAG__` into the launch); model chosen at `:879` and `:2196` |
 | `workers.frontend`, `.backend`, `.cheap-verification`, `.hard` | the same `bin/jg-spawn.sh:4856` for any worker. Marked: nothing reads these rows until Phase 2; the lead picks one by complexity. Drop them if `config/crew-dispatch.json` stays the only worker choice |
+| `first-draft.generate`, `first-draft.judge` | in the `first-draft-axi` 0.5.0 package (repo `umeranjum17/first-draft`), `src/byokit.mjs:53` (`backendOn` starts the Claude or Codex CLI with `model`); defaults at `src/byokit.mjs:122` (`DEFAULT_MODELS`) and, for the judge, `src/judge.mjs:39` (`judgeOf`) and `src/judge-fallback.mjs:5` |
 | `internal.supervision-engine` | `bin/jg-supervision-engine-lib.sh:365` (`--model "$model"`) |
 | `internal.model-pool` | `core/account-pool/bin/jg-model-pool:143,213` name the model; `pi-quota-failover:178` calls it and `:375` starts it |
 | `internal.route-chain` | `core/merge-card/merge-card:278` then `:314`; `core/account-pool/bin/jg-model-pool:314` |
@@ -64,12 +73,25 @@ A key exists only when code in this repo starts a model from it. `sign-off` read
 | `internal.inbox-ask` | `bin/jg-inbox.sh:1262` (`--model-id "$ASK_MODEL"`) |
 | `internal.voice-relay` | `bin/jg-voice-relay.py:548` (`model_id=self.options.model`) |
 
+## First-draft: does it have its own engine today?
+
+Yes. I read the installed package `first-draft-axi` 0.5.0 (`~/.local/lib/node_modules/first-draft-axi/src`, MIT, repo `umeranjum17/first-draft`) and ran `first-draft-axi doctor` (no paid call):
+
+- It resolves its own engine: an authenticated Claude or Codex subscription through BYOKit (`src/byokit.mjs:127` `resolveEngine`).
+- It has its own default model: `claude-sonnet-5-5` for Claude and `gpt-6.1-sol` for Codex (`src/byokit.mjs:122`). `doctor` reports `byokit:claude / claude-sonnet-5-5` on this machine.
+- It has its own override already: `first-draft-axi init --agent byokit:<route> --model <model>` saves one (`src/cli.mjs:514-530`), and `--model <id>` overrides it for one run (`src/cli.mjs:319`).
+- It has a separate judge that must use a different engine than the generator (`src/judge.mjs:39`, `src/judge-fallback.mjs:5`).
+
+So no ticket to give it an engine. What is missing is only the read of this file. Follow-up ticket, in the `first-draft` repo and not part of this PR: **first-draft reads `first-draft.generate` and `first-draft.judge` from `config/tool-models.json` when it runs inside a Juggernaut home, and logs the line below.** Until that lands, the two `first-draft` blocks do nothing, and `docs/configuration.md` says so.
+
 ## Read rules (Phase 2)
 
-- `bin/jg-tool-models.sh get <tool> <job>` prints `harness model effort` and logs `TOOL_MODELS: used <tool>.<job> = <harness> <model> <effort>`.
-- A missing file, key or field, bad JSON, an unverified harness, a bad effort, or a model the allow-list refuses (`jg_model_allowlist_require`) stops with one line naming the file and the key, for example `TOOL_MODELS: config/tool-models.json: no entry "no-mistakes.review"`. No default, no prefix stripping, no second source.
-- A site that can run one harness only (judge on a non-pi harness, voice rewrite on non-claude) stops the same way.
-- `check` validates every entry in the file. The default file ships as `docs/examples/tool-models.json`; bootstrap copies it to `config/` once when absent and never overwrites.
+- Each tool owns its default in its own code, once. A tool asks `bin/jg-tool-models.sh resolve <tool> <job> --default "<harness> <model> [effort]"` and gets back the effective `harness model effort`. No entry means the tool's own default. A missing file is valid and means all defaults.
+- Every run logs one stable line, so the token and value metrics can read it: `TOOL_MODELS tool=<tool> job=<job> source=default|file harness=<h> model=<m> effort=<e|none>`. `source=file` means the entry in `config/tool-models.json` was used. `source=default` means the tool's own default was used. The line goes to the run's stderr and is appended to `state/tool-models.log` with a leading `ts=<iso8601>`. One line per run; no other format.
+- A bad entry stops with one plain line naming the file and the key, for example `TOOL_MODELS: config/tool-models.json: "no-mistakes.review": model "x" is not in the model allow-list`. A bad entry is: bad JSON, an entry with a missing field, an unverified harness, a bad effort, or a model the allow-list refuses (`jg_model_allowlist_require`). The tool does not fall back to its default for a bad entry.
+- No prefix stripping, no env var, no second file, no precedence chain: the file entry or the tool's default, nothing between.
+- A site that can run one harness only (judge on a non-pi harness, voice rewrite on non-claude) stops the same way when the entry names another harness.
+- `check` validates every entry in the file. `docs/examples/tool-models.json` is documentation and is not copied to `config/` by bootstrap, because absence already means the defaults.
 
 ## Prior art
 
@@ -92,8 +114,10 @@ OpenCode (MIT, `agent.<name>.model` as `provider/model-id`; a subagent with no m
 
 ## Decisions for the owner (recommendation first)
 
-1. **Remove the other sources.** Yes: delete `JG_INBOX_*_MODEL`, `JG_VOICE_MODEL`, `config/inbox-*-model`, `config/voice-model`, the model tokens of `config/squad-lead-harness`, and the built-in model strings in code. The per-lead pin `config/squad_leads/<id>/harness` is a harness pin: recommend keeping it as the one explicit override, logged when used.
-2. **Failover.** Quota failover stays, only through the listed `internal.route-chain`, one log line per step. A judge or review that is dry then moves down that list, not through a hidden one. Say no if you want it to stop instead.
-3. **Worker job rows** (`frontend`, `backend`, `cheap-verification`, `hard`) have no reader until Phase 2 and overlap `config/crew-dispatch.json`: keep them as the options list, or drop them and leave worker choice to crew-dispatch.
-4. **#668 and #669** stay open untouched; after you approve, their sites are re-done on this shape, and Overwatch decides whether to close them.
-5. `config/crew-dispatch.json` (per-task profiles) is out of scope and unchanged.
+1. **This steer replaces two earlier rules.** The earlier "the default file lists every entry, and a missing entry stops" is replaced by "no entry = the tool's own default, logged". Say if you still want a visible full file copied into `config/` at bootstrap; I recommend not, because the log line already shows what ran.
+2. **Remove the other sources.** Yes: delete `JG_INBOX_*_MODEL`, `JG_VOICE_MODEL`, `config/inbox-*-model`, `config/voice-model` and the model tokens of `config/squad-lead-harness`. The built-in model string stays once in each tool as that tool's own default (this part of the earlier "remove the built-in strings" is replaced). The per-lead pin `config/squad_leads/<id>/harness` is a harness pin: recommend keeping it as the one explicit override, logged when used.
+3. **Failover.** Quota failover stays, only through the listed `internal.route-chain` (built-in list when no entry), one log line per step. A judge or review that is dry then moves down that list, not through a hidden one. Say no if you want it to stop instead.
+4. **Worker job rows** (`frontend`, `backend`, `cheap-verification`, `hard`) have no reader until Phase 2, no default of their own, and overlap `config/crew-dispatch.json`: keep them as the options list, or drop them and leave worker choice to crew-dispatch.
+5. **Log file.** I propose `state/tool-models.log` for the metrics reader. Say if the metrics use another place.
+6. **#668 and #669** stay open untouched; after you approve, their sites are re-done on this shape, and Overwatch decides whether to close them.
+7. `config/crew-dispatch.json` (per-task profiles) is out of scope and unchanged.
