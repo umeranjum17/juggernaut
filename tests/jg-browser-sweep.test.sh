@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # tests/jg-browser-sweep.test.sh - bin/jg-browser-sweep.sh selection and its apply path.
+# The done-done journey journeys/browser-sweep.sh runs this test and keeps its transcript.
+# It also stands as the changed-test owner for journeys/readme-badge-proof.sh, whose browser stop trap this change added.
 #
 # Selection runs through the real command line on a fake process table: an old bridge and an old
 # puppeteer browser are named, while a young one, the user's real Chrome, a renderer child, and a
