@@ -179,17 +179,20 @@ def publish(ok, why):
         cand = subprocess.run(['git', '-C', repo, 'rev-parse', '--verify', 'HEAD^{commit}'], capture_output=True, text=True, timeout=60).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         cand = ''
-    prior = None
+    try:
+        prior = json.load(open(f'{home}/state/{task}.run-receipt.json'))
+    except (OSError, ValueError):
+        prior = None
     if ok:  # a standing PASS for this same candidate keeps its fuller evidence; a FAIL is superseded
-        try:
-            prior = json.load(open(f'{home}/state/{task}.run-receipt.json'))
-        except (OSError, ValueError):
-            prior = None
         if isinstance(prior, dict) and cand and prior.get('verdict') == 'PASS' and prior.get('head') == cand:
             print('checks-lint: receipt: this candidate already holds a PASS receipt')
             return
     with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as t:
         t.write(f'checks-lint {"PASS" if ok else "FAIL"} {src} head {head}: {why}\n')
+        # The design gate reads its `first-draft receipt:` line from the receipt's evidence, which this publish
+        # replaces; carry the line over from a receipt for this same candidate so the design record survives.
+        if isinstance(prior, dict) and cand and prior.get('head') == cand and isinstance(prior.get('evidence'), str):
+            t.writelines(l + '\n' for l in prior['evidence'].split('\n') if l.startswith('first-draft receipt: '))
     # The receipt must name the pull request this run judged; passing it is more reliable than the publisher's own
     # lookup, which cannot resolve a branch from a detached candidate tree.
     penv = {**os.environ, 'JG_HOME': home}
