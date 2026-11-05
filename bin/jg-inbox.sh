@@ -23,7 +23,7 @@
 #   jg-inbox.sh note [--request-id <id>] [--json] [--] <text>...
 #   jg-inbox.sh note [--request-id <id>] [--json] -   (body from stdin)
 #   jg-inbox.sh announce [--json] <id>
-#   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--option <label>]... [--allow-change] [--] <text>... | reply [--json] <id> [--attach <path>]... -
+#   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--evidence-from <status-line>] [--option <label>]... [--allow-change] [--] <text>... | reply [--json] <id> [--attach <path>]... -
 #   jg-inbox.sh followup <same arguments as reply>
 #   jg-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]
 #   jg-inbox.sh ready
@@ -78,6 +78,9 @@
 # already has its reply (a later outcome, or pictures that came after the text). It is recorded as
 # its own reply with its own sequence, shown in `receipts` as one more entry for the same note, and
 # a note takes any number of them. A note with no reply yet is refused: use `reply`.
+# `reply --evidence-from <status-line>` attaches the paths of that line's `evidence=` token
+# (bin/jg-evidence-lib.sh) as if each were given to --attach; a path that is no longer a readable
+# file is skipped with a warning on stderr, and a line without the token adds nothing.
 # `reply --option <label>` (repeatable, 2 to 8) asks the captain to choose: the chat
 # gateway sends the answer with one button per label, and the captain's tap comes back
 # as a note whose second line is `pick: <label> (<option set id>)`. The labels are
@@ -170,6 +173,14 @@ INBOX="$STATE/inbox"
 CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 
 die() { printf 'jg-inbox: %s\n' "$*" >&2; exit 1; }
+
+# The evidence token reader steps aside when its library is not beside this script (a lone copy).
+if [ -r "$SELF_DIR/jg-evidence-lib.sh" ]; then
+  # shellcheck source=bin/jg-evidence-lib.sh
+  . "$SELF_DIR/jg-evidence-lib.sh"
+else
+  jg_evidence_paths_of_line() { :; }
+fi
 
 # shellcheck source=bin/jg-question-lib.sh disable=SC1091
 . "$SELF_DIR/jg-question-lib.sh" \
@@ -690,9 +701,21 @@ next_reply_seq() {
   printf '%s\n' "$seq"
 }
 
+# One attachment path, made absolute and checked; the single owner of what --attach accepts.
+attach_path() {  # <path> -> absolute path
+  local file=$1
+  case "$file" in
+    *$'\n'*|*$'\r'*) die "refusing an attachment path with a line break" ;;
+    /*) ;;
+    *) file="$PWD/$file" ;;
+  esac
+  [ -f "$file" ] && [ -r "$file" ] || die "attachment is not a readable file: $1"
+  printf '%s\n' "$file"
+}
+
 cmd_reply() {
-  local json=0 id body path staging seq target n usage attach="" file text_args=() rest=0 options="" nopt=0 change=0 opt
-  usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--option <label>]... [--allow-change] [--] <text>... (or: ... -)"
+  local json=0 id body path staging seq target n usage attach="" file evidence text_args=() rest=0 options="" nopt=0 change=0 opt
+  usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--evidence-from <status-line>] [--option <label>]... [--allow-change] [--] <text>... (or: ... -)"
   if [ "${1:-}" = "--json" ]; then
     json=1
     shift
@@ -709,14 +732,21 @@ cmd_reply() {
       exit 0
     elif [ "$rest" -eq 0 ] && [ "$1" = "--attach" ]; then
       [ "$#" -ge 2 ] || die "--attach needs a file path"
-      file=$2
-      case "$file" in
-        *$'\n'*|*$'\r'*) die "refusing an attachment path with a line break" ;;
-        /*) ;;
-        *) file="$PWD/$file" ;;
-      esac
-      [ -f "$file" ] && [ -r "$file" ] || die "attachment is not a readable file: $2"
+      file=$(attach_path "$2") || exit 1
       attach="$attach$file"$'\n'
+      shift 2
+    elif [ "$rest" -eq 0 ] && [ "$1" = "--evidence-from" ]; then
+      # The evidence token of a landing line (bin/jg-evidence-lib.sh) goes through the same
+      # attachment check; a path that no longer exists is skipped with a warning so the answer still goes.
+      [ "$#" -ge 2 ] || die "--evidence-from needs a status line"
+      while IFS= read -r evidence; do
+        [ -n "$evidence" ] || continue
+        if file=$(attach_path "$evidence" 2>/dev/null); then
+          attach="$attach$file"$'\n'
+        else
+          printf 'jg-inbox: evidence skipped, not a readable file: %s\n' "$evidence" >&2
+        fi
+      done < <(jg_evidence_paths_of_line "$2")
       shift 2
     elif [ "$rest" -eq 0 ] && [ "$1" = "--option" ]; then
       [ "$#" -ge 2 ] || die "--option needs a label"
