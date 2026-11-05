@@ -282,7 +282,7 @@ def rewritten(text, rules, rules_text):
     again, _ = review(out, rules, None)
     if again:
         return None, "the rewrite still holds a banned term: " + "; ".join(again)
-    lost = [m.group(0) for m in PROTECTED.finditer(text) if m.group(0) not in out]
+    lost = [m.group(0) for m in PROTECTED.finditer(text) if m.group(0).strip("(),:;.") not in out]
     if lost:
         return None, "the rewrite lost %s" % ", ".join(lost)
     items, kept = sum(bool(ITEM.match(l)) for l in text.split("\n")), sum(bool(ITEM.match(l)) for l in out.split("\n"))
