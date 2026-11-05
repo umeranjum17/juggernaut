@@ -9,6 +9,8 @@
 #      and have the server reload it: the owner's unit file and bus.conf stay byte for byte
 #      the same, nothing restarts, and the owner's client still authenticates. A home that
 #      would push the account count past the caps is refused, naming the owner.
+#      An account taken away restarts the server, because a reload keeps its JetStream
+#      reservation, and a fixture home never reaches a real owner's accounts file.
 #   2. the JetStream limits arithmetic with 21 accounts: the generated caps cover what the
 #      21 accounts reserve plus headroom, and a real server starts on them. The 384Mb cap
 #      the incident wrote (insufficient memory resources, 10028) is refused by
@@ -118,7 +120,11 @@ stop_lab() {
 # The servers stop before the shared cleanup removes $D (and the pid files in it): a signal
 # used to remove the directory first, so the stop found no pid and the server outlived the run.
 # shellcheck disable=SC2329 # Registered by the traps below.
-lab_exit() { stop_lab; jg_test_cleanup; }
+lab_exit() {
+  stop_lab
+  [ -z "${REAL:-}" ] || rm -rf -- "$REAL"
+  jg_test_cleanup
+}
 trap lab_exit EXIT
 trap 'lab_exit; exit 130' INT
 trap 'lab_exit; exit 143' TERM
@@ -315,6 +321,80 @@ JG_BUS_HOMES="$LAB_REGISTRY" bus "$H6" install-service >/dev/null 2>&1
   || fail "a lab home was not recorded in the registry JG_BUS_HOMES named"
 [ "$(sha256sum "$OWNER_REGISTRY")" = "$registry_before" ] || fail "a lab home with its own registry still changed the machine's real one"
 pass "a lab home is refused by the machine's real registry, which stays byte-identical; the registry JG_BUS_HOMES names holds it instead"
+
+# --- 1e. an account taken away restarts the server ----------------------------------
+# A reload drops a removed account but keeps its JetStream reservation until the server
+# restarts. On a full machine the next new account was refused (10028), and that refusal
+# ended the reload before JetStream was back on the accounts it had not reached, so homes
+# that never left lost it at random. Each swap below takes one account away from a full
+# machine and adds one, and every home that stayed must keep its stream and its raises.
+rm -rf -- "$H5/state" "$H6/state" "$D/homes/registered-real/state"
+stayers() { printf '%s\t%s\n' "$H2" "$H2/state" "$H3" "$H3/state" > "$1"; }
+gone=$H4
+for i in 1 2 3 4; do
+  rm -rf -- "$gone/state"
+  gone="$D/homes/swap-$i"; make_home "$gone"
+  swap_pid=$(cat "$D/service.pid"); stayers "$D/swap-registry.$i"
+  out6=$(JG_BUS_HOMES="$D/swap-registry.$i" bus "$gone" install-service 2>&1)
+  assert_contains "$out6" "added to the shared accounts" "swap $i did not add its account: $out6"
+  ! grep -q 'insufficient' "$D/server.log" \
+    || { cat "$D/server.log"; fail "swap $i left the new account refused by a removed account's reservation"; }
+  for h in "$gone" "$H1" "$H2" "$H3" "$LEAD2"; do
+    one=$(JG_BUS_HOMES="$D/swap-registry.$i" bus "$h" ensure 2>&1)
+    assert_contains "$one" "bus: up nats://127.0.0.1:$PORT stream CAPTAIN" "$h lost JetStream in swap $i: $one"
+  done
+  [ "$(cat "$D/service.pid")" != "$swap_pid" ] || fail "swap $i took an account away without a restart"
+done
+wake "$H1" raise check swap-proof "check: the owner after four swaps" now || fail "the raise after the swaps failed"
+[ ! -s "$H1/state/.wake-bus.outbox.jsonl" ] || fail "the bus refused the raise: $(cat "$H1/state/.wake-bus.outbox.jsonl")"
+wake "$H1" ids check swap-proof | grep -q . || fail "the owner could not read its raise back"
+# The owner's own install takes the same path: its accounts shrink and the caps stay.
+rm -rf -- "$gone/state"
+swap_pid=$(cat "$D/service.pid"); conf_before=$(sha256sum "$H1/state/bus/bus.conf")
+stayers "$D/swap-registry.owner"
+JG_BUS_HOMES="$D/swap-registry.owner" bus "$H1" install-service >/dev/null 2>&1
+[ "$(sha256sum "$H1/state/bus/bus.conf")" = "$conf_before" ] || fail "the owner's install moved the caps, so it proves nothing about the accounts"
+[ "$(cat "$D/service.pid")" != "$swap_pid" ] || fail "the owner's install took an account away without a restart"
+one=$(JG_BUS_HOMES="$D/swap-registry.owner" bus "$H2" ensure 2>&1)
+assert_contains "$one" "bus: up nats://127.0.0.1:$PORT stream CAPTAIN" "a home lost JetStream in the owner's install: $one"
+pass "an account taken away restarts the server, from a join and from the owner's install: no account is refused and every home that stayed keeps JetStream"
+
+# --- 1f. a fixture never reaches a real owner's accounts file -----------------------
+# Every suite exports JG_BUS_HOMES, and a suite with no lab unit of its own reaches the
+# machine's real unit. Its list used to replace the real one, so each run rewrote the real
+# accounts file with fixture homes and reloaded the real server. The owner here stands
+# outside every temp root, as a real one does; only the checkout's ignored state directory
+# is sure to be, so a checkout under a temp root has nowhere to put it.
+case "$ROOT/" in
+  /tmp/* | /var/tmp/* | /dev/shm/* | "${TMPDIR:-/tmp}"/*)
+    echo "note: the checkout is under a temp root, so section 1f has no real-looking owner to use"
+    ;;
+  *)
+    mkdir -p "$ROOT/state"
+    REAL=$(mktemp -d "$ROOT/state/jg-bus-owner.XXXXXX") || fail "cannot create the real-looking owner"
+    OWNER="$REAL/owner"; make_home "$OWNER"; mkdir -p "$OWNER/state/bus"
+    MEMBER="$D/real-member"; make_home "$MEMBER"
+    cp "$H1/state/bus/bus.conf" "$OWNER/state/bus/bus.conf"
+    printf 'system_account: SYS\n' > "$OWNER/state/bus/accounts.conf"
+    printf '%s\t%s\n' "$MEMBER" "$MEMBER/state" > "$OWNER/state/bus/homes"
+    REAL_UNIT="jg-lab-$$-real.service"
+    printf '[Service]\nWorkingDirectory=%s\nEnvironment="JG_HOME=%s"\n' "$OWNER/state/bus" "$OWNER" \
+      > "$XDG_CONFIG_HOME/systemd/user/$REAL_UNIT"
+    real_snap() { sha256sum "$OWNER/state/bus/accounts.conf" "$OWNER/state/bus/homes" | awk '{print $1}' | tr '\n' ' '; }
+    real_before=$(real_snap); reloads_before=$(grep -c reload "$D/systemctl.log")
+    FIXTURE="$D/fixture/home"; make_home "$FIXTURE"
+    out7=$(JG_BUS_UNIT="$REAL_UNIT" JG_BUS_HOMES="$D/fixture-registry" bus "$FIXTURE" unit nats 2>&1)
+    [ "$(real_snap)" = "$real_before" ] || fail "a fixture rewrote a real owner's accounts or list: $out7"
+    assert_equals "$reloads_before" "$(grep -c reload "$D/systemctl.log")" "a fixture signalled a real owner's server"
+    assert_contains "$out7" "never added to the machine registry" "a fixture must be refused by a real owner: $out7"
+    [ ! -e "$D/fixture-registry" ] || fail "a refused fixture was still recorded"
+    # The real owner itself keeps its own list, whatever the shell it runs in exports.
+    JG_BUS_UNIT="$REAL_UNIT" JG_BUS_HOMES="$D/fixture-registry" bus "$OWNER" unit nats >/dev/null 2>&1
+    member=$(bus "$MEMBER" account | cut -f1)
+    grep -q "user: $member," "$OWNER/state/bus/accounts.conf" || fail "a real owner read another list than its own"
+    pass "a fixture is refused by a real owner, whose accounts and list stay byte-identical with no signal, and that owner keeps its own list"
+    ;;
+esac
 
 # --- 1c. status reads the service manager itself ------------------------------------
 # The probe used to call a service down unless this home had written its own pid file, so
