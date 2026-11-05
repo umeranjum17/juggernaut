@@ -187,12 +187,12 @@ type sendPart struct {
 // must not be sent is left out and named in the text, so the owner is told instead of left waiting.
 func (a *app) replyParts(ad Adapter, w where, cursor, body string, attach []string, choice bool) (parts []sendPart) {
 	lim, pics, docs, refused := ad.Out(), []LocalFile{}, []LocalFile{}, []string{}
-	for _, p := range attach {
+	for i, p := range attach {
 		switch f, why := a.vetAttachment(lim, p); {
 		case why != "":
 			refused = append(refused, why)
-		case f.Photo:
-			pics = append(pics, f)
+		case f.Photo: // a picture taller than 3:1 goes as its slices, in order (see gateway_media_split.go)
+			pics = append(pics, a.splitTall(lim, f, filepath.Join(a.sliceDir(cursor), strconv.Itoa(i)))...)
 		default:
 			docs = append(docs, f)
 		}
@@ -313,6 +313,7 @@ func (a *app) followReplies(ad Adapter) error {
 				}
 				a.recordOutboundLeg(p, id)
 			}
+			os.RemoveAll(a.sliceDir(r.Cursor)) // the slices of a tall picture are not needed once the reply is sent
 		}
 		if err := os.WriteFile(cursorFile+".tmp", []byte(r.Cursor+"\n"), 0o600); err != nil {
 			return err
