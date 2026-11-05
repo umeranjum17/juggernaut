@@ -23,7 +23,7 @@ mkhome() { # <name> <url-line|-> -> home dir
 }
 env_for() { printf 'JG_HOME=%s JG_ROOT_OVERRIDE=%s JG_STATE_OVERRIDE=%s/state JG_DATA_OVERRIDE=%s/data JG_CONFIG_OVERRIDE=%s/config' "$1" "$ROOT" "$1" "$1" "$1"; }
 # check <label> <expected> <actual>: compare without printing either (they may hold the token)
-same() { [ "$2" = "$3" ] && pass "$1" || fail "$1: output differs from the expected text"; }
+same() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1: output differs from the expected text"; fi; }
 
 good=$(mkhome good "${BOARD}?token=${TOK}#old")
 notok=$(mkhome notoken "$BOARD")
