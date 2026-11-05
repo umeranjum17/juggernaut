@@ -117,6 +117,7 @@ isolated="$TMP_ROOT/isolated"
 mkdir -p "$isolated/bin"
 cp "$INBOX_BIN" "$isolated/bin/jg-inbox.sh"
 cp "$ROOT/bin/jg-question-lib.sh" "$isolated/bin/jg-question-lib.sh"
+cp "$ROOT/bin/jg-board-link-lib.sh" "$isolated/bin/jg-board-link-lib.sh"
 chmod +x "$isolated/bin/jg-inbox.sh"
 home=$(make_home human-wake-fail)
 set +e

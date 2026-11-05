@@ -177,6 +177,9 @@ if [ -r "$SELF_DIR/jg-voice-lib.sh" ]; then
 else
   jg_voice_apply() { JG_VOICE_OUT=$2; }
 fi
+# shellcheck source=bin/jg-board-link-lib.sh
+. "$SELF_DIR/jg-board-link-lib.sh" \
+  || die "the board-link rule needs $SELF_DIR/jg-board-link-lib.sh beside this script"
 
 # First non-comment, non-blank line of a config file, or nothing.
 read_setting() {  # <file-name>
@@ -752,6 +755,9 @@ cmd_reply() {
     # The captain voice file (bin/jg-voice.py) decides: a model rewrite in plain sentences, or a refusal with the terms to fix.
     jg_voice_apply chat-reply "$body" || die "reply refused by the captain voice file; rewrite it in plain words"
     body=$JG_VOICE_OUT
+    # A bare board link gets the access token, or the reply is refused. After the voice step, so the token never reaches a model rewrite.
+    jg_board_link_fix "$body" || die "reply refused: it holds a board link without its access token"
+    body=$JG_BOARD_LINK_OUT
   fi
   jg_question_flag_reply "$body"
   mkdir -p "$REPLIES"

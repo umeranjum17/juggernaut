@@ -45,10 +45,18 @@ func (t *telegram) Limit() int { return 4096 }
 func (t *telegram) Send(ctx context.Context, out Outbound) (string, error) {
 	reply, _ := json.Marshal(map[string]any{"message_id": json.Number(out.ReplyTo), "allow_sending_without_reply": true})
 	if len(out.Files) > 0 {
+		caption, err := boardLinkText(out.Text)
+		if err != nil {
+			return "", err
+		}
+		out.Text = caption
 		return t.sendFiles(ctx, out, string(reply))
 	}
 	text, err := voiceText(out.Text)
 	if err != nil {
+		return "", err
+	}
+	if text, err = boardLinkText(text); err != nil {
 		return "", err
 	}
 	msg := map[string]any{"chat_id": json.Number(out.Chat)}
