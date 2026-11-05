@@ -86,6 +86,7 @@ plan=(
   task-priority:plain
   tickets-sync:env
   lookout-adapter:plain
+  undelivered-alert:home
 )
 
 if [ "$list" = 1 ]; then
