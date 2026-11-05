@@ -304,6 +304,10 @@ jobs:
       - name: Checks lint superseding-receipt test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-supersede-receipt.test.sh
+      # The merge holds the task control lock while the lint publishes its receipt: no deadlock, and the PR url is kept.
+      - name: Checks lint receipt-lock test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/checks-lint-receipt-lock.test.sh
       # A 305-file fixture above gh's 100-file list cap and 300-file diff cap; no real PRs are changed.
       - name: Checks lint big-PR size test
         if: ${{ !cancelled() }}

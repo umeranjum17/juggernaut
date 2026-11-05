@@ -847,6 +847,7 @@ test_merge_runs_the_evidence_lint_itself() {
   cat > "$lint" <<'LINT'
 #!/usr/bin/env bash
 printf 'lint-args: %s %s\n' "$1" "$2" >> "$(dirname "$0")/lint.log"
+printf 'lint-lock: held_by=%s owner=%s\n' "${JG_CONTROL_LOCK_HELD_BY-}" "$(cat "$JG_STATE_OVERRIDE/.control-task-x1.lock/pid" 2>/dev/null)" >> "$(dirname "$0")/lint.log"
 if [ -e "$(dirname "$0")/lint-fail" ]; then echo "checks-lint: FAIL: evidence file missing"; exit 1; fi
 echo "checks-lint: PASS"
 LINT
@@ -874,6 +875,13 @@ LINT
   assert_grep 'checks-lint: PASS' "$case_dir/stdout" "lint-passes: the lint line was not printed"
   assert_grep "lint-args: https://github.com/example/repo/pull/31 $case_dir/home/data/task-x1" "$case_dir/lint.log" \
     "lint-passes: the lint was not run over data/<task>"
+  # The merge holds the task control lock while the lint runs; the lint's receipt write needs that lock, so
+  # the lint is told who holds it (jg-run-receipt.sh checks the lock's owner) rather than waiting on it.
+  held=$(sed -n 's/^lint-lock: held_by=\([0-9]*\) owner=.*/\1/p' "$case_dir/lint.log" | tail -n 1)
+  owner=$(sed -n 's/^lint-lock: held_by=[0-9]* owner=\([0-9]*\)$/\1/p' "$case_dir/lint.log" | tail -n 1)
+  if [ -z "$held" ] || [ "$held" != "$owner" ]; then
+    fail "lint-passes: the lint was not told the control-lock holder (held_by=[$held] owner=[$owner])"
+  fi
   assert_logged_gh_merge "$case_dir" 31 example/repo --squash
   printf 'lint PASS run (exit %s): %s | forge call: %s\n' "$rc" "$(cat "$case_dir/stdout")" "$(grep 'pr merge' "$case_dir/gh.log")"
   pass "jg-pr-merge runs the evidence lint itself: FAIL refuses, PASS merges in one call"

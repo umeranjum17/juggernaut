@@ -127,7 +127,7 @@ for meta in "$JG_HOME"/state/*.meta; do
     report=$(mktemp) || exit 1
     printf 'checks-lint %s %s head %s: %s\n' "$receipt_verdict" "$source" "$head" "${why:-$out}" > "$report"
     worktree=$(awk -F= '$1 == "worktree" { value = $2 } END { print value }' "$meta")
-    receipt=$(env JG_HOME="$JG_HOME" "$helper" "$task" "$receipt_verdict" "$report" "${worktree:-$JG_HOME}" 2>&1); receipt_rc=$?
+    receipt=$(env JG_HOME="$JG_HOME" JG_RECEIPT_PR="$source" "$helper" "$task" "$receipt_verdict" "$report" "${worktree:-$JG_HOME}" 2>&1); receipt_rc=$?
     [ "$receipt_rc" -eq 0 ] || echo "checks-lint: receipt not published: ${receipt:-jg-run-receipt.sh failed}" >&2
     rm -f -- "$report"
   fi

@@ -6,6 +6,10 @@
 # limitations; it is embedded in the receipt, not stored as a temporary pointer.
 # bin/jg-dod-lib.sh owns the schema, compatibility and acceptance contract.
 # The existing task control lock serializes publication with guarded landing.
+# A caller that already holds that lock and is waiting on this call (the guarded
+# PR merge running the evidence lint) names its pid in JG_CONTROL_LOCK_HELD_BY;
+# the lock is then not re-taken, but only while the lock's recorded owner is
+# that live pid, so every other writer is still excluded.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -47,12 +51,21 @@ META="$STATE/$ID.meta"
 command -v jq >/dev/null || { echo 'error: jq required for completion receipts' >&2; exit 1; }
 LOCK="$STATE/.control-$ID.lock"
 TMP=
+LOCK_TAKEN=false
+held_by=${JG_CONTROL_LOCK_HELD_BY-}
+unset JG_CONTROL_LOCK_HELD_BY
 cleanup() {
   [ -z "$TMP" ] || rm -f -- "$TMP"
-  jg_lock_release "$LOCK" || true
+  [ "$LOCK_TAKEN" != true ] || jg_lock_release "$LOCK" || true
 }
-jg_lock_acquire_wait "$LOCK"
 trap cleanup EXIT
+if [ -n "$held_by" ] && jg_pid_alive "$held_by" \
+  && [ "$(cat "$LOCK/pid" 2>/dev/null || true)" = "$held_by" ]; then
+  :
+else
+  jg_lock_acquire_wait "$LOCK"
+  LOCK_TAKEN=true
+fi
 if ! jg_backlog_meta_spawn_gen_optional "$META" "$STATE"; then
   echo "error: $JG_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
