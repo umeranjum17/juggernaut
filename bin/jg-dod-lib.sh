@@ -611,6 +611,19 @@ jg_dod_note_reports_published_change() {  # <note>
   return 1
 }
 
+# 0 when a Recon's done passes bin/jg-recon-gate.sh (or the gate has nothing to
+# judge: quick, a legacy brief, no task directory). 1 when it refuses; stdout then
+# holds a one-line reason and no other output.
+jg_dod_recon_gate_refusal() {  # <task-id>
+  local gate out rc
+  gate="$(dirname "${BASH_SOURCE[0]}")/jg-recon-gate.sh"
+  [ -f "$gate" ] || return 0
+  out=$( [ -z "${JG_HOME:-}" ] || export JG_HOME; bash "$gate" "$1" 2>&1 >/dev/null ); rc=$?
+  [ "$rc" -eq 1 ] || return 0
+  printf 'recon gate refused the done: %s\n' "$(printf '%s' "$out" | sed 's/^jg-recon-gate: refused: //' | paste -sd';' - | sed 's/;/; /g')"
+  return 1
+}
+
 # 0 when this ship done: is one the named-head gate must accept or refuse.
 # no-mistakes pre-validation done: is the pipeline handoff and is not gated.
 # Empty mode is treated as no-mistakes, the unregistered-project default.
@@ -885,6 +898,12 @@ jg_dod_pr_checks_clear() {  # <worktree> <pr-url>
 # candidate. The receipts feature (jg_receipts_accept_done) uses the head it is given.
 jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta> <run-output> [<forge-head>]]
   local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} run_out=${9:-} forge_head=${10:-} url sha gerrit recorded_head design_head
+  # A standard or deep Recon's done is accepted only past bin/jg-recon-gate.sh;
+  # a quick Recon, a legacy brief and a ship are not its subject.
+  if [ "$kind" = scout ] && [ -n "$id" ] && [ "$(status_line_verb "$line")" = "done" ]; then
+    jg_dod_recon_gate_refusal "$id" || return 1
+    return 0
+  fi
   jg_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   # The captain's first-draft rule (bin/jg-merge-gate-lib.sh owns it): a design task
   # reaches done only when its completion receipt names a first-draft record that made
