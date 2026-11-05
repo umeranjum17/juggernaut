@@ -17,6 +17,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-fleet-snapshot.sh`   | Print structured fleet snapshot JSON and refresh only its parent-side remote-ledger cache (schema `jg-fleet-snapshot.v1`) |
 | `jg-home-summary-refresh.sh` | Atomically publish this home's structured summary ledger                         |
 | `jg-whats-left.sh` | Render the standing view of what is left (`state/whats-left.md`) from the backlog, status and holds; refreshed on every summary publication |
+| `jg-owner-asks.sh` | List the owner's open asks in his own words, grouped Needs you / Not done / Done (verified), from every home's `[captain-ask]` tickets and captain holds; `--json` for the board; the Telegram `/status` reply and `jg-captain-say.sh --asks` use it |
 | `jg-fleet-ledger.sh`     | Append the opt-in fleet activity ledger's records ([contract](fleet-ledger.md))      |
 | `jg-comms-feed.sh`       | Export every fleet message across Main and its Squad Lead homes as one read-only, live, append-only JSONL feed for a channel-style reader |
 | `jg-chat.sh`            | The one owner of the fleet chat store: one JSONL record per message with its thread (`#fleet`, a lead, or a worker task), its sender and kind, and a captain message's own status; written at the call site that already records the steer, the status line or the wake |

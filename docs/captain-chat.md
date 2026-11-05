@@ -61,6 +61,7 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   A chat with several open notes gets one indicator. A refused action is logged once and never stops the note or its reply.
   A restarted gateway does not show it again for notes filed before the restart.
 - A message that is only `/status` is answered by the gateway itself, threaded on it: the owner, the answers sent and that the bot is answering. It files no note and wakes no one. It is the only command.
+  The reply ends with the owner's open asks in his own words, grouped Needs you / Not done / Done (verified), from `bin/jg-owner-asks.sh`, which builds them from the records with no model. Done needs a recorded release that runs; a merge alone is Not done.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
 - The owner can send a photo, document, voice note, audio, video or round video note. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
@@ -93,6 +94,7 @@ The same event is in `state/captain-channel.jsonl`, and a bus that refuses it fa
 The script refuses, with exit 1 and the reason on stderr, text that holds a secret, text that is a raw status line, and text that the captain-facing rules reject (an internal id, a path or jargon, or no short first line).
 `bin/jg-captain-card-lib.sh` owns those rules, and `AGENTS.md` section 9 owns the words.
 Exit 2 is a usage error.
+`--asks` appends the same owner-asks block under the text, so a status push lists what is left. Only the text above the block goes through the message rules; the whole message still goes through the secret check.
 `tests/jg-captain-say-chat.test.sh` runs the whole path with a real Dapr sidecar, a real NATS server and a fake Bot API.
 
 ## Pushes to the owner

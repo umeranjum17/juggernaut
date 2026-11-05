@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jg-captain-say.sh - Main posts its own turn summary to the captain's chat.
 #
-# Usage: jg-captain-say.sh [--key <slug>] [--link <url>] <text...>
+# Usage: jg-captain-say.sh [--key <slug>] [--link <url>] [--asks] <text...>
 #        printf '%s\n' "<text>" | jg-captain-say.sh [--key <slug>] [--link <url>]
 #
 # The summary is published as a captain-facing `summary` event (bin/jg-bus.sh publish), so it takes
@@ -14,19 +14,24 @@
 #     first line that is not one short line of outcome (AGENTS.md section 9 owns the words).
 # A URL is a public link and passes, so a PR is named by its full https URL. --key only names the
 # event in the record (default main-summary); the chat shows the text and the link, not the key.
+# --asks appends the owner's asks, in his words (bin/jg-owner-asks.sh: Needs you / Not done / Done),
+# under the text, so every status update lists what is left. That block is built from the
+# records with no model, so only the text above it goes through the message layer; the whole
+# message still goes through the secret check.
 # Exit: 0 published (or the channel is off), 1 refused, 2 usage.
 set -u
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
 # shellcheck source=bin/jg-captain-card-lib.sh
 . "$SCRIPT_DIR/jg-captain-card-lib.sh"
 
-usage() { printf 'usage: jg-captain-say.sh [--key <slug>] [--link <url>] <text...>   (or the text on stdin)\n' >&2; exit 2; }
+usage() { printf 'usage: jg-captain-say.sh [--key <slug>] [--link <url>] [--asks] <text...>   (or the text on stdin)\n' >&2; exit 2; }
 
-KEY=main-summary LINK=''
+KEY=main-summary LINK='' ASKS=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --key) [ "$#" -ge 2 ] && [ -n "$2" ] || usage; KEY=$2; shift 2 ;;
     --link) [ "$#" -ge 2 ] && [ -n "$2" ] || usage; LINK=$2; shift 2 ;;
+    --asks) ASKS=1; shift ;;
     --) shift; break ;;
     -*) usage ;;
     *) break ;;
@@ -38,7 +43,12 @@ TEXT=$(printf '%s' "$TEXT" | sed -e 's/[[:space:]]*$//')
 
 refuse() { printf 'jg-captain-say: refused: %s\n' "$1" >&2; exit 1; }
 
-if printf '%s\n' "$TEXT" | grep -qE '[0-9]{6,}:[A-Za-z0-9_-]{30,}|(^|[^A-Za-z0-9])(sk|ghp|gho|ghs|github_pat|xox[abp]|AKIA)[-_A-Za-z0-9]{16,}|[Bb]earer[[:space:]]+[A-Za-z0-9._~+/=-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY|(token|secret|password|passwd|api[_-]?key)[[:space:]]*[=:][[:space:]]*[^[:space:]]{8,}'; then
+ASKS_TEXT=''
+if [ "$ASKS" = 1 ]; then
+  ASKS_TEXT=$("$SCRIPT_DIR/jg-owner-asks.sh") || refuse 'the owner asks could not be built; send the text without --asks or fix the read'
+fi
+
+if printf '%s\n' "$TEXT${ASKS_TEXT:+$'\n\n'$ASKS_TEXT}" | grep -qE '[0-9]{6,}:[A-Za-z0-9_-]{30,}|(^|[^A-Za-z0-9])(sk|ghp|gho|ghs|github_pat|xox[abp]|AKIA)[-_A-Za-z0-9]{16,}|[Bb]earer[[:space:]]+[A-Za-z0-9._~+/=-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY|(token|secret|password|passwd|api[_-]?key)[[:space:]]*[=:][[:space:]]*[^[:space:]]{8,}'; then
   refuse 'the text holds a secret (a token, key or password); say what happened and keep the secret out'
 fi
 if printf '%s\n' "$TEXT" | grep -qE '^[[:space:]]*(working|done|blocked|paused|failed|needs-decision|resolved)[[:space:]]+\[(at|key)='; then
@@ -48,6 +58,7 @@ if why=$(jg_captain_card_refusal message "$TEXT" 0); then :; else
   refuse "${why#refused: }"
 fi
 
+[ -z "$ASKS_TEXT" ] || TEXT="$TEXT"$'\n\n'"$ASKS_TEXT"
 args=(publish summary "$KEY" "$TEXT")
 [ -z "$LINK" ] || args+=(--link "$LINK")
 exec "$SCRIPT_DIR/jg-bus.sh" "${args[@]}"
