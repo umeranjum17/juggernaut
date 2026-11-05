@@ -17,12 +17,16 @@
 # What a sweep may remove, all directly under DIR (default /tmp, JG_TMP_ROOT):
 #   - an entry named tmp.*, crewhouse-*, or claude-accounts.* (file or directory);
 #   - an entry directly inside a container named claude-<digits> (per-home agent
-#     scratch) or opencode; the container itself is never removed.
+#     scratch) or opencode; the container itself is never removed;
+#   - a session folder directly inside a project folder of a claude-<digits>
+#     container (claude-1000/<project>/<session>), when the project folder itself
+#     is kept only because a live process or recent change touches it. A project
+#     folder kept as a live lane's is never entered. The project folder stays.
 # Anything else is never touched and is only counted by name prefix.
 # An allowlisted entry is kept unless every one of these holds:
 #   - it is a real file or directory (never a symlink) owned by this user;
 #   - nothing in its tree, including itself, changed in the last N days
-#     (default 2, JG_TMP_SWEEP_MIN_AGE_DAYS);
+#     (default 1, JG_TMP_SWEEP_MIN_AGE_DAYS);
 #   - no live process has it as a cwd, an open file, a command-line argument or
 #     an environment value, or inside any of those (read from /proc);
 #   - no live lane owns it: no state/*.meta of JG_HOME (when set) names its
@@ -38,9 +42,9 @@ set -u
 
 ROOT=${JG_TMP_ROOT:-/tmp}
 WARN_PCT=${JG_TMP_WARN_PCT:-80}
-MIN_AGE_DAYS=${JG_TMP_SWEEP_MIN_AGE_DAYS:-2}
+MIN_AGE_DAYS=${JG_TMP_SWEEP_MIN_AGE_DAYS:-1}
 
-usage() { sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 die() { echo "jg-tmp-sweep: $*" >&2; exit "${2:-2}"; }
 
 MODE=${1:-}
@@ -111,7 +115,7 @@ LIVE_KEYS=$(
       } 2>/dev/null
     done
     [ -z "${JG_HOME:-}" ] || cat "$JG_HOME"/state/*.scratch 2>/dev/null
-  } | sed 's/ (deleted)$//' | awk -v r="$ROOT/" 'index($0, r) == 1 { n = split(substr($0, length(r) + 1), c, "/"); print c[1]; if (n > 1) print c[1] "/" c[2] }' | sort -u
+  } | sed 's/ (deleted)$//' | awk -v r="$ROOT/" 'index($0, r) == 1 { n = split(substr($0, length(r) + 1), c, "/"); print c[1]; if (n > 1) print c[1] "/" c[2]; if (n > 2) print c[1] "/" c[2] "/" c[3] }' | sort -u
 )
 
 # Lane tokens: a task id or worktree path that, as an entry-name part, marks the entry as a lane's.
@@ -203,11 +207,20 @@ while IFS= read -r -d '' entry; do
   esac
 done < <(old_entries "$ROOT")
 # A container is never removed itself, however old; only its old children are.
+# A project folder of a claude-<digits> container that is still there is entered
+# whatever its own age: its old, unused session folders go and the project folder
+# stays. A lane's project folder, a symlink and a foreign one are not entered.
 while IFS= read -r container; do
   [ -n "$container" ] || continue
   while IFS= read -r -d '' child; do
     CONSIDERED=$((CONSIDERED + 1)); consider "$child"
   done < <(old_entries "$container")
+  case "${container##*/}" in claude-[0-9]*) ;; *) continue ;; esac
+  for child in "$container"/* "$container"/.[!.]*; do
+    [ -d "$child" ] && [ ! -L "$child" ] && [ -O "$child" ] || continue
+    case "$(keep_reason "$child")" in live-lane) continue ;; esac
+    while IFS= read -r -d '' session; do consider "$session"; done < <(old_entries "$child")
+  done
 done <<EOF
 $CONTAINERS
 EOF
