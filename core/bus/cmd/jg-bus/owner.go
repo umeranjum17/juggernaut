@@ -85,11 +85,14 @@ func registryFile(runtime string) string {
 	return filepath.Join(runtime, "homes")
 }
 
+// tempRoots are the system locations a throw-away home lives under; a test names its own.
+var tempRoots = func() []string { return []string{os.TempDir(), "/tmp", "/var/tmp", "/dev/shm"} }
+
 // labHome is THE decision on whether a home may enter a machine's real registry: a
 // throw-away home - one under a system temp root, or inside the checkout running this
 // command - is a test fixture, never a member. It names the root that matched.
 func labHome(home, root string) (string, bool) {
-	for _, temp := range []string{os.TempDir(), "/tmp", "/var/tmp", "/dev/shm"} {
+	for _, temp := range tempRoots() {
 		if temp != "" && withinHome(home, temp) {
 			return resolveHome(temp), true
 		}

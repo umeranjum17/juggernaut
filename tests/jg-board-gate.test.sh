@@ -54,13 +54,14 @@ case "$cmd" in
 esac
 SH
   chmod +x "$d/fakebin/sign-off-axi"
+  printf 'set mode off\n' > "$d/channel-off" # the cards raised here stay off the machine's shared bus
   printf '%s\n' "$d"
 }
 
 with_env() {  # <case dir> <command...>
   local d=$1
   shift
-  env PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" \
+  env JG_CAPTAIN_CHANNEL="$d/channel-off" PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" \
     SIGN_OFF_HOME="$d/so" SIGNOFF_LOG="$d/signoff.log" JG_BOARD_GATE_NOW="$NOW" \
     JG_BOARD_GATE_REFIRE_SECS=0 "$@"
 }
