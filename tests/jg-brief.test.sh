@@ -1918,3 +1918,51 @@ test_delivery_risk_reason() {
 }
 test_delivery_risk_reason
 test_preferred_stack_is_advice_never_a_gate
+
+# Recon depth (--depth quick|standard|deep). Quick is today's scout brief byte
+# for byte, enforced against a golden captured before the flag existed.
+# Standard is the default and, with deep, adds the depth section that names the
+# evidence files and the gate. The flag is refused on a ship and a charter.
+test_scout_depth_levels() {
+  local home golden out status id
+  home="$TMP_ROOT/depth-home"
+  mkdir -p "$home/data"
+  golden="$ROOT/tests/fixtures/scout-brief-quick.golden.md"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" gold-scout some-proj --scout --depth quick >/dev/null 2>&1 \
+    || fail "--scout --depth quick should scaffold"
+  # shellcheck disable=SC2016 # The sed program holds literal placeholders.
+  sed -e "s#$home#@HOME@#g" -e "s#$ROOT#@ROOT@#g" "$home/data/gold-scout/brief.md" > "$TMP_ROOT/quick.normalized.md"
+  cmp -s "$TMP_ROOT/quick.normalized.md" "$golden" \
+    || fail "a quick Recon brief drifted from the pre-depth golden: $(diff "$golden" "$TMP_ROOT/quick.normalized.md" | head -5)"
+
+  for id in depth-default depth-standard depth-deep; do
+    case "$id" in
+      depth-default) JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --scout >/dev/null 2>&1 ;;
+      depth-standard) JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --scout --depth=standard >/dev/null 2>&1 ;;
+      depth-deep) JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --scout --depth deep >/dev/null 2>&1 ;;
+    esac || fail "$id: scaffold failed"
+    assert_grep "# Recon depth" "$home/data/$id/brief.md" "$id: brief has no depth section"
+    assert_grep "deep-recon/SKILL.md" "$home/data/$id/brief.md" "$id: brief does not name the deep-recon skill"
+    assert_grep "jg-recon-gate.sh $id" "$home/data/$id/brief.md" "$id: brief does not name the gate"
+    assert_grep "# Definition of done" "$home/data/$id/brief.md" "$id: depth section displaced the definition of done"
+  done
+  assert_grep "Recon depth: standard" "$home/data/depth-default/brief.md" "absent --depth did not default to standard"
+  assert_grep "Recon depth: standard" "$home/data/depth-standard/brief.md" "--depth=standard was not recorded"
+  assert_grep "Recon depth: deep" "$home/data/depth-deep/brief.md" "--depth deep was not recorded"
+  assert_grep "Write \`critic.md\` yourself" "$home/data/depth-standard/brief.md" "standard brief does not make the researcher write the critic round"
+  assert_no_grep "separate critic" "$home/data/depth-standard/brief.md" "standard brief asks for a separate critic worker"
+  assert_grep "separate critic" "$home/data/depth-deep/brief.md" "deep brief does not hand the critic to a separate worker"
+  assert_no_grep "Recon depth:" "$home/data/gold-scout/brief.md" "quick brief carries a depth line"
+
+  out=$(JG_HOME="$home" "$ROOT/bin/jg-brief.sh" depth-bad some-proj --scout --depth thorough 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "an unknown --depth value was accepted"
+  assert_contains "$out" "must be one of quick, standard, deep" "unknown depth refusal did not list the levels"
+  assert_absent "$home/data/depth-bad/brief.md" "refused depth scaffold wrote a brief"
+  out=$(JG_HOME="$home" "$ROOT/bin/jg-brief.sh" depth-ship some-proj --mode direct-PR --depth deep 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "a ship brief accepted --depth"
+  assert_contains "$out" "applies only to --scout briefs" "ship depth refusal did not explain why"
+  out=$(JG_HOME="$home" "$ROOT/bin/jg-brief.sh" depth-lead --squad-lead --no-projects --depth deep 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "a squad lead charter accepted --depth"
+  pass "jg-brief.sh: --depth keeps quick byte-identical, defaults to standard, and adds the deep stages only for deep"
+}
+test_scout_depth_levels

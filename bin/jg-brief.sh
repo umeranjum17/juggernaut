@@ -15,7 +15,7 @@
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
 # Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
-#        jg-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
+#        jg-brief.sh <task-id> <repo-name> --scout [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
 #   --medium names the project's medium at intake, so the brief can carry this
 #   home's stack advice from config/preferred-stack.json. It is a recommendation,
@@ -24,6 +24,12 @@
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
 #   A visual deliverable goes on a sign-off board report, never a retired review
 #   surface, and the report carries the sign-off report link only.
+#   --depth <quick|standard|deep> sets how deep a scout goes (scout only; refused on a ship
+#   and on --squad-lead). Standard is the default when the flag is absent. quick writes the
+#   plain scout contract with nothing added. standard and deep add a `# Recon depth` section
+#   that names the level, the evidence files under data/<task-id>/, and bin/jg-recon-gate.sh,
+#   which refuses `done` for them. deep adds the seven stages and a separate critic worker.
+#   The .agents/skills/deep-recon skill owns the stages, budgets, and rubric.
 #   --squad-lead writes a persistent squad_lead charter. The project list
 #   is cloned into the squad_lead home, while the natural-language scope
 #   tells the main juggernaut when to route work there; routine churn stays in its own home;
@@ -290,6 +296,8 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 case "$CONFIG" in /*) ;; *) CONFIG="$PWD/$CONFIG" ;; esac
 KIND=ship
 HERDR_LAB=0
+DEPTH=
+DEPTH_SET=0
 NO_PROJECTS=0
 MODE=
 MODE_SET=0
@@ -344,6 +352,7 @@ for a in "$@"; do
       demo-reason) DEMO_REASON=$a ;;
       ui-change) UI_CHANGE=$a ;;
       risk) RISK=$a; RISK_SET=1 ;;
+      depth) DEPTH=$a; DEPTH_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -388,6 +397,8 @@ for a in "$@"; do
     --ui-change=*) UI_CHANGE=${a#--ui-change=} ;;
     --risk) want_value=risk ;;
     --risk=*) RISK=${a#--risk=}; RISK_SET=1 ;;
+    --depth) want_value=depth ;;
+    --depth=*) DEPTH=${a#--depth=}; DEPTH_SET=1 ;;
     # yolo never reaches the worker: it is juggernaut's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -432,6 +443,19 @@ if [ "$KIND" = ship ]; then
   fi
 elif [ "$RISK_SET" -eq 1 ]; then
   echo "error: --risk applies only to ship briefs; a scout delivers a report and a squad_lead charter is not a delivery contract" >&2
+  exit 1
+fi
+
+# A Recon's depth is a scout-only choice. Absent means standard; quick is the
+# plain scout contract and the other two add the depth section below.
+if [ "$KIND" = scout ]; then
+  [ "$DEPTH_SET" -eq 1 ] || DEPTH=standard
+  case "$DEPTH" in
+    quick|standard|deep) ;;
+    *) echo "error: --depth must be one of quick, standard, deep (got '$DEPTH')" >&2; exit 1 ;;
+  esac
+elif [ "$DEPTH_SET" -eq 1 ]; then
+  echo "error: --depth applies only to --scout briefs; a ship delivers a PR and a squad_lead charter is not a Recon" >&2
   exit 1
 fi
 
@@ -917,6 +941,27 @@ Critical-path override: $OFF_CRITICAL_PATH"
 
 if [ "$KIND" = scout ]; then
 SIGNOFF_LINE='A visual deliverable goes on a sign-off board report, never a retired review surface: publish or update it with sign-off-axi and return the sign-off report link only, in the report and in your done line.'
+DEPTH_SECTION=
+if [ "$DEPTH" != quick ]; then
+  DEPTH_SECTION="# Recon depth
+Recon depth: $DEPTH
+Read and follow \`$JG_ROOT/.agents/skills/deep-recon/SKILL.md\` for the stages, the source budget, the stop rules and the 13-section report template.
+Keep every stage file under \`$DATA/$ID/\`: \`brief-research.md\`, \`outline.md\`, \`sources.jsonl\`, \`claims.jsonl\`, \`checks.jsonl\`, \`critic.md\` and \`report.md\`.
+Before reporting done, run \`$JG_ROOT/bin/jg-recon-gate.sh $ID\` until it prints PASS; it refuses a \`done\` that skips the template, an unverified load-bearing claim, the critic or the source budget.
+"
+  if [ "$DEPTH" = deep ]; then
+    DEPTH_SECTION="${DEPTH_SECTION}This is a deep Recon: you are the one researcher.
+After your draft report is complete, append \`needs-decision [at=<epoch>]: draft ready for the separate critic\` to the status file and stop; juggernaut dispatches one separate critic worker, and its \`critic.md\` is installed beside your report.
+Never write \`critic.md\` yourself for a deep Recon; the gate refuses a critic that is you.
+Close every gap the critic finds, then run the gate again.
+"
+  else
+    DEPTH_SECTION="${DEPTH_SECTION}Write \`critic.md\` yourself: one round that reads the draft as a hostile reviewer, lists the gaps it found, and carries a \`Round 1: new gaps 0\` line once they are closed.
+"
+  fi
+  DEPTH_SECTION="$DEPTH_SECTION
+"
+fi
 cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
@@ -955,7 +1000,7 @@ $SHARED_INFRA_RULE
 
 $WAIT_BLOCK$INBOX_SECTION
 
-# Definition of done
+${DEPTH_SECTION}# Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
 The report's first section is \`## 1. Answer (five lines)\`: the answer to the owner's ask, in short plain sentences, with the evidence below it.
