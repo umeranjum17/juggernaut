@@ -76,3 +76,7 @@ pass 'a plan using a dependency must name its port module and adapter'
 
 bash "$check" --root "$here" --all >"$tmp/out.log" 2>&1 || { cat "$tmp/out.log" >&2; no 'the real tree has an unlisted client use'; }
 pass 'the real tree has no client use outside an adapter or the legacy list'
+
+# The done-done journey journeys/ports-adapter-refusal.sh replays the same refusal against a real clone.
+[ -x "$here/journeys/ports-adapter-refusal.sh" ] || no 'journeys/ports-adapter-refusal.sh is missing or not executable'
+pass 'the ports-adapter-refusal journey is present'
