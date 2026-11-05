@@ -37,8 +37,10 @@ case $SHA in
 esac
 
 export CHROME_DEVTOOLS_AXI_SESSION="oxbs-${SLUG}-${PULL}"
-cleanup() { chrome-devtools-axi stop >/dev/null 2>&1 || true; }
+cleanup() { timeout 20 chrome-devtools-axi stop >/dev/null 2>&1 || true; }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 log() { printf '%s\n' "$*" | tee -a "$LOG"; }
 fail() { log "FAIL: $*"; exit 1; }
