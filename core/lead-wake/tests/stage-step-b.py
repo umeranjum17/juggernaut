@@ -30,6 +30,10 @@ for a, b in ring:
 t = t.replace('\nwhile :; do\n', '\n' + src + 'while :; do\n', 1)
 p.write_text(t)
 p = bin_ / 'jg-config-inherit-lib.sh'
-t = p.read_text().replace(' lane-target}"', '}"')
+t = p.read_text()
+# Drop the lane-target token wherever it sits in the declared list: another item
+# appended after it (tool-models.json) must not leave it behind.
+t, n = re.subn(r'^(JG_INHERITABLE_CONFIG=.*?) lane-target((?: [^ "}]+)*\}")', r'\1\2', t, count=1, flags=re.M)
+assert n == 1, 'lane-target not found in JG_INHERITABLE_CONFIG'
 t = re.sub(r'^(JG_INHERITABLE_CONFIG=.*\n)', r'\1[ ! -r "${JG_ADDONS_DIR:-${JG_HOME:-}/projects/juggernaut-addons}/lead-wake/bin/jg-lead-wake-inherit.sh" ] || . "${JG_ADDONS_DIR:-${JG_HOME:-}/projects/juggernaut-addons}/lead-wake/bin/jg-lead-wake-inherit.sh"\n', t, count=1, flags=re.M)
 p.write_text(t)
