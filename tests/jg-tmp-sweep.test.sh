@@ -30,13 +30,17 @@ OLD=$(( $(date +%s) - 5 * 86400 ))
 old() { jg_touch_epoch "$OLD" -h "$@"; }
 
 # Stale and allowlisted: the sweep must remove these.
-mkdir -p "$R/tmp.old/sub" "$R/crewhouse-apply.old" "$R/claude-1000/-slug-gone" "$R/opencode"
+mkdir -p "$R/tmp.old/sub" "$R/crewhouse-apply.old" "$R/claude-1000/-slug-gone" "$R/opencode" \
+  "$R/claude-1000/-slug-busy/sess-ended" "$R/claude-1000/-slug-busy/sess-live" "$R/claude-1000/-slug-busy/sess-new" \
+  "$R/claude-1000/-fake-wt-lane-alpha/sess-ended"
 touch "$R/tmp.old/sub/f" "$R/tmp.oldfile" "$R/claude-accounts.old" "$R/claude-1000/old.png" "$R/opencode/old.log"
 ln -s "$OUTSIDE" "$R/tmp.old/link-out"
 mkdir -p "$R/tmp.old/locked" && touch "$R/tmp.old/locked/hook" && chmod 500 "$R/tmp.old/locked/hook" "$R/tmp.old/locked"
 # Kept: fresh, recent inside, live, lane-owned, symlink, and off-allowlist.
 mkdir -p "$R/tmp.fresh" "$R/tmp.newinside" "$R/tmp.livecwd" "$R/tmp.livefd" \
   "$R/claude-1000/-fake-wt-lane-alpha" "$R/claude-1000/-slug-fresh" "$R/plan-old"
+touch "$R/claude-1000/-slug-busy/sess-ended/f" "$R/claude-1000/-slug-busy/sess-live/f" "$R/claude-1000/-slug-busy/sess-new/f" \
+  "$R/claude-1000/-fake-wt-lane-alpha/sess-ended/f"
 touch "$R/tmp.newinside/new" "$R/tmp.livefd/held" "$R/plan-old/f"
 ln -s "$OUTSIDE" "$R/tmp.oldlink"
 printf 'worktree=/fake/wt/lane-alpha\nkind=ship\n' >"$H/state/lane-alpha.meta"
@@ -44,18 +48,24 @@ printf 'worktree=/fake/wt/lane-alpha\nkind=ship\n' >"$H/state/lane-alpha.meta"
 # Age everything stale last, so creating children above cannot refresh a parent.
 for p in tmp.old/locked/hook tmp.old/locked tmp.old/sub/f tmp.old/link-out tmp.old/sub tmp.old tmp.oldfile tmp.oldlink crewhouse-apply.old \
   claude-accounts.old claude-1000/old.png claude-1000/-slug-gone claude-1000/-fake-wt-lane-alpha \
-  opencode/old.log tmp.livecwd tmp.livefd/held tmp.livefd plan-old/f plan-old; do
+  opencode/old.log claude-1000/-slug-busy/sess-ended/f claude-1000/-slug-busy/sess-ended claude-1000/-slug-busy/sess-live/f \
+  claude-1000/-slug-busy/sess-live claude-1000/-fake-wt-lane-alpha/sess-ended/f claude-1000/-fake-wt-lane-alpha/sess-ended \
+  tmp.livecwd tmp.livefd/held tmp.livefd plan-old/f plan-old; do
   old "$R/$p"
 done
-old "$R/claude-1000" "$R/opencode"
+old "$R/claude-1000/-slug-busy" "$R/claude-1000" "$R/opencode"
+# sess-new is made fresh after aging: a project with a recent session is still entered.
+touch "$R/claude-1000/-slug-busy/sess-new/f"
 
 ( cd "$R/tmp.livecwd" && exec sleep 600 ) & LIVE_PIDS="$LIVE_PIDS $!"
 ( exec 9<"$R/tmp.livefd/held"; exec sleep 600 ) & LIVE_PIDS="$LIVE_PIDS $!"
+( cd "$R/claude-1000/-slug-busy/sess-live" && exec sleep 600 ) & LIVE_PIDS="$LIVE_PIDS $!"
 sleep 1
 
 survivors="tmp.fresh tmp.newinside tmp.livecwd tmp.livefd tmp.oldlink plan-old claude-1000 opencode
-claude-1000/-fake-wt-lane-alpha claude-1000/-slug-fresh"
-removed="tmp.old tmp.oldfile crewhouse-apply.old claude-accounts.old claude-1000/old.png claude-1000/-slug-gone opencode/old.log"
+claude-1000/-fake-wt-lane-alpha claude-1000/-slug-fresh
+claude-1000/-slug-busy claude-1000/-slug-busy/sess-live claude-1000/-slug-busy/sess-new claude-1000/-fake-wt-lane-alpha/sess-ended"
+removed="tmp.old tmp.oldfile crewhouse-apply.old claude-accounts.old claude-1000/old.png claude-1000/-slug-gone opencode/old.log claude-1000/-slug-busy/sess-ended"
 
 # --- dry run: lists, removes nothing ---------------------------------------
 dry=$(JG_HOME=$H "$SWEEP" sweep --root "$R" 2>&1) || fail "dry run exited nonzero: $dry"
@@ -63,7 +73,7 @@ for p in $removed; do
   printf '%s\n' "$dry" | grep -Fx -- "would remove $R/$p" >/dev/null || fail "dry run lists stale $p"
   assert_present "$R/$p" "dry run must not remove $p"
 done
-assert_contains "$dry" "would remove 7 entries" "dry run counts exactly the seven stale entries"
+assert_contains "$dry" "would remove 8 entries" "dry run counts exactly the eight stale entries"
 for p in $survivors; do
   ! printf '%s\n' "$dry" | grep -Fx -- "would remove $R/$p" >/dev/null || fail "dry run must not list $p"
 done
@@ -75,8 +85,8 @@ out=$(JG_HOME=$H "$SWEEP" sweep --apply --root "$R" 2>&1) || fail "sweep exited 
 for p in $removed; do assert_absent "$R/$p" "sweep removes stale $p"; done
 for p in $survivors; do assert_present "$R/$p" "sweep keeps $p"; done
 assert_present "$OUTSIDE/keep.txt" "sweep never follows a symlink out of the root"
-assert_contains "$out" "removed 7 entries" "sweep reports what it removed"
-assert_contains "$out" "live-process=2" "sweep reports the two process-held entries"
+assert_contains "$out" "removed 8 entries" "sweep reports what it removed"
+assert_contains "$out" "live-process=4" "sweep reports the process-held entries and the live project and session"
 assert_contains "$out" "live-lane=1" "sweep reports the lane-owned entry"
 pass "sweep removes the stale entries and keeps live, lane-owned, symlinked and off-allowlist ones"
 
@@ -93,9 +103,10 @@ ln -s "$R" "$T/rootlink"
 "$SWEEP" sweep --min-age-days x --root "$R" >/dev/null 2>&1; expect_code 2 $? "non-numeric age"
 pass "check thresholds and unsafe roots"
 
-# --- sentinel tick: warns at the threshold and sweeps once a day ------------
-mkdir -p "$R/tmp.again"
-old "$R/tmp.again"
+# --- sentinel tick: warns at the threshold, reports first, then sweeps once a day
+mkdir -p "$R/tmp.again" "$R/claude-1000/-slug-busy/sess-again"
+touch "$R/claude-1000/-slug-busy/sess-again/f"
+old "$R/claude-1000/-slug-busy/sess-again/f" "$R/claude-1000/-slug-busy/sess-again" "$R/tmp.again"
 export JG_TMP_ROOT=$R JG_TMP_WARN_PCT=0
 JG_HOME=$H "$ROOT/bin/jg-sentinel.sh" tick >/dev/null 2>&1
 log=$H/state/.sentinel.log
@@ -104,8 +115,22 @@ for _ in $(seq 40); do
   sleep 0.5
 done
 assert_grep "WARNING: " "$log" "tick logs the inode warning"
-assert_grep "tmp sweep (exit 0)" "$log" "tick logs the sweep summary"
+assert_grep "tmp sweep --dry-run (exit 0)" "$log" "the first tick only reports"
+assert_grep "tmp sweep: would remove $R/tmp.again" "$log" "the first tick logs each entry it would remove"
+assert_present "$R/tmp.again" "the first tick removes nothing"
+assert_present "$R/claude-1000/-slug-busy/sess-again" "the first tick keeps the stale session"
+rm -f "$H/state/.sentinel-tmp-sweep"
+JG_HOME=$H "$ROOT/bin/jg-sentinel.sh" tick >/dev/null 2>&1
+for _ in $(seq 40); do
+  grep -q 'tmp sweep --apply' "$log" 2>/dev/null && break
+  sleep 0.5
+done
+assert_grep "tmp sweep --apply (exit 0)" "$log" "the second tick logs the sweep summary"
+assert_grep "tmp sweep: remove $R/tmp.again" "$log" "the second tick logs each removal"
+assert_grep "tmp sweep: remove $R/claude-1000/-slug-busy/sess-again" "$log" "the second tick logs each removed session"
 assert_absent "$R/tmp.again" "tick sweeps the stale entry"
+assert_absent "$R/claude-1000/-slug-busy/sess-again" "tick sweeps the stale session"
+assert_present "$R/claude-1000/-slug-busy/sess-live" "tick keeps the live session"
 assert_present "$R/tmp.fresh" "tick keeps the fresh entry"
 before=$(grep -c 'tmp sweep' "$log")
 JG_HOME=$H "$ROOT/bin/jg-sentinel.sh" tick >/dev/null 2>&1

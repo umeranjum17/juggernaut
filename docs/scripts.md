@@ -17,6 +17,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-fleet-snapshot.sh`   | Print structured fleet snapshot JSON and refresh only its parent-side remote-ledger cache (schema `jg-fleet-snapshot.v1`) |
 | `jg-home-summary-refresh.sh` | Atomically publish this home's structured summary ledger                         |
 | `jg-whats-left.sh` | Render the standing view of what is left (`state/whats-left.md`) from the backlog, status and holds; refreshed on every summary publication |
+| `jg-owner-asks.sh` | List the owner's open asks in his own words, grouped Needs you / Not done / Done (verified), from every home's `[captain-ask]` tickets and captain holds; `--json` for the board; the Telegram `/status` reply and `jg-captain-say.sh --asks` use it |
 | `jg-fleet-ledger.sh`     | Append the opt-in fleet activity ledger's records ([contract](fleet-ledger.md))      |
 | `jg-comms-feed.sh`       | Export every fleet message across Main and its Squad Lead homes as one read-only, live, append-only JSONL feed for a channel-style reader |
 | `jg-chat.sh`            | The one owner of the fleet chat store: one JSONL record per message with its thread (`#fleet`, a lead, or a worker task), its sender and kind, and a captain message's own status; written at the call site that already records the steer, the status line or the wake |
@@ -153,7 +154,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-timeout-lib.sh`      | Single owner of hard-bounded command execution and its fallback watchdog |
 | `jg-timing-lib.sh`       | Single owner of the deferred network stage's per-step elapsed-time records, inert unless a run asks for them |
 | `jg-sentinel.sh`         | Out-of-runtime recovery: detect an agent-runtime restart or a stale beacon with no turn running, reconcile direct reports, and wake the primary |
-| `jg-tmp-sweep.sh`        | Report /tmp space and inode use and sweep stale allowlisted fleet scratch that no live process or lane holds; the sentinel warns at 80% and sweeps daily |
+| `jg-tmp-sweep.sh`        | Report /tmp space and inode use and sweep stale allowlisted fleet scratch that no live process or lane holds; including old session folders of a project folder that other sessions still use; the sentinel warns at 80% and sweeps daily, only reporting on its first run |
 | `jg-supervision-lib.sh`  | Shared in-flight-work-without-fresh-watcher-beacon predicate                         |
 | `jg-ff-lib.sh`           | Shared guarded fast-forward/reconcile helper for origin pulls and Squad Lead syncs, with durable divergence markers |
 | `jg-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
@@ -228,6 +229,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-mail.py`             | The IMAP/SMTP engine behind `jg-mail.sh` |
 | `jg-board-answers.sh`    | Standing board-answer check: `arm` registers a watcher check that sends each routed answer straight to its lead's inbox (closing the lead's decision key, archiving the card once the lead acknowledges) and wakes Main only for unrouted answers; `route` records a card's owner |
 | `jg-board-asks.sh`       | Turn the feed a board rebuild just built into the feed that may be posted, keeping the card's detail field (its must category), dropping a key its owner dismissed, and dropping a key another home already has live |
+| `jg-board-link.sh`       | `fix`: read a message on stdin and print it with every bare board link given the access token, or exit 1 with a plain reason when no token is available; the Telegram send in core/bus calls it, and `jg_board_link_fix` in `jg-board-link-lib.sh` is the one rule the inbox and chat replies share |
 | `jg-mail-check.sh`       | Standing received-mail poll: `arm` registers a watcher check that runs `jg-mail.sh poll` on the watcher cadence (new mail still wakes via the poll; the check's own line also wakes unless the poll is a proven no-op), `disarm` removes it |
 | `jg-decisions-reconcile.sh` | Standing board reconcile on its own hourly interval: `arm` registers a watcher check that clears every open card a durable record already settles (a card built from a hold that is the captain's own instruction - parked work, his stop order, or a preserved branch - a recorded answer, a `resolved [key=...]` status line, the task's merged PR, or a task closed in the backlog), logs one line per cleared card with its evidence, and keeps every card whose record is missing or unreadable |
 | `jg-voice-relay.py`      | Hold the spoken conversation on this host, answer from the records, and hand real work to `jg-inbox.sh` ([voice-relay.md](voice-relay.md)) |

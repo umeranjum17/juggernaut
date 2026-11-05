@@ -728,6 +728,7 @@ tests/jg-grok-continuity-live-e2e.test.sh 80
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 177
 tests/jg-harness-quirks.test.sh 527
 tests/jg-herdr-lead-label.test.sh 365
+tests/jg-tool-models.test.sh 4000
 tests/jg-classify-go.test.sh 520
 tests/jg-herdr-go.test.sh 1222
 tests/jg-guard-host.test.sh 6431
@@ -857,6 +858,7 @@ tests/jg-version-branch-sync.test.sh 33220
 tests/jg-wake-batching.test.sh 52062
 tests/jg-watch-beacon.test.sh 45490
 tests/jg-whats-left.test.sh 3479
+tests/jg-owner-asks.test.sh 2000
 tests/jg-nudge-residue.test.sh 6000
 EOF
 }
@@ -1590,7 +1592,7 @@ families_for_changed_path() {
       printf '%s\n' live-harness-optin
       ;;
     bin/jg-bearings-snapshot.sh|bin/jg-fleet-snapshot.sh|bin/jg-fleet-view.sh|bin/jg-contributions.sh|bin/jg-contributions.jq|\
-    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh)
+    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh|bin/jg-owner-asks.sh)
       ;;
     bin/jg-install-herdr.sh|bin/jg-install-treehouse.sh|bin/jg-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit

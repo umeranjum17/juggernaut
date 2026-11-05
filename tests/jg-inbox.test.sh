@@ -117,6 +117,7 @@ isolated="$TMP_ROOT/isolated"
 mkdir -p "$isolated/bin"
 cp "$INBOX_BIN" "$isolated/bin/jg-inbox.sh"
 cp "$ROOT/bin/jg-question-lib.sh" "$isolated/bin/jg-question-lib.sh"
+cp "$ROOT/bin/jg-board-link-lib.sh" "$isolated/bin/jg-board-link-lib.sh"
 chmod +x "$isolated/bin/jg-inbox.sh"
 home=$(make_home human-wake-fail)
 set +e
@@ -613,6 +614,60 @@ expect_code 1 "$missing_code" "a missing attachment is refused"
 assert_contains "$missing" "nope.png" "the refusal names the file"
 run_inbox "$home" reply 1700000000-cccccc --attach "$home/shot.png" >/dev/null || fail "an attachment alone should be a reply"
 pass "reply --attach records files for the gateway and shows them in receipts"
+
+# followup: a further message on a note that already has its reply.
+printf 'id=1700000000-dddddd\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nask\n' > "$home/state/inbox/1700000000-dddddd.note"
+set +e
+early=$(run_inbox "$home" followup 1700000000-dddddd "too early" 2>&1)
+early_code=$?
+set -e
+expect_code 1 "$early_code" "a followup on a note with no reply is refused"
+assert_contains "$early" "use reply" "the refusal points to reply"
+set +e
+again=$(run_inbox "$home" reply 1700000000-bbbbbb "again" 2>&1)
+set -e
+assert_contains "$again" "followup" "a second reply is refused and the refusal names followup"
+run_inbox "$home" followup 1700000000-bbbbbb --attach "$home/shot.png" -- "the picture" >/dev/null || fail "followup --attach failed"
+run_inbox "$home" followup 1700000000-bbbbbb "a last word" >/dev/null || fail "second followup failed"
+rec=$(run_inbox "$home" receipts --all-replies) || fail "receipts failed"
+assert_equals "plain|the picture|a last word" \
+  "$(printf '%s' "$rec" | python3 -c 'import json,sys; print("|".join(r["body"] for r in json.load(sys.stdin)["replies"] if r["id"] == "1700000000-bbbbbb"))')" \
+  "a note takes any number of followups, in order, each its own reply"
+assert_equals "$home/shot.png" \
+  "$(printf '%s' "$rec" | python3 -c 'import json,sys; print([r for r in json.load(sys.stdin)["replies"] if r["body"] == "the picture"][0]["attachments"][0])')" \
+  "a followup carries its attachment"
+cursor=$(printf '%s' "$rec" | python3 -c 'import json,sys; print([r for r in json.load(sys.stdin)["replies"] if r["body"] == "the picture"][0]["cursor"])')
+assert_equals "a last word" "$(run_inbox "$home" receipts --after "$cursor" | json_get replies 0 body)" \
+  "the cursor passes a followup like any reply"
+assert_equals "no" "$(printf '%s' "$rec" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if "_followups" in json.dumps(d) else "no")')" \
+  "receipts keep the followup bookkeeping out of the notes"
+pass "followup sends further messages on an answered note"
+
+# --help and mistyped options never become words for the owner.
+reply_count() { run_inbox "$home" receipts --all-replies | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["replies"]))'; }
+before=$(reply_count)
+for form in "reply 1700000000-dddddd --help" "reply 1700000000-dddddd -h" "followup 1700000000-bbbbbb --help" "reply --help" "followup -h"; do
+  set +e
+  # shellcheck disable=SC2086
+  help_out=$(run_inbox "$home" $form 2>&1)
+  help_code=$?
+  set -e
+  expect_code 0 "$help_code" "$form prints usage and exits 0"
+  assert_contains "$help_out" "usage: jg-inbox.sh reply" "$form prints the usage"
+done
+for form in "reply 1700000000-dddddd --hlep" "followup 1700000000-bbbbbb -x"; do
+  set +e
+  # shellcheck disable=SC2086
+  opt_out=$(run_inbox "$home" $form 2>&1)
+  opt_code=$?
+  set -e
+  expect_code 1 "$opt_code" "$form is refused as an unknown option"
+  assert_contains "$opt_out" "unknown option" "$form names the problem"
+done
+assert_equals "$before" "$(reply_count)" "--help and a mistyped option record nothing, so nothing is sent"
+run_inbox "$home" reply 1700000000-dddddd -- "--help is how you ask for usage" >/dev/null || fail "text after -- should still be recorded"
+assert_equals "$((before + 1))" "$(reply_count)" "text that starts with a dash is recorded when it comes after --"
+pass "reply and followup treat --help as usage and refuse a mistyped option, recording nothing"
 
 # --- reply --option ---------------------------------------------------------
 

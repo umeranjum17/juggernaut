@@ -29,11 +29,22 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   It is sent once, because a replay of the same update adds no second notification, and a dropped message has none.
   This path needs no new channel, no typing into the pane and no model turn. Other notes keep their 100-character summary.
 - `bin/jg-inbox.sh reply <id>` is the only way an answer reaches the chat. It is sent as a threaded reply, split at 4096 characters, and sent once.
+- Text messages and the mark on a tapped choice go out with Telegram HTML formatting.
+  The gateway renders `**bold**`, `*italic*` or `_italic_`, `` `code` ``, fenced code, `[text](https://url)` and `> quote` lines to the matching tags.
+  All other text has `&`, `<` and `>` escaped, and a marker with no partner stays text, so model text cannot break the markup.
+  If Telegram answers "can't parse entities", the gateway sends the same text once as plain text.
+  Tables and collapsible blocks stay off.
+  File captions stay plain text.
 - Add `--attach <path>` (repeatable) to `reply` to send files with the answer.
   The script only records the paths. The gateway sends them from disk, threaded on the owner's message.
   Pictures up to 10 MB go as photos, and Telegram falls back to a file if it refuses one. Other files go as files up to 50 MB.
   Up to 10 pictures, or up to 10 files, go as one album.
   The text is the caption of the first album when it fits 1024 characters.
+- A note takes one `reply`. To send more on it, such as a later outcome or the pictures that came after the text, run `bin/jg-inbox.sh followup <id>` with the same arguments (`--attach`, text).
+  Each followup is its own message threaded on the owner's note, sent once, in the order recorded.
+- `reply` and `followup` print usage for `--help` or `-h` and record nothing.
+  Text that opens with a dash is refused as an unknown option unless it comes after `--`, so a mistyped option is never sent to the owner.
+  A note with no reply yet is refused: use `reply`.
 - Add `--option <label>` (repeatable, 2 to 8, 60 characters each) to `reply` to ask the owner to choose.
   The pictures go as an album first. The text then goes as a message with one button per option.
   A choice never uses the text as an album caption, so the question stays beside the buttons.
@@ -55,6 +66,7 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   A chat with several open notes gets one indicator. A refused action is logged once and never stops the note or its reply.
   A restarted gateway does not show it again for notes filed before the restart.
 - A message that is only `/status` is answered by the gateway itself, threaded on it: the owner, the answers sent and that the bot is answering. It files no note and wakes no one. It is the only command.
+  The reply ends with the owner's open asks in his own words, grouped Needs you / Not done / Done (verified), from `bin/jg-owner-asks.sh`, which builds them from the records with no model. Done needs a recorded release that runs; a merge alone is Not done.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
 - The owner can send a photo, document, voice note, audio, video or round video note. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
@@ -87,6 +99,7 @@ The same event is in `state/captain-channel.jsonl`, and a bus that refuses it fa
 The script refuses, with exit 1 and the reason on stderr, text that holds a secret, text that is a raw status line, and text that the captain-facing rules reject (an internal id, a path or jargon, or no short first line).
 `bin/jg-captain-card-lib.sh` owns those rules, and `AGENTS.md` section 9 owns the words.
 Exit 2 is a usage error.
+`--asks` appends the same owner-asks block under the text, so a status push lists what is left. Only the text above the block goes through the message rules; the whole message still goes through the secret check.
 `tests/jg-captain-say-chat.test.sh` runs the whole path with a real Dapr sidecar, a real NATS server and a fake Bot API.
 
 ## Pushes to the owner

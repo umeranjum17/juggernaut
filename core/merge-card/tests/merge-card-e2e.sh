@@ -397,6 +397,23 @@ is "no room on the fleet route: the next chain route judges" "$(cat "$ROUTE_LOG"
 POOL_FAIL=1 LIMIT_MODEL=ollama-cloud/deepseek-v4.1-flash PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
 is "quota failure: the next chain route judges" "$(paste -sd, "$ROUTE_LOG")" 'ollama-cloud/deepseek-v4.1-flash,commandcode/deepseek/deepseek-v4.1-flash'
 is "quota failure: the verdict passes" "$(jq -r .verdict "$home/data/pool/merge-card.json")" pass
+
+# config/tool-models.json moves the judge with no code change: with the Claude pool healthy the judge is Claude
+# until a done-done-judge entry names a pi model, then that model judges on the next call; a refused entry
+# says why in one line and the judge stays as it was.
+: >"$ROUTE_LOG"
+PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
+is "tool models, no entry: the configured Claude judge judges" "$(cat "$ROUTE_LOG")" claude-haiku-5-5
+: >"$ROUTE_LOG"
+printf '{"rules":[{"tool":"done-done-judge","when":"the proof judge","use":{"harness":"pi","model":"commandcode/deepseek/deepseek-v4.1-flash"}}]}\n' >"$home/config/tool-models.json"
+PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
+is "tool models, entry: the named DeepSeek model judges" "$(cat "$ROUTE_LOG")" commandcode/deepseek/deepseek-v4.1-flash
+: >"$ROUTE_LOG"
+printf '{"rules":[{"tool":"done-done-judge","when":"the proof judge","use":{"harness":"claude","model":"sonnet"}}]}\n' >"$home/config/tool-models.json"
+PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >"$work/tm-bad.log" 2>&1
+is "tool models, wrong harness: the judge stays as configured" "$(cat "$ROUTE_LOG")" claude-haiku-5-5
+grep -q 'TOOL_MODELS: done-done-judge needs harness pi' "$work/tm-bad.log" && ok "tool models, wrong harness: one plain reason" || no "tool models, wrong harness: one plain reason: $(cat "$work/tm-bad.log")"
+rm -f "$home/config/tool-models.json"
 : >"$ROUTE_LOG"
 MODE=inconclusive POOL_FAIL=1 PATH="$work/bin:$PATH" JG_HOME=$home "$here/../merge-card" check pool "$wt" "$head_c" - >/dev/null 2>&1
 is "proof failure: no second route is tried" "$(cat "$ROUTE_LOG")" ollama-cloud/deepseek-v4.1-flash

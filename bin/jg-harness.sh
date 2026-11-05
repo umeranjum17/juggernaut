@@ -42,6 +42,8 @@
 # config/squad-lead-harness format: a single line "<harness> [<model>] [<effort>]",
 # whitespace-separated. A bare "<harness>" (today's format) behaves exactly as before:
 # harness only, no model/effort. Only the first non-empty, non-comment line is parsed.
+# An entry tagged "squad-lead" in config/tool-models.json (bin/jg-tool-models.sh) outranks
+# this global line, so one JSON edit moves the lead; without one this line stands.
 # With an id, config/squad_leads/<id>/harness takes precedence as a complete
 # three-token harness/model/effort pin. Invalid pins refuse and name the file.
 # config/crew-harness stays a bare adapter name, never parsed for a model.
@@ -98,6 +100,8 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 . "$SCRIPT_DIR/jg-cursor-lib.sh"
 # shellcheck source=bin/jg-gemini-lib.sh
 . "$SCRIPT_DIR/jg-gemini-lib.sh"
+# shellcheck source=bin/jg-tool-models.sh
+. "$SCRIPT_DIR/jg-tool-models.sh"
 
 # Print the harness named by a verified environment marker, or nothing when no
 # marker is present. Markers only report what the environment CLAIMS; detect_own
@@ -490,6 +494,11 @@ squad_lead_line() {
     else
       file=$(jg_compat_pick "$CONFIG/squad-lead-harness")
     fi
+  fi
+  if [ "$pinned" = 0 ]; then
+    # config/tool-models.json "squad-lead" outranks the global default and yields to a per-lead pin.
+    line=$(jg_tool_models_resolve squad-lead)
+    [ -z "$line" ] || { printf '%s\n' "$line"; return 0; }
   fi
   [ -f "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do

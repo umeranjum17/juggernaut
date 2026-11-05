@@ -24,6 +24,7 @@
 #   jg-inbox.sh note [--request-id <id>] [--json] -   (body from stdin)
 #   jg-inbox.sh announce [--json] <id>
 #   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--option <label>]... [--allow-change] [--] <text>... | reply [--json] <id> [--attach <path>]... -
+#   jg-inbox.sh followup <same arguments as reply>
 #   jg-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]
 #   jg-inbox.sh ready
 #   jg-inbox.sh say  [<file.wav>]       (default: audio on stdin)
@@ -73,6 +74,10 @@
 # script only checks the file is a readable regular file and never sends it. The
 # channel that delivers the reply (the chat gateway) owns every send decision,
 # including the refusal of a secret path. With an attachment the text may be empty.
+# `followup <id> ...` takes the arguments of `reply` and sends a further message on a note that
+# already has its reply (a later outcome, or pictures that came after the text). It is recorded as
+# its own reply with its own sequence, shown in `receipts` as one more entry for the same note, and
+# a note takes any number of them. A note with no reply yet is refused: use `reply`.
 # `reply --option <label>` (repeatable, 2 to 8) asks the captain to choose: the chat
 # gateway sends the answer with one button per label, and the captain's tap comes back
 # as a note whose second line is `pick: <label> (<option set id>)`. The labels are
@@ -177,6 +182,9 @@ if [ -r "$SELF_DIR/jg-voice-lib.sh" ]; then
 else
   jg_voice_apply() { JG_VOICE_OUT=$2; }
 fi
+# shellcheck source=bin/jg-board-link-lib.sh
+. "$SELF_DIR/jg-board-link-lib.sh" \
+  || die "the board-link rule needs $SELF_DIR/jg-board-link-lib.sh beside this script"
 
 # First non-comment, non-blank line of a config file, or nothing.
 read_setting() {  # <file-name>
@@ -683,19 +691,23 @@ next_reply_seq() {
 }
 
 cmd_reply() {
-  local json=0 id body path staging seq usage attach="" file text_args=() rest=0 options="" nopt=0 change=0 opt
+  local json=0 id body path staging seq target n usage attach="" file text_args=() rest=0 options="" nopt=0 change=0 opt
   usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--option <label>]... [--allow-change] [--] <text>... (or: ... -)"
   if [ "${1:-}" = "--json" ]; then
     json=1
     shift
   fi
   id=${1:-}
+  case "$id" in -h|--help) printf '%s\n' "$usage"; exit 0 ;; esac
   [ -n "$id" ] || die "$usage"
   shift
   valid_note_id "$id" || die "invalid note id"
   path=$(note_path "$id") || die "no such note: $id"
   while [ "$#" -gt 0 ]; do
-    if [ "$rest" -eq 0 ] && [ "$1" = "--attach" ]; then
+    if [ "$rest" -eq 0 ] && [ "${#text_args[@]}" -eq 0 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
+      printf '%s\n' "$usage"
+      exit 0
+    elif [ "$rest" -eq 0 ] && [ "$1" = "--attach" ]; then
       [ "$#" -ge 2 ] || die "--attach needs a file path"
       file=$2
       case "$file" in
@@ -727,6 +739,10 @@ cmd_reply() {
       rest=1
       shift
     else
+      # A reply text that opens like an option is a mistyped option, never words for the owner; text after "--" is always text.
+      if [ "$rest" -eq 0 ] && [ "${#text_args[@]}" -eq 0 ]; then
+        case "$1" in -?*) die "unknown option: $1 (to send text that starts with a dash, put it after --)" ;; esac
+      fi
       text_args+=("$1")
       shift
     fi
@@ -752,14 +768,27 @@ cmd_reply() {
     # The captain voice file (bin/jg-voice.py) decides: a model rewrite in plain sentences, or a refusal with the terms to fix.
     jg_voice_apply chat-reply "$body" || die "reply refused by the captain voice file; rewrite it in plain words"
     body=$JG_VOICE_OUT
+    # A bare board link gets the access token, or the reply is refused. After the voice step, so the token never reaches a model rewrite.
+    jg_board_link_fix "$body" || die "reply refused: it holds a board link without its access token"
+    body=$JG_BOARD_LINK_OUT
   fi
   jg_question_flag_reply "$body"
   mkdir -p "$REPLIES"
   load_wake_lib || die "the reply sequence needs $JG_ROOT/bin/jg-wake-lib.sh"
   jg_lock_acquire_wait "$REPLY_SEQ_LOCK" || die "could not claim the reply sequence"
-  if [ -f "$REPLIES/$id" ]; then
+  target="$REPLIES/$id"
+  if [ "${REPLY_FOLLOWUP:-0}" -eq 1 ]; then
+    # A followup is a further reply on a note that already has one: its own record, its own sequence.
+    if [ ! -f "$REPLIES/$id" ]; then
+      jg_lock_release "$REPLY_SEQ_LOCK"
+      die "no reply recorded for $id yet; use reply"
+    fi
+    n=1
+    while [ -e "$REPLIES/$id.f$n" ]; do n=$((n + 1)); done
+    target="$REPLIES/$id.f$n"
+  elif [ -f "$REPLIES/$id" ]; then
     jg_lock_release "$REPLY_SEQ_LOCK"
-    die "reply already recorded for $id"
+    die "reply already recorded for $id (to send more on this note: jg-inbox.sh followup)"
   fi
   if ! seq=$(next_reply_seq); then
     jg_lock_release "$REPLY_SEQ_LOCK"
@@ -784,11 +813,11 @@ cmd_reply() {
       *) printf '\n' ;;
     esac
   } >"$staging"
-  mv "$staging" "$REPLIES/$id"
+  mv "$staging" "$target"
   jg_lock_release "$REPLY_SEQ_LOCK"
   if [ "$json" -eq 1 ]; then
     need_python
-    python3 - "$id" "$REPLIES/$id" <<'PY'
+    python3 - "$id" "$target" <<'PY'
 import json, sys
 note_id, path = sys.argv[1], sys.argv[2]
 json.dump({
@@ -802,6 +831,11 @@ PY
   else
     printf 'replied %s\n' "$id"
   fi
+}
+
+# A further message on a note that was already answered, with the same options as reply.
+cmd_followup() {
+  REPLY_FOLLOWUP=1 cmd_reply "$@"
 }
 
 cmd_receipts() {
@@ -892,8 +926,8 @@ def list_notes(folder):
 # malformed: it is reported in omitted[] rather than given a made-up position.
 malformed_replies = []
 
-def reply_record(note_id):
-    path = Path(replies_dir) / note_id
+def reply_record(note_id, name=None):
+    path = Path(replies_dir) / (name or note_id)
     if not path.is_file():
         return None
     record = parse_record(path)
@@ -935,6 +969,15 @@ def enrich(note, acknowledged):
     else:
         rec["announced"] = None
     rec["reply"] = reply_record(note_id)
+    # followup records (<id>.f1, <id>.f2, ...) are further replies on the same note; the numbered
+    # suffix is read in order, and only the replies list below carries them.
+    followups = []
+    for path in sorted(Path(replies_dir).glob(note_id + ".f*"), key=lambda p: (len(p.name), p.name)):
+        if path.name[len(note_id) + 2:].isdigit():
+            follow = reply_record(note_id, path.name)
+            if follow:
+                followups.append(follow)
+    rec["_followups"] = followups
     rec.pop("path", None)
     rec.pop("announce_marker", None)
     return rec
@@ -960,6 +1003,7 @@ for group in (pending_all, handled_all):
     for note in group:
         if note.get("reply"):
             replies_all.append(note["reply"])
+        replies_all.extend(note.get("_followups", []))
 replies_all.sort(key=lambda r: r["cursor"])
 
 if after:
@@ -991,13 +1035,16 @@ if malformed_replies:
         "reveal": "inspect %s" % replies_dir,
     })
 
+def public(rows):
+    return [{k: v for k, v in r.items() if k != "_followups"} for r in rows]
+
 home_label = "/".join(Path(home).parts[-2:]) if home else home
 json.dump({
     "schema": "jg-inbox-receipts.v1",
     "home": home_label,
     "generated": generated,
-    "pending": pending,
-    "handled": handled,
+    "pending": public(pending),
+    "handled": public(handled),
     "replies": replies,
     "reply_cursor": reply_cursor,
     "omitted": omitted,
@@ -1302,6 +1349,7 @@ case "${1:-}" in
   note)     shift; cmd_note "$@" ;;
   announce) shift; cmd_announce "$@" ;;
   reply)    shift; cmd_reply "$@" ;;
+  followup) shift; cmd_followup "$@" ;;
   receipts) shift; cmd_receipts "$@" ;;
   ready)    shift; cmd_ready "$@" ;;
   say)      shift; cmd_say "$@" ;;
