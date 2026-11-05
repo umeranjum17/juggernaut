@@ -1,6 +1,6 @@
 # Proposal: tool models by tool and job (`config/tool-models.json`)
 
-Status: draft for approval, revised three times: a tool gets a key only when its code starts a model; only a tool with an AI engine gets a key, and the file overrides that engine's own default (owner, Telegram 276-277); first-draft, no-mistakes, learn-from-mistakes and done-done each get a key with their own jobs (owner, Telegram 279). No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
+Status: draft for approval, revised four times: a tool gets a key only when its code starts a model; only a tool with an AI engine gets a key, and the file overrides that engine's own default (owner, Telegram 276-277); first-draft, no-mistakes, learn-from-mistakes and done-done each get a key with their own jobs (owner, Telegram 279); every job value may be one entry or an ordered array of entries, picked by quota and spread across signed-in accounts (owner, Telegram 288-289). No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
 
 ## Problem
 
@@ -10,7 +10,7 @@ Today one flat list is keyed by internal call sites (`squad-lead`, `voice-rewrit
 
 Rule from the owner: a tool that has an AI engine can be configured here; a tool without one needs no key. Every tool that uses AI owns its own engine with its own default model. `config/tool-models.json` only overrides that default, per job.
 
-Top-level key = a tool with an AI engine whose code starts a model (`done-done`, `no-mistakes`, `first-draft`, `learn-from-mistakes`, `workers`). Second level = a job type. Each job = one explicit `{harness, model, effort?}`. Each tool reads exactly its own `<tool>.<job>` entry. AI call sites that are not an owner tool live under `internal`. The lead or worker picks the job by complexity; no rule picks it.
+Top-level key = a tool with an AI engine whose code starts a model (`done-done`, `no-mistakes`, `first-draft`, `learn-from-mistakes`, `workers`). Second level = a job type. Each job value = one explicit entry `{harness, model, account?, effort?}`, or an ordered array of such entries (see "Arrays: pick by quota, spread across accounts"). Each tool reads exactly its own `<tool>.<job>` entry. AI call sites that are not an owner tool live under `internal`. The lead or worker picks the job by complexity; no rule picks it.
 
 The file lists overrides. The example below is the shipped example: it shows today's default of each tool, so you can copy a block and edit it. Delete a block and that tool uses its own default again.
 
@@ -61,6 +61,47 @@ The file lists overrides. The example below is the shipped example: it shows tod
 ```
 
 Values copy each tool's own default where one exists (squad lead, done-done, first-draft, learn-from-mistakes judge, supervision engine, pool, voice rewrite, route chain). The `no-mistakes` fix and after-round rows copy the review row because Juggernaut pins one model today. The `learn-from-mistakes.worker` row has no default in that tool today (see the engines section). The `inbox-*` and `voice-relay` ids and the four non-lead `workers` rows have no built-in today: they are starting options, unverified, for you to edit.
+
+## Arrays: pick by quota, spread across accounts
+
+Owner (Telegram 288-289): "Each can have arrays as well based on quota and round robin with multiple accounts if available", "Not just a single option". So any `<tool>.<job>` value, and any `internal.<site>` value, is one entry or an ordered array. The array is a list of options the owner wrote down. It is not a router and no new picker is built.
+
+```json
+{
+  "no-mistakes": {
+    "review": [
+      { "harness": "pi",    "model": "claude-bridge/claude-haiku-5-5", "account": "work" },
+      { "harness": "pi",    "model": "claude-bridge/claude-haiku-5-5", "account": "personal" },
+      { "harness": "codex", "model": "gpt-6-luna", "effort": "medium" }
+    ],
+    "fix": { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" }
+  }
+}
+```
+
+Entry fields: `harness`, `model` (required), `effort` (optional), `account` (optional). `account` is the id of a login in this home's account pool (`config/account-pool`). Omit it and the pool chooses among the signed-in accounts of that route. A one-entry array and a bare entry mean the same.
+
+**Reuse, no new picker.** Phase 2 adds no selection logic. Each step below already exists:
+
+| Step | Existing owner | What it does today |
+|---|---|---|
+| Rule for choosing among options | skill `quota-array-dispatch` (`.agents/skills/quota-array-dispatch/SKILL.md`) | Reads quota-axi's default TOON once. Drops a candidate that fails eligibility, reasoning-class fit or the runway floor. Ranks the rest by `spendPriority`. No array-order or harness bias in a tie. Malformed config is an error. Uncertainty keeps a candidate eligible. |
+| Ordered pick from a quota snapshot | `bin/jg-quota-choose.sh` | Takes `--candidate <harness:model>` in order and prints the first one that quota allows, or `none` and exit 1. Limit in its own header: one provider family per harness. |
+| Row join, one account per row | `quota_row` in `bin/jg-quota-axi-lib.sh` (used by `bin/jg-dispatch-resolve.sh`) | Binds a candidate to the quota row of its own account (schema 6), then ranks eligible candidates by `spendPriority`. |
+| Shape check of an entry | `bin/jg-profile.jq` (`profiles()` takes one object or an array; `profile_bad` checks harness, model, effort, provider, floor) | Phase 2 adds `account` to `profile_bad`. The tool-models check and the dispatch profiles then share one validator. |
+| Spread across accounts of one route | `core/account-pool/bin/jg-model-pool` (`pick`, `next`) and `config/account-pool` | `pick` takes the signed-in account that is not resting and has the most room, above the rest floor (`JG_ACCOUNT_POOL_REST_FLOOR`, default 15%). `next` rests the account in use and moves to another. Spawn prints and records `account=<id>`. |
+
+How an array resolves in one run:
+
+1. Read the entries in file order. Check every entry: shape (`bin/jg-profile.jq`) and model allow-list (`jg_model_allowlist_require`). One bad entry stops the run; nothing is skipped silently.
+2. Read quota once (quota-axi default TOON). Apply the skill's gates. Pick by `spendPriority`; when the skill's rule leaves a tie, the first listed entry wins.
+3. If the chosen route has several signed-in accounts and the entry has no `account`, `jg-model-pool pick` chooses the account. When the entry names an `account`, that account is used if it is not resting; if it is resting, the entry is not eligible and the next option is considered.
+4. If a run hits its limit midway, `jg-model-pool next` rests that account and the next run picks another.
+5. If no entry is eligible, the tool stops with one plain line naming the file and key. It does not fall to the tool's default (see decision 8).
+
+What "round robin" means here, stated plainly: the account pool picks the account with the most room and rests an account that hits its limit. Load therefore spreads over the accounts without a counter, but it is not a strict turn-by-turn rotation. A strict rotation would need new code in `jg-model-pool`; see decision 9.
+
+The lead or worker still chooses the job (`workers.frontend`, `workers.hard`). The array lists options for that job. No rule picks the job.
 
 ## Keys kept, with the line that starts the model
 
@@ -118,16 +159,17 @@ Stays without a key: it starts no model (the agent that files a card does the mo
 
 ## Read rules (Phase 2)
 
-- Each tool owns its default in its own code, once. A tool asks `bin/jg-tool-models.sh resolve <tool> <job> --default "<harness> <model> [effort]"` and gets back the effective `harness model effort`. No entry means the tool's own default. A missing file is valid and means all defaults.
-- Every run logs one stable line, so the token and value metrics can read it: `TOOL_MODELS tool=<tool> job=<job> source=default|file harness=<h> model=<m> effort=<e|none>`. `source=file` means the entry in `config/tool-models.json` was used. `source=default` means the tool's own default was used. The line goes to the run's stderr and is appended to `state/tool-models.log` with a leading `ts=<iso8601>`. One line per run; no other format.
-- A bad entry stops with one plain line naming the file and the key, for example `TOOL_MODELS: config/tool-models.json: "no-mistakes.review": model "x" is not in the model allow-list`. A bad entry is: bad JSON, an entry with a missing field, an unverified harness, a bad effort, or a model the allow-list refuses (`jg_model_allowlist_require`). The tool does not fall back to its default for a bad entry.
+- Each tool owns its default in its own code, once. A tool asks `bin/jg-tool-models.sh resolve <tool> <job> --default "<harness> <model> [effort]"` and gets back the effective `harness model effort` and, when an account applies, `account=<id>`. For an array, `resolve` calls the existing quota pick (section "Arrays") and returns the one entry it chose. No entry means the tool's own default. A missing file is valid and means all defaults.
+- Every run logs one stable line, so the token and value metrics can read it: `TOOL_MODELS tool=<tool> job=<job> source=default|file entry=<n|single|default> of=<count> harness=<h> model=<m> effort=<e|none> account=<id|none>`. `source=file` means an entry in `config/tool-models.json` was used. `entry` is its place in the array (from 1), `single` for a bare entry, `default` when the file had none. `account` is the pool account that the run used, or `none` when the harness has no pool. `source=default` means the tool's own default was used. The line goes to the run's stderr and is appended to `state/tool-models.log` with a leading `ts=<iso8601>`. One line per run; no other format.
+- A bad entry stops with one plain line naming the file and the key, for example `TOOL_MODELS: config/tool-models.json: "no-mistakes.review": model "x" is not in the model allow-list`. A bad entry is: bad JSON, an entry with a missing field, an unverified harness, a bad effort, or a model the allow-list refuses (`jg_model_allowlist_require`). In an array the check runs on every entry, not only the chosen one, and the message names the entry place, for example `"no-mistakes.review[2]"`. The tool does not fall back to its default for a bad entry.
+- An array with no eligible entry stops with one plain line naming the file and key. It never moves to the default on its own.
 - No prefix stripping, no env var, no second file, no precedence chain: the file entry or the tool's default, nothing between.
 - A site that can run one harness only (judge on a non-pi harness, voice rewrite on non-claude) stops the same way when the entry names another harness.
 - `check` validates every entry in the file. `docs/examples/tool-models.json` is documentation and is not copied to `config/` by bootstrap, because absence already means the defaults.
 
 ## Prior art
 
-OpenCode (MIT, `agent.<name>.model` as `provider/model-id`; a subagent with no model inherits the primary agent's) is the pick: per-role key, explicit model string. I took the shape of "role name maps to a model", and rejected the inherit-from-parent fallback. Aider (Apache-2.0) names three roles, `main`, `weak` (commit messages, summaries) and `editor`, each with its own model: I took the idea of job types by purpose (cheap vs hard). Claude Code (proprietary, all rights reserved; nothing reusable, ideas only) takes a `model` per subagent definition, with an inherit default: I took per-role model, and rejected inherit. LiteLLM router (MIT outside `enterprise/`) maps a `model_name` group to several deployments with routing and fallbacks: I rejected that, because its shuffle and fallback are the hidden behaviour the owner refused; only our explicit `internal.route-chain` list remains. No code copied from any of the four.
+OpenCode (MIT, `agent.<name>.model` as `provider/model-id`; a subagent with no model inherits the primary agent's) is the pick: per-role key, explicit model string. I took the shape of "role name maps to a model", and rejected the inherit-from-parent fallback. Aider (Apache-2.0) names three roles, `main`, `weak` (commit messages, summaries) and `editor`, each with its own model: I took the idea of job types by purpose (cheap vs hard). Claude Code (proprietary, all rights reserved; nothing reusable, ideas only) takes a `model` per subagent definition, with an inherit default: I took per-role model, and rejected inherit. LiteLLM router (MIT outside `enterprise/`) maps a `model_name` group to several deployments with routing and fallbacks. I did not take its router: arrays here are a list the owner writes, picked by the quota-array code this repo already has (`quota-array-dispatch`, `bin/jg-quota-choose.sh`, `core/account-pool/bin/jg-model-pool`), with no random shuffle and no fallback the file does not list. No code copied from any of the four.
 
 ## Every call site in #666, #667, #668, #669
 
@@ -151,5 +193,8 @@ OpenCode (MIT, `agent.<name>.model` as `provider/model-id`; a subagent with no m
 3. **Failover.** Quota failover stays, only through the listed `internal.route-chain` (built-in list when no entry), one log line per step. A judge or review that is dry then moves down that list, not through a hidden one. Say no if you want it to stop instead.
 4. **Worker job rows** (`frontend`, `backend`, `cheap-verification`, `hard`) have no reader until Phase 2, no default of their own, and overlap `config/crew-dispatch.json`: keep them as the options list, or drop them and leave worker choice to crew-dispatch.
 5. **Log file.** I propose `state/tool-models.log` for the metrics reader. Say if the metrics use another place.
-6. **#668 and #669** stay open untouched; after you approve, their sites are re-done on this shape, and Overwatch decides whether to close them.
-7. `config/crew-dispatch.json` (per-task profiles) is out of scope and unchanged.
+6. **Arrays reuse our own picker.** Arrays use the existing quota-array selection and account pool, with no new picker (see "Arrays"). I recommend this. The one gap is strict round robin (decision 9).
+7. **#668 and #669** stay open untouched; after you approve, their sites are re-done on this shape, and Overwatch decides whether to close them.
+8. **No eligible entry in an array.** I recommend the tool stops with a plain line and does not fall to its own default, because a silent fall is the hidden behaviour the owner refused. Say if you want the default as the last resort.
+9. **Round robin.** Today the pool picks the most room and rests a full account; it does not rotate in turns. I recommend keeping that. If you want strict turns, it is a small change in `jg-model-pool` in Phase 2, and I need your word first.
+10. `config/crew-dispatch.json` (per-task profiles) is out of scope and unchanged.
