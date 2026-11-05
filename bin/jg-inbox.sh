@@ -91,6 +91,11 @@
 # as a note whose second line is `pick: <label> (<option set id>)`. The labels are
 # recorded in the reply and shown as `options` in `receipts`; `--allow-change` lets the
 # captain change the pick by tapping another button (`options_change` is then true).
+# A reply or followup that offers more than two options, or asks for a design pick, must carry a
+# board #decide/<key> link or it is refused. Options are the larger of the --option labels and the
+# body lines that open with a letter or number choice (`A)`, `b.`, `1)`, `(2)`); a design pick is the
+# phrase "design pick", "pick a/the/one ... design", or "choose a/the/one ... design". Two options or
+# fewer, and text with no pick, are unchanged.
 # This script sends nothing.
 # `ready` is the read-only primary-readiness projection (lock, wake-consumer
 # health, away posture, observation time). It never acquires the session lock
@@ -743,6 +748,17 @@ attach_path() {  # <path> -> absolute path
   printf '%s\n' "$file"
 }
 
+# 0 = the reply is fine without a board link; 1 = it needs one (more than two options, or a design pick).
+reply_needs_board_link() {  # <body> <--option count>
+  local body=$1 n=$2 line lines=0 re_line='^[[:space:]]*(\(?[A-Za-z0-9]{1,2}[.)])[[:space:]]+[^[:space:]]'
+  local re_pick='([Dd]esign pick|([Pp]ick|[Cc]hoose) (a|an|the|one)( [A-Za-z]+){0,3} design)'
+  while IFS= read -r line; do
+    [[ $line =~ $re_line ]] && lines=$((lines + 1))
+  done <<<"$body"
+  [ "$lines" -gt "$n" ] || lines=$n
+  [ "$lines" -le 2 ] && ! [[ $body =~ $re_pick ]]
+}
+
 cmd_reply() {
   local json=0 id body path staging seq target n usage attach="" file evidence text_args=() rest=0 options="" nopt=0 change=0 opt
   usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--evidence-from <status-line>] [--option <label>]... [--allow-change] [--] <text>... (or: ... -)"
@@ -831,6 +847,10 @@ cmd_reply() {
     # A bare board link gets the access token, or the reply is refused. After the voice step, so the token never reaches a model rewrite.
     jg_board_link_fix "$body" || die "reply refused: it holds a board link without its access token"
     body=$JG_BOARD_LINK_OUT
+  fi
+  # A big choice or a design pick is too much for chat: it must point to its board card.
+  if ! jg_board_has_decide_link "$body"; then
+    reply_needs_board_link "$body" "$nopt" || die "reply refused: it offers more than two options or asks for a design pick, and holds no board #decide/<key> link; add the board link"
   fi
   jg_question_flag_reply "$body"
   mkdir -p "$REPLIES"

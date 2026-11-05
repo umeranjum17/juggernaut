@@ -10,6 +10,7 @@
 #                                    and return 1 when the URL file, the key or
 #                                    the section is unusable
 #   jg_board_merge_key <pr-url>      the key merge-card gives a PR's evidence card
+#   jg_board_has_decide_link <text>  return 0 when the text holds a board #decide/<key> link
 #   jg_board_link_fix <text>         set JG_BOARD_LINK_OUT to the text with every bare
 #                                    board link given the token; return 1 (reason on
 #                                    stderr, never the token) when a bare link cannot
@@ -44,6 +45,10 @@ jg_board_merge_key() {  # <pr-url>
   local key=${1#*://}
   key=merge-$(printf '%s' "${key#*/}" | tr -c 'A-Za-z0-9._-' -)
   printf '%s\n' "${key:0:128}"
+}
+
+jg_board_has_decide_link() {  # <text>
+  [[ $1 =~ https?://[^][:space:]#\<\>\"\'\(\)]+#decide/[A-Za-z0-9._-]+ ]]
 }
 
 # shellcheck disable=SC2034  # JG_BOARD_LINK_OUT is the result the caller reads.
