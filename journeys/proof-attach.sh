@@ -39,6 +39,14 @@ done-done look "file://$T/screen.html" --out "$JG_HOME/data/ui-ok/screen.png" >>
 rm -f "$JG_HOME/data/ui-ok/screen.dom.json"
 step "UI work with media is accepted" 0 ui-ok
 step "UI work without media (text-only card) is refused" 1 ui-bare
+cardstep() {  # <label> <want-exit> <task> <pr>: the done-time picture rule asks the board
+  local out rc=0
+  out=$(bash "$REPO/bin/jg-proof-attach.sh" card "$3" --pr "$4" --head "$HEAD" --board "$B" 2>&1) || rc=$?
+  printf '== %s (exit %s)\n%s\n' "$1" "$rc" "$out" >> "$LOG"
+  [ "$rc" = "$2" ] || { echo "FAIL $1: want exit $2 got $rc" >> "$LOG"; fails=1; }
+}
+cardstep "done for UI work whose picture card is on the board passes" 0 ui-ok "$PR"
+cardstep "done for UI work with no card is refused, naming the command" 1 ui-nocard https://github.com/acme/app/pull/9
 printf '## Checks\nscreen: none\noutcome: Parser is faster\n' > "$T/body"
 printf '{"schema":1,"exit":0,"dirty":false,"commit":"%s","run_id":"20261029T000000Z-01234567-ab","started_at":"1","files":["out.txt"]}' "$HEAD" > "$JG_HOME/data/lib-ok/.done-done/runs/r.json"
 step "non-UI work with a sealed receipt is allowed text-only" 0 lib-ok https://github.com/acme/app/pull/8
@@ -46,7 +54,7 @@ printf '== board\n%s\n' "$(sign-off-axi list "$B" --json --full | jq -c '.decisi
 cat > "$OUT/steps.json" <<'J'
 {"target":{"version":"juggernaut bin/jg-proof-attach.sh at this commit"},
  "start":"a disposable home and an empty sign-off board, with the real sign-off-axi and merge-card",
- "steps":["attach a ready card for UI work that has a real screenshot","attach a ready card for UI work that has no media","attach a ready card for screen-free work that has a sealed receipt"],
- "result":"the screenshot card is posted with one media file, the text-only UI card is refused with the fix named, and the screen-free card is posted text-only"}
+ "steps":["attach a ready card for UI work that has a real screenshot","attach a ready card for UI work that has no media","attach a ready card for screen-free work that has a sealed receipt","ask the done rule about UI work whose card is posted, and about UI work with no card"],
+ "result":"the screenshot card is posted with one media file, the text-only UI card is refused with the fix named, and the screen-free card is posted text-only; the done rule passes the posted card and refuses a UI change with none, printing the one command that posts it"}
 J
 exit "$fails"
