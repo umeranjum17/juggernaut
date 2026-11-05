@@ -23,6 +23,7 @@
 #   jg-inbox.sh note [--request-id <id>] [--json] [--] <text>...
 #   jg-inbox.sh note [--request-id <id>] [--json] -   (body from stdin)
 #   jg-inbox.sh announce [--json] <id>
+#   jg-inbox.sh approve <note-id> <ticket-id>
 #   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--evidence-from <status-line>] [--option <label>]... [--allow-change] [--] <text>... | reply [--json] <id> [--attach <path>]... -
 #   jg-inbox.sh followup <same arguments as reply>
 #   jg-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]
@@ -46,6 +47,10 @@
 # lists pending and handled captain-ask notes with that ticket and its current
 # backlog state.
 # `announce` repairs the wake for an already-saved note without creating another.
+# `approve` writes the signed `approved-by-captain: note:<id>` line into the body of a ticket,
+# which bin/jg-spawn.sh and bin/jg-send.sh require before a ship is built for a [captain-ask]
+# or Recon/plan-born ticket (bin/jg-captain-ask-lib.sh). It takes only a chat note, the
+# captain's own words, and refuses any other note.
 # A note already acknowledged (in handled/) gets no wake from `announce` or a
 # request-id replay; both report it as acknowledged and exit 0.
 # It refuses a note whose announcement state is UNKNOWN: a note written before
@@ -438,6 +443,31 @@ announce_note() {  # <id> <summary>
   fi
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
   return "$status"
+}
+
+cmd_approve() {  # <note-id> <ticket-id>
+  local id=${1:-} ticket=${2:-} path body show current tmp
+  [ "$#" -eq 2 ] || die "usage: jg-inbox.sh approve <note-id> <ticket-id>"
+  valid_note_id "$id" || die "invalid note id"
+  case "$ticket" in ''|*[!A-Za-z0-9._-]*) die "invalid ticket id" ;; esac
+  path=$(note_path "$id") || die "no such note: $id"
+  case "$(read_note_body "$path")" in
+    '[chat '*) ;;
+    *) die "note $id is not a captain chat note; only his own words approve a build" ;;
+  esac
+  need tasks-axi
+  fail() { die "$@"; }
+  # shellcheck source=bin/jg-captain-ask-lib.sh
+  . "$SELF_DIR/jg-captain-ask-lib.sh"
+  show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" show "$ticket" --full 2>/dev/null) \
+    || die "cannot read ticket $ticket"
+  current=$(printf '%s\n' "$show" | sed -n 's/^  body: //p' | head -1 | perl -MJSON::PP -e 'local $/; my $v = <STDIN>; $v = JSON::PP->new->utf8->allow_nonref->decode($v) if $v =~ /^"/; binmode STDOUT, ":raw"; utf8::encode($v) if utf8::is_utf8($v); print $v')
+  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-inbox-approve.XXXXXX") || die "cannot stage the approval"
+  printf '%s\n\n%s\n' "$current" "$(captain_ask_approval_line "$ticket" "note:$id")" > "$tmp"
+  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" update "$ticket" --body-file "$tmp" >/dev/null \
+    || { rm -f -- "$tmp"; die "could not record the approval on $ticket"; }
+  rm -f -- "$tmp"
+  printf 'approved %s by note %s\n' "$ticket" "$id"
 }
 
 captain_ask_ticket_id() { printf 'captain-ask-%s' "$1"; }
@@ -1378,6 +1408,7 @@ cmd_drain() {
 case "${1:-}" in
   note)     shift; cmd_note "$@" ;;
   announce) shift; cmd_announce "$@" ;;
+  approve)  shift; cmd_approve "$@" ;;
   reply)    shift; cmd_reply "$@" ;;
   followup) shift; cmd_followup "$@" ;;
   receipts) shift; cmd_receipts "$@" ;;

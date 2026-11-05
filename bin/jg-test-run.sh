@@ -859,6 +859,7 @@ tests/jg-wake-batching.test.sh 52062
 tests/jg-watch-beacon.test.sh 45490
 tests/jg-whats-left.test.sh 3479
 tests/jg-owner-asks.test.sh 2000
+tests/jg-captain-approval.test.sh 2100
 tests/jg-nudge-residue.test.sh 6000
 EOF
 }
