@@ -1927,7 +1927,7 @@ test_scout_depth_levels() {
   local home golden out status id
   home="$TMP_ROOT/depth-home"
   mkdir -p "$home/data"
-  golden="$ROOT/tests/fixtures/scout-brief-quick.golden"
+  golden="$ROOT/tests/fixtures/scout-brief/quick.golden"
   JG_HOME="$home" "$ROOT/bin/jg-brief.sh" gold-scout some-proj --scout --depth quick >/dev/null 2>&1 \
     || fail "--scout --depth quick should scaffold"
   # shellcheck disable=SC2016 # The sed program holds literal placeholders.
