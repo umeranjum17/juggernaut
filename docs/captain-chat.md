@@ -40,6 +40,9 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   Pictures up to 10 MB go as photos, and Telegram falls back to a file if it refuses one. Other files go as files up to 50 MB.
   Up to 10 pictures, or up to 10 files, go as one album.
   The text is the caption of the first album when it fits 1024 characters.
+- A note takes one `reply`. To send more on it, such as a later outcome or the pictures that came after the text, run `bin/jg-inbox.sh followup <id>` with the same arguments (`--attach`, text).
+  Each followup is its own message threaded on the owner's note, sent once, in the order recorded.
+  A note with no reply yet is refused: use `reply`.
 - Add `--option <label>` (repeatable, 2 to 8, 60 characters each) to `reply` to ask the owner to choose.
   The pictures go as an album first. The text then goes as a message with one button per option.
   A choice never uses the text as an album caption, so the question stays beside the buttons.
