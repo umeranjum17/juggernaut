@@ -958,7 +958,10 @@ $WAIT_BLOCK$INBOX_SECTION
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
+The report's first section is \`## 1. Answer (five lines)\`: the answer to the owner's ask, in short plain sentences, with the evidence below it.
 $SIGNOFF_LINE
+A report page opens with that same Answer: put the first Answer line, in plain words and at most 30 words, in the picture heading (\`visual.heading\`), never a finding, a number or an example from the evidence.
+Before you post it and again before done, run \`$JG_ROOT/bin/jg-report-opening-check.sh $DATA/$ID/report.md --card <the report.json you post>\` until it prints PASS; teardown refuses a posted page that fails it.
 Before reporting done, read and follow \`$JG_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
 When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; juggernaut may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.

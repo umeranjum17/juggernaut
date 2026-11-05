@@ -1615,6 +1615,43 @@ test_scout_nested_clone_returns_with_no_untracked_entries() {
   pass "scout copy with a nested clone and a scratch file returns with no untracked entries"
 }
 
+# A scout that posted a board report page whose opening is a finding instead of
+# the report's Answer is refused (bin/jg-report-opening-check.sh); the same page
+# reposted under the same key with the Answer in the picture heading is returned.
+test_scout_report_page_must_open_with_the_answer() {
+  local case_dir rc board
+  case_dir=$(make_case scout-page-opening)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  printf '%s\n' '# Deep Recon design' '' '## 1. Answer (five lines)' '' \
+    '1. **Add a depth level to every Recon: quick, standard or deep.** Deep runs a fixed method.' \
+    '' '## 2. Evidence' '' 'The Pi-bots page lost most of its report.' > "$case_dir/data/task-x1/report.md"
+  board="$case_dir/board.json"
+  printf '{"schema":2,"items":[{"key":"deep-page","kind":"report","filer":"task-x1","title":"Deep Recon","visual":{"heading":"The Pi-bots page lost most of its report"},"sections":[{"heading":"Question"}]}]}\n' > "$board"
+  mkdir -p "$case_dir/config"
+  printf "exec merge-card post --board '%s' \"\$@\"\n" "$board" > "$case_dir/config/post-merge"
+  add_treehouse_clean_fd "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "scout-page-opening: a page opening with a finding must be refused"
+  grep -q 'does not open with its Answer' "$case_dir/stderr" \
+    || fail "scout-page-opening: refusal did not name the Answer: $(cat "$case_dir/stderr")"
+  grep -q 'The Pi-bots page lost most of its report' "$case_dir/stderr" \
+    || fail "scout-page-opening: refusal did not show the page opening: $(cat "$case_dir/stderr")"
+
+  jq '.items[0].visual.heading = "Add a depth level to every Recon: quick, standard or deep."' "$board" > "$board.new" \
+    && mv "$board.new" "$board"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout2" 2> "$case_dir/stderr2"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "scout-page-opening: a page opening with the Answer must be returned: $(cat "$case_dir/stderr2")"
+  pass "scout teardown refuses a report page that does not open with its Answer and returns one that does"
+}
+
 test_ship_nested_clone_is_refused_and_bytes_stay() {
   local case_dir wt rc head before after
   case_dir=$(make_case ship-nested-refuse)
@@ -5668,6 +5705,7 @@ test_untracked_only_refusal_diagnostic
 test_tracked_edit_refusal_diagnostic
 test_mixed_refusal_diagnostic
 test_scout_nested_clone_returns_with_no_untracked_entries
+test_scout_report_page_must_open_with_the_answer
 test_ship_nested_clone_is_refused_and_bytes_stay
 test_dirty_return_warns_which_slot_was_lost
 test_dirty_return_warns_even_when_a_later_step_refuses
