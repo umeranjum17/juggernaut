@@ -72,6 +72,12 @@ case $out in *"https://github.com/example/repo/pull/602 key=worktree."*) ;; *) f
 case $out in *"local copy is clean after cleanup"*"instructions are filed"*) ;; *) fail "second message not rewritten: $out" ;; esac
 pass "URLs and key=value tokens survive the rewrite"
 
+# A link the message closes with a comma is kept when the rewrite writes the same link without the mark: the check counts the link, not the punctuation after it.
+rc=0; out=$(printf '%s' 'The worktree is clean after teardown, see https://github.com/example/repo/pull/602, then merge.' | JG_VOICE_REWRITE_CMD="echo The local copy is clean after cleanup, see https://github.com/example/repo/pull/602 then merge." python3 "$VOICE" apply --channel telegram 2>"$TMP_ROOT/comma.err") || rc=$?
+[ "$rc" -eq 0 ] || fail "a rewrite that kept the link but not the comma after it was refused (rc=$rc): $(cat "$TMP_ROOT/comma.err")"
+case $out in *"https://github.com/example/repo/pull/602 then merge."*) ;; *) fail "the rewrite was not sent as written: $out" ;; esac
+pass "a link followed by a comma is not lost when the rewrite drops the comma"
+
 # A rewrite that dropped a URL, or that still holds a banned term, is refused instead of sent.
 rc=0; out=$(printf '%s' "$RELAY_TWO" | JG_VOICE_REWRITE_CMD="echo The local copy is clean." python3 "$VOICE" apply --channel telegram 2>"$TMP_ROOT/refuse.err") || rc=$?
 [ "$rc" -eq 1 ] && [ -z "$out" ] || fail "a rewrite that lost the URL was sent (rc=$rc): $out"
