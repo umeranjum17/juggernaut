@@ -1368,13 +1368,17 @@ resolve_merge_checks_lint() {
 
 # Prints the lint line; returns 0 only on a PASS verdict, so nothing is waived.
 run_merge_checks_lint() {
-  local lint out='' rc=0
+  local lint out='' rc=0 self=''
   lint=$(resolve_merge_checks_lint)
+  # This call holds the task control lock and waits on the lint, whose receipt
+  # write takes the same lock: naming the holder lets that write proceed
+  # (jg-run-receipt.sh checks the lock's recorded owner) instead of deadlocking.
+  if [ -n "$MERGE_CONTROL_LOCK" ]; then jg_current_pid self || self=; fi
   if [ ! -x "$lint" ]; then
     printf 'error: merge refused: the evidence lint %s is not runnable\n' "$lint" >&2
     return 1
   fi
-  out=$(env JG_HOME="$JG_HOME" timeout "${JG_PR_MERGE_LINT_TIMEOUT:-300}" "$lint" "$URL" "$JG_HOME/data/$ID" 2>&1) || rc=$?
+  out=$(env JG_HOME="$JG_HOME" JG_CONTROL_LOCK_HELD_BY="$self" timeout "${JG_PR_MERGE_LINT_TIMEOUT:-300}" "$lint" "$URL" "$JG_HOME/data/$ID" 2>&1) || rc=$?
   printf '%s\n' "$out"
   if [ "$rc" -ne 0 ] || ! printf '%s\n' "$out" | grep -q 'PASS'; then
     printf 'error: merge refused: the evidence lint did not pass (exit %s); fix what it names and run the merge again\n' "$rc" >&2
