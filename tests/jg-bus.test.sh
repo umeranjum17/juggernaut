@@ -135,7 +135,7 @@ run() {  # <case-dir> <command...>
   local d=$1
   shift
   env PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" SIGN_OFF_HOME="$d/so" \
-    JG_SEND_SETTLE=0 "$@" 2>&1
+    JG_SEND_SETTLE=0 JG_CAPTAIN_CHANNEL="$d/home/config/captain-channel" "$@" 2>&1
 }
 run_quiet() { run "$@" 2>/dev/null; }
 requests() { cat "$SINK_OUT" 2>/dev/null; }
@@ -260,7 +260,7 @@ assert_contains "$out" "exit=0" "publish still exits 0, so no emitter is broken 
 # the channel's (bin/jg-supervise-daemon.sh wedge_alarm_notify).
 d=$(setup wedge)
 : >"$SINK_OUT"
-JG_HOME="$d/home" JG_STATE_OVERRIDE="$d/home/state" JG_SUPERVISOR_BACKEND=tmux \
+JG_HOME="$d/home" JG_CAPTAIN_CHANNEL="$d/home/config/captain-channel" JG_STATE_OVERRIDE="$d/home/state" JG_SUPERVISOR_BACKEND=tmux \
   JG_SUPERVISOR_TARGET=nonexistent:0 LOG="$d/home/state/.supervise-daemon.log" \
   bash -c '. "$1"; inject_wedge_alarm "$2" 601; inject_wedge_alarm "$2" 601' \
   _ "$ROOT/bin/jg-supervise-daemon.sh" "$d/home/state"
