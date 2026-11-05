@@ -204,6 +204,9 @@ run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The ke
 assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "a captain outcome is teed once"
 assert_contains "$(events "$d")" '"kind":"outcome"' "the teed event names the outcome"
 assert_equals "2" "$(wc -l <"$d/home/state/branch-outcomes.jsonl" | tr -d ' ')" "the outcome store still holds both rows"
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "merged-not-released: the key fix is waiting" >/dev/null
+assert_contains "$(events "$d" | tail -1)" 'Not live yet: the key fix is waiting' "the chat event says Not live yet"
+assert_contains "$(tail -1 "$d/home/state/branch-outcomes.jsonl")" 'merged-not-released: the key fix' "the stored row keeps the old label"
 
 # --- the CAPTAIN stream carries what the bus took, and nothing delivers it a second time ------
 d=$(setup stream)
