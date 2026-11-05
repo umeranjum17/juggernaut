@@ -145,6 +145,30 @@ prompt='Reply with the single word PONG.'
 # 1. Without a pool, the default chain is the persisted pipeline route.
 is "default chain is Claude Haiku through claude-bridge" "$(PI_QUOTA_FAILOVER_PRINT_CHAIN=1 "$wrapper" </dev/null)" "$route"
 
+# 1b. An entry tagged no-mistakes-review in config/tool-models.json moves the chain with a file edit alone; removing it
+# restores the default; a bad entry keeps the default and prints one TOOL_MODELS line. The wrapper finds the home
+# through PI_QUOTA_FAILOVER_JG_HOME because it runs from an install dir.
+tmhome=$work/jghome
+mkdir -p "$tmhome/config"
+ln -s "$addons/../bin" "$tmhome/bin"
+mkdir -p "$work/install" && cp "$wrapper" "$work/install/pi-quota-failover" # the install dir copy wiring.sh makes
+chain_of() { PI_QUOTA_FAILOVER_JG_HOME=$tmhome PI_QUOTA_FAILOVER_PRINT_CHAIN=1 "$work/install/pi-quota-failover" </dev/null 2>"$work/tm.err"; }
+tm_rule() { printf '{"rules":[{"tool":"no-mistakes-review","when":"fixture","use":%s}]}\n' "$1" >"$tmhome/config/tool-models.json"; }
+echo "before: review chain = $(chain_of)"
+is "no tool-models file keeps the default chain" "$(chain_of)" "$route"
+tm_rule '{"harness":"pi","model":"ollama-cloud/deepseek-v4.1-flash"}'
+echo "after the file names DeepSeek: review chain = $(chain_of)"
+is "the file edit alone moves the review chain" "$(chain_of)" "ollama-cloud/deepseek-v4.1-flash"
+tm_rule '{"harness":"claude","model":"sonnet"}'
+is "a non-pi harness keeps the default chain" "$(chain_of)" "$route"
+if grep -q '^TOOL_MODELS: no-mistakes-review needs harness pi' "$work/tm.err"; then ok "a non-pi harness prints one plain reason"; else no "a non-pi harness prints one plain reason: $(cat "$work/tm.err")"; fi
+printf 'not json' >"$tmhome/config/tool-models.json"
+is "a bad file keeps the default chain" "$(chain_of)" "$route"
+if grep -q '^TOOL_MODELS: ' "$work/tm.err"; then ok "a bad file prints a TOOL_MODELS reason"; else no "a bad file prints a TOOL_MODELS reason"; fi
+rm -f "$tmhome/config/tool-models.json"
+echo "after the entry is removed: review chain = $(chain_of)"
+is "removing the file restores the default chain" "$(chain_of)" "$route"
+
 # 2. A call pinned to the config's route runs that route (no pool).
 : >"$STUB_ARGV"
 : >"$STUB_QUOTA_LOG"
