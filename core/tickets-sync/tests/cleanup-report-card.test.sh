@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The daily clean-up publishes a report card, never an ask: a keep/remove call on
-# flagged tickets is not one of the captain's five must categories, so an ask
+# flagged tickets is not one of the captain's six must categories, so an ask
 # carrying it is routed to Overwatch and re-alerted on. The card takes no answer,
 # the finding count and the first findings are on it, the report file beside it
 # still holds every finding, and the asks gate neither counts nor routes it.

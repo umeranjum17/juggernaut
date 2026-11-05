@@ -12,7 +12,7 @@ STALE_DAYS = 14
 def report_message(found, kinds, key, today):
     """The clean-up's board card: a report, never an ask.
 
-    A flagged ticket is not one of the captain's five must categories, so the pass
+    A flagged ticket is not one of the captain's six must categories, so the pass
     reports what it found and Main keeps or removes each ticket. A report takes no
     answer, which is what keeps the card off the ask gate: an ask with no must
     category is routed to Overwatch and re-alerted on, forever. Schema 3 is the
