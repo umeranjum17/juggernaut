@@ -86,16 +86,26 @@ home owns them: the home the installed unit names in its `JG_HOME` (the first ho
 directory, so the name is relative; an absolute one lands at `state/bus/home/...` and the
 server refuses to start). Every other home's bootstrap (`jg-stack.sh up`, which writes the
 unit from `jg-bus.sh unit nats`) and update (`install-service`) only registers its account
-in the owner's `accounts.conf` and asks the running server to reload (SIGHUP, through
-`systemctl --user kill`). It never installs, rewrites or restarts the unit and never touches
-`bus.conf`, and it says who the owner is. Before this rule every home's session start
+in the owner's `accounts.conf` and has the running server load it. It never installs or
+rewrites the unit and never touches `bus.conf`, and it says who the owner is.
+Before this rule every home's session start
 pointed the machine's unit at its own config and locked every other home out.
 
 The owner keeps the machine's member list in `state/bus/homes`, one line per home that
 joined, and the accounts are written from it. A home under a temp root, or inside the
 checkout running the command, is a test fixture and is refused instead of added, naming
-the way out: a test or a lab names its own list with `JG_BUS_HOMES`, so fixture homes are
-recorded there and a real machine's list stays byte for byte as it is.
+the way out: a test or a lab runs a bus of its own and names its own list with
+`JG_BUS_HOMES`, so fixture homes are recorded there and a real machine's list stays byte for
+byte as it is. That list stands in only for an owner under a temp root. A real owner always
+reads its own `homes`, so a fixture that reaches the real unit is refused and never rewrites
+the real `accounts.conf` or signals the real server.
+
+A rewritten `accounts.conf` reaches the running server in one of two ways. Accounts only
+added load by a reload (SIGHUP, through `systemctl --user kill`). An account taken away
+restarts the server, because nats-server keeps a removed account's JetStream reservation until
+it restarts. Those kept reservations outgrow the caps, the next new account is refused with
+`insufficient memory resources (10028)`, and that refusal ends the reload before JetStream is
+back on the accounts it has not reached, so accounts that never left lose it at random.
 
 The JetStream caps in `bus.conf` are the per-account reservation times the accounts in
 `accounts.conf` plus one account of headroom, rounded up to a step of eight reservations.

@@ -314,16 +314,16 @@ func (a *app) installService() int {
 		say("bus: cannot start %s: %s", name, detail(string(out)))
 		return 0
 	}
-	// A new server config (the caps moved a step) needs a restart; new accounts alone are
-	// loaded by a reload; an unchanged install touches neither.
+	// A new server config (the caps moved a step) needs a restart; changed accounts are
+	// loaded by loadAccounts; an unchanged install touches neither.
 	if wasActive && a.confChanged {
 		if out, err := exec.Command("systemctl", "--user", "restart", name).CombinedOutput(); err != nil {
 			say("bus: cannot restart %s for its new config: %s", name, detail(string(out)))
 			return 0
 		}
 	} else if wasActive && a.accountsChanged {
-		if out, err := exec.Command("systemctl", "--user", "kill", "--kill-whom=main", "--signal=HUP", name).CombinedOutput(); err != nil {
-			say("bus: cannot reload %s for its new accounts: %s", name, detail(string(out)))
+		if err := loadAccounts(name, a.accountsRemoved); err != nil {
+			say("bus: cannot load the new accounts into %s: %v", name, err)
 			return 0
 		}
 	}
@@ -337,6 +337,23 @@ func (a *app) installService() int {
 	}
 	say("bus: up, systemd user service %s for %s (%s)", name, a.home, a.cfgOr("nats-url", ""))
 	return 0
+}
+
+// loadAccounts is THE way a running server takes a rewritten accounts file. Accounts only
+// added load by a reload. An account taken away needs a restart: nats-server 2.10 drops it
+// from its accounts on a reload but keeps its JetStream reservation until it restarts, so
+// the reservations outgrow the caps. The next new account is then refused (10028), and that
+// refusal ends the reload before it gives JetStream back to the accounts it has not reached,
+// because every reload clears each account's JetStream imports and restores them one by one.
+func loadAccounts(name string, removed bool) error {
+	args := []string{"--user", "kill", "--kill-whom=main", "--signal=HUP", name}
+	if removed {
+		args = []string{"--user", "restart", name}
+	}
+	if out, err := exec.Command("systemctl", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s", detail(string(out)))
+	}
+	return nil
 }
 
 // startOne starts one service from its file, logs it beside its pid, and says so. A

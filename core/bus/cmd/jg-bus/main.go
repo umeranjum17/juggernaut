@@ -85,7 +85,8 @@
 //	registry The machine's member homes live in one list, the owner's state/bus/homes.
 //	         A home that joins appends one line; a temp or worktree test home never
 //	         joins a real machine's list, and a test or a lab names its own list with
-//	         JG_BUS_HOMES so its fixture homes are recorded there instead.
+//	         JG_BUS_HOMES so its fixture homes are recorded there instead. That list only
+//	         stands in for a throw-away owner; a real owner always reads its own.
 //	install-service
 //	         Make that service real: write the unit when it is missing, reload systemd, enable
 //	         it now, and verify. Only the unit's owner (the home it names) does that; any
@@ -147,7 +148,7 @@ type app struct {
 	log         string
 	configFiles []string
 	// set by buildUnit for the nats part: what it just rewrote.
-	accountsChanged, confChanged bool
+	accountsChanged, accountsRemoved, confChanged bool
 	// typing is the chat's "typing…" indicator while a serving gateway has open notes; nil otherwise.
 	typing *typer
 	// data is the home's data directory, which holds the Squad Lead registry.
