@@ -252,17 +252,21 @@ func TestGatewayOutboundMedia(t *testing.T) {
 				}
 			}
 		}
+		t.Logf("tall strip 780x6872 -> slice %d of 3: %s %v caption %q, pixels equal to rows %d-%d of the strip", i+1, c.filename[name], slice.Bounds().Size(), media[i]["caption"], row, row+wantH-1)
 		row += wantH
 	}
 	// 11: a picture exactly 3:1 is not cut: one picture, the file's own bytes.
 	if c = mustCall(11, "sendPhoto"); c.filename["photo"] != "edge.png" || !bytes.Equal(c.data["photo"], pngOf(edgeImg)) || c.fields["caption"] != "" || len(calls) != 13 {
 		t.Errorf("3:1 picture = %+v, %d calls", c, len(calls))
 	}
+	t.Logf("3:1 picture 780x2340 -> one sendPhoto %s, %d bytes, the file's own", c.filename["photo"], len(c.data["photo"]))
 	// 12: the 60-row sliver is not sent alone: two slices, 300x900 and 300x960.
 	c = mustCall(12, "sendMediaGroup")
 	for i, wantH := range []int{900, 960} {
 		if slice, err := png.Decode(bytes.NewReader(c.data[fmt.Sprintf("f%d", i)])); err != nil || slice.Bounds().Dx() != 300 || slice.Bounds().Dy() != wantH || len(c.data) != 2 {
 			t.Errorf("sliver slice %d: %v, %d files, err %v; want 300x%d", i, slice.Bounds(), len(c.data), err, wantH)
+		} else {
+			t.Logf("strip 300x1860 with a 60-row end -> slice %d of 2: %v (the end is joined to the last slice)", i+1, slice.Bounds().Size())
 		}
 	}
 	if left, _ := os.ReadDir(filepath.Join(state, "captain-chat", "slices")); len(left) != 0 {
