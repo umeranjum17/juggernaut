@@ -860,6 +860,7 @@ tests/jg-watch-beacon.test.sh 45490
 tests/jg-whats-left.test.sh 3479
 tests/jg-owner-asks.test.sh 2000
 tests/jg-captain-approval.test.sh 2100
+tests/jg-triage.test.sh 2000
 tests/jg-nudge-residue.test.sh 6000
 EOF
 }
@@ -1593,7 +1594,7 @@ families_for_changed_path() {
       printf '%s\n' live-harness-optin
       ;;
     bin/jg-bearings-snapshot.sh|bin/jg-fleet-snapshot.sh|bin/jg-fleet-view.sh|bin/jg-contributions.sh|bin/jg-contributions.jq|\
-    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh|bin/jg-owner-asks.sh)
+    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh|bin/jg-owner-asks.sh|bin/jg-triage.sh)
       ;;
     bin/jg-install-herdr.sh|bin/jg-install-treehouse.sh|bin/jg-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
