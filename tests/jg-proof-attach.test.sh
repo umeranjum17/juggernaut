@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # bin/jg-proof-attach.sh: a ready, review or merged card carries its proof, and UI or video
 # work is never filed text-only. One host row per case; the forge and the board are stubs.
+# It also owns journeys/proof-attach.sh, so the changed-test map selects it.
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -117,7 +118,8 @@ export JG_PROOF_BOARD=$root/b.json
 row card-none t10 "" "$EMPTY"; uim t10 yes
 out=$(dgate t10) && fail "a UI task with no card passed"
 assert_contains "$out" "jg-proof-attach.sh attach ready t10 --pr $PR --head $HEAD" "refusal says the one command that posts the card"
-text_only="{\"decisions\":[{\"key\":\"$key\",\"media\":[],\"evidence\":{\"commit\":\"$HEAD\"}}]}"
+ckey=merge-acme-app-pull-7
+text_only="{\"decisions\":[{\"key\":\"$ckey\",\"media\":[],\"evidence\":{\"commit\":\"$HEAD\"}}]}"
 row card-text t11 "" "$text_only"; uim t11 yes
 dgate t11 >/dev/null && fail "a UI task whose card has no pictures passed"
 row card-ok t12 "" "$good"; uim t12 yes
