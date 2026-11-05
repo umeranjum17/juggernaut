@@ -137,6 +137,19 @@ test_must_ask_is_posted_and_counted() {
   pass "a must ask is posted with its category and is the only thing the waiting count holds"
 }
 
+test_plan_approval_is_a_must_and_a_made_up_category_is_not() {
+  local d out key detail
+  d=$(setup plan-approval)
+  key=$(ask_key "$d" --must plan-approval) || fail "a plan-approval ask was refused: $(ask "$d" --must plan-approval)"
+  detail=$(jq -r --arg k "$key" '.items[] | select(.key == $k) | .detail' "$d/so/.sign-off/decisions.json")
+  assert_equals "must: plan-approval" "$detail" "the plan-approval card does not carry its category"
+  assert_equals "1" "$(run "$d" "$GATE" waiting)" "the plan-approval ask was not counted as waiting"
+  out=$(ask "$d" --must made-up-category --title "Rename the other word?" --ask-ref m2) \
+    && fail "a made-up category was posted: $out"
+  assert_equals "1" "$(open_cards "$d")" "a made-up category still reached the captain's board"
+  pass "a plan-approval ask is a must and a made-up category is still refused"
+}
+
 test_check_re_pings_an_old_must_ask_once() {
   local d out
   d=$(setup old-must)
@@ -330,6 +343,7 @@ test_check_dismisses_the_card_of_a_settled_hold() {
 test_non_must_ask_is_refused_and_routed
 test_dismiss_sends_a_fitting_reason_and_odd_titles_make_valid_tags
 test_must_ask_is_posted_and_counted
+test_plan_approval_is_a_must_and_a_made_up_category_is_not
 test_check_re_pings_an_old_must_ask_once
 test_check_moves_an_unclassified_ask_to_overwatch
 test_check_reports_a_merge_with_no_board_evidence
