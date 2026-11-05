@@ -1750,6 +1750,8 @@ Squad Lead homes inherit the file with the other shared config.
 | `done-done-judge` | `core/merge-card/merge-card` | Model that judges the Evidence card. The harness must be `pi`, and the model carries its provider prefix. |
 | `supervision-engine` | `bin/jg-supervision-engine-lib.sh` | Default model of the supervision engine when its harness matches the entry. |
 | `no-mistakes-review` | `core/pipeline-quota-failover/pi-quota-failover` | Model of the no-mistakes review chain, and of the account-pool route that names no model. The harness must be `pi`, and the model carries its provider prefix. The installed wrapper finds the home through `PI_QUOTA_FAILOVER_JG_HOME`, then `JG_HOME`, then `~/juggernaut`; `PI_QUOTA_FAILOVER_CHAIN` still wins. |
+| `route-chain` | `core/account-pool/bin/jg-route-chain-lib.sh`, read by `jg-model-pool`, `jg-route-probe` and the done-done judge | The default free-route chain, in order. `use` is the list of routes; each is `{harness, model}` with an optional `provider` (default: the model's prefix), `billing` (default `plan`) and `only` (`hard`). It replaces only the built-in default chain; a home's own `route=` lines in `config/account-pool` still win. Every route that passes the allow-list stays in the chain. |
+| `model-pool` | `core/account-pool/bin/jg-model-pool` | The Claude model a pick returns when the request names none. The harness must be `claude`. A model the request names still wins. |
 
 Tools in this repository that still choose a model in their own way are listed in the follow-up section of the pull request that added this file.
 See [`docs/examples/tool-models.json`](examples/tool-models.json) for a starting point.

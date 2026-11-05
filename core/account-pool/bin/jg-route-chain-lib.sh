@@ -38,8 +38,32 @@ jg_route_chain_json() {
       esac
     done <"$file"
   fi
-  [ "$out" != '[]' ] || out=$JG_ROUTE_DEFAULT_CHAIN
+  [ "$out" != '[]' ] || out=$(jg_route_tool_models_chain "$file") || out=$JG_ROUTE_DEFAULT_CHAIN
   printf '%s\n' "$out"
+}
+
+# jg_route_tool_models_chain <pool config file>: the chain an entry tagged route-chain in config/tool-models.json
+# (bin/jg-tool-models.sh, docs/configuration.md "Tool models") names, read at every call; it replaces only the built-in
+# default above, so a home's own route= lines still win. Non-zero (print nothing) when there is no usable entry, and the
+# built-in default stands. Each profile is {harness, model} plus optional provider (else the model's prefix), billing
+# (else plan) and only; the route id is route:<model>, or route:<provider>/<model> when the model has no provider prefix.
+jg_route_tool_models_chain() {
+  local file=${1:-} tm profiles chain
+  tm=${BASH_SOURCE[0]%/*}/../../../bin/jg-tool-models.sh
+  [ -x "$tm" ] || return 1
+  # The tool-models file sits beside the pool config unless the caller names one.
+  if [ -n "$file" ] && [ -z "${JG_TOOL_MODELS:-}" ]; then
+    profiles=$(JG_TOOL_MODELS=${file%/*}/tool-models.json "$tm" profiles route-chain) || return 1
+  else
+    profiles=$("$tm" profiles route-chain) || return 1
+  fi
+  [ -n "$profiles" ] || return 1
+  chain=$(jq -c '[.[] | select(.model != null)
+    | (.provider // (if (.model | contains("/")) then (.model | split("/")[0]) else .harness end)) as $provider
+    | {id: ("route:" + (if (.model | contains("/")) then .model else $provider + "/" + .model end)),
+       provider: $provider, harness, model, billing: (.billing // "plan")} + (if .only then {only} else {} end)]' <<<"$profiles") || return 1
+  [ "$chain" != '[]' ] || return 1
+  printf '%s\n' "$chain"
 }
 
 # jg_route_quota_provider <provider>: the provider name quota-axi reports this route's room under, because pi and the

@@ -3,13 +3,22 @@
     {
       "tool": "squad-lead",
       "when": "Which model each Squad Lead launches with.",
-      "use": { "harness": "claude", "model": "sonnet", "effort": "high" },
+      "use": {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "high"
+      },
       "why": "Edit this entry to move every new Squad Lead launch to another model."
     },
     {
       "tool": "done-done-judge",
       "when": "Which model judges the Evidence card.",
-      "use": [{ "harness": "pi", "model": "ollama-cloud/deepseek-v4.1-flash" }],
+      "use": [
+        {
+          "harness": "pi",
+          "model": "ollama-cloud/deepseek-v4.1-flash"
+        }
+      ],
       "why": "The judge runs on the harness pi, so the model carries its provider prefix."
     },
     {
@@ -21,7 +30,52 @@
     {
       "tool": "supervision-engine",
       "when": "Which model the supervision engine uses when its engine has no model of its own.",
-      "use": { "harness": "claude", "model": "claude-haiku-5-5" }
+      "use": {
+        "harness": "claude",
+        "model": "claude-haiku-5-5"
+      }
+    },
+    {
+      "tool": "route-chain",
+      "when": "The default free-route chain, in order, when config/account-pool names no route= lines.",
+      "use": [
+        {
+          "harness": "opencode",
+          "model": "ollama-cloud/deepseek-v4.1-flash"
+        },
+        {
+          "harness": "pi",
+          "model": "commandcode/deepseek/deepseek-v4.1-flash"
+        },
+        {
+          "harness": "codex",
+          "model": "openai-codex/gpt-6-luna",
+          "provider": "codex"
+        },
+        {
+          "harness": "kimi",
+          "model": "kimi-coding/kimi-for-coding"
+        },
+        {
+          "harness": "cursor",
+          "model": "auto"
+        },
+        {
+          "harness": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "provider": "codex",
+          "only": "hard"
+        }
+      ],
+      "why": "This is today's built-in chain. Reorder or replace routes here; each route gets the id route:<model> and the billing plan."
+    },
+    {
+      "tool": "model-pool",
+      "when": "The Claude model a pool pick returns when the request names none.",
+      "use": {
+        "harness": "claude",
+        "model": "claude-haiku-5-5"
+      }
     }
   ]
 }
