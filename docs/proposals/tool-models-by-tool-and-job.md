@@ -1,6 +1,6 @@
 # Proposal: tool models by tool and job (`config/tool-models.json`)
 
-Status: draft for approval, revised twice: a tool gets a key only when its code starts a model, and (owner, Telegram 276-277) only a tool with an AI engine gets a key, with the file as an override of that engine's own default. No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
+Status: draft for approval, revised three times: a tool gets a key only when its code starts a model; only a tool with an AI engine gets a key, and the file overrides that engine's own default (owner, Telegram 276-277); first-draft, no-mistakes, learn-from-mistakes and done-done each get a key with their own jobs (owner, Telegram 279). No code yet. Replaces the flat `rules[]` list of #666 (merged) and the sites in #667 (merged), #668 and #669 (both stay open).
 
 ## Problem
 
@@ -10,21 +10,29 @@ Today one flat list is keyed by internal call sites (`squad-lead`, `voice-rewrit
 
 Rule from the owner: a tool that has an AI engine can be configured here; a tool without one needs no key. Every tool that uses AI owns its own engine with its own default model. `config/tool-models.json` only overrides that default, per job.
 
-Top-level key = a tool with an AI engine whose code starts a model (`done-done`, `no-mistakes`, `first-draft`, `workers`). Second level = a job type. Each job = one explicit `{harness, model, effort?}`. Each tool reads exactly its own `<tool>.<job>` entry. AI call sites that are not an owner tool live under `internal`. The lead or worker picks the job by complexity; no rule picks it.
+Top-level key = a tool with an AI engine whose code starts a model (`done-done`, `no-mistakes`, `first-draft`, `learn-from-mistakes`, `workers`). Second level = a job type. Each job = one explicit `{harness, model, effort?}`. Each tool reads exactly its own `<tool>.<job>` entry. AI call sites that are not an owner tool live under `internal`. The lead or worker picks the job by complexity; no rule picks it.
 
 The file lists overrides. The example below is the shipped example: it shows today's default of each tool, so you can copy a block and edit it. Delete a block and that tool uses its own default again.
 
 ```json
 {
   "done-done": {
-    "judge": { "harness": "claude", "model": "claude-haiku-5-5" }
+    "author": { "harness": "claude", "model": "claude-haiku-5-5", "effort": "low" },
+    "judge":  { "harness": "claude", "model": "claude-haiku-5-5" }
   },
   "no-mistakes": {
-    "review": { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" }
+    "review":             { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" },
+    "fix":                { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" },
+    "review-after-round": { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" },
+    "fix-after-round":    { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" }
   },
   "first-draft": {
     "generate": { "harness": "claude", "model": "claude-sonnet-5-5" },
     "judge":    { "harness": "codex", "model": "gpt-6.1-sol" }
+  },
+  "learn-from-mistakes": {
+    "worker": { "harness": "claude", "model": "claude-haiku-5-5" },
+    "judge":  { "harness": "claude", "model": "claude-sonnet-5-5" }
   },
   "workers": {
     "squad-lead":         { "harness": "claude", "model": "opus", "effort": "max" },
@@ -52,16 +60,20 @@ The file lists overrides. The example below is the shipped example: it shows tod
 }
 ```
 
-Values copy each tool's own default where one exists (squad lead, judge, review, first-draft, supervision engine, pool, voice rewrite, route chain). The `inbox-*` and `voice-relay` ids and the four non-lead `workers` rows have no built-in today: they are starting options, unverified, for you to edit.
+Values copy each tool's own default where one exists (squad lead, done-done, first-draft, learn-from-mistakes judge, supervision engine, pool, voice rewrite, route chain). The `no-mistakes` fix and after-round rows copy the review row because Juggernaut pins one model today. The `learn-from-mistakes.worker` row has no default in that tool today (see the engines section). The `inbox-*` and `voice-relay` ids and the four non-lead `workers` rows have no built-in today: they are starting options, unverified, for you to edit.
 
 ## Keys kept, with the line that starts the model
 
-A key exists only when code starts a model from it: code in this repo, or for `first-draft` the installed package named in its row. `sign-off` reads no entry: it is a board, and the agent that files a card does the model work. `first-draft` has a key: see the next section. `done-done.cheap-verification` and `no-mistakes.cheap-verification` are dropped: no line here starts them.
+A key exists only when code starts a model from it: code in this repo, or for the four tools with their own repo the source named in its row (read on disk; see the engines section). `sign-off` reads no entry: it is a board, and the agent that files a card does the model work. `done-done.cheap-verification` and `no-mistakes.cheap-verification` are dropped: no line here starts them.
 
 | Key | Line that starts the model |
 |---|---|
-| `done-done.judge` | `core/merge-card/merge-card:314` (`done-done check --judge answerer:pi`), `:377` (claude judge) |
-| `no-mistakes.review` | `core/pipeline-quota-failover/pi-quota-failover:375` (`exec "$real_pi"` with the chain model from `:80-95`) |
+| `done-done.judge` | Juggernaut side: `core/merge-card/merge-card:314` (`done-done check --judge answerer:pi`), `:377` (claude judge). Tool side: `done-done-axi` 0.6.24 `dist/judge.js:162` (`askAgent`) from `dist/judge.js:143`, which spawns at `dist/agents.js:446`; judge model chosen at `dist/agents.js:425` |
+| `done-done.author` | `done-done-axi` `dist/agents.js:369` (`selectAgent` returns `agentRun`), spawn at `dist/agents.js:446`; default `CHEAP.claude` at `dist/config.js:43` |
+| `no-mistakes.review` | Juggernaut side: `core/pipeline-quota-failover/pi-quota-failover:375` (`exec "$real_pi"` with the chain model from `:80-95`). Tool side: no-mistakes `internal/daemon/manager.go:341` (`agent.NewWithOptions` with `cfg.AgentProfileFor(name)`), profile from `internal/config/config.go:1724`; role `reviewer` pinned by `internal/config/review_agents.go:17,36` |
+| `no-mistakes.fix`, `.review-after-round`, `.fix-after-round` | the same start (`manager.go:341`); roles `fixer`, `reviewer_after_round`, `fixer_after_round` at `internal/config/review_agents.go:17-20` |
+| `learn-from-mistakes.worker` | `learn-from-mistakes-axi` 0.12.0 `src/runners/index.mjs:105` (`spawn(bin, args, ...)` inside `call` at `:145`), reached from `src/steps/agent-step.mjs:53` for the steps analyse (`steps/analyse.mjs:60`), propose (`steps/propose.mjs:137`) and incident (`steps/incident.mjs:42`); model flag built at `src/runners/claude.mjs:9` and `src/runners/pi.mjs:11` |
+| `learn-from-mistakes.judge` | the same start (`runners/index.mjs:105`) for the verify step (`steps/verify.mjs:65`); judge model chosen at `src/runners/index.mjs:39` |
 | `workers.squad-lead` | `bin/jg-spawn.sh:4856` (`__MODELFLAG__` into the launch); model chosen at `:879` and `:2196` |
 | `workers.frontend`, `.backend`, `.cheap-verification`, `.hard` | the same `bin/jg-spawn.sh:4856` for any worker. Marked: nothing reads these rows until Phase 2; the lead picks one by complexity. Drop them if `config/crew-dispatch.json` stays the only worker choice |
 | `first-draft.generate`, `first-draft.judge` | in the `first-draft-axi` 0.5.0 package (repo `umeranjum17/first-draft`), `src/byokit.mjs:53` (`backendOn` starts the Claude or Codex CLI with `model`); defaults at `src/byokit.mjs:122` (`DEFAULT_MODELS`) and, for the judge, `src/judge.mjs:39` (`judgeOf`) and `src/judge-fallback.mjs:5` |
@@ -73,7 +85,11 @@ A key exists only when code starts a model from it: code in this repo, or for `f
 | `internal.inbox-ask` | `bin/jg-inbox.sh:1262` (`--model-id "$ASK_MODEL"`) |
 | `internal.voice-relay` | `bin/jg-voice-relay.py:548` (`model_id=self.options.model`) |
 
-## First-draft: does it have its own engine today?
+## Do these tools have their own engine today?
+
+All four do. I read the source of each on this machine; none is a guess. Starts are listed in the keys table above.
+
+### first-draft
 
 Yes. I read the installed package `first-draft-axi` 0.5.0 (`~/.local/lib/node_modules/first-draft-axi/src`, MIT, repo `umeranjum17/first-draft`) and ran `first-draft-axi doctor` (no paid call):
 
@@ -82,7 +98,23 @@ Yes. I read the installed package `first-draft-axi` 0.5.0 (`~/.local/lib/node_mo
 - It has its own override already: `first-draft-axi init --agent byokit:<route> --model <model>` saves one (`src/cli.mjs:514-530`), and `--model <id>` overrides it for one run (`src/cli.mjs:319`).
 - It has a separate judge that must use a different engine than the generator (`src/judge.mjs:39`, `src/judge-fallback.mjs:5`).
 
-So no ticket to give it an engine. What is missing is only the read of this file. Follow-up ticket, in the `first-draft` repo and not part of this PR: **first-draft reads `first-draft.generate` and `first-draft.judge` from `config/tool-models.json` when it runs inside a Juggernaut home, and logs the line below.** Until that lands, the two `first-draft` blocks do nothing, and `docs/configuration.md` says so.
+So no ticket to give it an engine. Jobs: `generate` (the options) and `judge` (the critic). What is missing is only the read of this file: follow-up ticket, in the `first-draft` repo and not part of this PR: **first-draft reads `first-draft.generate` and `first-draft.judge` from `config/tool-models.json` when it runs inside a Juggernaut home, and logs the line below.** Until that lands, its blocks do nothing, and `docs/configuration.md` says so.
+
+### no-mistakes
+
+Yes. Source: `projects/no-mistakes` in the Overwatch home (a clone at `v1.85.3-8-g8225612e`; the installed binary is `v1.84.0`, so a line may differ in that build). The daemon creates one agent per configured harness (`internal/daemon/manager.go:341`), each with a `model` and `effort` profile from `agent_config` (`internal/config/config.go:1724`, `agentcfg.Profile` at `internal/agentcfg/agentcfg.go:90`). Its own default is empty: the harness keeps its own default model. Four review-loop roles can pin a harness, model and effort: `reviewer`, `fixer`, `reviewer_after_round`, `fixer_after_round` (`internal/config/review_agents.go:17-20,36`). I did not open the daemon's local config file (a protected login and config file), so I do not state what this machine pins there. Jobs: `review`, `fix`, `review-after-round`, `fix-after-round`. Today Juggernaut also pins the review model one level up, in `pi-quota-failover:375`. Follow-up ticket in the `no-mistakes` repo: read `no-mistakes.<job>` from this file, and log the line below.
+
+### learn-from-mistakes
+
+Yes, with one gap. Source: installed `learn-from-mistakes-axi` 0.12.0 (`~/.local/lib/node_modules/learn-from-mistakes-axi/src`, MIT). It has two roles, `worker` (analyse, propose, incident) and `judge` (verify), each with its own runner (claude, codex, opencode, pi, gemini, acp; `src/runners/index.mjs:17`). The judge has its own default: on claude with no model of its own it runs `claude-sonnet-5-5` (`src/runners/index.mjs:38-39`). The worker has no default: it refuses to run with no model (`src/steps/agent-step.mjs:24`, `src/runners/index.mjs:147`), by design ("never picks one for them"). So `learn-from-mistakes.worker` in the example is a starting option, not a default, and this file would be its first source. Follow-up tickets in the `learn-from-mistakes` repo: (1) read `learn-from-mistakes.<job>` from this file and log the line below; (2) decide whether the worker gets a default of its own.
+
+### done-done
+
+Yes. Source: installed `done-done-axi` 0.6.24 (`~/.local/lib/node_modules/done-done-axi/dist`, Apache-2.0). It has an author agent that runs the capture (`dist/agents.js:366-369`, default `CHEAP.claude` = `claude-haiku-5-5`, effort `low`, at `dist/config.js:43`; the cost guard comment at `dist/config.js:36` says a default is always the cheap one) and a judge (`dist/agents.js:420-428`; defaults: `JUDGE_DEFAULT` = `openai-codex/gpt-6-luna` for the pi answerer at `dist/config.js:41`, else the agent's `CHEAP` model). Both start through `askAgent`/`spawn` (`dist/agents.js:695,446`). Jobs: `author`, `judge`. Follow-up ticket in the `done-done` repo: read `done-done.<job>` from this file and log the line below. Today Juggernaut passes the judge only through `core/merge-card/merge-card:314,377`.
+
+### sign-off
+
+Stays without a key: it starts no model (the agent that files a card does the model work; the Go-deeper dispatcher resumes that agent's own Claude session and picks no model). Say if you want a key anyway.
 
 ## Read rules (Phase 2)
 
@@ -114,7 +146,7 @@ OpenCode (MIT, `agent.<name>.model` as `provider/model-id`; a subagent with no m
 
 ## Decisions for the owner (recommendation first)
 
-1. **This steer replaces two earlier rules.** The earlier "the default file lists every entry, and a missing entry stops" is replaced by "no entry = the tool's own default, logged". Say if you still want a visible full file copied into `config/` at bootstrap; I recommend not, because the log line already shows what ran.
+1. **The latest steers replace earlier rules.** The cuts of `first-draft` (and my earlier answer on its engine) are replaced by the engines section above.  The earlier "the default file lists every entry, and a missing entry stops" is replaced by "no entry = the tool's own default, logged". Say if you still want a visible full file copied into `config/` at bootstrap; I recommend not, because the log line already shows what ran.
 2. **Remove the other sources.** Yes: delete `JG_INBOX_*_MODEL`, `JG_VOICE_MODEL`, `config/inbox-*-model`, `config/voice-model` and the model tokens of `config/squad-lead-harness`. The built-in model string stays once in each tool as that tool's own default (this part of the earlier "remove the built-in strings" is replaced). The per-lead pin `config/squad_leads/<id>/harness` is a harness pin: recommend keeping it as the one explicit override, logged when used.
 3. **Failover.** Quota failover stays, only through the listed `internal.route-chain` (built-in list when no entry), one log line per step. A judge or review that is dry then moves down that list, not through a hidden one. Say no if you want it to stop instead.
 4. **Worker job rows** (`frontend`, `backend`, `cheap-verification`, `hard`) have no reader until Phase 2, no default of their own, and overlap `config/crew-dispatch.json`: keep them as the options list, or drop them and leave worker choice to crew-dispatch.
