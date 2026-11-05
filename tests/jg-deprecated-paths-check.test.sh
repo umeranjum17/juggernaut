@@ -12,7 +12,8 @@ g() { git -C "$tmp/r" -c user.email=fixture@example.invalid -c user.name=Fixture
 
 git init -q "$tmp/r"
 mkdir -p "$tmp/r/bin" "$tmp/r/defaults" "$tmp/r/old/sub" "$tmp/r/live"
-cp "$here/bin/jg-lint.sh" "$here/bin/jg-deprecated-paths-check.sh" "$tmp/r/bin/"
+cp "$here/bin/jg-lint.sh" "$here/bin/jg-deprecated-paths-check.sh" "$here/bin/jg-ports-check.sh" "$tmp/r/bin/"
+cp "$here/defaults/ports-adapters" "$tmp/r/defaults/"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/r/bin/jg-lint-workflows.sh"
 chmod +x "$tmp/r/bin/jg-lint-workflows.sh"
 mkdir -p "$tmp/r/bin/backends" && printf '#!/usr/bin/env bash\n:\n' >"$tmp/r/bin/backends/stub.sh"
