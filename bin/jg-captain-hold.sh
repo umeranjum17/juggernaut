@@ -1230,6 +1230,10 @@ command_hold() {
 write_resolution_record() {  # <task-id> <mode> <shown-body>
   local id=$1 mode=$2 body=$3 new_body tmp hold_set
   new_body=$(resolution_block "$mode")
+  # The captain's recorded answer is the board approval a build of this ticket needs.
+  case "$mode" in
+    answered|released|repaired) new_body=$(printf '%s\n%s' "$new_body" "$(captain_ask_approval_line "$id" "answer:$DECISION_DIGEST")") ;;
+  esac
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   hold_set=$(body_hold_set_timestamp "$body")

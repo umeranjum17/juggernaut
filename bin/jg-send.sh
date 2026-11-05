@@ -872,6 +872,23 @@ else
     echo "error: [$order_route_tag] steer needs a ticket=<task-id> token; add one before sending (for example: [$order_route_tag] ticket=TASK-ID your instruction)" >&2
     exit 1
   fi
+  # An order that names a [captain-ask] or Recon/plan-born ticket is a build order unless it
+  # says kind=recon; it needs the captain's signed approval (bin/jg-captain-ask-lib.sh).
+  if [ -n "$order_route_tag" ] && ! [[ "$MESSAGE" =~ (^|[[:space:]])kind=(recon|scout)([[:space:]]|$) ]] &&
+    [[ "$MESSAGE" =~ (^|[[:space:]])ticket=([A-Za-z0-9._-]+)([[:space:]]|$) ]]; then
+    order_ticket=${BASH_REMATCH[2]}
+    DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
+    # shellcheck source=bin/jg-tasks-axi-lib.sh
+    . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+    # shellcheck source=bin/jg-backlog-transition-lib.sh
+    . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
+    if jg_backlog_row_probe "$DATA" "$order_ticket"; then
+      fail() { echo "error: [$order_route_tag] steer not sent: $*" >&2; exit 1; }
+      # shellcheck source=bin/jg-captain-ask-lib.sh
+      . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
+      guard_captain_ask_build "$order_ticket" "$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$order_ticket" --full)"
+    fi
+  fi
   if [ "$TARGET_BACKEND" = remote ]; then
     JG_SEND_REMOTE_BUDGET=${JG_SEND_REMOTE_BUDGET:-30}
     case "$JG_SEND_REMOTE_BUDGET" in
