@@ -553,6 +553,7 @@ EOF
 portable_parallel_weight_hints() {
   cat <<'EOF'
 tests/jg-brief.test.sh 10594
+tests/jg-browser-sweep.test.sh 2000
 tests/jg-captain-hold-lifecycle.test.sh 343658
 tests/jg-crew-state.test.sh 82058
 tests/jg-pr-merge.test.sh 300199

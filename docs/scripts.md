@@ -158,6 +158,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-timing-lib.sh`       | Single owner of the deferred network stage's per-step elapsed-time records, inert unless a run asks for them |
 | `jg-sentinel.sh`         | Out-of-runtime recovery: detect an agent-runtime restart or a stale beacon with no turn running, reconcile direct reports, and wake the primary |
 | `jg-tmp-sweep.sh`        | Report /tmp space and inode use and sweep stale allowlisted fleet scratch that no live process or lane holds; including old session folders of a project folder that other sessions still use; the sentinel warns at 80% and sweeps daily, only reporting on its first run |
+| `jg-browser-sweep.sh`    | List (default) or stop, with `--apply`, chrome-devtools-axi bridges and puppeteer browsers older than `--hours` (default 24) that a run left behind, then print the browser count before and after; never touches the user's real Chrome or a process that only names the profile path. Manual; no periodic check runs it. |
 | `jg-supervision-lib.sh`  | Shared in-flight-work-without-fresh-watcher-beacon predicate                         |
 | `jg-ff-lib.sh`           | Shared guarded fast-forward/reconcile helper for origin pulls and Squad Lead syncs, with durable divergence markers |
 | `jg-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
