@@ -7,6 +7,8 @@
 #   jg-tool-models.sh model <tool> <harness> [<provider>/]
 #                                      print only the entry's model, when the entry names that harness,
 #                                      with the optional "<provider>/" prefix removed; else print nothing
+#   jg-tool-models.sh profiles <tool> print the tool's allowed profiles as one JSON array (for a tool that takes a
+#                                      list, like the route chain), or print nothing when its default stands
 #   jg-tool-models.sh check            validate config/tool-models.json; one line per problem
 #
 # config/tool-models.json is the crew-dispatch shape (docs/configuration.md "Tool
@@ -101,12 +103,48 @@ jg_tool_models_model() {
   printf '%s\n' "${model#"$prefix"}"
 }
 
+# jg_tool_models_profiles <tool>: for a tool that takes a LIST of models (the route chain), print a JSON array of
+# every profile of the tool's rule that the allow-list accepts, in file order, or print nothing when the tool's own
+# default stands. A refused profile is skipped with one TOOL_MODELS line; a bad file or no accepted profile keeps the
+# default. Always returns 0.
+jg_tool_models_profiles() {
+  local tool=$1 file err p harness model refusal kept=()
+  file=$(jg_tool_models_file)
+  [ -f "$file" ] || return 0
+  command -v jq >/dev/null 2>&1 || { echo "TOOL_MODELS: jq is missing, so $file is not read; $tool keeps its default" >&2; return 0; }
+  err=$(jg_tool_models_error "$file")
+  if [ -n "$err" ]; then
+    echo "TOOL_MODELS: $file is not used - $err; $tool keeps its default" >&2
+    return 0
+  fi
+  # shellcheck source=bin/jg-model-allowlist.sh
+  . "$_jg_tm_dir/jg-model-allowlist.sh"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    harness=$(jq -r .harness <<<"$p")
+    model=$(jq -r '.model // empty' <<<"$p")
+    if refusal=$(jg_model_allowlist_require "$harness" "$model" 2>&1); then
+      kept+=("$p")
+    else
+      echo "TOOL_MODELS: $tool profile $harness ${model:-default} skipped - ${refusal#error: }" >&2
+    fi
+  done < <(jq -c --arg t "$tool" '
+    def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+    first(.rules[] | select(.tool == $t)) | profiles(.use)[]' "$file" 2>/dev/null)
+  if [ "${#kept[@]}" -gt 0 ]; then
+    printf '%s\n' "${kept[@]}" | jq -sc .
+  elif jq -e --arg t "$tool" 'any(.rules[]; .tool == $t)' "$file" >/dev/null 2>&1; then
+    echo "TOOL_MODELS: no profile for $tool is allowed; $tool keeps its default" >&2
+  fi
+}
+
 [ "${BASH_SOURCE[0]}" -ef "$0" ] || return 0
 set -u
 JG_HOME="${JG_HOME:-$(cd "$_jg_tm_dir/.." && pwd)}"
 case "${1:-}" in
   resolve) [ "$#" -eq 2 ] || { echo "usage: jg-tool-models.sh resolve <tool>" >&2; exit 2; }; jg_tool_models_resolve "$2" ;;
   model) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { echo "usage: jg-tool-models.sh model <tool> <harness> [<provider>/]" >&2; exit 2; }; jg_tool_models_model "$2" "$3" "${4-}" ;;
+  profiles) [ "$#" -eq 2 ] || { echo "usage: jg-tool-models.sh profiles <tool>" >&2; exit 2; }; jg_tool_models_profiles "$2" ;;
   check)
     f=$(jg_tool_models_file)
     [ -f "$f" ] || { echo "no $f: every tool keeps its default"; exit 0; }
@@ -114,5 +152,5 @@ case "${1:-}" in
     [ -z "$err" ] || { echo "TOOL_MODELS: $f is not used - $err" >&2; exit 1; }
     jq -r '.rules[] | "\(.tool)\t\(.when)"' "$f"
     ;;
-  *) echo "usage: jg-tool-models.sh resolve <tool> | model <tool> <harness> [<provider>/] | check" >&2; exit 2 ;;
+  *) echo "usage: jg-tool-models.sh resolve <tool> | model <tool> <harness> [<provider>/] | profiles <tool> | check" >&2; exit 2 ;;
 esac
