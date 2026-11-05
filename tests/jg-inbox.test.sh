@@ -643,6 +643,32 @@ assert_equals "no" "$(printf '%s' "$rec" | python3 -c 'import json,sys; d=json.l
   "receipts keep the followup bookkeeping out of the notes"
 pass "followup sends further messages on an answered note"
 
+# --help and mistyped options never become words for the owner.
+reply_count() { run_inbox "$home" receipts --all-replies | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["replies"]))'; }
+before=$(reply_count)
+for form in "reply 1700000000-dddddd --help" "reply 1700000000-dddddd -h" "followup 1700000000-bbbbbb --help" "reply --help" "followup -h"; do
+  set +e
+  # shellcheck disable=SC2086
+  help_out=$(run_inbox "$home" $form 2>&1)
+  help_code=$?
+  set -e
+  expect_code 0 "$help_code" "$form prints usage and exits 0"
+  assert_contains "$help_out" "usage: jg-inbox.sh reply" "$form prints the usage"
+done
+for form in "reply 1700000000-dddddd --hlep" "followup 1700000000-bbbbbb -x"; do
+  set +e
+  # shellcheck disable=SC2086
+  opt_out=$(run_inbox "$home" $form 2>&1)
+  opt_code=$?
+  set -e
+  expect_code 1 "$opt_code" "$form is refused as an unknown option"
+  assert_contains "$opt_out" "unknown option" "$form names the problem"
+done
+assert_equals "$before" "$(reply_count)" "--help and a mistyped option record nothing, so nothing is sent"
+run_inbox "$home" reply 1700000000-dddddd -- "--help is how you ask for usage" >/dev/null || fail "text after -- should still be recorded"
+assert_equals "$((before + 1))" "$(reply_count)" "text that starts with a dash is recorded when it comes after --"
+pass "reply and followup treat --help as usage and refuse a mistyped option, recording nothing"
+
 # --- reply --option ---------------------------------------------------------
 
 home=$(make_home option)

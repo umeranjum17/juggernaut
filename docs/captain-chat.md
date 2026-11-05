@@ -42,6 +42,8 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   The text is the caption of the first album when it fits 1024 characters.
 - A note takes one `reply`. To send more on it, such as a later outcome or the pictures that came after the text, run `bin/jg-inbox.sh followup <id>` with the same arguments (`--attach`, text).
   Each followup is its own message threaded on the owner's note, sent once, in the order recorded.
+- `reply` and `followup` print usage for `--help` or `-h` and record nothing.
+  Text that opens with a dash is refused as an unknown option unless it comes after `--`, so a mistyped option is never sent to the owner.
   A note with no reply yet is refused: use `reply`.
 - Add `--option <label>` (repeatable, 2 to 8, 60 characters each) to `reply` to ask the owner to choose.
   The pictures go as an album first. The text then goes as a message with one button per option.

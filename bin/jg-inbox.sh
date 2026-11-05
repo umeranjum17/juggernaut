@@ -698,12 +698,16 @@ cmd_reply() {
     shift
   fi
   id=${1:-}
+  case "$id" in -h|--help) printf '%s\n' "$usage"; exit 0 ;; esac
   [ -n "$id" ] || die "$usage"
   shift
   valid_note_id "$id" || die "invalid note id"
   path=$(note_path "$id") || die "no such note: $id"
   while [ "$#" -gt 0 ]; do
-    if [ "$rest" -eq 0 ] && [ "$1" = "--attach" ]; then
+    if [ "$rest" -eq 0 ] && [ "${#text_args[@]}" -eq 0 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
+      printf '%s\n' "$usage"
+      exit 0
+    elif [ "$rest" -eq 0 ] && [ "$1" = "--attach" ]; then
       [ "$#" -ge 2 ] || die "--attach needs a file path"
       file=$2
       case "$file" in
@@ -735,6 +739,10 @@ cmd_reply() {
       rest=1
       shift
     else
+      # A reply text that opens like an option is a mistyped option, never words for the owner; text after "--" is always text.
+      if [ "$rest" -eq 0 ] && [ "${#text_args[@]}" -eq 0 ]; then
+        case "$1" in -?*) die "unknown option: $1 (to send text that starts with a dash, put it after --)" ;; esac
+      fi
       text_args+=("$1")
       shift
     fi
