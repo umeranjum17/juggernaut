@@ -3,6 +3,7 @@
 # bin/jg-harness.sh (the squad lead launch), bin/jg-supervision-engine-lib.sh and bin/jg-tool-models.sh on a
 # disposable home and print each answer before and after the edit, so nothing changes until the file does,
 # the next call reads the new file, and a bad entry says why in one line and keeps today's default.
+# journeys/tool-models.sh is the done-done journey that runs this file, so this test owns that journey.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -11,6 +12,9 @@ set -u
 lead() { # the squad lead's harness, model and effort as the real launch path reads them
   printf '%s %s %s' "$(JG_HOME=$1 "$ROOT/bin/jg-harness.sh" squad_lead 2>&1)" \
     "$(JG_HOME=$1 "$ROOT/bin/jg-harness.sh" squad-lead-model 2>&1)" "$(JG_HOME=$1 "$ROOT/bin/jg-harness.sh" squad-lead-effort 2>&1)"
+}
+engine_model() { # the supervision engine's default claude model, read the way a supervised launch reads it
+  bash -c '. "$1"; JG_HOME=$2 jg_supervision_engine_default_model claude' _ "$ROOT/bin/jg-supervision-engine-lib.sh" "$1"
 }
 rules() { # <tool> <profile-json>
   printf '{"rules":[{"tool":"%s","when":"fixture for %s","use":%s}]}\n' "$1" "$1" "$2"
@@ -50,11 +54,11 @@ test_other_tools_read_the_same_file() {
   local home out
   home=$(jg_test_tmproot jg-tool-models-tools)
   mkdir -p "$home/config"
-  out=$(. "$ROOT/bin/jg-supervision-engine-lib.sh"; JG_HOME=$home jg_supervision_engine_default_model claude)
+  out=$(engine_model "$home")
   echo "before: supervision engine model = $out"
   [ "$out" = sonnet ] || fail "no file: the supervision engine must keep its built-in model, got [$out]"
   rules supervision-engine '{"harness":"claude","model":"claude-haiku-5-5"}' >"$home/config/tool-models.json"
-  out=$(. "$ROOT/bin/jg-supervision-engine-lib.sh"; JG_HOME=$home jg_supervision_engine_default_model claude)
+  out=$(engine_model "$home")
   echo "after: supervision engine model = $out"
   [ "$out" = claude-haiku-5-5 ] || fail "the file must move the supervision engine model, got [$out]"
   [ -z "$(JG_HOME=$home "$ROOT/bin/jg-tool-models.sh" resolve voice-rewrite 2>&1)" ] || fail "a tool with no rule must print nothing"
