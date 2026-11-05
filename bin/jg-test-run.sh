@@ -728,6 +728,7 @@ tests/jg-grok-continuity-live-e2e.test.sh 80
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 177
 tests/jg-harness-quirks.test.sh 527
 tests/jg-herdr-lead-label.test.sh 365
+tests/jg-tool-models.test.sh 4000
 tests/jg-classify-go.test.sh 520
 tests/jg-herdr-go.test.sh 1222
 tests/jg-guard-host.test.sh 6431

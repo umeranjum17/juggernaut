@@ -85,7 +85,7 @@ JG_SHARED_CAPTAIN_MODE="444"
 # The declared inheritable set (space-separated, config-dir-relative item paths).
 # Extend here to inherit more of the primary's local config; override via the
 # environment only in tests. Items must not contain whitespace.
-JG_INHERITABLE_CONFIG="${JG_INHERITABLE_CONFIG:-crew-dispatch.json preferred-stack.json architecture.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode keep-ai-trailers supervision-host-off juggernaut-role lane-target}"
+JG_INHERITABLE_CONFIG="${JG_INHERITABLE_CONFIG:-crew-dispatch.json preferred-stack.json architecture.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode keep-ai-trailers supervision-host-off juggernaut-role lane-target tool-models.json}"
 # Every shipped preference block (defaults/preferences/<block>.json, see bin/jg-pref.sh) is inheritable as
 # config/preferences/<block>.json, so one `jg-pref.sh set` reaches every home through the same push. A new
 # block file joins by existing; no list here changes.

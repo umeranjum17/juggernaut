@@ -239,6 +239,20 @@ redirect_evidence() {
 # shellcheck source=signoff/bin/jg-signoff-feedback-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/signoff/bin/jg-signoff-feedback-lib.sh"
 
+# The pi model an entry tagged done-done-judge in config/tool-models.json (bin/jg-tool-models.sh) names, or
+# nothing when there is none and the judge stays as done-done configures it. The judge runs on pi, so another harness is refused.
+tool_models_judge() {
+  local tm harness model
+  tm=$("$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/jg-tool-models.sh" resolve done-done-judge) || return 0
+  [ -n "$tm" ] || return 0
+  read -r harness model _ <<<"$tm"
+  if [ "$harness" = pi ] && [ "${model:-default}" != default ]; then
+    printf '%s\n' "$model"
+  else
+    echo "TOOL_MODELS: done-done-judge needs harness pi and a model; the judge stays as configured" >&2
+  fi
+}
+
 # The executable selects before capturing judge JSON, keeping diagnostics out of it.
 pool_env_run() {
   local wt=$1
@@ -262,6 +276,9 @@ pool_env_run() {
     # is kept for hard steps only, when the route probe marked it down, when its provider has no room left,
     # or when pi does not list it on this machine. A route the fleet cannot read counts as up.
     chain=$(jg_route_chain_json "${JG_HOME:-}/config/account-pool") || chain=''
+    # The model config/tool-models.json names for the judge leads the chain; the route list still follows it,
+    # so a model that is dry or not listed here falls back to today's order.
+    [ -z "${TM_JUDGE:-}" ] || chain=$(jq -c --arg m "$TM_JUDGE" '[{id: "tool-models", provider: ($m | split("/")[0]), model: $m}] + .' <<<"${chain:-[]}") || chain=''
     while IFS=$'\t' read -r id provider model <&3; do
       [ -n "$model" ] || continue
       if jg_route_down "$id"; then
@@ -352,7 +369,8 @@ check() {
     # Explicit non-Claude judges must never depend on Claude pool capacity.
     case ${judge[1]:-claude-code} in
       claude-code|answerer:claude|answerer:claude-code)
-        JG_POOL_REQUIRE_FRESH=1 jg_pool_claude_env || fallback=1 ;;
+        # A judge model from config/tool-models.json runs on the route list and never needs Claude pool room.
+        if [ -n "${TM_JUDGE:=$(tool_models_judge)}" ]; then fallback=1; else JG_POOL_REQUIRE_FRESH=1 jg_pool_claude_env || fallback=1; fi ;;
     esac
     if done-done check --help 2>&1 | grep -q -- '--citation-base' ||
        version_at_least "$dd_v" 0.3.1; then
