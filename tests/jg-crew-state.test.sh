@@ -3397,6 +3397,32 @@ test_scout_skips_run_lookup() {
   pass "scout skips the run lookup"
 }
 
+# A standard or deep Recon's done is current-state done only past
+# bin/jg-recon-gate.sh; a quick Recon's done is not judged by it.
+test_recon_done_waits_for_the_depth_gate() {
+  reset_fakes
+  local d out; d=$(new_case recon-gate)
+  make_repo_on_branch "$d/wt" fm/recon-g
+  make_fakebin "$d" >/dev/null
+  mkdir -p "$d/data"
+  jg_write_meta "$d/state/recon-g.meta" "window=fm:jg-recon-g" "worktree=$d/wt" "kind=scout" "harness=claude"
+  JG_HOME="$d" JG_DATA_OVERRIDE="$d/data" "$ROOT/bin/jg-brief.sh" recon-g some-proj --scout --depth standard >/dev/null 2>&1 \
+    || fail "could not scaffold the standard Recon brief"
+  printf 'done: report ready\n' > "$d/state/recon-g.status"
+  arm_idle_record "$d/state" recon-g
+  out=$(JG_DATA_OVERRIDE="$d/data" run_crew_state "$d" recon-g)
+  assert_contains "$out" "state: blocked" "a standard Recon with no report is not done"
+  assert_contains "$out" "recon gate refused the done" "the blocked state does not name the gate"
+  jg_write_meta "$d/state/recon-q.meta" "window=fm:jg-recon-q" "worktree=$d/wt" "kind=scout" "harness=claude"
+  JG_HOME="$d" JG_DATA_OVERRIDE="$d/data" "$ROOT/bin/jg-brief.sh" recon-q some-proj --scout --depth quick >/dev/null 2>&1 \
+    || fail "could not scaffold the quick Recon brief"
+  printf 'done: report ready\n' > "$d/state/recon-q.status"
+  arm_idle_record "$d/state" recon-q
+  out=$(JG_DATA_OVERRIDE="$d/data" run_crew_state "$d" recon-q)
+  assert_contains "$out" "state: done" "a quick Recon's done is not judged by the depth gate"
+  pass "a standard Recon's done is blocked by the depth gate and a quick Recon's is not"
+}
+
 # (j) torn-down worktree and missing meta are graceful (unknown/none, exit 0)
 test_torn_down_worktree() {
   reset_fakes
@@ -5931,6 +5957,7 @@ test_dead_window_still_reports_terminal_run_step
 test_dead_window_still_reports_active_run_step
 test_no_timeout_uses_perl_bound
 test_scout_skips_run_lookup
+test_recon_done_waits_for_the_depth_gate
 test_torn_down_worktree
 test_remote_alive_with_log_uses_status_log
 test_remote_alive_idle_is_healthy_not_gone

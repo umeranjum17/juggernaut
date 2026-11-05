@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# The Recon depth gate: one shell check on a Recon's files, never a model call.
+#
+# Usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]
+#
+# bin/jg-brief.sh --scout writes `Recon depth: <level>` into a standard or deep
+# Recon's brief, and .agents/skills/deep-recon/SKILL.md owns the method. Before
+# such a Recon may report `done`, this gate reads data/<task-id>/ and refuses when:
+#   - report.md lacks one of the 13 template sections (`## <n>. <name>`, in order,
+#     with a body), or a deep report writes "Not applicable" under section 8 or 11;
+#   - a load-bearing claim in claims.jsonl is neither `verified` in checks.jsonl
+#     nor named by its C-n id in the report's "Not checked" section, or a refuted
+#     claim is still cited in the report body;
+#   - a deep claim is `verified` on one source with no hands-on run;
+#   - critic.md is missing, names no `Critic:`, has no `Round n: new gaps k` line,
+#     or its last round found new gaps; a deep critic may not be `self` or the
+#     researcher's own task id, and a deep Recon allows 3 rounds;
+#   - sources.jsonl is under the level's budget: standard 8 sources over 3 kinds,
+#     deep 20 over 5.
+# Quick is exempt, and so is a brief with no depth line (a brief made before the
+# flag existed). The depth is read from data/<task-id>/brief.md unless --depth is
+# given. The data directory is JG_DATA_OVERRIDE, else <JG_HOME>/data.
+#
+# It prints one line and exits 0 on success, one line per refusal and exits 1
+# otherwise, and exits 2 on a usage error. A "board link missing" refusal waits
+# for the board report surface and is not built here.
+set -u
+die() { echo "jg-recon-gate: $*" >&2; exit 2; }
+
+task=
+depth=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --depth) [ "$#" -ge 2 ] || die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]"; depth=$2; shift 2 ;;
+    --depth=*) depth=${1#--depth=}; shift ;;
+    -*) die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]" ;;
+    *) [ -z "$task" ] || die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]"; task=$1; shift ;;
+  esac
+done
+[ -n "$task" ] || die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]"
+case "$task" in */*|.*) die "task id '$task' is not a plain id" ;; esac
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+data=${JG_DATA_OVERRIDE:-${JG_HOME:-$root}/data}
+dir=$data/$task
+[ -d "$dir" ] || die "no task directory at $dir"
+
+if [ -z "$depth" ] && [ -f "$dir/brief.md" ]; then
+  depth=$(sed -n 's/^Recon depth:[[:space:]]*//p' "$dir/brief.md" | head -1 | tr -d '[:space:]')
+fi
+case "$depth" in
+  ''|quick) echo "recon gate: exempt - ${depth:-no depth line} Recon"; exit 0 ;;
+  standard|deep) ;;
+  *) die "unknown depth '$depth'" ;;
+esac
+
+python3 -I - "$dir" "$task" "$depth" <<'PY'
+import json, os, re, sys
+
+d, task, depth = sys.argv[1:4]
+refusals = []
+
+
+def refuse(msg):
+    refusals.append(msg)
+
+
+def rows(name):
+    path = os.path.join(d, name)
+    if not os.path.isfile(path):
+        refuse(f"{name} is missing")
+        return []
+    out = []
+    for n, line in enumerate(open(path, encoding="utf-8"), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            refuse(f"{name} line {n} is not JSON")
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+        else:
+            refuse(f"{name} line {n} is not an object")
+    return out
+
+
+SECTIONS = [
+    "Answer", "What was asked", "Method and depth record", "Prior art and options",
+    "Findings", "Design", "Not checked", "Implementation plan",
+    "Risks and mitigations", "Open decisions", "Acceptance test",
+    "Sources and evidence", "Revision log",
+]
+
+# --- report sections ---------------------------------------------------------
+body = {}
+report = ""
+rpath = os.path.join(d, "report.md")
+if not os.path.isfile(rpath):
+    refuse("report.md is missing")
+else:
+    report = open(rpath, encoding="utf-8").read()
+    heads = [(m.start(), int(m.group(1)), m.group(2).strip())
+             for m in re.finditer(r"^## (\d+)\.\s+(.*)$", report, re.M)]
+    for i, (pos, num, title) in enumerate(heads):
+        end = heads[i + 1][0] if i + 1 < len(heads) else len(report)
+        text = report[pos:end].split("\n", 1)[1] if "\n" in report[pos:end] else ""
+        body.setdefault(num, (title, text))
+    for num, name in enumerate(SECTIONS, 1):
+        got = body.get(num)
+        if got is None or not got[0].lower().startswith(name.lower()):
+            refuse(f"report.md has no section '## {num}. {name}'")
+        elif not got[1].strip():
+            refuse(f"report.md section {num} '{name}' is empty")
+    if depth == "deep":
+        for num in (8, 11):
+            got = body.get(num)
+            if got and re.match(r"\s*not applicable", got[1], re.I):
+                refuse(f"a deep report may not write 'Not applicable' under section {num} '{SECTIONS[num - 1]}'")
+
+# --- sources budget ----------------------------------------------------------
+sources = rows("sources.jsonl")
+need_n, need_k = (8, 3) if depth == "standard" else (20, 5)
+ids = {str(s.get("id")) for s in sources if s.get("id")}
+kinds = {str(s.get("kind")) for s in sources if s.get("kind")}
+if os.path.isfile(os.path.join(d, "sources.jsonl")) and (len(ids) < need_n or len(kinds) < need_k):
+    refuse(f"source budget not met for {depth}: {len(ids)} sources over {len(kinds)} kinds, need {need_n} over {need_k}")
+
+# --- claims and checks -------------------------------------------------------
+claims = {str(c.get("id")): c for c in rows("claims.jsonl") if c.get("id")}
+status, method = {}, {}
+for c in rows("checks.jsonl"):
+    cid = str(c.get("claim"))
+    status[cid] = str(c.get("status"))
+    method[cid] = str(c.get("method"))
+not_checked = body.get(7, ("", ""))[1]
+others = report
+if 7 in body:
+    others = report.replace(not_checked, "", 1)
+for cid, c in sorted(claims.items()):
+    st = status.get(cid, "unverified")
+    if st == "refuted" and re.search(r"\[%s\]" % re.escape(cid), others):
+        refuse(f"refuted claim {cid} is still cited in the report")
+    if not c.get("load_bearing"):
+        continue
+    if st == "verified":
+        if depth == "deep" and len(c.get("sources") or []) < 2 and method.get(cid) != "run":
+            refuse(f"deep claim {cid} is verified on one source with no hands-on run")
+    elif not re.search(r"\b%s\b" % re.escape(cid), not_checked):
+        refuse(f"load-bearing claim {cid} is {st}, and section 7 'Not checked' does not list it")
+
+# --- critic ------------------------------------------------------------------
+cpath = os.path.join(d, "critic.md")
+if not os.path.isfile(cpath):
+    refuse("critic.md is missing")
+else:
+    critic = open(cpath, encoding="utf-8").read()
+    who = re.search(r"^Critic:[ \t]*(\S.*)$", critic, re.M)
+    rounds = re.findall(r"^Round[ \t]+(\d+):[ \t]*new gaps[ \t]+(\d+)", critic, re.M)
+    if not who:
+        refuse("critic.md has no 'Critic: <who>' line")
+    elif depth == "deep" and who.group(1).strip().lower() in ("self", task.lower()):
+        refuse("a deep Recon needs a separate critic worker; critic.md names the researcher")
+    if not rounds:
+        refuse("critic.md has no 'Round <n>: new gaps <k>' line")
+    else:
+        if int(rounds[-1][1]) > 0:
+            refuse(f"critic.md round {rounds[-1][0]} found {rounds[-1][1]} new gaps; close them and run another round")
+        if depth == "deep" and len(rounds) > 3:
+            refuse(f"critic.md has {len(rounds)} rounds; a deep Recon allows 3")
+
+if refusals:
+    for r in refusals:
+        print(f"jg-recon-gate: refused: {r}", file=sys.stderr)
+    sys.exit(1)
+print(f"recon gate: PASS - {depth} Recon {task}: {len(ids)} sources over {len(kinds)} kinds, {len(claims)} claims")
+PY

@@ -2861,6 +2861,16 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
     echo "Repost the page under the same key with the Answer in the picture heading, then retry." >&2
     exit 1
   fi
+  # A standard or deep Recon's report must pass the depth gate (bin/jg-recon-gate.sh;
+  # quick and a legacy brief are exempt), so a shallow report is not cleaned up as done.
+  RECON_GATE_RC=0
+  RECON_GATE=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-recon-gate.sh" "$ID" 2>&1 >/dev/null) || RECON_GATE_RC=$?
+  if [ "$RECON_GATE_RC" -eq 1 ]; then
+    echo "REFUSED: scout task $ID has a report that does not pass the Recon depth gate." >&2
+    printf '%s\n' "$RECON_GATE" | sed 's/^/  /' >&2
+    echo "Close the gaps and run bin/jg-recon-gate.sh $ID until it passes, or use --force after explicit discard approval." >&2
+    exit 1
+  fi
 fi
 
 # A public commitment is not kept until its final reply lands in the ORIGINAL
