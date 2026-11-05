@@ -590,7 +590,11 @@ case "$CMD" in
     # path (bin/jg-bus.sh): the row above is stored exactly as before, and a
     # routine or silent row is not captain-facing, so only this one is sent.
     if [ "$VERDICT" = captain ] && [ "$SILENT" = false ]; then
-      "$SCRIPT_DIR/jg-bus.sh" publish outcome "$TASK" "$SUMMARY" >/dev/null 2>&1 || true
+      # Chat words only: the stored row above keeps the label. "merged-not-released:"
+      # was sent for work that had not merged, so the chat says only what is always true.
+      SENT="$SUMMARY"
+      case "$SUMMARY" in 'merged-not-released:'*) SENT="Not live yet:${SUMMARY#merged-not-released:}" ;; esac
+      "$SCRIPT_DIR/jg-bus.sh" publish outcome "$TASK" "$SENT" >/dev/null 2>&1 || true
     fi
     ;;
   unread)
