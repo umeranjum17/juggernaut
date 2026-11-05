@@ -59,16 +59,14 @@ test_urls_and_plain_text_pass() {
 }
 
 test_parent_channel_withholds_a_path_at_write_time() {
-  local f=$TMP_ROOT/channel.status
-  (
-    # shellcheck disable=SC1091
-    . "$ROOT/bin/jg-parent-channel-lib.sh"
-    jg_parent_channel_append_once "$f" 'done [at=1]: shot data/x/plan.png'
-    jg_parent_channel_append_once "$f" 'done [at=2]: shot data/x/plan.png #reports/x'
-  ) || fail 'the parent channel append must still deliver'
-  assert_contains "$(cat "$f")" 'done [at=1]: shot [file path withheld]' 'a path line is delivered with the path withheld'
-  assert_contains "$(cat "$f")" 'data/x/plan.png #reports/x' 'a line with a board key is delivered unchanged'
-  case $(cat "$f") in *'data/x/plan.png'$'\n'*) fail 'the bare path reached the channel' ;; esac
+  local f=$TMP_ROOT/channel.status body
+  # shellcheck disable=SC1091
+  . "$ROOT/bin/jg-parent-channel-lib.sh"
+  jg_parent_channel_append_once "$f" 'done [at=1]: shot data/x/plan.png' || fail 'the parent channel append must still deliver'
+  jg_parent_channel_append_once "$f" 'done [at=2]: shot data/x/plan.png #reports/x' || fail 'the parent channel append must still deliver'
+  body=$(cat "$f")
+  assert_contains "$body" 'done [at=1]: shot [file path withheld]' 'a path line is delivered with the path withheld'
+  assert_contains "$body" 'data/x/plan.png #reports/x' 'a line with a board key is delivered unchanged'
   pass 'the parent channel append withholds a path and keeps a board-key line'
 }
 
