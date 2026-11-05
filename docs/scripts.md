@@ -225,6 +225,8 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-public-followup-emit.sh` | Validate and report one typed terminal work result into its owning home, or stage it when that home is remote |
 | `jg-public-followup-collect.sh` | Read and retire the typed terminal results a remote work home staged for the home that owes the public reply |
 | `jg-inbox.sh`            | The captain's out-of-band capture surface: queue notes, ticket and list `[captain-ask]` notes, announce or repair wakes, record primary replies, and emit bounded receipts and readiness JSON |
+| `jg-evidence-lib.sh`     | Own the optional `evidence=<path>,<path>` token a lead's UI review-ready or landed line carries, read by `jg-inbox.sh reply --evidence-from` |
+| `jg-evidence-check.sh`   | Watcher check: flag a reply that names a UI landing's PR and attaches no picture or proof, once per reply |
 | `jg-mail.sh`             | General-purpose mail plane: read unseen IMAP mail, send one SMTP message, or surface new mail as a `check` wake via `poll` (configuration in the home's gitignored `.env`) |
 | `jg-mail.py`             | The IMAP/SMTP engine behind `jg-mail.sh` |
 | `jg-board-answers.sh`    | Standing board-answer check: `arm` registers a watcher check that sends each routed answer straight to its lead's inbox (closing the lead's decision key, archiving the card once the lead acknowledges) and wakes Main only for unrouted answers; `route` records a card's owner |

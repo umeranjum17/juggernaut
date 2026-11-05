@@ -35,6 +35,8 @@ _JG_MERGE_OUTCOME_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_JG_MERGE_OUTCOME_LIB_DIR/jg-pr-lib.sh"
 # shellcheck source=bin/jg-parent-channel-lib.sh
 . "$_JG_MERGE_OUTCOME_LIB_DIR/jg-parent-channel-lib.sh"
+# shellcheck source=bin/jg-evidence-lib.sh
+. "$_JG_MERGE_OUTCOME_LIB_DIR/jg-evidence-lib.sh"
 # shellcheck source=bin/jg-board-link-lib.sh
 # shellcheck disable=SC1091
 . "$_JG_MERGE_OUTCOME_LIB_DIR/jg-board-link-lib.sh"
@@ -89,6 +91,8 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
     if card_link=$(jg_board_link reports "$(jg_board_merge_key "$JG_PR_URL")" 2>/dev/null); then
       line="$line card=$card_link"
     fi
+    # UI work carries its evidence paths (bin/jg-evidence-lib.sh); other work adds nothing.
+    line="$line$(jg_evidence_line_suffix "$state" "${JG_DATA_OVERRIDE:-$home/data}" "$id")"
   else
     self_rc=$?
     [ "$self_rc" -eq 1 ] || return 3

@@ -90,6 +90,8 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-parent-channel-lib.sh
 . "$SCRIPT_DIR/jg-parent-channel-lib.sh"
+# shellcheck source=bin/jg-evidence-lib.sh
+. "$SCRIPT_DIR/jg-evidence-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
 
@@ -456,6 +458,8 @@ PR_MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_YOLO=$(grep '^yolo=' "$META" | tail -1 | cut -d= -f2- || true)
 [ -z "$PR_MODE" ] || READY_LINE="$READY_LINE mode=$(jg_parent_channel_clean_note "$PR_MODE")"
 [ -z "$PR_YOLO" ] || READY_LINE="$READY_LINE yolo=$(jg_parent_channel_clean_note "$PR_YOLO")"
+# UI work carries its evidence paths (bin/jg-evidence-lib.sh); other work adds nothing.
+READY_LINE="$READY_LINE$(jg_evidence_line_suffix "$STATE" "${JG_DATA_OVERRIDE:-$JG_HOME/data}" "$ID")"
 READY_RC=0
 jg_parent_channel_report "$JG_HOME" "$STATE" "$READY_LINE" || READY_RC=$?
 case "$READY_RC" in
