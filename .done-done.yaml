@@ -34,6 +34,8 @@ journeys:
     command: bash tests/jg-pre-push.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   spawn-dispatch-profile:
     command: bash journeys/spawn-dispatch-profile.sh
+  tool-models:
+    command: bash journeys/tool-models.sh
   receipt-candidate-hook:
     command: bash journeys/receipt-candidate-hook.sh
   tickets-stage-publish:

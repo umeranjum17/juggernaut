@@ -45,3 +45,32 @@ func voiceText(text string) (string, error) {
 	}
 	return string(out), nil
 }
+
+// boardLinkText gives every bare board link in text the board access token (bin/jg-board-link.sh
+// owns the rule). It runs after voiceText, so the token never reaches a model rewrite. A message
+// with a bare link and no token to add is refused with a 400, like a voice refusal, and is never
+// sent; a missing script or a crashed run sends the text as written, as voiceText does.
+func boardLinkText(text string) (string, error) {
+	root := os.Getenv("JG_BUS_ROOT")
+	if root == "" {
+		root = os.Getenv("JG_ROOT_OVERRIDE")
+	}
+	if root == "" || !strings.Contains(text, "#") {
+		return text, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", filepath.Join(root, "bin", "jg-board-link.sh"), "fix")
+	cmd.Stdin = strings.NewReader(text)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return "", &sendError{"board-link", 400, strings.TrimSpace(stderr.String())}
+	}
+	if err != nil {
+		return text, nil
+	}
+	return string(out), nil
+}

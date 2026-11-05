@@ -1,0 +1,27 @@
+{
+  "rules": [
+    {
+      "tool": "squad-lead",
+      "when": "Which model each Squad Lead launches with.",
+      "use": { "harness": "claude", "model": "sonnet", "effort": "high" },
+      "why": "Edit this entry to move every new Squad Lead launch to another model."
+    },
+    {
+      "tool": "done-done-judge",
+      "when": "Which model judges the Evidence card.",
+      "use": [{ "harness": "pi", "model": "ollama-cloud/deepseek-v4.1-flash" }],
+      "why": "The judge runs on the harness pi, so the model carries its provider prefix."
+    },
+    {
+      "tool": "no-mistakes-review",
+      "when": "Which model the no-mistakes review chain uses.",
+      "use": { "harness": "pi", "model": "claude-bridge/claude-haiku-5-5" },
+      "why": "The review runs on the harness pi, so the model carries its provider prefix."
+    },
+    {
+      "tool": "supervision-engine",
+      "when": "Which model the supervision engine uses when its engine has no model of its own.",
+      "use": { "harness": "claude", "model": "claude-haiku-5-5" }
+    }
+  ]
+}

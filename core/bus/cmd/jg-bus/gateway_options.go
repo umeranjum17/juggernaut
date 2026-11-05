@@ -56,8 +56,7 @@ func (t *telegram) Answer(ctx context.Context, callback, text string) error {
 
 // Edit replaces the text and the keyboard of a message the bot sent; no buttons removes the keyboard.
 func (t *telegram) Edit(ctx context.Context, chat, message, text string, buttons []Button) error {
-	body := toJSON(map[string]any{"chat_id": json.Number(chat), "message_id": json.Number(message), "text": text, "reply_markup": keyboard(buttons)})
-	_, err := t.call(ctx, "editMessageText", 10*time.Second, func() (io.Reader, string) { return bytes.NewReader([]byte(body)), "application/json" })
+	_, err := t.textCall(ctx, "editMessageText", 10*time.Second, map[string]any{"chat_id": json.Number(chat), "message_id": json.Number(message), "reply_markup": keyboard(buttons)}, text)
 	return err
 }
 

@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -46,7 +48,25 @@ func (a *app) statusLine(file string) string {
 // bot works; no token is read and no note, event or wake follows. A failed reply is logged only.
 func (a *app) answerStatus(ad Adapter, in Inbound) {
 	text := a.statusLine(filepath.Base(a.tokenPath())) + "\nbot: answering this message now"
+	if asks := a.ownerAsks(); asks != "" {
+		text += "\n\n" + asks
+	}
 	if _, err := ad.Send(context.Background(), Outbound{Chat: in.Chat, ReplyTo: in.Message, Text: text}); err != nil {
 		a.noteFailure("gateway status", err.Error())
 	}
+}
+
+// ownerAsks is the owner's own asks, in his words, from bin/jg-owner-asks.sh (no model, no network).
+// A script that is missing, slow or failing adds nothing: /status still answers from the gateway.
+func (a *app) ownerAsks() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(a.root, "bin", "jg-owner-asks.sh"))
+	cmd.Env = append(os.Environ(), "JG_HOME="+a.home)
+	out, err := cmd.Output()
+	if err != nil {
+		a.noteFailure("gateway status asks", err.Error())
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

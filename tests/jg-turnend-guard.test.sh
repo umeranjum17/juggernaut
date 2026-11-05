@@ -253,6 +253,7 @@ install_guard_scripts() {
   cp "$ROOT/bin/jg-primary-scope-lib.sh" "$dir/bin/jg-primary-scope-lib.sh"
   cp "$ROOT/bin/jg-supervision-lib.sh" "$dir/bin/jg-supervision-lib.sh"
   cp "$ROOT/bin/jg-supervision-engine-lib.sh" "$dir/bin/jg-supervision-engine-lib.sh"
+  cp "$ROOT/bin/jg-tool-models.sh" "$dir/bin/jg-tool-models.sh"
   cp "$ROOT/bin/jg-wake-lib.sh" "$dir/bin/jg-wake-lib.sh"
   cp "$ROOT/bin/jg-path-lib.sh" "$dir/bin/jg-path-lib.sh"
   cp "$ROOT/bin/jg-hook-host-lib.sh" "$dir/bin/jg-hook-host-lib.sh"
@@ -1415,6 +1416,7 @@ install_integrated_autoarm() {
   cp "$ROOT/bin/jg-cursor-lib.sh" "$dir/bin/jg-cursor-lib.sh"
   cp "$ROOT/bin/jg-lock.sh" "$dir/bin/jg-lock.sh"
   cp "$ROOT/bin/jg-supervision-engine-lib.sh" "$dir/bin/jg-supervision-engine-lib.sh"
+  cp "$ROOT/bin/jg-tool-models.sh" "$dir/bin/jg-tool-models.sh"
   chmod +x "$dir/bin/jg-claude-stop-autoarm.sh" "$dir/bin/jg-lock.sh"
   ln -s /bin/bash "$dir/fake-claude"
   # These cases drive the watcher arm, so the home opts out of the supervision

@@ -81,8 +81,8 @@ func TestGatewayReceipt(t *testing.T) {
 	}
 	text, _ := sends[0]["text"].(string)
 	rp, _ := sends[0]["reply_parameters"].(map[string]any)
-	if sends[0]["chat_id"] != 42.0 || rp["message_id"] != 120.0 || !strings.Contains(text, "gateway: telegram") || !strings.Contains(text, "owner paired") || strings.Contains(text, tok) || strings.Contains(text, home) {
-		t.Fatalf("/status answer = %v: want owner 42, threaded on 120, the gateway line, no token and no path", sends[0])
+	if sends[0]["chat_id"] != 42.0 || rp["message_id"] != 120.0 || !strings.Contains(text, "gateway: telegram") || !strings.Contains(text, "owner paired") || !strings.Contains(text, "Your asks, in your words.") || strings.Contains(text, tok) || strings.Contains(text, home) {
+		t.Fatalf("/status answer = %v: want owner 42, threaded on 120, the gateway line, the owner's asks, no token and no path", sends[0])
 	}
 	if d, _ := os.ReadFile(state + "/captain-chat/dropped.tsv"); strings.Count(string(d), "\n") != 1 {
 		t.Fatalf("the stranger's /status should be counted as dropped once: %q", d)

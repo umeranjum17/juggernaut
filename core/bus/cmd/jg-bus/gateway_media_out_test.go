@@ -214,6 +214,28 @@ func TestGatewayOutboundMedia(t *testing.T) {
 	if len(calls) != 10 {
 		t.Errorf("restart sent %d more calls", len(calls)-10)
 	}
+	// A note that was already answered takes more messages: `followup` sends a later picture and a
+	// later text on the same note, threaded on the owner's message, each once.
+	for _, args := range [][]string{
+		{"followup", ids["100"], "--attach", albums[0], "--", "the landed screen"},
+		{"followup", ids["100"], "--", "and the release"},
+	} {
+		if out, err := a.inbox("", args...); err != nil {
+			t.Fatalf("%v: %v %s", args, err, out)
+		}
+	}
+	once()
+	once()
+	if len(calls) != 12 {
+		t.Fatalf("followups sent %d calls, want 2 more: %v", len(calls)-10, methods(calls))
+	}
+	if c = mustCall(10, "sendPhoto"); c.fields["caption"] != "the landed screen" || !bytes.Equal(c.data["photo"], pngBytes(2)) ||
+		!strings.Contains(c.fields["reply_parameters"], `"message_id":100`) || c.fields["chat_id"] != "42" {
+		t.Errorf("followup picture = %+v", c)
+	}
+	if c = mustCall(11, "sendMessage"); c.fields["text"] != "and the release" || !strings.Contains(c.fields["reply_parameters"], `"message_id":100`) {
+		t.Errorf("followup text = %+v", c)
+	}
 	filepath.Walk(home, func(p string, i os.FileInfo, _ error) error {
 		if b, _ := os.ReadFile(p); p != tokenFile && !i.IsDir() && i.Size() < 1<<20 && strings.Contains(string(b), tok) {
 			t.Errorf("the bot token was written to %s", p)

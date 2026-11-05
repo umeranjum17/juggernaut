@@ -73,6 +73,8 @@ TEXT_MAX=4000
 # jg_lock_acquire_wait/jg_lock_release are the fleet's one lock implementation.
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
+# shellcheck source=bin/jg-board-link-lib.sh
+. "$SCRIPT_DIR/jg-board-link-lib.sh"
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
@@ -293,6 +295,8 @@ cmd_reply() {
   shift
   text=$*
   [ -n "${text//[[:space:]]/}" ] || die 'a reply needs text'
+  jg_board_link_fix "$text" || die 'reply refused: it holds a board link without its access token'
+  text=$JG_BOARD_LINK_OUT
   now=$(date +%s)
   chat_append "$thread" "$(chat_agent "$thread")" - agent - "$text" ||
     die 'cannot record the reply'

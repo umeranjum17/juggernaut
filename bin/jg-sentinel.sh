@@ -460,8 +460,12 @@ tmp_hygiene() {
   # In the background: a sweep of a crowded /tmp takes about a minute and must not delay recovery.
   (
     rc=0
-    out=$("$SCRIPT_DIR/jg-tmp-sweep.sh" sweep --apply 2>&1) || rc=$?
-    say "tmp sweep (exit $rc): $(printf '%s' "$out" | grep -E '^(removed|space use|inode use|FAILED|jg-tmp-sweep)' | tr '\n' ';')"
+    # The first sweep on a home only reports; the marker records that its report was logged.
+    mode=--apply
+    if [ ! -e "$STATE/.sentinel-tmp-sweep-reported" ]; then mode=--dry-run; : >"$STATE/.sentinel-tmp-sweep-reported"; fi
+    out=$("$SCRIPT_DIR/jg-tmp-sweep.sh" sweep "$mode" 2>&1) || rc=$?
+    printf '%s\n' "$out" | grep -E '^(remove|would remove|FAILED) ' | while IFS= read -r line; do say "tmp sweep: $line"; done
+    say "tmp sweep $mode (exit $rc): $(printf '%s' "$out" | grep -E '^(removed|would remove [0-9]|space use|inode use|FAILED|jg-tmp-sweep)' | tr '\n' ';')"
   ) >/dev/null 2>&1 &
 }
 
