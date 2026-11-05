@@ -518,6 +518,19 @@ CONTROL_LOCK_HELD=1
 jg_refuse_if_gate_agent
 JG_LOCK_LOG_PREFIX=teardown
 
+# An absent task record (no file, no symlink) with no pending backlog close means
+# the watcher's own cleanup already removed the task: say so and exit 0 after
+# clearing the receipt and probe files it can leave behind. A record that exists
+# but is not a regular file still falls through to the refusal below.
+if [ ! -e "$META" ] && [ ! -L "$META" ] && [ ! -e "$STATE/$ID.backlog-close" ]; then
+  jg_backlog_record_parent_authorized "$META" "task record" "$STATE" || {
+    echo "error: teardown refused: $JG_BACKLOG_TRANSITION_ERROR" >&2
+    exit 1
+  }
+  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID.probe-at" "$STATE/$ID.account-probe-at"
+  echo "task $ID is already cleaned up: its task record $META does not exist; nothing to tear down"
+  exit 0
+fi
 jg_backlog_record_present "$META" "task record" "$STATE" || {
   echo "error: teardown refused: $JG_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
