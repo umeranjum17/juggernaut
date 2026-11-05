@@ -1680,6 +1680,28 @@ See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a star
 
 Squad Lead homes inherit this file from the primary, so a Squad Lead's own operators apply the same dispatch profile behavior.
 
+## Tool models (config/tool-models.json)
+
+`config/tool-models.json` is an optional local, gitignored file that says which AI model each tool in this repository uses.
+It has the crew-dispatch shape: a `rules` list, and each rule carries `when`, `use`, an optional `why`, and a `tool` tag.
+`use` is one profile or an ordered list of profiles, and a profile is `{harness, model, effort}` with the same rules as `config/crew-dispatch.json`.
+Both files check profiles with one shared `jq` module, `bin/jg-profile.jq`.
+`bin/jg-tool-models.sh resolve <tool>` reads the file at every call, so an edit applies to the next launch or call with no code change and no restart.
+With no file, or no rule for a tool, nothing changes and the tool keeps its own default.
+A model must pass the spawn allow-list (`config/model-allow-list.json`); the first profile in the list that passes wins.
+A bad file, a bad profile, or a model the allow-list refuses prints one `TOOL_MODELS:` line that gives the reason, and the tool keeps its default.
+`bin/jg-tool-models.sh check` lists the tagged rules or the reason the file is unusable.
+Squad Lead homes inherit the file with the other shared config.
+
+| Tool tag | Read by | What the entry sets |
+|---|---|---|
+| `squad-lead` | `bin/jg-harness.sh` (`squad_lead_line`), used by `bin/jg-spawn.sh` and `bin/jg-control.sh` | Harness, model, and effort of a Squad Lead launch. A per-lead pin in `config/squad_leads/<id>/harness` still wins, and the entry wins over `config/squad-lead-harness`. |
+| `done-done-judge` | `core/merge-card/merge-card` | Model that judges the Evidence card. The harness must be `pi`, and the model carries its provider prefix. |
+| `supervision-engine` | `bin/jg-supervision-engine-lib.sh` | Default model of the supervision engine when its harness matches the entry. |
+
+Tools in this repository that still choose a model in their own way are listed in the follow-up section of the pull request that added this file.
+See [`docs/examples/tool-models.json`](examples/tool-models.json) for a starting point.
+
 ## Preferred stack and architecture (config/preferred-stack.json, config/architecture.json)
 
 Two optional local, gitignored files record a preference and never a gate.

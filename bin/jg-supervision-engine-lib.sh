@@ -83,7 +83,18 @@ jg_supervision_engine_verified() {  # <engine>
   return 1
 }
 
+# shellcheck source=bin/jg-tool-models.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-tool-models.sh"
+
 jg_supervision_engine_default_model() {  # <engine>
+  # An entry tagged supervision-engine in config/tool-models.json (bin/jg-tool-models.sh) for this engine's
+  # harness outranks the built-in default.
+  local tm tm_harness='' tm_model=''
+  tm=$(jg_tool_models_resolve supervision-engine) && read -r tm_harness tm_model _ <<<"$tm"
+  case "$tm_model" in
+    ''|default|*[!A-Za-z0-9._:/@-]*) ;;
+    *) if [ "$tm_harness" = "$1" ]; then printf '%s\n' "$tm_model"; return 0; fi ;;
+  esac
   case "$1" in
     claude) printf 'sonnet\n' ;;
     *) return 1 ;;
