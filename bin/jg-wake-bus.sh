@@ -79,7 +79,7 @@ bus_gate() {
     return 1
   fi
   if ! bus stream ls >/dev/null 2>&1; then
-    printf 'skip: no bus at %s\n' "$BUS_URL"
+    printf 'skip: the event system at %s does not answer\n' "$BUS_URL"
     return 1
   fi
 }
@@ -230,7 +230,7 @@ live_inbox_handled() { # <task> <seq> <outcome> <evidence>
 
 # live_inbox_settle: a worker acknowledges a steer by moving its record into
 # handled/, so this is the one observer that carries that move to the bus. A
-# record still in its inbox is left alone; one that is gone is acknowledged.
+# record still in its inbox is left alone; one that is in handled/ is acknowledged; one that is in neither is not.
 # Cheap: it reads the local replica, not the bus. The record's number is the last part
 # of its own id, and its file is that number padded the way bin/jg-task-inbox-lib.sh
 # names it, so a replica an older render wrote with the stream's sequence still settles.
@@ -240,14 +240,18 @@ live_inbox_settle() {
   live_events | jq -r 'select((.ack // false) != true and .task != null) | [.id, .task, (.id | split("/") | last)] | @tsv' 2>/dev/null | while IFS=$'\t' read -r id task seq; do
       [ -n "${task:-}" ] || continue
       case "$seq" in ''|*[!0-9]*) continue ;; esac
-      [ -e "$STATE/$task.inbox/$(printf '%03d' "$((10#$seq))").msg" ] && continue
+      # Acknowledged only when the worker moved the record into handled/. A record
+      # that is in neither place was lost, not handled, so it stays unacknowledged.
+      [ -e "$STATE/$task.inbox/handled/$(printf '%03d' "$((10#$seq))").msg" ] || continue
       printf '%s\n' "$id"
     done > "$STATE/.wake-bus.inbox-acks.$$" || return 0
+  local rc=0
   if [ -s "$STATE/.wake-bus.inbox-acks.$$" ]; then
     # shellcheck disable=SC2046  # one id per line, each one event id
-    live_ack $(cat "$STATE/.wake-bus.inbox-acks.$$")
+    live_ack $(cat "$STATE/.wake-bus.inbox-acks.$$") || rc=$?
   fi
   rm -f -- "$STATE/.wake-bus.inbox-acks.$$"
+  return "$rc"
 }
 
 # live_count: how many rows the read model holds, which is how a consumer knows

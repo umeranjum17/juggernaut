@@ -264,7 +264,7 @@ bus_gate() {
     return 1
   fi
   if ! bus stream ls >/dev/null 2>&1; then
-    printf 'skip: no bus at %s\n' "$BUS_URL"
+    printf 'skip: the event system at %s does not answer\n' "$BUS_URL"
     return 1
   fi
 }

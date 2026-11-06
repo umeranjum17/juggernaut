@@ -287,10 +287,13 @@ _jg_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
   # writer is the source, which is why nothing has to scan for it later
   # (docs/bus-live.md). A bus that cannot be reached leaves the record in place
   # and the renderer picks it up on its next pass, so a steer is never lost.
-  jg_wake_bus inbox-raise "$task" "$((10#${seq#0}))" \
+  # A failed raise never blocks the steer, but it is reported, not swallowed.
+  local raise_out
+  raise_out=$(jg_wake_bus inbox-raise "$task" "$((10#${seq#0}))" \
     "$([ "$delivery_mode" = fire-and-forget ] && printf 'fire-and-forget' || printf 'normal')" \
     "$(printf '%s' "$text" | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | cut -d' ' -f1)" \
-    >/dev/null 2>&1 || true
+    2>&1) || printf 'jg-task-inbox: steer %s for %s is stored, but the event system did not take it: %s\n' \
+      "$seq" "$task" "$(printf '%s' "$raise_out" | tr '\n' ' ' | cut -c1-200)" >&2
   printf '%s' "$rec"
 }
 

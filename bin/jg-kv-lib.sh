@@ -126,7 +126,7 @@ jg_kv_ready() { # <home-dir>
   [ -n "$JG_KV_READY" ] && return 0
   jg_kv_resolve "$1" || return 1
   if ! jg_kv_call kv ls >/dev/null 2>&1; then
-    JG_KV_WHY="no bus at $JG_KV_URL_RESOLVED"
+    JG_KV_WHY="the event system at $JG_KV_URL_RESOLVED does not answer"
     return 1
   fi
   JG_KV_WHY=

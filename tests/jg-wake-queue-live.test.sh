@@ -137,6 +137,33 @@ test_inbox_is_raised_at_the_writer_and_acknowledged_on_the_move() {
   pass "an inbox record is raised at its writer and acknowledged on the move"
 }
 
+# A record that vanished from its inbox without landing in handled/ was lost, not handled.
+test_a_lost_record_is_not_acknowledged() {
+  local rec
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/jg-task-inbox-lib.sh"
+  rec=$(jg_task_inbox_write "$STATE_DIR" task-lost "steer that goes missing") || fail "the inbox write failed"
+  rm -f -- "$rec"
+  bus inbox-settle || fail "the settle pass failed"
+  assert_equals 1 "$(inbox_replica task-lost)" "a record in neither the inbox nor handled/ must stay unacknowledged"
+  pass "a missing record is not counted as acknowledged"
+}
+
+# A raise the event system refuses is reported on stderr; the steer itself stays stored.
+test_a_failed_raise_is_reported_and_the_steer_stays_stored() {
+  local rec err
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/jg-task-inbox-lib.sh"
+  jg_wake_bus() { printf 'refused: the event system said no\n'; return 1; }
+  err=$(jg_task_inbox_write "$STATE_DIR" task-raise "steer with a refused raise" 2>&1 >"$STATE_DIR/.raise-rec") || fail "a refused raise must not fail the steer"
+  rec=$(cat "$STATE_DIR/.raise-rec")
+  [ -f "$rec" ] || fail "the steer record must stay stored"
+  assert_contains "$err" "did not take it" "the refused raise must be reported"
+  assert_contains "$err" "the event system said no" "the report must carry the reason"
+  unset -f jg_wake_bus
+  pass "a failed raise is reported and the steer stays stored"
+}
+
 # One server serves every home on the machine, so a stream made for the first home's
 # prefix alone must not turn the next home's raise into an owed outbox row: that
 # is how a queue "on the bus" kept all its wakes in a file.
@@ -416,6 +443,8 @@ test_one_real_wake_reads_end_to_end_through_the_go_path || result=1
 test_record_only_row_lands_in_the_record_model || result=1
 test_withdraw_takes_only_its_own_row || result=1
 test_inbox_is_raised_at_the_writer_and_acknowledged_on_the_move || result=1
+test_a_lost_record_is_not_acknowledged || result=1
+test_a_failed_raise_is_reported_and_the_steer_stays_stored || result=1
 test_a_second_home_reaches_the_same_stream || result=1
 test_an_inbox_acknowledgement_lands_on_the_inbox_stream || result=1
 test_an_acknowledgement_owed_by_the_outbox_still_settles || result=1
