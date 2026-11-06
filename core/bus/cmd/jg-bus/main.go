@@ -78,6 +78,8 @@
 //	         config it writes and refuses to write one the server could not start with.
 //	ensure   Start the server when it is not listening and create the stream, then say
 //	         one line. What a bootstrap step and docs/bus-service.md run.
+//	health   Test every JetStream account from the client side and send one message when an
+//	         outage starts and one when it ends: `health run` (health.go).
 //	unit     Print the systemd user service a home installs once for one part: nats
 //	         (the default) runs the server itself and creates the stream after it
 //	         starts; wake-engine, wake-watcher and router run this command's own consumers; dapr
@@ -116,7 +118,7 @@
 //	jg-bus gateway --once | serve | pair | status | enabled | push <text>   (gateway.go, gateway_pair.go and gateway_push.go own this)
 //	jg-bus parity [--record <file>] [--corrupt]
 //	jg-bus reply [<event.json>]
-//	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|gateway] | install-service | stop | status | bootstrap
+//	jg-bus stream | serve | ensure | check-limits <config> | unit [nats|wake-engine|wake-watcher|router|dapr|gateway] | install-service | health run | stop | status | bootstrap
 //	jg-bus wake-engine | router | probe [wake-engine|wake-watcher|router]   (engine.go owns these)
 //	jg-bus wake-watcher | watcher oldest|resurfaced|latest|rows|replay|rebuild   (watcher.go owns these)
 //	jg-bus wake render|raise|settle|deliver <state> ...   (wake.go, wakebus.go, wakerender.go own the wake queue's fold, bus and replica)
@@ -191,6 +193,8 @@ func run(args []string) int {
 		return a.probe(rest)
 	case "unit":
 		return a.unit(rest)
+	case "health":
+		return a.health(rest)
 	case "install-service":
 		return a.installService()
 	case "accounts":
