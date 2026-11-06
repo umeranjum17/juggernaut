@@ -126,7 +126,7 @@ callers() {  # The read shapes each backlog caller parses.
   assert_contains "$(. "$ROOT/bin/jg-supervision-lib.sh"; jg_ready_work_rows "$T/bd")" "jg-one-a acme" "supervision must see ready work"
 }
 writes() {  # The write shapes backlog callers send, then what each provider reads back.
-  local one=https://github.com/o/r/pull/1
+  local one=https://github.com/o/r/pull/1 two=https://github.com/o/r/pull/2
   same add jg-w1 "no type" --body why
   same add jg-w1 "[feature] One" --kind ship --repo acme --priority 1 --body why
   same add jg-w1 "[feature] One" --priority 1 --body why
@@ -137,8 +137,26 @@ writes() {  # The write shapes backlog callers send, then what each provider rea
   same add jg-w5 "[feature] Five" --priority 2 --body why --pr nope
   same add jg-w5 "[feature] Five" --priority 2 --body why --body-file /dev/null
   same add jg-w5 "[feature] Five" --priority 2 --body why --report nope
-  same show jg-w1 --full
-  same show jg-w2
+  same update jg-w1 --title "[feature] One more" --repo beta --kind recon --priority 2 --body new
+  same update jg-w1 --pr "$one"
+  same update jg-w1 --pr "$one"
+  same update jg-w1 --pr "$two" --json
+  same update jg-w1 --report data/w1/report.md
+  same update jg-w1
+  same update nope --title x
+  same update jg-w1 --priority 9
+  same block jg-w4 --by jg-w1
+  same block jg-w4 --by jg-w1
+  same block jg-w4 --by jg-w4
+  same block jg-w4 --by nope
+  same block jg-w4
+  same block nope --by jg-w1
+  same "done" jg-w4 --pr "$one" --note finished
+  same "done" jg-w4 --pr "$one"
+  same "done" jg-w4 --json
+  same "done" jg-w2
+  same "done" nope
+  for ident in jg-w1 jg-w2 jg-w4; do same show "$ident" --full; same show "$ident"; done
   same list
   same ready
 }
