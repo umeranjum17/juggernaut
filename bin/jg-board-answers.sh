@@ -207,7 +207,9 @@ cmd_tick() {
   if [ ! -e "$DISARMED" ] && ! registration_ok; then
     # Squad Lead homes are read by their primary home, and a state directory
     # that is not this home's own is a fixture or an override: neither is armed here.
-    if [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ "$STATE" != "$JG_HOME/state" ] || [ ! -d "$STATE" ]; then
+    # With no board file there is nothing to watch yet; the tick after one appears arms.
+    if [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ "$STATE" != "$JG_HOME/state" ] || [ ! -d "$STATE" ] \
+      || [ -z "$(jg_question_board)" ]; then
       return 0
     fi
     if cause=$(write_registration) && registration_ok; then

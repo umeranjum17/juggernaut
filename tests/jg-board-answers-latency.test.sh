@@ -14,9 +14,9 @@ DRAIN="$ROOT/bin/jg-wake-drain.sh"
 BA="$ROOT/bin/jg-board-answers.sh"
 
 if [ "${JG_BOARD_LATENCY_REAL:-0}" = 1 ]; then
-  POLL_ENV=() BOUND=60
+  POLL_ENV=() BOUND=60 QUIET=50
 else
-  POLL_ENV=(JG_POLL=1 JG_FAST_CHECK_INTERVAL=3) BOUND=20
+  POLL_ENV=(JG_POLL=1 JG_FAST_CHECK_INTERVAL=3) BOUND=20 QUIET=8
 fi
 LATENCY_LOG=${JG_BOARD_LATENCY_LOG:-}
 
@@ -45,7 +45,7 @@ answer() {  # <dir> <key> <epoch>
 }
 
 start_watch() {  # <dir> -> sets WPID
-  env HOME="$1/home" XDG_CONFIG_HOME="$1/home/config" TMPDIR="$1/tmp" PATH="$1/fakebin:$PATH" \
+  env HOME="$1/home" XDG_CONFIG_HOME="$1/home/config" TMPDIR="$1/tmp" PATH="$1/fakebin:${WATCH_PATH:-$PATH}" \
     JG_HOME="$1" JG_STATE_OVERRIDE="$1/state" JG_CONFIG_OVERRIDE="$1/config" SIGN_OFF_HOME="$1/so" \
     JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS=99999999 JG_STALE_ESCALATE_SECS=999999 "${POLL_ENV[@]}" \
@@ -167,7 +167,39 @@ test_disarm_is_not_undone_by_the_watcher() {
   pass "a disarmed check stays disarmed"
 }
 
+test_no_board_stays_quiet_until_one_appears() {
+  local d
+  d=$(new_home noboard)
+  rm -f "$d/so/.sign-off/decisions.json"
+  start_watch "$d"
+  sleep "$QUIET"
+  [ ! -e "$d/state/board-answers.check.sh" ] || { stop_watch; fail "a home with no board was armed"; }
+  ! grep -q 'board-answers' "$d/state/.wake-queue" 2>/dev/null || { stop_watch; fail "a home with no board woke Main: $(cat "$d/state/.wake-queue")"; }
+  printf '{"schema":2,"items":[]}\n' > "$d/so/.sign-off/decisions.json"
+  wait_for 40 registered "$d" || { stop_watch; fail "the check was not armed once the board appeared"; }
+  stop_watch
+  pass "a home with no board is neither armed nor woken, and arms itself once a board appears"
+}
+
+test_board_without_the_tool_alerts_once() {
+  local d dir kept=''
+  d=$(new_home notool)
+  rm -f "$d/fakebin/sign-off-axi"
+  while IFS= read -r dir; do
+    [ -x "$dir/sign-off-axi" ] || kept=$kept${kept:+:}$dir
+  done < <(printf '%s\n' "$PATH" | tr ':' '\n')
+  WATCH_PATH=$kept start_watch "$d"
+  wait_wake "$BOUND" "$d" 'sign-off-axi is not on PATH' > /dev/null || { stop_watch; fail "a board with no tool stayed silent"; }
+  ack "$d"
+  sleep "$QUIET"
+  stop_watch
+  ! grep -q 'sign-off-axi is not on PATH' "$d/state/.wake-queue" 2>/dev/null || fail "the missing tool alerted twice"
+  pass "a board whose tool is missing raises one alert"
+}
+
 test_new_answer_wakes_within_the_bound_with_no_manual_arm
+test_no_board_stays_quiet_until_one_appears
+test_board_without_the_tool_alerts_once
 test_broken_registration_heals_and_answers_still_wake
 test_unfixable_registration_alerts_once_and_recovers
 test_disarm_is_not_undone_by_the_watcher
