@@ -122,6 +122,9 @@ for phrase in 'Release c-13 is ready.' 'It needs the signature of the owner.' 'C
 done
 printf '%s' 'The release is ready. Cleanup finished.' | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "the check refused a plain sentence"
 pass "the three internal phrases from the captain's screenshot are flagged, and a plain sentence is not"
+printf '%s' 'The notes are in data/sitrep/report.md now.' | python3 "$VOICE" check --channel telegram 2>/dev/null && fail "the check passed a message that names a file path"
+printf '%s' 'The notes are at https://example.test/notes/report.md now.' | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "the check refused a link that ends in .md"
+pass "a file path is flagged for the captain's chat, and a link to a .md page is not"
 
 # A ticket id beside its full link (the captain's Telegram 408 and 409): `revert-pr678` carries a PR number, which the
 # check refused even when the message linked that PR. Smallest rule: a PR number passes only when the same message
