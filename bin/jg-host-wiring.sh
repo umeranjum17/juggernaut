@@ -19,6 +19,11 @@
 # A rerun is a rerun of each fragment's idempotent wiring and exits 0 when it lands the same wiring;
 # one failed step does not stop the rest, and every failed step is named before a nonzero exit.
 #
+# A Squad Lead home (marked by jg_compat_marker) never wires the machine-wide units: sentinel (jg-sentinel),
+# host-memory (jg-heavy-adopt timer) and lookout-adapter (the one dashboard). They are single per-machine
+# units, so the last lead home to run this would take them from Main; per-home steps still run, and --unwire
+# skips the same steps. Wake engine, wake watcher and router are not wired here.
+#
 # Exit status: 0 when every step wired, 1 when a step failed, 2 on a usage error.
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -104,6 +109,20 @@ fi
 home=$(cd "$home" && pwd -P)
 export JG_HOME=$home
 
+# Source the repo marker helper; a copy with no compat file beside it uses the same marker spelling.
+if [ -r "$here/bin/jg-compat.sh" ]; then
+  # shellcheck source=bin/jg-compat.sh
+  . "$here/bin/jg-compat.sh"
+else
+  jg_compat_marker() { printf '%s\n' "${1-}/.jg-squad-lead-home"; }
+fi
+machine_wide=' sentinel host-memory lookout-adapter '
+lead_home=0
+[ ! -e "$(jg_compat_marker "$home")" ] || lead_home=1
+if [ "$lead_home" = 1 ]; then
+  printf 'jg-host-wiring: %s is a Squad Lead home; skipping the machine-wide units:%s (Main owns them)\n' "$home" "${machine_wide% }"
+fi
+
 steps=("${plan[@]}")
 [ "$unwire" = 0 ] || { steps=(); for ((i = ${#plan[@]} - 1; i >= 0; i--)); do steps+=("${plan[i]}"); done; }
 
@@ -114,6 +133,7 @@ for entry in "${steps[@]}"; do
   file=wiring.sh
   [ "$unwire" = 0 ] || file=unwiring.sh
   script=$here/core/$name/$file
+  if [ "$lead_home" = 1 ] && [ "${machine_wide#*" $name "}" != "$machine_wide" ]; then continue; fi
   if [ ! -f "$script" ]; then
     if [ "$unwire" = 1 ]; then
       [ -f "$here/core/$name/wiring.sh" ] || { printf 'jg-host-wiring: %s has no wiring at %s\n' "$name" "$here/core/$name" >&2; failed="$failed $name"; continue; }
