@@ -16,8 +16,8 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
 | `jg-fleet-snapshot.sh`   | Print structured fleet snapshot JSON and refresh only its parent-side remote-ledger cache (schema `jg-fleet-snapshot.v1`) |
 | `jg-home-summary-refresh.sh` | Atomically publish this home's structured summary ledger                         |
-| `jg-beads-migrate-check.sh` | Dry-run the Beads migration on copies of every home through the guarded wrapper and stop unless every home matches the manifest |
-| `jg-beads-migrate.py` | Turn a copy of every home's tickets into per-home Beads import files and a manifest; runs no bd and moves nothing live |
+| `jg-beads-migrate-check.sh` | Dry-run the Beads migration on copies of every home through the guarded wrapper and stop unless every home matches the manifest; `--rehearse <home>` then cuts a throwaway copy of that home and goes back |
+| `jg-beads-migrate.py` | Turn a copy of every home's tickets into per-home Beads import files, a manifest and the groups to settle by hand; `cut` moves one home to its store on an order and `back` undoes it |
 | `jg-whats-left.sh` | Render the standing view of what is left (`state/whats-left.md`) from the backlog, status and holds; refreshed on every summary publication |
 | `jg-owner-asks.sh` | List the owner's open asks in his own words, grouped Needs you / Not done / Done (verified), from every home's `[captain-ask]` tickets and captain holds; `--json` for the board; the Telegram `/status` reply and `jg-captain-say.sh --asks` use it |
 | `jg-triage.sh` | Check this home's health in one command (session lock, wake consumer, bus stack, backlog lock, Squad Leads, sentinel, tools, checkout, config, login, /tmp, stray servers); `--fix` repairs the safe ones through their guarded scripts; `--porcelain`, `--context`, `--agent` ([contract](triage.md)) |

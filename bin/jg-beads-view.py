@@ -8,6 +8,7 @@ bin/jg-beads-write.py imports it, so a write answers in the same shape.
 bd stamps UTC and tasks-axi the local day, so created and closed read as the local day.
 A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while a lane is its assignee; kind is metadata.kind, else issue_type;
 parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
+show takes a row's id or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
 markdown prints the store in the backlog file's layout, for readers of that file's lines: ids are item, hold reasons encoded.
 Refusals print tasks-axi's error lines on stdout: exit 2 for a bad flag, exit 1 for an unknown id.
@@ -79,6 +80,17 @@ def flying(row):
     return row.get("status") == "in_progress" or (row.get("status") in HELD and bool(row.get("assignee")))
 
 
+def legacy(row):
+    meta = row.get("metadata") or {}
+    return [meta[name] for name in ("legacy_item", "legacy_id", "legacy_twin") if meta.get(name)]
+
+
+def named(rows, ident):
+    """The row with this id, else the one row that carried it before the move; two claimants read as none."""
+    hits = [row for row in rows if row["id"] == ident] or [row for row in rows if ident in legacy(row)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def task(row, rows):
     meta = row.get("metadata") or {}
     closed = row.get("status") == "closed"
@@ -102,7 +114,7 @@ def task(row, rows):
         # parent: the parent-child edge's target, else upkeep for the upkeep label; item: the id the home's state files use.
         "parent": next((d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "parent-child"),
                        "upkeep" if "upkeep" in (row.get("labels") or []) else "-"),
-        "item": meta.get("legacy_item") or row["id"],
+        "item": meta.get("legacy_item") or row["id"], "names": legacy(row),
     }
 
 
@@ -130,13 +142,14 @@ def show(tasks, args):
     found, ids = flags(args, (), ("--full",))
     if len(ids) != 1:
         refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi show <id> [--full]")
-    for item in tasks:
-        if item["id"] == ids[0]:
-            card(item, None if "--full" in found else "--full")
-            if item["blocked"] == "yes" and item["state"] != "done":
-                print("help[2]:\n  - Run `tasks-axi unblock %s --by <other>` to clear a blocker" % ids[0])
-                print("  - Run `tasks-axi start %s` to move it to in flight" % ids[0])
-            return
+    hits = [t for t in tasks if t["id"] == ids[0]] or [t for t in tasks if ids[0] in t["names"]]
+    if len(hits) == 1:
+        item = hits[0]
+        card(item, None if "--full" in found else "--full")
+        if item["blocked"] == "yes" and item["state"] != "done":
+            print("help[2]:\n  - Run `tasks-axi unblock %s --by <other>` to clear a blocker" % item["id"])
+            print("  - Run `tasks-axi start %s` to move it to in flight" % item["id"])
+        return
     refuse('Task "%s" not found in this backlog' % ids[0], "Run `tasks-axi list` to see existing tasks", "NOT_FOUND", 1)
 
 

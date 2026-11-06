@@ -686,7 +686,7 @@ tests/jg-agents-md-floor.test.sh 542
 tests/jg-agy-signals-live-e2e.test.sh 84
 tests/jg-backend-tmux-smoke.test.sh 312
 tests/jg-backlog-handoff.test.sh 78753
-tests/jg-beads-migrate.test.sh 500
+tests/jg-beads-migrate.test.sh 1700
 tests/jg-behavior-determinism.test.sh 22547
 tests/jg-board-answers.test.sh 6382
 tests/jg-board-answers-latency.test.sh 90000
