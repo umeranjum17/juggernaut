@@ -168,7 +168,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-config-inherit-lib.sh` | Shared primary-to-Squad-Lead inherited local-material propagation and config-reread delivery |
 | `jg-tasks-axi.sh`        | Run `tasks-axi` against this home's backlog from any working directory               |
 | `jg-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
-| `jg-beads.sh`            | The one guarded way to run `bd` and `dolt`: pinned builds, one embedded stealth store outside any git tree, no shared server, metrics off |
+| `jg-beads.sh`            | The one guarded way to run `bd` and `dolt`: pinned builds, one embedded stealth store outside any git tree, no shared server, metrics off, and a store rule that a blocked or held row needs a reason, which `check` reports when missing |
 | `jg-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |
 | `jg-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
 | `jg-project-capacity-lib.sh` | Per-project worker capacity: `config/project-capacity` parsing, what holds a place, and the spawn-time fit check ([configuration.md](configuration.md#project-capacity-configproject-capacity)) |

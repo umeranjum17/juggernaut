@@ -8,9 +8,14 @@
 #        BEADS_DIR=<store>/.beads jg-beads.sh <bd verb> [args...]
 #        jg-beads.sh --help
 #
-# `init` creates an embedded, stealth store; no bd init flag reaches it. `check` proves the pins
-# and the store without running either tool. `dolt` runs in the store's database folder and
-# refuses a query naming a dolt_push, pull, fetch, clone, remote or backup procedure.
+# `init` creates an embedded, stealth store; no bd init flag reaches it. It adds the on_hold status
+# and the hold rule: a blocked or on_hold row must name a non-blank metadata.hold_reason. bd needs no
+# reason and its hooks cannot refuse, so the rule is a Dolt CHECK that every writer meets. Run again
+# on a store missing the rule, `init` adds it; on a store with the rule, it refuses.
+# `check` proves the pins and the store, then reads the rule with dolt: a rule gone or changed exits
+# 2 naming it, and a read that fails reports that failure, never a missing rule.
+# `dolt` runs in the store's database folder and refuses a query naming a dolt_push, pull, fetch,
+# clone, remote or backup procedure.
 # Every other verb is a bd call from the store's parent, so a relative path means that folder.
 # bd verbs served: show list ready count search blocked create update close reopen dep label
 # comment comments note, plus what a migration needs: `import <file>`, `export -o <name>` with a
@@ -41,6 +46,13 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/jg-pin-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-pin-lib.sh"
+
+# The hold rule. bd keeps ephemeral rows in wisps, so that table carries it too, under its own name.
+HOLD_RULES='issues hold_needs_reason
+wisps wisp_hold_needs_reason'
+HOLD_CHECK="status NOT IN ('blocked','on_hold') OR CHAR_LENGTH(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata,'\$.hold_reason')),''))) > 0"
+# The same rule as the pinned dolt stores it, so a weaker rule under the right name reads as changed.
+HOLD_STORED="((NOT((\`status\` IN ('blocked', 'on_hold')))) OR (char_length(trim(both ' ' from coalesce(json_unquote(json_extract(\`metadata\`, '\$.hold_reason')),''))) > 0))"
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 die() { printf 'jg-beads: %s\n' "$*" >&2; exit 2; }
@@ -111,19 +123,63 @@ env_lock() {
   export BEADS_CEILING_DIRECTORIES=$STORE_PARENT GIT_CEILING_DIRECTORIES=$STORE_PARENT
 }
 
+# Dolt runs from the store's database folder.
+db_enter() {
+  local db
+  db=$(sed -n 's/.*"dolt_database": *"\([^"]*\)".*/\1/p' "$BEADS_DIR/metadata.json")
+  [ -n "$db" ] && [ -d "$BEADS_DIR/embeddeddolt/$db" ] || die "no database folder for ${db:-this store} in $BEADS_DIR/embeddeddolt"
+  cd -- "$BEADS_DIR/embeddeddolt/$db" || die "cannot enter the database folder of $BEADS_DIR"
+}
+
+# Prints "<table> <rule>" for each rule gone or changed. Runs in the database folder.
+hold_rule_gaps() {  # <dolt>
+  local stored table rule
+  stored=$("$1" sql -r csv -q "SELECT constraint_name, check_clause FROM information_schema.check_constraints WHERE constraint_name LIKE '%hold_needs_reason'") \
+    || die "cannot read the hold rule from $BEADS_DIR"
+  while read -r table rule; do
+    grep -Fqx "$rule,\"$HOLD_STORED\"" <<< "$stored" || printf '%s %s\n' "$table" "$rule"
+  done <<< "$HOLD_RULES"
+}
+
 run_init() {  # --prefix <prefix>
+  local bd dolt gaps table rule
   [ "$#" -eq 2 ] && [ "$1" = --prefix ] || die "usage: jg-beads.sh init --prefix <prefix>"
   case "$2" in ''|-*|*[!A-Za-z0-9_-]*) die "a prefix is letters, digits, - and _ only: $2" ;; esac
-  [ ! -e "$BEADS_DIR/metadata.json" ] || die "$BEADS_DIR is already a store; init never runs twice"
   pin_check bd
+  bd=$PINNED_TOOL
+  pin_check dolt
+  dolt=$PINNED_TOOL
   mkdir -p -- "$BEADS_DIR" || die "cannot create $BEADS_DIR"
   cd -- "$STORE_PARENT" || die "cannot enter $STORE_PARENT"
-  "$PINNED_TOOL" init --quiet --stealth --prefix "$2" || exit $?
+  [ -e "$BEADS_DIR/metadata.json" ] || "$bd" init --quiet --stealth --prefix "$2" || exit $?
   store_mode_check
+  db_enter
+  gaps=$(hold_rule_gaps "$dolt") || exit $?
+  [ -n "$gaps" ] || die "$BEADS_DIR is already a store; init never runs twice"
+  # The status must exist first, or a refused on_hold would be bd's status check and not the rule.
+  "$bd" config set status.custom on_hold:frozen > /dev/null || exit $?
+  while read -r table rule; do
+    "$dolt" sql -q "ALTER TABLE $table ADD CONSTRAINT $rule CHECK ($HOLD_CHECK)" || exit $?
+  done <<< "$gaps"
+  # wisps is not versioned, so a repair of that rule alone leaves nothing to commit.
+  "$dolt" add -A && "$dolt" commit --allow-empty --author 'jg-beads <jg-beads@local>' -m 'Add the hold rule' > /dev/null || exit $?
+}
+
+run_check() {
+  local tool gaps
+  for tool in bd dolt; do
+    pin_check "$tool"
+    printf '%s: %s (pinned %s)\n' "$tool" "$PINNED_TOOL" "$(jg_pin_version "$tool")"
+  done
+  store_mode_check
+  printf 'store: %s (embedded, stealth)\n' "$BEADS_DIR"
+  db_enter
+  gaps=$(hold_rule_gaps "$PINNED_TOOL") || exit $?
+  [ -z "$gaps" ] || die "hold rule missing or changed in $BEADS_DIR: $(cut -d' ' -f2 <<< "$gaps" | tr '\n' ' ')"
+  printf 'rule: hold_needs_reason (issues, wisps)\n'
 }
 
 run_dolt() {  # version | sql -q <query>
-  local db
   if [ "$#" -eq 3 ] && [ "$1" = sql ] && [ "$2" = -q ]; then
     printf '%s' "$3" | grep -Eiq 'dolt_(push|pull|fetch|clone|remote|backup)' \
       && die "this query reaches a remote, which the store never does"
@@ -132,9 +188,7 @@ run_dolt() {  # version | sql -q <query>
   fi
   pin_check dolt
   store_mode_check
-  db=$(sed -n 's/.*"dolt_database": *"\([^"]*\)".*/\1/p' "$BEADS_DIR/metadata.json")
-  [ -n "$db" ] && [ -d "$BEADS_DIR/embeddeddolt/$db" ] || die "no database folder for ${db:-this store} in $BEADS_DIR/embeddeddolt"
-  cd -- "$BEADS_DIR/embeddeddolt/$db" || die "cannot enter the database folder of $BEADS_DIR"
+  db_enter
   exec "$PINNED_TOOL" "$@"
 }
 
@@ -171,14 +225,7 @@ export BEADS_DIR=$STORE_PARENT/.beads
 env_lock
 case "$1" in
   init) shift; run_init "$@" ;;
-  check)
-    for tool in bd dolt; do
-      pin_check "$tool"
-      printf '%s: %s (pinned %s)\n' "$tool" "$PINNED_TOOL" "$(jg_pin_version "$tool")"
-    done
-    store_mode_check
-    printf 'store: %s (embedded, stealth)\n' "$BEADS_DIR"
-    ;;
+  check) run_check ;;
   dolt) shift; run_dolt "$@" ;;
   *) run_bd "$@" ;;
 esac

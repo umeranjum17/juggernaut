@@ -78,11 +78,11 @@ grep -q 'manifest' "$T/err" || fail "a wrong count gave no reason"
 # The check script refuses a shared server before any bd call; the wrapper refuses an unpinned bd.
 CHECK=$ROOT/bin/jg-beads-migrate-check.sh
 printf 'fake' >"$T/bd"; chmod +x "$T/bd"
-BEADS_DOLT_SHARED_SERVER=1 "$CHECK" --main "$M" --bd "$T/bd" --scratch "$T/s" 2>&1 | grep -q 'banned' || fail "shared server not refused"
-if [ -n "${JG_TEST_BD:-}" ]; then # CI has no pinned bd; set this to the pinned build for the full path.
-  "$CHECK" --main "$M" --bd "$T/bd" --scratch "$T/s" 2>&1 | grep -q 'not the pinned' || fail "unpinned bd not refused"
+BEADS_DOLT_SHARED_SERVER=1 "$CHECK" --main "$M" --bd "$T/bd" --dolt "$T/bd" --scratch "$T/s" 2>&1 | grep -q 'banned' || fail "shared server not refused"
+if [ -n "${JG_TEST_BD:-}" ] && [ -n "${JG_TEST_DOLT:-}" ]; then # CI has no pinned builds; set both for the full path.
+  "$CHECK" --main "$M" --bd "$T/bd" --dolt "$JG_TEST_DOLT" --scratch "$T/s" 2>&1 | grep -q 'not the pinned' || fail "unpinned bd not refused"
   mkdir -p "$T/tree/.git"
-  "$CHECK" --main "$M" --bd "$JG_TEST_BD" --scratch "$T/tree/s" 2>&1 | grep -q 'inside the git tree' || fail "scratch in a git tree not refused"
-  "$CHECK" --main "$M" --bd "$JG_TEST_BD" --scratch "$T/s" | grep -q 'dry run passed' || fail "fixture dry run failed"
+  "$CHECK" --main "$M" --bd "$JG_TEST_BD" --dolt "$JG_TEST_DOLT" --scratch "$T/tree/s" 2>&1 | grep -q 'inside the git tree' || fail "scratch in a git tree not refused"
+  "$CHECK" --main "$M" --bd "$JG_TEST_BD" --dolt "$JG_TEST_DOLT" --scratch "$T/s" | grep -q 'dry run passed' || fail "fixture dry run failed"
 fi
 pass "beads migrate plan keeps every row, hold and blocker"

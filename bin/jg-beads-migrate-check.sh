@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jg-beads-migrate-check.sh - dry-run the Beads migration on copies of every home.
 #
-# Usage: jg-beads-migrate-check.sh --main <main home> --bd <pinned bd> --scratch <dir>
+# Usage: jg-beads-migrate-check.sh --main <main home> --bd <pinned bd> --dolt <pinned dolt> --scratch <dir>
 #
 # Copies the board feed and each home's backlog and archive into a new folder under
 # <dir>, builds the import files with bin/jg-beads-migrate.py, then imports one store
@@ -18,19 +18,21 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 die() { echo "jg-beads-migrate-check: $*" >&2; exit 1; }
 usage() { sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
-MAIN='' BD='' SCRATCH=''
+MAIN='' BD='' DOLT='' SCRATCH=''
 while [ "$#" -gt 0 ]; do
   case $1 in
     --main) MAIN=${2:-}; shift 2 ;;
     --bd) BD=${2:-}; shift 2 ;;
+    --dolt) DOLT=${2:-}; shift 2 ;;
     --scratch) SCRATCH=${2:-}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
-[ -n "$MAIN" ] && [ -n "$BD" ] && [ -n "$SCRATCH" ] || die "--main, --bd and --scratch are required"
+[ -n "$MAIN" ] && [ -n "$BD" ] && [ -n "$DOLT" ] && [ -n "$SCRATCH" ] || die "--main, --bd, --dolt and --scratch are required"
 [ -z "${BEADS_DOLT_SHARED_SERVER:-}" ] || die "BEADS_DOLT_SHARED_SERVER is set; a shared server is banned"
 [ -f "$BD" ] || die "no bd at $BD"
+[ -f "$DOLT" ] || die "no dolt at $DOLT"
 command -v bwrap >/dev/null || die "bwrap is required"
 mkdir -p "$SCRATCH"
 SCRATCH=$(cd "$SCRATCH" && pwd)
@@ -42,6 +44,7 @@ done
 
 RUN=$(mktemp -d "$SCRATCH/run.XXXXXX")
 BD=$(realpath "$BD")
+DOLT=$(realpath "$DOLT")
 mkdir -p "$RUN/runs"
 python3 "$HERE/jg-beads-migrate.py" copy --main "$MAIN" --to "$RUN/copy"
 python3 "$HERE/jg-beads-migrate.py" plan --copy "$RUN/copy" --out "$RUN/imp"
@@ -50,7 +53,7 @@ in_store() { # <store parent> <wrapper args...>: one wrapper call, jailed; each 
   local store=$1
   shift
   bwrap --ro-bind / / --bind "$RUN" "$RUN" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent \
-    env -i PATH=/usr/bin:/bin HOME="$HOME" BEADS_DIR="$store/.beads" BEADS_ACTOR=migrate-check JG_BEADS_BD="$BD" \
+    env -i PATH=/usr/bin:/bin HOME="$HOME" BEADS_DIR="$store/.beads" BEADS_ACTOR=migrate-check JG_BEADS_BD="$BD" JG_BEADS_DOLT="$DOLT" \
     "$HERE/jg-beads.sh" "$@"
 }
 
