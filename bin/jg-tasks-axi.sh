@@ -222,7 +222,7 @@ if jg_backlog_backend_beads "$JG_HOME/config"; then
   case "${1:-}" in
     show|view) beads_read | key_tool annotate-show; exit $? ;;
     list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
-    ready) beads_read; exit $? ;;
+    ready|markdown) beads_read; exit $? ;;
     add|create|update|edit|done|close|block|start|reopen) JG_BEADS=1 ;;
     *) fail "the beads backlog does not serve ${1:-this command} yet" ;;
   esac
@@ -422,7 +422,9 @@ if [ "${#CLOSE_NOTE_ARGS[@]}" -gt 0 ]; then
 fi
 if [ "$JG_BEADS" = 1 ]; then
   jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
-  exit $?
+  _jg_rc=$?
+  case "${1:-}" in add|create) [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true ;; esac
+  exit "$_jg_rc"
 fi
 case "${1:-}" in
   show|view|list)

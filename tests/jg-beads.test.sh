@@ -137,6 +137,26 @@ reader() {  # <home> <command...>: a reader of that home's backlog, with no task
     JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" JG_BOOTSTRAP_NETWORK=skip JG_PIN_FILE_OVERRIDE="${JG_PIN_FILE_OVERRIDE:-}" \
     "${jail[@]}" "$@" 2>&1
 }
+flow_home() {  # <ta|bd>: a copy of that home with a held lane and an open lane.
+  local lane fl=$T/fl-$1
+  mkdir -p "$fl/state" "$fl/data"
+  cp -R "$T/$1/config" "$fl/"
+  [ ! -f "$T/$1/data/backlog.md" ] || cp "$T/$1/data/backlog.md" "$fl/data/"
+  for lane in jg-wait jg-one-a; do
+    printf 'kind=ship\n' > "$fl/state/$lane.meta"
+    printf 'blocked [at=1000]: waits\n' > "$fl/state/$lane.status"
+  done
+}
+flow() {  # <home>: the lead's lines, past each lane's clock.
+  rm -f "$1/state/.flow.last"
+  reader "$1" env JG_MAIN_HOME="$ROOT" JG_FLOW_NOW=100000 "$ROOT/core/fleet-flow/bin/jg-flow-check.sh" "$1"
+}
+owner_rule() {  # <home> <id>: the owner rule's verdict on that row, and its exit status.
+  local rc=0
+  # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
+  reader "$1" env JG_GUARD_HOST_BIN="${GUARD:-}" OPA="${OPA:-}" bash -c '. "$1/core/owner-rules/bin/jg-owner-rules-lib.sh"; jg_owner_rules_check "$2/data" "$3" direct-PR ship' _ "$ROOT" "$1" "$2" || rc=$?
+  printf 'rc=%s\n' "$rc"
+}
 readers() {  # What reads the backlog file reads the same rows from the store.
   local pick out home flying
   pick='[.backlog.records[] | {id,state,title,repo,kind,priority,blocked_by_ids,hold_reason,hold_kind,pr_url,verb:.completion.verb,body_lines}] | sort_by(.id)'
@@ -151,6 +171,27 @@ readers() {  # What reads the backlog file reads the same rows from the store.
   assert_contains "$(cat "$T/bd.flying")" 'jg-fly - Flying' "the inbox status must list the store's work in flight"
   assert_contains "$(cat "$T/bd.asks")" 'jg-wait' "the owner's asks must read the store"
   for out in rows flying asks; do
+    diff "$T/ta.$out" "$T/bd.$out" >/dev/null || fail "$out differs across providers: $(diff "$T/ta.$out" "$T/bd.$out")"
+  done
+  for home in ta bd; do
+    reader "$T/$home" python3 "$ROOT/bin/jg_voice_records.py" status --home "$T/$home" --scope full | jq -S 'del(.generated_at, .as_of)' > "$T/$home.voice" || fail "$home voice"
+    reader "$T/$home" "$ROOT/bin/jg-whats-left.sh" show | grep -v '^Updated ' > "$T/$home.left"
+    printf 'JG\n' > "$T/$home/config/ticket-prefix"
+    reader "$T/$home" "$ROOT/bin/jg-ticket-key.sh" sync || fail "$home keys"
+    cut -f2 "$T/$home/data/ticket-keys.tsv" | sort > "$T/$home.keys"  # A file row keeps a held item's date before its hold tags, so mint order can differ.
+    rm -f "$T/$home/config/ticket-prefix" "$T/$home/data/ticket-keys.tsv" "$T/$home/data/ticket-counters.tsv"
+    flow_home "$home"
+    flow "$T/fl-$home" > "$T/$home.flow"
+    owner_rule "$T/$home" jg-one-a > "$T/$home.owner"
+  done
+  assert_contains "$(cat "$T/bd.voice")" 'Flying' "the voice status must read the store"
+  assert_contains "$(cat "$T/bd.left")" 'jg-one-a' "what is left must read the store"
+  assert_contains "$(cat "$T/bd.keys")" 'jg-one-a' "ticket keys must cover the store's open rows"
+  [ -z "${GUARD:-}" ] || assert_contains "$(cat "$T/bd.owner")" 'no owner ask' "the owner rule must judge the store's row"
+  assert_contains "$(cat "$T/bd.flow")" 'jg-one-a lead' "an open lane must raise its wait line"
+  assert_not_contains "$(cat "$T/bd.flow")" 'jg-wait' "a lane held in the store must raise no wait line"
+  assert_contains "$(reader "$T/bd" env JG_BIN="$ROOT/bin" "$ROOT/core/fleet-flow/bin/jg-flow.sh" --json | jq -c '.queue')" 'jg-one-a' "the flow report must read the store's queue"
+  for out in voice left keys flow owner; do
     diff "$T/ta.$out" "$T/bd.$out" >/dev/null || fail "$out differs across providers: $(diff "$T/ta.$out" "$T/bd.$out")"
   done
   out=$(reader "$T/bd" timeout 90 "$ROOT/bin/jg-session-start.sh")
@@ -206,6 +247,13 @@ writes() {  # The write shapes backlog callers send, then what each provider rea
   for ident in jg-w1 jg-w2 jg-w4; do same show "$ident" --full; same show "$ident"; done
   same list
   same ready
+  printf 'JG\n' | tee "$T/ta/config/ticket-prefix" > "$T/bd/config/ticket-prefix"
+  same add jg-ask "[captain-ask] Asked" --kind ship --repo acme --priority 0 --body why
+  assert_grep "jg-ask" "$T/bd/data/ticket-keys.tsv" "an add on the store must key its ticket"
+  assert_equals "$(cut -f2 "$T/bd/data/ticket-keys.tsv" | sort)" "$(cut -f2 "$T/ta/data/ticket-keys.tsv" | sort)" "both homes must key the same tickets"
+  rm -f "$T"/{ta,bd}/config/ticket-prefix "$T"/{ta,bd}/data/ticket-keys.tsv "$T"/{ta,bd}/data/ticket-counters.tsv
+  [ -z "${GUARD:-}" ] || assert_contains "$(owner_rule "$T/bd" jg-ask)" 'rc=0' "the owner rule must pass the store's ask"
+  assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-whats-left.sh" show)" "jg-ask" "a look after a write must show the new row"
 }
 # What a row's lifecycle leaves, through the library the spawn, teardown and session-start scripts call.
 TRANSITION=$T/transition.sh
@@ -420,6 +468,11 @@ JSON
   out=$(JG_HOME="$T/bd" "$CLI" unblock x --by y 2>&1)
   expect_code 2 $? "an unserved verb on beads"
   assert_contains "$out" "does not serve unblock" "an unserved verb must be refused"
+  GUARD=$T/guard/jg-guard-host OPA=$(command -v opa || true)
+  if [ -z "$OPA" ] || ! JG_GUARD_HOST_BIN=$GUARD "$ROOT/bin/jg-guard-host.sh" --list >/dev/null 2>&1; then
+    GUARD=
+    printf 'skip: owner rule verdicts: the guard needs Go and OPA\n'
+  fi
   ROWS=$T/rows.json callers
   # A failed read says so, and a lead's store decides whether that lead can sleep.
   : > "$LOG.down"
@@ -428,6 +481,16 @@ JSON
   assert_contains "$out" "the store cannot be read" "a failed read must give its reason"
   assert_not_contains "$out" "title-line" "a store has no title lines to fall back on"
   assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" status)" "the backlog cannot be read" "a failed read must not look like nothing in flight"
+  out=$(reader "$T/bd" python3 "$ROOT/bin/jg_voice_records.py" status --home "$T/bd" --scope full)
+  expect_code 2 $? "a voice status with no store"
+  assert_contains "$out" "the backlog cannot be read" "a failed read must not read as an empty fleet"
+  printf 'JG\n' > "$T/bd/config/ticket-prefix"
+  out=$(reader "$T/bd" "$ROOT/bin/jg-ticket-key.sh" sync)
+  expect_code 2 $? "a key sync with no store"
+  assert_contains "$out" "the backlog cannot be read" "a failed read must not look like nothing to key"
+  rm -f "$T/bd/config/ticket-prefix"
+  assert_contains "$(flow "$T/fl-bd")" "backlog read failed" "an unread hold must not look like no hold"
+  assert_contains "$(owner_rule "$T/bd" jg-one-a)" "cannot read the backlog for jg-one-a" "an unread entry must refuse"
   mkdir -p "$T/dm/bin" "$T/dm/state" "$T/dm/config" "$T/dm/data"
   printf '#!/usr/bin/env bash\n' | tee "$T/dm/bin/jg-control.sh" > "$T/dm/bin/jg-send.sh"
   chmod +x "$T/dm/bin/"*.sh
