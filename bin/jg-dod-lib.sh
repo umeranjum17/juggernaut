@@ -906,6 +906,10 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   fi
   jg_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   url=$(jg_dod_pr_url_from_done_note "$(status_line_note "$line")") || url=
+  # The captain's picture rule: a UI change reports done only with its board card.
+  if declare -F jg_ui_card_done_gate >/dev/null && [ -n "$id" ] && [ -n "$meta" ]; then
+    jg_ui_card_done_gate "$id" "$meta" "${design_head:-}" "${url:--}" || return 1
+  fi
   if [ -z "$forge_head" ] && [ -n "$url" ] && [ -n "$meta" ] && [ -f "$meta" ] \
     && [ "$(jg_dod_meta_value "$meta" pr)" = "$url" ] \
     && { jg_dod_forge_head_is_named_head "$mode" || { [ "$mode" = direct-PR ] && jg_dod_pr_outside_origin "$wt" "$url"; }; }; then

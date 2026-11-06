@@ -426,7 +426,7 @@ cpu_count() {
 family_for_basename() {
   case "$1" in
     jg-brief.test.sh|jg-crew-state.test.sh|\
-    jg-prior-art-gate.test.sh|jg-recon-gate.test.sh|jg-recon-depth.test.sh|\
+    jg-prior-art-gate.test.sh|jg-recon-gate.test.sh|jg-recon-depth.test.sh|jg-loss-claim-check.test.sh|\
     jg-captain-hold-lifecycle.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
@@ -855,6 +855,7 @@ tests/jg-lavish-guard.test.sh 361
 tests/jg-lavish-session-check.test.sh 365
 tests/jg-licence-check.test.sh 131
 tests/jg-live-claim.test.sh 568
+tests/jg-loss-claim-check.test.sh 400
 tests/jg-prior-art-gate.test.sh 468
 tests/jg-recon-depth.test.sh 300
 tests/jg-recon-gate.test.sh 1500
@@ -1612,7 +1613,7 @@ families_for_changed_path() {
       ;;
     bin/jg-lint.sh|bin/jg-lint-workflows.sh|bin/jg-install-shellcheck.sh|\
     bin/jg-install-actionlint.sh|\
-    bin/jg-committed-binary-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-recon-depth.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
+    bin/jg-committed-binary-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-recon-depth.sh|bin/jg-loss-claim-check.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
     bin/jg-captain-hold.sh|bin/jg-hold-reason-lib.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
     bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-tasks-axi-lib.sh|\
     bin/jg-vendor-auth-probe.sh|\

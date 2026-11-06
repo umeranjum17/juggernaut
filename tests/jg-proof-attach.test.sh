@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # bin/jg-proof-attach.sh: a ready, review or merged card carries its proof, and UI or video
 # work is never filed text-only. One host row per case; the forge and the board are stubs.
+# It also owns journeys/proof-attach.sh, so the changed-test map selects it.
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -107,3 +108,24 @@ assert_contains "$out" "posted text-only" "post-merge hook posts the card ($out)
 assert_not_contains "$out" "is not set" "post-merge hook lost its home"
 assert_contains "$(cat "$log")" "so post" "board saw the merge card"
 pass "row verify-merge-card-posts-after-pr-239: the post-merge hook files the merge card"
+
+# The picture rule at done: a ui_change=yes task reports done only with its board card.
+uim() {  # <task> <ui_change>: a task record
+  printf 'ui_change=%s\n' "$2" > "$home/state/$1.meta"
+}
+dgate() { jg_ui_card_done_gate "$1" "$home/state/$1.meta" "$HEAD" "$PR" 2>&1; }
+export JG_PROOF_BOARD=$root/b.json
+row card-none t10 "" "$EMPTY"; uim t10 yes
+out=$(dgate t10) && fail "a UI task with no card passed"
+assert_contains "$out" "jg-proof-attach.sh attach ready t10 --pr $PR --head $HEAD" "refusal says the one command that posts the card"
+ckey=merge-acme-app-pull-7
+text_only="{\"decisions\":[{\"key\":\"$ckey\",\"media\":[],\"evidence\":{\"commit\":\"$HEAD\"}}]}"
+row card-text t11 "" "$text_only"; uim t11 yes
+dgate t11 >/dev/null && fail "a UI task whose card has no pictures passed"
+row card-ok t12 "" "$good"; uim t12 yes
+out=$(dgate t12) || fail "a UI task with a posted card was refused: $out"
+row card-nonui t13 "" "$EMPTY"; uim t13 no
+dgate t13 >/dev/null || fail "a non-UI task was touched"
+row card-old t14 "" "$EMPTY"; : > "$home/state/t14.meta"
+dgate t14 >/dev/null || fail "a record with no ui_change was refused"
+pass "row ui-card-done-gate: UI task without a card fails, with a card passes, non-UI untouched"
