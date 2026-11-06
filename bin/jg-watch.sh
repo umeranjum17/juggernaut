@@ -4168,7 +4168,8 @@ while :; do
   # worker's acknowledgement of an inbox record is a `mv` into handled/, so this
   # poll carries that move to the bus as the record's acknowledgement; a bus the
   # poll cannot reach is silent and can never fail or delay a wake.
-  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>&1 || true
+  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>"$STATE/.inbox-settle.err" \
+    || echo "watcher: inbox settle failed: $(tr '\n' ' ' < "$STATE/.inbox-settle.err" | cut -c1-200)" >&2
   # Migration step 5e shadow: the same task leases and busy events, mirrored to
   # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
   # test, and a mirror that cannot reach its bus can never fail or delay a wake.
