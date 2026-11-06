@@ -70,7 +70,7 @@ make_arm() {
 set -u
 lab=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 case "${1:-}" in
-  --handling-delivered) exit 0 ;;
+  --handling-delivered) exit "${HANDLING_STATUS:-0}" ;;
 esac
 n=$(cat "$lab/state/cycles" 2>/dev/null || echo 0)
 n=$((n + 1))
@@ -177,6 +177,18 @@ if (scenario === "replay") {
   process.exit(deliveries.length === 1 ? 0 : 1);
 }
 
+if (scenario === "confirm") {
+  await fire("session_start", { reason: "startup" });
+  if (!(await waitForDeliveries(1))) {
+    console.log("delivered=0 (no wake was delivered)");
+    process.exit(1);
+  }
+  const failed = deliveries.some((d) => d.content.includes("handling delivery confirmation was rejected"));
+  console.log(`delivered=${deliveries.length}`);
+  console.log(`failed=${failed ? "yes" : "no"}`);
+  process.exit(0);
+}
+
 if (scenario === "leave-unfinished") {
   await fire("session_start", { reason: "startup" });
   if (!(await waitForDeliveries(1))) {
@@ -216,6 +228,7 @@ run_scenario() {  # <scenario> <wake-cycles>
     JG_OPERATIONAL_INPUT_SCRIPT="$ROOT/bin/jg-operational-input.sh" \
     WAKE_CYCLES="$2" \
     WAKE_REASON="$REASON" \
+    HANDLING_STATUS="${HANDLING_STATUS:-0}" \
     NODE_NO_WARNINGS=1 \
     timeout 90 node "$LAB/driver.mjs" "$1" 2>&1 )
 }
@@ -254,7 +267,37 @@ test_replacement_replays_a_row_left_unfinished() {
   pass "extension: a later process still replays a row delivered but never consumed"
 }
 
+# bin/jg-watch-arm.sh --handling-delivered answers 3 for an episode the drain
+# already acknowledged (tests/jg-watch-arm-handling-delivered.test.sh): the
+# extension must treat that as complete, and any other refusal as FAILED.
+test_acknowledged_generation_is_not_reported_failed() {
+  local out status
+  printf '0\n' > "$STATE/cycles"
+  out=$(HANDLING_STATUS=3 run_scenario confirm 1)
+  status=$?
+  printf '%s\n' "$out"
+  expect_code 0 "$status" "a superseded confirmation must still deliver the wake"
+  assert_contains "$out" 'delivered=1' "the wake was not delivered"
+  assert_contains "$out" 'failed=no' "an already-acknowledged generation must not report FAILED"
+  pass "extension: status 3 (acknowledged generation) delivers the wake with no FAILED message"
+}
+
+test_genuine_refusal_is_still_reported_failed() {
+  local out status code
+  for code in 1 2; do
+    printf '0\n' > "$STATE/cycles"
+    out=$(HANDLING_STATUS=$code run_scenario confirm 1)
+    status=$?
+    printf '%s\n' "$out"
+    expect_code 0 "$status" "a refused confirmation must still deliver the wake"
+    assert_contains "$out" 'failed=yes' "refusal status $code must still be reported as FAILED"
+  done
+  pass "extension: any other non-zero confirmation status is still reported FAILED"
+}
+
 test_replay_delivers_one_copy_across_turn_boundaries
 test_replacement_replays_a_row_left_unfinished
+test_acknowledged_generation_is_not_reported_failed
+test_genuine_refusal_is_still_reported_failed
 
 printf 'ok - %s\n' "Pi watcher wake delivery identity"

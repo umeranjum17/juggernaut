@@ -517,6 +517,14 @@ case "${1:-}" in
 esac
 
 if [ "$mode" = handling-delivered ]; then
+  # An episode the drain already acknowledged under this generation has nothing
+  # left to confirm, and its successor may have exited since: report it as
+  # superseded (3), the extension's complete outcome, ahead of the liveness
+  # guards, which only protect a marker that is still advancing.
+  jg_recovery_marker_snapshot "$STATE/.watcher-down" || exit 1
+  case "$JG_RECOVERY_MARKER_TOKEN" in
+    acked:handling:"$handling_generation"|acked:downtime:"$handling_generation") exit 3 ;;
+  esac
   jg_pid_alive "$handling_watcher_pid" \
     && jg_watcher_lock_matches_pid "$STATE" "$WATCH" "$handling_watcher_pid" "$JG_HOME" \
     && jg_recovery_marker_begin_handling "$STATE/.watcher-down" "$handling_generation"
