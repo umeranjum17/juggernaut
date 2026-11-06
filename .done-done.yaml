@@ -12,6 +12,8 @@ journeys:
     command: bash journeys/wake-watcher.sh
   wake-batching:
     command: bash journeys/wake-batching.sh
+  ports-adapter-refusal:
+    command: bash journeys/ports-adapter-refusal.sh
   rejected-state-check-once:
     command: bash journeys/rejected-state-check-once.sh
   wake-schedule:
