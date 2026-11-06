@@ -103,6 +103,14 @@ case "${1:-}" in
 esac
 EOF
 chmod +x "$LAB_BIN/systemctl"
+# Lab journalctl: the server's log since a reload, which reads as a failed JetStream
+# restore only while the lab holds js-fail.
+cat > "$LAB_BIN/journalctl" <<'EOF'
+#!/usr/bin/env bash
+[ ! -e "$LAB_DIR/js-fail" ] || echo "[ERR] Error enabling jetstream on configured accounts: insufficient memory resources available (10028)"
+exit 0
+EOF
+chmod +x "$LAB_BIN/journalctl"
 export LAB_DIR="$D" LAB_PORT="$PORT" XDG_CONFIG_HOME="$D/xdg" JG_STACK_UNIT_PREFIX="jg-lab-$$" \
   JG_BUS_UNIT="jg-lab-$$-bus.service"
 PATH="$LAB_BIN:$PATH"; export PATH
@@ -358,6 +366,17 @@ JG_BUS_HOMES="$D/swap-registry.owner" bus "$H1" install-service >/dev/null 2>&1
 one=$(JG_BUS_HOMES="$D/swap-registry.owner" bus "$H2" ensure 2>&1)
 assert_contains "$one" "bus: up nats://127.0.0.1:$PORT stream CAPTAIN" "a home lost JetStream in the owner's install: $one"
 pass "an account taken away restarts the server, from a join and from the owner's install: no account is refused and every home that stayed keeps JetStream"
+
+# --- 1e2. a reload that logs a JetStream failure is finished by a restart -----------
+# A reload that cannot fit an account logs the error and still exits clean, leaving
+# accounts without JetStream, so no acknowledgement reaches their wake rows.
+touch "$D/js-fail"
+reload_home="$D/homes/reload-fail"; make_home "$reload_home"
+swap_pid=$(cat "$D/service.pid"); stayers "$D/reload-registry"
+JG_BUS_HOMES="$D/reload-registry" bus "$reload_home" install-service >/dev/null 2>&1
+rm -f -- "$D/js-fail"
+[ "$(cat "$D/service.pid")" != "$swap_pid" ] || fail "a reload that logged a JetStream failure was not followed by a restart"
+pass "a reload that logs a JetStream failure is finished by a restart"
 
 # --- 1f. a fixture never reaches a real owner's accounts file -----------------------
 # Every suite exports JG_BUS_HOMES, and a suite with no lab unit of its own reaches the
