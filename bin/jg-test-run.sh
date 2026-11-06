@@ -689,6 +689,7 @@ tests/jg-backlog-handoff.test.sh 78753
 tests/jg-beads-migrate.test.sh 500
 tests/jg-behavior-determinism.test.sh 22547
 tests/jg-board-answers.test.sh 6382
+tests/jg-board-answers-latency.test.sh 90000
 tests/jg-board-asks.test.sh 643
 tests/jg-board-gate.test.sh 2029
 tests/jg-bus-gateway.test.sh 8000
