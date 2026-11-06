@@ -14,6 +14,7 @@ no() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
 home=$tmp/home
 mkdir -p "$home/config" "$home/bin" "$home/state" "$home/data" "$tmp/user"
 export HOME=$tmp/user
+unset JG_HOME
 export XDG_DATA_HOME=$HOME/.local/share XDG_CONFIG_HOME=$HOME/.config
 # Keep the guard's global hooks path inside the fixture, never the runner's real git configuration.
 export GIT_CONFIG_GLOBAL=$HOME/.gitconfig GIT_CONFIG_SYSTEM=/dev/null
@@ -111,3 +112,17 @@ HOME=$tmp/user XDG_DATA_HOME=$tmp/user/.local/share XDG_CONFIG_HOME=$tmp/user/.c
   bash "$here/bin/jg-host-wiring.sh" --dry-run --home "$home" >"$tmp/dry.log" 2>&1 || true
 grep -q '^== git-identity' "$tmp/dry.log" || { cat "$tmp/dry.log" >&2; no 'a dry run did not reach the git-identity step'; }
 pass 'a dry run reaches each step and prints what it would write'
+
+# A Squad Lead home never wires the machine-wide units, wiring or unwiring; per-home steps still run.
+lead=$tmp/lead
+mkdir -p "$lead/config" "$lead/bin" "$lead/state" "$lead/data"
+printf 'lead\n' >"$lead/.jg-squad-lead-home"
+for mode in --dry-run '--dry-run --unwire'; do
+  # shellcheck disable=SC2086
+  bash "$here/bin/jg-host-wiring.sh" $mode --home "$lead" >"$tmp/lead.log" 2>&1 || true
+  grep -q 'Squad Lead home; skipping the machine-wide units: sentinel host-memory lookout-adapter' "$tmp/lead.log" ||
+    { cat "$tmp/lead.log" >&2; no "a lead home ($mode) did not name the skipped machine-wide units"; }
+  if grep -Eq '^== (sentinel|host-memory|lookout-adapter):' "$tmp/lead.log"; then no "a lead home ($mode) reached a machine-wide step"; fi
+  grep -q '^== git-identity' "$tmp/lead.log" || no "a lead home ($mode) lost its per-home steps"
+done
+pass 'a lead home skips the machine-wide units in wire and unwire, and keeps per-home steps'
