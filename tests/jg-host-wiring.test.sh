@@ -12,6 +12,7 @@ pass() { printf 'ok - %s\n' "$*"; }
 no() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
 
 home=$tmp/home
+export JG_HOME=$home
 mkdir -p "$home/config" "$home/bin" "$home/state" "$home/data" "$tmp/user"
 export HOME=$tmp/user
 export XDG_DATA_HOME=$HOME/.local/share XDG_CONFIG_HOME=$HOME/.config
