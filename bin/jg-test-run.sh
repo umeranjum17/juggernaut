@@ -806,6 +806,8 @@ tests/jg-supervision-host-live-e2e.test.sh 84
 tests/jg-supervision-host.test.sh 1062710
 tests/jg-status-digest.test.sh 1261
 tests/jg-stack-owner.test.sh 635
+tests/jg-bus-health.test.sh 5000
+tests/jg-bus-health-extra.test.sh 4000
 tests/jg-tangle-guard.test.sh 24870
 tests/jg-tasks-axi.test.sh 47421
 tests/jg-teardown-core.test.sh 4222

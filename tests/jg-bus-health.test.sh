@@ -48,7 +48,7 @@ printf '123456:FAKE-token\n' > "$H/config/captain-chat/telegram.token"; chmod 60
 cleanup() { kill "$NATS" "$BOT" 2>/dev/null || true; }
 trap cleanup EXIT
 for _ in $(seq 50); do grep -q 'Server is ready' "$D/server.log" && break; sleep 0.2; done
-health() { JG_CAPTAIN_CHANNEL=$H/config/captain-channel JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_HEALTH_NOW=$1 timeout 240 bash "$ROOT/bin/jg-bus.sh" health run; }
+health() { JG_HEALTH_SKIP=wake,disk,bus-budget JG_CAPTAIN_CHANNEL=$H/config/captain-channel JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_HEALTH_NOW=$1 timeout 240 bash "$ROOT/bin/jg-bus.sh" health run; }
 sent() { grep -c '^sendMessage ' "$CALLS"; }
 T0=1000000000
 health "$T0" > "$D/run.out" 2>&1 || fail "a healthy bus failed the run: $(cat "$D/run.out")"

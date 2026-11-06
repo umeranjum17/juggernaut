@@ -51,6 +51,8 @@ The 2026-11-01 `tests/jg-release-readiness.test.sh` carries its provisional loca
 `tests/jg-wake-next.test.sh` (2751 ms) and `tests/migration-card.test.sh` (1443 ms) arrived with the same merge that carried the release branch's own unmeasured share past the guard's bound, so they take the duration one `bin/jg-test-run.sh` run on the Linux workspace host measured for each.
 `tests/jg-planned-wait.test.sh` (12000 ms) carries its provisional local measurement of 10889 ms from `bash tests/jg-planned-wait.test.sh` on the Linux workspace host, rounded up, so the next CI refresh replaces it with an Ubuntu measurement and the no-hint coverage guard keeps its margin.
 
+The 2026-11-06 `tests/jg-bus-health.test.sh` (5000 ms) and `tests/jg-bus-health-extra.test.sh` (4000 ms) carry provisional hints rounded up from local runs of 4.3 s and 3.5 s on the Linux workspace host, so the next CI refresh replaces them with Ubuntu measurements.
+
 ## Parallel lanes
 
 The two parallel lanes use longest-processing-time assignment over those hints.
