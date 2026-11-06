@@ -215,6 +215,15 @@ run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The ke
 assert_equals "0" "$(events "$d" | wc -l | tr -d ' ')" "a captain row from a lead home is not teed to the captain channel"
 assert_equals "1" "$(wc -l <"$d/home/state/branch-outcomes.jsonl" | tr -d ' ')" "the lead home still stores the row for its parent"
 
+# --- a replayed captain row is stored again but never sent to the chat again --------------------
+d=$(setup replay)
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The key is fixed and released in 0.4.1" >/dev/null
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The key is fixed and released in 0.4.1" >/dev/null
+assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "the same captain row appended again is not sent a second time"
+assert_equals "2" "$(wc -l <"$d/home/state/branch-outcomes.jsonl" | tr -d ' ')" "the store still holds both rows"
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "A new result landed" >/dev/null
+assert_equals "2" "$(events "$d" | wc -l | tr -d ' ')" "a new captain row is still sent"
+
 # --- the CAPTAIN stream carries what the bus took, and nothing delivers it a second time ------
 d=$(setup stream)
 printf 'set dapr-http-url http://127.0.0.1:%s\nset dapr-pubsub accepted\nset nats-url %s\n' \

@@ -87,6 +87,7 @@ Delete a row to allow a term. Add a row to ban one.
 | `\bharness(es)?\b\|\bbackends?\b\|\badapters?\b` | ? say "worker tool", and only when the tool choice blocks work |
 | `\byolo\b\|\bdelivery mode\b\|\bdirect-PR\b\|\blocal-only\b` | ? say who approves the merge |
 | `\bcontext budget\b\|\bpipeline step\b` | ? say the concrete result |
+| `(?<![\w/.-])(?:[\w.-]+/)+[\w.-]+\.md\b` | ? name what the file says and give the board link, never the file path |
 | `\bPR\s*#?\d+\b\|\bpull request #?\d+\b` | ? write the full https:// URL and what the PR does for the user |
 | `\bgates?\b` | ? say "check", or name what must pass |
 | `\barmed\b` | ? say "switched on" or "ready" |
