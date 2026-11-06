@@ -366,6 +366,9 @@ jobs:
       - name: Stale-PR alarm test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/stale-pr-alarm.test.sh
+      - name: Stranded-merge sweep test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/stranded-merge-sweep.test.sh
       - name: Red-CI ticket test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/red-ci-ticket.test.sh
