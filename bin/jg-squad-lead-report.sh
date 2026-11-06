@@ -25,6 +25,8 @@
 # A report that names a wait is checked by core/status-wait-check: it receives
 # <verb> <note> before the append and owns the wait rules. Its output is shown
 # and a nonzero exit refuses the report with exit 2.
+# bin/jg-ticket-link-guard.sh then owns the ticket rule: a note that names no
+# board ticket link is refused before the append, and the refusal names the fix.
 # bin/jg-live-claim.sh then owns the fixed-means-live rule: a note that reports a
 # user-visible fix as done is written as `merged-not-released: ...` unless it
 # carries the released ref and where it is observable, or states the truth itself,
@@ -77,6 +79,16 @@ jg_squad_lead_report_status_blocked_wait() {  # <verb> <text>
 # and names the sign-off board that replaced it (bin/jg-lavish-guard.sh).
 jg_squad_lead_report_lavish_guard() {  # <text>
   local guard=$SCRIPT_DIR/jg-lavish-guard.sh
+  [ -x "$guard" ] || return 0
+  printf '%s\n' "$1" | "$guard" || exit 2
+}
+
+# The ticket rule (bin/jg-ticket-link-guard.sh owns it): a captain-facing reply
+# names the board ticket its work belongs to, so the captain can open it.
+# A reply with no ticket link is refused here, before the parent channel sees it,
+# and the guard's line names the one-line fix.
+jg_squad_lead_report_ticket_guard() {  # <text>
+  local guard=$SCRIPT_DIR/jg-ticket-link-guard.sh
   [ -x "$guard" ] || return 0
   printf '%s\n' "$1" | "$guard" || exit 2
 }
@@ -165,6 +177,7 @@ if [ "$DOC_MODE" = 1 ]; then
   NOTE=$*
   jg_question_flag_reply "$NOTE"
   jg_squad_lead_report_lavish_guard "$NOTE"
+  jg_squad_lead_report_ticket_guard "$NOTE"
   jg_squad_lead_report_status_blocked_wait "$VERB" "$NOTE"
   NOTE=$(jg_squad_lead_report_live_claim "$VERB" "$NOTE")
   if [ -n "$NOTE" ]; then
@@ -176,6 +189,7 @@ else
   NOTE=$*
   jg_question_flag_reply "$NOTE"
   jg_squad_lead_report_lavish_guard "$NOTE"
+  jg_squad_lead_report_ticket_guard "$NOTE"
   jg_squad_lead_report_status_blocked_wait "$VERB" "$NOTE"
   NOTE=$(jg_squad_lead_report_live_claim "$VERB" "$NOTE")
   printf -v line '%s [%s]: %s (via-helper)' "$VERB" "$token" "$NOTE"
