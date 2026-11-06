@@ -69,15 +69,18 @@ def rows():
 
 
 def target(items, ident):
-    if ident not in items:
+    row = view.named(items.values(), ident)
+    if row is None:
         view.refuse('Task "%s" not found in this backlog' % ident, "Run `tasks-axi list` to see existing tasks",
                     "NOT_FOUND", 1)
-    return items[ident]
+    return row
 
 
 def blocker(items, ident):
-    if ident not in items:
+    row = view.named(items.values(), ident)
+    if row is None:
         view.refuse('blocker "%s" not found' % ident, "Create the blocker task first, or choose an existing task id")
+    return row["id"]
 
 
 def checked(found):
@@ -173,13 +176,12 @@ def add(args):
     ident = minted(title, found.get("--prefix"), items) if "--mint" in found else words[0]
     tips = ["Run `tasks-axi start %s` to move it to in flight" % ident,
             "Run `tasks-axi block %s --by <other>` to record a dependency" % ident]
-    if ident in items:
-        state = LABEL[view.task(items[ident], items)["state"]]
+    known = view.named(items.values(), ident)
+    if known:
+        state = LABEL[view.task(known, items)["state"]]
         respond(found, "add", ident, "add %s already exists -> %s" % (ident, state), tips, already=True)
         return
-    blockers = found.get("--blocked-by+", [])
-    for other in blockers:
-        blocker(items, other)
+    blockers = [blocker(items, other) for other in found.get("--blocked-by+", [])]
     meta = {"kind": found["--kind"]} if "--kind" in found else {}
     if "--report" in found:
         meta["reports"] = found["--report"]
@@ -200,9 +202,9 @@ def update(args):
     found, ids = view.flags(args, FIELDS + ("--title",), ("--json",))
     if len(ids) != 1:
         view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi update <id> [flags]")
-    ident = ids[0]
     items = rows()
-    row = target(items, ident)
+    row = target(items, ids[0])
+    ident = row["id"]
     item = view.task(row, items)
     if not set(found) - {"--json"}:
         view.refuse("Nothing to update", "Pass a field, e.g. --title, --body, --body-file, --repo, or --kind")
@@ -241,10 +243,10 @@ def done(args):
     found, ids = view.flags(args, ("--pr", "--report", "--note", "--keep"), ("--no-prune", "--json"))
     if len(ids) != 1:
         view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi done <id> [flags]")
-    ident = ids[0]
     checked(found)
     items = rows()
-    row = target(items, ident)
+    row = target(items, ids[0])
+    ident = row["id"]
     item = view.task(row, items)
     already = item["state"] == "done"
     words, cmd = links(row, found)
@@ -276,10 +278,11 @@ def block(args):
     if not other:
         view.refuse("--by <id> is required", "Name the other task, e.g. `--by treehouse-lease-t4`")
     items = rows()
-    item = view.task(target(items, ident), items)
+    row = target(items, ident)
+    ident, item = row["id"], view.task(row, items)
+    other = blocker(items, other)
     if ident == other:
         view.refuse("A task cannot block itself")
-    blocker(items, other)
     already = "blocked-by:" + other in item["deps"].split(",")
     if not already:
         bd("dep", "add", ident, other)
@@ -294,7 +297,8 @@ def one_row(verb, args):
     found, ids = view.flags(args, (), ("--json",))
     if len(ids) != 1:
         view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi %s <id>" % verb)
-    return found, ids[0], target(rows(), ids[0])
+    row = target(rows(), ids[0])
+    return found, row["id"], row
 
 
 def start(args):

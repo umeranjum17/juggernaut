@@ -398,6 +398,15 @@ The session digest, the fleet snapshot, the inbox status, the owner's asks and t
 Readers of `data/backlog.md` not named here do not yet see that store.
 On such a home, bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check`, which proves the pinned versions, the hold rule and telemetry off, and report any failure.
 
+A home moves to that path by one guarded step, [`bin/jg-beads-migrate.py`](../bin/jg-beads-migrate.py) `cut`, run on a written order and never by default.
+The cut holds `data/backlog.md.lock` so no writer can touch the old files, imports the plan, checks the store against the manifest row by row, switches the two config files, and leaves `data/backlog.md` and `data/done-archive.md` read-only.
+Any failure puts the home back on its old files by itself.
+`back` undoes a finished or stopped cut, restores the old files and config, and keeps the store aside.
+It refuses while the store holds rows written since the cut, naming them, and `--drop-new-writes` goes back anyway with those rows saved in `data/beads-after-cut.<at>.jsonl`.
+A cut needs a plan from just before it, because it refuses a home whose old files changed since the copy.
+A remote home stays on the old path, and a parked home's rows cut with main under a `parked-home:<name>` label.
+Closed rows move with the rest, so `show` and the write verbs find a row by the name it carried before the move as well as by its new id.
+
 ### Backlog intake (config/backlog-intake-loose)
 
 `bin/jg-tasks-axi.sh add` files only work that says what it is and why it matters.

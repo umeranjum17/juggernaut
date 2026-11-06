@@ -12,6 +12,7 @@ trap 'rm -rf -- "$work"' EXIT
 export TZ=UTC HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff JG_HOME=$work/main
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state}
 ln -s "$fork/bin" "$JG_HOME/bin"
+ln -s "$fork/toolchain.versions" "$JG_HOME/toolchain.versions"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 printf '[markdown]\npath="data/backlog.md"\narchive="data/done-archive.md"\ndone_keep=0\n' > "$JG_HOME/.tasks.toml"
