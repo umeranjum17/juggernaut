@@ -103,6 +103,7 @@ refused "reaches a remote" "$WRAPPER" dolt sql -q "CALL DOLT_PUSH('origin', 'mai
 "$WRAPPER" dolt sql -q 'show tables' || fail "a plain query must run"
 assert_grep "pwd=$T/store/.beads/embeddeddolt/jg args=sql -q show tables" "$LOG" "dolt must run in the database folder"
 # Both providers answer each caller alike. The stand-in prints bd's own JSON for the seeded backlog.
+export TZ=UTC  # Beads stamps rows in UTC and tasks-axi in local time.
 CLI="$ROOT/bin/jg-tasks-axi.sh" jail=()
 same() {  # <wrapper args...>: stdout and exit status match across providers.
   local a b ra=0 rb=0
@@ -159,9 +160,124 @@ writes() {  # The write shapes backlog callers send, then what each provider rea
   same "done" jg-w4 --json
   same "done" jg-w2
   same "done" nope
+  same add jg-w6 "[feature] Six" --priority 2 --body why
+  same start jg-w6
+  same start jg-w6
+  same show jg-w6
+  same reopen jg-w6
+  same reopen jg-w6
+  same start jg-w6 --json
+  same "done" jg-w6
+  same reopen jg-w6  # tasks-axi forgets a reopened row's created date and Beads keeps it, so show stays out.
+  same start
+  same start jg-w6 extra
+  same start nope
+  same reopen nope
   for ident in jg-w1 jg-w2 jg-w4; do same show "$ident" --full; same show "$ident"; done
   same list
   same ready
+}
+# What a row's lifecycle leaves, through the library the spawn, teardown and session-start scripts call.
+TRANSITION=$T/transition.sh
+cat > "$TRANSITION" <<'SH'
+. "$BIN/jg-timeout-lib.sh"
+. "$BIN/jg-tasks-axi-lib.sh"
+. "$BIN/jg-backlog-transition-lib.sh"
+state=$JG_HOME/state data=$JG_HOME/data op=$1 id=$2
+shift 2
+case "$op" in
+  applies) jg_backlog_transition_applies "$JG_HOME/config" "$data" ship ;;
+  dispatch) : > "$state/$id.meta"; jg_backlog_atomic_transition dispatch "$state/$id.meta" "$data" "$id" "$state" ;;
+  close|retain) jg_backlog_atomic_transition "$op" "" "$state/$id.backlog-close" "$data" "$id" "$state" "$@" ;;
+  probe) jg_backlog_row_probe "$data" "$id" ;;
+  reopen) jg_backlog_mutate "$data" reopen "$id" ;;
+esac
+rc=$?
+printf '%s rc=%s row=[%s] %s\n' "$op" "$rc" "${JG_BACKLOG_ROW_STATE:-}" "${JG_BACKLOG_TRANSITION_ERROR:-}"
+exit "$rc"
+SH
+step() {  # <home> <op> <id> [args...]: the library's answer on one home.
+  local home=$1
+  shift
+  env -u JG_DATA_OVERRIDE -u JG_STATE_OVERRIDE -u JG_CONFIG_OVERRIDE JG_HOME="$home" BIN="$ROOT/bin" \
+    "${jail[@]}" bash "$TRANSITION" "$@" 2>&1
+}
+both() {  # <op> <id> [args...]: a gate that answers on the old store answers the same on Beads.
+  local old new
+  old=$(step "$T/ta" "$@")
+  new=$(step "$T/bd" "$@")
+  [ "$old" = "$new" ] || fail "transition $*: providers differ"$'\n'"tasks-axi: $old"$'\n'"beads: $new"
+  printf 'ok - both stores answer: %s\n' "$new"
+}
+transitions() {
+  local out one=https://github.com/o/r/pull/9 h
+  mkdir -p "$T/ta/state" "$T/bd/state" "$T/bd/data"
+  same add jg-t1 "[feature] Life" --priority 2 --body why
+  same add jg-t2 "[feature] Held" --priority 2 --body why
+  same add jg-t3 "[feature] Gone" --priority 2 --body why
+  same add jg-t4 "[feature] Waits" --priority 2 --body why --blocked-by jg-t1
+  (cd "$T/ta" && TASKS_AXI_FILE="$T/ta/data/backlog.md" tasks-axi hold jg-t2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
+  "${jail[@]}" "$WRAPPER" update jg-t2 --status on_hold --set-metadata "hold_reason=owner call" \
+    --set-metadata hold_kind=captain >/dev/null 2>&1 || fail "seed a held row"
+  both applies jg-t1
+  both probe jg-t1
+  both probe jg-t2
+  both dispatch jg-t1
+  both probe jg-t1
+  both dispatch jg-t1
+  both dispatch jg-t2
+  both dispatch jg-t4
+  both dispatch nope
+  both retain jg-t2 --report data/jg-t2/report.md --note kept
+  both probe jg-t2
+  both close jg-t3 --pr "$one"
+  both probe jg-t3
+  both dispatch jg-t3
+  both close jg-t3 --pr "$one"
+  both close jg-t4 --pr "$one"
+  same show jg-t2 --full
+  same show jg-t3 --full
+  same show jg-t4 --full
+  both reopen jg-t3
+  assert_not_contains "$("${jail[@]}" "$WRAPPER" show jg-t3 --json 2>/dev/null)" closed_at "a reopened row must forget its close"
+  # Beads has one status column, so a row a hold reached first refuses in the store too.
+  out=$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" start jg-t2 2>&1)
+  expect_code 13 $? "a start on a held row"
+  assert_contains "$out" 'stale write refused: jg-t2 has status \"on_hold\"' "a held row must refuse the start"
+  # A second writer lands between the read and the write: each move refuses with bd's 13 and leaves the row alone.
+  h=$T/race
+  mkdir -p "$h/bin"
+  cat > "$h/bin/bd" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = update ] && [ -e "$h/armed" ]; then
+  rm -f "$h/armed"
+  "$JG_BEADS_TEST_BD" update "\$2" --status "\$(cat "$h/to")" >/dev/null 2>&1
+fi
+exec "$JG_BEADS_TEST_BD" "\$@"
+SH
+  chmod +x "$h/bin/bd"
+  printf 'bd 1.3.4\ndolt 2.6.0\nbd-sha256-%s-%s %s\ndolt-sha256-%s-%s %s\n' "$os" "$arch" "$(sha_of "$h/bin/bd")" \
+    "$os" "$arch" "$(sha_of "$JG_BEADS_TEST_DOLT")" > "$h/pins"
+  race() {  # <library exit> <id> <status the other writer sets> <op> [args...]
+    local want=$1 id=$2 to=$3 after rc
+    shift 3
+    printf '%s\n' "$to" > "$h/to"
+    : > "$h/armed"
+    out=$(JG_PIN_FILE_OVERRIDE=$h/pins JG_BEADS_BD=$h/bin/bd step "$T/bd" "$1" "$id" "${@:2}")
+    rc=$?
+    expect_code "$want" "$rc" "$1 $id after a second writer: $out"
+    assert_contains "$out" "stale write refused: $id has status \\\"$to\\\"" "$1 $id must name the stale row"
+    after=$("${jail[@]}" "$WRAPPER" show "$id" --json 2>/dev/null)
+    assert_contains "$after" "\"status\": \"$to\"" "$1 $id must leave the other writer's status"
+    assert_not_contains "$after" "$one" "$1 $id must write nothing"
+    printf 'ok - a second writer set %s first, and the store refused: %s\n' "$to" "$out"
+    rm -f "$T/bd/state/$id.meta"
+  }
+  same add jg-t5 "[feature] Race" --priority 2 --body why
+  race 13 jg-t5 in_progress dispatch
+  race 13 jg-t5 closed reopen
+  same add jg-t6 "[feature] Race close" --priority 2 --body why
+  race 1 jg-t6 in_progress close --pr "$one"
 }
 if command -v tasks-axi >/dev/null; then
   mkdir -p "$T/ta/data" "$T/bd/config"
@@ -187,9 +303,9 @@ JSON
   out=$(JG_HOME="$T/bd" "$CLI" list 2>&1) && fail "a beads home with no store must refuse"
   assert_contains "$out" "beads-dir" "the refusal must name the store file"
   printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
-  out=$(JG_HOME="$T/bd" "$CLI" reopen x 2>&1)
+  out=$(JG_HOME="$T/bd" "$CLI" unblock x --by y 2>&1)
   expect_code 2 $? "an unserved verb on beads"
-  assert_contains "$out" "does not serve reopen" "an unserved verb must be refused"
+  assert_contains "$out" "does not serve unblock" "an unserved verb must be refused"
   ROWS=$T/rows.json callers
 else
   printf 'skip: providers: tasks-axi is not installed\n'
@@ -263,6 +379,7 @@ else
     printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
     TMPDIR=$T callers  # The jail's /tmp is read-only.
     TMPDIR=$T writes
+    TMPDIR=$T transitions
     out=$(TMPDIR=$T JG_HOME="$T/bd" "${jail[@]}" "$CLI" add --mint "[feature] Mint me" --prefix zz --priority 2 --body why --json) || fail "real mint"
     assert_contains "$out" '"id": "zz-feature-mint-me-' "a minted id must carry the prefix and the title"
   fi

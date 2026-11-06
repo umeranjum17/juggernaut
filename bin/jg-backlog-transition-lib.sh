@@ -37,6 +37,12 @@
 # data directory is relocated keeps its backlog and its archive together. A root
 # with no `.tasks.toml` gets tasks-axi's built-in defaults.
 # bin/jg-tasks-axi-lib.sh owns backend precedence and configuration failures.
+# A home whose config/backlog-backend says beads skips all of that: its rows sit
+# in the store config/beads-dir names, so every row read and mutation here runs
+# the Beads provider instead of tasks-axi, under the same bounds and in the same
+# process position. Only the data directory is authorized, because it keeps no
+# backlog file. Each write checks the status it read, so a row that moved
+# underneath a transition refuses with bd's exit 13 and changes nothing.
 #
 # CRASH RECOVERY. Only teardown needs a durable record: it removes the meta and
 # with it the completion links, so a process killed between the two halves would
@@ -235,12 +241,22 @@ jg_backlog_config_present() {  # <root> <authorized-root>
   return 0
 }
 
+# The config directory of the home that owns <data>, by jg_backlog_ticket_publish's rule.
+jg_backlog_config_of() {  # <data-dir>
+  printf '%s\n' "${JG_CONFIG_OVERRIDE:-${JG_HOME:-${1%/*}}/config}"
+}
+
 # Every home is bound to its own data directory, whichever adapter it configures,
 # so the boundary is authorized first and unconditionally. Only the markdown
 # backlog's regular-file requirement is adapter-specific: another adapter keeps
 # its rows in its own workspace and need not carry <data>/backlog.md at all.
 jg_backlog_source_present() {  # <data-dir> <authorized-data-dir> [root authorized-root]
   local data=$1 authorized_data=$2 root=${3:-} authorized_root=${4:-} file backend
+  if jg_backlog_backend_beads "$(jg_backlog_config_of "$data")"; then
+    file=$(jg_backlog_file "$data") || return 1
+    jg_backlog_record_parent_authorized "$file" "backlog data directory" "$authorized_data" parent-only
+    return $?
+  fi
   if [ -z "$root" ]; then
     root=$(jg_backlog_root "$data") || return 1
     authorized_root=$(jg_backlog_authorized_root "$authorized_data")
@@ -262,9 +278,10 @@ jg_backlog_source_present() {  # <data-dir> <authorized-data-dir> [root authoriz
 }
 
 # Resolve how the owning home's backlog is addressed, for reads and mutations
-# alike: sets JG_BACKLOG_AXI_ROOT to the cd target and JG_BACKLOG_AXI_FILE to
-# the markdown --file path, empty for every other backend. This is the single
-# place that decision is made. A markdown backlog is addressed as
+# alike: sets JG_BACKLOG_AXI_ROOT to the cd target, JG_BACKLOG_AXI_FILE to the
+# markdown --file path, empty for every other backend, and JG_BACKLOG_AXI_BEADS
+# to the config directory of a Beads home, else empty. This is the single place
+# that decision is made. A markdown backlog is addressed as
 # <data>/backlog.md so the change lands in the home that owns the task
 # regardless of the caller's working directory; any other configured adapter
 # is addressed by that root alone, because --file would override the adapter's
@@ -274,9 +291,16 @@ jg_backlog_source_present() {  # <data-dir> <authorized-data-dir> [root authoriz
 # interruption contract counts on not existing.
 jg_backlog_tasks_axi_addressing() {  # <data-dir>
   JG_BACKLOG_AXI_FILE=
-  local data root backend
+  JG_BACKLOG_AXI_BEADS=
+  local data root backend config
   data=$(jg_backlog_data_absolute "$1") || return $?
   root=$(jg_backlog_root "$data") || return $?
+  config=$(jg_backlog_config_of "$data")
+  if jg_backlog_backend_beads "$config"; then
+    JG_BACKLOG_AXI_ROOT=$root
+    JG_BACKLOG_AXI_BEADS=$config
+    return 0
+  fi
   backend=$(jg_tasks_axi_backend "$root" 2>&1) || {
     JG_BACKLOG_TRANSITION_ERROR=$backend
     return 2
@@ -303,6 +327,13 @@ jg_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>
     return 2
   fi
   root=$(jg_backlog_root "$data") || return 2
+  if jg_backlog_backend_beads "$config"; then
+    if ! JG_BACKLOG_TRANSITION_ERROR=$(jg_backlog_beads_store "$config" 2>&1 >/dev/null); then
+      return 2
+    fi
+    jg_backlog_source_present "$data" "$authorized_data" || return 2
+    return 0
+  fi
   authorized_root=$(jg_backlog_authorized_root "$authorized_data")
   jg_backlog_config_present "$root" "$authorized_root" || return 2
   backend=$(jg_tasks_axi_backend "$root" 2>&1) || {
@@ -342,12 +373,24 @@ jg_tasks_axi_timeout_expired() {  # <status>
   jg_timed_out "$1"
 }
 
+# JG_BACKLOG_TOOL is the command that answers a verb for the addressing just
+# resolved: tasks-axi, or a shell serving the Beads provider, so a Beads home runs
+# under the same bound and exec position as any other.
+jg_backlog_tool() {
+  JG_BACKLOG_TOOL=(tasks-axi)
+  [ -n "${JG_BACKLOG_AXI_BEADS:-}" ] || return 0
+  # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
+  JG_BACKLOG_TOOL=(bash -c '. "$1"; shift; jg_backlog_beads_serve "$@"' jg-beads
+    "$(dirname "${BASH_SOURCE[0]}")/jg-tasks-axi-lib.sh" "$JG_BACKLOG_AXI_BEADS")
+}
+
 jg_tasks_axi() {
   local bound=${JG_TASKS_AXI_TIMEOUT:-}
+  jg_backlog_tool
   if [ -z "$bound" ]; then
-    exec tasks-axi "$@"
+    exec "${JG_BACKLOG_TOOL[@]}" "$@"
   fi
-  jg_exec_timed "$bound" "$bound" tasks-axi "$@"
+  jg_exec_timed "$bound" "$bound" "${JG_BACKLOG_TOOL[@]}" "$@"
 }
 
 # Print one row's `tasks-axi show` output (plus stderr) from the addressing
@@ -394,9 +437,10 @@ jg_backlog_row_show() {  # <resolved-data-dir> <id> [flag...]
   if [ -n "$JG_BACKLOG_AXI_FILE" ]; then
     set -- "$@" --file "$JG_BACKLOG_AXI_FILE"
   fi
+  jg_backlog_tool
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
-  out=$(jg_run_timed "$secs" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec tasks-axi show "$@"' \
-    _ "$JG_BACKLOG_AXI_ROOT" "$id" "$@" 2>&1)
+  out=$(jg_run_timed "$secs" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec "$@"' \
+    _ "$JG_BACKLOG_AXI_ROOT" "${JG_BACKLOG_TOOL[@]}" show "$id" "$@" 2>&1)
   status=$?
   # A backend that wrote a header or a progress line before wedging leaves that
   # fragment as the first output line, and every caller reads the first line as

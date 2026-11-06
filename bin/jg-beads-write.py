@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""jg-beads-write.py - serve tasks-axi's add, update, done and block on a Beads store.
+"""jg-beads-write.py - serve tasks-axi's add, update, done, block, start and reopen on a Beads store.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block> [args...]
+Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|start|reopen> [args...]
 
 bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-axi.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi's lines on stdout.
@@ -9,6 +9,9 @@ kind is metadata.kind, repo is the project:<repo> label, the first PR is externa
 and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as tasks-axi writes it.
 A rerun converges: an existing id, blocker, link or note is left alone. bd refuses an id with no dash and a dependency
 cycle, and that refusal reaches stderr with bd's exit status.
+start, reopen and done move status only from the status they expect, so a row that moved first exits 13 and changes
+nothing, with one refusal line on stdout. A held row keeps its status on reopen. start takes only an open row: one
+status column cannot read in flight and held at once, so where tasks-axi would start a held or done row this refuses.
 """
 import hashlib
 import json
@@ -27,10 +30,15 @@ LABEL = {"queued": "Queued", "in_flight": "In flight", "done": "Done"}
 PR_ERROR = ("--pr must be a canonical pull request URL: https://github.com/<owner>/<repo>/pull/<n> (GitHub) "
             "or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)")
 FIELDS = ("--kind", "--repo", "--body", "--body-file", "--pr", "--report", "--priority")
+STALE = 13
 
 
 def bd(*args):
     run = subprocess.run([WRAPPER, *args], capture_output=True, text=True, check=False)
+    if run.returncode == STALE:
+        said = [line.split("mismatch: ", 1)[1] for line in (run.stdout + run.stderr).splitlines() if "mismatch: " in line]
+        view.refuse("stale write refused: " + (said[0] if said else "the row moved"),
+                    f"Run `tasks-axi show {args[1]}` and decide again", "STALE_WRITE", STALE)
     if run.returncode:
         sys.stderr.write(run.stdout + run.stderr)
         sys.exit(run.returncode)
@@ -226,10 +234,10 @@ def done(args):
     note = found.get("--note")
     if note and note not in item["body"].split("\n"):
         cmd.append("--description=" + "\n".join(filter(None, [item["body"], note])))
+    if not already:
+        cmd += ["--status", "closed", "--if-status", row["status"]] + (["--force"] if item["blocked"] == "yes" else [])
     if cmd:
         bd("update", ident, *cmd)
-    if not already:
-        bd("close", ident, *(["--force"] if item["blocked"] == "yes" else []))
     tail = "".join(" (%s %s)" % (name, found["--" + name]) for name in ("pr", "report") if "--" + name in found)
     line = "done %s%s -> Done%s" % (ident, " already" if already else "", tail)
     tips = ["Run `tasks-axi ready` to dispatch work unblocked by this"]
@@ -259,10 +267,37 @@ def block(args):
     respond(found, "block", ident, line, tips, card=False, **extra, blocked_by=other)
 
 
+def one_row(verb, args):
+    found, ids = view.flags(args, (), ("--json",))
+    if len(ids) != 1:
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi %s <id>" % verb)
+    return found, ids[0], target(rows(), ids[0])
+
+
+def start(args):
+    found, ident, row = one_row("start", args)
+    tips = ["Run `tasks-axi done %s --pr <url>` when it ships" % ident]
+    if row["status"] == "in_progress":
+        respond(found, "start", ident, "start %s already in flight" % ident, tips, card=False, already=True)
+        return
+    bd("update", ident, "--status", "in_progress", "--if-status", "open")
+    respond(found, "start", ident, "start %s -> In flight" % ident, tips, card=False)
+
+
+def reopen(args):
+    found, ident, row = one_row("reopen", args)
+    tips = ["Run `tasks-axi start %s` to move it to in flight" % ident]
+    if row["status"] not in ("in_progress", "closed"):
+        respond(found, "reopen", ident, "reopen %s already queued" % ident, tips, card=False, already=True)
+        return
+    bd("update", ident, "--status", "open", "--if-status", row["status"])
+    respond(found, "reopen", ident, "reopen %s -> Queued" % ident, tips, card=False)
+
+
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
-             "block": block}.get(verb)
+             "block": block, "start": start, "reopen": reopen}.get(verb)
     if serve is None:
         view.refuse("Unknown write verb: " + verb)
     serve(sys.argv[2:])
