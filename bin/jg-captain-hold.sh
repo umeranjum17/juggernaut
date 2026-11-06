@@ -2418,9 +2418,11 @@ EOF
 # A design card (`jg-question-card.sh post --must design-pick`) is also a
 # `[design-ux]` backlog row keyed by the card and linked to the ticket that
 # raised it, so `blocking` finds it from that ticket; the link is never optional.
-# A card naming no raising ticket, or one this home does not carry, is refused.
+# On a Beads store the row is labelled `decision` and blocks that ticket by an edge,
+# and a retry lays a missing edge. A card naming no raising ticket, or one this
+# home does not carry, is refused.
 command_design_card() {  # <card-key> --raised-by <ticket> --title <question>
-  local key=${1:-} raised='' title='' repo priority_check mark
+  local key=${1:-} raised='' title='' repo priority_check mark filed=0 label=()
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -2444,15 +2446,21 @@ command_design_card() {  # <card-key> --raised-by <ticket> --title <question>
   # The marker lets the board-answers check find the card's answer without reading the backlog for every answer.
   mark=$STATE/design-cards/$key
   mkdir -p "$STATE/design-cards" || fail "cannot create $STATE/design-cards"
-  if task_show "$key"; then : > "$mark"; printf 'design-card: %s already filed\n' "$key"; return 0; fi
-  priority_check=${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}
-  if [ -x "$priority_check" ]; then
-    "$priority_check" add "$key" "[design-ux] $title" --kind captain --priority 1 >/dev/null || exit 1
+  ! task_show "$key" || filed=1
+  if [ "$filed" = 0 ]; then
+    priority_check=${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}
+    if [ -x "$priority_check" ]; then
+      "$priority_check" add "$key" "[design-ux] $title" --kind captain --priority 1 >/dev/null || exit 1
+    fi
+    ! beads_home || label=(--label decision)
+    BD_DUE_REQUIRED=false tasks_axi add "$key" "[design-ux] $title" --kind captain --repo "$repo" --priority 1 ${label[@]+"${label[@]}"} \
+      --body "$(printf 'Design pick for the captain, raised by %s.\nlinked-to: %s' "$raised" "$raised")" >/dev/null \
+      || fail "could not file the design row for card $key"
   fi
-  BD_DUE_REQUIRED=false tasks_axi add "$key" "[design-ux] $title" --kind captain --repo "$repo" --priority 1 \
-    --body "$(printf 'Design pick for the captain, raised by %s.\nlinked-to: %s' "$raised" "$raised")" >/dev/null \
-    || fail "could not file the design row for card $key"
+  ! beads_home || tasks_axi block "$raised" --by "$key" >/dev/null \
+    || fail "could not link the design row for card $key to $raised"
   : > "$mark"
+  if [ "$filed" = 1 ]; then printf 'design-card: %s already filed\n' "$key"; return 0; fi
   printf 'design-card: %s linked to %s\n' "$key" "$raised"
 }
 
