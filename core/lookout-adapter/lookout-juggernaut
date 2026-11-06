@@ -135,12 +135,13 @@ def incident_rows(home, now):
             continue
         if now - end > 7 * 86400:
             continue
-        c = causes.setdefault(str(row.get('cause') or 'no cause recorded'), {'n': 0, 'secs': 0, 'last': 0})
+        c = causes.setdefault(str(row.get('cause') or 'no cause recorded'), {'n': 0, 'secs': 0, 'last': 0, 'began': 0})
         c['n'] += 1
         c['secs'] += max(0, end - start)
-        c['last'] = max(c['last'], end)
+        if end >= c['last']:
+            c['last'], c['began'] = end, start  # the latest outage of this cause: Lookout shows when it began and how long it lasted
     for i, (cause, c) in enumerate(sorted(causes.items(), key=lambda kv: -kv[1]['last'])):
-        rows.append({'id': 'outage-7d-%d' % i, 'at': iso(c['last']), 'resolved_at': iso(c['last']), 'severity': 'warn', 'kind': 'outage',
+        rows.append({'id': 'outage-7d-%d' % i, 'at': iso(c['began']), 'resolved_at': iso(c['last']), 'severity': 'warn', 'kind': 'outage',
                      'summary': '%s: %d outage%s, %d min in 7 days' % (cause, c['n'], '' if c['n'] == 1 else 's', round(c['secs'] / 60))})
     return rows
 
