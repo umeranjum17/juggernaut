@@ -636,6 +636,38 @@ jg_backlog_start() {  # <data-dir> <id>
   jg_backlog_mutate "$1" start "$2"
 }
 
+# On a Beads home a row names the lane that owns it: the spawn generation in the
+# task record, so every fresh spawn and relaunch is a new lane, with the record's
+# harness as metadata.agent. bin/jg-beads-write.py owns the claim and its refusal.
+# Any other backlog reads none of this and moves the row exactly as before.
+jg_backlog_beads_home() {  # <data-dir>
+  local data
+  data=$(jg_backlog_data_absolute "$1") || return 1
+  jg_backlog_backend_beads "$(jg_backlog_config_of "$data")"
+}
+
+jg_backlog_lane_start() {  # <meta> <data-dir> <id> <state-dir>
+  local meta=$1 data=$2 id=$3 state=$4 agent
+  jg_backlog_beads_home "$data" || {
+    jg_backlog_start "$data" "$id"
+    return
+  }
+  jg_backlog_meta_spawn_gen_optional "$meta" "$state" || return 1
+  agent=$(LC_ALL=C sed -n 's/^harness=//p' "$meta" | tail -n 1)
+  JG_BACKLOG_LANE=$JG_BACKLOG_META_SPAWN_GEN JG_BACKLOG_AGENT=$agent jg_backlog_start "$data" "$id"
+}
+
+# A row already In flight needs no move, so only Beads has work here: the new
+# lane claims it, or takes it from the lane this spawn replaces on a relaunch.
+jg_backlog_lane_claim() {  # <meta> <data-dir> <id> <state-dir>
+  jg_backlog_beads_home "$2" || return 0
+  jg_backlog_lane_start "$@"
+}
+
+jg_backlog_lane_handover() {  # <meta> <data-dir> <id> <state-dir>
+  JG_BACKLOG_LANE_HANDOVER=1 jg_backlog_lane_claim "$@"
+}
+
 # tasks-axi takes a --pr link only as a canonical GitHub or Forgejo pull request
 # and refuses anything else, so a Gerrit change URL is recorded on the row as a
 # note instead. The subshell keeps the parse from overwriting a caller's
@@ -940,8 +972,8 @@ jg_backlog_dispatch_transition() {
     return 1
   fi
   case "$row" in
-    in_flight\ no\ no) return 0 ;;
-    queued\ no\ no) jg_backlog_start "$data" "$id" ;;
+    in_flight\ no\ no) jg_backlog_lane_claim "$meta" "$data" "$id" "$state" ;;
+    queued\ no\ no) jg_backlog_lane_start "$meta" "$data" "$id" "$state" ;;
   esac
 }
 
@@ -987,6 +1019,7 @@ jg_backlog_atomic_transition() {
     publish) jg_backlog_record_publish "$@" ;;
     remove) jg_backlog_record_remove "$@" ;;
     dispatch) jg_backlog_dispatch_transition "$@" ;;
+    handover) jg_backlog_lane_handover "$@" ;;
     rollback) jg_backlog_dispatch_rollback "$@" ;;
     close) jg_backlog_close_transition "$@" ;;
     retain) jg_backlog_retain_transition "$@" ;;

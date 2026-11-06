@@ -6,7 +6,7 @@ Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|sh
 Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never starts bd.
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
 bd stamps UTC and tasks-axi the local day, so created and closed read as the local day.
-A held row is status on_hold, blocked or deferred, and reads as queued; kind is metadata.kind, else issue_type;
+A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while a lane is its assignee; kind is metadata.kind, else issue_type;
 parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
 Refusals print tasks-axi's error lines on stdout: exit 2 for a bad flag, exit 1 for an unknown id.
@@ -72,6 +72,11 @@ def day(stamp):
     return datetime.datetime.fromisoformat(stamp).astimezone().date().isoformat() if stamp else "-"
 
 
+def flying(row):
+    """Say whether the row is in flight: one status column cannot hold in flight and held, so a held lane is its assignee."""
+    return row.get("status") == "in_progress" or (row.get("status") in HELD and bool(row.get("assignee")))
+
+
 def task(row, rows):
     meta = row.get("metadata") or {}
     closed = row.get("status") == "closed"
@@ -82,7 +87,7 @@ def task(row, rows):
     links += ["report:" + path for path in split(meta.get("reports"))]
     repos = [label[8:] for label in row.get("labels") or [] if label.startswith("project:")]
     return {
-        "id": row["id"], "title": row.get("title", ""), "state": STATE.get(row.get("status"), "queued"),
+        "id": row["id"], "title": row.get("title", ""), "state": "in_flight" if flying(row) else STATE.get(row.get("status"), "queued"),
         "blocked": "yes" if waiting else "no", "blocked_by": ",".join(waiting) or "none",
         "held": "yes" if held else "no", "hold_reason": meta.get("hold_reason", "-") if held else "-",
         "hold_kind": meta.get("hold_kind", "-") if held else "-",
