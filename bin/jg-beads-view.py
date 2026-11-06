@@ -67,6 +67,7 @@ def split(value):
 
 def task(row, rows):
     meta = row.get("metadata") or {}
+    closed = row.get("status") == "closed"
     deps = [d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "blocks"]
     waiting = [d for d in deps if rows.get(d, {}).get("status") != "closed"]
     held = row.get("status") in HELD
@@ -80,7 +81,7 @@ def task(row, rows):
         "hold_kind": meta.get("hold_kind", "-") if held else "-",
         "hold_until": (row.get("defer_until") or "-")[:10], "kind": meta.get("kind") or row.get("issue_type", "task"),
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
-        "created": (row.get("created_at") or "-")[:10], "closed": (row.get("closed_at") or "-")[:10],
+        "created": "-" if closed else (row.get("created_at") or "-")[:10], "closed": (row.get("closed_at") or "-")[:10],
         "deps": ",".join("blocked-by:" + d for d in deps) or "none",
         "links": ",".join(links) or "none", "body": row.get("description", ""),
         "delivery_state": meta.get("delivery_state", "-"),
@@ -114,7 +115,7 @@ def show(tasks, args):
     for item in tasks:
         if item["id"] == ids[0]:
             card(item, None if "--full" in found else "--full")
-            if item["blocked"] == "yes":
+            if item["blocked"] == "yes" and item["state"] != "done":
                 print("help[2]:\n  - Run `tasks-axi unblock %s --by <other>` to clear a blocker" % ids[0])
                 print("  - Run `tasks-axi start %s` to move it to in flight" % ids[0])
             return
@@ -174,8 +175,9 @@ def listing(tasks, args):
 def main():
     raw = json.load(sys.stdin) or []
     rows = {row["id"]: row for row in raw}
-    tasks = sorted((task(row, rows) for row in raw), key=lambda t: (
-        ["in_flight", "queued", "done"].index(t["state"]), rows[t["id"]].get("created_at") or "", t["id"]))
+    tasks = sorted((task(row, rows) for row in raw), key=lambda t: (rows[t["id"]].get("created_at") or "", t["id"]))
+    tasks.sort(key=lambda t: rows[t["id"]].get("closed_at") or "", reverse=True)
+    tasks.sort(key=lambda t: ["in_flight", "queued", "done"].index(t["state"]))
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"show": show, "view": show, "ready": ready, "list": listing}.get(verb)
     if serve is None:

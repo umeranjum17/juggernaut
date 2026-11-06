@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""jg-beads-write.py - serve tasks-axi's add on a Beads store.
+"""jg-beads-write.py - serve tasks-axi's add, update, done and block on a Beads store.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create> [args...]
+Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block> [args...]
 
 bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-axi.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi's lines on stdout.
 kind is metadata.kind, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
 and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as tasks-axi writes it.
-A rerun converges: an existing id is left alone. bd refuses an id with no dash, and that refusal reaches stderr with
-bd's exit status.
+A rerun converges: an existing id, blocker, link or note is left alone. bd refuses an id with no dash and a dependency
+cycle, and that refusal reaches stderr with bd's exit status.
 """
 import hashlib
 import json
@@ -41,6 +41,13 @@ def rows():
     return {row["id"]: row for row in json.loads(bd("list", "--all", "--limit", "0", "--json")) or []}
 
 
+def target(items, ident):
+    if ident not in items:
+        view.refuse('Task "%s" not found in this backlog' % ident, "Run `tasks-axi list` to see existing tasks",
+                    "NOT_FOUND", 1)
+    return items[ident]
+
+
 def blocker(items, ident):
     if ident not in items:
         view.refuse('blocker "%s" not found' % ident, "Create the blocker task first, or choose an existing task id")
@@ -60,6 +67,21 @@ def checked(found):
         with open(found["--body-file"], encoding="utf-8") as source:
             return source.read().rstrip("\n")
     return found.get("--body")
+
+
+def links(row, found):
+    """Return the words a new link adds to the title, and the bd update flags that store it."""
+    meta, ref = row.get("metadata") or {}, row.get("external_ref")
+    prs, reports = view.split(meta.get("prs")), view.split(meta.get("reports"))
+    pr, report = found.get("--pr"), found.get("--report")
+    words, cmd = [], []
+    if pr and pr != ref and pr not in prs:
+        words.append(pr)
+        cmd += ["--set-metadata", "prs=" + ",".join(prs + [pr])] if ref else ["--external-ref", pr]
+    if report and report not in reports:
+        words.append(report)
+        cmd += ["--set-metadata", "reports=" + ",".join(reports + [report])]
+    return words, cmd
 
 
 def as_json(item):
@@ -83,7 +105,7 @@ def as_json(item):
     }
 
 
-def respond(found, action, ident, line, tips, **extra):
+def respond(found, action, ident, line, tips, card=True, **extra):
     items = rows()
     item = view.task(items[ident], items)
     if "--json" in found:
@@ -92,7 +114,8 @@ def respond(found, action, ident, line, tips, **extra):
     print("ok: " + line)
     if extra.get("already"):
         print("already: true")
-    view.card(item, "show %s --full" % ident)
+    if card:
+        view.card(item, "show %s --full" % ident)
     print("help[%d]:" % len(tips))
     for tip in tips:
         print("  - " + tip)
@@ -146,11 +169,103 @@ def add(args):
     respond(found, "add", ident, line, tips)
 
 
+def update(args):
+    found, ids = view.flags(args, FIELDS + ("--title",), ("--json",))
+    if len(ids) != 1:
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi update <id> [flags]")
+    ident = ids[0]
+    items = rows()
+    row = target(items, ident)
+    item = view.task(row, items)
+    if not set(found) - {"--json"}:
+        view.refuse("Nothing to update", "Pass a field, e.g. --title, --body, --body-file, --repo, or --kind")
+    body = checked(found)
+    words, cmd = links(row, found)
+    title = " ".join([found.get("--title", item["title"]), *words])
+    changed = []
+    if title != item["title"]:
+        cmd.append("--title=" + title)
+    if found.get("--title", item["title"]) != item["title"]:
+        changed.append("title")
+    if body is not None and body != item["body"]:
+        cmd.append("--description=" + body)
+        changed.append("body")
+    if found.get("--repo", item["repo"]) != item["repo"]:
+        cmd += [] if item["repo"] == "-" else ["--remove-label", "project:" + item["repo"]]
+        cmd += ["--add-label", "project:" + found["--repo"]]
+        changed.append("repo")
+    if found.get("--kind", item["kind"]) != item["kind"]:
+        cmd += ["--set-metadata", "kind=" + found["--kind"]]
+        changed.append("kind")
+    if found.get("--priority", str(item["priority"])) != str(item["priority"]):
+        cmd += ["-p", found["--priority"]]
+        changed.append("priority")
+    if words:
+        changed.append("links")
+    tips = ["Run `tasks-axi show %s --full` to see the result" % ident]
+    if not cmd:
+        respond(found, "update", ident, "updated %s already" % ident, tips, already=True)
+        return
+    bd("update", ident, *cmd)
+    respond(found, "update", ident, "updated %s (%s)" % (ident, ", ".join(changed)), tips, changed=changed)
+
+
+def done(args):
+    found, ids = view.flags(args, ("--pr", "--report", "--note", "--keep"), ("--no-prune", "--json"))
+    if len(ids) != 1:
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi done <id> [flags]")
+    ident = ids[0]
+    checked(found)
+    items = rows()
+    row = target(items, ident)
+    item = view.task(row, items)
+    already = item["state"] == "done"
+    words, cmd = links(row, found)
+    if words:
+        cmd.append("--title=" + " ".join([item["title"], *words]))
+    note = found.get("--note")
+    if note and note not in item["body"].split("\n"):
+        cmd.append("--description=" + "\n".join(filter(None, [item["body"], note])))
+    if cmd:
+        bd("update", ident, *cmd)
+    if not already:
+        bd("close", ident, *(["--force"] if item["blocked"] == "yes" else []))
+    tail = "".join(" (%s %s)" % (name, found["--" + name]) for name in ("pr", "report") if "--" + name in found)
+    line = "done %s%s -> Done%s" % (ident, " already" if already else "", tail)
+    tips = ["Run `tasks-axi ready` to dispatch work unblocked by this"]
+    extra = {"already": True} if already else {}
+    respond(found, "done", ident, line, tips, card=False, **extra, pruned=0)
+
+
+def block(args):
+    found, ids = view.flags(args, ("--by",), ("--json",))
+    if len(ids) != 1:
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi block <id> --by <other>")
+    ident, other = ids[0], found.get("--by")
+    if not other:
+        view.refuse("--by <id> is required", "Name the other task, e.g. `--by treehouse-lease-t4`")
+    items = rows()
+    item = view.task(target(items, ident), items)
+    if ident == other:
+        view.refuse("A task cannot block itself")
+    blocker(items, other)
+    already = "blocked-by:" + other in item["deps"].split(",")
+    if not already:
+        bd("dep", "add", ident, other)
+    tips = ["Run `tasks-axi unblock %s --by <other>` to clear it" % ident,
+            "Run `tasks-axi ready` to see what is still dispatchable"]
+    line = "block %s %s %s" % (ident, "already blocked-by" if already else "-> blocked-by", other)
+    extra = {"already": True} if already else {}
+    respond(found, "block", ident, line, tips, card=False, **extra, blocked_by=other)
+
+
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
-    if verb not in ("add", "create"):
+    serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
+             "block": block}.get(verb)
+    if serve is None:
         view.refuse("Unknown write verb: " + verb)
-    add(sys.argv[2:])
+    serve(sys.argv[2:])
 
 
 if __name__ == "__main__":

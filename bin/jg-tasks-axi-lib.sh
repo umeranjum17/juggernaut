@@ -15,7 +15,7 @@
 # backlog mutations, but validated squad_lead handoffs always use `tasks-axi mv`.
 # `config/backlog-backend=beads` serves backlog reads from this home's bd store,
 # named by the absolute BEADS_DIR in `config/beads-dir`; jg_backlog_beads_read
-# owns that read, jg_backlog_beads_write owns add, and
+# owns that read, jg_backlog_beads_write owns add, update, done and block, and
 # bin/jg-tasks-axi.sh refuses every other verb on it for now.
 # Absent or any other value keeps the default tasks-axi backend path, falling
 # back to manual mutation when the tool is not compatible.
@@ -218,7 +218,7 @@ jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
   printf '%s\n' "$store"
 }
 
-jg_backlog_beads_write() {  # <config_dir> <add|create> [args...]
+jg_backlog_beads_write() {  # <config_dir> <add|update|done|block and aliases> [args...]
   local bin_dir store
   store=$(jg_backlog_beads_store "$1") || return 2
   shift
