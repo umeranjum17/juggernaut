@@ -717,7 +717,7 @@ IFS= read -r -d '' INBOX_SECTION <<EOF || true
 # Juggernaut instruction inbox
 Juggernaut steers you through durable message files in $INBOX_DIR.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list $INBOX_DIR/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: \`mv $INBOX_DIR/NNN.msg $INBOX_DIR/handled/\`.
-The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. It proves only that you read the message. When you have acted on it, say so with proof: \`$(shell_quote "$JG_ROOT/bin/jg-delivery.sh") handled $ID NNN --evidence <status|commit|reply|task|pr>:<pointer>\` (or \`failed $ID NNN --reason <why>\` if you cannot). An empty or absent inbox needs no action.
 EOF
 if [ -e "$CONFIG/wait-no-turns" ]; then
   INBOX_SECTION+="Do not poll or list the inbox while waiting; a waiting instruction rings."$'\n'

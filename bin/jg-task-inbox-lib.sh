@@ -25,6 +25,8 @@
 # Layout under <state-dir>:
 #   <task>.inbox/NNN.msg       one durable steer, numeric sequence, atomic rename
 #   <task>.inbox/handled/      the worker's `mv` here IS the acknowledgement
+#   <task>.inbox/.delivery.jsonl  the delivery record, one JSON line per proof (see
+#                              below); append-only, never read by the ladder
 #   <task>.inbox/.seq.lock     serializes sequence allocation across writers
 #                              (the session and the away daemon)
 #   <task>.inbox/.ring-state   watcher re-ring ladder: "<msg>\t<count>\t<epoch>"
@@ -47,6 +49,14 @@
 #   --
 #   <exact message text; newlines are legal; a marked squad_lead request keeps
 #    its from-juggernaut marker and corr token verbatim in this body>
+#
+# Delivery record (jg_task_delivery_note, bin/jg-delivery.sh): five words, each with its
+# own proof, and no word stands in for another. stored: the record was renamed into the
+# inbox. rung: the doorbell was typed (a ring that returned 0). read: the worker moved the
+# record to handled/ - the folder name is old, the move proves only a read. handled: the
+# worker ran `bin/jg-delivery.sh handled` with an evidence pointer (a status line, commit,
+# reply, task change or PR). failed: the worker refused it with a reason. Only stored and
+# rung are written here; the rest is the worker's claim and is shown as one.
 #
 # Sequence numbers are never reused within a task: allocation scans both the
 # inbox root and handled/, so a message is processed at most once per worker
@@ -272,6 +282,7 @@ _jg_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
     printf '%s' "$text"
   } > "$tmp" && mv "$tmp" "$rec" || status=1
   [ "$status" -eq 0 ] || { rm -f "$tmp"; return 1; }
+  jg_task_delivery_note "$dir" "$seq" stored || true
   # The record is durable, so publish it: the bus is this path's store and the
   # writer is the source, which is why nothing has to scan for it later
   # (docs/bus-live.md). A bus that cannot be reached leaves the record in place
@@ -281,6 +292,18 @@ _jg_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
     "$(printf '%s' "$text" | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | cut -d' ' -f1)" \
     >/dev/null 2>&1 || true
   printf '%s' "$rec"
+}
+
+# Append one proof to the delivery record. Best effort by design: a record that cannot
+# be written never blocks a steer, a ring or a worker's claim.
+jg_task_delivery_note() {  # <inbox-dir> <seq-or-record-name> <word> [pointer]
+  local dir=$1 seq=${2##*/} word=$3 pointer=${4:-}
+  seq=${seq%.msg}
+  case "$seq" in ''|*[!0-9]*) return 1 ;; esac
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -nc --argjson seq "$((10#$seq))" --arg word "$word" --arg pointer "$pointer" --argjson at "$(date +%s)" \
+    '{seq:$seq,word:$word,at:$at} + (if $pointer == "" then {} else {pointer:$pointer} end)' \
+    >> "$dir/.delivery.jsonl" 2>/dev/null || return 1
 }
 
 # Durably enqueue one steer: temp-write, then atomic rename into the next
@@ -425,6 +448,14 @@ jg_task_inbox_doorbell_line() {  # <record-path>
 # On return 2, JG_TASK_INBOX_RING_REASON holds the backend's refusal
 # diagnostics on one line, for callers to log; it is empty otherwise.
 jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
+  local rc=0 dir=${3%/*}
+  _jg_task_inbox_ring_attempt "$@" || rc=$?
+  [ "${dir##*/}" != handled ] || dir=${dir%/*}
+  [ "$rc" -ne 0 ] || jg_task_delivery_note "$dir" "${3##*/}" rung || true
+  return "$rc"
+}
+
+_jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> [expected-label]
   local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict errf
   JG_TASK_INBOX_RING_REASON=
   case "$(jg_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in

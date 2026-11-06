@@ -27,6 +27,25 @@ Two things follow, and both are the point of the switch:
   consumer died, so the queue's own append-recovery marker and the `.wake-settled`
   file are gone with the mechanisms they served.
 
+## What "delivered" means
+
+A steer has five words, and each has its own proof (`bin/jg-delivery.sh`, header and
+`<task>.inbox/.delivery.jsonl`):
+
+| word | proof |
+| --- | --- |
+| stored | the record was renamed into the inbox (written by the inbox library) |
+| rung | a doorbell was typed for it (a ring that returned 0) |
+| read | the worker moved it to `handled/`; the folder name is old, the move proves only a read |
+| handled | the worker ran `jg-delivery.sh handled <task> <n> --evidence <kind>:<pointer>`; the pointer is a status line, commit, reply, task or PR |
+| failed | the worker ran `jg-delivery.sh failed <task> <n> --reason <why>` |
+
+Handled and failed are the worker's claim, kept in the record and sent once as its own
+`jg.<home>.inbox.handled` event under a short timeout, so a down bus never blocks the worker. A
+transport acknowledgement is never called handled. No event comes when a worker never acts, so
+the sender's timeout is `jg-delivery.sh overdue <task> --after <seconds>`, and the doorbell
+stays. `tests/jg-delivery-record.test.sh` proves it on a throwaway server.
+
 ## One stream for every home
 
 The machine runs one JetStream. `JG_WAKE` carries each home's `jg.<home>.wake.>` and

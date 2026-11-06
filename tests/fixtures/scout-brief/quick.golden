@@ -73,7 +73,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 # Juggernaut instruction inbox
 Juggernaut steers you through durable message files in '@HOME@/state/gold-scout.inbox'.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '@HOME@/state/gold-scout.inbox'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '@HOME@/state/gold-scout.inbox'/NNN.msg '@HOME@/state/gold-scout.inbox'/handled/`.
-The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. It proves only that you read the message. When you have acted on it, say so with proof: `'@ROOT@/bin/jg-delivery.sh' handled gold-scout NNN --evidence <status|commit|reply|task|pr>:<pointer>` (or `failed gold-scout NNN --reason <why>` if you cannot). An empty or absent inbox needs no action.
 
 # Definition of done
 Write your findings to `@HOME@/data/gold-scout/report.md`.
