@@ -208,6 +208,13 @@ run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "merged
 assert_contains "$(events "$d" | tail -1)" 'Not live yet: the key fix is waiting' "the chat event says Not live yet"
 assert_contains "$(tail -1 "$d/home/state/branch-outcomes.jsonl")" 'merged-not-released: the key fix' "the stored row keeps the old label"
 
+# --- a row written in a squad lead home is never published direct to the captain ---------------
+d=$(setup lead-outcome)
+printf 'schema=1\nid=muxr\n' >"$d/home/.jg-squad-lead-home"
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The key is fixed and released in 0.4.1" >/dev/null
+assert_equals "0" "$(events "$d" | wc -l | tr -d ' ')" "a captain row from a lead home is not teed to the captain channel"
+assert_equals "1" "$(wc -l <"$d/home/state/branch-outcomes.jsonl" | tr -d ' ')" "the lead home still stores the row for its parent"
+
 # --- the CAPTAIN stream carries what the bus took, and nothing delivers it a second time ------
 d=$(setup stream)
 printf 'set dapr-http-url http://127.0.0.1:%s\nset dapr-pubsub accepted\nset nats-url %s\n' \

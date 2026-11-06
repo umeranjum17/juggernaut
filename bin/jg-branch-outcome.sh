@@ -589,7 +589,12 @@ case "$CMD" in
     # The captain channel delivers a captain-facing row to the captain by the new
     # path (bin/jg-bus.sh): the row above is stored exactly as before, and a
     # routine or silent row is not captain-facing, so only this one is sent.
-    if [ "$VERDICT" = captain ] && [ "$SILENT" = false ]; then
+    # A row written in a squad lead home is never published direct: nobody reads that
+    # home's chat and main has not reviewed the row, so the captain would receive raw,
+    # replayed lead work. The lead's own publishers carry its outcomes to the parent
+    # channel (docs/squad-lead-parent-channel.md), and main publishes what it accepts.
+    if [ "$VERDICT" = captain ] && [ "$SILENT" = false ] \
+        && [ ! -e "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ]; then
       # Chat words only: the stored row above keeps the label. "merged-not-released:"
       # was sent for work that had not merged, so the chat says only what is always true.
       SENT="$SUMMARY"
