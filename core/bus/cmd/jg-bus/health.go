@@ -51,19 +51,37 @@ type healthRecord struct {
 // finding is one failed test: the member that failed and why.
 type finding struct{ member, why string }
 
-var serviceLabels = map[string]string{"bus": "the event system"}
+var serviceLabels = map[string]string{"bus": "the event system", "bus-budget": "the event system's memory budget",
+	"wake": "the notification services", "disk": "the temporary disk"}
 
 func (a *app) health(args []string) int {
 	switch {
 	case len(args) == 0 || args[0] == "run":
 		return a.healthRun(a.runChecks())
+	case args[0] == "unit" && len(args) < 3:
+		text, err := a.healthUnit(len(args) == 2 && args[1] == "timer")
+		if err != nil {
+			return die("%v", err)
+		}
+		fmt.Print(text)
+		return 0
+	case args[0] == "install":
+		return a.healthInstall()
 	}
-	return die("usage: jg-bus health [run]")
+	return die("usage: jg-bus health [run | unit [timer] | install]")
 }
 
 // runChecks runs every test once and returns the failures of each service (nil when it passed).
 func (a *app) runChecks() map[string][]finding {
-	return map[string][]finding{"bus": a.busFindings()}
+	tests := map[string]func() []finding{"bus": a.busFindings, "bus-budget": a.budgetFindings, "wake": a.consumerFindings, "disk": a.diskFindings}
+	got := map[string][]finding{}
+	for name, test := range tests {
+		// JG_HEALTH_SKIP names tests a lab leaves out (a lab has no wake services).
+		if !strings.Contains(","+os.Getenv("JG_HEALTH_SKIP")+",", ","+name+",") {
+			got[name] = test()
+		}
+	}
+	return got
 }
 
 // step feeds one run's failures to a service's counters and says what changed: "open", "close" or "".
@@ -149,6 +167,14 @@ func (a *app) healthRun(results map[string][]finding) int {
 }
 
 func (a *app) repair(service string) string {
+	switch service {
+	case "bus-budget":
+		return "raise max_mem_store and max_file_store in core/bus/nats.conf, then restart the bus"
+	case "wake":
+		return "run bin/jg-stack.sh up for the home that owns these services"
+	case "disk":
+		return "clean leaked files in the temporary disk"
+	}
 	return "restart the bus with: systemctl --user restart " + natsUnit()
 }
 
