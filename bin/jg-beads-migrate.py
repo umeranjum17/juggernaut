@@ -3,6 +3,7 @@
 
   jg-beads-migrate.py copy --main <home> --to <dir>   copy feed and backlogs; the only read of a real home
   jg-beads-migrate.py plan --copy <dir> --out <dir>   write <home>.jsonl, <home>.prefixes and manifest.json
+  jg-beads-migrate.py verify --copy <dir> --out <dir> --runs <dir> [--home <home>]   judge a dry run; exit 1 on a mismatch
 
 One row per piece of work: fm-/jg- twins collapse to jg-<hash>. The home's source row wins on status, title and
 hold, on single rows too, because the board feed only mirrors it; with no source row the newest `at` twin wins.
@@ -14,6 +15,7 @@ manifest.json records every row and the disposition of every held row, so a dry 
 import argparse, base64, collections, hashlib, json, os, re, shutil, sys
 
 NO_REASON = 'no reason recorded before migration'
+STATUSES = ('open', 'in_progress', 'on_hold', 'closed')
 TAG = r'\s*\((?:repo|kind|priority|since|done|merged|hold|until|hold-kind|hold-until)[: ][^)]*\)'
 
 def registry(main):
@@ -202,13 +204,53 @@ def plan(a):
         open(f'{a.out}/{h}.prefixes', 'w').write(','.join(sorted({r['id'].split('-')[0] for r in rows})))
     json.dump({'rows': man, 'held': held, 'buckets': sorted(buckets)}, open(f'{a.out}/manifest.json', 'w'))
 
+def verify(a):
+    man = json.load(open(f'{a.out}/manifest.json'))
+    reg = json.load(open(f'{a.copy}/registry.json'))
+    feed, src, bad = read_feed(a.copy), read_sources(a.copy, reg['homes']), []
+    homes = [a.home] if a.home else sorted({m['home'] for m in man['rows'].values()})
+    exported, table = {}, []
+    for h in homes:
+        rows = {r['id']: r for r in map(json.loads, open(f'{a.runs}/{h}.export.jsonl')) if r.get('id')}
+        want = {i: m for i, m in man['rows'].items() if m['home'] == h}
+        exported.update(rows)
+        bad += [f'{h}: {i} missing from the store' for i in want.keys() - rows.keys()]
+        bad += [f'{h}: {i} in the store but not the manifest' for i in rows.keys() - want.keys()]
+        for i in want.keys() & rows.keys():
+            if rows[i]['status'] != want[i]['status']: bad.append(f"{h}: {i} is {rows[i]['status']}, manifest says {want[i]['status']}")
+            if f'home:{h}' not in rows[i].get('labels', []): bad.append(f'{h}: {i} lost its home label')
+            if len(rows[i].get('dependencies') or []) != want[i]['deps']: bad.append(f'{h}: {i} dependency count differs')
+        counted = dict(l.split() for l in open(f'{a.runs}/{h}.counts'))
+        n = collections.Counter(m['status'] for m in want.values())
+        bad += [f"{h}: bd counts {counted.get(s)} {s}, manifest {n[s]}" for s in STATUSES if int(counted.get(s, -1)) != n[s]]
+        table.append((h, len(want), *(n[s] for s in STATUSES), sum('hold-reason-missing' in rows.get(i, {}).get('labels', []) for i in want)))
+    if not a.home:
+        keys = {suffix(i) for i in feed} | set(src)
+        if len(man['rows']) + len(man['buckets']) != len(keys): bad.append(f"census: {len(man['rows'])} rows + {len(man['buckets'])} buckets, the copy holds {len(keys)}")
+        must = {i for i, r in feed.items() if is_held(r)}
+        must |= {'jg-' + k for k, s in src.items() if s['status'] == 'on_hold' and not ({'jg-' + k, 'fm-' + k} & feed.keys())}
+        bad += [f'held: {i} has no disposition' for i in sorted(must - man['held'].keys())]
+        for i, d in man['held'].items():
+            md = exported.get(d['row'], {}).get('metadata') or {}
+            if d['disposition'] == 'on_hold' and not (exported.get(d['row'], {}).get('status') == 'on_hold' and str(md.get('hold_reason', '')).strip()): bad.append(f'held: {i} lost its hold or reason')
+            if d['disposition'].startswith('dropped-by') and not str(md.get('past_hold', '')).strip(): bad.append(f'held: {i} dropped with no trace')
+        print('home rows ' + ' '.join(STATUSES) + ' no_reason')
+        for t in table: print(*t)
+        print('total', *(sum(t[c] for t in table) for c in range(1, 7)))
+        print('feed ids', len(feed), 'twins collapsed', sum(len(m['legacy']) == 2 for m in man['rows'].values()),
+              'dropped holds', collections.Counter(d['disposition'] for d in man['held'].values()), 'live unresolved blockers', sum(m['live_blocked'] for m in man['rows'].values()))
+    for line in bad[:40]: print(line, file=sys.stderr)
+    return 1 if bad else 0
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('copy'); c.add_argument('--main', required=True); c.add_argument('--to', required=True)
     c = sub.add_parser('plan'); c.add_argument('--copy', required=True); c.add_argument('--out', required=True)
+    c = sub.add_parser('verify'); c.add_argument('--copy', required=True); c.add_argument('--out', required=True)
+    c.add_argument('--runs', required=True); c.add_argument('--home')
     a = p.parse_args()
-    return {'copy': copy, 'plan': plan}[a.cmd](a) or 0
+    return {'copy': copy, 'plan': plan, 'verify': verify}[a.cmd](a) or 0
 
 if __name__ == '__main__':
     sys.exit(main())

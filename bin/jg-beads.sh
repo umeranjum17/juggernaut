@@ -13,7 +13,9 @@
 # refuses a query naming a dolt_push, pull, fetch, clone, remote or backup procedure.
 # Every other verb is a bd call from the store's parent, so a relative path means that folder.
 # bd verbs served: show list ready count search blocked create update close reopen dep label
-# comment comments note. Any other is refused, so a verb that can reach a server, a remote or a
+# comment comments note, plus what a migration needs: `import <file>`, `export -o <name>` with a
+# plain name, so the file lands beside the store, and `config set` for status.custom and
+# allowed_prefixes only. Any other is refused, so a verb that can reach a server, a remote or a
 # git tree needs a deliberate change here.
 #
 # Refusals (exit 2, neither tool run):
@@ -140,6 +142,15 @@ run_bd() {  # <verb> [args...]
   local arg
   case "${1-}" in
     show|list|ready|count|search|blocked|create|update|close|reopen|dep|label|comment|comments|note) ;;
+    import) [ "$#" -eq 2 ] && [ "${2#-}" = "$2" ] || die "usage: jg-beads.sh import <file>" ;;
+    export)
+      [ "$#" -eq 3 ] && [ "$2" = -o ] || die "usage: jg-beads.sh export -o <name>"
+      case "$3" in ''|-*|.*|*/*) die "an export name is a plain file name beside the store: $3" ;; esac
+      ;;
+    config)
+      [ "$#" -eq 4 ] && [ "$2" = set ] || die "bd config is not served except as config set <key> <value>"
+      case "$3" in status.custom|allowed_prefixes) ;; *) die "bd config key $3 is not served here" ;; esac
+      ;;
     *) die "bd ${1-} is not served here; see jg-beads.sh --help" ;;
   esac
   for arg in "$@"; do
