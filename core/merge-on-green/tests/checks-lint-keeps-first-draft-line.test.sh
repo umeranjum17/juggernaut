@@ -44,6 +44,7 @@ lint() { # the evidence lint: it writes its own report and republishes the recei
 gate() { # the design gate both merge paths run, for the head the receipt binds
   (
     set -u
+    # shellcheck disable=SC2317,SC2329 # the sourced merge-gate lib calls this stub
     jg_dod_meta_value() { sed -n "s/^$2=//p" "$1" | tail -1; }
     # shellcheck source=/dev/null
     . "$d/fm/bin/jg-merge-gate-lib.sh"

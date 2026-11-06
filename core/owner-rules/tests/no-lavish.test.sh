@@ -63,7 +63,7 @@ if [ -n "${JG_TEST_FORK:-}" ]; then
   check 2 'real helper refuses before status append' bash "$report" 'done' abcdef0123456789 'http://review.example:4387/session/umer'
   if [ ! -e "$work/parent/state/umer.status" ]; then echo 'ok - refused note wrote no status'
   else echo 'not ok - refused note wrote status'; fails=$((fails + 1)); fi
-  check 0 'real helper appends sign-off note' bash "$report" 'done' abcdef0123456789 'http://review.example:4388/board/umer'
+  check 0 'real helper appends sign-off note' bash "$report" 'done' abcdef0123456789 'sign-off board http://review.example:4388/board/umer #tickets/jg-abc'
   grep -qF 'http://review.example:4388/board/umer' "$work/parent/state/umer.status"
 else echo 'SKIP real squad_lead helper: set JG_TEST_FORK to a Juggernaut checkout'; fi
 
