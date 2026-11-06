@@ -40,7 +40,8 @@ if [ "$mode" = check ] && [ -f "$MEM/.last" ]; then
 fi
 carried=$(awk '{ sub(/#.*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if (length($0)) print }' "$FMH/config/version-branch-carried" 2>/dev/null)
 
-repos=$(while IFS= read -r line; do
+repos=$([ -f "$FMH/data/projects.md" ] || exit 0
+while IFS= read -r line; do
   name=${line%% \[*}; name=${name%% - *}; name=${name#- }
   url=$(git -C "$FMH/projects/$name" remote get-url origin 2>/dev/null) || continue
   printf '%s\n' "$url" | sed -n 's#^\(https://github\.com/\|git@github\.com:\|ssh://git@github\.com/\)\([A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*\)$#\2#p' | sed 's/\.git$//'
