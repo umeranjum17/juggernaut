@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """jg-beads-view.py - render bd rows in the read shape tasks-axi prints.
 
-Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|show|view|markdown> [args...]
+Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|show|view|markdown|links> [args...]
 
 Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never starts bd.
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
+The links verb is not a tasks-axi read: it prints the ids linked to one row, for bin/jg-captain-hold.sh's blocking gate.
 bd stamps UTC and tasks-axi the local day, so created and closed read as the local day.
-A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while a lane is its assignee; kind is metadata.kind, else issue_type;
+A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while a lane is its assignee
+or metadata.hold_from says so; a hold stops holding on its defer_until date, and its fields stay readable on a closed row;
+kind is metadata.kind, else issue_type;
 parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
 show takes a row's id or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
@@ -30,6 +33,8 @@ STATES = ["queued", "in_flight", "done", "held"]
 PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?([eE][+-]?\d+)?\Z")
 MUST_QUOTE = re.compile(r'[,:"\\\[\]{}\x00-\x1f]')
 ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+LINK_LINE = re.compile(r"^[ \t]*(?:linked-to|parent):(.*)$", re.M)
+LINK_WORD = re.compile(r"[A-Za-z0-9._-]+\Z")
 
 
 def scalar(value):
@@ -76,8 +81,16 @@ def day(stamp):
 
 
 def flying(row):
-    """Say whether the row is in flight: one status column cannot hold in flight and held, so a held lane is its assignee."""
-    return row.get("status") == "in_progress" or (row.get("status") in HELD and bool(row.get("assignee")))
+    """Say whether the row is in flight: one status column cannot hold in flight and held, so a held lane is its assignee or metadata.hold_from."""
+    meta = row.get("metadata") or {}
+    return row.get("status") == "in_progress" or (row.get("status") in HELD and bool(row.get("assignee") or meta.get("hold_from")))
+
+
+def mentions(row):
+    """The names a row links to: its edges, and the linked-to: and parent: lines a migrated body still carries."""
+    words = re.split(r"[,;\s]+", " ".join(LINK_LINE.findall(row.get("description") or "")))
+    return {d["depends_on_id"] for d in row.get("dependencies") or []} | {
+        word for word in words if LINK_WORD.match(word) and word.lower() != "upkeep"}
 
 
 def legacy(row):
@@ -96,21 +109,23 @@ def task(row, rows):
     closed = row.get("status") == "closed"
     deps = [d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "blocks"]
     waiting = [d for d in deps if rows.get(d, {}).get("status") != "closed"]
-    held = row.get("status") in HELD
+    status = row.get("status")
+    until = (row.get("defer_until") or "-")[:10]
+    held = status in HELD and (until == "-" or until > datetime.date.today().isoformat())
     links = ["pr:" + url for url in dict.fromkeys(filter(None, [row.get("external_ref"), *split(meta.get("prs"))]))]
     links += ["report:" + path for path in split(meta.get("reports"))]
     repos = [label[8:] for label in row.get("labels") or [] if label.startswith("project:")]
     return {
         "id": row["id"], "title": row.get("title", ""), "state": "in_flight" if flying(row) else STATE.get(row.get("status"), "queued"),
         "blocked": "yes" if waiting else "no", "blocked_by": ",".join(waiting) or "none",
-        "held": "yes" if held else "no", "hold_reason": meta.get("hold_reason", "-") if held else "-",
-        "hold_kind": meta.get("hold_kind", "-") if held else "-",
-        "hold_until": (row.get("defer_until") or "-")[:10], "kind": meta.get("kind") or row.get("issue_type", "task"),
+        "held": "yes" if held else "no", "hold_reason": meta.get("hold_reason", "-"),
+        "hold_kind": meta.get("hold_kind", "-"), "hold_until": until, "kind": meta.get("kind") or row.get("issue_type", "task"),
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
         "created": "-" if closed else day(row.get("created_at")), "closed": day(row.get("closed_at")),
         "deps": ",".join("blocked-by:" + d for d in deps) or "none",
         "links": ",".join(links) or "none", "body": row.get("description", ""),
         "delivery_state": meta.get("delivery_state", "-"),
+        "mentions": mentions(row),
         # parent: the parent-child edge's target, else upkeep for the upkeep label; item: the id the home's state files use.
         "parent": next((d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "parent-child"),
                        "upkeep" if "upkeep" in (row.get("labels") or []) else "-"),
@@ -234,6 +249,23 @@ def markdown(tasks, args):
                 print("".join("  %s\n" % line for line in item["body"].splitlines() if line.strip()), end="")
 
 
+def links(tasks, args):
+    """Print the ids linked to one row in either direction, one per line; a moved row answers to its old names too."""
+    if len(args) != 1:
+        refuse("Expected 1 positional argument, got %d" % len(args), "usage: links <id>")
+
+    def claimed(name):
+        return [item for item in tasks if item["id"] == name] or [item for item in tasks if name in item["names"]]
+
+    own = claimed(args[0])
+    own = own[0] if len(own) == 1 else None
+    words = {args[0], own["id"], *own["names"]} if own else {args[0]}
+    linked = {item["id"] for item in tasks if words & item["mentions"]}
+    for name in own["mentions"] if own else ():
+        linked |= {item["id"] for item in claimed(name)}
+    print("\n".join(sorted(ident for ident in linked if ident not in words)))
+
+
 def main():
     raw = json.load(sys.stdin) or []
     rows = {row["id"]: row for row in raw}
@@ -241,7 +273,7 @@ def main():
     tasks.sort(key=lambda t: rows[t["id"]].get("closed_at") or "", reverse=True)
     tasks.sort(key=lambda t: ["in_flight", "queued", "done"].index(t["state"]))
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
-    serve = {"show": show, "view": show, "ready": ready, "list": listing, "markdown": markdown}.get(verb)
+    serve = {"show": show, "view": show, "ready": ready, "list": listing, "markdown": markdown, "links": links}.get(verb)
     if serve is None:
         refuse("Unknown read verb: " + verb)
     serve(tasks, sys.argv[2:])

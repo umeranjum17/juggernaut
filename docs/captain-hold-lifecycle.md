@@ -57,6 +57,11 @@ It works in this order:
 
 Publishing the stamp first ensures a snapshot cannot observe a newly captain-held task without the timestamp that defines its age.
 
+On a home whose `config/backlog-backend` reads `beads`, these steps and every other subcommand on this page except `design-card` and `design-pick` run on the Beads store through the same provider verbs, with no tasks-axi.
+`blocking` links a row to a decision by any edge between them in either direction, and by the `linked-to:` and `parent:` lines a migrated body still carries.
+The hold reason, kind and `--until` date sit on the row as plain text, so a reason keeps its parentheses and line breaks with no encoding.
+A failed store call stops the command and is never read as "not held".
+
 Repeat and edge cases:
 
 - Retries of an active hold preserve its hold-set timestamp.

@@ -15,8 +15,8 @@
 # backlog mutations, but validated squad_lead handoffs always use `tasks-axi mv`.
 # `config/backlog-backend=beads` serves backlog reads from this home's bd store,
 # named by the absolute BEADS_DIR in `config/beads-dir`; jg_backlog_beads_read
-# owns that read, jg_backlog_beads_write owns add, update, done, block, start and
-# reopen, and bin/jg-tasks-axi.sh refuses every other verb on it for now.
+# owns that read, jg_backlog_beads_write owns add, update, done, block, start,
+# reopen, hold and unhold, and bin/jg-tasks-axi.sh refuses every other verb on it for now.
 # Absent or any other value keeps the default tasks-axi backend path, falling
 # back to manual mutation when the tool is not compatible.
 # jg_tasks_axi_backend_resolve owns backend precedence: TASKS_AXI_BACKEND when
@@ -241,7 +241,7 @@ jg_backlog_beads_health() {  # <config_dir>
   return "$rc"
 }
 
-jg_backlog_beads_write() {  # <config_dir> <add|update|done|block|start|reopen and aliases> [args...]
+jg_backlog_beads_write() {  # <config_dir> <add|update|done|block|start|reopen|hold|unhold and aliases> [args...]
   local bin_dir store
   store=$(jg_backlog_beads_store "$1") || return 2
   shift
@@ -249,7 +249,7 @@ jg_backlog_beads_write() {  # <config_dir> <add|update|done|block|start|reopen a
   BEADS_DIR=$store python3 "$bin_dir/jg-beads-write.py" "$@"
 }
 
-jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown> [args...]
+jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links> [args...]
   local bin_dir store err rows rc=0
   store=$(jg_backlog_beads_store "$1") || return 2
   shift
@@ -265,7 +265,7 @@ jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown> [args.
 # One verb, read or write, for bin/jg-backlog-transition-lib.sh's row calls.
 jg_backlog_beads_serve() {  # <config_dir> <verb> [args...]
   case "${2:-}" in
-    show|view|list|ready)
+    show|view|list|ready|links)
       local config=$1
       shift
       jg_backlog_beads_read "$config" "$@"
