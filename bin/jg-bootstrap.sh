@@ -12,6 +12,7 @@
 #                 "BACKEND_INVALID: <name> (known: <names>)",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "SENTINEL: jg-sentinel is not running ... (install: <command>)",
+#                 "UNIT_HOME: <unit> is running for <other home> ... (move it: <command>)",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "HOME_SUMMARY: <ledger never published|not republished since
@@ -1771,6 +1772,7 @@ detect_local_config() {
   detect_code_root_backlog_fork
   detect_home_summary_publication
   detect_sentinel_service
+  detect_unit_homes
 }
 
 # Restart recovery (bin/jg-sentinel.sh) must run outside the Herdr server it
@@ -1786,6 +1788,36 @@ detect_sentinel_service() {
   printf -v quoted_home %q "$JG_HOME"
   printf -v quoted_sentinel %q "$JG_ROOT/bin/jg-sentinel.sh"
   echo "SENTINEL: jg-sentinel is not running, so a killed Herdr server leaves supervision and workers down until someone notices (install: mkdir -p ~/.config/systemd/user && JG_HOME=$quoted_home $quoted_sentinel unit > ~/.config/systemd/user/jg-sentinel.service && systemctl --user enable --now jg-sentinel)"
+}
+
+# A machine-wide user unit serves the home named in its own JG_HOME, and being
+# active says nothing about which home that is. A unit left pointing at another
+# home keeps running while this home gets no wake, no restart recovery and no
+# reply routing from it, so each one is compared with this home and a mismatch
+# is reported with the step that moves it. Detect-only: nothing is rewired here.
+# A unit that is absent, inactive or unreadable says nothing; detect_sentinel_service
+# and `jg-stack.sh status` own those cases.
+detect_unit_homes() {
+  [ "$BACKEND" = herdr ] || return 0
+  [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ -L "$(jg_compat_marker "$JG_HOME")" ] && return 0
+  command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1 || return 0
+  local unit prefix=${JG_STACK_UNIT_PREFIX:-jg} env served quoted_home quoted_sentinel quoted_stack fix
+  printf -v quoted_home %q "$JG_HOME"
+  printf -v quoted_sentinel %q "$JG_ROOT/bin/jg-sentinel.sh"
+  printf -v quoted_stack %q "$JG_ROOT/bin/jg-stack.sh"
+  for unit in jg-sentinel "$prefix-wake-engine" "$prefix-wake-watcher" "$prefix-router"; do
+    systemctl --user is-active --quiet "$unit" 2>/dev/null || continue
+    env=$(systemctl --user show -p Environment --value "$unit" 2>/dev/null) || continue
+    served=$(printf '%s\n' "$env" | tr ' ' '\n' | sed -n 's/^JG_HOME=//p' | head -n 1)
+    [ -n "$served" ] || continue
+    [ "$served" -ef "$JG_HOME" ] 2>/dev/null && continue
+    if [ "$unit" = jg-sentinel ]; then
+      fix="JG_HOME=$quoted_home $quoted_sentinel unit > ~/.config/systemd/user/jg-sentinel.service && systemctl --user daemon-reload && systemctl --user restart jg-sentinel"
+    else
+      fix="JG_HOME=$quoted_home $quoted_stack up"
+    fi
+    echo "UNIT_HOME: $unit is running for $served, not this home, so this home gets nothing from it (move it: $fix)"
+  done
 }
 
 # Shadow-backlog check. When this home's data directory is not the code root's,
