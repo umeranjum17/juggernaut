@@ -52,6 +52,20 @@ The alert is remembered per PR and reason in `<home>/data/jg-merge-on-green/stal
 poll stays silent. A PR that closes, heals or changes reason forgets it, and a new stall alerts again. A forge
 failure is silent and retried next sweep. The check never closes or rebases a PR, and the open-PR cap above is unchanged.
 
+## Stranded-merge sweep
+
+A merged PR that never reaches the default branch is lost work: six PRs sat on `release/c-10` this way.
+`stranded-merge-sweep.sh check <jg-home>` runs after the stale-PR alarm in every `merge-on-green.sh check`, with no model turn.
+For each project with a github.com `origin`, it asks the forge how far each closed release branch (every `release/c-N` below the newest) is ahead of the default branch.
+A branch ahead by 0 is fine.
+A branch listed in `config/version-branch-carried` has had its work carried to a newer release, so it is counted and never alarmed.
+Any other closed branch ahead by more than 0 is stamped when first seen.
+After 48 hours (`JG_STRANDED_HOURS`) one line `stranded-merge-sweep: <repo>: <branch> is ahead of <default> by <n> commits ...` is printed, and it repeats only when the count changes.
+The forge is asked at most once an hour (`JG_STRANDED_SWEEP_MIN`), which keeps the watcher check fast.
+A forge failure is silent and retried next sweep.
+`stranded-merge-sweep.sh report <jg-home>` prints each closed branch with its ahead count and state.
+`merge-on-green/tests/stranded-merge-sweep.test.sh` drives it against a `gh-axi` stub.
+
 ## Red-CI ticket
 
 A red CI run produces a root-cause ticket, never a re-run. `red-ci-ticket.sh check <jg-home>` runs at the end of every

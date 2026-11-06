@@ -272,6 +272,10 @@ done
 # branch, raises one alert per PR. It lives in stale-pr-alarm.sh beside this script and is skipped when absent.
 [ ! -x "$SRC/stale-pr-alarm.sh" ] || JG_STALE_PR_LIMIT=$DEADLINE "$SRC/stale-pr-alarm.sh" check "$FMH"
 
+# Stranded-merge sweep: a closed release branch ahead of the default branch for 48 h raises one alert. It lives in
+# stranded-merge-sweep.sh beside this script, asks the forge at most once an hour, and is skipped when absent.
+[ ! -x "$SRC/stranded-merge-sweep.sh" ] || JG_STRANDED_LIMIT=$DEADLINE "$SRC/stranded-merge-sweep.sh" check "$FMH"
+
 # Red-CI ticket: a red run on the default branch, a version branch or an open PR files one root-cause ticket, once
 # per run id. It lives in red-ci-ticket.sh beside this script and is skipped when absent.
 [ ! -x "$SRC/red-ci-ticket.sh" ] || JG_RED_CI_LIMIT=$DEADLINE "$SRC/red-ci-ticket.sh" check "$FMH"
