@@ -421,6 +421,14 @@ PY
 #
 # Returns 2 without waking when the note is no longer pending: juggernaut has
 # already acknowledged it, so a wake would only spend a turn on an empty inbox.
+# Ring the primary at once for a just-queued note: this home's sentinel `ring` types the doorbell
+# when no watcher is live (bin/jg-sentinel.sh owns the test). Only a home with a locked primary
+# session rings, and it runs detached so a slow or absent Herdr never delays or fails the note.
+ring_primary() {
+  [ "$STATE" = "$JG_HOME/state" ] && [ -s "$STATE/.lock-session" ] && [ -x "$JG_ROOT/bin/jg-sentinel.sh" ] || return 0
+  (JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-sentinel.sh" ring >/dev/null 2>&1 </dev/null &) 2>/dev/null || true
+}
+
 announce_note() {  # <id> <summary>
   local id=$1 summary=$2 lib="$JG_ROOT/bin/jg-wake-lib.sh" status=0
   if note_announced "$id"; then
@@ -447,6 +455,7 @@ announce_note() {  # <id> <summary>
     status=1
   fi
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
+  [ "$status" -ne 0 ] || ring_primary
   return "$status"
 }
 
