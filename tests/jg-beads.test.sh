@@ -88,6 +88,12 @@ refused "names a server" "$WRAPPER" list
 printf '{"dolt_mode": "embedded"}\n' > "$BEADS_DIR/metadata.json"
 printf 'no-git-ops: false\n' > "$BEADS_DIR/config.yaml"
 refused "not in stealth mode" "$WRAPPER" list
+# bin/jg-lint.sh lets only the wrapper name bd.
+mkdir -p "$T/lint/bin/backends"
+cp "$ROOT/bin/jg-lint.sh" "$T/lint/bin/"
+printf '#!/usr/bin/env bash\nbd list\n' | tee "$T/lint/bin/jg-beads.sh" > "$T/lint/bin/jg-other.sh"
+assert_contains "$(cd "$T/lint" && bash bin/jg-lint.sh bin/jg-other.sh 2>&1)" "bin/jg-other.sh:2: direct Beads CLI invocation bypasses bin/jg-beads.sh" "lint must refuse bd outside the wrapper"
+(cd "$T/lint" && bash bin/jg-lint.sh bin/jg-beads.sh >/dev/null 2>&1) || fail "lint must let the wrapper name bd"
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
 else
