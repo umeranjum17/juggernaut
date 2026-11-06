@@ -125,7 +125,8 @@ test_broken_registration_heals_and_answers_still_wake() {
   registered "$d" && fail "the edit did not break the registration"
   start_watch "$d"
   wait_for 40 registered "$d" || { stop_watch; fail "the broken registration was not re-armed"; }
-  grep -q 're-armed: board-answers' "$d/state/board-answers.rearm.log" || { stop_watch; fail "the re-arm left no log line"; }
+  # The log line is written just after the registration verifies, so wait for it rather than race it.
+  wait_for 10 grep -qs 're-armed: board-answers' "$d/state/board-answers.rearm.log" || { stop_watch; fail "the re-arm left no log line"; }
   answer "$d" after-heal "$(date +%s)"
   secs=$(wait_wake "$BOUND" "$d" 'after-heal') || { stop_watch; fail "no wake after the re-arm (waited $secs s)"; }
   stop_watch
