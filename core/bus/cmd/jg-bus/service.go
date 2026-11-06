@@ -350,11 +350,28 @@ func loadAccounts(name string, removed bool) error {
 	if removed {
 		args = []string{"--user", "restart", name}
 	}
+	since := time.Now().Add(-time.Second).Format("2006-01-02 15:04:05")
 	if out, err := exec.Command("systemctl", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", detail(string(out)))
 	}
+	if removed {
+		return nil
+	}
+	// A reload that cannot fit an account logs this and still returns success, leaving
+	// the accounts it had not reached without JetStream, so no acknowledgement can reach
+	// their wake rows. A restart reserves from a clean slate and gives it back to all.
+	time.Sleep(reloadSettle)
+	log, _ := exec.Command("journalctl", "--user", "-u", name, "--since", since, "--no-pager", "-o", "cat").Output()
+	if strings.Contains(string(log), "Error enabling jetstream") {
+		if out, err := exec.Command("systemctl", "--user", "restart", name).CombinedOutput(); err != nil {
+			return fmt.Errorf("the reload left JetStream off for some accounts and the restart failed: %s", detail(string(out)))
+		}
+	}
 	return nil
 }
+
+// reloadSettle is how long a reload is given to log its result before loadAccounts reads it.
+var reloadSettle = 1500 * time.Millisecond
 
 // startOne starts one service from its file, logs it beside its pid, and says so. A
 // service that is already running is left alone.
