@@ -181,3 +181,71 @@ for pair in "ma1 $pa1" "mb2 $pb2" "mc3 $pc3" "mf6 $pf6"; do
   merged_pr "$2" || fail "M3 $1 did not reach the forge after the recorded pick"
 done
 pass "linked starts and merges are refused while a decision is open, unrelated work moves, a recorded pick releases both"
+
+# ---- the replay of the incident: a design card is posted, the ticket that raised it is merged ----
+# D*: the card is posted the only way that files a design row; the ticket's pull request names no link of its own.
+command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
+SO="$W/so"
+mkdir -p "$SO/.sign-off"
+printf '{"schema":2,"items":[]}\n' > "$SO/.sign-off/decisions.json"
+: > "$SO/.sign-off/decisions.answers.jsonl"
+printf 'leash: matters\n' > "$SO/.sign-off/config.yaml"
+printf 'set mode off\n' > "$W/channel-off"
+cat > "$MFAKE/sign-off-axi" <<'SH'
+#!/usr/bin/env bash
+cmd=$1; shift
+board=$SIGN_OFF_HOME/.sign-off/decisions.json
+case "$cmd" in
+  list) jq -c '{decisions: [.items[]]}' "$board" ;;
+  answers) jq -s 'reduce .[] as $a ({}; .[$a.key] = ($a | del(.key)))' "${board%.json}.answers.jsonl" ;;
+  dismiss) ;;
+  raise)
+    key='' title=''
+    while [ "$#" -gt 0 ]; do
+      case "$1" in --key) key=$2; shift ;; --title) title=$2; shift ;; esac
+      shift
+    done
+    key=${key:-card}
+    jq --arg k "$key" --arg t "$title" '.items += [{key: $k, kind: "decision", title: $t}]' "$board" > "$board.t" && mv "$board.t" "$board"
+    printf '%s\n' "$key" ;;
+esac
+SH
+chmod +x "$MFAKE/sign-off-axi"
+DCARD="tickets-layout-pick"
+dcard() {  # <post flags...>: post one design card from the merge home
+  PATH="$MFAKE:$PATH" JG_HOME="$MH" JG_STATE_OVERRIDE="$MH/state" JG_DATA_OVERRIDE="$MH/data" JG_CONFIG_OVERRIDE="$MH/config" \
+    SIGN_OFF_HOME="$SO" JG_CAPTAIN_CHANNEL="$W/channel-off" JG_SEND_SETTLE=0 \
+    "$ROOT/bin/jg-question-card.sh" post --route main --ask-ref ticket-layout --key "$DCARD" --must design-pick \
+    --title "Which layout should the ticket list use?" --why "The list page needs one layout." \
+    --outcome yes="It uses the compact layout." --outcome no="It keeps the wide layout." "$@" 2>&1
+}
+board_items() { jq -r '.items | length' "$SO/.sign-off/decisions.json"; }
+ship_m mr1; pr1=$PR
+out=$(dcard); rc=$?
+[ "$rc" -ne 0 ] || fail "D1 a design card with no raising ticket was posted: $out"
+assert_contains "$out" "must name the ticket that raised it" "D1 the refusal does not say the raising ticket is missing"
+out=$(dcard --raised-by no-such-ticket); rc=$?
+[ "$rc" -ne 0 ] || fail "D2 a design card naming a ticket this home lacks was posted: $out"
+assert_equals 0 "$(board_items)" "D2 a refused design card reached the board"
+tasks_m show "$DCARD" >/dev/null 2>&1 && fail "D2 a refused design card filed a design row"
+out=$(merge mr1 "$pr1" 2>&1); rc=$?
+expect_code 0 "$rc" "D3 the ticket merges while no card is open: $out"
+merged_pr "$pr1" || fail "D3 the merge did not reach the forge"
+ship_m mr2; pr2=$PR
+out=$(dcard --raised-by mr2); rc=$?
+expect_code 0 "$rc" "D4 a design card naming its raising ticket should post: $out"
+assert_equals 1 "$(board_items)" "D4 the design card did not reach the board"
+out=$(dcard --raised-by mr2); rc=$?
+expect_code 0 "$rc" "D4 a repeat post should converge: $out"
+tasks_m show "$DCARD" 2>&1 | grep -q 'linked-to: mr2' || fail "D4 the design row is not linked to the ticket that raised it"
+out=$(merge mr2 "$pr2" 2>&1); rc=$?
+[ "$rc" -ne 0 ] || fail "D5 the merge of the ticket that raised an open design card went through: $out"
+assert_contains "$out" "$DCARD" "D5 the refusal does not name the open design card"
+merged_pr "$pr2" && fail "D5 the refused merge reached the forge"
+printf '{"key":"%s","answer":"yes","label":"yes","close":"done","at":"2026-11-06T07:00:00Z"}\n' "$DCARD" >> "$SO/.sign-off/decisions.answers.jsonl"
+PATH="$MFAKE:$PATH" JG_HOME="$MH" JG_STATE_OVERRIDE="$MH/state" JG_DATA_OVERRIDE="$MH/data" JG_CONFIG_OVERRIDE="$MH/config" \
+  SIGN_OFF_HOME="$SO" JG_SEND_SETTLE=0 "$ROOT/bin/jg-board-answers.sh" check >/dev/null 2>&1
+out=$(merge mr2 "$pr2" 2>&1); rc=$?
+expect_code 0 "$rc" "D6 the ticket should merge after the recorded pick: $out"
+merged_pr "$pr2" || fail "D6 the merge did not reach the forge after the recorded pick"
+pass "replay: the ticket that raised an open design card is refused at merge, and merges once the pick is recorded"

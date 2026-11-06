@@ -33,6 +33,9 @@
 #            board at the first pass are recorded, not reported.
 # arm    Write state/board-answers.check.sh, bind it with jg-check-register.sh,
 #        and run one pass. disarm removes the shim and its trust binding.
+# A design card (jg-question-card.sh post --must design-pick) also has a marker
+# state/design-cards/<card-key>; its answer is recorded on the card's backlog row
+# (jg-captain-hold.sh design-pick), which releases the work linked to it.
 # State: state/board-routes/<card-key>, state/.board-answers-seen. Unrouted keys
 # starting `jg-` belong to the captain-hold card adapter and are skipped.
 set -u
@@ -85,6 +88,13 @@ answer_text() {  # <key> <at> <answer> <label> <note> <link>
     "$1" "$2" "$3" "${4:+ ($4)}" "${5:+ - note: $5}" "${6:+ Card: $6.}"
 }
 
+# A design card's answer closes its backlog row, which releases the work linked to it
+# (bin/jg-captain-hold.sh design-pick). Only a card with a marker pays for the backlog read.
+designed() {  # <card-key> <answer>
+  [ -f "$STATE/design-cards/$1" ] || return 0
+  "$SCRIPT_DIR/jg-captain-hold.sh" design-pick "$1" --words "$2" >/dev/null 2>&1 || true
+}
+
 cmd_check() {
   local json board key answer label note at lead dk link text id out first=0 report='' shown
   jg_question_signoff_available || { say "board answers cannot be read: sign-off-axi is not on PATH"; return 0; }
@@ -94,6 +104,7 @@ cmd_check() {
   mkdir -p "$ROUTES"
   while IFS=$'\037' read -r key at answer label note; do
     key_ok "$key" && [ -n "$at" ] && [ -n "$answer" ] || continue
+    designed "$key" "$answer"
     # The chat message for this card shows the board's answer and drops its buttons. A repeat is a no-op there.
     if ! grep -qxF "$key" "$CLOSED" 2>/dev/null; then
       printf '%s\n' "$key" >> "$CLOSED"
@@ -134,6 +145,7 @@ cmd_route_answer() {
   key_ok "$key" || die "route-answer needs a card key" 2
   { [ -n "$at" ] && [ -n "$answer" ]; } || die "route-answer needs the answer time and the captain's answer" 2
   mkdir -p "$ROUTES"
+  designed "$key" "$answer"
   lead=$(rget "$key" lead)
   if [ -z "$lead" ]; then
     case "$key" in jg-*) die "refused: $key belongs to the captain-hold adapter, not a routed card" 3 ;; esac

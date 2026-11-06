@@ -34,6 +34,8 @@
 #   jg-captain-hold.sh answered <task-id>
 #   jg-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   jg-captain-hold.sh blocking <task-id>
+#   jg-captain-hold.sh design-card <card-key> --raised-by <ticket> --title <question>
+#   jg-captain-hold.sh design-pick <card-key> --words <the captain's words>
 #   jg-captain-hold.sh diverged
 #   jg-captain-hold.sh reconcile list
 #   jg-captain-hold.sh reconcile close <task-id> --evidence-file <path>
@@ -223,6 +225,12 @@
 # `<task-id><TAB><title>` per open call; 1 means none; 2 means it could not be
 # established, which a caller must treat as a refusal.
 #
+# `design-card` and `design-pick` are the two ends of a design card's row, called by
+# bin/jg-question-card.sh (post, --must design-pick) and bin/jg-board-answers.sh. The
+# post files a `[design-ux]` row keyed by the card with `linked-to: <raising ticket>`,
+# so `blocking` finds it from that ticket; a card naming no raising ticket (or one this
+# home lacks) is refused. The answer records the captain's words on the row and closes it.
+#
 # `answered` is the read-only predicate bin/jg-tasks-axi.sh asks before it lets a
 # `[captain-ask]` row leave the backlog: exit 0 when the task body carries a
 # recorded captain answer (an evidence-only `reconciled` record or an open hold-set stamp does not count),
@@ -380,7 +388,7 @@ raise_hold_card() {  # <task-id> <task-title> <reason> <done|release> <must>
   out=$("$SCRIPT_DIR/jg-question-card.sh" post \
     --route main \
     --ask-ref "$id" --key "$key" --title "$title" --about "$reason" --why "$(card_why "$reason")" \
-    ${must:+--must "$must"} ${ticket:+--ticket "$ticket"} \
+    ${must:+--must "$must"} ${ticket:+--ticket "$ticket"} --filer captain-hold \
     --outcome yes="Answer recorded: yes." \
     --outcome no="Answer recorded: no." \
     --recommend yes --recommend-reason "The hold records no recommendation." \
@@ -2377,6 +2385,74 @@ EOF
   [ "$n" -gt 0 ]
 }
 
+# A design card (`jg-question-card.sh post --must design-pick`) is also a
+# `[design-ux]` backlog row keyed by the card and linked to the ticket that
+# raised it, so `blocking` finds it from that ticket; the link is never optional.
+# A card naming no raising ticket, or one this home does not carry, is refused.
+command_design_card() {  # <card-key> --raised-by <ticket> --title <question>
+  local key=${1:-} raised='' title='' repo priority_check mark
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --raised-by) shift; raised=${1:-} ;;
+      --title) shift; title=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug card-key "$key"
+  [ -n "$raised" ] || fail "refused: a design card must name the ticket that raised it; pass --raised-by <ticket>"
+  validate_slug raised-by "$raised"
+  validate_one_line title "$title"
+  [ -n "${title//[[:space:]]/}" ] || fail "a design card needs --title"
+  require_tasks_axi
+  task_show "$raised" || fail "refused: $raised, named as the ticket that raised the design card, is not in this home's backlog"
+  repo=$(show_field_value "$TASK_SHOW_OUTPUT" repo)
+  [ -n "$repo" ] || repo=juggernaut
+  validate_one_line repo "$repo"
+  # The marker lets the board-answers check find the card's answer without reading the backlog for every answer.
+  mark=$STATE/design-cards/$key
+  mkdir -p "$STATE/design-cards" || fail "cannot create $STATE/design-cards"
+  if task_show "$key"; then : > "$mark"; printf 'design-card: %s already filed\n' "$key"; return 0; fi
+  priority_check=${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}
+  if [ -x "$priority_check" ]; then
+    "$priority_check" add "$key" "[design-ux] $title" --kind captain --priority 1 >/dev/null || exit 1
+  fi
+  BD_DUE_REQUIRED=false tasks_axi add "$key" "[design-ux] $title" --kind captain --repo "$repo" --priority 1 \
+    --body "$(printf 'Design pick for the captain, raised by %s.\nlinked-to: %s' "$raised" "$raised")" >/dev/null \
+    || fail "could not file the design row for card $key"
+  : > "$mark"
+  printf 'design-card: %s linked to %s\n' "$key" "$raised"
+}
+
+# The captain answered the card: record his words on its design row and close it,
+# which releases the work linked to it. A card with no design row is no design
+# card, so that is a quiet no-op; an unreadable backlog is not.
+command_design_pick() {  # <card-key> --words <the captain's words>
+  local key=${1:-} words='' mark
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --words) shift; words=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug card-key "$key"
+  [ -n "${words//[[:space:]]/}" ] || fail "design-pick needs --words \"<the captain's words>\""
+  mark=$STATE/design-cards/$key
+  task_show "$key" || { rm -f -- "$mark"; return 0; }
+  case "$(show_field_value "$TASK_SHOW_OUTPUT" title)" in *"[design-ux]"*) ;; *) rm -f -- "$mark"; return 0 ;; esac
+  [ "$(show_field "$TASK_SHOW_OUTPUT" state)" != "done" ] || { rm -f -- "$mark"; return 0; }
+  require_tasks_axi
+  tasks_axi "done" "$key" --no-prune --note "Captain's pick: $(printf '%s' "$words" | tr '\n\r' '  ' | cut -c1-500)" >/dev/null \
+    || fail "could not record the pick on design row $key"
+  rm -f -- "$mark"
+  printf 'design-pick: %s recorded\n' "$key"
+}
+
 case "${1:-}" in
   hold) shift; command_hold "$@" ;;
   answer) shift; command_answer "$@" ;;
@@ -2390,6 +2466,8 @@ case "${1:-}" in
   answered) shift; command_answered "$@" ;;
   open) shift; command_open "$@" ;;
   blocking) shift; command_blocking "$@" ;;
+  design-card) shift; command_design_card "$@" ;;
+  design-pick) shift; command_design_pick "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;

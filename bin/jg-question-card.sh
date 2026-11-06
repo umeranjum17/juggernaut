@@ -6,6 +6,7 @@
 #   jg-question-card.sh post --ask-ref <ref> --title "<one question>" [sign-off-axi raise flags...]
 #   jg-question-card.sh post --board <decisions.json> ... (the same flags)
 #   jg-question-card.sh post --route <lead> [--decision-key <slug>] ... (the same flags)
+#   jg-question-card.sh post --must design-pick --raised-by <ticket> ... (a design card)
 #   jg-question-card.sh answer <card-key> --words "<the captain's words>" [--board <decisions.json>]
 #   jg-question-card.sh keys
 #
@@ -39,6 +40,15 @@
 #        or an open decision of one. No single match refuses the post and names
 #        the flag: pass --route <lead>, or --route main for a card Main owns
 #        (its answer then wakes Main, as before).
+#        A design card (--must design-pick) must name the ticket that raised it
+#        with --raised-by <ticket>, a task in this home's backlog; without one,
+#        or with one this home lacks, the post is refused and nothing is posted.
+#        The post also files a `[design-ux]` backlog row keyed by the card and
+#        linked to that ticket (bin/jg-captain-hold.sh design-card), so the open
+#        pick stops the ticket's merge and its linked work; the answer closes the
+#        row (bin/jg-board-answers.sh). A card a script files as an alert, with
+#        --filer, is not a design ask and is exempt. Only this path files the row: a card posted
+#        straight through sign-off-axi, or into another home's board, does not.
 #        --must <category> is the gate (bin/jg-ask-gate-lib.sh): it is written
 #        into the card's detail field as "must: <category>", and on the
 #        when-it-matters leash a post with none is refused and recorded for
@@ -116,6 +126,7 @@ split_board() {
   DECISION_KEY=''
   MUST=''
   RECORD=''
+  RAISED=''
   ARGS=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -139,6 +150,11 @@ split_board() {
         [ $# -gt 0 ] || die "--decision-key needs a key"
         DECISION_KEY=$1
         ;;
+      --raised-by)
+        shift
+        [ $# -gt 0 ] || die "--raised-by needs the ticket that raised the card"
+        RAISED=$1
+        ;;
       --must)
         shift
         [ $# -gt 0 ] || die "--must needs a category ($(jg_ask_categories_words))"
@@ -159,7 +175,7 @@ resolve_owner_lead() {
   for meta in "$state"/*.meta; do
     [ -f "$meta" ] || continue
     id=${meta##*/}; id=${id%.meta}
-    for c in "$DECISION_KEY" "$(flag_value --key)" "$(flag_value --ask-ref)"; do
+    for c in "$DECISION_KEY" "$(flag_value --key)" "$(flag_value --ask-ref)" "$RAISED"; do
       [ -n "$c" ] || continue
       if [ "$id" = "$c" ] || status_open_decisions "$state/$id.status" 2>/dev/null | grep -q "^$c"$'\t'; then
         [ "$id" = "$c" ] || dk=$c
@@ -227,7 +243,7 @@ refuse() {  # <the refusal line>
 }
 
 cmd_post() {
-  local title ask_ref before after key board out link rc=0 refusal rec filer detail RECORD=''
+  local title ask_ref before after key board out link rc=0 refusal rec filer detail raised_rc RECORD=''
   split_board "$@"
   require_signoff
   title=$(flag_value --title)
@@ -260,6 +276,15 @@ cmd_post() {
   fi
   if ! refusal=$(jg_ask_gate_refusal "$MUST" "$BOARD"); then
     refuse "$refusal"
+  fi
+
+  # A design card names the ticket that raised it, so the open pick can stop that
+  # ticket's merge (bin/jg-captain-hold.sh design-card); checked before anything posts.
+  if [ "$MUST" = design-pick ] && [ -z "$(flag_value --filer)" ]; then
+    [ -n "$RAISED" ] || die "refused: a design card must name the ticket that raised it; pass --raised-by <ticket>"
+    raised_rc=0
+    "$SCRIPT_DIR/jg-captain-hold.sh" open "$RAISED" --distinguish-absent >/dev/null 2>&1 || raised_rc=$?
+    case "$raised_rc" in 0|1) ;; 3) die "refused: --raised-by '$RAISED' is not a ticket in this home's backlog" ;; *) die "refused: could not read this home's backlog to check --raised-by '$RAISED'" ;; esac
   fi
 
   if [ "$ROUTE" = main ]; then
@@ -302,6 +327,8 @@ cmd_post() {
   fi
   [ -z "$ROUTE" ] || "$SCRIPT_DIR/jg-board-answers.sh" route "$key" "$ROUTE" "$DECISION_KEY" >&2 \
     || die "the card $key is posted but its route to $ROUTE was not recorded; run jg-board-answers.sh route $key $ROUTE"
+  { [ "$MUST" != design-pick ] || [ -n "$(flag_value --filer)" ]; } || "$SCRIPT_DIR/jg-captain-hold.sh" design-card "$key" --raised-by "$RAISED" --title "$title" >&2 \
+    || die "the card $key is posted but its design row was not filed; run jg-captain-hold.sh design-card $key --raised-by $RAISED --title ..."
   # The detail field is where the card's must category lives, and a rebuild of
   # the feed writes its own detail. Record it beside the board as well, so the
   # category outlives any rebuild (bin/jg-board-record-lib.sh).

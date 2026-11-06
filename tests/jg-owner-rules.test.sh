@@ -262,7 +262,8 @@ test_turn_boundary_prints_no_block_for_a_question() {
     return 0
   }
   local key again
-  key=$(SIGN_OFF_HOME="$board" "$CARD" post  --route main --ask-ref chat-1 --must design-pick \
+  jg_test_raising_ticket "$TMP_ROOT/question-card-home"
+  key=$(JG_HOME="$TMP_ROOT/question-card-home" JG_ROOT_OVERRIDE="$ROOT" SIGN_OFF_HOME="$board" "$CARD" post  --route main --ask-ref chat-1 --must design-pick --raised-by m1 \
     --title "Should the fix merge now?" --why "The fix is green and in scope." \
     --outcome yes="It merges once the captain says so." --outcome no="It waits for his review." \
     --recommend yes --recommend-reason "His word is the merge call." --default no 2>/dev/null)
@@ -273,7 +274,7 @@ test_turn_boundary_prints_no_block_for_a_question() {
     SIGN_OFF_HOME="$board" "$GUARD" >/dev/null 2>&1; rc=$?
   assert_equals 0 "$rc" "a reply citing an open board card was blocked"
 
-  again=$(SIGN_OFF_HOME="$board" "$CARD" post  --route main --ask-ref chat-1 --must design-pick \
+  again=$(JG_HOME="$TMP_ROOT/question-card-home" JG_ROOT_OVERRIDE="$ROOT" SIGN_OFF_HOME="$board" "$CARD" post  --route main --ask-ref chat-1 --must design-pick --raised-by m1 \
     --title "Should the fix merge now?" --why "The fix is green and in scope." \
     --outcome yes="It merges once the captain says so." --outcome no="It waits for his review." \
     --recommend yes --recommend-reason "His word is the merge call." --default no 2>/dev/null)
