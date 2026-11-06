@@ -1617,7 +1617,7 @@ record_pr_metadata() {
 }
 
 require_released_captain_hold() {
-  local hold_status=0
+  local hold_status=0 linked_calls
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
     "$SCRIPT_DIR/jg-captain-hold.sh" open "$ID" --distinguish-absent || hold_status=$?
   case "$hold_status" in
@@ -1625,11 +1625,20 @@ require_released_captain_hold() {
       echo "error: task $ID is still held for the captain; release it before merging" >&2
       return 1
       ;;
-    1|3) return 0 ;;
+    1|3) ;;
     *)
       echo "error: could not determine whether task $ID is still held for the captain; refusing to merge" >&2
       return 1
       ;;
+  esac
+  # A call open on linked work stops the merge too, read live (`blocking` owns links).
+  hold_status=0
+  linked_calls=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$ID") || hold_status=$?
+  case "$hold_status" in
+    0) echo "error: task $ID is linked to a decision still open for the captain; answer it before merging: $(printf '%s' "$linked_calls" | tr '\t\n' ' ;')" >&2; return 1 ;;
+    1) return 0 ;;
+    *) echo "error: could not determine whether work linked to task $ID is still held for the captain; refusing to merge" >&2; return 1 ;;
   esac
 }
 

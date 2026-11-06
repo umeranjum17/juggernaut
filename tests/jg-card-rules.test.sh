@@ -19,6 +19,7 @@ CARD="$ROOT/bin/jg-question-card.sh"
 setup() {  # <name> -> the case dir
   local d=$TMP_ROOT/$1
   mkdir -p "$d/home/state" "$d/home/data" "$d/home/config" "$d/fakebin" "$d/so/.sign-off"
+  jg_test_raising_ticket "$d/home"
   printf '{"schema":2,"items":[]}\n' > "$d/so/.sign-off/decisions.json"
   cat > "$d/fakebin/sign-off-axi" <<'SH'
 #!/usr/bin/env bash
@@ -63,7 +64,7 @@ run() {  # <case dir> <command...>
 post() {  # <case dir> [post flags...]
   local d=$1
   shift
-  run "$d" "$CARD" post  --route main --ask-ref m1 --must design-pick \
+  run "$d" "$CARD" post  --route main --ask-ref m1 --must design-pick --raised-by m1 \
     --outcome yes="It ships Friday." --outcome no="It waits a week." "$@"
 }
 
@@ -127,11 +128,11 @@ test_rule3_a_card_is_one_plain_question_with_two_clear_options() {
   refused_by "$d" "$out" 3
   out=$(post "$d" --title "Read the plan at data/wrapper-report.md and approve?")
   refused_by "$d" "$out" 3
-  out=$(run "$d" "$CARD" post  --route main --ask-ref m1 --must design-pick --title "Pick the launch word" \
+  out=$(run "$d" "$CARD" post  --route main --ask-ref m1 --must design-pick --raised-by m1 --title "Pick the launch word" \
     --outcome yes="It ships Friday." --outcome no="It waits a week.")
   refused_by "$d" "$out" 3
   assert_contains "$out" "plain question" "a title that is not a question was refused for another reason"
-  out=$(run "$d" "$CARD" post  --route main --ask-ref m1 --must design-pick --title "Pick the launch word?" \
+  out=$(run "$d" "$CARD" post  --route main --ask-ref m1 --must design-pick --raised-by m1 --title "Pick the launch word?" \
     --outcome yes="It ships Friday.")
   refused_by "$d" "$out" 3
   out=$(post "$d" --title "Ship the new sign-in screen this week?" \

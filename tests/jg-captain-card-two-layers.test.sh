@@ -57,6 +57,7 @@ test_the_check_names_each_failing_rule() {
 test_both_captain_facing_paths_run_the_check() {
   local d=$TMP_ROOT/paths seq
   mkdir -p "$d/home/state" "$d/home/config" "$d/fakebin" "$d/so/.sign-off"
+  jg_test_raising_ticket "$d/home"
   printf 'leash: matters\n' > "$d/so/.sign-off/config.yaml"
   printf '{"schema":2,"items":[]}\n' > "$d/so/.sign-off/decisions.json"
   cat > "$d/fakebin/sign-off-axi" <<'SH'
@@ -68,7 +69,7 @@ SH
   chmod +x "$d/fakebin/sign-off-axi"
   card() {  # [extra flags] -> post one card through the real tool
     env PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" SIGN_OFF_HOME="$d/so" \
-      bash "$ROOT/bin/jg-question-card.sh" post  --route main --ask-ref m1 --must design-pick \
+      bash "$ROOT/bin/jg-question-card.sh" post  --route main --ask-ref m1 --must design-pick --raised-by m1 \
       --title "Ship the sign-in fix?" --why "It is ready." \
       --outcome yes="It ships Friday." --outcome no="It waits a week." "$@" 2>&1
   }

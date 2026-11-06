@@ -33,6 +33,9 @@
 #   jg-captain-hold.sh verify <origin-id>
 #   jg-captain-hold.sh answered <task-id>
 #   jg-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
+#   jg-captain-hold.sh blocking <task-id>
+#   jg-captain-hold.sh design-card <card-key> --raised-by <ticket> --title <question>
+#   jg-captain-hold.sh design-pick <card-key> --words <the captain's words>
 #   jg-captain-hold.sh diverged
 #   jg-captain-hold.sh reconcile list
 #   jg-captain-hold.sh reconcile close <task-id> --evidence-file <path>
@@ -212,6 +215,22 @@
 # the task's last status line - and on a 0 bounds repeated alarms from new pane
 # hashes for the decision.
 #
+# `blocking` is the read-only predicate bin/jg-spawn.sh (a ship start) and
+# bin/jg-pr-merge.sh (a merge) ask: is a captain call open on this task or on
+# any task linked to it, in either direction? A call is open when its task is
+# held (`open`'s reading), or when it is a not-done `[design-ux]` ticket with no
+# recorded pick, from the moment it is filed. A `[captain-ask]` ticket is an
+# order, not a question: it counts only while held.
+# Links are read one hop, live; only this home's backlog is seen. Exit 0 prints
+# `<task-id><TAB><title>` per open call; 1 means none; 2 means it could not be
+# established, which a caller must treat as a refusal.
+#
+# `design-card` and `design-pick` are the two ends of a design card's row, called by
+# bin/jg-question-card.sh (post, --must design-pick) and bin/jg-board-answers.sh. The
+# post files a `[design-ux]` row keyed by the card with `linked-to: <raising ticket>`,
+# so `blocking` finds it from that ticket; a card naming no raising ticket (or one this
+# home lacks) is refused. The answer records the captain's words on the row and closes it.
+#
 # `answered` is the read-only predicate bin/jg-tasks-axi.sh asks before it lets a
 # `[captain-ask]` row leave the backlog: exit 0 when the task body carries a
 # recorded captain answer (an evidence-only `reconciled` record or an open hold-set stamp does not count),
@@ -369,7 +388,7 @@ raise_hold_card() {  # <task-id> <task-title> <reason> <done|release> <must>
   out=$("$SCRIPT_DIR/jg-question-card.sh" post \
     --route main \
     --ask-ref "$id" --key "$key" --title "$title" --about "$reason" --why "$(card_why "$reason")" \
-    ${must:+--must "$must"} ${ticket:+--ticket "$ticket"} \
+    ${must:+--must "$must"} ${ticket:+--ticket "$ticket"} --filer captain-hold \
     --outcome yes="Answer recorded: yes." \
     --outcome no="Answer recorded: no." \
     --recommend yes --recommend-reason "The hold records no recommendation." \
@@ -2289,6 +2308,151 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
   exit 2
 }
 
+# Ids a body links to: the words on `linked-to:` and `parent:` lines; a word that
+# is no task links nothing, and `upkeep` (a bucket) is dropped.
+body_link_targets() {  # <decoded body>
+  printf '%s\n' "$1" | sed -n -E 's/^[[:space:]]*(linked-to|parent):[[:space:]]*(.*)$/\2/p' \
+    | tr ',;[:space:]' '\n' | LC_ALL=C grep -E '^[A-Za-z0-9._-]+$' | LC_ALL=C grep -vix upkeep | LC_ALL=C sort -u
+}
+
+# Is <task-id> an open decision (see `blocking`)? 0 yes, 1 no; unreadable exits 2.
+decision_open() {  # <task-id>
+  local target=$1 status=0 show
+  (command_open "$target" --distinguish-absent) || status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) ;;
+    3) return 1 ;;
+    *) exit 2 ;;
+  esac
+  task_show "$target" || { printf 'jg-captain-hold: task %s could not be read\n' "$target" >&2; exit 2; }
+  show=$TASK_SHOW_OUTPUT
+  [ "$(show_field "$show" state)" != "done" ] || return 1
+  case "$(show_field_value "$show" title)" in *"[design-ux]"*) ;; *) return 1 ;; esac  # the one design tag
+  status=0
+  (command_answered "$target") || status=$?
+  case "$status" in 0) return 1 ;; 1) ;; *) exit 2 ;; esac
+  captain_ask_build_approved "$target" "$show" && return 1
+  return 0
+}
+
+# THE place that scopes which open decisions stop which work: only those LINKED
+# to <task-id> (either direction); unrelated work keeps moving. To make every
+# open decision stop all work, print every open decision here instead. A
+# `parent:` id links only when it is a real task, so `parent: upkeep` links nothing.
+# One pass over the backlog file finds the rows linking here; only those are checked.
+linked_open_decisions() {  # <task-id>; prints the open decisions linked to it, one id per line
+  local id=$1 data file mine target
+  data=$(jg_backlog_data_absolute "$DATA") \
+    || { printf 'jg-captain-hold: data directory cannot be resolved: %s\n' "$DATA" >&2; exit 2; }
+  task_show "$id" || { printf 'jg-captain-hold: task %s could not be read for its links\n' "$id" >&2; exit 2; }
+  mine=$(body_link_targets "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")")
+  file=$(jg_backlog_file "$data") && [ -r "$file" ] \
+    || { printf 'jg-captain-hold: tasks could not be listed: %s is unreadable\n' "${file:-$data}" >&2; exit 2; }
+  while IFS= read -r target; do
+    [ -n "$target" ] && [ "$target" != "$id" ] || continue
+    if decision_open "$target"; then printf '%s\n' "$target"; fi
+  done <<EOF
+$( { printf '%s\n' "$mine"
+    awk -v me="$id" '/^- \[.\] [A-Za-z0-9._-]+ / { row = $0; sub(/^- \[.\] /, "", row); sub(/ .*/, "", row); next }
+      /^[^[:space:]]/ { row = "" }
+      row != "" && /^[[:space:]]+(linked-to|parent):/ {
+        line = $0; sub(/^[[:space:]]+[a-z-]+:/, "", line); gsub(/[,;[:space:]]+/, " ", line)
+        n = split(line, w, " "); for (i = 1; i <= n; i++) if (w[i] == me) print row
+      }' "$file"; } | LC_ALL=C sort -u)
+EOF
+}
+
+command_blocking() {  # <task-id>
+  local id=${1:-} status=0 target blockers n=0
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  (command_open "$id" --distinguish-absent) || status=$?
+  case "$status" in
+    0) blockers=$id ;;
+    1) blockers='' ;;
+    3) return 1 ;;
+    *) exit 2 ;;
+  esac
+  blockers="$blockers"$'\n'"$(linked_open_decisions "$id")" || exit 2
+  while IFS= read -r target; do
+    [ -n "$target" ] || continue
+    n=$((n + 1))
+    task_show "$target" || true
+    printf '%s\t%s\n' "$target" "$(sanitize_field "$(show_field_value "$TASK_SHOW_OUTPUT" title)")"
+  done <<EOF
+$(printf '%s\n' "$blockers" | LC_ALL=C sort -u)
+EOF
+  [ "$n" -gt 0 ]
+}
+
+# A design card (`jg-question-card.sh post --must design-pick`) is also a
+# `[design-ux]` backlog row keyed by the card and linked to the ticket that
+# raised it, so `blocking` finds it from that ticket; the link is never optional.
+# A card naming no raising ticket, or one this home does not carry, is refused.
+command_design_card() {  # <card-key> --raised-by <ticket> --title <question>
+  local key=${1:-} raised='' title='' repo priority_check mark
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --raised-by) shift; raised=${1:-} ;;
+      --title) shift; title=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug card-key "$key"
+  [ -n "$raised" ] || fail "refused: a design card must name the ticket that raised it; pass --raised-by <ticket>"
+  validate_slug raised-by "$raised"
+  validate_one_line title "$title"
+  [ -n "${title//[[:space:]]/}" ] || fail "a design card needs --title"
+  require_tasks_axi
+  task_show "$raised" || fail "refused: $raised, named as the ticket that raised the design card, is not in this home's backlog"
+  repo=$(show_field_value "$TASK_SHOW_OUTPUT" repo)
+  [ -n "$repo" ] || repo=juggernaut
+  validate_one_line repo "$repo"
+  # The marker lets the board-answers check find the card's answer without reading the backlog for every answer.
+  mark=$STATE/design-cards/$key
+  mkdir -p "$STATE/design-cards" || fail "cannot create $STATE/design-cards"
+  if task_show "$key"; then : > "$mark"; printf 'design-card: %s already filed\n' "$key"; return 0; fi
+  priority_check=${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}
+  if [ -x "$priority_check" ]; then
+    "$priority_check" add "$key" "[design-ux] $title" --kind captain --priority 1 >/dev/null || exit 1
+  fi
+  BD_DUE_REQUIRED=false tasks_axi add "$key" "[design-ux] $title" --kind captain --repo "$repo" --priority 1 \
+    --body "$(printf 'Design pick for the captain, raised by %s.\nlinked-to: %s' "$raised" "$raised")" >/dev/null \
+    || fail "could not file the design row for card $key"
+  : > "$mark"
+  printf 'design-card: %s linked to %s\n' "$key" "$raised"
+}
+
+# The captain answered the card: record his words on its design row and close it,
+# which releases the work linked to it. A card with no design row is no design
+# card, so that is a quiet no-op; an unreadable backlog is not.
+command_design_pick() {  # <card-key> --words <the captain's words>
+  local key=${1:-} words='' mark
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --words) shift; words=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug card-key "$key"
+  [ -n "${words//[[:space:]]/}" ] || fail "design-pick needs --words \"<the captain's words>\""
+  mark=$STATE/design-cards/$key
+  task_show "$key" || { rm -f -- "$mark"; return 0; }
+  case "$(show_field_value "$TASK_SHOW_OUTPUT" title)" in *"[design-ux]"*) ;; *) rm -f -- "$mark"; return 0 ;; esac
+  [ "$(show_field "$TASK_SHOW_OUTPUT" state)" != "done" ] || { rm -f -- "$mark"; return 0; }
+  require_tasks_axi
+  tasks_axi "done" "$key" --no-prune --note "Captain's pick: $(printf '%s' "$words" | tr '\n\r' '  ' | cut -c1-500)" >/dev/null \
+    || fail "could not record the pick on design row $key"
+  rm -f -- "$mark"
+  printf 'design-pick: %s recorded\n' "$key"
+}
+
 case "${1:-}" in
   hold) shift; command_hold "$@" ;;
   answer) shift; command_answer "$@" ;;
@@ -2301,6 +2465,9 @@ case "${1:-}" in
   verify) shift; command_verify "$@" ;;
   answered) shift; command_answered "$@" ;;
   open) shift; command_open "$@" ;;
+  blocking) shift; command_blocking "$@" ;;
+  design-card) shift; command_design_card "$@" ;;
+  design-pick) shift; command_design_pick "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;

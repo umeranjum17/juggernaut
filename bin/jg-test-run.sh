@@ -680,7 +680,7 @@ list_portable_serial() {
 # balance rather than coverage. That doc owns the refresh procedure.
 portable_serial_weight_hints() {
   cat <<'EOF'
-tests/board-link.test.sh 276
+tests/board-link.test.sh 1700
 tests/jg-afk-inject-e2e.test.sh 42474
 tests/jg-agents-md-floor.test.sh 542
 tests/jg-agy-signals-live-e2e.test.sh 84
@@ -757,7 +757,7 @@ tests/jg-on.test.sh 20997
 tests/jg-opencode-primary-live-e2e.test.sh 80
 tests/jg-overwatch-kpi.test.sh 2289
 tests/jg-owner-correction.test.sh 2003
-tests/jg-owner-rules.test.sh 4142
+tests/jg-owner-rules.test.sh 4200
 tests/jg-pending-reply-turn-end.test.sh 3000
 tests/jg-pi-branch-live-e2e.test.sh 140
 tests/jg-pi-primary-live-e2e.test.sh 83
@@ -837,8 +837,8 @@ tests/migration-card-live.test.sh 83
 tests/merge-card-title.test.sh 1218
 tests/merge-gate-one-entry.test.sh 7202
 tests/jg-bus-machine-service.test.sh 88
-tests/jg-captain-card-two-layers.test.sh 1592
-tests/jg-card-rules.test.sh 1195
+tests/jg-captain-card-two-layers.test.sh 2200
+tests/jg-card-rules.test.sh 3900
 tests/jg-chat-store.test.sh 7108
 tests/jg-dispatch-resolve-codex-routing.test.sh 641
 tests/jg-dispatch-resolve-tiers.test.sh 874
@@ -864,6 +864,7 @@ tests/jg-watch-beacon.test.sh 45490
 tests/jg-whats-left.test.sh 3479
 tests/jg-owner-asks.test.sh 2000
 tests/jg-captain-approval.test.sh 2100
+tests/jg-pending-decision-blocks-work.test.sh 66000
 tests/jg-triage.test.sh 2000
 tests/jg-nudge-residue.test.sh 6000
 EOF
