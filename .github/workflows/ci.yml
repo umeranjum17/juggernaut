@@ -277,6 +277,11 @@ jobs:
       # such a file would skip the lane green (bin/jg-ci-area-reads.sh).
       - name: Run the smoke eval
         run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh --smoke
+      # The release train's replay of a design lane, a multi-PR lane and a signature
+      # lookup through the merge path, time-boxed (bin/jg-release-smoke.sh).
+      - name: Replay the release lanes
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
+        run: bin/jg-release-smoke.sh
 
   # The fast evals: deterministic behaviour checks over real entry points in a
   # throwaway home. bin/jg-fast-evals.sh owns the set; nothing here mocks a
