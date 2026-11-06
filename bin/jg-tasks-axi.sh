@@ -82,6 +82,9 @@
 # task id goes is resolved to its slug before tasks-axi runs, `show` prints the key under
 # the id, `list --keys` puts each row's key first, and a successful `add` keys the new
 # ticket when the home has a registered prefix.
+# Provider: `config/backlog-backend=beads` serves `show`, `view`, `list` and `ready` from this
+# home's bd store in the same shape, with no tasks-axi needed (bin/jg-tasks-axi-lib.sh's
+# jg_backlog_beads_read); any other verb exits 2 with nothing run. Its hold reasons are plain text.
 # Otherwise the exit status is tasks-axi's own, unless decoding a read fails;
 # in that case the decoder's nonzero status is returned.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
@@ -212,6 +215,17 @@ done
 ARGS=(${_jg_keyed[@]+"${_jg_keyed[@]}"})
 unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
+if jg_backlog_backend_beads "$JG_HOME/config"; then
+  beads_read() { jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}; }
+  set -o pipefail
+  case "${1:-}" in
+    show|view) beads_read | key_tool annotate-show ;;
+    list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi ;;
+    ready) beads_read ;;
+    *) fail "the beads backlog serves reads only so far; ${1:-this command} is not served" ;;
+  esac
+  exit $?
+fi
 command -v tasks-axi >/dev/null 2>&1 || fail "tasks-axi is not on PATH; run bin/jg-bootstrap.sh for the install command"
 
 JG_BACKLOG_TRANSITION_ERROR=

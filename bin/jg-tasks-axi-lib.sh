@@ -13,6 +13,9 @@
 # stripped or forked builds that advertise a current version without those flags.
 # `config/backlog-backend=manual` opts out of tasks-axi for routine juggernaut
 # backlog mutations, but validated squad_lead handoffs always use `tasks-axi mv`.
+# `config/backlog-backend=beads` serves backlog reads from this home's bd store,
+# named by the absolute BEADS_DIR in `config/beads-dir`; jg_backlog_beads_read
+# owns that read and bin/jg-tasks-axi.sh refuses every other verb on it for now.
 # Absent or any other value keeps the default tasks-axi backend path, falling
 # back to manual mutation when the tool is not compatible.
 # jg_tasks_axi_backend_resolve owns backend precedence: TASKS_AXI_BACKEND when
@@ -195,6 +198,30 @@ jg_backlog_backend_value() {
 jg_backlog_backend_manual() {
   local config_dir=$1
   [ "$(jg_backlog_backend_value "$config_dir")" = manual ]
+}
+
+jg_backlog_backend_beads() {
+  [ "$(jg_backlog_backend_value "$1")" = beads ]
+}
+
+# Reads through bin/jg-beads.sh, the only way bd runs; bin/jg-beads-view.py owns the
+# field mapping. bd's stderr carries routine warnings, so it surfaces only on failure.
+# The store path is never derived, because a store inside a home's git clone is refused.
+jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready> [args...]
+  local config_dir=$1 bin_dir store err rows rc=0
+  shift
+  bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  store=$(tr -d '[:space:]' < "$config_dir/beads-dir" 2>/dev/null) || store=
+  if [ -z "$store" ]; then
+    printf 'jg-tasks-axi: the beads backlog needs its store: put an absolute BEADS_DIR in %s/beads-dir\n' "$config_dir" >&2
+    return 2
+  fi
+  err=$(mktemp) || return 2
+  rows=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --all --limit 0 --json 2>"$err") || rc=$?
+  [ "$rc" -eq 0 ] || cat -- "$err" >&2
+  rm -f -- "$err"
+  [ "$rc" -eq 0 ] || return "$rc"
+  printf '%s' "$rows" | python3 "$bin_dir/jg-beads-view.py" "$@"
 }
 
 jg_tasks_axi_backend_available() {
