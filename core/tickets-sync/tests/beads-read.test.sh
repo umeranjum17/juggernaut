@@ -9,7 +9,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 fork=${JG_TEST_FORK:-$(cd "$root/.." && pwd -P)}
 work=$(mktemp -d "${JG_TICKETS_TEST_ROOT:-${TMPDIR:-/tmp}}/tickets-sync-beads.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
-export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff JG_HOME=$work/main
+export TZ=UTC HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff JG_HOME=$work/main
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state}
 ln -s "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
@@ -22,6 +22,7 @@ printf '[markdown]\npath="data/backlog.md"\narchive="data/done-archive.md"\ndone
  tasks-axi add upkeep 'Umer maintenance' --repo alpha --priority 2 --body 'parent: upkeep' >/dev/null
  tasks-axi add held 'Umer paused item' --repo alpha --priority 1 >/dev/null
  tasks-axi hold held --reason 'Umer parked this item' --kind parked >/dev/null
+ tasks-axi add wide "Umer wide title $(printf 'word%.0s ' $(seq 1 25))" --repo alpha --priority 2 --body "$(printf 'Umer long note %.0s' $(seq 1 60))"$'\nrelease: v2\nparent: parent' >/dev/null
  tasks-axi add child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --body $'Umer notes\nrelease: v1\nparent: parent' >/dev/null)
 printf 'window=default:w9:p1\nendpoint_task_id=long\nharness=pi\nmodel=m\neffort=high\naccount=a\n' > "$JG_HOME/state/long.meta"
 printf 'working [at=1700000000]: building Umer release\n' > "$JG_HOME/state/long.status"

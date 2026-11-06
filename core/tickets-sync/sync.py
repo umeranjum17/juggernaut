@@ -42,7 +42,8 @@ def run(args, env=None, cwd=None, missing=False):
 TICKET_ERRORS = (OSError, ValueError, KeyError, RuntimeError, sp.TimeoutExpired)
 
 def rows(args, env, cwd=None, extra=''):
-    text = run(args + ['--limit', '100000', '--fields', 'held,hold_kind,hold_reason,closed,created,priority,body,links' + extra], env, cwd)
+    # A Beads home's list answers whole titles and bodies on --full, so it needs no read of each truncated row.
+    text = run(args + ['--limit', '100000', '--fields', 'held,hold_kind,hold_reason,closed,created,priority,body,links' + extra] + (['--full'] if extra else []), env, cwd)
     result = toon_rows(text)
     if result is None or re.search(r'count: \d+ of (?!0\b)\d+ total', text) and len(result) >= 100000:
         raise RuntimeError('tasks-axi returned an unreadable or capped task list')
