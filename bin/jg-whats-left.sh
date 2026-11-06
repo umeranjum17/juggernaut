@@ -5,7 +5,8 @@
 #
 #   write  (default) render state/whats-left.md and print nothing.
 #   show   print the view; first re-render it when any backlog or status record
-#          is newer than the file, so a look never shows a stale list.
+#          is newer than the file, so a look never shows a stale list. A home on
+#          Beads re-renders on every look.
 #
 # The view is a projection of jg-bearings-snapshot.sh, which reads the records
 # that already exist (backlog, task status, captain holds). It keeps no list of
@@ -20,12 +21,16 @@ JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-$JG_ROOT}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
+CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 VIEW="$STATE/whats-left.md"
 TIMEOUT=${JG_WHATS_LEFT_TIMEOUT:-45}
 case "$TIMEOUT" in ''|*[!0-9]*|0) TIMEOUT=45 ;; esac
 # shellcheck source=bin/jg-timeout-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-timeout-lib.sh"
+# shellcheck source=bin/jg-tasks-axi-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
 
 case "${1:-write}" in
   -h|--help) sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -71,6 +76,7 @@ render() {
 
 stale() {
   [ -s "$VIEW" ] || return 0
+  ! jg_backlog_backend_beads "$CONFIG" || return 0  # A store has no file age to compare, so each look renders.
   [ -n "$(find "$DATA/backlog.md" "$STATE" -maxdepth 1 \( -name backlog.md -o -name '*.status' -o -name '*.meta' \) -newer "$VIEW" -print -quit 2>/dev/null)" ]
 }
 

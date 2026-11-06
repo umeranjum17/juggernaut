@@ -276,15 +276,31 @@ def _denied(denies, *fields):
     return any(needle in haystack for needle in denies)
 
 
-def _parse_backlog(path):
+def _backlog_lines(home):
+    """Return the backlog's lines; a home on Beads gives them from its store."""
+    backend = _read_config(home, "backlog-backend")
+    if backend is not None and "".join(backend.split()) == "beads":
+        tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-tasks-axi.sh")
+        try:
+            result = subprocess.run(
+                [tool, "markdown"], capture_output=True, text=True, timeout=30,
+                env=dict(os.environ, JG_HOME=home))
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RecordError("the backlog cannot be read: {}".format(exc))
+        if result.returncode != 0:
+            raise RecordError("the backlog cannot be read: {}".format(result.stderr.strip()))
+        return result.stdout.splitlines()
+    try:
+        with open(os.path.join(data_dir(home), "backlog.md"), encoding="utf-8") as handle:
+            return handle.read().splitlines()
+    except FileNotFoundError:
+        return []
+
+
+def _parse_backlog(lines):
     """Return (section, item) pairs for every task line in the backlog."""
     items = []
     section = ""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            lines = handle.read().splitlines()
-    except FileNotFoundError:
-        return items
     for line in lines:
         if line.startswith("## "):
             section = line[3:].strip().lower()
@@ -398,7 +414,7 @@ def fleet_status(home=None, scope=None):
 
     state = state_dir(home)
     workers = _workers(state)
-    items = _parse_backlog(os.path.join(data_dir(home), "backlog.md"))
+    items = _parse_backlog(_backlog_lines(home))
 
     open_items = [i for i in items if not i["done"]]
     in_flight = [i for i in open_items if i["section"] == "in flight"]

@@ -32,6 +32,9 @@ KEYS="$DATA/ticket-keys.tsv"
 COUNTERS="$DATA/ticket-counters.tsv"
 BACKLOG="$DATA/backlog.md"
 TAB=$'\t'
+# shellcheck source=bin/jg-tasks-axi-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 die() { printf 'jg-ticket-key: %s\n' "$*" >&2; exit 2; }
@@ -86,8 +89,10 @@ assign() {  # <slug> [<project>]; the caller holds the lock
 
 # Open tickets as `since<TAB>slug<TAB>repo-less title`, oldest first.
 open_items() {
-  [ -r "$BACKLOG" ] || return 0
-  awk '
+  local text
+  jg_backlog_present "$CONFIG" "$BACKLOG" || return 0
+  text=$(jg_backlog_text "$CONFIG" "$BACKLOG") || return 1
+  printf '%s\n' "$text" | awk '
     /^## / { open = ($0 !~ /^## Done/); next }
     open && /^- \[.\] / {
       line = substr($0, 7); slug = line; sub(/ - .*/, "", slug)
@@ -98,7 +103,7 @@ open_items() {
       }
       sub(/ \(priority: [0-9]\)$/, "", title)
       printf "%s\t%s\t%s\n", since, slug, title
-    }' "$BACKLOG" | LC_ALL=C sort -t "$TAB" -k1,1 -k2,2
+    }' | LC_ALL=C sort -t "$TAB" -k1,1 -k2,2
 }
 
 cmd=${1:-}
@@ -119,9 +124,10 @@ case "$cmd" in
   sync)
     prefix_for >/dev/null || exit 0
     lock
+    items=$(open_items) || die "the backlog cannot be read, so no ticket was keyed"
     while IFS="$TAB" read -r _since slug _title; do
-      [ -n "$(key_of "$slug")" ] || assign "$slug" >/dev/null
-    done < <(open_items) ;;
+      [ -z "$slug" ] || [ -n "$(key_of "$slug")" ] || assign "$slug" >/dev/null
+    done <<<"$items" ;;
   annotate)
     [ -r "$KEYS" ] || { cat; exit 0; }
     awk -F'\t' 'NR == FNR { k[$2] = $1; next }

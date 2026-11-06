@@ -394,7 +394,7 @@ The `start`, `reopen` and `done` moves write only if the row still has the statu
 [`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh) drives the same provider directly, so spawn, teardown and bootstrap keep their gates on that store.
 The lane on such a row is the assignee, set to the task record's `spawn_gen`, and `metadata.agent`, set to its harness.
 A fresh spawn takes the row only if it has no owner, so a second spawn on a row another lane holds refuses with exit 13 and starts nothing that stays; a relaunch hands the row over from the owner it read, `done` keeps the assignee as history, and `reopen` clears it.
-The session digest, the fleet snapshot, the inbox status, the owner's asks and the Squad Lead dormant sweep read that store as well, and a failed read reports the failure rather than an empty backlog.
+The session digest, the fleet snapshot, the inbox status, the owner's asks, the Squad Lead dormant sweep, ticket keys, the what's-left view, voice status, the flow check and the owner rules read that store as well, and a failed read reports the failure rather than an empty backlog.
 Readers of `data/backlog.md` not named here do not yet see that store.
 On such a home, bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check`, which proves the pinned versions, the hold rule and telemetry off, and report any failure.
 
