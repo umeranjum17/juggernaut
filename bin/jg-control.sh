@@ -710,7 +710,7 @@ complete_exit_confirmation() {
 }
 
 wait_exit_stopped() {
-  local elapsed=0 state rc confirmed=${1:-0} retries=1 screen content
+  local elapsed=0 state rc confirmed=${1:-0} retries=1 screen content retry_ok
   while :; do
     state=$(agent_state)
     [ "$state" != dead ] || return 0
@@ -722,13 +722,15 @@ wait_exit_stopped() {
         1)
           # A slash popup can consume the first Enter. Retry only while the
           # current composer still proves this exact exit command, never on
-          # an opaque modal or an unrelated pending draft.
-          if [ "$HARNESS" = claude ] && [ "$retries" -lt "$EXIT_RETRIES" ]; then
+          # an opaque modal or an unrelated pending draft. Pi's popup does
+          # the same, and its submit loop reads that pane as delivered.
+          case "$HARNESS" in claude|pi|pi-signed) retry_ok=1 ;; *) retry_ok=0 ;; esac
+          if [ "$retry_ok" = 1 ] && [ "$retries" -lt "$EXIT_RETRIES" ]; then
             screen=$(jg_backend_visible_capture "$BACKEND" "$T" "$LABEL" 2>/dev/null) || screen=
             content=$(jg_composer_extract_selected_content 'styled=0
 cursor=0
 identity=0' "$screen" 2>/dev/null) || content=
-            if [ "${content//[$' \t\r\n']/}" = /exit ]; then
+            if [ "${content//[$' \t\r\n']/}" = "$(jg_control_exit_command "$HARNESS")" ]; then
               jg_backend_validate_task_endpoint "$META" "$ID" || return 1
               [ "$(agent_state)" = alive ] || return 1
               jg_backend_send_key "$BACKEND" "$T" Enter "$LABEL" || return 1

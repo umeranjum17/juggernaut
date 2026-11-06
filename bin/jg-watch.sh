@@ -257,6 +257,15 @@ fi
 unset _jg_d
 set -u
 
+# Remember where a nonzero exit came from, so a silent `|| exit 1` names itself
+# in watcher_cleanup instead of leaving the primary an unexplained status 1.
+WATCH_EXIT_FROM=
+exit() {
+  local rc=$?
+  WATCH_EXIT_FROM="line ${BASH_LINENO[0]} in ${FUNCNAME[1]:-main}"
+  builtin exit "${1:-$rc}"
+}
+
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
@@ -3711,7 +3720,11 @@ pr_poll_publish_release() {
 
 WATCH_CHILD_RECORDER_PID=
 watcher_cleanup() {
+  local watch_rc=$?
   local cleanup_status=0 owns_lock=0 transition=release-lock
+  if [ "$watch_rc" -ne 0 ] && [ -n "$WATCH_EXIT_FROM" ] && [ "$watch_rc" -lt 128 ]; then
+    echo "watcher: FAILED - exited $watch_rc at jg-watch.sh $WATCH_EXIT_FROM"
+  fi
   if [ -n "$WATCH_CHILD_RECORDER_PID" ]; then
     kill -TERM "$WATCH_CHILD_RECORDER_PID" 2>/dev/null || true
     wait "$WATCH_CHILD_RECORDER_PID" 2>/dev/null || true

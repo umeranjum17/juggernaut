@@ -832,6 +832,8 @@ tests/jg-planned-wait.test.sh 12000
 tests/jg-watch-inventory.test.sh 4395
 tests/jg-watch-handoff.test.sh 51760
 tests/jg-watcher-lock.test.sh 210766
+tests/jg-watch-silent-exit.test.sh 5000
+tests/jg-lock-pi-session-id.test.sh 1000
 tests/jg-worker-account-live-e2e.test.sh 192
 tests/juggernaut-axi-serve.test.sh 1466
 tests/juggernaut-axi.test.sh 29551
