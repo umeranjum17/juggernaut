@@ -72,6 +72,28 @@ check "a merged PR with no recorded URL and no URL from the forge is not landed"
 rm -f "$FORGE"
 out=$(land --base-branch main); rc=$?
 check "content already on the default branch lands a branch with no PR" "$rc|$out" "0|landed=yes"
+
+# A pull request merged into its own base branch: the release branch carries the merge and the
+# default branch does not. The copy sits on the merged release tip, so the merge landed there
+# even though main has not caught up, and the notice for this merged pull request must stop.
+g init -q --bare -b main "$lab/rel-origin.git"
+g clone -q "$lab/rel-origin.git" "$lab/rel-proj" 2>/dev/null
+( cd "$lab/rel-proj" && g checkout -q -b main && echo base > f && g add f && g commit -q -m base \
+  && git push -q origin main \
+  && g checkout -q -b release/c-15 && echo rel > r && g add r && g commit -q -m "release work" \
+  && echo work > w && g add w && g commit -q -m "squash (#9)" && git push -q origin release/c-15 \
+  && git remote set-head origin main >/dev/null )
+g clone -q -b release/c-15 "$lab/rel-origin.git" "$lab/rel-wt" 2>/dev/null
+prhead=$(git -C "$lab/rel-wt" rev-parse HEAD~1)
+rel_land() { "$core" landed --worktree "$lab/rel-wt" --branch task --project "$lab/rel-proj" --pr-url https://github.com/o/r/pull/9; }
+printf 'MERGED%s%s%shttps://github.com/o/r/pull/9%srelease/c-15\n' "$tab" "$prhead" "$tab" "$tab" > "$FORGE"
+out=$(rel_land); rc=$?
+check "a PR merged into its release base branch lands a copy on it, though main lacks the merge" "$rc|$out" "0|landed=yes
+pr_url=https://github.com/o/r/pull/9"
+printf 'OPEN%s%s%shttps://github.com/o/r/pull/9%srelease/c-15\n' "$tab" "$prhead" "$tab" "$tab" > "$FORGE"
+out=$(rel_land); rc=$?
+check "a pull request the forge reports open still refuses, so its notice still fires" "$rc|$(printf '%s' "$out" | grep -c 'as OPEN, not merged')" "1|1"
+printf 'MERGED%s%s%s\n' "$tab" "$head" "$tab" > "$FORGE"
 out=$(JG_TEARDOWN_CORE_BIN=$lab/none/jg-teardown-core JG_TEARDOWN_CORE_GO=$lab/no-such-go "$core" landed --worktree "$lab/wt" --project "$lab/proj" 2>&1); rc=$?
 check "no binary and no toolchain exits 2, never 0" "$rc" 2
 check "a request with no worktree exits 2" "$("$core" landed --project "$lab/proj" >/dev/null 2>&1; echo $?)" 2
