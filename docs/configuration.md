@@ -390,6 +390,7 @@ The fleet view prints that scorecard on every render from the local ledger alone
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
 A home may instead select another tasks-axi adapter such as Beads through its own `.tasks.toml` or `TASKS_AXI_BACKEND`; Juggernaut still uses only tasks-axi verbs for routine backlog reads and mutations, and the adapter maps `start` and evidence-bearing `done` transitions to its native statuses and evidence fields.
 A local `config/backlog-backend` reading `beads` is a separate path: `bin/jg-tasks-axi.sh` serves its reads from the bd store named by the absolute `BEADS_DIR` in `config/beads-dir`, serves `add`, `update`, `done` and `block` the same way, and refuses every other write for now.
+On such a home, bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check`, which proves the pinned versions, the hold rule and telemetry off, and report any failure.
 
 ### Backlog intake (config/backlog-intake-loose)
 

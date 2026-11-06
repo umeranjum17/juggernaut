@@ -5,11 +5,13 @@ Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|sh
 
 Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never starts bd.
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
+bd stamps UTC and tasks-axi the local day, so created and closed read as the local day.
 A held row is status on_hold, blocked or deferred, and reads as queued; kind is metadata.kind, else issue_type;
 parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
 Refusals print tasks-axi's error lines on stdout: exit 2 for a bad flag, exit 1 for an unknown id.
 """
+import datetime
 import json
 import re
 import sys
@@ -66,6 +68,10 @@ def split(value):
     return value.split(",") if isinstance(value, str) else value or []
 
 
+def day(stamp):
+    return datetime.datetime.fromisoformat(stamp).astimezone().date().isoformat() if stamp else "-"
+
+
 def task(row, rows):
     meta = row.get("metadata") or {}
     closed = row.get("status") == "closed"
@@ -82,7 +88,7 @@ def task(row, rows):
         "hold_kind": meta.get("hold_kind", "-") if held else "-",
         "hold_until": (row.get("defer_until") or "-")[:10], "kind": meta.get("kind") or row.get("issue_type", "task"),
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
-        "created": "-" if closed else (row.get("created_at") or "-")[:10], "closed": (row.get("closed_at") or "-")[:10],
+        "created": "-" if closed else day(row.get("created_at")), "closed": day(row.get("closed_at")),
         "deps": ",".join("blocked-by:" + d for d in deps) or "none",
         "links": ",".join(links) or "none", "body": row.get("description", ""),
         "delivery_state": meta.get("delivery_state", "-"),

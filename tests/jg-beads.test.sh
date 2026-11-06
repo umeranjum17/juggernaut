@@ -103,7 +103,7 @@ refused "reaches a remote" "$WRAPPER" dolt sql -q "CALL DOLT_PUSH('origin', 'mai
 "$WRAPPER" dolt sql -q 'show tables' || fail "a plain query must run"
 assert_grep "pwd=$T/store/.beads/embeddeddolt/jg args=sql -q show tables" "$LOG" "dolt must run in the database folder"
 # Both providers answer each caller alike. The stand-in prints bd's own JSON for the seeded backlog.
-CLI="$ROOT/bin/jg-tasks-axi.sh" today=$(date +%F) jail=()
+CLI="$ROOT/bin/jg-tasks-axi.sh" jail=()
 same() {  # <wrapper args...>: stdout and exit status match across providers.
   local a b ra=0 rb=0
   a=$(JG_HOME="$T/ta" "$CLI" "$@" 2>/dev/null) || ra=$?
@@ -122,6 +122,9 @@ callers() {  # The read shapes each backlog caller parses.
   same list --state "done" --repo none
   for state in jg-one-a jg-two-b jg-wait; do same show "$state" --full; done
   same show nope
+  for zone in Etc/GMT-14 Etc/GMT+12; do  # These two are never on the same day, so UTC cannot pass for either.
+    assert_contains "$(TZ=$zone JG_HOME="$T/bd" "${jail[@]}" "$CLI" list --fields created --limit 1 2>&1)" ",$(TZ=$zone date +%F)" "created must read as the local day"
+  done
   same list --json
   assert_contains "$(. "$ROOT/bin/jg-supervision-lib.sh"; jg_ready_work_rows "$T/bd")" "jg-one-a acme" "supervision must see ready work"
 }
@@ -172,7 +175,7 @@ if command -v tasks-axi >/dev/null; then
   ta start jg-fly
   ta add jg-fin Finished --priority 2
   ta "done" jg-fin --pr https://github.com/o/r/pull/5 --note fin
-  stamp="${today}T10:00:0"
+  stamp=$(date -u +%FT%H:%M:0)
   cat > "$T/rows.json" <<JSON
 [{"id":"jg-one-a","title":"First, thing: here","description":"line one\nline two","status":"open","priority":1,"issue_type":"task","created_at":"${stamp}1Z","metadata":{"kind":"ship"},"labels":["project:acme"]},
 {"id":"jg-two-b","title":"Second","status":"open","priority":2,"issue_type":"task","created_at":"${stamp}2Z","dependencies":[{"issue_id":"jg-two-b","depends_on_id":"jg-one-a","type":"blocks","metadata":"{}"}]},
@@ -205,6 +208,29 @@ cp "$ROOT/bin/jg-lint.sh" "$T/lint/bin/"
 printf '#!/usr/bin/env bash\nbd list\n' | tee "$T/lint/bin/jg-beads.sh" > "$T/lint/bin/jg-other.sh"
 assert_contains "$(cd "$T/lint" && bash bin/jg-lint.sh bin/jg-other.sh 2>&1)" "bin/jg-other.sh:2: direct Beads CLI invocation bypasses bin/jg-beads.sh" "lint must refuse bd outside the wrapper"
 (cd "$T/lint" && bash bin/jg-lint.sh bin/jg-beads.sh >/dev/null 2>&1) || fail "lint must let the wrapper name bd"
+# Bootstrap, the session digest and the remote doctor all report this home's store.
+mkdir -p "$T/hh/config" "$T/hh/data" "$T/hh/state" "$T/user"
+printf 'beads\n' > "$T/hh/config/backlog-backend"
+printf '%s\n' "$BEADS_DIR" > "$T/hh/config/beads-dir"
+start_lines() {  # Each surface's lines about the store, with the fleet's real pin table.
+  local home=(env -u JG_PIN_FILE_OVERRIDE HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$T/hh"
+    JG_STATE_OVERRIDE="$T/hh/state" JG_DATA_OVERRIDE="$T/hh/data" JG_CONFIG_OVERRIDE="$T/hh/config" JG_BOOTSTRAP_NETWORK=skip)
+  "${home[@]}" JG_BOOTSTRAP_DETECT_ONLY=1 JG_BOOTSTRAP_VERBOSE_FACTS=1 "${jail[@]}" "$ROOT/bin/jg-bootstrap.sh" 2>&1 \
+    | grep -E '^(BEADS_UNHEALTHY|BOOTSTRAP_INFO: Beads)' | sed 's/^/bootstrap /'
+  "${home[@]}" "${jail[@]}" timeout 90 "$ROOT/bin/jg-session-start.sh" 2>&1 | sed -n 's/^BEADS_UNHEALTHY/digest &/p'
+  "${home[@]}" "${jail[@]}" "$ROOT/bin/jg-remote-doctor.sh" 2>&1 | grep -E '^(check |action: )beads-store'
+}
+out=$(JG_BEADS_BD=$STUB start_lines)
+for want in 'bootstrap BEADS_UNHEALTHY: jg-beads: ' 'digest BEADS_UNHEALTHY: jg-beads: ' 'check beads-store=human: jg-beads: ' \
+  'action: beads-store: install the bd and dolt builds'; do
+  assert_contains "$out" "$want" "a store that fails its check must say so at every start surface"
+done
+assert_contains "$out" "is not the pinned bd 1.3.4" "each start surface must give the reason"
+rm "$T/hh/config/backlog-backend"
+out=$(JG_BEADS_BD=$STUB start_lines)
+assert_contains "$out" "check beads-store=skip:" "the doctor must skip a home off Beads"
+assert_not_contains "$out" BEADS_UNHEALTHY "a home off Beads must not report a store"
+printf 'beads\n' > "$T/hh/config/backlog-backend"
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
 else
@@ -267,6 +293,21 @@ else
   assert_contains "$held" '"hold_reason": "owner call"' "the good write must keep its reason"
   # The embedded store has no server: nothing outlives a jailed call, so each call is a restart from disk.
   assert_contains "$(jg check)" "rule: hold_needs_reason" "the rule must pass check"
+  # A healthy store is quiet at start, and a queued telemetry event is not.
+  printf '%s\n' "$BEADS_DIR" > "$T/hh/config/beads-dir"
+  healthy='healthy: bd 1.3.4, dolt 2.6.0, hold rule present, telemetry off'
+  out=$(start_lines)
+  assert_contains "$out" "bootstrap BOOTSTRAP_INFO: Beads store $healthy" "bootstrap must name a healthy store"
+  assert_contains "$out" "check beads-store=ok: $healthy" "the doctor must pass a healthy store"
+  assert_not_contains "$out" BEADS_UNHEALTHY "a healthy store must not report a fault"
+  for trace in home/.dolt/eventsData/queued home/.beads/machine-id; do
+    mkdir -p "$T/real/.jg-beads-env/${trace%/*}"
+    : > "$T/real/.jg-beads-env/$trace"
+    out=$(start_lines)
+    assert_contains "$out" "digest BEADS_UNHEALTHY: jg-beads: telemetry ran from this store" "$trace must fail the digest"
+    assert_contains "$out" "check beads-store=human: jg-beads: telemetry ran" "$trace must fail the doctor"
+    rm "$T/real/.jg-beads-env/$trace"
+  done
   no_hold "no reason after a restart" update "$id" --status blocked --unset-metadata hold_reason
   assert_contains "$(jg init --prefix jg 2>&1)" "already a store" "a store with its rule must refuse init"
   # A rule gone or weakened fails check, init restores a gone one, and init never replaces a changed one.
