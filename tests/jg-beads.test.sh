@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Behavior tests for bin/jg-beads.sh. Every store sits in a throwaway folder outside any git tree.
+# Behavior tests for bin/jg-beads.sh, and for bin/jg-tasks-axi.sh reading through it: its callers must get the
+# same lines from either provider. Every store sits in a throwaway folder outside any git tree.
 # Stand-ins hashed into a private pin table prove each refusal comes before a binary starts. JG_BEADS_TEST_BD
 # and JG_BEADS_TEST_DOLT name the pinned builds for the real case, which skips plainly without them.
 set -u
@@ -16,6 +17,7 @@ cat > "$STUB" <<'SH'
 #!/usr/bin/env bash
 [ ! -e "$LOG.down" ] || { echo "the store cannot be read" >&2; exit 1; }
 { printf 'pwd=%s args=%s\n' "$PWD" "$*"; env; } >> "$LOG"
+[ "$1" != list ] || [ ! -r "${ROWS:-}" ] || cat "$ROWS"
 [ "$1" = init ] || exit 0
 printf '{"dolt_mode": "embedded", "dolt_database": "jg"}\n' > "$BEADS_DIR/metadata.json"
 printf 'no-git-ops: true\n' > "$BEADS_DIR/config.yaml"
@@ -100,6 +102,60 @@ refused "only dolt version" "$WRAPPER" dolt sql-server
 refused "reaches a remote" "$WRAPPER" dolt sql -q "CALL DOLT_PUSH('origin', 'main')"
 "$WRAPPER" dolt sql -q 'show tables' || fail "a plain query must run"
 assert_grep "pwd=$T/store/.beads/embeddeddolt/jg args=sql -q show tables" "$LOG" "dolt must run in the database folder"
+# Both providers answer each caller alike. The stand-in prints bd's own JSON for the seeded backlog.
+CLI="$ROOT/bin/jg-tasks-axi.sh" today=$(date +%F) jail=()
+same() {  # <wrapper args...>: stdout and exit status match across providers.
+  local a b ra=0 rb=0
+  a=$(JG_HOME="$T/ta" "$CLI" "$@" 2>/dev/null) || ra=$?
+  b=$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" "$@" 2>/dev/null) || rb=$?
+  [ "$a" = "$b" ] && [ "$ra" = "$rb" ] || fail "$* differs, rc $ra/$rb: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b"))"
+}
+callers() {  # The read shapes each backlog caller parses.
+  local state
+  same list
+  same ready
+  for state in queued in_flight "done" held; do same list --state "$state" --fields blocked_by,held,hold_kind,hold_reason; done
+  same list --state queued --fields priority
+  same list --fields created --limit 2
+  same list --repo acme
+  same list --blocked
+  same list --state "done" --repo none
+  for state in jg-one-a jg-two-b jg-wait; do same show "$state" --full; done
+  same show nope
+  same list --json
+  assert_contains "$(. "$ROOT/bin/jg-supervision-lib.sh"; jg_ready_work_rows "$T/bd")" "jg-one-a acme" "supervision must see ready work"
+}
+if command -v tasks-axi >/dev/null; then
+  mkdir -p "$T/ta/data" "$T/bd/config"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$T/ta/data/backlog.md"
+  ta() { (cd "$T/ta" && TASKS_AXI_FILE="$T/ta/data/backlog.md" tasks-axi "$@" >/dev/null) || fail "seed: $*"; }
+  ta add jg-one-a "First, thing: here" --kind ship --repo acme --priority 1 --body $'line one\nline two'
+  ta add jg-two-b Second --priority 2 --blocked-by jg-one-a
+  ta add jg-wait Waiting --priority 2
+  ta hold jg-wait --reason "wait: for x" --kind captain
+  ta add jg-fly Flying --kind recon --priority 3
+  ta start jg-fly
+  ta add jg-fin Finished --priority 2
+  ta "done" jg-fin --pr https://github.com/o/r/pull/5 --note fin
+  stamp="${today}T10:00:0"
+  cat > "$T/rows.json" <<JSON
+[{"id":"jg-one-a","title":"First, thing: here","description":"line one\nline two","status":"open","priority":1,"issue_type":"task","created_at":"${stamp}1Z","metadata":{"kind":"ship"},"labels":["project:acme"]},
+{"id":"jg-two-b","title":"Second","status":"open","priority":2,"issue_type":"task","created_at":"${stamp}2Z","dependencies":[{"issue_id":"jg-two-b","depends_on_id":"jg-one-a","type":"blocks","metadata":"{}"}]},
+{"id":"jg-wait","title":"Waiting","status":"on_hold","priority":2,"issue_type":"task","created_at":"${stamp}3Z","metadata":{"hold_reason":"wait: for x","hold_kind":"captain"}},
+{"id":"jg-fly","title":"Flying","status":"in_progress","priority":3,"issue_type":"task","created_at":"${stamp}4Z","metadata":{"kind":"recon"}},
+{"id":"jg-fin","title":"Finished https://github.com/o/r/pull/5","description":"fin","status":"closed","priority":2,"issue_type":"task","created_at":"${stamp}5Z","closed_at":"${stamp}6Z","external_ref":"https://github.com/o/r/pull/5"}]
+JSON
+  printf 'beads\n' > "$T/bd/config/backlog-backend"
+  out=$(JG_HOME="$T/bd" "$CLI" list 2>&1) && fail "a beads home with no store must refuse"
+  assert_contains "$out" "beads-dir" "the refusal must name the store file"
+  printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
+  out=$(JG_HOME="$T/bd" "$CLI" add x y 2>&1)
+  expect_code 2 $? "a write on beads"
+  assert_contains "$out" "reads only" "a write must be refused"
+  ROWS=$T/rows.json callers
+else
+  printf 'skip: providers: tasks-axi is not installed\n'
+fi
 # A store this wrapper would not create is never opened.
 printf '{"dolt_mode": "server"}\n' > "$BEADS_DIR/metadata.json"
 refused "not an embedded store" "$WRAPPER" list
@@ -126,12 +182,27 @@ else
   [ -e "$T/real/.beads.gate.lock" ] || fail "the gate lock must sit beside the store"
   assert_contains "$("${jail[@]}" "$WRAPPER" dolt sql -q 'select count(*) as dirty from dolt_status' 2>&1)" "| 0 " "init must commit the rule"
   "${jail[@]}" "$WRAPPER" check >/dev/null || fail "real check"
-  id=$("${jail[@]}" "$WRAPPER" create one --json 2>/dev/null | sed -n 's/.*"id": "\([^"]*\)".*/\1/p')
-  assert_contains "$("${jail[@]}" "$WRAPPER" show "$id" --json 2>/dev/null)" '"title": "one"' "real show"
+  "${jail[@]}" "$WRAPPER" create "First, thing: here" --id jg-one-a --priority 1 --description $'line one\nline two' \
+    --labels project:acme --metadata '{"kind":"ship"}' >/dev/null 2>&1 || fail "real create"
+  assert_contains "$("${jail[@]}" "$WRAPPER" show jg-one-a --json 2>/dev/null)" '"title": "First, thing: here"' "real show"
   out=$("${jail[@]}" "$WRAPPER" dolt version 2>&1) || fail "real dolt version"
   assert_contains "$out" "dolt version 2.6.0" "real dolt must be the pin"
   assert_not_contains "$out" "unable to query" "real dolt must not call out"
   assert_contains "$("${jail[@]}" "$WRAPPER" dolt sql -q 'show tables' 2>&1)" "issues" "real dolt must read the store"
+  if command -v tasks-axi >/dev/null; then
+    bd_() { "${jail[@]}" "$WRAPPER" "$@" >/dev/null 2>&1 || fail "real seed: $*"; }
+    bd_ create Second --id jg-two-b --priority 2
+    bd_ dep add jg-two-b jg-one-a
+    bd_ create Waiting --id jg-wait --priority 2 --metadata '{"hold_reason":"wait: for x","hold_kind":"captain"}'
+    bd_ update jg-wait --status on_hold
+    bd_ create Flying --id jg-fly --priority 3 --metadata '{"kind":"recon"}'
+    bd_ update jg-fly --status in_progress
+    bd_ create "Finished https://github.com/o/r/pull/5" --id jg-fin --priority 2 --description fin --external-ref https://github.com/o/r/pull/5
+    bd_ close jg-fin --reason fin
+    printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
+    TMPDIR=$T callers  # The jail's /tmp is read-only.
+  fi
+  id=jg-one-a
   # A held row needs a reason on every route in, and the store itself refuses each one.
   jg() { "${jail[@]}" "$WRAPPER" "$@"; }
   no_hold() {  # <label> <wrapper args...>
