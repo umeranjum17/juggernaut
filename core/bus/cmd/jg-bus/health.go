@@ -6,7 +6,7 @@ package main
 // accounts it did not reach, and no other check tests an account from the client side.
 //
 // It uses no model, no wake path and no watcher: those are the things it tests. A systemd timer
-// (`health unit`, `health unit timer`) starts it every 60 seconds.
+// starts it every 60 seconds.
 //
 // State machine, after Gatus's thresholds: two failed runs in a row open one outage per service, two
 // passing runs close it. One message at the start and one at the end, grouped per service, so 26
@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -31,7 +30,6 @@ import (
 const (
 	healthFailsToOpen   = 2
 	healthPassesToClose = 2
-	budgetWarnPercent   = 80
 )
 
 type outage struct {
@@ -53,28 +51,19 @@ type healthRecord struct {
 // finding is one failed test: the member that failed and why.
 type finding struct{ member, why string }
 
-var serviceLabels = map[string]string{"bus": "the event system", "bus-budget": "the event system's memory budget"}
+var serviceLabels = map[string]string{"bus": "the event system"}
 
 func (a *app) health(args []string) int {
 	switch {
 	case len(args) == 0 || args[0] == "run":
 		return a.healthRun(a.runChecks())
-	case args[0] == "unit" && len(args) < 3:
-		text, err := a.healthUnit(len(args) == 2 && args[1] == "timer")
-		if err != nil {
-			return die("%v", err)
-		}
-		fmt.Print(text)
-		return 0
-	case args[0] == "install":
-		return a.healthInstall()
 	}
-	return die("usage: jg-bus health [run | unit [timer] | install]")
+	return die("usage: jg-bus health [run]")
 }
 
 // runChecks runs every test once and returns the failures of each service (nil when it passed).
 func (a *app) runChecks() map[string][]finding {
-	return map[string][]finding{"bus": a.busFindings(), "bus-budget": a.budgetFindings()}
+	return map[string][]finding{"bus": a.busFindings()}
 }
 
 // step feeds one run's failures to a service's counters and says what changed: "open", "close" or "".
@@ -160,9 +149,6 @@ func (a *app) healthRun(results map[string][]finding) int {
 }
 
 func (a *app) repair(service string) string {
-	if service == "bus-budget" {
-		return "raise max_mem_store and max_file_store in core/bus/nats.conf, then restart the bus"
-	}
 	return "restart the bus with: systemctl --user restart " + natsUnit()
 }
 
@@ -252,79 +238,4 @@ func accountFault(errText string, err error) string {
 		return "the nats client failed: " + err.Error()
 	}
 	return detail(errText)
-}
-
-// budgetFindings warns when the accounts' JetStream reservations pass budgetWarnPercent of the
-// server's global caps: the next account that joins by reload can then fail with error 10028.
-func (a *app) budgetFindings() []finding {
-	dir := filepath.Dir(a.accountsFile())
-	conf := withIncludes(readFileString(filepath.Join(dir, "bus.conf")), dir)
-	var needMem, needFile int
-	for _, m := range jsReservation.FindAllStringSubmatch(conf, -1) {
-		mem, _ := parseMb(m[1])
-		file, _ := parseMb(m[2])
-		needMem, needFile = needMem+mem, needFile+file
-	}
-	haveMem, haveFile, err := globalCaps(conf)
-	if err != nil || haveMem == 0 || haveFile == 0 {
-		return []finding{{"caps", "cannot read the JetStream caps from " + filepath.Join(dir, "bus.conf")}}
-	}
-	if pct := max(needMem*100/haveMem, needFile*100/haveFile); pct > budgetWarnPercent {
-		return []finding{{"reservations", fmt.Sprintf("the accounts reserve %d%% of the JetStream caps (%d of %d Mb memory, %d of %d Mb storage); a reload that adds an account can fail with error 10028", pct, needMem, haveMem, needFile, haveFile)}}
-	}
-	return nil
-}
-
-// healthUnit is the oneshot service that runs the check, or its 60 second timer.
-func (a *app) healthUnit(timer bool) (string, error) {
-	name := strings.TrimSuffix(stackUnit("health"), ".service")
-	if timer {
-		return "[Unit]\nDescription=Juggernaut bus health run, every 60 seconds\n\n[Timer]\nOnBootSec=60s\nOnUnitActiveSec=60s\nAccuracySec=1s\nUnit=" + name + ".service\n\n[Install]\nWantedBy=timers.target\n", nil
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	q := func(v string) string {
-		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%").Replace(v) + `"`
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "[Unit]\nDescription=Juggernaut bus health run (one JetStream test per account)\n\n[Service]\nType=oneshot\n")
-	fmt.Fprintf(&b, "WorkingDirectory=%s\n", strings.ReplaceAll(a.runtime, "%", "%%"))
-	for _, e := range []string{"JG_HOME=" + a.home, "JG_BUS_ROOT=" + a.root, "JG_STATE_OVERRIDE=" + a.state, "PATH=" + os.Getenv("PATH")} {
-		fmt.Fprintf(&b, "Environment=%s\n", q(e))
-	}
-	fmt.Fprintf(&b, "ExecStart=%s health run\n", q(self))
-	return b.String(), nil
-}
-
-// healthInstall writes both units and starts the timer. Run it only for the machine's bus owner.
-func (a *app) healthInstall() int {
-	for _, timer := range []bool{false, true} {
-		text, err := a.healthUnit(timer)
-		if err != nil {
-			return die("%v", err)
-		}
-		name := stackUnit("health")
-		if timer {
-			name = strings.TrimSuffix(name, ".service") + ".timer"
-		}
-		path, ok := unitPath(name)
-		if !ok {
-			return die("no home directory for the systemd user unit")
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return die("%v", err)
-		}
-		if _, err := writeIfChanged(path, text); err != nil {
-			return die("cannot write %s: %v", path, err)
-		}
-	}
-	for _, args := range [][]string{{"daemon-reload"}, {"enable", "--now", strings.TrimSuffix(stackUnit("health"), ".service") + ".timer"}} {
-		if out, err := exec.Command("systemctl", append([]string{"--user"}, args...)...).CombinedOutput(); err != nil {
-			return die("systemctl %s: %v: %s", args[0], err, detail(string(out)))
-		}
-	}
-	say("health: timer installed and started")
-	return 0
 }

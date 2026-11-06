@@ -241,8 +241,6 @@ channel.
 
 ## Health run and outage messages
 
-`jg-bus health run` logs in as every JetStream account in the machine's accounts file and runs `nats stream ls -n` as that account. This is the test that catches error 10028: after a failed reload the server stays up and `nats account info` still exits 0, but the account has no JetStream. A second test warns when the accounts reserve more than 80% of the server's JetStream caps.
+`jg-bus health run` logs in as every JetStream account in the machine's accounts file and runs `nats stream ls -n` as that account. This is the test that catches error 10028: after a failed reload the server stays up and `nats account info` still exits 0, but the account has no JetStream.
 
 Two failed runs open one outage per service and send one message to the owner. Two passing runs close it and send one more. Each closed outage adds a row to `state/outage-history.jsonl`. A message the chat refused stays queued, the failure goes to the channel log, and the run exits 1. A home with no chat only keeps the history. The run uses no model, no wake path and no herdr.
-
-`jg-bus health unit` and `jg-bus health unit timer` print the systemd user service and its 60 second timer. `jg-bus health install` writes both and starts the timer. Only the machine's bus owner runs it.

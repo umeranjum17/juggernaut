@@ -60,22 +60,22 @@ grep -q '10028' "$D/server.log" || fail "the lab did not reproduce error 10028"
 health "$((T0 + 60))" > "$D/run.out" 2>&1 || fail "the first failed run exited non-zero: $(cat "$D/run.out")"
 assert_equals 0 "$(sent)" "one failed run opens no outage"
 health "$((T0 + 120))" > "$D/run.out" 2>&1 || fail "the second failed run exited non-zero: $(cat "$D/run.out")"
-assert_equals 2 "$(sent)" "two failed runs send one start message for the bus and one for its budget"
+assert_equals 1 "$(sent)" "two failed runs send one start message"
 assert_contains "$(cat "$CALLS")" "Outage started: the event system." "the start message names the service"
 assert_contains "$(cat "$CALLS")" "JetStream is off for the account" "the start message names the cause"
 assert_contains "$(cat "$CALLS")" "To repair:" "the start message says how to repair"
 health "$((T0 + 180))" > "$D/run.out" 2>&1
-assert_equals 2 "$(sent)" "a continuing outage sends nothing more"
+assert_equals 1 "$(sent)" "a continuing outage sends nothing more"
 # Back to two accounts: the next reload works. Two passing runs close the outage.
 accounts a b; reload
 health "$((T0 + 240))" > "$D/run.out" 2>&1
-assert_equals 2 "$(sent)" "one passing run does not close the outage"
+assert_equals 1 "$(sent)" "one passing run does not close the outage"
 health "$((T0 + 300))" > "$D/run.out" 2>&1 || fail "a recovered bus failed the run: $(cat "$D/run.out")"
-assert_equals 4 "$(sent)" "two passing runs send one end message per service"
+assert_equals 2 "$(sent)" "two passing runs send one end message"
 assert_contains "$(cat "$CALLS")" "Outage ended: the event system works again." "the end message says the bus works again"
-assert_equals 2 "$(wc -l < "$H/state/outage-history.jsonl")" "each closed outage adds one history row"
+assert_equals 1 "$(wc -l < "$H/state/outage-history.jsonl")" "each closed outage adds one history row"
 health "$((T0 + 360))" > "$D/run.out" 2>&1
-assert_equals 4 "$(sent)" "a healthy bus after recovery sends nothing"
+assert_equals 2 "$(sent)" "a healthy bus after recovery sends nothing"
 # A chat that refuses the message is a logged failure, and the message is sent by the next run.
 kill "$BOT"; wait "$BOT" 2>/dev/null || true
 accounts a b c d e; reload
