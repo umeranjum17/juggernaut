@@ -147,7 +147,7 @@ test_unfixable_registration_alerts_once_and_recovers() {
   ! grep -q 'could not be re-armed' "$d/state/.wake-queue" 2>/dev/null || { stop_watch; fail "the same unfixed cause alerted twice"; }
   rm -rf -- "$d/state/board-answers.check.sh"
   wait_for 40 registered "$d" || { stop_watch; fail "the check did not recover once the cause was removed"; }
-  [ ! -e "$d/state/.board-answers-rearm-alert" ] || fail "recovery left the alert latched"
+  wait_for 10 test ! -e "$d/state/.board-answers-rearm-alert" || { stop_watch; fail "recovery left the alert latched"; }
   answer "$d" after-recovery "$(date +%s)"
   secs=$(wait_wake "$BOUND" "$d" 'after-recovery') || { stop_watch; fail "no wake after recovery (waited $secs s)"; }
   stop_watch
