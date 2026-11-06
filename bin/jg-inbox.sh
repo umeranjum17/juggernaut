@@ -469,7 +469,6 @@ cmd_approve() {  # <note-id> <ticket-id>
     '[chat '*) ;;
     *) die "note $id is not a captain chat note; only his own words approve a build" ;;
   esac
-  need tasks-axi
   fail() { die "$@"; }
   # shellcheck source=bin/jg-captain-ask-lib.sh
   . "$SELF_DIR/jg-captain-ask-lib.sh"
@@ -490,7 +489,6 @@ ensure_captain_ask_ticket() {  # <note-id> <note-body>
   local id=$1 body=$2 first title ticket show
   first=${body%%$'\n'*}
   case "$first" in '[captain-ask]'*) ;; *) return 0 ;; esac
-  need tasks-axi
   ticket=$(captain_ask_ticket_id "$id")
   if show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" show "$ticket" --full 2>/dev/null); then
     return 0

@@ -396,6 +396,7 @@ The lane on such a row is the assignee, set to the task record's `spawn_gen`, an
 A fresh spawn takes the row only if it has no owner, so a second spawn on a row another lane holds refuses with exit 13 and starts nothing that stays; a relaunch hands the row over from the owner it read, `done` keeps the assignee as history, and `reopen` clears it.
 The session digest, the fleet snapshot, the inbox status, the owner's asks, the Squad Lead dormant sweep, ticket keys, the what's-left view, voice status, the flow check and the owner rules read that store as well, and a failed read reports the failure rather than an empty backlog.
 Readers of `data/backlog.md` not named here do not yet see that store.
+`bin/jg-backlog-handoff.sh` and `bin/jg-backlog-receive.sh` refuse before moving anything when either home keeps a store, because they move rows between backlog files.
 On such a home, bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check`, which proves the pinned versions, the hold rule and telemetry off, and report any failure.
 
 A home moves to that path by one guarded step, [`bin/jg-beads-migrate.py`](../bin/jg-beads-migrate.py) `cut`, run on a written order and never by default.

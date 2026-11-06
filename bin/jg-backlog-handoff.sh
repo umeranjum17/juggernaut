@@ -934,6 +934,8 @@ if [ "$RESUME_PENDING" -eq 1 ]; then
   exit "$FAILED"
 fi
 
+jg_backlog_refuse_beads_move "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" 'this home' || exit 1
+
 ACTIVE_REGISTRY_LOCK=$(squad_lead_registry_lock_path "$STATE")
 jg_lock_acquire_wait "$ACTIVE_REGISTRY_LOCK"
 REMOTE=$(squad_lead_registry_field "$REG" "$ID" remote 2>/dev/null || true)
@@ -955,6 +957,7 @@ RAW_HOME=$(squad_lead_home "$ID") || exit 1
   exit 1
 }
 SUB_HOME=$(validate_squad_lead_home "$ID" "$RAW_HOME") || exit 1
+jg_backlog_refuse_beads_move "$SUB_HOME/config" "squad_lead $ID" || exit 1
 SUB_BACKLOG="$SUB_HOME/data/backlog.md"
 validate_backlog_file "main backlog" "$MAIN_BACKLOG" || exit 1
 validate_backlog_file "squad_lead backlog" "$SUB_BACKLOG" || exit 1

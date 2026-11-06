@@ -105,6 +105,7 @@ run_move() { # <keys...>
 }
 
 [ "$#" -eq 4 ] || usage
+jg_backlog_refuse_beads_move "$JG_HOME/config" 'this home' || exit 1
 REL=$1
 EXPECTED_BYTES=$2
 EXPECTED_HASH=$3
