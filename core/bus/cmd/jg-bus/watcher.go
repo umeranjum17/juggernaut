@@ -47,9 +47,10 @@ package main
 //
 // A row's sequence is its `rseq`, which every producer sets before publishing; an event without
 // one is ordered by its own `at`, so it sorts with the rest instead of being dropped. The consumer
-// acknowledges each message as it fetches it (the `nats` client's `consumer next`), so an event
-// received and lost before the fold reached disk is absent; `jg-bus watcher rebuild` deletes the
-// fold and the consumer, and the service then replays the stream from the start.
+// acknowledges each message only after the fold reached disk (jsclient.go), so a crash between the
+// fetch and the save leaves the event unacknowledged and the server delivers it again; a failed
+// save asks for another try and, on the last, lands on the dead list. `jg-bus watcher rebuild`
+// deletes the fold and the consumer, and the service then replays the stream from the start.
 
 import (
 	"bufio"

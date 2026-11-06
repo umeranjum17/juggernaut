@@ -13,14 +13,17 @@ package main
 //	                     counter, one line per part, and exit 1 when a named part has no consumer.
 //
 // Both are pull consumers with a durable name, so an event raised while the service was down
-// is delivered when it returns, and an event is handled once per delivery. The consumer is the
-// `nats` client's `consumer next`, the same client the rest of this command uses, because the
-// shipped Go module carries no NATS library. A failure other than "nothing arrived" ends the
-// process with its reason, and the unit's Restart=always brings it back.
+// is delivered when it returns. An event counts as handled only after its handler returned:
+// the consumer fetches it without acknowledging (jsclient.go), runs the handler, and then
+// acknowledges it. A handler that fails asks the server to deliver the event again after a short
+// delay, and an event whose last try failed is written to the part's dead list
+// (<runtime>/<part>.dead.jsonl) and terminated, so a failure is kept where an operator can read it
+// and never silently dropped. A failure other than "nothing arrived" ends the process with its
+// reason, and the unit's Restart=always brings it back.
 //
-// The wake engine's handler is the render, which is idempotent and cursor-based, so an event
-// acknowledged by the fetch and then failing to render is applied by the next render. That is
-// why a failed handle is counted and reported rather than retried here.
+// Both handlers are idempotent (the wake engine's is the render, which is cursor-based; the
+// router's is the board's own route), so an event delivered twice after a lost acknowledgement is
+// harmless.
 
 import (
 	"bytes"
@@ -31,6 +34,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -61,7 +65,8 @@ func stopOnSignal() {
 // tally is a consumer's durable counter, kept beside its pid so a restart continues it.
 type tally struct {
 	Handled int    `json:"handled"`
-	Failed  int    `json:"failed"`
+	Retried int    `json:"retried"` // handler failures that were sent back for another try
+	Failed  int    `json:"failed"`  // events whose last try failed: they are on the dead list
 	LastID  string `json:"last_id"`
 	LastAt  int64  `json:"last_at"`
 	Started int64  `json:"started"`
@@ -192,7 +197,7 @@ func (p *part) ensureConsumer() error {
 	}
 	from := cmp.Or(p.deliver, "all")
 	_, errText, err := p.nats("consumer", "add", p.stream, p.name, "--pull", "--filter", p.filter,
-		"--ack", "explicit", "--wait", "10s", "--deliver", from, "--replay", "instant", "--defaults")
+		"--ack", "explicit", "--wait", ackWait.String(), "--deliver", from, "--replay", "instant", "--defaults")
 	if err != nil {
 		return fmt.Errorf("cannot create consumer %s on %s: %s", p.name, p.stream, strings.TrimSpace(errText))
 	}
@@ -201,15 +206,59 @@ func (p *part) ensureConsumer() error {
 
 // fetchWait is how long one fetch waits for an event: 30s, or JG_BUS_FETCH_WAIT (a Go duration)
 // for a test that must cross many fetch cycles quickly.
-func fetchWait() string {
-	if v := os.Getenv("JG_BUS_FETCH_WAIT"); v != "" {
-		return v
+func fetchWait() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("JG_BUS_FETCH_WAIT")); err == nil && d > 0 {
+		return d
 	}
-	return "30s"
+	return 30 * time.Second
+}
+
+// maxTries is how many times a failing event is tried before it goes to the dead list: 3, or
+// JG_BUS_MAX_TRIES. retryDelay is the wait before the server delivers it again, scaled by the try
+// number: 5s, or JG_BUS_RETRY_DELAY (a Go duration).
+func maxTries() int {
+	if n, err := strconv.Atoi(os.Getenv("JG_BUS_MAX_TRIES")); err == nil && n > 0 {
+		return n
+	}
+	return 3
+}
+
+func retryDelay(tries int) time.Duration {
+	d := 5 * time.Second
+	if v, err := time.ParseDuration(os.Getenv("JG_BUS_RETRY_DELAY")); err == nil && v >= 0 {
+		d = v
+	}
+	return d * time.Duration(tries)
+}
+
+// ackWait is how long the server waits for an acknowledgement before it delivers an event again.
+// ensureConsumer sets it; the keep-alive runs at a third of it.
+const ackWait = 10 * time.Second
+
+func envValue(env []string, key string) string {
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, key+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// deadLetter records an event that failed its last try, one JSON line, before it is terminated.
+func (a *app) deadLetter(p *part, m *jsMsg, tries int, herr error) {
+	line, _ := json.Marshal(map[string]any{"at": time.Now().Unix(), "stream": p.stream, "consumer": p.name,
+		"tries": tries, "error": herr.Error(), "body": string(m.Data)})
+	f, err := os.OpenFile(filepath.Join(a.runtime, p.name+".dead.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		say("%s: cannot write the dead list: %v", p.name, err)
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(line, '\n'))
 }
 
 // serveConsumer runs one part until it fails. Waiting for an event is the fetch's own blocking
-// wait, not a sleep.
+// wait, not a sleep. Each event is acknowledged only after its handler returned.
 func (a *app) serveConsumer(p *part) int {
 	if err := os.MkdirAll(a.runtime, 0o755); err != nil {
 		return die("cannot create %s", a.runtime)
@@ -225,32 +274,47 @@ func (a *app) serveConsumer(p *part) int {
 	a.writeTally(p.name, t)
 	say("%s: consuming %s on %s as %s", p.name, p.filter, p.stream, p.name)
 	for {
-		body, errText, err := p.nats("consumer", "next", p.stream, p.name, "--count", "1", "--wait", fetchWait(), "--raw")
+		conn, err := dialNATS(p.url, envValue(p.env, "NATS_USER"), envValue(p.env, "NATS_PASSWORD"))
 		if err != nil {
-			// An expired fetch ends as "timeout" or, when the server's expiry notice arrives
-			// first, as a message with no reply to acknowledge. Neither is an event, unless the
-			// client printed a body before it failed to acknowledge: that is a real event whose
-			// acknowledgement is missing, so it is handled (the server redelivers it, and both
-			// handlers are idempotent) rather than dropped.
-			expired := strings.Contains(errText, "timeout") || strings.Contains(errText, "does not have a reply")
-			if expired && strings.TrimSpace(body) == "" {
-				continue
-			}
-			if !expired {
-				return die("%s: fetch failed: %s", p.name, strings.TrimSpace(errText))
-			}
-			say("%s: handling an event the client could not acknowledge: %s", p.name, strings.TrimSpace(errText))
+			return die("%s: cannot reach the bus: %v", p.name, err)
+		}
+		m, err := conn.next(p.stream, p.name, fetchWait())
+		if err != nil {
+			conn.close()
+			return die("%s: fetch failed: %v", p.name, err)
+		}
+		if m == nil { // nothing arrived within the wait
+			conn.close()
+			continue
 		}
 		var ev struct {
 			ID string `json:"id"`
 		}
-		_ = json.Unmarshal([]byte(body), &ev)
-		if herr := p.handle([]byte(body)); herr != nil {
-			t.Failed++
-			say("%s: event %s: %v", p.name, ev.ID, herr)
-		} else {
+		_ = json.Unmarshal(m.Data, &ev)
+		tries := m.tries()
+		stopKeep := conn.keepAlive(m, ackWait/3)
+		herr := p.handle(m.Data)
+		stopKeep()
+		var rerr error
+		switch {
+		case herr == nil:
+			rerr = conn.ack(m)
 			t.Handled++
+		case tries < maxTries():
+			say("%s: event %s: try %d of %d failed, will be delivered again: %v", p.name, ev.ID, tries, maxTries(), herr)
+			rerr = conn.nak(m, retryDelay(tries))
+			t.Retried++
+		default:
+			say("%s: event %s: failed on its last try (%d), written to the dead list: %v", p.name, ev.ID, tries, herr)
+			a.deadLetter(p, m, tries, herr)
+			rerr = conn.term(m)
+			t.Failed++
 		}
+		if rerr != nil {
+			// The server will deliver the event again; both handlers are idempotent.
+			say("%s: event %s: the answer to the server was not sent: %v", p.name, ev.ID, rerr)
+		}
+		conn.close()
 		t.LastID, t.LastAt = ev.ID, time.Now().Unix()
 		a.writeTally(p.name, t)
 	}
@@ -322,9 +386,9 @@ func (a *app) probe(args []string) int {
 			pid = got
 		}
 		t := a.readTally(name)
-		fmt.Printf("%-11s pid=%d stream=%s messages=%d last_seq=%d consumer=%s delivered=%d acked=%d pending=%d handled=%d failed=%d\n",
+		fmt.Printf("%-11s pid=%d stream=%s messages=%d last_seq=%d consumer=%s delivered=%d acked=%d pending=%d handled=%d retried=%d failed=%d\n",
 			name, pid, p.stream, stream.State.Messages, stream.State.LastSeq, p.name,
-			consumer.Delivered.Stream, consumer.AckFloor.Stream, consumer.Pending, t.Handled, t.Failed)
+			consumer.Delivered.Stream, consumer.AckFloor.Stream, consumer.Pending, t.Handled, t.Retried, t.Failed)
 		if cerr != nil {
 			status = 1
 		}
