@@ -524,5 +524,27 @@ SH
   pass "T16 a release branch is shipped only when its release pull request merged"
 }
 
+test_a_carried_release_branch_counts_as_shipped() {
+  local w rc cfg
+  w=$(mktemp -d) || fail "cannot create the fixture"
+  cfg=$w/config
+  mkdir -p "$w/bin" "$cfg"
+  printf '#!/usr/bin/env bash\necho "gh must not be asked" >&2\nexit 1\n' > "$w/bin/gh"
+  chmod +x "$w/bin/gh"
+  shipped() { PATH="$w/bin:$PATH" JG_CONFIG_OVERRIDE=$cfg bash -c '. "$1"; jg_release_shipped o/r "$2" main' _ "$VERSION_LIB" "$@"; }
+  shipped release/c-10; rc=$?
+  assert_equals 2 "$rc" "without a carried record an unreadable forge stays unreadable"
+  printf '# closed by the c-16 carry\nrelease/c-10\n' > "$cfg/version-branch-carried"
+  shipped release/c-10; rc=$?
+  assert_equals 0 "$rc" "a carried release branch is shipped with no merged release pull request"
+  shipped release/c-11; rc=$?
+  assert_equals 2 "$rc" "a branch the record does not list is still decided by the forge"
+  rows=$(printf '5\thttps://x/pull/5\trelease/c-10\n' | PATH="$w/bin:$PATH" JG_CONFIG_OVERRIDE=$cfg bash -c '. "$1"; jg_release_orphans_of release/c-16 o/r main' _ "$VERSION_LIB")
+  assert_equals "$(printf '5\thttps://x/pull/5\trelease/c-10')" "$rows" "a pull request left on a carried release is an orphan"
+  rm -rf -- "$w"
+  pass "T17 a carried release branch counts as shipped"
+}
+
 test_release_shipped_means_its_release_pull_request_merged
+test_a_carried_release_branch_counts_as_shipped
 echo "all jg-version-branch-sync tests passed"

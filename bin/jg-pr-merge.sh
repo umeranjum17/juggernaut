@@ -1103,7 +1103,7 @@ github_default_merge_method() {
 # other base, for an unshipped release branch, and for the default branch.
 # A shipped read that fails refuses, as every other live read here does.
 github_shipped_release_refusal() {  # <base> <pr-number>
-  local base=$1 number=$2 project open default rc=0
+  local base=$1 number=$2 project open default why rc=0
   case "$base" in release/c-[0-9]*) ;; *) return 0 ;; esac
   case "${base#release/c-}" in *[!0-9]*) return 0 ;; esac
   project=$(jg_dod_meta_value "$META" project 2>/dev/null) || project=
@@ -1124,10 +1124,14 @@ github_shipped_release_refusal() {  # <base> <pr-number>
       return 1 ;;
   esac
   jg_release_older_than "$base" "$open" || open=
+  why="its pull request into $default is merged"
+  if jg_carried_branches "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" | grep -qxF -- "$base"; then
+    why="its work was carried onto a newer release and the branch is closed"
+  fi
   if [ -n "$open" ]; then
-    printf '%s\n' "  - $base already shipped (its pull request into $default is merged), so a merge into it never reaches the default branch; the open release branch is $open - run: gh pr edit $number --base $open"
+    printf '%s\n' "  - $base already shipped ($why), so a merge into it never reaches the default branch; the open release branch is $open - run: gh pr edit $number --base $open"
   else
-    printf '%s\n' "  - $base already shipped (its pull request into $default is merged) and no newer release branch is open, so a merge into it never reaches the default branch; open the next release branch, then retarget this pull request"
+    printf '%s\n' "  - $base already shipped ($why) and no newer release branch is open, so a merge into it never reaches the default branch; open the next release branch, then retarget this pull request"
   fi
   return 1
 }

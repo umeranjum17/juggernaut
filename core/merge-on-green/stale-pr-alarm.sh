@@ -10,7 +10,9 @@
 #   - no checks and no update for 24 hours (no check run and no commit status on the head, and
 #     updated_at older than 24 h), or
 #   - its base is a release/* branch that already merged into the default branch (a closed, merged PR
-#     from that branch into main exists, so the PR can never land where it points).
+#     from that branch into main exists, so the PR can never land where it points), or listed in
+#     <home>/config/version-branch-carried (a closed release whose work moved to a newer one); that
+#     alert names the live release branch.
 # The alert is remembered per PR and reason in <home>/data/jg-merge-on-green/stale-pr-alarm/, so the
 # next poll stays silent; a PR that is closed, healthy or changes reason forgets or re-raises it.
 # Only PRs we own are watched: the author is the home's gh login, or the PR URL is recorded as pr= in a
@@ -46,6 +48,8 @@ for repo in $repos; do
   [ "$(date +%s)" -lt "$LIMIT" ] || break
   prs=$(api "repos/$repo/pulls?state=open&per_page=100" '.[]|[.number,.html_url,.base.ref,.updated_at,.head.sha,.user.login,.created_at,.head.ref]|@tsv') || continue
   key=${repo//\//__}; flagged=' '; cut=0
+  livebranches=$(api "repos/$repo/branches?per_page=100" '.[].name|select(test("^release/c-[0-9]+$"))') || livebranches=''
+
   while IFS=$'\t' read -r num url base updated sha author created headref; do
     [ -n "$num" ] || continue
     [ "$author" = "$me" ] || printf '%s\n' "$owned" | grep -qxF -- "$url" || continue
@@ -65,8 +69,14 @@ for repo in $repos; do
         && [ "$runs" = 0 ] && [ "$stat" = 0 ] && reasons='no checks and no update for 24 h'
     fi
     case $base in release/*)
-      merged=$(api "repos/$repo/pulls?state=closed&base=main&head=${repo%%/*}:$base&per_page=10" 'map(select(.merged_at!=null))|length') \
-        && [ "${merged:-0}" -gt 0 ] && reasons="${reasons:+$reasons; }base branch $base is a release branch already merged into main" ;;
+      if awk '{ sub(/#.*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if (length($0)) print }' "$FMH/config/version-branch-carried" 2>/dev/null | grep -qxF -- "$base"; then
+        # A carried branch is closed: its work moved to a newer release, so name the live one.
+        live=$(printf '%s\n' "$livebranches" | awk -F/ -v b="$base" 'BEGIN { sub(/.*c-/, "", b) } { n = $0; sub(/.*c-/, "", n); if (n + 0 > b + 0 && n + 0 > best) { best = n + 0; name = $0 } } END { if (name) print name }')
+        reasons="${reasons:+$reasons; }base branch $base is a closed release branch whose work was carried${live:+; the live release branch is $live}"
+      else
+        merged=$(api "repos/$repo/pulls?state=closed&base=main&head=${repo%%/*}:$base&per_page=10" 'map(select(.merged_at!=null))|length') \
+          && [ "${merged:-0}" -gt 0 ] && reasons="${reasons:+$reasons; }base branch $base is a release branch already merged into main"
+      fi ;;
     esac
     [ -n "$reasons" ] || continue
     flagged="$flagged$num "

@@ -110,8 +110,21 @@ jg_frozen_base_refusal() {  # <config-dir> <project-dir> <base> <red-fix-of> <ca
   return 1
 }
 
+# A release branch the captain has closed by carrying its work onto a newer
+# release takes no new work either: a merge into it never reaches the default
+# branch, though no release pull request of its own ever merged.
+# The record is one fact in one place, like the freeze: the optional local,
+# gitignored config/version-branch-carried, one branch name per line (blank
+# lines and # comments ignored).
+jg_carried_branches() {  # <config-dir>
+  local file=${1:-}/version-branch-carried
+  [ -f "$file" ] || return 0
+  awk '{ sub(/#.*/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if (length($0)) print }' "$file"
+}
+
 # A release branch is SHIPPED when its release pull request into the default
-# branch merged, and not before. A newer release/c-<N> existing says only that
+# branch merged, or when it is recorded as carried (jg_carried_branches), and
+# not before. A newer release/c-<N> existing says only that
 # the next cycle was cut; the older branch still takes work (a red-fix, a late
 # feature) until its own release lands, because a merge into it reaches the
 # default branch with that release. This is the one definition: the merge guard
@@ -126,10 +139,13 @@ jg_frozen_base_refusal() {  # <config-dir> <project-dir> <base> <red-fix-of> <ca
 # a release/c-<digits> branch); 2 when it cannot be read (no repo or default, no
 # gh, or the forge failed), so every caller picks its own safe answer for an
 # unreadable read. The read is bounded where the host has `timeout`.
+# A carried branch answers 0 from the local record before any forge read; the
+# record lives in ${JG_CONFIG_OVERRIDE:-$JG_HOME/config}.
 jg_release_shipped() {  # <repo> <branch> <default>
   local repo=${1:-} branch=${2:-} default=${3:-} n
   case "$branch" in release/c-[0-9]*) ;; *) return 1 ;; esac
   case "${branch#release/c-}" in *[!0-9]*) return 1 ;; esac
+  jg_carried_branches "${JG_CONFIG_OVERRIDE:-${JG_HOME:+$JG_HOME/config}}" | grep -qxF -- "$branch" && return 0
   [ -n "$repo" ] && [ -n "$default" ] && command -v gh >/dev/null 2>&1 || return 2
   if command -v timeout >/dev/null 2>&1; then
     n=$(timeout 25 gh pr list --repo "$repo" --state merged --head "$branch" \
