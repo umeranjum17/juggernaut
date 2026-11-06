@@ -154,6 +154,7 @@ test_a_failed_raise_is_reported_and_the_steer_stays_stored() {
   local rec err
   # shellcheck source=/dev/null
   . "$ROOT/bin/jg-task-inbox-lib.sh"
+  # shellcheck disable=SC2329  # called by jg_task_inbox_write, which shellcheck cannot see
   jg_wake_bus() { printf 'refused: the event system said no\n'; return 1; }
   err=$(jg_task_inbox_write "$STATE_DIR" task-raise "steer with a refused raise" 2>&1 >"$STATE_DIR/.raise-rec") || fail "a refused raise must not fail the steer"
   rec=$(cat "$STATE_DIR/.raise-rec")
