@@ -113,7 +113,7 @@ test_an_ordinary_report_is_untouched() {
 }
 
 test_the_lead_report_path_writes_the_downgrade() {
-  local dir claim='Fixed the refresh bug; the PR is merged.'
+  local dir claim='Fixed the refresh bug; the PR is merged. #tickets/jg-abc'
   dir=$(home lead-report)
   mkdir -p "$dir/parent/state"
   printf 'umer\n' > "$dir/.jg-squad-lead-home"
@@ -126,7 +126,7 @@ test_the_lead_report_path_writes_the_downgrade() {
 }
 
 test_the_lead_report_path_keeps_a_live_claim() {
-  local dir claim='Fixed the refresh bug; live: v1.2.3 @ https://app.test/settings; carries: #12; waiting: none'
+  local dir claim='Fixed the refresh bug; live: v1.2.3 @ https://app.test/settings; carries: #12; waiting: none #tickets/jg-abc'
   dir=$(home lead-report-live 'v1.2.3 2026-11-01T09:00Z app.test')
   mkdir -p "$dir/parent/state"
   printf 'umer\n' > "$dir/.jg-squad-lead-home"
@@ -199,7 +199,7 @@ test_a_record_without_prs_reads_unrecorded() {
 }
 
 test_the_lead_report_path_prints_the_extended_claim() {
-  local dir claim='Fixed the refresh bug; live: v1.2.3 @ https://app.test/settings'
+  local dir claim='Fixed the refresh bug; live: v1.2.3 @ https://app.test/settings #tickets/jg-abc'
   dir=$(home lead-report-extended 'v1.2.3 2026-11-01T09:00Z app.test prs=40')
   task "$dir" waiting-e 41
   mkdir -p "$dir/parent/state"

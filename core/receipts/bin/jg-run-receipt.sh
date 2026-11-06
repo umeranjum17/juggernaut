@@ -107,13 +107,25 @@ if [ -z "$PR_URL" ] && [ "$pr_was_set" = true ]; then
   exit 1
 fi
 umask 077
+# A republish for the same head (the evidence lint publishes its own report) must not lose the worker's
+# `first-draft receipt: <ref>` line, which the design gate reads from this record. Only a receipt bound to
+# this task and this exact head lends its line, so a new head never inherits an older head's design proof.
+PRIOR_LINES=
+if [ -f "$STATE/$ID.run-receipt.json" ] && [ ! -L "$STATE/$ID.run-receipt.json" ]; then
+  PRIOR_LINES=$(jq -r --arg task "$ID" --arg head "$HEAD_SHA" '
+    select(.task == $task and .head == $head and (.evidence | type == "string"))
+    | .evidence | split("\n")[] | select(test("^first-draft receipt: [^[:space:]]"))
+  ' "$STATE/$ID.run-receipt.json" 2>/dev/null || true)
+fi
 TMP=$(mktemp "$STATE/.$ID.run-receipt.XXXXXX")
 jq -n --arg task "$ID" --arg mode "$MODE" --arg gen "$GEN" \
   --arg head "$HEAD_SHA" --arg pr "$PR_URL" --arg verdict "$VERDICT" --argjson at "$(date +%s)" \
-  --rawfile evidence "$EVIDENCE" '
+  --arg carried "$PRIOR_LINES" --rawfile evidence "$EVIDENCE" '
   if ($evidence | test("[^[:space:]]")) then
     {schema:1, task:$task, mode:$mode, spawn_gen:$gen, head:$head, pr:$pr,
-     verdict:$verdict, at:$at, evidence:$evidence}
+     verdict:$verdict, at:$at,
+     evidence:($evidence + ($carried | split("\n") | map(select(. as $l | $l != "" and ($evidence | contains($l) | not)))
+       | map("\n" + .) | join("")))}
   else error("nonempty evidence required") end
 ' > "$TMP"
 if ! jg_backlog_atomic_transition publish "$TMP" "$STATE/$ID.run-receipt.json" "completion receipt" "$STATE"; then
