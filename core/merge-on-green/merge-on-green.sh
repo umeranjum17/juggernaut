@@ -57,9 +57,10 @@ meta_get() { # <meta-file> <key> -> last value, the same rule jg_meta_get applie
   printf '%s' "$value"
 }
 
-first_reason() { # first non-empty line of a command's output, trimmed to keep the wake line short
+first_reason() { # first reason line of a command's output, trimmed to keep the wake line short.
+  # `armed:` (jg-pr-check) and `WARNING:` (jg-guard) lines are notices, not refusals: skipped.
   local r
-  r=$(printf '%s' "$1" | sed '/^[[:space:]]*$/d' | head -1)
+  r=$(printf '%s' "$1" | sed -E '/^[[:space:]]*$/d; /^[[:space:]]*(armed:|WARNING:)/d' | head -1)
   [ -n "$r" ] || r="exit code ${2:-?} with no output"
   [ "${#r}" -le 140 ] || r=${r:0:137}'...'
   printf '%s' "$r"
@@ -81,7 +82,8 @@ MERGE_LATENCY_LIMIT=${JG_MERGE_LATENCY_LIMIT_MINUTES:-5}
 case "$MERGE_LATENCY_LIMIT" in ''|*[!0-9]*) MERGE_LATENCY_LIMIT=5 ;; esac
 record_latency() { # <task> <pr>
   local done_at merged_at when minutes
-  done_at=$(sed -n 's/^done \[at=\([0-9][0-9]*\)\]:.*/\1/p' "$STATE/$1.status" 2>/dev/null | tail -1)
+  # A worker's hand-off line: `done` or `ready`, `[at=<epoch>]` with optional extra keys.
+  done_at=$(sed -n -E 's/^(done|ready)[[:space:]]*\[at=([0-9]+)[^]]*\].*/\2/p' "$STATE/$1.status" 2>/dev/null | tail -1)
   [ -n "$done_at" ] || return 0
   merged_at=
   when=$(timeout "$BUDGET" gh pr view "$2" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || when=
@@ -211,7 +213,9 @@ for m in "$STATE"/*.meta; do
   # start one only when it still fits inside the watcher's whole-check bound; the fit arithmetic
   # doubles as the merge's bound, so the whole remaining window is available to it.
   mbudget=$(( START + ${JG_CHECK_TIMEOUT:-30} - $(date +%s) - 1 ))
-  [ "$mbudget" -ge "$BUDGET" ] || break
+  # A merge needs two command-bounds of room (a third of the check bound each, so two thirds): the
+  # forge call plus the read-back. Less than that only gets the merge cut mid-way and retried forever.
+  [ "$mbudget" -ge $(( BUDGET * 2 )) ] || break
   mkdir -p "$DATA" || { echo "merge-on-green: NOT merging $task $pr: cannot write $DATA; $LEAD_NOTE"; continue; }
   printf '%s\n' "$pr_head" > "$DATA/$task.head" || { echo "merge-on-green: NOT merging $task $pr: cannot write $DATA/$task.head; $LEAD_NOTE"; continue; }
   merge_out=$(JG_HOME="$FMH" timeout "$mbudget" "$FMH/bin/jg-pr-merge.sh" "$task" "$pr" 2>&1); merge_rc=$?

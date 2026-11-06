@@ -48,6 +48,12 @@ cat > "$FM/bin/jg-pr-merge.sh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s|%s\n' "$JG_HOME" "$*" >> "$STUB_DIR/merge-calls"
 [ -f "$STUB_DIR/merge-slow" ] && sleep 600
+if [ -f "$STUB_DIR/merge-noisy" ]; then
+  echo "armed: merge poll for $2"
+  echo "WARNING: queued wakes are waiting"
+  echo "error: pull request is not mergeable: required check ci is red" >&2
+  exit 1
+fi
 if [ -f "$STUB_DIR/merge-refuse" ]; then
   echo "error: pull request is not mergeable: required check ci is red" >&2
   exit 1
@@ -196,20 +202,20 @@ rm "$FM/state/t9.meta" "$FM/state/t9.run-receipt.json"
 # task+head+reason, no merge attempt recorded, and the next sweep still retries silently.
 meta t10 on "$H1" s10
 touch "$STUB_DIR/lint-slow"
-out=$(JG_CHECK_TIMEOUT=9 "$SRC/merge-on-green.sh" check "$FM" 2>&1)
+out=$(JG_CHECK_TIMEOUT=12 "$SRC/merge-on-green.sh" check "$FM" 2>&1)
 check "k: lint timeout wakes once" "$(printf '%s\n' "$out" | wc -l)" 1
 has "k: lint timeout named" "$out" "checks lint timed out"
 has "k: lint timeout truthful" "$out" "retrying next sweep"
-check "k: repeat lint timeout silent" "$(JG_CHECK_TIMEOUT=9 "$SRC/merge-on-green.sh" check "$FM" 2>&1)" ""
+check "k: repeat lint timeout silent" "$(JG_CHECK_TIMEOUT=12 "$SRC/merge-on-green.sh" check "$FM" 2>&1)" ""
 check "k: lint timeout remembered, no head" "$([ -e "$FM/data/jg-merge-on-green/t10.refused" ] && [ ! -e "$FM/data/jg-merge-on-green/t10.head" ] && echo timeout-only || echo wrong)" timeout-only
 rm "$STUB_DIR/lint-slow"
 touch "$STUB_DIR/merge-slow"
-out=$(JG_CHECK_TIMEOUT=9 "$SRC/merge-on-green.sh" check "$FM" 2>&1)
+out=$(JG_CHECK_TIMEOUT=12 "$SRC/merge-on-green.sh" check "$FM" 2>&1)
 check "k: merge attempted then killed" "$(wc -l < "$STUB_DIR/merge-calls")" 4
 check "k: merge timeout wakes once" "$(printf '%s\n' "$out" | wc -l)" 1
 has "k: merge timeout named" "$out" "jg-pr-merge timed out"
 check "k: merge timeout not recorded as head" "$([ -e "$FM/data/jg-merge-on-green/t10.head" ] && echo recorded || echo never)" never
-check "k: repeat merge timeout silent" "$(JG_CHECK_TIMEOUT=9 "$SRC/merge-on-green.sh" check "$FM" 2>&1)" ""
+check "k: repeat merge timeout silent" "$(JG_CHECK_TIMEOUT=12 "$SRC/merge-on-green.sh" check "$FM" 2>&1)" ""
 check "k: repeat merge timeout still retried" "$(wc -l < "$STUB_DIR/merge-calls")" 5
 rm "$STUB_DIR/merge-slow"
 out=$(mog)
@@ -263,6 +269,24 @@ check "n: the row is recorded with the real gap" \
 check "n: the table has one header row" "$(sed -n 1p "$FM/data/merge-latency.tsv")" \
   "$(printf 'task\tpr\tdone_epoch\tmerged_epoch\tminutes')"
 rm "$FM/state/t13.meta" "$FM/state/t13.run-receipt.json"
+
+# (n2) a refusal wake names the real refusal, not the `armed:` and `WARNING:` notices printed first;
+# a worker's `ready [at=N key=..]` hand-off line still gets a latency row.
+meta t95 on "$H1" s95
+now=$(date +%s)
+printf 'ready [at=%s extra=1]: slice 2 PR https://github.com/ex/r/pull/95\n' "$((now - 60))" > "$FM/state/t95.status"
+touch "$STUB_DIR/merge-noisy"
+out=$(mog)
+has "n2: the real refusal is named" "$out" "jg-pr-merge refused: error: pull request is not mergeable: required check ci is red"
+check "n2: armed and WARNING lines are not the reason" "$(printf '%s' "$out" | grep -cE 'refused: (armed:|WARNING:)')" 0
+rm "$STUB_DIR/merge-noisy"
+rm -f "$FM/data/jg-merge-on-green/t95.head"
+STUB_MERGED_AT=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
+export STUB_MERGED_AT
+out=$(mog)
+has "n2: a ready hand-off line is measured" "$out" "in 1m from its done line"
+check "n2: the ready line has a latency row" "$(awk -F '\t' '$1 == "t95" { print $5 }' "$FM/data/merge-latency.tsv")" 1
+rm "$FM/state/t95.meta" "$FM/state/t95.run-receipt.json"
 
 # (o) a merge inside the target is recorded and reported without the over-target wording.
 meta t14 on "$H2" s14

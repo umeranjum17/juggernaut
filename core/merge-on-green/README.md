@@ -80,7 +80,7 @@ so the lead relays it. Nothing is printed
 when nothing happened. One merge attempt per task per head: the attempted head is remembered in
 `<home>/data/jg-merge-on-green/<task>.head`, so a refused head stays quiet until the lead pushes a
 new one. Every command is bounded with `timeout` (a third of `JG_CHECK_TIMEOUT` each, floor 5 s):
-gate commands start only before 80% of the bound, a merge only when it fits inside the whole bound,
+gate commands start only before 80% of the bound, a merge only when two such bounds (two thirds of the check bound) are left,
 so the watcher's kill can at worst cut a gate command (harmlessly retried next sweep), never a
 merge.
 
