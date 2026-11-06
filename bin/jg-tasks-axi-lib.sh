@@ -218,6 +218,19 @@ jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
   printf '%s\n' "$store"
 }
 
+# A reader of the backlog file's lines reads a Beads home the same way: the store, rendered in that layout.
+jg_backlog_present() {  # <config_dir> <backlog_file>
+  jg_backlog_backend_beads "$1" || [ -f "$2" ]
+}
+
+jg_backlog_text() {  # <config_dir> <backlog_file>
+  if jg_backlog_backend_beads "$1"; then
+    jg_backlog_beads_read "$1" markdown
+  else
+    cat -- "$2"
+  fi
+}
+
 # The start checks' one line on this home's store: the summary of `jg-beads.sh check`, or why it failed.
 jg_backlog_beads_health() {  # <config_dir>
   local bin_dir store out rc=0
@@ -236,7 +249,7 @@ jg_backlog_beads_write() {  # <config_dir> <add|update|done|block|start|reopen a
   BEADS_DIR=$store python3 "$bin_dir/jg-beads-write.py" "$@"
 }
 
-jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready> [args...]
+jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown> [args...]
   local bin_dir store err rows rc=0
   store=$(jg_backlog_beads_store "$1") || return 2
   shift

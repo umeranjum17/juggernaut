@@ -48,6 +48,8 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
+# shellcheck source=bin/jg-tasks-axi-lib.sh
+. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
 NOW=$(date +%s)
 PERSIST_WAIT=${JG_SQUAD_LEAD_DORMANT_PERSIST_WAIT:-900}
 PERSIST_REQUEST='Your home has no open work, so your agent will be stopped to free its seat; routed work relaunches you, and every durable record stays. Before that, persist the open work you are holding only in this conversation, following the /intel skill'"'"'s "Open-record persistence" section and nothing else from that skill. Do not start new work to look busy. Then reply on your parent channel saying it is done.'
@@ -63,9 +65,13 @@ idle_secs() {
 }
 
 busy_reason() {  # <id> <lead-home>: why it must stay awake, or nothing when it has no work
-  local id=$1 home=$2 f open
-  [ -f "$home/data/backlog.md" ] || { echo "its backlog is unreadable"; return; }
-  open=$(awk '/^## /{ s = ($0 == "## In flight" || $0 == "## Queued") } s && /^- \[ \]/{ n++ } END { print n + 0 }' "$home/data/backlog.md")
+  local id=$1 home=$2 f text open
+  if ! jg_backlog_present "$home/config" "$home/data/backlog.md" \
+    || ! text=$(jg_backlog_text "$home/config" "$home/data/backlog.md" 2>/dev/null); then
+    echo "its backlog is unreadable"
+    return
+  fi
+  open=$(printf '%s\n' "$text" | awk '/^## /{ s = ($0 == "## In flight" || $0 == "## Queued") } s && /^- \[ \]/{ n++ } END { print n + 0 }')
   [ "$open" -eq 0 ] || { echo "$open open item(s)"; return; }
   for f in "$home"/state/*.meta "$STATE/$id.inbox"/*.msg; do
     [ -e "$f" ] && { echo "a worker or an unread message"; return; }

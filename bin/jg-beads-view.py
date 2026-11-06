@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """jg-beads-view.py - render bd rows in the read shape tasks-axi prints.
 
-Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|show|view> [args...]
+Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|show|view|markdown> [args...]
 
 Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never starts bd.
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
@@ -9,8 +9,10 @@ bd stamps UTC and tasks-axi the local day, so created and closed read as the loc
 A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while a lane is its assignee; kind is metadata.kind, else issue_type;
 parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
+markdown prints the store in the backlog file's layout, for readers of that file's lines: ids are item, hold reasons encoded.
 Refusals print tasks-axi's error lines on stdout: exit 2 for a bad flag, exit 1 for an unknown id.
 """
+import base64
 import datetime
 import json
 import re
@@ -188,6 +190,37 @@ def listing(tasks, args):
         print("  - Run `tasks-axi ready%s` to see unblocked queued work" % (" --repo=" + repo if repo else ""))
 
 
+def file_row(item, items):
+    links = [] if item["links"] == "none" else item["links"].split(",")
+    waiting = [] if item["blocked_by"] == "none" else item["blocked_by"].split(",")
+    words = ["- [%s] %s - %s" % ("x" if item["state"] == "done" else " ", item["item"], item["title"])]
+    words += [link.partition(":")[2] for link in links]
+    words += ["blocked-by: " + items.get(ident, ident) for ident in waiting]
+    tags = [("repo", item["repo"]), ("kind", "-" if item["kind"] == "task" else item["kind"]), ("priority", item["priority"])]
+    if item["held"] == "yes":
+        reason = base64.b64encode(item["hold_reason"].encode()).decode()
+        tags += [("hold", "jg-hold-v1:" + reason), ("hold-kind", item["hold_kind"]), ("hold-until", item["hold_until"])]
+    words += ["(%s: %s)" % tag for tag in tags if tag[1] != "-"]
+    if item["state"] != "done":
+        words += [] if item["created"] == "-" else ["(since %s)" % item["created"]]
+    else:
+        verb = "merged" if any(l.startswith("pr:") for l in links) else "reported" if links else "done"
+        words.append("(%s %s)" % (verb, item["closed"]))
+    return " ".join(words)
+
+
+def markdown(tasks, args):
+    flags(args, (), ())
+    items = {item["id"]: item["item"] for item in tasks}
+    print("# Backlog")
+    for heading, state in (("In flight", "in_flight"), ("Queued", "queued"), ("Done", "done")):
+        print("\n## " + heading)
+        for item in tasks:
+            if item["state"] == state:
+                print(file_row(item, items))
+                print("".join("  %s\n" % line for line in item["body"].splitlines() if line.strip()), end="")
+
+
 def main():
     raw = json.load(sys.stdin) or []
     rows = {row["id"]: row for row in raw}
@@ -195,7 +228,7 @@ def main():
     tasks.sort(key=lambda t: rows[t["id"]].get("closed_at") or "", reverse=True)
     tasks.sort(key=lambda t: ["in_flight", "queued", "done"].index(t["state"]))
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
-    serve = {"show": show, "view": show, "ready": ready, "list": listing}.get(verb)
+    serve = {"show": show, "view": show, "ready": ready, "list": listing, "markdown": markdown}.get(verb)
     if serve is None:
         refuse("Unknown read verb: " + verb)
     serve(tasks, sys.argv[2:])

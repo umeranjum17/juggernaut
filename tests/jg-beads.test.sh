@@ -128,6 +128,36 @@ callers() {  # The read shapes each backlog caller parses.
   done
   same list --json
   assert_contains "$(. "$ROOT/bin/jg-supervision-lib.sh"; jg_ready_work_rows "$T/bd")" "jg-one-a acme" "supervision must see ready work"
+  readers
+}
+reader() {  # <home> <command...>: a reader of that home's backlog, with no tasks-axi on its path.
+  local home=$1
+  shift
+  env -u JG_PIN_FILE_OVERRIDE HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" \
+    JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" JG_BOOTSTRAP_NETWORK=skip JG_PIN_FILE_OVERRIDE="${JG_PIN_FILE_OVERRIDE:-}" \
+    "${jail[@]}" "$@" 2>&1
+}
+readers() {  # What reads the backlog file reads the same rows from the store.
+  local pick out home flying
+  pick='[.backlog.records[] | {id,state,title,repo,kind,priority,blocked_by_ids,hold_reason,hold_kind,pr_url,verb:.completion.verb,body_lines}] | sort_by(.id)'
+  mkdir -p "$T/user" "$T/ta/state" "$T/ta/config" "$T/bd/data" "$T/bd/state"
+  for home in ta bd; do
+    reader "$T/$home" "$ROOT/bin/jg-fleet-snapshot.sh" --contribution-input | jq -S "$pick" > "$T/$home.rows" || fail "$home snapshot"
+    flying=$(reader "$T/$home" "$ROOT/bin/jg-inbox.sh" status | sed -n '/^--- in flight/,/^$/p')
+    printf '%s\n' "$flying" > "$T/$home.flying"
+    reader "$T/$home" "$ROOT/bin/jg-owner-asks.sh" --json | jq -S '[.. | objects | select(.id? == "jg-wait")]' > "$T/$home.asks" || fail "$home asks"
+  done
+  assert_contains "$(cat "$T/bd.rows")" '"hold_reason": "wait: for x"' "the snapshot must read a held row from the store"
+  assert_contains "$(cat "$T/bd.flying")" 'jg-fly - Flying' "the inbox status must list the store's work in flight"
+  assert_contains "$(cat "$T/bd.asks")" 'jg-wait' "the owner's asks must read the store"
+  for out in rows flying asks; do
+    diff "$T/ta.$out" "$T/bd.$out" >/dev/null || fail "$out differs across providers: $(diff "$T/ta.$out" "$T/bd.$out")"
+  done
+  out=$(reader "$T/bd" timeout 90 "$ROOT/bin/jg-session-start.sh")
+  for want in 'compact backlog listing (beads;' 'jg-fly,in_flight,recon' 'jg-wait,queued' '"wait: for x"' 'jg-two-b,queued' 'jg-one-a,queued' \
+    'bin/jg-tasks-axi.sh show <id> --full.'; do
+    assert_contains "$out" "$want" "the digest must print the store's rows"
+  done
 }
 writes() {  # The write shapes backlog callers send, then what each provider reads back.
   local one=https://github.com/o/r/pull/1 two=https://github.com/o/r/pull/2
@@ -391,6 +421,27 @@ JSON
   expect_code 2 $? "an unserved verb on beads"
   assert_contains "$out" "does not serve unblock" "an unserved verb must be refused"
   ROWS=$T/rows.json callers
+  # A failed read says so, and a lead's store decides whether that lead can sleep.
+  : > "$LOG.down"
+  out=$(reader "$T/bd" timeout 90 "$ROOT/bin/jg-session-start.sh")
+  assert_contains "$out" "beads compact listing failed:" "a failed read must not look like an empty backlog"
+  assert_contains "$out" "the store cannot be read" "a failed read must give its reason"
+  assert_not_contains "$out" "title-line" "a store has no title lines to fall back on"
+  assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" status)" "the backlog cannot be read" "a failed read must not look like nothing in flight"
+  mkdir -p "$T/dm/bin" "$T/dm/state" "$T/dm/config" "$T/dm/data"
+  printf '#!/usr/bin/env bash\n' | tee "$T/dm/bin/jg-control.sh" > "$T/dm/bin/jg-send.sh"
+  chmod +x "$T/dm/bin/"*.sh
+  printf 'kind=squad_lead\nhome=%s\nharness=claude\nbackend=tmux\nwindow=jg-lead\n' "$T/bd" > "$T/dm/state/lead.meta"
+  printf -- '- lead - a local lead (home: %s; scope: l; projects: l; added 2026-10-30)\n' "$T/bd" > "$T/dm/data/squad_leads.md"
+  printf '1\n' > "$T/dm/config/squad-lead-dormant-secs"
+  mv "$T/bd/state" "$T/bd.state"
+  sweep_lead() { JG_ROOT_OVERRIDE=$T/dm JG_HOME=$T/dm JG_STATE_OVERRIDE=$T/dm/state "$ROOT/bin/jg-squad-lead-dormant.sh" sweep 2>&1; }
+  assert_equals "$(ROWS=$T/rows.json sweep_lead)" "" "a store that cannot be read must keep its lead awake"
+  rm "$LOG.down"
+  assert_equals "$(ROWS=$T/rows.json sweep_lead)" "" "a lead with open rows must stay awake"
+  printf '[]\n' > "$T/none.json"
+  assert_contains "$(ROWS=$T/none.json sweep_lead)" "asked: lead" "a lead with an empty store may sleep"
+  mv "$T/bd.state" "$T/bd/state"
 else
   printf 'skip: providers: tasks-axi is not installed\n'
 fi
