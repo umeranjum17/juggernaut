@@ -39,9 +39,9 @@
 # Explicit paths always bypass this file-set selection and lint exactly the
 # given paths, matching the same config, without the workflow YAML check.
 # Explicit core bin/ and bin/backends/ scripts still receive the
-# backend-purity check. The backend-purity check rejects direct Beads CLI
-# invocations in the core bin/ and bin/backends/ scripts so every configured
-# backlog backend follows the same tasks-axi lifecycle path.
+# backend-purity check. The backend-purity check rejects a direct Beads CLI
+# invocation in the core bin/ and bin/backends/ scripts, because bd runs only
+# through bin/jg-beads.sh, which holds its guards.
 #
 # Lint defaults to two concurrency-limited workers over two stable logical
 # shards, and each worker runs ONE canonical root per ShellCheck process, so a
@@ -589,9 +589,7 @@ jg_lint_run_deprecated() {
   fi
 }
 
-# Backend adapters belong behind tasks-axi. Keep direct Beads CLI invocations
-# out of juggernaut's core scripts so every configured backend follows the same
-# lifecycle path.
+# bd runs only through bin/jg-beads.sh, the one script allowed to name it.
 jg_lint_run_backend_purity() {
   local findings path canonical
   local -a purity_roots
@@ -805,12 +803,13 @@ jg_lint_run_backend_purity() {
       segments[++count]=current
       return count
     }
+    FILENAME ~ /(^|\/)bin\/jg-beads\.sh$/ { next }
     /^[[:space:]]*#/ { next }
     {
       count=split_commands($0, segments)
       for (i=1; i<=count; i++) {
         if (invokes_bd(segments[i])) {
-          print FILENAME ":" FNR ": direct Beads CLI invocation bypasses tasks-axi"
+          print FILENAME ":" FNR ": direct Beads CLI invocation bypasses bin/jg-beads.sh"
           break
         }
       }
