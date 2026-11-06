@@ -1125,9 +1125,9 @@ github_shipped_release_refusal() {  # <base> <pr-number>
   esac
   jg_release_older_than "$base" "$open" || open=
   if [ -n "$open" ]; then
-    printf '%s\n' "  - $base already shipped (its pull request into $default is merged), so a merge into it never reaches the default branch; the open release branch is $open - run: gh pr edit $number --base $open"
+    printf '%s\n' "  - $base already shipped (its release pull request into $default is merged, or the branch was closed by carrying its work to a newer release), so a merge into it never reaches the default branch; the open release branch is $open - run: gh pr edit $number --base $open"
   else
-    printf '%s\n' "  - $base already shipped (its pull request into $default is merged) and no newer release branch is open, so a merge into it never reaches the default branch; open the next release branch, then retarget this pull request"
+    printf '%s\n' "  - $base already shipped (its release pull request into $default is merged, or the branch was closed by carrying its work to a newer release) and no newer release branch is open, so a merge into it never reaches the default branch; open the next release branch, then retarget this pull request"
   fi
   return 1
 }

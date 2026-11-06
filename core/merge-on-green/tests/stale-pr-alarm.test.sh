@@ -30,6 +30,7 @@ cat > "$d/gh-axi" <<'STUB'
 case $2 in
   user) f=user ;;
   repos/ex/r/pulls\?state=open*) f=pulls-open ;;
+  repos/ex/r/branches*) f=branches ;;
   repos/ex/r/pulls\?state=closed\&base=main\&head=ex:release/c-5*) f=pulls-closed-merged ;;
   repos/ex/r/pulls\?state=closed*) f=pulls-closed-none ;;
   repos/ex/r/commits/sha102/check-runs|repos/ex/r/commits/sha104/check-runs|repos/ex/r/commits/sha110/check-runs) f=check-runs-some ;;
@@ -79,6 +80,14 @@ touch "$STUB_FAIL"
 check "a forge failure is silent" "$(alarm)" ""
 rm "$STUB_FAIL"
 check "after the failure nothing repeats" "$(alarm)" ""
+
+# A closed release branch recorded as carried alerts like a shipped one and names the live release branch.
+printf '[{"name":"release/c-5"},{"name":"release/c-6"},{"name":"release/c-12"},{"name":"main"}]\n' > "$STUB_FIX/branches.json"
+rm -rf "$FM/data/jg-merge-on-green/stale-pr-alarm"; alarm >/dev/null
+mkdir -p "$FM/config"; printf '# closed\nrelease/c-6\n' > "$FM/config/version-branch-carried"
+check "a carried release base alerts and names the live release branch" "$(alarm | grep "$U/105:")" "stale-pr-alarm: $U/105: base branch release/c-6 is a closed release branch whose work was carried; the live release branch is release/c-12"
+check "the carried alert is not repeated" "$(alarm | grep -c "$U/105" || true)" 0
+rm "$FM/config/version-branch-carried"
 
 # merge-on-green.sh check runs the alarm too: a fresh memory makes both PRs alert through the one watcher check.
 rm -rf "$FM/data/jg-merge-on-green/stale-pr-alarm"
