@@ -1808,7 +1808,8 @@ detect_unit_homes() {
   for unit in jg-sentinel "$prefix-wake-engine" "$prefix-wake-watcher" "$prefix-router"; do
     systemctl --user is-active --quiet "$unit" 2>/dev/null || continue
     env=$(systemctl --user show -p Environment --value "$unit" 2>/dev/null) || continue
-    served=$(printf '%s\n' "$env" | tr ' ' '\n' | sed -n 's/^JG_HOME=//p' | head -n 1)
+    # A home path may hold spaces, so cut at the next NAME= word, not at the first space.
+    served=$(printf '%s\n' "$env" | sed -n 's/^\(.* \)\{0,1\}"\{0,1\}JG_HOME=\(.*\)$/\2/p' | sed 's/[[:space:]]\{1,\}"\{0,1\}[A-Za-z_][A-Za-z0-9_]*=.*$//; s/"$//')
     [ -n "$served" ] || continue
     [ "$served" -ef "$JG_HOME" ] 2>/dev/null && continue
     if [ "$unit" = jg-sentinel ]; then
