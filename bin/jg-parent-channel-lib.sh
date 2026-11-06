@@ -164,7 +164,14 @@ jg_parent_channel_append_once() {  # <path> <line>
   local path=$1 line=$2
   # The captain voice file rewrites the note before it is compared or written, so a retry of the
   # same event rewrites to the same line and stays deduplicated. A line is never held back here.
-  if jg_voice_apply parent-channel "$line" --line; then line=$JG_VOICE_OUT; fi
+  # A machine close line (`resolved [key=waiting-timer-...]: waiting-timer-...: ...`) is a marker the
+  # reader matches, not prose for the captain, so it reaches the channel as written.
+  local mkey mnote
+  if [ "$(status_line_verb "$line")" = resolved ] \
+    && mkey=$(_jg_decision_key "$line" "") && mnote=$(status_line_note "$line") \
+    && case $mkey in waiting-timer-*) _jg_decision_key_transition_allowed "$mkey" "$mnote" ;; *) false ;; esac; then
+    :
+  elif jg_voice_apply parent-channel "$line" --line; then line=$JG_VOICE_OUT; fi
   if [ -e "$path" ] || [ -L "$path" ]; then
     [ -f "$path" ] && [ ! -L "$path" ] || return 1
   else
