@@ -125,6 +125,23 @@ callers() {  # The read shapes each backlog caller parses.
   same list --json
   assert_contains "$(. "$ROOT/bin/jg-supervision-lib.sh"; jg_ready_work_rows "$T/bd")" "jg-one-a acme" "supervision must see ready work"
 }
+writes() {  # The write shapes backlog callers send, then what each provider reads back.
+  local one=https://github.com/o/r/pull/1
+  same add jg-w1 "no type" --body why
+  same add jg-w1 "[feature] One" --kind ship --repo acme --priority 1 --body why
+  same add jg-w1 "[feature] One" --priority 1 --body why
+  same add jg-w2 "[feature] Two" --priority 2 --body why --blocked-by jg-w1 --pr "$one" --report data/w2/report.md
+  same add jg-w3 "[feature] Three" --priority 2 --body why --blocked-by nope
+  same add jg-w4 "[feature] Four" --priority 3 --body why --json
+  same add jg-w5 --priority 2
+  same add jg-w5 "[feature] Five" --priority 2 --body why --pr nope
+  same add jg-w5 "[feature] Five" --priority 2 --body why --body-file /dev/null
+  same add jg-w5 "[feature] Five" --priority 2 --body why --report nope
+  same show jg-w1 --full
+  same show jg-w2
+  same list
+  same ready
+}
 if command -v tasks-axi >/dev/null; then
   mkdir -p "$T/ta/data" "$T/bd/config"
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$T/ta/data/backlog.md"
@@ -149,9 +166,9 @@ JSON
   out=$(JG_HOME="$T/bd" "$CLI" list 2>&1) && fail "a beads home with no store must refuse"
   assert_contains "$out" "beads-dir" "the refusal must name the store file"
   printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
-  out=$(JG_HOME="$T/bd" "$CLI" add x y 2>&1)
-  expect_code 2 $? "a write on beads"
-  assert_contains "$out" "reads only" "a write must be refused"
+  out=$(JG_HOME="$T/bd" "$CLI" reopen x 2>&1)
+  expect_code 2 $? "an unserved verb on beads"
+  assert_contains "$out" "does not serve reopen" "an unserved verb must be refused"
   ROWS=$T/rows.json callers
 else
   printf 'skip: providers: tasks-axi is not installed\n'
@@ -201,6 +218,9 @@ else
     bd_ close jg-fin --reason fin
     printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
     TMPDIR=$T callers  # The jail's /tmp is read-only.
+    TMPDIR=$T writes
+    out=$(TMPDIR=$T JG_HOME="$T/bd" "${jail[@]}" "$CLI" add --mint "[feature] Mint me" --prefix zz --priority 2 --body why --json) || fail "real mint"
+    assert_contains "$out" '"id": "zz-feature-mint-me-' "a minted id must carry the prefix and the title"
   fi
   id=jg-one-a
   # A held row needs a reason on every route in, and the store itself refuses each one.

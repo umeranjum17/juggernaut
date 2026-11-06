@@ -15,7 +15,8 @@
 # backlog mutations, but validated squad_lead handoffs always use `tasks-axi mv`.
 # `config/backlog-backend=beads` serves backlog reads from this home's bd store,
 # named by the absolute BEADS_DIR in `config/beads-dir`; jg_backlog_beads_read
-# owns that read and bin/jg-tasks-axi.sh refuses every other verb on it for now.
+# owns that read, jg_backlog_beads_write owns add, and
+# bin/jg-tasks-axi.sh refuses every other verb on it for now.
 # Absent or any other value keeps the default tasks-axi backend path, falling
 # back to manual mutation when the tool is not compatible.
 # jg_tasks_axi_backend_resolve owns backend precedence: TASKS_AXI_BACKEND when
@@ -207,15 +208,29 @@ jg_backlog_backend_beads() {
 # Reads through bin/jg-beads.sh, the only way bd runs; bin/jg-beads-view.py owns the
 # field mapping. bd's stderr carries routine warnings, so it surfaces only on failure.
 # The store path is never derived, because a store inside a home's git clone is refused.
-jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready> [args...]
-  local config_dir=$1 bin_dir store err rows rc=0
-  shift
-  bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-  store=$(tr -d '[:space:]' < "$config_dir/beads-dir" 2>/dev/null) || store=
+jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
+  local store
+  store=$(tr -d '[:space:]' < "$1/beads-dir" 2>/dev/null) || store=
   if [ -z "$store" ]; then
-    printf 'jg-tasks-axi: the beads backlog needs its store: put an absolute BEADS_DIR in %s/beads-dir\n' "$config_dir" >&2
+    printf 'jg-tasks-axi: the beads backlog needs its store: put an absolute BEADS_DIR in %s/beads-dir\n' "$1" >&2
     return 2
   fi
+  printf '%s\n' "$store"
+}
+
+jg_backlog_beads_write() {  # <config_dir> <add|create> [args...]
+  local bin_dir store
+  store=$(jg_backlog_beads_store "$1") || return 2
+  shift
+  bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  BEADS_DIR=$store python3 "$bin_dir/jg-beads-write.py" "$@"
+}
+
+jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready> [args...]
+  local bin_dir store err rows rc=0
+  store=$(jg_backlog_beads_store "$1") || return 2
+  shift
+  bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   err=$(mktemp) || return 2
   rows=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --all --limit 0 --json 2>"$err") || rc=$?
   [ "$rc" -eq 0 ] || cat -- "$err" >&2

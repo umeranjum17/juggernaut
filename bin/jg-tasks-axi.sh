@@ -215,25 +215,26 @@ done
 ARGS=(${_jg_keyed[@]+"${_jg_keyed[@]}"})
 unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
+JG_BEADS=0
 if jg_backlog_backend_beads "$JG_HOME/config"; then
   beads_read() { jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}; }
   set -o pipefail
   case "${1:-}" in
-    show|view) beads_read | key_tool annotate-show ;;
-    list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi ;;
-    ready) beads_read ;;
-    *) fail "the beads backlog serves reads only so far; ${1:-this command} is not served" ;;
+    show|view) beads_read | key_tool annotate-show; exit $? ;;
+    list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
+    ready) beads_read; exit $? ;;
+    add|create) JG_BEADS=1 ;;
+    *) fail "the beads backlog does not serve ${1:-this command} yet" ;;
   esac
-  exit $?
 fi
-command -v tasks-axi >/dev/null 2>&1 || fail "tasks-axi is not on PATH; run bin/jg-bootstrap.sh for the install command"
+[ "$JG_BEADS" = 1 ] || command -v tasks-axi >/dev/null 2>&1 || fail "tasks-axi is not on PATH; run bin/jg-bootstrap.sh for the install command"
 
 JG_BACKLOG_TRANSITION_ERROR=
-if ! jg_backlog_tasks_axi_addressing "$DATA"; then
+if [ "$JG_BEADS" = 0 ] && ! jg_backlog_tasks_axi_addressing "$DATA"; then
   fail "${JG_BACKLOG_TRANSITION_ERROR:-data directory cannot be resolved: $DATA}"
 fi
 
-if [ -n "$JG_BACKLOG_AXI_FILE" ]; then
+if [ -n "${JG_BACKLOG_AXI_FILE:-}" ]; then
   if [ -L "$JG_BACKLOG_AXI_FILE" ]; then
     fail "$JG_BACKLOG_AXI_FILE is a symlink; a tasks-axi write would replace it with a regular file and fork the backlog - make it this home's real file"
   fi
@@ -242,9 +243,13 @@ else
   unset TASKS_AXI_FILE
 fi
 
-cd "$JG_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $JG_BACKLOG_AXI_ROOT"
+[ "$JG_BEADS" = 1 ] || cd "$JG_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $JG_BACKLOG_AXI_ROOT"
 
-tasks_axi() { tasks-axi "$@"; }
+if [ "$JG_BEADS" = 1 ]; then
+  tasks_axi() { jg_backlog_beads_read "$JG_HOME/config" "$@"; }
+else
+  tasks_axi() { tasks-axi "$@"; }
+fi
 
 # The typed public-followup schema in the pinned tasks-axi spells a squad-lead
 # work home with the pre-rename prefix, so this boundary translates in both
@@ -256,6 +261,8 @@ jg_taxi_stream_from_wire() {
 }
 # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
+# A Beads store never prunes, so there is no archive to guard.
+[ "$JG_BEADS" = 0 ] || guard_captain_ask_archive() { :; }
 captain_guard() {  # <tasks-axi args>
   local prune_state="done" no_prune=0 keep_arg='' keep_next=0 sub=''
   local verb id='' value=0 title_next=0 state_next=0 has_title=0 new_title='' arg
@@ -412,6 +419,10 @@ CLOSE_NOTE_ARGS=()
 captain_guard ${ARGS[@]+"${ARGS[@]}"}
 if [ "${#CLOSE_NOTE_ARGS[@]}" -gt 0 ]; then
   case " ${ARGS[*]} " in *" --note "*) ;; *) ARGS+=("${CLOSE_NOTE_ARGS[@]}") ;; esac
+fi
+if [ "$JG_BEADS" = 1 ]; then
+  jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
+  exit $?
 fi
 case "${1:-}" in
   show|view|list)
