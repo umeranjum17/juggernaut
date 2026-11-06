@@ -30,6 +30,9 @@ cat > "$t/flow.json" <<JSON
  {"home":"alpha","task":"a-one","open":true,"stage":"working","kind":"ship","project":"alpha-app","reason":"building","seconds_in_stage":5,"open_waits":[{"reason":"building"}],"times":{"dispatched":$((now-60)),"working":$((now-50)),"merged":null}},
  {"home":"alpha","task":"old","open":false,"stage":"done","kind":"ship","project":"alpha-app","times":{"dispatched":$((now-7200)),"merged":$((now-3600))}}]}
 JSON
+printf '{"at":1,"services":{"bus":{"open":true,"since":%s,"cause":"JetStream is off"},"disk":{"open":false}}}\n' "$((now-300))" > "$t/home/state/health.json"
+printf '{"service":"bus","start":%s,"end":%s,"cause":"JetStream is off"}\n{"service":"bus","start":%s,"end":%s,"cause":"JetStream is off"}\n{"service":"disk","start":%s,"end":%s,"cause":"old"}\n' \
+  "$((now-7200))" "$((now-6900))" "$((now-4000))" "$((now-3700))" "$((now-9*86400))" "$((now-9*86400+60))" > "$t/home/state/outage-history.jsonl"
 out="$t/fleet.json"
 "$here/lookout-juggernaut" --home "$t/home" --proc "$t/proc" --flow-json "$t/flow.json" > "$out"
 python3 - "$out" <<'PY'
@@ -44,6 +47,10 @@ lane = d['lanes'][0]
 assert (lane['id'], lane['stage'], lane['project'], lane['waiting_on'], lane['pr_url']) == (
     'alpha/a-one', 'working', 'alpha-app', 'building', 'https://github.com/o/r/pull/1')
 assert d['workers'][0]['model'] == 'claude-haiku-5-5'
+inc = d['incidents']
+assert [i['id'] for i in inc] == ['outage-open-bus', 'outage-7d-0'], inc
+assert inc[0]['summary'] == 'Open outage, bus: JetStream is off' and 'resolved_at' not in inc[0]
+assert inc[1]['summary'] == 'JetStream is off: 2 outages, 10 min in 7 days', inc[1]
 assert d['merges'][0]['repo'] == 'o/r' and d['merges'][0]['lane'] == 'alpha/old'
 PY
 npx --yes lookout-axi@0.1.0 check --adapter "$out"

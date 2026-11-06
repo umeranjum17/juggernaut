@@ -109,6 +109,42 @@ def quota_doc(home):
     return rows
 
 
+def incident_rows(home, now):
+    """Outages from the bus health run: each open one first, then one row per cause for the last 7 days (count and minutes)."""
+    state = os.path.join(home, 'state')
+    rows = []
+    try:
+        record = load(os.path.join(state, 'health.json'))
+    except (OSError, ValueError):
+        record = {}
+    for name, o in sorted((record.get('services') or {}).items()):
+        if isinstance(o, dict) and o.get('open'):
+            rows.append({'id': 'outage-open-' + name, 'at': iso(o.get('since') or now), 'severity': 'crit', 'kind': 'outage',
+                         'summary': 'Open outage, %s: %s' % (name, o.get('cause') or 'no cause recorded')})
+    causes = {}
+    try:
+        with open(os.path.join(state, 'outage-history.jsonl')) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+            start, end = float(row['start']), float(row['end'])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if now - end > 7 * 86400:
+            continue
+        c = causes.setdefault(str(row.get('cause') or 'no cause recorded'), {'n': 0, 'secs': 0, 'last': 0})
+        c['n'] += 1
+        c['secs'] += max(0, end - start)
+        c['last'] = max(c['last'], end)
+    for i, (cause, c) in enumerate(sorted(causes.items(), key=lambda kv: -kv[1]['last'])):
+        rows.append({'id': 'outage-7d-%d' % i, 'at': iso(c['last']), 'resolved_at': iso(c['last']), 'severity': 'warn', 'kind': 'outage',
+                     'summary': '%s: %d outage%s, %d min in 7 days' % (cause, c['n'], '' if c['n'] == 1 else 's', round(c['secs'] / 60))})
+    return rows
+
+
 def build_fleet(home, build=True, proc='/proc', flow_json=None):
     data = refresh(home, build, flow_json)
     now = data['at']
@@ -150,7 +186,7 @@ def build_fleet(home, build=True, proc='/proc', flow_json=None):
                             'started_at': iso(started), 'last_activity_at': iso(updated)})
     return {'schema': 'lookout.fleet.v1', 'generated_at': iso(time.time()), 'name': 'Juggernaut fleet',
             'hosts': [host], 'homes': homes, 'lanes': lanes, 'workers': workers, 'quota': quota_doc(home),
-            'merges': merges, 'releases': [], 'incidents': []}
+            'merges': merges, 'releases': [], 'incidents': incident_rows(home, now)}
 
 
 def main(argv):
