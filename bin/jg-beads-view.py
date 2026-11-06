@@ -4,8 +4,9 @@
 Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|show|view> [args...]
 
 Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never starts bd.
+bin/jg-beads-write.py imports it, so a write answers in the same shape.
 A held row is status on_hold, blocked or deferred, and reads as queued; kind is metadata.kind, else issue_type;
-repo is the project:<repo> label; links are external_ref and metadata.prs.
+repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
 Refusals print tasks-axi's error lines on stdout: exit 2 for a bad flag, exit 1 for an unknown id.
 """
 import json
@@ -18,6 +19,7 @@ ROW = ["id", "state", "kind", "repo", "title"]
 SHOW = ["id", "title", "state", "blocked", "blocked_by", "held", "hold_reason", "hold_kind", "hold_until",
         "kind", "repo", "priority", "created", "closed", "deps", "links", "body"]
 EXTRA = sorted(set(SHOW) - set(ROW)) + ["delivery_state"]
+CLIP = {"title": 80, "body": 500}
 STATES = ["queued", "in_flight", "done", "held"]
 PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?([eE][+-]?\d+)?\Z")
 MUST_QUOTE = re.compile(r'[,:"\\\[\]{}\x00-\x1f]')
@@ -51,6 +53,7 @@ def flags(args, valued, switches):
             positional.append(arg)
         elif name in valued:
             found[name] = value if eq else args.pop(0) if args else ""
+            found.setdefault(name + "+", []).append(found[name])
         elif arg in switches:
             found[arg] = True
         else:
@@ -58,14 +61,17 @@ def flags(args, valued, switches):
     return found, positional
 
 
+def split(value):
+    return value.split(",") if isinstance(value, str) else value or []
+
+
 def task(row, rows):
     meta = row.get("metadata") or {}
     deps = [d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "blocks"]
     waiting = [d for d in deps if rows.get(d, {}).get("status") != "closed"]
     held = row.get("status") in HELD
-    prs = meta.get("prs") or []
-    prs = [prs] if isinstance(prs, str) else prs
-    links = dict.fromkeys(filter(None, [row.get("external_ref"), *prs]))
+    links = ["pr:" + url for url in dict.fromkeys(filter(None, [row.get("external_ref"), *split(meta.get("prs"))]))]
+    links += ["report:" + path for path in split(meta.get("reports"))]
     repos = [label[8:] for label in row.get("labels") or [] if label.startswith("project:")]
     return {
         "id": row["id"], "title": row.get("title", ""), "state": STATE.get(row.get("status"), "queued"),
@@ -76,26 +82,38 @@ def task(row, rows):
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
         "created": (row.get("created_at") or "-")[:10], "closed": (row.get("closed_at") or "-")[:10],
         "deps": ",".join("blocked-by:" + d for d in deps) or "none",
-        "links": ",".join("pr:" + url for url in links) or "none", "body": row.get("description", ""),
+        "links": ",".join(links) or "none", "body": row.get("description", ""),
         "delivery_state": meta.get("delivery_state", "-"),
     }
+
+
+def clip(item, field, hint):
+    value, limit = item[field], CLIP.get(field) if hint else None
+    if limit and len(value) > limit:
+        return "%s\n... (truncated, %d chars total - use %s to see complete text)" % (value[:limit], len(value), hint)
+    return value
 
 
 def table(name, tasks, fields):
     print("%s[%d]{%s}:" % (name, len(tasks), ",".join(fields)))
     for item in tasks:
-        print("  " + ",".join(scalar(item[field]) for field in fields))
+        print("  " + ",".join(scalar(clip(item, field, "show %s --full" % item["id"])) for field in fields))
+
+
+def card(item, hint=None):
+    print("task:")
+    for field in SHOW:
+        value = clip(item, field, hint)
+        print("  %s: %s" % (field, scalar(value)))
 
 
 def show(tasks, args):
-    _, ids = flags(args, (), ("--full",))
+    found, ids = flags(args, (), ("--full",))
     if len(ids) != 1:
         refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi show <id> [--full]")
     for item in tasks:
         if item["id"] == ids[0]:
-            print("task:")
-            for field in SHOW:
-                print("  %s: %s" % (field, scalar(item[field])))
+            card(item, None if "--full" in found else "--full")
             if item["blocked"] == "yes":
                 print("help[2]:\n  - Run `tasks-axi unblock %s --by <other>` to clear a blocker" % ids[0])
                 print("  - Run `tasks-axi start %s` to move it to in flight" % ids[0])
