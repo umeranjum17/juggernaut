@@ -69,6 +69,10 @@
 #     lines. Anything else - refactors, extra proof, tooling,
 #     follow-ups - belongs in a report, not the backlog. The local presence flag
 #     config/backlog-intake-loose in this home turns the check off;
+#   - `add` (or `create`) whose title or body is new OpenClaw work: owner rule
+#     owner-rule-286ed286 refuses it, even with config/backlog-intake-loose;
+#     work that removes OpenClaw or moves a product to Pi still passes
+#     (bin/jg-openclaw-rule.sh owns how the two are told apart);
 #   - `add`/`create` of a [captain-ask] item with a --priority other than 0, or
 #     `update`/`edit` that would set one on a [captain-ask] row (or retitle a
 #     row to [captain-ask] with one): an owner ask is top priority. Such an add
@@ -363,6 +367,7 @@ captain_ask_first() {
 case "${1:-}" in
   add|create)
     item_args ${ARGS[@]+"${ARGS[@]}"}
+    "$SCRIPT_DIR/jg-openclaw-rule.sh" check "$ITEM_TITLE" "$ITEM_BODY" || exit 1
     intake_check
     captain_ask_first
     PRIORITY_CHECK="${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}"

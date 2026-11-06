@@ -1910,6 +1910,15 @@ require_released_captain_hold || exit 1
 # the orphaned forge child can still merge on the lapsed away authority.
 case "$PROVIDER" in
   github)
+    # Owner rule owner-rule-286ed286: a pull request that adds OpenClaw work does not merge
+    # (bin/jg-openclaw-rule.sh owns the rule and how a removal is told apart). An unreadable
+    # title refuses, as every other live read here does. GitLab and Forgejo are not read.
+    if ! openclaw_title=$(gh pr view "$URL" --json title -q .title 2>/dev/null) \
+      || ! openclaw_body=$(gh pr view "$URL" --json body -q .body 2>/dev/null); then
+      echo "error: merge refused: could not read the pull request title and body for the OpenClaw rule" >&2
+      exit 1
+    fi
+    "$SCRIPT_DIR/jg-openclaw-rule.sh" check "$openclaw_title" "$openclaw_body" >&2 || exit 1
     merge_output=
     merge_args=()
     JG_PR_GITHUB_CALLER_METHOD=$(caller_merge_method "$@")
