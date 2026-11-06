@@ -18,7 +18,7 @@ the shell it deletes, and deletes that shell in the same change.
 
 1. **Done.** The landed-work test: the forge proof (GitHub through `gh`, Forgejo through
    `tea api`), the PR lookup by branch, the patch-id containment that survives squash and rebase,
-   the default-branch content check, and the default-branch read. 29 shell lines remain in
+   the content check against the branch that carries the merge, and the default-branch read. 29 shell lines remain in
    `bin/jg-teardown.sh` to marshal the facts the command cannot read from the worktree.
 2. **Done.** The worktree safety check (`safety`): the dirty, unpushed and unmerged reads, the
    local-only rule, the untracked-path report and the lock-blocked answer (exit 3). The wait for a

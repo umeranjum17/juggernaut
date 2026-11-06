@@ -2,7 +2,7 @@
 # jg-teardown-core.sh - the teardown decisions' entry point: build the Go command once, then run it.
 #
 # The landed-work test - "has this worktree's work landed?", the forge proof and the
-# default-branch content check teardown must pass before it discards a worktree - is owned by the
+# content check against the branch that carries the merge teardown must pass before it discards a worktree - is owned by the
 # Go command at core/teardown/cmd/jg-teardown, and its header is the one owner of that contract.
 # bin/jg-teardown.sh gathers the task's recorded facts and calls this dispatcher; the shell test
 # it held is deleted, so this file adds no behaviour. The binary is built on first use inside the
