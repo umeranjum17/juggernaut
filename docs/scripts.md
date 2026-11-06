@@ -126,6 +126,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-task-inbox-lib.sh`   | Single owner of durable steering-inbox records, acknowledgement, doorbells, and the delivery-attempt ladder |
 | `jg-pending-reply-lib.sh` | Parent-owned Squad Lead pending-reply expectations, recovery, and keyed escalation lifecycle |
 | `jg-squad-lead-report.sh` | Optional helper that resolves the parent channel itself and appends a correlated status or document-pointer report |
+| `jg-ticket-link-guard.sh` | Refuse a captain-facing reply that names no board ticket link, and name the one-line fix; run before a lead's parent-channel append and before a supervision captain outcome is stored |
 | `jg-extension.mjs`       | Bind, inspect, verify, and strictly invoke trusted external process-event adapter packages |
 | `jg-extension-launch-barrier.mjs` | Publish one exact static core-owned invocation group before package code runs |
 | `jg-extension.sh`        | Expose extension binding commands through the tracked shell and remote-home command boundary |
