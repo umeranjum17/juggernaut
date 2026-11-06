@@ -126,6 +126,16 @@ done_keep = 10
 TOML
 }
 
+# Give a fixture home a backlog holding one ticket, so a design card (a `--must design-pick`
+# post, which must name the ticket that raised it) has a raising ticket to name.
+jg_test_raising_ticket() {  # <home> [<ticket>=m1]
+  mkdir -p "$1/data"
+  jg_test_tasks_toml "$1/.tasks.toml"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$1/data/backlog.md"
+  (cd "$1" && JG_TASK_PRIORITY_CHECK=/nonexistent tasks-axi add "${2:-m1}" "Ship the fix" --kind ship --repo sample >/dev/null 2>&1) \
+    || fail "could not file the raising ticket ${2:-m1}"
+}
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034

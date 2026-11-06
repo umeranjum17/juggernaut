@@ -3056,6 +3056,15 @@ if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
       # shellcheck source=bin/jg-captain-ask-lib.sh
       . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
       guard_captain_ask_build "$ID" "$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$ID" --full)"
+      # A decision open on this ticket or on linked work blocks the start.
+      SPAWN_LINKED_STATUS=0
+      SPAWN_LINKED_CALLS=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
+        "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$ID") || SPAWN_LINKED_STATUS=$?
+      case "$SPAWN_LINKED_STATUS" in
+        0) fail "task $ID is linked to a decision still open for the captain: $(printf '%s\n' "$SPAWN_LINKED_CALLS" | awk -F'\t' 'NF { printf "%s%s (%s)", sep, $1, $2; sep = "; " }'); answer it, then start the task" ;;
+        1) ;;
+        *) fail "could not determine whether a decision linked to task $ID is still open for the captain" ;;
+      esac
     fi
   elif [ "$JG_BACKLOG_ROW_RESULT" = not_found ]; then
     echo "error: task $ID has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/jg-tasks-axi.sh add $ID '[<type>] <title>' --kind $KIND --body '<why>') and re-run" >&2

@@ -325,6 +325,9 @@ Load `fleet-records` before adding, editing, handing off, or closing a backlog i
 
 A decision is simply a task held for the captain: create the task with `bin/jg-tasks-axi.sh add` when needed, then always hold it through `bin/jg-captain-hold.sh hold <id> --reason "<reason>"`, with `--until <date>` when the captain defers it.
 A held item never stops the fleet: keep it held and dispatch everything it does not block.
+An open decision does block the work linked to it: a task body names sibling work with a `linked-to: <ticket-id>[, <ticket-id>]` line, or a `parent: <ticket-id>` line naming a real ticket, and `bin/jg-captain-hold.sh blocking <id>` makes `bin/jg-spawn.sh` and `bin/jg-pr-merge.sh` refuse that work until the decision is answered.
+A held task, or a `[design-ux]` ticket with no recorded pick, is open from the moment it is filed; a `[captain-ask]` ticket is an order and counts only while held.
+A design card (`jg-question-card.sh post --must design-pick`) must name its raising ticket with `--raised-by <ticket>`, and the post files the `[design-ux]` row linked to it, so the open pick stops that ticket's merge.
 Captain calls discovered by investigations or visual reviews follow `captain-hold-lifecycle`, which owns their completion gate and recorded-answer rules.
 Re-evaluate queued work after every teardown and heartbeat, and also after a recorded PR-ready handoff when `config/project-capacity` caps that project, dispatching items only when dependencies, time gates, and project capacity have cleared.
 
