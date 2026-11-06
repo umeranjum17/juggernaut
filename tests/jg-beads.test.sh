@@ -207,6 +207,7 @@ both() {  # <op> <id> [args...]: a gate that answers on the old store answers th
   old=$(step "$T/ta" "$@")
   new=$(step "$T/bd" "$@")
   [ "$old" = "$new" ] || fail "transition $*: providers differ"$'\n'"tasks-axi: $old"$'\n'"beads: $new"
+  printf 'ok - both stores answer: %s\n' "$new"
 }
 transitions() {
   local out one=https://github.com/o/r/pull/9 h
@@ -269,6 +270,7 @@ SH
     after=$("${jail[@]}" "$WRAPPER" show "$id" --json 2>/dev/null)
     assert_contains "$after" "\"status\": \"$to\"" "$1 $id must leave the other writer's status"
     assert_not_contains "$after" "$one" "$1 $id must write nothing"
+    printf 'ok - a second writer set %s first, and the store refused: %s\n' "$to" "$out"
     rm -f "$T/bd/state/$id.meta"
   }
   same add jg-t5 "[feature] Race" --priority 2 --body why
