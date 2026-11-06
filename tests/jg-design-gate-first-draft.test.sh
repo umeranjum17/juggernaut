@@ -99,3 +99,36 @@ jg_design_done_gate "$st" c1 "$st/c1.meta" "$code_head" >/dev/null \
 meta c2
 jg_design_done_gate "$st" c2 "$st/c2.meta" "$(git -C "$repo" rev-parse main)" >/dev/null || fail "a non-design task was refused"
 pass "the merge gate resolves the receipt, and an ordinary task and a code task stay unaffected"
+
+# One lane, several pull requests: the copy sits at a later slice that carries no receipt,
+# while the pull request being merged holds a PASS receipt with its first-draft line. The
+# design rule is measured at that pull request's head (the forge head, else the recorded
+# pr_head), never the copy's HEAD, and a PR head with no first-draft line still refuses.
+git -C "$repo" checkout -q work
+pr_head=$(git -C "$repo" rev-parse HEAD)
+printf 'later slice\n' > "$repo/slice2.txt"
+git -C "$repo" add -A && git -C "$repo" commit -qm 'second slice'
+later_head=$(git -C "$repo" rev-parse HEAD)
+[ "$later_head" != "$pr_head" ] || fail "fixture: the later slice must move HEAD"
+# Forge reads after the design gate are not this test's subject.
+jg_dod_pr_checks_clear() { return 0; }
+jg_dod_recorded_pr_on_forge() { return 0; }
+jg_dod_pr_outside_origin() { return 0; }
+jg_receipts_accept_done() { return 0; }
+pr_url=https://github.com/o/r/pull/7
+accept() {  # <id> [<forge-head>]
+  jg_dod_accept_ship_done ship direct-PR "$repo" some-proj "done: PR $pr_url" "$st" "$1" "$st/$1.meta" "" ${2:+"$2"} 2>&1
+}
+meta s1 design_call=yes "pr=$pr_url" "pr_head=$pr_head"
+receipt s1 "$later_head"
+out=$(accept s1) && fail "no receipt at either head was accepted: $out"
+receipt s1 "$pr_head" "$st/make-both.json"
+out=$(accept s1) || fail "the PR head's PASS receipt with a first-draft line was refused at the later copy HEAD: $out"
+out=$(accept s1 "$pr_head") || fail "the forge head's receipt was refused at the later copy HEAD: $out"
+receipt s1 "$pr_head"
+out=$(accept s1) && fail "a receipt at the PR head with no first-draft line was accepted: $out"
+assert_contains "$out" "first-draft receipt" "the refusal must name the missing line at the PR head"
+receipt s1 "$pr_head" "$st/judge-only.json"
+out=$(accept s1) && fail "a judge-only receipt at the PR head was accepted: $out"
+assert_contains "$out" "judge-only run" "the refusal must stay as strict at the PR head"
+pass "a lane at a later slice is measured at the recorded PR head, and a PR head with no first-draft line still refuses"
