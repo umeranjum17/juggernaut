@@ -32,6 +32,12 @@ test_classes() {
   assert_equals "$(route "$home" "$state" check "$state/tickets-sync.check.sh" \
     'tickets-sync: 1 homes read; 2 tickets changed')" batch \
     "a tickets poll summary must not wake a model"
+  assert_equals "$(route "$home" "$state" check "$state/route-chain.check.sh" \
+    'route-chain: head=route:commandcode/x down=route:ollama-cloud/y(ollama_credit_empty)')" now \
+    "a changed route state must wake at once"
+  assert_equals "$(route "$home" "$state" check "$state/route-chain.check.sh" \
+    'route-chain probe: quota-axi timed out')" batch \
+    "any other route-chain output rides the digest"
   printf 'working [at=1]: editing\n' > "$state/lane.status"
   printf 'needs-decision [at=2]: pick one\n' > "$state/pick.status"
   assert_equals "$(route "$home" "$state" signal pick.status "signal: x")" now \

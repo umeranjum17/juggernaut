@@ -70,6 +70,10 @@ batch    check   post-merge-ci-*  *
 # a board row the work has already settled, or a pass summary, is not a decision.
 # bin/jg-ticket.sh writes the state where the work happens, so the check that
 # reports any remainder rides the next digest instead of waking a model.
+# The route-chain probe prints a line only when a route moved or went down or up, so each line
+# is news and wakes at once; any other output from it (an error) rides the digest.
+now      check   *route-chain.check.sh      *route-chain: head=*
+batch    check   *route-chain.check.sh      *
 batch    check   *tickets-stale.check.sh    *
 batch    check   *tickets-sync.check.sh     *
 # Wakes that need no model (a class may carry `@condition`; bin/jg-wake-lib.sh owns them):
