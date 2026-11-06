@@ -1517,7 +1517,7 @@ backlog_record_reconcile() {
       # already owns. A held row is the captain's to move, and a closed row is a
       # contradiction this sweep must not resolve by resurrecting the item.
       if [ "$row" = "queued no no" ]; then
-        if jg_backlog_start "$DATA" "$id"; then
+        if jg_backlog_lane_start "$meta" "$DATA" "$id" "$STATE"; then
           echo "BOOTSTRAP_INFO: marked $id in flight to match the worker this home already owns"
         else
           echo "BACKLOG_RECONCILE: $id: worker record exists but its backlog item could not be moved to In flight: $JG_BACKLOG_TRANSITION_ERROR"

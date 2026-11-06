@@ -188,6 +188,11 @@ shift 2
 case "$op" in
   applies) jg_backlog_transition_applies "$JG_HOME/config" "$data" ship ;;
   dispatch) : > "$state/$id.meta"; jg_backlog_atomic_transition dispatch "$state/$id.meta" "$data" "$id" "$state" ;;
+  lane|handover)
+    printf 'spawn_gen=%s\nharness=%s\n' "$1" "$2" > "$state/$id.meta"
+    [ "$op" = handover ] || op=dispatch
+    jg_backlog_atomic_transition "$op" "$state/$id.meta" "$data" "$id" "$state"
+    ;;
   close|retain) jg_backlog_atomic_transition "$op" "" "$state/$id.backlog-close" "$data" "$id" "$state" "$@" ;;
   probe) jg_backlog_row_probe "$data" "$id" ;;
   reopen) jg_backlog_mutate "$data" reopen "$id" ;;
@@ -244,14 +249,14 @@ transitions() {
   out=$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" start jg-t2 2>&1)
   expect_code 13 $? "a start on a held row"
   assert_contains "$out" 'stale write refused: jg-t2 has status \"on_hold\"' "a held row must refuse the start"
-  # A second writer lands between the read and the write: each move refuses with bd's 13 and leaves the row alone.
+  # A second writer lands just before the guarded write: each move refuses with bd's 13 and leaves the row alone.
   h=$T/race
   mkdir -p "$h/bin"
   cat > "$h/bin/bd" <<SH
 #!/usr/bin/env bash
-if [ "\$1" = update ] && [ -e "$h/armed" ]; then
+if [ "\$1" = update ] && [[ " \$* " = *" --if-"* ]] && [ -e "$h/armed" ]; then
   rm -f "$h/armed"
-  "$JG_BEADS_TEST_BD" update "\$2" --status "\$(cat "$h/to")" >/dev/null 2>&1
+  "$JG_BEADS_TEST_BD" update "\$2" \$(cat "$h/to") >/dev/null 2>&1
 fi
 exec "$JG_BEADS_TEST_BD" "\$@"
 SH
@@ -261,7 +266,7 @@ SH
   race() {  # <library exit> <id> <status the other writer sets> <op> [args...]
     local want=$1 id=$2 to=$3 after rc
     shift 3
-    printf '%s\n' "$to" > "$h/to"
+    printf -- '--status %s\n' "$to" > "$h/to"
     : > "$h/armed"
     out=$(JG_PIN_FILE_OVERRIDE=$h/pins JG_BEADS_BD=$h/bin/bd step "$T/bd" "$1" "$id" "${@:2}")
     rc=$?
@@ -278,6 +283,85 @@ SH
   race 13 jg-t5 closed reopen
   same add jg-t6 "[feature] Race close" --priority 2 --body why
   race 1 jg-t6 in_progress close --pr "$one"
+  lanes
+}
+owner() {  # <id> <lane> <agent>: the row's assignee and metadata.agent, empty for none.
+  local row
+  row=$("${jail[@]}" "$WRAPPER" show "$1" --json 2>/dev/null)
+  [ "$(printf '%s' "$row" | jq -r '(if type == "array" then .[0] else . end) | "\(.assignee // "")/\(.metadata.agent // "")"')" = "$2/$3" ] ||
+    fail "row $1 must be owned by [$2/$3]: $row"
+  printf 'ok - %s is owned by [%s/%s]\n' "$1" "$2" "$3"
+}
+lanes() {
+  local one=https://github.com/o/r/pull/9 h=$T/race out rc
+  same add jg-l1 "[feature] Lane" --priority 2 --body why
+  same add jg-l2 "[feature] Held lane" --priority 2 --body why
+  same add jg-l3 "[feature] Blocked lane" --priority 2 --body why
+  same add jg-l4 "[feature] Race lane" --priority 2 --body why
+  same add jg-l5 "[feature] Race handover" --priority 2 --body why
+  both lane jg-l1 s1.1.1 claude
+  owner jg-l1 s1.1.1 claude
+  both lane jg-l1 s1.1.1 claude
+  # The old store has no owner to compare, so a second lane is refused on Beads alone.
+  out=$(step "$T/bd" lane jg-l1 s2.2.2 codex)
+  expect_code 13 $? "a second lane on a claimed row: $out"
+  assert_contains "$out" 'stale write refused: jg-l1 is held by \"s1.1.1\", expected \"\"' "a second lane must name the owner"
+  printf 'ok - a second lane is refused: %s\n' "$out"
+  owner jg-l1 s1.1.1 claude
+  both handover jg-l1 s3.3.3 codex
+  owner jg-l1 s3.3.3 codex
+  both retain jg-l1 --report data/jg-l1/report.md --note kept
+  owner jg-l1 "" ""
+  both probe jg-l1
+  both lane jg-l1 s4.4.4 claude
+  owner jg-l1 s4.4.4 claude
+  # A closed row keeps its lane as history, whoever closes it, and a reopen clears it.
+  both close jg-l1 --pr "$one"
+  owner jg-l1 s4.4.4 claude
+  both close jg-l1 --pr "$one"
+  both reopen jg-l1
+  owner jg-l1 "" ""
+  # A hold reaches a lane's row: it stays in flight, a relaunch moves the lane, and a retain leaves it held.
+  both lane jg-l2 s5.5.5 claude
+  (cd "$T/ta" && TASKS_AXI_FILE="$T/ta/data/backlog.md" tasks-axi hold jg-l2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
+  "${jail[@]}" "$WRAPPER" update jg-l2 --status on_hold --set-metadata "hold_reason=owner call" \
+    --set-metadata hold_kind=captain >/dev/null 2>&1 || fail "seed a held row"
+  both probe jg-l2
+  both dispatch jg-l2
+  both handover jg-l2 s6.6.6 codex
+  owner jg-l2 s6.6.6 codex
+  both retain jg-l2 --report data/jg-l2/report.md --note kept
+  owner jg-l2 "" ""
+  both probe jg-l2
+  # bd takes no owner guard with --force, so a blocked lane still closes on its status guard.
+  both lane jg-l3 s7.7.7 claude
+  same add jg-l6 "[feature] Blocker" --priority 2 --body why
+  same block jg-l3 --by jg-l6
+  both close jg-l3 --pr "$one"
+  owner jg-l3 s7.7.7 claude
+  # Another lane lands between the read and the write: each move refuses and the winner keeps the row.
+  lane_race() {  # <library exit> <id> <the other lane> <the owner it replaces, - for none> <op> [args...]
+    local want=$1 id=$2 winner=$3 before=$4
+    shift 4
+    printf -- '-a %s%s\n' "$winner" "$([ "$before" = - ] || printf ' --if-assignee %s' "$before")" > "$h/to"
+    : > "$h/armed"
+    out=$(JG_PIN_FILE_OVERRIDE=$h/pins JG_BEADS_BD=$h/bin/bd step "$T/bd" "$1" "$id" "${@:2}")
+    rc=$?
+    expect_code "$want" "$rc" "$1 $id after another lane: $out"
+    assert_contains "$out" "stale write refused: $id is held by \\\"$winner\\\"" "$1 $id must name the other lane"
+    owner "$id" "$winner" ""
+    printf 'ok - another lane took the row first, and the store refused: %s\n' "$out"
+  }
+  lane_race 13 jg-l4 winner - lane s8.8.8 claude
+  "${jail[@]}" "$WRAPPER" update jg-l5 --status in_progress -a s9.9.9 >/dev/null 2>&1 || fail "seed a lane"
+  lane_race 13 jg-l5 winner s9.9.9 handover s0.0.1 codex
+  lane_race 1 jg-l5 second winner close --pr "$one"
+  lane_race 1 jg-l5 third second retain --report data/jg-l5/report.md --note kept
+  # bd itself refuses a reassign that names no owner, so a live lane cannot be overwritten unguarded.
+  out=$("${jail[@]}" "$WRAPPER" update jg-l5 -a fourth 2>&1)
+  expect_code 1 $? "a bare reassign of a live lane"
+  assert_contains "$out" 'cannot reassign jg-l5' "a bare reassign must refuse"
+  owner jg-l5 third ""
 }
 if command -v tasks-axi >/dev/null; then
   mkdir -p "$T/ta/data" "$T/bd/config"
@@ -328,6 +412,59 @@ assert_contains "$(cd "$T/lint" && bash bin/jg-lint.sh bin/jg-other.sh 2>&1)" "b
 mkdir -p "$T/hh/config" "$T/hh/data" "$T/hh/state" "$T/user"
 printf 'beads\n' > "$T/hh/config/backlog-backend"
 printf '%s\n' "$BEADS_DIR" > "$T/hh/config/beads-dir"
+spawned() {  # A real spawn, relaunch and teardown on a Beads home: the lane follows the task's record.
+  local w=$T/world h=$T/world/home wt=$T/world/wt p=$T/world/proj fake out gen
+  command -v go >/dev/null || { printf 'skip: real spawn: a spawn builds its core with Go, and Go is not installed\n'; return 0; }
+  # shellcheck source=tests/fixtures.sh disable=SC1091
+  . "$ROOT/tests/fixtures.sh"
+  mkdir -p "$w/gotmp"
+  export GOTMPDIR=$w/gotmp GOCACHE=$w/go GOPATH=$w/gp  # A spawn builds its core, and the jail keeps only $T writable.
+  jg_git_identity fmtest fmtest@example.com
+  git init -q --bare -b main "$w/origin.git"
+  git clone -q "$w/origin.git" "$p" 2>/dev/null
+  git -C "$p" commit -q --allow-empty -m base
+  git -C "$p" push -q origin HEAD:refs/heads/main
+  git -C "$p" remote set-head origin main >/dev/null 2>&1
+  git -C "$p" worktree add -q --detach "$wt" origin/main
+  jg_test_spawn_home "$h"
+  fake=$(make_spawn_fakebin "$w/fake" gh gh-axi)
+  jg_test_fake_sleep_noop "$fake"
+  sed -i '/^set -u$/a case "$*" in *pane_current_command*) echo bash; exit 0 ;; esac' "$fake/tmux"
+  printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_available_gb=0\n' > "$h/config/host-memory"
+  printf 'beads\n' > "$h/config/backlog-backend"
+  printf '%s\n' "$BEADS_DIR" > "$h/config/beads-dir"
+  run() {  # <jg-spawn args...>
+    # shellcheck disable=SC2016  # The inner shell expands them.
+    "${jail[@]}" bash -c '. "$1/tests/fixtures.sh"; shift; jg_test_run_spawn "$@"' _ \
+      "$ROOT" "$h" "$wt" "$fake" "$@"
+  }
+  for id in jg-s1 jg-s2; do
+    JG_HOME=$h "${jail[@]}" "$CLI" add "$id" "[feature] Umer's lane" --kind ship --priority 2 --body why >/dev/null || fail "seed $id"
+    JG_HOME=$h "$ROOT/bin/jg-brief.sh" "$id" proj --mode direct-PR --project "$p" >/dev/null 2>&1 || fail "brief $id"
+    sed -i 's/{TASK}/Drive a lane./;s/{JUGGERNAUT_SPEC}/Drive a lane end to end./' "$h/data/$id/brief.md"
+  done
+  lane_of() { sed -n 's/^spawn_gen=//p' "$h/state/jg-s1.meta"; }
+  out=$(run jg-s1 "$p" codex --mode direct-PR --yolo off) || fail "a spawn on a Beads home: $out"
+  owner jg-s1 "$(lane_of)" codex
+  gen=$(lane_of)
+  out=$(JG_FAKE_DUPLICATE_WINDOW=jg-jg-s1 run jg-s1 --relaunch) || fail "a relaunch on a Beads home: $out"
+  [ "$(lane_of)" != "$gen" ] || fail "a relaunch must start a new lane"
+  owner jg-s1 "$(lane_of)" codex
+  gen=$(lane_of)
+  # Another home's lane holds this row, so no second agent starts on it.
+  "${jail[@]}" "$WRAPPER" update jg-s2 --status in_progress -a other >/dev/null 2>&1 || fail "seed another lane"
+  out=$(run jg-s2 "$p" codex --mode direct-PR --yolo off)
+  expect_code 13 $? "a spawn on a row another lane holds: $out"
+  owner jg-s2 other ""
+  printf 'ok - a spawn on another lane'"'"'s row is refused: %s\n' "$(printf '%s\n' "$out" | tail -1)"
+  printf 'pr=https://github.com/o/r/pull/7\n' >> "$h/state/jg-s1.meta"
+  out=$(JG_HOME=$h JG_STATE_OVERRIDE=$h/state JG_DATA_OVERRIDE=$h/data JG_CONFIG_OVERRIDE=$h/config HOME=$h/user-home \
+    PATH="$fake:$PATH" "${jail[@]}" "$ROOT/bin/jg-teardown.sh" jg-s1 2>&1) \
+    || fail "a teardown on a Beads home: $out"
+  assert_contains "$("${jail[@]}" "$WRAPPER" show jg-s1 --json 2>/dev/null)" '"status": "closed"' "teardown must close the row"
+  owner jg-s1 "$gen" codex
+  printf 'ok - a real spawn, relaunch and teardown moved the lane on the store\n'
+}
 start_lines() {  # Each surface's lines about the store, with the fleet's real pin table.
   local home=(env -u JG_PIN_FILE_OVERRIDE HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$T/hh"
     JG_STATE_OVERRIDE="$T/hh/state" JG_DATA_OVERRIDE="$T/hh/data" JG_CONFIG_OVERRIDE="$T/hh/config" JG_BOOTSTRAP_NETWORK=skip)
@@ -354,7 +491,7 @@ else
   mkdir -p "$T/real"
   export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
   jail=()
-  command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
+  command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
   "${jail[@]}" "$WRAPPER" init --prefix jg 2>/dev/null || fail "real init"
   [ -e "$T/real/.beads.gate.lock" ] || fail "the gate lock must sit beside the store"
   assert_contains "$("${jail[@]}" "$WRAPPER" dolt sql -q 'select count(*) as dirty from dolt_status' 2>&1)" "| 0 " "init must commit the rule"
@@ -377,9 +514,10 @@ else
     bd_ create "Finished https://github.com/o/r/pull/5" --id jg-fin --priority 2 --description fin --external-ref https://github.com/o/r/pull/5
     bd_ close jg-fin --reason fin
     printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
-    TMPDIR=$T callers  # The jail's /tmp is read-only.
+    TMPDIR=$T callers  # The jail's /tmp is gone with each call.
     TMPDIR=$T writes
     TMPDIR=$T transitions
+    TMPDIR=$T spawned
     out=$(TMPDIR=$T JG_HOME="$T/bd" "${jail[@]}" "$CLI" add --mint "[feature] Mint me" --prefix zz --priority 2 --body why --json) || fail "real mint"
     assert_contains "$out" '"id": "zz-feature-mint-me-' "a minted id must carry the prefix and the title"
   fi

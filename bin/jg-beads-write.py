@@ -12,6 +12,10 @@ cycle, and that refusal reaches stderr with bd's exit status.
 start, reopen and done move status only from the status they expect, so a row that moved first exits 13 and changes
 nothing, with one refusal line on stdout. A held row keeps its status on reopen. start takes only an open row: one
 status column cannot read in flight and held at once, so where tasks-axi would start a held or done row this refuses.
+A worker's lane owns its row: the assignee is the lane named by JG_BACKLOG_LANE and metadata.agent is JG_BACKLOG_AGENT.
+start claims a row with no owner, and JG_BACKLOG_LANE_HANDOVER=1 takes it from the owner it read, so a row another lane
+took first exits 13. done keeps the assignee as history, reopen clears both, and each moves only from the owner it read.
+bd takes --if-assignee or --force, never both, so closing a blocked row is guarded by status alone.
 """
 import hashlib
 import json
@@ -43,6 +47,21 @@ def bd(*args):
         sys.stderr.write(run.stdout + run.stderr)
         sys.exit(run.returncode)
     return run.stdout
+
+
+def lane(row):
+    """Return the flags that make this run's lane the row's owner, or nothing with no lane named."""
+    name, agent = os.environ.get("JG_BACKLOG_LANE"), os.environ.get("JG_BACKLOG_AGENT")
+    if not name:
+        return []
+    owner = row.get("assignee") or "" if os.environ.get("JG_BACKLOG_LANE_HANDOVER") else ""
+    return ["-a", name, "--if-assignee", owner] + (["--set-metadata", "agent=" + agent] if agent else [])
+
+
+def released(row):
+    """Return the flags that take a lane off its row, guarded on the owner read."""
+    owner = row.get("assignee")
+    return ["-a", "", "--unset-metadata", "agent", "--if-assignee", owner] if owner else []
 
 
 def rows():
@@ -235,7 +254,11 @@ def done(args):
     if note and note not in item["body"].split("\n"):
         cmd.append("--description=" + "\n".join(filter(None, [item["body"], note])))
     if not already:
-        cmd += ["--status", "closed", "--if-status", row["status"]] + (["--force"] if item["blocked"] == "yes" else [])
+        cmd += ["--status", "closed", "--if-status", row["status"]]
+        if item["blocked"] == "yes":
+            cmd.append("--force")
+        elif row.get("assignee"):
+            cmd += ["--if-assignee", row["assignee"]]
     if cmd:
         bd("update", ident, *cmd)
     tail = "".join(" (%s %s)" % (name, found["--" + name]) for name in ("pr", "report") if "--" + name in found)
@@ -277,10 +300,13 @@ def one_row(verb, args):
 def start(args):
     found, ident, row = one_row("start", args)
     tips = ["Run `tasks-axi done %s --pr <url>` when it ships" % ident]
-    if row["status"] == "in_progress":
+    claim = lane(row)
+    if view.flying(row):
+        if claim and row.get("assignee") != claim[1]:
+            bd("update", ident, *claim, "--if-status", row["status"])
         respond(found, "start", ident, "start %s already in flight" % ident, tips, card=False, already=True)
         return
-    bd("update", ident, "--status", "in_progress", "--if-status", "open")
+    bd("update", ident, "--status", "in_progress", "--if-status", "open", *claim)
     respond(found, "start", ident, "start %s -> In flight" % ident, tips, card=False)
 
 
@@ -288,9 +314,11 @@ def reopen(args):
     found, ident, row = one_row("reopen", args)
     tips = ["Run `tasks-axi start %s` to move it to in flight" % ident]
     if row["status"] not in ("in_progress", "closed"):
+        if row.get("assignee"):
+            bd("update", ident, *released(row), "--if-status", row["status"])
         respond(found, "reopen", ident, "reopen %s already queued" % ident, tips, card=False, already=True)
         return
-    bd("update", ident, "--status", "open", "--if-status", row["status"])
+    bd("update", ident, "--status", "open", "--if-status", row["status"], *released(row))
     respond(found, "reopen", ident, "reopen %s -> Queued" % ident, tips, card=False)
 
 

@@ -3044,6 +3044,7 @@ herdr_projection_existing_meta_allows_flat() { # <meta>
 # costs nothing to unwind, while the same refusal after publication would strand
 # a live pane. The authoritative mutation still runs under the meta lock below.
 BACKLOG_TRANSITION=0
+BACKLOG_LANE_HANDOVER=0
 BACKLOG_ROW_STATE=
 if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
@@ -3081,8 +3082,10 @@ if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
     fi
   elif [ "$RELAUNCH" -eq 1 ] && [ "${BACKLOG_ROW_STATE%% *}" = in_flight ]; then
     # A relaunch replaces the agent of an item already In flight; a hold or
-    # blocker on it is not a reason to strand the task, and there is no row to move.
+    # blocker on it is not a reason to strand the task, and there is no row to
+    # move; only the lane that owns it changes.
     BACKLOG_TRANSITION=0
+    BACKLOG_LANE_HANDOVER=1
   elif ! jg_backlog_row_dispatchable "$BACKLOG_ROW_STATE"; then
     echo "error: this home's backlog item $ID is not dispatchable in state $BACKLOG_ROW_STATE; refusing before creating its endpoint or local copy" >&2
     exit 1
@@ -4777,6 +4780,10 @@ fi
 # serialized exactly as before. The call itself is deferred to the final commit
 # point below so every earlier launch-delivery failure remains unwindable.
 spawn_commit_backlog_transition() {
+  if [ "$BACKLOG_LANE_HANDOVER" = 1 ]; then
+    jg_backlog_atomic_transition handover "$STATE/$ID.meta" "$DATA" "$ID" "$STATE"
+    return
+  fi
   [ "$BACKLOG_TRANSITION" = 1 ] || return 0
   jg_backlog_atomic_transition dispatch "$STATE/$ID.meta" "$DATA" "$ID" "$STATE"
 }
@@ -4808,7 +4815,7 @@ spawn_report_preserved_state() {
   fi
   # The commit reported success, but the row does not read back In flight:
   # move it now under the same lock and verify the result before naming it.
-  jg_backlog_start "$DATA" "$ID" || repair_error=$JG_BACKLOG_TRANSITION_ERROR
+  jg_backlog_lane_start "$STATE/$ID.meta" "$DATA" "$ID" "$STATE" || repair_error=$JG_BACKLOG_TRANSITION_ERROR
   if [ -z "$repair_error" ] &&
     jg_backlog_row_probe "$DATA" "$ID" &&
     [ "$JG_BACKLOG_ROW_STATE" = "in_flight no no" ]; then

@@ -392,6 +392,8 @@ A home may instead select another tasks-axi adapter such as Beads through its ow
 A local `config/backlog-backend` reading `beads` is a separate path: `bin/jg-tasks-axi.sh` serves its reads from the bd store named by the absolute `BEADS_DIR` in `config/beads-dir`, serves `add`, `update`, `done`, `block`, `start` and `reopen` the same way, and refuses every other write for now.
 The `start`, `reopen` and `done` moves write only if the row still has the status they read, so a row a second writer moved refuses with exit 13, `code: STALE_WRITE`, and changes nothing.
 [`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh) drives the same provider directly, so spawn, teardown and bootstrap keep their gates on that store.
+The lane on such a row is the assignee, set to the task record's `spawn_gen`, and `metadata.agent`, set to its harness.
+A fresh spawn takes the row only if it has no owner, so a second spawn on a row another lane holds refuses with exit 13 and starts nothing that stays; a relaunch hands the row over from the owner it read, `done` keeps the assignee as history, and `reopen` clears it.
 On such a home, bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check`, which proves the pinned versions, the hold rule and telemetry off, and report any failure.
 
 ### Backlog intake (config/backlog-intake-loose)
