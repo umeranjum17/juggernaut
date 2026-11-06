@@ -13,7 +13,9 @@
 # reason and its hooks cannot refuse, so the rule is a Dolt CHECK that every writer meets. Run again
 # on a store missing the rule, `init` adds it; on a store with the rule, it refuses.
 # `check` proves the pins and the store, then reads the rule with dolt: a rule gone or changed exits
-# 2 naming it, and a read that fails reports that failure, never a missing rule.
+# 2 naming it, and a read that fails reports that failure, never a missing rule. It then reads
+# telemetry back from dolt and exits 2 on a flag not off or on a trace either tool leaves in this
+# store's forced home once its metrics run. Its last line sums the store up for the start checks.
 # `dolt` runs in the store's database folder and refuses a query naming a dolt_push, pull, fetch,
 # clone, remote or backup procedure.
 # Every other verb is a bd call from the store's parent, so a relative path means that folder.
@@ -165,6 +167,18 @@ run_init() {  # --prefix <prefix>
   "$dolt" add -A && "$dolt" commit --allow-empty --author 'jg-beads <jg-beads@local>' -m 'Add the hold rule' > /dev/null || exit $?
 }
 
+# dolt answers from the forced config, and bd has no such answer, so its proof is what metrics leave.
+# dolt keeps a lock in eventsData even with metrics off, so only another file there is a trace.
+telemetry_check() {  # <dolt>
+  local flag trace
+  for flag in metrics.disabled versioncheck.disabled; do
+    [ "$("$1" config --global --get "$flag" 2>/dev/null)" = true ] || die "telemetry is not off: dolt does not read $flag as true"
+  done
+  trace=$(find "$HOME" \( -name machine-id -o -name version_check.txt -o -path '*/eventsData/*' ! -name dolt.lock \) -print -quit)
+  [ -z "$trace" ] || die "telemetry ran from this store: $trace"
+  printf 'telemetry: off\n'
+}
+
 run_check() {
   local tool gaps
   for tool in bd dolt; do
@@ -177,6 +191,8 @@ run_check() {
   gaps=$(hold_rule_gaps "$PINNED_TOOL") || exit $?
   [ -z "$gaps" ] || die "hold rule missing or changed in $BEADS_DIR: $(cut -d' ' -f2 <<< "$gaps" | tr '\n' ' ')"
   printf 'rule: hold_needs_reason (issues, wisps)\n'
+  telemetry_check "$PINNED_TOOL"
+  printf 'healthy: bd %s, dolt %s, hold rule present, telemetry off\n' "$(jg_pin_version bd)" "$(jg_pin_version dolt)"
 }
 
 run_dolt() {  # version | sql -q <query>

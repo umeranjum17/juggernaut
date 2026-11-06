@@ -740,6 +740,20 @@ check_entrypoint_link() {
     "rerun this command with --fix to create it"
 }
 
+# A home on the Beads backlog needs the pinned bd and dolt on this host, and only a
+# person can install them, so every gap in its store is a human one.
+check_beads_store() {
+  local config=${JG_CONFIG_OVERRIDE:-${JG_HOME:-$JG_ROOT}/config} health
+  if ! jg_backlog_backend_beads "$config"; then
+    set_check beads-store 'skip: this home does not keep its backlog in Beads'
+  elif health=$(jg_backlog_beads_health "$config"); then
+    set_check beads-store "ok: $health"
+  else
+    set_check beads-store "human: $health" \
+      'install the bd and dolt builds toolchain.versions pins, then repair the store with jg-beads.sh'
+  fi
+}
+
 run_checks() { # <resolved-login-shell>
   local shell=$1
   CHECK_NAMES=()
@@ -751,6 +765,7 @@ run_checks() { # <resolved-login-shell>
   check_launch_agent "$shell"
   check_herdr_server
   check_entrypoint_link
+  check_beads_store
 }
 
 # --- repairs ----------------------------------------------------------------

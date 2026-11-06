@@ -218,6 +218,16 @@ jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
   printf '%s\n' "$store"
 }
 
+# The start checks' one line on this home's store: the summary of `jg-beads.sh check`, or why it failed.
+jg_backlog_beads_health() {  # <config_dir>
+  local bin_dir store out rc=0
+  store=$(jg_backlog_beads_store "$1" 2>&1) || { printf '%s\n' "$store"; return 2; }
+  bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  out=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" check 2>&1) || rc=$?
+  printf '%s\n' "${out##*$'\n'}"
+  return "$rc"
+}
+
 jg_backlog_beads_write() {  # <config_dir> <add|update|done|block and aliases> [args...]
   local bin_dir store
   store=$(jg_backlog_beads_store "$1") || return 2

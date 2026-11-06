@@ -32,6 +32,8 @@ When any diagnostic needs captain attention, report the plain consequence and re
 - `TANGLE: <remediation>` - the primary checkout is stranded on a feature branch instead of its default branch; `AGENTS.md` section 8 explains why this guard exists and what it protects.
   The work is safe on that branch ref; restore the primary to its default branch with the printed `git -C <root> checkout <default>`, then re-validate that branch in a proper worktree.
   This is the only sanctioned Juggernaut-initiated git write to the primary, and it is a non-destructive branch switch that strands nothing.
+- `BEADS_UNHEALTHY: <reason>` - this home's backlog is in Beads and its store failed `bin/jg-beads.sh check`: a build that is not the pinned one, a store that is not embedded and stealth, the hold rule gone or changed, or telemetry not off.
+  Treat backlog reads and writes as unsafe until the printed reason is fixed; a missing or unpinned bd or dolt is a human install, and `bin/jg-beads.sh init` restores a gone rule but never a changed one.
 - `STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>` - the visible startup-memory budget is not a safe one-line positive decimal file; do not infer the default or propagate it.
   Correct the local primary file, then rerun session start so the normal convergence path can deliver the validated value to Squad Lead homes.
 - `SENTINEL: jg-sentinel is not running ... (install: <command>)` - nothing outside the agent runtime recovers supervision and workers after the Herdr server is killed.

@@ -130,7 +130,8 @@
 # go dark. So on refusal, bootstrap still runs (in JG_BOOTSTRAP_DETECT_ONLY=1
 # mode) for its local read-only detect lines - missing tools, the worktree-tangle
 # check, the harness override, crew-dispatch validation, tasks-axi and quota-axi
-# tool checks, and tasks-axi availability - none of which mutate shared state
+# tool checks, tasks-axi availability, and a Beads home's store health - none of
+# which mutate shared state
 # and all of which are safe to compute without verified lock ownership.
 # It deliberately skips the network-only GitHub-auth probe because a read-only
 # session has no dispatch, spawn, steer, or merge action for that verdict to gate.

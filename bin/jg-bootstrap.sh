@@ -19,6 +19,7 @@
 #                 <stamp>>; <n> failed attempt(s) ... last: <recorded failure>",
 #                 "BACKLOG_RECONCILE: <id>: <what this home could not reconcile>",
 #                 "BACKLOG_RECONCILE: code-root <file> is not this home's <file>; ...",
+#                 "BEADS_UNHEALTHY: <why the store failed jg-beads.sh check>",
 #                 "TANGLE: <remediation>",
 #                 "SQUAD_LEAD_SYNC: squad_lead <id>: skipped: <reason>",
 #                 "NUDGE_SQUAD_LEADS: squad_lead <id>: send failed: <reason>",
@@ -1770,6 +1771,7 @@ detect_local_config() {
     echo "BOOTSTRAP_INFO: tasks-axi available"
   fi
   detect_code_root_backlog_fork
+  detect_beads_health
   detect_home_summary_publication
   detect_sentinel_service
   detect_unit_homes
@@ -1779,6 +1781,16 @@ detect_local_config() {
 # recovers from, as a systemd user service someone installs once. Without it a
 # killed server leaves supervision and every worker down until noticed, so a
 # primary Herdr home on a systemd host says so on every start until installed.
+detect_beads_health() {
+  local health
+  jg_backlog_backend_beads "$CONFIG" || return 0
+  if health=$(jg_backlog_beads_health "$CONFIG"); then
+    [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: Beads store $health"
+  else
+    echo "BEADS_UNHEALTHY: $health"
+  fi
+}
+
 detect_sentinel_service() {
   [ "$BACKEND" = herdr ] || return 0
   [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ -L "$(jg_compat_marker "$JG_HOME")" ] && return 0
