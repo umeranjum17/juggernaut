@@ -257,6 +257,8 @@ esac
 . "$SCRIPT_DIR/jg-merge-authority-lib.sh"
 # shellcheck source=bin/jg-hold-reason-lib.sh
 . "$SCRIPT_DIR/jg-hold-reason-lib.sh"
+# shellcheck source=bin/jg-tasks-axi-lib.sh
+. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
 
 usage() {
   cat <<'EOF'
@@ -411,14 +413,13 @@ first_pr_url_in_file() {  # <file>
 
 backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
   local backlog=${1:-$BACKLOG}
-  if [ ! -f "$backlog" ]; then
+  if ! jg_backlog_present "$CONFIG" "$backlog"; then
     jq -n --arg path "$backlog" '{path:$path,present:false,records:[]}'
     return 0
   fi
 
   set -o pipefail
-  # shellcheck disable=SC2094
-  jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
+  jg_backlog_text "$CONFIG" "$backlog" | jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
     --argjson age_days "$JG_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" '
     def trim: gsub("^[[:space:]]+|[[:space:]]+$"; "");
     def timestamp_epoch($d):
@@ -599,7 +600,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
           | .captain_actionable = (.hold_bucket == "live")
         else . end)
     | del(.section,.order)
-  ' < "$backlog" | jg_hold_reason_decode_stream json
+  ' | jg_hold_reason_decode_stream json
 )
 
 SNAPSHOT_TASK_DIR=

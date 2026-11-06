@@ -1338,7 +1338,7 @@ audio_seconds=$secs"
 # ---------------------------------------------------------------- status
 
 cmd_status() {
-  local pending=0
+  local pending=0 backlog
   [ -d "$INBOX" ] && pending=$(find "$INBOX" -maxdepth 1 -name '*.note' 2>/dev/null | wc -l | tr -d ' ')
 
   printf '=== juggernaut status (read-only, no wake sent) ===\n'
@@ -1346,10 +1346,17 @@ cmd_status() {
   printf 'time     %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'inbox    %s note(s) waiting for juggernaut\n' "$pending"
 
-  if [ -f "$DATA/backlog.md" ]; then
+  # Loaded here so taking a note never depends on the backlog provider.
+  # shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
+  . "$SELF_DIR/jg-tasks-axi-lib.sh"
+  if jg_backlog_present "$CONFIG" "$DATA/backlog.md"; then
     printf '\n--- in flight ---\n'
-    awk '/^## In flight/{f=1;next} /^## /{f=0} f && /^- \[/{print}' \
-      "$DATA/backlog.md" | sed 's/^- \[ \] /  /' | cut -c1-150
+    if backlog=$(jg_backlog_text "$CONFIG" "$DATA/backlog.md"); then
+      printf '%s\n' "$backlog" | awk '/^## In flight/{f=1;next} /^## /{f=0} f && /^- \[/{print}' \
+        | sed 's/^- \[ \] /  /' | cut -c1-150
+    else
+      printf '  (the backlog cannot be read)\n'
+    fi
   else
     printf '\n(no backlog at %s)\n' "$DATA/backlog.md"
   fi

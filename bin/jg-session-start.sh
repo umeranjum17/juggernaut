@@ -176,6 +176,8 @@
 # stay out of the startup digest; the same never-bound-a-held-or-blocked-row
 # rule applies, recognized there from the title line's own hold/blocked-by
 # markers.
+# On a Beads home the same groups come from the store and no backlog file is
+# needed; a failed read prints its reason, because a store has no title lines.
 # Full bodies are targeted follow-up only: `bin/jg-tasks-axi.sh show <id> --full` when
 # compatible tasks-axi is available, or `data/backlog.md` when the file body is
 # truly needed.
@@ -489,6 +491,10 @@ print_file_capped() {
 }
 
 print_backlog_pointer() {
+  if jg_backlog_backend_beads "$CONFIG"; then
+    printf 'Full task bodies remain available on demand: bin/jg-tasks-axi.sh show <id> --full.\n'
+    return 0
+  fi
   printf 'Full task bodies remain available on demand: bin/jg-tasks-axi.sh show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
 }
 
@@ -596,19 +602,29 @@ bound_held_rows() {
     }'
 }
 
-print_backlog_tasks_axi_compact() {
-  local path=$1 in_flight held blocked ready err
-  if ! in_flight=$(tasks-axi list --file "$path" --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
+backlog_rows() {  # <backlog_file> <list|ready> [flags...]
+  local path=$1 verb=$2
+  shift 2
+  if jg_backlog_backend_beads "$CONFIG"; then
+    jg_backlog_beads_read "$CONFIG" "$verb" "$@"
+  else
+    tasks-axi "$verb" --file "$path" "$@"
+  fi
+}
+
+print_backlog_rows_compact() {  # <backlog_file> <provider name>
+  local path=$1 provider=$2 in_flight held blocked ready err
+  if ! in_flight=$(backlog_rows "$path" list --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$in_flight
-  elif ! held=$(tasks-axi list --file "$path" --state held --fields "$BACKLOG_FIELDS" 2>&1); then
+  elif ! held=$(backlog_rows "$path" list --state held --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$held
-  elif ! blocked=$(tasks-axi list --file "$path" --state queued --blocked --fields "$BACKLOG_FIELDS" 2>&1); then
+  elif ! blocked=$(backlog_rows "$path" list --state queued --blocked --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$blocked
-  elif ! ready=$(tasks-axi ready --file "$path" 2>&1); then
+  elif ! ready=$(backlog_rows "$path" ready 2>&1); then
     err=$ready
   else
-    printf 'compact backlog listing (tasks-axi; done rows omitted; every in-flight, captain-held, and blocked row shown in full; other held rows bounded to %s; ready queued bounded to %s; task bodies omitted)\n' \
-      "$HELD_LIMIT" "$QUEUED_LIMIT"
+    printf 'compact backlog listing (%s; done rows omitted; every in-flight, captain-held, and blocked row shown in full; other held rows bounded to %s; ready queued bounded to %s; task bodies omitted)\n' \
+      "$provider" "$HELD_LIMIT" "$QUEUED_LIMIT"
     printf '\nin flight:\n'
     printf '%s\n' "$in_flight" | jg_hold_reason_decode_stream | strip_axi_help
     printf '\nheld (captain- or time-gated; an in-flight item that is also held appears in both groups):\n'
@@ -619,6 +635,10 @@ print_backlog_tasks_axi_compact() {
     print_ready_queued_bounded "$ready"
     return 0
   fi
+  if [ "$provider" = beads ]; then
+    printf 'beads compact listing failed:\n%s\n' "$err"
+    return 0
+  fi
   printf 'tasks-axi compact listing failed; falling back to title-line rendering.\n'
   printf '%s\n' "$err"
   print_backlog_manual_compact "$path" "fallback"
@@ -626,11 +646,17 @@ print_backlog_tasks_axi_compact() {
 
 print_backlog_compact() {
   local path=$1 label=$2
+  if jg_backlog_backend_beads "$CONFIG"; then
+    subsection "backlog (Beads store)"
+    print_backlog_rows_compact "$path" beads
+    print_backlog_pointer
+    return 0
+  fi
   subsection "$label"
   if [ -f "$path" ]; then
     if [ -s "$path" ]; then
       if jg_tasks_axi_backend_available "$CONFIG"; then
-        print_backlog_tasks_axi_compact "$path"
+        print_backlog_rows_compact "$path" tasks-axi
       elif jg_backlog_backend_manual "$CONFIG"; then
         print_backlog_manual_compact "$path" "manual backend"
       else
