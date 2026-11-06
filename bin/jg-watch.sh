@@ -414,6 +414,7 @@ WATCHER_STALL_BOUND=$(jg_watcher_stall_bound "$POLL")
 HEARTBEAT=${JG_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${JG_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${JG_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps and ask-default decide ticks
+FAST_CHECK_INTERVAL=${JG_FAST_CHECK_INTERVAL:-30}  # seconds between board-answer ticks (must stay under a minute)
 CHECK_TIMEOUT=${JG_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${JG_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -3921,6 +3922,24 @@ rejected_checks_record() {
   done
 }
 
+# The captain's board answers must reach Main within a minute, so they do not
+# wait for the slow sweep below. bin/jg-board-answers.sh tick heals its own
+# registration (re-arms it, or says once that it could not) and then runs one
+# check pass; a line it prints becomes a check wake like any check result. The
+# slow sweep skips board-answers.check.sh so a pass is never run twice.
+run_fast_checks() {
+  local out reason shim="$STATE/board-answers.check.sh"
+  [ -f "$SCRIPT_DIR/jg-board-answers.sh" ] && [ ! -L "$SCRIPT_DIR/jg-board-answers.sh" ] || return 0
+  [ "$(age_of "$STATE/.last-fast-check")" -ge "$FAST_CHECK_INTERVAL" ] || return 0
+  touch "$STATE/.last-fast-check"
+  JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-board-answers.sh" tick || exit 1
+  out=$JG_CHECK_RESULT
+  [ -n "$out" ] || return 0
+  reason="check: $shim: $out"
+  jg_wake_append check "$shim" "$reason" || exit 1
+  wake "$reason"
+}
+
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
 # Time-based via .last-check mtime so the cadence survives watcher restarts.
 # A due check runs on every cycle that reaches it, including a cycle whose
@@ -3938,6 +3957,7 @@ run_due_checks() {
     contribution_check_output=
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
+      [ "$(basename "$c")" = board-answers.check.sh ] && continue  # run_fast_checks owns it
       is_pr_poll=0
       if [ "$(basename "$c")" = x-watch.check.sh ]; then
         if fmx_poll_shim_valid "$c" "$JG_HOME" "$JG_ROOT" \
@@ -4391,6 +4411,7 @@ EOF
     "$SCRIPT_DIR/jg-comms-feed.sh" sync >/dev/null 2>&1 || true
   fi
 
+  run_fast_checks
   run_due_checks
   if [ -n "$signal_wake" ]; then
     wake "$signal_wake"
