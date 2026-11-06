@@ -40,6 +40,8 @@ KNOWN = {
         "The merge check is switched on. The release must pass the usual check before it lands.",
     "GitHub is still computing its mergeability for the fix. The merge commit lands on release/c-10 when the pending checks pass.":
         "GitHub is still working out whether the fix can merge. The merged change lands on the release when the checks that are still running pass.",
+    " waiting-timer-cleared: wf-9 changed state":
+        " The waiting timer was cleared. The worker changed state.",
     " the merge guard passed on the worktree; see PR 602":
         " the merge check passed on the local copy; see https://github.com/example/repo/pull/602",
     "Update from MAIN:\n\n1. the merge guard passed\n2. the worktree is clean":
@@ -209,6 +211,16 @@ JG_VOICE_FILE="$TMP_ROOT/edited.md" jg_parent_channel_append_once "$chan" 'worki
 grep -q 'a lane is parked' "$chan" || fail "the blocked parent line was not delivered as written"
 JG_VOICE_REWRITE_CMD=false jg_parent_channel_append_once "$chan" 'working [at=1793000002]: the worktree is busy' 2>/dev/null || fail "a failed rewrite must never hold a parent-channel line back"
 grep -q 'the worktree is busy' "$chan" || fail "the parent line was not delivered as written when the rewrite failed"
+# A machine close line reaches the channel with its marker, so the wait it closes stays closed.
+wchan="$TMP_ROOT/parent/wait.status"
+jg_parent_channel_append_once "$wchan" 'blocked [at=1793000010] [key=waiting-timer-overdue-wf-9]: waiting-timer-overdue: wf-9 has waited too long'
+[ -n "$(status_open_decisions "$wchan")" ] || fail "the overdue wait did not open"
+jg_parent_channel_append_once "$wchan" 'resolved [at=1793000020] [key=waiting-timer-overdue-wf-9]: waiting-timer-cleared: wf-9 changed state'
+grep -q 'waiting-timer-cleared: wf-9' "$wchan" || fail "the close line was rewritten on its way to the channel: $(cat "$wchan")"
+[ -z "$(status_open_decisions "$wchan")" ] || fail "a close line sent through the parent channel left the wait open: $(status_open_decisions "$wchan")"
+printf '%s\n' 'blocked [at=1793000030] [key=waiting-timer-overdue-wf-9]: waiting-timer-overdue: wf-9 has waited too long' 'resolved [at=1793000040] [key=waiting-timer-overdue-wf-9]: The waiting timer was cleared. The worker changed state.' > "$TMP_ROOT/parent/rewritten.status"
+[ -z "$(status_open_decisions "$TMP_ROOT/parent/rewritten.status")" ] || fail "an already rewritten close line left the wait open"
+pass "the parent channel keeps a machine close line as written, and a rewritten close line closes its wait"
 pass "the parent channel rewrites the note, keeps its status framing, deduplicates a retry and never holds a line back"
 
 # --- role personality files ---------------------------------------------------

@@ -142,6 +142,14 @@ func transitionAllowed(key, note string) bool {
 	return true
 }
 
+// waitTimerClose: a resolve line for a waiting-timer key closes it whatever its note says. The
+// captain voice file may have rewritten the machine close line's "waiting-timer-cleared:" note
+// into prose on its way to the parent channel, and a wait that is over must not stay open for
+// that. Only a close is relaxed; opening or reopening still needs the namespace's own note.
+func waitTimerClose(verb, key string) bool {
+	return verb == resolveVerb() && strings.HasPrefix(key, "waiting-timer-")
+}
+
 func pendingReplyEscalation(key, note string) bool {
 	if !strings.HasPrefix(key, "pending-reply-") {
 		return false
@@ -231,7 +239,7 @@ func foldLine(open, line, kind string) string {
 		return open
 	}
 	note := lineNote(line)
-	if !transitionAllowed(key, note) {
+	if !transitionAllowed(key, note) && !waitTimerClose(verb, key) {
 		return open
 	}
 	recs := setDrop(open, key)
