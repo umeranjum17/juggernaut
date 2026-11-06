@@ -59,4 +59,30 @@ same "[(d['depends_on_id'],d['type']) for d in rows['jg-$TWIN']['dependencies']]
 same "rows['fm-$BARE']['status'],rows['fm-$BARE']['metadata']['hold_reason'],sorted(rows['fm-$BARE']['labels'])" "on_hold no reason recorded before migration ['hold-reason-missing', 'home:unplaced', 'parent-dangling']" "held row with no reason not labelled"
 same "rows['jg-$HELD']['status'],man['held']['jg-$HELD']['disposition'],rows['jg-$HELD']['closed_at'] != ''" "closed dropped-by-source True" "source close did not account for the hold"
 same "sum(len(rows['jg-'+k].get('dependencies',[])) for k in ('$(sum main/loop-a)','$(sum main/loop-b)')),sum('dependency-dropped' in r['labels'] for r in rows.values())" "1 1" "a blocker cycle was not recorded"
+
+# Judge a stand-in export built from the plan, then break it: the dry run must stop on each difference.
+mkdir -p "$T/runs"
+for h in main lead unplaced; do
+  cp "$T/imp/$h.jsonl" "$T/runs/$h.export.jsonl"
+  for s in open in_progress on_hold closed; do
+    printf '%s %s\n' "$s" "$(grep -c "\"status\": \"$s\"" "$T/imp/$h.jsonl")"
+  done >"$T/runs/$h.counts"
+done
+judge() { python3 "$ROOT/bin/jg-beads-migrate.py" verify --copy "$T/copy" --out "$T/imp" --runs "$T/runs" 2>"$T/err"; }
+judge >"$T/table" || fail "a matching dry run was refused: $(cat "$T/err")"
+grep -q '^main ' "$T/table" || fail "no per-home counts printed"
+sed -i 's/^open .*/open 99/' "$T/runs/main.counts"
+judge >/dev/null && fail "a wrong count passed"
+grep -q 'manifest' "$T/err" || fail "a wrong count gave no reason"
+
+# The check script refuses a shared server before any bd call; the wrapper refuses an unpinned bd.
+CHECK=$ROOT/bin/jg-beads-migrate-check.sh
+printf 'fake' >"$T/bd"; chmod +x "$T/bd"
+BEADS_DOLT_SHARED_SERVER=1 "$CHECK" --main "$M" --bd "$T/bd" --scratch "$T/s" 2>&1 | grep -q 'banned' || fail "shared server not refused"
+if [ -n "${JG_TEST_BD:-}" ]; then # CI has no pinned bd; set this to the pinned build for the full path.
+  "$CHECK" --main "$M" --bd "$T/bd" --scratch "$T/s" 2>&1 | grep -q 'not the pinned' || fail "unpinned bd not refused"
+  mkdir -p "$T/tree/.git"
+  "$CHECK" --main "$M" --bd "$JG_TEST_BD" --scratch "$T/tree/s" 2>&1 | grep -q 'inside the git tree' || fail "scratch in a git tree not refused"
+  "$CHECK" --main "$M" --bd "$JG_TEST_BD" --scratch "$T/s" | grep -q 'dry run passed' || fail "fixture dry run failed"
+fi
 pass "beads migrate plan keeps every row, hold and blocker"

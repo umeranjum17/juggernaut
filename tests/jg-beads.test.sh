@@ -73,6 +73,14 @@ assert_grep "BD_DISABLE_METRICS=1" "$LOG" "metrics stay off on every call"
 assert_contains "$("$WRAPPER" check)" "embedded, stealth" "check must name the store"
 # The verbs and flags that leave the store.
 for verb in sync serve config hooks setup migrate; do refused "is not served" "$WRAPPER" "$verb"; done
+refused "is not served" "$WRAPPER" config set sync.remote x
+refused "usage: jg-beads.sh import" "$WRAPPER" import a.jsonl --extra
+refused "plain file name" "$WRAPPER" export -o ../out.jsonl
+"$WRAPPER" config set allowed_prefixes jg || fail "a served config key must run"
+assert_grep "args=config set allowed_prefixes jg" "$LOG" "a served config key must reach bd"
+"$WRAPPER" import a.jsonl || fail "import must run"
+"$WRAPPER" export -o out.jsonl || fail "export must run"
+assert_grep "args=export -o out.jsonl" "$LOG" "export must reach bd"
 for flag in --global --db --db=/x --database=x -C -C/x -qC/x --directory=/x --mem-profile=/x --cpu-profile=/x; do
   refused "off BEADS_DIR" "$WRAPPER" list "$flag"
 done
