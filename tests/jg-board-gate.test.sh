@@ -150,6 +150,16 @@ test_plan_approval_is_a_must_and_a_made_up_category_is_not() {
   pass "a plan-approval ask is a must and a made-up category is still refused"
 }
 
+test_release_word_is_a_must_and_a_made_up_category_is_not() {
+  local d out key detail
+  d=$(setup release-word)
+  key=$(ask_key "$d" --must release-word) || fail "a release-word ask was refused: $(ask "$d" --must release-word)"
+  detail=$(jq -r --arg k "$key" '.items[] | select(.key == $k) | .detail' "$d/so/.sign-off/decisions.json")
+  assert_equals "must: release-word" "$detail" "the release-word card does not carry its category"
+  assert_equals "1" "$(run "$d" "$GATE" waiting)" "the release-word ask was not counted as waiting"
+  pass "a release-word ask is a must and is counted as waiting"
+}
+
 test_check_re_pings_an_old_must_ask_once() {
   local d out
   d=$(setup old-must)
