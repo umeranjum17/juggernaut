@@ -498,9 +498,19 @@ load_decision() {  # <path>; sets DECISION_TEXT and DECISION_DIGEST
 # belongs to the markdown backend only; a non-markdown backend is addressed by
 # the root's own tasks-axi configuration, exactly like the transition library's
 # mutate path.
+beads_home() {
+  local data
+  data=$(jg_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
+  jg_backlog_backend_beads "$(jg_backlog_config_of "$data")"
+}
+
 tasks_axi() {
   local data file root backend
   data=$(jg_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
+  if beads_home; then
+    jg_backlog_beads_serve "$(jg_backlog_config_of "$data")" "$@"
+    return
+  fi
   root=$(jg_backlog_root "$data") || fail "$JG_BACKLOG_TRANSITION_ERROR"
   backend=$(jg_tasks_axi_backend "$root") || return 2
   if [ "$backend" = markdown ]; then
@@ -513,7 +523,13 @@ tasks_axi() {
 
 # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
+# A Beads store never prunes, so there is no archive to guard.
+! beads_home || guard_captain_ask_archive() { :; }
 require_tasks_axi() {
+  if beads_home; then
+    jg_backlog_beads_store "$(jg_backlog_config_of "$(jg_backlog_data_absolute "$DATA")")" >/dev/null || exit 2
+    return 0
+  fi
   jg_tasks_axi_compatible || fail "compatible tasks-axi is required"
   tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null \
     || fail "tasks-axi does not expose the captain-hold contract"
@@ -1086,7 +1102,9 @@ command_hold() {
     fail 'hold needs --reason "<what the captain has to decide>"; nothing was recorded'
   fi
   # bin/jg-hold-reason-lib.sh owns the storage constraint and reversible encoding.
-  stored_reason=$(jg_hold_reason_encode "$reason") || fail "could not encode the hold reason"
+  # A Beads store takes any text, so only a tasks-axi row needs the encoded form.
+  stored_reason=$reason
+  beads_home || stored_reason=$(jg_hold_reason_encode "$reason") || fail "could not encode the hold reason"
   if [ -n "$origin" ]; then
     validate_slug origin-id "$origin"
   fi
@@ -2184,7 +2202,7 @@ command_diverged() {
   # A read-only listing on a per-wake path, so it skips the mutation-oriented
   # compatibility floor and its extra probes: a listing this parser cannot read
   # simply yields no candidates and the report stays silent.
-  command -v tasks-axi >/dev/null 2>&1 || return 0
+  beads_home || command -v tasks-axi >/dev/null 2>&1 || return 0
   ids=$(open_task_ids) || return 0
   [ -n "$ids" ] || return 0
   resolve=${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}
@@ -2266,7 +2284,9 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
     || { printf 'jg-captain-hold: data directory cannot be resolved: %s\n' "$DATA" >&2; exit 2; }
   root=$(jg_backlog_root "$data") \
     || { printf 'jg-captain-hold: %s\n' "$JG_BACKLOG_TRANSITION_ERROR" >&2; exit 2; }
-  if ! backend=$(jg_tasks_axi_backend_resolve "$root"); then
+  if beads_home; then
+    backend=beads
+  elif ! backend=$(jg_tasks_axi_backend_resolve "$root"); then
     exit 2
   fi
   if [ "$backend" = markdown ]; then
@@ -2281,7 +2301,8 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
       return 1
     fi
   fi
-  jg_tasks_axi_compatible || { printf 'jg-captain-hold: compatible tasks-axi is required\n' >&2; exit 2; }
+  [ "$backend" = beads ] || jg_tasks_axi_compatible \
+    || { printf 'jg-captain-hold: compatible tasks-axi is required\n' >&2; exit 2; }
   if jg_backlog_row_probe "$data" "$id"; then
     state=${JG_BACKLOG_ROW_STATE%% *}
     if [ "$state" != "done" ] && [ "$JG_BACKLOG_ROW_HOLD_KIND" = captain ]; then
@@ -2340,11 +2361,20 @@ decision_open() {  # <task-id>
 # to <task-id> (either direction); unrelated work keeps moving. To make every
 # open decision stop all work, print every open decision here instead. A
 # `parent:` id links only when it is a real task, so `parent: upkeep` links nothing.
-# One pass over the backlog file finds the rows linking here; only those are checked.
+# One pass over the backlog finds the rows linking here; only those are checked.
+# On a Beads store that pass is the provider's `links` read, which adds every edge.
 linked_open_decisions() {  # <task-id>; prints the open decisions linked to it, one id per line
   local id=$1 data file mine target
   data=$(jg_backlog_data_absolute "$DATA") \
     || { printf 'jg-captain-hold: data directory cannot be resolved: %s\n' "$DATA" >&2; exit 2; }
+  if beads_home; then
+    mine=$(tasks_axi links "$id") \
+      || { printf 'jg-captain-hold: task %s could not be read for its links\n' "$id" >&2; exit 2; }
+    while IFS= read -r target; do
+      [ -z "$target" ] || ! decision_open "$target" || printf '%s\n' "$target"
+    done <<<"$mine"
+    return 0
+  fi
   task_show "$id" || { printf 'jg-captain-hold: task %s could not be read for its links\n' "$id" >&2; exit 2; }
   mine=$(body_link_targets "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")")
   file=$(jg_backlog_file "$data") && [ -r "$file" ] \

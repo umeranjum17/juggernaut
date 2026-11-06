@@ -441,6 +441,141 @@ lanes() {
   assert_contains "$out" 'cannot reassign jg-l5' "a bare reassign must refuse"
   owner jg-l5 third ""
 }
+holds() {  # Each hold shape, on queued, in-flight and closed rows, then what each provider reads back.
+  same hold jg-w1 --reason "wait for x" --kind captain --until 2099-01-15
+  same hold jg-w1 --reason "wait for x" --kind captain --until 2099-01-15
+  same show jg-w1 --full
+  same list --state held --fields held,hold_kind,hold_reason
+  same ready
+  same hold jg-w1 --reason "wait for y"
+  same show jg-w1 --full
+  same hold jg-w1 --reason "over" --kind load --until 2001-01-01
+  same show jg-w1 --full
+  same ready
+  same hold jg-w1 --reason x --kind nope
+  same hold jg-w1 --reason x --until nope
+  same hold jg-w1 --reason "  "
+  same hold jg-w1
+  same hold nope --reason x
+  same unhold jg-w1
+  same unhold jg-w1
+  same unhold nope
+  same show jg-w1 --full
+  same hold jg-fly --reason "wait in flight" --kind parked
+  same show jg-fly --full
+  same list --state in_flight
+  same unhold jg-fly
+  same show jg-fly --full
+  same hold jg-w4 --reason late
+  same show jg-w4 --full
+  same unhold jg-w4
+  same update jg-w1 --archive-body
+  same update jg-w1 --body newer --archive-body
+  same show jg-w1 --full
+}
+captain() {  # <home> <args...>: bin/jg-captain-hold.sh in one home, on stdout and exit status.
+  local home=$1
+  shift
+  JG_CAPTAIN_HOLD_NOW=2026-11-07T10:00:00Z JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" \
+    "${jail[@]}" "$ROOT/bin/jg-captain-hold.sh" "$@" 2>&1 < "${FEED:-/dev/null}"
+}
+alike() {  # <args...>: the same captain-hold call on either store gives the same lines and exit status.
+  local a b ra=0 rb=0
+  a=$(captain "$T/ta" "$@") || ra=$?
+  b=$(captain "$T/bd" "$@") || rb=$?
+  a=${a//$T\/ta/HOME} b=${b//$T\/bd/HOME}
+  [ "$a" = "$b" ] && [ "$ra" = "$rb" ] || fail "captain $* differs, rc $ra/$rb: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b"))"
+}
+journey() {  # A hold, an answer, a release and a completed investigation, then every refusal the old store gives.
+  mkdir -p "$T/ta/state" "$T/bd/state" "$T/bd/data"
+  printf '%064d\n' 0 | tee "$T/ta/state/captain-approval.key" > "$T/bd/state/captain-approval.key"  # One signature on both.
+  printf 'ship it\n' > "$T/said.txt"
+  : > "$T/empty.txt"
+  alike hold jg-c1 --title "[decision] Pick a name" --reason "needs the name (short or long)" --priority 1
+  alike hold jg-c1 --title "[decision] Pick a name" --reason "needs the name (short or long)" --priority 1
+  alike open jg-c1
+  alike open jg-c1 --identity
+  alike open nope --distinguish-absent
+  # The work a decision stops, by a body line on either store and by an edge on Beads; a row it never named moves.
+  same add jg-c6 "[feature] Build the page" --priority 2 --body $'why\nlinked-to: jg-c1'
+  same add jg-c7 "[feature] Build the footer" --priority 2 --body why
+  alike blocking jg-c6
+  assert_contains "$(captain "$T/bd" blocking jg-c6)" jg-c1 "linked work must name the open decision"
+  alike blocking jg-c7
+  alike blocking nope
+  JG_HOME="$T/bd" "${jail[@]}" "$CLI" block jg-c7 --by jg-c1 >/dev/null || fail "lay an edge"
+  assert_contains "$(captain "$T/bd" blocking jg-c7)" jg-c1 "an edge must stop the work too"
+  # A migrated row answers to the name it had: a stop, a hold and a line that still names it.
+  "${jail[@]}" "$WRAPPER" update jg-c7 --set-metadata legacy_item=old-footer >/dev/null 2>&1 || fail "name the row"
+  "${jail[@]}" "$WRAPPER" update jg-c1 --set-metadata legacy_item=old-call >/dev/null 2>&1 || fail "name the call"
+  assert_contains "$(captain "$T/bd" blocking old-footer)" jg-c1 "a stop must reach a row by its old name"
+  JG_HOME="$T/bd" "${jail[@]}" "$CLI" update jg-c6 --body $'why\nlinked-to: old-call' >/dev/null || fail "name it in a line"
+  assert_contains "$(captain "$T/bd" blocking jg-c6)" jg-c1 "a line with the old name must still stop the work"
+  JG_HOME="$T/bd" "${jail[@]}" "$CLI" hold old-footer --reason "by its old name" >/dev/null || fail "hold by the old name"
+  assert_contains "$("${jail[@]}" "$WRAPPER" show jg-c7 --json 2>/dev/null)" on_hold "a hold must reach a row by its old name"
+  JG_HOME="$T/bd" "${jail[@]}" "$CLI" unhold old-footer >/dev/null || fail "release by the old name"
+  JG_HOME="$T/bd" "${jail[@]}" "$CLI" update jg-c6 --body $'why\nlinked-to: jg-c1' >/dev/null || fail "restore the line"
+  "${jail[@]}" "$WRAPPER" update jg-c7 --unset-metadata legacy_item >/dev/null 2>&1 || fail "drop the name"
+  "${jail[@]}" "$WRAPPER" update jg-c1 --unset-metadata legacy_item >/dev/null 2>&1 || fail "drop the call's name"
+  alike answered jg-c1
+  alike diverged
+  alike reconcile list
+  alike answer jg-c1
+  alike answer jg-c1 --decision-file "$T/empty.txt"
+  alike answer nope --decision-file "$T/said.txt"
+  alike answer jg-w2 --decision-file "$T/said.txt"
+  alike answer jg-c1 --decision-file "$T/said.txt"
+  alike answered jg-c1
+  alike blocking jg-c6
+  alike answer jg-c1 --decision-file "$T/said.txt"
+  alike open jg-c1
+  alike hold jg-c2 --title "[feature] Work" --reason $'held for the owner\nsecond line' --until 2099-01-15 --priority 2
+  alike open jg-c2
+  alike answer jg-c2 --decision-file "$T/said.txt" --release
+  alike open jg-c2
+  alike hold jg-c2 --reason ""
+  alike hold jg-c2 --reason x --until nope
+  alike hold jg-w4 --reason "too late"
+  alike hold nope --reason x
+  alike hold jg-c3 --title "[decision] Bind" --reason "owed by the investigation" --origin jg-fly --priority 2
+  printf 'id=jg-fly\n' | tee "$T/ta/state/jg-fly.meta" > "$T/bd/state/jg-fly.meta"
+  alike complete jg-fly nope
+  alike complete jg-fly jg-c3
+  alike verify jg-fly
+  alike hold jg-c4 --title "[decision] Keyed" --reason "a keyed answer" --priority 2
+  alike hold jg-c5 --title "[decision] Moot" --reason "the board drops it" --priority 2
+  printf 'jg-c4\tgo\t\n' > "$T/keyed.txt"
+  printf 'jg-c5\n' > "$T/moot.txt"
+  printf 'no longer needed\n' > "$T/why.txt"
+  FEED=$T/keyed.txt alike answers --any-origin --source "keyed fixture"
+  alike bind board --any-origin
+  FEED=$T/moot.txt alike reconcile-requests --source-id board --source "board fixture"
+  alike reconcile list
+  alike reconcile note jg-c5 --note-file "$T/why.txt"
+  alike reconcile close jg-c5 --evidence-file "$T/why.txt"
+  alike reconcile list
+  same add jg-ask "[captain-ask] An order" --priority 0 --body why
+  same hold jg-ask --reason "raw"
+  same hold jg-ask --reason "  "
+  alike hold jg-ask --reason "held the sanctioned way"
+  same "done" jg-ask
+  # A store that cannot answer is an unknown, never a clear.
+  mv "$T/bd/config/beads-dir" "$T/beads-dir"
+  captain "$T/bd" open jg-c1 >/dev/null
+  expect_code 2 $? "a Beads home with no store must not read as not held"
+  captain "$T/bd" hold jg-c1 --reason x >/dev/null
+  expect_code 2 $? "a Beads home with no store must refuse a hold"
+  mv "$T/beads-dir" "$T/bd/config/beads-dir"
+  # Only the old store encodes a reason, so only it quotes one: both read back as the same words.
+  local ident a b unquote='s/^(  hold_reason: )"(.*)"$/\1\2/'
+  for ident in jg-c1 jg-c2 jg-c3 jg-c4 jg-c5 jg-ask; do
+    a=$(JG_HOME="$T/ta" "$CLI" show "$ident" --full | sed -E "$unquote")
+    b=$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" show "$ident" --full | sed -E "$unquote")
+    [ "$a" = "$b" ] || fail "$ident differs: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b"))"
+  done
+  same list
+  same ready
+}
 if command -v tasks-axi >/dev/null; then
   mkdir -p "$T/ta/data" "$T/bd/config"
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$T/ta/data/backlog.md"
@@ -630,7 +765,9 @@ else
     printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
     TMPDIR=$T callers  # The jail's /tmp is gone with each call.
     TMPDIR=$T writes
-    TMPDIR=$T transitions
+    TMPDIR=$T holds
+    TMPDIR=$T journey
+    TMPDIR=$T transitions  # After the holds: its races move rows on the Beads store alone.
     TMPDIR=$T spawned
     out=$(TMPDIR=$T JG_HOME="$T/bd" "${jail[@]}" "$CLI" add --mint "[feature] Mint me" --prefix zz --priority 2 --body why --json) || fail "real mint"
     assert_contains "$out" '"id": "zz-feature-mint-me-' "a minted id must carry the prefix and the title"

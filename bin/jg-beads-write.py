@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""jg-beads-write.py - serve tasks-axi's add, update, done, block, start and reopen on a Beads store.
+"""jg-beads-write.py - serve tasks-axi's add, update, done, block, start, reopen, hold and unhold on a Beads store.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|start|reopen> [args...]
+Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|start|reopen|hold|unhold> [args...]
 
 bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-axi.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi's lines on stdout.
 kind is metadata.kind, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
 and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as tasks-axi writes it.
+A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; --until is defer_until at UTC
+midnight, because bd reads a bare date in local time; metadata.hold_from keeps an in-flight row's status for unhold.
+--archive-body needs nothing further: the store's own history keeps the replaced body.
 A rerun converges: an existing id, blocker, link or note is left alone. bd refuses an id with no dash and a dependency
 cycle, and that refusal reaches stderr with bd's exit status.
 start, reopen and done move status only from the status they expect, so a row that moved first exits 13 and changes
@@ -17,6 +20,7 @@ start claims a row with no owner, and JG_BACKLOG_LANE_HANDOVER=1 takes it from t
 took first exits 13. done keeps the assignee as history, reopen clears both, and each moves only from the owner it read.
 bd takes --if-assignee or --force, never both, so closing a blocked row is guarded by status alone.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -35,6 +39,8 @@ PR_ERROR = ("--pr must be a canonical pull request URL: https://github.com/<owne
             "or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)")
 FIELDS = ("--kind", "--repo", "--body", "--body-file", "--pr", "--report", "--priority")
 STALE = 13
+HOLD_KINDS = ("captain", "external", "load", "parked", "future")
+HOLD_FIELDS = ("hold_reason", "hold_kind", "hold_from")
 
 
 def bd(*args):
@@ -199,7 +205,7 @@ def add(args):
 
 
 def update(args):
-    found, ids = view.flags(args, FIELDS + ("--title",), ("--json",))
+    found, ids = view.flags(args, FIELDS + ("--title",), ("--archive-body", "--json"))
     if len(ids) != 1:
         view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi update <id> [flags]")
     items = rows()
@@ -209,6 +215,9 @@ def update(args):
     if not set(found) - {"--json"}:
         view.refuse("Nothing to update", "Pass a field, e.g. --title, --body, --body-file, --repo, or --kind")
     body = checked(found)
+    if "--archive-body" in found and body is None:
+        view.refuse("--archive-body requires --body or --body-file",
+                    "Inspect the current task first, then pass a replacement body with --body or --body-file")
     words, cmd = links(row, found)
     title = " ".join([found.get("--title", item["title"]), *words])
     changed = []
@@ -218,7 +227,7 @@ def update(args):
         changed.append("title")
     if body is not None and body != item["body"]:
         cmd.append("--description=" + body)
-        changed.append("body")
+        changed += ["body", "archive"] if "--archive-body" in found else ["body"]
     if found.get("--repo", item["repo"]) != item["repo"]:
         cmd += [] if item["repo"] == "-" else ["--remove-label", "project:" + item["repo"]]
         cmd += ["--add-label", "project:" + found["--repo"]]
@@ -326,10 +335,68 @@ def reopen(args):
     respond(found, "reopen", ident, "reopen %s -> Queued" % ident, tips, card=False)
 
 
+def hold_date(value):
+    try:
+        datetime.date.fromisoformat(value if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) else "")
+    except ValueError:
+        view.refuse("--until must be YYYY-MM-DD")
+    return value
+
+
+def hold(args):
+    found, ids = view.flags(args, ("--reason", "--kind", "--until"), ("--json",))
+    if len(ids) != 1:
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi hold <id> --reason <text>")
+    reason, kind = found.get("--reason"), found.get("--kind")
+    if reason is None:
+        view.refuse("--reason <text> is required", 'Pass a reason, e.g. --reason "captain decision pending"')
+    if not reason.strip():
+        view.refuse("--reason requires a value", "Pass --reason=... with a non-empty value")
+    if kind is not None and kind not in HOLD_KINDS:
+        view.refuse("--kind must be one of " + ", ".join(HOLD_KINDS))
+    until = hold_date(found["--until"]) if "--until" in found else None
+    items = rows()
+    row = target(items, ids[0])
+    ident = row["id"]
+    item = view.task(row, items)
+    tips = ["Run `tasks-axi unhold %s` to resume dispatch" % ident, "Run `tasks-axi ready --include-held` to review paused work"]
+    if (item["hold_reason"], item["hold_kind"], item["hold_until"]) == (reason, kind or "-", until or "-"):
+        respond(found, "hold", ident, "hold %s already held" % ident, tips, already=True)
+        return
+    status, meta = row.get("status"), row.get("metadata") or {}
+    cmd = ["--set-metadata", "hold_reason=" + reason]
+    cmd += ["--set-metadata", "hold_kind=" + kind] if kind else ["--unset-metadata", "hold_kind"] if "hold_kind" in meta else []
+    cmd += ["--defer", until + "T00:00:00Z" if until else ""] if until or row.get("defer_until") else []
+    cmd += ["--set-metadata", "hold_from=in_progress"] if status == "in_progress" else []
+    cmd += ["--status", "on_hold"] if status in ("open", "in_progress") else []
+    bd("update", ident, *cmd)
+    named = ", ".join(filter(None, [kind, until and "until " + until]))
+    respond(found, "hold", ident, "hold %s -> held%s" % (ident, " (%s)" % named if named else ""), tips)
+
+
+def unhold(args):
+    found, ids = view.flags(args, (), ("--json",))
+    if len(ids) != 1:
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi unhold <id>")
+    items = rows()
+    row = target(items, ids[0])
+    ident = row["id"]
+    meta = row.get("metadata") or {}
+    cmd = [word for key in HOLD_FIELDS if key in meta for word in ("--unset-metadata", key)]
+    cmd += ["--defer", ""] if row.get("defer_until") else []
+    cmd += ["--status", "in_progress" if view.flying(row) else "open"] if row.get("status") in view.HELD else []
+    tips = ["Run `tasks-axi ready` to see dispatchable work"]
+    if not cmd:
+        respond(found, "unhold", ident, "unhold %s already not held" % ident, tips, already=True)
+        return
+    bd("update", ident, *cmd)
+    respond(found, "unhold", ident, "unhold %s -> cleared" % ident, tips)
+
+
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
-             "block": block, "start": start, "reopen": reopen}.get(verb)
+             "block": block, "start": start, "reopen": reopen, "hold": hold, "unhold": unhold}.get(verb)
     if serve is None:
         view.refuse("Unknown write verb: " + verb)
     serve(sys.argv[2:])
