@@ -24,6 +24,10 @@
 # summary before it is stored: a summary that reports a user-visible fix as done
 # is recorded as `merged-not-released: ...` unless it carries the released ref
 # and where it is observable, or states the truth itself.
+# bin/jg-ticket-link-guard.sh owns the ticket rule: a captain verdict names the
+# board ticket link its work belongs to, and is refused here when it names none.
+# A `fleet` row summarizes many tickets and has no single ticket to name, so it
+# is the one row this check leaves alone.
 # --wake defaults to the wake reason the host recorded for the turn.
 #
 # Only the branch actor of a live host turn may report: JG_SUPERVISION_ACTOR
@@ -154,6 +158,13 @@ if [ "$(turn_field unscoped)" != 1 ]; then
 fi
 
 [ "$WAKE_SET" -eq 1 ] || WAKE=$(turn_field wake)
+
+# The ticket rule (bin/jg-ticket-link-guard.sh owns it): a captain outcome the
+# captain can act on names its board ticket, so the reply he reads opens it.
+if [ "$VERDICT" = captain ] && [ "$TASK" != fleet ] && [ -x "$SCRIPT_DIR/jg-ticket-link-guard.sh" ]; then
+  printf '%s\n' "$SUMMARY" | "$SCRIPT_DIR/jg-ticket-link-guard.sh" \
+    || refuse "captain reply names no ticket; the line above names the fix"
+fi
 
 set -- append --task "$TASK" --verdict "$VERDICT" --summary "$SUMMARY" --silent "$SILENT"
 [ -z "$WAKE" ] || set -- "$@" --wake "$WAKE"

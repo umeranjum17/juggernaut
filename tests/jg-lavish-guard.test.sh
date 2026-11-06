@@ -80,7 +80,8 @@ test_the_lead_report_helper_refuses_before_append() {
   assert_contains "$(cat "$dir/stderr")" 'sign-off board (sign-off-axi)' \
     'the report helper surfaces the sign-off instruction'
   assert_absent "$dir/parent/state/umer.status" 'a refused report wrote nothing to the parent channel'
-  JG_HOME="$dir" bash "$REPORT" 'done' abcdef0123456789 'board: http://review.example:4388/board/umer' \
+  JG_HOME="$dir" bash "$REPORT" 'done' abcdef0123456789 \
+    'board: http://review.example:4388/board/umer #tickets/jg-abc' \
     2>>"$dir/stderr" || fail 'the report helper refused a sign-off report link'
   assert_grep 'board: http://review.example:4388/board/umer' "$dir/parent/state/umer.status" \
     'the sign-off report link reaches the parent channel'
