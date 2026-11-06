@@ -707,6 +707,36 @@ SH
   pass "bootstrap: a Herdr primary without the restart-recovery service gets the install command"
 }
 
+test_herdr_primary_names_a_machine_unit_serving_another_home() {
+  local case_dir fakebin out other
+  case_dir="$TMP_ROOT/herdr unit home"
+  other="$case_dir/other home"
+  mkdir -p "$case_dir/home/config" "$other"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' herdr > "$case_dir/home/config/backend"
+  fakebin=$(make_fake_toolchain_no_tmux "$case_dir" herdr)
+  cat > "$fakebin/systemctl" <<'SH'
+#!/usr/bin/env bash
+[ "$1 $2 $3" != "--user show -p" ] || { printf 'JG_HOME=%s PATH=/usr/bin\n' "$JG_FAKE_UNIT_HOME"; exit 0; }
+exit 0
+SH
+  chmod +x "$fakebin/systemctl"
+  out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
+    JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_UNIT_HOME="$other" "$ROOT/bin/jg-bootstrap.sh")
+  for unit in jg-sentinel jg-wake-engine jg-wake-watcher jg-router; do
+    assert_contains "$out" "UNIT_HOME: $unit is running for $other" "an active $unit serving another home must be named"
+  done
+  assert_contains "$out" "jg-stack.sh up" "a moved bus unit must come with its repair step"
+  out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
+    JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_UNIT_HOME="$case_dir/home" "$ROOT/bin/jg-bootstrap.sh")
+  assert_not_contains "$out" "UNIT_HOME:" "units serving this home are not reported"
+  : > "$case_dir/home/.jg-squad-lead-home"
+  out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
+    JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_UNIT_HOME="$other" "$ROOT/bin/jg-bootstrap.sh")
+  assert_not_contains "$out" "UNIT_HOME:" "a squad_lead home is served by its primary's units"
+  pass "bootstrap: a machine unit serving another home is named with its repair step"
+}
+
 test_herdr_install_requires_manual_action() {
   local out status
   out=$("$ROOT/bin/jg-bootstrap.sh" install herdr 2>&1)
@@ -1379,6 +1409,7 @@ ROWS
 
 if [ "${1:-}" = sentinel ]; then
   test_herdr_primary_without_restart_recovery_says_how_to_install_it
+  test_herdr_primary_names_a_machine_unit_serving_another_home
   exit 0
 fi
 
@@ -1392,6 +1423,7 @@ test_orca_backend_gates_orca_tool_only_when_selected
 test_session_provider_backends_do_not_require_tmux
 test_session_provider_backends_gate_own_cli_not_tmux
 test_herdr_primary_without_restart_recovery_says_how_to_install_it
+test_herdr_primary_names_a_machine_unit_serving_another_home
 test_herdr_install_requires_manual_action
 test_cmux_bundled_cli_satisfies_dependency
 test_unknown_backend_reports_invalid_configuration

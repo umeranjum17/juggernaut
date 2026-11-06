@@ -30,6 +30,9 @@ type event struct {
 	// card-close event for a card the board answered. Old events have neither.
 	Options []cardOption `json:"options,omitempty"`
 	Answer  string       `json:"answer,omitempty"`
+	// Home is the publishing home, set by emitEvent. The chat gateway sends the owner only what a
+	// real home published (realHome); an event without it is from before this field and is let through.
+	Home string `json:"home,omitempty"`
 }
 
 // toJSON renders one value without HTML escaping, so a text with `&` or `<` keeps the
@@ -187,7 +190,7 @@ func (a *app) emit(kind, key, text, link string, media []mediaFile) int {
 
 // emitEvent stamps the event and emits it; the document is the bytes eventJSON builds.
 func (a *app) emitEvent(ev event) int {
-	ev.At, ev.Subject = time.Now().Unix(), a.cfgOr("subject-prefix", "")+"."+ev.Kind
+	ev.At, ev.Subject, ev.Home = time.Now().Unix(), a.cfgOr("subject-prefix", "")+"."+ev.Kind, resolveHome(a.home)
 	return a.emitDoc(ev.Kind, toJSON(ev), func() error { return a.sendToChat(ev) })
 }
 

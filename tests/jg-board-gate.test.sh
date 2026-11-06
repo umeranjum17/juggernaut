@@ -54,13 +54,14 @@ case "$cmd" in
 esac
 SH
   chmod +x "$d/fakebin/sign-off-axi"
+  printf 'set mode off\n' > "$d/channel-off" # the cards raised here stay off the machine's shared bus
   printf '%s\n' "$d"
 }
 
 with_env() {  # <case dir> <command...>
   local d=$1
   shift
-  env PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" \
+  env JG_CAPTAIN_CHANNEL="$d/channel-off" PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" \
     SIGN_OFF_HOME="$d/so" SIGNOFF_LOG="$d/signoff.log" JG_BOARD_GATE_NOW="$NOW" \
     JG_BOARD_GATE_REFIRE_SECS=0 "$@"
 }
@@ -73,7 +74,7 @@ run() { with_env "$@" 2>&1; }  # <case dir> <command...> -> both streams
 # takes stdout alone and the refusal text keeps the merged form above.
 run_out() { with_env "$@" 2>/dev/null; }  # <case dir> <command...> -> stdout alone
 
-POST=(post --title "Rename the fleet word?" --ask-ref m1 --why "It reads oddly here."
+POST=(post --route main --title "Rename the fleet word?" --ask-ref m1 --why "It reads oddly here."
   --outcome yes="It is renamed." --outcome no="It stays." --recommend yes
   --recommend-reason "It reads better." --default no)
 
@@ -134,6 +135,19 @@ test_must_ask_is_posted_and_counted() {
   out=$(ask "$d" "--title" "Rename the other word?" "--ask-ref" m2) \
     || fail "the ask-me-first leash refused a plain ask: $out"
   pass "a must ask is posted with its category and is the only thing the waiting count holds"
+}
+
+test_plan_approval_is_a_must_and_a_made_up_category_is_not() {
+  local d out key detail
+  d=$(setup plan-approval)
+  key=$(ask_key "$d" --must plan-approval) || fail "a plan-approval ask was refused: $(ask "$d" --must plan-approval)"
+  detail=$(jq -r --arg k "$key" '.items[] | select(.key == $k) | .detail' "$d/so/.sign-off/decisions.json")
+  assert_equals "must: plan-approval" "$detail" "the plan-approval card does not carry its category"
+  assert_equals "1" "$(run "$d" "$GATE" waiting)" "the plan-approval ask was not counted as waiting"
+  out=$(ask "$d" --must made-up-category --title "Rename the other word?" --ask-ref m2) \
+    && fail "a made-up category was posted: $out"
+  assert_equals "1" "$(open_cards "$d")" "a made-up category still reached the captain's board"
+  pass "a plan-approval ask is a must and a made-up category is still refused"
 }
 
 test_check_re_pings_an_old_must_ask_once() {
@@ -329,6 +343,7 @@ test_check_dismisses_the_card_of_a_settled_hold() {
 test_non_must_ask_is_refused_and_routed
 test_dismiss_sends_a_fitting_reason_and_odd_titles_make_valid_tags
 test_must_ask_is_posted_and_counted
+test_plan_approval_is_a_must_and_a_made_up_category_is_not
 test_check_re_pings_an_old_must_ask_once
 test_check_moves_an_unclassified_ask_to_overwatch
 test_check_reports_a_merge_with_no_board_evidence

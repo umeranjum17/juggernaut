@@ -367,6 +367,7 @@ raise_hold_card() {  # <task-id> <task-title> <reason> <done|release> <must>
   # beside that ticket's On hold row (bin/jg-ticket.sh owns the ticket id).
   ticket=$("$SCRIPT_DIR/jg-ticket.sh" id "$id" 2>/dev/null) || ticket=''
   out=$("$SCRIPT_DIR/jg-question-card.sh" post \
+    --route main \
     --ask-ref "$id" --key "$key" --title "$title" --about "$reason" --why "$(card_why "$reason")" \
     ${must:+--must "$must"} ${ticket:+--ticket "$ticket"} \
     --outcome yes="Answer recorded: yes." \
@@ -1230,6 +1231,10 @@ command_hold() {
 write_resolution_record() {  # <task-id> <mode> <shown-body>
   local id=$1 mode=$2 body=$3 new_body tmp hold_set
   new_body=$(resolution_block "$mode")
+  # The captain's recorded answer is the board approval a build of this ticket needs.
+  case "$mode" in
+    answered|released|repaired) new_body=$(printf '%s\n%s' "$new_body" "$(captain_ask_approval_line "$id" "answer:$DECISION_DIGEST")") ;;
+  esac
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   hold_set=$(body_hold_set_timestamp "$body")

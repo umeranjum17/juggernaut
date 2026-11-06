@@ -23,6 +23,7 @@ agents:Maintaining this file	overwatch,squad_lead,builder
 skill:juggernaut-coding-guidelines	builder,reviewer
 skill:done-done-verify-suites	builder,reviewer
 skill:prior-art	builder,scout
+skill:deep-recon	scout
 skill:diagnostic-reasoning	builder,reviewer,scout,overwatch,squad_lead
 skill:captain-hold-lifecycle	scout,overwatch,squad_lead
 skill:afk ahoy bearings debrief intel quiet stow radio-silence updatejuggernaut resupply sitrep watchover	overwatch,squad_lead

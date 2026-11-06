@@ -36,6 +36,16 @@ Classify the deliverable:
 - If established evidence already answers an informational question, relay it without a design-only Recon; when implementation intent is unclear, answer and ask one concise implementation question when useful rather than dispatching speculative design work.
 - Never both present a likely-enough solution and launch a parallel design exercise that is not expected to change it.
 
+### Recon depth
+
+Pick the depth of every Recon at intake and pass it to the scaffold as `--depth quick|standard|deep`; `bin/jg-recon-depth.sh "<the ask>"` maps the ask's words to a level, and a level the captain names always wins.
+- **deep** for "in depth", "discovery", "deep", "research properly", "detailed report", or a plan with slices.
+- **quick** only for one fact.
+- **standard** for everything else; it is the default.
+
+A deep Recon needs one separate critic worker after the researcher's draft, never a fan-out: when the researcher reports its draft ready, spawn one critic Recon on a fresh isolated copy with that draft, install the critic's output as the researcher's `data/<id>/critic.md`, and steer that same critic for each further round.
+`.agents/skills/deep-recon/SKILL.md` owns the stages, budgets and critic rubric, and `bin/jg-recon-gate.sh` refuses `done` for a standard or deep Recon that does not meet them.
+
 ## Delivery mode, branch, and consent flags
 
 Pass the mode explicitly to the brief, and pass both values explicitly to the spawn and any Recon promotion; each command refuses to guess the values it consumes.

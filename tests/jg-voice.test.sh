@@ -40,6 +40,8 @@ KNOWN = {
         "The merge check is switched on. The release must pass the usual check before it lands.",
     "GitHub is still computing its mergeability for the fix. The merge commit lands on release/c-10 when the pending checks pass.":
         "GitHub is still working out whether the fix can merge. The merged change lands on the release when the checks that are still running pass.",
+    " waiting-timer-cleared: wf-9 changed state":
+        " The waiting timer was cleared. The worker changed state.",
     " the merge guard passed on the worktree; see PR 602":
         " the merge check passed on the local copy; see https://github.com/example/repo/pull/602",
     "Update from MAIN:\n\n1. the merge guard passed\n2. the worktree is clean":
@@ -71,6 +73,12 @@ out=$(printf '%s' "$RELAY_TWO" | python3 "$VOICE" apply --channel telegram 2>/de
 case $out in *"https://github.com/example/repo/pull/602 key=worktree."*) ;; *) fail "URL and key=value were not protected: $out" ;; esac
 case $out in *"local copy is clean after cleanup"*"instructions are filed"*) ;; *) fail "second message not rewritten: $out" ;; esac
 pass "URLs and key=value tokens survive the rewrite"
+
+# A link the message closes with a comma is kept when the rewrite writes the same link without the mark: the check counts the link, not the punctuation after it.
+rc=0; out=$(printf '%s' 'The worktree is clean after teardown, see https://github.com/example/repo/pull/602, then merge.' | JG_VOICE_REWRITE_CMD="echo The local copy is clean after cleanup, see https://github.com/example/repo/pull/602 then merge." python3 "$VOICE" apply --channel telegram 2>"$TMP_ROOT/comma.err") || rc=$?
+[ "$rc" -eq 0 ] || fail "a rewrite that kept the link but not the comma after it was refused (rc=$rc): $(cat "$TMP_ROOT/comma.err")"
+case $out in *"https://github.com/example/repo/pull/602 then merge."*) ;; *) fail "the rewrite was not sent as written: $out" ;; esac
+pass "a link followed by a comma is not lost when the rewrite drops the comma"
 
 # A rewrite that dropped a URL, or that still holds a banned term, is refused instead of sent.
 rc=0; out=$(printf '%s' "$RELAY_TWO" | JG_VOICE_REWRITE_CMD="echo The local copy is clean." python3 "$VOICE" apply --channel telegram 2>"$TMP_ROOT/refuse.err") || rc=$?
@@ -116,6 +124,25 @@ for phrase in 'Release c-13 is ready.' 'It needs the signature of the owner.' 'C
 done
 printf '%s' 'The release is ready. Cleanup finished.' | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "the check refused a plain sentence"
 pass "the three internal phrases from the captain's screenshot are flagged, and a plain sentence is not"
+printf '%s' 'The notes are in data/sitrep/report.md now.' | python3 "$VOICE" check --channel telegram 2>/dev/null && fail "the check passed a message that names a file path"
+printf '%s' 'The notes are at https://example.test/notes/report.md now.' | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "the check refused a link that ends in .md"
+pass "a file path is flagged for the captain's chat, and a link to a .md page is not"
+
+# A ticket id beside its full link (the captain's Telegram 408 and 409): `revert-pr678` carries a PR number, which the
+# check refused even when the message linked that PR. Smallest rule: a PR number passes only when the same message
+# holds a full link to that same PR; with no link, or a link to another PR, it stays refused, and other terms are untouched.
+PR_URL='https://github.com/example/repo/pull/678'
+printf '%s' "Ticket revert-pr678 is ready: $PR_URL" | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "a ticket id beside its full link was refused"
+printf '%s' "The fix is in PR 678: $PR_URL" | python3 "$VOICE" check --channel telegram 2>/dev/null || fail "a PR number beside its full link was refused"
+for bad in 'Ticket revert-pr678 is ready.' 'The fix is in PR 678.' "Ticket revert-pr679 is ready: $PR_URL"; do
+  printf '%s' "$bad" | python3 "$VOICE" check --channel telegram 2>/dev/null && fail "a PR number with no link to that PR passed: $bad"
+done
+if err=$(printf '%s' "Ticket revert-pr678 is ready: $PR_URL The worktree is clean after teardown." | python3 "$VOICE" check --channel telegram 2>&1 >/dev/null); then
+  fail "other internal terms passed beside a linked ticket id"
+fi
+case $err in *'"worktree"'*'"teardown"'*) ;; *) fail "the other internal terms were not named: $err" ;; esac
+case $err in *'"pr678"'*) fail "the linked ticket id was still named: $err" ;; esac
+pass "a ticket id passes beside its full link, is refused with no link, and other internal terms are still refused"
 
 want=$(printf '%s\n' 'Three things are ready:' '' '1. The fix.' '2. The test.' '3. The notes.' '' 'Please review.')
 out=$(printf '%s\n%s\n' 'Three things are ready: 1. The fix. 2. The test. 3. The notes.' 'Please review.' | python3 "$VOICE" apply --channel telegram 2>/dev/null)
@@ -184,6 +211,16 @@ JG_VOICE_FILE="$TMP_ROOT/edited.md" jg_parent_channel_append_once "$chan" 'worki
 grep -q 'a lane is parked' "$chan" || fail "the blocked parent line was not delivered as written"
 JG_VOICE_REWRITE_CMD=false jg_parent_channel_append_once "$chan" 'working [at=1793000002]: the worktree is busy' 2>/dev/null || fail "a failed rewrite must never hold a parent-channel line back"
 grep -q 'the worktree is busy' "$chan" || fail "the parent line was not delivered as written when the rewrite failed"
+# A machine close line reaches the channel with its marker, so the wait it closes stays closed.
+wchan="$TMP_ROOT/parent/wait.status"
+jg_parent_channel_append_once "$wchan" 'blocked [at=1793000010] [key=waiting-timer-overdue-wf-9]: waiting-timer-overdue: wf-9 has waited too long'
+[ -n "$(status_open_decisions "$wchan")" ] || fail "the overdue wait did not open"
+jg_parent_channel_append_once "$wchan" 'resolved [at=1793000020] [key=waiting-timer-overdue-wf-9]: waiting-timer-cleared: wf-9 changed state'
+grep -q 'waiting-timer-cleared: wf-9' "$wchan" || fail "the close line was rewritten on its way to the channel: $(cat "$wchan")"
+[ -z "$(status_open_decisions "$wchan")" ] || fail "a close line sent through the parent channel left the wait open: $(status_open_decisions "$wchan")"
+printf '%s\n' 'blocked [at=1793000030] [key=waiting-timer-overdue-wf-9]: waiting-timer-overdue: wf-9 has waited too long' 'resolved [at=1793000040] [key=waiting-timer-overdue-wf-9]: The waiting timer was cleared. The worker changed state.' > "$TMP_ROOT/parent/rewritten.status"
+[ -z "$(status_open_decisions "$TMP_ROOT/parent/rewritten.status")" ] || fail "an already rewritten close line left the wait open"
+pass "the parent channel keeps a machine close line as written, and a rewritten close line closes its wait"
 pass "the parent channel rewrites the note, keeps its status framing, deduplicates a retry and never holds a line back"
 
 # --- role personality files ---------------------------------------------------

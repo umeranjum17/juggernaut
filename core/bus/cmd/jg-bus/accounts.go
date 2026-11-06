@@ -249,13 +249,32 @@ func (a *app) machineHomes() []string {
 // writeAccounts writes the machine's accounts file, which the server config includes. It
 // covers every home that has a state directory beside this one and every registered
 // home, so one unit serves the whole machine. It rewrites the file only when its content
-// changed, and says whether it did.
+// changed, says whether it did, and records whether that took an account away.
 func (a *app) writeAccounts(homes []string) (bool, error) {
 	out := captureStdout(func() int { return a.accounts(homes) })
 	if out == "" {
 		return false, fmt.Errorf("no accounts were produced")
 	}
-	return writeIfChanged(filepath.Join(a.runtime, "accounts.conf"), out)
+	path := filepath.Join(a.runtime, "accounts.conf")
+	a.accountsRemoved = accountRemoved(readFileString(path), out)
+	return writeIfChanged(path, out)
+}
+
+// accountLine matches the line that opens one account in the accounts file.
+var accountLine = regexp.MustCompile(`(?m)^  ([A-Za-z0-9._-]+) \{$`)
+
+// accountRemoved reports whether <before> holds an account <after> does not.
+func accountRemoved(before, after string) bool {
+	kept := map[string]bool{}
+	for _, m := range accountLine.FindAllStringSubmatch(after, -1) {
+		kept[m[1]] = true
+	}
+	for _, m := range accountLine.FindAllStringSubmatch(before, -1) {
+		if !kept[m[1]] {
+			return true
+		}
+	}
+	return false
 }
 
 // writeIfChanged replaces a private file atomically, and only when its text differs.

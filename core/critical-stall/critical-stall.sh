@@ -80,7 +80,7 @@ while IFS="$TAB" read -r slug first; do
   fi
   name=$("$PROBE" "$slug" 2>/dev/null | head -n 1 | cut -f1); name=${name:-$slug}
   cardrc=0
-  out=$(timeout "$BUDGET" "$CARD" post --board "$board" --must design-pick --filer critical-stall \
+  out=$(timeout "$BUDGET" "$CARD" post --board "$board" --must design-pick --route main --filer critical-stall \
     --ask-ref "critical-stall-$slug-${sha:0:8}" --key "critical-stall-$slug-${sha:0:8}" \
     --title "$name is stalled for $pending_h hours. Restart the work now?" \
     --why "It is on the critical path, so later migration work waits for it. $( [ -n "$urls" ] && echo "Its newest commit is $commit_h hours old." || echo "It has no open pull request.")" \

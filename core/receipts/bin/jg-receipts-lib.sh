@@ -119,11 +119,13 @@ jg_receipts_tool() {
 # The acceptance rules are policy/gate/receipt.rego and policy/gate/rules.json: this reads the task record and the
 # receipt file into facts, asks the one evaluator, and prints the message for the reason it gives. The forge read for
 # "the lane's next pull request" is made only when the policy asks for it. An evaluator that cannot run refuses.
-jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head>
+jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head> [<pr-url>]
   local state=$1 id=$2 meta=$3 head=$4 receipt pr file hv=false facts docs verdict count why
   [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] || return 0
   receipt="$state/$id.run-receipt.json"
-  pr=$(jg_dod_meta_value "$meta" pr)
+  # The optional <pr-url> is the pull request being recorded for merge, which a lane with several
+  # pull requests holds apart from the pr= its record carried from an earlier one.
+  pr=${5:-$(jg_dod_meta_value "$meta" pr)}
   count=$(awk -F= '$1 == "receipt_required" { n++ } END { print n+0 }' "$meta") || return 1
   file=other
   if [ ! -e "$receipt" ] && [ ! -L "$receipt" ]; then file="absent"; elif [ -f "$receipt" ] && [ ! -L "$receipt" ]; then file="file"; fi
@@ -192,7 +194,13 @@ jg_receipts_accept_done() {  # <worktree> <mode> <line> <state> <id> <meta> [<fo
       fi
     fi
   fi
-  jg_dod_receipt_accept "$state" "$id" "$meta" "$sha" || return 1
+  # At merge time (bin/jg-pr-merge.sh records through bin/jg-pr-check.sh) the receipt must name the
+  # pull request being merged, not the one an earlier arm left in the record.
+  if [ "${JG_PR_CHECK_MERGE:-}" = 1 ] && [ -n "$forge_head" ]; then
+    jg_dod_receipt_accept "$state" "$id" "$meta" "$sha" "${url:-}" || return 1
+  else
+    jg_dod_receipt_accept "$state" "$id" "$meta" "$sha" || return 1
+  fi
 }
 
 # Meta line for a spawn: prints receipt_required=1 for a ship task (the caller's
@@ -215,14 +223,16 @@ jg_receipts_promote() {  # <meta> <tmp-meta>
 }
 
 # Receipt candidate for bin/jg-pr-check.sh: the verified forge head when the pull
-# request lives outside the worktree's origin repository (the merge binds to that
-# head, not the worktree's HEAD), else nothing so the worker HEAD stands. The
+# request lives outside the worktree's origin repository, or when the merge path
+# is recording it (JG_PR_CHECK_MERGE=1: the merge binds to that head, not the
+# worktree's HEAD, which is another pull request's head in a lane that holds
+# several), else nothing so the worker HEAD stands. The
 # caller refuses any other output. PR_HEAD is empty when the forge head is
 # unverified. Needs the fork lib (jg_dod_pr_outside_origin).
 jg_receipts_pr_candidate() {  # <worktree> <pr-url> <mode> <meta> <verified-pr-head>
   local wt=$1 url=$2 pr_head=${5:-}
   [ -n "$pr_head" ] || return 0
-  if jg_dod_pr_outside_origin "$wt" "$url"; then
+  if [ "${JG_PR_CHECK_MERGE:-}" = 1 ] || jg_dod_pr_outside_origin "$wt" "$url"; then
     printf '%s' "$pr_head"
   fi
   return 0

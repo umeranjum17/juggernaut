@@ -444,6 +444,16 @@ jg_test_tmproot() {
   printf '%s\n' "$root"
 }
 
+# A fixture never reaches the captain's real chat: with no channel config set, the captain channel
+# (bin/jg-bus.sh, docs/captain-channel.md) posts live, so a test's card or outcome would arrive in
+# the real gateway chat. Point every test at a `mode off` channel config. An explicit
+# JG_CAPTAIN_CHANNEL set by a test still wins. This sits after jg_test_tmproot, which it calls.
+if [ -z "${JG_CAPTAIN_CHANNEL:-}" ]; then
+  _jg_channel_off=$(jg_test_tmproot jg-captain-channel-off)/off.conf
+  printf 'set mode off\n' > "$_jg_channel_off"
+  export JG_CAPTAIN_CHANNEL="$_jg_channel_off"
+fi
+
 trap jg_test_cleanup EXIT
 trap 'jg_test_cleanup; exit 130' INT
 trap 'jg_test_cleanup; exit 143' TERM

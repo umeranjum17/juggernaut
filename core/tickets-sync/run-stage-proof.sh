@@ -46,9 +46,12 @@ sign-off-axi ticket "$work/board.json" --id "$tid" --json | tee "$evidence/ticke
 sign-off-axi serve "$work/board.json" --port 0 --bind 127.0.0.1 >"$work/serve.log" 2>&1 &
 cleanup() {
   SIGN_OFF_HOME=$work/signoff sign-off-axi stop "$work/board.json" >/dev/null 2>&1 || true
-  HOME=$real_home CHROME_DEVTOOLS_AXI_SESSION=${CHROME_DEVTOOLS_AXI_SESSION:-} chrome-devtools-axi stop >/dev/null 2>&1 || true
+  # Only our own named session: an empty name would stop the default browser session.
+  [ -z "${CHROME_DEVTOOLS_AXI_SESSION:-}" ] || HOME=$real_home timeout 20 chrome-devtools-axi stop >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 for _ in $(seq 1 50); do
   if grep -Eoq 'http://127\.0\.0\.1:[0-9]+' "$work/serve.log"; then break; fi
   sleep 0.1

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Tests for bin/jg-teardown.sh's landed-work safety and stale-lock recovery.
+# The already-cleaned-task case is also driven end to end, before and after, by journeys/teardown-missing-record.sh.
 #
 # The check refuses to tear down a worktree whose work has not LANDED, because
 # treehouse return hard-resets the worktree. For a PR-delivered ship task "landed"
@@ -725,6 +726,29 @@ test_local_only_fork_remote_allows() {
   ' "$case_dir/state/home-summary.json" >/dev/null \
     || fail "successful task teardown did not publish the task's removal from the home summary ledger"
   pass "local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed"
+}
+
+test_teardown_of_an_already_cleaned_task_says_so() {
+  local case_dir out rc
+  case_dir=$(make_case already-cleaned)
+  rm -f "$case_dir/state/task-x1.meta"
+  : > "$case_dir/state/task-x1.run-receipt.json"
+  : > "$case_dir/state/task-x1.probe-at"
+  rc=0; out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "already-cleaned teardown exited $rc: $out"
+  printf '%s\n' "$out" | grep -F 'already cleaned up' >/dev/null \
+    || fail "already-cleaned teardown did not say so: $out"
+  printf '%s\n' "$out" | grep -F 'not a regular file' >/dev/null \
+    && fail "already-cleaned teardown gave the wrong refusal: $out"
+  assert_absent "$case_dir/state/task-x1.run-receipt.json" "leftover receipt kept"
+  assert_absent "$case_dir/state/task-x1.probe-at" "leftover probe file kept"
+  # A record that exists but is not a regular file keeps its refusal.
+  mkdir "$case_dir/state/task-x1.meta"
+  rc=0; out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "non-regular task record was accepted: $out"
+  printf '%s\n' "$out" | grep -F 'not a regular file' >/dev/null \
+    || fail "non-regular task record lost its refusal: $out"
+  pass "teardown of an already-cleaned task says so and exits 0"
 }
 
 test_teardown_closes_the_backlog_item_itself() {
@@ -1589,6 +1613,72 @@ test_scout_nested_clone_returns_with_no_untracked_entries() {
   assert_absent "$wt/scratch-clone" "scout-nested-clean: nested clone survived return"
   assert_absent "$wt/scratch.txt" "scout-nested-clean: scratch file survived return"
   pass "scout copy with a nested clone and a scratch file returns with no untracked entries"
+}
+
+# A scout that posted a board report page whose opening is a finding instead of
+# the report's Answer is refused (bin/jg-report-opening-check.sh); the same page
+# reposted under the same key with the Answer in the picture heading is returned.
+test_scout_report_page_must_open_with_the_answer() {
+  local case_dir rc board
+  case_dir=$(make_case scout-page-opening)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  printf '%s\n' '# Deep Recon design' '' '## 1. Answer (five lines)' '' \
+    '1. **Add a depth level to every Recon: quick, standard or deep.** Deep runs a fixed method.' \
+    '' '## 2. Evidence' '' 'The Pi-bots page lost most of its report.' > "$case_dir/data/task-x1/report.md"
+  board="$case_dir/board.json"
+  printf '{"schema":2,"items":[{"key":"deep-page","kind":"report","filer":"task-x1","title":"Deep Recon","visual":{"heading":"The Pi-bots page lost most of its report"},"sections":[{"heading":"Question"}]}]}\n' > "$board"
+  mkdir -p "$case_dir/config"
+  printf "exec merge-card post --board '%s' \"\$@\"\n" "$board" > "$case_dir/config/post-merge"
+  add_treehouse_clean_fd "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "scout-page-opening: a page opening with a finding must be refused"
+  grep -q 'does not open with its Answer' "$case_dir/stderr" \
+    || fail "scout-page-opening: refusal did not name the Answer: $(cat "$case_dir/stderr")"
+  grep -q 'The Pi-bots page lost most of its report' "$case_dir/stderr" \
+    || fail "scout-page-opening: refusal did not show the page opening: $(cat "$case_dir/stderr")"
+
+  jq '.items[0].visual.heading = "Add a depth level to every Recon: quick, standard or deep."' "$board" > "$board.new" \
+    && mv "$board.new" "$board"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout2" 2> "$case_dir/stderr2"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "scout-page-opening: a page opening with the Answer must be returned: $(cat "$case_dir/stderr2")"
+  pass "scout teardown refuses a report page that does not open with its Answer and returns one that does"
+}
+
+# A standard Recon whose report fails the depth gate (bin/jg-recon-gate.sh) is
+# refused at cleanup; the same Recon with a quick brief is returned.
+test_scout_report_must_pass_the_recon_depth_gate() {
+  local case_dir rc
+  case_dir=$(make_case scout-depth-gate)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  printf '%s\n' '# Task' '' '# Recon depth' 'Recon depth: standard' > "$case_dir/data/task-x1/brief.md"
+  add_treehouse_clean_fd "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "scout-depth-gate: a shallow standard report must be refused"
+  grep -q 'does not pass the Recon depth gate' "$case_dir/stderr" \
+    || fail "scout-depth-gate: refusal did not name the gate: $(cat "$case_dir/stderr")"
+  grep -q "no section '## 1. Answer'" "$case_dir/stderr" \
+    || fail "scout-depth-gate: refusal did not say what is missing: $(cat "$case_dir/stderr")"
+
+  printf '%s\n' '# Task' '' '# Recon depth' 'Recon depth: quick' > "$case_dir/data/task-x1/brief.md"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout2" 2> "$case_dir/stderr2"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "scout-depth-gate: a quick Recon is exempt from the gate: $(cat "$case_dir/stderr2")"
+  pass "scout teardown refuses a standard report that fails the depth gate and returns a quick one"
 }
 
 test_ship_nested_clone_is_refused_and_bytes_stay() {
@@ -5593,6 +5683,7 @@ test_forced_child_missing_adapter_sibling_refuses_before_cleanup
 test_forced_squad_lead_own_missing_adapter_sibling_refuses_before_child_cleanup
 test_retained_sources_still_reach_the_ordinary_refusal
 test_local_only_fork_remote_allows
+test_teardown_of_an_already_cleaned_task_says_so
 test_teardown_closes_the_backlog_item_itself
 test_teardown_closes_a_gerrit_task_with_its_change_url_as_a_note
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
@@ -5643,6 +5734,8 @@ test_untracked_only_refusal_diagnostic
 test_tracked_edit_refusal_diagnostic
 test_mixed_refusal_diagnostic
 test_scout_nested_clone_returns_with_no_untracked_entries
+test_scout_report_page_must_open_with_the_answer
+test_scout_report_must_pass_the_recon_depth_gate
 test_ship_nested_clone_is_refused_and_bytes_stay
 test_dirty_return_warns_which_slot_was_lost
 test_dirty_return_warns_even_when_a_later_step_refuses

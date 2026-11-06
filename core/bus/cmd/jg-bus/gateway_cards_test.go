@@ -110,6 +110,9 @@ func TestGatewayCardButtons(t *testing.T) {
 	if len(labels) != 2 || labels[0] != "Yes" || labels[1] != "No" || !strings.Contains(sent["text"].(string), "Merge the PR?") {
 		t.Fatalf("card message %v: want two buttons under the question", sent)
 	}
+	if rows := readFileString(filepath.Join(a.state, "captain-chat", "sent.jsonl")); !strings.Contains(rows, `"text":`+string(mustJSON(sent["text"]))) {
+		t.Fatalf("sent.jsonl %q: want the row to hold the card text exactly as sent", rows)
+	}
 	for _, d := range data {
 		if len(d) >= 64 || strings.Contains(d, "merge-pr") {
 			t.Fatalf("callback data %q: want under 64 bytes and not the card id", d)

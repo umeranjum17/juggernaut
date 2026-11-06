@@ -25,6 +25,23 @@ func pngBytes(seed uint8) []byte {
 	return b.Bytes()
 }
 
+// strip is a w by h picture whose every pixel tells where it is, so a cut can be checked pixel by pixel.
+func strip(w, h int) *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{uint8(x / 4), uint8(y / 28), uint8(x + y), 255})
+		}
+	}
+	return img
+}
+
+func pngOf(img image.Image) []byte {
+	var b bytes.Buffer
+	png.Encode(&b, img)
+	return b.Bytes()
+}
+
 // call is one request the fake Bot API got: its method, its form fields (or JSON keys) and the
 // files it carried, by form field.
 type call struct {
@@ -37,7 +54,9 @@ type call struct {
 
 // The owner's notes are answered with files: a picture, a picture and a file, an album, a picture
 // Telegram refuses, a file Telegram refuses, and files that must never go (a token, a link to it,
-// .env, a file over 50 MB, a file that is gone). Against a fake Bot API.
+// .env, a file over 50 MB, a file that is gone). A picture taller than 3:1 (780x6872) goes as three
+// slices in one album, in order, with the same pixels and the caption on the first; one exactly 3:1
+// stays one picture. Against a fake Bot API.
 func TestGatewayOutboundMedia(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("jg-inbox.sh needs python3")
@@ -111,10 +130,14 @@ func TestGatewayOutboundMedia(t *testing.T) {
 	os.Symlink(tokenPath, link)
 	os.Truncate(huge, 51<<20) // a sparse file: it costs no disk
 	albums := []string{write("data/a1.png", pngBytes(2)), write("data/a2.png", pngBytes(3)), write("data/a3.png", pngBytes(4))}
+	tallImg, edgeImg := strip(780, 6872), strip(780, 2340) // the owner's phone could not read 780x6872; 3:1 exactly is still readable
+	tall, edge := write("data/tall.png", pngOf(tallImg)), write("data/edge.png", pngOf(edgeImg))
+	sliverImg := strip(300, 1860) // two full slices of 900 and a last 60 rows high, under a third of the width: joined to the second
+	sliver := write("data/sliver.png", pngOf(sliverImg))
 
-	// Seven notes from the owner (messages 100 to 160); each is answered below.
+	// Ten notes from the owner (messages 100 to 190); each is answered below.
 	var ups []string
-	for i := 10; i < 17; i++ {
+	for i := 10; i < 20; i++ {
 		ups = append(ups, upd(i, "private", 42, 42, false, fmt.Sprintf("note %d", i)))
 	}
 	batch = strings.Join(ups, ",")
@@ -122,8 +145,8 @@ func TestGatewayOutboundMedia(t *testing.T) {
 	batch = ""
 	ids := map[string]string{} // message id -> note id
 	readLines(state+"/captain-chat/inbound.jsonl", func(v map[string]string) { ids[v["message"]] = v["note"] })
-	if len(ids) != 7 {
-		t.Fatalf("filed %d of 7 notes", len(ids))
+	if len(ids) != 10 {
+		t.Fatalf("filed %d of 10 notes", len(ids))
 	}
 	calls = nil
 	reply := func(i int, text string, files ...string) {
@@ -146,6 +169,9 @@ func TestGatewayOutboundMedia(t *testing.T) {
 	reply(5, "files you should not get", tokenPath, link, env, huge, gone)
 	os.Remove(gone)    // recorded, then gone before the gateway looks
 	reply(6, "", shot) // a picture alone: no text at all
+	reply(7, "a long strip", tall)
+	reply(8, "", edge)
+	reply(9, "", sliver)
 	once()
 
 	mustCall := func(i int, method string) call {
@@ -195,8 +221,56 @@ func TestGatewayOutboundMedia(t *testing.T) {
 		}
 	}
 	// 9: a picture alone has no caption.
-	if c = mustCall(9, "sendPhoto"); c.fields["caption"] != "" || len(calls) != 10 {
-		t.Errorf("picture alone = %+v, %d calls", c, len(calls))
+	if c = mustCall(9, "sendPhoto"); c.fields["caption"] != "" {
+		t.Errorf("picture alone = %+v", c)
+	}
+	// 10: the 780x6872 strip is one album of three slices, in order: 780x2340, 780x2340, 780x2192, each
+	// at most 3:1, the caption on the first only, and put together they are the strip, pixel for pixel.
+	c = mustCall(10, "sendMediaGroup")
+	media = nil
+	json.Unmarshal([]byte(c.fields["media"]), &media)
+	if len(media) != 3 || media[0]["caption"] != "a long strip" || media[1]["caption"] != "" || media[2]["caption"] != "" || len(c.data) != 3 {
+		t.Errorf("tall strip = %+v media %v", c, media)
+	}
+	row := 0
+	for i, wantH := range []int{2340, 2340, 2192} {
+		name := fmt.Sprintf("f%d", i)
+		if media[i]["type"] != "photo" || media[i]["media"] != "attach://"+name || c.filename[name] != fmt.Sprintf("tall-%d.png", i+1) {
+			t.Errorf("slice %d = %v file %q", i, media[i], c.filename[name])
+		}
+		slice, err := png.Decode(bytes.NewReader(c.data[name]))
+		if err != nil {
+			t.Fatalf("slice %d is not a PNG: %v", i, err)
+		}
+		if b := slice.Bounds(); b.Dx() != 780 || b.Dy() != wantH || b.Dy() > 3*b.Dx() {
+			t.Errorf("slice %d is %v, want 780x%d and at most 3:1", i, b, wantH)
+		}
+		for y := 0; y < wantH; y++ {
+			for x := 0; x < 780; x++ {
+				if got, want := color.NRGBAModel.Convert(slice.At(x, y)), tallImg.At(x, row+y); got != want {
+					t.Fatalf("slice %d pixel (%d,%d) = %v, want %v", i, x, y, got, want)
+				}
+			}
+		}
+		t.Logf("tall strip 780x6872 -> slice %d of 3: %s %v caption %q, pixels equal to rows %d-%d of the strip", i+1, c.filename[name], slice.Bounds().Size(), media[i]["caption"], row, row+wantH-1)
+		row += wantH
+	}
+	// 11: a picture exactly 3:1 is not cut: one picture, the file's own bytes.
+	if c = mustCall(11, "sendPhoto"); c.filename["photo"] != "edge.png" || !bytes.Equal(c.data["photo"], pngOf(edgeImg)) || c.fields["caption"] != "" || len(calls) != 13 {
+		t.Errorf("3:1 picture = %+v, %d calls", c, len(calls))
+	}
+	t.Logf("3:1 picture 780x2340 -> one sendPhoto %s, %d bytes, the file's own", c.filename["photo"], len(c.data["photo"]))
+	// 12: the 60-row sliver is not sent alone: two slices, 300x900 and 300x960.
+	c = mustCall(12, "sendMediaGroup")
+	for i, wantH := range []int{900, 960} {
+		if slice, err := png.Decode(bytes.NewReader(c.data[fmt.Sprintf("f%d", i)])); err != nil || slice.Bounds().Dx() != 300 || slice.Bounds().Dy() != wantH || len(c.data) != 2 {
+			t.Errorf("sliver slice %d: %v, %d files, err %v; want 300x%d", i, slice.Bounds(), len(c.data), err, wantH)
+		} else {
+			t.Logf("strip 300x1860 with a 60-row end -> slice %d of 2: %v (the end is joined to the last slice)", i+1, slice.Bounds().Size())
+		}
+	}
+	if left, _ := os.ReadDir(filepath.Join(state, "captain-chat", "slices")); len(left) != 0 {
+		t.Errorf("slices left behind after the reply was sent: %v", left)
 	}
 	for _, c := range calls {
 		for _, b := range c.data {
@@ -211,8 +285,8 @@ func TestGatewayOutboundMedia(t *testing.T) {
 	}
 	os.Remove(state + "/captain-chat/telegram.reply-cursor")
 	once()
-	if len(calls) != 10 {
-		t.Errorf("restart sent %d more calls", len(calls)-10)
+	if len(calls) != 13 {
+		t.Errorf("restart sent %d more calls", len(calls)-13)
 	}
 	// A note that was already answered takes more messages: `followup` sends a later picture and a
 	// later text on the same note, threaded on the owner's message, each once.
@@ -226,14 +300,14 @@ func TestGatewayOutboundMedia(t *testing.T) {
 	}
 	once()
 	once()
-	if len(calls) != 12 {
-		t.Fatalf("followups sent %d calls, want 2 more: %v", len(calls)-10, methods(calls))
+	if len(calls) != 15 {
+		t.Fatalf("followups sent %d calls, want 2 more: %v", len(calls)-13, methods(calls))
 	}
-	if c = mustCall(10, "sendPhoto"); c.fields["caption"] != "the landed screen" || !bytes.Equal(c.data["photo"], pngBytes(2)) ||
+	if c = mustCall(13, "sendPhoto"); c.fields["caption"] != "the landed screen" || !bytes.Equal(c.data["photo"], pngBytes(2)) ||
 		!strings.Contains(c.fields["reply_parameters"], `"message_id":100`) || c.fields["chat_id"] != "42" {
 		t.Errorf("followup picture = %+v", c)
 	}
-	if c = mustCall(11, "sendMessage"); c.fields["text"] != "and the release" || !strings.Contains(c.fields["reply_parameters"], `"message_id":100`) {
+	if c = mustCall(14, "sendMessage"); c.fields["text"] != "and the release" || !strings.Contains(c.fields["reply_parameters"], `"message_id":100`) {
 		t.Errorf("followup text = %+v", c)
 	}
 	filepath.Walk(home, func(p string, i os.FileInfo, _ error) error {

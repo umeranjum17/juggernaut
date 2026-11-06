@@ -23,7 +23,8 @@
 #   jg-inbox.sh note [--request-id <id>] [--json] [--] <text>...
 #   jg-inbox.sh note [--request-id <id>] [--json] -   (body from stdin)
 #   jg-inbox.sh announce [--json] <id>
-#   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--option <label>]... [--allow-change] [--] <text>... | reply [--json] <id> [--attach <path>]... -
+#   jg-inbox.sh approve <note-id> <ticket-id>
+#   jg-inbox.sh reply [--json] <id> [--attach <path>]... [--evidence-from <status-line>] [--option <label>]... [--allow-change] [--] <text>... | reply [--json] <id> [--attach <path>]... -
 #   jg-inbox.sh followup <same arguments as reply>
 #   jg-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]
 #   jg-inbox.sh ready
@@ -46,6 +47,10 @@
 # lists pending and handled captain-ask notes with that ticket and its current
 # backlog state.
 # `announce` repairs the wake for an already-saved note without creating another.
+# `approve` writes the signed `approved-by-captain: note:<id>` line into the body of a ticket,
+# which bin/jg-spawn.sh and bin/jg-send.sh require before a ship is built for a [captain-ask]
+# or Recon/plan-born ticket (bin/jg-captain-ask-lib.sh). It takes only a chat note, the
+# captain's own words, and refuses any other note.
 # A note already acknowledged (in handled/) gets no wake from `announce` or a
 # request-id replay; both report it as acknowledged and exit 0.
 # It refuses a note whose announcement state is UNKNOWN: a note written before
@@ -78,11 +83,19 @@
 # already has its reply (a later outcome, or pictures that came after the text). It is recorded as
 # its own reply with its own sequence, shown in `receipts` as one more entry for the same note, and
 # a note takes any number of them. A note with no reply yet is refused: use `reply`.
+# `reply --evidence-from <status-line>` attaches the paths of that line's `evidence=` token
+# (bin/jg-evidence-lib.sh) as if each were given to --attach; a path that is no longer a readable
+# file is skipped with a warning on stderr, and a line without the token adds nothing.
 # `reply --option <label>` (repeatable, 2 to 8) asks the captain to choose: the chat
 # gateway sends the answer with one button per label, and the captain's tap comes back
 # as a note whose second line is `pick: <label> (<option set id>)`. The labels are
 # recorded in the reply and shown as `options` in `receipts`; `--allow-change` lets the
 # captain change the pick by tapping another button (`options_change` is then true).
+# A reply or followup that offers more than two options, or asks for a design pick, must carry a
+# board #decide/<key> link or it is refused. Options are the larger of the --option labels and the
+# body lines that open with a letter or number choice (`A)`, `b.`, `1)`, `(2)`); a design pick is the
+# phrase "design pick", "pick a/the/one ... design", or "choose a/the/one ... design". Two options or
+# fewer, and text with no pick, are unchanged.
 # This script sends nothing.
 # `ready` is the read-only primary-readiness projection (lock, wake-consumer
 # health, away posture, observation time). It never acquires the session lock
@@ -170,6 +183,14 @@ INBOX="$STATE/inbox"
 CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 
 die() { printf 'jg-inbox: %s\n' "$*" >&2; exit 1; }
+
+# The evidence token reader steps aside when its library is not beside this script (a lone copy).
+if [ -r "$SELF_DIR/jg-evidence-lib.sh" ]; then
+  # shellcheck source=bin/jg-evidence-lib.sh
+  . "$SELF_DIR/jg-evidence-lib.sh"
+else
+  jg_evidence_paths_of_line() { :; }
+fi
 
 # shellcheck source=bin/jg-question-lib.sh disable=SC1091
 . "$SELF_DIR/jg-question-lib.sh" \
@@ -400,6 +421,14 @@ PY
 #
 # Returns 2 without waking when the note is no longer pending: juggernaut has
 # already acknowledged it, so a wake would only spend a turn on an empty inbox.
+# Ring the primary at once for a just-queued note: this home's sentinel `ring` types the doorbell
+# when no watcher is live (bin/jg-sentinel.sh owns the test). Only a home with a locked primary
+# session rings, and it runs detached so a slow or absent Herdr never delays or fails the note.
+ring_primary() {
+  [ "$STATE" = "$JG_HOME/state" ] && [ -s "$STATE/.lock-session" ] && [ -x "$JG_ROOT/bin/jg-sentinel.sh" ] || return 0
+  (JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-sentinel.sh" ring >/dev/null 2>&1 </dev/null &) 2>/dev/null || true
+}
+
 announce_note() {  # <id> <summary>
   local id=$1 summary=$2 lib="$JG_ROOT/bin/jg-wake-lib.sh" status=0
   if note_announced "$id"; then
@@ -426,7 +455,33 @@ announce_note() {  # <id> <summary>
     status=1
   fi
   jg_lock_release "$JG_WAKE_QUEUE_LOCK"
+  [ "$status" -ne 0 ] || ring_primary
   return "$status"
+}
+
+cmd_approve() {  # <note-id> <ticket-id>
+  local id=${1:-} ticket=${2:-} path body show current tmp
+  [ "$#" -eq 2 ] || die "usage: jg-inbox.sh approve <note-id> <ticket-id>"
+  valid_note_id "$id" || die "invalid note id"
+  case "$ticket" in ''|*[!A-Za-z0-9._-]*) die "invalid ticket id" ;; esac
+  path=$(note_path "$id") || die "no such note: $id"
+  case "$(read_note_body "$path")" in
+    '[chat '*) ;;
+    *) die "note $id is not a captain chat note; only his own words approve a build" ;;
+  esac
+  need tasks-axi
+  fail() { die "$@"; }
+  # shellcheck source=bin/jg-captain-ask-lib.sh
+  . "$SELF_DIR/jg-captain-ask-lib.sh"
+  show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" show "$ticket" --full 2>/dev/null) \
+    || die "cannot read ticket $ticket"
+  current=$(printf '%s\n' "$show" | sed -n 's/^  body: //p' | head -1 | perl -MJSON::PP -e 'local $/; my $v = <STDIN>; $v = JSON::PP->new->utf8->allow_nonref->decode($v) if $v =~ /^"/; binmode STDOUT, ":raw"; utf8::encode($v) if utf8::is_utf8($v); print $v')
+  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-inbox-approve.XXXXXX") || die "cannot stage the approval"
+  printf '%s\n\n%s\n' "$current" "$(captain_ask_approval_line "$ticket" "note:$id")" > "$tmp"
+  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" update "$ticket" --body-file "$tmp" >/dev/null \
+    || { rm -f -- "$tmp"; die "could not record the approval on $ticket"; }
+  rm -f -- "$tmp"
+  printf 'approved %s by note %s\n' "$ticket" "$id"
 }
 
 captain_ask_ticket_id() { printf 'captain-ask-%s' "$1"; }
@@ -690,9 +745,32 @@ next_reply_seq() {
   printf '%s\n' "$seq"
 }
 
+# One attachment path, made absolute and checked; the single owner of what --attach accepts.
+attach_path() {  # <path> -> absolute path
+  local file=$1
+  case "$file" in
+    *$'\n'*|*$'\r'*) die "refusing an attachment path with a line break" ;;
+    /*) ;;
+    *) file="$PWD/$file" ;;
+  esac
+  [ -f "$file" ] && [ -r "$file" ] || die "attachment is not a readable file: $1"
+  printf '%s\n' "$file"
+}
+
+# 0 = the reply is fine without a board link; 1 = it needs one (more than two options, or a design pick).
+reply_needs_board_link() {  # <body> <--option count>
+  local body=$1 n=$2 line lines=0 re_line='^[[:space:]]*(\(?[A-Za-z0-9]{1,2}[.)])[[:space:]]+[^[:space:]]'
+  local re_pick='([Dd]esign pick|([Pp]ick|[Cc]hoose) (a|an|the|one)( [A-Za-z]+){0,3} design)'
+  while IFS= read -r line; do
+    [[ $line =~ $re_line ]] && lines=$((lines + 1))
+  done <<<"$body"
+  [ "$lines" -gt "$n" ] || lines=$n
+  [ "$lines" -le 2 ] && ! [[ $body =~ $re_pick ]]
+}
+
 cmd_reply() {
-  local json=0 id body path staging seq target n usage attach="" file text_args=() rest=0 options="" nopt=0 change=0 opt
-  usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--option <label>]... [--allow-change] [--] <text>... (or: ... -)"
+  local json=0 id body path staging seq target n usage attach="" file evidence text_args=() rest=0 options="" nopt=0 change=0 opt
+  usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--evidence-from <status-line>] [--option <label>]... [--allow-change] [--] <text>... (or: ... -)"
   if [ "${1:-}" = "--json" ]; then
     json=1
     shift
@@ -709,14 +787,21 @@ cmd_reply() {
       exit 0
     elif [ "$rest" -eq 0 ] && [ "$1" = "--attach" ]; then
       [ "$#" -ge 2 ] || die "--attach needs a file path"
-      file=$2
-      case "$file" in
-        *$'\n'*|*$'\r'*) die "refusing an attachment path with a line break" ;;
-        /*) ;;
-        *) file="$PWD/$file" ;;
-      esac
-      [ -f "$file" ] && [ -r "$file" ] || die "attachment is not a readable file: $2"
+      file=$(attach_path "$2") || exit 1
       attach="$attach$file"$'\n'
+      shift 2
+    elif [ "$rest" -eq 0 ] && [ "$1" = "--evidence-from" ]; then
+      # The evidence token of a landing line (bin/jg-evidence-lib.sh) goes through the same
+      # attachment check; a path that no longer exists is skipped with a warning so the answer still goes.
+      [ "$#" -ge 2 ] || die "--evidence-from needs a status line"
+      while IFS= read -r evidence; do
+        [ -n "$evidence" ] || continue
+        if file=$(attach_path "$evidence" 2>/dev/null); then
+          attach="$attach$file"$'\n'
+        else
+          printf 'jg-inbox: evidence skipped, not a readable file: %s\n' "$evidence" >&2
+        fi
+      done < <(jg_evidence_paths_of_line "$2")
       shift 2
     elif [ "$rest" -eq 0 ] && [ "$1" = "--option" ]; then
       [ "$#" -ge 2 ] || die "--option needs a label"
@@ -771,6 +856,10 @@ cmd_reply() {
     # A bare board link gets the access token, or the reply is refused. After the voice step, so the token never reaches a model rewrite.
     jg_board_link_fix "$body" || die "reply refused: it holds a board link without its access token"
     body=$JG_BOARD_LINK_OUT
+  fi
+  # A big choice or a design pick is too much for chat: it must point to its board card.
+  if ! jg_board_has_decide_link "$body"; then
+    reply_needs_board_link "$body" "$nopt" || die "reply refused: it offers more than two options or asks for a design pick, and holds no board #decide/<key> link; add the board link"
   fi
   jg_question_flag_reply "$body"
   mkdir -p "$REPLIES"
@@ -1348,6 +1437,7 @@ cmd_drain() {
 case "${1:-}" in
   note)     shift; cmd_note "$@" ;;
   announce) shift; cmd_announce "$@" ;;
+  approve)  shift; cmd_approve "$@" ;;
   reply)    shift; cmd_reply "$@" ;;
   followup) shift; cmd_followup "$@" ;;
   receipts) shift; cmd_receipts "$@" ;;

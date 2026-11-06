@@ -189,7 +189,19 @@ func TestGatewayEnvelope(t *testing.T) {
 	if len(l.sends) != 3 || l.sends[0]["text"] != "The fix is merged." || l.sends[1]["text"] != "Disk is full." || l.sends[2]["text"] != "Main finished the turn." || l.lost() != 0 {
 		t.Fatalf("sends %v, undelivered %d: want the enveloped outcome once, the alert and Main's summary, not the inbound event", l.sends, l.lost())
 	}
+	rows := readFileString(filepath.Join(l.a.state, "captain-chat", "sent.jsonl"))
+	for _, s := range l.sends {
+		if !strings.Contains(rows, `"text":`+string(mustJSON(s["text"]))) {
+			t.Fatalf("sent.jsonl %q: want a row holding %q exactly as sent", rows, s["text"])
+		}
+	}
 	if code := l.a.routeReply(wrap("jg.captain.reply", `{"at":"2026-11-04T10:00:00Z","kind":"reply","key":"card-9","subject":"jg.captain.reply","answer":"yes"}`)); code != 0 || readFileString(l.routed) != "card-9|yes\n" {
 		t.Fatalf("reply router exit %d, routed %q: want the enveloped answer routed to card-9", code, readFileString(l.routed))
 	}
+}
+
+// mustJSON is how sent.jsonl spells a text, so a test can look for it word for word.
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }

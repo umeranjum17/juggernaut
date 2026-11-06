@@ -101,6 +101,47 @@ guard_captain_ask_archive() {  # <state> <keep-or-empty> <call-target-or-empty>
   for id in $(printf '%s\n' "$ids" | tail -n +"$(( skip + 1 ))"); do guard_captain_ask "$id"; done
 }
 
+# Build approval. A ship may be built for a [captain-ask] ticket, or a ticket marked
+# `born-from: recon|plan`, only when its body carries `approved-by-captain: <ref> sig=<hmac>`.
+# Only captain_ask_approval_line writes one: bin/jg-captain-hold.sh answer (the captain's
+# recorded answer) and bin/jg-inbox.sh approve (his own note) call it. The sig is an HMAC over
+# the ticket id and ref under state/captain-approval.key (mode 0600, made on first write), so
+# a hand-written line, or one copied from another ticket, never verifies.
+captain_ask_approval_sig() {  # <ticket> <ref> <key-file>; prints the hex HMAC
+  printf '%s\n%s' "$1" "$2" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(cat "$3")" -r | cut -d' ' -f1
+}
+
+captain_ask_approval_line() {  # <ticket> <ref>; prints the signed line, making the key if absent
+  local key="${STATE:?}/captain-approval.key"
+  case "$2" in ''|*[!A-Za-z0-9._:-]*) fail "approval reference must be a plain token (a note id or answer digest): $2" ;; esac
+  command -v openssl >/dev/null 2>&1 || fail "openssl is required to sign a captain approval"
+  if [ ! -s "$key" ]; then
+    mkdir -p "$STATE" || fail "cannot make $STATE"
+    (umask 077; openssl rand -hex 32 > "$key") || fail "cannot make the captain approval key at $key"
+  fi
+  printf 'approved-by-captain: %s sig=%s\n' "$2" "$(captain_ask_approval_sig "$1" "$2" "$key")"
+}
+
+captain_ask_build_gated() {  # <show-output>; 0 when a ship build needs the captain's approval
+  printf '%s\n' "$1" | sed -n 's/^  title: //p' | head -1 | grep -qF '[captain-ask]' && return 0
+  printf '%s\n' "$1" | grep -Eq 'born-from: *(recon|plan)([^A-Za-z]|$)'
+}
+
+captain_ask_build_approved() {  # <ticket> <show-output>; 0 when a line in the body verifies
+  local key="${STATE:?}/captain-approval.key" ref sig
+  [ -s "$key" ] || return 1
+  while read -r ref sig; do
+    [ -n "$ref" ] && [ "$sig" = "$(captain_ask_approval_sig "$1" "$ref" "$key")" ] && return 0
+  done < <(printf '%s\n' "$2" | grep -Eo 'approved-by-captain: [A-Za-z0-9._:-]+ sig=[0-9a-f]{64}' | sed -E 's/^approved-by-captain: ([^ ]+) sig=/\1 /')
+  return 1
+}
+
+guard_captain_ask_build() {  # <ticket> <show-output>; refuses an unapproved build
+  captain_ask_build_gated "$2" || return 0
+  captain_ask_build_approved "$1" "$2" && return 0
+  fail "$1 is a [captain-ask] or Recon/plan-born ticket with no approved-by-captain line, so no worker may be told to build it. The captain's recorded answer (bin/jg-captain-hold.sh answer) or his own note (bin/jg-inbox.sh approve <note-id> $1) writes that line; a report, a recommendation or an option pick does not"
+}
+
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.

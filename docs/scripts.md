@@ -18,6 +18,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-home-summary-refresh.sh` | Atomically publish this home's structured summary ledger                         |
 | `jg-whats-left.sh` | Render the standing view of what is left (`state/whats-left.md`) from the backlog, status and holds; refreshed on every summary publication |
 | `jg-owner-asks.sh` | List the owner's open asks in his own words, grouped Needs you / Not done / Done (verified), from every home's `[captain-ask]` tickets and captain holds; `--json` for the board; the Telegram `/status` reply and `jg-captain-say.sh --asks` use it |
+| `jg-triage.sh` | Check this home's health in one command (session lock, wake consumer, bus stack, backlog lock, Squad Leads, sentinel, tools, checkout, config, login, /tmp, stray servers); `--fix` repairs the safe ones through their guarded scripts; `--porcelain`, `--context`, `--agent` ([contract](triage.md)) |
 | `jg-fleet-ledger.sh`     | Append the opt-in fleet activity ledger's records ([contract](fleet-ledger.md))      |
 | `jg-comms-feed.sh`       | Export every fleet message across Main and its Squad Lead homes as one read-only, live, append-only JSONL feed for a channel-style reader |
 | `jg-chat.sh`            | The one owner of the fleet chat store: one JSONL record per message with its thread (`#fleet`, a lead, or a worker task), its sender and kind, and a captain message's own status; written at the call site that already records the steer, the status line or the wake |
@@ -25,6 +26,8 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-fleet-heartbeat.sh`  | One no-model pass over this home and every local Squad Lead home: working lanes against the lane target, ready backlog, open waits and supervision age, as a MOVING, IDLE, GAP or STALLED verdict per home; bootstrap arms it on a primary home unless `config/fleet-heartbeat-off` exists, and `arm` registers a watcher check that wakes Main when a home turns GAP or STALLED and re-fires until it recovers; the same check names a lane whose work is done while its worker still answers, so the lead lands it and closes it |
 | `jg-design-gate.sh`      | The no-model design gate: `size` applies the small-tweak rule (at most 40 changed UI lines, no new UI file), `handroll` writes the lead's or Main's approval that a small UI tweak needs to merge (the asking worker cannot write it), and `board` refuses a board post of design options unless the first-draft run record it names made or refined every one of them |
 | `jg-prior-art-gate.sh`  | The no-model prior-art gate: refuse a ship brief whose `# Prior art` section is missing, still holds the scaffold placeholder, or names a pick with no licence decision, so new or complex work starts from what already exists |
+| `jg-recon-gate.sh`      | The no-model Recon depth gate: refuse `done` for a standard or deep Recon whose report misses a template section, leaves a load-bearing claim neither verified nor under "Not checked", lacks a `critic.md` or ends with a round that still found gaps, or falls short of the level's source budget; a quick Recon is exempt, and `jg-dod-lib.sh` and `jg-teardown.sh` call it |
+| `jg-recon-depth.sh`     | Pick a Recon's depth (`quick`, `standard` or `deep`) from the words of the ask; a level the captain names wins, and `task-dispatch` passes the answer to `jg-brief.sh --scout --depth` |
 | `jg-live-claim.sh`       | The no-model fixed-means-live rule: a report that a user-visible change is fixed or done carries the released ref and where it is observable, or is downgraded to `merged-not-released: ...` |
 | `jg-live-services.sh`    | The post-release check: one line per required service (NATS and Dapr) with pid or unit status; `jg-live-claim.sh` refuses a `live:` claim while any is down |
 | `jg-installed-drift.sh`  | The watcher check for the copies this fleet runs: for every installed copy under `$XDG_DATA_HOME/fm-*` and `$XDG_DATA_HOME/jg-*`, compare each file with its repo counterpart from `<copy>/.jg-origin` or `core/<name>` and print one line per finding (`differ`, `missing`, or `unknown origin <copy>`), nothing when every copy matches, and exit 0 always; it never repairs or deletes a copy, and `arm` registers it as a watcher check |
@@ -123,6 +126,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-task-inbox-lib.sh`   | Single owner of durable steering-inbox records, acknowledgement, doorbells, and the delivery-attempt ladder |
 | `jg-pending-reply-lib.sh` | Parent-owned Squad Lead pending-reply expectations, recovery, and keyed escalation lifecycle |
 | `jg-squad-lead-report.sh` | Optional helper that resolves the parent channel itself and appends a correlated status or document-pointer report |
+| `jg-ticket-link-guard.sh` | Refuse a captain-facing reply that names no board ticket link, and name the one-line fix; run before a lead's parent-channel append and before a supervision captain outcome is stored |
 | `jg-extension.mjs`       | Bind, inspect, verify, and strictly invoke trusted external process-event adapter packages |
 | `jg-extension-launch-barrier.mjs` | Publish one exact static core-owned invocation group before package code runs |
 | `jg-extension.sh`        | Expose extension binding commands through the tracked shell and remote-home command boundary |
@@ -155,6 +159,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-timing-lib.sh`       | Single owner of the deferred network stage's per-step elapsed-time records, inert unless a run asks for them |
 | `jg-sentinel.sh`         | Out-of-runtime recovery: detect an agent-runtime restart or a stale beacon with no turn running, reconcile direct reports, and wake the primary |
 | `jg-tmp-sweep.sh`        | Report /tmp space and inode use and sweep stale allowlisted fleet scratch that no live process or lane holds; including old session folders of a project folder that other sessions still use; the sentinel warns at 80% and sweeps daily, only reporting on its first run |
+| `jg-browser-sweep.sh`    | List (default) or stop, with `--apply`, chrome-devtools-axi bridges and puppeteer browsers older than `--hours` (default 24) that a run left behind, then print the browser count before and after; never touches the user's real Chrome or a process that only names the profile path. Manual; no periodic check runs it. |
 | `jg-supervision-lib.sh`  | Shared in-flight-work-without-fresh-watcher-beacon predicate                         |
 | `jg-ff-lib.sh`           | Shared guarded fast-forward/reconcile helper for origin pulls and Squad Lead syncs, with durable divergence markers |
 | `jg-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
@@ -225,6 +230,8 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-public-followup-emit.sh` | Validate and report one typed terminal work result into its owning home, or stage it when that home is remote |
 | `jg-public-followup-collect.sh` | Read and retire the typed terminal results a remote work home staged for the home that owes the public reply |
 | `jg-inbox.sh`            | The captain's out-of-band capture surface: queue notes, ticket and list `[captain-ask]` notes, announce or repair wakes, record primary replies, and emit bounded receipts and readiness JSON |
+| `jg-evidence-lib.sh`     | Own the optional `evidence=<path>,<path>` token a lead's UI review-ready or landed line carries, read by `jg-inbox.sh reply --evidence-from` |
+| `jg-evidence-check.sh`   | Watcher check: flag a reply that names a UI landing's PR and attaches no picture or proof, once per reply |
 | `jg-mail.sh`             | General-purpose mail plane: read unseen IMAP mail, send one SMTP message, or surface new mail as a `check` wake via `poll` (configuration in the home's gitignored `.env`) |
 | `jg-mail.py`             | The IMAP/SMTP engine behind `jg-mail.sh` |
 | `jg-board-answers.sh`    | Standing board-answer check: `arm` registers a watcher check that sends each routed answer straight to its lead's inbox (closing the lead's decision key, archiving the card once the lead acknowledges) and wakes Main only for unrouted answers; `route` records a card's owner |

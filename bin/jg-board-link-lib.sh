@@ -10,6 +10,7 @@
 #                                    and return 1 when the URL file, the key or
 #                                    the section is unusable
 #   jg_board_merge_key <pr-url>      the key merge-card gives a PR's evidence card
+#   jg_board_has_decide_link <text>  return 0 when the text holds a board #decide/<key> link
 #   jg_board_link_fix <text>         set JG_BOARD_LINK_OUT to the text with every bare
 #                                    board link given the token; return 1 (reason on
 #                                    stderr, never the token) when a bare link cannot
@@ -20,7 +21,7 @@
 # to the terminal or to private state, never into a tracked file.
 #
 # A bare board link is a board-host URL with a #decide/#reports/#designs/#waiting/
-# #answered fragment and no token. jg_board_link_fix is the one place that rule
+# #answered/#tickets fragment and no token. jg_board_link_fix is the one place that rule
 # lives; every send to the owner (inbox reply, chat reply, Telegram through
 # bin/jg-board-link.sh fix) calls it. A link that already carries token= is left as is.
 #
@@ -29,7 +30,7 @@
 
 jg_board_link() {  # <section> <key>
   local section=${1:-} key=${2:-} file url
-  case "$section" in decide|reports|designs|waiting|answered) ;; *) return 1 ;; esac
+  case "$section" in decide|reports|designs|waiting|answered|tickets) ;; *) return 1 ;; esac
   case "$key" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   file=${JG_SIGNOFF_URL_FILE:-${JG_HOME:-}/state/signoff-board.url}
   [ -f "$file" ] || return 1
@@ -46,10 +47,14 @@ jg_board_merge_key() {  # <pr-url>
   printf '%s\n' "${key:0:128}"
 }
 
+jg_board_has_decide_link() {  # <text>
+  [[ $1 =~ https?://[^][:space:]#\<\>\"\'\(\)]+#decide/[A-Za-z0-9._-]+ ]]
+}
+
 # shellcheck disable=SC2034  # JG_BOARD_LINK_OUT is the result the caller reads.
 jg_board_link_fix() {  # <text>
   local rest=$1 out='' m pre file board='' auth='' token_ok=0 u ua
-  local re='(https?://[^][:space:]#<>"'"'"'()]+)#(decide|reports|designs|waiting|answered)'
+  local re='(https?://[^][:space:]#<>"'"'"'()]+)#(decide|reports|designs|waiting|answered|tickets)'
   JG_BOARD_LINK_OUT=$1
   file=${JG_SIGNOFF_URL_FILE:-${JG_HOME:-}/state/signoff-board.url}
   if [ -f "$file" ]; then

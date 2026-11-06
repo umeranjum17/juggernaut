@@ -10,9 +10,8 @@ import (
 
 // The machine runs ONE bus unit and one server config, and exactly one home owns them:
 // the home the installed unit names in its JG_HOME. Every other home on the machine only
-// registers its own account in the shared accounts file and asks the running server to
-// reload it. It never installs, rewrites or restarts the unit and never rewrites the
-// server config. Before this rule every home's session start ran `jg-stack.sh up` and
+// registers its own account in the shared accounts file and has the running server load
+// it. It never installs or rewrites the unit and never rewrites the server config. Before this rule every home's session start ran `jg-stack.sh up` and
 // every update ran `install-service`, so each one pointed the machine's unit at its own
 // config and locked every other home out (authentication error, user empty).
 
@@ -77,19 +76,27 @@ func (a *app) ownerApp(o unitOwner) *app {
 
 // registryFile is the machine's list of member homes: one "<resolved home>\t<state
 // directory>" line per home that joined. JG_BUS_HOMES names another file, which is how a
-// test or a lab keeps its registrations out of a real machine's list.
+// test or a lab keeps its registrations out of a real machine's list. That file stands in
+// only for a throw-away owner: every suite exports it, and a suite with no lab unit of its
+// own reaches the machine's real unit, where its list used to replace the real one, so a
+// fixture rewrote the real accounts file and reloaded the real server on every run.
 func registryFile(runtime string) string {
 	if file := os.Getenv("JG_BUS_HOMES"); file != "" {
-		return file
+		if _, lab := labHome(runtime, ""); lab {
+			return file
+		}
 	}
 	return filepath.Join(runtime, "homes")
 }
+
+// tempRoots are the system locations a throw-away home lives under; a test names its own.
+var tempRoots = func() []string { return []string{os.TempDir(), "/tmp", "/var/tmp", "/dev/shm"} }
 
 // labHome is THE decision on whether a home may enter a machine's real registry: a
 // throw-away home - one under a system temp root, or inside the checkout running this
 // command - is a test fixture, never a member. It names the root that matched.
 func labHome(home, root string) (string, bool) {
-	for _, temp := range []string{os.TempDir(), "/tmp", "/var/tmp", "/dev/shm"} {
+	for _, temp := range tempRoots() {
 		if temp != "" && withinHome(home, temp) {
 			return resolveHome(temp), true
 		}
@@ -108,16 +115,16 @@ func withinHome(path, root string) bool {
 
 // registerHome records this home and its state directory in the owner's list of
 // machine homes, once, so the owner's accounts file carries it from then on. A lab home
-// with no JG_BUS_HOMES is refused: 452 temp and worktree fixture homes had reached a real
+// is refused by a real list: 452 temp and worktree fixture homes had reached a real
 // machine's list, because every suite's join landed in the owner's own registry.
 func (a *app) registerHome(owner *app) error {
 	home := resolveHome(a.home)
-	if os.Getenv("JG_BUS_HOMES") == "" {
+	file := registryFile(owner.runtime)
+	if file == filepath.Join(owner.runtime, "homes") {
 		if root, lab := labHome(home, a.root); lab {
-			return fmt.Errorf("%s is a temporary or test home under %s, so it is never added to the machine registry owned by %s; set JG_BUS_HOMES to a file of its own to register it there", home, root, owner.home)
+			return fmt.Errorf("%s is a temporary or test home under %s, so it is never added to the machine registry owned by %s; a lab runs a bus of its own, with its unit in JG_BUS_UNIT and its list in JG_BUS_HOMES", home, root, owner.home)
 		}
 	}
-	file := registryFile(owner.runtime)
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
 	}
@@ -148,7 +155,7 @@ func (a *app) registeredStates() map[string]string {
 }
 
 // joinMachine is everything a non-owner home does about the machine bus: register its
-// account in the owner's shared accounts file and ask the running server to reload it.
+// account in the owner's shared accounts file and have the running server load it.
 // The unit and the server config stay byte for byte as the owner left them. It refuses,
 // naming the owner, when the owner's JetStream caps would not cover the new account.
 // say receives its one line.
@@ -174,8 +181,8 @@ func (a *app) joinMachine(o unitOwner, say func(string, ...any)) int {
 		}
 		name := unitName()
 		if exec.Command("systemctl", "--user", "is-active", "--quiet", name).Run() == nil {
-			if out, err := exec.Command("systemctl", "--user", "kill", "--kill-whom=main", "--signal=HUP", name).CombinedOutput(); err != nil {
-				say("bus: added this home's account but could not reload %s: %s", name, detail(string(out)))
+			if err := loadAccounts(name, owner.accountsRemoved); err != nil {
+				say("bus: added this home's account but could not load it into %s: %v", name, err)
 				return 0
 			}
 		}

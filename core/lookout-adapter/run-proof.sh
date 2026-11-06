@@ -17,11 +17,13 @@ export CHROME_DEVTOOLS_AXI_SESSION=lookout-adapter-proof-$$
 tmp=$(mktemp -d)
 pids=()
 cleanup() {
-  chrome-devtools-axi stop >/dev/null 2>&1 || true
+  timeout 20 chrome-devtools-axi stop >/dev/null 2>&1 || true
   for p in "${pids[@]}"; do kill "$p" 2>/dev/null || true; done
   rm -rf -- "$tmp"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
 ap=$(free_port); lp=$(free_port)
 "$here/lookout-juggernaut" --home "$JG_HOME" --no-build --serve --port "$ap" >"$tmp/adapter.log" 2>&1 & pids+=("$!")

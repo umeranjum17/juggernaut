@@ -135,7 +135,7 @@ run() {  # <case-dir> <command...>
   local d=$1
   shift
   env PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" SIGN_OFF_HOME="$d/so" \
-    JG_SEND_SETTLE=0 "$@" 2>&1
+    JG_SEND_SETTLE=0 JG_CAPTAIN_CHANNEL="$d/home/config/captain-channel" "$@" 2>&1
 }
 run_quiet() { run "$@" 2>/dev/null; }
 requests() { cat "$SINK_OUT" 2>/dev/null; }
@@ -143,7 +143,7 @@ events() { cat "$1/home/state/captain-channel.jsonl" 2>/dev/null; }
 
 # --- the tee records and publishes, and the live path is untouched -------------
 d=$(setup tee)
-key=$(run_quiet "$d" "$CARD" post --title "Which key should the muxr use?" --option "Key it" --option "Rename it" --must money --record https://board.example/records/card-1 --ask-ref 'card[1]')
+key=$(run_quiet "$d" "$CARD" post --route main --title "Which key should the muxr use?" --option "Key it" --option "Rename it" --must money --record https://board.example/records/card-1 --ask-ref 'card[1]')
 assert_equals "put-the-key-into-muxr" "$key" "post still prints the card key alone"
 assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "the card post is teed once"
 assert_contains "$(events "$d")" '"kind":"card"' "the teed event names the card"
@@ -204,6 +204,25 @@ run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The ke
 assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "a captain outcome is teed once"
 assert_contains "$(events "$d")" '"kind":"outcome"' "the teed event names the outcome"
 assert_equals "2" "$(wc -l <"$d/home/state/branch-outcomes.jsonl" | tr -d ' ')" "the outcome store still holds both rows"
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "merged-not-released: the key fix is waiting" >/dev/null
+assert_contains "$(events "$d" | tail -1)" 'Not live yet: the key fix is waiting' "the chat event says Not live yet"
+assert_contains "$(tail -1 "$d/home/state/branch-outcomes.jsonl")" 'merged-not-released: the key fix' "the stored row keeps the old label"
+
+# --- a row written in a squad lead home is never published direct to the captain ---------------
+d=$(setup lead-outcome)
+printf 'schema=1\nid=muxr\n' >"$d/home/.jg-squad-lead-home"
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The key is fixed and released in 0.4.1" >/dev/null
+assert_equals "0" "$(events "$d" | wc -l | tr -d ' ')" "a captain row from a lead home is not teed to the captain channel"
+assert_equals "1" "$(wc -l <"$d/home/state/branch-outcomes.jsonl" | tr -d ' ')" "the lead home still stores the row for its parent"
+
+# --- a replayed captain row is stored again but never sent to the chat again --------------------
+d=$(setup replay)
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The key is fixed and released in 0.4.1" >/dev/null
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "The key is fixed and released in 0.4.1" >/dev/null
+assert_equals "1" "$(events "$d" | wc -l | tr -d ' ')" "the same captain row appended again is not sent a second time"
+assert_equals "2" "$(wc -l <"$d/home/state/branch-outcomes.jsonl" | tr -d ' ')" "the store still holds both rows"
+run_quiet "$d" "$OUTCOME" append --task muxr --verdict captain --summary "A new result landed" >/dev/null
+assert_equals "2" "$(events "$d" | wc -l | tr -d ' ')" "a new captain row is still sent"
 
 # --- the CAPTAIN stream carries what the bus took, and nothing delivers it a second time ------
 d=$(setup stream)
@@ -260,7 +279,7 @@ assert_contains "$out" "exit=0" "publish still exits 0, so no emitter is broken 
 # the channel's (bin/jg-supervise-daemon.sh wedge_alarm_notify).
 d=$(setup wedge)
 : >"$SINK_OUT"
-JG_HOME="$d/home" JG_STATE_OVERRIDE="$d/home/state" JG_SUPERVISOR_BACKEND=tmux \
+JG_HOME="$d/home" JG_CAPTAIN_CHANNEL="$d/home/config/captain-channel" JG_STATE_OVERRIDE="$d/home/state" JG_SUPERVISOR_BACKEND=tmux \
   JG_SUPERVISOR_TARGET=nonexistent:0 LOG="$d/home/state/.supervise-daemon.log" \
   bash -c '. "$1"; inject_wedge_alarm "$2" 601; inject_wedge_alarm "$2" 601' \
   _ "$ROOT/bin/jg-supervise-daemon.sh" "$d/home/state"

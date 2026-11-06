@@ -103,10 +103,10 @@ case "$mode" in
     if [ "$mode" = captain ] || [ "$mode" = captain-held ] \
       || [ "$mode" = captain-close-before-return ]; then
       "$JG_REPO/bin/jg-branch-report.sh" --task "$task" --verdict captain \
-        --summary "stub escalated: $(printf '%s\n' "$drain" | grep -v '^WAKE_' | tr '\n' ' ' | cut -c1-400)" \
+        --summary "stub escalated: $(printf '%s\n' "$drain" | grep -v '^WAKE_' | tr '\n' ' ' | cut -c1-400) #tickets/jg-abc" \
         >> "$JG_HOME/engine-report.log" 2>&1
     else
-      report_args=(--task "$task" --verdict "$verdict" --summary "stub handled $task")
+      report_args=(--task "$task" --verdict "$verdict" --summary "stub handled $task #tickets/jg-abc")
       case "$mode" in
         return-silent|return-fail-silent)
           report_args=(--task "$task" --verdict routine --summary 'still working; nothing new has happened; no action was taken' --silent true)
@@ -335,18 +335,18 @@ test_report_surface_enforces_actor_turn_and_scope() {
   out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t0 "$REPORT" --task alpha --verdict routine --summary ok 2>&1); rc=$?
   expect_code 3 "$rc" "a report for an ended turn must be refused"
 
-  out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" --task beta --verdict captain --summary 'from memory' 2>&1); rc=$?
+  out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" --task beta --verdict captain --summary 'from memory #tickets/jg-abc' 2>&1); rc=$?
   expect_code 3 "$rc" "a report for a task the wake did not name must be refused"
   assert_contains "$out" "names alpha, not beta" "scope refusal must name the wake's task"
   out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" --task fleet --verdict routine --summary quiet 2>&1); rc=$?
   expect_code 3 "$rc" "a fleet report on a task-scoped wake must be refused"
   [ ! -e "$state/branch-outcomes.jsonl" ] || fail "a refused report touched the outcome store"
 
-  out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" --task alpha --verdict captain --summary 'PR ready' --silent true 2>&1); rc=$?
+  out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" --task alpha --verdict captain --summary 'PR ready #tickets/jg-abc' --silent true 2>&1); rc=$?
   expect_code 2 "$rc" "a captain outcome with --silent true must be refused"
   [ ! -e "$state/branch-outcomes.jsonl" ] || fail "a refused silent captain outcome changed the durable store"
 
-  out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" --task alpha --verdict captain --summary 'PR ready' 2>&1); rc=$?
+  out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" --task alpha --verdict captain --summary 'PR ready #tickets/jg-abc' 2>&1); rc=$?
   expect_code 0 "$rc" "an in-scope report must be recorded"
   assert_contains "$out" "recorded seq 1 [captain]" "the report must name its store sequence"
   assert_grep '"task":"alpha"' "$state/branch-outcomes.jsonl" "the outcome store did not receive the report"
@@ -387,11 +387,11 @@ test_report_after_the_return_is_queued_for_main() {
   ! grep -qs 'supervision-host-return' "$state/.wake-queue" || fail "a report during the away window must not be queued for main"
 
   JG_HOME="$home" "$CONTRACT" archive >/dev/null 2>&1 || fail "fixture: could not archive the away posture"
-  out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" --task alpha --verdict captain --summary 'PR ready for review' 2>&1); rc=$?
+  out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" --task alpha --verdict captain --summary 'PR ready for review #tickets/jg-abc' 2>&1); rc=$?
   expect_code 0 "$rc" "a report after the return must be recorded"
   assert_contains "$out" "recorded seq 2 [captain]; the captain has returned, so it is queued for MAIN to relay" \
     "a report after the return must say it is queued for main"
-  assert_re $'\tcheck\tsupervision-host-return:2\tcheck: supervision-host outcome 2 for alpha \\[captain\\] was recorded after the captain returned.*relay it to the captain: PR ready for review$' \
+  assert_re $'\tcheck\tsupervision-host-return:2\tcheck: supervision-host outcome 2 for alpha \\[captain\\] was recorded after the captain returned.*relay it to the captain: PR ready for review #tickets/jg-abc$' \
     "$state/.wake-queue" "the late outcome must be a durable check wake for main"
   queue_before=$(cat "$state/.wake-queue")
   out=$(JG_HOME="$home" JG_SUPERVISION_ACTOR=branch JG_BRANCH_REPORT_TURN=t1 "$REPORT" \
@@ -2271,7 +2271,7 @@ test_return_during_an_engine_turn_hands_its_outcomes_to_main() {
   assert_re '^signal: .*demo.status' "$home/host.out" "the handoff must carry the close"
   assert_re '^supervision-host: the captain returned while the away session was handling this wake.*store rows 1[,)]' "$home/host.out" \
     "the handoff must say the captain returned mid-turn and name the store rows"
-  assert_re '^supervision-host: outcome 1 for demo \[routine\]: stub handled demo$' "$home/host.out" \
+  assert_re '^supervision-host: outcome 1 for demo \[routine\]: stub handled demo #tickets/jg-abc$' "$home/host.out" \
     "the handoff must carry the turn's outcome for main to relay"
   assert_re '	handled	turn=' "$home/state/.supervision-host.log" "the turn itself was handled"
   assert_no_grep 'demo.status' "$home/state/.wake-queue" "the handled wake must stay acknowledged"
@@ -2322,7 +2322,7 @@ test_large_turn_relays_an_early_visible_outcome() {
   [ "$count" -eq 1 ] || fail "many receipts: expected one visible outcome, got $count: $(tail -n 5 "$home/host.out")"
   [ "$(wc -l < "$home/state/branch-outcomes.jsonl" | tr -d ' ')" -eq 1001 ] \
     || fail "many receipts: the fixture did not exceed the old 1,000-row window: rows=$(wc -l < "$home/state/branch-outcomes.jsonl") host=$(cat "$home/host.out") report=$(cat "$home/engine-report.log") tail=$(tail -c 300 "$home/state/branch-outcomes.jsonl")"
-  assert_re '^supervision-host: outcome 1 for demo \[routine\]: stub handled demo$' "$home/host.out" \
+  assert_re '^supervision-host: outcome 1 for demo \[routine\]: stub handled demo #tickets/jg-abc$' "$home/host.out" \
     "many receipts: the early visible outcome was lost behind later silent rows"
   assert_no_grep 'bulk silent fixture' "$home/host.out" "many receipts: silent outcomes were relayed"
   pass "host: an early visible outcome survives more than 1,000 same-turn receipts"
@@ -2441,7 +2441,7 @@ test_return_during_a_failed_turn_still_hands_its_outcomes_to_main() {
   assert_absent "$home/state/.afk-contract" "fixture: the stub's return did not archive the record"
   assert_re '^supervision-host: the away session could not take this wake: the engine turn failed \(exit 3\); .*captain returned during its turn.*store rows 1[,)]' "$home/host.out" \
     "the handback must say the turn failed, that the captain returned, and name the store rows"
-  assert_re '^supervision-host: outcome 1 for demo \[routine\]: stub handled demo$' "$home/host.out" \
+  assert_re '^supervision-host: outcome 1 for demo \[routine\]: stub handled demo #tickets/jg-abc$' "$home/host.out" \
     "the handback must carry the failed turn's outcome for main to relay"
   assert_re '	failed	turn=' "$home/state/.supervision-host.log" "the turn itself failed"
   pass "host: a captain return during a failed engine turn still hands that turn's outcomes to main"

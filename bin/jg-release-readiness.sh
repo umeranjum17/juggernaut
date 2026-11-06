@@ -419,6 +419,7 @@ raise_card() {  # <key> <hash>
     fi
   fi
   out=$("$CARD_POST" post ${args[@]+"${args[@]}"} \
+    --route main \
     --must public-release --filer "${filer:-release-readiness}" \
     --ask-ref "$key" --key "$key" \
     --title "$(card_title)" --why "$(card_why)" --detail "$(card_detail)" \

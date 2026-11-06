@@ -14,6 +14,7 @@
 # Usage (JG_HOME is required; the backend session defaults to Herdr's default):
 #   JG_HOME=<home> jg-sentinel.sh tick       one pass; what a scheduler runs
 #   JG_HOME=<home> jg-sentinel.sh loop       tick every JG_SENTINEL_INTERVAL seconds
+#   JG_HOME=<home> jg-sentinel.sh ring       ring the primary now for a queued captain note (jg-inbox.sh runs it)
 #   JG_HOME=<home> jg-sentinel.sh reconcile  nudge or relaunch this home's direct reports, once per episode
 #   JG_HOME=<home> jg-sentinel.sh unit       print a systemd user service running `loop`
 #
@@ -36,10 +37,22 @@
 #      The wake is typed only when that pane reads not busy and its composer
 #      reads exactly empty, as the away daemon's injection does, so it never
 #      lands mid-turn or on top of the captain's typing; a deferred wake stays
-#      pending for the next tick. The typed text is an operational-input
+#      pending for the next tick. A wake still deferred JG_SENTINEL_DEFER_ALERT_SECS
+#      (300) after the first deferral sends the captain one chat alert for that
+#      episode (state/.sentinel-wake-deferred); a delivered wake or a healthy
+#      beacon ends the episode. The typed text is an operational-input
 #      doorbell whose record says what happened; handling it is an ordinary
 #      turn, and that turn's end re-arms supervision through the primary's own
 #      re-arm owner (docs/watcher-continuity.md).
+#
+# A captain note is the exception to the grace: while a note's wake row waits in
+# the queue and no watcher is live (beacon older than JG_SENTINEL_INBOX_GRACE,
+# default 60 s), the primary is rung at once, with no need for lanes in flight
+# and no 300 s beacon wait. Each tick checks it, and `ring` runs only that check;
+# bin/jg-inbox.sh runs `ring` the moment it queues the note, so the note reaches
+# a turn in seconds whatever the unit's own tick phase. One ring per queued set
+# of notes, repeated after JG_SENTINEL_INBOX_REWAKE_SECS (default 300); a
+# deferred ring (mid-turn, composer not empty) is retried by the next tick.
 #
 # Before step 1, each tick also guards /tmp pressure through bin/jg-tmp-sweep.sh,
 # which owns the policy: a WARNING log line and a primary wake when /tmp space or
@@ -126,7 +139,7 @@ usage() {
 }
 
 case "${1:-}" in
-  tick|loop|reconcile|unit) CMD=$1 ;;
+  tick|loop|reconcile|unit|ring) CMD=$1 ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
@@ -138,6 +151,9 @@ SESSION=${JG_SENTINEL_HERDR_SESSION:-${HERDR_SESSION:-default}}
 INTERVAL=${JG_SENTINEL_INTERVAL:-60}
 REWAKE=${JG_SENTINEL_REWAKE_SECS:-1800}
 GRACE=${JG_GUARD_GRACE:-300}
+DEFER_ALERT_SECS=${JG_SENTINEL_DEFER_ALERT_SECS:-300}
+INBOX_GRACE=${JG_SENTINEL_INBOX_GRACE:-60}
+INBOX_REWAKE=${JG_SENTINEL_INBOX_REWAKE_SECS:-300}
 TMP_REWARN=${JG_SENTINEL_TMP_REWARN_SECS:-21600}
 TMP_SWEEP=${JG_SENTINEL_TMP_SWEEP_SECS:-86400}
 LOG="$STATE/.sentinel.log"
@@ -398,18 +414,39 @@ primary_target() {
   printf '%s:%s\n' "$SESSION" "$panes"
 }
 
+# A deferred wake is normal for a moment (a turn is running, the captain is typing). A wake that
+# stays deferred means the primary is not taking it, so the captain hears once per episode: the
+# first deferral opens the episode, the alert goes out when it has lasted DEFER_ALERT_SECS, and a
+# delivered wake (or a healthy watcher beacon, see tick) closes it. A fresh episode alerts again.
+defer_wake() {  # <log line> <plain cause for the captain>
+  local file="$STATE/.sentinel-wake-deferred" first alerted now
+  say "$1"
+  [ "$DRY_RUN" = 0 ] || return 1
+  now=$(date +%s)
+  read -r first alerted <"$file" 2>/dev/null || true
+  [ -n "${first:-}" ] || { first=$now; alerted=0; printf '%s 0\n' "$first" >"$file"; }
+  if [ "${alerted:-0}" = 0 ] && [ $(( now - first )) -ge "$DEFER_ALERT_SECS" ]; then
+    printf '%s 1\n' "$first" >"$file"
+    "${JG_SENTINEL_CAPTAIN_SAY:-$SCRIPT_DIR/jg-captain-say.sh}" --key sentinel-wake-deferred \
+      "The main session is not taking a waiting message. It has been $(( (now - first) / 60 )) minutes. $2. Open the main session or restart it." >/dev/null 2>&1 \
+      || say "primary: could not send the deferred-wake alert"
+  fi
+  return 1
+}
+
 wake_primary() {  # <body>
   local target doorbell verdict
-  target=$(primary_target) || { say "primary: no single Herdr pane runs session $(head -n 1 "$STATE/.lock-session" 2>/dev/null); wake deferred"; return 1; }
-  [ "$(jg_backend_busy_state herdr "$target")" != busy ] || { say "primary: $target mid-turn; wake deferred"; return 1; }
-  [ "$(jg_backend_composer_state herdr "$target")" = empty ] || { say "primary: $target composer not empty; wake deferred"; return 1; }
+  target=$(primary_target) || { defer_wake "primary: no single Herdr pane runs session $(head -n 1 "$STATE/.lock-session" 2>/dev/null); wake deferred" "No single window runs the main session"; return 1; }
+  [ "$(jg_backend_busy_state herdr "$target")" != busy ] || { defer_wake "primary: $target mid-turn; wake deferred" "The main session has been busy the whole time"; return 1; }
+  [ "$(jg_backend_composer_state herdr "$target")" = empty ] || { defer_wake "primary: $target composer not empty; wake deferred" "Unsent text sits in the main session input box"; return 1; }
   jg_operational_record_write "$STATE" watcher "$1" doorbell || { say "primary: could not write the wake record"; return 1; }
   verdict=$(jg_backend_send_nudge herdr "$target" "$doorbell" 3 0.5 0.5 2>/dev/null)
   if [ "$verdict" != empty ]; then
     # The record stays: typed text that was not confirmed can still be submitted,
     # and a ring whose record is gone sends its reader to a missing file.
-    say "primary: wake typed into $target but not confirmed ($verdict)"; return 1;
+    defer_wake "primary: wake typed into $target but not confirmed ($verdict)" "The main session did not confirm the message"; return 1;
   fi
+  [ "$DRY_RUN" = 1 ] || rm -f "$STATE/.sentinel-wake-deferred"
   say "primary: woke $target"
 }
 
@@ -469,6 +506,24 @@ tmp_hygiene() {
   ) >/dev/null 2>&1 &
 }
 
+# Ring the primary now when a captain note waits in the wake queue and no watcher is live.
+# The ring is recorded per set of queued notes, only after it was typed and confirmed.
+ring_for_inbox() {
+  local keys sum last woken
+  keys=$(jg_wake_queued_keys check 2>/dev/null | grep '^inbox:' | sort) || true
+  [ -n "$keys" ] || return 0
+  jg_supervision_status "$STATE" "$INBOX_GRACE"
+  [ "$JG_SUP_WATCHER_FRESH" = false ] || return 0
+  sum=$(printf '%s\n' "$keys" | cksum | cut -d' ' -f1)
+  read -r last woken <"$STATE/.sentinel-inbox-woken" 2>/dev/null || true
+  [ "${woken:-}" != "$sum" ] || [ $(( $(date +%s) - ${last:-0} )) -ge "$INBOX_REWAKE" ] || return 0
+  if wake_primary "A captain note waits in the inbox and no watcher is running. Run bin/jg-session-start.sh if this session was resumed, drain the wake queue, handle the note, then end the turn so supervision re-arms."; then
+    printf '%s %s\n' "$(date +%s)" "$sum" >"$STATE/.sentinel-inbox-woken"
+  else
+    return 1
+  fi
+}
+
 tick() {
   local id prev beat woken_beat age last body rc=0
   tmp_hygiene || true
@@ -496,7 +551,8 @@ tick() {
     wake_primary "$(cat "$STATE/.sentinel-wake-pending")" && rm -f "$STATE/.sentinel-wake-pending"
     return "$rc"
   fi
-  jg_supervision_unhealthy "$STATE" "$GRACE" || return "$rc"
+  ring_for_inbox || true
+  jg_supervision_unhealthy "$STATE" "$GRACE" || { [ "$DRY_RUN" = 1 ] || rm -f "$STATE/.sentinel-wake-deferred"; return "$rc"; }
   beat=$(jg_path_mtime "$STATE/.last-watcher-beat")
   read -r last woken_beat <"$STATE/.sentinel-wake-last" 2>/dev/null || true
   age=$(( $(date +%s) - ${last:-0} ))
@@ -528,6 +584,7 @@ locked() {
 
 case "$CMD" in
   tick) locked tick ;;
+  ring) locked ring_for_inbox ;;
   reconcile) locked reconcile_episode "${JG_SENTINEL_EPISODE:-$(herdr_identity)}" ;;
   loop)
     while :; do

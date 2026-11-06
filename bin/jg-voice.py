@@ -36,6 +36,8 @@ stderr: a banned term is never sent and a half-swapped sentence is never printed
 stderr. A missing or unreadable voice file steps aside: the text passes unchanged. `--line`
 treats the text as a status line (`verb [key=..]: note`) and only checks the note after the
 first colon.
+A PR number the same text also links in full (`pull/678`) is not flagged, so `revert-pr678` beside
+its URL passes; the same id with no link, or a link to another PR, is still refused.
 Send points: bin/jg-voice-lib.sh (chat reply, parent channel) and the Telegram send in core/bus.
 """
 import os
@@ -48,6 +50,9 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 # What a rewrite must never touch: code spans, URLs, [..=..] tags and key=value tokens.
 PROTECTED = re.compile(r"(`[^`\n]*`|\S+://\S+|\[[^\]\n]*=[^\]\n]*\]|[\w.-]+=\S+)")
+# A PR number the message also links in full (`.../pull/678`) is a ticket id beside its link, not a bare number.
+PR_LINK = re.compile(r"\S+://\S+/pull/(\d+)")
+PR_NUMBER = re.compile(r"(?:pr|pull request)[\s#-]*(\d+)", re.I)
 STATUS_LINE = re.compile(r"^([A-Za-z-]+(?: \[[^\]\n]*\])*:)(.*)$", re.S)
 # A list item line (`1. x`, `2) x`, `- x`, `* x`, a bullet), and a numbered marker inside a line of prose.
 ITEM = re.compile(r"^\s*(?:\d{1,3}[.)]|[-*\u2022])\s+\S")
@@ -158,13 +163,17 @@ def plain_segments(text):
 def review(text, rules, max_words):
     """-> (term findings, length findings). The first row to claim a stretch of text keeps it."""
     terms, lengths = [], []
+    linked = set(PR_LINK.findall(text))
     for is_plain, piece in plain_segments(text):
         claims = []
         for rx, say in rules if is_plain else ():
             for m in rx.finditer(piece):
                 if m.end() > m.start() and not any(m.start() < e and s < m.end() for s, e, _ in claims):
                     claims.append((m.start(), m.end(), say))
-        terms += ['"%s" - plain wording: %s' % (piece[s:e], say) for s, e, say in sorted(claims)]
+        for s, e, say in sorted(claims):
+            ref = PR_NUMBER.fullmatch(piece[s:e])
+            if not (ref and ref.group(1) in linked):
+                terms.append('"%s" - plain wording: %s' % (piece[s:e], say))
     if max_words:
         for s in re.split(r"(?<=[.!?])\s+|\n+", PROTECTED.sub(lambda m: "x" if "://" in m.group(0) else m.group(0), text)):
             if len(s.split()) > int(max_words):
@@ -273,7 +282,7 @@ def rewritten(text, rules, rules_text):
     again, _ = review(out, rules, None)
     if again:
         return None, "the rewrite still holds a banned term: " + "; ".join(again)
-    lost = [m.group(0) for m in PROTECTED.finditer(text) if m.group(0) not in out]
+    lost = [m.group(0) for m in PROTECTED.finditer(text) if m.group(0).strip("(),:;.") not in out]
     if lost:
         return None, "the rewrite lost %s" % ", ".join(lost)
     items, kept = sum(bool(ITEM.match(l)) for l in text.split("\n")), sum(bool(ITEM.match(l)) for l in out.split("\n"))

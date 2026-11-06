@@ -561,6 +561,13 @@ case "$CMD" in
       echo "error: refusing append because the outcome cursor is invalid or ahead of the store" >&2
       exit 1
     fi
+    # A captain row this home already stored for the same task with the same words is a replay
+    # (a restart re-hosts finished work), so it is stored again but never sent to the chat again.
+    REPLAYED=false
+    if [ -s "$STORE" ] && grep -F -- "\"task\":\"$(json_escape "$TASK")\"" "$STORE" \
+        | grep -qF -- "\"verdict\":\"captain\",\"summary\":\"$(json_escape "$SUMMARY")\""; then
+      REPLAYED=true
+    fi
     SEQ=$(( LAST_SEQ + 1 ))
     capture_status_position "$TASK"
     rm -f -- "$OUTCOME_INDEX_READY" || { jg_lock_release "$LOCK"; exit 1; }
@@ -589,8 +596,17 @@ case "$CMD" in
     # The captain channel delivers a captain-facing row to the captain by the new
     # path (bin/jg-bus.sh): the row above is stored exactly as before, and a
     # routine or silent row is not captain-facing, so only this one is sent.
-    if [ "$VERDICT" = captain ] && [ "$SILENT" = false ]; then
-      "$SCRIPT_DIR/jg-bus.sh" publish outcome "$TASK" "$SUMMARY" >/dev/null 2>&1 || true
+    # A row written in a squad lead home is never published direct: nobody reads that
+    # home's chat and main has not reviewed the row, so the captain would receive raw,
+    # replayed lead work. The lead's own publishers carry its outcomes to the parent
+    # channel (docs/squad-lead-parent-channel.md), and main publishes what it accepts.
+    if [ "$VERDICT" = captain ] && [ "$SILENT" = false ] && [ "$REPLAYED" = false ] \
+        && [ ! -e "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ]; then
+      # Chat words only: the stored row above keeps the label. "merged-not-released:"
+      # was sent for work that had not merged, so the chat says only what is always true.
+      SENT="$SUMMARY"
+      case "$SUMMARY" in 'merged-not-released:'*) SENT="Not live yet:${SUMMARY#merged-not-released:}" ;; esac
+      "$SCRIPT_DIR/jg-bus.sh" publish outcome "$TASK" "$SENT" >/dev/null 2>&1 || true
     fi
     ;;
   unread)

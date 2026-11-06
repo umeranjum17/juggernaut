@@ -23,13 +23,14 @@ printf '%s\n' "$*" >> "$SIGNOFF_LOG"
 case "${1-}" in --version) echo 'sign-off-axi stub' ;; raise) echo raised ;; esac
 SH
   chmod +x "$d/fakebin/sign-off-axi"
+  printf 'set mode off\n' > "$d/channel-off" # the hold raises a card; keep it off the machine's shared bus
   printf '%s\n' "$d"
 }
 
 run() {  # <case dir> <command...>
   local d=$1
   shift
-  env PATH="$d/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" JG_CODE_ROOT="$ROOT" \
+  env JG_CAPTAIN_CHANNEL="$d/channel-off" PATH="$d/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" JG_CODE_ROOT="$ROOT" \
     JG_HOME="$d/home" JG_ROOT_OVERRIDE="$ROOT" \
     JG_STATE_OVERRIDE="$d/home/state" JG_DATA_OVERRIDE="$d/home/data" \
     JG_CONFIG_OVERRIDE="$d/home/config" SIGNOFF_LOG="$d/signoff.log" "$@" 2>&1

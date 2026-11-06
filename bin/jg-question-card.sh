@@ -34,6 +34,11 @@
 #        the answer straight to that lead and closes its decision <slug>
 #        (default: the card key). Cards Main files for a lead name it. Neither
 #        flag reaches sign-off-axi.
+#        With no --route, the lead is found from the card's own names: the
+#        --decision-key, --key or --ask-ref that is a task recorded in this home
+#        or an open decision of one. No single match refuses the post and names
+#        the flag: pass --route <lead>, or --route main for a card Main owns
+#        (its answer then wakes Main, as before).
 #        --must <category> is the gate (bin/jg-ask-gate-lib.sh): it is written
 #        into the card's detail field as "must: <category>", and on the
 #        when-it-matters leash a post with none is refused and recorded for
@@ -88,6 +93,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/jg-board-record-lib.sh"
 # shellcheck source=bin/jg-captain-card-lib.sh
 . "$SCRIPT_DIR/jg-captain-card-lib.sh"
+# shellcheck source=bin/jg-classify-lib.sh
+. "$SCRIPT_DIR/jg-classify-lib.sh"
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
@@ -141,6 +148,29 @@ split_board() {
     esac
     shift
   done
+}
+
+# The lead that owns this card, found from the names the card carries: a task of
+# this home called by one of them, or one whose status has that key as an open
+# decision. Sets ROUTE (and DECISION_KEY for a matched open decision); returns
+# 1 unless exactly one task matches.
+resolve_owner_lead() {
+  local state=${JG_STATE_OVERRIDE:-${JG_HOME:-/nonexistent}/state} meta id c found='' n=0 dk=''
+  for meta in "$state"/*.meta; do
+    [ -f "$meta" ] || continue
+    id=${meta##*/}; id=${id%.meta}
+    for c in "$DECISION_KEY" "$(flag_value --key)" "$(flag_value --ask-ref)"; do
+      [ -n "$c" ] || continue
+      if [ "$id" = "$c" ] || status_open_decisions "$state/$id.status" 2>/dev/null | grep -q "^$c"$'\t'; then
+        [ "$id" = "$c" ] || dk=$c
+        found=$id; n=$((n + 1))
+        break
+      fi
+    done
+  done
+  [ "$n" -eq 1 ] || return 1
+  ROUTE=$found
+  [ -n "$DECISION_KEY" ] || DECISION_KEY=$dk
 }
 
 set_detail() {  # <value>: keep exactly one --detail pair in ARGS
@@ -232,6 +262,14 @@ cmd_post() {
     refuse "$refusal"
   fi
 
+  if [ "$ROUTE" = main ]; then
+    # An explicit Main-owned card: its answer wakes Main, so no lead is recorded.
+    ROUTE=''
+    [ -z "$DECISION_KEY" ] || die "refused: --decision-key closes a lead's decision, so it cannot go with --route main"
+  elif [ -z "$ROUTE" ]; then
+    resolve_owner_lead \
+      || die "refused: no single lead owns this card; pass --route <lead> (a task id in this home), or --route main for a card Main owns"
+  fi
   [ -z "$DECISION_KEY" ] || [ -n "$ROUTE" ] || die "refused: --decision-key only closes a lead's decision, so it needs --route <lead>"
   # Check the lead first: a refused route must not leave an unrouted card behind.
   [ -z "$ROUTE" ] || [ -f "${JG_STATE_OVERRIDE:-${JG_HOME:-/nonexistent}/state}/$ROUTE.meta" ] \

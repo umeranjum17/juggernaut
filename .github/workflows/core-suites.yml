@@ -304,6 +304,10 @@ jobs:
       - name: Checks lint superseding-receipt test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-supersede-receipt.test.sh
+      # The lint's republished receipt keeps the worker's first-draft receipt line, so a design PR still passes the design gate.
+      - name: Checks lint keeps first-draft line test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/checks-lint-keeps-first-draft-line.test.sh
       # The merge holds the task control lock while the lint publishes its receipt: no deadlock, and the PR url is kept.
       - name: Checks lint receipt-lock test
         if: ${{ !cancelled() }}
@@ -345,6 +349,10 @@ jobs:
       - name: Completion-receipt superseded-copy test
         if: ${{ !cancelled() }}
         run: bash receipts/tests/receipt-superseded-copy.test.sh
+      # Real commits in real repositories, forge read stubbed: one lane lands several pull requests, each with the receipt for its own head.
+      - name: Completion-receipt multi-PR lane test
+        if: ${{ !cancelled() }}
+        run: bash receipts/tests/receipt-multi-pr-lane.test.sh
       - name: No old receipt path test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/no-old-receipt-path.test.sh

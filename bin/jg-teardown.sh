@@ -518,6 +518,19 @@ CONTROL_LOCK_HELD=1
 jg_refuse_if_gate_agent
 JG_LOCK_LOG_PREFIX=teardown
 
+# An absent task record (no file, no symlink) with no pending backlog close means
+# the watcher's own cleanup already removed the task: say so and exit 0 after
+# clearing the receipt and probe files it can leave behind. A record that exists
+# but is not a regular file still falls through to the refusal below.
+if [ ! -e "$META" ] && [ ! -L "$META" ] && [ ! -e "$STATE/$ID.backlog-close" ]; then
+  jg_backlog_record_parent_authorized "$META" "task record" "$STATE" || {
+    echo "error: teardown refused: $JG_BACKLOG_TRANSITION_ERROR" >&2
+    exit 1
+  }
+  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID.probe-at" "$STATE/$ID.account-probe-at"
+  echo "task $ID is already cleaned up: its task record $META does not exist; nothing to tear down"
+  exit 0
+fi
 jg_backlog_record_present "$META" "task record" "$STATE" || {
   echo "error: teardown refused: $JG_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
@@ -2837,6 +2850,25 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
       JG_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/jg-captain-hold.sh" verify "$ID" >/dev/null; then
     echo "REFUSED: scout task $ID has not passed the captain-call completion gate." >&2
     echo "Inventory its report and any visual review through bin/jg-captain-hold.sh before teardown." >&2
+    exit 1
+  fi
+  # A report page the Recon posted must open with the report's Answer, not a
+  # finding. No page on the board passes (bin/jg-report-opening-check.sh).
+  if ! OPENING_CHECK=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" \
+      "$SCRIPT_DIR/jg-report-opening-check.sh" "$REPORT" --filer "$ID" 2>&1 >/dev/null); then
+    echo "REFUSED: scout task $ID posted a report page that does not open with its Answer." >&2
+    printf '%s\n' "$OPENING_CHECK" | sed 's/^/  /' >&2
+    echo "Repost the page under the same key with the Answer in the picture heading, then retry." >&2
+    exit 1
+  fi
+  # A standard or deep Recon's report must pass the depth gate (bin/jg-recon-gate.sh;
+  # quick and a legacy brief are exempt), so a shallow report is not cleaned up as done.
+  RECON_GATE_RC=0
+  RECON_GATE=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-recon-gate.sh" "$ID" 2>&1 >/dev/null) || RECON_GATE_RC=$?
+  if [ "$RECON_GATE_RC" -eq 1 ]; then
+    echo "REFUSED: scout task $ID has a report that does not pass the Recon depth gate." >&2
+    printf '%s\n' "$RECON_GATE" | sed 's/^/  /' >&2
+    echo "Close the gaps and run bin/jg-recon-gate.sh $ID until it passes, or use --force after explicit discard approval." >&2
     exit 1
   fi
 fi

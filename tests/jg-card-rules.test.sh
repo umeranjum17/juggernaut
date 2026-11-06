@@ -63,7 +63,7 @@ run() {  # <case dir> <command...>
 post() {  # <case dir> [post flags...]
   local d=$1
   shift
-  run "$d" "$CARD" post --ask-ref m1 --must design-pick \
+  run "$d" "$CARD" post  --route main --ask-ref m1 --must design-pick \
     --outcome yes="It ships Friday." --outcome no="It waits a week." "$@"
 }
 
@@ -109,7 +109,7 @@ test_rule1_a_captain_stop_order_is_never_a_card() {
 test_rule2_a_stuck_worker_is_never_a_card() {
   local d out
   d=$(setup stuck)
-  out=$(run "$d" "$CARD" post --ask-ref waiting-byokit --key waiting-byokit-card \
+  out=$(run "$d" "$CARD" post  --route main --ask-ref waiting-byokit --key waiting-byokit-card \
     --title "Unblock stuck byokit?" --why "byokit is stuck on a plan that needs one call." \
     --outcome yes="Main clears or answers the wait now." --outcome no="It stays stuck until you steer it.")
   refused_by "$d" "$out" 2
@@ -127,11 +127,11 @@ test_rule3_a_card_is_one_plain_question_with_two_clear_options() {
   refused_by "$d" "$out" 3
   out=$(post "$d" --title "Read the plan at data/wrapper-report.md and approve?")
   refused_by "$d" "$out" 3
-  out=$(run "$d" "$CARD" post --ask-ref m1 --must design-pick --title "Pick the launch word" \
+  out=$(run "$d" "$CARD" post  --route main --ask-ref m1 --must design-pick --title "Pick the launch word" \
     --outcome yes="It ships Friday." --outcome no="It waits a week.")
   refused_by "$d" "$out" 3
   assert_contains "$out" "plain question" "a title that is not a question was refused for another reason"
-  out=$(run "$d" "$CARD" post --ask-ref m1 --must design-pick --title "Pick the launch word?" \
+  out=$(run "$d" "$CARD" post  --route main --ask-ref m1 --must design-pick --title "Pick the launch word?" \
     --outcome yes="It ships Friday.")
   refused_by "$d" "$out" 3
   out=$(post "$d" --title "Ship the new sign-in screen this week?" \

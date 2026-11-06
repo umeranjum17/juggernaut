@@ -29,6 +29,9 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
   It is sent once, because a replay of the same update adds no second notification, and a dropped message has none.
   This path needs no new channel, no typing into the pane and no model turn. Other notes keep their 100-character summary.
 - `bin/jg-inbox.sh reply <id>` is the only way an answer reaches the chat. It is sent as a threaded reply, split at 4096 characters, and sent once.
+- UI work lands with its pictures.
+  A lead's review-ready or landed line for a UI task ends with `evidence=<path>,<path>` (`bin/jg-evidence-lib.sh`), read from `data/<task>/evidence.list`.
+  `bin/jg-inbox.sh reply <id> --evidence-from "<that line>"` attaches those files, and `bin/jg-evidence-check.sh` (registered as a watcher check) flags a reply that names the PR and attaches nothing.
 - Text messages and the mark on a tapped choice go out with Telegram HTML formatting.
   The gateway renders `**bold**`, `*italic*` or `_italic_`, `` `code` ``, fenced code, `[text](https://url)` and `> quote` lines to the matching tags.
   All other text has `&`, `<` and `>` escaped, and a marker with no partner stays text, so model text cannot break the markup.
@@ -68,6 +71,14 @@ Save the token in `config/captain-chat/telegram.token` (mode 600), then run step
 - A message that is only `/status` is answered by the gateway itself, threaded on it: the owner, the answers sent and that the bot is answering. It files no note and wakes no one. It is the only command.
   The reply ends with the owner's open asks in his own words, grouped Needs you / Not done / Done (verified), from `bin/jg-owner-asks.sh`, which builds them from the records with no model. Done needs a recorded release that runs; a merge alone is Not done.
 - Remove the token file and run `bin/jg-stack.sh up` to retire the unit.
+- The gateway sends the owner only what a real home published.
+  Every event carries a `home` field, set by the publishing command.
+  A card, outcome, alert, digest or summary is sent when that home is the gateway's own home, or a member of the machine registry (`state/bus/homes`) whose home and state directories are not a throw-away location.
+  Any other event is named once in `state/captain-channel.log` and dropped.
+  A `card-close` from such a home cannot close a real card.
+  A test home reaches the machine's one bus when its config falls back to the shipped `live` default, so this rule, not each suite's discipline, keeps a test card off the chat.
+  An event with no `home` is from a publisher older than the field and is still sent.
+  `TestGatewayRefusesCardsFromTestHomes` proves it.
 - The owner can send a photo, document, voice note, audio, video or round video note. Each is downloaded (Telegram allows up to 20 MB), stored once by content hash at `state/captain-chat/media/<day>/<sha256>.<ext>` (folders 0700, files 0600), and listed in the note as `[file <kind> <path> <size> <mime>]`. The `inbound` event on the bus carries the same files in an optional `media` list; older events have none. A caption becomes the note text.
 - A file over 20 MB is not downloaded. The note says so and the bot tells the owner in the chat. A file that cannot be fetched is named in the note and the text is still filed. Files are deleted after `chat-media-days` (default 30).
 

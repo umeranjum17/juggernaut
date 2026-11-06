@@ -426,7 +426,7 @@ cpu_count() {
 family_for_basename() {
   case "$1" in
     jg-brief.test.sh|jg-crew-state.test.sh|\
-    jg-prior-art-gate.test.sh|\
+    jg-prior-art-gate.test.sh|jg-recon-gate.test.sh|jg-recon-depth.test.sh|\
     jg-captain-hold-lifecycle.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
@@ -553,6 +553,7 @@ EOF
 portable_parallel_weight_hints() {
   cat <<'EOF'
 tests/jg-brief.test.sh 10594
+tests/jg-browser-sweep.test.sh 2000
 tests/jg-captain-hold-lifecycle.test.sh 343658
 tests/jg-crew-state.test.sh 82058
 tests/jg-pr-merge.test.sh 300199
@@ -851,6 +852,8 @@ tests/jg-lavish-session-check.test.sh 365
 tests/jg-licence-check.test.sh 131
 tests/jg-live-claim.test.sh 568
 tests/jg-prior-art-gate.test.sh 468
+tests/jg-recon-depth.test.sh 300
+tests/jg-recon-gate.test.sh 1500
 tests/jg-running-products.test.sh 204
 tests/jg-stack.test.sh 44236
 tests/jg-turnend-guard-no-false-blocks.test.sh 335
@@ -859,6 +862,8 @@ tests/jg-wake-batching.test.sh 52062
 tests/jg-watch-beacon.test.sh 45490
 tests/jg-whats-left.test.sh 3479
 tests/jg-owner-asks.test.sh 2000
+tests/jg-captain-approval.test.sh 2100
+tests/jg-triage.test.sh 2000
 tests/jg-nudge-residue.test.sh 6000
 EOF
 }
@@ -1592,7 +1597,7 @@ families_for_changed_path() {
       printf '%s\n' live-harness-optin
       ;;
     bin/jg-bearings-snapshot.sh|bin/jg-fleet-snapshot.sh|bin/jg-fleet-view.sh|bin/jg-contributions.sh|bin/jg-contributions.jq|\
-    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh|bin/jg-owner-asks.sh)
+    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh|bin/jg-owner-asks.sh|bin/jg-triage.sh)
       ;;
     bin/jg-install-herdr.sh|bin/jg-install-treehouse.sh|bin/jg-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
@@ -1602,7 +1607,7 @@ families_for_changed_path() {
       ;;
     bin/jg-lint.sh|bin/jg-lint-workflows.sh|bin/jg-install-shellcheck.sh|\
     bin/jg-install-actionlint.sh|\
-    bin/jg-committed-binary-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
+    bin/jg-committed-binary-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-recon-depth.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
     bin/jg-captain-hold.sh|bin/jg-hold-reason-lib.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
     bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-tasks-axi-lib.sh|\
     bin/jg-vendor-auth-probe.sh|\
