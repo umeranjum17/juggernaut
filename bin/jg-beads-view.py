@@ -6,6 +6,7 @@ Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|sh
 Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never starts bd.
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
 A held row is status on_hold, blocked or deferred, and reads as queued; kind is metadata.kind, else issue_type;
+parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
 Refusals print tasks-axi's error lines on stdout: exit 2 for a bad flag, exit 1 for an unknown id.
 """
@@ -18,7 +19,7 @@ HELD = {"on_hold", "blocked", "deferred"}
 ROW = ["id", "state", "kind", "repo", "title"]
 SHOW = ["id", "title", "state", "blocked", "blocked_by", "held", "hold_reason", "hold_kind", "hold_until",
         "kind", "repo", "priority", "created", "closed", "deps", "links", "body"]
-EXTRA = sorted(set(SHOW) - set(ROW)) + ["delivery_state"]
+EXTRA = sorted(set(SHOW) - set(ROW)) + ["delivery_state", "parent", "item"]
 CLIP = {"title": 80, "body": 500}
 STATES = ["queued", "in_flight", "done", "held"]
 PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?([eE][+-]?\d+)?\Z")
@@ -85,6 +86,10 @@ def task(row, rows):
         "deps": ",".join("blocked-by:" + d for d in deps) or "none",
         "links": ",".join(links) or "none", "body": row.get("description", ""),
         "delivery_state": meta.get("delivery_state", "-"),
+        # parent: the parent-child edge's target, else upkeep for the upkeep label; item: the id the home's state files use.
+        "parent": next((d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "parent-child"),
+                       "upkeep" if "upkeep" in (row.get("labels") or []) else "-"),
+        "item": meta.get("legacy_item") or row["id"],
     }
 
 
@@ -95,10 +100,10 @@ def clip(item, field, hint):
     return value
 
 
-def table(name, tasks, fields):
+def table(name, tasks, fields, full=False):
     print("%s[%d]{%s}:" % (name, len(tasks), ",".join(fields)))
     for item in tasks:
-        print("  " + ",".join(scalar(clip(item, field, "show %s --full" % item["id"])) for field in fields))
+        print("  " + ",".join(scalar(clip(item, field, None if full else "show %s --full" % item["id"])) for field in fields))
 
 
 def card(item, hint=None):
@@ -140,7 +145,7 @@ def ready(tasks, args):
 
 
 def listing(tasks, args):
-    found, _ = flags(args, ("--state", "--repo", "--kind", "--limit", "--fields"), ("--blocked",))
+    found, _ = flags(args, ("--state", "--repo", "--kind", "--limit", "--fields"), ("--blocked", "--full"))
     state, repo, kind = (found.get(f) for f in ("--state", "--repo", "--kind"))
     if state is not None and state not in STATES:
         refuse("--state must be one of " + ", ".join(STATES))
@@ -164,7 +169,7 @@ def listing(tasks, args):
             print('help[2]:\n  - "Run `tasks-axi add <id> \\"<title>\\"` to add a task"')
             print("  - Run `tasks-axi list --state done` to see completed work")
         return
-    table("tasks", rows, ROW + extra)
+    table("tasks", rows, ROW + extra, "--full" in found)
     both = not state and not kind
     print("help[%d]:" % (2 if both else 1))
     print("  - Run `tasks-axi show <id>` for full notes on a task")

@@ -41,8 +41,9 @@ def run(args, env=None, cwd=None, missing=False):
 # What one ticket's publish can fail with; a bad record is skipped, never fatal to the pass.
 TICKET_ERRORS = (OSError, ValueError, KeyError, RuntimeError, sp.TimeoutExpired)
 
-def rows(args, env, cwd=None):
-    text = run(args + ['--limit', '100000', '--fields', 'held,hold_kind,hold_reason,closed,created,priority,body,links'], env, cwd)
+def rows(args, env, cwd=None, extra=''):
+    # A Beads home's list answers whole titles and bodies on --full, so it needs no read of each truncated row.
+    text = run(args + ['--limit', '100000', '--fields', 'held,hold_kind,hold_reason,closed,created,priority,body,links' + extra] + (['--full'] if extra else []), env, cwd)
     result = toon_rows(text)
     if result is None or re.search(r'count: \d+ of (?!0\b)\d+ total', text) and len(result) >= 100000:
         raise RuntimeError('tasks-axi returned an unreadable or capped task list')
@@ -78,6 +79,11 @@ def register_icon(board, project, registry):
     except RuntimeError as error: return str(error)[:120]
     registry[project.lower()] = digest
     return None
+
+def beads_home(source):
+    """Whether this home's backlog is served by its Beads store (config/backlog-backend), as bin/jg-tasks-axi-lib.sh reads it."""
+    backend = source / 'config/backlog-backend'
+    return backend.is_file() and backend.read_text().strip() == 'beads'
 
 def ticket_id(home, item):
     return "jg-" + hashlib.sha256(f"{home}/{item}".encode()).hexdigest()[:32]
@@ -277,18 +283,30 @@ def sync():
             env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_ROOT_OVERRIDE', 'TASKS_AXI_FILE', 'TASKS_AXI_BACKEND')}
             env['JG_HOME'] = str(source)
             reader = ['bash', str(home / 'bin/jg-tasks-axi.sh')]
-            tasks = rows(reader + ['list'], env) + rows(reader + ['list', '--state', 'done'], env)
-            address = run(['bash', '-c', '. "$1/jg-tasks-axi-lib.sh"; . "$1/jg-backlog-transition-lib.sh"; jg_backlog_tasks_axi_addressing "$JG_HOME/data" || exit; printf "%s\\n%s\\n" "$JG_BACKLOG_AXI_ROOT" "$JG_BACKLOG_AXI_FILE"', 'tickets-sync', str(home / 'bin')], env).splitlines()
-            root, file = address
-            if not file: raise RuntimeError(f'{name}: archive backfill requires markdown addressing')
-            settings = {}
-            for config in (Path.home() / '.tasks-axi/config.toml', Path(root) / '.tasks.toml'):
-                if config.exists(): settings.update(tomllib.loads(config.read_text()).get('markdown', {}))
-            archive = Path(root) / settings.get('archive', str(Path(file).parent / 'done-archive.md'))
-            archive_copy = state / f'{name}-archive.md'
-            if archive.exists():
-                archive_copy.write_text(re.sub(r'^## Archived[^\n]*$', '## Done', archive.read_text(), flags=re.M))
-            archived = rows(['tasks-axi', 'list', '--state', 'done', '--backend', 'markdown', '--file', str(archive_copy)], env, state) if archive.exists() else []
+            # The one seam: a Beads home answers every row, done ones and whole bodies included, from one provider read;
+            # a markdown home needs its done list, its archive and a full read of each truncated row.
+            beads = beads_home(source)
+            tasks = rows(reader + ['list'], env, extra=',parent,item') if beads else rows(reader + ['list'], env) + rows(reader + ['list', '--state', 'done'], env)
+            archived = []
+            if beads:
+                # The rest of the pass keys a row by the item name its state files and parent lines use, as a markdown row is.
+                by_id = {r['id']: r for r in tasks}
+                for r in tasks:
+                    parent = r['parent'] if r['parent'] == 'upkeep' else by_id[r['parent']]['item'] if r['parent'] in by_id else ''
+                    if parent: r['body'] += f"\nparent: {parent}"
+                tasks = [dict(r, id=r['item']) for r in tasks]
+            if not beads:
+                address = run(['bash', '-c', '. "$1/jg-tasks-axi-lib.sh"; . "$1/jg-backlog-transition-lib.sh"; jg_backlog_tasks_axi_addressing "$JG_HOME/data" || exit; printf "%s\\n%s\\n" "$JG_BACKLOG_AXI_ROOT" "$JG_BACKLOG_AXI_FILE"', 'tickets-sync', str(home / 'bin')], env).splitlines()
+                root, file = address
+                if not file: raise RuntimeError(f'{name}: archive backfill requires markdown addressing')
+                settings = {}
+                for config in (Path.home() / '.tasks-axi/config.toml', Path(root) / '.tasks.toml'):
+                    if config.exists(): settings.update(tomllib.loads(config.read_text()).get('markdown', {}))
+                archive = Path(root) / settings.get('archive', str(Path(file).parent / 'done-archive.md'))
+                archive_copy = state / f'{name}-archive.md'
+                if archive.exists():
+                    archive_copy.write_text(re.sub(r'^## Archived[^\n]*$', '## Done', archive.read_text(), flags=re.M))
+                    archived = rows(['tasks-axi', 'list', '--state', 'done', '--backend', 'markdown', '--file', str(archive_copy)], env, state)
             backlog_ids = {r['id'] for r in tasks}
             tasks = {r['id']: r for r in archived + tasks}
             full_file = state / f'{name}-full.json'
@@ -314,7 +332,7 @@ def sync():
                     and ticket_id(name, r['id']) not in ledger and ticket_id(name, r['id']) not in existing
             pending = []
             for item, r in tasks.items():
-                if '\n... (truncated, ' not in r['title'] + r.get('body', '') or unneeded(item, r): continue
+                if beads or '\n... (truncated, ' not in r['title'] + r.get('body', '') or unneeded(item, r): continue
                 cached = full_cache.setdefault(str(source_of(item)), {})
                 stamp = str(source_of(item).stat().st_mtime_ns)
                 if cached.get('stamp') != stamp: cached.clear(); cached.update(stamp=stamp, rows={})
@@ -333,7 +351,7 @@ def sync():
                         note('tickets-sync: reading full request context; continuing next check')
                         return
             for item, r in tasks.items():
-                cached = full_cache.get(str(source_of(item)))
+                cached = None if beads else full_cache.get(str(source_of(item)))
                 if cached and item in cached['rows']: r.update(cached['rows'][item])
             save(full_file, full_cache)
             if options.close and name == options.close.partition('/')[0]:
