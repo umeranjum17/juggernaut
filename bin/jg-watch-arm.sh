@@ -216,7 +216,7 @@ cycle_signal_name() {
 }
 
 cycle_log_append() {
-  local exit_code=$1 signal=$2 reason=$3 successor=$4 ended_at beacon_age lock_after size tmp raw i
+  local exit_code=$1 signal=$2 reason=$3 successor=$4 detail=${5:-} ended_at beacon_age lock_after size tmp raw i
   [ "$cycle_active" -eq 1 ] || return 0
   ended_at=$(date +%s)
   beacon_age=$(jg_path_age "$BEAT")
@@ -228,7 +228,7 @@ cycle_log_append() {
     sleep 0.02
     i=$((i + 1))
   done
-  printf 'arm_pid=%s\twatcher_pid=%s\torigin=%s\tstarted_at=%s\tended_at=%s\texit_code=%s\tsignal=%s\treason=%s\tbeacon_age=%s\tlock_before=%s\tlock_after=%s\tsuccessor=%s\n' \
+  printf 'arm_pid=%s\twatcher_pid=%s\torigin=%s\tstarted_at=%s\tended_at=%s\texit_code=%s\tsignal=%s\treason=%s\tbeacon_age=%s\tlock_before=%s\tlock_after=%s\tsuccessor=%s%s\n' \
     "$ARM_PID" \
     "$(cycle_clean_field "$cycle_watcher_pid")" \
     "$(cycle_clean_field "$cycle_origin")" \
@@ -240,7 +240,8 @@ cycle_log_append() {
     "$beacon_age" \
     "$(cycle_clean_field "$cycle_lock_before")" \
     "$(cycle_clean_field "$lock_after")" \
-    "$(cycle_clean_field "$successor")" >> "$CYCLE_LOG" 2>/dev/null || true
+    "$(cycle_clean_field "$successor")" \
+    "${detail:+$'\t'detail=$(cycle_clean_field "$detail")}" >> "$CYCLE_LOG" 2>/dev/null || true
 
   size=$(wc -c < "$CYCLE_LOG" 2>/dev/null | tr -d '[:space:]')
   case "$size" in
@@ -758,7 +759,10 @@ owned_child_finished() {
 
   reason_type="nonzero-exit"
   [ "$signal" = none ] || reason_type="signal-exit"
-  cycle_log_append "$rc" "$signal" "$reason_type" none
+  # The ledger never held child output; keep its last line so a silent exit 1
+  # is still readable from the owning home.
+  detail=$(grep -v '^[[:space:]]*$' "$child_out" 2>/dev/null | tail -1)
+  cycle_log_append "$rc" "$signal" "$reason_type" none "$detail"
   print_watch_output "$child_out"
   if ! grep -q '^watcher: FAILED' "$child_out" 2>/dev/null; then
     echo "watcher: FAILED - watcher cycle exited $rc without an actionable reason"

@@ -129,7 +129,9 @@ case "${1:-}" in
       printf '%s\n' "$payload" >> "$D/literal"
       if [ -z "${JG_FAKE_NEVER_DIES:-}" ] \
          && { [ "$payload" = /exit ] || [ "$payload" = /quit ]; }; then
-        if [ -f "$D/open-exit-modal" ]; then
+        if [ -f "$D/enter-gate" ]; then
+          printf '╭────╮\n│ %s │\n╰────╯\n' "$payload" > "$D/pane"
+        elif [ -f "$D/open-exit-modal" ]; then
           : > "$D/exit-modal-armed"
         else
           printf 'zsh' > "$D/command"
@@ -141,7 +143,16 @@ case "${1:-}" in
     else
       printf '%s\n' "$payload" >> "$D/keys"
       printf '%s %s\n' "$(perl -MTime::HiRes=time -e 'printf "%.3f", time')" "$payload" >> "$D/key-times"
-      if [ "$payload" = Enter ] && [ -f "$D/exit-modal-armed" ]; then
+      if [ "$payload" = Enter ] && [ -f "$D/enter-gate" ]; then
+        # A completion popup swallows Enters until the last one submits.
+        left=$(( $(cat "$D/enter-gate") - 1 ))
+        if [ "$left" -le 0 ]; then
+          printf 'zsh' > "$D/command"
+          rm -f "$D/enter-gate" "$D/pane"
+        else
+          printf '%s' "$left" > "$D/enter-gate"
+        fi
+      elif [ "$payload" = Enter ] && [ -f "$D/exit-modal-armed" ]; then
         cp "$D/modal-screen" "$D/pane"
         rm -f "$D/exit-modal-armed"
         : > "$D/exit-modal"
@@ -1117,6 +1128,23 @@ test_grok_idle_footer_does_not_confirm_cancellation() {
   pass "jg-control interrupt: grok's idle footer does not confirm cancellation"
 }
 
+# Pi's completion popup swallows Enter after /quit while the pane still reads as
+# a submitted composer, so the agent never stops until a person presses Enter.
+test_pi_exit_survives_a_popup_that_swallows_enter() {
+  local dir out rc harness
+  for harness in pi pi-signed; do
+    dir=$(new_case "pi-popup-$harness")
+    add_task "$dir" t1 "$harness"
+    alive_as "$dir" pi
+    printf '5' > "$dir/fake/enter-gate"
+    out=$(JG_CONTROL_EXIT_WAIT=2 run_control "$dir" t1 exit); rc=$?
+    expect_code 0 "$rc" "$harness exit should submit /quit through the popup"$'\n'"$out"
+    assert_contains "$out" stopped "$harness exit should report the agent stopped"
+    [ "$(literals "$dir")" = /quit ] || fail "$harness /quit should be typed exactly once, got: $(literals "$dir")"
+  done
+  pass "jg-control exit: a Pi pane whose popup swallows Enter still submits /quit and stops"
+}
+
 # --- 6. marker non-regression -----------------------------------------------
 
 test_squad_lead_control_command_carries_no_marker() {
@@ -1356,5 +1384,6 @@ test_exit_accepts_agent_stopped_by_busy_interrupt
 test_agent_that_does_not_stop_fails_closed
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
+test_pi_exit_survives_a_popup_that_swallows_enter
 test_squad_lead_control_command_carries_no_marker
 test_jg_send_still_marks_the_same_squad_lead_task

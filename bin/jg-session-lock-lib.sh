@@ -199,6 +199,43 @@ jg_harness_pid_alive() {
 # ancestry list an earlier walk already produced, so a caller that walked once
 # need not walk again.
 jg_session_lock_trusted_session_id() {  # [<ancestry-pids>]
+  jg_session_lock_claude_session_id "$@" || jg_session_lock_pi_session_id "$@"
+}
+
+# Pi hands its shells no session id, so a Pi primary's id is the one Herdr binds
+# to the pane that runs it: the agent_session value bin/jg-sentinel.sh matches
+# against the same snapshot to find the pane to wake. Trust gate: the pane id
+# must be in this environment AND the innermost harness process of this
+# contiguous ancestry must be Pi itself, so a codex or Claude started by hand
+# in a Pi pane never claims the pane's session. Claude's id is never reused:
+# that lock's pid anchor stays CLAUDE_PID (jg_session_lock_anchor_pid).
+jg_session_lock_pi_session_id() {  # [<ancestry-pids>]
+  local pane=${HERDR_PANE_ID:-} pids=${1:-} pid comm args base name id
+  [ -n "$pane" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  if [ -z "$pids" ]; then
+    pids=$(jg_harness_ancestry_pids) || return 1
+  fi
+  pid=${pids%%$'\n'*}
+  comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
+  args=$(ps -o args= -p "$pid" 2>/dev/null)
+  jg_harness_process_matches "$comm" "$args" || return 1
+  [ "$JG_HARNESS_IS_CLAUDE" -eq 0 ] || return 1
+  base=$(basename -- "$comm")
+  case "$base" in
+    pi|pi-signed) ;;
+    *)
+      name=$(jg_harness_path_name "$comm" || jg_harness_path_name "${args%% *}") || return 1
+      case "$name" in pi|pi-signed) ;; *) return 1 ;; esac ;;
+  esac
+  id=$("${HERDR_BIN_PATH:-herdr}" api snapshot --session "${HERDR_SESSION:-default}" 2>/dev/null \
+    | jq -r --arg pane "$pane" '[.result.snapshot.agents[]? | select(.pane_id == $pane) | .agent_session.value // empty] | if length == 1 then .[0] else empty end' 2>/dev/null) || return 1
+  [ -n "$id" ] || return 1
+  case "$id" in *$'\n'*|*$'\r'*) return 1 ;; esac
+  printf '%s\n' "$id"
+}
+
+jg_session_lock_claude_session_id() {  # [<ancestry-pids>]
   local id=${CLAUDE_CODE_SESSION_ID:-} claude_pid=${CLAUDE_PID:-} pids=${1:-} pid comm args
   [ -n "$id" ] || return 1
   case "$id" in *$'\n'*|*$'\r'*) return 1 ;; esac
@@ -254,7 +291,7 @@ jg_session_lock_same_session() {  # <state> [<ancestry-pids>]
 jg_session_lock_anchor_pid() {
   local pids
   pids=$(jg_harness_ancestry_pids) || return 1
-  if jg_session_lock_trusted_session_id "$pids" >/dev/null; then
+  if jg_session_lock_claude_session_id "$pids" >/dev/null; then
     printf '%s\n' "$CLAUDE_PID"
     return 0
   fi
