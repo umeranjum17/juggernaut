@@ -14,7 +14,8 @@ mkdir -p "$T/bin" "$T/store" "$T/linked" "$T/repo/.git" "$T/repo/a/b"
 STUB=$T/bin/bd STUB_DOLT=$T/bin/dolt
 cat > "$STUB" <<'SH'
 #!/usr/bin/env bash
-{ printf 'pwd=%s args=%s\n' "$PWD" "$*"; env; } > "$LOG"
+[ ! -e "$LOG.down" ] || { echo "the store cannot be read" >&2; exit 1; }
+{ printf 'pwd=%s args=%s\n' "$PWD" "$*"; env; } >> "$LOG"
 [ "$1" = init ] || exit 0
 printf '{"dolt_mode": "embedded", "dolt_database": "jg"}\n' > "$BEADS_DIR/metadata.json"
 printf 'no-git-ops: true\n' > "$BEADS_DIR/config.yaml"
@@ -66,11 +67,22 @@ for want in "pwd=$T/store args=init --quiet --stealth --prefix jg" "BEADS_DIR=$T
   assert_grep "$want" "$LOG" "init must run with $want"
 done
 for gone in BD_FOO DOLT_BAR GIT_DIR; do assert_no_grep "$gone=" "$LOG" "$gone must not reach bd"; done
-refused "already a store" "$WRAPPER" init --prefix jg
 "$WRAPPER" list --json || fail "a served verb must run"
 assert_grep "args=list --json" "$LOG" "arguments must reach bd unchanged"
 assert_grep "BD_DISABLE_METRICS=1" "$LOG" "metrics stay off on every call"
-assert_contains "$("$WRAPPER" check)" "embedded, stealth" "check must name the store"
+# The stand-in dolt reads back no rule, and a store without it never passes.
+out=$("$WRAPPER" check 2>&1)
+expect_code 2 "$?" "a store with no hold rule"
+assert_contains "$out" "embedded, stealth" "check must name the store"
+assert_contains "$out" "hold rule missing or changed in $T/store/.beads: hold_needs_reason wisp_hold_needs_reason" "check must name the rule"
+# A read that fails shows its own cause and never reads as a missing rule.
+: > "$LOG.down"
+out=$("$WRAPPER" check 2>&1)
+expect_code 2 "$?" "a store dolt cannot read"
+assert_contains "$out" "the store cannot be read" "check must show the real cause"
+assert_contains "$out" "cannot read the hold rule" "check must say what it could not do"
+assert_not_contains "$out" "hold rule missing" "a failed read is not a missing rule"
+rm -f "$LOG.down"
 # The verbs and flags that leave the store.
 for verb in sync serve config hooks setup migrate; do refused "is not served" "$WRAPPER" "$verb"; done
 refused "is not served" "$WRAPPER" config set sync.remote x
@@ -112,6 +124,7 @@ else
   command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
   "${jail[@]}" "$WRAPPER" init --prefix jg 2>/dev/null || fail "real init"
   [ -e "$T/real/.beads.gate.lock" ] || fail "the gate lock must sit beside the store"
+  assert_contains "$("${jail[@]}" "$WRAPPER" dolt sql -q 'select count(*) as dirty from dolt_status' 2>&1)" "| 0 " "init must commit the rule"
   "${jail[@]}" "$WRAPPER" check >/dev/null || fail "real check"
   id=$("${jail[@]}" "$WRAPPER" create one --json 2>/dev/null | sed -n 's/.*"id": "\([^"]*\)".*/\1/p')
   assert_contains "$("${jail[@]}" "$WRAPPER" show "$id" --json 2>/dev/null)" '"title": "one"' "real show"
@@ -119,5 +132,46 @@ else
   assert_contains "$out" "dolt version 2.6.0" "real dolt must be the pin"
   assert_not_contains "$out" "unable to query" "real dolt must not call out"
   assert_contains "$("${jail[@]}" "$WRAPPER" dolt sql -q 'show tables' 2>&1)" "issues" "real dolt must read the store"
+  # A held row needs a reason on every route in, and the store itself refuses each one.
+  jg() { "${jail[@]}" "$WRAPPER" "$@"; }
+  no_hold() {  # <label> <wrapper args...>
+    local got
+    got=$(jg "${@:2}" 2>&1) && fail "$1: the store took a held row with no reason"
+    assert_contains "$got" 'hold_needs_reason" violated' "$1"
+  }
+  row='"issue_type":"task","priority":2,"created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-01T00:00:00Z"'
+  printf '{"id":"jg-held","title":"held","status":"blocked",%s}\n' "$row" > "$T/held.jsonl"
+  printf '{"id":"jg-wisp","title":"held","status":"on_hold","ephemeral":true,%s}\n' "$row" > "$T/held-wisp.jsonl"
+  no_hold "no reason" update "$id" --status blocked
+  no_hold "empty reason" update "$id" --status blocked --set-metadata hold_reason=
+  no_hold "spaces for a reason" update "$id" --status blocked --set-metadata "hold_reason=   "
+  no_hold "custom status" update "$id" --status on_hold
+  no_hold "direct SQL" dolt sql -q "update issues set status='blocked', metadata='{}' where id='$id'"
+  no_hold "create into held" create held -t task --status on_hold
+  no_hold "ephemeral create into held" create held -t task --ephemeral --status blocked
+  no_hold "import of a held row" import "$T/held.jsonl"
+  no_hold "ephemeral import of a held row" import "$T/held-wisp.jsonl"
+  jg update "$id" --status on_hold --set-metadata "hold_reason=owner call" >/dev/null 2>&1 || fail "a held row with a reason must land"
+  no_hold "clearing the reason while held" update "$id" --unset-metadata hold_reason
+  held=$(jg show "$id" --json 2>/dev/null)
+  assert_contains "$held" '"status": "on_hold"' "the good write must stay held"
+  assert_contains "$held" '"hold_reason": "owner call"' "the good write must keep its reason"
+  # The embedded store has no server: nothing outlives a jailed call, so each call is a restart from disk.
+  assert_contains "$(jg check)" "rule: hold_needs_reason" "the rule must pass check"
+  no_hold "no reason after a restart" update "$id" --status blocked --unset-metadata hold_reason
+  assert_contains "$(jg init --prefix jg 2>&1)" "already a store" "a store with its rule must refuse init"
+  # A rule gone or weakened fails check, init restores a gone one, and init never replaces a changed one.
+  jg dolt sql -q "ALTER TABLE wisps DROP CHECK wisp_hold_needs_reason" >/dev/null 2>&1 || fail "drop the wisps rule"
+  out=$(jg check 2>&1)
+  expect_code 2 "$?" "a store missing its wisps rule"
+  assert_contains "$out" "hold rule missing or changed in $BEADS_DIR: wisp_hold_needs_reason" "check must name the gone rule"
+  jg init --prefix jg >/dev/null 2>&1 || fail "init must restore a gone rule"
+  jg check >/dev/null || fail "a restored rule must pass check"
+  jg dolt sql -q "ALTER TABLE issues DROP CHECK hold_needs_reason" >/dev/null 2>&1 || fail "drop the issues rule"
+  jg dolt sql -q "ALTER TABLE issues ADD CONSTRAINT hold_needs_reason CHECK (status <> 'x')" >/dev/null 2>&1 || fail "weaken the issues rule"
+  out=$(jg check 2>&1)
+  expect_code 2 "$?" "a store with a weakened rule"
+  assert_contains "$out" "hold rule missing or changed" "check must catch a weakened rule"
+  jg init --prefix jg >/dev/null 2>&1 && fail "init must not pass over a weakened rule"
 fi
 pass "jg-beads guards"
