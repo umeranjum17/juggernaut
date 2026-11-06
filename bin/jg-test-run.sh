@@ -439,7 +439,7 @@ family_for_basename() {
     jg-reply-engine.test.sh|jg-pending-reply-turn-end.test.sh|\
     jg-metrics-shadow-parity.test.sh|\
     jg-bus-service.test.sh|\
-    jg-wake-queue-live.test.sh|jg-wake-engine.test.sh|jg-wake-watcher.test.sh|\
+    jg-wake-queue-live.test.sh|jg-wake-engine.test.sh|jg-wake-watcher.test.sh|jg-delivery-record.test.sh|\
     jg-bus-account-isolation.test.sh|\
     jg-escalation-workflows.test.sh|jg-bus-leaf-parity.test.sh)
       printf '%s\n' watcher-wake-lock
@@ -800,6 +800,7 @@ tests/jg-bus-service.test.sh 616
 tests/jg-wake-queue-live.test.sh 19169
 tests/jg-wake-watcher.test.sh 41813
 tests/jg-wake-engine.test.sh 65412
+tests/jg-delivery-record.test.sh 200
 tests/jg-bus-account-isolation.test.sh 63398
 tests/jg-squad-lead-lifecycle-e2e.test.sh 14484
 tests/jg-supervision-host-live-e2e.test.sh 84
