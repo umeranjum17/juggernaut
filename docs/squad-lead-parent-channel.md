@@ -64,3 +64,5 @@ Every line passes through the captain voice file in `jg_parent_channel_append_on
 ## Live verification
 
 [`verification/squad-lead-parent-channel.md`](verification/squad-lead-parent-channel.md) records the dated live run: real tmux panes, both real watchers re-armed after each wake, and no model, with every delivered parent line and the parent wake it produced.
+
+`bin/jg-path-guard.sh` keeps a raw file path off the channel: `jg_parent_channel_append_once` withholds any path in prose (`data/`, `state/`, `.treehouse/`, `~/`, absolute) unless the line carries a board key (`#reports/`, `#decide/`, `#designs/`) or "picture attached", because the captain reads on a phone and cannot open a path. A `key=path` pointer is machine-read and stays. `tests/jg-path-guard.test.sh` proves a path line is refused, a board-key line passes, and both together pass.
