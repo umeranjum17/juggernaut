@@ -31,6 +31,8 @@ printf 'set nats-url nats://127.0.0.1:%s\n' "$port" > "$HOME_DIR/config/captain-
 printf 'now * * * *\n' > "$HOME_DIR/config/wake-routing"
 # tests/lib.sh points every bus client at a dead address so a test never reaches the machine bus; this
 # test runs its own lab server, so it names that one for the wake bus.
+# A failing event is tried again after a short delay; the lab shortens the 5s default.
+export JG_BUS_RETRY_DELAY=2s
 export JG_WAKE_BUS_URL="nats://127.0.0.1:$port"
 export JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$HOME_DIR/state" JG_DATA_OVERRIDE="$HOME_DIR/data" JG_WAKE_ROUTING="$HOME_DIR/config/wake-routing"
 # `unit nats` is not used here: it resolves the machine unit's owner and, from any other home, registers
@@ -108,6 +110,19 @@ acct=$("$BUS" account); NATS_USER=${acct%%$'\t'*} NATS_PASSWORD=$(cat "${acct#*$
   "$JG_NATS_BIN" -s "nats://127.0.0.1:$port" pub --jetstream -q jg.captain.reply \
   '{"key":"not-routed","at":"2026-11-01T00:00:00Z","answer":"yes"}' >/dev/null 2>&1 || fail "the reply did not publish"
 wait_field router delivered 1 || fail "the router never received the reply: $("$BUS" probe router) $(cat "$DIR/router.log")"
+# Ack after handling: while the handler's failure is still being retried the server has not been told
+# the event is done, so the ack floor stays at 0 and the event is not counted failed or handled.
+wait_field router retried 1 || fail "the failed handle was not sent back for another try: $("$BUS" probe router) $(cat "$DIR/router.log")"
+[ "$(field router acked)" = 0 ] && [ "$(field router failed)" = 0 ] && [ "$(field router handled)" = 0 ] \
+  || fail "the event was acknowledged before its handler succeeded: $("$BUS" probe router)"
+pass "a failing handle leaves the event unacknowledged and is retried: $("$BUS" probe router)"
+# After its last try the event is on the dead list with the cause, and only then is it closed.
 wait_field router failed 1 || fail "the unrouted reply was not counted: $("$BUS" probe router) $(cat "$DIR/router.log")"
+[ "$(field router retried)" = 2 ] && [ "$(field router acked)" = 1 ] || fail "the tries or the close are wrong: $("$BUS" probe router)"
 grep -q 'not routed to a lead' "$DIR/router.log" || fail "the router did not report the refusal: $(cat "$DIR/router.log")"
+dead=$(find "$HOME_DIR/state" -name 'router.dead.jsonl' | head -1)
+if [ -z "$dead" ] || [ "$(wc -l < "$dead")" != 1 ] || ! grep -q 'not-routed' "$dead" || ! grep -q '"tries":3' "$dead"; then
+  fail "the dead list does not hold the failed reply once: ${dead:-none} $(cat "${dead:-/dev/null}" 2>/dev/null)"
+fi
+pass "after its last try the reply is on the dead list and closed: $(cat "$dead")"
 pass "a captain reply reaches the router and is routed by the board's rule: $("$BUS" probe router)"
