@@ -121,7 +121,8 @@ wait_field router failed 1 || fail "the unrouted reply was not counted: $("$BUS"
 [ "$(field router retried)" = 2 ] && [ "$(field router acked)" = 1 ] || fail "the tries or the close are wrong: $("$BUS" probe router)"
 grep -q 'not routed to a lead' "$DIR/router.log" || fail "the router did not report the refusal: $(cat "$DIR/router.log")"
 dead=$(find "$HOME_DIR/state" -name 'router.dead.jsonl' | head -1)
-[ -n "$dead" ] && [ "$(wc -l < "$dead")" = 1 ] && grep -q 'not-routed' "$dead" && grep -q '"tries":3' "$dead" \
-  || fail "the dead list does not hold the failed reply once: ${dead:-none} $(cat "${dead:-/dev/null}" 2>/dev/null)"
+if [ -z "$dead" ] || [ "$(wc -l < "$dead")" != 1 ] || ! grep -q 'not-routed' "$dead" || ! grep -q '"tries":3' "$dead"; then
+  fail "the dead list does not hold the failed reply once: ${dead:-none} $(cat "${dead:-/dev/null}" 2>/dev/null)"
+fi
 pass "after its last try the reply is on the dead list and closed: $(cat "$dead")"
 pass "a captain reply reaches the router and is routed by the board's rule: $("$BUS" probe router)"
