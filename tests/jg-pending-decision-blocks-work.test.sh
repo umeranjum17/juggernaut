@@ -2,7 +2,7 @@
 # An open captain decision stops the work linked to it: no start, no merge.
 # Real bin/jg-spawn.sh and bin/jg-pr-merge.sh over fixture homes; the terminal, forge and model are stand-ins.
 # Incident shape: a [design-ux] ticket is only filed (no hold, no ask) and a pull request naming it merged anyway.
-# S* starts, M* merges: linked work is refused, unrelated work and `parent: upkeep` move, a recorded pick releases.
+# S* starts, M* merges: linked work is refused; unrelated work, `parent: upkeep` and a filed [captain-ask] move.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -82,7 +82,9 @@ for pair in "sa1 dz1" "sb2 dz2" "sc3 dz1"; do  # names it, named by it, parent l
 done
 file_s su1 "Fix the footer"
 file_s su2 "Fix the header" "parent: upkeep"
-for t in su1 su2; do
+file_s sq1 "[captain-ask] Make the footer taller"
+file_s su3 "Make the footer taller" "linked-to: sq1"
+for t in su1 su2 su3; do
   out=$(spawn "$t"); rc=$?
   expect_code 0 "$rc" "S2 $t should start: $out"
 done
@@ -159,7 +161,9 @@ for tuple in "ma1 $pa1 mz1" "mb2 $pb2 mz2" "mc3 $pc3 mz1" "mf6 $pf6 mh1"; do
   merged_pr "$2" && fail "M1 the refused merge of $1 reached the forge"
 done
 ship_m me5 "parent: upkeep"; pe5=$PR
-for pair in "md4 $pd4" "me5 $pe5"; do
+tasks_m add mq1 "[captain-ask] Make the footer taller" --kind ship --repo sample >/dev/null || fail "M2 file mq1"
+ship_m mg7 "linked-to: mq1"; pg7=$PR
+for pair in "md4 $pd4" "me5 $pe5" "mg7 $pg7"; do
   # shellcheck disable=SC2086
   set -- $pair
   out=$(merge "$1" "$2" 2>&1); rc=$?

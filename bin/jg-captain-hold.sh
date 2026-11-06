@@ -216,8 +216,9 @@
 # `blocking` is the read-only predicate bin/jg-spawn.sh (a ship start) and
 # bin/jg-pr-merge.sh (a merge) ask: is a captain call open on this task or on
 # any task linked to it, in either direction? A call is open when its task is
-# held (`open`'s reading), or when it is a not-done `[captain-ask]` or
-# `[design-ux]` ticket with no recorded pick, from the moment it is filed.
+# held (`open`'s reading), or when it is a not-done `[design-ux]` ticket with no
+# recorded pick, from the moment it is filed. A `[captain-ask]` ticket is an
+# order, not a question: it counts only while held.
 # Links are read one hop, live; only this home's backlog is seen. Exit 0 prints
 # `<task-id><TAB><title>` per open call; 1 means none; 2 means it could not be
 # established, which a caller must treat as a refusal.
@@ -2306,12 +2307,6 @@ body_link_targets() {  # <decoded body>
     | tr ',;[:space:]' '\n' | LC_ALL=C grep -E '^[A-Za-z0-9._-]+$' | LC_ALL=C grep -vix upkeep | LC_ALL=C sort -u
 }
 
-# A design or decision ticket is recognised by one of these title tags.
-decision_ticket_title() {  # <title>
-  case "$1" in *"[captain-ask]"*|*"[design-ux]"*) return 0 ;; esac
-  return 1
-}
-
 # Is <task-id> an open decision (see `blocking`)? 0 yes, 1 no; unreadable exits 2.
 decision_open() {  # <task-id>
   local target=$1 status=0 show
@@ -2325,7 +2320,7 @@ decision_open() {  # <task-id>
   task_show "$target" || { printf 'jg-captain-hold: task %s could not be read\n' "$target" >&2; exit 2; }
   show=$TASK_SHOW_OUTPUT
   [ "$(show_field "$show" state)" != "done" ] || return 1
-  decision_ticket_title "$(show_field_value "$show" title)" || return 1
+  case "$(show_field_value "$show" title)" in *"[design-ux]"*) ;; *) return 1 ;; esac  # the one design tag
   status=0
   (command_answered "$target") || status=$?
   case "$status" in 0) return 1 ;; 1) ;; *) exit 2 ;; esac
@@ -2337,24 +2332,26 @@ decision_open() {  # <task-id>
 # to <task-id> (either direction); unrelated work keeps moving. To make every
 # open decision stop all work, print every open decision here instead. A
 # `parent:` id links only when it is a real task, so `parent: upkeep` links nothing.
+# One pass over the backlog file finds the rows linking here; only those are checked.
 linked_open_decisions() {  # <task-id>; prints the open decisions linked to it, one id per line
-  local id=$1 data mine target rows
+  local id=$1 data file mine target
   data=$(jg_backlog_data_absolute "$DATA") \
     || { printf 'jg-captain-hold: data directory cannot be resolved: %s\n' "$DATA" >&2; exit 2; }
   task_show "$id" || { printf 'jg-captain-hold: task %s could not be read for its links\n' "$id" >&2; exit 2; }
   mine=$(body_link_targets "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")")
-  rows=$( { jg_backlog_row_list "$data" && jg_backlog_row_list "$data" --state held; } 2>&1) \
-    || { printf 'jg-captain-hold: tasks could not be listed: %s\n' "$(printf '%s' "$rows" | sed -n '1p')" >&2; exit 2; }
+  file=$(jg_backlog_file "$data") && [ -r "$file" ] \
+    || { printf 'jg-captain-hold: tasks could not be listed: %s is unreadable\n' "${file:-$data}" >&2; exit 2; }
   while IFS= read -r target; do
     [ -n "$target" ] && [ "$target" != "$id" ] || continue
-    decision_open "$target" || continue
-    task_show "$target" || { printf 'jg-captain-hold: task %s could not be read for its links\n' "$target" >&2; exit 2; }
-    if printf '%s\n' "$mine" | grep -qxF -- "$target" \
-      || body_link_targets "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")" | grep -qxF -- "$id"; then
-      printf '%s\n' "$target"
-    fi
+    if decision_open "$target"; then printf '%s\n' "$target"; fi
   done <<EOF
-$(printf '%s\n' "$rows" | awk -F, '/^  [A-Za-z0-9._-]+,/ { id = $1; sub(/^ +/, "", id); print id }' | LC_ALL=C sort -u)
+$( { printf '%s\n' "$mine"
+    awk -v me="$id" '/^- \[.\] [A-Za-z0-9._-]+ / { row = $0; sub(/^- \[.\] /, "", row); sub(/ .*/, "", row); next }
+      /^[^[:space:]]/ { row = "" }
+      row != "" && /^[[:space:]]+(linked-to|parent):/ {
+        line = $0; sub(/^[[:space:]]+[a-z-]+:/, "", line); gsub(/[,;[:space:]]+/, " ", line)
+        n = split(line, w, " "); for (i = 1; i <= n; i++) if (w[i] == me) print row
+      }' "$file"; } | LC_ALL=C sort -u)
 EOF
 }
 
