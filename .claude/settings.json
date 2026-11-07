@@ -1,8 +1,4 @@
 {
-  "env": {
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "183000",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "100"
-  },
   "skillOverrides": {
     "afk": "user-invocable-only",
     "ahoy": "user-invocable-only",

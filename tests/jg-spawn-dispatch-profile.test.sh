@@ -1665,10 +1665,29 @@ test_claude_token_saver_settings() {
   status=$?
   expect_code 0 "$status" "squad_lead claude spawn should succeed"$'\n'"$out"
   settings=$(claude_settings_json_arg "$(cat "$LAUNCH_LOG")")
-  printf '%s' "$settings" | jq -e '.enabledPlugins == {"ponytail@ponytail":false} and .env == {"BASH_MAX_OUTPUT_LENGTH":"8000"} and (.hooks | has("UserPromptSubmit"))' >/dev/null \
-    || fail "the squad_lead settings file lacks the token saver keys: $settings"
+  printf '%s' "$settings" | jq -e '.enabledPlugins == {"ponytail@ponytail":false} and .env == {"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"183000","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":"100","BASH_MAX_OUTPUT_LENGTH":"8000"} and (.hooks | has("UserPromptSubmit"))' >/dev/null \
+    || fail "the squad_lead settings file lacks the token saver keys or the default 150000 supervisor cap: $settings"
   [ ! -e "$sm/config/bash-output-max" ] || fail "config/bash-output-max must stay a one-home trial, not be inherited"
   pass "a claude squad_lead's settings file carries the token saver keys, and the cap is not inherited"
+
+  id=profile-claude-lead-cap-off-z45
+  rec=$(make_spawn_case profile-claude-lead-cap-off claude "$id")
+  read_case_record "$rec"
+  sm="$CASE_DIR/squad-lead-home"
+  make_seeded_squad_lead_home "$sm" "$id"
+  printf 'lead off\n' > "$HOME_DIR/config/supervisor-context-cap"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --squad-lead)
+  status=$?
+  expect_code 0 "$status" "squad_lead claude spawn with 'lead off' should succeed"$'\n'"$out"
+  settings=$(claude_settings_json_arg "$(cat "$LAUNCH_LOG")")
+  printf '%s' "$settings" | jq -e '(.env // {}) | has("CLAUDE_CODE_AUTO_COMPACT_WINDOW") | not' >/dev/null \
+    || fail "config/supervisor-context-cap 'lead off' must leave the cap out of the lead's settings: $settings"
+  printf 'lead 10\n' > "$HOME_DIR/config/supervisor-context-cap"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --squad-lead)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a malformed config/supervisor-context-cap must stop the launch"
+  assert_contains "$out" "config/supervisor-context-cap line 1 must be" "a malformed cap did not name the problem"
+  pass "config/supervisor-context-cap 'lead off' drops the cap from a lead's settings, and a malformed line stops the launch"
 
   id=profile-claude-token-saver-bad-z43
   rec=$(make_spawn_case profile-claude-token-saver-bad claude "$id")

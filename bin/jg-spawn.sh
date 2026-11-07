@@ -4232,7 +4232,17 @@ BUSY_GEN=
       if [ "$KEEP_AI_TRAILERS" != 1 ]; then
         session_keys='"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false},'
       fi
-      [ -z "$CLAUDE_TOKEN_KEYS" ] || session_keys="$session_keys$CLAUDE_TOKEN_KEYS,"
+      # Supervisor context cap (config/supervisor-context-cap): the lead's own env, merged with the token saver's env key.
+      lead_cap_pairs=$(python3 "$SCRIPT_DIR/jg-context-bound.py" env lead --pairs --config "$CONFIG") || exit 1
+      lead_keys=$CLAUDE_TOKEN_KEYS
+      if [ -n "$lead_cap_pairs" ]; then
+        case "$lead_keys" in
+          *'"env":{'*) lead_keys=${lead_keys/'"env":{'/'"env":{'$lead_cap_pairs,} ;;
+          '') lead_keys="\"env\":{$lead_cap_pairs}" ;;
+          *) lead_keys="$lead_keys,\"env\":{$lead_cap_pairs}" ;;
+        esac
+      fi
+      [ -z "$lead_keys" ] || session_keys="$session_keys$lead_keys,"
       printf '{%s%s}\n' "$session_keys" "$hooks_json" >"$STATE_REAL/$ID.claude-settings.json"
     else
       mkdir -p "$WT/.claude"
