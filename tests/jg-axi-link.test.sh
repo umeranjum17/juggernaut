@@ -96,7 +96,6 @@ if command -v node >/dev/null 2>&1 && command -v git >/dev/null 2>&1 && command 
   out=$(PATH="$PREFIX/bin:$PATH" bash "$ROOT/install.sh" --home "$home" --dry-run 2>&1)
   assert_contains "$out" "axi: would link $LAUNCHER" "install.sh --dry-run plans the link"
   assert_absent "$LAUNCHER" "install.sh --dry-run writes no launcher"
-  case $'\n'"$out" in *$'\nbd'*|*$'\ndolt'*) fail "install.sh must leave bd and dolt to bin/jg-beads.sh" ;; esac
   pass "install.sh plans the link"
 else
   echo "skip: install.sh dry run needs node, git and gh"

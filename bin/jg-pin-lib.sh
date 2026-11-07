@@ -65,3 +65,23 @@ jg_pin_npm() {
   [[ $spec =~ ^.+@[0-9] ]] || return 1
   printf '%s\n' "$spec"
 }
+
+# A tool pinned by binary hash, like bd and dolt: the row for this platform, and a file's hash.
+jg_pin_sha_want() {
+  local os arch
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  arch=$(uname -m)
+  case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+  jg_pin_spec "$1-sha256-$os-$arch"
+}
+
+jg_pin_sha_of() {
+  { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1
+}
+
+# The pinned version when the tool on PATH hashes to its row, so the answer never starts the binary.
+jg_pin_hashed_version() {
+  local path
+  path=$(command -v "$1") || return 0
+  [ "$(jg_pin_sha_of "$path")" != "$(jg_pin_sha_want "$1" 2>/dev/null)" ] || jg_pin_version "$1"
+}

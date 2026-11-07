@@ -61,6 +61,46 @@ refused "shared server is banned" BEADS_DOLT_SHARED_SERVER= "$WRAPPER" list
 refused "no store at" "$WRAPPER" list
 refused "is not the pinned bd 1.3.4" JG_BEADS_BD="$T/bin/other" "$WRAPPER" init --prefix jg
 refused "a prefix is letters" "$WRAPPER" init --prefix --force
+
+# The install: a build lands only on its pin, and neither tool starts on the way.
+mkdir -p "$T/rel/dolt-$os-$arch/bin" "$T/fetch"
+cp "$STUB" "$T/rel/bd"
+cp "$STUB_DOLT" "$T/rel/dolt-$os-$arch/bin/dolt"
+tar -czf "$T/bd.tgz" -C "$T/rel" bd
+tar -czf "$T/dolt.tgz" -C "$T/rel" "dolt-$os-$arch"
+cat > "$T/fetch/curl" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$6" >> "$FETCH_LOG"
+case $6 in */dolt-*) cp "$RELEASES/dolt.tgz" "$5" ;; *) cp "$RELEASES/bd.tgz" "$5" ;; esac
+SH
+chmod +x "$T/fetch/curl"
+get() {  # <prefix> <tool>...
+  local prefix=$1
+  shift
+  env FETCH_LOG="$T/fetched" RELEASES="$T" NPM_CONFIG_PREFIX="$prefix" PATH="$T/fetch:$PATH" bash "$ROOT/bin/jg-bootstrap.sh" install "$@" 2>&1
+}
+rm -f "$LOG"
+out=$(get "$T/pfx" bd dolt) || fail "install the pinned builds: $out"
+assert_contains "$out" "bd: 1.3.4" "the install must name the pin"
+assert_contains "$(cat "$T/fetched")" "gastownhall/beads/releases/download/v1.3.4/beads_1.3.4_${os}_$arch.tar.gz" "bd comes from its pinned release"
+assert_contains "$(cat "$T/fetched")" "dolthub/dolt/releases/download/v2.6.0/dolt-$os-$arch.tar.gz" "dolt comes from its pinned release"
+[ "$(sha_of "$T/pfx/bin/bd")" = "$(sha_of "$STUB")" ] && [ -x "$T/pfx/bin/bd" ] || fail "bd must land on its pin"
+[ "$(sha_of "$T/pfx/bin/dolt")" = "$(sha_of "$STUB_DOLT")" ] && [ -x "$T/pfx/bin/dolt" ] || fail "dolt must land on its pin"
+assert_absent "$LOG" "an install must never start bd or dolt"
+cp "$T/bin/other" "$T/rel/bd"
+tar -czf "$T/bd.tgz" -C "$T/rel" bd
+out=$(get "$T/off" bd)
+expect_code 1 "$?" "a build off its pin"
+assert_contains "$out" "does not hold the pinned bd" "the refusal must say why"
+assert_absent "$T/off/bin/bd" "a build off its pin must not land"
+if command -v node >/dev/null && command -v git >/dev/null && command -v gh >/dev/null; then
+  plan() { NPM_CONFIG_PREFIX="$1" bash "$ROOT/install.sh" --home "$T/ihome" --dry-run 2>&1; }
+  assert_contains "$(plan "$T/pfx")" "bd: have 1.3.4" "install.sh must take a build on its pin as installed"
+  assert_contains "$(plan "$T/off")" "dolt: would install the pinned 2.6.0" "install.sh must plan a missing build"
+  cp "$T/bin/other" "$T/pfx/bin/dolt"
+  assert_contains "$(plan "$T/pfx")" "dolt: would install the pinned 2.6.0" "install.sh must replace a build off its pin"
+  assert_absent "$LOG" "install.sh must never start bd or dolt"
+fi
 refused "usage: jg-beads.sh init" "$WRAPPER" init --prefix jg --server
 # Each call runs with the store forced and everything else dropped.
 env BD_FOO=1 DOLT_BAR=1 GIT_DIR=/x BD_DISABLE_METRICS=0 DO_NOT_TRACK=0 "$WRAPPER" init --prefix jg 2>&1 || fail "init"
