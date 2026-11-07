@@ -13,6 +13,7 @@
 #    verify stops landings except a fixes-red commit.
 # T5 The batch release pushes the trunk to the next release branch without force and opens one
 #    PR listing every commit; an empty batch, a red trunk and an unverified tip refuse.
+# The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 set -u
 
 # shellcheck source=tests/lib.sh
