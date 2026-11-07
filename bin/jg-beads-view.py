@@ -24,7 +24,7 @@ import json
 import re
 import sys
 
-STATE = {"in_progress": "in_flight", "closed": "done"}
+STATE = {"closed": "done"}
 HELD = {"on_hold", "blocked", "deferred"}
 CORE = {"decision": "captain"}
 ROW = ["id", "state", "kind", "repo", "title"]
@@ -86,6 +86,8 @@ def day(stamp):
 def flying(row):
     """Say whether the row is in flight: one status column cannot hold in flight and held, so a held lane is its assignee, and a woken hold keeps it."""
     status, meta = row.get("status"), row.get("metadata") or {}
+    if "followup" in meta:  # A promise is never in flight: its in_progress status is the delivery lock.
+        return False
     return status == "in_progress" or (bool(row.get("assignee")) and (status in HELD or (status == "open" and "hold_reason" in meta)))
 
 
@@ -132,7 +134,7 @@ def task(row, rows):
         "created": "-" if closed else day(row.get("created_at")), "closed": day(row.get("closed_at")),
         "deps": ",".join("blocked-by:" + d for d in deps) or "none",
         "links": ",".join(links) or "none", "body": row.get("description", ""),
-        "mentions": mentions(row),
+        "mentions": mentions(row), "delivery_state": meta.get("delivery_state", "-"),
         # parent: the parent-child edge's target, else upkeep for the upkeep label; item: the id the home's state files use.
         "parent": next((d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "parent-child"),
                        "upkeep" if "upkeep" in (row.get("labels") or []) else "-"),

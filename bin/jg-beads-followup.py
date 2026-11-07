@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """jg-beads-followup.py - keep a public follow-up as one native Beads row.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py public-followup <add|bind-work|supersede-work|work-event|list|ready> [args...] [--json]
+Usage: BEADS_DIR=<store> jg-beads-write.py public-followup <add|bind-work|supersede-work|work-event|begin-delivery|record-delivery|record-error|waive|list|ready> [args...] [--json]
 
 --json carries the public_followup payload bin/jg-public-followup.sh reads, one contract on either backlog.
 The row has the public-followup label; metadata.followup holds what never changes, metadata.relations the bound work.
 Each accepted work event is one comment, the record of what landed; metadata.delivery_state is the cached answer.
 A tracks edge joins the row to bound work in this store, and never blocks it; work in another home stays metadata.
-Every write comes after its checks and before the row write, so a rerun after a crash folds the comment and converges.
+Every event comment comes after its checks and before the row write, so a rerun after a crash folds the comment and converges.
+Status is the delivery lock: an attempt is one update guarded by --if-status, so a losing writer exits 13 and nothing posts.
+metadata.delivery holds the attempt, and each delivery record is one comment after its row write, which a rerun fills in once.
 One flock beside the store spans each change's read, check and write, and a crash releases it.
 """
 import datetime
@@ -30,12 +32,20 @@ STATES = ("intent", "pending-work", "ready", "preflight-matched", "delivery-regi
 DELIVERABLES = {"pr-merged": ["pr_url"], "report-ready": ["report_path"], "local-main": ["commit_sha"],
                 "failure-outcome": ["error_code"], "explicit-answer": []}
 MUTABLE = ("intent", "pending-work", "ready")
+POSTING, FINAL = ("delivery-posting", "unknown", "partial"), ("posted", "waived")
+FAULTS = ("context-blocked", "retry-due", "unknown", "partial", "expired-action-required")
+DELIVERY = ("attempt_count", "payload_digest", "last_error_code", "next_attempt_at", "receipt", "last_error", "waiver")
+CLEARED = dict.fromkeys(("last_error_code", "next_attempt_at", "last_error"))
 RELATION = ("relation_id", "work_ref", "role", "required", "generation")
 EVENT = ("schema_version", "event_id", "obligation_id", "relation_id", "generation", "source_home_id", "work_id",
          "outcome_type", "deliverables", "public_safe_outcome", "occurred_at")
 USAGE = {"bind-work": "bind-work <id> --relation-file <file> [--json]",
          "supersede-work": "supersede-work <id> --relation <relation-id> --successor-file <file> [--json]",
-         "work-event": "work-event <id> --event-file <file> [--json]"}
+         "work-event": "work-event <id> --event-file <file> [--json]",
+         "begin-delivery": "begin-delivery <id> --payload-hash <sha256> [--json]",
+         "record-delivery": "record-delivery <id> --receipt-file <file> [--json]",
+         "record-error": "record-error <id> --error-file <file> [--json]",
+         "waive": "waive <id> --reason <text> --approved-by captain [--json]"}
 LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 PR_URL = re.compile(r"https://(%s(?:\.%s)*)/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/(pull|pulls)/[1-9][0-9]*\Z" % (LABEL, LABEL))
 WORK_CHANGED = ["work_relations", "delivery.state"]
@@ -47,10 +57,10 @@ def bad(message):
     view.refuse(message, "Repair the typed public-followup data before retrying")
 
 
-def record(value, path, keys):
+def record(value, path, keys, optional=()):
     if not isinstance(value, dict):
         bad(path + " must be an object")
-    for key in [k for k in keys if k not in value] + [k for k in value if k not in keys]:
+    for key in [k for k in keys if k not in value] + [k for k in value if k not in keys and k not in optional]:
         bad("%s.%s %s" % (path, key, "is required" if key in keys else "is not allowed"))
     return value
 
@@ -143,9 +153,9 @@ def home_of(value, path):
     return matching(value, r"(main|%s[A-Za-z0-9][A-Za-z0-9._-]*)\Z" % re.escape(wire), path, "must be main or %s<stable-id>" % wire)
 
 
-def generation_of(value, path):
-    if type(value) is not int or value < 1:
-        bad(path + " must be an integer >= 1")
+def integer(value, path, least=1):
+    if type(value) is not int or value < least:
+        bad("%s must be an integer >= %d" % (path, least))
     return value
 
 
@@ -158,7 +168,7 @@ def relation_of(value, path="relation"):
     one_of(value["role"], ("fulfills", "contributes"), path + ".role")
     if not isinstance(value["required"], bool):
         bad(path + ".required must be a boolean")
-    generation_of(value["generation"], path + ".generation")
+    integer(value["generation"], path + ".generation")
     return value
 
 
@@ -171,7 +181,7 @@ def event_of(value, path="event"):
     matching(event["event_id"], r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}\Z", path + ".event_id", "must be a stable event id")
     matching(event["obligation_id"], TASK_ID, path + ".obligation_id", "must be a task id")
     matching(event["relation_id"], r"rel-[A-Za-z0-9._-]+\Z", path + ".relation_id", "must start with rel-")
-    generation_of(event["generation"], path + ".generation")
+    integer(event["generation"], path + ".generation")
     home_of(event["source_home_id"], path + ".source_home_id")
     matching(event["work_id"], TASK_ID, path + ".work_id", "must be a task id")
     one_of(event["outcome_type"], ("pr-merged", "report-ready", "local-main", "failed", "superseded"), path + ".outcome_type")
@@ -183,6 +193,50 @@ def event_of(value, path="event"):
     if "successor" not in value:
         bad(path + ".successor is required")
     return event, None if value["successor"] is None else relation_of(value["successor"], path + ".successor")
+
+
+def versioned(value, path):
+    if value.get("schema_version", 1) != 1:
+        bad(path + ".schema_version must be 1")
+
+
+def later(value, path):
+    return None if value is None else moment(value, path)
+
+
+def receipt_of(value, path="receipt"):
+    record(value, path, ("state", "request_id", "platform", "attempt_count", "total_chunks", "posted_chunks", "posted_at"),
+           ("schema_version", "retain_until"))
+    versioned(value, path)
+    if value["state"] != "posted":
+        bad(path + ".state must be posted")
+    total = integer(value["total_chunks"], path + ".total_chunks")
+    if integer(value["posted_chunks"], path + ".posted_chunks") != total:
+        bad(path + ".posted_chunks must equal total_chunks for posted")
+    matching(value["request_id"], r"req-[A-Za-z0-9._-]+\Z", path + ".request_id", "must start with req-")
+    one_of(value["platform"], ("x", "discord"), path + ".platform")
+    integer(value["attempt_count"], path + ".attempt_count")
+    moment(value["posted_at"], path + ".posted_at")
+    return {**value, "schema_version": 1, "retain_until": later(value.get("retain_until"), path + ".retain_until")}
+
+
+def fault_of(value, path="error"):
+    record(value, path, ("state", "attempt_count", "error_code", "occurred_at"),
+           ("schema_version", "next_attempt_at", "total_chunks", "posted_chunks"))
+    versioned(value, path)
+    matching(value["error_code"], r"[a-z][a-z0-9._-]{0,63}\Z", path + ".error_code", "must be a safe error enum")
+    one_of(value["state"], FAULTS, path + ".state")
+    total, posted = value.get("total_chunks"), value.get("posted_chunks")
+    total = total if total is None else integer(total, path + ".total_chunks", 0)
+    posted = posted if posted is None else integer(posted, path + ".posted_chunks", 0)
+    if (total is None) != (posted is None):
+        bad(path + " chunk counts must both be present or both be null")
+    if value["state"] == "partial" and (total is None or total < 2 or posted < 1 or posted >= total):
+        bad(path + " partial state requires 0 < posted_chunks < total_chunks")
+    integer(value["attempt_count"], path + ".attempt_count", 0)
+    moment(value["occurred_at"], path + ".occurred_at")
+    return {**value, "schema_version": 1, "next_attempt_at": later(value.get("next_attempt_at"), path + ".next_attempt_at"),
+            "total_chunks": total, "posted_chunks": posted}
 
 
 def pull_request(url):
@@ -271,9 +325,13 @@ def landing(relations, event, successor):
         relation["state"] = "failed" if event["outcome_type"] == "failed" else "landed"
 
 
+def notes(row):
+    return json.loads(write.bd("comments", row["id"], "--json")) if row.get("comment_count") else []
+
+
 def fold(row):
     relations = [{**item, "accepted_event_ids": [], "accepted_events": []} for item in row["metadata"].get("relations", [])]
-    for note in json.loads(write.bd("comments", row["id"], "--json")) if row.get("comment_count") else []:
+    for note in notes(row):
         try:
             item = json.loads(note["text"])
         except ValueError:
@@ -288,6 +346,28 @@ def commit(row, relations):
     kept = [{key: value for key, value in item.items() if not key.startswith("accepted_")} for item in relations]
     write.bd("update", row["id"], "--if-status", "open", "--metadata", json.dumps(
         {"relations": kept, "delivery_state": standing(meta, relations), "revision": meta["revision"] + 1}))
+
+
+def delivery_of(row, relations):
+    meta = row["metadata"]
+    return {"state": standing(meta, relations), "delivery_key": meta["followup"]["delivery_key"], "attempt_count": 0,
+            **dict.fromkeys(DELIVERY[1:]), **meta.get("delivery", {})}
+
+
+def logged(row, delivery):
+    text = json.dumps({"followup": "delivery", **{key: delivery[key] for key in ("state",) + DELIVERY}}, sort_keys=True)
+    if text not in [note["text"] for note in notes(row)]:
+        write.bd("comment", row["id"], text)
+
+
+def settle(row, past, state, **changes):
+    """Move the delivery in one guarded row write, which a stale reader loses with exit 13, then log the record."""
+    meta, kept = row["metadata"], {**past, "state": state, **changes}
+    status = "closed" if state in FINAL else "in_progress" if state in POSTING else "open"
+    write.bd("update", row["id"], "--if-status", row["status"], "--status", status, *["--force"] * (status == "closed"),
+             "--metadata", json.dumps({"delivery_state": state, "delivery": {key: kept[key] for key in DELIVERY},
+                                       "revision": meta["revision"] + 1, **({"closed_ns": time.time_ns()} if status == "closed" else {})}))
+    logged(row, kept)
 
 
 def identity(relation):
@@ -341,12 +421,10 @@ def typed(row, items):
     meta = row["metadata"]
     fixed = meta["followup"]
     relations = fold(row)
-    delivery = {"state": standing(meta, relations), "delivery_key": fixed["delivery_key"], "attempt_count": 0, **dict.fromkeys(
-        ("payload_digest", "last_error_code", "next_attempt_at", "receipt", "last_error", "waiver"))}
     return {**write.as_json(view.task(row, items)), "priority": None, "public_followup": {
         "schema_version": 1, "revision": meta["revision"], "request": fixed["request"], "purpose": fixed["purpose"],
         "expected_final": fixed["expected_final"], "obligation_expires_at": fixed["obligation_expires_at"],
-        "delivery": delivery, "work_relations": relations,
+        "delivery": delivery_of(row, relations), "work_relations": relations,
         "lineage": {"predecessor_obligation_id": None, "successor_obligation_id": None}}}
 
 
@@ -356,15 +434,18 @@ def answer(found, verb, ident, changed, already=False):
     state, revision = task["public_followup"]["delivery"]["state"], task["public_followup"]["revision"]
     if "--json" in found:
         print(json.dumps({"ok": True, "action": "public-followup." + verb, **({"already": True} if already else {}),
-                          "revision": revision, "changed": changed, "task": task}, indent=2))
+                          "revision": revision, "changed": changed, **({"pruned": 0} if verb in ("record-delivery", "waive") else {}),
+                          "task": task}, indent=2))
         return
     print("ok: public-followup %s %s%s -> %s (revision %d)" % (verb, ident, " already" if already else "", state, revision))
     print("already: true\n" if already else "", end="")
     print("public_followup:\n  id: %s\n  state: %s\n  delivery_state: %s\n  revision: %d\n  relations: %d" % (
         ident, task["state"], state, revision, len(task["public_followup"]["work_relations"])))
-    print("help[1]:\n  - Run `tasks-axi public-followup %s" % (
-        "begin-delivery %s --payload-hash <sha256>` after semantic preflight" % ident if state == "ready" else
-        "list --work-ref <home/task>` to reconcile related work"))
+    if state not in FINAL:
+        print("help[1]:\n  - Run `tasks-axi public-followup %s" % (
+            "begin-delivery %s --payload-hash <sha256>` after semantic preflight" % ident if state == "ready" else
+            "record-delivery %s --receipt-file <file>` after receipt reconciliation" % ident if state in POSTING else
+            "list --work-ref <home/task>` to reconcile related work"))
 
 
 def add(args):
@@ -405,9 +486,20 @@ def bind(args):
     answer(found, "bind-work", ident, [] if known else WORK_CHANGED, bool(known))
 
 
+def needed(found, name):
+    value = found.get(name)
+    if value is None:
+        view.refuse(name + " <value> is required", "Pass %s=<value>" % name)
+    if not value.strip():
+        view.refuse(name + " requires a value", "Pass %s=... with a non-empty value" % name)
+    if "\n" in value or "\r" in value:
+        view.refuse(name + " must be a single line", "Pass %s=... without line breaks" % name)
+    return value
+
+
 def supersede(args):
     found, ids = view.flags(args, ("--relation", "--successor-file"), ("--json",))
-    ref = found.get("--relation") or view.refuse("--relation <value> is required", "Pass --relation=<value>")
+    ref = needed(found, "--relation")
     successor = relation_of(loaded(found, "--successor-file"))
     ident = one_id(ids, "supersede-work")
     items, row, relations = obligation(ident)
@@ -470,10 +562,105 @@ def work_event(args):
     answer(found, "work-event", ident, WORK_CHANGED)
 
 
+def begin(args):
+    found, ids = view.flags(args, ("--payload-hash",), ("--json",))
+    digest = matching(needed(found, "--payload-hash"), r"[a-f0-9]{64}\Z", "--payload-hash", "must be a lowercase SHA-256 hex digest")
+    ident = one_id(ids, "begin-delivery")
+    items, row, relations = obligation(ident)
+    past = delivery_of(row, relations)
+    if past["payload_digest"] not in (None, digest):
+        clash("Delivery payload hash conflicts with the recorded digest")
+    if past["state"] == "delivery-posting" and past["payload_digest"] == digest:
+        logged(row, past)
+        answer(found, "begin-delivery", ident, [], True)
+        return
+    if view.task(row, items)["blocked"] != "no":
+        view.refuse("Cannot begin delivery while the obligation has an active blocker")
+    if past["state"] not in ("ready", "preflight-matched", "delivery-registered", "retry-due"):
+        view.refuse("Cannot begin delivery from state " + past["state"])
+    settle(row, past, "delivery-posting", payload_digest=digest, attempt_count=past["attempt_count"] + 1, **CLEARED)
+    answer(found, "begin-delivery", ident, ["delivery"])
+
+
+def record_delivery(args):
+    found, ids = view.flags(args, ("--receipt-file",), ("--json",))
+    receipt = receipt_of(loaded(found, "--receipt-file"))
+    ident = one_id(ids, "record-delivery")
+    _, row, relations = obligation(ident)
+    past, request = delivery_of(row, relations), row["metadata"]["followup"]["request"]
+    if (receipt["request_id"], receipt["platform"]) != (request["request_id"], request["platform"]):
+        view.refuse("Posted receipt request or platform does not match the obligation")
+    if past["state"] == "posted":
+        if past["receipt"] != receipt:
+            clash("Public-followup already has a different posted receipt")
+        logged(row, past)
+        answer(found, "record-delivery", ident, [], True)
+        return
+    if past["state"] == "waived":
+        clash("Waived public-followup cannot accept a delivery receipt")
+    if past["payload_digest"] is None or past["attempt_count"] < 1 or receipt["attempt_count"] != past["attempt_count"]:
+        view.refuse("Posted receipt does not match a recorded delivery attempt")
+    if past["state"] not in ("delivery-posting", "retry-due", "unknown", "partial"):
+        view.refuse("Cannot record delivery from state " + past["state"])
+    settle(row, past, "posted", receipt=receipt, **CLEARED)
+    answer(found, "record-delivery", ident, ["delivery", "state"])
+
+
+def record_error(args):
+    found, ids = view.flags(args, ("--error-file",), ("--json",))
+    fault = fault_of(loaded(found, "--error-file"))
+    ident = one_id(ids, "record-error")
+    _, row, relations = obligation(ident)
+    past = delivery_of(row, relations)
+    state = past["state"]
+    if state in FINAL:
+        view.refuse("Completed public-followup cannot record a delivery error")
+    if fault["attempt_count"] != past["attempt_count"]:
+        view.refuse("Delivery error does not match the current recorded attempt")
+    if state == fault["state"] and past["last_error"] == fault:
+        logged(row, past)
+        answer(found, "record-error", ident, [], True)
+        return
+    if state in ("intent", "pending-work"):
+        view.refuse("Delivery errors cannot be recorded before work is ready")
+    if fault["state"] in ("unknown", "partial") and (past["payload_digest"] is None or past["attempt_count"] < 1):
+        view.refuse(fault["state"] + " requires a recorded delivery attempt")
+    if state == "expired-action-required" and fault["state"] not in (state, "context-blocked"):
+        bad("public_followup delivery cannot move from %s to %s" % (state, fault["state"]))
+    settle(row, past, fault["state"], last_error_code=fault["error_code"], next_attempt_at=fault["next_attempt_at"], last_error=fault)
+    answer(found, "record-error", ident, ["delivery"])
+
+
+def waive(args):
+    found, ids = view.flags(args, ("--reason", "--approved-by"), ("--json",))
+    reason = needed(found, "--reason").strip()
+    if not reason or len(reason) > 240 or any(ord(c) < 0x20 or ord(c) == 0x7F for c in reason):
+        view.refuse("--reason must be safe single-line text up to 240 characters")
+    if needed(found, "--approved-by") != "captain":
+        view.refuse("--approved-by must be exactly captain")
+    ident = one_id(ids, "waive")
+    _, row, relations = obligation(ident)
+    past = delivery_of(row, relations)
+    if past["state"] == "waived":
+        if past["waiver"]["reason"] != reason:
+            clash("Public-followup already has a different waiver")
+        logged(row, past)
+        answer(found, "waive", ident, [], True)
+        return
+    if past["state"] == "posted":
+        clash("Posted public-followup cannot be waived")
+    stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    settle(row, past, "waived", waiver={"approved_by": "captain", "reason": reason, "waived_at": stamp}, **CLEARED)
+    answer(found, "waive", ident, ["delivery", "state"])
+
+
 def promises(items):
-    # bd stamps created_at to the second, so the row's own stamp keeps two promises of one second in order.
-    order = sorted(filter(promised, items.values()), key=lambda row: (row["created_at"], row["metadata"].get("added_ns", 0)))
-    return [typed(row, items) for row in order]
+    # bd stamps to the second, so the row's own stamps keep two promises of one second in order: open first, newest closed next.
+    def place(row):
+        meta = row["metadata"]
+        return (1, -meta.get("closed_ns", 0), row["created_at"]) if row["status"] == "closed" else (0, meta.get("added_ns", 0), row["created_at"])
+
+    return [typed(row, items) for row in sorted(filter(promised, items.values()), key=place)]
 
 
 def shown(found, name, action, items, kept, none):
@@ -521,7 +708,8 @@ def owed(args):
 
 def main(args):
     verb = args[0] if args else ""
-    changes = {"add": add, "bind-work": bind, "supersede-work": supersede, "work-event": work_event}
+    changes = {"add": add, "bind-work": bind, "supersede-work": supersede, "work-event": work_event, "begin-delivery": begin,
+               "record-delivery": record_delivery, "record-error": record_error, "waive": waive}
     if verb in ("list", "ready"):
         (listing if verb == "list" else owed)(args[1:])
     elif verb in changes:

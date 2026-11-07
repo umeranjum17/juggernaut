@@ -20,7 +20,7 @@ printf '%s\n' "$T/bd/s/.beads" > "$T/bd/config/beads-dir"
 BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "a store"
 ask() { JG_HOME="$T/$1" "${jail[@]}" "$CLI" "${@:2}"; }
 same() {  # <args...>: both providers answer alike, apart from the random delivery key and the row's stamps.
-  local a b ra=0 rb=0 clean='del(.. | .delivery_key?, .created?, .closed?)'
+  local a b ra=0 rb=0 clean='del(.. | .delivery_key?, .created?, .closed?, .waived_at?)'
   a=$(ask ta "$@" 2>/dev/null) || ra=$?
   b=$(ask bd "$@" 2>/dev/null) || rb=$?
   case " $* " in *" --json "*) a=$(jq -S "$clean" <<<"$a") b=$(jq -S "$clean" <<<"$b") ;; esac
@@ -140,6 +140,89 @@ report pf-four ev-loud
 report pf-four ev-fail --json
 report pf-four ev-fail
 same public-followup list --json
+# Delivery: every attempt, receipt, error and waiver answers alike on both backlogs, whatever order it arrives in.
+due() { promise "$1" "$2" req >/dev/null; $1 public-followup bind-work "$2" --relation-file "$T/rel-a.json" >/dev/null 2>&1
+  event "ev-$2" rel-a 1 jg-work pr-merged "$url" null "$2"; $1 public-followup work-event "$2" --event-file "$T/ev-$2.json" >/dev/null 2>&1; }
+begin() { same public-followup begin-delivery "$1" --payload-hash "$2" "${@:3}"; }
+post() { same public-followup record-delivery "$1" --receipt-file "$T/$2.json" "${@:3}"; }
+miss() { same public-followup record-error "$1" --error-file "$T/$2.json" "${@:3}"; }
+waive() { same public-followup waive "$1" --reason "$2" --approved-by "$3" "${@:4}"; }
+notes() { BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" comments "$1" --json | jq '[.[] | select(.text | fromjson | .followup == "delivery")] | length'; }
+sha=$(printf '%064d' 1) sha2=$(printf '%064d' 2) n=0
+jq -n '{state:"posted", request_id:"req-1", platform:"discord", attempt_count:2, total_chunks:1, posted_chunks:1, posted_at:"2026-08-01T10:00:00Z"}' > "$T/rc.json"
+jq -n '{state:"retry-due", attempt_count:1, error_code:"relay.down", occurred_at:"2026-08-01T10:00:00Z", next_attempt_at:"2026-08-01T11:00:00Z"}' > "$T/er.json"
+for edit in '.schema_version = 2' '.state = "partial"' '.total_chunks = 0' '.posted_chunks = 2' '.request_id = "nope"' '.platform = "mail"' '.attempt_count = 0' '.posted_at = "soon"' '.retain_until = "soon"' '.extra = 1' 'del(.state)'; do
+  n=$((n + 1)); jq "$edit" "$T/rc.json" > "$T/rc$n.json"; post pf-two "rc$n"
+done
+for edit in '.schema_version = 2' '.error_code = "Not Safe"' '.state = "posted"' '.total_chunks = 2' '.state = "partial"' '.attempt_count = -1' '.occurred_at = "soon"' '.next_attempt_at = "soon"' '.extra = 1'; do
+  n=$((n + 1)); jq "$edit" "$T/er.json" > "$T/er$n.json"; miss pf-two "er$n"
+done
+jq '.attempt_count = 2 | .state = "partial" | .total_chunks = 3 | .posted_chunks = 1' "$T/er.json" > "$T/er-part.json"
+jq '.attempt_count = 0 | .state = "expired-action-required"' "$T/er.json" > "$T/er-late.json"
+jq '.attempt_count = 0 | .state = "context-blocked"' "$T/er.json" > "$T/er-ctx.json"
+jq '.attempt_count = 0' "$T/er.json" > "$T/er-due.json"
+jq '.attempt_count = 0 | .state = "unknown"' "$T/er.json" > "$T/er-odd.json"
+jq '.total_chunks = 2 | .posted_chunks = 2' "$T/rc.json" > "$T/rc-other.json"
+jq '.request_id = "req-2"' "$T/rc.json" > "$T/rc-req.json"
+due same pf-five; due same pf-six
+for id in pf-one pf-none jg-plain; do begin "$id" "$sha"; done
+same public-followup begin-delivery pf-two --payload-hash nope
+same public-followup begin-delivery pf-two
+same public-followup begin-delivery --payload-hash "$sha"
+miss pf-two er
+post pf-two rc
+begin pf-two "$sha" --json
+begin pf-two "$sha" --json
+begin pf-two "$sha"
+begin pf-two "$sha2"
+same public-followup list --delivery-state delivery-posting --json
+same public-followup ready
+same ready
+assert_contains "$(ask bd start pf-two 2>&1)" "cannot change through generic" "an attempt must keep the typed path"
+miss pf-two er --json
+miss pf-two er --json
+miss pf-two er
+same public-followup list --delivery-state retry-due --json
+begin pf-two "$sha" --json
+miss pf-two er-part --json
+post pf-two rc-req
+post pf-two rc --json
+post pf-two rc --json
+post pf-two rc
+post pf-two rc-other
+begin pf-two "$sha"
+miss pf-two er
+waive pf-two reason captain
+[ "$(notes pf-two)" = 5 ] || fail "each delivery record must be one comment, got $(notes pf-two)"
+waive pf-five 'owed nothing' captain --json
+waive pf-five 'owed nothing' captain --json
+waive pf-five 'owed nothing' captain
+waive pf-five 'another reason' captain
+waive pf-five '   ' captain
+waive pf-six 'owed nothing' someone
+same public-followup waive pf-six --approved-by captain
+same public-followup waive pf-six --reason why
+post pf-five rc
+begin pf-five "$sha"
+miss pf-six er-odd
+miss pf-six er-late --json
+miss pf-six er-due
+miss pf-six er-ctx --json
+miss pf-six er-due --json
+begin pf-six "$sha" --json
+same public-followup list --json
+same public-followup ready
+same ready
+# Rival attempts: only the guarded row write decides, so one attempt wins and no post can start twice.
+due 'ask bd' pf-lock
+for n in 1 2 3 4; do (ask bd public-followup begin-delivery pf-lock --payload-hash "$(printf '%064d' "$n")" >/dev/null 2>&1; echo $? > "$T/lock.$n") & done; wait
+[ "$(grep -lx 0 "$T"/lock.* | wc -l)" = 1 ] || fail "one attempt must win, got: $(cat "$T"/lock.*)"
+[ "$(ask bd public-followup list --delivery-state delivery-posting --json | jq '[.public_followups[] | select(.id == "pf-lock") | .public_followup.delivery.attempt_count] == [1]')" = true ] || fail "the winner holds attempt one"
+# A crash after the row write leaves no comment, and a rerun fills it in once.
+due 'ask bd' pf-crash
+BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" update pf-crash --if-status open --status in_progress --metadata "{\"delivery_state\":\"delivery-posting\",\"delivery\":{\"attempt_count\":1,\"payload_digest\":\"$sha\"}}" >/dev/null 2>&1 || fail "a crashed attempt"
+for _ in 1 2; do [ "$(ask bd public-followup begin-delivery pf-crash --payload-hash "$sha" --json | jq .already)" = true ] || fail "the rerun must answer already"; done
+[ "$(notes pf-crash)" = 1 ] || fail "the rerun must log the attempt once, got $(notes pf-crash)"
 # A crash between the comment and the row write folds on the rerun, so the answer stays one event.
 promise 'ask bd' pf-gap req >/dev/null
 ask bd public-followup bind-work pf-gap --relation-file "$T/rel-a.json" >/dev/null
