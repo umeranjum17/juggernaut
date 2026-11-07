@@ -11,7 +11,8 @@ One row per piece of work: fm-/jg- twins collapse to jg-<hash>. The home's sourc
 hold, on single rows too, because the board feed only mirrors it; with no source row the newest `at` twin wins.
 A hold the winner drops stays visible as metadata.past_hold plus a hold-dropped-by-* label, for a person to settle.
 The upkeep bucket is not imported: its children carry the `upkeep` label. A held row with no reason gets the
-hold-reason-missing label. Inline blocked-by becomes a `blocks` dependency and hold-until becomes defer_until.
+hold-reason-missing label. Inline blocked-by becomes a `blocks` dependency, and a hold with hold-until is a deferred
+row with that date as defer_until, so bd returns it by itself.
 manifest.json records every row and the disposition of every held row, so a dry run has something to match.
 
 Settling: a row with no home parks under main with the `unplaced` label. A row of a home in data/parked, or of a lead
@@ -33,7 +34,8 @@ and named, and it refuses unless --drop-new-writes says those rows stay out of t
 import argparse, base64, collections, csv, glob, hashlib, json, os, re, shutil, subprocess, sys, time
 
 NO_REASON = 'no reason recorded before migration'
-STATUSES = ('open', 'in_progress', 'on_hold', 'closed')
+STATUSES = ('open', 'in_progress', 'on_hold', 'deferred', 'closed')
+HELD = ('on_hold', 'deferred')
 FILES = ('backlog.md', 'done-archive.md')
 HERE = os.path.dirname(os.path.abspath(__file__))
 TAG = r'\s*\((?:repo|kind|priority|since|done|merged|hold|until|hold-kind|hold-until)[: ][^)]*\)'
@@ -103,7 +105,8 @@ def parse_item(home, f, sec, m):
     closed = m[1] == 'x' or f == 'done-archive.md' or sec == 'Done'
     hold = tag('hold')
     hold = decode(hold) if hold is not None else None
-    status = 'closed' if closed else 'on_hold' if hold is not None else 'in_progress' if sec == 'In flight' else 'open'
+    status = ('closed' if closed else ('deferred' if tag('hold-until') else 'on_hold') if hold is not None
+              else 'in_progress' if sec == 'In flight' else 'open')
     title = re.sub(r'\s*blocked-by: \S+', '', re.sub(TAG, '', rest)).strip()
     return dict(home=home, item=m[2], title=title or m[2], status=status, hold=hold, file=f, body=[], parent=None,
                 blocked=re.findall(r'blocked-by: ([^\s)]+)', rest), repo=tag('repo'), priority=tag('priority'), kind=tag('kind'),
@@ -189,7 +192,7 @@ def plan(a):
         project = pick(k, 'project') or (s or {}).get('repo')
         if project: labels.append('project:' + slug(project))
         was_held = any(is_held(feed[j]) for j in ids) or (s and s['hold'] is not None and s['status'] != 'closed')
-        if status == 'on_hold':
+        if status in HELD:
             md['hold_reason'] = reason or NO_REASON
             if not reason: labels.append('hold-reason-missing')
             if s and s['hold_kind']: md['hold_kind'] = s['hold_kind']
@@ -225,14 +228,14 @@ def plan(a):
         if deps: row['dependencies'] = deps
         out[h].append(row)
         man[i] = {'home': h, 'status': status, 'deps': len(deps), 'legacy': ids, 'live_blocked': len(md.get('blocked_by', [])) if status != 'closed' else 0}
-        if was_held or status == 'on_hold':
+        if was_held or status in HELD:
             for j in [j for j in ids if is_held(feed[j])] or [i]: held[j] = {'row': i, 'disposition': disposition}
         note = {'id': i, 'home': h, 'title': row['title'], 'item': s and s['item'], 'status': status, 'source_status': s and s['status']}
         board_held = any(is_held(feed[j]) for j in ids)
         for group, hit in (('unplaced', k in parked and not parked[k]), ('unplaced_held', k in parked and not parked[k] and was_held),
-                           ('no_reason', status == 'on_hold' and not reason), ('no_reason_past', status != 'on_hold' and md.get('past_hold') == NO_REASON),
-                           ('held_not_on_board', status == 'on_hold' and not ids), ('held_no_source_row', board_held and not s),
-                           ('held_not_in_source', board_held and s and s['status'] != 'on_hold'),
+                           ('no_reason', status in HELD and not reason), ('no_reason_past', status not in HELD and md.get('past_hold') == NO_REASON),
+                           ('held_not_on_board', status in HELD and not ids), ('held_no_source_row', board_held and not s),
+                           ('held_not_in_source', board_held and s and s['status'] not in HELD),
                            (f'parked:{parked.get(k)}', parked.get(k)), (f"remote:{h}", h in reg['remote'])):
             if hit: settle[group].append(note)
     held.update({j: {'row': None, 'disposition': 'dropped-upkeep-bucket'} for k in buckets for j in groups[k] if is_held(feed[j])})
@@ -272,11 +275,11 @@ def verify(a):
         keys = {suffix(i) for i in feed} | set(src)
         if len(man['rows']) + len(man['buckets']) != len(keys): bad.append(f"census: {len(man['rows'])} rows + {len(man['buckets'])} buckets, the copy holds {len(keys)}")
         must = {i for i, r in feed.items() if is_held(r)}
-        must |= {'jg-' + k for k, s in src.items() if s['status'] == 'on_hold' and not ({'jg-' + k, 'fm-' + k} & feed.keys())}
+        must |= {'jg-' + k for k, s in src.items() if s['status'] in HELD and not ({'jg-' + k, 'fm-' + k} & feed.keys())}
         bad += [f'held: {i} has no disposition' for i in sorted(must - man['held'].keys())]
         for i, d in man['held'].items():
             md = exported.get(d['row'], {}).get('metadata') or {}
-            if d['disposition'] == 'on_hold' and not (exported.get(d['row'], {}).get('status') == 'on_hold' and str(md.get('hold_reason', '')).strip()): bad.append(f'held: {i} lost its hold or reason')
+            if d['disposition'] == 'on_hold' and not (exported.get(d['row'], {}).get('status') in HELD and str(md.get('hold_reason', '')).strip()): bad.append(f'held: {i} lost its hold or reason')
             if d['disposition'].startswith('dropped-by') and not str(md.get('past_hold', '')).strip(): bad.append(f'held: {i} dropped with no trace')
         print('home rows ' + ' '.join(STATUSES) + ' no_reason')
         for t in table: print(*t)

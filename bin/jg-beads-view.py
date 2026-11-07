@@ -7,7 +7,10 @@ Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
 The links verb is not a tasks-axi read: it prints the ids linked to one row, for bin/jg-captain-hold.sh's blocking gate.
 bd stamps UTC and tasks-axi the local day, so created and closed read as the local day.
-A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while it has an assignee; a hold stops holding on its defer_until date, and its fields stay readable on a closed row;
+A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while it has an assignee;
+its fields stay readable on a closed row and on a row whose date has passed.
+A dated hold is status deferred: bd ready wakes a past-date row to open and clears defer_until, and until that first
+bd ready the row still reads as no longer held, so a due row reads the same on both sides of the wake;
 kind is metadata.kind, else captain for issue_type decision, else issue_type;
 parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
 show takes a row's id or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
@@ -27,7 +30,7 @@ CORE = {"decision": "captain"}
 ROW = ["id", "state", "kind", "repo", "title"]
 SHOW = ["id", "title", "state", "blocked", "blocked_by", "held", "hold_reason", "hold_kind", "hold_until",
         "kind", "repo", "priority", "created", "closed", "deps", "links", "body"]
-EXTRA = sorted(set(SHOW) - set(ROW)) + ["delivery_state", "parent", "item"]
+EXTRA = sorted(set(SHOW) - set(ROW)) + ["parent", "item"]
 CLIP = {"title": 80, "body": 500}
 STATES = ["queued", "in_flight", "done", "held"]
 PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?([eE][+-]?\d+)?\Z")
@@ -81,8 +84,16 @@ def day(stamp):
 
 
 def flying(row):
-    """Say whether the row is in flight: one status column cannot hold in flight and held, so a held lane is its assignee."""
-    return row.get("status") == "in_progress" or (row.get("status") in HELD and bool(row.get("assignee")))
+    """Say whether the row is in flight: one status column cannot hold in flight and held, so a held lane is its assignee, and a woken hold keeps it."""
+    status, meta = row.get("status"), row.get("metadata") or {}
+    return status == "in_progress" or (bool(row.get("assignee")) and (status in HELD or (status == "open" and "hold_reason" in meta)))
+
+
+def holding(row):
+    """Say whether the hold still holds: on_hold and blocked until someone clears them, deferred until the moment bd reads as due."""
+    status, until = row.get("status"), row.get("defer_until")
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return status in HELD and (status != "deferred" or not until or until > now)
 
 
 def mentions(row):
@@ -108,22 +119,19 @@ def task(row, rows):
     closed = row.get("status") == "closed"
     deps = [d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "blocks"]
     waiting = [d for d in deps if rows.get(d, {}).get("status") != "closed"]
-    status = row.get("status")
     until = (row.get("defer_until") or "-")[:10]
-    held = status in HELD and (until == "-" or until > datetime.date.today().isoformat())
     links = ["pr:" + url for url in dict.fromkeys(filter(None, [row.get("external_ref"), *split(meta.get("prs"))]))]
     links += ["report:" + path for path in split(meta.get("reports"))]
     repos = [label[8:] for label in row.get("labels") or [] if label.startswith("project:")]
     return {
         "id": row["id"], "title": row.get("title", ""), "state": "in_flight" if flying(row) else STATE.get(row.get("status"), "queued"),
         "blocked": "yes" if waiting else "no", "blocked_by": ",".join(waiting) or "none",
-        "held": "yes" if held else "no", "hold_reason": meta.get("hold_reason", "-"),
+        "held": "yes" if holding(row) else "no", "hold_reason": meta.get("hold_reason", "-"),
         "hold_kind": meta.get("hold_kind", "-"), "hold_until": until, "kind": meta.get("kind") or CORE.get(row.get("issue_type"), row.get("issue_type", "task")),
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
         "created": "-" if closed else day(row.get("created_at")), "closed": day(row.get("closed_at")),
         "deps": ",".join("blocked-by:" + d for d in deps) or "none",
         "links": ",".join(links) or "none", "body": row.get("description", ""),
-        "delivery_state": meta.get("delivery_state", "-"),
         "mentions": mentions(row),
         # parent: the parent-child edge's target, else upkeep for the upkeep label; item: the id the home's state files use.
         "parent": next((d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "parent-child"),

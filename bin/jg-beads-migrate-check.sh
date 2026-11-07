@@ -77,7 +77,7 @@ for file in "$RUN"/imp/*.jsonl; do
   in_store "$store" import "$file" >"$RUN/runs/$home.import.log" 2>&1 || die "$home: import failed, see $RUN/runs/$home.import.log"
   in_store "$store" export -o export.jsonl >/dev/null
   mv "$store/export.jsonl" "$RUN/runs/$home.export.jsonl"
-  for status in open in_progress on_hold closed; do
+  for status in open in_progress on_hold deferred closed; do
     printf '%s %s\n' "$status" "$(in_store "$store" count --status "$status")"
   done >"$RUN/runs/$home.counts"
   python3 "$HERE/jg-beads-migrate.py" verify --copy "$RUN/copy" --out "$RUN/imp" --runs "$RUN/runs" --home "$home" || die "$home: store differs from the manifest"

@@ -106,6 +106,7 @@ same() {  # <wrapper args...>: stdout and exit status match across providers.
   local a b ra=0 rb=0
   a=$(JG_HOME="$T/ta" "$CLI" "$@" 2>/dev/null) || ra=$?
   b=$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" "$@" 2>/dev/null) || rb=$?
+  a=${a//ready --include-held/list --state held}  # The one line that differs: a store's tip names a verb it serves.
   [ "$a" = "$b" ] && [ "$ra" = "$rb" ] || fail "$* differs, rc $ra/$rb: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b"))"
 }
 callers() {  # The read shapes each backlog caller parses.
