@@ -1108,6 +1108,8 @@ test_scout_brief_names_sign_off_only() {
     'scout brief did not make the report open with its Answer'
   assert_grep 'jg-report-opening-check.sh' "$brief" \
     'scout brief did not name the report page opening check'
+  assert_grep 'psm-wide-check.sh' "$brief" \
+    'scout brief did not name the wide-report state map check'
   assert_no_grep 'Lavish' "$brief" 'scout brief still named the retired review surface'
   assert_no_grep 'lavish-axi' "$brief" 'scout brief still named the retired tool'
   pass 'jg-brief.sh: a scout brief names the sign-off board and no retired review surface'
