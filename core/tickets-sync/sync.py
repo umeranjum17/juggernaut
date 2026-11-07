@@ -253,6 +253,9 @@ def sync():
             for key, value in desired.items():
                 if key != 'assignee': args += ['--' + key, str(value)]
             if desired.get('hold') == 'yes': args += ['--hold-reason', reason]
+            # The board refuses a new ticket that carries no description, so a row this pass raises gets the summary the
+            # board's own backfill gives an old one: its title. Only a new row sends it, so words written on the board stay.
+            if not old: args += ['--description', desired.get('title') or tid]
             run(args); changed += 1
             if 'assignee' in desired:
                 feed[tid] = write_assignee(feed_file, tid, feed.get(tid, {}), desired, feed_ends, reason)

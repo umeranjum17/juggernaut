@@ -4,6 +4,10 @@
 Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|show|view|markdown|links> [args...]
 
 Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never starts bd.
+Beads answers ready and blocked: when JG_BEADS_READY names a file holding `bd ready --json`, ready prints exactly those rows in bd's order,
+and when JG_BEADS_BLOCKED names `bd blocked --json`, the blocked and blocked_by fields and list --blocked read it;
+with neither, the answer is worked out from the rows' blocks edges, which is how a write answers.
+Ours on top of bd's answer: a public-followup row is delivery work, so ready leaves it to its own count.
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
 The links verb is not a tasks-axi read: it prints the ids linked to one row, for bin/jg-captain-hold.sh's blocking gate.
 bd stamps UTC and tasks-axi the local day, so created and closed read as the local day.
@@ -21,6 +25,7 @@ Refusals print tasks-axi's error lines on stdout: exit 2 for a bad flag, exit 1 
 import base64
 import datetime
 import json
+import os
 import re
 import sys
 
@@ -112,11 +117,13 @@ def named(rows, ident):
     return hits[0] if len(hits) == 1 else None
 
 
-def task(row, rows):
+def task(row, rows, native=None):
+    """native is bd blocked's answer as {id: [open blockers]}; None works the answer out from the blocks edges."""
     meta = row.get("metadata") or {}
     closed = row.get("status") == "closed"
     deps = [d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "blocks"]
-    waiting = [d for d in deps if rows.get(d, {}).get("status") != "closed"]
+    # bd blocked does not speak for a closed row, so it keeps the edge answer.
+    waiting = [d for d in deps if rows.get(d, {}).get("status") != "closed"] if native is None or closed else native.get(row["id"], [])
     until = (row.get("defer_until") or "-")[:10]
     links = ["pr:" + url for url in dict.fromkeys(filter(None, [row.get("external_ref"), *split(meta.get("prs"))]))]
     links += ["report:" + path for path in split(meta.get("reports"))]
@@ -173,11 +180,16 @@ def show(tasks, args):
     refuse('Task "%s" not found in this backlog' % ids[0], "Run `tasks-axi list` to see existing tasks", "NOT_FOUND", 1)
 
 
-def ready(tasks, args):
+def ready(tasks, args, answer=None):
+    """answer is bd ready's ids in its order; None is a store read without it."""
     found, _ = flags(args, ("--repo",), ())
     repo = found.get("--repo")
-    rows = [t for t in tasks if t["state"] == "queued" and t["held"] == "no" and t["blocked"] == "no"
-            and t["kind"] != "public-followup" and repo in (None, t["repo"])]
+    if answer is None:
+        pool = [t for t in tasks if t["state"] == "queued" and t["held"] == "no" and t["blocked"] == "no"]
+    else:
+        by_id = {t["id"]: t for t in tasks}
+        pool = [by_id[ident] for ident in answer if ident in by_id]
+    rows = [t for t in pool if t["kind"] != "public-followup" and repo in (None, t["repo"])]
     suffix = " --repo=" + repo if repo else ""
     print("count: %d" % len(rows))
     if rows:
@@ -276,14 +288,27 @@ def links(tasks, args):
     print("\n".join(sorted(ident for ident in linked if ident not in words)))
 
 
+def beads_answer(variable):
+    """The rows bd printed into the file this variable names, or None when the caller asked bd nothing."""
+    path = os.environ.get(variable)
+    if not path:
+        return None
+    with open(path) as handle:
+        return json.load(handle) or []
+
+
 def main():
     raw = json.load(sys.stdin) or []
     rows = {row["id"]: row for row in raw}
-    tasks = sorted((task(row, rows) for row in raw), key=lambda t: (rows[t["id"]].get("created_at") or "", t["id"]))
+    blocked = beads_answer("JG_BEADS_BLOCKED")
+    native = None if blocked is None else {item["id"]: list(item.get("blocked_by") or []) for item in blocked}
+    ready_rows = beads_answer("JG_BEADS_READY")
+    answer = None if ready_rows is None else [item["id"] for item in ready_rows]
+    tasks = sorted((task(row, rows, native) for row in raw), key=lambda t: (rows[t["id"]].get("created_at") or "", t["id"]))
     tasks.sort(key=lambda t: rows[t["id"]].get("closed_at") or "", reverse=True)
     tasks.sort(key=lambda t: ["in_flight", "queued", "done"].index(t["state"]))
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
-    serve = {"show": show, "view": show, "ready": ready, "list": listing, "markdown": markdown, "links": links}.get(verb)
+    serve = {"show": show, "view": show, "ready": lambda t, a: ready(t, a, answer), "list": listing, "markdown": markdown, "links": links}.get(verb)
     if serve is None:
         refuse("Unknown read verb: " + verb)
     serve(tasks, sys.argv[2:])
