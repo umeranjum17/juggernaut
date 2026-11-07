@@ -96,6 +96,58 @@ same public-followup list --work-ref main/jg-next --json
 # Native shape: one tracks edge that never blocks the work it names.
 [ "$(BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" list --all --limit 0 --json | jq '[.[] | select(.id == "pf-two") | .dependencies[]? | select(.type == "tracks")] | length')" = 1 ] || fail "one tracks edge from the promise to its work"
 assert_contains "$(ask bd ready)" "jg-work" "bound work must stay ready"
+# A work event lands, refuses or supersedes alike, and the promise comes due only when its contract is met.
+event() {  # <event-id> <relation> <generation> <task> <outcome> <deliverables> <successor> [obligation]
+  jq -n --arg id "$1" --arg rel "$2" --argjson generation "$3" --arg task "$4" --arg outcome "$5" --argjson items "$6" --argjson next "$7" --arg ob "${8:-pf-two}" \
+    '{schema_version:1, event_id:$id, obligation_id:$ob, relation_id:$rel, generation:$generation, source_home_id:"main", work_id:$task,
+      outcome_type:$outcome, deliverables:$items, public_safe_outcome:"The fix landed", occurred_at:"2026-07-31T10:00:00Z", successor:$next}' > "$T/$1.json"
+}
+report() { same public-followup work-event "$1" --event-file "$T/$2.json" "${@:3}"; }
+url='{"pr_url":"https://github.com/umer/juggernaut/pull/7"}'
+event ev-land rel-a 1 jg-work pr-merged "$url" null
+event ev-short rel-a 1 jg-work pr-merged '{}' null
+event ev-host rel-a 1 jg-work pr-merged '{"pr_url":"https://gitlab.example.com/umer/juggernaut/pull/7"}' null
+event ev-other rel-a 1 jg-work report-ready '{"report_path":"data/x/report.md"}' null
+event ev-stale rel-a 2 jg-work pr-merged "$url" null
+event ev-source rel-a 1 jg-else pr-merged "$url" null
+event ev-unknown rel-gone 1 jg-work pr-merged "$url" null
+event ev-foreign rel-a 1 jg-work pr-merged "$url" null pf-three
+jq '.event_id = "ev-land" | .public_safe_outcome = "Another outcome"' "$T/ev-land.json" > "$T/ev-changed.json"
+jq 'del(.successor)' "$T/ev-land.json" > "$T/ev-nonext.json"
+for file in ev-short ev-host ev-other ev-stale ev-source ev-unknown ev-foreign ev-nonext; do report pf-two "$file"; done
+same public-followup ready
+same public-followup ready --json
+report pf-two ev-land --json
+report pf-two ev-land --json
+report pf-two ev-land
+report pf-two ev-changed
+same public-followup list --delivery-state ready --json
+same public-followup ready
+same public-followup ready --json
+same ready
+promise same pf-four req
+bind pf-four rel-a
+next=$(cat "$T/rel-next.json")
+event ev-bare rel-a 1 jg-work superseded '{}' null pf-four
+event ev-carry rel-a 1 jg-work superseded "$url" "$next" pf-four
+event ev-move rel-a 1 jg-work superseded '{}' "$next" pf-four
+event ev-fail rel-next 2 jg-next failed '{"error_code":"build.broken"}' null pf-four
+event ev-loud rel-next 2 jg-next failed '{"error_code":"Not Safe"}' null pf-four
+for file in ev-bare ev-carry; do report pf-four "$file"; done
+report pf-four ev-move --json
+report pf-four ev-move --json
+report pf-four ev-loud
+report pf-four ev-fail --json
+report pf-four ev-fail
+same public-followup list --json
+# A crash between the comment and the row write folds on the rerun, so the answer stays one event.
+promise 'ask bd' pf-gap req >/dev/null
+ask bd public-followup bind-work pf-gap --relation-file "$T/rel-a.json" >/dev/null
+event ev-gap rel-a 1 jg-work pr-merged "$url" null pf-gap
+BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" comment pf-gap "$(jq -c '{followup:"work-event"} + .' "$T/ev-gap.json")" >/dev/null 2>&1 || fail "a comment left by a crash"
+ask bd public-followup work-event pf-gap --event-file "$T/ev-gap.json" --json > "$T/gap.out" || fail "the rerun must accept the logged event"
+[ "$(jq -r '.already, .task.public_followup.delivery.state' "$T/gap.out" | paste -sd' ')" = "true ready" ] || fail "the rerun must answer already and ready: $(cut -c1-200 "$T/gap.out")"
+[ "$(ask bd public-followup list --delivery-state ready --json | jq '[.public_followups[] | select(.id == "pf-gap")] | length')" = 1 ] || fail "the rerun must leave the row ready"
 # Writers of one id race to one row with one delivery key.
 for n in 1 2 3 4; do promise 'ask bd' pf-race req --json > "$T/race.$n" 2>/dev/null & done; wait
 [ "$(ask bd public-followup list --json | jq '[.public_followups[] | select(.id == "pf-race")] | length')" = 1 ] || fail "one promise from four writers"

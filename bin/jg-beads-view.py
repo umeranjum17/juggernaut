@@ -186,7 +186,12 @@ def ready(tasks, args):
         table("ready", rows, ROW)
     else:
         print("ready: 0 unblocked queued tasks")
-    print("ready_public_followups: 0 delivery-ready obligations")
+    due = [t for t in tasks if t["kind"] == "public-followup" and t["delivery_state"] == "ready" and t["state"] != "done"
+           and t["blocked"] == "no" and repo in (None, t["repo"])]
+    if due:
+        table("ready_public_followups", due, ROW + ["delivery_state"])
+    else:
+        print("ready_public_followups: 0 delivery-ready obligations")
     print("help[1]:")
     print("  - Run `tasks-axi start <id>` to dispatch one of these" if rows else
           "  - Run `tasks-axi list --state queued%s` to see all queued work (incl. blocked)" % suffix)
