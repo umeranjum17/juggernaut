@@ -95,9 +95,22 @@ GHEOF
   lint_path=$d/bin:$PATH
 fi
 
+# A draft lint of a local report file is a rehearsal, not a claim: done-done registers each evidence file's hash
+# under the task as it lints, so a rehearsal would make the PR's own lint reject every file as already used by
+# another PR (measured: the same lane waited about an hour for it). Put the registry back as it was.
+hashes=$DD_HOME/lint.hashes hashes_bak= draft=false
+case $source in
+  https://*) ;;
+  *) draft=true
+     if [ -f "$hashes" ]; then hashes_bak=$(mktemp) && cp -p -- "$hashes" "$hashes_bak" || draft=false; fi ;;
+esac
+
 set +e
 out=$(cd "$d" && PATH="$lint_path" DONE_DONE_HOME="$DD_HOME" "${DD[@]}" lint "$source" "$evidence" 2>&1)
 rc=$?
+if [ "$draft" = true ]; then
+  if [ -n "$hashes_bak" ]; then cp -p -- "$hashes_bak" "$hashes"; rm -f -- "$hashes_bak"; else rm -f -- "$hashes"; fi
+fi
 row=$(tail -n 1 "$DD_HOME/lint.log" 2>/dev/null || true)
 logged_src=$(printf '%s' "$row" | cut -f2)
 head=$(printf '%s' "$row" | cut -f3)
@@ -127,6 +140,18 @@ for meta in "$JG_HOME"/state/*.meta; do
     report=$(mktemp) || exit 1
     printf 'checks-lint %s %s head %s: %s\n' "$receipt_verdict" "$source" "$head" "${why:-$out}" > "$report"
     worktree=$(awk -F= '$1 == "worktree" { value = $2 } END { print value }' "$meta")
+    # The receipt binds the candidate worktree's HEAD. A lint of a PR head that worktree is not on (a lane
+    # member pushed from another copy) must not stamp this verdict on the wrong head: it would overwrite the
+    # slot another head's receipt holds. Publish only when the lint judged the head the worktree is on.
+    case $head in
+      [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+        wt_head=$(git -C "${worktree:-$JG_HOME}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)
+        if [ "$wt_head" != "$head" ]; then
+          echo "checks-lint: receipt not published: the lint judged $head but task $task sits on ${wt_head:-no commit}; publish it from a copy on $head with jg-run-receipt.sh" >&2
+          rm -f -- "$report"
+          break
+        fi ;;
+    esac
     receipt=$(env JG_HOME="$JG_HOME" JG_RECEIPT_PR="$source" "$helper" "$task" "$receipt_verdict" "$report" "${worktree:-$JG_HOME}" 2>&1); receipt_rc=$?
     [ "$receipt_rc" -eq 0 ] || echo "checks-lint: receipt not published: ${receipt:-jg-run-receipt.sh failed}" >&2
     rm -f -- "$report"
