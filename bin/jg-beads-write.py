@@ -168,7 +168,7 @@ def minted(title, prefix, items):
 
 
 def add(args):
-    found, words = view.flags(args, FIELDS + ("--prefix", "--blocked-by"), ("--queue", "--mint", "--json"))
+    found, words = view.flags(args, FIELDS + ("--prefix", "--blocked-by", "--label"), ("--queue", "--mint", "--json"))
     if "--mint" in found:
         if len(words) != 1 or not words[0]:
             view.refuse("--mint requires a title", 'Run `tasks-axi add "<title>" --mint`')
@@ -198,6 +198,7 @@ def add(args):
         cmd += [flag, value] if value else []
     cmd += ["--description=" + body] if body else []
     cmd += ["-l", "project:" + found["--repo"]] if "--repo" in found else []
+    cmd += ["-l", found["--label"]] if "--label" in found else []
     bd(*cmd)
     named = [found[f] if f == "--kind" else "repo " + found[f] for f in ("--kind", "--repo") if f in found]
     line = "added %s%s -> Queued" % (ident, " (%s)" % ", ".join(named) if named else "")
