@@ -817,7 +817,9 @@ tests/jg-test-run.test.sh 11831
 tests/jg-ticket-writeback.test.sh 83
 tests/jg-tmp-sweep.test.sh 5192
 tests/jg-tokens-retro.test.sh 597
-tests/jg-trunk.test.sh 6200
+tests/jg-trunk.test.sh 13000
+tests/jg-trunk-spawn.test.sh 12000
+tests/jg-trunk-scope.test.sh 8000
 tests/jg-worker-rules.test.sh 3493
 tests/jg-turnend-guard.test.sh 45675
 tests/jg-update.test.sh 16890

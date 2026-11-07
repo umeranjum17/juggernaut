@@ -3953,6 +3953,17 @@ run_fast_checks() {
       wake "$reason"
     fi
   fi
+  # A worker's done starts its landing here, in every home: core/trunk-landing lands a task whose done-done receipt
+  # is a PASS for its exact head into the local trunk and cleans it up, with no lead or human step.
+  if [ -f "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ] && [ ! -L "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ]; then
+    run_check_capture "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" check "$JG_HOME" || exit 1
+    out=$JG_CHECK_RESULT
+    if [ -n "$out" ]; then
+      reason="check: trunk-landing: $out"
+      jg_wake_append check trunk-landing "$reason" || exit 1
+      wake "$reason"
+    fi
+  fi
   # The machine's four services belong to Main, and a unit that is dead or serves
   # another home is exactly the missing alert this path exists for, so it is read
   # here on the fast cadence and not on the slow sweep (bin/jg-unit-claim.sh owns

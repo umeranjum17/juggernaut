@@ -126,9 +126,9 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-project-mode.sh`     | Resolve a project's registered delivery posture, forge binding, or ship-branch prefix from `data/projects.md` for fleet sync, home seeding, and the forge agreement a ship spawn or Recon promotion applies |
 | `jg-forge-detect.sh`     | Propose a clone's forge binding from its origin remote for project-add intake, never recording it |
 | `jg-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |
-| `jg-trunk.sh`            | Land one proved commit per ticket on a local trunk branch, move the home to the last fully green commit at once, and push the accumulated trunk as one batch release; every open captain call is a key in `jg-trunk-policy-lib.sh` with its safe default |
+| `jg-trunk.sh`            | The trunk flow ([docs/trunk-flow.md](trunk-flow.md)): land one proved commit per ticket on a local trunk branch (never live), go live and release as one trunk-to-main pull request only on the captain's recorded word, and pin the home back after a red CI; every open captain call is a key in `jg-trunk-policy-lib.sh` with its safe default |
 | `jg-trunk-policy-lib.sh` | The one seam for the trunk flow's open captain calls: trunk owner, landings in away mode, protected paths, full suite versus smoke, owner rules, release age; read from `config/trunk-policy` |
-| `jg-trunk-live-home.sh`  | Live hook for a project whose code this home runs: fast-forward the home checkout to the trunk commit through the shared fast-forward library |
+| `jg-trunk-live-home.sh`  | Live hook for a project whose code this home runs: fast-forward the home checkout to the trunk commit through the shared fast-forward library, or move it back to an earlier trunk commit after a red CI |
 | `jg-review-diff.sh`      | Review an operator branch or resolved PR head against the authoritative base          |
 | `jg-marker-lib.sh`       | Compatibility entry point for the from-juggernaut carrier owned by `jg-operational-input.sh` |
 | `jg-task-inbox-lib.sh`   | Single owner of durable steering-inbox records, acknowledgement, doorbells, and the delivery-attempt ladder |

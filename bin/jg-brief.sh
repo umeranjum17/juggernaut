@@ -1047,6 +1047,18 @@ Replace the survey line below with the record, then run \`$JG_ROOT/bin/jg-prior-
 Prior art (survey): <replace with \`Prior art pick: <name>\` and \`Licence: <licence - usable here or not>\` lines, or with \`Prior art: none needed - <why this work is neither new nor complex>\`>
 EOF
 PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
+# A project registered local-trunk (docs/trunk-flow.md) ships its lanes as local-only tasks that land on the local
+# trunk by themselves. Only that posture gets this section; every other project's brief is exactly as it was.
+TRUNK_SECTION=
+if [ "$MODE" = local-only ] && [ "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$REPO" 2>/dev/null | cut -d' ' -f1)" = local-trunk ]; then
+  TRUNK_SECTION="
+# Local trunk lane
+This project is registered local-trunk: there is no feature pull request, and the only pull request is the release one, raised on the captain's word.
+Your branch must be exactly ONE commit on top of the local trunk tip (the \`trunk\` branch of the project), and the commit message must carry its ticket reference (the task id or its ticket key).
+If the trunk has advanced, rebase onto it and fix every conflict yourself, then prove again: a conflicting change is refused with its paths named and is never landed dirty.
+When the sealed done-done proof has passed at that exact head, publish the completion receipt for it and report ready. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
+"
+fi
 DESIGN_SECTION=
 if [ -n "$DESIGN_CALL" ]; then
   DESIGN_SECTION="
@@ -1123,7 +1135,7 @@ cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
 $TASK_SECTION
-$PRIOR_ART_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
+$PRIOR_ART_SECTION$TRUNK_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
 $STACK_BLOCK$RULES_BLOCK
 
