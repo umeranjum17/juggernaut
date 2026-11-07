@@ -242,13 +242,6 @@ jg_backlog_beads_health() {  # <config_dir>
   return "$rc"
 }
 
-# A remote handoff stages rows in an outbox file, and no store feeds or files that outbox yet.
-jg_backlog_refuse_beads_move() {  # <config_dir> <who>
-  jg_backlog_backend_beads "$1" || return 0
-  printf 'error: %s keeps its backlog in a Beads store, and a remote handoff can only move rows between backlog files; nothing was moved\n' "$2" >&2
-  return 1
-}
-
 jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [args...]
   local bin_dir store
   store=$(jg_backlog_beads_store "$1") || return 2

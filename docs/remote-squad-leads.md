@@ -617,7 +617,8 @@ bin/jg-backlog-handoff.sh <id> <item-key>...
 
 For a remote route, the handoff takes these steps:
 
-1. `tasks-axi mv` first moves the dependency-closed set atomically from the primary backlog into `data/handoff/<id>.outbox.md`.
+1. The receiver first proves it can file rows; a refusal stops the handoff before anything is staged.
+   `tasks-axi mv`, or on a [Beads store](configuration.md) a staged file and then a delete, moves the dependency-closed set from the primary backlog into `data/handoff/<id>.outbox.md`.
 2. The outbox is then copied to the remote handoff scratch directory.
 3. `jg-backlog-receive.sh` atomically ingests every destination-absent key (a key the remote backlog does not already hold) under the remote backlog's own lock.
 

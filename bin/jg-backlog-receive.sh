@@ -3,12 +3,15 @@
 #
 # Usage:
 #   jg-backlog-receive.sh state/handoff/<squad-lead-id>.outbox.md <bytes> <sha256> <generation>
+#   jg-backlog-receive.sh --check    exits 3 with the reason when this home cannot file rows
 #
 # The delivered file must be a non-symlink backlog-format scratch file confined
 # to JG_HOME/state/handoff. Every item must be Queued. Keys already present in
 # data/backlog.md are skipped; every remaining key moves in one dependency-closed
 # `tasks-axi mv` transaction under tasks-axi's own locks. On an ambiguous caller
 # retry, destination-present classification makes this operation idempotent.
+# A home with a Beads store files every delivered key through the store's own
+# take verb instead, which a retry repeats with no effect and needs no tasks-axi.
 #
 # If tasks-axi reports a lock failure, this host may remove and retry once only
 # for its own backlog or delivered lock whose pid is dead and whose mtime is at
@@ -49,7 +52,7 @@ LOCK_STALE_SECS=30
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi
 }
@@ -104,8 +107,17 @@ run_move() { # <keys...>
   tasks-axi mv "$@" --file "$DELIVERED" --to "$DEST" --backend markdown
 }
 
+STORE=0
+if jg_backlog_backend_beads "$JG_HOME/config"; then STORE=1; fi
+if [ "$#" -eq 1 ] && [ "$1" = --check ]; then
+  if [ "$STORE" = 1 ]; then
+    jg_backlog_beads_health "$JG_HOME/config" >&2 || { echo "error: this home's Beads store cannot file rows" >&2; exit 3; }
+  else
+    jg_tasks_axi_compatible || { echo "error: this home has no compatible tasks-axi to file rows" >&2; exit 3; }
+  fi
+  exit 0
+fi
 [ "$#" -eq 4 ] || usage
-jg_backlog_refuse_beads_move "$JG_HOME/config" 'this home' || exit 1
 REL=$1
 EXPECTED_BYTES=$2
 EXPECTED_HASH=$3
@@ -157,6 +169,10 @@ ACTUAL_BYTES=$(LC_ALL=C wc -c < "$DELIVERED" | tr -d ' ')
 [ "$ACTUAL_BYTES" -eq "$EXPECTED_BYTES" ] || die "delivered outbox length does not match its commitment"
 ACTUAL_HASH=$(sha256_file "$DELIVERED") || die "cannot hash delivered outbox"
 [ "$ACTUAL_HASH" = "$EXPECTED_HASH" ] || die "delivered outbox digest does not match its commitment"
+if [ "$STORE" = 1 ]; then
+  DEST="$PARENT_REAL/.$ID.store-view.md"
+  jg_backlog_beads_read "$JG_HOME/config" markdown > "$DEST" || die "this home's Beads store cannot be read; delivered outbox is preserved for retry"
+fi
 [ ! -L "$DEST" ] || die "destination backlog must not be a symlink"
 if [ -e "$DEST" ] && [ ! -f "$DEST" ]; then die "destination backlog is not a regular file"; fi
 
@@ -185,7 +201,13 @@ for key in "${KEYS[@]}"; do
   fi
 done
 
-if [ "${#TO_MOVE[@]}" -gt 0 ]; then
+if [ "$STORE" = 1 ]; then
+  if ! MOVE_OUT=$(jg_backlog_beads_write "$JG_HOME/config" take "$DELIVERED" "${KEYS[@]}" 2>&1); then
+    [ -z "$MOVE_OUT" ] || printf '%s\n' "$MOVE_OUT" >&2
+    die "backlog receipt failed; delivered outbox is preserved for retry"
+  fi
+  jg_backlog_beads_read "$JG_HOME/config" markdown > "$DEST" || die "receipt verification could not read the store; delivered outbox is preserved"
+elif [ "${#TO_MOVE[@]}" -gt 0 ]; then
   jg_tasks_axi_compatible || die "a compatible tasks-axi is required for atomic backlog receipt; run bin/jg-bootstrap.sh for the required version"
   if ! MOVE_OUT=$(run_move "${TO_MOVE[@]}" 2>&1); then
     recovered=0
@@ -204,6 +226,7 @@ for key in "${KEYS[@]}"; do
   backlog_key_section "$DEST" "$key" >/dev/null 2>&1 \
     || die "receipt verification failed for $key; delivered outbox is preserved"
 done
+[ "$STORE" = 0 ] || rm -f -- "$DEST"
 rm -f -- "$DELIVERED" || die "receipt succeeded but delivered scratch cleanup failed"
 jg_lock_release "$TRANSFER_LOCK" || die "receipt succeeded but transfer lock cleanup failed"
 trap - EXIT
