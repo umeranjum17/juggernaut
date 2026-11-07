@@ -123,6 +123,8 @@ jg_dod_receipt_accept() {  # <state> <id> <meta> <candidate-head> [<pr-url>]
   local state=$1 id=$2 meta=$3 head=$4 receipt pr file hv=false facts docs verdict count why
   [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] || return 0
   receipt="$state/$id.run-receipt.json"
+  # A lane holds one slot but may land several pull requests: put back the receipt published for this head, if any.
+  jg_pr_head_valid "$head" && "$_JG_RECEIPTS_LIB_DIR/jg-receipt-restore.sh" "$state" "$id" "$head" >/dev/null
   # The optional <pr-url> is the pull request being recorded for merge, which a lane with several
   # pull requests holds apart from the pr= its record carried from an earlier one.
   pr=${5:-$(jg_dod_meta_value "$meta" pr)}

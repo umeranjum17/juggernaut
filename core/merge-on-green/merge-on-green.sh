@@ -173,6 +173,8 @@ for m in "$STATE"/*.meta; do
 
   # 2. The completion receipt must be a PASS for exactly this head and spawn generation.
   rcpt=$STATE/$task.run-receipt.json
+  # The lane's one slot may hold another member's receipt: put back the one published for this head, if any.
+  "$SRC/../receipts/bin/jg-receipt-restore.sh" "$STATE" "$task" "$pr_head" >/dev/null 2>&1 || :
   if [ ! -f "$rcpt" ]; then
     refuse "no run receipt at state/$task.run-receipt.json" ''
     continue
