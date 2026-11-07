@@ -120,6 +120,18 @@ It is not threaded, and a long text is split at 4096 characters.
 With no token file, no paired owner or a channel that is not live it sends nothing and prints nothing.
 `bin/jg-migration-card.sh live --quiet` uses it to send the migration live table whenever a row changes, and once a day when none did.
 
+## Away mode reaches the owner by itself
+
+Entering away mode arms `bin/jg-away-reach.sh`, and the return disarms it; `bin/jg-afk-contract.sh` calls `arm` on `enter` and `disarm` on `archive`, so no further command exists.
+Arming writes `state/away-reach.check.sh` and binds it with `bin/jg-check-register.sh`; the watcher runs it every check interval, in shell, with no model turn.
+Everything it needs is on disk, so a restart of the home changes nothing.
+While an away record exists it sends through `bin/jg-bus.sh gateway push`:
+
+- One update every 30 minutes (`JG_AWAY_REACH_INTERVAL`): worker counts, then the owner asks (`bin/jg-owner-asks.sh`). An update equal to the last one sent is skipped, so an unchanged fleet is not news.
+- An urgent message as the event arises, at most one check interval late: a new `needs-decision`, `blocked` or `failed` status line, or a line that asks for a sign-in or a credential. Each line is sent once, and secrets are removed.
+
+A quiet-mode record (the owner is present) never arms it. `tests/jg-away-reach.test.sh` fails if the clock or the urgent path is removed.
+
 ## The migration card row
 
 The migration card has a `chat` row, "captain chat (Telegram)".
