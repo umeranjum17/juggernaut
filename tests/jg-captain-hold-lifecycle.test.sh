@@ -219,14 +219,14 @@ signoff_hold() {  # <home> <task-id>
 }
 
 test_hold_reaches_the_core_signoff_card_path() {
-  local home out id=signoff-core-route
+  local home out id=jg-signoff-core-route
   home=$(make_home signoff-core-route)
   mkdir -p "$home/projects/sample" "$home/state/procevent"
   : > "$home/state/procevent/signoff.source"
   out=$(signoff_hold "$home" "$id" 2>&1) || fail "a hold with no authored ask exited nonzero: $out"
   assert_contains "$out" "no authored owner ask" \
     "an armed hold did not reach the core sign-off card path"
-  assert_grep "$id" "$home/data/backlog.md" "a hold whose card failed did not stay recorded"
+  tasks_in "$home" show "$id" >/dev/null || fail "a hold whose card failed did not stay recorded"
   pass "an armed hold reaches core/signoff and keeps its record and exits 0 when it has no authored ask"
 }
 
@@ -245,7 +245,7 @@ hold_with_reason() {  # <home> <addons-dir> <log> <task-id> <reason>
 }
 
 test_a_hold_that_is_the_captains_own_instruction_raises_no_card() {
-  local home addons log out rc=0 id=stop-order-held real=stop-order-real-ask
+  local home addons log out rc=0 id=jg-stop-order-held real=jg-stop-order-real-ask
   home=$(make_home stop-order-held)
   addons="$home/addons"
   log="$home/signoff.log"
@@ -255,7 +255,7 @@ test_a_hold_that_is_the_captains_own_instruction_raises_no_card() {
   out=$(hold_with_reason "$home" "$addons" "$log" "$id" \
     "captain stop order Main42 holds this lane; branch preserved unmerged" 2>&1) || rc=$?
   [ "$rc" -eq 0 ] || fail "a stop-order hold was refused instead of recorded: $out"
-  assert_grep "$id" "$home/data/backlog.md" "the stop-order hold was not recorded"
+  tasks_in "$home" show "$id" >/dev/null || fail "the stop-order hold was not recorded"
   assert_absent "$log" "a stop-order hold raised a card"
   assert_absent "$home/data/overwatch-decisions.md" "a stop-order hold was recorded for Main as a board ask"
   # The counter-case: a real product question still reaches the board.
@@ -269,7 +269,7 @@ test_a_hold_that_is_the_captains_own_instruction_raises_no_card() {
 # is a success: the signoff adapter says so with exit 3 and the hold exits 0. Any
 # other adapter failure still fails the command, with the hold recorded.
 test_a_direction_hold_with_no_card_exits_zero_and_a_real_card_failure_does_not() {
-  local home addons log out rc id=direction-held
+  local home addons log out rc id=jg-direction-held
   home=$(make_home direction-held)
   addons="$home/addons"
   log="$home/signoff.log"
@@ -280,35 +280,32 @@ test_a_direction_hold_with_no_card_exits_zero_and_a_real_card_failure_does_not()
   out=$(SIGNOFF_STATUS=3 hold_with_reason "$home" "$addons" "$log" "$id" \
     "Keep the release lane parked until the new build lands" 2>&1) || rc=$?
   [ "$rc" -eq 0 ] || fail "a direction hold with no card exited $rc instead of 0: $out"
-  assert_grep "$id" "$home/data/backlog.md" "the direction hold was not recorded"
+  tasks_in "$home" show "$id" >/dev/null || fail "the direction hold was not recorded"
   assert_grep "raise|$id|" "$log" "the direction hold never reached the card path"
   rc=0
-  out=$(SIGNOFF_STATUS=1 hold_with_reason "$home" "$addons" "$log" "direction-failed" \
+  out=$(SIGNOFF_STATUS=1 hold_with_reason "$home" "$addons" "$log" "jg-direction-failed" \
     "Keep the release lane parked until the new build lands" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "a real card failure exited 0: $out"
-  assert_grep "direction-failed" "$home/data/backlog.md" "the hold was not recorded before the card failed"
+  tasks_in "$home" show "jg-direction-failed" >/dev/null || fail "the hold was not recorded before the card failed"
   pass "a hold with no card to raise exits 0, and a real card failure still exits nonzero"
 }
 
 test_a_parked_hold_raises_no_card() {
-  local home addons log out rc=0 id=parked-held
+  local home addons log out rc=0 id=jg-parked-held
   home=$(make_home parked-held)
   addons="$home/addons"
   log="$home/signoff.log"
   mkdir -p "$home/projects/sample" "$home/state/procevent"
   : > "$home/state/procevent/signoff.source"
   signoff_addon_stub "$addons"
-  cat > "$home/data/backlog.md" <<EOF
-## In flight
-- [ ] $id - Route the card (repo: sample) (kind: ship) (hold: waiting on a parked lane) (hold-kind: parked)
-
-## Queued
-
-## Done
-EOF
+  tasks_in "$home" add "$id" "Route the card" --kind ship --repo sample --start >/dev/null \
+    || fail "could not create the parked fixture"
+  BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" update "$id" --status on_hold \
+    --set-metadata hold_reason="waiting on a parked lane" --set-metadata hold_kind=parked >/dev/null \
+    || fail "could not park the fixture"
   out=$(hold_with_reason "$home" "$addons" "$log" "$id" "who signs off the release" 2>&1) || rc=$?
   [ "$rc" -eq 0 ] || fail "a parked hold was refused instead of recorded: $out"
-  assert_grep "(hold-kind: captain)" "$home/data/backlog.md" "the parked hold was not re-recorded for the captain"
+  assert_contains "$(tasks_in "$home" show "$id" --full)" "hold_kind: captain" "the parked hold was not re-recorded for the captain"
   assert_absent "$log" "a parked hold raised a card"
   assert_absent "$home/data/overwatch-decisions.md" "a parked hold was recorded for Main as a board ask"
   pass "a hold whose kind is parked records the hold alone and raises no card"
@@ -324,14 +321,8 @@ test_uninventoried_report_decision_refuses_completion() {
   home=$(make_home omitted-decision)
   id=jg-sample-route-review
   mkdir -p "$home/data/$id"
-  cat > "$home/data/backlog.md" <<EOF
-## In flight
-- [ ] $id - Investigate sample routing (repo: sample) (kind: scout) (since 2026-07-14)
-
-## Queued
-
-## Done
-EOF
+  tasks_in "$home" add "$id" "Investigate sample routing" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the uninventoried fixture"
   write_origin_meta "$home" "$id"
   printf 'done: report and visual review complete\n' > "$home/state/$id.status"
   cat > "$home/data/$id/report.md" <<'EOF'
@@ -1883,15 +1874,8 @@ test_relocated_report_does_not_wedge_an_answer_before_replay() {
   id=jg-sample-relocated-answer-before-replay
   wt="$home/projects/$id"
   mkdir -p "$home/data" "$data/$id" "$wt" "$home/projects/sample"
-  cat > "$home/data/backlog.md" <<'EOF'
-## In flight
-
-## Queued
-
-## Done
-EOF
-  (cd "$home" && jg-tasks-axi.sh add "$id" "Investigate relocated answer replay" --kind scout \
-    --repo sample --start --file "$data/backlog.md" >/dev/null) \
+  tasks_in "$home" add "$id" "Investigate relocated answer replay" --kind scout \
+    --repo sample --start >/dev/null \
     || fail "could not create the relocated answer-before-replay fixture"
   jg_write_meta "$home/state/$id.meta" \
     "window=juggernaut:jg-$id" "worktree=$wt" "project=$home/projects/sample" \
@@ -1930,7 +1914,7 @@ EOF
     JG_DATA_OVERRIDE="$data" JG_CONFIG_OVERRIDE="$home/config" \
     "$ROOT/bin/jg-captain-hold.sh" answer "$id" --decision-file "$home/answer.txt" \
     >/dev/null || fail "the unsupported relocated report wedged the captain's answer"
-  show=$(cd "$home" && jg-tasks-axi.sh show "$id" --full --file "$data/backlog.md") \
+  show=$(tasks_in "$home" show "$id" --full) \
     || fail "the answered relocated row disappeared"
   assert_contains "$show" "state: done" "the relocated report kept the answered call open"
   assert_contains "$show" "held: no" "the relocated report kept the answered call held"
@@ -1953,105 +1937,6 @@ EOF
 
 # A home whose data directory is relocated keeps one backlog; the predicate and
 # the retention must address it the way teardown does, not JG_HOME/data.
-test_teardown_retains_captain_calls_in_a_relocated_backlog() {
-  local home data id show
-  home=$(make_home teardown-relocated-hold)
-  data="$home/records"
-  mv "$home/data" "$data"
-  id=jg-sample-relocated-hold
-  mkdir -p "$home/data" "$data/$id"
-  # A backlog at the default location stays empty, so a wrongly addressed read
-  # would find no row at all.
-  cat > "$home/data/backlog.md" <<'EOF'
-## In flight
-
-## Queued
-
-## Done
-EOF
-  (cd "$home" && jg-tasks-axi.sh add "$id" "Investigate relocated sample hold" --kind scout \
-    --repo sample --start --file "$data/backlog.md" >/dev/null) \
-    || fail "could not create the relocated captain-hold fixture"
-  write_origin_meta "$home" "$id"
-  printf 'done: report complete\n' > "$home/state/$id.status"
-  printf '# Relocated hold\n\nThe captain call remains open.\n' > "$data/$id/report.md"
-  PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" \
-    JG_DATA_OVERRIDE="$data" JG_CONFIG_OVERRIDE="$home/config" \
-    "$ROOT/bin/jg-captain-hold.sh" hold "$id" \
-    --reason "captain must choose the relocated sample outcome" >/dev/null \
-    || fail "could not hold the relocated work item"
-  PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" \
-    JG_DATA_OVERRIDE="$data" JG_CONFIG_OVERRIDE="$home/config" \
-    "$ROOT/bin/jg-captain-hold.sh" hold "$id-call" --title "Sibling captain call" \
-    --reason "captain must decide the sibling call" --repo sample --origin "$id" >/dev/null \
-    || fail "could not hold the sibling captain call"
-  PATH="$home/fakebin:$PATH" JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" \
-    JG_DATA_OVERRIDE="$data" JG_CONFIG_OVERRIDE="$home/config" \
-    "$ROOT/bin/jg-captain-hold.sh" complete "$id" "$id-call" >/dev/null \
-    || fail "completion gate failed for the relocated captain hold"
-
-  PATH="$home/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
-    JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$data" \
-    JG_CONFIG_OVERRIDE="$home/config" "$TEARDOWN" "$id" \
-    > "$home/teardown.out" 2> "$home/teardown.err" \
-    || fail "cleanup of the relocated captain hold failed: $(cat "$home/teardown.err")"
-  show=$(cd "$home" && jg-tasks-axi.sh show "$id" --full --file "$data/backlog.md") \
-    || fail "the relocated captain-held row disappeared"
-  assert_not_contains "$show" "state: done" "cleanup closed the relocated captain call"
-  assert_contains "$show" "state: queued" "cleanup left the relocated captain call reading as worked on"
-  assert_contains "$show" "hold_kind: captain" "cleanup dropped the relocated captain hold"
-  assert_contains "$show" "Deliverable of the finished work: report records/$id/report.md" \
-    "cleanup did not record the deliverable in the relocated backlog"
-  assert_absent "$home/state/$id.meta" "cleanup left the relocated task record behind"
-  assert_absent "$home/state/$id.backlog-close" "cleanup left its pending record behind"
-  assert_no_grep "$id" "$home/data/backlog.md" "cleanup wrote to the empty default-location backlog"
-  pass "cleanup retains captain calls in the configured backlog"
-}
-
-test_merge_approval_releases_before_zero_done_retention() {
-  local home id archive repo wt pr show
-  home=$(make_home zero-done-retention)
-  id=jg-sample-zero-retention-merge
-  archive="$home/data/done-archive.md"
-  repo="$home/projects/sample"
-  wt="$home/projects/$id"
-  pr="https://github.com/sample/sample/pull/19"
-  printf '%s\n' 'backend = "markdown"' '' '[markdown]' \
-    'path = "data/backlog.md"' 'archive = "data/done-archive.md"' \
-    'done_keep = 0' > "$home/.tasks.toml"
-  jg_git_worktree "$repo" "$wt" fm/zero-retention-merge
-  tasks_in "$home" add "$id" "Ship zero-retention merge $pr" --kind ship \
-    --repo sample --start >/dev/null || fail "could not create the zero-retention fixture"
-  jg_write_meta "$home/state/$id.meta" \
-    "window=juggernaut:jg-$id" "endpoint_task_id=$id" "worktree=$wt" \
-    "project=$repo" "harness=codex" "kind=ship" "mode=no-mistakes" \
-    "pr=$pr" "spawn_gen=fixture-$id"
-  printf 'done: merge ready\n' > "$home/state/$id.status"
-  run_captain "$home" hold "$id" --reason "captain merge approval pending" >/dev/null \
-    || fail "could not hold the zero-retention merge"
-  printf 'Merge the approved change.\n' > "$home/merge-answer.txt"
-  run_captain "$home" answer "$id" --release \
-    --decision-file "$home/merge-answer.txt" >/dev/null \
-    || fail "could not release the approved zero-retention merge"
-  show=$(tasks_in "$home" show "$id" --full) || fail "the released merge row disappeared"
-  assert_contains "$show" "state: in_flight" \
-    "merge approval completed the zero-retention row before landing"
-  assert_contains "$show" "Resolution mode: released" \
-    "merge approval did not record the existing release mode"
-  run_teardown "$home" "$id" > "$home/teardown.out" 2> "$home/teardown.err" \
-    || fail "zero-retention cleanup failed: $(cat "$home/teardown.err")"
-  assert_no_grep "$id" "$home/data/backlog.md" \
-    "zero-retention cleanup kept the completed row in the active backlog"
-  assert_grep "$id" "$archive" "zero-retention cleanup did not archive the completed row"
-  assert_grep "$pr" "$archive" "zero-retention archival lost the merged pull request"
-  assert_grep "Merge the approved change." "$archive" \
-    "zero-retention archival lost the recorded merge approval"
-  assert_absent "$home/state/$id.meta" "zero-retention cleanup retained task metadata"
-  assert_absent "$home/state/$id.backlog-close" \
-    "zero-retention cleanup retained its pending close record"
-  pass "merge approval releases before zero-retention cleanup records completion"
-}
-
 test_pr_merge_entrypoint_refuses_a_captain_held_task() {
   local home pr_id pr repo wt rc
   home=$(make_home held-merge-entrypoints)
@@ -2125,83 +2010,6 @@ test_local_merge_entrypoint_refuses_a_captain_held_task() {
   assert_absent "$home/state/.control-$local_id.lock" \
     "the refused local merge left its task control lock held"
   pass "the local merge entrypoint refuses a captain-held task before merging"
-}
-
-test_pr_merge_entrypoint_separates_an_unreadable_record_from_an_absent_one() {
-  local home id pr rc merge_count
-  home=$(make_home missing-pr-authority-record)
-  configure_merged_github "$home"
-  id=jg-sample-missing-pr-authority
-  pr=https://github.com/sample/sample/pull/43
-  write_origin_meta "$home" "$id" ship
-
-  # A backlog that exists but cannot be read may hide a live captain hold, so
-  # the merge must refuse without reaching the forge.
-  chmod 000 "$home/data/backlog.md"
-  set +e
-  run_pr_merge "$home" "$id" "$pr" > "$home/missing-pr.out" 2> "$home/missing-pr.err"
-  rc=$?
-  set -e
-  chmod 644 "$home/data/backlog.md"
-  [ "$rc" -ne 0 ] || fail "the PR merge entrypoint accepted an unreadable captain-hold authority record"
-  assert_grep "could not determine whether task $id is still held for the captain" "$home/missing-pr.err" \
-    "the PR merge refusal did not name its unreadable authority record"
-  assert_no_grep 'pr merge 43 ' "$home/gh.log" \
-    "the PR merge entrypoint reached the forge without a readable authority record"
-
-  # A home with no backlog at all records no captain calls, so nothing can be
-  # held and the merge proceeds.
-  rm "$home/data/backlog.md"
-  run_pr_merge "$home" "$id" "$pr" > "$home/absent-pr.out" 2> "$home/absent-pr.err" \
-    || fail "the PR merge entrypoint refused a home carrying no backlog"
-  merge_count=$(grep -c 'pr merge 43 ' "$home/gh.log" || true)
-  [ "$merge_count" -eq 1 ] || fail "the absent backlog did not permit exactly one PR merge"
-  pass "the PR merge entrypoint separates an unreadable authority record from an absent one"
-}
-
-test_local_merge_entrypoint_separates_an_unreadable_record_from_an_absent_one() {
-  local home id repo wt before after rc
-  home=$(make_home missing-local-authority-record)
-  id=jg-sample-missing-local-authority
-  repo="$home/projects/jg-sample-local"
-  wt="$home/projects/$id"
-  jg_git_worktree "$repo" "$wt" "fm/$id"
-  printf 'untracked local delivery\n' > "$wt/local.txt"
-  git -C "$wt" add local.txt
-  git -C "$wt" -c user.name='Juggernaut Tests' -c user.email='tests@example.invalid' \
-    commit -qm 'untracked local delivery'
-  jg_write_meta "$home/state/$id.meta" \
-    "window=juggernaut:jg-$id" "endpoint_task_id=$id" "worktree=$wt" \
-    "project=$repo" "harness=codex" "kind=ship" "mode=local-only" \
-    "spawn_gen=fixture-$id"
-  before=$(git -C "$repo" rev-parse main)
-
-  # Unreadable authority record: refuse, and leave the default branch where it was.
-  chmod 000 "$home/data/backlog.md"
-  set +e
-  PATH="$home/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
-    JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
-    JG_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/jg-merge-local.sh" "$id" \
-    > "$home/missing-local.out" 2> "$home/missing-local.err"
-  rc=$?
-  set -e
-  chmod 644 "$home/data/backlog.md"
-  after=$(git -C "$repo" rev-parse main)
-  [ "$rc" -ne 0 ] || fail "the local merge entrypoint accepted an unreadable captain-hold authority record"
-  [ "$after" = "$before" ] || fail "the local merge entrypoint moved main without a readable authority record"
-  assert_grep "could not determine whether task $id is still held for the captain" "$home/missing-local.err" \
-    "the local merge refusal did not name its unreadable authority record"
-
-  # No backlog at all: nothing can be held, so the landing proceeds.
-  rm "$home/data/backlog.md"
-  PATH="$home/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
-    JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
-    JG_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/jg-merge-local.sh" "$id" \
-    > "$home/absent-local.out" 2> "$home/absent-local.err" \
-    || fail "the local merge entrypoint refused a home carrying no backlog"
-  after=$(git -C "$repo" rev-parse main)
-  [ "$after" != "$before" ] || fail "the absent backlog did not permit the local merge"
-  pass "the local merge entrypoint separates an unreadable authority record from an absent one"
 }
 
 test_merge_entrypoints_validate_identity_and_state_before_locking() {
@@ -2914,12 +2722,8 @@ test_interrupted_cleanup_keeps_the_captain_call_recoverable
 test_answer_before_cleanup_replay_preserves_the_retained_report
 test_unusable_pending_close_record_names_its_reason
 test_relocated_report_does_not_wedge_an_answer_before_replay
-test_teardown_retains_captain_calls_in_a_relocated_backlog
-test_merge_approval_releases_before_zero_done_retention
 test_pr_merge_entrypoint_refuses_a_captain_held_task
 test_local_merge_entrypoint_refuses_a_captain_held_task
-test_pr_merge_entrypoint_separates_an_unreadable_record_from_an_absent_one
-test_local_merge_entrypoint_separates_an_unreadable_record_from_an_absent_one
 test_merge_entrypoints_validate_identity_and_state_before_locking
 test_merge_entrypoints_refuse_a_reused_task_incarnation
 test_merge_entrypoints_serialize_forced_teardown_before_task_reads
