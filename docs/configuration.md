@@ -1393,6 +1393,8 @@ An executable `config/merge-gate` in a home is run before every landing - `bin/j
 A nonzero exit refuses that merge and prints the gate's own reason; an absent file changes nothing, and a present but non-executable one refuses the merge until it is fixed.
 `bin/jg-merge-gate-lib.sh` owns the hook, so the gate runs with nothing else wired; `core/merge-card` defines the same two hooks and is the version that runs.
 `config/post-merge` is the matching after-the-fact hook and never changes a merge's outcome.
+Both merge paths also run a proof gate (`jg_dod_proof_gate`): where the home, or the parent of a Squad Lead home, names a board (`config/post-merge` or `JG_PROOF_BOARD`), the merge posts the task's proof card itself and is refused when the proof, the board client or the board is missing.
+After a proven merge, `bin/jg-merge-alert.sh` files one alert on the same board, and a board that is down queues it under `state/merge-alerts/` for the supervision cycle to retry.
 A home that wants the retired-catalog rule in its own gate adds one line to `config/merge-gate`: `bin/jg-retired-catalog-check.sh --base "${3:--}"` (or the whole-tree form with no `--base`), which refuses a landing that restores a path under the retired catalog directory (the check names it); the repo's own invariants job runs the same check on every pull request.
 The gate's content is home-local policy; `bin/jg-tool-wiring.sh` places done-done's gate only in a home that has none.
 `core/owner-guard/wiring.sh` and `core/owner-rules/wiring.sh` write one gate file holding both checks, and `core/lib/merge-gate-lib.sh` owns that file, the steps it records, and the home's own gate kept at `config/merge-gate.pre-chain`.
