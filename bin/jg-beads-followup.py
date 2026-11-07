@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import sys
+import time
 
 sys.dont_write_bytecode = True
 view = __import__("jg-beads-view")
@@ -277,7 +278,7 @@ def add(args):
         view.refuse('Public-followup "%s" already exists with different immutable data' % ids[0], None, "CONFLICT", 1)
     if not row:
         meta = {"kind": KIND, "followup": {**fixed, "delivery_key": "fd1_" + secrets.token_urlsafe(24)},
-                "delivery_state": "intent", "revision": 1}
+                "delivery_state": "intent", "revision": 1, "added_ns": time.time_ns()}
         write.bd("create", "--title=" + fixed["request"]["public_safe_summary"], "--id", ids[0], "--force",
                  "--labels", KIND, "--metadata", json.dumps(meta))
     answer(found, "add", ids[0], [] if row else ["task", "public_followup"], bool(row))
@@ -324,7 +325,9 @@ def supersede(args):
 
 
 def promises(items):
-    return [typed(row, items) for row in sorted(items.values(), key=lambda row: row["created_at"]) if promised(row)]
+    # bd stamps created_at to the second, so the row's own stamp keeps two promises of one second in order.
+    order = sorted(filter(promised, items.values()), key=lambda row: (row["created_at"], row["metadata"].get("added_ns", 0)))
+    return [typed(row, items) for row in order]
 
 
 def shown(found, name, action, items, kept, none):
