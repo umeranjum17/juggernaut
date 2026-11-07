@@ -1285,6 +1285,25 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   pass "pi-signed shares Pi launch semantics while preserving its configured and recorded identity"
 }
 
+test_pi_refuses_a_claude_model_before_any_pane_exists() {
+  local harness model rec id out status
+  for harness in pi pi-signed; do
+    for model in claude-haiku-5-5 anthropic/claude-sonnet-5-5; do
+      id="profile-${harness}-claude-z9"
+      rec=$(make_spawn_case "profile-${harness}-claude-${model//\//-}" "$harness" "$id")
+      read_case_record "$rec"
+      out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model "$model" 2>&1)
+      status=$?
+      expect_code 1 "$status" "$harness with Claude model $model should be refused"
+      assert_contains "$out" "cannot run the Claude model '$model'" "refusal does not name the model"
+      assert_contains "$out" "--harness claude" "refusal does not give the way out"
+      [ ! -s "$LAUNCH_LOG" ] || fail "$harness launched a pane for Claude model $model"
+      [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "$harness recorded a task for Claude model $model"
+    done
+  done
+  pass "pi and pi-signed refuse a Claude model before any pane exists"
+}
+
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi() {
   local harness version rec id out status launch
   for harness in pi pi-signed; do
@@ -1665,10 +1684,29 @@ test_claude_token_saver_settings() {
   status=$?
   expect_code 0 "$status" "squad_lead claude spawn should succeed"$'\n'"$out"
   settings=$(claude_settings_json_arg "$(cat "$LAUNCH_LOG")")
-  printf '%s' "$settings" | jq -e '.enabledPlugins == {"ponytail@ponytail":false} and .env == {"BASH_MAX_OUTPUT_LENGTH":"8000"} and (.hooks | has("UserPromptSubmit"))' >/dev/null \
-    || fail "the squad_lead settings file lacks the token saver keys: $settings"
+  printf '%s' "$settings" | jq -e '.enabledPlugins == {"ponytail@ponytail":false} and .env == {"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"183000","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":"100","BASH_MAX_OUTPUT_LENGTH":"8000"} and (.hooks | has("UserPromptSubmit"))' >/dev/null \
+    || fail "the squad_lead settings file lacks the token saver keys or the default 150000 supervisor cap: $settings"
   [ ! -e "$sm/config/bash-output-max" ] || fail "config/bash-output-max must stay a one-home trial, not be inherited"
   pass "a claude squad_lead's settings file carries the token saver keys, and the cap is not inherited"
+
+  id=profile-claude-lead-cap-off-z45
+  rec=$(make_spawn_case profile-claude-lead-cap-off claude "$id")
+  read_case_record "$rec"
+  sm="$CASE_DIR/squad-lead-home"
+  make_seeded_squad_lead_home "$sm" "$id"
+  printf 'lead off\n' > "$HOME_DIR/config/supervisor-context-cap"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --squad-lead)
+  status=$?
+  expect_code 0 "$status" "squad_lead claude spawn with 'lead off' should succeed"$'\n'"$out"
+  settings=$(claude_settings_json_arg "$(cat "$LAUNCH_LOG")")
+  printf '%s' "$settings" | jq -e '(.env // {}) | has("CLAUDE_CODE_AUTO_COMPACT_WINDOW") | not' >/dev/null \
+    || fail "config/supervisor-context-cap 'lead off' must leave the cap out of the lead's settings: $settings"
+  printf 'lead 10\n' > "$HOME_DIR/config/supervisor-context-cap"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --squad-lead)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a malformed config/supervisor-context-cap must stop the launch"
+  assert_contains "$out" "config/supervisor-context-cap line 1 must be" "a malformed cap did not name the problem"
+  pass "config/supervisor-context-cap 'lead off' drops the cap from a lead's settings, and a malformed line stops the launch"
 
   id=profile-claude-token-saver-bad-z43
   rec=$(make_spawn_case profile-claude-token-saver-bad claude "$id")
@@ -2292,6 +2330,7 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
 test_pi_signed_persistent_squad_lead_uses_pi_extensions_and_identity
 test_pi_seeded_squad_lead_preapproves_project_trust
 test_pi_worker_launch_omits_seeded_home_approve
+test_pi_refuses_a_claude_model_before_any_pane_exists
 test_pi_approve_probe_omits_unsupported_flag
 test_pi_exclude_tools_reach_ship_and_scout_launches
 test_pi_exclude_tools_worker_registry_reports

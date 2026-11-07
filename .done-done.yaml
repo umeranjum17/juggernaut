@@ -49,6 +49,8 @@ journeys:
     timeout: 45m
   fleet-report:
     command: bash core/fleet-report/run-proof.sh
+  project-state-map:
+    command: bash core/project-state-map/run-proof.sh
   status-digest:
     command: bash journeys/status-digest.sh
   release-readiness:
@@ -185,6 +187,8 @@ journeys:
     command: bash journeys/axi-digest.sh
   remote-squad-lead-lifecycle:
     command: bash journeys/remote-squad-lead-lifecycle.sh
+  unit-claim:
+    command: bash journeys/unit-claim.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

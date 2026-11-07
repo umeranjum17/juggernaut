@@ -1212,7 +1212,11 @@ def resolve_settings(options):
     if not options.region:
         options.region = records.require_setting(home, *SETTINGS["region"])
     if not options.model:
-        options.model = records.require_setting(home, *SETTINGS["model"])
+        # An environment variable wins; then an entry tagged voice-relay in config/tool-models.json (harness pi,
+        # model amazon-bedrock/<id>), which outranks config/voice-model; no entry keeps the config file.
+        env_model = (os.environ.get(SETTINGS["model"][1]) or "").strip()
+        options.model = env_model or records.tool_model(home, "voice-relay", "pi", "amazon-bedrock/") \
+            or records.require_setting(home, *SETTINGS["model"])
     if options.profile is None:
         # Presence, not truthiness: an empty JG_VOICE_PROFILE is the captain
         # saying "use the credentials I already have" and must not fall through

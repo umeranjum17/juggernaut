@@ -243,6 +243,22 @@ def require_setting(home, name, env, what):
     return value
 
 
+def tool_model(home, tool, harness, prefix=""):
+    """Return the model config/tool-models.json names for a tool, else None.
+
+    bin/jg-tool-models.sh owns the file, the checks and the one plain TOOL_MODELS
+    line on stderr, so this only asks it. None means the caller keeps its default.
+    """
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-tool-models.sh")
+    env = dict(os.environ, JG_HOME=home, JG_CONFIG_OVERRIDE=config_dir(home))
+    try:
+        run = subprocess.run([script, "model", tool, harness, prefix], env=env,
+                             stdout=subprocess.PIPE, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return run.stdout.strip() or None
+
+
 def read_scope(home):
     """Return the configured read scope, defaulting to the narrowest one."""
     raw = _read_config(home, "voice-read-scope")

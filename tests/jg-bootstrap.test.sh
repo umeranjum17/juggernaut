@@ -607,20 +607,23 @@ test_herdr_primary_names_a_machine_unit_serving_another_home() {
 exit 0
 SH
   chmod +x "$fakebin/systemctl"
+  # Only the home's own copy of Juggernaut reads the machine's units, so this home
+  # gets one; a fixture running another checkout's bootstrap reports nothing.
+  cp -a "$ROOT/bin" "$case_dir/home/bin"
   out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
-    JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_UNIT_HOME="$other" "$ROOT/bin/jg-bootstrap.sh")
+    JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_UNIT_HOME="$other" "$case_dir/home/bin/jg-bootstrap.sh")
   for unit in jg-sentinel jg-wake-engine jg-wake-watcher jg-router; do
-    assert_contains "$out" "UNIT_HOME: $unit is running for $other" "an active $unit serving another home must be named"
+    assert_contains "$out" "UNIT_HOME: $unit serves $other, not this home" "an active $unit serving another home must be named"
   done
-  assert_contains "$out" "jg-stack.sh up" "a moved bus unit must come with its repair step"
+  assert_not_contains "$out" "move it" "a Main home moves the units itself at session start; the banner names no manual command"
   out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
-    JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_UNIT_HOME="$case_dir/home" "$ROOT/bin/jg-bootstrap.sh")
+    JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_UNIT_HOME="$case_dir/home" "$case_dir/home/bin/jg-bootstrap.sh")
   assert_not_contains "$out" "UNIT_HOME:" "units serving this home are not reported"
   : > "$case_dir/home/.jg-squad-lead-home"
   out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
-    JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_UNIT_HOME="$other" "$ROOT/bin/jg-bootstrap.sh")
+    JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_UNIT_HOME="$other" "$case_dir/home/bin/jg-bootstrap.sh")
   assert_not_contains "$out" "UNIT_HOME:" "a squad_lead home is served by its primary's units"
-  pass "bootstrap: a machine unit serving another home is named with its repair step"
+  pass "bootstrap: a machine unit serving another home is named, with no command to run"
 }
 
 test_herdr_install_requires_manual_action() {

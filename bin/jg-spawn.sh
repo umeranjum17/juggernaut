@@ -2121,6 +2121,14 @@ devin)
   }
   ;;
 pi | pi-signed)
+  # A Claude model never runs on Pi: it has no Anthropic login of its own, so the lane would start and then
+  # fail on its first turn. Refuse here, before any pane or record exists, and name the way out.
+  case "${MODEL##*/}:${MODEL%%/*}" in
+  claude-*:* | claude:* | *:anthropic)
+    echo "error: $HARNESS cannot run the Claude model '$MODEL'; Pi has no Claude login, so the lane would fail on its first turn. Use --harness claude for a Claude model, or pick a Pi model such as openai-codex/gpt-5.6-sol" >&2
+    exit 1
+    ;;
+  esac
   PI_BIN=$(resolve_pi_executable "$HARNESS") || {
     echo "error: $HARNESS executable not found on PATH; install it or select a different verified harness" >&2
     exit 1
@@ -4230,7 +4238,17 @@ BUSY_GEN=
       if [ "$KEEP_AI_TRAILERS" != 1 ]; then
         session_keys='"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false},'
       fi
-      [ -z "$CLAUDE_TOKEN_KEYS" ] || session_keys="$session_keys$CLAUDE_TOKEN_KEYS,"
+      # Supervisor context cap (config/supervisor-context-cap): the lead's own env, merged with the token saver's env key.
+      lead_cap_pairs=$(python3 "$SCRIPT_DIR/jg-context-bound.py" env lead --pairs --config "$CONFIG") || exit 1
+      lead_keys=$CLAUDE_TOKEN_KEYS
+      if [ -n "$lead_cap_pairs" ]; then
+        case "$lead_keys" in
+          *'"env":{'*) lead_keys=${lead_keys/'"env":{'/'"env":{'$lead_cap_pairs,} ;;
+          '') lead_keys="\"env\":{$lead_cap_pairs}" ;;
+          *) lead_keys="$lead_keys,\"env\":{$lead_cap_pairs}" ;;
+        esac
+      fi
+      [ -z "$lead_keys" ] || session_keys="$session_keys$lead_keys,"
       printf '{%s%s}\n' "$session_keys" "$hooks_json" >"$STATE_REAL/$ID.claude-settings.json"
     else
       mkdir -p "$WT/.claude"

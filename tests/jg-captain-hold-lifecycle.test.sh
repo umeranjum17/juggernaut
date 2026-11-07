@@ -424,6 +424,42 @@ test_answer_records_and_closes() {
   pass "answer records the captain's words, closes idempotently, and releases routed work"
 }
 
+# A release from a board answer tells the owner what started: one
+# `sign-off-axi feedback --reply` on the card, and a feedback failure never
+# fails the release.
+test_release_posts_its_reply_on_the_card() {
+  local home log rc
+  home=$(make_home release-reply)
+  log="$home/feedback.log"
+  cat > "$home/fakebin/sign-off-axi" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = feedback ] || exit 0
+printf '%s\n' "$*" >> "$FEEDBACK_LOG"
+exit "${FEEDBACK_RC:-0}"
+SH
+  chmod +x "$home/fakebin/sign-off-axi"
+  printf 'Go.\n' > "$home/go.txt"
+  tasks_in "$home" add reply-widget "Ship the reply widget" --kind ship --repo sample >/dev/null
+  run_captain "$home" hold reply-widget --reason "captain go needed" >/dev/null
+  FEEDBACK_LOG=$log run_captain "$home" answer reply-widget --decision-file "$home/go.txt" --release --card fd-open-calls >/dev/null \
+    || fail "answer --release failed"
+  assert_grep "feedback fd-open-calls " "$log" "the release did not reply on the answered card"
+  assert_grep "--reply Released reply-widget: Ship the reply widget" "$log" \
+    "the release reply did not name the task and its outcome"
+  tasks_in "$home" add keyed-widget "Ship the keyed widget" --kind ship --repo sample >/dev/null
+  run_captain "$home" hold keyed-widget --reason "captain go needed" >/dev/null
+  printf 'keyed-widget\tgo\t\trelease\n' | FEEDBACK_LOG=$log run_captain "$home" answers --source "reply fixture" >/dev/null \
+    || fail "a keyed release failed"
+  assert_grep "feedback keyed-widget " "$log" "a keyed release did not reply on its card"
+  tasks_in "$home" add broken-widget "Ship the broken widget" --kind ship --repo sample >/dev/null
+  run_captain "$home" hold broken-widget --reason "captain go needed" >/dev/null
+  rc=0
+  FEEDBACK_RC=5 FEEDBACK_LOG=$log run_captain "$home" answer broken-widget --decision-file "$home/go.txt" --release --card broken-card >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] || fail "a failing feedback call failed the release"
+  assert_contains "$(tasks_in "$home" show broken-widget --full)" "held: no" "a failing feedback call left the hold in place"
+  pass "a release replies on its card with what starts, and a feedback failure never fails it"
+}
+
 # --release lifts the hold instead of closing, preserving the work item's own
 # body under the record; a re-held task later accepts a new answer.
 test_release_frees_held_work() {

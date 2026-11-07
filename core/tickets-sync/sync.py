@@ -188,9 +188,9 @@ def sync():
             temp = path.with_suffix('.tmp'); temp.write_text(json.dumps(value)); temp.replace(path)
         seen = set()
         skipped_ids = set()
-        def publish(tid, desired, derived=(), where='', reason=''):
+        def publish(tid, desired, derived=(), where='', reason='', description=''):
             # One bad record never stops the pass: name it and the home and item behind it once, then go on.
-            try: _publish(tid, desired, derived, reason)
+            try: _publish(tid, desired, derived, reason, description)
             except TICKET_ERRORS as error:
                 if tid in skipped_ids: return
                 skipped_ids.add(tid)
@@ -208,7 +208,7 @@ def sync():
             existing[tid]['assignee'] = desired['assignee']
         def legacy_owner(tid, desired):
             if tid.startswith('jg-'): owner_line('fm-' + tid[3:], desired)
-        def _publish(tid, desired, derived=(), reason=''):
+        def _publish(tid, desired, derived=(), reason='', description=''):
             nonlocal changed, feed_ends
             seen.add(tid)
             if options.check:
@@ -246,9 +246,15 @@ def sync():
             for key, value in desired.items():
                 if key != 'assignee': args += ['--' + key, str(value)]
             if desired.get('hold') == 'yes': args += ['--hold-reason', reason]
+            # The board refuses a new ticket without a description and wants its "# Ask", "# Why" and "# Done when"
+            # headings each at the start of a line, so the task body goes whole, line breaks kept. Only a new row sends it,
+            # so words written on the board afterwards stay.
+            summary = '' if old else description or desired.get('title') or tid
+            if summary: args += ['--description', summary]
             run(args); changed += 1
             if 'assignee' in desired:
-                feed[tid] = write_assignee(feed_file, tid, feed.get(tid, {}), desired, feed_ends, reason)
+                # The owner line is the whole record, so a new row's description rides along or the line would drop it.
+                feed[tid] = write_assignee(feed_file, tid, {**feed.get(tid, {}), **({'description': summary} if summary else {})}, desired, feed_ends, reason)
                 feed_ends = True
             updated = dict(old)
             for key, value in desired.items():
@@ -352,7 +358,7 @@ def sync():
                     desired['stage'] = stage
                     if event is not None: desired['last-event-at'] = event
                 if all(i['name'] != name or i['row']['id'] != item for i in items): items.append(dict(tid=tid, name=name, row=r, event=event, parked=name in parked, source=source))
-                publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason)
+                publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason, body.strip())
         if options.cleanup:
             carded = {d['ticket'] for d in json.loads(run(['sign-off-axi', 'list', str(board), '--json'])).get('decisions', []) if d.get('ticket')}
             def cards():

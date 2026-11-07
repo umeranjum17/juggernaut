@@ -182,6 +182,21 @@ case $text_card in "owner-rules: $pr declares screen: none, so it takes the text
 jq -e --arg k "$cardkey" '.items | any(.[]; .key==$k and .kind=="evidence" and .media==null and .run.commit!=null)' "$work/board.json" >/dev/null && ok "auto-post: text-only receipt card exists" || no "auto-post: text-only receipt card missing"
 # A capture is never demanded of a screen-free merge: the card carries no media and no media path is posted.
 jq -e --arg k "$cardkey" '.items | any(.[]; .key==$k and (.media // []) == [])' "$work/board.json" >/dev/null && ok "screen: none: the card carries no capture" || no "screen: none: the card names a capture"
+# A lead home finds Main's public key from the parent binding it carries; nobody exports JG_MAIN_HOME by hand.
+# Main's home is $home here (it holds the key pair); the lead holds only the sealed run and the signature.
+lead=$work/lead; mkdir -p "$lead/data" "$lead/config"; cp -r "$home/data/lane" "$lead/data/lane"; cp "$home/data/checks-gate.log" "$lead/data/" 2>/dev/null
+printf '#!/bin/sh\necho "prev gate ran: $*"\n' > "$lead/config/merge-gate"; chmod +x "$lead/config/merge-gate"
+"$addons/owner-rules/wiring.sh" "$lead" >/dev/null
+lead_gate() { env -u JG_MAIN_HOME PATH="$work/bin:$PATH" XDG_DATA_HOME="$work/data" JG_HOME="$lead" JG_FLEET_BOARD="$work/board.json" "$lead/config/merge-gate" lane - "$head" "$pr" 2>&1; printf 'rc=%s\n' "$?"; }
+lead_nokey=$(lead_gate)
+[[ $lead_nokey == *"no valid local proof signature"* ]] && ok "lead home with no parent binding does not see Main's key" || no "lead without binding: $lead_nokey"
+printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$home" > "$lead/.jg-squad-lead-parent"
+jq --arg k "$cardkey" --arg h "$head" '.items = [{kind:"evidence",key:$k,run:{commit:$h}}]' "$work/board.json" > "$work/board.tmp" && mv "$work/board.tmp" "$work/board.json"
+[[ $(lead_gate | tail -1) == rc=0 ]] && ok "lead home: the merge gate finds Main's public key from the parent binding" || no "lead home did not find Main's key: $(lead_gate)"
+printf 'schema=jg-squad-lead-parent.v1\nroute=remote\n' > "$lead/.jg-squad-lead-parent"
+lead_bad=$(lead_gate)
+[[ $lead_bad == *"fix: export JG_MAIN_HOME=<absolute path of Main's home>"* && $lead_bad == *rc=1 ]] && ok "lead home: an unusable binding names the exact fix" || no "unusable binding: $lead_bad"
+rm -f "$lead/.jg-squad-lead-parent"
 printf '{"schema":1,"answers_only":false,"items":[]}\n' > "$work/board.json"
 is "refusal: unreadable board refuses" "$(gate "$head" "$pr" "$work/missing-board" | tail -1)" "rc=1"
 rm -f "$log"; is "refusal: screen: none still needs lint" "$(gate | tail -1)" "rc=1"

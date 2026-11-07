@@ -278,6 +278,8 @@ func (e env) cond(cond, key, payload string, depth int) bool {
 		return e.fleetUnchanged()
 	case "merge-owned":
 		return e.mergeOwned(key, payload)
+	case "ship-pr":
+		return e.shipTask(key)
 	case "gap-long":
 		return e.gapLong(payload)
 	case "lead-restarted":
@@ -338,6 +340,29 @@ func (e env) mergeOwned(key, payload string) bool {
 	}
 	attempted := strings.TrimSpace(wholeFile(filepath.Join(e.homeOrRoot(), "data", "jg-merge-on-green", task+".head")))
 	return attempted != head
+}
+
+// shipTask is the `@ship-pr` fact: the key is a `<task>.status` whose task record exists and is a ship (the
+// kind is absent or `ship`), so its PR-ready report is a merge-ready outcome the merge-ready batch names.
+// A Recon, a lead and a task with no record answer false and keep their own routing.
+func (e env) shipTask(key string) bool {
+	if !strings.HasSuffix(key, ".status") {
+		return false
+	}
+	task := strings.TrimSuffix(key, ".status")
+	if task == "" || strings.ContainsAny(task, "/\\") || strings.HasPrefix(task, ".") {
+		return false
+	}
+	meta := filepath.Join(e.state, task+".meta")
+	if !isFile(meta) || isLink(meta) {
+		return false
+	}
+	data, err := os.ReadFile(meta)
+	if err != nil {
+		return false
+	}
+	kind := metaLast(completeLines(string(data)), "kind")
+	return kind == "" || kind == "ship"
 }
 
 // wholeFile is `$(cat path)`: the file's text without one trailing newline, empty when unreadable.

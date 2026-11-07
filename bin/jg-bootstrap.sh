@@ -12,7 +12,7 @@
 #                 "BACKEND_INVALID: <name> (known: <names>)",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "SENTINEL: jg-sentinel is not running ... (install: <command>)",
-#                 "UNIT_HOME: <unit> is running for <other home> ... (move it: <command>)",
+#                 "UNIT_HOME: <unit> is <what is wrong with it>, so this home gets no alert from it",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "HOME_SUMMARY: <ledger never published|not republished since
@@ -192,8 +192,8 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-pin-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-pin-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 # shellcheck source=bin/jg-quota-axi-lib.sh disable=SC1091
@@ -1563,6 +1563,9 @@ startup_memory_budget_setup() {
 # belongs to the network half of a split run; JG_STACK_SKIP=1 turns it off for a fixture.
 bus_service() {
   local out
+  # A Squad Lead home runs none of the machine's services: Main owns them, and
+  # `jg-stack.sh up` refuses there for that reason.
+  [ ! -e "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ] || return 0
   network_phase || return 0
   [ "${JG_STACK_SKIP:-0}" != 1 ] || return 0
   if out=$("$SCRIPT_DIR/jg-stack.sh" up 2>&1); then
@@ -1804,32 +1807,14 @@ detect_sentinel_service() {
 # A machine-wide user unit serves the home named in its own JG_HOME, and being
 # active says nothing about which home that is. A unit left pointing at another
 # home keeps running while this home gets no wake, no restart recovery and no
-# reply routing from it, so each one is compared with this home and a mismatch
-# is reported with the step that moves it. Detect-only: nothing is rewired here.
-# A unit that is absent, inactive or unreadable says nothing; detect_sentinel_service
-# and `jg-stack.sh status` own those cases.
+# reply routing from it. bin/jg-unit-claim.sh owns that read, the move Main makes
+# on it at session start, and the UNIT_HOME line printed here when one is wrong.
+# A unit that is absent, inactive or unreadable is not this section's case:
+# detect_sentinel_service and `jg-stack.sh status` own those.
 detect_unit_homes() {
   [ "$BACKEND" = herdr ] || return 0
-  [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ -L "$(jg_compat_marker "$JG_HOME")" ] && return 0
-  command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1 || return 0
-  local unit prefix=${JG_STACK_UNIT_PREFIX:-jg} env served quoted_home quoted_sentinel quoted_stack fix
-  printf -v quoted_home %q "$JG_HOME"
-  printf -v quoted_sentinel %q "$JG_ROOT/bin/jg-sentinel.sh"
-  printf -v quoted_stack %q "$JG_ROOT/bin/jg-stack.sh"
-  for unit in jg-sentinel "$prefix-wake-engine" "$prefix-wake-watcher" "$prefix-router"; do
-    systemctl --user is-active --quiet "$unit" 2>/dev/null || continue
-    env=$(systemctl --user show -p Environment --value "$unit" 2>/dev/null) || continue
-    # A home path may hold spaces, so cut at the next NAME= word, not at the first space.
-    served=$(printf '%s\n' "$env" | sed -n 's/^\(.* \)\{0,1\}"\{0,1\}JG_HOME=\(.*\)$/\2/p' | sed 's/[[:space:]]\{1,\}"\{0,1\}[A-Za-z_][A-Za-z0-9_]*=.*$//; s/"$//')
-    [ -n "$served" ] || continue
-    [ "$served" -ef "$JG_HOME" ] 2>/dev/null && continue
-    if [ "$unit" = jg-sentinel ]; then
-      fix="JG_HOME=$quoted_home $quoted_sentinel unit > ~/.config/systemd/user/jg-sentinel.service && systemctl --user daemon-reload && systemctl --user restart jg-sentinel"
-    else
-      fix="JG_HOME=$quoted_home $quoted_stack up"
-    fi
-    echo "UNIT_HOME: $unit is running for $served, not this home, so this home gets nothing from it (move it: $fix)"
-  done
+  [ -x "$SCRIPT_DIR/jg-unit-claim.sh" ] || return 0
+  "$SCRIPT_DIR/jg-unit-claim.sh" status 2>/dev/null || true
 }
 
 # This home's ledger publication is deliberately best-effort: every lifecycle

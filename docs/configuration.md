@@ -10,7 +10,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
-| Backlog, preferences, and memory | [Backlog](#backlog-configbeads-dir), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), and [host memory guard](#host-memory-guard-confighost-memory) |
+| Backlog, preferences, and memory | [Backlog](#backlog-configbeads-dir), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
 | Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
@@ -873,6 +873,31 @@ Until then local files are the only memory owners.
 the internal [`fleet-records` skill](../.agents/skills/fleet-records/SKILL.md) owns what a declaration changes about knowledge routing, and the internal [`intel` skill](../.agents/skills/intel/SKILL.md) owns how curation reads the declaration and protects tier-owned entries from pruning.
 The section counts toward the startup memory budget like the rest of its file, so keep it to the mapping rather than restating these rules.
 
+## Digest print caps (defaults/token-caps, config/token-caps)
+
+`defaults/token-caps` holds the shipped byte and row caps for the session-start digest, each with its reason.
+A home overrides a value in `config/token-caps` (same `<name> <positive integer>` lines); a `JG_SESSION_START_*` variable overrides both for one run.
+A missing, zero, or malformed value falls back to the built-in in `bin/jg-session-start.sh`, so a bad line never switches a cap off.
+The caps only cut what the digest prints.
+Each cut names the remainder and the command that shows it.
+No cap touches the wake queue, the lock, network checks, owner rules, or captain-held rows.
+
+## Supervisor context cap (config/supervisor-context-cap)
+
+`config/supervisor-context-cap` sets how many tokens a supervisor's conversation may reach before the harness compacts it.
+Each line is `<lead|main> <tokens, 50000 or more|off>`; `#` starts a comment.
+Default: `lead 150000`, `main off`. With no file the defaults apply.
+A malformed line stops the launch with an error; it is never read as a default or as off.
+
+Why 150000: the escalation token audit measured a wake at 509k tokens when Main started under 150k and 2,058k over 600k.
+Each model call re-reads the whole conversation, so the cap cuts the cost of every wake.
+
+Leads get the cap in their per-launch settings, so a new lead launch picks it up.
+Main stays off until the lead pilot passes (`docs/context-bound.md`, "Pilot"). To turn Main on, set `main 150000` in the file, run `python3 bin/jg-context-bound.py apply main --home <home>`, and restart Main.
+`apply` changes only the two cap keys in the home's local settings; `off` removes only those keys.
+
+The cap never edits records on disk. Holds, decisions, owner rules, proofs and pending asks are re-read whole from disk after a compaction, and the captain's own words are re-printed verbatim (`docs/context-bound.md`, "The record is kept").
+
 ## Startup memory budget (config/startup-memory-budget)
 
 `config/startup-memory-budget` is the primary-authoritative per-home allowance for the startup prompt-memory surface: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` together.
@@ -1692,6 +1717,7 @@ With no file, or no rule for a tool, nothing changes and the tool keeps its own 
 A model must pass the spawn allow-list (`config/model-allow-list.json`); the first profile in the list that passes wins.
 A bad file, a bad profile, or a model the allow-list refuses prints one `TOOL_MODELS:` line that gives the reason, and the tool keeps its default.
 `bin/jg-tool-models.sh check` lists the tagged rules or the reason the file is unusable.
+`bin/jg-tool-models.sh model <tool> <harness> [<provider>/]` prints only the entry's model, for a site that can run one harness; an entry for another harness prints one `TOOL_MODELS:` line and the site keeps its default.
 Squad Lead homes inherit the file with the other shared config.
 
 | Tool tag | Read by | What the entry sets |
@@ -1700,6 +1726,10 @@ Squad Lead homes inherit the file with the other shared config.
 | `done-done-judge` | `core/merge-card/merge-card` | Model that judges the Evidence card. The harness must be `pi`, and the model carries its provider prefix. |
 | `supervision-engine` | `bin/jg-supervision-engine-lib.sh` | Default model of the supervision engine when its harness matches the entry. |
 | `no-mistakes-review` | `core/pipeline-quota-failover/pi-quota-failover` | Model of the no-mistakes review chain, and of the account-pool route that names no model. The harness must be `pi`, and the model carries its provider prefix. The installed wrapper finds the home through `PI_QUOTA_FAILOVER_JG_HOME`, then `JG_HOME`, then `~/juggernaut`; `PI_QUOTA_FAILOVER_CHAIN` still wins. |
+| `voice-rewrite` | `bin/jg-voice.py` | Model of the default voice rewrite command. The harness must be `claude`. `JG_VOICE_REWRITE_CMD` and `config/voice-rewrite-command` still win. |
+| `inbox-stt` | `bin/jg-inbox.sh` (`say`) | Speech-to-text model. The harness must be `pi` and the model carries the prefix `amazon-bedrock/`. `JG_INBOX_STT_MODEL` still wins, and the entry wins over `config/inbox-stt-model`. |
+| `inbox-ask` | `bin/jg-inbox.sh` (`ask`) | Side-question model, with the same rules as `inbox-stt`. `JG_INBOX_ASK_MODEL` still wins over the entry, and the entry wins over `config/inbox-ask-model`. |
+| `voice-relay` | `bin/jg-voice-relay.py` | Nova Sonic model of the voice relay, with the same rules as `inbox-stt`. `JG_VOICE_MODEL` still wins over the entry, and the entry wins over `config/voice-model`. |
 
 Tools in this repository that still choose a model in their own way are listed in the follow-up section of the pull request that added this file.
 See [`docs/examples/tool-models.json`](examples/tool-models.json) for a starting point.

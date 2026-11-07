@@ -160,7 +160,7 @@
 #     JG_SESSION_START_HELD_LIMIT (default 10) with a count and the
 #     command that lists them (a real home carried 132 of them, 42KB).
 # CURATED MEMORY: captain-shared.md, learnings.md and owner-rules.md print up to
-# JG_SESSION_START_CONTEXT_FILE_CAP bytes (default 10000), then a cut marker
+# JG_SESSION_START_CONTEXT_FILE_CAP bytes (defaults/token-caps owns the defaults), then a cut marker
 # with the line range, the exact sed command, and an index of the headings in
 # the unprinted part.
 # The backlog groups come from the Beads store (`list` for the compact identity
@@ -397,9 +397,24 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/jg-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/jg-line-cap-lib.sh"
 
 
-STATUS_TAIL=${JG_SESSION_START_STATUS_TAIL:-3}
+# The digest size bounds are token caps: defaults/token-caps owns each value and
+# its reason, config/token-caps overrides it for one home, and the matching
+# JG_SESSION_START_* variable overrides both for one run.
+# token_cap <name> <built-in>: the last `<name> <positive integer>` line of the
+# home's file, else the shared default, else the built-in; a malformed value is
+# skipped, so a bad line can never zero a cap.
+token_cap() {
+  local name=$1 builtin=$2 file val
+  for file in "$CONFIG/token-caps" "$SCRIPT_DIR/../defaults/token-caps"; do
+    [ -f "$file" ] && [ ! -L "$file" ] || continue
+    val=$(awk -v n="$name" '$1 == n && $2 ~ /^[0-9]+$/ && $2 > 0 { v = $2 } END { if (v != "") print v }' "$file" 2>/dev/null)
+    [ -z "$val" ] || { printf '%s\n' "$val"; return 0; }
+  done
+  printf '%s\n' "$builtin"
+}
+STATUS_TAIL=${JG_SESSION_START_STATUS_TAIL:-$(token_cap status-tail 3)}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=3 ;; esac
-QUEUED_LIMIT=${JG_SESSION_START_QUEUED_LIMIT:-20}
+QUEUED_LIMIT=${JG_SESSION_START_QUEUED_LIMIT:-$(token_cap queued-limit 20)}
 case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
 LANES_TIMEOUT=${JG_SESSION_START_LANES_TIMEOUT:-30}
 case "$LANES_TIMEOUT" in ''|*[!0-9]*) LANES_TIMEOUT=30 ;; esac
@@ -415,10 +430,15 @@ case "$ENDPOINT_TIMEOUT" in ''|*[!0-9]*) ENDPOINT_TIMEOUT=10 ;; esac
 # disclose their remainder and the command that shows it; neither touches a
 # section that carries an action (wake queue, lock, network checks, captain-held
 # rows).
-HELD_LIMIT=${JG_SESSION_START_HELD_LIMIT:-10}
+HELD_LIMIT=${JG_SESSION_START_HELD_LIMIT:-$(token_cap held-limit 10)}
 case "$HELD_LIMIT" in ''|*[!0-9]*) HELD_LIMIT=10 ;; esac
-CONTEXT_FILE_CAP=${JG_SESSION_START_CONTEXT_FILE_CAP:-10000}
+CONTEXT_FILE_CAP=${JG_SESSION_START_CONTEXT_FILE_CAP:-$(token_cap context-file-cap 10000)}
 case "$CONTEXT_FILE_CAP" in ''|*[!0-9]*|0) CONTEXT_FILE_CAP=10000 ;; esac
+# The two long captain-memory files get the smaller memory cap; owner-rules keeps
+# the full context-file cap because it carries standing decisions. The run
+# override sets both, as it always has.
+MEMORY_FILE_CAP=${JG_SESSION_START_CONTEXT_FILE_CAP:-$(token_cap memory-file-cap 7500)}
+case "$MEMORY_FILE_CAP" in ''|*[!0-9]*|0) MEMORY_FILE_CAP=$CONTEXT_FILE_CAP ;; esac
 BACKLOG_FIELDS=blocked_by,hold_kind,hold_reason
 
 RULE='================'
@@ -452,19 +472,19 @@ print_file_or_absent() {
 # the cap, then discloses the remainder (line range, byte count) with an index of
 # its headings so the session can read exactly the part it needs.
 print_file_capped() {
-  local path=$1 label=$2 size keep lines headings
-  if [ ! -s "$path" ] || [ "$(wc -c < "$path")" -le "$CONTEXT_FILE_CAP" ]; then
+  local path=$1 label=$2 cap=${3:-$CONTEXT_FILE_CAP} size keep lines headings
+  if [ ! -s "$path" ] || [ "$(wc -c < "$path")" -le "$cap" ]; then
     print_file_or_absent "$path" "$label"
     return 0
   fi
   size=$(wc -c < "$path")
   subsection "$label"
-  keep=$(head -c "$CONTEXT_FILE_CAP" "$path" | wc -l)
+  keep=$(head -c "$cap" "$path" | wc -l)
   lines=$(wc -l < "$path")
   head -n "$keep" "$path"
   headings=$(tail -n +"$((keep + 1))" "$path" | grep -n '^#' | awk -F: -v off="$keep" '{ n = $1 + off; sub(/^[0-9]+:/, ""); printf "  line %d: %s\n", n, substr($0, 1, 100) }' | head -40)
   printf '\n[cut at %s bytes: lines %s-%s (%s bytes in all) are not printed; read them with sed -n %s,%sp %s%s]\n' \
-    "$CONTEXT_FILE_CAP" "$((keep + 1))" "$lines" "$size" "$((keep + 1))" "$lines" "$path" \
+    "$cap" "$((keep + 1))" "$lines" "$size" "$((keep + 1))" "$lines" "$path" \
     "${headings:+. Headings in the unprinted part:}"
   [ -z "$headings" ] || printf '%s\n' "$headings"
 }
@@ -727,6 +747,15 @@ if [ "$READ_ONLY" -eq 0 ]; then
   # session-start result. A context re-emit is not another session start.
   if [ "$REEMIT" -eq 0 ]; then
     "$SCRIPT_DIR/jg-home-summary-refresh.sh" --best-effort || true
+  fi
+  # The machine's four long-running services belong to Main, and bin/jg-unit-claim.sh
+  # owns why: one that serves another home sends every stuck-worker, blocked-pane
+  # and stopped-service alert there instead of here, and nothing else notices. The
+  # claim runs on the home's own copy before the digest reads that state, and says
+  # nothing when they already serve here. It reads JG_HOME's own units, so a state
+  # override (a test) never reaches it.
+  if [ "$REEMIT" -eq 0 ] && [ "$STATE" = "$JG_HOME/state" ]; then
+    "$SCRIPT_DIR/jg-unit-claim.sh" claim || true
   fi
   # Every network call and the potentially slow inactive-outcome startup scan
   # are launched HERE, detached and bounded, so they run concurrently with the
@@ -1058,8 +1087,8 @@ section "CONTEXT"
 print_file_or_absent "$DATA/projects.md" "data/projects.md"
 print_file_or_absent "$(jg_compat_pick "$DATA/squad_leads.md")" "data/squad_leads.md"
 print_file_or_absent "$DATA/captain.md" "data/captain.md"
-print_file_capped "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in squad_lead homes)"
-print_file_capped "$DATA/learnings.md" "data/learnings.md"
+print_file_capped "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in squad_lead homes)" "$MEMORY_FILE_CAP"
+print_file_capped "$DATA/learnings.md" "data/learnings.md" "$MEMORY_FILE_CAP"
 print_file_capped "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
 # The role's personality file adds tone only; the voice rules stay in captain-voice.md (bin/jg-voice.py).
 if voice_persona=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" python3 "$SCRIPT_DIR/jg-voice.py" persona 2>/dev/null) && [ -n "$voice_persona" ]; then

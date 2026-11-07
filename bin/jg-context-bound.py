@@ -5,6 +5,8 @@
   rates [--since EPOCH] [--until EPOCH] <transcript>...   wakes per hour of one home, from its session records
   emit [--state DIR]      SessionStart(compact) payload on stdin: history path + captain's words verbatim
   settings [--window N]   a lab --settings file with the shipped bound;  find <session-id>: its transcript
+  cap <role> [--config DIR]   the cap a role gets (tokens, or off);  env <role> [--pairs]: its settings env
+  apply <role> --home DIR     merge the role's cap into the home's local Claude settings   (docs/configuration.md "Supervisor context cap")
 """
 import argparse
 import json
@@ -13,6 +15,10 @@ import sys
 import time
 
 WAKE = "needs a handling turn now"
+# The shipped cap per supervisor role, in tokens; config/supervisor-context-cap overrides it. Main stays off until the lead pilot passes.
+DEFAULT_CAP = {"lead": 150000, "main": None}
+MARGIN = 33000  # Claude Code compacts at window - 33000, so the window is the cap plus this
+KEYS = ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
 # Text that reaches the model as a user turn but is not the captain.
 NOT_CAPTAIN = (WAKE, "Juggernaut operational input", "Juggernaut instruction", "SUPERVISION WAKE",
                "<system-reminder>", "<task-notification>", "[SYSTEM NOTIFICATION", "<command-",
@@ -147,10 +153,64 @@ def cmd_emit(args):
             log.write("%d\t%s\t%s\t%s\t%s\n" % (time.time(), trigger, pre, post, path))
 
 
+def resolve_cap(role, config):
+    """Tokens for the role, or None for off. A malformed line is an error, never a silent default or a silent off."""
+    cap = DEFAULT_CAP[role]
+    path = os.path.join(config, "supervisor-context-cap") if config else ""
+    if path and os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            for n, raw in enumerate(fh, 1):
+                line = raw.split("#")[0].split()
+                if not line:
+                    continue
+                if len(line) != 2 or line[0] not in DEFAULT_CAP or not (line[1] == "off" or (line[1].isdigit() and int(line[1]) >= 50000)):
+                    sys.exit("error: config/supervisor-context-cap line %d must be '<lead|main> <tokens, 50000 or more|off>'" % n)
+                if line[0] == role:
+                    cap = None if line[1] == "off" else int(line[1])
+    return cap
+
+
+def cap_env(cap):
+    return {} if cap is None else {KEYS[0]: str(cap + MARGIN), KEYS[1]: "100"}
+
+
+def cmd_cap(args):
+    cap = resolve_cap(args.role, args.config)
+    if args.what == "cap":
+        print("off" if cap is None else cap)
+    elif args.pairs:
+        print(",".join('"%s":"%s"' % kv for kv in cap_env(cap).items()))
+    else:
+        print(json.dumps(cap_env(cap)))
+
+
+def cmd_apply(args):
+    """Merge the role's cap into the home's local settings; every other key stays, and off removes only the cap keys."""
+    path = os.path.join(args.home, "." + "claude", "settings.local.json")
+    doc = {}
+    if os.path.isfile(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except ValueError:
+            sys.exit("error: %s is not valid JSON; left untouched" % path)
+    env = {k: v for k, v in (doc.get("env") or {}).items() if k not in KEYS}
+    env.update(cap_env(resolve_cap(args.role, args.config or os.path.join(args.home, "config"))))
+    if env:
+        doc["env"] = env
+    else:
+        doc.pop("env", None)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+    print("%s: %s" % (path, json.dumps(env)))
+
+
 def cmd_settings(args):
-    here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, "..", ".claude", "settings.json"), encoding="utf-8") as fh:
-        env = dict(json.load(fh).get("env") or {})
+    env = cap_env(DEFAULT_CAP["lead"])
     if args.window:
         env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = args.window
     print(json.dumps({"env": env}))
@@ -183,6 +243,17 @@ def main():
     p = sub.add_parser("settings")
     p.add_argument("--window")
     p.set_defaults(fn=cmd_settings)
+    for name in ("cap", "env"):
+        p = sub.add_parser(name)
+        p.add_argument("role", choices=sorted(DEFAULT_CAP))
+        p.add_argument("--config")
+        p.add_argument("--pairs", action="store_true")
+        p.set_defaults(fn=cmd_cap, what=name)
+    p = sub.add_parser("apply")
+    p.add_argument("role", choices=sorted(DEFAULT_CAP))
+    p.add_argument("--home", required=True)
+    p.add_argument("--config")
+    p.set_defaults(fn=cmd_apply)
     p = sub.add_parser("find")
     p.add_argument("session")
     p.set_defaults(fn=cmd_find)

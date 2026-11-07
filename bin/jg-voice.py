@@ -47,6 +47,8 @@ import subprocess
 import sys
 import tempfile
 
+import jg_voice_records as records
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 # What a rewrite must never touch: code spans, URLs, [..=..] tags and key=value tokens.
 PROTECTED = re.compile(r"(`[^`\n]*`|\S+://\S+|\[[^\]\n]*=[^\]\n]*\]|[\w.-]+=\S+)")
@@ -241,7 +243,12 @@ def rewrite_command():
             cmd = open(os.path.join(config, "voice-rewrite-command"), encoding="utf-8").readline().strip()
         except OSError:
             cmd = ""
-    return shlex.split(cmd or DEFAULT_REWRITE)
+    if cmd:
+        return shlex.split(cmd)
+    # No command of the captain's own: the default command, with the model an entry tagged voice-rewrite in
+    # config/tool-models.json names (harness claude). No entry keeps today's model.
+    model = records.tool_model(home_root(), "voice-rewrite", "claude")
+    return shlex.split(DEFAULT_REWRITE.replace("claude-haiku-5-5", model, 1) if model else DEFAULT_REWRITE)
 
 
 def rewrite_request(rules_text, text, findings):

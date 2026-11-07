@@ -19,6 +19,21 @@ if [ -z "${JG_HOME:-}" ] || [ ! -e "$JG_HOME/config/owner-rules" ]; then
   exit 1
 fi
 command -v openssl >/dev/null 2>&1 || { echo "owner-rules: OpenSSL is required for local proof signatures" >&2; exit 1; }
+# Main's home holds the key pair. An explicit JG_MAIN_HOME wins; otherwise a lead home follows the parent binding it
+# already carries (.jg-squad-lead-parent) up to the home with none, so no merge in a lead home needs a hand export.
+# A binding that cannot be followed stops with the exact fix instead of reading a key the lead home never had.
+# Only the merge gate follows it: sign and init-key keep the private key in the home they run in, never a lead's reach into Main.
+if [ -z "${JG_MAIN_HOME:-}" ] && [ "$mode" = gate ]; then
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../bin" && pwd -P)/jg-squad-lead-parent-lib.sh"
+  JG_MAIN_HOME=$JG_HOME hops=0
+  while [ -e "$JG_MAIN_HOME/.jg-squad-lead-parent" ]; do
+    if [ "$hops" -ge 8 ] || ! jg_squad_lead_parent_record_parse "$JG_MAIN_HOME/.jg-squad-lead-parent" || [ -z "$JG_SQUAD_LEAD_PARENT_HOME" ] || [ ! -d "$JG_SQUAD_LEAD_PARENT_HOME" ]; then
+      echo "owner-rules: cannot find Main's home from $JG_MAIN_HOME/.jg-squad-lead-parent (it is corrupt, remote, or names a missing home); fix: export JG_MAIN_HOME=<absolute path of Main's home> and run the merge again" >&2
+      exit 1
+    fi
+    JG_MAIN_HOME=$JG_SQUAD_LEAD_PARENT_HOME hops=$((hops + 1))
+  done
+fi
 key_home=${JG_MAIN_HOME:-$JG_HOME}
 pub=$key_home/config/owner-rules-proof.pub
 private=$key_home/config/owner-rules-proof.key
@@ -115,7 +130,7 @@ if [ -r "$canary" ]; then canary_readable=true; ! grep -Fqx -- "$JG_HOME" "$cana
 # Only PRs have board keys: where the fleet board is, whether it holds an items list, and the card's key.
 # The board is read by file, never through argv: a real board is hundreds of KB and one argument is capped near 128 KB.
 board=${JG_FLEET_BOARD:-} board_state=ok board_file=/dev/null
-main_home=${JG_MAIN_HOME:-$HOME/juggernaut}
+main_home=${JG_MAIN_HOME:-$JG_HOME}
 if [ -z "$board" ] && [ -r "$JG_HOME/config/fleet-board" ]; then IFS= read -r board < "$JG_HOME/config/fleet-board"; fi
 if [ -z "$board" ] && [ -r "$main_home/config/fleet-board" ]; then IFS= read -r board < "$main_home/config/fleet-board"; fi
 read_board() {
