@@ -7,8 +7,7 @@ Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
 The links verb is not a tasks-axi read: it prints the ids linked to one row, for bin/jg-captain-hold.sh's blocking gate.
 bd stamps UTC and tasks-axi the local day, so created and closed read as the local day.
-A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while a lane is its assignee
-or metadata.hold_from says so; a hold stops holding on its defer_until date, and its fields stay readable on a closed row;
+A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while it has an assignee; a hold stops holding on its defer_until date, and its fields stay readable on a closed row;
 kind is metadata.kind, else issue_type;
 parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
 show takes a row's id or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
@@ -81,9 +80,8 @@ def day(stamp):
 
 
 def flying(row):
-    """Say whether the row is in flight: one status column cannot hold in flight and held, so a held lane is its assignee or metadata.hold_from."""
-    meta = row.get("metadata") or {}
-    return row.get("status") == "in_progress" or (row.get("status") in HELD and bool(row.get("assignee") or meta.get("hold_from")))
+    """Say whether the row is in flight: one status column cannot hold in flight and held, so a held lane is its assignee."""
+    return row.get("status") == "in_progress" or (row.get("status") in HELD and bool(row.get("assignee")))
 
 
 def mentions(row):

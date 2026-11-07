@@ -43,6 +43,8 @@
 # Every call forces BD_DISABLE_METRICS=1, DO_NOT_TRACK=1 and BD_NON_INTERACTIVE=1, since bd metrics
 # are on by default, and drops every other BEADS_*, BD_*, DOLT_* and GIT_* variable but BEADS_ACTOR,
 # and every token, secret, password, API key and PAT variable, since bd prints part of one it finds.
+# BEADS_ACTOR is the lane in JG_BACKLOG_LANE when one is named, else the caller's, else juggernaut, so bd's comments and events
+# carry who wrote them.
 # HOME, XDG_* and TMPDIR point at `<parent>/.jg-beads-env`, because both tools write `$HOME/.dolt`,
 # and dolt's metrics and version check are off there; without that even `dolt version` calls out.
 set -u
@@ -129,7 +131,7 @@ env_lock() {
   export XDG_CONFIG_HOME=$HOME/.config XDG_CACHE_HOME=$HOME/.cache
   export XDG_DATA_HOME=$HOME/.local/share XDG_STATE_HOME=$HOME/.local/state
   export BD_DISABLE_METRICS=1 DO_NOT_TRACK=1 BD_NON_INTERACTIVE=1
-  export BEADS_ACTOR=${BEADS_ACTOR:-juggernaut}
+  export BEADS_ACTOR=${JG_BACKLOG_LANE:-${BEADS_ACTOR:-juggernaut}}
   export BEADS_CEILING_DIRECTORIES=$STORE_PARENT GIT_CEILING_DIRECTORIES=$STORE_PARENT
 }
 
