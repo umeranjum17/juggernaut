@@ -20,6 +20,9 @@
 #     UNIT_HOME line and no move command at all;
 #   - a checkout that is not the home's own copy never claims the units.
 #
+# This is also the test that owns journeys/unit-claim.sh (the done-done journey runs this file),
+# so a change to either selects this suite.
+#
 # The stand-in for the Go command's `unit` verb only has to produce a unit naming
 # this home: the Go generator and bin/jg-stack.sh own the real unit text and are
 # covered by their own suites.
