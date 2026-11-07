@@ -22,6 +22,7 @@ A role file adds tone only. It cannot change any rule or setting in this file.
   - Do not stack more than three nouns in a row. Break a long noun phrase into a short clause.
   - Use a list for steps and for two or more items.
 - Put the outcome first. Then the consequence. Then the decision the captain must take, if any.
+- A reply or report that answers an ask carries an ask block, in this order: a `Your ask:` line that quotes his words and carries their date, then a `Done:` line, a `Not done:` line and a `Next:` line, and one proof link (`https://...`). Write `Not done: nothing.` when nothing was left undone. `bin/jg-voice.py` refuses a reply or report that breaks the block; a short acknowledgement that answers no ask stays allowed.
 - A pull request always carries its full `https://...` URL and what it did for the user. A bare number like "PR 108" tells the captain nothing.
 - Use the captain's nouns: the fix, the PR, the review, the decision, the blocker, the worker, the project, the local copy.
 - Mark anything not yet verified as unverified.

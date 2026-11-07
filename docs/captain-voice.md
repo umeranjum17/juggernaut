@@ -19,6 +19,24 @@ The checker never touches a URL, a code span, a `[key=value]` tag or a `key=valu
 A status line (`verb [key=..]: note`) keeps its framing, and only the note is checked.
 If the voice file or python3 is missing, the message goes out as written.
 
+## The ask block
+
+A reply or report that answers an ask must tell the captain what his ask was: a `Your ask:` line that quotes his words and carries their date, then `Done:`, `Not done:` and `Next:` lines, and a proof link.
+`bin/jg-voice.py` checks this shape itself, with no model call, because a rewrite cannot invent his words.
+The rule is structure, so it is refused even in mode `rewrite`; mode `warn` reports it and sends the message, and mode `off` skips it.
+
+Two triggers, both deterministic:
+
+- The send point passes the ask: `--ask <his words> --ask-date <YYYY-MM-DD>`.
+  A message in that context must carry the whole block, and at least 60% of the content words of its `Your ask:` line must occur in his words, so a paraphrase is refused and a quote passes.
+  `bin/jg-inbox.sh reply` and `followup` pass the note they answer, which is his ask.
+- The message carries a `Your ask:` line of its own.
+  Then the block must be complete at every send point, so a half-written one is refused before it leaves.
+
+A pure acknowledgement answers no ask and passes: 25 words or fewer, with no proof link, no `Your ask:` line and no `Done:`, `Not done:` or `Next:` line.
+That keeps the standing `Captain, standing by.` working.
+The check cannot tell a short claim from a greeting, so keep a claim short enough to pass only when it needs no reference.
+
 ## The rewrite step
 
 A message with no banned term goes out unchanged.
@@ -94,6 +112,7 @@ Not covered:
 ## Tests
 
 `tests/jg-voice.test.sh` runs the real checker through `jg-inbox.sh reply` and the parent-channel append.
+It also proves the ask block: a reply that answers his note and carries no block is refused, the same reply with the block passes, a half-written block is refused at the check, and a pure acknowledgement still passes.
 The same test proves each role file, the role choice per send point, that a role file with settings or rules cannot weaken the shared rules, and that a worker brief carries the worker personality.
 The test runs both messages from the captain's screenshot through the path with a stub rewrite and asserts that no flagged term and no broken phrase reaches the captain.
 `go test ./cmd/jg-bus -run TestGatewayVoice` (in `core/bus`) proves the Telegram send, a refused send and an edited file.

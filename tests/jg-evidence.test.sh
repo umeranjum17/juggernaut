@@ -42,10 +42,14 @@ pass "UI landing lines carry evidence paths and old lines stay valid"
 
 # --- part 2: reply --evidence-from attaches them through --attach ---------------------------
 note=1700000000-aaaaaa
-printf 'id=%s\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nhow did it land\n' "$note" >"$parent/state/inbox/$note.note"
+printf 'id=%s\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nhow did the fix land\n' "$note" >"$parent/state/inbox/$note.note"
 rm -f "$mate/data/uitask/after.png"
 JG_HOME="$parent" JG_STATE_OVERRIDE="$parent/state" JG_DATA_OVERRIDE="$parent/data" JG_CONFIG_OVERRIDE="$parent/config" \
-  bash "$ROOT/bin/jg-inbox.sh" reply "$note" --evidence-from "$ui_line" -- "Landed: $url" >/dev/null 2>"$TMP_ROOT/warn" \
+  bash "$ROOT/bin/jg-inbox.sh" reply "$note" --evidence-from "$ui_line" -- "Your ask: \"how did the fix land\" (2026-01-01)
+Done: it landed.
+Not done: nothing.
+Next: read the attachments.
+Landed: $url" >/dev/null 2>"$TMP_ROOT/warn" \
   || fail "reply --evidence-from failed"
 reply="$parent/state/inbox/.replies/$note"
 assert_grep "attach=$mate/data/uitask/motion.webm" "$reply" "the evidence file became an attachment"
@@ -61,12 +65,16 @@ check() { bash "$ROOT/bin/jg-evidence-check.sh" "$parent"; }
 assert_equals "" "$(check)" "a reply that attaches evidence is not flagged"
 note2=1700000000-bbbbbb
 printf 'id=%s\n--\nx\n' "$note2" >"$parent/state/inbox/$note2.note"
+# The reply answers his note, so it carries the ask block (2026-11-05).
+block=$'Your ask: "the fix landed" (2026-01-01)\nDone: it landed.\nNot done: nothing.\nNext: read it.'
 JG_HOME="$parent" JG_STATE_OVERRIDE="$parent/state" JG_DATA_OVERRIDE="$parent/data" JG_CONFIG_OVERRIDE="$parent/config" \
-  bash "$ROOT/bin/jg-inbox.sh" reply "$note2" -- "Merged: $url" >/dev/null || fail "plain reply failed"
+  bash "$ROOT/bin/jg-inbox.sh" reply "$note2" -- "$block
+Merged: $url" >/dev/null || fail "plain reply failed"
 note3=1700000000-cccccc
 printf 'id=%s\n--\nx\n' "$note3" >"$parent/state/inbox/$note3.note"
 JG_HOME="$parent" JG_STATE_OVERRIDE="$parent/state" JG_DATA_OVERRIDE="$parent/data" JG_CONFIG_OVERRIDE="$parent/config" \
-  bash "$ROOT/bin/jg-inbox.sh" reply "$note3" -- "Merged: https://github.com/example/demo/pull/90" >/dev/null || fail "plain reply 2 failed"
+  bash "$ROOT/bin/jg-inbox.sh" reply "$note3" -- "$block
+Merged: https://github.com/example/demo/pull/90" >/dev/null || fail "plain reply 2 failed"
 out=$(check)
 assert_contains "$out" "$note2" "the bare reply about the UI landing is flagged"
 assert_contains "$out" "$url" "the flag names the PR"
