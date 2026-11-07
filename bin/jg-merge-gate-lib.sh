@@ -240,8 +240,11 @@ jg_design_size() {  # <worktree> <base-branch> <head>: prints `design|tweak <ui-
   # Both halves detect renames. A pure move reads 0 0 here, so it is neither a changed
   # line nor a new file; the whole numstat line is matched because a rename prints its
   # paths in git's own compact form and either side may carry the UI extension.
+  # A UI file that only loses lines adds none, so it is not design work and adds no UI
+  # line: taking a page apart is no longer work someone has to design. A file that keeps
+  # a line still measures added plus deleted, so a real rewrite is measured as it was.
   lines=$(git -C "$wt" diff --numstat -M "$mb" "$head" \
-    | awk -F'\t' -v re="$JG_DESIGN_UI_RE" 'tolower($0) ~ re && $1 != "-" { n += $1 + $2 } END { print n + 0 }')
+    | awk -F'\t' -v re="$JG_DESIGN_UI_RE" 'tolower($0) ~ re && $1 != "-" && $1 + 0 > 0 { n += $1 + $2 } END { print n + 0 }')
   new=$(git -C "$wt" diff --name-only -M --diff-filter=A "$mb" "$head" | grep -ciE "$JG_DESIGN_UI_RE")
   if [ "$new" -gt 0 ] || [ "$lines" -gt "$JG_DESIGN_TWEAK_LINES" ]; then echo "design $lines $new"; else echo "tweak $lines $new"; fi
 }

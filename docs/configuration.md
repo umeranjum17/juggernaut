@@ -762,6 +762,7 @@ The flag is a home-local preference and is not inherited by Squad Lead homes.
 
 Every design rule is a shell check on recorded files, never a model judgment.
 A change is a small tweak, which a worker may hand-roll, when its UI files change at most 40 lines and it adds no new UI file.
+A UI file that only loses lines adds none, so deleting UI counts as no UI line: taking a page or a stylesheet apart is not design work.
 A small tweak that touches UI files merges only after the task's lead or Main writes a hand-roll approval; the asking worker never can.
 Past that size, or briefed with `--design-call yes`, the change is design work and merges only with a first-draft receipt line.
 The receipt is resolved, never taken on its word: the run record its `first-draft receipt: <ref>` line names must prove a `first-draft-axi make` or `refine` and list every `.html` option the change adds.

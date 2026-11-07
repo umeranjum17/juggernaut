@@ -37,7 +37,11 @@ assert_equals "tweak 40 0" "$(sizeof tmove20 'mkdir -p lib && git mv app.css lib
 assert_equals "design 42 0" "$(sizeof tmove21 'mkdir -p lib && git mv app.css lib/app.css && sed -i "1,21s/\$/y/" lib/app.css')" "a move plus 21 changed lines is still past the bar"
 assert_equals "design 1 1" "$(sizeof tmovethennew 'mkdir -p lib && git mv app.css lib/app.css && echo "<p>" > new.html')" "a genuinely new UI file beside a moved one is still design"
 assert_equals "design 41 0" "$(sizeof tappend 'seq 1 41 >> app.css')" "genuinely added UI lines still count and still refuse"
-pass "size rule measures a move as a move and still refuses real design work"
+# A file that only loses lines adds none, so taking UI apart is not design work at any
+# size and needs no design receipt (byokit PR 923: a removed-only UI change was refused).
+assert_equals "tweak 0 0" "$(sizeof tdel 'sed -i "1,60d" app.css')" "UI lines that are only deleted are not design work"
+assert_equals "tweak 0 0" "$(sizeof tdelall 'git rm -q app.css')" "removing a UI file outright is not design work"
+pass "size rule measures a move as a move, still refuses real design work, and never charges for a deletion"
 
 # A merge past the size rule needs the first-draft receipt even when briefed design_call=no.
 head=$(git -C "$repo" rev-parse t42)
