@@ -1,7 +1,7 @@
 # project-state-map
 
 A map of each project's states and moving parts for the sign-off board.
-The map is built in four steps: a script searches the code, a small model reads the hits, a script re-searches every cited line and drops false ones, and a script draws the board card.
+The map is built in four steps: a script searches the code, a small model reads the hits, a script re-searches every cited line and drops false ones, and a script draws the board card, and a refresh runs the chain only when the code changed.
 The plan is `data/project-state-machines-report/report.md` in the owning home; the build is sliced, and this file lists only the steps that exist.
 No step ever changes a project file.
 - `bin/psm-search.sh <project-dir> [--out file] [--max-hits N] [--max-per-file N]` is the search step: it writes a `psm.hits.v1` hit list with file, line, pass and text for four passes (closed value sets, flags and empty fields, loops and timers, machinery), the project tree, and a hash of the hit text.
@@ -19,7 +19,16 @@ No step ever changes a project file.
   The same map and `--filed` give the same bytes.
   `--post` publishes with `sign-off-axi` (or `JG_REPORT_POST`), copies the pictures beside the board file, and dismisses the replaced card.
 
+- `bin/psm-refresh.sh run <project-dir> --state dir --board board.json [--force] [--opt-in] [--max-usd N]` runs the chain for one project and keeps one live card.
+  The refresh key is the tree plus the hash of the hit text; when it equals the stored key the run says "unchanged" and makes no model call and no board write.
+  A changed key, or `--force`, reads, proves, posts a new card and dismisses the old one.
+  A refused or failed read leaves the old card and the stored key alone.
+  `tick <home>` is the scheduled entry: it reads `config/project-state-map` (one `<project-dir> opt-in` line per project, the opt-in word required) and the board in `config/fleet-board`, and is silent unless a card was refreshed or a read failed.
+  `psm-card.sh --rev` gives each card a new key, because a board refuses a key it already holds.
+
 ## Check
+- `bash tests/psm-refresh.test.sh` refreshes a copy of the fixture project with a stub model: one call and one post on the first run, none when unchanged, a new card on `--force`, a refresh only when a hit line changes, refusals leaving the old card, the tick, and a real board when `sign-off-axi` is installed.
+- `bash tests/psm-acceptance.sh <evidence-dir>` is the acceptance chain on the fixture project, with a 390 px picture (needs `sign-off-axi` and `chrome-devtools-axi`).
 - `bash tests/psm-read.test.sh` reads the fixture hits with a replayed reply and a stub model: the map keeps the hit key, a live read needs the opt-in, secret-looking files are not sent, the cap and a cap of 0 stop the call, and a bad reply is refused.
 - `bash tests/psm-search.test.sh` runs the search over `tests/fixture-project`, which has known states and parts: the known hit list, a git repo giving the same hits with secrets skipped, the project left unchanged, the hit hash following hit text only, the caps, and refused input.
 - `bash tests/psm-prove.test.sh` proves `tests/fixture-map.json`, which plants false lines: the true machines stay, the false ones are dropped and counted, and the project is left unchanged.
