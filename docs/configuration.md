@@ -389,7 +389,7 @@ The fleet view prints that scorecard on every render from the local ledger alone
 
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
 A home may instead select another tasks-axi adapter such as Beads through its own `.tasks.toml` or `TASKS_AXI_BACKEND`; Juggernaut still uses only tasks-axi verbs for routine backlog reads and mutations, and the adapter maps `start` and evidence-bearing `done` transitions to its native statuses and evidence fields.
-A local `config/backlog-backend` reading `beads` is a separate path: `bin/jg-tasks-axi.sh` serves its reads from the bd store named by the absolute `BEADS_DIR` in `config/beads-dir`, serves `add`, `update`, `done`, `block`, `start`, `reopen`, `hold` and `unhold` the same way, and refuses every other write for now.
+A local `config/backlog-backend` reading `beads` is a separate path: `bin/jg-tasks-axi.sh` serves its reads from the bd store named by the absolute `BEADS_DIR` in `config/beads-dir`, serves `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold` and `unhold` the same way, and refuses every other write for now.
 The `start`, `reopen` and `done` moves write only if the row still has the status they read, so a row a second writer moved refuses with exit 13, `code: STALE_WRITE`, and changes nothing.
 [`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh) drives the same provider directly, so spawn, teardown and bootstrap keep their gates on that store.
 The lane on such a row is the assignee, set to the task record's `spawn_gen`, and `metadata.agent`, set to its harness.
@@ -398,6 +398,7 @@ The session digest, the fleet snapshot, the inbox status, the owner's asks, the 
 Readers of `data/backlog.md` not named here do not yet see that store.
 `bin/jg-backlog-handoff.sh` and `bin/jg-backlog-receive.sh` refuse before moving anything when either home keeps a store, because they move rows between backlog files.
 On such a home, bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check`, which proves the pinned versions, the hold rule and telemetry off, and report any failure.
+`bin/jg-remote-doctor.sh` does not require `tasks-axi` on such a home.
 
 A home moves to that path by one guarded step, [`bin/jg-beads-migrate.py`](../bin/jg-beads-migrate.py) `cut`, run on a written order and never by default.
 The cut holds `data/backlog.md.lock` so no writer can touch the old files, imports the plan, checks the store against the manifest row by row, switches the two config files, and leaves `data/backlog.md` and `data/done-archive.md` read-only.

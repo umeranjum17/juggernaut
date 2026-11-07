@@ -319,7 +319,7 @@ A file at `~/.local/bin/jg-remote-entrypoint.sh` that is not Juggernaut's own sy
 
 | Requirement | Tools |
 | --- | --- |
-| Always required | `git`, compatible `tasks-axi`, and the Herdr row of the [backend toolchain table](configuration.md#toolchain) |
+| Always required | `git`, compatible `tasks-axi` unless the home keeps a [Beads store](configuration.md), and the Herdr row of the [backend toolchain table](configuration.md#toolchain) |
 | At least one of | `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, or `kimi` |
 | Additionally required on macOS | `lsof`, so the doctor and guard can prove which process owns the session socket |
 

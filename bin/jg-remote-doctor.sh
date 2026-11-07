@@ -90,6 +90,10 @@ JG_ROOT="${JG_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 # shellcheck source=bin/jg-remote-herdr-owner-lib.sh
 . "$SCRIPT_DIR/jg-remote-herdr-owner-lib.sh"
 REQUIRED_TOOLS=(git jq herdr tasks-axi treehouse)
+# A Beads home's backlog needs no tasks-axi; check_beads_store owns that home's tools.
+if jg_backlog_backend_beads "${JG_CONFIG_OVERRIDE:-${JG_HOME:-$JG_ROOT}/config}"; then
+  REQUIRED_TOOLS=(git jq herdr treehouse)
+fi
 HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi)
 OPTIONAL_TOOLS=(tmux no-mistakes gh)
 LAUNCH_AGENT_LABEL=dev.juggernaut.herdr.jg-remote
@@ -473,7 +477,7 @@ report_required_tools() {
 
 report_required_tools_from_worker() {
   local job_id probe_stdout probe_stderr probe_exit line fact name value
-  local expected=6 count=0 valid=1 seen=' '
+  local expected=$((${#REQUIRED_TOOLS[@]} + 1)) count=0 valid=1 seen=' '
   if ! job_id=$(jg_remote_job_stage "${HOME:-}" "$JG_ROOT" "${JG_HOME:-}" \
     jg-remote-doctor.sh --worker-tool-probe </dev/null); then
     set_check remote-job-probe "fixable: the remote job worker could not accept the required-tool probe" \
