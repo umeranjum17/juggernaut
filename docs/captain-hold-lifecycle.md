@@ -52,7 +52,7 @@ It works in this order:
 1. It uses an existing task, or creates one when nothing exists to hold.
 2. It records the task's UTC hold-set timestamp as the leading line of the task body.
 3. When `--origin` is supplied, it records the origin on the task, replacing any previous association.
-4. It invokes the underlying jg-tasks-axi.sh hold operation.
+4. It invokes the underlying jg-backlog.sh hold operation.
 5. It verifies the hold and timestamp.
 
 Publishing the stamp first ensures a snapshot cannot observe a newly captain-held task without the timestamp that defines its age.
@@ -61,7 +61,7 @@ These steps and every other subcommand on this page run on the Beads store throu
 The hold reason, kind and `--until` date sit on the row as plain text, so a reason keeps its parentheses and line breaks with no encoding.
 A failed store call stops the command and is never read as "not held".
 `blocking` links a row to a decision by any edge between them in either direction.
-A `linked-to:` or `parent:` line in a body is how a row asks for an edge: the write or the migration lays it, as `blocks` with a decision on one side, `parent-child` for a parent, and `related` otherwise, and `bin/jg-tasks-axi.sh relink` lays any line a raw `bd` write left without one.
+A `linked-to:` or `parent:` line in a body is how a row asks for an edge: the write or the migration lays it, as `blocks` with a decision on one side, `parent-child` for a parent, and `related` otherwise, and `bin/jg-backlog.sh relink` lays any line a raw `bd` write left without one.
 `design-card` also labels its row `decision` and blocks the raising ticket by an edge, so that ticket leaves `ready` until the pick closes the row.
 
 Repeat and edge cases:
@@ -73,7 +73,7 @@ Repeat and edge cases:
 - Before the backend hold runs, `--origin` records the origin the call is held for on its own `Captain hold origin:` body line, which `complete` and `verify` check using backend identities rather than alias spellings.
   If that write fails, the backend hold is not attempted.
 - The reason may contain parentheses, semicolons, quotes, and line breaks.
-  [`bin/jg-hold-reason-lib.sh`](../bin/jg-hold-reason-lib.sh) owns the storage encoding and compatibility rules; [`bin/jg-tasks-axi.sh --help`](../bin/jg-tasks-axi.sh) owns the public read commands and output contract.
+  [`bin/jg-hold-reason-lib.sh`](../bin/jg-hold-reason-lib.sh) owns the storage encoding and compatibility rules; [`bin/jg-backlog.sh --help`](../bin/jg-backlog.sh) owns the public read commands and output contract.
 
 ### Answering a call (`answer`)
 
@@ -88,7 +88,7 @@ It requires a non-empty captain decision file of at most 8192 bytes.
 It then works in this order:
 
 1. It durably writes a resolution block carrying the decision digest and a `Resolution mode:`.
-2. It retains the leading hold-set stamp until the selected `jg-tasks-axi.sh done` or `jg-tasks-axi.sh unhold` transition succeeds.
+2. It retains the leading hold-set stamp until the selected `jg-backlog.sh done` or `jg-backlog.sh unhold` transition succeeds.
 3. It then restores the successful record's resolution-first body ordering.
    The previous body remains preserved below the block and archived through the backlog.
    The record is marked `Resolution completed: yes`, so a later hold does not replay it.
@@ -158,7 +158,7 @@ After cleanup, and still under the task's own lock, teardown does three things:
 - It records one `Deliverable of the finished work: ...` line at the end of the task body.
 - It copies a supported pull request or canonical `data/<id>/report.md` into the row's structured artifact fields.
   A Gerrit change URL is not a pull request the backlog accepts, so it appears only in the deliverable line.
-- It runs `jg-tasks-axi.sh reopen`.
+- It runs `jg-backlog.sh reopen`.
 
 The row returns to Queued with its hold intact.
 It remains on the appropriate Captain's Call or Charted Next decision surface instead of reading as work still under way.
@@ -179,7 +179,7 @@ Two retained-delivery gaps remain bounded by the backlog 0.2.6.
 They are recorded for separate upstream work rather than representing defects introduced by this branch.
 
 - A retained local-only delivery cannot reach the row.
-  `--note` exists on `jg-tasks-axi.sh done` but not on `jg-tasks-axi.sh update`, while the durable pending-close record carrying that note is retired when retention completes.
+  `--note` exists on `jg-backlog.sh done` but not on `jg-backlog.sh update`, while the durable pending-close record carrying that note is retired when retention completes.
 - A relocated retained report cannot reach the row, because the backlog accepts only `data/<id>/report.md`.
   `done` reports `Task report link must be a data/<id>/report.md path`, and `update` reports `--report must be a data/<id>/report.md path`.
 
@@ -361,7 +361,7 @@ Re-holding through the wrapper with `--until` remains the durable fix rather tha
 ### Recently Landed notes
 
 [`bin/jg-landed-lib.sh`](../bin/jg-landed-lib.sh) owns Recently Landed's shared selection and artifact-display compatibility rules.
-A local-only landing's note is written by `jg-tasks-axi.sh done --note` as the last of the row's indented body lines rather than into the row title.
+A local-only landing's note is written by `jg-backlog.sh done --note` as the last of the row's indented body lines rather than into the row title.
 The snapshot therefore reads that final line as the note as well as parsing the title, and the landing is published carrying its recorded note.
 A body that carries a captain resolution record is the captain's own prose and is never mined for that note, so a decision worded `local main` does not become a delivery artifact.
 The projection remains read-only and uses the canonical snapshot's structured fields, including the machine-written hold-set timestamp.
@@ -411,7 +411,7 @@ Three states are deliberately not divergence:
 
 ### Cost and scope
 
-Cost stays flat: one `jg-tasks-axi.sh list`, one key scan per status log, and the precise per-key fold only for a key that already names a still-open task.
+Cost stays flat: one `jg-backlog.sh list`, one key scan per status log, and the precise per-key fold only for a key that already names a still-open task.
 The comparison is refused unless the status directory is the active home's own.
 Because the backlog reads that home's backlog, a mismatch would report one home's logs against another's tasks.
 If the backlog is unavailable or its listing cannot be parsed, the guard cannot read the structured record and prints nothing.
@@ -481,7 +481,7 @@ The suite does not test the accepted merge-to-cleanup re-hold window or asynchro
 
 - A report-only unresolved captain call refuses `--none` completion before teardown can erase the source.
 - Non-forced Recon teardown always requires the durable inventory verification.
-- The recorded-answer guard holds: a bare `jg-tasks-axi.sh done` close fails `verify` until `answer` records the captain's word, and an ordinary finished task cannot be dressed up as an answered call. The backlog wrapper's own `[captain-ask]` refusal reads the same record through `answered` ([`bin/jg-tasks-axi.sh`](../bin/jg-tasks-axi.sh) owns it).
+- The recorded-answer guard holds: a bare `jg-backlog.sh done` close fails `verify` until `answer` records the captain's word, and an ordinary finished task cannot be dressed up as an answered call. The backlog wrapper's own `[captain-ask]` refusal reads the same record through `answered` ([`bin/jg-backlog.sh`](../bin/jg-backlog.sh) owns it).
 
 ### Answers, stamps, and deferral
 

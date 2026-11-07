@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Fused backlog transitions for the scripts that own a task's physical record.
-# Usage: . bin/jg-tasks-axi-lib.sh; . bin/jg-backlog-transition-lib.sh
+# Usage: . bin/jg-backlog-lib.sh; . bin/jg-backlog-transition-lib.sh
 # (this library reads that one's Beads store helpers and never sources it itself).
 #
 # INVARIANT. In ordinary successful lifecycle state, `state/<id>.meta` exists
@@ -255,7 +255,7 @@ jg_backlog_timeout_expired() {  # <status>
 jg_backlog_tool() {
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
   JG_BACKLOG_TOOL=(bash -c '. "$1"; shift; jg_backlog_beads_serve "$@"' jg-beads
-    "$(dirname "${BASH_SOURCE[0]}")/jg-tasks-axi-lib.sh" "$JG_BACKLOG_AXI_BEADS")
+    "$(dirname "${BASH_SOURCE[0]}")/jg-backlog-lib.sh" "$JG_BACKLOG_AXI_BEADS")
 }
 
 jg_backlog_serve() {

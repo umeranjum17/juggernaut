@@ -44,8 +44,8 @@ case "$DONE_SHOWN" in ''|*[!0-9]*) DONE_SHOWN=8 ;; esac
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 
 FORMAT=text
 while [ "$#" -gt 0 ]; do

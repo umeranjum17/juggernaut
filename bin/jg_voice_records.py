@@ -278,7 +278,7 @@ def _denied(denies, *fields):
 
 def _backlog_lines(home):
     """Return the backlog's lines, rendered from the home's Beads store."""
-    tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-tasks-axi.sh")
+    tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-backlog.sh")
     try:
         result = subprocess.run(
             [tool, "markdown"], capture_output=True, text=True, timeout=30,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Integration test for fleet-flow/bin/jg-flow-check.sh over a fixture Main home and one muxr home.
-# Stub jg-tasks-axi.sh and jg-crew-state.sh in the fixture Main's bin/ stand in for the fork.
+# Stub jg-backlog.sh and jg-crew-state.sh in the fixture Main's bin/ stand in for the fork.
 # Proves: parked lanes (lane-cap park resumes, unnamed park is STALLED); a 5 h external-wait lane (paused or failed) stops counting toward the cap, a 3 h one,
 # a working one, a captain-held one and a 5 h one that has resumed still count; paused lanes and long
 # blocked or failed waits are probed; --can-start frees the slot; --summary prints dry=1 and dry=0.
@@ -21,7 +21,7 @@ d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
 main=$d/main home=$d/pool/8/juggernaut now=$(date +%s)
 mkdir -p "$main/bin" "$main/config" "$main/state" "$home/state" "$home/data" "$home/crew"
-cat > "$main/bin/jg-tasks-axi.sh" <<'EOF'
+cat > "$main/bin/jg-backlog.sh" <<'EOF'
 #!/usr/bin/env bash
 if [ "$1" = markdown ]; then cat "$JG_HOME/data/backlog.md" 2>/dev/null; exit 0; fi  # The text a Beads store renders
 [ "$1" = ready ] || exit 2

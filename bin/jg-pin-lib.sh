@@ -7,7 +7,7 @@
 # jg_pin_version <tool>  print the version the repo verifies for that tool.
 # jg_pin_npm <tool>      print the npm spec to install. Nonzero when the row is not npm-installable.
 #
-# Callers: bin/jg-bootstrap.sh (its install commands and every floor), bin/jg-tasks-axi-lib.sh,
+# Callers: bin/jg-bootstrap.sh (its install commands and every floor), bin/jg-backlog-lib.sh,
 # bin/jg-quota-axi-lib.sh, and the installer. Nothing here writes, and a missing table or row is a
 # refusal rather than a silently assumed version. JG_PIN_FILE_OVERRIDE points at another table, which
 # is how a test proves that changing one row changes what the install paths install.

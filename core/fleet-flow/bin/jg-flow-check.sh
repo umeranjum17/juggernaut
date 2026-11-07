@@ -81,7 +81,7 @@ def backlog_lines():
     global BACKLOG
     if BACKLOG is None:
         try:
-            r = subprocess.run([f'{MAIN}/bin/jg-tasks-axi.sh', 'markdown'], capture_output=True, text=True, timeout=8,
+            r = subprocess.run([f'{MAIN}/bin/jg-backlog.sh', 'markdown'], capture_output=True, text=True, timeout=8,
                                env={**os.environ, 'JG_HOME': home})
             if r.returncode: raise RuntimeError(f'exit {r.returncode}: ' + (r.stderr.strip().splitlines() or [''])[-1])
         except Exception as e: sys.exit(f'{name}: backlog read failed: {e}')
@@ -180,7 +180,7 @@ HARD = CAP + 2
 
 def ready_ids():
     # Raises on a failed query: a failed read must never look like a proven zero.
-    r = subprocess.run([f'{MAIN}/bin/jg-tasks-axi.sh', 'ready'], capture_output=True, text=True, timeout=8,
+    r = subprocess.run([f'{MAIN}/bin/jg-backlog.sh', 'ready'], capture_output=True, text=True, timeout=8,
                        env={**os.environ, 'JG_HOME': home})
     if r.returncode: raise RuntimeError(f'ready query exit {r.returncode}: ' + (r.stderr.strip().splitlines() or [''])[-1])
     return re.findall(r'^\s{2}([\w.-]+),queued', r.stdout, re.M)

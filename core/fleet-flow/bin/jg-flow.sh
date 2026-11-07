@@ -2,7 +2,7 @@
 # jg-flow.sh - read-only flow data, no endpoint or cache writes.
 # Usage: JG_HOME=<home> jg-flow.sh --json [--now <unix-seconds>] [--checks] [--capacity]
 # JG_BIN names the Juggernaut bin/ holding the helper libraries this reader runs
-# (jg-classify-lib.sh, jg-tasks-axi-lib.sh, jg-backlog-transition-lib.sh, jg-tasks-axi.sh);
+# (jg-classify-lib.sh, jg-backlog-lib.sh, jg-backlog-transition-lib.sh, jg-backlog.sh);
 # unset, it defaults to this script's own directory, so a Juggernaut checkout copy needs nothing.
 # --capacity reads Linux procfs, installed memory-gate defaults, the heavy slice,
 # and /tmp filesystem usage (du limited to 3 s). Partial du exposes readable
@@ -28,7 +28,7 @@
 # config/lane-caps supplies recorded-active lane caps; no free worker is inferred.
 # Reads this home and recursively registered local homes: state/*.meta/status,
 # state/fleet-ledger.jsonl (docs/fleet-ledger.md), and queued/in-flight tasks through
-# the home-addressed jg-tasks-axi.sh consumer (including archived dependency completions).
+# the home-addressed jg-backlog.sh consumer (including archived dependency completions).
 # In-flight waits also use backlog hold metadata and the main captain-shared park/pause notes.
 # Missing/unavailable backlog backends are unknown, never a stale Markdown fallback.
 # Registered remote homes remain listed, with unavailable lanes/backlog/lifecycle
@@ -70,7 +70,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # to this script's own directory (the fork's bin/), so a fork copy needs nothing;
 # else JG_BIN names the Juggernaut bin/ when this script runs from another repo.
 if [ -n "${JG_BIN+x}" ]; then
-  [ -d "$JG_BIN" ] && [ -f "$JG_BIN/jg-tasks-axi.sh" ] || { echo "jg-flow: JG_BIN is not a Juggernaut bin directory (no jg-tasks-axi.sh): $JG_BIN" >&2; exit 1; }
+  [ -d "$JG_BIN" ] && [ -f "$JG_BIN/jg-backlog.sh" ] || { echo "jg-flow: JG_BIN is not a Juggernaut bin directory (no jg-backlog.sh): $JG_BIN" >&2; exit 1; }
 else
   JG_BIN="$SCRIPT_DIR"
 fi
@@ -184,10 +184,10 @@ for line in read(ROOT / 'config/lane-caps', True) or []:
 def backlog_rows(name, home, state='queued'):
     try:
         result = subprocess.run(['bash', '-c', '''
-. "$1/jg-tasks-axi-lib.sh"
+. "$1/jg-backlog-lib.sh"
 . "$1/jg-backlog-transition-lib.sh"
 jg_backlog_beads_store "$JG_HOME/config" >/dev/null || exit 2
-exec bash "$1/jg-tasks-axi.sh" list --state "$2" --fields blocked_by,held,hold_kind,hold_reason
+exec bash "$1/jg-backlog.sh" list --state "$2" --fields blocked_by,held,hold_kind,hold_reason
 ''', 'jg-flow', str(Path(sys.argv[4]).parent), state], capture_output=True, text=True, timeout=20,
             env=dict(os.environ, JG_HOME=str(home), JG_DATA_OVERRIDE=''))
         if result.returncode:

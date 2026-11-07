@@ -163,7 +163,7 @@ hold() {  # <captain-hold args...>
   timeout "$(left)" env JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
     JG_CONFIG_OVERRIDE="$H/config" PATH="$FAKE:$PATH" "$REPO/bin/jg-captain-hold.sh" "$@"
 }
-tasks() { timeout "$(left)" env JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" "$REPO/bin/jg-tasks-axi.sh" "$@"; }
+tasks() { timeout "$(left)" env JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" "$REPO/bin/jg-backlog.sh" "$@"; }
 
 # merge <id> <pr-number> <base> <project> [<extra meta line>]: one real merge attempt.
 # Sets MERGE_OUT and MERGE_RC; MERGE_CALLED says whether the forge saw a merge.

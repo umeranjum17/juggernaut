@@ -30,7 +30,7 @@ from pathlib import Path
 script, tmp = sys.argv[1], Path(sys.argv[2])
 main, child = tmp / 'main', tmp / 'child'
 def tx(home, *args):
-    r = subprocess.run(['jg-tasks-axi.sh', *args], env=dict(os.environ, JG_HOME=str(home)), capture_output=True, text=True)
+    r = subprocess.run(['jg-backlog.sh', *args], env=dict(os.environ, JG_HOME=str(home)), capture_output=True, text=True)
     assert r.returncode == 0, (args, r.stdout, r.stderr)
 for h in (main, child):
     (h / 'state').mkdir(parents=True)

@@ -9,7 +9,7 @@
 # 'BOOTSTRAP_INFO: ...' lines, so those contracts are pinned verbatim. The cases
 # are table-driven over the inputs that vary: whether `treehouse get --help`
 # advertises --lease, which (if any) the backlog version is on PATH, whether
-# jg-tasks-axi.sh update advertises --archive-body, whether its mv help advertises
+# jg-backlog.sh update advertises --archive-body, whether its mv help advertises
 # multi-ID moves, whether quota-axi is on PATH,
 # whether the local backend config opts out of the backlog backlog mutations,
 # which no-mistakes version is on PATH, and which gh-axi version is on PATH.

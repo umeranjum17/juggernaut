@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A public follow-up kept as a native Beads row by bin/jg-beads-followup.py, driven through bin/jg-tasks-axi.sh on both providers, in a throwaway
+# A public follow-up kept as a native Beads row by bin/jg-beads-followup.py, driven through bin/jg-backlog.sh on both providers, in a throwaway
 # folder outside any git tree. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds; it skips plainly without them.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -7,7 +7,7 @@ set -u
 
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: real store: JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT is unset\n'; exit 0; fi
-T=$(jg_test_tmproot jg-beads-followup) CLI="$ROOT/bin/jg-tasks-axi.sh" jail=()
+T=$(jg_test_tmproot jg-beads-followup) CLI="$ROOT/bin/jg-backlog.sh" jail=()
 unset BEADS_DB BEADS_DOLT_SHARED_SERVER
 export TZ=UTC JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
@@ -54,7 +54,7 @@ assert_contains "$(promise 'ask bd' jg-plain req)" "already exists" "a promise m
 # Only the typed verbs move a promise, and a backlog file cannot carry one.
 refused() { local out; out=$(ask bd "$@" pf-one 2>&1) && fail "$1 must refuse a promise"; assert_contains "$out" "cannot change through generic" "$1 must name the typed path"; }
 refused 'done'; refused start; refused reopen; refused hold --reason why; refused update --title moved
-assert_contains "$(. "$ROOT/bin/jg-tasks-axi-lib.sh"; jg_backlog_beads_write "$T/bd/config" stage pf-one 2>&1)" "cannot cross to a backlog file" "a backlog file must refuse a promise"
+assert_contains "$(. "$ROOT/bin/jg-backlog-lib.sh"; jg_backlog_beads_write "$T/bd/config" stage pf-one 2>&1)" "cannot cross to a backlog file" "a backlog file must refuse a promise"
 assert_contains "$(. "$ROOT/bin/jg-public-followup-lib.sh"; jg_pf_obligation_json "$T/bd" pf-one 2>&1)" '"public_safe_summary"' "the shell reader must see the payload"
 # Work bound to a promise: both backlogs agree on every relation answer, refusal and the delivery state it leaves.
 relation() { jq -n --arg id "$1" --arg task "$2" --arg role "${3:-fulfills}" --argjson generation "${4:-1}" \

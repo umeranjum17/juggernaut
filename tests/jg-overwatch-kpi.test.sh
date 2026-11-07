@@ -11,7 +11,7 @@ set -u
 
 KPI="$ROOT/bin/jg-overwatch-kpi.sh"
 GUARD="$ROOT/bin/jg-turnend-guard.sh"
-SCRIPT_DIR_TASKS="$ROOT/bin/jg-tasks-axi.sh"
+SCRIPT_DIR_TASKS="$ROOT/bin/jg-backlog.sh"
 TMP_ROOT=$(jg_test_tmproot jg-overwatch-kpi)
 jg_git_identity fmtest fmtest@example.invalid
 

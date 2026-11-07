@@ -26,7 +26,7 @@
 # the teardown refuses before cleanup.
 # None of this loosens the landed-work gates below: the transition runs only on
 # the paths that already proceed to remove the record.
-# The close - and only the close - is replaced by `jg-tasks-axi.sh reopen` with the
+# The close - and only the close - is replaced by `jg-backlog.sh reopen` with the
 # deliverable recorded while the backlog item is still an open captain call
 # (bin/jg-captain-hold.sh `open` owns that predicate), because the policy holds
 # the very work item a question gates and cleanup must never retire the
@@ -325,7 +325,7 @@ teardown_require_backend_prerequisites() {  # <backend> <task-id>
   fi
 }
 for _teardown_source in \
-  jg-tasks-axi-lib.sh \
+  jg-backlog-lib.sh \
   jg-backlog-transition-lib.sh \
   jg-timeout-lib.sh \
   jg-backend.sh \
@@ -354,8 +354,8 @@ do
   teardown_require_source "$SCRIPT_DIR/$_teardown_source"
 done
 unset _teardown_source
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 # shellcheck source=bin/jg-backend.sh
@@ -1497,9 +1497,9 @@ backlog_refresh_reminder() {
   if [ "$BACKLOG_CLOSED" = 1 ] && [ "$BACKLOG_TRANSITION" = retain ]; then
     printf '%s\n' "Backlog: $ID stays open in $backlog_display, still held for the captain with its deliverable recorded. Relay the question and close it only with bin/jg-captain-hold.sh answer."
   elif [ "$BACKLOG_CLOSED" = 1 ]; then
-    printf '%s\n' "Backlog: $ID is closed in $backlog_display. Run bin/jg-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
+    printf '%s\n' "Backlog: $ID is closed in $backlog_display. Run bin/jg-backlog.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   else
-    printf '%s\n' "Backlog: $ID just finished ($BACKLOG_SKIP_REASON). Close it in $backlog_display with bin/jg-tasks-axi.sh done, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
+    printf '%s\n' "Backlog: $ID just finished ($BACKLOG_SKIP_REASON). Close it in $backlog_display with bin/jg-backlog.sh done, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
   fi
 }
 
@@ -2878,7 +2878,7 @@ if [ "$FORCE" != "--force" ] \
       "$SCRIPT_DIR/jg-public-followup.sh" guard-work "$PUBLIC_FOLLOWUP_WORK_HOME" "$ID" 2>/dev/null); then
     echo "REFUSED: task $ID still owes a public reply through the myjuggernaut relay." >&2
     printf '%s\n' "$PUBLIC_FOLLOWUP_BLOCKING" >&2
-    echo "Deliver it with bin/jg-public-followup.sh deliver <obligation-id>, waive it with bin/jg-tasks-axi.sh public-followup waive, or use --force after explicit discard approval." >&2
+    echo "Deliver it with bin/jg-public-followup.sh deliver <obligation-id>, waive it with bin/jg-backlog.sh public-followup waive, or use --force after explicit discard approval." >&2
     exit 1
   fi
 fi

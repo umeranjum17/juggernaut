@@ -35,7 +35,7 @@
 #                          one of --home and --stage-in is required;
 #                          `jg-public-followup.sh brief` prints whichever the
 #                          bound work home actually needs.
-#   --obligation <id>      jg-tasks-axi.sh public-followup obligation id.
+#   --obligation <id>      jg-backlog.sh public-followup obligation id.
 #   --relation <id>        The relation_id this work fulfills or contributes to.
 #   --source-home <id>     This worker's stable home identity, exactly as bound:
 #                          "main" or "squad_lead:<stable-id>".

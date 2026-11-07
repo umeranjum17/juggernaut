@@ -19,9 +19,9 @@ The fork's `bin/jg-flow.sh` is a thin shim that resolves this checkout
 - `wiring.sh` — installs the flow check.
 - `tests/jg-flow-check.test.sh` — the flow check's integration test.
 
-The reader sources `jg-classify-lib.sh`, `jg-tasks-axi-lib.sh` and
+The reader sources `jg-classify-lib.sh`, `jg-backlog-lib.sh` and
 `jg-backlog-transition-lib.sh` from `${JG_BIN:-its own directory}` and runs
-the home-addressed `jg-tasks-axi.sh` backlog consumer from the same directory;
+the home-addressed `jg-backlog.sh` backlog consumer from the same directory;
 those fork files did not move, so a Juggernaut checkout copy needs nothing and
 this copy runs only with `JG_BIN` naming such a `bin/` (the fork shim always
 sets it).
@@ -44,7 +44,7 @@ Moved from Main's `config/jg-flow-check.sh` (sha256 `6e353c9e...4ed2`) in the fi
 Install with `fleet-flow/wiring.sh [--dry-run]`: it copies the check to `${XDG_DATA_HOME:-~/.local/share}/jg-fleet-flow/jg-flow-check.sh`, is idempotent, and `--dry-run` writes nothing.
 Main's `config/jg-flow-check.sh` then becomes a symlink to that copy, not an exec shim, because `bin/jg-flow.sh` reads its stage-clock policy from that file's text.
 Wake lines are keyed by identity only (kind and lane or item) and ring once per rung of the `RUNG_HOURS` ladder (1, 2, 4 ... 256 h); the live age lives in the text, never in the key. `tests/jg-flow-wake-key.test.sh` proves it.
-Test: `tests/jg-flow-check.test.sh` drives the real check over a fixture Main home and lead homes with stub `jg-tasks-axi.sh` and `jg-crew-state.sh`, including the live-lanes-and-kept-copies cases.
+Test: `tests/jg-flow-check.test.sh` drives the real check over a fixture Main home and lead homes with stub `jg-backlog.sh` and `jg-crew-state.sh`, including the live-lanes-and-kept-copies cases.
 
 ## Install (operator, after merge)
 

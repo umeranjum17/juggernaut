@@ -32,7 +32,7 @@ held() {
   local p fd
   for p in /proc/[0-9]*; do
     if ! ls "$p/fd" >/dev/null 2>&1; then
-      grep -qa jg-tasks-axi "$p/cmdline" 2>/dev/null && return 0
+      grep -qa jg-backlog "$p/cmdline" 2>/dev/null && return 0
       continue
     fi
     for fd in "$p"/fd/*; do

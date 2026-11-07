@@ -169,7 +169,7 @@
 # `--state queued --blocked`, and `ready`), so this script never reimplements
 # task state; the groups can overlap, because an in-flight item that is also held
 # appears under both. A failed read prints its reason.
-# Full bodies are targeted follow-up only: `bin/jg-tasks-axi.sh show <id> --full`.
+# Full bodies are targeted follow-up only: `bin/jg-backlog.sh show <id> --full`.
 #
 # STATUS TAILS: JG_SESSION_START_STATUS_TAIL (default 3) bounds how many lines each task's
 # tail prints, and bin/jg-line-cap-lib.sh bounds how long each of those lines
@@ -385,8 +385,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/jg-harness.sh" 2>/dev/null || printf unknown)
 
 # shellcheck source=bin/jg-backend.sh
 . "$SCRIPT_DIR/jg-backend.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-public-followup-lib.sh
 . "$SCRIPT_DIR/jg-public-followup-lib.sh"
 # shellcheck source=bin/jg-trace-context-lib.sh
@@ -470,7 +470,7 @@ print_file_capped() {
 }
 
 print_backlog_pointer() {
-  printf 'Full task bodies remain available on demand: bin/jg-tasks-axi.sh show <id> --full.\n'
+  printf 'Full task bodies remain available on demand: bin/jg-backlog.sh show <id> --full.\n'
 }
 
 # The store closes every listing with its own help block. This section composes
@@ -501,7 +501,7 @@ print_ready_queued_bounded() {
       if (total > 0) {
         printf "(shown %d of %d ready queued item(s))\n", shown, total
         if (total > shown) {
-          printf "(%d more queued - bin/jg-tasks-axi.sh ready)\n", total - shown
+          printf "(%d more queued - bin/jg-backlog.sh ready)\n", total - shown
         }
       }
     }
@@ -522,7 +522,7 @@ bound_held_rows() {
     { print }
     END {
       if (n > max) {
-        printf "(%d more held row(s) not listed; the captain-held rows above are complete - bin/jg-tasks-axi.sh list --state held shows every row)\n", n - max
+        printf "(%d more held row(s) not listed; the captain-held rows above are complete - bin/jg-backlog.sh list --state held shows every row)\n", n - max
       }
     }'
 }
@@ -892,7 +892,7 @@ Go to a source directly only when:
   - an individual full status log is needed for older wake-event history, or a
     status line was capped and its tail matters (each task's full log path is
     printed with its tail),
-  - a full task body is needed (bin/jg-tasks-axi.sh show <id> --full),
+  - a full task body is needed (bin/jg-backlog.sh show <id> --full),
   - the backlog listing disclosed omitted queued items and this turn needs them,
   - a held-row or curated-memory section printed a "not listed" or "[cut at" line and this turn needs the rest (the line names the command or line range),
   - the NETWORK CHECKS section reported its checks still IN PROGRESS and this

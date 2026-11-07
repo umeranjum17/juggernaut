@@ -25,7 +25,7 @@ guard_captain_ask() {  # <id>
   for pr in $(printf '%s\n' "$CAPTAIN_ASK_SHOW" | sed -n 's/^  links: //p' | grep -o 'pr:[^" ,]*' | sed 's/^pr://'); do
     [ "$(gh pr view "$pr" --json state -q .state 2>/dev/null)" = MERGED ] && return 0
   done
-  fail "$1 is a [captain-ask] item with no recorded captain answer (bin/jg-captain-hold.sh answer) and no merged PR (bin/jg-tasks-axi.sh update --pr); it cannot leave the backlog"
+  fail "$1 is a [captain-ask] item with no recorded captain answer (bin/jg-captain-hold.sh answer) and no merged PR (bin/jg-backlog.sh update --pr); it cannot leave the backlog"
 }
 
 # Closing, cancelling or deleting a captain-asked row: delivery (a merged PR or a Recon
@@ -61,7 +61,7 @@ captain_ask_record_closure() {  # <id> <evidence line>
   if ! { mkdir -p "$DATA" && printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%MZ)" "$1" "$2" >> "$DATA/captain-closures.md"; }; then
     fail "cannot record the captain's closing words for $1; it stays in the backlog"
   fi
-  # shellcheck disable=SC2034  # CLOSE_NOTE_ARGS is read by bin/jg-tasks-axi.sh, which sources this file
+  # shellcheck disable=SC2034  # CLOSE_NOTE_ARGS is read by bin/jg-backlog.sh, which sources this file
   case "${verb:-}" in
     done|close) CLOSE_NOTE_ARGS=(--note "Closed on $2") ;;
   esac

@@ -32,8 +32,8 @@ printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 mkdir -p "$work/store"
 printf '%s\n' "$work/store/.beads" > "$JG_HOME/config/beads-dir"
 BEADS_DIR="$work/store/.beads" "$fork/bin/jg-beads.sh" init --prefix stage >/dev/null 2>&1 || { echo 'cannot create the Beads store (set JG_BEADS_BD and JG_BEADS_DOLT to the pinned builds)' >&2; exit 1; }
-(cd "$JG_HOME"; "$fork/bin/jg-tasks-axi.sh" add stage-stuck '[feature] Umer stuck telescope focus' --repo alpha --priority 1 --body $'Stage proof row\nrelease: next\nparent: upkeep' >/dev/null
- "$fork/bin/jg-tasks-axi.sh" start stage-stuck >/dev/null)
+(cd "$JG_HOME"; "$fork/bin/jg-backlog.sh" add stage-stuck '[feature] Umer stuck telescope focus' --repo alpha --priority 1 --body $'Stage proof row\nrelease: next\nparent: upkeep' >/dev/null
+ "$fork/bin/jg-backlog.sh" start stage-stuck >/dev/null)
 git init -q "$JG_HOME/projects/alpha"
 git -C "$JG_HOME/projects/alpha" remote add origin https://github.com/example/ownvoice.git
 # More than six hours ago so the board draws stuck Nh.

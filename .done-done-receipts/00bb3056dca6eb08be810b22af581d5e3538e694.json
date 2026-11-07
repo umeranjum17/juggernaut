@@ -21,7 +21,7 @@
       "tool": "0.6.20",
       "steps": {
         "target": {
-          "version": "juggernaut bin/jg-tasks-axi.sh and bin/jg-captain-ask-lib.sh at this commit"
+          "version": "juggernaut bin/jg-backlog.sh and bin/jg-captain-ask-lib.sh at this commit"
         },
         "start": "a disposable juggernaut home with a real backlog",
         "steps": [

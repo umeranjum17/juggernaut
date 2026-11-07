@@ -90,7 +90,7 @@ H=$REHEARSE HOME_COPY=$RUN/rehearse/$REHEARSE
 mkdir -p "$HOME_COPY/data" "$HOME_COPY/config"
 cp -p "$RUN"/copy/homes/"$H"/* "$HOME_COPY/data/"
 migrate() { jailed python3 "$HERE/jg-beads-migrate.py" "$@"; }
-axi() { jailed JG_HOME="$HOME_COPY" "$HERE/jg-tasks-axi.sh" "$@"; }
+axi() { jailed JG_HOME="$HOME_COPY" "$HERE/jg-backlog.sh" "$@"; }
 cut_home() { migrate cut --home "$H" --dir "$HOME_COPY" --copy "$RUN/copy" --out "$RUN/imp" --store "$RUN/rehearse/store-$1/.beads" --order "${2-rehearsal on a throwaway copy}"; }
 go_back() { migrate back --dir "$HOME_COPY" "$@"; }
 says() { # <text> <command...>: the command fails and its output carries the text.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # done-done journey: a red CI run is never re-run to see if it passes. The real bin/jg-ci-rerun.sh runs over the
-# real jg-tasks-axi.sh backlog and a recorded forge. Shows: (1) a red run with no ticket is refused; (2) a red run
+# real jg-backlog.sh backlog and a recorded forge. Shows: (1) a red run with no ticket is refused; (2) a red run
 # whose ticket has no "root-cause:" line is refused; (3) with that line the run is re-run once; (4) a green run
 # is re-run without a ticket. tests/jg-ci-rerun.test.sh owns the edge cases.
 set -u
@@ -37,10 +37,10 @@ log "step 1: red run 21 with no ticket"
 log "step 2: the watcher's ticket exists, but names no root cause"
 body="CI went red: CI, run 21 (failure). Find the root cause.
 Never re-run; fix the root cause. bin/jg-ci-rerun.sh refuses a re-run of this run until this ticket carries a 'root-cause:' note."
-"$H/bin/jg-tasks-axi.sh" add ci-red-run-21 "[blocker] CI red: CI shard 2: find the root cause" --kind ship --body "$body" >/dev/null || fail "cannot file the ticket"
+"$H/bin/jg-backlog.sh" add ci-red-run-21 "[blocker] CI red: CI shard 2: find the root cause" --kind ship --body "$body" >/dev/null || fail "cannot file the ticket"
 "$H/bin/jg-ci-rerun.sh" 21 --repo ex/r >> "$LOG" 2>&1 && fail "a red run with a note-less ticket was re-run"
 log "step 3: the ticket names the root cause"
-"$H/bin/jg-tasks-axi.sh" update ci-red-run-21 --body "$body
+"$H/bin/jg-backlog.sh" update ci-red-run-21 --body "$body
 root-cause: the shard reads a clock the fixture never freezes" >/dev/null || fail "cannot add the note"
 "$H/bin/jg-ci-rerun.sh" 21 --repo ex/r >> "$LOG" 2>&1 || fail "a red run with a root-cause note was refused"
 [ "$(cat "$RERUNS")" = "rerun 21 -R ex/r" ] || fail "want exactly one re-run of 21, got: $(cat "$RERUNS")"

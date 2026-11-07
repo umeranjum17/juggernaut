@@ -40,7 +40,7 @@ printf 'tmux\n' > "$world/config/backend"
 printf 'lead\n' > "$world/.jg-squad-lead-home"
 printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$world/parent" > "$world/.jg-squad-lead-parent"
 core_beads_home "$ROOT" "$world"
-(cd "$world" && jg-tasks-axi.sh add jg-held-lane 'deliberately paused lane')
+(cd "$world" && jg-backlog.sh add jg-held-lane 'deliberately paused lane')
 tmux new-session -d -s juggernaut -n jg-held-lane 'sleep 300'
 printf 'window=juggernaut:jg-held-lane\nkind=ship\nharness=pi\nbackend=tmux\nworktree=%s\n' "$world" > "$world/state/jg-held-lane.meta"
 cycle() {

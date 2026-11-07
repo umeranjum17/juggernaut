@@ -4,7 +4,7 @@
 # carrying it is routed to Overwatch and re-alerted on. The card takes no answer,
 # the finding count and the first findings are on it, the report file beside it
 # still holds every finding, and the asks gate neither counts nor routes it.
-# Real jg-tasks-axi.sh on a Beads store, real sign-off-axi board, real install: nothing is mocked.
+# Real jg-backlog.sh on a Beads store, real sign-off-axi board, real install: nothing is mocked.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -31,7 +31,7 @@ core_beads_home "$fork" "$JG_HOME"
 # Eight captain tickets with no ask card and no quoted words are two findings
 # each, so the full finding list is well past the 1000 characters one card used to take.
 (cd "$JG_HOME"; for n in one two three four five six seven eight; do
-  jg-tasks-axi.sh add "jg-ask-$n" "[captain-ask] P0 Umer capped ask $n" --repo alpha --priority 0 --body 'type: captain-ask' >/dev/null
+  jg-backlog.sh add "jg-ask-$n" "[captain-ask] P0 Umer capped ask $n" --repo alpha --priority 0 --body 'type: captain-ask' >/dev/null
 done)
 bash "$root/wiring.sh"
 status=0

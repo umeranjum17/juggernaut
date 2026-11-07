@@ -24,10 +24,10 @@ FMH=$(cd "$2" && pwd -P)
 STATE=$FMH/state; DATA=$FMH/data; CONFIG=$FMH/config; BIN=$FMH/bin
 LIMIT=${JG_SHIPPED_RECONCILE_LIMIT:-$(( $(date +%s) + ${JG_CHECK_TIMEOUT:-30} * 4 / 5 ))}
 # The home's own libraries own the backlog transition; a home without them has nothing this can do.
-[ -r "$BIN/jg-tasks-axi-lib.sh" ] && [ -r "$BIN/jg-backlog-transition-lib.sh" ] && [ -x "$BIN/jg-crew-state.sh" ] || exit 0
+[ -r "$BIN/jg-backlog-lib.sh" ] && [ -r "$BIN/jg-backlog-transition-lib.sh" ] && [ -x "$BIN/jg-crew-state.sh" ] || exit 0
 export JG_HOME=$FMH
-# shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
-. "$BIN/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
+. "$BIN/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh disable=SC1091
 . "$BIN/jg-backlog-transition-lib.sh"
 jg_backlog_transition_applies "$CONFIG" "$DATA" ship || exit 0

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end: drive red-ci-ticket.sh against a fixture home whose clone has a github origin, with a gh-axi stub that
-# answers from recorded run lists and a jg-tasks-axi.sh stub that records every add. Covers a red run filing one ticket
+# answers from recorded run lists and a jg-backlog.sh stub that records every add. Covers a red run filing one ticket
 # with the run id, URL, failing job and first failing log line, a second poll filing none, a green run and a superseded
 # old red run filing none, a red run on an open PR head filing its own ticket, a failed add retried next poll, a forge
 # failure staying silent, and the check running from merge-on-green.sh check.
@@ -16,14 +16,14 @@ printf -- '- r [direct-PR +yolo] - fixture project (ex/r) (added 2026-11-04)\n' 
 git -C "$FM/projects/r" init -q
 git -C "$FM/projects/r" remote add origin https://github.com/ex/r.git
 export STUB_FAIL=$d/fail STUB_ADDS=$d/adds STUB_ADD_FAIL=$d/addfail
-cat > "$FM/bin/jg-tasks-axi.sh" <<'STUB'
+cat > "$FM/bin/jg-backlog.sh" <<'STUB'
 #!/usr/bin/env bash
 # add <id> <title> --kind ship --body <body>: record it; show: never found
 [ "$1" = add ] || exit 1
 [ ! -e "$STUB_ADD_FAIL" ] || exit 1
 printf '%s\n' "$2|$3|$7" >> "$STUB_ADDS"
 STUB
-chmod +x "$FM/bin/jg-tasks-axi.sh"
+chmod +x "$FM/bin/jg-backlog.sh"
 cp "$SRC/tests/fixtures/red-ci-ticket/gh-axi" "$d/gh-axi"
 export JG_RED_CI_GH=$d/gh-axi
 fails=0

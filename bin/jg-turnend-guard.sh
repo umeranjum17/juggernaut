@@ -244,7 +244,7 @@ fi
 # as one time fix". A captain message that told the fleet to work differently
 # must leave something the whole system reads - an owner rule
 # (bin/jg-owner-rules.sh add) or, when it cannot be a rule yet, an enforcement
-# ticket (bin/jg-tasks-axi.sh add) - in the turn it lands, or the correction dies
+# ticket (bin/jg-backlog.sh add) - in the turn it lands, or the correction dies
 # in one conversation and the next session repeats it. bin/jg-owner-correction.sh
 # owns the record and the predicate; the KPI rule above has already required the
 # tag that record reads. A helper that is missing or cannot answer is never read
@@ -272,7 +272,7 @@ owner_correction_block() {  # <seq> <kind> <text>
     printf '●  Write the rule the whole system reads, in his own words, when it is his own taste or authority:\n'
     printf '●    %s/jg-owner-rules.sh add --kind owner --words "<his exact words>" --scope "<where it applies>" --enforce "<script or contract that enforces it>"\n' "$SCRIPT_DIR"
     printf '●  When it is an engineering default every Juggernaut user should get, or cannot be a rule yet, file the ticket instead:\n'
-    printf '●    %s/jg-tasks-axi.sh add <id> "[feature] <what changes>" --body "<summary of what changes and why>"\n' "$SCRIPT_DIR"
+    printf '●    %s/jg-backlog.sh add <id> "[feature] <what changes>" --body "<summary of what changes and why>"\n' "$SCRIPT_DIR"
     printf '●  His message (%s): %.160s\n' "$2" "$3"
     printf '●%s\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
   } >&2

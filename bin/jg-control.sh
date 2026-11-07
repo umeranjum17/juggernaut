@@ -633,8 +633,8 @@ clear_retired_meta_busy_gen() {  # <gen>
   [ -n "$gen" ] || return 0
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
   if ! declare -F jg_backlog_atomic_transition >/dev/null 2>&1; then
-    # shellcheck source=bin/jg-tasks-axi-lib.sh
-    . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+    # shellcheck source=bin/jg-backlog-lib.sh
+    . "$SCRIPT_DIR/jg-backlog-lib.sh"
     # shellcheck source=bin/jg-backlog-transition-lib.sh
     . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
   fi

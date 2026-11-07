@@ -12,14 +12,14 @@ This record supports seven active guarantees for promised public replies made th
 6. Work bound to a REMOTE Squad Lead home can report its typed terminal result: the instructions name paths that exist on the worker's own machine, the owning home collects results for open registrations over that route, an unreachable route fails loudly, an empty reachable route is a healthy no-op, and a non-open registration is skipped without contact.
 7. Work that ends failed or parked remains deliverable when its promised final expected a merged pull request, so the original thread receives the honest failed outcome exactly once instead of retaining an undeliverable promise.
 
-[`docs/configuration.md`](../configuration.md#promised-public-replies-statepublic-followup) owns the operator-facing contract, [`docs/architecture.md`](../architecture.md#optional-relay) owns the mechanism boundary, and `jg-tasks-axi.sh public-followup --help` owns the typed obligation schema.
+[`docs/configuration.md`](../configuration.md#promised-public-replies-statepublic-followup) owns the operator-facing contract, [`docs/architecture.md`](../architecture.md#optional-relay) owns the mechanism boundary, and `jg-backlog.sh public-followup --help` owns the typed obligation schema.
 Task chronology and delivery evidence stay outside this record.
 
 ## Environment
 
 Recorded 2026-09-01 on Darwin 25.5.0 (arm64) with GNU bash 5.3.9, the backlog 0.2.5, jq 1.8.1, and ShellCheck 0.11.0 (the version `bin/jg-lint.sh` pins).
-The stock macOS compatibility lane additionally runs the focused first-registration regression with `/bin/bash` 3.2.57 and a real `bin/jg-tasks-axi.sh` installation.
-The relay is a fakebin `curl` in every case, so no public post is ever made; `bin/jg-tasks-axi.sh` and `jq` are the real tools, because stubbing the obligation state machine would verify nothing.
+The stock macOS compatibility lane additionally runs the focused first-registration regression with `/bin/bash` 3.2.57 and a real `bin/jg-backlog.sh` installation.
+The relay is a fakebin `curl` in every case, so no public post is ever made; `bin/jg-backlog.sh` and `jq` are the real tools, because stubbing the obligation state machine would verify nothing.
 The remote-route cases fake only the SSH binary at the `JG_SSH_BIN` process seam and then run the real tracked `jg-remote-entrypoint.sh` against a local checkout standing in for the remote one, so the work that has to reach the remote home actually runs there; no host and no network are involved.
 The failed-result regression was refreshed separately on 2026-09-22 in the same environment with the backlog 0.2.6.
 
@@ -160,8 +160,8 @@ Outward delivery for a remote-home loop is the separate legacy-link clear proven
 
 ## Relay-disabled zero overhead
 
-The relay-disabled case in `tests/jg-public-followup.test.sh` invokes every public-followup entry point against a home with no `.env`, logs every `bin/jg-tasks-axi.sh` invocation, and compares the state tree before and after.
-It proves the feature makes no `bin/jg-tasks-axi.sh` call, prints nothing, and creates no `state/public-followup` artifact without coupling that guarantee to session start's independently owned state files.
+The relay-disabled case in `tests/jg-public-followup.test.sh` invokes every public-followup entry point against a home with no `.env`, logs every `bin/jg-backlog.sh` invocation, and compares the state tree before and after.
+It proves the feature makes no `bin/jg-backlog.sh` call, prints nothing, and creates no `state/public-followup` artifact without coupling that guarantee to session start's independently owned state files.
 
 The whole added cost in that home is the activation predicate, measured over 1000 in-process calls including loop overhead:
 

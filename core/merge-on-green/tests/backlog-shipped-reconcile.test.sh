@@ -27,7 +27,7 @@ chmod +x "$FM/bin/jg-crew-state.sh"
 . "$REPO/core/lib/beads-test-env.sh"
 core_beads_home "$REPO" "$FM"
 export JG_HOME=$FM
-ta() { jg-tasks-axi.sh "$@" >/dev/null; }
+ta() { jg-backlog.sh "$@" >/dev/null; }
 row() { ta add "jg-$1" "[feature] $2" --repo r --priority 1 --body body; }
 for id in merged-gone live-merged released-gone no-evidence other-pr held-merged pending-close no-pr lead-x; do
   row "$id" "in flight $id"; ta start "jg-$id"
@@ -55,7 +55,7 @@ fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok: $1"; else printf 'FAIL: %s\n  want: %s\n  got:  %s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi; }
 reconcile() { JG_CHECK_TIMEOUT=60 "$SRC/backlog-shipped-reconcile.sh" check "$FM" 2>&1; }
 section() { # <state>: the ids in that state, without the jg- prefix, sorted
-  jg-tasks-axi.sh list --state "$1" --fields id | sed -nE 's/^ +(jg-[A-Za-z0-9._-]+).*/\1/p' | sed 's/^jg-//' | sort | tr '\n' ' '; }
+  jg-backlog.sh list --state "$1" --fields id | sed -nE 's/^ +(jg-[A-Za-z0-9._-]+).*/\1/p' | sed 's/^jg-//' | sort | tr '\n' ' '; }
 
 out=$(reconcile)
 P=https://github.com/ex/r/pull
@@ -65,7 +65,7 @@ check "exactly two rows are reported" "$(printf '%s\n' "$out" | grep -c '^backlo
 check "Done holds the two shipped rows" "$(section done)" "merged-gone released-gone "
 check "In flight keeps every row that must stay" "$(section in_flight)" "held-merged lead-x live-merged no-evidence no-pr other-pr pending-close "
 check "Queued is untouched" "$(section queued)" "queued-merged "
-check "the closed row records its PR" "$(jg-tasks-axi.sh show jg-merged-gone --full | grep -q "$P/71" && echo 1)" 1
+check "the closed row records its PR" "$(jg-backlog.sh show jg-merged-gone --full | grep -q "$P/71" && echo 1)" 1
 check "the worker record stays for teardown" "$([ -f "$FM/state/jg-merged-gone.meta" ] && [ -f "$FM/state/jg-released-gone.meta" ] && echo both)" both
 check "a rerun is silent" "$(reconcile)" ""
 

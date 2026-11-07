@@ -151,7 +151,7 @@ run_pf_sysbash() {  # <home> <args...>
 
 # The backlog's pinned public-followup schema names a squad_lead home with the
 # pre-rename prefix, so the fixtures translate at that boundary exactly as
-# bin/jg-tasks-axi.sh does for production calls.
+# bin/jg-backlog.sh does for production calls.
 taxi_home() {  # <home-id>
   case "$1" in
     squad_lead:*) printf '%s:%s\n' "second$(printf mate)" "${1#squad_lead:}" ;; # the pre-rename home id the store still holds
@@ -161,7 +161,7 @@ taxi_home() {  # <home-id>
 tasks_in() {  # <home> <backlog args...>
   local home=$1
   shift
-  (cd "$home" && JG_HOME="$home" "$ROOT/bin/jg-tasks-axi.sh" "$@")
+  (cd "$home" && JG_HOME="$home" "$ROOT/bin/jg-backlog.sh" "$@")
 }
 
 # seed_commitment <home> <obligation> <request> <platform> <work-home> <work-id>

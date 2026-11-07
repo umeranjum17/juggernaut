@@ -472,12 +472,12 @@ cmd_approve() {  # <note-id> <ticket-id>
   fail() { die "$@"; }
   # shellcheck source=bin/jg-captain-ask-lib.sh
   . "$SELF_DIR/jg-captain-ask-lib.sh"
-  show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" show "$ticket" --full 2>/dev/null) \
+  show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" show "$ticket" --full 2>/dev/null) \
     || die "cannot read ticket $ticket"
   current=$(printf '%s\n' "$show" | sed -n 's/^  body: //p' | head -1 | perl -MJSON::PP -e 'local $/; my $v = <STDIN>; $v = JSON::PP->new->utf8->allow_nonref->decode($v) if $v =~ /^"/; binmode STDOUT, ":raw"; utf8::encode($v) if utf8::is_utf8($v); print $v')
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-inbox-approve.XXXXXX") || die "cannot stage the approval"
   printf '%s\n\n%s\n' "$current" "$(captain_ask_approval_line "$ticket" "note:$id")" > "$tmp"
-  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" update "$ticket" --body-file "$tmp" >/dev/null \
+  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" update "$ticket" --body-file "$tmp" >/dev/null \
     || { rm -f -- "$tmp"; die "could not record the approval on $ticket"; }
   rm -f -- "$tmp"
   printf 'approved %s by note %s\n' "$ticket" "$id"
@@ -490,11 +490,11 @@ ensure_captain_ask_ticket() {  # <note-id> <note-body>
   first=${body%%$'\n'*}
   case "$first" in '[captain-ask]'*) ;; *) return 0 ;; esac
   ticket=$(captain_ask_ticket_id "$id")
-  if show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" show "$ticket" --full 2>/dev/null); then
+  if show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" show "$ticket" --full 2>/dev/null); then
     return 0
   fi
   title=$first
-  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" add "$ticket" "$title" \
+  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" add "$ticket" "$title" \
     --kind captain --priority 0 --body "$body" >/dev/null || die "captain ask note $id is saved but its ticket $ticket could not be created"
 }
 
@@ -647,7 +647,7 @@ cmd_asks() {
     case "$first" in '[captain-ask]'*) ;; *) continue ;; esac
     id=${path##*/}; id=${id%.note}
     ticket=$(captain_ask_ticket_id "$id")
-    show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" show "$ticket" --full 2>/dev/null) || die "captain ask note $id has no readable ticket $ticket"
+    show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" show "$ticket" --full 2>/dev/null) || die "captain ask note $id has no readable ticket $ticket"
     state=$(printf '%s\n' "$show" | sed -n 's/^  state: //p' | head -1)
     [ -n "$state" ] || die "captain ask ticket $ticket has no readable state"
     printf '%s\t%s\t%s\t%s\n' "$ticket" "$state" "$id" "$first"
@@ -1345,8 +1345,8 @@ cmd_status() {
   printf 'inbox    %s note(s) waiting for juggernaut\n' "$pending"
 
   # Loaded here so taking a note never depends on the backlog provider.
-  # shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
-  . "$SELF_DIR/jg-tasks-axi-lib.sh"
+  # shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
+  . "$SELF_DIR/jg-backlog-lib.sh"
   printf '\n--- in flight ---\n'
   if backlog=$(jg_backlog_text "$CONFIG"); then
     printf '%s\n' "$backlog" | awk '/^## In flight/{f=1;next} /^## /{f=0} f && /^- \[/{print}' \

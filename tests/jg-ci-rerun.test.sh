@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end: bin/jg-ci-rerun.sh over the real jg-tasks-axi.sh backlog and a recorded forge. A red run is refused
+# End-to-end: bin/jg-ci-rerun.sh over the real jg-backlog.sh backlog and a recorded forge. A red run is refused
 # with no ticket, refused with a ticket that has no root-cause note (the filed text only mentions the word), and
 # re-run once the ticket body holds a "root-cause:" line; a green run re-runs without a ticket; --failed passes on.
 # journeys/ci-rerun-refusal.sh is the done-done journey for the same script and is selected with this file.
@@ -35,12 +35,12 @@ grep -q 'no root-cause ticket yet' "$d/err" || no "the refusal does not say ther
 ok "a red run with no ticket is refused"
 body="CI went red: CI, run 21 (failure). Find the root cause.
 Never re-run; fix the root cause. bin/jg-ci-rerun.sh refuses a re-run of this run until this ticket carries a 'root-cause:' note."
-"$H/bin/jg-tasks-axi.sh" add ci-red-run-21 "[blocker] CI red: CI shard 2: find the root cause" --kind ship --body "$body" >/dev/null
+"$H/bin/jg-backlog.sh" add ci-red-run-21 "[blocker] CI red: CI shard 2: find the root cause" --kind ship --body "$body" >/dev/null
 rerun 21 --repo ex/r && no "a red run with a note-less ticket was re-run"
 grep -q 'no root-cause note' "$d/err" || no "the refusal does not say the note is missing"
 [ ! -s "$RERUNS" ] || no "a re-run was issued"
 ok "a red run whose ticket has no root-cause note is refused"
-"$H/bin/jg-tasks-axi.sh" update ci-red-run-21 --body "$body
+"$H/bin/jg-backlog.sh" update ci-red-run-21 --body "$body
 root-cause: the shard reads a clock that the fixture never freezes" >/dev/null
 rerun 21 --repo ex/r --failed || no "a red run with a root-cause note was refused"
 [ "$(cat "$RERUNS")" = "rerun 21 -R ex/r --failed" ] || no "want one re-run of 21 with --failed, got: $(cat "$RERUNS")"

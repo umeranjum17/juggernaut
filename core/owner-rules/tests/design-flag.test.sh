@@ -28,7 +28,7 @@ root=$(cd "$addons/.." && pwd)
 core_beads_home "$root" "$home"
 export JG_HOME=$home
 add() {  # <id> <title> [<body>]
-  (cd "$home" && bash "$root/bin/jg-tasks-axi.sh" add "$1" "$2" --priority 0 --kind ship --repo sample --body "${3:-Fixture ticket $1}") >/dev/null 2>"$work/add.err" \
+  (cd "$home" && bash "$root/bin/jg-backlog.sh" add "$1" "$2" --priority 0 --kind ship --repo sample --body "${3:-Fixture ticket $1}") >/dev/null 2>"$work/add.err" \
     || { echo "fixture: could not add $1: $(cat "$work/add.err")" >&2; exit 1; }
 }
 add jg-req '[captain-ask] Rebuild the dashboard' 'design: required'

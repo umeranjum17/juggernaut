@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sourced by a core test that needs a real Beads backlog in a fixture home. It skips plainly without the pinned
-# bd and dolt (JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT) and puts the checkout's bin/ on PATH so jg-tasks-axi.sh resolves.
+# bd and dolt (JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT) and puts the checkout's bin/ on PATH so jg-backlog.sh resolves.
 # core_beads_home <checkout> <home> [<prefix>=jg]: a fresh store in <home>-store, named by <home>/config/beads-dir.
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   echo 'skip: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset'; exit 0

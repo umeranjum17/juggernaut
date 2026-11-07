@@ -146,7 +146,7 @@
 #   check: ready work waiting with free lane slots: (<open>/<target> open): <ids> - dispatch them now, P0 first, up to project capacity
 #   check: ready work waiting with no worker working: <ids> - dispatch them now, P0 first, up to project capacity
 #                          a primary or squad_lead home's base-cadence scan found dispatchable
-#                          queued work (jg-tasks-axi.sh ready) while the home sits
+#                          queued work (jg-backlog.sh ready) while the home sits
 #                          below its lane floor: with config/lane-target naming a
 #                          positive integer, fewer live lanes than that target
 #                          (a lane whose last status line is paused, blocked,

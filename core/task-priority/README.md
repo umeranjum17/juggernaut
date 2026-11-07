@@ -7,6 +7,6 @@ A new backlog task must carry a priority 0-3 and a target release, so every open
   The target release is a `release: <name>` line in `--body` or `--body-file`; absent means `later`, so only the priority can refuse.
   Stdout is `release: <name>`, the resolved release.
 - `wiring.sh [--dry-run]` copies the check to `${XDG_DATA_HOME:-~/.local/share}/jg-task-priority/check.sh`.
-- Fork seam (slice 2, not in this feature): `bin/jg-tasks-axi.sh add` and the row creation in `bin/jg-captain-hold.sh hold`
+- Fork seam (slice 2, not in this feature): `bin/jg-backlog.sh add` and the row creation in `bin/jg-captain-hold.sh hold`
   call that path with the backlog arguments when it is installed, and do nothing when it is not. Existing rows are never checked.
 - Test: `tests/task-priority.test.sh` runs the real installer and check in a throwaway `XDG_DATA_HOME`.

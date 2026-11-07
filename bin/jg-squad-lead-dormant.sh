@@ -48,8 +48,8 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 . "$SCRIPT_DIR/jg-parked-homes-lib.sh"
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 NOW=$(date +%s)
 PERSIST_WAIT=${JG_SQUAD_LEAD_DORMANT_PERSIST_WAIT:-900}
 PERSIST_REQUEST='Your home has no open work, so your agent will be stopped to free its seat; routed work relaunches you, and every durable record stays. Before that, persist the open work you are holding only in this conversation, following the /intel skill'"'"'s "Open-record persistence" section and nothing else from that skill. Do not start new work to look busy. Then reply on your parent channel saying it is done.'

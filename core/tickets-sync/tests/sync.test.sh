@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Real jg-tasks-axi.sh on a Beads store -> installed watcher check -> real sign-off-axi, in isolated homes.
+# Real jg-backlog.sh on a Beads store -> installed watcher check -> real sign-off-axi, in isolated homes.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -17,7 +17,7 @@ trap 'echo "retained fixture and normalized archives: $work"' EXIT
 # $HOME/juggernaut need not exist on a machine that only cloned this repository, and a fork that is not a Juggernaut
 # checkout leaves $JG_HOME/bin a dangling link that fails the install with an env 127 instead of a verdict.
 fork=${JG_TEST_FORK:-$(cd "$root/.." && pwd -P)}
-[ -f "$fork/bin/jg-tasks-axi.sh" ] || { echo "FAIL: $fork is not a Juggernaut checkout (no bin/jg-tasks-axi.sh); set JG_TEST_FORK"; exit 1; }
+[ -f "$fork/bin/jg-backlog.sh" ] || { echo "FAIL: $fork is not a Juggernaut checkout (no bin/jg-backlog.sh); set JG_TEST_FORK"; exit 1; }
 export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff
 export JG_HOME=$work/main
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state} "$work/parked/data"
@@ -30,21 +30,21 @@ printf 'parked\n' > "$JG_HOME/config/parked-homes"
 . "$root/lib/beads-test-env.sh"
 core_beads_home "$fork" "$JG_HOME"
 core_beads_home "$fork" "$work/parked"
-(cd "$JG_HOME"; jg-tasks-axi.sh add jg-parent '[captain-ask] P1 Parent: Umer release' --repo alpha --priority 0 --body 'type: captain-ask: "Umer telescope focus should be simple"' >/dev/null
- jg-tasks-axi.sh done jg-parent --captain-quote 'Umer focus should be simple' >/dev/null
- jg-tasks-axi.sh add jg-long "Umer 🚢 $(printf 'long title %.0s' {1..30})" --repo alpha --priority 1 --body $'release: v1\nhttps://github.com/example/alpha/pull/123\nhttps://github.com/example/alpha/pull/456' >/dev/null
- jg-tasks-axi.sh start jg-long >/dev/null
- jg-tasks-axi.sh add jg-upkeep 'Umer maintenance' --repo alpha --priority 2 --body 'parent: upkeep' >/dev/null
- jg-tasks-axi.sh add jg-held 'Umer paused item' --repo alpha --priority 1 --body 'parent: missing' >/dev/null
- jg-tasks-axi.sh hold jg-held --reason 'Umer parked this item' --kind parked >/dev/null
- jg-tasks-axi.sh add jg-voice 'Umer voice practice' --repo ownvoice --priority 2 --body 'release: soon' >/dev/null
- jg-tasks-axi.sh add jg-take 'Umer takes' --repo takeone --priority 2 >/dev/null
- jg-tasks-axi.sh add jg-gone 'Umer queued item whose worker has gone' --repo alpha --priority 2 >/dev/null
- jg-tasks-axi.sh add jg-inferred 'Umer telescope focus regression' --repo alpha --priority 1 >/dev/null
- jg-tasks-axi.sh add jg-internal 'Umer internal maintenance' --repo herdr --priority 2 --body 'parent: upkeep' >/dev/null
- jg-tasks-axi.sh add jg-child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nrelease: v1\nparent: jg-parent' >/dev/null)
-(cd "$work/parked"; JG_HOME="$work/parked" jg-tasks-axi.sh add jg-parent 'Umer paused project' --repo beta --priority 2 >/dev/null)
-(cd "$JG_HOME"; jg-tasks-axi.sh add jg-recent 'Umer shipped feature' --repo alpha --priority 2 >/dev/null; jg-tasks-axi.sh done jg-recent >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh add jg-parent '[captain-ask] P1 Parent: Umer release' --repo alpha --priority 0 --body 'type: captain-ask: "Umer telescope focus should be simple"' >/dev/null
+ jg-backlog.sh done jg-parent --captain-quote 'Umer focus should be simple' >/dev/null
+ jg-backlog.sh add jg-long "Umer 🚢 $(printf 'long title %.0s' {1..30})" --repo alpha --priority 1 --body $'release: v1\nhttps://github.com/example/alpha/pull/123\nhttps://github.com/example/alpha/pull/456' >/dev/null
+ jg-backlog.sh start jg-long >/dev/null
+ jg-backlog.sh add jg-upkeep 'Umer maintenance' --repo alpha --priority 2 --body 'parent: upkeep' >/dev/null
+ jg-backlog.sh add jg-held 'Umer paused item' --repo alpha --priority 1 --body 'parent: missing' >/dev/null
+ jg-backlog.sh hold jg-held --reason 'Umer parked this item' --kind parked >/dev/null
+ jg-backlog.sh add jg-voice 'Umer voice practice' --repo ownvoice --priority 2 --body 'release: soon' >/dev/null
+ jg-backlog.sh add jg-take 'Umer takes' --repo takeone --priority 2 >/dev/null
+ jg-backlog.sh add jg-gone 'Umer queued item whose worker has gone' --repo alpha --priority 2 >/dev/null
+ jg-backlog.sh add jg-inferred 'Umer telescope focus regression' --repo alpha --priority 1 >/dev/null
+ jg-backlog.sh add jg-internal 'Umer internal maintenance' --repo herdr --priority 2 --body 'parent: upkeep' >/dev/null
+ jg-backlog.sh add jg-child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nrelease: v1\nparent: jg-parent' >/dev/null)
+(cd "$work/parked"; JG_HOME="$work/parked" jg-backlog.sh add jg-parent 'Umer paused project' --repo beta --priority 2 >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh add jg-recent 'Umer shipped feature' --repo alpha --priority 2 >/dev/null; jg-backlog.sh done jg-recent >/dev/null)
 git init -q "$JG_HOME/projects/alpha"
 git -C "$JG_HOME/projects/alpha" remote add origin https://github.com/example/alpha-app.git
 printf 'window=default:w9:p1\nendpoint_task_id=jg-long\nharness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount=found-claude\n' > "$JG_HOME/state/jg-long.meta"
@@ -53,7 +53,7 @@ printf 'harness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount
 printf 'paused [at=1700000010]: ran once and stopped\n' > "$JG_HOME/state/jg-gone.status"
 sign-off-axi ticket "$work/board.json" --id jg-legacy-fixture --title 'Needs a parent · alpha' --progress 17 --asked yes >/dev/null
 sign-off-axi ticket "$work/board.json" --id jg-history-fixture --title 'Umer historical maintenance' --project main --progress 100 --asked no >/dev/null
-source_before=$(cd "$JG_HOME" && jg-tasks-axi.sh list; cd "$work/parked" && JG_HOME="$work/parked" jg-tasks-axi.sh list)
+source_before=$(cd "$JG_HOME" && jg-backlog.sh list; cd "$work/parked" && JG_HOME="$work/parked" jg-backlog.sh list)
 bash "$root/tickets-sync/wiring.sh" --dry-run
 test ! -d "$XDG_DATA_HOME/jg-tickets-sync"
 bash "$root/tickets-sync/wiring.sh"
@@ -148,8 +148,8 @@ rm "$JG_HOME/state/tickets-sync/closures.json"
 mv "$JG_HOME/state/tickets-sync"/published-*.json "$JG_HOME/state/tickets-sync/ledger-before-restart"
 "$JG_HOME/state/tickets-sync.check.sh"
 test "$before" = "$(sha256sum "$work/board.tickets.jsonl" "$work/board.projects.jsonl")"
-test "$source_before" = "$(cd "$JG_HOME" && jg-tasks-axi.sh list; cd "$work/parked" && JG_HOME="$work/parked" jg-tasks-axi.sh list)"
-(cd "$JG_HOME"; jg-tasks-axi.sh done jg-child --captain-quote 'Umer settings' --pr https://github.com/example/alpha/pull/1 >/dev/null; jg-tasks-axi.sh done jg-inferred >/dev/null)
+test "$source_before" = "$(cd "$JG_HOME" && jg-backlog.sh list; cd "$work/parked" && JG_HOME="$work/parked" jg-backlog.sh list)"
+(cd "$JG_HOME"; jg-backlog.sh done jg-child --captain-quote 'Umer settings' --pr https://github.com/example/alpha/pull/1 >/dev/null; jg-backlog.sh done jg-inferred >/dev/null)
 "$JG_HOME/state/tickets-sync.check.sh"
 sign-off-axi ticket "$work/board.json" --id "$child" --json > "$work/closed.json"
 jq -e '.ticket | .progress == 100 and .hold == false and (.prs | index("https://github.com/example/alpha/pull/1") != null)' "$work/closed.json"
@@ -163,23 +163,23 @@ sign-off-axi ticket "$work/board.json" --id "$parent" --json | jq -e '.ticket.pr
 echo 'PASS: completed sync stays idempotent; epic progress rolls up from its child'
 
 if command -v gh-axi >/dev/null && [ -n "${JG_TEST_MERGED_PR:-}" ]; then
-  (cd "$JG_HOME"; jg-tasks-axi.sh add jg-merged 'Umer shipped PR' --repo alpha --priority 1 --body "pr: $JG_TEST_MERGED_PR" >/dev/null; jg-tasks-axi.sh start jg-merged >/dev/null)
+  (cd "$JG_HOME"; jg-backlog.sh add jg-merged 'Umer shipped PR' --repo alpha --priority 1 --body "pr: $JG_TEST_MERGED_PR" >/dev/null; jg-backlog.sh start jg-merged >/dev/null)
   "$JG_HOME/state/tickets-sync.check.sh"
   sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-merged)" --json | jq -e '.ticket.progress == 100 and .ticket.state == "done"'
   echo 'PASS: merged GitHub PR closes an in-flight backlog item'
 fi
 
-(cd "$JG_HOME"; jg-tasks-axi.sh add jg-other '[captain-ask] P1 Umer telescope focus second request' --repo alpha --priority 0 >/dev/null
- jg-tasks-axi.sh add jg-ambiguous 'Umer telescope focus diagnostic' --repo alpha --priority 1 >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh add jg-other '[captain-ask] P1 Umer telescope focus second request' --repo alpha --priority 0 >/dev/null
+ jg-backlog.sh add jg-ambiguous 'Umer telescope focus diagnostic' --repo alpha --priority 1 >/dev/null)
 "$JG_HOME/state/tickets-sync.check.sh"
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-ambiguous)" --json | jq -e --arg upkeep "$upkeep" '.ticket.parent == $upkeep'
 echo 'PASS: confirmed tagged children, specific orphan match, ambiguous upkeep, plain/quoted asks and internal-project clearing'
 
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-other)" --json | jq -e '.ticket.title == "Umer telescope focus second request"'
-(cd "$JG_HOME"; jg-tasks-axi.sh add jg-refresh 'Umer active refresh check' --repo alpha --priority 2 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nparent: jg-parent')
+(cd "$JG_HOME"; jg-backlog.sh add jg-refresh 'Umer active refresh check' --repo alpha --priority 2 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nparent: jg-parent')
 "$JG_HOME/state/tickets-sync.check.sh"
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-refresh)" --json | jq -e --arg parent "$parent" '.ticket.parent == $parent'
-(cd "$JG_HOME"; jg-tasks-axi.sh update jg-refresh --body "$(printf 'Umer notes %.0s' {1..80})"$'\nparent: jg-other')
+(cd "$JG_HOME"; jg-backlog.sh update jg-refresh --body "$(printf 'Umer notes %.0s' {1..80})"$'\nparent: jg-other')
 "$JG_HOME/state/tickets-sync.check.sh"
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-refresh)" --json | jq -e --arg parent "$(ticket_id main/jg-other)" '.ticket.parent == $parent'
 echo 'PASS: full-body parent beyond list truncation and source revision refresh'
@@ -240,11 +240,11 @@ echo 'PASS: --reconcile corrects a drifted ticket and settles a true board witho
 # The daily clean-up flags what needs a keep/remove call, back-fills a captain quote's
 # date and source from the steer record, posts one report card (never an ask) and
 # prints one line a day.
-(cd "$JG_HOME"; jg-tasks-axi.sh add jg-ask3 '[captain-ask] P0 Umer ask three' --repo alpha --priority 0 --body 'type: captain-ask: "Umer wants the board to show quotes always"' >/dev/null
- jg-tasks-axi.sh add jg-dupa 'Umer duplicate thing' --repo alpha --priority 2 >/dev/null
- jg-tasks-axi.sh add jg-dupb 'Umer duplicate thing.' --repo alpha --priority 2 >/dev/null
- jg-tasks-axi.sh add jg-old 'Umer quiet urgent work' --repo alpha --priority 1 >/dev/null
- jg-tasks-axi.sh start jg-old >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh add jg-ask3 '[captain-ask] P0 Umer ask three' --repo alpha --priority 0 --body 'type: captain-ask: "Umer wants the board to show quotes always"' >/dev/null
+ jg-backlog.sh add jg-dupa 'Umer duplicate thing' --repo alpha --priority 2 >/dev/null
+ jg-backlog.sh add jg-dupb 'Umer duplicate thing.' --repo alpha --priority 2 >/dev/null
+ jg-backlog.sh add jg-old 'Umer quiet urgent work' --repo alpha --priority 1 >/dev/null
+ jg-backlog.sh start jg-old >/dev/null)
 printf 'working [at=1700000000]: started\n' > "$JG_HOME/state/jg-old.status"
 mkdir -p "$JG_HOME/state/lane.inbox"
 printf 'schema=jg-task-inbox.v1\nat=2026-10-28T10:00:00Z\n--\nCaptain: Umer wants the board to show quotes always\n' > "$JG_HOME/state/lane.inbox/001.msg"
@@ -254,8 +254,8 @@ sign-off-axi raise "$work/board.json" --ticket "$(ticket_id main/jg-ask3)" --ask
 out=$(bash "$work/cleanup.sh")
 grep -q '^tickets-cleanup: flagged .*duplicate.*no-ask-card.*no-quote.*stale' <<<"$out"
 grep -q '1 quotes back-filled' <<<"$out"
-grep -q "quoted-at: 2026-10-28" <(cd "$JG_HOME"; jg-tasks-axi.sh show jg-ask3 --full)
-grep -q "source: $JG_HOME/state/lane.inbox/001.msg" <(cd "$JG_HOME"; jg-tasks-axi.sh show jg-ask3 --full)
+grep -q "quoted-at: 2026-10-28" <(cd "$JG_HOME"; jg-backlog.sh show jg-ask3 --full)
+grep -q "source: $JG_HOME/state/lane.inbox/001.msg" <(cd "$JG_HOME"; jg-backlog.sh show jg-ask3 --full)
 sign-off-axi list "$work/board.json" --json > "$work/cards.json"
 grep -q "ticket-cleanup-$(date -u +%F)" "$work/cards.json"
 # A report, never an ask: an ask with no must category is what the board gate routes
@@ -282,7 +282,7 @@ echo 'PASS: the card reconcile archives a closed-source card, keeps an open-sour
 
 # A board that still shows the row the poll published before it re-keyed its ids (fm-<hash> beside jg-<hash>) is the
 # same work, so that row names the same owner: only the assignee moves, and its own fields stay as they were.
-(cd "$JG_HOME"; jg-tasks-axi.sh add jg-legacy 'Umer legacy row item' --repo alpha --priority 2 >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh add jg-legacy 'Umer legacy row item' --repo alpha --priority 2 >/dev/null)
 legacy="fm-$(ticket_id main/jg-legacy | cut -c4-)"
 sign-off-axi ticket "$work/board.json" --id "$legacy" --title 'Umer legacy row item' --state queued >/dev/null
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
@@ -292,7 +292,7 @@ echo 'PASS: the row from before the re-keyed ids names the same owner, and only 
 
 # Every project image ships from the core icons directory: the installer copies them all, and
 # `sync.py` looks nowhere else, so a project whose image lives there registers on the board.
-(cd "$JG_HOME"; jg-tasks-axi.sh add jg-draft 'Umer first draft practice' --repo first-draft --priority 2 >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh add jg-draft 'Umer first draft practice' --repo first-draft --priority 2 >/dev/null)
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
 core_icon="$root/tickets-sync/icons/first-draft.svg"
 cmp "$core_icon" "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/icons/first-draft.svg"

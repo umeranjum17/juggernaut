@@ -12,7 +12,7 @@ Brief-time owner and hierarchy rules are enforced by the fleet, not by prose. A 
 
 ## Rule 00: every lane names the owner ask it serves
 
-The backlog item for the lane id (`bin/jg-tasks-axi.sh show <id>`) must have a title starting `[captain-ask]`, or its title or body must name a `MainNNN` order. Ship and scout lanes both need one; squad lead charters do not.
+The backlog item for the lane id (`bin/jg-backlog.sh show <id>`) must have a title starting `[captain-ask]`, or its title or body must name a `MainNNN` order. Ship and scout lanes both need one; squad lead charters do not.
 
 Refusal at brief time (`$id` is the task id):
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One record the board refuses never stops a pass: the sync names that ticket and its
 # source item once, keeps going, and publishes the rest of the home in the same pass.
-# Real jg-tasks-axi.sh on a Beads store, the real installer and the real sign-off-axi in an isolated home.
+# Real jg-backlog.sh on a Beads store, the real installer and the real sign-off-axi in an isolated home.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d "${JG_TICKETS_TEST_ROOT:-${TMPDIR:-/tmp}}/tickets-sync-skip.XXXXXX")
@@ -17,10 +17,10 @@ printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 . "$root/lib/beads-test-env.sh"
 core_beads_home "$fork" "$JG_HOME"
 (cd "$JG_HOME"
- jg-tasks-axi.sh add jg-good 'Umer good item' --repo alpha --priority 2 >/dev/null
- jg-tasks-axi.sh add jg-bad 'Umer bad item' --repo alpha --priority 2 >/dev/null
- jg-tasks-axi.sh add jg-longhold 'Umer long hold item' --repo alpha --priority 2 >/dev/null
- jg-tasks-axi.sh hold jg-longhold --reason "$(printf 'Umer waits on the store review %.0s' {1..10})" --kind captain >/dev/null)
+ jg-backlog.sh add jg-good 'Umer good item' --repo alpha --priority 2 >/dev/null
+ jg-backlog.sh add jg-bad 'Umer bad item' --repo alpha --priority 2 >/dev/null
+ jg-backlog.sh add jg-longhold 'Umer long hold item' --repo alpha --priority 2 >/dev/null
+ jg-backlog.sh hold jg-longhold --reason "$(printf 'Umer waits on the store review %.0s' {1..10})" --kind captain >/dev/null)
 # The bad item's own record names a PR link sign-off refuses, so its publish is the only one that fails.
 printf 'pr=not-a-url\n' > "$JG_HOME/state/jg-bad.meta"
 bash "$root/tickets-sync/wiring.sh"

@@ -1615,7 +1615,7 @@ families_for_changed_path() {
     bin/jg-install-actionlint.sh|\
     bin/jg-committed-binary-check.sh|bin/jg-ports-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-recon-depth.sh|bin/jg-loss-claim-check.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
     bin/jg-captain-hold.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
-    bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-tasks-axi-lib.sh|\
+    bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-backlog-lib.sh|\
     bin/jg-vendor-auth-probe.sh|\
     bin/jg-primary-scope-lib.sh|bin/jg-project-mode.sh|bin/jg-forge-detect.sh|bin/jg-promote.sh|\
     bin/jg-ff-lib.sh|bin/jg-gotmp*|bin/*pretool*)

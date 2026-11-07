@@ -181,7 +181,7 @@ jobs:
       - name: Key-in-env check test
         if: ${{ !cancelled() }}
         run: bash key-in-env-check/tests/key-in-env-check-e2e.sh
-      # Fixture Main and lead homes with stub jg-tasks-axi.sh and jg-crew-state.sh: lane slots and dry.
+      # Fixture Main and lead homes with stub jg-backlog.sh and jg-crew-state.sh: lane slots and dry.
       - name: Home flow check test
         if: ${{ !cancelled() }}
         run: bash fleet-flow/tests/jg-flow-check.test.sh

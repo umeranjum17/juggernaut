@@ -24,7 +24,7 @@ file and `cut` refuses it, so it stays on the old path until proved. settle.json
 a non-empty lock every backlog writer refuses on and no reclaim touches, so writes stop for the whole cut and the old
 files can never move again. It refuses if those files differ from the copy, then imports through bin/jg-beads.sh into a
 fresh store, checks the export and counts against the manifest, runs `jg-beads.sh check`, writes config/beads-dir,
-reads every row back through bin/jg-tasks-axi.sh, and makes the old files read-only.
+reads every row back through bin/jg-backlog.sh, and makes the old files read-only.
 data/beads-cut.json records each phase and what the home held. A failed step undoes the cut; a killed one leaves the
 record, and `back` finishes the undo. Running `cut` again on a finished home changes nothing.
 
@@ -335,8 +335,8 @@ def beads(store, *args):
 
 def tasks(home_dir, *args):
     env = {k: v for k, v in os.environ.items() if k not in ('BEADS_DIR', 'JG_DATA_OVERRIDE', 'JG_CONFIG_OVERRIDE', 'JG_STATE_OVERRIDE')}
-    run = subprocess.run([f'{HERE}/jg-tasks-axi.sh', *args], capture_output=True, text=True, env={**env, 'JG_HOME': home_dir})
-    if run.returncode: raise Stop(f"jg-tasks-axi.sh {args[0]} failed: {(run.stderr or run.stdout).strip()[-400:]}")
+    run = subprocess.run([f'{HERE}/jg-backlog.sh', *args], capture_output=True, text=True, env={**env, 'JG_HOME': home_dir})
+    if run.returncode: raise Stop(f"jg-backlog.sh {args[0]} failed: {(run.stderr or run.stdout).strip()[-400:]}")
     return run.stdout
 
 def read_back(a, home_dir):

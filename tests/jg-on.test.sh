@@ -58,7 +58,7 @@ cat > "$REMOTE_ROOT/bin/jg-probe-path.sh" <<'SH'
 printf '%s\n' "$PATH"
 SH
 printf '#!/usr/bin/env bash\nexit 0\n' > "$REMOTE_ROOT/bin/treehouse"
-cp "$ROOT/bin/jg-remote-doctor.sh" "$ROOT/bin/jg-tasks-axi-lib.sh" \
+cp "$ROOT/bin/jg-remote-doctor.sh" "$ROOT/bin/jg-backlog-lib.sh" \
   "$ROOT/bin/jg-remote-herdr-owner-lib.sh" "$ROOT/bin/jg-backend.sh" "$REMOTE_ROOT/bin/"
 mkdir -p "$REMOTE_ROOT/bin/backends"
 cp "$ROOT/bin/backends/herdr.sh" "$REMOTE_ROOT/bin/backends/herdr.sh"

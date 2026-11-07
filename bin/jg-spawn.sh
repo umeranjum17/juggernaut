@@ -619,8 +619,8 @@ esac
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 
@@ -3066,7 +3066,7 @@ if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
       esac
     fi
   elif [ "$JG_BACKLOG_ROW_RESULT" = not_found ]; then
-    echo "error: task $ID has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/jg-tasks-axi.sh add $ID '[<type>] <title>' --kind $KIND --body '<why>') and re-run" >&2
+    echo "error: task $ID has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/jg-backlog.sh add $ID '[<type>] <title>' --kind $KIND --body '<why>') and re-run" >&2
     exit 1
   else
     echo "error: task $ID's backlog item could not be read before dispatch ($JG_BACKLOG_ROW_ERROR)" >&2
@@ -4838,7 +4838,7 @@ fi
 # The backlog mutation is deliberately the final fallible commit below, so
 # teardown cannot remove a relaunched record while its replacement worker is
 # still being delivered, cannot observe or complete a fresh provisional record
-# between its state check and `jg-tasks-axi.sh start`, and a delivery failure cannot
+# between its state check and `jg-backlog.sh start`, and a delivery failure cannot
 # follow a committed In-flight transition.
 if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0

@@ -139,7 +139,7 @@ jg_test_backlog() {  # <home> <wrapper args...>
   local home=$1
   shift
   (cd "$home" && JG_HOME="$home" JG_CONFIG_OVERRIDE="$home/config" JG_TASK_PRIORITY_CHECK=/nonexistent \
-    "$ROOT/bin/jg-tasks-axi.sh" "$@")
+    "$ROOT/bin/jg-backlog.sh" "$@")
 }
 
 # File one ticket in a fixture home: <home> <id> <title with its [type] tag> [extra add args].
@@ -157,7 +157,7 @@ jg_test_add() {
 jg_test_raising_ticket() {  # <home> [<ticket>=jg-m1]
   jg_test_beads_home "$1"
   (cd "$1" && JG_HOME="$1" JG_CONFIG_OVERRIDE="$1/config" JG_TASK_PRIORITY_CHECK=/nonexistent \
-    "$ROOT/bin/jg-tasks-axi.sh" add "${2:-jg-m1}" "[feature] Ship the fix" --priority 1 --kind ship --repo sample --body "Raising ticket for a fixture card" >/dev/null 2>&1) \
+    "$ROOT/bin/jg-backlog.sh" add "${2:-jg-m1}" "[feature] Ship the fix" --priority 1 --kind ship --repo sample --body "Raising ticket for a fixture card" >/dev/null 2>&1) \
     || fail "could not file the raising ticket ${2:-jg-m1}"
 }
 

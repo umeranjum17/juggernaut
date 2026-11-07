@@ -108,7 +108,7 @@ def daily(items, today, state, board, home, run, carded, cards=None):
         hit = find_source(words, it['source'])
         if not hit: found.append(('no-source', label, 'quote has no dated source link and no steer record holds it')); continue
         add = ('' if at else f'\nquoted-at: {hit[0]}') + ('' if src else f'\nsource: {hit[1]}')
-        run(['bash', str(home / 'bin/jg-tasks-axi.sh'), 'update', row['id'], '--body', row.get('body', '') + add], {**os.environ, 'JG_HOME': str(it['source'])})
+        run(['bash', str(home / 'bin/jg-backlog.sh'), 'update', row['id'], '--body', row.get('body', '') + add], {**os.environ, 'JG_HOME': str(it['source'])})
         filled += 1
     found += findings(items, today)
     kinds = {}

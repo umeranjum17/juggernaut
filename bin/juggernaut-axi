@@ -4,7 +4,7 @@
 # The approved design (data/juggernaut-axi/report.md), read-only commands so far:
 # `status`, `lanes`, `wakes`, `tickets`, `tasks` (list, show, ready), `holds`, `pr`, `decisions`, `messages`,
 # plus the three writes `answer`, `message`, and `ticket`, each delegated to an existing
-# guarded path (jg-captain-hold.sh, jg-send.sh, jg-tasks-axi.sh); it never closes tasks
+# guarded path (jg-captain-hold.sh, jg-send.sh, jg-backlog.sh); it never closes tasks
 # or writes state itself, and a result claims only what the durable record confirms. Like bin/jg-bearings-snapshot.sh it projects the canonical JSON model
 # (jg-bearings-snapshot.sh / jg-fleet-snapshot.sh --json) and renders TOON at the
 # output boundary (bin/jg-toon-lib.sh); `--json` prints the same model.
@@ -17,7 +17,7 @@
 # (state/.wake-queue, state/.wake-settled) as it is and never renders, acknowledges, or
 # calls the bus, so its age is stated and nothing it does moves a wake.
 # `tasks` and `holds` project the backlog records of the same fleet snapshot (no new store):
-# `tasks ready` is queued work with no unresolved blocker and no hold, as `jg-tasks-axi.sh ready` is.
+# `tasks ready` is queued work with no unresolved blocker and no hold, as `jg-backlog.sh ready` is.
 # `pr <url>` runs bin/jg-pr-state.sh (read-only) for the blockers it can see and the one thing
 # the change waits for; an empty blocker list is not a readiness verdict, and the output says so.
 set -u
@@ -75,7 +75,7 @@ commands:
   ticket <title> --why <text> [--repo <name>] [--kind <ship|scout|docs>] [--priority <0-3>]
                          queue a new ticket (never starts work); the title starts
                          with a type tag and --why says why it is worth doing
-                         (bin/jg-tasks-axi.sh owns that intake rule)
+                         (bin/jg-backlog.sh owns that intake rule)
 
   serve [--port <n>] [--reads-per-minute <n>]
                          opt-in loopback (127.0.0.1) read-only HTTP API; needs an
@@ -561,7 +561,7 @@ cmd_ticket() {
       --priority:*) die "--priority must be 0-3" ;;
     esac
   done
-  out=$(JG_HOME=${JG_HOME:-$HOME_ROOT} "$HOME_ROOT/bin/jg-tasks-axi.sh" add --mint "$title" "${args[@]}" --json) || exit $?
+  out=$(JG_HOME=${JG_HOME:-$HOME_ROOT} "$HOME_ROOT/bin/jg-backlog.sh" add --mint "$title" "${args[@]}" --json) || exit $?
   printf '%s\n' "$out" | jq -c '{schema: "juggernaut-axi.v1", view: "write", action: "ticket", task: .task.id, ok: .ok, confirmed: (.task.state == "queued"), note: "queued by the backlog", ticket: (.task | {id, title, state, repo, kind})}' \
     || { echo "juggernaut-axi: ticket result unreadable" >&2; exit 1; }
 }

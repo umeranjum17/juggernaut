@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# jg-tasks-axi.sh - read and write THIS home's Beads backlog from any working directory.
+# jg-backlog.sh - read and write THIS home's Beads backlog from any working directory.
 #
-# Usage: jg-tasks-axi.sh [<backlog command> [args...]]
-#        jg-tasks-axi.sh --help
+# Usage: jg-backlog.sh [<backlog command> [args...]]
+#        jg-backlog.sh --help
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
 # `show`, `view`, `list`, `ready`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
 # `start`, `reopen`, `hold`, `unhold`, `public-followup` and `relink` from the store that
-# `config/beads-dir` names (bin/jg-tasks-axi-lib.sh); any other verb exits 2 with nothing
+# `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
 # absolute against the caller's working directory. Hold reasons are plain text.
 #
@@ -16,7 +16,7 @@
 #
 # Refusals (exit 2, nothing run):
 #   - a caller-supplied --file, because this command owns the addressing;
-#   - a home with no store named in `config/beads-dir` (bin/jg-tasks-axi-lib.sh owns that diagnostic);
+#   - a home with no store named in `config/beads-dir` (bin/jg-backlog-lib.sh owns that diagnostic);
 #   - `add` (or its `create` alias) with --start, so neither spelling places a row In
 #     flight without the dispatch artifacts bin/jg-spawn.sh creates - the task record,
 #     status file, and inbox that go with the row (`start <id>` stays a documented
@@ -83,8 +83,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
-# shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 
@@ -97,7 +97,7 @@ usage() {
 }
 
 fail() {
-  printf 'jg-tasks-axi: %s\n' "$*" >&2
+  printf 'jg-backlog: %s\n' "$*" >&2
   exit 2
 }
 

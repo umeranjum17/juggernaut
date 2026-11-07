@@ -98,8 +98,8 @@ REG="$DATA/squad_leads.md"
 CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 MOVE_DIR=
 MAIN_BACKLOG=
-# shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh
 . "$SCRIPT_DIR/jg-squad-lead-registry-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
@@ -373,7 +373,7 @@ warn_stale_public_commitments() { # <squad-lead-id> <moved-key>...
     out=$("$SCRIPT_DIR/jg-public-followup.sh" guard-work main "$key" 2>/dev/null) || rc=$?
     [ "$rc" -ne 0 ] || continue
     [ -z "$out" ] || printf '%s\n' "$out" >&2
-    printf 'warning: %s still owes a public reply bound to main/%s; rebind it to squad_lead:%s (bin/jg-tasks-axi.sh public-followup bind-work, then bin/jg-public-followup.sh register <obligation-id> --relation <relation-id> --work-home squad_lead:%s --work-id %s --generation <n>) or the promised reply will be reconciled against work this home no longer owns.\n' \
+    printf 'warning: %s still owes a public reply bound to main/%s; rebind it to squad_lead:%s (bin/jg-backlog.sh public-followup bind-work, then bin/jg-public-followup.sh register <obligation-id> --relation <relation-id> --work-home squad_lead:%s --work-id %s --generation <n>) or the promised reply will be reconciled against work this home no longer owns.\n' \
       "$key" "$key" "$id" "$id" "$key" >&2
   done
   if jg_pf_relay_active "$JG_HOME" && jg_pf_has_delivered_open_loops "$STATE"; then

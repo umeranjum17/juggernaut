@@ -98,7 +98,7 @@ test_add_asks_for_the_kind_and_refuses_a_product_rule() {
     --words "keep CI thin: no full suite on every push" --scope "every project" --enforce bin/jg-lint.sh 2>&1); rc=$?
   assert_equals 2 "$rc" "a product rule was accepted into the owner surface"
   case "$out" in
-    *"bin/jg-tasks-axi.sh add"*) ;;
+    *"bin/jg-backlog.sh add"*) ;;
     *) fail "the product refusal did not point at a ticket: $out" ;;
   esac
   case "$out" in

@@ -13,7 +13,7 @@ if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
 fi
 
 T=$(jg_test_tmproot jg-beads-native-n8)
-WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-tasks-axi.sh
+WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-backlog.sh
 unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
 mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
 export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT

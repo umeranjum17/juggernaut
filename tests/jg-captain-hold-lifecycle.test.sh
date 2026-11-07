@@ -512,7 +512,7 @@ EOF
   pass "release frees held work with the captain's words recorded and the body preserved"
 }
 
-# The recorded-answer guard survives an out-of-band close: a bare jg-tasks-axi.sh done
+# The recorded-answer guard survives an out-of-band close: a bare jg-backlog.sh done
 # fails verify until answer records the captain's word, and an ordinary finished
 # task can never be dressed up as an answered captain call.
 test_out_of_band_close_is_recordable() {

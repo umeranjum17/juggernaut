@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 DATA = Path(os.environ.get("JG_DATA_OVERRIDE") or Path(os.environ.get("JG_HOME") or ROOT) / "data")
-BACKLOG = os.environ.get("BACKLOG") or ROOT / "bin/jg-tasks-axi.sh"
+BACKLOG = os.environ.get("BACKLOG") or ROOT / "bin/jg-backlog.sh"
 SEND = os.environ.get("JG_SEND") or ROOT / "bin/jg-send.sh"
 HANDOFF = os.environ.get("JG_HANDOFF") or ROOT / "bin/jg-backlog-handoff.sh"
 OWNER_RULES = os.environ.get("JG_OWNER_RULES") or ROOT / "bin/jg-owner-rules.sh"

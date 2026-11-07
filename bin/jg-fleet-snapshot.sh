@@ -257,8 +257,8 @@ esac
 . "$SCRIPT_DIR/jg-merge-authority-lib.sh"
 # shellcheck source=bin/jg-hold-reason-lib.sh
 . "$SCRIPT_DIR/jg-hold-reason-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 
 usage() {
   cat <<'EOF'

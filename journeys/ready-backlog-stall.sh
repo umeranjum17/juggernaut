@@ -62,7 +62,7 @@ printf '4\n' > "$L/config/lane-target"
 # shellcheck source=core/lib/beads-test-env.sh
 . "$REPO/core/lib/beads-test-env.sh"
 core_beads_home "$FORK" "$L"
-JG_HOME="$L" "$FORK/bin/jg-tasks-axi.sh" add jg-alpha "[feature] ship the routed fix" --priority 1 --body "users wait on the routed fix" >/dev/null || { echo "fixture: backlog add failed"; exit 1; }
+JG_HOME="$L" "$FORK/bin/jg-backlog.sh" add jg-alpha "[feature] ship the routed fix" --priority 1 --body "users wait on the routed fix" >/dev/null || { echo "fixture: backlog add failed"; exit 1; }
 
 START=$(date +%s)
 stamp() { printf '+%4ss' "$(( $(date +%s) - START ))"; }
@@ -114,7 +114,7 @@ log "parent channel holds $(overdue) stalled-backlog report(s) from the lead"
 wait_until 1900 steered_twice
 wait_until 1950 carded
 log "Main has steered the lead $(grep -c 'You have ready backlog work' "$M/sent" 2>/dev/null) time(s)"
-JG_HOME="$L" "$FORK/bin/jg-tasks-axi.sh" hold jg-alpha --reason "waits on the vendor" >/dev/null
+JG_HOME="$L" "$FORK/bin/jg-backlog.sh" hold jg-alpha --reason "waits on the vendor" >/dev/null
 log "the lead holds alpha with its reason"
 wait_until 2100 resolved
 wait_until 2250 dismissed

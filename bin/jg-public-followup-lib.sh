@@ -3,7 +3,7 @@
 # deterministic public-followup consumer.
 #
 # Juggernaut promises a public final reply when a myjuggernaut relay mention (X or
-# Discord) asks for work. `jg-tasks-axi.sh public-followup` is the sole owner of that
+# Discord) asks for work. `jg-backlog.sh public-followup` is the sole owner of that
 # typed obligation and its state machine; state/x-context/ is the sole owner of
 # the private full request context. This library owns Juggernaut's activation
 # gate, private per-home transport paths, retained-loop state and locking
@@ -84,8 +84,8 @@
 # those remain that file's contract and are not restated here.
 
 _JG_PF_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _JG_PF_LIB_DIR="."
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$_JG_PF_LIB_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$_JG_PF_LIB_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-x-lib.sh
 . "$_JG_PF_LIB_DIR/jg-x-lib.sh"
 
@@ -426,7 +426,7 @@ jg_pf_backlog_tool() {  # <home>
 # data override is still in the environment.
 jg_pf_obligation_json() {
   local home=$1 id=$2 out
-  out=$(JG_HOME="$home" JG_DATA_OVERRIDE='' "$_JG_PF_LIB_DIR/jg-tasks-axi.sh" \
+  out=$(JG_HOME="$home" JG_DATA_OVERRIDE='' "$_JG_PF_LIB_DIR/jg-backlog.sh" \
     public-followup list --json 2>/dev/null) || return 1
   [ -n "$out" ] || return 1
   printf '%s' "$out" | jq -c --arg id "$id" \

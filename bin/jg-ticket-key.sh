@@ -31,9 +31,9 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 KEYS="$DATA/ticket-keys.tsv"
 COUNTERS="$DATA/ticket-counters.tsv"
 TAB=$'\t'
-# shellcheck source=bin/jg-tasks-axi-lib.sh
+# shellcheck source=bin/jg-backlog-lib.sh
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 die() { printf 'jg-ticket-key: %s\n' "$*" >&2; exit 2; }

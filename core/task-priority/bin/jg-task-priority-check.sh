@@ -3,7 +3,7 @@
 #
 # Usage: jg-task-priority-check.sh <backlog command> [args...]
 #
-# The fork's jg-tasks-axi.sh `add` and jg-captain-hold.sh `hold` (when it creates the row) call this with the
+# The fork's jg-backlog.sh `add` and jg-captain-hold.sh `hold` (when it creates the row) call this with the
 # exact the backlog arguments, only when the feature is installed. Only `add` and `create` are checked; any other
 # command exits 0. A new task needs:
 #   - --priority 0-3 (0 = most urgent); missing or out of range is refused, exit 1, with the flag to pass;

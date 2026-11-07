@@ -267,7 +267,7 @@ real_home=$(make_beads_home real)
 SIGNOFF_BOARD="$real_home/board.json"
 export SIGNOFF_BOARD
 printf '{}\n' > "$SIGNOFF_BOARD"
-(cd "$real_home" && JG_HOME="$real_home" BEADS_ACTOR=fixture jg-tasks-axi.sh add jg-sample-work "Gated work") >/dev/null \
+(cd "$real_home" && JG_HOME="$real_home" BEADS_ACTOR=fixture jg-backlog.sh add jg-sample-work "Gated work") >/dev/null \
   || fail "could not create the existing work item"
 real_env "$real_home" "$ADAPTER" arm >/dev/null \
   || fail "the real sign-off adapter did not arm"
@@ -307,7 +307,7 @@ jq --arg k "$q" '.[$k] += {answer: "reconcile", label: "", close: "done", at: "2
 out=$(real_env "$real_home" "$ROOT/bin/jg-procevent.sh" start signoff 2>&1) || true
 case "$out" in *"answers-fed: signoff"*) : ;; *) fail "a permanently refused answer was not acknowledged: $out" ;; esac
 [ "$(grep -c 'refused: jg-sample-q' <<<"$out")" = 1 ] || fail "the refusal was not reported exactly once: $out"
-show=$(cd "$real_home" && JG_HOME="$real_home" BEADS_ACTOR=fixture jg-tasks-axi.sh show jg-sample-q --full 2>&1)
+show=$(cd "$real_home" && JG_HOME="$real_home" BEADS_ACTOR=fixture jg-backlog.sh show jg-sample-q --full 2>&1)
 case "$show" in *"held: yes"*) : ;; *) fail "a refused reconcile answer released the hold: $show" ;; esac
 grep -qF 'jg-sample-q' "$real_home/state/signoff-delivered" || fail "the refused answer was not recorded as delivered"
 [ -z "$(real_env "$real_home" "$ADAPTER" poll 2>/dev/null)" ] \

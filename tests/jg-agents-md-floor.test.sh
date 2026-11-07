@@ -109,7 +109,7 @@ done <<'LEDGER'
 10|.agents/skills/fleet-records/SKILL.md|Work routed to a Squad Lead is recorded in
 10|.agents/skills/fleet-records/SKILL.md|When a main-side thread such as a pending captain
 10|.agents/skills/fleet-records/SKILL.md|When the automatic transition gate applies, dispatch and completion
-10|.agents/skills/fleet-records/SKILL.md|`docs/configuration.md` and current `bin/jg-tasks-axi.sh help` own the backlog
+10|.agents/skills/fleet-records/SKILL.md|`docs/configuration.md` and current `bin/jg-backlog.sh help` own the backlog
 10|.agents/skills/fleet-records/SKILL.md|`squad-lead-provisioning` and `bin/jg-backlog-handoff.sh` own cross-home handoff safety.
 10|.agents/skills/fleet-records/SKILL.md|Keep free-form notes free of temporary paths, moving versions,
 10|.agents/skills/fleet-records/SKILL.md|Inspect the current task note before replacing its considered

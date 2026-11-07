@@ -186,7 +186,7 @@ Treat an inherited queue that carries plans with no matching delivery record as 
 Apply `fleet-records`' work-items-only backlog contract before creation or handoff.
 When a Squad Lead is created for a domain, existing main-backlog items that fall under its scope should become its work instead of staying stranded in the main backlog.
 Scope-matching is Juggernaut's judgment against the Squad Lead's natural-language scope, not a keyword rule.
-Read `bin/jg-tasks-axi.sh list`, pick queued items that fit the new scope, and move them with:
+Read `bin/jg-backlog.sh list`, pick queued items that fit the new scope, and move them with:
 
 ```sh
 bin/jg-backlog-handoff.sh <squad-lead-id> <item-key>...
@@ -194,7 +194,7 @@ bin/jg-backlog-handoff.sh <squad-lead-id> <item-key>...
 
 After seeding, run this handoff for the new Squad Lead's in-scope queued items.
 For an existing or inherited domain, complete record intake first so no already-shipped plan row is handed off as open work.
-For a local route, the helper resolves and validates the Squad Lead home from `data/squad_leads.md`, then delegates the item move to `bin/jg-tasks-axi.sh`, which moves each named item - and a whole connected set, blocker plus dependents, atomically - from the main home's Beads store into the Squad Lead home's.
+For a local route, the helper resolves and validates the Squad Lead home from `data/squad_leads.md`, then delegates the item move to `bin/jg-backlog.sh`, which moves each named item - and a whole connected set, blocker plus dependents, atomically - from the main home's Beads store into the Squad Lead home's.
 For a remote route, the same helper first moves the dependency-closed set atomically from the main backlog into `data/handoff/<id>.outbox.md`, then transfers that backlog-format outbox through `jg-on.sh` and lets the remote home's `jg-backlog-receive.sh` move every not-already-present key under the destination lock.
 After a new local placement or a remote outbox receipt becomes durable, the helper attempts one marked routed-work instruction through the receiving Squad Lead's recorded endpoint.
 [`bin/jg-backlog-handoff.sh`](../../../bin/jg-backlog-handoff.sh) owns route-specific wake outcomes, remote outbox release after durable receipt, and stable wake-correlation retry behavior.

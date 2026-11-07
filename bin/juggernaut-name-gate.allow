@@ -51,7 +51,7 @@ bin/fm-spawn.sh  # alias for bin/jg-spawn.sh; called by live homes, panes and pe
 bin/fm-subagent-pretool-check.sh  # alias for bin/jg-subagent-pretool-check.sh; called by live homes, panes and per-lane records
 bin/fm-supervision-engine-lib.sh  # alias for bin/jg-supervision-engine-lib.sh; called by live homes, panes and per-lane records
 bin/fm-supervision-lib.sh  # alias for bin/jg-supervision-lib.sh; called by live homes, panes and per-lane records
-bin/fm-tasks-axi.sh  # alias for bin/jg-tasks-axi.sh; called by live homes, panes and per-lane records
+bin/jg-backlog.sh  # alias for bin/jg-backlog.sh; called by live homes, panes and per-lane records
 bin/fm-teardown.sh  # alias for bin/jg-teardown.sh; called by live homes, panes and per-lane records
 bin/fm-timeout-lib.sh  # alias for bin/jg-timeout-lib.sh; called by live homes, panes and per-lane records
 bin/fm-turnend-guard-cursor.sh  # alias for bin/jg-turnend-guard-cursor.sh; called by live homes, panes and per-lane records

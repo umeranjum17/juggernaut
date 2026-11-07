@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# done-done journey: the real bin/jg-tasks-axi.sh against a real Beads backlog. A [captain-ask]
+# done-done journey: the real bin/jg-backlog.sh against a real Beads backlog. A [captain-ask]
 # ticket with no delivery cannot be closed, cancelled or deleted without the captain's quoted words
 # or an answered confirm card; an ordinary ticket is unaffected; the quote lands in the ticket note.
 set -u
@@ -12,7 +12,7 @@ mkdir -p "$T/code" "$T/home/state"
 core_beads_home "$REPO" "$T/home"
 export JG_HOME="$T/home" JG_ROOT_OVERRIDE="$T/code"
 unset JG_DATA_OVERRIDE JG_STATE_OVERRIDE
-jg() { (cd "$T/code" && "$REPO/bin/jg-tasks-axi.sh" "$@"); }
+jg() { (cd "$T/code" && "$REPO/bin/jg-backlog.sh" "$@"); }
 hold() { (cd "$T/code" && "$REPO/bin/jg-captain-hold.sh" "$@"); }
 expect() {  # <label> <want rc> <got rc>
   [ "$2" = "$3" ] || { echo "FAIL $1: want exit $2 got $3"; echo x >> "$T/fails"; }
@@ -44,7 +44,7 @@ step() {  # <label> <want rc> <args...>
   jg show jg-rejected | grep -q "state: queued" || { echo "FAIL: refused ticket left the backlog"; echo x >> "$T/fails"; }
 } 2>&1 | tee "$OUT/captain-close-gate-transcript.txt"
 cat > "$OUT/steps.json" <<'J'
-{"target":{"version":"juggernaut bin/jg-tasks-axi.sh and bin/jg-captain-ask-lib.sh at this commit"},
+{"target":{"version":"juggernaut bin/jg-backlog.sh and bin/jg-captain-ask-lib.sh at this commit"},
  "start":"a disposable juggernaut home with a real Beads backlog",
  "steps":["try to cancel and close a captain-asked ticket with no words, a blank quote and an unanswered card","close one with a quote and one with an answered confirm card","remove an ordinary ticket"],
  "result":"the captain-asked ticket stays until his words or an answered card are given, and the words are recorded; an ordinary ticket is unaffected"}

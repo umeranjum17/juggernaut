@@ -22,8 +22,8 @@ _JG_SUP_BIN=${BASH_SOURCE[0]%/*}
 # from an unreadable one.
 jg_ready_work_rows() {
   local home=$1 out rc prios
-  out=$(JG_HOME="$home" "$_JG_SUP_BIN/jg-tasks-axi.sh" ready 2>/dev/null); rc=$?
-  prios=$(JG_HOME="$home" "$_JG_SUP_BIN/jg-tasks-axi.sh" list --state queued --fields priority 2>/dev/null) || prios=
+  out=$(JG_HOME="$home" "$_JG_SUP_BIN/jg-backlog.sh" ready 2>/dev/null); rc=$?
+  prios=$(JG_HOME="$home" "$_JG_SUP_BIN/jg-backlog.sh" list --state queued --fields priority 2>/dev/null) || prios=
   printf '%s\n' "$out" | awk -v p="$prios" '
     BEGIN {
       n = split(p, L, "\n")

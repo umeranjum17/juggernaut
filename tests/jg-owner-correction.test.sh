@@ -59,7 +59,7 @@ test_a_correction_with_no_artefact_is_flagged() {
   stop "$home"; rc=$?
   assert_equals 2 "$rc" "a turn that followed an owner correction with neither artefact ended"
   for want in 'HE CORRECTED THE FLEET, AND NOTHING CAPTURED IT' 'jg-owner-rules.sh add --kind owner --words' \
-    'jg-tasks-axi.sh add' 'one time fix'; do
+    'jg-backlog.sh add' 'one time fix'; do
     grep -qF "$want" "$home/guard.err" || fail "the block did not name '$want': $(cat "$home/guard.err")"
   done
   stop "$home"; rc=$?
@@ -91,7 +91,7 @@ test_an_enforcement_ticket_captures_the_correction() {
   make_home "$home"
   submit "$home" "$CORRECTION"
   kpi "$home" tag feedback https://github.com/acme/juggernaut/pull/41 >/dev/null || fail "tagging failed"
-  in_home "$home" bash "$home/bin/jg-tasks-axi.sh" add jg-capture \
+  in_home "$home" bash "$home/bin/jg-backlog.sh" add jg-capture \
     "[feature] flag a turn that ends after an owner correction" \
     --body "an owner correction must become a rule or an enforcement ticket" >/dev/null \
     || fail "filing the enforcement ticket failed"

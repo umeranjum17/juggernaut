@@ -189,7 +189,7 @@ rule_ticket_id() {
 # yet. A failure is reported and never fails the recording.
 file_enforcement_ticket() {
   local title=$1 words=$2 scope=$3 enforce=$4 date=$5 id body enforce_line taxi out
-  taxi="$SCRIPT_DIR/jg-tasks-axi.sh"
+  taxi="$SCRIPT_DIR/jg-backlog.sh"
   id=$(rule_ticket_id "$words")
   if [ ! -x "$taxi" ]; then
     printf 'jg-owner-rules: rule recorded, no ticket filed: %s is missing beside this script\n' "$taxi" >&2
@@ -248,10 +248,10 @@ cmd_add() {
   kind=$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')
   case "$kind" in
     '')
-      die "refused: name the kind; this surface holds --kind owner entries only, and a product rule (an engineering default every Juggernaut user should get) is filed as a ticket with bin/jg-tasks-axi.sh add" ;;
+      die "refused: name the kind; this surface holds --kind owner entries only, and a product rule (an engineering default every Juggernaut user should get) is filed as a ticket with bin/jg-backlog.sh add" ;;
     owner) ;;
     product)
-      die "refused: a product rule is not an owner rule; file it with bin/jg-tasks-axi.sh add and put the default where it ships - AGENTS.md, a shipped default, a doc, or the code that enforces it" ;;
+      die "refused: a product rule is not an owner rule; file it with bin/jg-backlog.sh add and put the default where it ships - AGENTS.md, a shipped default, a doc, or the code that enforces it" ;;
     *)
       die "refused: --kind must be owner (got '$kind')" ;;
   esac
@@ -385,7 +385,7 @@ cmd_split() {
     cat "$tmp/owner-rules.md" > "$surface" || die "cannot write $surface"
     printf 'applied: %s keeps %s owner entries and drops %s product entries\n' "$surface" "$owners" "$products"
     [ "$products" -eq 0 ] \
-      || printf 'file each product entry as a ticket with bin/jg-tasks-axi.sh add, and put the default where it ships\n'
+      || printf 'file each product entry as a ticket with bin/jg-backlog.sh add, and put the default where it ships\n'
   fi
 
   [ "$unknown" -eq 0 ] && return 0

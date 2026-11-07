@@ -275,7 +275,7 @@ def sync():
         for name, source in ordered:
             env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_ROOT_OVERRIDE')}
             env['JG_HOME'] = str(source)
-            reader = ['bash', str(home / 'bin/jg-tasks-axi.sh')]
+            reader = ['bash', str(home / 'bin/jg-backlog.sh')]
             # A Beads home answers every row, done ones and whole bodies included, from one provider read.
             tasks = rows(reader + ['list'], env, extra=',parent,item')
             # The rest of the pass keys a row by the item name its state files and parent lines use.

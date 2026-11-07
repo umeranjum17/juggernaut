@@ -26,9 +26,9 @@ case "$TIMEOUT" in ''|*[!0-9]*|0) TIMEOUT=45 ;; esac
 # shellcheck source=bin/jg-timeout-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-timeout-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
+# shellcheck source=bin/jg-backlog-lib.sh
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 
 case "${1:-write}" in
   -h|--help) sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;

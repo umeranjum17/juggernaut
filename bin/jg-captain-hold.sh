@@ -53,7 +53,7 @@
 # store keeps it as native issue type `decision`. Captain holds have no due
 # semantics (`--until` is the optional hold deferral). When the optional
 # task-priority feature is installed, a created task needs `--priority 0-3`; the
-# feature's refusal is returned as-is (bin/jg-tasks-axi.sh owns that hook).
+# feature's refusal is returned as-is (bin/jg-backlog.sh owns that hook).
 # The command records a UTC `Captain hold set:` timestamp in the task body:
 # repeating an active hold preserves the existing timestamp, while re-holding
 # released work starts a new lifecycle. A task already closed is refused rather
@@ -220,7 +220,7 @@
 # so `blocking` finds it from that ticket; a card naming no raising ticket (or one this
 # home lacks) is refused. The answer records the captain's words on the row and closes it.
 #
-# `answered` is the read-only predicate bin/jg-tasks-axi.sh asks before it lets a
+# `answered` is the read-only predicate bin/jg-backlog.sh asks before it lets a
 # `[captain-ask]` row leave the backlog: exit 0 when the task body carries a
 # recorded captain answer (an evidence-only `reconciled` record or an open hold-set stamp does not count),
 # 1 when it does not, and any other non-zero status when the task cannot be read.
@@ -279,9 +279,9 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-classify-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-classify-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
+# shellcheck source=bin/jg-backlog-lib.sh
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"

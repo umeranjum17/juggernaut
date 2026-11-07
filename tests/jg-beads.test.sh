@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavior tests for bin/jg-beads.sh, and for bin/jg-tasks-axi.sh reading through it: its callers must get the
+# Behavior tests for bin/jg-beads.sh, and for bin/jg-backlog.sh reading through it: its callers must get the
 # same lines from either provider. Every store sits in a throwaway folder outside any git tree.
 # Stand-ins hashed into a private pin table prove each refusal comes before a binary starts. JG_BEADS_TEST_BD
 # and JG_BEADS_TEST_DOLT name the pinned builds for the real case, which skips plainly without them.
@@ -141,7 +141,7 @@ refused "reaches a remote" "$WRAPPER" dolt sql -q "CALL DOLT_PUSH('origin', 'mai
 assert_grep "pwd=$T/store/.beads/embeddeddolt/jg args=sql -q show tables" "$LOG" "dolt must run in the database folder"
 # Both providers answer each caller alike. The stand-in prints bd's own JSON for the seeded backlog.
 export TZ=UTC  # Beads stamps rows in UTC and the backlog in local time.
-CLI="$ROOT/bin/jg-tasks-axi.sh" jail=()
+CLI="$ROOT/bin/jg-backlog.sh" jail=()
 same() {  # <wrapper args...>: stdout and exit status match across providers.
   local a b ra=0 rb=0
   a=$(JG_HOME="$T/ta" "$CLI" "$@" 2>/dev/null) || ra=$?
@@ -299,7 +299,7 @@ SH
   [ ! -e "$T/xa/data/handoff/to-xb.outbox.md" ] || fail "a receipt must release the outbox"
   mkdir -p "$T/xb/data/handoff"  # A crash after staging leaves the rows on both sides.
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
-  reader "$T/xb" bash -c '. "$1/bin/jg-tasks-axi-lib.sh"; jg_backlog_beads_write "$2/config" stage jg-rm-base jg-rm-tail' _ "$ROOT" "$T/xb" > "$T/xb/data/handoff/to-xf.outbox.md"
+  reader "$T/xb" bash -c '. "$1/bin/jg-backlog-lib.sh"; jg_backlog_beads_write "$2/config" stage jg-rm-base jg-rm-tail' _ "$ROOT" "$T/xb" > "$T/xb/data/handoff/to-xf.outbox.md"
   reader "$T/xb" "$CLI" show jg-rm-base >/dev/null || fail "a crash must leave the source row"
   send "$T/xb" "$tool" to-xf jg-rm-base jg-rm-tail >/dev/null
   assert_not_contains "$(reader "$T/xb" "$CLI" list)" jg-rm-base "a rerun must release the source row"
@@ -373,7 +373,7 @@ readers() {  # What reads the backlog file reads the same rows from the store.
   done
   out=$(reader "$T/bd" timeout 90 "$ROOT/bin/jg-session-start.sh")
   for want in 'compact backlog listing (beads;' 'jg-fly,in_flight,recon' 'jg-wait,queued' '"wait: for x"' 'jg-two-b,queued' 'jg-one-a,queued' \
-    'bin/jg-tasks-axi.sh show <id> --full.'; do
+    'bin/jg-backlog.sh show <id> --full.'; do
     assert_contains "$out" "$want" "the digest must print the store's rows"
   done
 }
@@ -442,7 +442,7 @@ writes() {  # The write shapes backlog callers send, then what each provider rea
 TRANSITION=$T/transition.sh
 cat > "$TRANSITION" <<'SH'
 . "$BIN/jg-timeout-lib.sh"
-. "$BIN/jg-tasks-axi-lib.sh"
+. "$BIN/jg-backlog-lib.sh"
 . "$BIN/jg-backlog-transition-lib.sh"
 state=$JG_HOME/state data=$JG_HOME/data op=$1 id=$2
 shift 2
@@ -482,7 +482,7 @@ transitions() {
   same add jg-t2 "[feature] Held" --priority 2 --body why
   same add jg-t3 "[feature] Gone" --priority 2 --body why
   same add jg-t4 "[feature] Waits" --priority 2 --body why --blocked-by jg-t1
-  (cd "$T/ta" && BACKLOG_FILE="$T/ta/data/backlog.md" jg-tasks-axi.sh hold jg-t2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
+  (cd "$T/ta" && BACKLOG_FILE="$T/ta/data/backlog.md" jg-backlog.sh hold jg-t2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
   "${jail[@]}" "$WRAPPER" update jg-t2 --status on_hold --set-metadata "hold_reason=owner call" \
     --set-metadata hold_kind=captain >/dev/null 2>&1 || fail "seed a held row"
   both applies jg-t1
@@ -584,7 +584,7 @@ lanes() {
   owner jg-l1 "" ""
   # A hold reaches a lane's row: it stays in flight, a relaunch moves the lane, and a retain leaves it held.
   both lane jg-l2 s5.5.5 claude
-  (cd "$T/ta" && BACKLOG_FILE="$T/ta/data/backlog.md" jg-tasks-axi.sh hold jg-l2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
+  (cd "$T/ta" && BACKLOG_FILE="$T/ta/data/backlog.md" jg-backlog.sh hold jg-l2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
   "${jail[@]}" "$WRAPPER" update jg-l2 --status on_hold --set-metadata "hold_reason=owner call" \
     --set-metadata hold_kind=captain >/dev/null 2>&1 || fail "seed a held row"
   both probe jg-l2

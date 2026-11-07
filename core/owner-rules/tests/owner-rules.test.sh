@@ -36,7 +36,7 @@ export JG_HOME=$home
 add() {  # <id> <title> <body>
   local id=$1 title=$2 body=$3 prio=1
   case $title in "[captain-ask]"*) prio=0 ;; esac
-  (cd "$home" && JG_HOME=$home bash "$FM/bin/jg-tasks-axi.sh" add "$id" "$title" --priority "$prio" --kind ship --repo sample --body "$body") >/dev/null 2>"$work/add.err" \
+  (cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" add "$id" "$title" --priority "$prio" --kind ship --repo sample --body "$body") >/dev/null 2>"$work/add.err" \
     || { echo "fixture: could not add $id: $(cat "$work/add.err")" >&2; exit 1; }
 }
 add jg-with-ask '[captain-ask] Ship a thing' 'A body line.'
@@ -50,7 +50,7 @@ add jg-scout-parentless 'Plain title' 'Main13 asked for this.'
 add jg-no-ask 'Plain title' 'Nothing names an owner.'
 add jg-bad-design '[captain-ask] Vague design flag' 'design: maybe'
 add jg-with-ask-longer 'Main9 something' 'Done item.'
-(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-tasks-axi.sh" done jg-with-ask-longer) >/dev/null 2>&1 || true
+(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" done jg-with-ask-longer) >/dev/null 2>&1 || true
 # brief <id> <args...>: stderr, then rc= on the last line.
 brief() {
   local id=$1 out rc; shift
@@ -86,7 +86,7 @@ is "pass: prefix id does not match a longer id" "$(brief jg-with-ask --scout | t
 JG_HOME=$home JG_ADDONS_DIR=$addons JG_SQUAD_LEAD_CHARTER=x bash "$FM/bin/jg-brief.sh" sm --squad-lead --no-projects >/dev/null 2>&1 \
   && ok "pass: squad_lead charter is exempt" || no "squad_lead charter refused"
 
-tree=$(bash "$addons/owner-rules/bin/jg-owner-rules-tree.sh" <(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-tasks-axi.sh" markdown))
+tree=$(bash "$addons/owner-rules/bin/jg-owner-rules-tree.sh" <(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" markdown))
 printf '%s\n' "$tree" | grep -qF 'jg-with-main: jg-with-main -> jg-with-ask -> [epic root]' && ok "tree: prints epic parent chain" || no "tree: epic parent chain missing"
 printf '%s\n' "$tree" | grep -qF 'jg-cycle-a: jg-cycle-a -> jg-cycle-b -> jg-cycle-a -> [cycle: jg-cycle-a]' && ok "tree: reports cycle" || no "tree: cycle unreported"
 printf '%s\n' "$tree" | grep -A8 '^Items with no valid parent:' | grep -qF '  jg-cycle-a' && ok "tree: lists invalid items" || no "tree: invalid items list missing cycle"

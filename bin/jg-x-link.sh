@@ -199,7 +199,7 @@ if [ ! -f "$META" ]; then
       ''|*' '*) ;;
       *) ROUTE_HOME_ARG="squad_lead:$ROUTE_MATCHES" ;;
     esac
-    printf 'jg-x-link: bind the public promise through the promised-final path instead: bin/jg-tasks-axi.sh public-followup add + bind-work, then bin/jg-public-followup.sh register <obligation-id> --relation <relation-id> --work-home %s --work-id %s --generation <n>, and put the bin/jg-public-followup.sh brief <obligation-id> command into the routed worker instructions.\n' \
+    printf 'jg-x-link: bind the public promise through the promised-final path instead: bin/jg-backlog.sh public-followup add + bind-work, then bin/jg-public-followup.sh register <obligation-id> --relation <relation-id> --work-home %s --work-id %s --generation <n>, and put the bin/jg-public-followup.sh brief <obligation-id> command into the routed worker instructions.\n' \
       "$ROUTE_HOME_ARG" "$ID" >&2
   fi
   exit 1

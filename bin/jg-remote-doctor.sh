@@ -85,8 +85,8 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$SCRIPT_DIR" && pwd -P)
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 # shellcheck source=bin/jg-remote-job-lib.sh
 . "$SCRIPT_DIR/jg-remote-job-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-remote-herdr-owner-lib.sh
 . "$SCRIPT_DIR/jg-remote-herdr-owner-lib.sh"
 # check_beads_store owns the backlog's own tools (the pinned bd and dolt).

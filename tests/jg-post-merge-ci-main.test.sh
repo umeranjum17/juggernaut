@@ -21,14 +21,14 @@ world() {  # <name> <status> <conclusion>
   dir="$TMP_ROOT/$name"
   mkdir -p "$dir/home/data" "$dir/home/state" "$dir/repo/bin" "$dir/fakebin"
   cp "$ALARM" "$dir/repo/bin/jg-post-merge-ci.sh"
-  cat > "$dir/repo/bin/jg-tasks-axi.sh" <<EOF
+  cat > "$dir/repo/bin/jg-backlog.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\\n' "\$*" >> "$dir/backlog-adds"
 EOF
   cat > "$dir/repo/bin/jg-wake-lib.sh" <<EOF
 jg_wake_append() { printf '%s\\n' "\$*" >> "$dir/wakes"; }
 EOF
-  chmod +x "$dir/repo/bin/jg-tasks-axi.sh"
+  chmod +x "$dir/repo/bin/jg-backlog.sh"
   cat > "$dir/fakebin/gh" <<EOF
 #!/usr/bin/env bash
 printf '[{"databaseId":4242,"status":"$status","conclusion":"$conclusion","headSha":"abcdef0123456789"}]\\n'

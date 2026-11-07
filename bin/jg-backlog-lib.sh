@@ -1,11 +1,11 @@
 # shellcheck shell=bash
 # Backlog store access for every script that reads or writes this home's backlog.
-# Usage: . bin/jg-tasks-axi-lib.sh
+# Usage: . bin/jg-backlog-lib.sh
 #
 # The backlog is this home's Beads store, named by the absolute BEADS_DIR in
 # `config/beads-dir`. jg_backlog_beads_read owns every read, jg_backlog_beads_write owns
 # add, update, done, block, unblock, start, reopen, hold, unhold, relink and the
-# stage, take and drop a handoff moves rows with, and bin/jg-tasks-axi.sh refuses
+# stage, take and drop a handoff moves rows with, and bin/jg-backlog.sh refuses
 # every other verb. There is no other backend and no fallback: a home with no store
 # named reports that, and its caller stops.
 
@@ -17,7 +17,7 @@ jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
   store=
   [ -r "$1/beads-dir" ] && store=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e q < "$1/beads-dir")
   if [ -z "$store" ]; then
-    printf 'jg-tasks-axi: the beads backlog needs its store: put an absolute BEADS_DIR in %s/beads-dir\n' "$1" >&2
+    printf 'jg-backlog: the beads backlog needs its store: put an absolute BEADS_DIR in %s/beads-dir\n' "$1" >&2
     return 2
   fi
   printf '%s\n' "$store"

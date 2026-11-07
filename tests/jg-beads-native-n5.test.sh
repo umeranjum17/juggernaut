@@ -63,7 +63,7 @@ home() {  # <name>: a Beads home on its own store.
   bd_ "$1" init --prefix n5
 }
 bd_() { BEADS_DIR=$T/$1/s/.beads "${jail[@]}" "$WRAPPER" "${@:2}" >/dev/null 2>&1 || fail "$1: bd ${*:2}"; }
-axi() { JG_HOME=$T/$1 "${jail[@]}" "$ROOT/bin/jg-tasks-axi.sh" "${@:2}"; }
+axi() { JG_HOME=$T/$1 "${jail[@]}" "$ROOT/bin/jg-backlog.sh" "${@:2}"; }
 captain() { JG_CAPTAIN_HOLD_NOW=2026-11-07T10:00:00Z JG_HOME=$1 JG_STATE_OVERRIDE=$1/state JG_DATA_OVERRIDE=$1/data JG_CONFIG_OVERRIDE=$1/config "${jail[@]}" "$ROOT/bin/jg-captain-hold.sh" "${@:2}" 2>&1 </dev/null; }
 codes() {  # <home folder> <ids...>: each row's blocking exit code.
   local id rc out=

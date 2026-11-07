@@ -8,7 +8,7 @@
 # operation. Every command here reads durable state and nothing else.
 #
 # OWNERSHIP BOUNDARIES (do not re-implement any of these here):
-#   jg-tasks-axi.sh public-followup   the typed obligation and its state machine.
+#   jg-backlog.sh public-followup   the typed obligation and its state machine.
 #   state/x-context/            the private full request context (jg-x-lib.sh).
 #   bin/jg-x-reply.sh           posting to the relay, thread splitting, dry run.
 #   bin/jg-public-followup-lib.sh  the activation gate and private transport.
@@ -37,7 +37,7 @@
 #   jg-public-followup.sh register <obligation-id> --relation <relation-id>
 #         --work-home <main|squad_lead:<id>> --work-id <task-id> --generation <n>
 #         [--platform <x|discord>] [--request <request-id>]
-#       Record the binding the relay path just created with `jg-tasks-axi.sh
+#       Record the binding the relay path just created with `jg-backlog.sh
 #       public-followup add` + `bind-work`. This is the event-driven
 #       registration: it creates this home's private public-followup directories
 #       (0700) and the bounded public-safe registration record, which is what
@@ -63,7 +63,7 @@
 #
 #   jg-public-followup.sh consume
 #       Drain every pending typed terminal event: validate its derived identity,
-#       skip anything already accepted, apply `jg-tasks-axi.sh public-followup
+#       skip anything already accepted, apply `jg-backlog.sh public-followup
 #       work-event`, and quarantine what the backlog refuses. Prints one
 #       "ready <obligation-id> <request-id> <platform>" line per obligation that
 #       became delivery-ready, and one "rejected <event-id>: <reason>" line per
@@ -241,10 +241,10 @@ require_tools() {
 }
 
 # Every the backlog call addresses $JG_HOME/data, the home whose backlog owns the
-# obligation, through bin/jg-tasks-axi.sh. An inherited JG_DATA_OVERRIDE is
+# obligation, through bin/jg-backlog.sh. An inherited JG_DATA_OVERRIDE is
 # cleared because a caller such as a squad_lead teardown names the parent home
 # in JG_HOME while its own data override is still in the environment.
-tx() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-tasks-axi.sh" "$@"; }
+tx() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-backlog.sh" "$@"; }
 
 # obligation_json <id>: this home's typed obligation payload, through the shared
 # reader every consumer of the promised contract uses. the backlog stays the
@@ -309,7 +309,7 @@ cmd_register() {
   payload=$(obligation_json "$id") \
     || die "could not read the backlog through the backlog" 1
   [ -n "$payload" ] \
-    || die "no public-followup obligation '$id' in this home's backlog; create it with bin/jg-tasks-axi.sh public-followup add before registering" 1
+    || die "no public-followup obligation '$id' in this home's backlog; create it with bin/jg-backlog.sh public-followup add before registering" 1
 
   # The relation must already be bound, so a registration can never describe a
   # binding the backlog does not have.
@@ -321,7 +321,7 @@ cmd_register() {
      (.public_followup.work_relations // [])
        | map(select(.relation_id == $r and (.work_ref.home_id | own_id) == $h and .work_ref.task_id == $w))
        | length > 0' >/dev/null 2>&1 \
-    || die "obligation '$id' has no bound relation '$relation' for $work_home/$work_id; run bin/jg-tasks-axi.sh public-followup bind-work first" 1
+    || die "obligation '$id' has no bound relation '$relation' for $work_home/$work_id; run bin/jg-backlog.sh public-followup bind-work first" 1
 
   [ -n "$platform" ] || platform=$(pf_field "$payload" '.public_followup.request.platform')
   [ -n "$request" ] || request=$(pf_field "$payload" '.public_followup.request.request_id')
