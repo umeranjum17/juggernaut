@@ -99,6 +99,66 @@ test_bad_entries_report_and_fall_back() {
   pass "tool models: a bad harness, effort, file or off-list model prints one plain reason and keeps today's default"
 }
 
+# The gateway chat sites: the voice rewrite, the inbox speech and side-question models, and the voice relay. Each runs
+# the real script with a fake model command (a fake claude and a fake aws) that records the model it was given.
+test_gateway_chat_follows_the_file() {
+  local home fb out
+  home=$(jg_test_tmproot jg-tool-models-gateway)
+  mkdir -p "$home/config" "$home/state" "$home/data"
+  fb=$(jg_fakebin "$home")
+  printf '#!/bin/sh\ncat >/dev/null\nprintf "%%s\\n" "$*" >>"%s/claude.log"\nexit 1\n' "$home" >"$fb/claude"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s/aws.log"\necho answer\n' "$home" >"$fb/aws"
+  chmod +x "$fb/claude" "$fb/aws"
+  printf 'us-east-1\n' >"$home/config/inbox-region"
+  printf 'file-ask-model\n' >"$home/config/inbox-ask-model"
+  printf 'voice-region\n' >"$home/config/voice-region"
+  printf 'file-voice-model\n' >"$home/config/voice-model"
+  local env=(env -u JG_VOICE_REWRITE_CMD -u JG_INBOX_ASK_MODEL -u JG_VOICE_MODEL -u JG_INBOX_PROFILE
+    "PATH=$fb:$PATH" "JG_HOME=$home" "JG_CONFIG_OVERRIDE=$home/config" "JG_STATE_OVERRIDE=$home/state" "JG_DATA_OVERRIDE=$home/data")
+  rewrite_model() { : >"$home/claude.log"; "${env[@]}" python3 "$ROOT/bin/jg-voice.py" apply --channel telegram 'The worktree is clean.' >/dev/null 2>&1; grep -o -e '--model [^ ]*' "$home/claude.log" | head -1; }
+  ask_model() { : >"$home/aws.log"; "${env[@]}" "$ROOT/bin/jg-inbox.sh" ask hi >/dev/null 2>&1; grep -o -e '--model-id [^ ]*' "$home/aws.log" | head -1; }
+  relay_model() { "${env[@]}" python3 -c '
+import argparse, importlib.util, sys
+spec = importlib.util.spec_from_file_location("relay", sys.argv[1] + "/bin/jg-voice-relay.py")
+relay = importlib.util.module_from_spec(spec); sys.path.insert(0, sys.argv[1] + "/bin"); spec.loader.exec_module(relay)
+print(relay.resolve_settings(argparse.Namespace(home=None, region=None, model=None, profile="", voice="v")).model)' "$ROOT" 2>&1; }
+
+  out=$(rewrite_model); echo "before: voice rewrite = $out"
+  [ "$out" = "--model claude-haiku-5-5" ] || fail "no file: the voice rewrite must keep Haiku, got [$out]"
+  out=$(ask_model); echo "before: inbox ask = $out"
+  [ "$out" = "--model-id file-ask-model" ] || fail "no file: the inbox ask must keep config/inbox-ask-model, got [$out]"
+  out=$(relay_model); echo "before: voice relay = $out"
+  [ "$out" = file-voice-model ] || fail "no file: the voice relay must keep config/voice-model, got [$out]"
+
+  printf '{"rules":[%s,%s,%s]}\n' \
+    '{"tool":"voice-rewrite","when":"fixture","use":{"harness":"claude","model":"sonnet"}}' \
+    '{"tool":"inbox-ask","when":"fixture","use":{"harness":"pi","model":"amazon-bedrock/tm-ask-model"}}' \
+    '{"tool":"voice-relay","when":"fixture","use":{"harness":"pi","model":"amazon-bedrock/tm-relay-model"}}' >"$home/config/tool-models.json"
+  out=$(rewrite_model); echo "after the file names Sonnet: voice rewrite = $out"
+  [ "$out" = "--model sonnet" ] || fail "the file edit alone must move the voice rewrite, got [$out]"
+  out=$(ask_model); echo "after: inbox ask = $out"
+  [ "$out" = "--model-id tm-ask-model" ] || fail "the file edit alone must move the inbox ask, got [$out]"
+  out=$(relay_model); echo "after: voice relay = $out"
+  [ "$out" = tm-relay-model ] || fail "the file edit alone must move the voice relay, got [$out]"
+  : >"$home/aws.log"; "${env[@]}" JG_INBOX_ASK_MODEL=env-ask "$ROOT/bin/jg-inbox.sh" ask hi >/dev/null 2>&1
+  out=$(grep -o -e '--model-id [^ ]*' "$home/aws.log" | head -1)
+  echo "environment variable set: inbox ask = $out"
+  [ "$out" = "--model-id env-ask" ] || fail "JG_INBOX_ASK_MODEL must still win over the file, got [$out]"
+
+  # A bad entry says why in one line and keeps today's model.
+  printf '{"rules":[{"tool":"voice-rewrite","when":"fixture","use":{"harness":"codex","model":"gpt-5.6-sol"}}]}\n' >"$home/config/tool-models.json"
+  out=$("${env[@]}" python3 "$ROOT/bin/jg-voice.py" apply --channel telegram 'The worktree is clean.' 2>&1 >/dev/null)
+  assert_contains "$out" "TOOL_MODELS: voice-rewrite needs harness claude" "a harness the site cannot run must say why"
+  [ "$(rewrite_model)" = "--model claude-haiku-5-5" ] || fail "a harness the site cannot run must keep Haiku"
+
+  rm -f "$home/config/tool-models.json"
+  [ "$(rewrite_model)" = "--model claude-haiku-5-5" ] && [ "$(ask_model)" = "--model-id file-ask-model" ] && [ "$(relay_model)" = file-voice-model ] ||
+    fail "removing the file must restore every default"
+  echo "after removing the file: voice rewrite, inbox ask and voice relay are back to their defaults"
+  pass "tool models: one file edit moves the voice rewrite, the inbox models and the voice relay, and removal restores each default"
+}
+
 test_squad_lead_follows_the_file
+test_gateway_chat_follows_the_file
 test_other_tools_read_the_same_file
 test_bad_entries_report_and_fall_back

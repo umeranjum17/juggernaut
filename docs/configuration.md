@@ -1742,6 +1742,7 @@ With no file, or no rule for a tool, nothing changes and the tool keeps its own 
 A model must pass the spawn allow-list (`config/model-allow-list.json`); the first profile in the list that passes wins.
 A bad file, a bad profile, or a model the allow-list refuses prints one `TOOL_MODELS:` line that gives the reason, and the tool keeps its default.
 `bin/jg-tool-models.sh check` lists the tagged rules or the reason the file is unusable.
+`bin/jg-tool-models.sh model <tool> <harness> [<provider>/]` prints only the entry's model, for a site that can run one harness; an entry for another harness prints one `TOOL_MODELS:` line and the site keeps its default.
 Squad Lead homes inherit the file with the other shared config.
 
 | Tool tag | Read by | What the entry sets |
@@ -1750,6 +1751,10 @@ Squad Lead homes inherit the file with the other shared config.
 | `done-done-judge` | `core/merge-card/merge-card` | Model that judges the Evidence card. The harness must be `pi`, and the model carries its provider prefix. |
 | `supervision-engine` | `bin/jg-supervision-engine-lib.sh` | Default model of the supervision engine when its harness matches the entry. |
 | `no-mistakes-review` | `core/pipeline-quota-failover/pi-quota-failover` | Model of the no-mistakes review chain, and of the account-pool route that names no model. The harness must be `pi`, and the model carries its provider prefix. The installed wrapper finds the home through `PI_QUOTA_FAILOVER_JG_HOME`, then `JG_HOME`, then `~/juggernaut`; `PI_QUOTA_FAILOVER_CHAIN` still wins. |
+| `voice-rewrite` | `bin/jg-voice.py` | Model of the default voice rewrite command. The harness must be `claude`. `JG_VOICE_REWRITE_CMD` and `config/voice-rewrite-command` still win. |
+| `inbox-stt` | `bin/jg-inbox.sh` (`say`) | Speech-to-text model. The harness must be `pi` and the model carries the prefix `amazon-bedrock/`. `JG_INBOX_STT_MODEL` still wins, and the entry wins over `config/inbox-stt-model`. |
+| `inbox-ask` | `bin/jg-inbox.sh` (`ask`) | Side-question model, with the same rules as `inbox-stt`. `JG_INBOX_ASK_MODEL` still wins over the entry, and the entry wins over `config/inbox-ask-model`. |
+| `voice-relay` | `bin/jg-voice-relay.py` | Nova Sonic model of the voice relay, with the same rules as `inbox-stt`. `JG_VOICE_MODEL` still wins over the entry, and the entry wins over `config/voice-model`. |
 
 Tools in this repository that still choose a model in their own way are listed in the follow-up section of the pull request that added this file.
 See [`docs/examples/tool-models.json`](examples/tool-models.json) for a starting point.
