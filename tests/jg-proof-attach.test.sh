@@ -129,3 +129,17 @@ dgate t13 >/dev/null || fail "a non-UI task was touched"
 row card-old t14 "" "$EMPTY"; : > "$home/state/t14.meta"
 dgate t14 >/dev/null || fail "a record with no ui_change was refused"
 pass "row ui-card-done-gate: UI task without a card fails, with a card passes, non-UI untouched"
+
+# The done path itself must hand the picture rule a real head. On the trunk at dad45d8f the gate
+# ran before the head was resolved, so every UI change was refused with "its head commit could
+# not be read" even when its work copy held a commit and its card was posted.
+wt=$root/wt; mkdir -p "$wt"
+git -C "$wt" init -q && git -C "$wt" config user.email t@t && git -C "$wt" config user.name t
+printf 'x\n' > "$wt/a" && git -C "$wt" add -A && git -C "$wt" commit -qm base
+# shellcheck source=bin/jg-dod-lib.sh
+. "$ROOT/bin/jg-dod-lib.sh"
+uim donehead yes
+out=$(jg_dod_accept_ship_done ship direct-PR "$wt" app "done [at=1]: the work is finished" "$home/state" donehead "$home/state/donehead.meta" 2>&1)
+assert_not_contains "$out" "head commit could not be read" "the done path hands the picture rule a real head"
+assert_contains "$out" "attach ready donehead" "a UI done without its card is refused by the card rule, naming the command"
+pass "row ui-card-done-gate-head: a UI done is gated on its card, never on an unread head"

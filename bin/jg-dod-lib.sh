@@ -906,31 +906,31 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   fi
   jg_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   url=$(jg_dod_pr_url_from_done_note "$(status_line_note "$line")") || url=
-  # The captain's picture rule: a UI change reports done only with its board card.
-  if declare -F jg_ui_card_done_gate >/dev/null && [ -n "$id" ] && [ -n "$meta" ]; then
-    jg_ui_card_done_gate "$id" "$meta" "${design_head:-}" "${url:--}" || return 1
-  fi
   if [ -z "$forge_head" ] && [ -n "$url" ] && [ -n "$meta" ] && [ -f "$meta" ] \
     && [ "$(jg_dod_meta_value "$meta" pr)" = "$url" ] \
     && { jg_dod_forge_head_is_named_head "$mode" || { [ "$mode" = direct-PR ] && jg_dod_pr_outside_origin "$wt" "$url"; }; }; then
     recorded_head=$(jg_dod_meta_value "$meta" pr_head)
     jg_pr_head_valid "$recorded_head" && forge_head=$recorded_head
   fi
+  # The head every done-time captain rule below is measured at: the forge head when the copy
+  # holds it, else the copy's HEAD. Resolving it first means no rule can read an unset head
+  # and refuse a task it should have judged.
+  design_head=''
+  if [ -n "$forge_head" ] && git -C "${wt:-/nonexistent}" cat-file -e "$forge_head^{commit}" 2>/dev/null; then
+    design_head=$forge_head
+  else
+    design_head=$(git -C "${wt:-/nonexistent}" rev-parse HEAD 2>/dev/null) || design_head=''
+  fi
+  # The captain's picture rule (bin/jg-merge-gate-lib.sh owns it): a UI change reports done
+  # only with its board card at that head.
+  if declare -F jg_ui_card_done_gate >/dev/null && [ -n "$id" ] && [ -n "$meta" ]; then
+    jg_ui_card_done_gate "$id" "$meta" "$design_head" "${url:--}" || return 1
+  fi
   # The captain's first-draft rule (bin/jg-merge-gate-lib.sh owns it): a design task
   # reaches done only when its completion receipt names a first-draft record that made
   # or refined every option it presents. The refusal prints the option by name, so the
-  # done is not accepted and the lane stops here instead of warning. The rule is measured
-  # at the head of the pull request the done names (the forge head, else the recorded
-  # pr_head resolved above), because a lane that holds several pull requests sits at the
-  # last one's head; it falls back to the copy's HEAD only when no such head is known or
-  # the copy does not hold that commit, so the rule never gets looser.
+  # done is not accepted and the lane stops here instead of warning.
   if [ -n "$state" ] && [ -n "$id" ] && [ -n "$meta" ]; then
-    design_head=''
-    if [ -n "$forge_head" ] && git -C "${wt:-/nonexistent}" cat-file -e "$forge_head^{commit}" 2>/dev/null; then
-      design_head=$forge_head
-    else
-      design_head=$(git -C "${wt:-/nonexistent}" rev-parse HEAD 2>/dev/null) || design_head=''
-    fi
     jg_design_done_gate "$state" "$id" "$meta" "$design_head" || return 1
   fi
   if declare -F jg_receipts_accept_done >/dev/null; then jg_receipts_accept_done "$wt" "$mode" "$line" "$state" "$id" "$meta" "$forge_head" || return 1; fi
