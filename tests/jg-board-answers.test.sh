@@ -100,12 +100,15 @@ test_unrouted_answer_wakes_main_with_the_answer_first() {
   [ -z "$out" ] || fail "an answer already on the board at the first pass was reported: $out"
   answer "$d" free-card "ship it"
   out=$(run "$d" "$BA" check)
-  case "$out" in
-    "ship it ("*") | board answer on free-card at $AT, not routed to a lead"*) : ;;
-    *) fail "the unrouted wake line does not lead with the answer: $out" ;;
-  esac
+  [ -z "$out" ] || fail "the unrouted answer was printed although its wake was raised: $out"
+  grep -q "board-answer-unmapped-free-card-$AT" "$d/home/state/.wake-queue" \
+    || fail "no wake row was raised in the pass for the unmapped answer"
+  grep -q 'ship it (.*) | board answer on free-card at .*, not routed to a lead' "$d/home/state/.wake-queue" \
+    || fail "the unrouted wake does not lead with the answer"
   out=$(run "$d" "$BA" check)
   [ -z "$out" ] || fail "an unrouted answer was reported twice: $out"
+  [ "$(grep -c "board-answer-unmapped-free-card-$AT" "$d/home/state/.wake-queue")" = 1 ] \
+    || fail "the unmapped answer was queued more than once"
   pass "an unrouted answer wakes Main once, answer text first; old answers stay quiet"
 }
 
