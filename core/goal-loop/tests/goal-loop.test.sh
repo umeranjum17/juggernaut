@@ -13,12 +13,21 @@ H=$T/home
 mkdir -p "$H/state" "$H/config" "$H/data"
 unset GOAL_BEADS_DIR JG_GOAL_RESURFACE_SECS
 
-# A stand-in `jg-goal.sh rows`: it prints the recorded rows, or refuses with the recorded reason.
+# A stand-in `jg-goal.sh`: rows prints the recorded rows, or refuses with the recorded reason. notice and finish
+# record the call and the message key on the epic as the real verbs do, and finish closes the epic.
 cat > "$T/goal" <<'SH'
 #!/usr/bin/env bash
-[ "$1" = rows ] || exit 2
 if [ -s "$ROWS.refuse" ]; then cat "$ROWS.refuse" >&2; exit 2; fi
-cat "$ROWS"
+case "$1" in
+  rows) cat "$ROWS" ;;
+  notice|finish)
+    if [ -s "$ROWS.fail" ]; then cat "$ROWS.fail" >&2; exit 2; fi
+    echo "$*" >> "$ROWS.calls"
+    key="sent_goal_goal_a_${1/notice/stop_${3//[!A-Za-z0-9]/_}}"
+    jq --arg k "$key" 'map(if .id == "goal-a" then .metadata[$k] = 1 | (if $k | endswith("finish") then .status = "closed" else . end) else . end)' "$ROWS" > "$ROWS.new" && mv "$ROWS.new" "$ROWS"
+    echo "$1 message for $2" ;;
+  *) exit 2 ;;
+esac
 SH
 chmod +x "$T/goal"
 export JG_GOAL_BIN=$T/goal ROWS=$T/rows.json
@@ -56,7 +65,10 @@ for pair in "closed open open open open:merged" "closed closed open open open:re
   assert_equals "$(wake)" "" "step ${pair##*:} rings once"
 done
 rows closed closed closed closed closed
-assert_equals "$(wake)$(state)" $'finished\t' "every step closed is finished and raises nothing"
+assert_equals "$(state)" $'finished\t' "every step closed is finished"
+assert_contains "$(wake)" "finish message for goal-a" "a finished Goal gets its one message"
+assert_equals "$(wake)" "" "the finish message goes once"
+assert_equals "$(grep -c '^finish' "$ROWS.calls")" 1 "the Goal was finished once"
 assert_absent "$H/data/jg-goal-loop/goal-a.next" "a finished Goal leaves no wake record"
 
 # Resurface: the same open step rings again once the wait has run past the limit.
@@ -67,8 +79,20 @@ assert_contains "$(JG_GOAL_RESURFACE_SECS=0 "$LOOP" check "$H")" "released step"
 
 # A stop is the owner's or a blocker's call: the check reports it as stopped and never raises a step.
 rows closed open open open open on_hold
-assert_equals "$(wake)" "" "a stopped Goal raises no step"
-assert_equals "$(state)" $'stopped\tgoal-a.6' "state names the stop row"
+assert_contains "$(wake)" "notice message for goal-a" "a new stop gets its one message"
+assert_equals "$(wake)" "" "a stopped Goal raises no step and no second message"
+assert_equals "$("$LOOP" state "$H" | cut -f2,3,5)" $'stopped\tgoal-a.6\tsent' "state names the stop row and that its message went"
+assert_equals "$(grep -c '^notice goal-a goal-a.6' "$ROWS.calls")" 1 "the stop was announced once"
+rows closed open open open open
+assert_contains "$(wake)" "ready for its merged step" "closing the stop row resumes the Goal"
+
+# A message that cannot be written rings once for its reason and is tried again until it works.
+rows closed open open open open on_hold
+echo "jg-goal: could not record the message" > "$ROWS.fail"
+assert_contains "$(wake)" "notice failed - jg-goal: could not record the message" "a failed message is reported"
+assert_equals "$(wake)" "" "the same failure rings once"
+rm -f "$ROWS.fail"
+assert_contains "$(wake)" "notice message for goal-a" "the message goes once the write works"
 
 # A closed Goal is ignored and its record goes.
 rows open open open open open
@@ -138,4 +162,21 @@ for i in 0 1 2 3 4; do
   assert_contains "$(wake)" "ready for its ${steps[$((i + 1))]} step" "closing ${steps[$i]} moves the Goal on"
 done
 assert_equals "$(state)" $'finished\t' "the real Goal ends finished"
+out=$(wake)
+assert_contains "$out" "$id finished - merged-not-released: the Goal is done: make it live" "the finish message goes through the live claim"
+assert_equals "$(wake)" "" "the real finish message goes once"
+assert_equals "$(state)" "" "a finished Goal is closed"
+
+# A real stop: one message, none after a restart, and closing the row resumes the Goal.
+id=$("$ROOT/bin/jg-goal.sh" declare --ask "second" --repo o/r -- test -f "$T/live") || fail "second declare"
+"$ROOT/bin/jg-goal.sh" stop "$id" --kind owner-must 2>/dev/null && fail "a stop needs a reason"
+"$ROOT/bin/jg-goal.sh" stop "$id" --kind nonsense --reason x 2>/dev/null && fail "a stop needs a known kind"
+row=$("$ROOT/bin/jg-goal.sh" stop "$id" --kind owner-must --reason "the owner must pick") || fail "real stop"
+assert_contains "$("$ROOT/bin/jg-goal.sh" show "$id")" "stop: $row on_hold owner-must - the owner must pick" "show lists the open stop"
+assert_contains "$(wake)" "$id is stopped (owner-must): the owner must pick" "a real stop gets its message"
+rm -rf "$H/data/jg-goal-loop"
+assert_equals "$(wake)" "" "a restart sends no second message"
+"$ROOT/bin/jg-goal.sh" resume "$id.1" 2>/dev/null && fail "resume only takes a stop row"
+"$ROOT/bin/jg-goal.sh" resume "$row" >/dev/null || fail "resume"
+assert_contains "$(wake)" "$id is ready for its ship step" "closing the stop row resumes the Goal"
 pass "goal-loop"
