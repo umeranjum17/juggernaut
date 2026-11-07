@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Journey that proves the same gate end to end: journeys/merge-proof-gate.sh (done-done run merge-proof-gate).
 # jg_dod_proof_gate (bin/jg-merge-gate-lib.sh): a merge lands only with its proof card on the board.
 # The gate runs the real bin/jg-proof-attach.sh; only the board client is a stub.
 set -u
