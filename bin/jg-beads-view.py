@@ -36,8 +36,6 @@ STATES = ["queued", "in_flight", "done", "held"]
 PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?([eE][+-]?\d+)?\Z")
 MUST_QUOTE = re.compile(r'[,:"\\\[\]{}\x00-\x1f]')
 ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
-LINK_LINE = re.compile(r"^[ \t]*(?:linked-to|parent):(.*)$", re.M)
-LINK_WORD = re.compile(r"[A-Za-z0-9._-]+\Z")
 
 
 def scalar(value):
@@ -99,10 +97,8 @@ def holding(row):
 
 
 def mentions(row):
-    """The names a row links to: its edges, and the linked-to: and parent: lines a migrated body still carries."""
-    words = re.split(r"[,;\s]+", " ".join(LINK_LINE.findall(row.get("description") or "")))
-    return {d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") != "tracks"} | {
-        word for word in words if LINK_WORD.match(word) and word.lower() != "upkeep"}
+    """The rows a row links to: its edges alone, since a body's lines became edges when written (bin/jg-beads-links.py)."""
+    return {d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") != "tracks"}
 
 
 def legacy(row):

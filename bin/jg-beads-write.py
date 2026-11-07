@@ -29,10 +29,9 @@ stage prints rows as a backlog file, or with --native as export lines, and refus
 take files rows from either in one bd import, skips any already here, and refuses a blocker that neither moves nor is here.
 A backlog file's rows carry what its format holds, and the since date stays behind. drop deletes rows filed elsewhere, in
 one bd call, and leaves any row that moved out of the queue.
-A body's linked-to: and parent: lines become edges when written (bin/jg-beads-links.py): a new row also takes the lines
-that named it before it existed, a body that drops a name drops its edge, and an edge bd refuses as a cycle lands as
-related, so the link stays. unhold eases a line's blocks edge to related once neither side is a decision. relink lays
-every missing edge, for a store that holds lines written before edges were.
+A body's linked-to: and parent: lines become edges when written (bin/jg-beads-links.py), and a new row takes the lines that named it first.
+A body that drops a name drops its edge, an edge bd refuses as a cycle lands as related, and unhold eases a line's blocks edge to related
+once neither side is a decision. relink lays every missing edge, for a store whose lines came before edges.
 """
 import datetime
 import json
@@ -109,9 +108,8 @@ def lay(ident=None, old=""):
     for row, other, kind, _ in edges.pending(items, ident):
         if other:
             one, two, kind = edges.edge(row, other, kind)
-            refused = kind != "related" and subprocess.run([WRAPPER, "dep", "add", one["id"], two["id"], "--type", kind],
-                                                           capture_output=True, check=False).returncode
-            if kind == "related" or refused:
+            if kind == "related" or subprocess.run([WRAPPER, "dep", "add", one["id"], two["id"], "--type", kind],
+                                                   capture_output=True, check=False).returncode:
                 kind = "related"
                 bd("dep", "add", one["id"], two["id"], "--type", kind)
             edges.join(one, two, kind)
@@ -340,7 +338,6 @@ def done(args):
         cmd.append("--description=" + "\n".join(filter(None, [item["body"], note])))
     if not already:
         cmd += ["--status", "closed", "--if-status", row["status"]]
-        # bd refuses to close a parent with an open child; a home closes it, as a file home does, so an answer still lands.
         kids = any(d.get("type") == "parent-child" and d["depends_on_id"] == ident and other["status"] != "closed"
                    for other in items.values() for d in other.get("dependencies") or [])
         if item["blocked"] == "yes" or kids:
@@ -601,12 +598,8 @@ def drop(keys):
         bd("delete", *[row["id"] for row in found], "--force")
 
 
-def relink(args):
-    found, ids = view.flags(args, (), ("--json",))
-    if ids:
-        view.refuse("Expected no positional arguments, got %d" % len(ids), "usage: tasks-axi relink")
-    laid = lay()
-    print(json.dumps({"ok": True, "action": "relink", "laid": laid}, indent=2) if "--json" in found else "ok: relink laid %d" % laid)
+def relink(_args):
+    print("ok: relink laid %d" % lay())
 
 
 def main():

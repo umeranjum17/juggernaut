@@ -13,8 +13,7 @@ A hold the winner drops stays visible as metadata.past_hold plus a hold-dropped-
 The upkeep bucket is not imported: its children carry the `upkeep` label. A held row with no reason gets the
 hold-reason-missing label. Inline blocked-by becomes a `blocks` dependency, and a hold with hold-until is a deferred
 row with that date as defer_until, so bd returns it by itself.
-A linked-to: or parent: line in a body becomes an edge (bin/jg-beads-links.py), and a name no row of the home answers to
-is kept in metadata.linked_to with the link-unresolved label; a line can never leave the store without one or the other.
+A linked-to: or parent: line becomes an edge (bin/jg-beads-links.py); a name no row answers to is metadata.linked_to with the link-unresolved label.
 manifest.json records every row and the disposition of every held row, so a dry run has something to match.
 
 Settling: a row with no home parks under main with the `unplaced` label. A row of a home in data/parked, or of a lead

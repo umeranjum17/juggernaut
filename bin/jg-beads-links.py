@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """jg-beads-links.py - turn the linked-to: and parent: lines of a row's body into Beads edges.
 
-bin/jg-beads-write.py and bin/jg-beads-migrate.py import it, so a line becomes an edge when it is written or migrated.
-No reader parses a body: bin/jg-beads-view.py reads the edges alone, and the lines stay in the body as the row's text.
+bin/jg-beads-write.py and bin/jg-beads-migrate.py import it, and bin/jg-beads-view.py reads the edges alone; the lines stay as the row's text.
 A parent: line is a parent-child edge. A linked-to: line is a blocks edge when one side is a decision, the work waiting
-on the decision, and a related edge between siblings. A word that names no row stays text until that row is filed.
+on it, and a related edge between siblings. A word that names no row stays text until that row is filed.
 """
 import re
 import sys
