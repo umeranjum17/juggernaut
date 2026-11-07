@@ -324,8 +324,10 @@ bd_refusals() {  # <bd args...>
 run_bd() {  # <verb> [args...]
   local arg
   for arg in "$@"; do
+    # A short-flag cluster holds only letters before -C; past any other character the rest is a value, such as -o=/tmp/Cx.
+    [[ ! "$arg" =~ ^-[a-zA-Z]*C ]] || die "$arg would move this call off BEADS_DIR"
     case "$arg" in
-      --global|--global=*|--db|--db=*|--database|--database=*|--directory|--directory=*|-C*|-[!-]*C*|--mem-profile*|--cpu-profile*)
+      --global|--global=*|--db|--db=*|--database|--database=*|--directory|--directory=*|--mem-profile*|--cpu-profile*)
         die "$arg would move this call off BEADS_DIR" ;;
     esac
   done

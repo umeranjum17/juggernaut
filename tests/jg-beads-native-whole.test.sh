@@ -78,7 +78,7 @@ each "git tree" "${TREE[@]}" "migrate hooks --apply" "config set no-git-ops fals
 each secret "config get jira.api_token" "config set github.token x" "config set-many a=b linear.API_KEY=x" "config set x.pat y"
 
 for call in "${SERVED[@]/%/ --extra}" "gate check --type=timer" "gate check -t bead" "find-duplicates --method mechanical" \
-  "export -o $T/plain/o" "config set events-journal true" "help serve"; do read -ra args <<<"$call"; reaches "${args[@]}"; done
+  "export -o $T/plain/o" "export -o=$T/plain/Co" "config set events-journal true" "help serve"; do read -ra args <<<"$call"; reaches "${args[@]}"; done
 env GITHUB_TOKEN=tok1 ANTHROPIC_API_KEY=tok2 JIRA_PAT=tok3 X_SECRET=tok4 "$WRAPPER" list || fail "list"
 assert_no_grep 'tok[1-4]' "$LOG" "no secret may reach bd"
 
