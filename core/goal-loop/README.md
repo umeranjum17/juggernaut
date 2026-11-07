@@ -23,6 +23,11 @@ step and wakes the lead. The same failure `limits.attempts` times running, or mo
 `limit` stop instead. A finish line that no longer hashes to the declared one is an `owner-must` stop and the proof is
 never run. A runner whose process died with no exit file counts as a failed proof (`lost`).
 
+A Goal whose step waits for the lead (its `data/jg-goal-loop/<goal>.next` record) is also work for two other readers:
+the turn-end guard counts it as a supervision need in any home, so an idle lead cannot end its turn blind
+(`JG_SUP_GOAL_NEXT` in `bin/jg-supervision-lib.sh`), and `bin/jg-fleet-heartbeat.sh` counts it as ready work and names
+it in the home's row. The registered goal-loop check alone is not a need.
+
 A `next` wake rings once per Goal and step, again after `JG_GOAL_RESURFACE_SECS` (1800) while the step stays open,
 and at once if the Goal left `next` and came back. Records sit in `data/jg-goal-loop/`. A home with no
 `config/goal-beads-dir` is silent; a store the wrapper refuses raises one wake per reason, with the wrapper's text as

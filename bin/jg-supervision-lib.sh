@@ -86,6 +86,10 @@ jg_squad_lead_ready_work() {
 #                         sweep's call at execution time, and a home whose check
 #                         no longer validates needs the watcher precisely so the
 #                         sweep can report the rejection instead of going quiet.
+#   JG_SUP_GOAL_NEXT      count of open Goals whose next step waits for the lead, in any home: the
+#                         data/jg-goal-loop/<goal>.next records that core/goal-loop writes when it
+#                         wakes the lead and removes when the step is taken. The goal-loop check
+#                         itself is not a JG_SUP_CHECKS need, so a home with no Goal needs nothing.
 #   JG_SUP_READY_WORK     count of ready backlog items in a squad_lead home with
 #                         nothing else needing supervision (else 0); jg_ready_work_ids
 #                         owns readiness
@@ -108,6 +112,7 @@ jg_supervision_status() {
   local state=$1 grace=${2:-${JG_GUARD_GRACE:-300}} meta source check id beat m age pid claimed ready
   JG_SUP_IN_FLIGHT=0
   JG_SUP_READY_WORK=0
+  JG_SUP_GOAL_NEXT=0
   JG_SUP_NEEDED=false
   JG_SUP_WATCHER_FRESH=false
   JG_SUP_BEACON_DESC=never
@@ -127,13 +132,15 @@ jg_supervision_status() {
     [ -e "$check" ] || continue
     id=${check##*/}
     id=${id%.check.sh}
-    if [ "$id" = x-watch ]; then
+    if [ "$id" = x-watch ] || [ "$id" = goal-loop ]; then
       continue
     fi
     [ -e "$state/$id.check-trust" ] || continue
     JG_SUP_CHECKS=$((JG_SUP_CHECKS + 1))
   done
+  JG_SUP_GOAL_NEXT=$(find "${JG_HOME:-${state%/*}}/data/jg-goal-loop" -maxdepth 1 -name '*.next' 2>/dev/null | wc -l)
   if [ "$JG_SUP_IN_FLIGHT" -gt 0 ] \
+    || [ "$JG_SUP_GOAL_NEXT" -gt 0 ] \
     || [ -f "$state/x-watch.check.sh" ] \
     || [ "$JG_SUP_SOURCES" -gt 0 ] \
     || [ "$JG_SUP_CHECKS" -gt 0 ]; then

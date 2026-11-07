@@ -16,7 +16,9 @@
 #          working  state/<task>.meta of kind ship or scout whose last state
 #                   line is not paused, blocked, needs-decision, done or failed;
 #          target   config/lane-target (one positive integer);
-#          ready    ready_work in state/home-summary.json;
+#          ready    ready_work in state/home-summary.json, plus one for each open Goal whose
+#                   next step waits (a data/jg-goal-loop/<goal>.next record, which
+#                   core/goal-loop writes and removes), named in the why;
 #          waits    open wait-timer episodes in state/.waiting-timers/ that are
 #                   climbing a ladder. A wait that is a declared pause, and any
 #                   wait inside a home with a pause record (bin/jg-pause-lib.sh),
@@ -98,7 +100,7 @@ wait_is_paused() {  # <state-dir> <task>
 
 # home_row <id> <home-dir>: one TSV row.
 home_row() {
-  local id=$1 home=$2 st meta kind last working=0 target=- ready='?' waits=0 paused_waits=0 paused=0 age why verdict note refused=''
+  local id=$1 home=$2 st meta kind last working=0 goals target=- ready='?' waits=0 paused_waits=0 paused=0 age why verdict note refused=''
   [ -d "$home" ] || { printf '%s\tSTALLED\t0\t-\t?\t0\t-\thome %s is not a directory\n' "$id" "$home"; return; }
   if [ "$id" != overwatch ] && squad_lead_dormant "$STATE" "$id"; then
     printf '%s\tDORMANT\t0\t-\t-\t0\t-\tno open work; stopped, wakes on routed work\n' "$id"
@@ -123,6 +125,11 @@ EOF
   case "$target" in ''|*[!0-9]*|0) target=- ;; esac
   ready=$(jq -r '.ready_work // empty | numbers' "$st/home-summary.json" 2>/dev/null) || ready=
   [ -n "$ready" ] || ready='?'
+  goals=$(find "$home/data/jg-goal-loop" -maxdepth 1 -name '*.next' 2>/dev/null | wc -l)
+  if [ "$goals" -gt 0 ]; then
+    [ "$ready" != '?' ] || ready=0
+    ready=$((ready + goals))
+  fi
   for meta in "$st"/.waiting-timers/*; do
     [ -f "$meta" ] || continue
     if wait_is_paused "$st" "${meta##*/}"; then
@@ -161,6 +168,7 @@ EOF
   elif [ "$paused_waits" -gt 0 ] && [ "$verdict" != STALLED ]; then
     why="$why, $paused_waits paused wait(s)"
   fi
+  [ "$goals" -eq 0 ] || why="$why, $goals Goal step(s) next"
   [ -z "$refused" ] || why="$why, $refused"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$verdict" "$working" "$target" "$ready" "$waits" "$age" "$why"
 }
