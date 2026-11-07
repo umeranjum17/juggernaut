@@ -56,7 +56,8 @@ N=0
 ticket() {
   N=$((N + 1))
   TID=jg-ap$N
-  tasks add "$TID" "$1" --priority $([[ "$1" == \[captain-ask\]* ]] && echo 0 || echo 2) --kind ship --repo proj --body "${2:-Fixture ticket $TID}" >"$W/add.out" 2>&1 \
+  local prio=2; [[ "$1" == \[captain-ask\]* ]] && prio=0
+  tasks add "$TID" "$1" --priority "$prio" --kind ship --repo proj --body "${2:-Fixture ticket $TID}" >"$W/add.out" 2>&1 \
     || fail "could not add the ticket $TID: $(cat "$W/add.out")"
 }
 scaffold() {  # <id> [brief-args...]

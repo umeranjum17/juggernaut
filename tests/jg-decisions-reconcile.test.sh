@@ -76,7 +76,7 @@ lane() {  # <case-dir> <task-id> <state>; a Beads row in that state
   jg_test_add "$d/home" "$id" "[feature] $id work"
   case "$state" in
     in_flight) jg_test_backlog "$d/home" start "$id" >/dev/null ;;
-    done) jg_test_backlog "$d/home" start "$id" >/dev/null && jg_test_backlog "$d/home" done "$id" >/dev/null ;;
+    done) jg_test_backlog "$d/home" start "$id" >/dev/null && jg_test_backlog "$d/home" "done" "$id" >/dev/null ;;
   esac
 }
 

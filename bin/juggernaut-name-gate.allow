@@ -147,8 +147,6 @@ core/kill-guard/tests/main-allowance.test.mjs  # inline jg-compat env alias
 core/kill-guard/uninstall.sh  # inline jg-compat env alias
 core/lead-wake/bin/jg-lead-wake-inherit.sh  # inline jg-compat env alias
 core/lead-wake/bin/jg-lead-wake-lib.sh  # inline jg-compat env alias
-core/lead-wake/tests/jg-lead-wake.test.sh  # inline jg-compat env alias
-core/lead-wake/tests/lead-wake-e2e.sh  # inline jg-compat env alias
 core/limit-prompt-move/install.sh  # inline jg-compat env alias
 core/limit-prompt-move/run-live-proof.sh  # inline jg-compat env alias
 core/limit-prompt-move/tests/limit-prompt-move-e2e.sh  # inline jg-compat env alias

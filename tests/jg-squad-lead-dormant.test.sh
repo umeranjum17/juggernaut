@@ -96,7 +96,7 @@ test_a_lead_with_open_work_or_recent_activity_is_left_alone() {
   assert_equals "$(sweep "$d")" "" "a lead with an open item is not touched"
   assert_equals "$(rec_word "$d")" "" "no record is written for a working lead"
   printf '0\n' > "$d/main/config/squad-lead-dormant-secs"
-  jg_test_backlog "$d/lead" done jg-wip >/dev/null
+  jg_test_backlog "$d/lead" "done" jg-wip >/dev/null
   touch -d '2 hours ago' "$(cat "$d/lead/config/beads-dir")"
   assert_equals "$(sweep "$d")" "" "an idle time of 0 turns the rule off"
   # The rule compares whole-second mtimes (bin/jg-squad-lead-dormant.sh

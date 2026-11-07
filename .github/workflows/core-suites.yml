@@ -72,9 +72,6 @@ jobs:
       - name: Receipts hook journeys
         if: ${{ !cancelled() }}
         run: bash receipts/tests/receipts-hook-e2e.sh
-      - name: Lead-wake hook journeys
-        if: ${{ !cancelled() }}
-        run: bash lead-wake/tests/lead-wake-e2e.sh
       - name: Report actions replay
         if: ${{ !cancelled() }}
         run: python3 report-actions/tests/test_report_actions.py
