@@ -102,6 +102,30 @@ folded=$(BEADS_DIR=$T/fold/.beads "$ROOT/bin/jg-beads.sh" show "$id" --json 2>/d
 assert_equals "$(jq -r '.[0].metadata.goal.finish_hash' <<< "$folded")" "$hash" "the fold must keep the finish line hash"
 assert_equals "$(BEADS_DIR=$T/fold/.beads "$ROOT/bin/jg-beads.sh" ready --parent "$id" --json 2>/dev/null | jq -r '.[].title')" "ship" "the fold must keep the step order"
 
+# The released ref is kept on the epic, and the finish message claims it live only where the release record names it.
+fails "needs a Goal id and the released ref" released "$id"
+assert_equals "$("$GOAL" released "$id" v9)" "released $id: v9" "released must say what it kept"
+rows=$(BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" show "$id" --json 2>/dev/null)
+assert_equals "$(jq -r '.[0].metadata.released_ref' <<< "$rows")" v9 "the released ref is on the epic"
+close_steps() {  # <goal>: close every step, as the lead and the proof would
+  for row in $(BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" list --parent "$1" --json 2>/dev/null | jq -r '.[].id' | sort); do
+    BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" close "$row" --force --reason test >/dev/null 2>&1
+  done
+}
+mkdir -p "$T/probes"
+for s in nats dapr; do printf '#!/bin/sh\necho up\n' > "$T/probes/$s"; chmod +x "$T/probes/$s"; done
+export JG_LIVE_SERVICES_PROBES=$T/probes
+fin=$("$GOAL" declare --ask "ref goal" --repo o/r --where "this home" -- false) || fail "declare the finish goal"
+"$GOAL" released "$fin" v9 >/dev/null
+close_steps "$fin"
+assert_contains "$("$GOAL" finish "$fin")" "merged-not-released: the Goal is done: ref goal - live: v9 @ this home" "a ref the release record does not name is not live"
+fin=$("$GOAL" declare --ask "ref goal" --repo o/r --where "this home" -- false) || fail "declare the second finish goal"
+"$GOAL" released "$fin" v9 >/dev/null
+close_steps "$fin"
+printf 'v9 prs=1\n' > "$T/home/data/releases"
+assert_contains "$("$GOAL" finish "$fin")" "finished - the Goal is done: ref goal - live: v9 @ this home; carries: #1; waiting: none" "a recorded ref in running services is live"
+unset JG_LIVE_SERVICES_PROBES
+
 # Cancel closes the open rows and the epic, and tears nothing down.
 mkdir -p "$T/work/tree" && echo unlanded > "$T/work/tree/change.txt"
 "$GOAL" cancel "$id" 2>/dev/null && fail "cancel must name a reason"
