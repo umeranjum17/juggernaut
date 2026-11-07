@@ -5,6 +5,9 @@
 #    release branch with the pull request title and URL and the included pull
 #    request titles in the notes; a second run creates nothing; and a project
 #    that already tags its releases with its own scheme gets no second tag.
+# T2 The same merge writes one line to the home's release record, a second run
+#    adds none, and bin/jg-live-claim.sh then lets a `live:` claim for that tag
+#    stand, naming the pull requests the release carries.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -23,7 +26,7 @@ set -u
 case "${1:-} ${2:-}" in
   "pr view") printf 'MERGED\tmain\trelease/c-6\tRelease c-6 to main\t%s\n' "$FAKE_GH_SHA"; exit 0 ;;
   "repo view") echo main; exit 0 ;;
-  "pr list") printf -- '- Add the thing (https://github.com/o/r/pull/7)\n'; exit 0 ;;
+  "pr list") printf -- '7\t- Add the thing (https://github.com/o/r/pull/7)\n'; exit 0 ;;
   "release view")
     [ -f "$FAKE_GH_DIR/released-$3" ] && { echo "https://github.com/o/r/releases/tag/$3"; exit 0; }
     exit 1 ;;
@@ -88,5 +91,27 @@ test_release_merge_is_tagged_once() {
   pass "T1 a release merge is tagged once, and a project with its own scheme is left alone"
 }
 
+test_release_is_recorded_for_the_live_claim() {
+  local w out rec
+  w=$(new_world t2)
+  jg_git_identity fmtest fmtest@example.com
+  record_merge "$w" >/dev/null
+  rec=$(cat "$w/home/data/releases")
+  assert_contains "$rec" "c-6 " "the release record names the tag"
+  assert_contains "$rec" "repo=o/r commit=0123456789abcdef0123456789abcdef01234567 prs=7,9" \
+    "the release record names the repository, the commit and the pull requests it carries"
+  PATH="$w/bin:$PATH" FAKE_GH_DIR="$w/gh" FAKE_GH_SHA=0123456789abcdef0123456789abcdef01234567 \
+    JG_HOME="$w/home" "$TAG" https://github.com/o/r/pull/9 "$w/project" >/dev/null 2>&1
+  assert_equals 1 "$(grep -c '^c-6 ' "$w/home/data/releases")" "a second run adds no second line"
+
+  printf '#!/bin/sh\nexit 0\n' > "$w/services"; chmod +x "$w/services"
+  out=$(JG_HOME="$w/home" JG_STATE_OVERRIDE="$w/home/state" JG_LIVE_SERVICES_BIN="$w/services" \
+    "$ROOT/bin/jg-live-claim.sh" "done" "fixed: live: c-6 @ this home; waiting: none" 2>&1)
+  assert_not_contains "$out" "merged-not-released" "a claim for a recorded release is not downgraded"
+  assert_contains "$out" "carries: #7 #9" "the claim names the pull requests the recorded release carries"
+  pass "T2 a release is recorded once and the live claim reads it"
+}
+
 test_release_merge_is_tagged_once
+test_release_is_recorded_for_the_live_claim
 echo "all jg-release-tag tests passed"
