@@ -158,4 +158,7 @@ after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 # A local-only landing has no PR; the ticket closes here instead of at the next poll.
 JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$ID" --stage "done" --state "done" || true
 if [ "$before" != "$after" ] && declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$candidate" - >&2; fi
+# One board alert for this proven landing, filed here so it never depends on a lead
+# remembering; a board that is down queues it and bin/jg-watch.sh retries it.
+JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-merge-alert.sh" post "$ID" --head "$(git -C "$PROJ" rev-parse "$candidate")" 2>&1 | sed 's/^/alert: /' >&2 || true
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
