@@ -31,6 +31,9 @@ build_template() {
   local seed=$TMP_ROOT/seed
   jg_git_init_commit "$seed"
   cp -R "$ROOT/bin" "$seed/bin"
+  # bin/jg-lint.sh also runs the ports check, which reads its manifest from defaults/.
+  mkdir -p "$seed/defaults"
+  cp "$ROOT"/defaults/ports-adapters "$ROOT"/defaults/ports-adapters-legacy "$seed/defaults/"
   cat >"$seed/bin/jg-test-run.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$PP_LOG"

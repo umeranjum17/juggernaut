@@ -1607,7 +1607,14 @@ families_for_changed_path() {
       printf '%s\n' live-harness-optin
       ;;
     bin/jg-bearings-snapshot.sh|bin/jg-fleet-snapshot.sh|bin/jg-fleet-view.sh|bin/jg-contributions.sh|bin/jg-contributions.jq|\
-    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh|bin/jg-owner-asks.sh|bin/jg-triage.sh)
+    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh|bin/jg-owner-asks.sh|bin/jg-triage.sh|\
+    bin/jg-hold-reason-lib.sh|bin/jg-landed-lib.sh)
+      # The last two are sourced only by the snapshot scripts above, which no
+      # suite drives, so they have no test owner either.
+      ;;
+    .done-done-receipts/*.json|BACKLOG.md)
+      # A sealed done-done receipt is run evidence, and BACKLOG.md is the Beads
+      # card index: neither is code a suite reads.
       ;;
     bin/jg-install-herdr.sh|bin/jg-install-treehouse.sh|bin/jg-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
@@ -1633,7 +1640,9 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
       ;;
-    .agents/skills/*/SKILL.md)
+    .agents/skills/*/SKILL.md|.agents/skills/done-done-verify-suites/features/*.md)
+      # The verify skill's feature map is documentation the skill indexes, so it
+      # selects the same contract family as the skill itself.
       printf '%s\n' pure-contract-unit
       ;;
     .github/workflows/ci.yml|.github/workflows/behavior.yml|.no-mistakes.yaml)
@@ -1696,8 +1705,12 @@ families_for_changed_path() {
     journeys/*)
       # A done-done journey is owned by the test that names it: a direct
       # reference is per-script evidence, so select that script, not its family.
+      # A journey with no test but a `.done-done.yaml` entry is owned by its
+      # sealed done-done run, which is the proof; an unregistered one stays
+      # unmapped.
       scripts_for_test_reference "$path" \
         || families_for_test_reference "$path" \
+        || { grep -qF "command: bash $path" "$ROOT/.done-done.yaml" 2>/dev/null; } \
         || printf '%s\n' "__unmapped__:$path"
       ;;
     core/*)

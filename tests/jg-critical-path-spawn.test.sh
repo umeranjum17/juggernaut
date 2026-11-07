@@ -55,7 +55,7 @@ probe_state 'nats live' 'accounts pending'
 printf 'critical=nats,accounts,wake,inbox\nproject=proj\n' > "$HOME_DIR/config/migration-card"
 
 N=0
-fresh() { N=$((N + 1)); id=cp$N; }
+fresh() { N=$((N + 1)); id=jg-cp$N; }
 
 # scaffold <id> <brief-args...>: a real brief, filled in.
 scaffold() {

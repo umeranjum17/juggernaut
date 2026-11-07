@@ -108,7 +108,7 @@ jg_tool_models_model() {
 # default stands. A refused profile is skipped with one TOOL_MODELS line; a bad file or no accepted profile keeps the
 # default. Always returns 0.
 jg_tool_models_profiles() {
-  local tool=$1 file err p harness model refusal kept=()
+  local tool=$1 file err p harness model refusal allowed=()
   file=$(jg_tool_models_file)
   [ -f "$file" ] || return 0
   command -v jq >/dev/null 2>&1 || { echo "TOOL_MODELS: jq is missing, so $file is not read; $tool keeps its default" >&2; return 0; }
@@ -124,15 +124,15 @@ jg_tool_models_profiles() {
     harness=$(jq -r .harness <<<"$p")
     model=$(jq -r '.model // empty' <<<"$p")
     if refusal=$(jg_model_allowlist_require "$harness" "$model" 2>&1); then
-      kept+=("$p")
+      allowed+=("$p")
     else
       echo "TOOL_MODELS: $tool profile $harness ${model:-default} skipped - ${refusal#error: }" >&2
     fi
   done < <(jq -c --arg t "$tool" '
     def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
     first(.rules[] | select(.tool == $t)) | profiles(.use)[]' "$file" 2>/dev/null)
-  if [ "${#kept[@]}" -gt 0 ]; then
-    printf '%s\n' "${kept[@]}" | jq -sc .
+  if [ "${#allowed[@]}" -gt 0 ]; then
+    printf '%s\n' "${allowed[@]}" | jq -sc .
   elif jq -e --arg t "$tool" 'any(.rules[]; .tool == $t)' "$file" >/dev/null 2>&1; then
     echo "TOOL_MODELS: no profile for $tool is allowed; $tool keeps its default" >&2
   fi
