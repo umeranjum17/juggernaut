@@ -155,7 +155,7 @@ jg_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
   # that already tags its releases on its own scheme.
   if [ "$status" -eq 0 ] && [ -x "$_JG_MERGE_OUTCOME_LIB_DIR/jg-release-tag.sh" ]; then
     project_dir=$(grep '^project=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2-) || project_dir=''
-    "$_JG_MERGE_OUTCOME_LIB_DIR/jg-release-tag.sh" "$JG_PR_URL" "${project_dir:-$home}" >&2 || true
+    JG_HOME=$home "$_JG_MERGE_OUTCOME_LIB_DIR/jg-release-tag.sh" "$JG_PR_URL" "${project_dir:-$home}" >&2 || true
   fi
   # The migration card follows every merge into its release branch (opt-in config/migration-card).
   [ ! -e "${JG_CONFIG_OVERRIDE:-$home/config}/migration-card" ] || [ "$status" -ne 0 ] || JG_HOME=$home JG_CONFIG_OVERRIDE="${JG_CONFIG_OVERRIDE:-$home/config}" "$_JG_MERGE_OUTCOME_LIB_DIR/jg-migration-card.sh" merge "$JG_PR_URL" 2>&1 | sed 's/^/migration card: /' >&2 || true
