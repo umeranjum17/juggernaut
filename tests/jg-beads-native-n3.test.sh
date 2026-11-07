@@ -60,7 +60,7 @@ same "$(row n3-dated 'r["status"], r.get("defer_until"), m.get("hold_reason")')"
 seed n3-bare
 for call in "update n3-bare --status deferred" "update n3-bare --status=deferred" "update n3-bare -s deferred" \
   "update n3-bare --defer 2099-01-01" "update n3-bare --defer=2099-01-01" "create bare --id n3-new --force --defer 2099-01-01" \
-  "create bare --id n3-new --force --status deferred" "defer n3-bare --until 2099-01-01"; do
+  "create bare --id n3-new --force --status deferred"; do
   # shellcheck disable=SC2086  # Each call is a word list.
   refused 2 "$WRAPPER" $call
 done
@@ -73,6 +73,10 @@ refused 2 "$WRAPPER" update n3-bare --unset-metadata hold_reason
 refused 2 "$WRAPPER" update n3-bare --set-metadata hold_reason=
 same "$(row n3-bare 'm["hold_reason"]')" named "a deferred row must keep its reason"
 "$WRAPPER" update n3-bare --unset-metadata hold_reason --status open --defer "" >/dev/null 2>&1 || fail "leaving deferred may drop the reason"
+"$WRAPPER" defer n3-bare --until 2099-01-01 >/dev/null 2>&1 || fail "bd defer must pass through unchanged"
+out=$("$WRAPPER" check 2>&1) && fail "check must refuse the row bd defer left with no reason"
+assert_contains "$out" n3-bare "check must name the row bd defer left"
+"$WRAPPER" undefer n3-bare >/dev/null 2>&1 || fail "undefer"
 
 # Past date: a linked decision wakes in bd ready, its work stays stopped, and start works from both forms of a due row.
 seed n3-decide n3-work n3-unwoken n3-woken n3-future n3-lane n3-pause
@@ -103,7 +107,6 @@ in_ready n3-woken || fail "woken row"
 write start n3-woken >/dev/null || fail "start from woken"
 same "$(row n3-woken 'r["status"]')" in_progress "start must take a woken row"
 write hold n3-future --reason later --until "$FUTURE" >/dev/null || fail "future hold"
-"$WRAPPER" defer n3-future --until "$FUTURE" >/dev/null 2>&1 || fail "bd defer must stay whole for a row with a reason"
 refused 13 python3 "$WRITE" start n3-future
 same "$(row n3-future 'r["status"]')" deferred "start must refuse a future date"
 
