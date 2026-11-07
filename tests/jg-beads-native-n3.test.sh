@@ -4,6 +4,7 @@
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
+# shellcheck source=tests/lib.sh disable=SC1091
 . "$HERE/lib.sh"
 WRAPPER=$ROOT/bin/jg-beads.sh
 WRITE=$ROOT/bin/jg-beads-write.py

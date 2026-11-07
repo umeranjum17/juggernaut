@@ -183,7 +183,7 @@ crossings() {  # One row set walks store to store, store to file and file to sto
   file jg-mv-stay "[feature] Stay row" --priority 2 --body why
   file jg-mv-dep "[feature] Dep row" --priority 2 --body why --blocked-by jg-mv-stay
   file jg-mv-far "[feature] Far row" --priority 2 --body why
-  BEADS_DIR=$T/xa/s/.beads "${jail[@]}" "$WRAPPER" update jg-mv-far --status deferred --defer 2030-01-02 >/dev/null || fail "defer a row"
+  BEADS_DIR=$T/xa/s/.beads "${jail[@]}" "$WRAPPER" update jg-mv-far --status deferred --defer 2030-01-02 --set-metadata hold_reason=later >/dev/null || fail "defer a row"
   BEADS_DIR=$T/xa/s/.beads "${jail[@]}" "$WRAPPER" dep add jg-mv-far jg-mv-base --type related >/dev/null || fail "relate two rows"
   before=$(card "$T/xa" jg-mv-base; card "$T/xa" jg-mv-tail)
   out=$(walk "$T/xa" "$tool" jg-mv-stay)
