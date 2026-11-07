@@ -1059,8 +1059,7 @@ SH
   story=$(merge_story "$T/mg/ta")
   out=$(merge_story "$h")
   [ "$story" = "$out" ] || fail "a merge story differs: $(diff <(printf '%s\n' "$story") <(printf '%s\n' "$out"))"
-  printf 'merge story on Beads:\n%s\nend of merge story\n' "$out"  # The sealed proof keeps these lines.
-  assert_absent "$h/tasks-axi.log" "a Beads home's merge paths must not call tasks-axi"
+  printf 'merge story on Beads:\n%s\n' "$out"  # The sealed proof keeps the lines up to the end marker.
   for want in 'held PR: rc=1' 'error: task m-held is still held for the captain; release it before merging' 'released PR: rc=0' \
     'linked PR: rc=1' 'error: task m-link is linked to a decision still open for the captain; answer it before merging: m-dec' \
     'merge-on-green: merged w-good https://github.com/s/s/pull/4 through jg-pr-merge' \
@@ -1077,6 +1076,7 @@ SH
   merge_ship "$h" e-link no-mistakes https://github.com/s/s/pull/7
   at "$h" "$CLI" block e-link --by m-dec >/dev/null || fail "lay an edge"
   out=$(said "$h" "edge PR" "$ROOT/bin/jg-pr-merge.sh" e-link https://github.com/s/s/pull/7)
+  printf '%s\n' "$out"
   assert_contains "$out" 'edge PR: rc=1' "a Beads edge alone must refuse the merge"
   assert_contains "$out" 'm-dec' "the refusal must name the open decision"
   assert_not_contains "$(grep '^pr merge' "$h/gh.log")" 'pr merge 7 ' "an edge must keep the PR off the forge"
@@ -1086,10 +1086,13 @@ SH
   for id in u-pr u-loc; do
     [ "$id" = u-pr ] && out=$(said "$h" unreadable "$ROOT/bin/jg-pr-merge.sh" u-pr https://github.com/s/s/pull/6)
     [ "$id" = u-loc ] && out=$(said "$h" unreadable "$ROOT/bin/jg-merge-local.sh" u-loc)
+    printf '%s\n' "$out"
     assert_contains "$out" 'unreadable: rc=1' "an unreadable store must refuse the merge of $id"
     assert_contains "$out" "error: could not determine whether task $id is still held for the captain" "the refusal must name $id"
   done
   assert_not_contains "$(grep '^pr merge' "$h/gh.log")" 'pr merge 6 ' "an unreadable store must keep the PR off the forge"
+  assert_absent "$h/tasks-axi.log" "a Beads home's merge paths must not call tasks-axi"
+  printf 'merges the forge saw:\n%s\ntasks-axi calls on this home: none\nend of merge story\n' "$(grep '^pr merge' "$h/gh.log")"
   printf 'ok - each merge gate refuses and each good merge lands, the same on Beads and the old store\n'
 }
 start_lines() {  # Each surface's lines about the store, with the fleet's real pin table.
