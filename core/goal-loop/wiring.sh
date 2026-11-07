@@ -13,12 +13,12 @@ DEST=${XDG_DATA_HOME:-$HOME/.local/share}/jg-goal-loop
 SHIM=$FMH/state/goal-loop.check.sh
 SHIM_TEXT=$(printf '#!/usr/bin/env bash\nexec %q check %q\n' "$DEST/goal-loop.sh" "$FMH")
 if [ "$DRY" -eq 1 ]; then
-  echo "would copy $SRC/goal-loop.sh -> $DEST/goal-loop.sh, write $SHIM (mode 700) and run $FMH/bin/jg-check-register.sh goal-loop"
+  echo "would copy $SRC/goal-loop.sh and proof-run.sh -> $DEST, write $SHIM (mode 700) and run $FMH/bin/jg-check-register.sh goal-loop"
   exit 0
 fi
 [ -d "$FMH/state" ] && [ ! -L "$SHIM" ] || { echo "goal-loop: refused: $FMH/state is missing or $SHIM is a link" >&2; exit 1; }
 mkdir -p "$DEST"
-install -m 755 "$SRC/goal-loop.sh" "$DEST/goal-loop.sh"
+install -m 755 "$SRC/goal-loop.sh" "$SRC/proof-run.sh" "$DEST/"
 printf '%s\n' "$SHIM_TEXT" > "$SHIM"
 chmod 700 "$SHIM"
 env -u JG_STATE_OVERRIDE JG_HOME="$FMH" "$FMH/bin/jg-check-register.sh" goal-loop \

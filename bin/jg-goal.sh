@@ -10,6 +10,9 @@
 #        jg-goal.sh resume <stop-row>
 #        jg-goal.sh notice <goal-id> <stop-row>
 #        jg-goal.sh finish <goal-id>
+#        jg-goal.sh proof-start <goal-id>
+#        jg-goal.sh prove <goal-id>
+#        jg-goal.sh proof-failed <goal-id> <exit code or lost>
 #
 # A Goal is a Beads epic labelled `goal` in a small Goal-only store of its own, reached only through
 # bin/jg-beads.sh. The store folder is the absolute BEADS_DIR in `config/goal-beads-dir` (or GOAL_BEADS_DIR),
@@ -31,6 +34,12 @@
 # notice and finish are the Goal's only messages, one for each stop row and one for the finish. Each is
 # keyed in the epic's metadata (goal:<id>:stop:<row> and goal:<id>:finish) before it is printed, so a restart
 # or a second pass prints nothing twice. finish closes the epic. Its claim goes through bin/jg-live-claim.sh.
+# proof-start, prove and proof-failed are the check's three steps for the `proven` row. proof-start refuses to
+# run when the finish line no longer hashes to finish_hash, in the epic or in data/goals/<id>/finish.json: that
+# is an owner-must stop, never a pass (exit 3). prove closes the proven row and keeps the proof log's path; it is
+# the only way a Goal reaches its finish. proof-failed keeps the log, reopens the row and adds a `fix` step. The
+# same failure (its exit code and the end of its log, digits aside) limits.attempts times running, or
+# limits.fix_steps fixes, makes a `limit` stop instead, and no fix step.
 # cancel closes the Goal's open rows and the epic on the owner's word. It tears nothing down and sends
 # no message, so unlanded work stays under the normal cleanup rules.
 set -u
@@ -206,7 +215,73 @@ finish_goal() {
   [ "$new" = 1 ] || return 0
   ask=$(jq -r '.metadata.goal.ask // .title' <<< "$json")
   claim=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-live-claim.sh" "done" "the Goal is done: $ask" 2>/dev/null)
-  printf '%s finished - %s (where: %s)\n' "$id" "${claim:-the Goal is done: $ask}" "$(jq -r '.metadata.goal.finish.where // "this home"' <<< "$json")"
+  printf '%s finished - %s (where: %s; proof log: %s)\n' "$id" "${claim:-the Goal is done: $ask}" \
+    "$(jq -r '.metadata.goal.finish.where // "this home"' <<< "$json")" "$(jq -r '.metadata.proof_log // "none"' <<< "$json")"
+}
+
+goal_json() { goalstore show "$1" --json 2>/dev/null | jq -c '.[0] // empty'; }
+
+step_row() {  # <goal-id> <kind>: the row id of the first step of that kind
+  goalstore list --parent "$1" --all --json 2>/dev/null | jq -r --arg k "$2" '[.[] | select(.metadata.kind == $k)] | first | .id // empty'
+}
+
+# The finish line as declared: the epic's copy and the copy on disk must both hash to finish_hash.
+finish_unchanged() {  # <goal-id> <goal json>
+  local want have disk
+  want=$(jq -r '.metadata.goal.finish_hash' <<< "$2")
+  have=$(jq -Sc '.metadata.goal.finish' <<< "$2" | tr -d '\n' | sha_of)
+  disk=$(jq -Sc . "$DATA/goals/$1/finish.json" 2>/dev/null | tr -d '\n' | sha_of)
+  [ "$have" = "$want" ] && [ "$disk" = "$want" ]
+}
+
+proof_guard() {  # <goal-id> <goal json>: exit 3 after a stop when the finish line changed
+  finish_unchanged "$@" && return 0
+  stop_goal "$1" --kind owner-must --reason "the finish line changed after it was declared, so the proof is not trusted" > /dev/null
+  exit 3
+}
+
+proof_start() {
+  local id=${1-} json
+  [ -n "$id" ] || die "proof-start needs a Goal id"
+  need_store
+  json=$(goal_json "$id") && [ -n "$json" ] || die "no Goal $id"
+  proof_guard "$id" "$json"
+  goalstore update "$(step_row "$id" proven)" --status in_progress > /dev/null 2>&1 || die "could not take the proven step"
+}
+
+prove_goal() {
+  local id=${1-} json log
+  [ -n "$id" ] || die "prove needs a Goal id"
+  need_store
+  json=$(goal_json "$id") && [ -n "$json" ] || die "no Goal $id"
+  proof_guard "$id" "$json"
+  log=$DATA/goals/$id/proof-$(date +%s).log
+  mv -f "$DATA/goals/$id/proof.log" "$log" 2> /dev/null; rm -f "$DATA/goals/$id/proof.exit" "$DATA/goals/$id/proof.pid"
+  goalstore update "$id" --set-metadata "proof_log=$log" > /dev/null 2>&1 || die "could not record the proof log"
+  goalstore close "$(step_row "$id" proven)" --reason "the proof passed" > /dev/null 2>&1 || die "could not close the proven step"
+}
+
+proof_failed() {
+  local id=${1-} code=${2-} json dir log sig runs fixes row
+  [ -n "$id" ] && [ -n "$code" ] || die "proof-failed needs a Goal id and an exit code"
+  need_store
+  json=$(goal_json "$id") && [ -n "$json" ] || die "no Goal $id"
+  dir=$DATA/goals/$id
+  log=$dir/proof-$(date +%s).log
+  mv -f "$dir/proof.log" "$log" 2> /dev/null; rm -f "$dir/proof.exit" "$dir/proof.pid"
+  sig="$code-$(tail -n 20 "$log" 2> /dev/null | tr -d '0-9' | cksum | cut -d' ' -f1)"
+  runs=1; [ "$(jq -r '.metadata.fail_sig // ""' <<< "$json")" != "$sig" ] || runs=$(($(jq -r '.metadata.fail_runs // 0' <<< "$json") + 1))
+  fixes=$(($(jq -r '.metadata.fixes // 0' <<< "$json") + 1))
+  goalstore update "$id" --set-metadata "fail_sig=$sig" --set-metadata "fail_runs=$runs" --set-metadata "fixes=$fixes" > /dev/null 2>&1 || die "could not record the failure"
+  goalstore update "$(step_row "$id" proven)" --status open > /dev/null 2>&1 || die "could not reopen the proven step"
+  if [ "$runs" -ge "$(jq -r '.metadata.goal.limits.attempts' <<< "$json")" ]; then
+    stop_goal "$id" --kind limit --reason "the proof failed $runs times running with the same result (exit $code); see $dir" > /dev/null
+  elif [ "$fixes" -gt "$(jq -r '.metadata.goal.limits.fix_steps' <<< "$json")" ]; then
+    stop_goal "$id" --kind limit --reason "the fix steps limit was reached ($((fixes - 1))); the proof still fails (exit $code); see $dir" > /dev/null
+  else
+    row=$(goalstore create "fix $fixes" -t task --parent "$id" --metadata '{"kind":"fix"}' --silent 2> /dev/null) || die "could not add the fix step"
+    goalstore dep add "$(step_row "$id" proven)" "$row" > /dev/null 2>&1
+  fi
 }
 
 cancel_goal() {
@@ -240,5 +315,8 @@ case "${1:-}" in
   resume) shift; resume_goal "$@" ;;
   notice) shift; notice_goal "$@" ;;
   finish) shift; finish_goal "$@" ;;
-  *) die "unknown verb $1 (declare, show, cancel, rows, stop, resume, notice, finish)" ;;
+  proof-start) shift; proof_start "$@" ;;
+  prove) shift; prove_goal "$@" ;;
+  proof-failed) shift; proof_failed "$@" ;;
+  *) die "unknown verb $1 (declare, show, cancel, rows, stop, resume, notice, finish, proof-start, prove, proof-failed)" ;;
 esac

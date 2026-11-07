@@ -26,11 +26,17 @@ case "$1" in
     key="sent_goal_goal_a_${1/notice/stop_${3//[!A-Za-z0-9]/_}}"
     jq --arg k "$key" 'map(if .id == "goal-a" then .metadata[$k] = 1 | (if $k | endswith("finish") then .status = "closed" else . end) else . end)' "$ROWS" > "$ROWS.new" && mv "$ROWS.new" "$ROWS"
     echo "$1 message for $2" ;;
+  proof-start|prove|proof-failed) echo "$*" >> "$ROWS.calls" ;;
   *) exit 2 ;;
 esac
 SH
 chmod +x "$T/goal"
-export JG_GOAL_BIN=$T/goal ROWS=$T/rows.json
+cat > "$T/runner" <<'SH'
+#!/bin/sh
+echo "$*" >> "$ROWS.runs"
+SH
+chmod +x "$T/runner"
+export JG_GOAL_BIN=$T/goal ROWS=$T/rows.json JG_GOAL_PROOF_RUN=$T/runner
 
 # rows <status of ship merged released running proven> [<extra row status>]: one open Goal and its steps.
 rows() {
@@ -58,12 +64,37 @@ rows in_progress open open open open
 assert_equals "$(wake)$(state)" $'waiting\tship' "a taken step is waiting, not a wake"
 rows open open open open open
 assert_contains "$(wake)" "ship step" "a step that returns to open rings at once"
-for pair in "closed open open open open:merged" "closed closed open open open:released" "closed closed closed open open:running" "closed closed closed closed open:proven"; do
+for pair in "closed open open open open:merged" "closed closed open open open:released" "closed closed closed open open:running"; do
   # shellcheck disable=SC2086  # the five statuses are separate words on purpose
   rows ${pair%%:*}
   assert_contains "$(wake)" "ready for its ${pair##*:} step" "step ${pair##*:} rings when its turn comes"
   assert_equals "$(wake)" "" "step ${pair##*:} rings once"
 done
+# The proven step is the check's own: it starts the proof from the Goal's finish line and never wakes the lead.
+mkdir -p "$H/data/goals/goal-a"
+printf '{"proof":["touch","x"]}\n' > "$H/data/goals/goal-a/finish.json"
+: > "$ROWS.calls"
+rows closed closed closed closed open
+assert_equals "$(wake)" "" "the proven step never wakes the lead"
+assert_contains "$(cat "$ROWS.calls")" "proof-start goal-a" "the proof is started by the check"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$ROWS.runs" ] && break; sleep 0.2; done
+assert_contains "$(cat "$ROWS.runs")" "$H/data/goals/goal-a $H 900 touch x" "the proof runs detached from the finish line"
+# Its result is read on a later pass: a failure, a pass and a runner that died without a result.
+rows closed closed closed closed in_progress
+d=$H/data/goals/goal-a
+: > "$ROWS.calls"
+wake >/dev/null
+assert_equals "$(cat "$ROWS.calls")" "" "a proof still running is waited for"
+echo 1 > "$d/proof.exit"; wake >/dev/null
+assert_equals "$(cat "$ROWS.calls")" "proof-failed goal-a 1" "a failed proof is handed to proof-failed"
+echo 0 > "$d/proof.exit"; wake >/dev/null
+assert_contains "$(cat "$ROWS.calls")" "prove goal-a" "a passing proof is handed to prove"
+rm -f "$d/proof.exit"; echo 999999 > "$d/proof.pid"; : > "$ROWS.calls"; wake >/dev/null
+assert_equals "$(cat "$ROWS.calls")" "proof-failed goal-a lost" "a runner that died is a failed proof"
+echo $$ > "$d/proof.pid"; : > "$ROWS.calls"; wake >/dev/null
+assert_equals "$(cat "$ROWS.calls")" "" "a live runner is waited for"
+rm -f "$d/proof.pid"
+
 rows closed closed closed closed closed
 assert_equals "$(state)" $'finished\t' "every step closed is finished"
 assert_contains "$(wake)" "finish message for goal-a" "a finished Goal gets its one message"
@@ -148,35 +179,77 @@ if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   exit 0
 fi
 
-# The real pinned store: a declared Goal walks from ship to proven as its step rows close.
+# The real pinned store: a declared Goal walks from ship to running by the lead's closes, and the check owns proven.
 export JG_GOAL_BIN=$ROOT/bin/jg-goal.sh JG_HOME=$H JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
+unset JG_GOAL_PROOF_RUN
 mkdir -p "$T/real"
+GOALCLI=$ROOT/bin/jg-goal.sh
+bdw() { BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" "$@"; }
 BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" init --prefix goal >/dev/null 2>&1 || fail "init the store"
 printf '%s\n' "$T/real/.beads" > "$H/config/goal-beads-dir"
-id=$("$ROOT/bin/jg-goal.sh" declare --ask "make it live" --repo o/r -- test -f "$T/live") || fail "real declare"
+settle() { for _ in $(seq 100); do [ -f "$1" ] && return 0; sleep 0.1; done; fail "no proof result in $1"; }
+close_to_running() { for n in 1 2 3 4; do bdw close "$1.$n" --reason test >/dev/null 2>&1 || fail "close step $n"; done; }
+fixrow() { bdw list --parent "$1" --all --json 2>/dev/null | jq -r '.[] | select(.metadata.kind == "fix" and .status != "closed") | .id'; }
+
+id=$("$GOALCLI" declare --ask "make it live" --repo o/r -- test -f "$T/live") || fail "real declare"
 assert_contains "$(wake)" "$id is ready for its ship step (make it live)" "a declared Goal rings for its first step"
-steps=(ship merged released running proven)
-for i in 0 1 2 3 4; do
-  BEADS_DIR=$T/real/.beads "$ROOT/bin/jg-beads.sh" close "$id.$((i + 1))" --reason "test" >/dev/null 2>&1 || fail "close ${steps[$i]}"
-  [ "$i" -lt 4 ] || break
+steps=(ship merged released running)
+for i in 0 1 2 3; do
+  bdw close "$id.$((i + 1))" --reason "test" >/dev/null 2>&1 || fail "close ${steps[$i]}"
+  [ "$i" -lt 3 ] || break
   assert_contains "$(wake)" "ready for its ${steps[$((i + 1))]} step" "closing ${steps[$i]} moves the Goal on"
 done
-assert_equals "$(state)" $'finished\t' "the real Goal ends finished"
+# The proof fails now: the check starts it with no wake, then adds a fix step and wakes the lead for it.
+dir=$H/data/goals/$id
+assert_equals "$(wake)" "" "the proven step does not wake the lead"
+settle "$dir/proof.exit"
+assert_equals "$(wake)" "" "reading a failed proof wakes nobody"
+assert_equals "$(find "$dir" -name 'proof-*.log' | wc -l)" 1 "the failed proof's log is kept"
+assert_contains "$(wake)" "$id is ready for its fix step" "a failed proof gives the lead a fix step"
+bdw close "$(fixrow "$id")" --reason fixed >/dev/null 2>&1 || fail "close the fix"
+touch "$T/live"
+assert_equals "$(wake)" "" "the proof is started again"
+settle "$dir/proof.exit"
+assert_equals "$(wake)" "" "a passing proof closes proven with no message"
+assert_equals "$("$LOOP" state "$H" | cut -f2)" finished "only a passing proof finishes the Goal"
 out=$(wake)
 assert_contains "$out" "$id finished - merged-not-released: the Goal is done: make it live" "the finish message goes through the live claim"
+assert_contains "$out" "proof log: $dir/proof-" "the finish message names the proof log"
 assert_equals "$(wake)" "" "the real finish message goes once"
-assert_equals "$(state)" "" "a finished Goal is closed"
+assert_equals "$("$LOOP" state "$H")" "" "a finished Goal is closed"
+rm -f "$T/live"
+
+# The same failure twice, with two attempts allowed, is a limit stop and adds no third fix.
+id=$("$GOALCLI" declare --ask "never passes" --repo o/r --attempts 2 -- test -f "$T/never") || fail "declare with attempts"
+dir=$H/data/goals/$id
+close_to_running "$id"
+for round in 1 2; do
+  wake >/dev/null; settle "$dir/proof.exit"; wake >/dev/null
+  [ "$round" = 2 ] || { assert_contains "$(wake)" "ready for its fix step" "round $round gives a fix step"; bdw close "$(fixrow "$id")" --reason x >/dev/null 2>&1; }
+done
+assert_contains "$(wake)" "$id is stopped (limit): the proof failed 2 times running" "the same failure twice is a limit stop"
+assert_equals "$(fixrow "$id")" "" "a limit stop adds no fix step"
+assert_equals "$(wake)" "" "a stopped Goal runs no proof and wakes nobody"
+
+# A finish line that no longer hashes to the declared one is a stop, and the proof is never run.
+id=$("$GOALCLI" declare --ask "shrunk" --repo o/r -- test -f "$T/never") || fail "declare for the hash"
+dir=$H/data/goals/$id
+close_to_running "$id"
+printf '{"proof":["true"],"repo":"o/r","released":"tag","where":"this home"}\n' > "$dir/finish.json"
+assert_equals "$(wake)" "" "a changed finish line starts no proof"
+assert_absent "$dir/proof.pid" "no runner was started"
+assert_contains "$(wake)" "$id is stopped (owner-must): the finish line changed" "a changed finish line is a stop"
 
 # A real stop: one message, none after a restart, and closing the row resumes the Goal.
-id=$("$ROOT/bin/jg-goal.sh" declare --ask "second" --repo o/r -- test -f "$T/live") || fail "second declare"
-"$ROOT/bin/jg-goal.sh" stop "$id" --kind owner-must 2>/dev/null && fail "a stop needs a reason"
-"$ROOT/bin/jg-goal.sh" stop "$id" --kind nonsense --reason x 2>/dev/null && fail "a stop needs a known kind"
-row=$("$ROOT/bin/jg-goal.sh" stop "$id" --kind owner-must --reason "the owner must pick") || fail "real stop"
-assert_contains "$("$ROOT/bin/jg-goal.sh" show "$id")" "stop: $row on_hold owner-must - the owner must pick" "show lists the open stop"
+id=$("$GOALCLI" declare --ask "second" --repo o/r -- test -f "$T/live") || fail "second declare"
+"$GOALCLI" stop "$id" --kind owner-must 2>/dev/null && fail "a stop needs a reason"
+"$GOALCLI" stop "$id" --kind nonsense --reason x 2>/dev/null && fail "a stop needs a known kind"
+row=$("$GOALCLI" stop "$id" --kind owner-must --reason "the owner must pick") || fail "real stop"
+assert_contains "$("$GOALCLI" show "$id")" "stop: $row on_hold owner-must - the owner must pick" "show lists the open stop"
 assert_contains "$(wake)" "$id is stopped (owner-must): the owner must pick" "a real stop gets its message"
 rm -rf "$H/data/jg-goal-loop"
 assert_equals "$(wake)" "" "a restart sends no second message"
-"$ROOT/bin/jg-goal.sh" resume "$id.1" 2>/dev/null && fail "resume only takes a stop row"
-"$ROOT/bin/jg-goal.sh" resume "$row" >/dev/null || fail "resume"
+"$GOALCLI" resume "$id.1" 2>/dev/null && fail "resume only takes a stop row"
+"$GOALCLI" resume "$row" >/dev/null || fail "resume"
 assert_contains "$(wake)" "$id is ready for its ship step" "closing the stop row resumes the Goal"
 pass "goal-loop"
