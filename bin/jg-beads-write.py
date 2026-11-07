@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """jg-beads-write.py - serve tasks-axi's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold> [args...]
+Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|relink> [args...]
        BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
 
 bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-axi.sh's intake and captain guards.
@@ -23,12 +23,15 @@ start claims a row with no owner, and JG_BACKLOG_LANE_HANDOVER=1 takes it from t
 took first exits 13. done keeps the assignee as history, reopen clears both, and each moves only from the owner it read.
 With no lane named, start claims an unowned row for the actor (BEADS_ACTOR, else juggernaut), so every in-flight row has an owner.
 bin/jg-beads.sh makes the lane the actor of every bd call, so a comment or an event carries who wrote it.
-bd takes --if-assignee or --force, never both, so closing a blocked row is guarded by status alone.
+bd takes --if-assignee or --force, never both, so closing a blocked row or a parent with an open child is guarded by status alone.
 stage, take and drop move queued rows, and bd export and bd import carry them.
 stage prints rows as a backlog file, or with --native as export lines, and refuses to leave an active dependent behind.
 take files rows from either in one bd import, skips any already here, and refuses a blocker that neither moves nor is here.
 A backlog file's rows carry what its format holds, and the since date stays behind. drop deletes rows filed elsewhere, in
 one bd call, and leaves any row that moved out of the queue.
+A body's linked-to: and parent: lines become edges when written (bin/jg-beads-links.py), and a new row takes the lines that named it first.
+A body that drops a name drops its edge, an edge bd refuses as a cycle lands as related, and unhold eases a line's blocks edge to related
+once neither side is a decision. relink lays every missing edge, for a store whose lines came before edges.
 """
 import datetime
 import json
@@ -39,6 +42,7 @@ import sys
 
 sys.dont_write_bytecode = True
 view = __import__("jg-beads-view")
+edges = __import__("jg-beads-links")
 
 WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-beads.sh")
 PR = re.compile(r"https://(github\.com/[^/\s]+/[^/\s]+/pull|[^/\s]+/[^/\s]+/[^/\s]+/pulls)/\d+\Z")
@@ -89,6 +93,44 @@ def released(row):
 
 def rows():
     return {row["id"]: row for row in json.loads(bd("list", "--all", "--limit", "0", "--json")) or []}
+
+
+def lay(ident=None, old=""):
+    """Lay the edges of the lines touching one row, or of every line; a name the old body had and the new one lost is unlinked."""
+    items = rows()
+    if old:
+        kept = {side["id"] for line in edges.lines(items, ident) for side in line[:2] if side}
+        for word in {word for _, word in edges.named(old)}:
+            other = view.named(items.values(), word)
+            if other and other["id"] not in kept | {ident}:
+                unlink(items[ident], other)
+    laid = 0
+    for row, other, kind, _ in edges.pending(items, ident):
+        if other:
+            one, two, kind = edges.edge(row, other, kind)
+            if kind == "related" or subprocess.run([WRAPPER, "dep", "add", one["id"], two["id"], "--type", kind],
+                                                   capture_output=True, check=False).returncode:
+                kind = "related"
+                bd("dep", "add", one["id"], two["id"], "--type", kind)
+            edges.join(one, two, kind)
+            laid += 1
+    return laid
+
+
+def unlink(one, two):
+    """Remove the edge between two rows, in whichever direction it was laid."""
+    for a, b in ((one, two), (two, one)):
+        if any(d["depends_on_id"] == b["id"] for d in a.get("dependencies") or []):
+            bd("dep", "remove", a["id"], b["id"])
+
+
+def eased(ident):
+    """Turn the blocks edges of a released row's lines to related, so no row waits on what is no longer a decision."""
+    items = rows()
+    for row, other, kind, _ in edges.lines(items, ident):
+        if other and edges.edge(row, other, kind)[2] == "related" and edges.joined(row, other) == "blocks":
+            unlink(row, other)
+            bd("dep", "add", row["id"], other["id"], "--type", "related")
 
 
 def target(items, ident):
@@ -206,6 +248,7 @@ def add(args):
     known = ident and view.named(items.values(), ident)
     if known:
         state = LABEL[view.task(known, items)["state"]]
+        lay(known["id"])
         respond(found, "add", ident, "add %s already exists -> %s" % (ident, state), tips_for(ident), already=True)
         return
     blockers = [blocker(items, other) for other in found.get("--blocked-by+", [])]
@@ -223,6 +266,7 @@ def add(args):
     cmd += ["-l", found["--label"]] if "--label" in found else []
     made = bd(*cmd)
     ident = ident or json.loads(made)["id"]
+    lay(ident)
     named = [found[f] if f == "--kind" else "repo " + found[f] for f in ("--kind", "--repo") if f in found]
     line = "added %s%s -> Queued" % (ident, " (%s)" % ", ".join(named) if named else "")
     respond(found, "add", ident, line, tips_for(ident))
@@ -271,6 +315,8 @@ def update(args):
         respond(found, "update", ident, "updated %s already" % ident, tips, already=True)
         return
     bd("update", ident, *cmd)
+    if "body" in changed:
+        lay(ident, item["body"])
     respond(found, "update", ident, "updated %s (%s)" % (ident, ", ".join(changed)), tips, changed=changed)
 
 
@@ -292,7 +338,9 @@ def done(args):
         cmd.append("--description=" + "\n".join(filter(None, [item["body"], note])))
     if not already:
         cmd += ["--status", "closed", "--if-status", row["status"]]
-        if item["blocked"] == "yes":
+        kids = any(d.get("type") == "parent-child" and d["depends_on_id"] == ident and other["status"] != "closed"
+                   for other in items.values() for d in other.get("dependencies") or [])
+        if item["blocked"] == "yes" or kids:
             cmd.append("--force")
         elif row.get("assignee"):
             cmd += ["--if-assignee", row["assignee"]]
@@ -442,6 +490,7 @@ def unhold(args):
         respond(found, "unhold", ident, "unhold %s already not held" % ident, tips, already=True)
         return
     bd("update", ident, *cmd)
+    eased(ident)
     respond(found, "unhold", ident, "unhold %s -> cleared" % ident, tips)
 
 
@@ -538,6 +587,7 @@ def take(args):
             sink.write("".join(json.dumps(row) + "\n" for row in picked))
         bd("import", path + ".take.jsonl")
         os.unlink(path + ".take.jsonl")
+        lay()
 
 
 def drop(keys):
@@ -550,11 +600,15 @@ def drop(keys):
         bd("delete", *[row["id"] for row in found], "--force")
 
 
+def relink(_args):
+    print("ok: relink laid %d" % lay())
+
+
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
              "block": block, "unblock": unblock, "start": start, "reopen": reopen, "hold": hold, "unhold": unhold,
-             "stage": stage, "take": take, "drop": drop,
+             "stage": stage, "take": take, "drop": drop, "relink": relink,
              "public-followup": lambda args: __import__("jg-beads-followup").main(args)}.get(verb)
     if serve is None:
         view.refuse("Unknown write verb: " + verb)

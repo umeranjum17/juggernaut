@@ -13,6 +13,7 @@ A hold the winner drops stays visible as metadata.past_hold plus a hold-dropped-
 The upkeep bucket is not imported: its children carry the `upkeep` label. A held row with no reason gets the
 hold-reason-missing label. Inline blocked-by becomes a `blocks` dependency, and a hold with hold-until is a deferred
 row with that date as defer_until, so bd returns it by itself.
+A linked-to: or parent: line becomes an edge (bin/jg-beads-links.py); a name no row answers to is metadata.linked_to with the link-unresolved label.
 manifest.json records every row and the disposition of every held row, so a dry run has something to match.
 
 Settling: a row with no home parks under main with the `unplaced` label. A row of a home in data/parked, or of a lead
@@ -38,6 +39,8 @@ STATUSES = ('open', 'in_progress', 'on_hold', 'deferred', 'closed')
 HELD = ('on_hold', 'deferred')
 FILES = ('backlog.md', 'done-archive.md')
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True
+links = __import__('jg-beads-links')
 TAG = r'\s*\((?:repo|kind|priority|since|done|merged|hold|until|hold-kind|hold-until)[: ][^)]*\)'
 
 def registry(main):
@@ -121,8 +124,9 @@ def stamp(text, fallback='2026-01-01'):
     m = re.search(r'\d{4}-\d\d-\d\d', text or '')
     return (m[0] if m else fallback) + 'T00:00:00Z' if m or fallback else None
 
-def break_cycles(rows):
-    """bd skips an edge that closes a cycle or blocks a row on its own ancestor; record those instead, keeping parents."""
+def break_cycles(rows, linked=()):
+    """bd skips an edge that closes a cycle or blocks a row on its own ancestor; record those instead, keeping parents.
+    An edge a body line asked for stays as related, which closes no cycle, so the link survives."""
     edges, up = collections.defaultdict(set), collections.defaultdict(set)
     def reaches(graph, start, goal):
         seen, todo = set(), [start]
@@ -131,16 +135,31 @@ def break_cycles(rows):
             if n == goal: return True
             if n not in seen: seen.add(n); todo += graph[n]
         return False
-    pairs = [(r, d) for r in rows for d in r.get('dependencies', [])]
+    pairs = [(r, d) for r in rows for d in r.get('dependencies', []) if d['type'] != 'related']
     for r, d in sorted(pairs, key=lambda p: p[1]['type'] != 'parent-child'):
         i, j = r['id'], d['depends_on_id']
-        if reaches(edges, j, i) or reaches(up, i, j):
+        if (reaches(edges, j, i) or reaches(up, i, j)) and (i, j) in linked:
+            d['type'] = 'related'
+        elif reaches(edges, j, i) or reaches(up, i, j):
             r['dependencies'].remove(d)
             r['metadata'].setdefault('dep_dropped', []).append(j)
             if 'dependency-dropped' not in r['labels']: r['labels'].append('dependency-dropped')
         else:
             edges[i].add(j)
             if d['type'] == 'parent-child': up[i].add(j)
+
+def lay_lines(rows):
+    """Turn each body line into an edge among this home's rows, and record the names no row here answers to."""
+    linked = set()
+    for r, other, kind, word in links.pending({r['id']: r for r in rows}):
+        if other:
+            one, two, kind = links.edge(r, other, kind)
+            links.join(one, two, kind)
+            linked.add((one['id'], two['id']))
+        else:
+            r['metadata'].setdefault('linked_to', []).append(word)
+            if 'link-unresolved' not in r['labels']: r['labels'].append('link-unresolved')
+    return linked
 
 def plan(a):
     reg = json.load(open(f'{a.copy}/registry.json'))
@@ -241,7 +260,7 @@ def plan(a):
     held.update({j: {'row': None, 'disposition': 'dropped-upkeep-bucket'} for k in buckets for j in groups[k] if is_held(feed[j])})
     os.makedirs(a.out, exist_ok=True)
     for h, rows in out.items():
-        break_cycles(rows)
+        break_cycles(rows, lay_lines(rows))
         for r in rows: man[r['id']]['deps'] = len(r.get('dependencies', []))
         rows.sort(key=lambda r: bool(r.get('dependencies')))
         with open(f'{a.out}/{h}.jsonl', 'w') as f:
@@ -267,6 +286,7 @@ def verify(a):
             if rows[i]['status'] != want[i]['status']: bad.append(f"{h}: {i} is {rows[i]['status']}, manifest says {want[i]['status']}")
             if f'home:{h}' not in rows[i].get('labels', []): bad.append(f'{h}: {i} lost its home label')
             if len(rows[i].get('dependencies') or []) != want[i]['deps']: bad.append(f'{h}: {i} dependency count differs')
+        bad += [f'{h}: {r["id"]} names {word} in a line with no edge' for r, _, _, word in links.pending(rows)]
         counted = dict(l.split() for l in open(f'{a.runs}/{h}.counts'))
         n = collections.Counter(m['status'] for m in want.values())
         bad += [f"{h}: bd counts {counted.get(s)} {s}, manifest {n[s]}" for s in STATUSES if int(counted.get(s, -1)) != n[s]]

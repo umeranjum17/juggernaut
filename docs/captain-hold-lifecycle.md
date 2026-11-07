@@ -60,7 +60,9 @@ Publishing the stamp first ensures a snapshot cannot observe a newly captain-hel
 On a home whose `config/backlog-backend` reads `beads`, these steps and every other subcommand on this page run on the Beads store through the same provider verbs, with no tasks-axi.
 The hold reason, kind and `--until` date sit on the row as plain text, so a reason keeps its parentheses and line breaks with no encoding.
 A failed store call stops the command and is never read as "not held".
-`blocking` links a row to a decision by any edge between them in either direction, and by the `linked-to:` and `parent:` lines a migrated body still carries; `design-card` also labels its row `decision` and blocks the raising ticket by an edge, so that ticket leaves `ready` until the pick closes the row.
+`blocking` links a row to a decision by any edge between them in either direction.
+A `linked-to:` or `parent:` line in a body is how a row asks for an edge: the write or the migration lays it, as `blocks` with a decision on one side, `parent-child` for a parent, and `related` otherwise, and `bin/jg-tasks-axi.sh relink` lays any line a raw `bd` write left without one.
+`design-card` also labels its row `decision` and blocks the raising ticket by an edge, so that ticket leaves `ready` until the pick closes the row.
 
 Repeat and edge cases:
 

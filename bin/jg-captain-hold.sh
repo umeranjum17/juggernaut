@@ -2136,7 +2136,7 @@ decision_open() {  # <task-id>
 # open decision stop all work, print every open decision here instead. A
 # `parent:` id links only when it is a real task, so `parent: upkeep` links nothing.
 # One pass over the backlog finds the rows linking here; only those are checked.
-# On a Beads store that pass is the provider's `links` read, which adds every edge.
+# On a Beads store that pass is the provider's `links` read, which is every edge.
 linked_open_decisions() {  # <task-id>; prints the open decisions linked to it, one id per line
   local id=$1 data file mine target
   data=$(jg_backlog_data_absolute "$DATA") \

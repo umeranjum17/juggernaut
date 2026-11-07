@@ -16,7 +16,7 @@
 # `config/backlog-backend=beads` serves backlog reads from this home's bd store,
 # named by the absolute BEADS_DIR in `config/beads-dir`; jg_backlog_beads_read
 # owns that read, jg_backlog_beads_write owns add, update, done, block, unblock, start,
-# reopen, hold, unhold and the stage, take and drop a handoff moves rows with,
+# reopen, hold, unhold, relink and the stage, take and drop a handoff moves rows with,
 # and bin/jg-tasks-axi.sh refuses every other verb on it for now.
 # Absent or any other value keeps the default tasks-axi backend path, falling
 # back to manual mutation when the tool is not compatible.

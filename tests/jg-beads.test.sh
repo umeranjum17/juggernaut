@@ -681,7 +681,7 @@ journey() {  # A hold, an answer, a release and a completed investigation, then 
   alike open jg-c1 --identity
   alike open nope --distinguish-absent
   # The work a decision stops, by a body line on either store and by an edge on Beads; a row it never named moves.
-  same add jg-c6 "[feature] Build the page" --priority 2 --body $'why\nlinked-to: jg-c1'
+  linked add jg-c6 "[feature] Build the page" --priority 2 --body $'why\nlinked-to: jg-c1'
   same add jg-c7 "[feature] Build the footer" --priority 2 --body why
   alike blocking jg-c6
   assert_contains "$(captain "$T/bd" blocking jg-c6)" jg-c1 "linked work must name the open decision"
@@ -760,8 +760,10 @@ journey() {  # A hold, an answer, a release and a completed investigation, then 
   same list
   same ready
 }
+# A line on a decision is a blocks edge on Beads, so the row's card differs: both stores need only take the write.
+linked() { JG_HOME="$T/ta" "$CLI" "$@" >/dev/null 2>&1 || fail "file: $*"; JG_HOME="$T/bd" "${jail[@]}" "$CLI" "$@" >/dev/null 2>&1 || fail "store: $*"; }
 filed() {  # <id> <title> [link line] [priority]: one row on both stores.
-  same add "$1" "$2" --priority "${4:-2}" --body "why${3:+$'\n'$3}"
+  linked add "$1" "$2" --priority "${4:-2}" --body "why${3:+$'\n'$3}"
   JG_HOME="$T/bd" "${jail[@]}" "$CLI" show "$1" >/dev/null || fail "could not file $1"
 }
 stopped() {  # <row> <decision>: both stores refuse the row and name the decision.
