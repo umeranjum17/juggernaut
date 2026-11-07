@@ -39,7 +39,7 @@
 #     call off BEADS_DIR, and --mem-profile or --cpu-profile, which write outside it.
 #   - a call in bd_refusals: it reaches a server, a remote or a network, turns metrics on, writes
 #     into a git tree or its hooks, or exposes a secret. The message starts `refused (<rule>):`.
-#   - a create or update that defers a row, or strips a deferred row's reason, with no reason named, and bd defer, which keeps none.
+#   - a create or update that defers a row, or strips a deferred row's reason, with no reason named, and a bd defer of a row with none.
 #   - a bd or dolt whose sha256 is not its toolchain.versions row for this platform, checked
 #     before its first run, even for a version. JG_BEADS_BD and JG_BEADS_DOLT name the binary;
 #     otherwise each comes from PATH.
@@ -365,6 +365,20 @@ reason_check() {  # <create|update> [args...]
   done < <("$PINNED_TOOL" list --status deferred --limit 0 --json | sed -n 's/^ *"id": "\(.*\)",\{0,1\}$/\1/p')
 }
 
+# bd defer writes no hold_reason, so it stays whole for a row that already has one and refuses a row that does not.
+defer_check() {  # defer [args...]
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --until|--reason) shift ;;
+      -*) ;;
+      *) "$PINNED_TOOL" show "$1" --json | grep -Eq '"hold_reason": *"[[:space:]]*[^"[:space:]]' \
+        || die "$1 has no reason, and bd defer keeps none: pass --set-metadata hold_reason=<text> to update first" ;;
+    esac
+    [ "$#" -eq 0 ] || shift
+  done
+}
+
 run_bd() {  # <verb> [args...]
   local arg
   for arg in "$@"; do
@@ -381,7 +395,7 @@ run_bd() {  # <verb> [args...]
   cd -- "$STORE_PARENT" || die "cannot enter $STORE_PARENT"
   case "$1" in
     create|update) reason_check "$@" ;;
-    defer) die "a deferred row needs a reason and bd defer keeps none: use update <id> --status deferred --set-metadata hold_reason=<text>" ;;
+    defer) defer_check "$@" ;;
   esac
   exec "$PINNED_TOOL" "$@"
 }

@@ -103,6 +103,7 @@ in_ready n3-woken || fail "woken row"
 write start n3-woken >/dev/null || fail "start from woken"
 same "$(row n3-woken 'r["status"]')" in_progress "start must take a woken row"
 write hold n3-future --reason later --until "$FUTURE" >/dev/null || fail "future hold"
+"$WRAPPER" defer n3-future --until "$FUTURE" >/dev/null 2>&1 || fail "bd defer must stay whole for a row with a reason"
 refused 13 python3 "$WRITE" start n3-future
 same "$(row n3-future 'r["status"]')" deferred "start must refuse a future date"
 
@@ -139,12 +140,7 @@ in_ready n3-due || fail "an imported due row must wake"
 in_ready n3-carried && fail "an imported future date must stay out of bd ready"
 in_ready n3-behind && fail "an imported edge must keep work stopped"
 "$WRAPPER" check >/dev/null 2>&1 || fail "check after import"
-python3 - "$T/two/bad.jsonl" <<'PY' || fail "bad row"
-import json, sys
-open(sys.argv[1], "w").write(json.dumps({"_type": "issue", "id": "n3-noreason", "title": "t", "status": "deferred", "priority": 2,
-    "issue_type": "task", "created_at": "2026-11-07T00:00:00Z", "created_by": "j", "updated_at": "2026-11-07T00:00:00Z",
-    "defer_until": "2099-01-01T00:00:00Z"}) + "\n")
-PY
+printf '{"_type":"issue","id":"n3-noreason","title":"t","status":"deferred","priority":2,"issue_type":"task","created_at":"2026-11-07T00:00:00Z","created_by":"j","updated_at":"2026-11-07T00:00:00Z","defer_until":"2099-01-01T00:00:00Z"}\n' > "$T/two/bad.jsonl"
 "$WRAPPER" import bad.jsonl >/dev/null 2>&1 || fail "import bad"
 out=$("$WRAPPER" check 2>&1) && fail "check must refuse a deferred row with no reason"
 assert_contains "$out" n3-noreason "check must name the row"
