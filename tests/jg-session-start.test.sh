@@ -2178,6 +2178,43 @@ EOF
   pass "held rows and curated memory are bounded, disclose the rest, and keep captain-held rows whole"
 }
 
+# The caps are documented defaults, not magic numbers: defaults/token-caps sets the
+# memory cap, config/token-caps overrides it for one home, and owner-rules keeps
+# the larger bound so a standing decision is never cut by the memory cap.
+test_token_caps_defaults_and_home_override() {
+  local rec root home fakebin out i f
+  rec=$(new_world token-caps)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_tasks_axi_compact "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  for f in learnings.md owner-rules.md; do
+    : > "$home/data/$f"
+    i=1
+    while [ "$i" -le 400 ]; do
+      printf 'line %s of %s with padding text to take bytes\n' "$i" "$f" >> "$home/data/$f"
+      i=$((i + 1))
+    done
+  done
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "[cut at 7500 bytes: " "the shipped memory-file-cap default was not applied to learnings.md"
+  assert_contains "$out" "[cut at 10000 bytes: " "owner-rules.md lost the larger context-file-cap"
+
+  printf 'memory-file-cap 3000\nmemory-file-cap notanumber\ncontext-file-cap 0\n' > "$home/config/token-caps"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "[cut at 3000 bytes: " "config/token-caps did not override the memory cap"
+  assert_contains "$out" "[cut at 10000 bytes: " "a zero value in config/token-caps switched a cap off"
+
+  out=$(JG_SESSION_START_CONTEXT_FILE_CAP=2000 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" "[cut at 3000 bytes: " "the run variable did not override config/token-caps"
+  assert_contains "$out" "[cut at 2000 bytes: " "the run variable did not set the cap"
+
+  pass "token caps come from defaults/token-caps, a home file overrides them, and a bad value never turns one off"
+}
+
 test_backlog_queued_bound_discloses_its_remainder() {
   local rec root home fakebin out
   rec=$(new_world backlog-queued-bound)
@@ -3166,6 +3203,7 @@ test_non_pi_session_start_leaves_branch_state_untouched
 test_session_start_seeds_the_outcome_display_tail_while_away
 test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
 test_digest_sections_stay_under_their_caps
+test_token_caps_defaults_and_home_override
 test_backlog_queued_bound_discloses_its_remainder
 test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
