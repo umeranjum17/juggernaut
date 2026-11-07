@@ -181,7 +181,17 @@ func TestGatewayAnswers(t *testing.T) {
 	notes, _ = filepath.Glob(state + "/inbox/*.note")
 	for _, n := range notes {
 		if i := strings.TrimSuffix(filepath.Base(n), ".note"); i != id {
-			a.inbox(strings.Repeat(strings.Repeat("x", 99)+"\n", 50), "reply", i, "-")
+			// The reply answers his note, so it carries the ask block (2026-11-05): his words and
+			// their date, done, not done, next, and a proof link.
+			raw, _ := os.ReadFile(n)
+			at := ""
+			for _, line := range strings.Split(string(raw), "\n") {
+				if strings.HasPrefix(line, "at=") && len(line) >= 13 {
+					at = line[3:13]
+				}
+			}
+			block := fmt.Sprintf("Your ask: \"[chat telegram 42:11] again\" (%s)\nDone: the answer is sent.\nNot done: nothing.\nNext: read it.\nProof: https://example.invalid/proof\n", at)
+			a.inbox(block+strings.Repeat(strings.Repeat("x", 99)+"\n", 50), "reply", i, "-")
 		}
 	}
 	once()

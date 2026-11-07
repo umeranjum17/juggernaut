@@ -776,7 +776,7 @@ reply_needs_board_link() {  # <body> <--option count>
 }
 
 cmd_reply() {
-  local json=0 id body path staging seq target n usage attach="" file evidence text_args=() rest=0 options="" nopt=0 change=0 opt
+  local json=0 id body path staging seq target n usage attach="" file evidence text_args=() rest=0 options="" nopt=0 change=0 opt ask_words ask_date
   usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--evidence-from <status-line>] [--option <label>]... [--allow-change] [--] <text>... (or: ... -)"
   if [ "${1:-}" = "--json" ]; then
     json=1
@@ -858,7 +858,10 @@ cmd_reply() {
   fi
   if [ -n "${body//[[:space:]]/}" ]; then
     # The captain voice file (bin/jg-voice.py) decides: a model rewrite in plain sentences, or a refusal with the terms to fix.
-    jg_voice_apply chat-reply "$body" || die "reply refused by the captain voice file; rewrite it in plain words"
+    # The note this reply answers is his ask, so the reply carries his words and their date (2026-11-05).
+    ask_words=$(read_note_body "$path")
+    ask_date=$(sed -n 's/^at=\([0-9-]*\).*/\1/p' "$path" | head -n 1)
+    jg_voice_apply chat-reply "$body" --ask "$ask_words" --ask-date "$ask_date" || die "reply refused by the captain voice file; rewrite it in plain words"
     body=$JG_VOICE_OUT
     # A bare board link gets the access token, or the reply is refused. After the voice step, so the token never reaches a model rewrite.
     jg_board_link_fix "$body" || die "reply refused: it holds a board link without its access token"

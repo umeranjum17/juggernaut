@@ -45,10 +45,13 @@ pass "gateway helper: refused with a reason when the token is unavailable"
 # Path 2: inbox reply.
 reply() { # <home> <text> -> prints the recorded reply file
   local h=$1
+  # The reply answers his note, so it carries the ask block (2026-11-05): his words and their
+  # date, done, not done, next, and a proof link.
+  local block=$'Your ask: "Show the report link on the board." (2026-01-01)\nDone: the reply holds the link.\nNot done: nothing.\nNext: read it.\nProof: https://example.org/proof\n'
   mkdir -p "$h/state/inbox"
-  printf 'id=n1\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nask\n' > "$h/state/inbox/n1.note"
+  printf 'id=n1\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nShow the report link on the board.\n' > "$h/state/inbox/n1.note"
   # shellcheck disable=SC2046
-  env $(env_for "$h") JG_VOICE_FILE=/dev/null bash "$ROOT/bin/jg-inbox.sh" reply n1 "$2" >"$T/rout" 2>"$T/err"
+  env $(env_for "$h") JG_VOICE_FILE=/dev/null bash "$ROOT/bin/jg-inbox.sh" reply n1 "$block$2" >"$T/rout" 2>"$T/err"
 }
 recorded() { cat "$1"/state/inbox/.replies/n1 2>/dev/null; }
 reply "$good" "$BARE" || fail "inbox reply with a token available failed"

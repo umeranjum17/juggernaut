@@ -197,6 +197,37 @@ case $err in *"voice"*) ;; *) fail "the refusal must name the voice file: $err" 
 "$INBOX_BIN" reply "$id" "The fix is merged. It is released in v1." >/dev/null 2>&1 || fail "a plain reply was refused"
 pass "a chat reply with internal terms is refused, and a plain reply goes through"
 
+# --- the ask block: a reply that answers his note carries his words, the outcome and a proof --
+# 2026-11-05, his words: "There is no reference: what was my ask and what work was done against it."
+ask_text='Repair the slow reply path so every note carries my words.'
+ask_id=$("$INBOX_BIN" note "$ask_text" 2>/dev/null | sed -n 's/^queued //p' | head -n 1)
+[ -n "$ask_id" ] || fail "could not file an ask note"
+ask_note="$home/state/inbox/$ask_id.note"
+ask_day=$(sed -n 's/^at=\([0-9-]*\).*/\1/p' "$ask_note" | head -n 1)
+[ -n "$ask_day" ] || fail "the ask note carries no date"
+# A report that answers his ask and carries no reference is refused, and asks for the block.
+report_no_block="The slow reply path now carries the reference. Details: https://github.com/example/repo/pull/12"
+err=$("$INBOX_BIN" reply "$ask_id" "$report_no_block" 2>&1) && fail "a report that answers his ask with no ask block was recorded"
+case $err in *"Your ask:"*) ;; *) fail "the refusal does not ask for the ask block: $err" ;; esac
+# The same reply with the whole block goes through.
+block=$(printf '%s\n' "Your ask: \"$ask_text\" ($ask_day)" \
+  'Done: the reply now carries your ask, the outcome and a proof link.' \
+  'Not done: nothing.' \
+  'Next: review the change.' \
+  'Proof: https://github.com/example/repo/pull/12')
+"$INBOX_BIN" reply "$ask_id" "$block" >/dev/null 2>&1 || fail "a reply with the whole ask block was refused"
+# A half-written block is refused at the check, at every send point.
+err=$(printf '%s\n' "Your ask: \"$ask_text\" ($ask_day)" 'Done: the reply is fixed.' | python3 "$VOICE" check 2>&1) && fail "a half-written ask block passed the check"
+case $err in *"'Not done:' line"*) ;; *) fail "the refusal does not name the missing 'Not done:' line: $err" ;; esac
+case $err in *"'Next:' line"*"proof link"*) ;; *) fail "the refusal does not name the 'Next:' line and the proof link: $err" ;; esac
+err=$(printf '%s\n' "Your ask: \"$ask_text\"" 'Done: x' 'Not done: nothing.' 'Next: review.' 'Proof: https://x.example/a' | python3 "$VOICE" check 2>&1) && fail "an ask line with no date passed the check"
+case $err in *"no date"*) ;; *) fail "the refusal does not name the missing date: $err" ;; esac
+err=$(printf '%s\n' "Your ask: \"make the messages better\" ($ask_day)" 'Done: x' 'Not done: nothing.' 'Next: review.' 'Proof: https://x.example/a' | python3 "$VOICE" check --ask "$ask_text" --ask-date "$ask_day" 2>&1) && fail "a paraphrase passed as his words"
+case $err in *"does not quote his words"*) ;; *) fail "the refusal does not name the paraphrase: $err" ;; esac
+# A pure acknowledgement answers no ask and still goes out.
+printf '%s' 'Captain, standing by.' | python3 "$VOICE" check --ask "$ask_text" --ask-date "$ask_day" 2>/dev/null || fail "a pure acknowledgement was refused"
+pass "a reply that answers his ask carries his words, their date, done, not done, next and a proof link, or it is refused"
+
 # --- the parent channel rewrites, never blocks, never duplicates -------------
 # shellcheck source=bin/jg-parent-channel-lib.sh disable=SC1091
 . "$ROOT/bin/jg-parent-channel-lib.sh"
