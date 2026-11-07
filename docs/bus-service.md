@@ -55,6 +55,24 @@ running pid 123, listening 127.0.0.1:4222` and `wake-engine installed jg-bus, en
 The first part that cannot be made whole stops the run with one line,
 `STACK_FAILED: <part>: <what is missing>; blocks <what depends on it>`.
 
+### The four services belong to Main
+
+`jg-sentinel`, `jg-wake-engine`, `jg-wake-watcher` and `jg-router` are systemd
+USER units, so exactly one home can run each of them, and a home that installs
+them for itself takes them from the home that had them. A Squad Lead home did
+that once: it kept running, and Main's stuck-worker, blocked-pane and
+stopped-service alerts went to the lead's home instead, unseen. So Main claims
+them and a Squad Lead home never does:
+
+- at every Main session start, `bin/jg-unit-claim.sh claim` rewrites each
+  installed unit that serves another home or is not running, reloads, restarts
+  it, and verifies it serves this home; it says nothing when all four already do;
+- `bin/jg-watch.sh` reads the same verdict on its fast check, so a unit that
+  dies or starts serving another home reaches Main inside two minutes;
+- `bin/jg-stack.sh up` and `bin/jg-sentinel.sh unit` refuse in a Squad Lead home,
+  naming Main as the owner, and the boot banner prints no line and no command
+  there.
+
 The Dapr sidecar is one per machine, like the bus unit, so the same owner rule governs them.
 Only the home that owns the bus unit (`bin/jg-bus.sh owner` prints `self` there) installs the pinned `daprd`, and writes, enables and starts its unit.
 Any other home prints `<part>: owned by <home>, which installs and runs it; this home changes nothing` and reports the part as it finds it, so a second home's session start can no longer rewrite the owner's units or ports.
