@@ -77,6 +77,7 @@ plan=(
   zai-quota-check:env
   nm-drain:home
   merge-on-green:home
+  goal-loop:home
   critical-stall:home
   quota-failover:all
   limit-prompt-move:all-nodry
