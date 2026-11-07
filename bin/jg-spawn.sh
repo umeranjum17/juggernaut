@@ -651,6 +651,11 @@ fi
 if [ -n "${JG_DATA_OVERRIDE:-}" ]; then
   JG_DATA_OVERRIDE=$(resolve_directory_input JG_DATA_OVERRIDE "$JG_DATA_OVERRIDE") || exit 1
 fi
+# The backlog store is named by config/beads-dir read from here, and a spawn changes directory before that read, so a
+# relative config override is made absolute with the state and data ones.
+if [ -n "${JG_CONFIG_OVERRIDE:-}" ]; then
+  JG_CONFIG_OVERRIDE=$(resolve_directory_input JG_CONFIG_OVERRIDE "$JG_CONFIG_OVERRIDE") || exit 1
+fi
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 PROJECTS="${JG_PROJECTS_OVERRIDE:-$JG_HOME/projects}"

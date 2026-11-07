@@ -3433,7 +3433,10 @@ finished_cleanup_gate() {  # <window> <key> <hash> <task>
   local key=$2 h=$3 task=$4 mf last verb st mh at note now
   STALE_CLEANUP_NOTE=''
   mf="$STATE/.stale-cleanup-$key"
-  [ -n "$task" ] && [ -e "$STATE/$task.meta" ] || return 1
+  [ -n "$task" ] || return 1
+  # The caller read this task's record earlier in the same pass; a record gone since is a teardown that finished
+  # meanwhile (the cleanup this gate starts, or another), so there is nothing left to surface.
+  [ -e "$STATE/$task.meta" ] || return 0
   case "$(jg_meta_get "$STATE/$task.meta" kind)" in scout|squad_lead) return 1 ;; esac
   last=$(last_status_line "$STATE/$task.status")
   verb=''
