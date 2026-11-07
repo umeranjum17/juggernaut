@@ -776,7 +776,7 @@ clear_composer() {
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence submit_retries=$EXIT_RETRIES interrupt_result=not-needed dialog clear_key
+  local state cmd hazard verdict composer_state cancel absence submit_retries=$EXIT_RETRIES interrupt_result=not-needed dialog
   require_state_verified_backend exit
   state=$(agent_state)
   case "$state" in
@@ -883,9 +883,7 @@ do_exit() {
   fi
   # The refusal names the working recovery so the next operator clears or
   # submits the pending text instead of looping on interrupt: Enter submits it
-  # through the data plane, and the harness's clear key (when the capability
-  # table above names one) discards it.
-  clear_key=$(jg_control_interrupt_clear_key "$HARNESS" 2>/dev/null || true)
+  # through the data plane, and --clear-composer discards it.
   if [ "$CLEAR_COMPOSER" = 1 ] && [ "$composer_state" != empty ]; then
     clear_composer "$composer_state"
     composer_state=empty
