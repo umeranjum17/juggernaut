@@ -37,6 +37,15 @@ mkdir -p "$HOME"
 
 H=$T/home
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/fakebin"
+# The merge asks the backlog whether the task is still held for the captain, and a home with no Beads
+# store (pinned bd and dolt, run only through bin/jg-beads.sh) refuses to answer.
+BD=${JG_BEADS_BD:-${JG_BEADS_TEST_BD:-$(command -v bd)}}
+DOLT=${JG_BEADS_DOLT:-${JG_BEADS_TEST_DOLT:-$(command -v dolt)}}
+[ -n "$BD" ] && [ -n "$DOLT" ] || fail "the pinned bd and dolt are required (bin/jg-bootstrap.sh install bd dolt)"
+export JG_BEADS_BD=$BD JG_BEADS_DOLT=$DOLT
+mkdir -p "$T/beads"
+printf '%s\n' "$T/beads/.beads" > "$H/config/beads-dir"
+BEADS_DIR="$T/beads/.beads" "$REPO/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "cannot create the Beads store"
 HEAD_SHA=0123456789abcdef0123456789abcdef01234567
 U=https://github.com/acme/thing/pull
 

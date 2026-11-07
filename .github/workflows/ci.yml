@@ -274,6 +274,14 @@ jobs:
         run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh --smoke
       # The release train's replay of a design lane, a multi-PR lane and a signature
       # lookup through the merge path, time-boxed (bin/jg-release-smoke.sh).
+      - name: Install the pinned bd and dolt
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install bd dolt
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Replay the release lanes
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
         run: bin/jg-release-smoke.sh
@@ -292,6 +300,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      # The ticket eval keeps its ticket in a throwaway Beads store, which needs the pinned bd and dolt.
+      - name: Install the pinned bd and dolt
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install bd dolt
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Run the fast evals
         run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh
 
@@ -430,6 +446,17 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      # The backlog is a Beads store: the suites that file and read tickets in a fixture home run against the
+      # pinned bd and dolt (run only through bin/jg-beads.sh), or they skip.
+      - name: Install the backlog tools (pinned bd and dolt)
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install bd dolt
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "JG_BEADS_TEST_BD=$NPM_CONFIG_PREFIX/bin/bd" >> "$GITHUB_ENV"
+          echo "JG_BEADS_TEST_DOLT=$NPM_CONFIG_PREFIX/bin/dolt" >> "$GITHUB_ENV"
       - name: Run the tests this change's paths map to
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

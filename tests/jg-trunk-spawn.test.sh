@@ -30,7 +30,7 @@ printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_availa
 N=0
 # ship <mode>: scaffold a real brief and spawn it onto its own isolated copy; sets id, out, rc, wt.
 ship() {
-  N=$((N + 1)); id=ts$N; wt="$W/wt-$id"
+  N=$((N + 1)); id=jg-ts$N; wt="$W/wt-$id"
   JG_HOME="$HOME_DIR" "$ROOT/bin/jg-brief.sh" "$id" proj --mode "$1" --project "$PROJ" --migration-row none >/dev/null 2>&1 || fail "could not scaffold the $1 brief"
   sed -i 's/{TASK}/Exercise the trunk spawn./;s/{JUGGERNAUT_SPEC}/Exercise the trunk spawn end to end./' "$HOME_DIR/data/$id/brief.md"
   git -C "$PROJ" worktree add -q --detach "$wt" origin/main >/dev/null 2>&1 || fail "could not prepare the isolated copy"
