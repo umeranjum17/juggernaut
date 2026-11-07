@@ -936,6 +936,165 @@ spawned() {  # A real spawn, relaunch and teardown on a Beads home: the lane fol
   owner jg-s1 "$gen" codex
   printf 'ok - a real spawn, relaunch and teardown moved the lane on the store\n'
 }
+merge_home() {  # <home>: a home running this repo's scripts, with a project on GitHub and a finished worker.
+  local h=$1 f
+  mkdir -p "$h/bin" "$h/data" "$h/state" "$h/config" "$h/projects/r" "$h/fake" "$h/user"
+  for f in "$ROOT"/bin/*; do ln -s "$f" "$h/bin/${f##*/}"; done
+  ln -s "$ROOT/toolchain.versions" "$h/toolchain.versions"
+  rm "$h/bin/jg-crew-state.sh"
+  printf '#!/usr/bin/env bash\necho "state: done · source: run-step · checks green: PR ready for review"\n' > "$h/bin/jg-crew-state.sh"
+  chmod +x "$h/bin/jg-crew-state.sh"
+  printf -- '- r [direct-PR +yolo] - fixture project (ex/r) (added 2026-11-04)\n' > "$h/data/projects.md"
+  git -C "$h/projects/r" init -q
+  git -C "$h/projects/r" remote add origin https://github.com/ex/r.git
+}
+at() {  # <home> <command...>: one command in that home, on its recorded forge.
+  local h=$1
+  shift
+  env HOME="$h/user" PATH="$h/fake:$T/forge:$PATH" TMPDIR="$T" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" \
+    JG_DATA_OVERRIDE="$h/data" JG_CONFIG_OVERRIDE="$h/config" JG_TEST_GH_LOG="$h/gh.log" JG_PR_MERGE_CHECKS_LINT="$T/forge/lint" \
+    JG_MOG_CHECKS_LINT="$T/forge/lint" JG_RED_CI_GH="$T/forge/red-gh" JG_CI_RERUN_GH="$T/forge/red-gh" JG_BUS_BIN="$T/forge/jg-bus" JG_CHECK_TIMEOUT=60 \
+    "${jail[@]}" "$@"
+}
+said() {  # <home> <label> <command...>: one line of the story, with what the command said and its exit status.
+  local h=$1 label=$2 out rc=0
+  shift 2
+  out=$(at "$h" "$@" 2>&1) || rc=$?
+  printf '%s: rc=%s\n%s\n' "$label" "$rc" "$out" | grep -vE '^(●|WARNING:|warning:|armed:)' \
+    | sed -E "s#$h#HOME#g; s/[0-9a-f]{7} -> [0-9a-f]{7}/OLD -> NEW/"
+}
+merge_ship() {  # <home> <id> <mode> <pr or empty> [body]: a finished ship, its row In flight.
+  local h=$1 id=$2 mode=$3 pr=$4 body=${5:-why}
+  jg_git_worktree "$h/repos/$id" "$h/repos/$id.wt" "fm/$id" >/dev/null 2>&1
+  printf 'x\n' > "$h/repos/$id.wt/x.txt"
+  git -C "$h/repos/$id.wt" add x.txt
+  git -C "$h/repos/$id.wt" commit -qm work
+  at "$h" "$CLI" add "$id" "[feature] Umer's $id" --kind ship --repo sample --body "$body" >/dev/null || fail "seed $id"
+  jg_write_meta "$h/state/$id.meta" "window=jg-$id" "worktree=$h/repos/$id.wt" "project=$h/repos/$id" kind=ship "mode=$mode" \
+    "spawn_gen=g-$id" ${pr:+"pr=$pr"}
+  at "$h" "$CLI" start "$id" >/dev/null || fail "start $id"
+  printf 'done: merge ready\n' > "$h/state/$id.status"
+}
+watched() {  # <home> <id> <pr>: a ship the watcher may merge, with a passing receipt.
+  local head=1111111111111111111111111111111111111111
+  merge_ship "$1" "$2" no-mistakes "$3"
+  printf 'yolo=on\npr_head=%s\n' "$head" >> "$1/state/$2.meta"
+  printf '{"verdict":"PASS","head":"%s","spawn_gen":"g-%s"}\n' "$head" "$2" > "$1/state/$2.run-receipt.json"
+}
+merge_story() {  # <home>: every merge path on one store: refused while a gate stands, merged once it clears.
+  local h=$1 pr=https://github.com/s/s/pull hold=$ROOT/bin/jg-captain-hold.sh merge=$ROOT/bin/jg-pr-merge.sh local=$ROOT/bin/jg-merge-local.sh
+  merge_ship "$h" m-held no-mistakes "$pr/1"
+  said "$h" hold "$hold" hold m-held --reason "needs the call"
+  said "$h" "held PR" "$merge" m-held "$pr/1"
+  said "$h" answer "$hold" answer m-held --decision-file "$T/said.txt" --release
+  said "$h" "released PR" "$merge" m-held "$pr/1"
+  said "$h" decision "$hold" hold m-dec --title "[feature] Pick a name" --reason "needs the name"
+  merge_ship "$h" m-link no-mistakes "$pr/2" $'why\nlinked-to: m-dec'
+  said "$h" "linked PR" "$merge" m-link "$pr/2"
+  watched "$h" w-good "$pr/4"
+  watched "$h" w-held "$pr/5"
+  said "$h" "hold for the watcher" "$hold" hold w-held --reason "needs the call"
+  said "$h" "rerun with no ticket" "$ROOT/bin/jg-ci-rerun.sh" 11 --repo ex/r
+  said "$h" watcher "$ROOT/core/merge-on-green/merge-on-green.sh" check "$h"  # Its sweep files the red run's ticket too.
+  for id in m-held w-good w-held; do
+    said "$h" "row $id" "$CLI" show "$id" --full | grep -E 'rc=|state:|held:|links:'
+  done
+  merge_ship "$h" l-held local-only ""
+  said "$h" hold "$hold" hold l-held --reason "needs the call"
+  said "$h" "held local" "$local" l-held
+  merge_ship "$h" l-good local-only ""
+  said "$h" "good local" "$local" l-good
+  jg_git_worktree "$h/repos/gone" "$h/repos/gone.wt" fm/gone >/dev/null 2>&1
+  jg_write_meta "$h/state/gone.meta" window=jg-gone "worktree=$h/repos/gone.wt" "project=$h/repos/gone" kind=ship mode=no-mistakes spawn_gen=g "pr=$pr/9"
+  printf 'done: merge ready\n' > "$h/state/gone.status"
+  said "$h" "no row" "$merge" gone "$pr/9"
+  said "$h" "red run again" "$ROOT/core/merge-on-green/red-ci-ticket.sh" check "$h"
+  said "$h" "rerun with no note" "$ROOT/bin/jg-ci-rerun.sh" 11 --repo ex/r
+  said "$h" note "$CLI" update ci-red-run-11 --body $'CI went red.\nroot-cause: the disk filled' | grep 'rc='  # An add with no priority reads apart.
+  said "$h" "rerun with a note" "$ROOT/bin/jg-ci-rerun.sh" 11 --repo ex/r
+  grep -E '^(pr merge|run rerun)' "$h/gh.log"
+}
+merged() {  # The merge paths on a Beads home: each refusal and each good merge, the same lines as the old store.
+  local h=$T/mg/bd story out id
+  if ! command -v go >/dev/null || ! command -v opa >/dev/null; then printf 'skip: real merge: the receipt check needs go and opa\n'; return 0; fi
+  export GOTMPDIR=$T/world/gotmp GOCACHE=$T/world/go GOPATH=$T/world/gp
+  mkdir -p "$GOTMPDIR" "$T/forge"
+  cp "$JG_BUS_BIN" "$T/forge/jg-bus"  # A merge records its outcome through the bus, and the jail hides the /tmp copy.
+  jg_git_identity fmtest fmtest@example.com
+  cat > "$T/forge/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$JG_TEST_GH_LOG"
+head=1111111111111111111111111111111111111111
+case "${1:-} ${2:-}" in
+  "pr view") case " $* " in
+    *statusCheckRollup*) printf '{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"%s","baseRefName":"main","statusCheckRollup":[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]}\n' "$head" ;;
+    *headRefOid*) echo "$head" ;;
+  esac ;;
+  "pr merge") printf 'merged:\n  number: %s\n  status: ok\n' "$3" ;;
+  "api graphql") printf '%s\n' state=MERGED merged=true queued=false base=main ;;
+  "api --paginate") echo '[]' ;;
+  "api repos/"*) echo '{"name":"main","protected":false}' ;;
+esac
+SH
+  cp "$ROOT/core/merge-on-green/tests/fixtures/red-ci-ticket/gh-axi" "$T/forge/recorded-gh"
+  cat > "$T/forge/red-gh" <<'SH'
+#!/usr/bin/env bash
+[ "$1" != run ] || { printf '%s\n' "$*" >> "$JG_TEST_GH_LOG"; exit 0; }
+[ "$2" != repos/ex/r/actions/runs/11 ] || { echo failure; exit 0; }
+exec "${0%/*}/recorded-gh" "$@"
+SH
+  printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$T/forge/lint"
+  for tool in tmux treehouse no-mistakes gh-axi; do printf '#!/usr/bin/env bash\nexit 0\n' > "$T/forge/$tool"; done
+  chmod +x "$T"/forge/*
+  merge_home "$T/mg/ta"
+  merge_home "$h"
+  jg_test_tasks_toml "$T/mg/ta/.tasks.toml"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$T/mg/ta/data/backlog.md"
+  printf 'beads\n' > "$h/config/backlog-backend"
+  printf '%s\n' "$BEADS_DIR" > "$h/config/beads-dir"
+  # A Beads home's merge paths never reach tasks-axi, so a call here fails the story.
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/tasks-axi.log"\nexit 99\n' "$h" > "$h/fake/tasks-axi"
+  chmod +x "$h/fake/tasks-axi"
+  printf 'go\n' > "$T/said.txt"
+  story=$(merge_story "$T/mg/ta")
+  out=$(merge_story "$h")
+  [ "$story" = "$out" ] || fail "a merge story differs: $(diff <(printf '%s\n' "$story") <(printf '%s\n' "$out"))"
+  printf 'merge story on Beads:\n%s\n' "$out"  # The sealed proof keeps the lines up to the end marker.
+  for want in 'held PR: rc=1' 'error: task m-held is still held for the captain; release it before merging' 'released PR: rc=0' \
+    'linked PR: rc=1' 'error: task m-link is linked to a decision still open for the captain; answer it before merging: m-dec' \
+    'merge-on-green: merged w-good https://github.com/s/s/pull/4 through jg-pr-merge' \
+    'merge-on-green: NOT merging w-held https://github.com/s/s/pull/5' \
+    'backlog-shipped-reconcile: m-held moved out of in flight' 'backlog-shipped-reconcile: w-good moved out of in flight' \
+    'held local: rc=1' 'error: task l-held is still held for the captain; release it before merging' 'good local: rc=0' \
+    'merged fm/l-good into local main' 'no row: rc=0' 'filed ci-red-run-11' 'rerun with no ticket: rc=1' 'has no root-cause ticket yet' \
+    'rerun with no note: rc=1' 'has no root-cause note' 'rerun with a note: rc=0' 'pr merge 1 --repo s/s' 'pr merge 4 --repo s/s' \
+    'pr merge 9 --repo s/s' 'run rerun 11 -R ex/r'; do
+    assert_contains "$out" "$want" "the merge story must say $want"
+  done
+  assert_not_contains "$out" 'pr merge 2 ' "a linked PR must not reach the forge"
+  assert_not_contains "$out" 'pr merge 5 ' "a held PR must not reach the forge"
+  merge_ship "$h" e-link no-mistakes https://github.com/s/s/pull/7
+  at "$h" "$CLI" block e-link --by m-dec >/dev/null || fail "lay an edge"
+  out=$(said "$h" "edge PR" "$ROOT/bin/jg-pr-merge.sh" e-link https://github.com/s/s/pull/7)
+  printf '%s\n' "$out"
+  assert_contains "$out" 'edge PR: rc=1' "a Beads edge alone must refuse the merge"
+  assert_contains "$out" 'm-dec' "the refusal must name the open decision"
+  assert_not_contains "$(grep '^pr merge' "$h/gh.log")" 'pr merge 7 ' "an edge must keep the PR off the forge"
+  merge_ship "$h" u-pr no-mistakes https://github.com/s/s/pull/6
+  merge_ship "$h" u-loc local-only ""
+  printf '%s\n' "$T/none/.beads" > "$h/config/beads-dir"
+  for id in u-pr u-loc; do
+    [ "$id" = u-pr ] && out=$(said "$h" unreadable "$ROOT/bin/jg-pr-merge.sh" u-pr https://github.com/s/s/pull/6)
+    [ "$id" = u-loc ] && out=$(said "$h" unreadable "$ROOT/bin/jg-merge-local.sh" u-loc)
+    printf '%s\n' "$out"
+    assert_contains "$out" 'unreadable: rc=1' "an unreadable store must refuse the merge of $id"
+    assert_contains "$out" "error: could not determine whether task $id is still held for the captain" "the refusal must name $id"
+  done
+  assert_not_contains "$(grep '^pr merge' "$h/gh.log")" 'pr merge 6 ' "an unreadable store must keep the PR off the forge"
+  assert_absent "$h/tasks-axi.log" "a Beads home's merge paths must not call tasks-axi"
+  printf 'merges the forge saw:\n%s\ntasks-axi calls on this home: none\nend of merge story\n' "$(grep '^pr merge' "$h/gh.log")"
+  printf 'ok - each merge gate refuses and each good merge lands, the same on Beads and the old store\n'
+}
 start_lines() {  # Each surface's lines about the store, with the fleet's real pin table.
   local home=(env -u JG_PIN_FILE_OVERRIDE HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$T/hh"
     JG_STATE_OVERRIDE="$T/hh/state" JG_DATA_OVERRIDE="$T/hh/data" JG_CONFIG_OVERRIDE="$T/hh/config" JG_BOOTSTRAP_NETWORK=skip)
@@ -998,6 +1157,7 @@ else
     TMPDIR=$T spawned
     TMPDIR=$T asks
     TMPDIR=$T answers
+    TMPDIR=$T merged
     out=$(TMPDIR=$T JG_HOME="$T/bd" "${jail[@]}" "$CLI" add --mint "[feature] Mint me" --priority 2 --body why --json) || fail "real mint"
     assert_contains "$out" '"id": "jg-' "a minted id must be bd's, under the store prefix"
   fi
