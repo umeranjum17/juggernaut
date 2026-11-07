@@ -57,8 +57,51 @@ refused() { local out; out=$(ask bd "$@" pf-one 2>&1) && fail "$1 must refuse a 
 refused 'done'; refused start; refused reopen; refused hold --reason why; refused update --title moved
 assert_contains "$(. "$ROOT/bin/jg-tasks-axi-lib.sh"; jg_backlog_beads_write "$T/bd/config" stage pf-one 2>&1)" "cannot cross to a backlog file" "a backlog file must refuse a promise"
 assert_contains "$(. "$ROOT/bin/jg-public-followup-lib.sh"; jg_pf_obligation_json "$T/bd" pf-one 2>&1)" '"public_safe_summary"' "the shell reader must see the payload"
+# Work bound to a promise: both backlogs agree on every relation answer, refusal and the delivery state it leaves.
+relation() { jq -n --arg id "$1" --arg task "$2" --arg role "${3:-fulfills}" --argjson generation "${4:-1}" \
+  '{relation_id:$id, work_ref:{home_id:"main", task_id:$task}, role:$role, required:true, generation:$generation}' > "$T/$1.json"; }
+bind() { same public-followup bind-work "$1" --relation-file "$T/$2.json" "${@:3}"; }
+relation rel-a jg-work; relation rel-next jg-next fulfills 2; relation rel-far jg-next fulfills 3; relation rel-late jg-work fulfills 2
+jq '.role = "contributes"' "$T/rel-a.json" > "$T/rel-clash.json"
+jq '.relation_id = "rel-a"' "$T/rel-clash.json" > "$T/rel-clash.tmp" && mv "$T/rel-clash.tmp" "$T/rel-clash.json"
+jq '.relation_id = "nope"' "$T/rel-a.json" > "$T/rel-odd.json"
+jq '.work_ref.home_id = "nowhere"' "$T/rel-a.json" > "$T/rel-home.json"
+jq '.required = "yes"' "$T/rel-a.json" > "$T/rel-req.json"
+ask ta add jg-plain "[feature] Plain row" --body why >/dev/null 2>&1 || fail "a plain row on the old backlog"
+for h in ta bd; do ask "$h" add jg-work "[feature] Bound work" --body why >/dev/null 2>&1 || fail "work to bind on $h"; done
+promise same pf-two req --json
+promise same pf-three req --json
+bind pf-two rel-a --json
+bind pf-two rel-a --json
+bind pf-three rel-a
+bind pf-three rel-a
+for file in rel-clash rel-odd rel-home rel-req rel-late; do bind pf-two "$file"; done
+bind pf-none rel-a
+bind jg-plain rel-a
+same public-followup bind-work --relation-file "$T/rel-a.json"
+same public-followup bind-work pf-two extra --relation-file "$T/rel-a.json"
+same public-followup bind-work pf-two --relation-file "$T/absent.json"
+same public-followup list --work-ref main/jg-work --json
+same public-followup list --work-ref main/jg-work
+same public-followup list --work-ref main/absent
+same public-followup list --work-ref nowhere
+same public-followup list --delivery-state pending-work --json
+same public-followup supersede-work pf-three --relation rel-a --successor-file "$T/rel-next.json" --json
+same public-followup supersede-work pf-three --relation rel-a --successor-file "$T/rel-next.json" --json
+same public-followup supersede-work pf-three --relation rel-a --successor-file "$T/rel-far.json"
+same public-followup supersede-work pf-three --relation rel-next --successor-file "$T/rel-next.json"
+same public-followup supersede-work pf-three --relation rel-gone --successor-file "$T/rel-next.json"
+same public-followup supersede-work pf-three --successor-file "$T/rel-next.json"
+same public-followup list --work-ref main/jg-next --json
+# Native shape: one tracks edge that never blocks the work it names.
+[ "$(BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" list --all --limit 0 --json | jq '[.[] | select(.id == "pf-two") | .dependencies[]? | select(.type == "tracks")] | length')" = 1 ] || fail "one tracks edge from the promise to its work"
+assert_contains "$(ask bd ready)" "jg-work" "bound work must stay ready"
 # Writers of one id race to one row with one delivery key.
-for n in 1 2 3 4; do promise 'ask bd' pf-race req --json > "$T/race.$n" 2>&1 & done; wait
+for n in 1 2 3 4; do promise 'ask bd' pf-race req --json > "$T/race.$n" 2>/dev/null & done; wait
 [ "$(ask bd public-followup list --json | jq '[.public_followups[] | select(.id == "pf-race")] | length')" = 1 ] || fail "one promise from four writers"
 [ "$(jq -r '.task.public_followup.delivery.delivery_key' "$T"/race.* | sort -u | wc -l)" = 1 ] || fail "one delivery key from four writers"
+[ "$(jq -s 'map(select(.ok)) | length' "$T"/race.*)" = 4 ] || fail "each of four writers gets an answer, not a refusal"
+# Writers of one promise each keep their relation, so a lost update cannot drop bound work.
+for n in 1 2 3 4; do relation "rel-race$n" "jg-race$n"; ask bd public-followup bind-work pf-race --relation-file "$T/rel-race$n.json" >/dev/null 2>&1 & done; wait
+[ "$(ask bd public-followup list --work-ref main/jg-race1 --json | jq '[.public_followups[].public_followup.work_relations[]] | length')" = 4 ] || fail "four writers must bind four relations"
 pass "a public follow-up keeps one contract on both backlogs"
