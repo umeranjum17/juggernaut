@@ -14,6 +14,9 @@
 # has exactly one parser and cannot drift out of sync (the body-orphaning class
 # of bug fixed in PR #401 was exactly that drift).
 #
+# When either home keeps a Beads store, bd export and bd import move the rows and
+# a rerun settles a crash; a remote handoff still refuses on a store home.
+#
 # What this script still owns (never delegated):
 #   - resolving the squad_lead home from data/squad_leads.md;
 #   - proving the destination is a genuine seeded squad_lead home
@@ -50,6 +53,10 @@
 # `--backend markdown`, so a `.tasks.toml` in the caller's working directory
 # cannot redirect the move to another backend.
 # See AGENTS.md project management and task lifecycle.
+# A home with a Beads store has no backlog file, so its rows are classified on a
+# rendered copy and move through the file format: the target files them first,
+# and only then does the source let them go. A failure between the two leaves the
+# prepared wake in place, and rerunning the same handoff finishes the release.
 # Remote routes use an outbox handoff: one atomic local tasks-axi mv removes the
 # selected set from the dispatchable backlog into data/handoff/<id>.outbox.md,
 # then an idempotent confined transfer and jg-backlog-receive.sh deliver it.
@@ -108,6 +115,10 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 REG="$DATA/squad_leads.md"
 MAIN_BACKLOG="$DATA/backlog.md"
+CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
+MOVE_DIR=
+MAIN_STORE=0
+SUB_STORE=0
 # shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh
@@ -134,7 +145,7 @@ release_remote_locks() {
     ACTIVE_REGISTRY_LOCK=
   fi
 }
-trap release_remote_locks EXIT
+trap 'release_remote_locks; [ -z "$MOVE_DIR" ] || rm -rf -- "$MOVE_DIR"' EXIT
 trap 'exit 1' HUP INT TERM
 
 sha256_file() {
@@ -343,6 +354,66 @@ backlog_key_noncanonical_body_lines() {
 seed_backlog_scaffold() { # <path>
   mkdir -p "$(dirname "$1")"
   [ -f "$1" ] || printf '## In flight\n\n## Queued\n\n## Done\n' >"$1"
+}
+
+render_store() { # <config> <name>: renders that home's store to MOVE_DIR/<name>.md
+  [ -n "$MOVE_DIR" ] || MOVE_DIR=$(mktemp -d) || return 1
+  jg_backlog_beads_read "$1" markdown >"$MOVE_DIR/$2.md"
+}
+
+read_main_store() {
+  jg_backlog_backend_beads "$CONFIG" || return 0
+  MAIN_STORE=1
+  render_store "$CONFIG" main || return 1
+  MAIN_BACKLOG=$MOVE_DIR/main.md
+}
+
+# Exit 3 says the target may hold rows the source still holds, so the wake stays prepared.
+cross_store_move() { # <keys...>
+  local rows="$MOVE_DIR/rows.md" key rc=0
+  local -a fresh=()
+  if [ "$MAIN_STORE$SUB_STORE" = 11 ]; then
+    rows="$MOVE_DIR/rows.jsonl"
+    jg_backlog_beads_write "$CONFIG" stage --native "$@" >"$rows" || {
+      cat -- "$rows"
+      return 1
+    }
+  elif [ "$MAIN_STORE" = 1 ]; then
+    jg_backlog_beads_write "$CONFIG" stage "$@" >"$rows" || {
+      cat -- "$rows"
+      return 1
+    }
+  else
+    cp -- "$MAIN_BACKLOG" "$MOVE_DIR/from.md" || return 1
+    seed_backlog_scaffold "$rows"
+    tasks-axi mv "$@" --file "$MOVE_DIR/from.md" --to "$rows" --backend markdown || return 1
+  fi
+  if [ "$SUB_STORE" = 1 ]; then
+    jg_backlog_beads_write "$SUB_HOME/config" take "$rows" "$@" || rc=$?
+    [ "$rc" -ne 2 ] || return 1
+    [ "$rc" -eq 0 ] || return 3
+  else
+    for key in "$@"; do
+      backlog_key_section "$SUB_BACKLOG" "$key" >/dev/null 2>&1 || fresh+=("$key")
+    done
+    if [ "${#fresh[@]}" -gt 0 ]; then
+      tasks-axi mv "${fresh[@]}" --file "$rows" --to "$SUB_BACKLOG" --backend markdown || return 1
+    fi
+  fi
+  if [ "$MAIN_STORE" = 1 ]; then
+    jg_backlog_beads_write "$CONFIG" drop "$@" || return 3
+  else
+    seed_backlog_scaffold "$MOVE_DIR/gone.md"
+    tasks-axi mv "$@" --file "$MAIN_BACKLOG" --to "$MOVE_DIR/gone.md" --backend markdown || return 3
+  fi
+}
+
+move_rows() { # <keys...>
+  if [ "$MAIN_STORE$SUB_STORE" = 00 ]; then
+    tasks-axi mv "$@" --file "$MAIN_BACKLOG" --to "$SUB_BACKLOG" --backend markdown
+  else
+    cross_store_move "$@"
+  fi
 }
 
 # A public commitment made through the relay binds its work by home AND id, so an
@@ -770,6 +841,7 @@ remote_handoff() { # <squad-lead-id> <keys...>
   shift
   requested=("$@")
   outbox="$DATA/handoff/$id.outbox.md"
+  jg_backlog_refuse_beads_move "$CONFIG" 'this home' || return 1
   validate_backlog_file "main backlog" "$MAIN_BACKLOG" || return 1
   validate_backlog_file "remote handoff outbox" "$outbox" || return 1
   if [ ! -e "$outbox" ] && [ ! -L "$outbox" ]; then
@@ -934,8 +1006,6 @@ if [ "$RESUME_PENDING" -eq 1 ]; then
   exit "$FAILED"
 fi
 
-jg_backlog_refuse_beads_move "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" 'this home' || exit 1
-
 ACTIVE_REGISTRY_LOCK=$(squad_lead_registry_lock_path "$STATE")
 jg_lock_acquire_wait "$ACTIVE_REGISTRY_LOCK"
 REMOTE=$(squad_lead_registry_field "$REG" "$ID" remote 2>/dev/null || true)
@@ -957,8 +1027,15 @@ RAW_HOME=$(squad_lead_home "$ID") || exit 1
   exit 1
 }
 SUB_HOME=$(validate_squad_lead_home "$ID" "$RAW_HOME") || exit 1
-jg_backlog_refuse_beads_move "$SUB_HOME/config" "squad_lead $ID" || exit 1
 SUB_BACKLOG="$SUB_HOME/data/backlog.md"
+SUB_SHOWN=$SUB_BACKLOG
+read_main_store || exit 1
+if jg_backlog_backend_beads "$SUB_HOME/config"; then
+  SUB_STORE=1
+  render_store "$SUB_HOME/config" sub || exit 1
+  SUB_BACKLOG=$MOVE_DIR/sub.md
+  SUB_SHOWN="the Beads store of squad_lead $ID"
+fi
 validate_backlog_file "main backlog" "$MAIN_BACKLOG" || exit 1
 validate_backlog_file "squad_lead backlog" "$SUB_BACKLOG" || exit 1
 
@@ -1012,6 +1089,18 @@ REQUESTED_BATCH=$(receiver_wake_batch_id "$@") || {
   exit 1
 }
 
+# This batch's prepared wake proves a row on both sides is a move cut short, so it
+# rejoins the set and the source lets it go; the writes that repeat change nothing.
+if [ "$MAIN_STORE$SUB_STORE" != 00 ]; then
+  case "$(cat "$STATE/.backlog-handoff-$ID.wake-pending" 2>/dev/null || true)" in
+  prepared:*:"$REQUESTED_BATCH")
+    for key in "${ALREADY[@]+"${ALREADY[@]}"}"; do
+      if [ "$(backlog_key_section "$MAIN_BACKLOG" "$key" 2>/dev/null)" = '## Queued' ]; then TO_MOVE+=("$key"); fi
+    done
+    ;;
+  esac
+fi
+
 if [ "${#TO_MOVE[@]}" -eq 0 ]; then
   WAKE_PENDING_MARKER="$STATE/.backlog-handoff-$ID.wake-pending"
   case "$(cat "$WAKE_PENDING_MARKER" 2>/dev/null || true)" in
@@ -1021,7 +1110,7 @@ if [ "${#TO_MOVE[@]}" -eq 0 ]; then
     exit 1
     ;;
   esac
-  echo "nothing to move: ${ALREADY[*]:-no keys} already present in $SUB_BACKLOG"
+  echo "nothing to move: ${ALREADY[*]:-no keys} already present in $SUB_SHOWN"
   wake_pending_squad_lead_receiver "$ID" || exit 1
   exit 0
 fi
@@ -1039,7 +1128,7 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-if ! jg_tasks_axi_compatible; then
+if [ "$MAIN_STORE$SUB_STORE" != 11 ] && ! jg_tasks_axi_compatible; then
   echo "error: a compatible tasks-axi with atomic multi-ID mv support is required to move backlog items; run bin/jg-bootstrap.sh for the required version" >&2
   exit 1
 fi
@@ -1081,7 +1170,14 @@ fi
 # together and, on any failure, neither backlog's content changes - the only
 # cleanup is a scaffold we just created. tasks-axi writes both its success and
 # error output to stdout, so capture it and surface it only on failure.
-if ! MV_OUT=$(tasks-axi mv "${TO_MOVE[@]}" --file "$MAIN_BACKLOG" --to "$SUB_BACKLOG" --backend markdown 2>&1); then
+MV_RC=0
+MV_OUT=$(move_rows "${TO_MOVE[@]}" 2>&1) || MV_RC=$?
+if [ "$MV_RC" -eq 3 ] && [ "$MAIN_STORE$SUB_STORE" != 00 ]; then
+  [ -z "$MV_OUT" ] || printf '%s\n' "$MV_OUT" >&2
+  echo "error: the move to $ID stopped partway; rerun this same handoff to finish it" >&2
+  exit 1
+fi
+if [ "$MV_RC" -ne 0 ]; then
   if [ "$SUB_CREATED" -eq 1 ]; then
     rm -f "$SUB_BACKLOG"
   fi
@@ -1097,7 +1193,7 @@ if ! MV_OUT=$(tasks-axi mv "${TO_MOVE[@]}" --file "$MAIN_BACKLOG" --to "$SUB_BAC
 fi
 
 echo "handed off ${#TO_MOVE[@]} item(s) to $ID: ${TO_MOVE[*]}"
-echo "  into $SUB_BACKLOG"
+echo "  into $SUB_SHOWN"
 receiver_wake_promote_prepared "$ID" "$REQUESTED_BATCH" || {
   echo "error: handed off work to squad_lead $ID, but durable receiver wake state could not be recorded" >&2
   exit 1

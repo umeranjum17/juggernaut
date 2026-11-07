@@ -19,7 +19,7 @@
 # `dolt` runs in the store's database folder and refuses a query naming a dolt_push, pull, fetch,
 # clone, remote or backup procedure.
 # Every other verb is a bd call from the store's parent, so a relative path means that folder.
-# bd verbs served: show list ready count search blocked create update close reopen dep label
+# bd verbs served: show list ready count search blocked create update close delete reopen dep label
 # comment comments note, plus what a migration needs: `import <file>`, `export -o <name>` with a
 # plain name, so the file lands beside the store, and `config set` for status.custom and
 # allowed_prefixes only. Any other is refused, so a verb that can reach a server, a remote or a
@@ -211,7 +211,7 @@ run_dolt() {  # version | sql -q <query>
 run_bd() {  # <verb> [args...]
   local arg
   case "${1-}" in
-    show|list|ready|count|search|blocked|create|update|close|reopen|dep|label|comment|comments|note) ;;
+    show|list|ready|count|search|blocked|create|update|close|delete|reopen|dep|label|comment|comments|note) ;;
     import) [ "$#" -eq 2 ] && [ "${2#-}" = "$2" ] || die "usage: jg-beads.sh import <file>" ;;
     export)
       [ "$#" -eq 3 ] && [ "$2" = -o ] || die "usage: jg-beads.sh export -o <name>"

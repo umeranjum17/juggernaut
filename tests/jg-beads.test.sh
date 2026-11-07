@@ -158,33 +158,83 @@ owner_rule() {  # <home> <id>: the owner rule's verdict on that row, and its exi
   reader "$1" env JG_GUARD_HOST_BIN="${GUARD:-}" OPA="${OPA:-}" bash -c '. "$1/core/owner-rules/bin/jg-owner-rules-lib.sh"; jg_owner_rules_check "$2/data" "$3" direct-PR ship' _ "$ROOT" "$1" "$2" || rc=$?
   printf 'rc=%s\n' "$rc"
 }
-moves() {  # A handoff has no file to move a row through on a store, so either side refuses and nothing moves.
-  local want='keeps its backlog in a Beads store' before out rc=0
+moves() {  # A remote handoff and a receipt still move rows through a file, so a store refuses them and nothing moves.
+  local want='keeps its backlog in a Beads store' out rc=0
+  printf -- '- design - work (host: far; root: /r; home: /r/design; scope: work; projects: acme; added 2026-07-09)\n' > "$T/bd/data/squad_leads.md"
   out=$(reader "$T/bd" "$ROOT/bin/jg-backlog-handoff.sh" design jg-one-a) || rc=$?
-  expect_code 1 "$rc" "a handoff from a store"
-  assert_contains "$out" "this home $want" "a handoff from a store must say why"
-  mkdir -p "$T/mv/data" "$T/mv/state" "$T/mv/config" "$T/sub/data" "$T/sub/bin" "$T/sub/config"
-  printf 'design\n' > "$T/sub/.jg-squad-lead-home"
-  : > "$T/sub/AGENTS.md"
-  cp "$T/bd/config/"* "$T/sub/config/"
-  printf -- '- design - work (home: %s; scope: work; projects: acme; added 2026-07-09)\n' "$T/sub" > "$T/mv/data/squad_leads.md"
-  printf '## In flight\n\n## Queued\n\n- [ ] jg-one-a - One (repo: acme)\n\n## Done\n' > "$T/mv/data/backlog.md"
-  before=$(cat "$T/mv/data/backlog.md")
-  rc=0
-  out=$(reader "$T/mv" "$ROOT/bin/jg-backlog-handoff.sh" design jg-one-a) || rc=$?
-  expect_code 1 "$rc" "a handoff to a store"
-  assert_contains "$out" "squad_lead design $want" "a handoff to a store must say why"
-  assert_equals "$(cat "$T/mv/data/backlog.md")" "$before" "a refused handoff must leave the row where it was"
-  [ ! -e "$T/sub/data/backlog.md" ] || fail "a refused handoff must file no row a store cannot see"
+  expect_code 1 "$rc" "a remote handoff from a store"
+  assert_contains "$out" "this home $want" "a remote handoff from a store must say why"
+  rm -f "$T/bd/data/squad_leads.md"; rc=0
   mkdir -p "$T/bd/state/handoff"
-  cp "$T/mv/data/backlog.md" "$T/bd/state/handoff/design.outbox.md"
-  rc=0
+  printf '## In flight\n\n## Queued\n\n- [ ] jg-one-a - One (repo: acme)\n\n## Done\n' > "$T/bd/state/handoff/design.outbox.md"
   out=$(reader "$T/bd" "$ROOT/bin/jg-backlog-receive.sh" state/handoff/design.outbox.md 1 "$(printf 'a%.0s' {1..64})" 1) || rc=$?
   expect_code 1 "$rc" "a receipt on a store"
   assert_contains "$out" "this home $want" "a receipt on a store must say why"
   [ -f "$T/bd/state/handoff/design.outbox.md" ] || fail "a refused receipt must keep the delivered rows for retry"
   [ ! -e "$T/bd/data/backlog.md" ] || fail "a refused receipt must file no row a store cannot see"
   rm -f "$T/bd/state/handoff/design.outbox.md"
+}
+crossings() {  # One row set walks store to store, store to file and file to store, and arrives whole each time.
+  local h next=xb before out rc=0 tool="$PATH"
+  for h in xa xb xf; do
+    mkdir -p "$T/$h/data" "$T/$h/state" "$T/$h/config" "$T/$h/bin" "$T/$h/s"
+    printf 'design\n' > "$T/$h/.jg-squad-lead-home"
+    : > "$T/$h/AGENTS.md"
+    printf -- '- design - work (home: %s; scope: work; projects: acme; added 2026-07-09)\n' "$T/$next" > "$T/$h/data/squad_leads.md"
+    next=$([ "$h" = xa ] && echo xf || echo xa)
+    [ "$h" != xf ] || continue
+    printf 'beads\n' > "$T/$h/config/backlog-backend"
+    printf '%s\n' "$T/$h/s/.beads" > "$T/$h/config/beads-dir"
+    BEADS_DIR=$T/$h/s/.beads "${jail[@]}" "$WRAPPER" init --prefix jg >/dev/null 2>&1 || fail "a store for $h"
+  done
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$T/xf/data/backlog.md"
+  card() { reader "$1" env PATH="$tool" "$CLI" show "$2" --full | grep -E '^  (title|state|blocked_by|held|hold_reason|hold_kind|hold_until|kind|repo|priority|deps|links|body):' | tr -d '"'; }
+  walk() {  # <home> <path> <key>...: the receiver has no live endpoint here, so that last line is the one expected stop.
+    local home=$1 path=$2 out
+    shift 2
+    out=$(reader "$home" env PATH="$path" "$ROOT/bin/jg-backlog-handoff.sh" design "$@") || true
+    printf '%s\n' "$out"
+  }
+  file() { reader "$T/xa" "$CLI" add "$@" >/dev/null || fail "file $1"; }
+  file jg-mv-base "[feature] Base row" --repo acme --kind ship --priority 1 --body $'line one\nline two'
+  file jg-mv-tail "[feature] Tail row" --repo acme --priority 2 --body why --blocked-by jg-mv-base
+  reader "$T/xa" "$CLI" hold jg-mv-tail --reason "owner call" --kind captain --until 2030-01-02 >/dev/null || fail "hold the tail"
+  file jg-mv-stay "[feature] Stay row" --priority 2 --body why
+  file jg-mv-dep "[feature] Dep row" --priority 2 --body why --blocked-by jg-mv-stay
+  file jg-mv-far "[feature] Far row" --priority 2 --body why
+  BEADS_DIR=$T/xa/s/.beads "${jail[@]}" "$WRAPPER" update jg-mv-far --status deferred --defer 2030-01-02 >/dev/null || fail "defer a row"
+  BEADS_DIR=$T/xa/s/.beads "${jail[@]}" "$WRAPPER" dep add jg-mv-far jg-mv-base --type related >/dev/null || fail "relate two rows"
+  before=$(card "$T/xa" jg-mv-base; card "$T/xa" jg-mv-tail)
+  out=$(walk "$T/xa" "$tool" jg-mv-stay)
+  assert_contains "$out" "still blocking active tasks" "a stranded dependent must be named"
+  reader "$T/xa" "$CLI" show jg-mv-stay >/dev/null || fail "a refused move must keep the row"
+  walk "$T/xa" /usr/bin:/bin jg-mv-base jg-mv-tail jg-mv-far >/dev/null  # Store to store needs no tasks-axi.
+  out=$(BEADS_DIR=$T/xb/s/.beads "${jail[@]}" "$WRAPPER" show jg-mv-far --json)
+  assert_contains "$out" '"status": "deferred"' "a deferred row must stay deferred"
+  assert_contains "$out" '"dependency_type": "related"' "a related edge must move with both its rows"
+  assert_equals "$(card "$T/xb" jg-mv-base; card "$T/xb" jg-mv-tail)" "$before" "store to store must keep every field"
+  assert_contains "$(reader "$T/xa" "$CLI" list)" jg-mv-stay "the rows left behind must stay"
+  assert_not_contains "$(reader "$T/xa" "$CLI" list)" jg-mv-base "a moved row must leave the source"
+  walk "$T/xb" "$tool" jg-mv-base jg-mv-tail >/dev/null
+  assert_equals "$(card "$T/xf" jg-mv-base; card "$T/xf" jg-mv-tail)" "$before" "store to file must keep every field"
+  mkdir -p "$T/shim"
+  printf '#!/usr/bin/env bash\ncase "$*" in *gone.md*) exit 1 ;; esac\nexec %q "$@"\n' "$(command -v tasks-axi)" > "$T/shim/tasks-axi"
+  chmod +x "$T/shim/tasks-axi"
+  out=$(walk "$T/xf" "$T/shim:$tool" jg-mv-base jg-mv-tail)
+  assert_contains "$out" "rerun this same handoff" "a crash must say how to finish"
+  assert_contains "$(cat "$T/xf/state/.backlog-handoff-design.wake-pending")" "prepared:" "a crash must keep the prepared wake"
+  walk "$T/xf" "$tool" jg-mv-base jg-mv-tail >/dev/null
+  assert_equals "$(card "$T/xa" jg-mv-base; card "$T/xa" jg-mv-tail)" "$before" "file to store must keep every field"
+  assert_not_contains "$(cat "$T/xf/data/backlog.md")" jg-mv "a rerun must release the rows"
+  mkdir -p "$T/xa/data/route"
+  printf '# Route\n\n## Plan\n- [feature] Routed row\n## Actions\n- **Approve** (recommended): build starts. Owner: design. First PR due: 2026-02-01.\n- **Refine**: your note goes to design and a new version of this report appears with a diff.\n' > "$T/xa/data/route/report.md"
+  printf -- '- **Reject**: pick a reason and add a note. This report closes, no build starts, and the reason is saved as an owner rule.\nIf you do nothing: nothing starts and this report stays open.\n' >> "$T/xa/data/route/report.md"
+  rm -f "$T/xa/state/.backlog-handoff-design.wake-pending"  # The lead took the earlier rows.
+  out=$(reader "$T/xa" "$ROOT/core/report-actions/bin/jg-report-actions.py" approve "$T/xa/data/route/report.md") || true
+  assert_contains "$out" "the destination backlog is durable" "the approval must name the one expected stop"
+  out=$(reader "$T/xb" "$CLI" list)
+  assert_contains "$out" "Routed row" "an approved report must reach the lead through the move"
+  printf 'ok - a handoff moved rows whole across every mix of store and file\n'
 }
 asks() {  # These rows land on the store alone, so this runs after everything that compares the two.
   local note chat
@@ -909,6 +959,7 @@ else
     TMPDIR=$T holds
     TMPDIR=$T journey
     TMPDIR=$T gates
+    TMPDIR=$T crossings
     TMPDIR=$T transitions  # After the holds: its races move rows on the Beads store alone.
     TMPDIR=$T spawned
     TMPDIR=$T asks
