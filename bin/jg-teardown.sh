@@ -527,7 +527,7 @@ if [ ! -e "$META" ] && [ ! -L "$META" ] && [ ! -e "$STATE/$ID.backlog-close" ]; 
     echo "error: teardown refused: $JG_BACKLOG_TRANSITION_ERROR" >&2
     exit 1
   }
-  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID.probe-at" "$STATE/$ID.account-probe-at"
+  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID".run-receipt.????????????????????????????????????????.json "$STATE/$ID.probe-at" "$STATE/$ID.account-probe-at"
   echo "task $ID is already cleaned up: its task record $META does not exist; nothing to tear down"
   exit 0
 fi

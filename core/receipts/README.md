@@ -79,3 +79,5 @@ refactor.
    against the fork libraries.
 4. Run the repo CI gate (shellcheck plus syntax check over every feature
    script) on the PR head.
+
+A task holds one receipt slot, `state/<id>.run-receipt.json`. The publisher also keeps the newest receipt for each head it published as `state/<id>.run-receipt.<head>.json`. `jg_dod_receipt_accept` and `merge-on-green.sh` call `bin/jg-receipt-restore.sh` to put the receipt for the head being merged back into the slot, so a lane with several pull requests needs no hand republish before each one. Acceptance still judges the restored receipt by its own rules.
