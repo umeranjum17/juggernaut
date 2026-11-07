@@ -63,6 +63,27 @@ case "${1:-}" in
 esac
 SH
   chmod +x "$d/fakebin/systemctl"
+  # The session lock walks ps for a harness-shaped ancestor, and no CI host has
+  # one, so every queried pid reads as a live claude session; ppid stays real.
+  cat > "$d/fakebin/ps" <<'PS_STUB'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *comm=*) printf '/usr/local/bin/claude\n'; exit 0 ;;
+  *args=*) printf 'claude\n'; exit 0 ;;
+  *ppid=*)
+    pid=
+    previous=
+    for argument in "$@"; do
+      [ "$previous" = -p ] && pid=$argument
+      previous=$argument
+    done
+    exec /bin/ps -o ppid= -p "$pid"
+    ;;
+esac
+exit 1
+PS_STUB
+  chmod +x "$d/fakebin/ps"
   cat > "$d/stand-in/jg-bus" <<'SH'
 #!/usr/bin/env bash
 printf '[Service]\nEnvironment="JG_HOME=%s"\nExecStart=%s\n' "$JG_HOME" "$*"
