@@ -4,6 +4,9 @@
 # Usage:
 #   jg-tool-models.sh resolve <tool>   print "<harness> [<model> [<effort>]]" for the tool's
 #                                      entry, or print nothing when the tool's own default stands
+#   jg-tool-models.sh model <tool> <harness> [<provider>/]
+#                                      print only the entry's model, when the entry names that harness,
+#                                      with the optional "<provider>/" prefix removed; else print nothing
 #   jg-tool-models.sh check            validate config/tool-models.json; one line per problem
 #
 # config/tool-models.json is the crew-dispatch shape (docs/configuration.md "Tool
@@ -79,11 +82,31 @@ jg_tool_models_resolve() {
   [ "$tried" = 0 ] || echo "TOOL_MODELS: no profile for $tool is allowed; $tool keeps its default" >&2
 }
 
+# jg_tool_models_model <tool> <harness> [<provider>/]: the model of the tool's entry when the entry
+# names <harness> and a model, with the prefix removed. Anything else prints one TOOL_MODELS line and
+# nothing, so the caller keeps its default. For sites that cannot run every harness (a fixed command,
+# or a model on a cloud service), so a mismatched entry never changes what the site does.
+jg_tool_models_model() {
+  local tool=$1 want=$2 prefix=${3-} tm harness model
+  tm=$(jg_tool_models_resolve "$tool") || return 0
+  [ -n "$tm" ] || return 0
+  read -r harness model _ <<<"$tm"
+  case "${model:-default}" in
+    default|*[!A-Za-z0-9._:/@-]*) harness='' ;;
+  esac
+  if [ "$harness" != "$want" ]; then
+    echo "TOOL_MODELS: $tool needs harness $want and a model; $tool keeps its default" >&2
+    return 0
+  fi
+  printf '%s\n' "${model#"$prefix"}"
+}
+
 [ "${BASH_SOURCE[0]}" -ef "$0" ] || return 0
 set -u
 JG_HOME="${JG_HOME:-$(cd "$_jg_tm_dir/.." && pwd)}"
 case "${1:-}" in
   resolve) [ "$#" -eq 2 ] || { echo "usage: jg-tool-models.sh resolve <tool>" >&2; exit 2; }; jg_tool_models_resolve "$2" ;;
+  model) [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { echo "usage: jg-tool-models.sh model <tool> <harness> [<provider>/]" >&2; exit 2; }; jg_tool_models_model "$2" "$3" "${4-}" ;;
   check)
     f=$(jg_tool_models_file)
     [ -f "$f" ] || { echo "no $f: every tool keeps its default"; exit 0; }
@@ -91,5 +114,5 @@ case "${1:-}" in
     [ -z "$err" ] || { echo "TOOL_MODELS: $f is not used - $err" >&2; exit 1; }
     jq -r '.rules[] | "\(.tool)\t\(.when)"' "$f"
     ;;
-  *) echo "usage: jg-tool-models.sh resolve <tool> | check" >&2; exit 2 ;;
+  *) echo "usage: jg-tool-models.sh resolve <tool> | model <tool> <harness> [<provider>/] | check" >&2; exit 2 ;;
 esac
