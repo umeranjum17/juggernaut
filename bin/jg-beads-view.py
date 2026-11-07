@@ -8,7 +8,7 @@ bin/jg-beads-write.py imports it, so a write answers in the same shape.
 The links verb is not a tasks-axi read: it prints the ids linked to one row, for bin/jg-captain-hold.sh's blocking gate.
 bd stamps UTC and tasks-axi the local day, so created and closed read as the local day.
 A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while it has an assignee; a hold stops holding on its defer_until date, and its fields stay readable on a closed row;
-kind is metadata.kind, else issue_type;
+kind is metadata.kind, else captain for issue_type decision, else issue_type;
 parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
 show takes a row's id or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
@@ -23,6 +23,7 @@ import sys
 
 STATE = {"in_progress": "in_flight", "closed": "done"}
 HELD = {"on_hold", "blocked", "deferred"}
+CORE = {"decision": "captain"}
 ROW = ["id", "state", "kind", "repo", "title"]
 SHOW = ["id", "title", "state", "blocked", "blocked_by", "held", "hold_reason", "hold_kind", "hold_until",
         "kind", "repo", "priority", "created", "closed", "deps", "links", "body"]
@@ -117,7 +118,7 @@ def task(row, rows):
         "id": row["id"], "title": row.get("title", ""), "state": "in_flight" if flying(row) else STATE.get(row.get("status"), "queued"),
         "blocked": "yes" if waiting else "no", "blocked_by": ",".join(waiting) or "none",
         "held": "yes" if held else "no", "hold_reason": meta.get("hold_reason", "-"),
-        "hold_kind": meta.get("hold_kind", "-"), "hold_until": until, "kind": meta.get("kind") or row.get("issue_type", "task"),
+        "hold_kind": meta.get("hold_kind", "-"), "hold_until": until, "kind": meta.get("kind") or CORE.get(row.get("issue_type"), row.get("issue_type", "task")),
         "repo": repos[0] if repos else "-", "priority": row.get("priority", "-"),
         "created": "-" if closed else day(row.get("created_at")), "closed": day(row.get("closed_at")),
         "deps": ",".join("blocked-by:" + d for d in deps) or "none",

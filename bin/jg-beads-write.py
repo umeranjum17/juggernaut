@@ -6,12 +6,12 @@ Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|bl
 
 bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-axi.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi's lines on stdout.
-kind is metadata.kind, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
+kind captain is bd's decision type and shows to callers as captain, any other kind is metadata.kind, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
 and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as tasks-axi writes it.
 A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; --until is defer_until at UTC
 midnight, because bd reads a bare date in local time; a held row keeps its assignee, and that owner is what keeps it in flight.
 --archive-body needs nothing further: the store's own history keeps the replaced body.
-A rerun converges: an existing id, blocker, link or note is left alone. bd refuses an id with no dash and a dependency
+--mint leaves the id to bd, which names it under the store's prefix. A rerun converges: an existing id, blocker, link or note is left alone. bd refuses an id with no dash and a dependency
 cycle, and that refusal reaches stderr with bd's exit status.
 start, reopen and done move status only from the status they expect, so a row that moved first exits 13 and changes
 nothing, with one refusal line on stdout. A held row keeps its status on reopen. start takes only an open row: one
@@ -29,7 +29,6 @@ A backlog file's rows carry what its format holds, and the since date stays behi
 one bd call, and leaves any row that moved out of the queue.
 """
 import datetime
-import hashlib
 import json
 import os
 import re
@@ -47,6 +46,7 @@ PR_ERROR = ("--pr must be a canonical pull request URL: https://github.com/<owne
             "or https://<host>/<owner>/<repo>/pulls/<n> (Forgejo)")
 FIELDS = ("--kind", "--repo", "--body", "--body-file", "--pr", "--report", "--priority")
 STALE = 13
+CAPTAIN = "captain"
 HOLD_KINDS = ("captain", "external", "load", "parked", "future")
 HOLD_FIELDS = ("hold_reason", "hold_kind")
 
@@ -172,14 +172,9 @@ def respond(found, action, ident, line, tips, card=True, **extra):
         print("  - " + tip)
 
 
-def minted(title, prefix, items):
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:48].rstrip("-") or "task"
-    stem = prefix + "-" + slug if prefix else slug
-    for salt in range(256):
-        ident = "%s-%s" % (stem, hashlib.sha256(("%s:%d" % (title, salt)).encode()).hexdigest()[:2])
-        if ident not in items:
-            return ident
-    return view.refuse("no free id for this title")
+def tips_for(ident):
+    return ["Run `tasks-axi start %s` to move it to in flight" % ident,
+            "Run `tasks-axi block %s --by <other>` to record a dependency" % ident]
 
 
 def add(args):
@@ -187,6 +182,9 @@ def add(args):
     if "--mint" in found:
         if len(words) != 1 or not words[0]:
             view.refuse("--mint requires a title", 'Run `tasks-axi add "<title>" --mint`')
+        if "--prefix" in found:
+            view.refuse("--prefix cannot go with --mint: bd names a minted id under the store's own prefix",
+                        'Run `tasks-axi add <prefix>-<name> "<title>"` to choose the id')
     elif not 1 <= len(words) <= 2:
         view.refuse("Expected 1-2 positional arguments, got %d" % len(words), 'usage: tasks-axi add <id> "<title>" [flags]')
     elif len(words) == 1:
@@ -194,30 +192,30 @@ def add(args):
     body = checked(found)
     items = rows()
     title = words[-1]
-    ident = minted(title, found.get("--prefix"), items) if "--mint" in found else words[0]
-    tips = ["Run `tasks-axi start %s` to move it to in flight" % ident,
-            "Run `tasks-axi block %s --by <other>` to record a dependency" % ident]
-    known = view.named(items.values(), ident)
+    ident = None if "--mint" in found else words[0]
+    known = ident and view.named(items.values(), ident)
     if known:
         state = LABEL[view.task(known, items)["state"]]
-        respond(found, "add", ident, "add %s already exists -> %s" % (ident, state), tips, already=True)
+        respond(found, "add", ident, "add %s already exists -> %s" % (ident, state), tips_for(ident), already=True)
         return
     blockers = [blocker(items, other) for other in found.get("--blocked-by+", [])]
-    meta = {"kind": found["--kind"]} if "--kind" in found else {}
+    meta = {"kind": found["--kind"]} if found.get("--kind", CAPTAIN) != CAPTAIN else {}
     if "--report" in found:
         meta["reports"] = found["--report"]
-    cmd = ["create", "--title=" + " ".join(filter(None, [title, found.get("--pr"), found.get("--report")])),
-           "--id", ident, "--force"]
+    cmd = ["create", "--title=" + " ".join(filter(None, [title, found.get("--pr"), found.get("--report")]))]
+    cmd += ["--json"] if ident is None else ["--id", ident, "--force"]
+    cmd += ["--type", "decision"] if found.get("--kind") == CAPTAIN else []
     for flag, value in (("-p", found.get("--priority")), ("--external-ref", found.get("--pr")),
                         ("--deps", ",".join(blockers)), ("--metadata", meta and json.dumps(meta))):
         cmd += [flag, value] if value else []
     cmd += ["--description=" + body] if body else []
     cmd += ["-l", "project:" + found["--repo"]] if "--repo" in found else []
     cmd += ["-l", found["--label"]] if "--label" in found else []
-    bd(*cmd)
+    made = bd(*cmd)
+    ident = ident or json.loads(made)["id"]
     named = [found[f] if f == "--kind" else "repo " + found[f] for f in ("--kind", "--repo") if f in found]
     line = "added %s%s -> Queued" % (ident, " (%s)" % ", ".join(named) if named else "")
-    respond(found, "add", ident, line, tips)
+    respond(found, "add", ident, line, tips_for(ident))
 
 
 def update(args):
@@ -249,7 +247,9 @@ def update(args):
         cmd += ["--add-label", "project:" + found["--repo"]]
         changed.append("repo")
     if found.get("--kind", item["kind"]) != item["kind"]:
-        cmd += ["--set-metadata", "kind=" + found["--kind"]]
+        # Captain is bd's decision type; any other kind is metadata on a task. A row from before keeps kind in metadata.
+        cmd += ["--type", "decision", "--unset-metadata", "kind"] if found["--kind"] == CAPTAIN else \
+            ["--set-metadata", "kind=" + found["--kind"]] + (["--type", "task"] if row.get("issue_type") == "decision" else [])
         changed.append("kind")
     if found.get("--priority", str(item["priority"])) != str(item["priority"]):
         cmd += ["-p", found["--priority"]]
