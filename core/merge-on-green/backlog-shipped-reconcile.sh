@@ -4,8 +4,8 @@
 #
 # A ship whose PR merged leaves its row In flight when teardown never ran (the worker was killed, the pane
 # died, nobody tore the task down), so the board showed 49 items in progress while few ran. For every task
-# record <home>/state/<id>.meta that names a PR (pr=), this closes the backlog row with `tasks-axi done --pr`
-# when ALL of these hold:
+# record <home>/state/<id>.meta that names a PR (pr=), this closes the backlog row with `done --pr` through
+# the home's backlog provider (tasks-axi, or the Beads store) when ALL of these hold:
 #   - shipped evidence: the home's merge poll recorded the PR as merged (state/<id>.pr-poll-merge-notified
 #     naming that PR), or the PR number is listed as prs= on a line of <home>/data/releases (it shipped), and
 #   - the row reads exactly "in flight, not held, not blocked" (a held row is the captain's to move, and a

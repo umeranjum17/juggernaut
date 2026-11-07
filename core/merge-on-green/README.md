@@ -111,7 +111,7 @@ The lead then hears about the PR from this check's `done: merged` line or its `N
 
 A ship whose PR merged leaves its backlog row In flight when teardown never ran.
 `backlog-shipped-reconcile.sh check <jg-home>` runs at the end of every `merge-on-green.sh check` (after the red-CI ticket), so no model turn is spent.
-For each worker record with a `pr=` it moves the row to Done through `tasks-axi done --pr` when the PR is shipped, the row reads In flight and not held, and no worker is live.
+For each worker record with a `pr=` it moves the row to Done through the home's backlog provider (`done --pr`) when the PR is shipped, the row reads In flight and not held, and no worker is live.
 Shipped means the merge poll recorded the PR as merged (`state/<id>.pr-poll-merge-notified`), or a line of `data/releases` lists its number in `prs=`.
 No live worker means `bin/jg-crew-state.sh` reports done or failed, or reports that the endpoint or worktree is gone; working, parked, paused, blocked and unreadable states are left alone.
 A squad_lead record, a pending close (`state/<id>.backlog-close`), a held row and a queued row are never touched.
