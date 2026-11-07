@@ -392,6 +392,45 @@ jg_operational_doorbell_kind() {  # <message> <state-dir> <result-var>
   jg_operational_record_kind "$named_record" "$result_var"
 }
 
+# A captain note the Telegram gateway filed in this home's inbox. Provenance is the
+# note record, never the wording: the gateway (core/bus/cmd/jg-bus/gateway.go) writes each
+# Telegram note with the first body line `[chat telegram <chat>:<message>]` and the request
+# id `tg-<chat>-<message>`, and the wake it queues reads `check: captain inbox note <id> - ...`.
+# <message> is that wake text or the bare head; it counts only when a note on file carries
+# the head, so text typed at the terminal can not claim the channel. Used by the away-mode
+# return check: a Telegram note is not the captain returning, a terminal message is.
+jg_operational_telegram_note() {  # <message> <state-dir>
+  local message=${1-} state=${2-} inbox first id chat msg req note
+  [ -n "$state" ] || return 2
+  inbox=$state/inbox
+  first=${message%%$'\n'*}
+  case "$first" in
+    'check: captain inbox note '*)
+      id=${first#check: captain inbox note }
+      id=${id%% *}
+      ;;
+    '[chat telegram '*:*']'*)
+      chat=${first#'[chat telegram '}
+      msg=${chat#*:}
+      chat=${chat%%:*}
+      msg=${msg%%]*}
+      case "$chat$msg" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+      [ -n "$chat" ] && [ -n "$msg" ] || return 1
+      req=$inbox/.requests/tg-$chat-$msg
+      [ -f "$req" ] || return 1
+      id=$(head -n 1 "$req" | tr -d '\r')
+      ;;
+    *) return 1 ;;
+  esac
+  case "$id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  for note in "$inbox/$id.note" "$inbox/handled/$id.note"; do
+    [ -f "$note" ] || continue
+    awk 'found { print; exit } /^--$/ { found=1 }' "$note" | grep -q '^\[chat telegram [^ ]*\]' && return 0
+    return 1
+  done
+  return 1
+}
+
 jg_operational_home_state() {
   local root
   if [ -n "${JG_STATE_OVERRIDE:-}" ]; then
