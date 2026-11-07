@@ -279,6 +279,10 @@ jobs:
       - name: Model pool helper test
         if: ${{ !cancelled() }}
         run: bash account-pool/tests/model-pool.test.sh
+      # Fixture home only: config/tool-models.json moves the route chain and the pool's default Claude model.
+      - name: Pool tool models test
+        if: ${{ !cancelled() }}
+        run: bash account-pool/tests/tool-models.test.sh
       # Fixture pool readings and stub upstream quota-axi: Claude row follows jg-model-pool.
       - name: Quota-axi pool test
         if: ${{ !cancelled() }}

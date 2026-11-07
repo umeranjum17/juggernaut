@@ -1761,6 +1761,8 @@ Squad Lead homes inherit the file with the other shared config.
 | `inbox-stt` | `bin/jg-inbox.sh` (`say`) | Speech-to-text model. The harness must be `pi` and the model carries the prefix `amazon-bedrock/`. `JG_INBOX_STT_MODEL` still wins, and the entry wins over `config/inbox-stt-model`. |
 | `inbox-ask` | `bin/jg-inbox.sh` (`ask`) | Side-question model, with the same rules as `inbox-stt`. `JG_INBOX_ASK_MODEL` still wins over the entry, and the entry wins over `config/inbox-ask-model`. |
 | `voice-relay` | `bin/jg-voice-relay.py` | Nova Sonic model of the voice relay, with the same rules as `inbox-stt`. `JG_VOICE_MODEL` still wins over the entry, and the entry wins over `config/voice-model`. |
+| `route-chain` | `core/account-pool/bin/jg-route-chain-lib.sh`, read by `jg-model-pool`, `jg-route-probe` and the done-done judge | The default free-route chain, in order. `use` is the list of routes; each is `{harness, model}` with an optional `provider` (default: the model's prefix), `billing` (default `plan`) and `only` (`hard`). It replaces only the built-in default chain; a home's own `route=` lines in `config/account-pool` still win. Every route that passes the allow-list stays in the chain. |
+| `model-pool` | `core/account-pool/bin/jg-model-pool` | The Claude model a pick returns when the request names none. The harness must be `claude`. A model the request names still wins. |
 
 Tools in this repository that still choose a model in their own way are listed in the follow-up section of the pull request that added this file.
 See [`docs/examples/tool-models.json`](examples/tool-models.json) for a starting point.
