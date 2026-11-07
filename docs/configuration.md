@@ -411,6 +411,8 @@ Any failure puts the home back on its old files by itself.
 `back` undoes a finished or stopped cut, restores the old files and config, and keeps the store aside.
 It refuses while the store holds rows written since the cut, naming them, and `--drop-new-writes` goes back anyway with those rows saved in `data/beads-after-cut.<at>.jsonl`.
 A cut needs a plan from just before it, because it refuses a home whose old files changed since the copy.
+A cut switches the home to the store in the same step, so it runs only once that home's own `bin/` already carries the Beads reader: a home still running an earlier release stays on its old files until it updates.
+The lock stops every writer for the whole cut, so cut a home only while it is quiet, with no lane writing to it.
 A remote home stays on the old path, and a parked home's rows cut with main under a `parked-home:<name>` label.
 Closed rows move with the rest, so `show` and the write verbs find a row by the name it carried before the move as well as by its new id.
 
