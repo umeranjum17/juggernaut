@@ -1285,6 +1285,25 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   pass "pi-signed shares Pi launch semantics while preserving its configured and recorded identity"
 }
 
+test_pi_refuses_a_claude_model_before_any_pane_exists() {
+  local harness model rec id out status
+  for harness in pi pi-signed; do
+    for model in claude-haiku-5-5 anthropic/claude-sonnet-5-5; do
+      id="profile-${harness}-claude-z9"
+      rec=$(make_spawn_case "profile-${harness}-claude-${model//\//-}" "$harness" "$id")
+      read_case_record "$rec"
+      out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model "$model" 2>&1)
+      status=$?
+      expect_code 1 "$status" "$harness with Claude model $model should be refused"
+      assert_contains "$out" "cannot run the Claude model '$model'" "refusal does not name the model"
+      assert_contains "$out" "--harness claude" "refusal does not give the way out"
+      [ ! -s "$LAUNCH_LOG" ] || fail "$harness launched a pane for Claude model $model"
+      [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "$harness recorded a task for Claude model $model"
+    done
+  done
+  pass "pi and pi-signed refuse a Claude model before any pane exists"
+}
+
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi() {
   local harness version rec id out status launch
   for harness in pi pi-signed; do
@@ -2292,6 +2311,7 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
 test_pi_signed_persistent_squad_lead_uses_pi_extensions_and_identity
 test_pi_seeded_squad_lead_preapproves_project_trust
 test_pi_worker_launch_omits_seeded_home_approve
+test_pi_refuses_a_claude_model_before_any_pane_exists
 test_pi_approve_probe_omits_unsupported_flag
 test_pi_exclude_tools_reach_ship_and_scout_launches
 test_pi_exclude_tools_worker_registry_reports
