@@ -84,6 +84,8 @@
 # those remain that file's contract and are not restated here.
 
 _JG_PF_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _JG_PF_LIB_DIR="."
+# shellcheck source=bin/jg-tasks-axi-lib.sh
+. "$_JG_PF_LIB_DIR/jg-tasks-axi-lib.sh"
 # shellcheck source=bin/jg-x-lib.sh
 . "$_JG_PF_LIB_DIR/jg-x-lib.sh"
 
@@ -407,6 +409,11 @@ jg_pf_deliverable_problem() {
 }
 
 # --- the promised contract --------------------------------------------------
+
+# A Beads home keeps its promises in bd, so only an old backlog needs tasks-axi installed.
+jg_pf_backlog_tool() {  # <home>
+  jg_backlog_backend_beads "$1/config" || command -v tasks-axi >/dev/null 2>&1
+}
 
 # jg_pf_obligation_json <home> <obligation-id>: the complete typed obligation
 # payload on stdout, empty when that home's backlog simply has no such

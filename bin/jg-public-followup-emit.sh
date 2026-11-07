@@ -271,7 +271,7 @@ if [ "$HOME_MODE" = owning ]; then
   jg_pf_relay_active "$HOME_DIR" || exit 0
   command -v jq >/dev/null 2>&1 || die "jq is required to build a typed terminal event" 1
 
-  command -v tasks-axi >/dev/null 2>&1 \
+  jg_pf_backlog_tool "$HOME_DIR" \
     || die "tasks-axi is required to read what this obligation promised" 1
 
   REGISTRY="$(jg_pf_registry_dir "$STATE")/$OBLIGATION"

@@ -318,6 +318,8 @@ def block(args):
     other = blocker(items, other)
     if ident == other:
         view.refuse("A task cannot block itself")
+    if (row.get("metadata") or {}).get("delivery_state", "ready") not in ("intent", "pending-work", "ready"):
+        view.refuse("Cannot add blockers after public delivery has started")
     already = "blocked-by:" + other in item["deps"].split(",")
     if not already:
         bd("dep", "add", ident, other)
