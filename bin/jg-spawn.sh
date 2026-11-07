@@ -765,6 +765,18 @@ jg_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/jg-dod-lib.sh"
 # shellcheck source=bin/jg-version-branch-lib.sh
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
+
+# The project's local trunk branch (bin/jg-trunk.sh), printed when the project is registered local-trunk and has one.
+# Only a local-trunk project is touched here; no-mistakes, direct-PR and local-only projects go the way they always did. A
+# local-trunk project ships no feature pull request: a lane starts on the trunk tip and its one commit lands there.
+spawn_trunk_branch() {
+  local pn; pn=$(basename "$PROJ_ABS")
+  [ "$(JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1)" = local-trunk ] || return 1
+  [ -e "$STATE/trunk-tip-$pn" ] || return 1
+  JG_CONFIG_OVERRIDE=$CONFIG jg_trunk_branch "$pn" "$STATE"
+}
 # shellcheck source=bin/jg-role-lib.sh
 . "$SCRIPT_DIR/jg-role-lib.sh"
 # shellcheck source=bin/jg-trace-context-lib.sh
@@ -2743,7 +2755,8 @@ if [ "$KIND" = ship ]; then
     exit 1
   fi
   [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
-  STANDING_MODE=$("$JG_ROOT/bin/jg-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d' ' -f1) || STANDING_MODE=
+  STANDING_MODE=$("$JG_ROOT/bin/jg-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d" " -f1) || STANDING_MODE=
+  [ "$STANDING_MODE" != local-trunk ] || STANDING_MODE=local-only  # a local-trunk lane ships as a local-only task
   # The brief/spawn agreement (branch, mode, upstream consent, forge, yolo on gerrit) is the Go
   # spawn core's (core/spawn/cmd/jg-spawn-core/delivery.go), which prints its own refusal.
   # The registered forge is the captain's confirmed binding (bin/jg-project-mode.sh), read
@@ -2753,6 +2766,13 @@ if [ "$KIND" = ship ]; then
     --branch "$BRANCH" --relaunch="$RELAUNCH" --upstream-consent "$UPSTREAM_CONSENT" \
     --brief "$BRIEF" --source-brief "$SOURCE_BRIEF" --project "$PROJ_NAME" \
     --standing-forge "$STANDING_FORGE" || exit 1
+  # No feature pull requests: a project with a local trunk (bin/jg-trunk.sh init) ships every lane
+  # local-only; the only pull request is the release one. A current explicit captain instruction
+  # can still choose a pull request mode by removing the trunk record, never by this spawn.
+  if [ "$MODE" != local-only ] && spawn_trunk_branch >/dev/null; then
+    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local-only and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
+    exit 1
+  fi
   # Self-repository publication gate (bin/jg-role-lib.sh): a ship task whose
   # project is juggernaut's own repository may launch a publishing contract only
   # under an explicit grant - this home's maintainer scope in
@@ -2906,7 +2926,7 @@ spawn_worktree_has_origin_config() { # <worktree>
 }
 
 freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
-  local worktree=$1 base=${2:-} default target expected actual status
+  local worktree=$1 base=${2:-} default target expected actual status trunk
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
@@ -2918,6 +2938,13 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
       echo "error: pooled worktree '$worktree' is not clean; refusing to discard uncommitted work while refreshing its base" >&2
     fi
     return 1
+  fi
+  if trunk=$(spawn_trunk_branch); then
+    git -C "$worktree" reset -q --hard "refs/heads/$trunk" || {
+      echo "error: could not start pooled worktree '$worktree' on the local trunk '$trunk'; refusing to launch" >&2
+      return 1
+    }
+    return 0
   fi
   if ! spawn_worktree_has_origin_config "$worktree"; then
     [ -z "$base" ] || {

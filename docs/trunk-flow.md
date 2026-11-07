@@ -1,0 +1,43 @@
+# Trunk flow
+
+How a change reaches the captain's users, for every project registered `local-trunk`, in every home. `bin/jg-trunk.sh` owns each step; its header is the command reference, and `bin/jg-trunk-policy-lib.sh` holds every open captain call with its safe default (override in `config/trunk-policy`).
+
+## Scope: local-trunk projects only
+
+The trunk flow is a fourth delivery posture, `local-trunk` (`data/projects.md`: `- <name> [local-trunk] - ...`). **Every rule below applies to a project registered local-trunk and to no other.** A project registered `no-mistakes`, `direct-PR` or `local-only` (or not registered) keeps its own rules exactly as before: `direct-PR` still pushes and opens its PR, `no-mistakes` still runs its pipeline, `local-only` still stops at a ready branch and is merged locally by `bin/jg-merge-local.sh`. Each trunk entry point reads the project's registered mode first and refuses or ignores any other: every `jg-trunk.sh` subcommand refuses it naming the registered mode, the landing check skips it, the spawn refusal and the lane brief section apply only to local-trunk, and no trunk hook is installed in it. `tests/jg-trunk-scope.test.sh` proves one case per mode and fails if any of them is treated as local-trunk.
+
+In a local-trunk project the lanes ship as `local-only` tasks (nothing is pushed), and `bin/jg-project-mode.sh` reports `local-only` to mechanical callers; only `--raw` says `local-trunk`.
+
+## The standing orders, and where each is enforced
+
+| Order | Enforced by |
+| --- | --- |
+| Landing is automatic once the done-done proof passes, in every home | `core/trunk-landing` runs on the watcher's 30-second tick in every home (`run_fast_checks` in the watcher), so a worker's done starts the landing within seconds. It runs `jg-trunk.sh land <task>` for every `local-only` task of a local-trunk project whose `state/<task>.run-receipt.json` is a PASS for the exact branch head, then `bin/jg-teardown.sh <task>` UNFORCED (a refusal is reported and nothing is discarded). No lead or human step. |
+| A landing is as visible as a merge was | `land` records the same fleet-ledger `merged` event, ticket close and post-merge hook as `bin/jg-merge-local.sh`, and the check reports every landing, refusal and cleanup to the lead. The commit must carry its ticket reference (the task id or ticket key). |
+| Landing needs a PASS receipt at the exact head, and exactly one commit on the trunk tip | `land` refuses a missing, FAIL, other-head or other-incarnation receipt, a branch with zero or several commits over the trunk, and a trunk that moved. |
+| The trunk tip moves only by `land` | `jg-trunk.sh` installs a git `reference-transaction` hook in the project that refuses any write to the trunk branch not made by `init` or `land`; every subcommand also refuses when the branch differs from the tip `land` recorded (`state/trunk-tip-<project>`) and says so. |
+| The trunk stays safe until its release PR lands | Nothing forces, rewrites or deletes a trunk: the project's `reference-transaction` hook refuses all three for `trunk` and every `trunk-vN`, even from `jg-trunk.sh` itself, which can only create a trunk or fast-forward it. A pin-back moves the home, never the trunk, and only to a commit that went live green (else the last release). |
+| After the release merges, the next trunk is cut | `jg-trunk.sh rollover` (run by `release` and, every 5 minutes, by the landing check) refuses while the release PR is open. Once it has merged it cuts `trunk-v2` (then `-v3`, ...) from the default branch, moves the project onto it (lanes start there, landings go there) and records it in `state/trunk-branch-<project>`, `state/trunk-version-<project>` and `data/trunk-versions.tsv`. The old trunk is left exactly as it was. |
+| Local gates decide landing | `land` runs the captain hold, the receipt, design, demo, nav and `config/merge-gate` gates, then owner-guard and the lint (`gate-lint`) over the commit, then the lander's own gate (`gate-full` or `gate-smoke`) at the commit's exact tree in a clean clone. CI is not a landing gate. |
+| A conflicting change is rebased and fixed, never landed dirty | `land` refuses with the conflicting paths named. The lane rebases onto the trunk tip, fixes the conflict, proves again, and the check lands the new head. |
+| The trunk goes live only on the captain's word | `land` never moves the home. `jg-trunk.sh word live <project> "<his words>"` records the word for one commit; `jg-trunk.sh live <project>` refuses without it and spends it. A worker cannot record a word. |
+| The release is the trunk going into main as ONE pull request, on his word | `jg-trunk.sh release` refuses without a recorded `release` word for the tip. It pushes the trunk (never forced) and opens one pull request from the trunk itself into the default branch. There is no release branch. While that pull request is open, a later release only pushes the new commits into it. |
+| No feature pull requests | The only pull request is the release one. Lanes ship `local-only`; the spawn refuses any other mode on a local-trunk project. |
+| CI runs after live; a red CI pins back | `jg-trunk.sh ci <project> <sha> red` writes the red pin, stops landings except a commit with `fixes-red: <sha>`, and moves the home back to the newest earlier commit that went live and was not red (else the last release). `ci ... green` records the result and advances the green pin. |
+
+## Lifecycle of one ticket
+
+1. The lane starts on the trunk tip and makes one commit.
+2. The lane runs the verify skill sealed under done-done and publishes the PASS receipt for that head, then reports ready.
+3. The `trunk-landing` check lands it on the trunk and reports `landed`. If it refuses, the report names the reason once (a conflict names its paths); the lane fixes and proves a new head. A refusal that only needs time (away mode, an open linked decision, a red trunk) retries on its own.
+4. On the captain's word: `jg-trunk.sh verify`, `word live`, `live`.
+5. On the captain's word: `word release`, `release`. CI runs on the pushed trunk; a red result goes to `jg-trunk.sh ci`.
+6. When the release PR merges, the next trunk version is cut from the default branch and the cycle starts again on it.
+
+## Records
+
+`state/trunk-tip-<project>`, `trunk-green-<project>`, `trunk-red-<project>`, `trunk-released-<project>`, `trunk-word-<live|release>-<project>`; `data/trunk-landings.tsv`, `trunk-live.tsv`, `trunk-ci.tsv`, `trunk-words.tsv`, `trunk-releases.tsv`; the check's own state in `data/jg-trunk-landing/`.
+
+## Tests
+
+`tests/jg-trunk.test.sh` (run by the done-done journey `trunk-landing`) fails when any behaviour above is removed.

@@ -16,8 +16,9 @@
 #   gate-mode             full        full: the lander runs gate-full before landing
 #                                     smoke: it runs gate-smoke and the full suite runs in
 #                                     `verify`; the home never moves past the last full pass
+#   gate-lint             bin/jg-lint.sh   the lint every landing passes, whichever gate-mode
 #   gate-full             the CI invariants that need no network (no tracked personal paths, no
-#                         committed binaries, regression coverage), lint, then the whole suite
+#                         committed binaries, regression coverage), then the whole suite
 #   gate-smoke            (none)      smoke is refused until a command is chosen
 #   owner-rules           keep        keep: every owner rule gate in config/merge-gate still
 #                                     runs; any other value is refused as not decided
@@ -25,7 +26,7 @@
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
 
 # shellcheck disable=SC2016 # the command substitution runs in the gate's shell, not here
-_JG_TRUNK_GATE_FULL='test -z "$(git ls-files -- data state config projects .no-mistakes)" && bin/jg-committed-binary-check.sh && bin/jg-test-run.sh --check-coverage && bin/jg-lint.sh && bin/jg-test-run.sh --all'
+_JG_TRUNK_GATE_FULL='test -z "$(git ls-files -- data state config projects .no-mistakes)" && bin/jg-committed-binary-check.sh && bin/jg-test-run.sh --check-coverage && bin/jg-test-run.sh --all'
 
 jg_trunk_policy() {  # <key> [<project>]
   local key=$1 proj=${2-} file val=
@@ -42,6 +43,7 @@ jg_trunk_policy() {  # <key> [<project>]
       protected-landing) val=refuse ;;
       protected-paths) val=$_JG_TRUNK_PROTECTED ;;
       gate-mode) val=full ;;
+      gate-lint) val=bin/jg-lint.sh ;;
       gate-full) val=$_JG_TRUNK_GATE_FULL ;;
       gate-smoke) val= ;;
       owner-rules) val=keep ;;
@@ -50,4 +52,11 @@ jg_trunk_policy() {  # <key> [<project>]
     esac
   fi
   printf '%s\n' "$val"
+}
+
+# The branch a project's trunk is on now: the version the last rollover recorded (trunk-v2, ...), else the
+# trunk-branch policy value. Usage: jg_trunk_branch <project> [<state-dir>]
+jg_trunk_branch() {
+  local f="${2:-${JG_STATE_OVERRIDE:-${JG_HOME:-.}/state}}/trunk-branch-$1"
+  if [ -s "$f" ]; then cat "$f"; else jg_trunk_policy trunk-branch "$1"; fi
 }

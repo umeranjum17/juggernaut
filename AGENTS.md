@@ -176,6 +176,8 @@ The path's worker, automated gates, and captain approval remain authoritative:
 - **direct-PR** has the worker push and open a PR without the no-mistakes pipeline, then waits for the configured merge authority.
 - **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before Overwatch uses the guarded fast-forward merge path.
 
+A project registered **local-trunk** (`data/projects.md`, `docs/trunk-flow.md`) runs the trunk flow, and no other project does: the `core/trunk-landing` check lands a lane's one commit once its done-done receipt is a PASS for that exact head, landing never goes live, the trunk goes live and out as the ONE release pull request only on the captain's recorded word (`jg-trunk.sh word`), no feature pull request exists there, and a red CI pins the home back to the last green commit. no-mistakes, direct-PR and local-only projects keep their own rules exactly as written above.
+
 Delivery mode and `yolo` are orthogonal.
 `yolo` governs merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, Overwatch merges green, in-scope work itself.
 `docs/fast-merge-path.md` owns the fast required set, the tree-keyed proof, and the recorded done-to-merged minutes; the only required checks are its fast set, and every heavier suite runs after the merge.
