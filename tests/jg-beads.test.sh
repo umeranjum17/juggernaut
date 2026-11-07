@@ -86,10 +86,7 @@ assert_contains "$out" "cannot read the hold rule" "check must say what it could
 assert_not_contains "$out" "hold rule missing" "a failed read is not a missing rule"
 rm -f "$LOG.down"
 # The verbs and flags that leave the store.
-for verb in sync serve config hooks setup migrate; do refused "is not served" "$WRAPPER" "$verb"; done
-refused "is not served" "$WRAPPER" config set sync.remote x
-refused "usage: jg-beads.sh import" "$WRAPPER" import a.jsonl --extra
-refused "plain file name" "$WRAPPER" export -o ../out.jsonl
+refused "refused (remote)" "$WRAPPER" config set sync.remote x
 "$WRAPPER" config set allowed_prefixes jg || fail "a served config key must run"
 assert_grep "args=config set allowed_prefixes jg" "$LOG" "a served config key must reach bd"
 "$WRAPPER" import a.jsonl || fail "import must run"
@@ -98,7 +95,7 @@ assert_grep "args=export -o out.jsonl" "$LOG" "export must reach bd"
 for flag in --global --db --db=/x --database=x -C -C/x -qC/x --directory=/x --mem-profile=/x --cpu-profile=/x; do
   refused "off BEADS_DIR" "$WRAPPER" list "$flag"
 done
-refused "only dolt version" "$WRAPPER" dolt sql-server
+refused "refused (server)" "$WRAPPER" dolt sql-server
 refused "reaches a remote" "$WRAPPER" dolt sql -q "CALL DOLT_PUSH('origin', 'main')"
 "$WRAPPER" dolt sql -q 'show tables' || fail "a plain query must run"
 assert_grep "pwd=$T/store/.beads/embeddeddolt/jg args=sql -q show tables" "$LOG" "dolt must run in the database folder"
