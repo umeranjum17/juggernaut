@@ -186,10 +186,14 @@ jg_tasks_axi_backend() {  # <tasks-axi-working-directory>
 }
 
 jg_backlog_backend_value() {
-  local config_dir=$1 backend_file value
-  backend_file="$config_dir/backlog-backend"
-  if [ -f "$backend_file" ]; then
-    value=$(tr -d '[:space:]' < "$backend_file" 2>/dev/null || true)
+  jg_backlog_backend_of_file "$1/backlog-backend"
+}
+
+# The one rule for reading a backlog-backend value: its trimmed text, tasks-axi when the file is blank or absent.
+jg_backlog_backend_of_file() {  # <file>
+  local value
+  if [ -f "$1" ]; then
+    value=$(tr -d '[:space:]' < "$1" 2>/dev/null || true)
     [ -n "$value" ] || value=tasks-axi
     printf '%s\n' "$value"
     return 0

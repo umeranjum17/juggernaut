@@ -218,6 +218,49 @@ destination_allows_inherited_item() {
   git -C "$top" check-ignore -q -- "$rel_path" 2>/dev/null
 }
 
+# jg_backlog_backend_inherit_refusal <dest-config-dir> <incoming-backlog-backend-file>
+# config/backlog-backend decides where a home reads its rows, so a push that moves it across the
+# Beads boundary moves that home's reader off the rows it holds: they stay where they are and the
+# home lists none. This prints the reason and returns 0 when the push must be refused, and returns 1
+# (prints nothing) when the value is unchanged, stays on the same side of the boundary, or the
+# destination holds no row to hide and, for beads, already names its own store. A missing incoming file is the primary's absence, which means
+# tasks-axi. A destination whose rows cannot be counted is refused, because it cannot be proved
+# empty. Moving a home's rows between stores is bin/jg-beads-migrate.py's cut and back, never a push.
+jg_backlog_backend_inherit_refusal() {
+  local dest_config=$1 incoming_file=$2 incoming current data store out rows bin_dir
+  type jg_backlog_backend_value >/dev/null 2>&1 ||
+    . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-tasks-axi-lib.sh"
+  incoming=$(jg_backlog_backend_of_file "$incoming_file")
+  current=$(jg_backlog_backend_value "$dest_config")
+  [ "$incoming" != "$current" ] || return 1
+  [ "$incoming" = beads ] || [ "$current" = beads ] || return 1
+  if [ "$current" = beads ]; then
+    if ! store=$(jg_backlog_beads_store "$dest_config" 2>/dev/null); then
+      printf 'it keeps its rows in a Beads store that config/beads-dir does not name, so they cannot be counted and would be hidden by a switch to %s' "$incoming"
+      return 0
+    fi
+    bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    if ! out=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --all --limit 0 --json 2>/dev/null) ||
+      ! rows=$(printf '%s' "$out" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null); then
+      printf 'its Beads store could not be read, so its rows cannot be counted and would be hidden by a switch to %s' "$incoming"
+      return 0
+    fi
+    [ "$rows" -gt 0 ] || return 1
+    printf 'its Beads store holds %s row(s) that a switch to %s would hide' "$rows" "$incoming"
+    return 0
+  fi
+  data=${dest_config%/*}/data
+  rows=$(cat "$data/backlog.md" "$data/done-archive.md" 2>/dev/null | grep -Ec '^- \[.\] [^[:space:]]') || rows=0
+  if [ "$rows" -gt 0 ]; then
+    printf 'its backlog files hold %s row(s) that a switch to beads would hide' "$rows"
+    return 0
+  fi
+  # config/beads-dir is never inherited, only a cut writes it: beads without a store leaves the home unable to read its backlog.
+  jg_backlog_beads_store "$dest_config" >/dev/null 2>&1 && return 1
+  printf 'it has no Beads store named in config/beads-dir, so a switch to beads would leave it unable to read or write its backlog'
+  return 0
+}
+
 # propagate_inheritable_config <src-config-dir> <dest-config-dir>
 # Copy each declared inheritable item from the primary's config dir (src) into a
 # squad_lead home's config dir (dest). SILENT on stdout - callers parse stdout,
@@ -745,6 +788,13 @@ propagate_inheritable_config() {
           continue
         fi
       fi
+    fi
+    if [ "$item" = backlog-backend ] && reason=$(jg_backlog_backend_inherit_refusal "$dest_config" "$src"); then
+      reason="refused, left unchanged: $reason"
+      warn_inheritable_config_error "$item" "$dest" "$reason"
+      record_inheritable_config_result "$item" error "$reason"
+      rc=1
+      continue
     fi
     if [ -f "$src" ]; then
       if ! destination_allows_inherited_item "$dest_config" "$item"; then

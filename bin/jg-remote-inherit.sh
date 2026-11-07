@@ -171,6 +171,15 @@ quarantine_shared() {
   printf 'quarantined: %s (%s)\n' "${quarantine#"$HOME_REAL/"}" "$reason" >&2
 }
 
+# A backlog-backend change that would hide rows this home holds is refused before any state moves.
+refuse_hiding_backlog_backend() {  # <incoming file, empty for the primary's absence>
+  local why
+  [ "$REL" = config/backlog-backend ] || return 0
+  if why=$(jg_backlog_backend_inherit_refusal "$PARENT_REAL" "$1"); then
+    die "refused, left unchanged: $why"
+  fi
+}
+
 case "$COMMAND" in
   put)
     TMP=$(umask 077; mktemp "$PARENT_REAL/.inherit.XXXXXX") || die "cannot stage inherited material"
@@ -180,6 +189,7 @@ case "$COMMAND" in
     [ "$BYTES" -eq "$EXPECTED_BYTES" ] || die "inherited material length does not match its commitment"
     ACTUAL_HASH=$(sha256_file "$TMP") || die "cannot hash inherited material"
     [ "$ACTUAL_HASH" = "$EXPECTED_HASH" ] || die "inherited material digest does not match its commitment"
+    refuse_hiding_backlog_backend "$TMP"
     commit_generation
     if [ -f "$DEST" ] && cmp -s "$TMP" "$DEST"; then
       [ "$REL" != data/captain-shared.md ] || chmod 444 "$DEST"
@@ -200,6 +210,7 @@ case "$COMMAND" in
     EMPTY_HASH=$(sha256_file "$EMPTY") || die "cannot hash empty inheritance payload"
     rm -f -- "$EMPTY"
     [ "$EMPTY_HASH" = "$EXPECTED_HASH" ] || die "absent inheritance digest is not the empty payload"
+    refuse_hiding_backlog_backend ""
     commit_generation
     if [ ! -e "$DEST" ]; then
       printf 'unchanged: %s\n' "$REL"

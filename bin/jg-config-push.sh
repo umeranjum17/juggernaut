@@ -51,6 +51,8 @@ This is local-material-only:
     (no message when config is unchanged unless a previous send failure is pending)
   - reports each live home and each inheritable item as pushed, unchanged,
     skipped, or error
+  - refuses a config/backlog-backend change that would hide rows the home holds (reported as
+    an error, home left untouched), so a push never makes a home list fewer rows
   - exits non-zero for real propagation errors or reread-send failures
 
 Live homes come from state/*.meta records with kind=squad_lead.
