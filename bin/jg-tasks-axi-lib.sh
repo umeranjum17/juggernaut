@@ -250,17 +250,42 @@ jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [ar
   BEADS_DIR=$store python3 "$bin_dir/jg-beads-write.py" "$@"
 }
 
+# Beads answers ready and blocked, so the read asks bd for them before it lists the rows:
+# `bd ready` first, because that call wakes a dated hold whose day has come and the listing must show it awake.
+# A list asks `bd blocked` only when it shows blocked rows or the blocked fields, because the call costs about 0.3 s.
 jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links> [args...]
-  local bin_dir store err rows rc=0
+  local bin_dir store err rows rc=0 scratch word repo="" want_ready="" want_blocked=""
   store=$(jg_backlog_beads_store "$1") || return 2
   shift
   bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-  err=$(mktemp) || return 2
-  rows=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --all --limit 0 --json 2>"$err") || rc=$?
+  case "${1:-}" in
+    ready) want_ready=1 ;;
+    show|view) want_blocked=1 ;;
+    list) case " $* " in *blocked*) want_blocked=1 ;; esac ;;
+  esac
+  scratch=$(mktemp -d) || return 2
+  err=$scratch/err
+  if [ -n "$want_ready" ]; then
+    for word in "${@:2}"; do
+      case "$word" in --repo=*) repo=${word#--repo=} ;; --repo) repo=- ;; *) [ "$repo" = - ] && repo=$word ;; esac
+    done
+    [ "$repo" = - ] && repo=""
+    BEADS_DIR=$store "$bin_dir/jg-beads.sh" ready --limit 0 --json ${repo:+--label "project:$repo"} >"$scratch/ready" 2>"$err" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ] && [ -n "$want_blocked" ]; then
+    BEADS_DIR=$store "$bin_dir/jg-beads.sh" blocked --json >"$scratch/blocked" 2>"$err" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    rows=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --all --limit 0 --json 2>>"$err") || rc=$?
+  fi
   [ "$rc" -eq 0 ] || cat -- "$err" >&2
-  rm -f -- "$err"
-  [ "$rc" -eq 0 ] || return "$rc"
-  printf '%s' "$rows" | python3 "$bin_dir/jg-beads-view.py" "$@"
+  if [ "$rc" -eq 0 ]; then
+    printf '%s' "$rows" | JG_BEADS_READY=${want_ready:+$scratch/ready} JG_BEADS_BLOCKED=${want_blocked:+$scratch/blocked} \
+      python3 "$bin_dir/jg-beads-view.py" "$@" || rc=$?
+  fi
+  rm -f -- "$scratch/ready" "$scratch/blocked" "$scratch/err"
+  rmdir -- "$scratch"
+  return "$rc"
 }
 
 # One verb, read or write, for bin/jg-backlog-transition-lib.sh's row calls.
