@@ -1,0 +1,25 @@
+{
+  "schema": "psm.map.v1",
+  "project": "fixture-project",
+  "tree": "fixture",
+  "hit_hash": "fixture",
+  "machines": [
+    {"id": "ticket-stage", "name": "Ticket stage", "kind": "explicit",
+     "states": ["queued", "working", "review", "done"],
+     "moves": [{"from": "queued", "to": "working"}, {"from": "working", "to": "review"}, {"from": "review", "to": "done"}, {"from": "working", "to": "blocked", "why": "planted: blocked is not a stage"}],
+     "evidence": [{"file": "lib/contract.js", "line": 2, "text": "oneOf('queued', 'working', 'review', 'done')"}, {"file": "lib/contract.js", "line": 3, "text": "oneOf('open', 'closed', 'stuck')"}]},
+    {"id": "gate-state", "name": "Gate state", "kind": "explicit", "states": ["open", "closed"], "moves": [],
+     "evidence": [{"file": "lib/contract.js", "line": 3, "text": "oneOf('open', 'closed')"}]},
+    {"id": "stuck-flag", "name": "Stuck flag", "kind": "hidden", "states": ["stuck", "not stuck"], "moves": [],
+     "evidence": [{"file": "app/board.js", "line": 2, "text": "t.stuck && t.stage !== 'done'"}]},
+    {"id": "phantom", "name": "Phantom retry", "kind": "hidden", "states": ["waiting", "retrying"], "moves": [],
+     "evidence": [{"file": "server.js", "line": 2, "text": "retryState = 'waiting'"}, {"file": "app/ghost.js", "line": 1, "text": "export const retry"}]}
+  ],
+  "machinery": [
+    {"id": "http", "name": "HTTP server", "kind": "server",
+     "evidence": [{"file": "server.js", "line": 3, "text": "createServer("}, {"file": "server.js", "line": 4, "text": "listen(8080)"}]},
+    {"id": "poll", "name": "Board poll", "kind": "timer", "evidence": [{"file": "app/board.js", "line": 3, "text": "setInterval(load, 30000)"}]},
+    {"id": "queue", "name": "Job queue", "kind": "store", "evidence": [{"file": "app/board.js", "line": 99, "text": "queue.push"}]}
+  ],
+  "not_read": ["app/note.js has nothing to find"]
+}
