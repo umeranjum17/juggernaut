@@ -21,6 +21,9 @@
 # T9 The trunk is safe until its release PR lands: no write rewinds, forces or deletes it, even the lander's
 #    own; once the release merged, the next trunk version (trunk-v2) is cut from the default branch, recorded,
 #    and landed on, with the old trunk untouched; while it is open, nothing rolls over.
+# T10 Once the next trunk is cut, the old one is cleaned up unforced - remote branch, local branch, worktrees - only
+#    when its release is proved on main and every hotfix is carried into the new trunk; a copy holding
+#    unlanded work, or a hotfix not carried, keeps it, listed.
 # T7 The registered check core/trunk-landing lands a task whose receipt is a PASS for its exact head with
 #    no human step and never goes live; it ignores a task without that receipt, reports a refusal once
 #    (a conflict names its paths), retries a refusal that only needs time, cleans a landed task up unforced, and runs on the watcher's fast tick.
@@ -156,6 +159,13 @@ test_every_unsafe_landing_refuses() {
   lane clash CLASH; git -C "$W/lanes/clash" reset -q --hard "$(git -C "$PROJ" rev-parse trunk~1)"; commit_in "$W/lanes/clash" work.txt other "ticket clash"; prove clash
   refused 'a conflicting lane' clash 'conflicts with trunk'
   assert_contains "$(trunk land clash 2>&1)" 'in: work.txt' 'a conflict must name its paths'
+  for flag in --force -f --no-verify --skip-gates; do
+    b4=$(tip); out=$(trunk land "$flag" t2 2>&1) && fail "a landing with $flag must be refused: $out"
+    assert_contains "$out" "never forced" "a landing with $flag must say it is never forced"
+    [ "$(tip)" = "$b4" ] || fail "a forced landing with $flag moved the trunk"
+  done
+  out=$(trunk land t2 extra 2>&1) && fail "land with a stray argument must be refused: $out"
+  assert_contains "$out" "only the task id" "a stray argument must be refused by name"
   relane t2 ok2
   touch "$HOME_D/state/linked-open"; refused 'a ticket linked to an open decision' t2 'linked to a decision'
   rm "$HOME_D/state/linked-open"
@@ -253,7 +263,9 @@ test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut()
   printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$old:refs/heads/main"
   out=$(trunk rollover "$PROJ" 2>&1) || fail "a merged release must cut the next trunk: $out"
   [ "$(git -C "$PROJ" rev-parse trunk-v2)" = "$old" ] || fail "trunk-v2 must be cut from the merged default branch"
-  [ "$(tip)" = "$old" ] || fail "the old trunk must be left exactly as it was"
+  assert_contains "$out" "deleted local trunk" "the proved and carried old trunk must be cleaned up"
+  assert_contains "$out" "deleted remote trunk" "the old trunk's remote branch must be deleted"
+  git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null && fail "the old local trunk must be gone"
   [ "$(cat "$HOME_D/state/trunk-branch-proj")" = trunk-v2 ] && [ "$(cat "$HOME_D/state/trunk-version-proj")" = 2 ] || fail "the trunk record must name version 2"
   assert_contains "$(cat "$HOME_D/data/trunk-versions.tsv")" "$(printf 'proj\t2\ttrunk-v2\t%s' "$old")" "the version must be recorded"
   out=$(trunk rollover "$PROJ" 2>&1) && fail "one release rolls over once"
@@ -261,8 +273,41 @@ test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut()
   jg_write_meta "$HOME_D/state/n1.meta" "project=$PROJ" "mode=local-only" "branch=fm/n1" "worktree=$W/lanes/n1" "spawn_gen=g-n1"; prove n1
   out=$(trunk land n1 2>&1) || fail "a lane must land on the next trunk: $out"
   [ "$(git -C "$PROJ" rev-parse trunk-v2)" = "$(git -C "$PROJ" rev-parse fm/n1)" ] || fail "the next trunk must hold the landed commit"
-  [ "$(tip)" = "$old" ] || fail "landing on the next trunk must not touch the old one"
   pass 'the trunk is safe until its release lands, then the next version is cut and the project moves onto it'
+}
+
+test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried() {
+  local out old hot wt
+  world retire
+  lane o1 one; trunk land o1 >/dev/null 2>&1 || fail "o1 must land"
+  trunk verify "$PROJ" >/dev/null 2>&1; trunk word release "$PROJ" "ship it" >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "release must open"
+  old=$(tip); wt="$W/oldwt"
+  lane hx hotfix hot.txt; hot=$(git -C "$PROJ" rev-parse fm/hx); trunk land hx >/dev/null 2>&1 || fail "the hotfix must land on the old trunk while its release is open"
+  git -C "$PROJ" worktree add -q "$wt" trunk; printf 'scratch\n' > "$wt/unsaved.txt"
+  printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$old:refs/heads/main"
+  out=$(trunk rollover "$PROJ" 2>&1) || fail "the merged release must roll over: $out"
+  assert_contains "$out" "kept trunk: hotfix not carried into trunk-v2: " "a hotfix not carried must keep the old trunk and be listed"
+  assert_contains "$out" "ticket hx" "the uncarried hotfix must be named"
+  git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null || fail "an old trunk with an uncarried hotfix must not be deleted"
+  git --git-dir="$W/origin.git" rev-parse --verify -q refs/heads/trunk >/dev/null || fail "its remote branch must not be deleted either"
+  [ -d "$wt" ] || fail "a worktree on it must not be removed"
+  git -C "$PROJ" worktree add -q -b fm/hx2 "$W/lanes/hx2" trunk-v2; git -C "$W/lanes/hx2" cherry-pick -n "$hot" >/dev/null 2>&1 || fail "the hotfix must cherry-pick"
+  git -C "$W/lanes/hx2" -c user.name=t -c user.email=t@example.invalid commit -q -m "ticket hx2: carry hotfix hx"
+  jg_write_meta "$HOME_D/state/hx2.meta" "project=$PROJ" "mode=local-only" "branch=fm/hx2" "worktree=$W/lanes/hx2" "spawn_gen=g-hx2"; prove hx2
+  trunk land hx2 >/dev/null 2>&1 || fail "the carried hotfix must land on trunk-v2"
+  out=$(trunk retire "$PROJ" 2>&1) || fail "retire must not fail: $out"
+  assert_contains "$out" "kept worktree $wt: it holds uncommitted work" "a worktree with unlanded work must be kept and listed"
+  assert_contains "$out" "kept local trunk" "its branch must be kept with it"
+  [ -f "$wt/unsaved.txt" ] || fail "unlanded work must never be deleted"
+  git --git-dir="$W/origin.git" rev-parse --verify -q refs/heads/trunk >/dev/null && fail "the carried remote branch must be deleted"
+  rm -f "$wt/unsaved.txt"
+  out=$(trunk retire "$PROJ" 2>&1) || fail "retire must not fail: $out"
+  assert_contains "$out" "removed worktree" "a clean worktree on the old trunk must be removed"
+  assert_contains "$out" "deleted local trunk" "the old local trunk must be deleted once nothing holds unlanded work"
+  [ ! -d "$wt" ] || fail "the old trunk's worktree must be gone"
+  ! git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null || fail "the old local trunk must be gone"
+  [ -z "$(trunk retire "$PROJ" 2>&1)" ] || fail "retire with nothing left must be silent"
+  pass 'the old trunk is cleaned up unforced, only once its release is proved on main and every hotfix is carried'
 }
 
 test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
@@ -371,6 +416,7 @@ test_a_smoke_landing_is_pinned_behind_until_verify_passes
 test_the_release_is_one_pr_from_the_trunk_on_his_word
 test_a_red_ci_pins_the_home_back_to_the_last_green_commit
 test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut
+test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried
 test_the_registered_check_lands_a_proved_task_without_a_human
 test_the_landing_check_cuts_the_next_trunk_once_the_release_merged
 test_the_watcher_runs_the_landing_check_on_its_fast_tick
