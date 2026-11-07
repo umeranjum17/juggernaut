@@ -14,6 +14,8 @@ bash "$here/../bin/psm-prove.sh" "$here/fixture-map.json" "$here/fixture-project
 bash "$card" "$d/proved.json" --out-dir "$d/a" --filed "$T"
 bash "$card" "$d/proved.json" --out-dir "$d/b" --filed "$T"
 want 'same map gives the same card and pictures' "$(cd "$d/a" && find . -type f | sort | xargs sha256sum | sha256sum)" "$(cd "$d/b" && find . -type f | sort | xargs sha256sum | sha256sum)"
+bash "$card" "$d/proved.json" --out-dir "$d/rv" --filed "$T" --rev 99
+want 'a rev gives a new key for the same tree' "$(jq -r .key "$d/rv/report.json")" 'state-map-fixture-project-fixture-99'
 want 'card is a schema 5 report in the State map group' "$(jq -r '"\(.kind) \(.schema) \(.group) \(.key)"' "$d/a/report.json")" 'report 5 State map state-map-fixture-project-fixture'
 want 'the title counts machines and parts' "$(jq -r .title "$d/a/report.json")" 'fixture-project has 3 state machines and 2 moving parts'
 want 'one picture per kind, all present' "$(jq -r '.visual.diagram[] | .label' "$d/a/report.json" | paste -sd,)" 'Explicit sets,Hidden states,Machinery'

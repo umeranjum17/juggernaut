@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # Project state map, step 4 (draw): turn a proved map into a sign-off report card, with no model call.
-# Usage: psm-card.sh <proved.json> --out-dir <dir> [--filed <iso time>] [--post <board.json> [--replaces <key>]]
+# Usage: psm-card.sh <proved.json> --out-dir <dir> [--filed <iso time>] [--rev <text>] [--post <board.json> [--replaces <key>]]
 # Reads a psm.proved.v1 document (psm-prove.sh). Writes <dir>/report.json (report schema 5, group "State map",
 # key state-map-<project>-<tree>) and the pictures it points at: <dir>/state-map/<key>/{explicit,hidden,machinery}.html,
 # each phone first and light or dark, drawn only for the parts the map has. Same map and same --filed, same bytes.
+# --rev appends -<text> to the key: a board refuses a key it already holds, so a rerun on the same tree needs a new one.
 # --post publishes the card with sign-off-axi (or JG_REPORT_POST) and then dismisses --replaces, the card it
 # replaces, the way fleet-report keeps one live card.
 set -euo pipefail
 
-proved='' dir='' filed='' board='' replaces=''
+proved='' dir='' filed='' board='' replaces='' rev=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --out-dir) dir=${2:?}; shift 2 ;;
     --filed) filed=${2:?}; shift 2 ;;
+    --rev) rev=${2:?}; shift 2 ;;
     --post) board=${2:?}; shift 2 ;;
     --replaces) replaces=${2:?}; shift 2 ;;
     -h|--help) sed -n 2,9p "$0" | cut -c3-; exit 0 ;;
@@ -27,7 +29,7 @@ jq -e '.schema == "psm.proved.v1" and (.machines | type) == "array" and (.machin
   { echo "psm-card: not a psm.proved.v1 map: $proved" >&2; exit 2; }
 [ -z "$replaces" ] || [ -n "$board" ] || { echo 'psm-card: --replaces needs --post' >&2; exit 2; }
 [ -n "$filed" ] || filed=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-key=$(jq -r '((.project | split("/") | last) // "project" | ascii_downcase | gsub("[^a-z0-9]+"; "-") | gsub("^-|-$"; "")) as $n | "state-map-\($n)-\((.tree // "x") | .[:8])"' "$proved")
+key=$(jq -r '((.project | split("/") | last) // "project" | ascii_downcase | gsub("[^a-z0-9]+"; "-") | gsub("^-|-$"; "")) as $n | "state-map-\($n)-\((.tree // "x") | .[:8])"' "$proved")${rev:+-$rev}
 pics=state-map/$key # the card's pictures, as paths from the folder the report sits in
 mkdir -p "$dir/$pics"
 
