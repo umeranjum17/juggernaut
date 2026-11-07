@@ -164,6 +164,7 @@ if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$STATE" "$
 if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$STATE" "$ID" "$META" "$candidate" >&2 || exit 1; fi
 if declare -F jg_dod_nav_gate >/dev/null; then jg_dod_nav_gate "$ID" "$META" "$(git -C "$PROJ" log --format=%B "$DEFAULT..$candidate")" >&2 || exit 1; fi
 if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$candidate" - >&2 || exit 1; fi
+if declare -F jg_dod_proof_gate >/dev/null; then jg_dod_proof_gate "$JG_HOME" "$ID" "$candidate" - >&2 || exit 1; fi
 merge_status=0
 git -C "$PROJ" merge --ff-only "$candidate" >/dev/null || merge_status=$?
 jg_lock_release "$MERGE_CONTROL_LOCK" || true
@@ -175,4 +176,7 @@ after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 # A local-only landing has no PR; the ticket closes here instead of at the next poll.
 JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$ID" --stage "done" --state "done" || true
 if [ "$before" != "$after" ] && declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$candidate" - >&2; fi
+# One board alert for this proven landing, filed here so it never depends on a lead
+# remembering; a board that is down queues it and bin/jg-watch.sh retries it.
+JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-merge-alert.sh" post "$ID" --head "$(git -C "$PROJ" rev-parse "$candidate")" 2>&1 | sed 's/^/alert: /' >&2 || true
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
