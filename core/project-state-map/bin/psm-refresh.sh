@@ -2,6 +2,7 @@
 # Project state map, the refresh: search, read, prove and draw one project's card, and only when the code changed.
 # Usage: psm-refresh.sh run <project-dir> --state <dir> --board <board.json> [--force] [--opt-in] [--max-usd N] [--replay reply.txt] [--filed iso]
 #        psm-refresh.sh tick <home> [--force]
+#        psm-refresh.sh list <home>
 #        psm-refresh.sh ask <home> <project> [--force] [--opt-in] [--max-usd N] [--replay reply.txt]
 # run   Searches the project and forms the refresh key: the tree plus the hash of the hit text. When the key equals the
 #       one stored in --state (and a card exists) it prints "unchanged: ..." and stops: no model call, no board write.
@@ -14,6 +15,8 @@
 # ask   For a person who wants a fresh map now. <project> is a directory, or a name listed in <home>/config/project-state-map.
 #       Uses the same state and board as tick. An unchanged project prints "unchanged: ..." and "current card: <key>" at no cost;
 #       a changed project, or --force, refreshes. A live read still needs the project's opt-in word in the config, or --opt-in.
+# list  One line per project in <home>/config/project-state-map: "<name>: card <key>", "<name>: opted in, no card yet", or
+#       "<name>: no card (add the opt-in word to refresh it)". Changes nothing, so it shows whether every project has a card.
 # Exit: 0 refreshed or unchanged, 2 bad input, 3 the read was refused, 4 the read, proof or post failed.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -81,6 +84,16 @@ case "$mode" in
       case "$out" in unchanged:*|'') ;; *) printf '%s\n' "$out" ;; esac
     done < "$home/config/project-state-map"
     exit "$status" ;;
+  list)
+    home=${1:?psm-refresh: list needs a home}
+    [ -f "$home/config/project-state-map" ] || { echo 'psm-refresh: config/project-state-map does not exist' >&2; exit 2; }
+    while read -r dir flag _; do
+      case "$dir" in ''|'#'*) continue ;; esac
+      n=$(basename "$dir"); ck="$home/state/project-state-map/$n/card-key"
+      if [ -s "$ck" ]; then echo "$n: card $(cat "$ck")"
+      elif [ "$flag" = opt-in ]; then echo "$n: opted in, no card yet"
+      else echo "$n: no card (add the opt-in word to refresh it)"; fi
+    done < "$home/config/project-state-map" ;;
   ask)
     home=${1:?psm-refresh: ask needs a home}; shift; pdir=${1:?psm-refresh: ask needs a project}; shift
     force=0 optin=0 cap=${PSM_MAX_USD:-0.05} replay=''
@@ -108,7 +121,7 @@ case "$mode" in
     rc=0; run "$pdir" "$state" "$board" "$force" "$optin" "$cap" "$replay" '' || rc=$?
     [ "$rc" != 0 ] || [ ! -s "$state/card-key" ] || echo "current card: $(cat "$state/card-key")"
     exit "$rc" ;;
-  -h|--help) sed -n 2,5p "$0" | cut -c3-; exit 0 ;;
-  '') sed -n 2,5p "$0" | cut -c3- >&2; exit 2 ;;
+  -h|--help) sed -n 2,6p "$0" | cut -c3-; exit 0 ;;
+  '') sed -n 2,6p "$0" | cut -c3- >&2; exit 2 ;;
   *) echo "psm-refresh: unknown mode $mode" >&2; exit 2 ;;
 esac
