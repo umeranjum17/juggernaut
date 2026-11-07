@@ -391,6 +391,9 @@ Every home keeps its backlog in a Beads store.
 The absolute `BEADS_DIR` in `config/beads-dir` names it, and `bin/jg-backlog.sh` is the one command that reads and writes it.
 `bin/jg-beads.sh` is the only guarded way to run `bd` and `dolt`; `bin/jg-beads.sh check` proves the pinned versions, the hold rule and telemetry off.
 The wrapper serves `show`, `list`, `ready`, `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold`, `unhold` and `public-followup`, and refuses every other write.
+
+A Goal lives in a small Goal-only Beads store of its own. `config/goal-beads-dir` (or `GOAL_BEADS_DIR`) names its absolute `BEADS_DIR`, outside any git tree, and `bin/jg-goal.sh` reaches it only through `bin/jg-beads.sh`. The pinned bd and dolt must be in place; the wrapper's refusal is the message, and nothing falls back to another bd. Create the store with `BEADS_DIR=<dir> bin/jg-beads.sh init --prefix goal`.
+
 The `start`, `reopen` and `done` moves write only if the row still has the status they read, so a row a second writer moved refuses with exit 13, `code: STALE_WRITE`, and changes nothing.
 [`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh) drives the same provider directly, so spawn, teardown and bootstrap keep their gates on that store.
 `bin/jg-pr-merge.sh`, `bin/jg-merge-local.sh` and `core/merge-on-green/` read holds and linked decisions through `bin/jg-captain-hold.sh`, close rows through that provider, and refuse a merge when the store cannot be read.
@@ -408,6 +411,8 @@ Any failure puts the home back on its old files by itself.
 `back` undoes a finished or stopped cut, restores the old files and config, and keeps the store aside.
 It refuses while the store holds rows written since the cut, naming them, and `--drop-new-writes` goes back anyway with those rows saved in `data/beads-after-cut.<at>.jsonl`.
 A cut needs a plan from just before it, because it refuses a home whose old files changed since the copy.
+A cut switches the home to the store in the same step, so it runs only once that home's own `bin/` already carries the Beads reader: a home still running an earlier release stays on its old files until it updates.
+The lock stops every writer for the whole cut, so cut a home only while it is quiet, with no lane writing to it.
 A parked home's rows cut with main under a `parked-home:<name>` label.
 Closed rows move with the rest, so `show` and the write verbs find a row by the name it carried before the move as well as by its new id.
 
@@ -1368,6 +1373,8 @@ An executable `config/merge-gate` in a home is run before every landing - `bin/j
 A nonzero exit refuses that merge and prints the gate's own reason; an absent file changes nothing, and a present but non-executable one refuses the merge until it is fixed.
 `bin/jg-merge-gate-lib.sh` owns the hook, so the gate runs with nothing else wired; `core/merge-card` defines the same two hooks and is the version that runs.
 `config/post-merge` is the matching after-the-fact hook and never changes a merge's outcome.
+Both merge paths also run a proof gate (`jg_dod_proof_gate`): where the home, or the parent of a Squad Lead home, names a board (`config/post-merge` or `JG_PROOF_BOARD`), the merge posts the task's proof card itself and is refused when the proof, the board client or the board is missing.
+After a proven merge, `bin/jg-merge-alert.sh` files one alert on the same board, and a board that is down queues it under `state/merge-alerts/` for the supervision cycle to retry.
 A home that wants the retired-catalog rule in its own gate adds one line to `config/merge-gate`: `bin/jg-retired-catalog-check.sh --base "${3:--}"` (or the whole-tree form with no `--base`), which refuses a landing that restores a path under the retired catalog directory (the check names it); the repo's own invariants job runs the same check on every pull request.
 The gate's content is home-local policy; `bin/jg-tool-wiring.sh` places done-done's gate only in a home that has none.
 `core/owner-guard/wiring.sh` and `core/owner-rules/wiring.sh` write one gate file holding both checks, and `core/lib/merge-gate-lib.sh` owns that file, the steps it records, and the home's own gate kept at `config/merge-gate.pre-chain`.
@@ -1730,6 +1737,8 @@ Squad Lead homes inherit the file with the other shared config.
 | `inbox-stt` | `bin/jg-inbox.sh` (`say`) | Speech-to-text model. The harness must be `pi` and the model carries the prefix `amazon-bedrock/`. `JG_INBOX_STT_MODEL` still wins, and the entry wins over `config/inbox-stt-model`. |
 | `inbox-ask` | `bin/jg-inbox.sh` (`ask`) | Side-question model, with the same rules as `inbox-stt`. `JG_INBOX_ASK_MODEL` still wins over the entry, and the entry wins over `config/inbox-ask-model`. |
 | `voice-relay` | `bin/jg-voice-relay.py` | Nova Sonic model of the voice relay, with the same rules as `inbox-stt`. `JG_VOICE_MODEL` still wins over the entry, and the entry wins over `config/voice-model`. |
+| `route-chain` | `core/account-pool/bin/jg-route-chain-lib.sh`, read by `jg-model-pool`, `jg-route-probe` and the done-done judge | The default free-route chain, in order. `use` is the list of routes; each is `{harness, model}` with an optional `provider` (default: the model's prefix), `billing` (default `plan`) and `only` (`hard`). It replaces only the built-in default chain; a home's own `route=` lines in `config/account-pool` still win. Every route that passes the allow-list stays in the chain. |
+| `model-pool` | `core/account-pool/bin/jg-model-pool` | The Claude model a pick returns when the request names none. The harness must be `claude`. A model the request names still wins. |
 
 Tools in this repository that still choose a model in their own way are listed in the follow-up section of the pull request that added this file.
 See [`docs/examples/tool-models.json`](examples/tool-models.json) for a starting point.

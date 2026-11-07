@@ -1603,6 +1603,39 @@ test_scout_report_page_must_open_with_the_answer() {
   pass "scout teardown refuses a report page that does not open with its Answer and returns one that does"
 }
 
+# A Recon report that names three of the project's stored state-map states and parts
+# is refused once the warn week has passed unless it carries the map
+# (core/project-state-map/bin/psm-wide-check.sh); with a State map section it is returned.
+test_scout_wide_report_must_carry_the_state_map() {
+  local case_dir rc psm
+  psm="$ROOT/core/project-state-map"
+  case_dir=$(make_case scout-wide-report)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  mkdir -p "$case_dir/state/project-state-map/project"
+  bash "$psm/bin/psm-prove.sh" "$psm/tests/fixture-map.json" "$psm/tests/fixture-project" \
+    --out "$case_dir/state/project-state-map/project/proved.json"
+  echo 1 > "$case_dir/state/project-state-map/wide-since"
+  printf '%s\n' '# Wide' '' '## 1. Answer (five lines)' '' '1. The Ticket stage, the Gate state and the Board poll all misbehave.' > "$case_dir/data/task-x1/report.md"
+  add_treehouse_clean_fd "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "scout-wide-report: a wide report without the state map must be refused"
+  grep -q 'wide report without the project' "$case_dir/stderr" \
+    || fail "scout-wide-report: refusal did not name the state map: $(cat "$case_dir/stderr")"
+
+  printf '%s\n' '' '## 2. State map' '' 'See the project card.' >> "$case_dir/data/task-x1/report.md"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout2" 2> "$case_dir/stderr2"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "scout-wide-report: a wide report with the state map must be returned: $(cat "$case_dir/stderr2")"
+  pass "scout teardown refuses a wide report without the project's state map and returns one that carries it"
+}
+
 # A standard Recon whose report fails the depth gate (bin/jg-recon-gate.sh) is
 # refused at cleanup; the same Recon with a quick brief is returned.
 test_scout_report_must_pass_the_recon_depth_gate() {
@@ -5681,6 +5714,7 @@ test_tracked_edit_refusal_diagnostic
 test_mixed_refusal_diagnostic
 test_scout_nested_clone_returns_with_no_untracked_entries
 test_scout_report_page_must_open_with_the_answer
+test_scout_wide_report_must_carry_the_state_map
 test_scout_report_must_pass_the_recon_depth_gate
 test_ship_nested_clone_is_refused_and_bytes_stay
 test_dirty_return_warns_which_slot_was_lost

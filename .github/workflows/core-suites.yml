@@ -252,7 +252,15 @@ jobs:
       # Fixture project only: nothing outside a throwaway directory is read or written.
       - name: Project state map test
         if: ${{ !cancelled() }}
-        run: bash project-state-map/tests/psm-search.test.sh
+        run: |
+          bash project-state-map/tests/psm-search.test.sh
+          bash project-state-map/tests/psm-prove.test.sh
+          bash project-state-map/tests/psm-read.test.sh
+          bash project-state-map/tests/psm-card.test.sh
+          bash project-state-map/tests/psm-refresh.test.sh
+          bash project-state-map/tests/psm-ask.test.sh
+          bash project-state-map/tests/psm-wide.test.sh
+          bash project-state-map/tests/psm-first-run.test.sh
 
       # Fixture home only: no live state or metrics are read.
       - name: Retro metrics test
@@ -266,6 +274,10 @@ jobs:
       - name: Model pool helper test
         if: ${{ !cancelled() }}
         run: bash account-pool/tests/model-pool.test.sh
+      # Fixture home only: config/tool-models.json moves the route chain and the pool's default Claude model.
+      - name: Pool tool models test
+        if: ${{ !cancelled() }}
+        run: bash account-pool/tests/tool-models.test.sh
       # Fixture pool readings and stub upstream quota-axi: Claude row follows jg-model-pool.
       - name: Quota-axi pool test
         if: ${{ !cancelled() }}
@@ -307,6 +319,14 @@ jobs:
       - name: Checks lint keeps first-draft line test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-keeps-first-draft-line.test.sh
+      # The lint stamps its receipt only on the head it judged, never on a lane member's other head.
+      - name: Checks lint receipt head test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/checks-lint-receipt-head.test.sh
+      # A draft lint of a local report leaves the evidence registry as it found it.
+      - name: Checks lint draft registry test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/checks-lint-draft-registry.test.sh
       # The merge holds the task control lock while the lint publishes its receipt: no deadlock, and the PR url is kept.
       - name: Checks lint receipt-lock test
         if: ${{ !cancelled() }}
@@ -345,6 +365,10 @@ jobs:
       - name: Completion-receipt superseded-copy test
         if: ${{ !cancelled() }}
         run: bash receipts/tests/receipt-superseded-copy.test.sh
+      # A lane's one receipt slot gets the receipt published for the head being merged put back, with no hand republish.
+      - name: Completion-receipt lane restore test
+        if: ${{ !cancelled() }}
+        run: bash receipts/tests/receipt-lane-restore.test.sh
       # Real commits in real repositories, forge read stubbed: one lane lands several pull requests, each with the receipt for its own head.
       - name: Completion-receipt multi-PR lane test
         if: ${{ !cancelled() }}
@@ -375,6 +399,10 @@ jobs:
       - name: Critical-stall test
         if: ${{ !cancelled() }}
         run: bash critical-stall/tests/critical-stall.test.sh
+      # Recorded Goal rows and a fixture home; the real-store case skips without the pinned bd and dolt.
+      - name: Goal loop test
+        if: ${{ !cancelled() }}
+        run: bash goal-loop/tests/goal-loop.test.sh
       # Fixture home, stub gh and receipts; no merge runs.
       - name: Owner-rules gate test
         if: ${{ !cancelled() }}

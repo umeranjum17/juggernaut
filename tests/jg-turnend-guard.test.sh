@@ -236,6 +236,35 @@ test_predicate_relay_shim_is_not_a_custom_check() {
   pass "jg_supervision_status: the relay shim is not counted as a registered custom check"
 }
 
+test_predicate_goal_next_needs_supervision() {
+  local state="$TMP_ROOT/pred-goal/state"
+  mkdir -p "$state" "${state%/*}/data/jg-goal-loop"
+  register_custom_check "$state" goal-loop
+  JG_HOME="${state%/*}" jg_supervision_needed "$state" 300 && fail "the goal-loop check with no Goal waiting must need nothing"
+  [ "$JG_SUP_CHECKS" -eq 0 ] || fail "the goal-loop check is counted through its Goals, got $JG_SUP_CHECKS checks"
+  printf 'ship 1\n' > "${state%/*}/data/jg-goal-loop/goal-a.next"
+  JG_HOME="${state%/*}" jg_supervision_needed "$state" 300 || fail "a Goal whose next step waits did not register as supervision need"
+  [ "$JG_SUP_GOAL_NEXT" -eq 1 ] || fail "expected one waiting Goal step, got $JG_SUP_GOAL_NEXT"
+  JG_HOME="${state%/*}" jg_supervision_unhealthy "$state" 300 || fail "a waiting Goal step with no beacon must be unhealthy"
+  rm -f "${state%/*}/data/jg-goal-loop/goal-a.next"
+  JG_HOME="${state%/*}" jg_supervision_needed "$state" 300 && fail "a Goal whose step was taken must stop needing supervision"
+  pass "jg_supervision_needed: a Goal step waiting for the lead is a need, in any home; an empty goal-loop check is not"
+}
+
+# An idle lead with a Goal step waiting cannot end its turn without a live watcher.
+test_hook_blocks_idle_lead_with_goal_step_waiting() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-goal-next")
+  mkdir -p "$dir/data/jg-goal-loop"
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 0 "$status" "no Goal step waiting must leave the turn free to end"
+  printf 'ship 1\n' > "$dir/data/jg-goal-loop/goal-a.next"
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 2 "$status" "a Goal step waiting for the lead must block a blind turn end"
+  assert_contains "$out" "1 Goal step(s) wait for this idle lead" "block banner must name the Goal step"
+  pass "jg-turnend-guard: a waiting Goal step keeps a live watcher in any home"
+}
+
 # --- HOOK: bin/jg-turnend-guard.sh ------------------------------------------
 #
 # Each scenario gets its own directory carrying a copy of the two guard scripts
@@ -2547,6 +2576,7 @@ test_predicate_registered_check_survives_rebinding_drift
 test_predicate_unregistered_check_needs_nothing
 test_predicate_task_pr_poll_is_not_a_custom_check
 test_predicate_relay_shim_is_not_a_custom_check
+test_predicate_goal_next_needs_supervision
 test_hook_silent_when_no_work_in_flight
 test_hook_blocks_when_fresh_beacon_has_no_live_lock
 test_hook_blocks_source_only_home
@@ -2565,6 +2595,7 @@ test_hook_loop_guard_allows_retry
 test_hook_blocks_in_squad_lead_own_home
 test_hook_silent_in_idle_squad_lead_home
 test_hook_blocks_idle_squad_lead_with_ready_backlog
+test_hook_blocks_idle_lead_with_goal_step_waiting
 test_hook_squad_lead_loop_guard_allows_retry
 test_hook_squad_lead_reinvoke_recovery_loop
 test_hook_silent_in_squad_lead_child_worktree

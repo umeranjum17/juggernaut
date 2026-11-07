@@ -26,6 +26,7 @@
 # The hooks also get FM_HOME (the pre-rename name) because installed feature hooks and done-done's merge-gate still read it; delete with the S10 shim.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
+_JG_GATE_LIB_DIR=$(cd "$_jg_d" && pwd)
 if [ -r "$_jg_d/jg-compat.sh" ]; then
   # shellcheck source=bin/jg-compat.sh
   . "$_jg_d/jg-compat.sh"
@@ -344,5 +345,45 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
   [ -n "$removed" ] || return 0
   if [ -n "$(_jg_nav_line 'Removed by captain words')" ]; then return 0; fi
   echo "merge refused: $id is a UI change and its PR body drops from Nav before ($removed) with no 'Removed by captain words: <quote>' line; a UI change never removes an existing menu, tab or screen unless the captain's own words ask for it"
+  return 1
+}
+
+# The gates a local landing passes, in one place so bin/jg-merge-local.sh and bin/jg-trunk.sh
+# cannot drift: the captain hold, then receipt, design, demo, nav, config/merge-gate and the proof card.
+# Prints the refusal and returns 1; returns 0 when every gate passes.
+# Usage: jg_dod_local_landing_gates <bin-dir> <config-dir> <home> <state> <id> <meta> <project> <base> <candidate>
+jg_dod_local_landing_gates() {
+  local bin=$1 config=$2 home=$3 state=$4 id=$5 meta=$6 proj=$7 base=$8 candidate=$9 hold_status=0
+  JG_HOME="$home" JG_STATE_OVERRIDE="$state" "$bin/jg-captain-hold.sh" open "$id" --distinguish-absent || hold_status=$?
+  case "$hold_status" in
+    0) echo "error: task $id is still held for the captain; release it before merging" >&2; return 1 ;;
+    1|3) ;;
+    *) echo "error: could not determine whether task $id is still held for the captain; refusing to merge" >&2; return 1 ;;
+  esac
+  if declare -F jg_dod_receipt_accept >/dev/null; then jg_dod_receipt_accept "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
+  if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
+  if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "$config" "$state" "$id" "$meta" "$candidate" >&2 || return 1; fi
+  if declare -F jg_dod_nav_gate >/dev/null; then jg_dod_nav_gate "$id" "$meta" "$(git -C "$proj" log --format=%B "$base..$candidate")" >&2 || return 1; fi
+  if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "$config" "$home" "$id" "$meta" "$candidate" - >&2 || return 1; fi
+  if declare -F jg_dod_proof_gate >/dev/null; then jg_dod_proof_gate "$home" "$id" "$candidate" - >&2 || return 1; fi
+  return 0
+}
+
+# jg_dod_proof_gate is the proof-card gate both merge paths call: a merge lands only
+# when its proof card is on the board, so no lead has to remember it. It runs
+# bin/jg-proof-attach.sh with --require, which posts the card when it is missing and
+# refuses when the proof, the board client or the board is not there. A home with no
+# board anywhere (its own config/post-merge, $JG_PROOF_BOARD, or its parent's) has
+# nowhere to post and is not gated. A shell check decides.
+jg_dod_proof_gate() {  # <home> <id> <candidate-head> <pr-url|->
+  local home=$1 id=$2 head=$3 url=${4:--} out rc=0 args=()
+  # shellcheck source=bin/jg-board-link-lib.sh
+  if ! declare -F jg_board_file >/dev/null; then . "$_JG_GATE_LIB_DIR/jg-board-link-lib.sh" || return 0; fi
+  jg_board_file "$home" >/dev/null || return 0
+  [ "$url" = - ] || args=(--pr "$url")
+  out=$(JG_HOME=$home "$_JG_GATE_LIB_DIR/jg-proof-attach.sh" attach ready "$id" --head "$head" --require 1 "${args[@]+"${args[@]}"}" 2>&1) || rc=$?
+  printf '%s\n' "$out" | sed 's/^/proof: /' >&2
+  [ "$rc" -eq 0 ] && return 0
+  echo "merge refused: $id has no proof card on the board; fix what the proof lines above name, then merge again"
   return 1
 }

@@ -5,6 +5,9 @@
 # Usage:
 #   jg-afk-return.sh          Stop away mode, render the return brief, and open/check the gate.
 #   jg-afk-return.sh begin    Same as the default command.
+#   jg-afk-return.sh begin --message <text>  Same, unless <text> is a Telegram note this home
+#                            filed: a phone reply never ends away mode, so it prints `stay` and
+#                            changes nothing. Only a terminal message returns the captain.
 #   jg-afk-return.sh check    Re-render the brief and close the gate only after blockers resolve.
 #   jg-afk-return.sh guard    Read-only consult: exit 3 while away mode is still
 #                            active, exit 4 while return catch-up is pending.
@@ -907,6 +910,15 @@ EOF
 
 main() {
   local mode=${1:-begin} rc window_epoch contract_epoch
+  if [ "$mode" = begin ] && [ "${2:-}" = --message ]; then
+    # shellcheck source=bin/jg-operational-input.sh
+    . "$SCRIPT_DIR/jg-operational-input.sh"
+    if jg_operational_telegram_note "${3-}" "$STATE"; then
+      printf 'jg-afk-return: stay - a Telegram note is not the captain returning; away mode unchanged\n'
+      return 0
+    fi
+    shift 2
+  fi
   case "$mode" in
     begin|check) ;;
     guard) return_guard; return ;;

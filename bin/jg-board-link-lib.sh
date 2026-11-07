@@ -2,7 +2,7 @@
 # jg-board-link-lib.sh - the one owner of a board item's deep link.
 #
 # The sign-off board routes by hash: <board-url>?token=<t>#decide/<key>, and
-# likewise #reports, #designs, #waiting and #answered. The board address, token
+# likewise #reports, #evidence, #designs, #waiting, #answered and #tickets. The board address, token
 # included, is the first line of the file the dashboard front already reads:
 # $JG_SIGNOFF_URL_FILE, else $JG_HOME/state/signoff-board.url (private state).
 #
@@ -10,6 +10,9 @@
 #                                    and return 1 when the URL file, the key or
 #                                    the section is unusable
 #   jg_board_merge_key <pr-url>      the key merge-card gives a PR's evidence card
+#   jg_board_file <home>             the board file merge cards go on ($JG_PROOF_BOARD, else
+#                                    the --board of <home>/config/post-merge, else the parent
+#                                    home's when <home> is a Squad Lead), or return 1
 #   jg_board_has_decide_link <text>  return 0 when the text holds a board #decide/<key> link
 #   jg_board_link_fix <text>         set JG_BOARD_LINK_OUT to the text with every bare
 #                                    board link given the token; return 1 (reason on
@@ -30,7 +33,7 @@
 
 jg_board_link() {  # <section> <key>
   local section=${1:-} key=${2:-} file url
-  case "$section" in decide|reports|designs|waiting|answered|tickets) ;; *) return 1 ;; esac
+  case "$section" in decide|reports|evidence|designs|waiting|answered|tickets) ;; *) return 1 ;; esac
   case "$key" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   file=${JG_SIGNOFF_URL_FILE:-${JG_HOME:-}/state/signoff-board.url}
   [ -f "$file" ] || return 1
@@ -45,6 +48,19 @@ jg_board_merge_key() {  # <pr-url>
   local key=${1#*://}
   key=merge-$(printf '%s' "${key#*/}" | tr -c 'A-Za-z0-9._-' -)
   printf '%s\n' "${key:0:128}"
+}
+
+jg_board_file() {  # <home>
+  local board=${JG_PROOF_BOARD:-} home=${1:-} cfg
+  cfg=${JG_CONFIG_OVERRIDE:-$home/config}
+  [ -n "$board" ] || board=$(sed -n "s/.*--board[= ]'\{0,1\}\([^' ]*\).*/\1/p" "$cfg/post-merge" 2>/dev/null | head -n 1)
+  # A Squad Lead home with no board of its own files on its parent's, so a lead's merge is not left off the board.
+  if [ -z "$board" ] && declare -F jg_compat_parent_marker >/dev/null && declare -F jg_squad_lead_parent_record_parse >/dev/null \
+    && jg_squad_lead_parent_record_parse "$(jg_compat_parent_marker "$home")" && [ -n "$JG_SQUAD_LEAD_PARENT_HOME" ]; then
+    board=$(sed -n "s/.*--board[= ]'\{0,1\}\([^' ]*\).*/\1/p" "$JG_SQUAD_LEAD_PARENT_HOME/config/post-merge" 2>/dev/null | head -n 1)
+  fi
+  [ -n "$board" ] || return 1
+  printf '%s\n' "$board"
 }
 
 jg_board_has_decide_link() {  # <text>

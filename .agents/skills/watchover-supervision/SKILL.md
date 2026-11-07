@@ -19,6 +19,7 @@ These safety facts apply to both:
   Away mode on a non-Pi home that runs the supervision host (by default on Claude; `docs/configuration.md` "Supervision host") works the same way with the supervision host as the branch; a wake it hands back arrives through that harness's own wake path and is never the captain's return.
 - A marked message while away or quiet mode is active is internal escalation and does not exit that mode.
 - A message beginning `/watchover` refreshes away mode; a message beginning `/radio-silence` refreshes quiet mode.
+- A Telegram note never means the captain returned, in either mode: only a message typed in the terminal does. In away mode run `bin/jg-afk-return.sh begin --message "<text>"`; it prints `stay` for a note the Telegram gateway filed and changes nothing.
 - Any other unmarked message means the captain returned in away mode (load `/watchover`, run the return owner, and do not process that message as ordinary work until its durable catch-up gate clears), or, in quiet mode, is simply answered as ordinary work with the flag and daemon left untouched until an explicit `/radio-silence off`.
 - Away and quiet mode never expand approval authority for merges, ask-user findings, destructive actions, irreversible actions, or security-sensitive choices.
 - Bias ambiguous input toward exit because a present captain takes precedence.

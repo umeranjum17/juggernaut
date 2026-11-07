@@ -133,4 +133,9 @@ if ! jg_backlog_atomic_transition publish "$TMP" "$STATE/$ID.run-receipt.json" "
   exit 1
 fi
 TMP=
+# Keep the newest receipt for this head too, so a lane that lands several pull requests can have the right one
+# put back into the slot (jg-receipt-restore.sh) instead of republishing by hand before each merge.
+ARCH_TMP=$(mktemp "$STATE/.$ID.run-receipt.XXXXXX") \
+  && cp -- "$STATE/$ID.run-receipt.json" "$ARCH_TMP" \
+  && mv -f -- "$ARCH_TMP" "$STATE/$ID.run-receipt.$HEAD_SHA.json" || rm -f -- "${ARCH_TMP:-}"
 printf 'receipt: %s %s head=%s\n' "$ID" "$VERDICT" "$HEAD_SHA"

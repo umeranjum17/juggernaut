@@ -126,6 +126,9 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-project-mode.sh`     | Resolve a project's registered delivery posture, forge binding, or ship-branch prefix from `data/projects.md` for fleet sync, home seeding, and the forge agreement a ship spawn or Recon promotion applies |
 | `jg-forge-detect.sh`     | Propose a clone's forge binding from its origin remote for project-add intake, never recording it |
 | `jg-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |
+| `jg-trunk.sh`            | Land one proved commit per ticket on a local trunk branch, move the home to the last fully green commit at once, and push the accumulated trunk as one batch release; every open captain call is a key in `jg-trunk-policy-lib.sh` with its safe default |
+| `jg-trunk-policy-lib.sh` | The one seam for the trunk flow's open captain calls: trunk owner, landings in away mode, protected paths, full suite versus smoke, owner rules, release age; read from `config/trunk-policy` |
+| `jg-trunk-live-home.sh`  | Live hook for a project whose code this home runs: fast-forward the home checkout to the trunk commit through the shared fast-forward library |
 | `jg-review-diff.sh`      | Review an operator branch or resolved PR head against the authoritative base          |
 | `jg-marker-lib.sh`       | Compatibility entry point for the from-juggernaut carrier owned by `jg-operational-input.sh` |
 | `jg-task-inbox-lib.sh`   | Single owner of durable steering-inbox records, acknowledgement, doorbells, and the delivery-attempt ladder |
@@ -172,6 +175,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-config-inherit-lib.sh` | Shared primary-to-Squad-Lead inherited local-material propagation and config-reread delivery |
 | `jg-backlog.sh`        | Run `bin/jg-backlog.sh` against this home's backlog from any working directory               |
 | `jg-backlog-lib.sh`    | Shared Beads store selector                  |
+| `jg-goal.sh`             | Declare, show and cancel a Goal: a Beads epic with five ordered steps and a finish line whose proof must fail first; `rows` prints every Goal row for the loop check; `stop` and `resume` hold and release a Goal; `released` keeps the shipped version on the epic; `notice` and `finish` print its one message each, keyed so none repeats, and a finish names the version only where the release record has it; `proof-start`, `prove` and `proof-failed` run the proof step: a pass closes the Goal, a failure adds a fix step or a limit stop |
 | `jg-beads-view.py`       | Render `bd` rows in the read shape `bin/jg-backlog.sh` prints                                |
 | `jg-beads-write.py`      | Serve `bin/jg-backlog.sh` writes on a Beads store, in its reply shape                        |
 | `jg-beads-followup.py`   | Keep a public follow-up as one native row on a Beads store                           |
@@ -218,6 +222,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-pr-state.sh`         | Read-only: print one line per GitHub pull-request blocker it can see, reporting on checks that have reported rather than verdicting merge-readiness |
 | `jg-pr-reviewers.sh`     | Read-only: suggest reviewers from GitHub's own author mapping of recent commits on a pull request's changed files, never requesting one |
 | `jg-merge-outcome-lib.sh` | Publish a confirmed merge's durable, role-routed supervision outcome |
+| `jg-merge-alert.sh`      | File one text-only board alert for every proven merge (project, full PR URL, plain outcome, proof card link, who merged and built it with which model), queue it durably under `state/merge-alerts/` when the board is down and retry it from the supervision cycle |
 | `jg-reaper-lib.sh` | Stop a browser left behind by a dead worker when its profile is a fleet temp or scratch folder and it is past the age limit; raise the machine load alarm |
 | `jg-merge-authority-lib.sh` | Resolve merge authority at the gate, persist it against the accepted canonical PR, and identity-check its later poll consumption |
 | `jg-role.sh`             | Report this home's Juggernaut role and check the self-repository publication gate ([configuration.md](configuration.md#juggernaut-role-configjuggernaut-role)) |

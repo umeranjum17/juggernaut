@@ -290,6 +290,8 @@ afk_exit() {  # <state>
 #                              bin/jg-afk-contract.sh owns, or the legacy flag)
 #   message has marker, or is a doorbell for a record in this home
 #                           -> 1 (internal escalation; stay afk)
+#   message is a Telegram note this home filed (jg_operational_telegram_note)
+#                           -> 1 (a phone reply never ends away mode; stay afk)
 #   message is /watchover command -> 1 (re-entering/extending afk; stay afk)
 #   anything else           -> 0 (captain is back; exit afk)
 # Bias toward exit: only the marker, a doorbell this home's record backs, and an
@@ -299,6 +301,7 @@ should_exit_afk() {  # <state> <message-text>
   local state=$1 msg=$2
   afk_active "$state" || jg_afk_contract_present "$state" || return 1
   message_is_injection "$msg" "$state" && return 1
+  jg_operational_telegram_note "$msg" "$state" && return 1
   case "$msg" in
     /watchover*) return 1 ;;
   esac

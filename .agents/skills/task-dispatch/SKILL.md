@@ -62,6 +62,7 @@ Treat file or subsystem overlap as a risk signal rather than an automatic reason
 A project's declared machine capacity (`config/project-capacity`) still bounds that dispatch: a spawn beyond it exits 75 without launching, and its item stays queued rather than blocked.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Dispatch a home's ready routed backlog P0 first, up to project capacity; `fleet-records` owns the routed-backlog record.
+A `core/goal-loop` wake names a Goal step: take it like any ready item (ship or fix: spawn a worker and close the step row when the work lands). Stop the Goal with `bin/jg-goal.sh stop` for an owner-only call, a credential, a quota or an outside wait; closing the stop row resumes it.
 Write the task-specific brief under the brief rules below and `AGENTS.md` section 11 before spawning.
 
 ## Dispatch profiles and backends

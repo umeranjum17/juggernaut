@@ -524,7 +524,7 @@ if [ ! -e "$META" ] && [ ! -L "$META" ] && [ ! -e "$STATE/$ID.backlog-close" ]; 
     echo "error: teardown refused: $JG_BACKLOG_TRANSITION_ERROR" >&2
     exit 1
   }
-  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID.probe-at" "$STATE/$ID.account-probe-at"
+  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID".run-receipt.????????????????????????????????????????.json "$STATE/$ID.probe-at" "$STATE/$ID.account-probe-at"
   echo "task $ID is already cleaned up: its task record $META does not exist; nothing to tear down"
   exit 0
 fi
@@ -2849,6 +2849,18 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
     echo "Repost the page under the same key with the Answer in the picture heading, then retry." >&2
     exit 1
   fi
+  # A report that names three or more of the project's states and parts must carry the
+  # project's state map (core/project-state-map/bin/psm-wide-check.sh warns for a week first).
+  WIDE_RC=0
+  WIDE_CHECK=$("$SCRIPT_DIR/../core/project-state-map/bin/psm-wide-check.sh" "$REPORT" \
+    --project "$(basename "${PROJ:-unknown}")" --state "$STATE" --config "$CONFIG" 2>&1 >/dev/null) || WIDE_RC=$?
+  if [ "$WIDE_RC" -eq 1 ]; then
+    echo "REFUSED: scout task $ID wrote a wide report without the project's state map." >&2
+    printf '%s\n' "$WIDE_CHECK" | sed 's/^/  /' >&2
+    echo "Add the map card or a State map section to the report, then retry." >&2
+    exit 1
+  fi
+  [ -z "$WIDE_CHECK" ] || printf '%s\n' "$WIDE_CHECK" >&2
   # A standard or deep Recon's report must pass the depth gate (bin/jg-recon-gate.sh;
   # quick and a legacy brief are exempt), so a shallow report is not cleaned up as done.
   RECON_GATE_RC=0
