@@ -179,6 +179,12 @@ def publish(ok, why):
         cand = subprocess.run(['git', '-C', repo, 'rev-parse', '--verify', 'HEAD^{commit}'], capture_output=True, text=True, timeout=60).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         cand = ''
+    # The receipt binds the candidate worktree's HEAD. A lint of a PR head that worktree is not on (a lane member
+    # pushed from another copy) must not stamp this verdict on the wrong head, overwriting the slot another
+    # head's receipt holds: publish only when this run judged the head the worktree is on.
+    if re.fullmatch(r'[0-9a-f]{40}', str(head)) and cand != head:
+        print(f'checks-lint: receipt not published: the lint judged {head} but task {task} sits on {cand or "no commit"}; publish it from a copy on {head} with jg-run-receipt.sh')
+        return
     prior = None
     if ok:  # a standing PASS for this same candidate keeps its fuller evidence; a FAIL is superseded
         try:
