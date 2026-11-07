@@ -18,6 +18,12 @@ cat > "$STUB" <<'SH'
 [ ! -e "$LOG.down" ] || { echo "the store cannot be read" >&2; exit 1; }
 { printf 'pwd=%s args=%s\n' "$PWD" "$*"; env; } >> "$LOG"
 [ "$1" != list ] || [ ! -r "${ROWS:-}" ] || cat "$ROWS"
+if [ -r "${ROWS:-}" ]; then  # The two native answers, read from the same seeded rows.
+  case "$1" in
+    ready) python3 -c 'import json,sys; print(json.dumps([r for r in json.load(open(sys.argv[1])) if r["status"]=="open" and not r.get("dependencies")]))' "$ROWS" ;;
+    blocked) python3 -c 'import json,sys; print(json.dumps([{"id":r["id"],"blocked_by":[d["depends_on_id"] for d in r["dependencies"]]} for r in json.load(open(sys.argv[1])) if r.get("dependencies")]))' "$ROWS" ;;
+  esac
+fi
 [ "$1" = init ] || exit 0
 printf '{"dolt_mode": "embedded", "dolt_database": "jg"}\n' > "$BEADS_DIR/metadata.json"
 printf 'no-git-ops: true\n' > "$BEADS_DIR/config.yaml"
@@ -109,10 +115,17 @@ same() {  # <wrapper args...>: stdout and exit status match across providers.
   a=${a//ready --include-held/list --state held}  # The one line that differs: a store's tip names a verb it serves.
   [ "$a" = "$b" ] && [ "$ra" = "$rb" ] || fail "$* differs, rc $ra/$rb: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b"))"
 }
+sameset() {  # Same rows and status, any order: a Beads ready list keeps bd's own order, which ranks by priority.
+  local a b ra=0 rb=0
+  a=$(JG_HOME="$T/ta" "$CLI" "$@" 2>/dev/null | sort) || ra=$?
+  b=$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" "$@" 2>/dev/null | sort) || rb=$?
+  a=${a//ready --include-held/list --state held}
+  [ "$a" = "$b" ] || fail "$* differs as a set: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b"))"
+}
 callers() {  # The read shapes each backlog caller parses.
   local state
   same list
-  same ready
+  sameset ready
   for state in queued in_flight "done" held; do same list --state "$state" --fields blocked_by,held,hold_kind,hold_reason; done
   same list --state queued --fields priority
   same list --fields created --limit 2
@@ -390,7 +403,7 @@ writes() {  # The write shapes backlog callers send, then what each provider rea
   same reopen nope
   for ident in jg-w1 jg-w2 jg-w4; do same show "$ident" --full; same show "$ident"; done
   same list
-  same ready
+  sameset ready
   printf 'JG\n' | tee "$T/ta/config/ticket-prefix" > "$T/bd/config/ticket-prefix"
   same add jg-ask "[captain-ask] Asked" --kind ship --repo acme --priority 0 --body why
   assert_grep "jg-ask" "$T/bd/data/ticket-keys.tsv" "an add on the store must key its ticket"
@@ -590,12 +603,12 @@ holds() {  # Each hold shape, on queued, in-flight and closed rows, then what ea
   same hold jg-w1 --reason "wait for x" --kind captain --until 2099-01-15
   same show jg-w1 --full
   same list --state held --fields held,hold_kind,hold_reason
-  same ready
+  sameset ready
   same hold jg-w1 --reason "wait for y"
   same show jg-w1 --full
   same hold jg-w1 --reason "over" --kind load --until 2001-01-01
   same show jg-w1 --full
-  same ready
+  sameset ready
   same hold jg-w1 --reason x --kind nope
   same hold jg-w1 --reason x --until nope
   same hold jg-w1 --reason "  "
@@ -718,7 +731,7 @@ journey() {  # A hold, an answer, a release and a completed investigation, then 
     [ "$a" = "$b" ] || fail "$ident differs: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b"))"
   done
   same list
-  same ready
+  sameset ready
 }
 filed() {  # <id> <title> [link line] [priority]: one row on both stores.
   same add "$1" "$2" --priority "${4:-2}" --body "why${3:+$'\n'$3}"

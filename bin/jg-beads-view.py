@@ -124,7 +124,8 @@ def task(row, rows, native=None):
     meta = row.get("metadata") or {}
     closed = row.get("status") == "closed"
     deps = [d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "blocks"]
-    waiting = [d for d in deps if rows.get(d, {}).get("status") != "closed"] if native is None else native.get(row["id"], [])
+    # bd blocked does not speak for a closed row, so it keeps the edge answer.
+    waiting = [d for d in deps if rows.get(d, {}).get("status") != "closed"] if native is None or closed else native.get(row["id"], [])
     until = (row.get("defer_until") or "-")[:10]
     links = ["pr:" + url for url in dict.fromkeys(filter(None, [row.get("external_ref"), *split(meta.get("prs"))]))]
     links += ["report:" + path for path in split(meta.get("reports"))]
