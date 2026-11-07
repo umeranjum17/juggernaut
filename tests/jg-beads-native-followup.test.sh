@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A public follow-up kept as a native Beads row, driven through bin/jg-tasks-axi.sh on both providers, in a throwaway
+# A public follow-up kept as a native Beads row by bin/jg-beads-followup.py, driven through bin/jg-tasks-axi.sh on both providers, in a throwaway
 # folder outside any git tree. JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT name the pinned builds; it skips plainly without them.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
