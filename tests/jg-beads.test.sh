@@ -193,6 +193,11 @@ asks() {  # These rows land on the store alone, so this runs after everything th
   assert_contains "$(reader "$T/bd" "$CLI" show "captain-ask-$note" --full)" 'Keep it ticketed' "a captain ask must land in the store with no tasks-axi"
   chat=$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" note --request-id bd-chat --json '[chat test] Build it' | grep -m1 '^{' | jq -r .id)
   assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" approve "$chat" "captain-ask-$note")" "approved captain-ask-$note" "an approval must record with no tasks-axi"
+  # A routed decision clears its edge on the store too.
+  reader "$T/bd" "$ROOT/bin/jg-decision-hold.sh" hold jg-k1 size --title "[feature] Pick a size" --reason "captain must pick" >/dev/null || fail "a decision must hold"
+  reader "$T/bd" "$CLI" add jg-sized "[feature] Set the size" --priority 2 --body why --blocked-by jg-k1-decision-size >/dev/null || fail "routed work must file"
+  assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-decision-hold.sh" resolve jg-k1 size --decision-file "$T/said.txt" --routed-to jg-sized)" "resolved: jg-k1-decision-size" "a routed decision must resolve"
+  assert_contains "$(reader "$T/bd" "$CLI" show jg-sized --full)" "blocked_by: none" "a routed decision must clear its edge"
 }
 answers() {  # An answer closes the held row, so this runs after everything that compares it.
   local out
@@ -275,6 +280,12 @@ writes() {  # The write shapes backlog callers send, then what each provider rea
   same block jg-w4 --by nope
   same block jg-w4
   same block nope --by jg-w1
+  same unblock jg-w4 --by jg-w1
+  same unblock jg-w4 --by jg-w1 --json
+  same unblock jg-w4 --by nope
+  same unblock jg-w4
+  same unblock nope --by jg-w1
+  same block jg-w4 --by jg-w1
   same "done" jg-w4 --pr "$one" --note finished
   same "done" jg-w4 --pr "$one"
   same "done" jg-w4 --json
@@ -727,9 +738,9 @@ JSON
   out=$(JG_HOME="$T/bd" "$CLI" list 2>&1) && fail "a beads home with no store must refuse"
   assert_contains "$out" "beads-dir" "the refusal must name the store file"
   printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
-  out=$(JG_HOME="$T/bd" "$CLI" unblock x --by y 2>&1)
+  out=$(JG_HOME="$T/bd" "$CLI" mv x --to y 2>&1)
   expect_code 2 $? "an unserved verb on beads"
-  assert_contains "$out" "does not serve unblock" "an unserved verb must be refused"
+  assert_contains "$out" "does not serve mv" "an unserved verb must be refused"
   GUARD=$T/guard/jg-guard-host OPA=$(command -v opa || true)
   if [ -z "$OPA" ] || ! JG_GUARD_HOST_BIN=$GUARD "$ROOT/bin/jg-guard-host.sh" --list >/dev/null 2>&1; then
     GUARD=
@@ -848,7 +859,7 @@ start_lines() {  # Each surface's lines about the store, with the fleet's real p
   "${home[@]}" JG_BOOTSTRAP_DETECT_ONLY=1 JG_BOOTSTRAP_VERBOSE_FACTS=1 "${jail[@]}" "$ROOT/bin/jg-bootstrap.sh" 2>&1 \
     | grep -E '^(BEADS_UNHEALTHY|BOOTSTRAP_INFO: Beads)' | sed 's/^/bootstrap /'
   "${home[@]}" "${jail[@]}" timeout 90 "$ROOT/bin/jg-session-start.sh" 2>&1 | sed -n 's/^BEADS_UNHEALTHY/digest &/p'
-  "${home[@]}" "${jail[@]}" "$ROOT/bin/jg-remote-doctor.sh" 2>&1 | grep -E '^(check |action: )beads-store'
+  "${home[@]}" "${jail[@]}" "$ROOT/bin/jg-remote-doctor.sh" 2>&1 | grep -E '^(check |action: )beads-store|tasks-axi'
 }
 out=$(JG_BEADS_BD=$STUB start_lines)
 for want in 'bootstrap BEADS_UNHEALTHY: jg-beads: ' 'digest BEADS_UNHEALTHY: jg-beads: ' 'check beads-store=human: jg-beads: ' \
@@ -856,9 +867,11 @@ for want in 'bootstrap BEADS_UNHEALTHY: jg-beads: ' 'digest BEADS_UNHEALTHY: jg-
   assert_contains "$out" "$want" "a store that fails its check must say so at every start surface"
 done
 assert_contains "$out" "is not the pinned bd 1.3.4" "each start surface must give the reason"
+assert_not_contains "$out" tasks-axi "a home on Beads must not need tasks-axi"
 rm "$T/hh/config/backlog-backend"
 out=$(JG_BEADS_BD=$STUB start_lines)
 assert_contains "$out" "check beads-store=skip:" "the doctor must skip a home off Beads"
+assert_contains "$out" tasks-axi "a home off Beads must still need tasks-axi"
 assert_not_contains "$out" BEADS_UNHEALTHY "a home off Beads must not report a store"
 printf 'beads\n' > "$T/hh/config/backlog-backend"
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then

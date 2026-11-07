@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""jg-beads-write.py - serve tasks-axi's add, update, done, block, start, reopen, hold and unhold on a Beads store.
+"""jg-beads-write.py - serve tasks-axi's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|start|reopen|hold|unhold> [args...]
+Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold> [args...]
 
 bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-axi.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi's lines on stdout.
@@ -303,6 +303,25 @@ def block(args):
     respond(found, "block", ident, line, tips, card=False, **extra, blocked_by=other)
 
 
+def unblock(args):
+    found, ids = view.flags(args, ("--by",), ("--json",))
+    if len(ids) != 1:
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi unblock <id> --by <other>")
+    if not found.get("--by"):
+        view.refuse("--by <id> is required", "Name the other task, e.g. `--by treehouse-lease-t4`")
+    items = rows()
+    row = target(items, ids[0])
+    other = view.named(items.values(), found["--by"])
+    ident, other = row["id"], other["id"] if other else found["--by"]
+    already = "blocked-by:" + other not in view.task(row, items)["deps"].split(",")
+    if not already:
+        bd("dep", "remove", ident, other)
+    tips = ["Run `tasks-axi ready` to see newly unblocked work"]
+    line = "unblock %s %s %s" % (ident, "already not blocked-by" if already else "-> cleared", other)
+    extra = {"already": True} if already else {}
+    respond(found, "unblock", ident, line, tips, card=False, **extra, blocked_by=other)
+
+
 def one_row(verb, args):
     found, ids = view.flags(args, (), ("--json",))
     if len(ids) != 1:
@@ -397,7 +416,7 @@ def unhold(args):
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
-             "block": block, "start": start, "reopen": reopen, "hold": hold, "unhold": unhold}.get(verb)
+             "block": block, "unblock": unblock, "start": start, "reopen": reopen, "hold": hold, "unhold": unhold}.get(verb)
     if serve is None:
         view.refuse("Unknown write verb: " + verb)
     serve(sys.argv[2:])
