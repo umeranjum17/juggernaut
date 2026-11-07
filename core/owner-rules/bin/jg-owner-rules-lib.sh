@@ -19,7 +19,7 @@ jg_owner_rules_check() {
   # shellcheck source=bin/jg-tasks-axi-lib.sh
   # shellcheck disable=SC1091
   . "$bin/jg-tasks-axi-lib.sh"
-  if jg_backlog_present "$config" "$data/backlog.md" && ! backlog=$(jg_backlog_text "$config" "$data/backlog.md" 2>/dev/null); then
+  if ! backlog=$(jg_backlog_text "$config" 2>/dev/null); then
     echo "owner-rules: cannot read the backlog for $id" >&2
     exit 1
   fi

@@ -2,7 +2,7 @@
 # done-done journey: replay a stalled ready backlog in real time with the shipped timings.
 # A disposable main home and Squad Lead home each run the real bin/jg-watch.sh and
 # bin/jg-wake-drain.sh as a supervision loop over a copy of this checkout; the lead's
-# backlog is a real tasks-axi backlog with one ready item and four free lanes, and nothing
+# backlog is a real Beads backlog with one ready item and four free lanes, and nothing
 # starts. Only the terminal (one idle lead pane), the board, and the steer and interrupt
 # endpoints are recorders, because a disposable lead has no live pane to type into.
 # Expected: the lead's ready-work wake at once, the backstop at 10 minutes (lead re-woken,
@@ -17,7 +17,7 @@ FORK="$T/fork"
 M="$T/main"
 L="$T/lead"
 mkdir -p "$FORK"
-cp -a "$REPO/bin" "$REPO/core" "$FORK/"
+cp -a "$REPO/bin" "$REPO/core" "$REPO/toolchain.versions" "$FORK/"
 for f in jg-send.sh jg-control.sh; do
   # shellcheck disable=SC2016 # the recorder expands its own arguments when run
   printf '#!/usr/bin/env bash\nprintf "%%s %%s %%s\\n" "$(date +%%s)" %s "$*" >> "$JG_HOME/sent"\n' "${f%.sh}" > "$FORK/bin/$f"
@@ -59,7 +59,10 @@ printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$M" > "$
 printf 'kind=squad_lead\nmode=squad_lead\nbackend=tmux\nwindow=fake:1\nharness=claude\nhome=%s\n' "$L" > "$M/state/lead1.meta"
 : > "$M/state/lead1.status"
 printf '4\n' > "$L/config/lane-target"
-JG_HOME="$L" "$FORK/bin/jg-tasks-axi.sh" add alpha "[feature] ship the routed fix" --priority 1 --body "users wait on the routed fix" >/dev/null || { echo "fixture: backlog add failed"; exit 1; }
+# shellcheck source=core/lib/beads-test-env.sh
+. "$REPO/core/lib/beads-test-env.sh"
+core_beads_home "$FORK" "$L"
+JG_HOME="$L" "$FORK/bin/jg-tasks-axi.sh" add jg-alpha "[feature] ship the routed fix" --priority 1 --body "users wait on the routed fix" >/dev/null || { echo "fixture: backlog add failed"; exit 1; }
 
 START=$(date +%s)
 stamp() { printf '+%4ss' "$(( $(date +%s) - START ))"; }
@@ -111,7 +114,7 @@ log "parent channel holds $(overdue) stalled-backlog report(s) from the lead"
 wait_until 1900 steered_twice
 wait_until 1950 carded
 log "Main has steered the lead $(grep -c 'You have ready backlog work' "$M/sent" 2>/dev/null) time(s)"
-JG_HOME="$L" "$FORK/bin/jg-tasks-axi.sh" hold alpha --reason "waits on the vendor" >/dev/null
+JG_HOME="$L" "$FORK/bin/jg-tasks-axi.sh" hold jg-alpha --reason "waits on the vendor" >/dev/null
 log "the lead holds alpha with its reason"
 wait_until 2100 resolved
 wait_until 2250 dismissed
@@ -143,7 +146,7 @@ t2=$(printf '%s\n' "$times" | sed -n 2p)
   echo "episode armed at $first_at; first report at $t1 (after $((t1 - first_at))s); re-fire at $t2 ($((t2 - t1))s later)"
   check "the lead's first-sight ready-work wake fired" grep -q 'lead wake: check: ready work waiting with free lane slots (0/4 open): alpha' "$OUT/timeline.txt"
   check "the first stalled-backlog report came at 10 minutes, not before" between "$((t1 - first_at))" 600 720
-  check "the lead was woken again by the backstop" grep -q 'lead wake: check: ready backlog stalled: alpha waits with free lanes (0/4 open)' "$OUT/timeline.txt"
+  check "the lead was woken again by the backstop" grep -q 'lead wake: check: ready backlog stalled: jg-alpha waits with free lanes (0/4 open)' "$OUT/timeline.txt"
   check "Main got an event from the report" grep -q 'main wake: .*lead1' "$OUT/timeline.txt"
   check "Main steered the lead about its ready backlog" grep -q 'jg-send lead1 --fire-and-forget [0-9a-f]* You have ready backlog work that can start now' "$OUT/main-steers-to-lead.txt"
   check "the report re-fired 10 minutes later" between "$((${t2:-0} - t1))" 600 720

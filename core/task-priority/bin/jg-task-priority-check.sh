@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # jg-task-priority-check.sh - refuse a new backlog task that carries no priority.
 #
-# Usage: jg-task-priority-check.sh <tasks-axi command> [tasks-axi args...]
+# Usage: jg-task-priority-check.sh <backlog command> [args...]
 #
 # The fork's jg-tasks-axi.sh `add` and jg-captain-hold.sh `hold` (when it creates the row) call this with the
-# exact tasks-axi arguments, only when the feature is installed. Only `add` and `create` are checked; any other
+# exact the backlog arguments, only when the feature is installed. Only `add` and `create` are checked; any other
 # command exits 0. A new task needs:
 #   - --priority 0-3 (0 = most urgent); missing or out of range is refused, exit 1, with the flag to pass;
 #   - a target release: a `release: <name>` line in --body or --body-file, defaulting to `later` when absent.

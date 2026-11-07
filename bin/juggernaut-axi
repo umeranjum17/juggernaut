@@ -10,14 +10,14 @@
 # output boundary (bin/jg-toon-lib.sh); `--json` prints the same model.
 # Output contract: `juggernaut-axi.v1`; consumers ignore unknown fields.
 # It never writes state, never reads task transcripts, and states every omission.
-# Conventions follow tasks-axi: `count: N of M total`, tabular rows, a plain-words empty
+# Conventions follow the backlog: `count: N of M total`, tabular rows, a plain-words empty
 # state, cut text that names its full length (`--full` lifts it), `--fields` for extra
 # columns, `--limit`, a trailing help[] of next steps, and `<command> --help`.
 # `lanes` projects jg-fleet-snapshot.sh --json; `wakes` opens the bus read model
 # (state/.wake-queue, state/.wake-settled) as it is and never renders, acknowledges, or
 # calls the bus, so its age is stated and nothing it does moves a wake.
 # `tasks` and `holds` project the backlog records of the same fleet snapshot (no new store):
-# `tasks ready` is queued work with no unresolved blocker and no hold, as `tasks-axi ready` is.
+# `tasks ready` is queued work with no unresolved blocker and no hold, as `jg-tasks-axi.sh ready` is.
 # `pr <url>` runs bin/jg-pr-state.sh (read-only) for the blockers it can see and the one thing
 # the change waits for; an empty blocker list is not a readiness verdict, and the output says so.
 set -u
@@ -51,7 +51,7 @@ commands:
                          queued wakes from the bus read model, oldest first
   tasks [list] [--state <queued|in_flight|done|held>] [--repo <name>] [--kind <k>] [--blocked]
         [--limit <n>] [--fields <a,b>] [--full]
-                         backlog rows in tasks-axi's shape (default 50, at most 100)
+                         backlog rows in the backlog's shape (default 50, at most 100)
   tasks show <id> [--full]
                          one task with its hold, blockers, links, and notes
   tasks ready [--repo <name>] [--limit <n>] [--full]
@@ -88,7 +88,7 @@ USAGE
 
 die() { echo "juggernaut-axi: $*" >&2; exit 2; }
 
-# Per-command help in tasks-axi's shape: usage, flags, examples.
+# Per-command help in the backlog's shape: usage, flags, examples.
 verb_help() {
   case "$1" in
     lanes) cat <<'HELP'
@@ -141,7 +141,7 @@ HELP
   esac
 }
 
-# TOON-only presentation, tasks-axi style: "count: N of M total" and a plain-words empty list.
+# TOON-only presentation, the backlog style: "count: N of M total" and a plain-words empty list.
 # shellcheck disable=SC2016
 TOON_PREP='
   (if .view == "lanes" and (.lanes | length) == 0 then .lanes = "0 lanes match these filters"
@@ -562,7 +562,7 @@ cmd_ticket() {
     esac
   done
   out=$(JG_HOME=${JG_HOME:-$HOME_ROOT} "$HOME_ROOT/bin/jg-tasks-axi.sh" add --mint "$title" "${args[@]}" --json) || exit $?
-  printf '%s\n' "$out" | jq -c '{schema: "juggernaut-axi.v1", view: "write", action: "ticket", task: .task.id, ok: .ok, confirmed: (.task.state == "queued"), note: "queued by tasks-axi", ticket: (.task | {id, title, state, repo, kind})}' \
+  printf '%s\n' "$out" | jq -c '{schema: "juggernaut-axi.v1", view: "write", action: "ticket", task: .task.id, ok: .ok, confirmed: (.task.state == "queued"), note: "queued by the backlog", ticket: (.task | {id, title, state, repo, kind})}' \
     || { echo "juggernaut-axi: ticket result unreadable" >&2; exit 1; }
 }
 

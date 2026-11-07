@@ -169,7 +169,7 @@ the lead installs it from merged main, never from a branch.
 
 ## Test
 
-`merge-on-green/tests/backlog-shipped-reconcile.test.sh` drives the reconcile against a fixture home with a real markdown backlog and the real `tasks-axi`: shipped rows with a gone worker close, and live, unproven, held, queued, squad_lead, pending-close and no-`pr=` rows stay.
+`merge-on-green/tests/backlog-shipped-reconcile.test.sh` drives the reconcile against a fixture home with a real markdown backlog and the real `bin/jg-tasks-axi.sh`: shipped rows with a gone worker close, and live, unproven, held, queued, squad_lead, pending-close and no-`pr=` rows stay.
 
 `merge-on-green/tests/stale-pr-alarm.test.sh` drives the alarm against recorded PR fixtures (`tests/fixtures/stale-pr-alarm/`) behind a `gh-axi` stub: every reason, a release PR with and without started CI, a healthy PR and a recent one silent, no repeat on the second poll, a re-stall alerting again, a forge failure silent, and the alarm running from `merge-on-green.sh check`.
 

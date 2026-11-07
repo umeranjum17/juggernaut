@@ -100,40 +100,65 @@ fi
 # under the marker. A case that verifies the refusal sets JG_TASK_ID itself.
 unset JG_TASK_ID
 
-# Clear the tasks-axi env overrides. An operator shell exports TASKS_AXI_FILE
-# (and may export TASKS_AXI_BACKEND) at its real home's backlog, and tasks-axi
-# resolves that env AHEAD of the .tasks.toml a fixture copies, so a suite that
-# seeds a temp home with bare `tasks-axi` would silently write the operator's
-# live backlog instead - tests/jg-public-followup.test.sh did exactly that. Every
-# fixture addresses its own data/backlog.md through its copied .tasks.toml, an
-# explicit --file, or bin/jg-tasks-axi.sh; a case that verifies the wrapper
-# against an ambient override sets TASKS_AXI_FILE itself.
-unset TASKS_AXI_FILE TASKS_AXI_BACKEND
+# Clear the backlog env overrides: an operator shell may export BEADS_DIR at its
+# live store, and a fixture home must address only its own store through its own
+# config/beads-dir.
+unset BEADS_DIR BEADS_DB BEADS_DOLT_SHARED_SERVER
 
-# Write the tracked default backlog configuration into a fixture home. Never copy
-# "$ROOT/.tasks.toml": an operator's primary checkout keeps a gitignored override
-# there (for example a beads backend at its live backlog), so a copy points the
-# fixture at the operator's queue and produces false failures. This mirrors the
-# tracked .tasks.toml defaults.
-jg_test_tasks_toml() {  # <destination-file>
-  cat > "$1" <<'TOML'
-backend = "markdown"
+# Give a fixture home a real Beads store (the only backlog there is). The pinned builds come from
+# JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT; a suite without them skips plainly. One store is built per
+# suite process and copied into each home, because an init costs seconds.
+jg_test_beads_home() {  # <home> [<prefix>=jg]
+  local home=$1 prefix=${2:-jg} tpl store
+  if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
+    printf 'skip: no Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
+    exit 0
+  fi
+  export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
+  # $$ is the suite's own pid in every subshell, so a case built inside $(...) finds the same template.
+  tpl=$(jg_test_tmpdir)/jg-beads-tpl.$$
+  if [ ! -d "$tpl/$prefix/.beads" ]; then
+    if [ ! -d "$tpl" ]; then
+      mkdir -p "$tpl" || fail "could not make the Beads template root"
+      printf '%s\n%s\n' "$$" "$JG_TEST_OWNER_IDENTITY" > "$tpl/.jg-test-fixture"
+      printf '%s\n' "$tpl" >> "$JG_TEST_CLEANUP_REGISTRY"
+    fi
+    mkdir -p "$tpl/$prefix"
+    BEADS_DIR=$tpl/$prefix/.beads "$ROOT/bin/jg-beads.sh" init --prefix "$prefix" >/dev/null 2>&1 \
+      || fail "could not initialise the Beads template store"
+  fi
+  store=$home-store
+  mkdir -p "$home/config" "$home/data"
+  rm -rf "$store"
+  cp -a "$tpl/$prefix" "$store" || fail "could not copy the Beads store"
+  printf '%s\n' "$store/.beads" > "$home/config/beads-dir"
+}
 
-[markdown]
-path = "data/backlog.md"
-archive = "data/done-archive.md"
-done_keep = 10
-TOML
+# Run the backlog wrapper against a fixture home that jg_test_beads_home built.
+jg_test_backlog() {  # <home> <wrapper args...>
+  local home=$1
+  shift
+  (cd "$home" && JG_HOME="$home" JG_CONFIG_OVERRIDE="$home/config" JG_TASK_PRIORITY_CHECK=/nonexistent \
+    "$ROOT/bin/jg-tasks-axi.sh" "$@")
+}
+
+# File one ticket in a fixture home: <home> <id> <title with its [type] tag> [extra add args].
+jg_test_add() {
+  local home=$1 id=$2 title=$3
+  shift 3
+  local prio=1
+  case $title in '[captain-ask]'*) prio=0 ;; esac
+  jg_test_backlog "$home" add "$id" "$title" --priority "$prio" --kind ship --repo demo --body "Fixture ticket $id" "$@" >/dev/null 2>&1 \
+    || fail "could not file fixture ticket $id"
 }
 
 # Give a fixture home a backlog holding one ticket, so a design card (a `--must design-pick`
 # post, which must name the ticket that raised it) has a raising ticket to name.
-jg_test_raising_ticket() {  # <home> [<ticket>=m1]
-  mkdir -p "$1/data"
-  jg_test_tasks_toml "$1/.tasks.toml"
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$1/data/backlog.md"
-  (cd "$1" && JG_TASK_PRIORITY_CHECK=/nonexistent tasks-axi add "${2:-m1}" "Ship the fix" --kind ship --repo sample >/dev/null 2>&1) \
-    || fail "could not file the raising ticket ${2:-m1}"
+jg_test_raising_ticket() {  # <home> [<ticket>=jg-m1]
+  jg_test_beads_home "$1"
+  (cd "$1" && JG_HOME="$1" JG_CONFIG_OVERRIDE="$1/config" JG_TASK_PRIORITY_CHECK=/nonexistent \
+    "$ROOT/bin/jg-tasks-axi.sh" add "${2:-jg-m1}" "[feature] Ship the fix" --priority 1 --kind ship --repo sample --body "Raising ticket for a fixture card" >/dev/null 2>&1) \
+    || fail "could not file the raising ticket ${2:-jg-m1}"
 }
 
 # Resolve the repo root from this library's own location. Consumed by sourcing

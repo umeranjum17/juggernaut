@@ -363,9 +363,9 @@ When called with `JG_HOME=<this-juggernaut-home>` or when `JG_HOME` is already s
 The parent guards every reply-bearing marked request against a missing correlated report without reading the Squad Lead conversation; `bin/jg-pending-reply-lib.sh` owns the correlation, recovery, escalation, and retention contract, while `bin/jg-send.sh` owns the explicit fire-and-forget exception.
 When a marked turn ends with no correlated report, the parent itself appends one correlated `note` line that names the lead's last stamped status from this turn and resolves the request (`resolved_via=turn-end`), so no repost and no second lead turn follow; the repost stays the fallback only when the log holds no such line.
 Explicit backend-target sends and direct human typing stay unmarked, so captain intervention in a Squad Lead pane remains conversational.
-After seeding a Squad Lead, `jg-backlog-handoff.sh` validates the fleet-specific handoff, atomically delegates already-judged in-scope queued item moves to `tasks-axi mv`, and then attempts a marked routed-work wake through the receiver's recorded endpoint.
+After seeding a Squad Lead, `jg-backlog-handoff.sh` validates the fleet-specific handoff, atomically delegates already-judged in-scope queued item moves to `bin/jg-tasks-axi.sh` moves, and then attempts a marked routed-work wake through the receiver's recorded endpoint.
 The [`jg-backlog-handoff.sh`](../bin/jg-backlog-handoff.sh) header owns route-specific wake outcomes, remote outbox release after receipt, and stable wake-correlation retry behavior.
-`tests/jg-backlog-handoff.test.sh` and `tests/jg-remote-backlog-handoff.test.sh` pin the local and remote delivery boundaries.
+`tests/jg-beads.test.sh` and `tests/jg-remote-backlog-handoff.test.sh` pin the local and remote delivery boundaries.
 An unreachable remote host is unknown rather than dead, preserves its route and durable work, and is never failed over or relaunched locally.
 Idle Squad Lead panes are healthy; teardown is explicit and refuses while the Squad Lead home has in-flight work unless the captain has approved discard with `--force`.
 
@@ -492,14 +492,14 @@ Attached images are recorded as compact `{media_type, bytes, source_path}` metad
 Relay remains layered on top of the existing check mechanism without changing its request-handling behavior.
 
 A promised *final* public reply is a stronger commitment than a milestone follow-up, because forgetting it is publicly visible.
-It is therefore not carried in conversation memory at all: intake turns it into a typed `kind=public-followup` obligation owned by `tasks-axi public-followup`, and every later step reads that obligation from disk.
+It is therefore not carried in conversation memory at all: intake turns it into a typed `kind=public-followup` obligation owned by `jg-tasks-axi.sh public-followup`, and every later step reads that obligation from disk.
 The mechanism boundary is deliberately narrow.
-`tasks-axi` owns the obligation state machine and the authoritative validation of a terminal result's source home, work id, generation, schema, outcome, and deliverables.
+`bin/jg-tasks-axi.sh` owns the obligation state machine and the authoritative validation of a terminal result's source home, work id, generation, schema, outcome, and deliverables.
 `state/x-context/` remains the only owner of the private full request context.
 `bin/jg-x-reply.sh` remains the only thing that posts.
 `bin/jg-public-followup.sh` composes those three and adds the activation gate, a private terminal-event inbox, the idempotent delivery sequence, and retained-loop disposition: delivery stamps the registration delivered, `rechain` hands its thread binding to one follow-on obligation, and `retire` is the only close.
 Work routed to another home reports a *typed* terminal result through `bin/jg-public-followup-emit.sh`; Juggernaut never recovers the source home, work id, outcome, or deliverables by parsing a free-form `done:` sentence, and the child never learns the thread.
-The emitter mirrors `tasks-axi`'s deliverable rules to reject correctable mistakes at their source, while reconciliation still revalidates through `tasks-axi` and queues an at-least-once wake when `tasks-axi` refuses an event.
+The emitter mirrors `bin/jg-tasks-axi.sh`'s deliverable rules to reject correctable mistakes at their source, while reconciliation still revalidates through `bin/jg-tasks-axi.sh` and queues an at-least-once wake when `bin/jg-tasks-axi.sh` refuses an event.
 When that home is a remote Squad Lead, no local path reaches the owning home, so the result is staged where the work runs and the owning home pulls it over the same SSH route with `bin/jg-public-followup-collect.sh`.
 Because a terminal event's id is derived from its identity tuple rather than generated, duplicate reports and restart replay converge without coordination.
 Reconciliation rides the existing relay poll and the session-start digest instead of a new watcher, daemon, or timer, and both are gated on the same `.env` activation contract so a home that never opted into the relay executes none of it.

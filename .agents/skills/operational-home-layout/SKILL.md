@@ -13,7 +13,6 @@ AGENTS.md            this file (CLAUDE.md is a real @AGENTS.md pointer to it)
 CONTRIBUTING.md      contributor workflow and repo conventions
 README.md            public overview and development notes
 .github/workflows/   shared CI and PR enforcement, committed
-.tasks.toml          tracked tasks-axi markdown backend config for the default backlog backend (section 10)
 .agents/skills/      Juggernaut-loaded internal skills, committed; each carries metadata.internal=true for installers
 .claude/skills       symlink to .agents/skills for claude compatibility
 .claude/mods/        Claude Code mods (function-hooks plugins), committed; Calm's module may load through CLAUDE_CODE_ENABLE_FUNCTION_HOOKS or tengu_plugin_hooks_modules, but activates only when CLAUDE_CODE_ENABLE_FUNCTION_HOOKS is exactly "1" and is otherwise a complete no-op (docs/calm.md)
@@ -28,8 +27,8 @@ config/project-capacity  optional per-machine count of workers each named projec
 config/crew-exclude-tools  optional list of tool names hidden from this home's ship and scout workers; LOCAL, gitignored, and not inherited; a runtime that cannot hide tools refuses the launch rather than ignoring it; see docs/configuration.md "Worker tool exclusions"
 config/squad-lead-harness  global squad lead launch default; LOCAL, gitignored, not inherited; docs/configuration.md "Choose the squad lead harness" owns the schema and fallback
 config/squad_leads/<id>/harness  per-mate launch pin; LOCAL, gitignored, not inherited; same configuration contract
+config/beads-dir  absolute path of this home's Beads store (a `.beads` directory outside any git tree); LOCAL, gitignored; the backlog lives there, written through `bin/jg-tasks-axi.sh`; see docs/configuration.md
 config/backlog-intake-loose  optional presence flag turning off the backlog intake check (type tag plus justification line on every new item); LOCAL, gitignored, not inherited; see docs/configuration.md "Backlog intake"
-config/backlog-backend  backlog backend override; LOCAL, gitignored; absent or "tasks-axi" = the configured tasks-axi backend, "manual" = force routine backlog updates to hand-editing; inherited by squad lead homes (section 10)
 config/backend  runtime session-provider backend override for new tasks; LOCAL, gitignored; absent = falls through to runtime auto-detection (the runtime Juggernaut itself is executing inside), then tmux; tmux is the verified reference backend (docs/tmux-backend.md), herdr has its own required CI lane (docs/herdr-backend.md), while zellij, orca, and cmux remain experimental with no dedicated real-backend CI lane (docs/zellij-backend.md, docs/orca-backend.md, docs/cmux-backend.md) - herdr and cmux can also be selected by runtime auto-detection, zellij and orca never are (always explicit), and codex-app is not accepted; see docs/codex-app-backend.md; inherited by squad lead homes under the primary-authoritative contract in squad-lead-provisioning
 config/calm     Calm presentation preference shared by the Pi extension and the Claude Code mod; LOCAL, gitignored, and not inherited; see docs/configuration.md "Calm preference"
 config/token-saver-off  optional presence flag that turns the token saver off: no ponytail override, poll guard, Bash output cap, or daily token retro; LOCAL, gitignored, not inherited; see docs/configuration.md "Token saver"
@@ -54,7 +53,6 @@ config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitig
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/jg-tool-update-check.sh; LOCAL, gitignored, Juggernaut-maintained but human-editable, and NOT inherited by squad lead homes; see docs/configuration.md "Watched tool updates"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
-  backlog.md         task queue, dependencies, history
   captain.md         this home's domain-local captain preferences and working style; LOCAL, gitignored, canonical even if harness memory mirrors it, and updated with inspect-then-update
   captain-shared.md  main-authoritative shared captain preferences propagated read-only to squad lead homes; LOCAL, gitignored, owned by squad-lead-provisioning
   learnings.md       fleet-local operational facts and gotchas; LOCAL, gitignored; dated, evidence-backed, curated, and updated with inspect-then-update - rewrite and prune rather than append forever, the same contract as captain.md; created lazily, absent until this home has a learning to store

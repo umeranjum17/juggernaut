@@ -632,7 +632,7 @@ RESOLVE_CLOSE_MAX=$JG_LINE_CAP_DEFAULT
 # captain-held task that carries it: the key as a task id itself (the collapsed
 # identity - a captain call IS a task held for the captain), then the legacy
 # derived `<task>-decision-<key>` identity for pre-collapse rows. Answerable
-# means not closed and still carrying the captain-hold annotations tasks-axi
+# means not closed and still carrying the captain-hold annotations the backlog
 # preserves even past a hold-until date.
 jg_send_hold_resolved_id() { # <task-id> <decision-key>
   local show id state hold_kind

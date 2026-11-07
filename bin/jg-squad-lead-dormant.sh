@@ -66,8 +66,7 @@ idle_secs() {
 
 busy_reason() {  # <id> <lead-home>: why it must stay awake, or nothing when it has no work
   local id=$1 home=$2 f text open
-  if ! jg_backlog_present "$home/config" "$home/data/backlog.md" \
-    || ! text=$(jg_backlog_text "$home/config" "$home/data/backlog.md" 2>/dev/null); then
+  if ! text=$(jg_backlog_text "$home/config" 2>/dev/null); then
     echo "its backlog is unreadable"
     return
   fi
@@ -91,8 +90,10 @@ open_request() {  # <id>: whether a marked request to this lead still awaits its
 }
 
 quiet_secs() {  # <id> <lead-home>: seconds since its newest record changed
-  local f m newest=0
-  for f in "$STATE/$1.status" "$STATE/$1.inbox" "$STATE/$1.inbox/handled" "$2/data/backlog.md" "$2/state/.wake-queue"; do
+  local f m newest=0 store
+  store=$(jg_backlog_beads_store "$2/config" 2>/dev/null) || store=
+  for f in "$STATE/$1.status" "$STATE/$1.inbox" "$STATE/$1.inbox/handled" "$store" "$2/state/.wake-queue"; do
+    [ -n "$f" ] || continue
     m=$(jg_lock_path_mtime "$f") || continue
     [ "${m:-0}" -le "$newest" ] || newest=$m
   done

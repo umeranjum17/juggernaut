@@ -95,7 +95,7 @@ release_is_live() {  # <home path> <ref>
 
 read_home() {  # <home id> <home path>
   local id=$1 path=$2 snap cands row url n ref live_ref='' blocked_ref='' report ok closure
-  jg_backlog_present "$path/config" "$path/data/backlog.md" || { unread "$id" "no backlog in this home"; return 0; }
+  jg_backlog_beads_store "$path/config" >/dev/null 2>&1 || { unread "$id" "no backlog in this home"; return 0; }
   if ! snap=$(JG_HOME="$path" JG_DATA_OVERRIDE="$path/data" JG_STATE_OVERRIDE="$path/state" JG_CONFIG_OVERRIDE="$path/config" \
       jg_run_timed "$TIMEOUT" "$SCRIPT_DIR/jg-fleet-snapshot.sh" --contribution-input 2>/dev/null); then
     unread "$id" "the backlog read failed"; return 0

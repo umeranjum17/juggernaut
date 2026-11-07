@@ -17,6 +17,6 @@ If you do nothing: nothing starts and this report stays open.
 - `refine <report> --note "<his note>"` keeps the answered version as `report.v<N>.md`, writes the next one with his note, sends it to the owner, and prints the diff.
 - `reject <report> --reason <not-a-problem|wrong-fix|too-risky|not-now|other> [--note "<his note>"]` closes the report, prints no build, and saves his reason as an owner rule.
 
-One answer per version: `<report-dir>/answered` marks it and a refine clears it. Commands resolve from the Juggernaut checkout (`JG_CODE_ROOT`, else three levels above the script); `TASKS_AXI`, `JG_SEND`, `JG_HANDOFF`, `JG_OWNER_RULES` and `JG_DATA_OVERRIDE` override one command or the data directory each. No installer.
+One answer per version: `<report-dir>/answered` marks it and a refine clears it. Commands resolve from the Juggernaut checkout (`JG_CODE_ROOT`, else three levels above the script); `BACKLOG`, `JG_SEND`, `JG_HANDOFF`, `JG_OWNER_RULES` and `JG_DATA_OVERRIDE` override one command or the data directory each. No installer.
 
 Check: `python3 tests/test_report_actions.py` replays approve, refine and reject end to end on the real recorded report in `tests/fixtures/recorded-report.md`, with the outside commands stubbed in the throwaway directory.

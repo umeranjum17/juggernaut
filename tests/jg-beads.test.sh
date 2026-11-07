@@ -140,7 +140,7 @@ refused "reaches a remote" "$WRAPPER" dolt sql -q "CALL DOLT_PUSH('origin', 'mai
 "$WRAPPER" dolt sql -q 'show tables' || fail "a plain query must run"
 assert_grep "pwd=$T/store/.beads/embeddeddolt/jg args=sql -q show tables" "$LOG" "dolt must run in the database folder"
 # Both providers answer each caller alike. The stand-in prints bd's own JSON for the seeded backlog.
-export TZ=UTC  # Beads stamps rows in UTC and tasks-axi in local time.
+export TZ=UTC  # Beads stamps rows in UTC and the backlog in local time.
 CLI="$ROOT/bin/jg-tasks-axi.sh" jail=()
 same() {  # <wrapper args...>: stdout and exit status match across providers.
   local a b ra=0 rb=0
@@ -168,7 +168,7 @@ callers() {  # The read shapes each backlog caller parses.
   assert_contains "$(. "$ROOT/bin/jg-supervision-lib.sh"; jg_ready_work_rows "$T/bd")" "jg-one-a acme" "supervision must see ready work"
   readers
 }
-reader() {  # <home> <command...>: a reader of that home's backlog, with no tasks-axi on its path.
+reader() {  # <home> <command...>: a reader of that home's backlog, with no old-engine tool on its path.
   local home=$1
   shift
   env -u JG_PIN_FILE_OVERRIDE HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" \
@@ -204,7 +204,6 @@ crossings() {  # One row set walks store to store, store to file and file to sto
     printf -- '- design - work (home: %s; scope: work; projects: acme; added 2026-07-09)\n' "$T/$next" > "$T/$h/data/squad_leads.md"
     next=$([ "$h" = xa ] && echo xf || echo xa)
     [ "$h" != xf ] || continue
-    printf 'beads\n' > "$T/$h/config/backlog-backend"
     printf '%s\n' "$T/$h/s/.beads" > "$T/$h/config/beads-dir"
     BEADS_DIR=$T/$h/s/.beads "${jail[@]}" "$WRAPPER" init --prefix jg >/dev/null 2>&1 || fail "a store for $h"
   done
@@ -229,7 +228,7 @@ crossings() {  # One row set walks store to store, store to file and file to sto
   out=$(walk "$T/xa" "$tool" jg-mv-stay)
   assert_contains "$out" "still blocking active tasks" "a stranded dependent must be named"
   reader "$T/xa" "$CLI" show jg-mv-stay >/dev/null || fail "a refused move must keep the row"
-  walk "$T/xa" /usr/bin:/bin jg-mv-base jg-mv-tail jg-mv-far >/dev/null  # Store to store needs no tasks-axi.
+  walk "$T/xa" /usr/bin:/bin jg-mv-base jg-mv-tail jg-mv-far >/dev/null  # Store to store needs no other tool.
   out=$(BEADS_DIR=$T/xb/s/.beads "${jail[@]}" "$WRAPPER" show jg-mv-far --json)
   assert_contains "$out" '"status": "deferred"' "a deferred row must stay deferred"
   assert_contains "$out" '"dependency_type": "related"' "a related edge must move with both its rows"
@@ -239,8 +238,8 @@ crossings() {  # One row set walks store to store, store to file and file to sto
   walk "$T/xb" "$tool" jg-mv-base jg-mv-tail >/dev/null
   assert_equals "$(card "$T/xf" jg-mv-base; card "$T/xf" jg-mv-tail)" "$before" "store to file must keep every field"
   mkdir -p "$T/shim"
-  printf '#!/usr/bin/env bash\ncase "$*" in *gone.md*) exit 1 ;; esac\nexec %q "$@"\n' "$(command -v tasks-axi)" > "$T/shim/tasks-axi"
-  chmod +x "$T/shim/tasks-axi"
+  printf '#!/usr/bin/env bash\ncase "$*" in *gone.md*) exit 1 ;; esac\nexec %q "$@"\n' "$(command -v the backlog)" > "$T/shim/the backlog"
+  chmod +x "$T/shim/the backlog"
   out=$(walk "$T/xf" "$T/shim:$tool" jg-mv-base jg-mv-tail)
   assert_contains "$out" "rerun this same handoff" "a crash must say how to finish"
   assert_contains "$(cat "$T/xf/state/.backlog-handoff-design.wake-pending")" "prepared:" "a crash must keep the prepared wake"
@@ -295,7 +294,7 @@ SH
   out=$(send "$T/xa" /usr/bin:/bin to-xb jg-rm-base jg-rm-tail)
   assert_contains "$out" "outbox preserved" "an unreachable lead must keep the rows for retry"
   rm -f "$T/xb/down"
-  send "$T/xa" /usr/bin:/bin to-xb jg-rm-base jg-rm-tail >/dev/null  # Store to store over a route needs no tasks-axi.
+  send "$T/xa" /usr/bin:/bin to-xb jg-rm-base jg-rm-tail >/dev/null  # Store to store over a route needs no other tool.
   assert_equals "$(card "$T/xb" jg-rm-base; card "$T/xb" jg-rm-tail)" "$before" "store to a remote store must keep every field"
   [ ! -e "$T/xa/data/handoff/to-xb.outbox.md" ] || fail "a receipt must release the outbox"
   mkdir -p "$T/xb/data/handoff"  # A crash after staging leaves the rows on both sides.
@@ -314,9 +313,9 @@ asks() {  # These rows land on the store alone, so this runs after everything th
   local note chat
   # The jail has no message bus, so a note saves unannounced and exits nonzero: its JSON line is the result.
   note=$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" note --request-id bd-ask --json '[captain-ask] Keep it ticketed' | grep -m1 '^{' | jq -r .id)
-  assert_contains "$(reader "$T/bd" "$CLI" show "captain-ask-$note" --full)" 'Keep it ticketed' "a captain ask must land in the store with no tasks-axi"
+  assert_contains "$(reader "$T/bd" "$CLI" show "captain-ask-$note" --full)" 'Keep it ticketed' "a captain ask must land in the store with the old engine absent"
   chat=$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" note --request-id bd-chat --json '[chat test] Build it' | grep -m1 '^{' | jq -r .id)
-  assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" approve "$chat" "captain-ask-$note")" "approved captain-ask-$note" "an approval must record with no tasks-axi"
+  assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" approve "$chat" "captain-ask-$note")" "approved captain-ask-$note" "an approval must record with the old engine absent"
   # A routed decision clears its edge on the store too.
   reader "$T/bd" "$ROOT/bin/jg-decision-hold.sh" hold jg-k1 size --title "[feature] Pick a size" --reason "captain must pick" >/dev/null || fail "a decision must hold"
   reader "$T/bd" "$CLI" add jg-sized "[feature] Set the size" --priority 2 --body why --blocked-by jg-k1-decision-size >/dev/null || fail "routed work must file"
@@ -332,7 +331,7 @@ answers() {  # An answer closes the held row, so this runs after everything that
   out=$(reader "$T/bd" env PATH="$T/fb:/usr/bin:/bin" "$ROOT/bin/jg-send.sh" lane --resolve-key nope 'An answer') || true
   assert_contains "$out" 'no open decision or blocker' "an unknown key must stay refused"
   out=$(reader "$T/bd" env PATH="$T/fb:/usr/bin:/bin" "$ROOT/bin/jg-send.sh" lane --resolve-key jg-wait 'An answer') || true
-  assert_not_contains "$out" 'no open decision or blocker' "an answer must find a held row with no tasks-axi on its path"
+  assert_not_contains "$out" 'no open decision or blocker' "an answer must find a held row with no old-engine tool on its path"
   rm -f "$T/bd/state/lane.meta"
 }
 readers() {  # What reads the backlog file reads the same rows from the store.
@@ -423,7 +422,7 @@ writes() {  # The write shapes backlog callers send, then what each provider rea
   same reopen jg-w6
   same start jg-w6 --json
   same "done" jg-w6
-  same reopen jg-w6  # tasks-axi forgets a reopened row's created date and Beads keeps it, so show stays out.
+  same reopen jg-w6  # the old engine forgot a reopened row's created date and Beads keeps it, so show stays out.
   same start
   same start jg-w6 extra
   same start nope
@@ -473,7 +472,7 @@ both() {  # <op> <id> [args...]: a gate that answers on the old store answers th
   local old new
   old=$(step "$T/ta" "$@")
   new=$(step "$T/bd" "$@")
-  [ "$old" = "$new" ] || fail "transition $*: providers differ"$'\n'"tasks-axi: $old"$'\n'"beads: $new"
+  [ "$old" = "$new" ] || fail "transition $*: providers differ"$'\n'"the backlog: $old"$'\n'"beads: $new"
   printf 'ok - both stores answer: %s\n' "$new"
 }
 transitions() {
@@ -483,7 +482,7 @@ transitions() {
   same add jg-t2 "[feature] Held" --priority 2 --body why
   same add jg-t3 "[feature] Gone" --priority 2 --body why
   same add jg-t4 "[feature] Waits" --priority 2 --body why --blocked-by jg-t1
-  (cd "$T/ta" && TASKS_AXI_FILE="$T/ta/data/backlog.md" tasks-axi hold jg-t2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
+  (cd "$T/ta" && BACKLOG_FILE="$T/ta/data/backlog.md" jg-tasks-axi.sh hold jg-t2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
   "${jail[@]}" "$WRAPPER" update jg-t2 --status on_hold --set-metadata "hold_reason=owner call" \
     --set-metadata hold_kind=captain >/dev/null 2>&1 || fail "seed a held row"
   both applies jg-t1
@@ -585,7 +584,7 @@ lanes() {
   owner jg-l1 "" ""
   # A hold reaches a lane's row: it stays in flight, a relaunch moves the lane, and a retain leaves it held.
   both lane jg-l2 s5.5.5 claude
-  (cd "$T/ta" && TASKS_AXI_FILE="$T/ta/data/backlog.md" tasks-axi hold jg-l2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
+  (cd "$T/ta" && BACKLOG_FILE="$T/ta/data/backlog.md" jg-tasks-axi.sh hold jg-l2 --reason "owner call" --kind captain >/dev/null) || fail "seed a hold"
   "${jail[@]}" "$WRAPPER" update jg-l2 --status on_hold --set-metadata "hold_reason=owner call" \
     --set-metadata hold_kind=captain >/dev/null 2>&1 || fail "seed a held row"
   both probe jg-l2
@@ -840,74 +839,6 @@ gates() {  # An open decision stops the work linked to it: by a body line on eit
   captain "$T/bd" design-card jg-e6 --raised-by jg-e2 --title "Any?" >/dev/null && fail "a Beads home with no store must not file a design row"
   mv "$T/beads-dir" "$T/bd/config/beads-dir"
 }
-if command -v tasks-axi >/dev/null; then
-  mkdir -p "$T/ta/data" "$T/bd/config"
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$T/ta/data/backlog.md"
-  ta() { (cd "$T/ta" && TASKS_AXI_FILE="$T/ta/data/backlog.md" tasks-axi "$@" >/dev/null) || fail "seed: $*"; }
-  ta add jg-one-a "First, thing: here" --kind ship --repo acme --priority 1 --body $'line one\nline two'
-  ta add jg-two-b Second --priority 2 --blocked-by jg-one-a
-  ta add jg-wait Waiting --priority 2
-  ta hold jg-wait --reason "wait: for x" --kind captain
-  ta add jg-fly Flying --kind recon --priority 3
-  ta start jg-fly
-  ta add jg-fin Finished --priority 2
-  ta "done" jg-fin --pr https://github.com/o/r/pull/5 --note fin
-  stamp=$(date -u +%FT%H:%M:0)
-  cat > "$T/rows.json" <<JSON
-[{"id":"jg-one-a","title":"First, thing: here","description":"line one\nline two","status":"open","priority":1,"issue_type":"task","created_at":"${stamp}1Z","metadata":{"kind":"ship"},"labels":["project:acme"]},
-{"id":"jg-two-b","title":"Second","status":"open","priority":2,"issue_type":"task","created_at":"${stamp}2Z","dependencies":[{"issue_id":"jg-two-b","depends_on_id":"jg-one-a","type":"blocks","metadata":"{}"}]},
-{"id":"jg-wait","title":"Waiting","status":"on_hold","priority":2,"issue_type":"task","created_at":"${stamp}3Z","metadata":{"hold_reason":"wait: for x","hold_kind":"captain"}},
-{"id":"jg-fly","title":"Flying","status":"in_progress","priority":3,"issue_type":"task","created_at":"${stamp}4Z","metadata":{"kind":"recon"}},
-{"id":"jg-fin","title":"Finished https://github.com/o/r/pull/5","description":"fin","status":"closed","priority":2,"issue_type":"task","created_at":"${stamp}5Z","closed_at":"${stamp}6Z","external_ref":"https://github.com/o/r/pull/5"}]
-JSON
-  printf 'beads\n' > "$T/bd/config/backlog-backend"
-  out=$(JG_HOME="$T/bd" "$CLI" list 2>&1) && fail "a beads home with no store must refuse"
-  assert_contains "$out" "beads-dir" "the refusal must name the store file"
-  printf '%s\n' "$BEADS_DIR" > "$T/bd/config/beads-dir"
-  out=$(JG_HOME="$T/bd" "$CLI" mv x --to y 2>&1)
-  expect_code 2 $? "an unserved verb on beads"
-  assert_contains "$out" "does not serve mv" "an unserved verb must be refused"
-  GUARD=$T/guard/jg-guard-host OPA=$(command -v opa || true)
-  if [ -z "$OPA" ] || ! JG_GUARD_HOST_BIN=$GUARD "$ROOT/bin/jg-guard-host.sh" --list >/dev/null 2>&1; then
-    GUARD=
-    printf 'skip: owner rule verdicts: the guard needs Go and OPA\n'
-  fi
-  ROWS=$T/rows.json callers
-  ROWS=$T/rows.json answers
-  # A failed read says so, and a lead's store decides whether that lead can sleep.
-  : > "$LOG.down"
-  out=$(reader "$T/bd" timeout 90 "$ROOT/bin/jg-session-start.sh")
-  assert_contains "$out" "beads compact listing failed:" "a failed read must not look like an empty backlog"
-  assert_contains "$out" "the store cannot be read" "a failed read must give its reason"
-  assert_not_contains "$out" "title-line" "a store has no title lines to fall back on"
-  assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" status)" "the backlog cannot be read" "a failed read must not look like nothing in flight"
-  out=$(reader "$T/bd" python3 "$ROOT/bin/jg_voice_records.py" status --home "$T/bd" --scope full)
-  expect_code 2 $? "a voice status with no store"
-  assert_contains "$out" "the backlog cannot be read" "a failed read must not read as an empty fleet"
-  printf 'JG\n' > "$T/bd/config/ticket-prefix"
-  out=$(reader "$T/bd" "$ROOT/bin/jg-ticket-key.sh" sync)
-  expect_code 2 $? "a key sync with no store"
-  assert_contains "$out" "the backlog cannot be read" "a failed read must not look like nothing to key"
-  rm -f "$T/bd/config/ticket-prefix"
-  assert_contains "$(flow "$T/fl-bd")" "backlog read failed" "an unread hold must not look like no hold"
-  assert_contains "$(owner_rule "$T/bd" jg-one-a)" "cannot read the backlog for jg-one-a" "an unread entry must refuse"
-  mkdir -p "$T/dm/bin" "$T/dm/state" "$T/dm/config" "$T/dm/data"
-  printf '#!/usr/bin/env bash\n' | tee "$T/dm/bin/jg-control.sh" > "$T/dm/bin/jg-send.sh"
-  chmod +x "$T/dm/bin/"*.sh
-  printf 'kind=squad_lead\nhome=%s\nharness=claude\nbackend=tmux\nwindow=jg-lead\n' "$T/bd" > "$T/dm/state/lead.meta"
-  printf -- '- lead - a local lead (home: %s; scope: l; projects: l; added 2026-10-30)\n' "$T/bd" > "$T/dm/data/squad_leads.md"
-  printf '1\n' > "$T/dm/config/squad-lead-dormant-secs"
-  mv "$T/bd/state" "$T/bd.state"
-  sweep_lead() { JG_ROOT_OVERRIDE=$T/dm JG_HOME=$T/dm JG_STATE_OVERRIDE=$T/dm/state "$ROOT/bin/jg-squad-lead-dormant.sh" sweep 2>&1; }
-  assert_equals "$(ROWS=$T/rows.json sweep_lead)" "" "a store that cannot be read must keep its lead awake"
-  rm "$LOG.down"
-  assert_equals "$(ROWS=$T/rows.json sweep_lead)" "" "a lead with open rows must stay awake"
-  printf '[]\n' > "$T/none.json"
-  assert_contains "$(ROWS=$T/none.json sweep_lead)" "asked: lead" "a lead with an empty store may sleep"
-  mv "$T/bd.state" "$T/bd/state"
-else
-  printf 'skip: providers: tasks-axi is not installed\n'
-fi
 # A store this wrapper would not create is never opened.
 printf '{"dolt_mode": "server"}\n' > "$BEADS_DIR/metadata.json"
 refused "not an embedded store" "$WRAPPER" list
@@ -924,7 +855,6 @@ assert_contains "$(cd "$T/lint" && bash bin/jg-lint.sh bin/jg-other.sh 2>&1)" "b
 (cd "$T/lint" && bash bin/jg-lint.sh bin/jg-beads.sh >/dev/null 2>&1) || fail "lint must let the wrapper name bd"
 # Bootstrap, the session digest and the remote doctor all report this home's store.
 mkdir -p "$T/hh/config" "$T/hh/data" "$T/hh/state" "$T/user"
-printf 'beads\n' > "$T/hh/config/backlog-backend"
 printf '%s\n' "$BEADS_DIR" > "$T/hh/config/beads-dir"
 spawned() {  # A real spawn, relaunch and teardown on a Beads home: the lane follows the task's record.
   local w=$T/world h=$T/world/home wt=$T/world/wt p=$T/world/proj fake out gen
@@ -945,7 +875,6 @@ spawned() {  # A real spawn, relaunch and teardown on a Beads home: the lane fol
   jg_test_fake_sleep_noop "$fake"
   sed -i '/^set -u$/a case "$*" in *pane_current_command*) echo bash; exit 0 ;; esac' "$fake/tmux"
   printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_available_gb=0\n' > "$h/config/host-memory"
-  printf 'beads\n' > "$h/config/backlog-backend"
   printf '%s\n' "$BEADS_DIR" > "$h/config/beads-dir"
   run() {  # <jg-spawn args...>
     # shellcheck disable=SC2016  # The inner shell expands them.
@@ -1091,13 +1020,10 @@ SH
   chmod +x "$T"/forge/*
   merge_home "$T/mg/ta"
   merge_home "$h"
-  jg_test_tasks_toml "$T/mg/ta/.tasks.toml"
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$T/mg/ta/data/backlog.md"
-  printf 'beads\n' > "$h/config/backlog-backend"
   printf '%s\n' "$BEADS_DIR" > "$h/config/beads-dir"
-  # A Beads home's merge paths never reach tasks-axi, so a call here fails the story.
-  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/tasks-axi.log"\nexit 99\n' "$h" > "$h/fake/tasks-axi"
-  chmod +x "$h/fake/tasks-axi"
+  # A Beads home's merge paths never reach the backlog, so a call here fails the story.
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/the backlog.log"\nexit 99\n' "$h" > "$h/fake/the backlog"
+  chmod +x "$h/fake/the backlog"
   printf 'go\n' > "$T/said.txt"
   story=$(merge_story "$T/mg/ta")
   out=$(merge_story "$h")
@@ -1134,8 +1060,8 @@ SH
     assert_contains "$out" "error: could not determine whether task $id is still held for the captain" "the refusal must name $id"
   done
   assert_not_contains "$(grep '^pr merge' "$h/gh.log")" 'pr merge 6 ' "an unreadable store must keep the PR off the forge"
-  assert_absent "$h/tasks-axi.log" "a Beads home's merge paths must not call tasks-axi"
-  printf 'merges the forge saw:\n%s\ntasks-axi calls on this home: none\nend of merge story\n' "$(grep '^pr merge' "$h/gh.log")"
+  assert_absent "$h/the backlog.log" "a Beads home's merge paths must not call the backlog"
+  printf 'merges the forge saw:\n%s\nthe backlog calls on this home: none\nend of merge story\n' "$(grep '^pr merge' "$h/gh.log")"
   printf 'ok - each merge gate refuses and each good merge lands, the same on Beads and the old store\n'
 }
 start_lines() {  # Each surface's lines about the store, with the fleet's real pin table.
@@ -1144,7 +1070,7 @@ start_lines() {  # Each surface's lines about the store, with the fleet's real p
   "${home[@]}" JG_BOOTSTRAP_DETECT_ONLY=1 JG_BOOTSTRAP_VERBOSE_FACTS=1 "${jail[@]}" "$ROOT/bin/jg-bootstrap.sh" 2>&1 \
     | grep -E '^(BEADS_UNHEALTHY|BOOTSTRAP_INFO: Beads)' | sed 's/^/bootstrap /'
   "${home[@]}" "${jail[@]}" timeout 90 "$ROOT/bin/jg-session-start.sh" 2>&1 | sed -n 's/^BEADS_UNHEALTHY/digest &/p'
-  "${home[@]}" "${jail[@]}" "$ROOT/bin/jg-remote-doctor.sh" 2>&1 | grep -E '^(check |action: )beads-store|tasks-axi'
+  "${home[@]}" "${jail[@]}" "$ROOT/bin/jg-remote-doctor.sh" 2>&1 | grep -E '^(check |action: )beads-store'
 }
 out=$(JG_BEADS_BD=$STUB start_lines)
 for want in 'bootstrap BEADS_UNHEALTHY: jg-beads: ' 'digest BEADS_UNHEALTHY: jg-beads: ' 'check beads-store=human: jg-beads: ' \
@@ -1152,13 +1078,6 @@ for want in 'bootstrap BEADS_UNHEALTHY: jg-beads: ' 'digest BEADS_UNHEALTHY: jg-
   assert_contains "$out" "$want" "a store that fails its check must say so at every start surface"
 done
 assert_contains "$out" "is not the pinned bd 1.3.4" "each start surface must give the reason"
-assert_not_contains "$out" tasks-axi "a home on Beads must not need tasks-axi"
-rm "$T/hh/config/backlog-backend"
-out=$(JG_BEADS_BD=$STUB start_lines)
-assert_contains "$out" "check beads-store=skip:" "the doctor must skip a home off Beads"
-assert_contains "$out" tasks-axi "a home off Beads must still need tasks-axi"
-assert_not_contains "$out" BEADS_UNHEALTHY "a home off Beads must not report a store"
-printf 'beads\n' > "$T/hh/config/backlog-backend"
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
 else
@@ -1178,7 +1097,7 @@ else
   assert_contains "$out" "dolt version 2.6.0" "real dolt must be the pin"
   assert_not_contains "$out" "unable to query" "real dolt must not call out"
   assert_contains "$("${jail[@]}" "$WRAPPER" dolt sql -q 'show tables' 2>&1)" "issues" "real dolt must read the store"
-  if command -v tasks-axi >/dev/null; then
+  if command -v the backlog >/dev/null; then
     bd_() { "${jail[@]}" "$WRAPPER" "$@" >/dev/null 2>&1 || fail "real seed: $*"; }
     bd_ create Second --id jg-two-b --priority 2
     bd_ dep add jg-two-b jg-one-a

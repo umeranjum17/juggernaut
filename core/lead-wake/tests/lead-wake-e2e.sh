@@ -3,7 +3,7 @@
 # checkout; its bin/ and tests/ are copied privately and only the proposed step-B replacements
 # are applied to the copy (tests/stage-step-b.py). The real watcher then runs the fork's lead-wake cases (tests/jg-lead-wake.test.sh):
 # feature present = the fork's lead-wake behavior, feature absent = Kun's (no wake, no error).
-# Needs tasks-axi, bash, python3.
+# Needs the backlog, bash, python3.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -16,7 +16,6 @@ unset _jg_old _jg_new 2>/dev/null || true
 set -euo pipefail
 addons=$(cd "$(dirname "$0")/../.." && pwd)
 : "${JG_TEST_FORK:?set JG_TEST_FORK to a Juggernaut checkout}"
-command -v tasks-axi >/dev/null || { echo "not ok - tasks-axi is required"; exit 1; }
 d=$(mktemp -d)
 watchers=()  # watcher pids this run started, stopped before the fixture is removed
 cleanup() {
@@ -45,7 +44,8 @@ mkdir -p "$HOME" "$TMPDIR" "$d/fork" "$d/fakebin" "$d/empty"
 # dies and writes that failure to stderr, which the absent-feature case below
 # reads.
 mkdir -p "$d/fork/core/bus" "$d/fork/core/watch" "$d/fork/core/wake"
-cp -a "$JG_TEST_FORK/bin" "$JG_TEST_FORK/tests" "$d/fork/"
+cp -a "$JG_TEST_FORK/bin" "$JG_TEST_FORK/tests" "$JG_TEST_FORK/toolchain.versions" "$d/fork/"
+mkdir -p "$d/lib"; cp -a "$addons/lib/beads-test-env.sh" "$d/lib/"
 cp -a "$JG_TEST_FORK/core/bus/." "$d/fork/core/bus/"
 cp -a "$JG_TEST_FORK/core/watch/." "$d/fork/core/watch/"
 cp -a "$JG_TEST_FORK/core/wake/." "$d/fork/core/wake/"
@@ -56,14 +56,14 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$d/fakebin/tmux"
 printf '#!/usr/bin/env bash\necho "state: unknown · source: none · fake default"\n' > "$d/fakebin/jg-crew-state.sh"
 chmod +x "$d/fakebin/"*
 
+. "$d/lib/beads-test-env.sh"
 fail() { echo "not ok - $*" >&2; exit 1; }
 ok() { echo "ok - $*"; }
 tasks() { JG_HOME=$home "$d/fork/bin/jg-tasks-axi.sh" "$@" >/dev/null || fail "fixture: tasks $*"; }
 newhome() {  # <name>
   home=$d/$1; state=$home/state
   mkdir -p "$state" "$home/config" "$home/data"
-  printf 'manual\n' > "$home/config/backlog-backend"
-  : > "$home/config/backlog-intake-loose"  # bare fixture items for wake cases
+  core_beads_home "$d/fork" "$home"  # a real Beads store; bare fixture items for wake cases
   printf 'lead-1\n' > "$home/.jg-squad-lead-home"
 }
 # watch <addons-dir> <out> [wait-seconds]: run the real watcher; it exits on a wake.
@@ -91,7 +91,7 @@ JG_ADDONS_DIR=$d/empty RING_TEXT="Drain pending rows in this home's wake queue, 
 
 # Absent feature: Kun behavior - no ready-work wake, no error.
 newhome absent
-tasks add alpha-one "first ready item"
+tasks add jg-alpha-one "first ready item"
 watch "$d/empty" "$d/o5" 30 || true
 ! grep -q 'ready work waiting' "$d/o5" || fail "absent feature still woke the lead: $(cat "$d/o5")"
 [ ! -s "$d/o5.err" ] || fail "absent feature wrote stderr: $(cat "$d/o5.err")"

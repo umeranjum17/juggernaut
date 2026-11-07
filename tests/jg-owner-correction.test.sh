@@ -20,12 +20,12 @@ CORRECTION="I don't want these feedbacks as one time fix this need to go into ju
 # resolve that home's state, data, and backlog exactly as a real one would.
 make_home() {  # <dir>
   mkdir -p "$1/state" "$1/config"
-  cp -R "$ROOT/bin" "$1/bin"
+  cp -R "$ROOT/bin" "$1/bin"; cp "$ROOT/toolchain.versions" "$1/toolchain.versions"
   chmod +x "$1/bin/jg-turnend-guard.sh" "$1/bin/jg-owner-correction.sh"
   git init -q -b main "$1"
   git -C "$1" remote add origin https://github.com/acme/juggernaut.git
   : > "$1/AGENTS.md"
-  jg_test_tasks_toml "$1/.tasks.toml"
+  jg_test_beads_home "$1"
 }
 
 in_home() {  # <dir> <command...>
@@ -91,7 +91,7 @@ test_an_enforcement_ticket_captures_the_correction() {
   make_home "$home"
   submit "$home" "$CORRECTION"
   kpi "$home" tag feedback https://github.com/acme/juggernaut/pull/41 >/dev/null || fail "tagging failed"
-  in_home "$home" bash "$home/bin/jg-tasks-axi.sh" add capture-the-correction \
+  in_home "$home" bash "$home/bin/jg-tasks-axi.sh" add jg-capture \
     "[feature] flag a turn that ends after an owner correction" \
     --body "an owner correction must become a rule or an enforcement ticket" >/dev/null \
     || fail "filing the enforcement ticket failed"

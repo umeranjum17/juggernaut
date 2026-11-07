@@ -3,7 +3,7 @@
 #
 # A stray persistent top-level `cd projects/<clone>` in the PRIMARY juggernaut
 # shell silently relocates the shell, so a later juggernaut-owned command (a
-# backlog write, an jg-* lifecycle call, tasks-axi) runs inside a project clone
+# backlog write, an jg-* lifecycle call, the backlog) runs inside a project clone
 # instead of the home. This seatbelt denies such a command before it runs.
 # bin/jg-cd-command-policy.mjs is the sole owner of the block/allow decision; it
 # reuses the shell classifier owned by bin/jg-arm-command-policy.mjs. This

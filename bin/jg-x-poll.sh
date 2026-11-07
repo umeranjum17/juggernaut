@@ -29,7 +29,7 @@
 #
 # The public-followup line rides here rather than on a new poll of its own: this
 # check only exists in a home that opted into the relay, and it is an O(1)
-# directory presence test plus a signature compare, with no tasks-axi call and no
+# directory presence test plus a signature compare, with no backlog call and no
 # backlog scan. A home with no pending terminal results pays nothing for it.
 # The full object is stashed verbatim, so every conversation-context field the
 # relay includes is preserved for relay-respond to handle with continuity; the

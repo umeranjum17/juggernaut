@@ -40,7 +40,7 @@ esac
 FAKE
 chmod +x "$T/bin/sign-off-axi"
 export FAKE_RAISED=$T/raised
-card() { PATH="$T/bin:$PATH" bash "$ROOT/bin/jg-question-card.sh" post  --route main --title "Q?" --ask-ref m1 --must design-pick --raised-by m1 \
+card() { PATH="$T/bin:$PATH" bash "$ROOT/bin/jg-question-card.sh" post  --route main --title "Q?" --ask-ref jg-m1 --must design-pick --raised-by jg-m1 \
   --outcome yes="It is." --outcome no="It is not." 2>"$T/err"; }
 
 out=$(card) || fail "question card post failed"

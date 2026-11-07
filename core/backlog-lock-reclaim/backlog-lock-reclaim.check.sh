@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # backlog-lock-reclaim watcher check: reclaims <jg-home>/data/backlog.md.lock when it is a 0-byte file older than
-# JG_BACKLOG_LOCK_SAFE_AGE_S seconds (default 60, above tasks-axi's 30 s stale mark) and no process has it open.
-# A tasks-axi writer that dies between creating the lock and writing its token leaves exactly that file, and tasks-axi
-# never reclaims a lock, so every later backlog write fails LOCKED. Prints one wake line per reclaim and nothing
+# JG_BACKLOG_LOCK_SAFE_AGE_S seconds (default 60, above the old 30 s stale mark) and no process has it open.
+# A backlog writer that dies between creating the lock and writing its token leaves exactly that file, and nothing
+# else reclaims it, so every later backlog write fails LOCKED. Prints one wake line per reclaim and nothing
 # otherwise; each reclaim is logged with its path and age to state/backlog-lock-reclaim.log. Usage: check.sh <jg-home>
 # Liveness is the procfs open-descriptor table: a writer frozen between open and token write still holds the descriptor,
 # and the table is the one signal that names the lock file itself (a process name or cwd match cannot tell which
-# backlog a tasks-axi process writes). Descriptors of other users' processes are unreadable; a tasks-axi process we
+# backlog a backlog process writes). Descriptors of other users' processes are unreadable; a backlog process we
 # cannot read counts as a holder, so it is never reclaimed under.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
@@ -32,7 +32,7 @@ held() {
   local p fd
   for p in /proc/[0-9]*; do
     if ! ls "$p/fd" >/dev/null 2>&1; then
-      grep -qa tasks-axi "$p/cmdline" 2>/dev/null && return 0
+      grep -qa jg-tasks-axi "$p/cmdline" 2>/dev/null && return 0
       continue
     fi
     for fd in "$p"/fd/*; do

@@ -17,6 +17,9 @@ mkdir -p "$HOME"
 H=$T/home
 mkdir -p "$H/state" "$H/data" "$H/config"
 ln -s "$REPO/bin" "$H/bin"
+# shellcheck source=core/lib/beads-test-env.sh
+. "$REPO/core/lib/beads-test-env.sh"
+core_beads_home "$REPO" "$H"
 cat > "$T/gh" <<'STUB'
 #!/usr/bin/env bash
 # api repos/ex/r/actions/runs/<id> --jq .conclusion: 21 is red, 22 is green; run rerun <id> -R <repo> is recorded.

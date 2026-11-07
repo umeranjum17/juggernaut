@@ -8,7 +8,7 @@
 # operation. Every command here reads durable state and nothing else.
 #
 # OWNERSHIP BOUNDARIES (do not re-implement any of these here):
-#   tasks-axi public-followup   the typed obligation and its state machine.
+#   jg-tasks-axi.sh public-followup   the typed obligation and its state machine.
 #   state/x-context/            the private full request context (jg-x-lib.sh).
 #   bin/jg-x-reply.sh           posting to the relay, thread splitting, dry run.
 #   bin/jg-public-followup-lib.sh  the activation gate and private transport.
@@ -22,7 +22,7 @@
 # first on the authoritative activation contract (a non-empty FMX_PAIRING_TOKEN
 # in $JG_HOME/.env). Read-side and cleanup paths then use an O(1) presence check
 # for registrations this home actually created. A relay-disabled home therefore
-# runs one [ -f ] test before any backlog work: no tasks-axi call, no backlog scan,
+# runs one [ -f ] test before any backlog work: no backlog call, no backlog scan,
 # and no file created. Silent read-side commands return without output; commands
 # that require an active relay report their configuration error after the same
 # gate. A relay-enabled home with no live commitments stops at the second gate
@@ -37,14 +37,14 @@
 #   jg-public-followup.sh register <obligation-id> --relation <relation-id>
 #         --work-home <main|squad_lead:<id>> --work-id <task-id> --generation <n>
 #         [--platform <x|discord>] [--request <request-id>]
-#       Record the binding the relay path just created with `tasks-axi
+#       Record the binding the relay path just created with `jg-tasks-axi.sh
 #       public-followup add` + `bind-work`. This is the event-driven
 #       registration: it creates this home's private public-followup directories
 #       (0700) and the bounded public-safe registration record, which is what
 #       later makes the presence checks O(1) and lets bound work report a typed
 #       terminal result. A direct emit reads what the obligation expects from
-#       tasks-axi, so work reporting into this home is refused at emit for an
-#       outcome, missing required key, or value tasks-axi would refuse.
+#       The backlog, so work reporting into this home is refused at emit for an
+#       outcome, missing required key, or value the backlog would refuse.
 #       Refuses when the relay is not active for this home.
 #
 #   jg-public-followup.sh brief <obligation-id>
@@ -54,7 +54,7 @@
 #       --deliverable flags name the obligation's actual required keys, with
 #       every value the binding determines already filled in (report_path is
 #       data/<work-id>/report.md) and every other one left as a named
-#       placeholder followed by the format tasks-axi accepts. The same keys are
+#       placeholder followed by the format the backlog accepts. The same keys are
 #       repeated as --require-deliverable, so an emit that drops one is refused
 #       where it runs rather than quarantined here. For work
 #       bound to a REMOTE squad_lead home, the command names that route's own
@@ -63,8 +63,8 @@
 #
 #   jg-public-followup.sh consume
 #       Drain every pending typed terminal event: validate its derived identity,
-#       skip anything already accepted, apply `tasks-axi public-followup
-#       work-event`, and quarantine what tasks-axi refuses. Prints one
+#       skip anything already accepted, apply `jg-tasks-axi.sh public-followup
+#       work-event`, and quarantine what the backlog refuses. Prints one
 #       "ready <obligation-id> <request-id> <platform>" line per obligation that
 #       became delivery-ready, and one "rejected <event-id>: <reason>" line per
 #       refusal. A refusal's reason names the specific deliverable, outcome, or
@@ -136,7 +136,7 @@
 #       transport, and a remote that never confirms it is reported as unknown
 #       completion to reconcile on that host, not as a definite failure.
 #
-# Requires jq and a compatible tasks-axi for registration, briefs,
+# Requires jq and the Beads backlog for registration, briefs,
 # reconciliation, delivery, cleanup guards, and retirement; only `active`
 # inspects local state alone.
 # JG_PF_RETRY_BACKOFF_SECS (default 900) sets the next-attempt time recorded with
@@ -237,17 +237,17 @@ next_attempt_rfc3339() {
 
 require_tools() {
   command -v jq >/dev/null 2>&1 || die "jq is required" 1
-  jg_pf_backlog_tool "$JG_HOME" || die "tasks-axi is required" 1
+  jg_pf_backlog_tool "$JG_HOME" || die "the backlog is required" 1
 }
 
-# Every tasks-axi call addresses $JG_HOME/data, the home whose backlog owns the
+# Every the backlog call addresses $JG_HOME/data, the home whose backlog owns the
 # obligation, through bin/jg-tasks-axi.sh. An inherited JG_DATA_OVERRIDE is
 # cleared because a caller such as a squad_lead teardown names the parent home
 # in JG_HOME while its own data override is still in the environment.
 tx() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-tasks-axi.sh" "$@"; }
 
 # obligation_json <id>: this home's typed obligation payload, through the shared
-# reader every consumer of the promised contract uses. tasks-axi stays the
+# reader every consumer of the promised contract uses. the backlog stays the
 # single source of truth; the registration record is never consulted for state.
 obligation_json() { jg_pf_obligation_json "$JG_HOME" "$1"; }
 
@@ -307,13 +307,13 @@ cmd_register() {
 
   local payload
   payload=$(obligation_json "$id") \
-    || die "could not read the backlog through tasks-axi" 1
+    || die "could not read the backlog through the backlog" 1
   [ -n "$payload" ] \
     || die "no public-followup obligation '$id' in this home's backlog; create it with bin/jg-tasks-axi.sh public-followup add before registering" 1
 
   # The relation must already be bound, so a registration can never describe a
-  # binding tasks-axi does not have.
-  # tasks-axi stores the home id in its own pinned spelling, so the bound relation
+  # binding the backlog does not have.
+  # The backlog stores the home id in its own pinned spelling, so the bound relation
   # is compared after mapping that spelling back (slice S5).
   printf '%s' "$payload" | jq -e --arg r "$relation" --arg h "$work_home" --arg w "$work_id" \
     --arg wire "$JG_PF_SQUAD_LEAD_HOME_PREFIX" --arg own "$JG_PF_SQUAD_LEAD_HOME_PREFIX_ALT" \
@@ -454,17 +454,17 @@ the home above owns the reply.'
 
   require_tools
   payload=$(obligation_json "$id") \
-    || die "could not read public-followup obligation '$id' through tasks-axi" 1
+    || die "could not read public-followup obligation '$id' through the backlog" 1
   [ -n "$payload" ] \
-    || die "public-followup obligation '$id' is missing from tasks-axi" 1
+    || die "public-followup obligation '$id' is missing from the backlog" 1
   expected=$(pf_field "$payload" '.public_followup.expected_final.type')
   [ -n "$expected" ] \
     || die "public-followup obligation '$id' has no expected final type" 1
   # The command must name the outcome that SATISFIES this final, which is not
-  # always the final's own name: tasks-axi answers a failure-outcome final with
+  # always the final's own name: the backlog answers a failure-outcome final with
   # 'failed' and an explicit-answer final with 'local-main'.
   outcome=$(jg_pf_expected_outcome "$expected") \
-    || die "public-followup obligation '$id' has an expected final type tasks-axi does not define: $expected" 1
+    || die "public-followup obligation '$id' has an expected final type the backlog does not define: $expected" 1
   printf '%s' "$payload" \
     | jq -e '.public_followup.expected_final.required_deliverables
         | type == "array" and (map(type == "string" and test("^[a-z][a-z0-9_]{0,63}$")) | all)' \
@@ -473,7 +473,7 @@ the home above owns the reply.'
   keys=$(printf '%s' "$payload" \
     | jq -r '.public_followup.expected_final.required_deliverables[]' 2>/dev/null) || keys=
   # Pre-fill every value the binding already determines, so the worker has
-  # nothing to guess; name each remaining one and state the format tasks-axi
+  # nothing to guess; name each remaining one and state the format the backlog
   # accepts for it, so a guess never travels back to be quarantined here. Each
   # key is also named as --require-deliverable, which is how a staged emit
   # learns what this obligation requires when it cannot read the registration.
@@ -495,7 +495,7 @@ the home above owns the reply.'
     fi
     deliverable_flags="${deliverable_flags}    --deliverable ${key}=<${key}> \\
 "
-    format=$(jg_pf_deliverable_format "$key") || format='the exact value tasks-axi requires for this key'
+    format=$(jg_pf_deliverable_format "$key") || format='the exact value the backlog requires for this key'
     deliverable_formats="${deliverable_formats}  <${key}>: ${format}
 "
   done <<EOF
@@ -570,7 +570,7 @@ reject_event() {
   printf 'rejected %s: %s\n' "$event_id" "$reason"
 }
 
-# event_rejection_detail <payload>: the specific problem behind a tasks-axi
+# event_rejection_detail <payload>: the specific problem behind a backlog
 # refusal, whose own sentence names no key or value. Checks each deliverable
 # against the mirrored rules, then the outcome and required keys against the
 # obligation's expected final. Prints nothing when no specific cause is found.
@@ -615,7 +615,7 @@ EOF
     printf '%s' "$payload" | jq -e --arg k "$key" '.deliverables[$k] | type == "string"' >/dev/null 2>&1 \
       && continue
     printf "required deliverable '%s' is missing; expected %s\n" "$key" \
-      "$(jg_pf_deliverable_format "$key" || printf 'the value tasks-axi requires for it')"
+      "$(jg_pf_deliverable_format "$key" || printf 'the value the backlog requires for it')"
     return 0
   done <<EOF
 $(printf '%s' "$expected" | jq -r '.public_followup.expected_final.required_deliverables // [] | .[]' 2>/dev/null)
@@ -769,7 +769,7 @@ cmd_consume() {
 
     # The filename, the declared event_id, and the identity tuple must all agree.
     # A mismatch means the file was hand-edited or built by something other than
-    # jg-public-followup-emit.sh, so it is refused before tasks-axi sees it.
+    # jg-public-followup-emit.sh, so it is refused before the backlog sees it.
     if [ "$(pf_field "$payload" '.event_id')" != "$event_id" ]; then
       reject_event "$file" "$event_id" "declared event_id does not match the filename" || consume_rc=1
       continue
@@ -793,7 +793,7 @@ cmd_consume() {
       continue
     fi
 
-    # tasks-axi is the authority on source home, work id, generation, schema,
+    # The backlog is the authority on source home, work id, generation, schema,
     # outcome, and deliverables. Anything it refuses is quarantined verbatim.
     # stderr is captured separately so a warning can never corrupt the JSON that
     # the accepted path parses.
@@ -805,9 +805,9 @@ cmd_consume() {
     if [ "$rc" -ne 0 ]; then
       reason=$( { cat "$stderr_file" 2>/dev/null; printf '%s\n' "$out"; } \
         | grep -v '^[[:space:]]*$' | head -1)
-      reason=${reason:-tasks-axi refused the event}
+      reason=${reason:-the backlog refused the event}
       detail=$(event_rejection_detail "$payload")
-      [ -z "$detail" ] || reason="$detail (tasks-axi: $reason)"
+      [ -z "$detail" ] || reason="$detail (the backlog: $reason)"
       reason=$(printf '%s' "$reason" | jg_pf_clean_outcome_text | jg_pf_bound_bytes 600)
       reject_event "$file" "$event_id" "$reason" "$obligation" || consume_rc=1
       continue
@@ -901,7 +901,7 @@ cmd_pending() {
           and (.state | type == "string"))
       ' >/dev/null 2>&1; then
     if jg_pf_has_registrations "$STATE"; then
-      printf 'cannot read this home'\''s public commitments through tasks-axi; %s registration(s) are still recorded under state/%s/registry\n' \
+      printf 'cannot read this home'\''s public commitments through the backlog; %s registration(s) are still recorded under state/%s/registry\n' \
         "$(jg_pf_registry_ids "$STATE" | grep -c . || true)" "$JG_PF_DIRNAME"
       printed=1
     fi
@@ -1203,7 +1203,7 @@ cmd_deliver() {
 
   local payload delivery attempt request platform text tmp_text hash chunks rc receipt receipt_fields receipt_dry_run link_status link_rc
   local loop_retained=0
-  payload=$(obligation_json "$id") || die "could not read the backlog through tasks-axi" 1
+  payload=$(obligation_json "$id") || die "could not read the backlog through the backlog" 1
   [ -n "$payload" ] || die "no public-followup obligation '$id' in this home's backlog" 1
 
   delivery=$(pf_field "$payload" '.public_followup.delivery.state')
@@ -1280,7 +1280,7 @@ cmd_deliver() {
   # than assumed, because every later receipt or error must name it exactly.
   local begun
   begun=$(tx public-followup begin-delivery "$id" --payload-hash "$hash" --json 2>/dev/null) \
-    || die "tasks-axi refused to begin delivery for '$id'" 1
+    || die "the backlog refused to begin delivery for '$id'" 1
   attempt=$(printf '%s' "$begun" | jq -r '.task.public_followup.delivery.attempt_count // empty' 2>/dev/null)
   case "$attempt" in
     ''|*[!0-9]*) die "could not read the delivery attempt for '$id' after beginning it; nothing was posted" 1 ;;
@@ -1362,13 +1362,13 @@ cmd_record_posted() {
   require_tools
 
   local payload request platform loop_retained=0
-  payload=$(obligation_json "$id") || die "could not read the backlog through tasks-axi" 1
+  payload=$(obligation_json "$id") || die "could not read the backlog through the backlog" 1
   [ -n "$payload" ] || die "no public-followup obligation '$id' in this home's backlog" 1
   request=$(pf_field "$payload" '.public_followup.request.request_id')
   platform=$(pf_field "$payload" '.public_followup.request.platform')
 
   record_posted "$id" "$attempt" "$request" "$platform" "$chunks" \
-    || die "tasks-axi refused the receipt for '$id' attempt $attempt; the recorded attempt must match exactly" 1
+    || die "the backlog refused the receipt for '$id' attempt $attempt; the recorded attempt must match exactly" 1
   link_rc=0
   clear_public_followup_link "$id" || link_rc=$?
   if [ "$link_rc" -ne 0 ]; then
@@ -1553,9 +1553,9 @@ cmd_rechain() {
       '{type:$t, required_deliverables:$keys, completion_policy:"all-required"}' \
       > "$expected_file"
   fi
-  # The relation document is typed data tasks-axi validates, so its home id uses
+  # The relation document is typed data the backlog validates, so its home id uses
   # that tool's pinned spelling (slice S5).
-  jq -n --arg h "$(jg_pf_tasks_axi_home_id "$work_home")" --arg w "$work_id" \
+  jq -n --arg h "$(jg_pf_backlog_home_id "$work_home")" --arg w "$work_id" \
     '{relation_id:"rel-1", work_ref:{home_id:$h, task_id:$w},
       role:"fulfills", required:true, generation:1}' > "$relation_file"
 
@@ -1564,7 +1564,7 @@ cmd_rechain() {
     existing=
   else
     existing=$(obligation_json "$new_id") \
-      || die "could not read the backlog through tasks-axi" 1
+      || die "could not read the backlog through the backlog" 1
   fi
   if [ -n "$existing" ]; then
     printf '%s' "$existing" | jq -e \
@@ -1580,9 +1580,9 @@ cmd_rechain() {
     tx public-followup add "$new_id" --request-context-file "$ctx_file" \
       --purpose promised-final --expected-final-file "$expected_file" \
       --expires-at "$expires" >/dev/null \
-      || die "tasks-axi refused to add '$new_id' on the retained thread binding" 1
+      || die "the backlog refused to add '$new_id' on the retained thread binding" 1
     existing=$(obligation_json "$new_id") \
-      || die "added '$new_id' but could not read it back through tasks-axi; retry this same rechain command" 1
+      || die "added '$new_id' but could not read it back through the backlog; retry this same rechain command" 1
   fi
 
   relation_count=$(printf '%s' "$existing" \
@@ -1590,7 +1590,7 @@ cmd_rechain() {
     || die "could not inspect work bindings for '$new_id'" 1
   if [ "$relation_count" -eq 0 ]; then
     tx public-followup bind-work "$new_id" --relation-file "$relation_file" >/dev/null \
-      || die "tasks-axi refused to bind '$new_id' to $work_home/$work_id; retry this same rechain command" 1
+      || die "the backlog refused to bind '$new_id' to $work_home/$work_id; retry this same rechain command" 1
   else
     printf '%s' "$existing" | jq -e --arg h "$work_home" --arg w "$work_id" \
       '(.public_followup.work_relations // []) as $relations
@@ -1647,7 +1647,7 @@ cmd_retire() {
   pf_registry_lock_acquire "$id" \
     || die "could not lock registration '$id' for retirement" 1
 
-  payload=$(obligation_json "$id") || die "could not read the backlog through tasks-axi" 1
+  payload=$(obligation_json "$id") || die "could not read the backlog through the backlog" 1
   if [ -n "$payload" ]; then
     delivery=$(pf_field "$payload" '.public_followup.delivery.state')
     task_state=$(pf_field "$payload" '.state')

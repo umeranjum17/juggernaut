@@ -21,23 +21,30 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home" "$TMP/xdg" "$TMP/tmp"
+# shellcheck source=core/lib/beads-test-env.sh
+. "$ROOT/../lib/beads-test-env.sh"
+for h in main child grand; do core_beads_home "$(cd "$JG_BIN/.." && pwd)" "$TMP/$h"; done
 HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/xdg" TMPDIR="$TMP/tmp" python3 - "$ROOT/bin/jg-flow.sh" "$TMP" <<'PY'
 import hashlib, json, os, shlex, shutil, socket, subprocess, sys, threading
 from pathlib import Path
 script, tmp = sys.argv[1], Path(sys.argv[2])
 main, child = tmp / 'main', tmp / 'child'
+def tx(home, *args):
+    r = subprocess.run(['jg-tasks-axi.sh', *args], env=dict(os.environ, JG_HOME=str(home)), capture_output=True, text=True)
+    assert r.returncode == 0, (args, r.stdout, r.stderr)
 for h in (main, child):
     (h / 'state').mkdir(parents=True)
-    (h / 'data').mkdir()
-    (h / 'data/backlog.md').write_text('## Queued\n')
 (main / 'data/squad_leads.md').write_text(f'- child - Worker (home: {child}; scope: app; projects: app)\n')
 (child / 'data/squad_leads.md').write_text(f'- main - Parent (home: {main}; scope: fleet; projects: app)\n')
 # Exact rejected-key return from writeboost.status; key and timestamp remain unknown.
 (main / 'state/child.status').write_text('done [key=ov-rn-setup-polish corr=03b23bf8e7b2c26c]: PR 26 merged and verified - guarded merge read back state=MERGED at the exact checked head 2c7f3076 with all checks green; task cleaned up; per your words, production-phone replacement and live ChatGPT remain separately unapproved\n')
-(main / 'data/backlog.md').write_text('## Queued\n- [ ] next - Next blocked-by: prior\n'
-    '- [ ] held - Held (hold: jg-hold-v1:V2FpdCBmb3IgWW91)\n'
-    '- [ ] ready - Ready blocked-by: finished\n## In flight\n- [ ] prior - Prerequisite\n'
-    '## Done\n- [x] finished - Completed\n')
+for i, t in (('jg-next', 'Next'), ('jg-held', 'Held'), ('jg-ready', 'Ready'), ('jg-prior', 'Prerequisite'), ('jg-finished', 'Completed')):
+    tx(main, 'add', i, t)
+tx(main, 'start', 'jg-prior')
+tx(main, 'done', 'jg-finished')
+tx(main, 'block', 'jg-next', '--by', 'jg-prior')
+tx(main, 'block', 'jg-ready', '--by', 'jg-finished')
+tx(main, 'hold', 'jg-held', '--reason', 'Wait for You')
 (child / 'state/live.meta').write_text('kind=ship\nspawn_gen=s99.1.2\n')
 (child / 'state/live.status').write_text('working [at=10]: building\n'
     'needs-decision [at=20] [key=captain-hold-a]: choose scope\n'
@@ -55,7 +62,7 @@ def files():
 def run():
     return subprocess.check_output(['bash', script, '--json', '--now', '100'],
                                    env=dict((k, v) for k, v in dict(os.environ, JG_HOME=str(main), JG_DATA_OVERRIDE='').items()
-                                            if k != 'TASKS_AXI_BACKEND'))
+                                            if k != 'BACKLOG_BACKEND'))
 before = files()
 a = run()
 assert a == run() and files() == before, 'deterministic and read-only'
@@ -72,15 +79,13 @@ assert closed['durations']['merge_to_cleanup'] == 10
 assert closed['state_seconds'] == {'working': 50}, 'the trailing stage runs to the merge'
 assert 'pr_opened' not in closed['times'] and 'checks_green' not in closed['times']
 assert x['time_to_merge']['median_seconds'] == x['time_to_merge']['p85_seconds'] == 60
-assert {q['task']: q['why'] for q in x['queue']} == {'next': 'dependency: prior', 'held': 'hold: Wait for You',
-    'ready': 'unknown: dispatch admission not recorded'}
+assert {q['task']: q['why'] for q in x['queue']} == {'jg-next': 'dependency: jg-prior', 'jg-held': 'hold: Wait for You',
+    'jg-ready': 'unknown: dispatch admission not recorded'}
 assert next(b for b in x['bottlenecks'] if b['cause'] == 'unknown')['unknown_items'] == 1
 assert any(n.get('line') == 7 for n in x['limitations']), 'malformed durable record disclosed'
 assert sum(d['known'] + d['unknown'] for d in x['trend_7d']) == len(x['executed_7d'])
 grand = tmp / 'grand'
 (grand / 'state').mkdir(parents=True)
-(grand / 'data').mkdir()
-(grand / 'data/backlog.md').write_text('## Queued\n')
 (grand / 'data/squad_leads.md').write_text(f'- main - Parent (home: {main}; scope: fleet; projects: app)\n')
 with open(child / 'data/squad_leads.md', 'a') as f:
     f.write(f'- grand - Worker (home: {grand}; scope: app; projects: app)\n')
@@ -120,13 +125,15 @@ assert relive['open'] and relive['timestamp_basis'] == 'emitted'
 assert relive['stage'] == 'unknown' and relive['open_waits'] == [], 'live reuse drops pre-dispatch status'
 assert relive['seconds_in_stage'] is None and relive['times']['working'] is None
 assert relive['reason'] == 'unknown: no status reason'
-(main / 'config').mkdir()
+(main / 'config').mkdir(exist_ok=True)
 (main / 'config/jg-flow-check.sh').write_text("clock = 30 if L['verb'] == 'needs-decision' else 50\n")
 (main / 'config/lane-caps').write_text('main 0\n')
 (main / 'data/captain-shared.md').write_text('# Captain notes\n- project-x: soft pause pending budget review\n')
-(child / 'data/backlog.md').write_text('## In flight\n- [ ] hold-lane - Captain held task (hold: wait for captain) (hold-kind: captain)\n')
-(child / 'state/hold-lane.meta').write_text('kind=ship\nproject=project-y\n')
-(child / 'state/hold-lane.status').write_text('working [at=10]: started\n')
+tx(child, 'add', 'jg-hold-lane', 'Captain held task')
+tx(child, 'start', 'jg-hold-lane')
+tx(child, 'hold', 'jg-hold-lane', '--reason', 'wait for captain', '--kind', 'captain')
+(child / 'state/jg-hold-lane.meta').write_text('kind=ship\nproject=project-y\n')
+(child / 'state/jg-hold-lane.status').write_text('working [at=10]: started\n')
 (child / 'state/project-paused.meta').write_text('kind=ship\nproject=project-x\n')
 (child / 'state/project-paused.status').write_text('paused [at=10]: soft pause\n')
 for task, reason in [('memory', 'jg-mem-gate: waiting (free 1 GB)'), ('credential', 'waiting for login'),
@@ -146,9 +153,9 @@ for task, reason in [('memory', 'jg-mem-gate: waiting (free 1 GB)'), ('credentia
 (child / 'state/smallmerge.status').write_text('blocked [at=90] [key=wait]: waiting for merge\n')
 z = json.loads(run())
 new = {l['task']: l for l in z['lanes'] if l['open']}
-assert new['hold-lane']['kind'] == 'ship' and new['hold-lane']['hold_kind'] == 'captain', new['hold-lane']
-assert new['hold-lane']['open_waits'][-1]['cause'] == 'captain'
-assert new['hold-lane']['open_waits'][-1]['reason'] == 'wait for captain'
+assert new['jg-hold-lane']['kind'] == 'ship' and new['jg-hold-lane']['hold_kind'] == 'captain', new['jg-hold-lane']
+assert new['jg-hold-lane']['open_waits'][-1]['cause'] == 'captain'
+assert new['jg-hold-lane']['open_waits'][-1]['reason'] == 'wait for captain'
 assert new['project-paused']['project'] == 'project-x'
 assert new['project-paused']['parked_reason'] == 'project-x: soft pause pending budget review'
 for task, expected in [('memory', 'memory_gate'), ('credential', 'credential_external'),
@@ -173,7 +180,7 @@ assert mem_item['overlap'] is True and merge_item['overlap'] is True
 assert mem_bucket['additive'] is False and merge_bucket['additive'] is False
 assert next(i for i in mem_bucket['items'] if i['task'] == 'memory')['overlap'] is False
 assert 'mixed' not in {i['task'] for i in next(b for b in z['bottlenecks'] if b['cause'] == 'unknown')['items']}
-assert {q['task']: q['why'] for q in z['queue']}['ready'] == 'lane cap: 0 recorded active lanes, cap 0'
+assert {q['task']: q['why'] for q in z['queue']}['jg-ready'] == 'lane cap: 0 recorded active lanes, cap 0'
 assert new['unknown']['stage_clock']['overdue'] is None, 'unstamped stage never guessed overdue'
 scenarios = {
     'keyclose': [('blocked', 10, 'a', 'waiting for login'),
@@ -242,10 +249,12 @@ for representation in ('emitted', 'captured'):
         ('a', 'review_merge', 90), (None, 'memory_gate', 80)], 'pause does not overwrite keyed decision'
 wait = rows['emitted-unknownpause']['open_waits'][0]
 assert wait['seconds'] is None and wait['since'] is None, 'unstamped pause stays unknown'
-(main / 'data/done-archive.md').write_text('## Done\n- [x] archived - Completed prerequisite\n')
-with open(main / 'data/backlog.md', 'a') as f:
-    f.write('## Queued\n- [ ] archive-ready - Archived prerequisite blocked-by: archived\n'
-            '- [ ] multiple - Multiple dependencies blocked-by: archived blocked-by: prior\n')
+for i, t in (('jg-archived', 'Completed prerequisite'), ('jg-archive-ready', 'Archived prerequisite'), ('jg-multiple', 'Multiple dependencies')):
+    tx(main, 'add', i, t)
+tx(main, 'done', 'jg-archived')
+tx(main, 'block', 'jg-archive-ready', '--by', 'jg-archived')
+tx(main, 'block', 'jg-multiple', '--by', 'jg-archived')
+tx(main, 'block', 'jg-multiple', '--by', 'jg-prior')
 with open(main / 'data/squad_leads.md', 'a') as f:
     f.write(f'- macbook - Remote (host: macbook; root: /remote/repo; home: {grand}; scope: app; projects: app)\n')
 before = files()
@@ -258,22 +267,20 @@ remote = next(n for n in coverage['limitations'] if n['source'] == 'macbook')
 assert remote['host'] == 'macbook' and remote['home'] == str(grand)
 assert 'unknown' in remote['reason'] and 'remote' in remote['reason']
 reasons = {q['task']: q['why'] for q in coverage['queue'] if q['home'] == 'main'}
-assert reasons['archive-ready'] == 'lane cap: 0 recorded active lanes, cap 0'
-assert reasons['multiple'] == 'dependency: prior', 'completed edges excluded, unresolved edge retained'
-assert reasons['held'] == 'hold: Wait for You', 'consumer decodes hold reasons'
-(grand / 'data/backlog.md').unlink()
+assert reasons['jg-archive-ready'] == 'lane cap: 0 recorded active lanes, cap 0'
+assert reasons['jg-multiple'] == 'dependency: jg-prior', 'completed edges excluded, unresolved edge retained'
+assert reasons['jg-held'] == 'hold: Wait for You', 'consumer decodes hold reasons'
+(grand / 'config/beads-dir').unlink()
 before = files()
 missing = json.loads(run())
-assert files() == before and not (grand / 'data/backlog.md').exists(), 'missing backlog read does not create a file'
+assert files() == before and not (grand / 'config/beads-dir').exists(), 'missing store read does not create one'
 assert any(n['source'] == 'grand/backlog' and n['reason'].startswith('unknown:')
            for n in missing['limitations']), 'missing backlog is unknown, not a known empty queue'
-(child / '.tasks.toml').write_text('backend = "beads"\n[beads]\npath = ".beads"\n'
-                                   'bin = "./unavailable-bd"\nprefix = "flow"\n')
-(child / 'data/backlog.md').write_text('## Queued\n- [ ] stale-markdown - Must not be consumed\n')
+(child / 'config/beads-dir').write_text(str(tmp / 'no-such-store/.beads') + '\n')
 before = files()
 unavailable = json.loads(run())
-assert files() == before, 'unavailable alternate backend never migrates or changes its home'
-assert not any(q['home'] == 'child' for q in unavailable['queue']), 'no stale markdown fallback after migration'
+assert files() == before, 'an unavailable store never changes its home'
+assert not any(q['home'] == 'child' for q in unavailable['queue']), 'an unavailable store yields no queue'
 assert any(n['source'] == 'child/backlog' and n['reason'].startswith('unknown:')
            for n in unavailable['limitations']), 'unavailable alternate backend disclosed'
 (main / 'config/jg-flow-check.sh').write_text('unrecognized clock policy\n')

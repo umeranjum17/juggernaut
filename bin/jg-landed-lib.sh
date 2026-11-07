@@ -10,7 +10,7 @@
 # question "is this closed row a delivery the captain should see", so the rule
 # lives here and neither program restates it.
 #
-# A closed row is never actively held: tasks-axi clears the held flag when a
+# A closed row is never actively held: the backlog clears the held flag when a
 # task closes, but a non-release answer keeps hold-kind and the hold reason.
 # Merge approval removes those annotations through the release contract before
 # cleanup records the merged PR or local-only landing, so either artifact on a

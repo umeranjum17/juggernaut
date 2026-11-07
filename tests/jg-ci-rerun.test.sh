@@ -12,6 +12,9 @@ export HOME=$d/user TMPDIR=$d
 H=$d/home
 mkdir -p "$HOME" "$H/state" "$H/data" "$H/config"
 ln -s "$ROOT/bin" "$H/bin"
+# shellcheck source=core/lib/beads-test-env.sh
+. "$ROOT/core/lib/beads-test-env.sh"
+core_beads_home "$ROOT" "$H"
 cat > "$d/gh" <<'STUB'
 #!/usr/bin/env bash
 # api repos/ex/r/actions/runs/<id> --jq .conclusion: 21 and 23 are red, 22 is green; run rerun <id> -R <repo> [--failed] is recorded.

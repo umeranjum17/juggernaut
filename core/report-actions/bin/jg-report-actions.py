@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 DATA = Path(os.environ.get("JG_DATA_OVERRIDE") or Path(os.environ.get("JG_HOME") or ROOT) / "data")
-TASKS_AXI = os.environ.get("TASKS_AXI") or ROOT / "bin/jg-tasks-axi.sh"
+BACKLOG = os.environ.get("BACKLOG") or ROOT / "bin/jg-tasks-axi.sh"
 SEND = os.environ.get("JG_SEND") or ROOT / "bin/jg-send.sh"
 HANDOFF = os.environ.get("JG_HANDOFF") or ROOT / "bin/jg-backlog-handoff.sh"
 OWNER_RULES = os.environ.get("JG_OWNER_RULES") or ROOT / "bin/jg-owner-rules.sh"
@@ -109,7 +109,7 @@ def cmd_approve(path, words):
     for line in section(path.read_text(), "Plan").splitlines():
         item = line[2:].strip() if line.startswith("- ") else ""
         if item:
-            out = run([TASKS_AXI, "add", "--mint", item, "--kind", "ship",
+            out = run([BACKLOG, "add", "--mint", item, "--kind", "ship",
                        "--body", f"From report: {place}. Owner: {owner}. First PR due: {due}."])
             minted = re.search(r"^ok: added ([A-Za-z0-9._-]+)", out, re.M)
             if not minted:

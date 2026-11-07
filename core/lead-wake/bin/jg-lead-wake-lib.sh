@@ -106,14 +106,14 @@ ready_work_waits_idle() {
     warn_invalid_lane_target_once
   fi
   if [ -n "$target" ] && open=$(open_lane_count) && [ "$open" -lt "$target" ]; then
-    READY_WORK_REASON="check: ready work waiting with free lane slots ($open/$target open): $READY_WORK_IDS - start the top ready item now, or record why it waits"
+    READY_WORK_REASON="check: ready work waiting with free lane slots ($open/$target open): $READY_WORK_IDS - dispatch them now, P0 first, up to project capacity"
   else
     for meta in "$STATE"/*.meta; do
       [ -f "$meta" ] || continue
       task=${meta##*/}
       crew_is_provably_working "${task%.meta}" && return 1
     done
-    READY_WORK_REASON="check: ready work waiting with no worker working: $READY_WORK_IDS - start each or record why it waits"
+    READY_WORK_REASON="check: ready work waiting with no worker working: $READY_WORK_IDS - dispatch them now, P0 first, up to project capacity"
   fi
   jg_epoch_seconds_to now
   surfaced=$(cat "$STATE/.ready-work-surfaced" 2>/dev/null) || surfaced=

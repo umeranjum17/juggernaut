@@ -140,7 +140,7 @@ For the same reason the 1.72x four-worker figure recorded above is left as a sta
 
 An earlier proof on 2026-09-03 refused this family on `tests/jg-backlog-handoff.test.sh`, failing two runs of three with `Task "pre-move-crash" not found in this backlog`.
 The cause was in the case's crash injection, not in shared Squad Lead state.
-Its fake `tasks-axi` killed the handoff and then slept a fixed second before delegating to the real binary, expecting to be torn down during that pause.
+Its fake `bin/jg-tasks-axi.sh` killed the handoff and then slept a fixed second before delegating to the real binary, expecting to be torn down during that pause.
 Nothing tore it down: the fake outlives the process it kills, so on a host slow enough for the case's next assertions to take longer than a second, the orphan woke up and completed the very move the case requires left undone, which then made the recovery step fail.
 Direct observation of the source and destination backlogs during the injected crash showed exactly that, the item moving one second after the crash while the case was still asserting.
 

@@ -97,6 +97,16 @@ make_case() {
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
   mkdir -p "$case_dir/state" "$case_dir/config" "$case_dir/data" "$fakebin"
+  jg_test_beads_home "$case_dir"
+  # Every case starts with task-x1 In flight, as a spawned task is: the store
+  # is seeded once and copied, since each bd call costs a second.
+  if [ ! -d "$TMP_ROOT/seeded-store" ]; then
+    seed_backlog_in_flight "$case_dir"
+    cp -a "$case_dir-store" "$TMP_ROOT/seeded-store"
+  else
+    rm -rf "$case_dir-store"
+    cp -a "$TMP_ROOT/seeded-store" "$case_dir-store"
+  fi
 
   # Mocks for the post-check teardown steps. Refuse logic exits before these
   # run; the ALLOW cases need them so the script can complete cleanly.
@@ -657,22 +667,25 @@ run_teardown() {
 }
 
 # Seed a real backlog carrying task-x1 as In flight, so a teardown in this case
-# has a row to close. Uses the real tasks-axi (the fixture's default fakebin has
-# no tasks-axi stub, so PATH resolves the installed one).
+# has a row to close.
 seed_backlog_in_flight() {
   local case_dir=$1 kind=${2:-ship}
-  mkdir -p "$case_dir/data"
-  printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' \
-    > "$case_dir/data/backlog.md"
-  tasks-axi add task-x1 "teardown fixture task" --kind "$kind" \
-    --file "$case_dir/data/backlog.md" >/dev/null
-  tasks-axi start task-x1 --file "$case_dir/data/backlog.md" >/dev/null
+  [ -z "$(backlog_row_state "$case_dir")" ] || return 0
+  jg_test_backlog "$case_dir" add task-x1 "[feature] teardown fixture task" --priority 1 --kind "$kind" --repo demo \
+    --body "Teardown fixture task" >/dev/null
+  jg_test_backlog "$case_dir" start task-x1 >/dev/null
 }
 
 backlog_row_state() {
   local case_dir=$1
-  tasks-axi show task-x1 --file "$case_dir/data/backlog.md" 2>/dev/null |
+  jg_test_backlog "$case_dir" show task-x1 2>/dev/null |
     sed -n 's/^  state: *//p' | head -1
+}
+
+# The whole row, links and body included, as a file the grep assertions can read.
+backlog_dump() {  # <case-dir>: prints the file's path
+  jg_test_backlog "$1" show task-x1 --full > "$1/data/backlog.dump" 2>&1 || true
+  printf '%s\n' "$1/data/backlog.dump"
 }
 
 # Build the teardown test's executable search path without lsof, regardless of
@@ -680,7 +693,7 @@ backlog_row_state() {
 make_path_without_lsof() {  # <case-dir>
   local case_dir=$1 path_dir="$1/path-without-lsof" cmd resolved
   mkdir -p "$path_dir"
-  for cmd in awk bash basename cat chmod cp cut date dirname env find git go grep head hostname id ln \
+  for cmd in awk python3 jq bash basename cat chmod cp cut date dirname env find git go grep head hostname id ln \
     mkdir mktemp mv perl ps readlink realpath rm sed sh sleep sort stat tail timeout tr uname wc xargs; do
     resolved=$(command -v "$cmd" 2>/dev/null) || continue
     case "$resolved" in /*) ln -sf "$resolved" "$path_dir/$cmd" ;; esac
@@ -753,7 +766,7 @@ test_teardown_of_an_already_cleaned_task_says_so() {
 
 test_teardown_closes_the_backlog_item_itself() {
   local case_dir out
-  case_dir=$(make_case tasks-axi-close)
+  case_dir=$(make_case backlog-close)
   write_meta "$case_dir" no-mistakes ship
   printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
   seed_backlog_in_flight "$case_dir"
@@ -761,7 +774,7 @@ test_teardown_closes_the_backlog_item_itself() {
   out=$(run_teardown "$case_dir") || fail "teardown failed with a real backlog"
   [ "$(backlog_row_state "$case_dir")" = "done" ] \
     || fail "teardown returned success while its backlog item was still open: $(backlog_row_state "$case_dir")"
-  assert_grep 'https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+  assert_grep 'https://github.com/example/repo/pull/7' "$(backlog_dump "$case_dir")" \
     "closed backlog item did not record the task's PR"
   assert_absent "$case_dir/state/task-x1.backlog-close" \
     "a landed close left its pending-close record behind"
@@ -769,71 +782,9 @@ test_teardown_closes_the_backlog_item_itself() {
     || fail "teardown dropped the dependency-cleared follow-up: $out"
   printf '%s\n' "$out" | grep -F 'check date gates' >/dev/null \
     || fail "teardown did not preserve date-gate check: $out"
-  printf '%s\n' "$out" | grep -F 'Run tasks-axi done' >/dev/null \
+  printf '%s\n' "$out" | grep -F 'Run jg-tasks-axi.sh done' >/dev/null \
     && fail "teardown still asked a later turn to close the item it already closed: $out"
   pass "teardown closes its own backlog item before reporting success"
-}
-
-test_teardown_closes_a_gerrit_task_with_its_change_url_as_a_note() {
-  local case_dir out real_tasks_axi gerrit_url=https://gerrit.example.com/c/project/+/12345
-  case_dir=$(make_case tasks-axi-close-gerrit)
-  write_meta "$case_dir" no-mistakes ship
-  printf 'pr=%s\n' "$gerrit_url" >> "$case_dir/state/task-x1.meta"
-  seed_backlog_in_flight "$case_dir"
-  # Pin the refusal tasks-axi applies to a --pr link that is not a canonical
-  # GitHub pull request, so this case keeps reproducing whatever the installed
-  # release accepts.
-  real_tasks_axi=$(command -v tasks-axi)
-  cat > "$case_dir/fakebin/tasks-axi" <<SH
-#!/usr/bin/env bash
-previous=
-for arg in "\$@"; do
-  if [ "\$previous" = --pr ] && ! [[ "\$arg" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+\$ ]]; then
-    echo "error: \"Task pr link must be a canonical pull request URL\""
-    exit 1
-  fi
-  previous=\$arg
-done
-exec "$real_tasks_axi" "\$@"
-SH
-  chmod +x "$case_dir/fakebin/tasks-axi"
-
-  out=$(run_teardown "$case_dir" 2>&1) || fail "teardown of a landed Gerrit task failed: $out"
-  [ "$(backlog_row_state "$case_dir")" = "done" ] \
-    || fail "teardown left a landed Gerrit task's backlog item at $(backlog_row_state "$case_dir"): $out"
-  tasks-axi show task-x1 --file "$case_dir/data/backlog.md" --full \
-    | grep -F "body: \"Gerrit change $gerrit_url\"" >/dev/null \
-    || fail "closed Gerrit backlog item did not record its change URL as a note"
-  assert_absent "$case_dir/state/task-x1.backlog-close" \
-    "a landed Gerrit close left its pending-close record behind"
-
-  case_dir=$(make_case tasks-axi-close-github-under-refusal)
-  write_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
-  seed_backlog_in_flight "$case_dir"
-  cp "$TMP_ROOT/tasks-axi-close-gerrit/fakebin/tasks-axi" "$case_dir/fakebin/tasks-axi"
-  out=$(run_teardown "$case_dir" 2>&1) || fail "teardown of a landed GitHub task failed: $out"
-  tasks-axi show task-x1 --file "$case_dir/data/backlog.md" \
-    | grep -F 'links: "pr:https://github.com/example/repo/pull/7"' >/dev/null \
-    || fail "a GitHub pull request no longer closed as the item's pr link"
-  pass "teardown closes a landed Gerrit task with its change URL as a note and a GitHub task with --pr"
-}
-
-test_teardown_manual_backend_leaves_the_backlog_to_the_operator() {
-  local case_dir out backlog_path
-  case_dir=$(make_case tasks-axi-manual-optout)
-  write_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
-  printf '%s\n' manual > "$case_dir/config/backlog-backend"
-  seed_backlog_in_flight "$case_dir"
-
-  out=$(run_teardown "$case_dir") || fail "teardown failed with manual backlog backend"
-  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
-    || fail "manual backlog backend was mutated by teardown anyway"
-  backlog_path=$(cd "$case_dir/data" && pwd -P)/backlog.md
-  printf '%s\n' "$out" | grep -F "Update $backlog_path - move task-x1 to Done" >/dev/null \
-    || fail "teardown did not prompt manual backlog update under opt-out: $out"
-  pass "teardown honors config/backlog-backend=manual and still finishes cleanly"
 }
 
 test_local_only_truly_unpushed_refuses() {
@@ -1073,7 +1024,7 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
 
   expect_code 0 "$rc" "no-pr-branch-discovery: teardown should succeed by discovering the merged PR from the branch name"
   ! grep -q REFUSED "$case_dir/stderr" || fail "no-pr-branch-discovery: teardown printed a REFUSED line"
-  assert_grep 'https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+  assert_grep 'https://github.com/example/repo/pull/7' "$(backlog_dump "$case_dir")" \
     "no-pr-branch-discovery: resolved PR URL was not recorded on completion"
   pass "teardown discovers a merged PR by branch name and tears down when no pr= was ever recorded"
 }
@@ -2084,10 +2035,6 @@ test_windowless_record_outside_the_leftover_class_still_refuses() {
   printf '%s\n' 'backend=orca' 'terminal=term-7' >> "$case_dir/state/task-x1.meta"
   seed_backlog_in_flight "$case_dir"
   assert_windowless_record_refuses "$case_dir" windowless-orca "no spawn_gen that identifies one exact incarnation"
-
-  case_dir=$(make_case windowless-no-backlog)
-  write_windowless_legacy_meta "$case_dir" no-mistakes ship "$case_dir/missing-wt"
-  assert_windowless_record_refuses "$case_dir" windowless-no-backlog "missing, empty, or ambiguous window endpoint"
 
   case_dir=$(make_case windowless-dup-project)
   write_windowless_legacy_meta "$case_dir" no-mistakes ship "$case_dir/missing-wt"
@@ -3119,6 +3066,7 @@ SH
     missing-adapter|missing-parser|missing-explicit-close-helper)
       mkdir -p "$case_dir/test-root"
       cp -R "$ROOT/bin" "$case_dir/test-root/bin"
+      cp "$ROOT/toolchain.versions" "$case_dir/test-root/toolchain.versions"
       if [ "$mode" = missing-adapter ]; then
         rm -f "$case_dir/test-root/bin/backends/herdr.sh"
       elif [ "$mode" = missing-explicit-close-helper ]; then
@@ -5519,7 +5467,7 @@ prepare_teardown_source_copy() {  # <case-dir>
       ln -s "$f" "$dest/$base"
     fi
   done
-  printf 'manual\n' > "$case_dir/config/backlog-backend"
+  ln -s "$ROOT/toolchain.versions" "$case_dir/test-root/toolchain.versions"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
@@ -5685,8 +5633,6 @@ test_retained_sources_still_reach_the_ordinary_refusal
 test_local_only_fork_remote_allows
 test_teardown_of_an_already_cleaned_task_says_so
 test_teardown_closes_the_backlog_item_itself
-test_teardown_closes_a_gerrit_task_with_its_change_url_as_a_note
-test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
 test_pushed_branch_needs_forge_merge_proof

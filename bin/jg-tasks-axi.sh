@@ -1,66 +1,35 @@
 #!/usr/bin/env bash
-# jg-tasks-axi.sh - run tasks-axi against THIS home's backlog from any working directory.
+# jg-tasks-axi.sh - read and write THIS home's Beads backlog from any working directory.
 #
-# Usage: jg-tasks-axi.sh [<tasks-axi command> [args...]]
+# Usage: jg-tasks-axi.sh [<backlog command> [args...]]
 #        jg-tasks-axi.sh --help
 #
-# Every routine juggernaut backlog read or mutation goes through this command
-# rather than a bare `tasks-axi`; `jg-tasks-axi.sh <command> --help` prints
-# tasks-axi's own help. Arguments reach tasks-axi as given, apart from one
-# rewrite that keeps file arguments meaning what the caller meant: a relative
-# value of `--to` or any `--*-file` flag (`--body-file`, `--relation-file`, ...)
-# is made absolute against the caller's working directory, because tasks-axi
-# starts from the backlog root instead. `--report` stays as given: tasks-axi
-# stores it verbatim as a link, which lifecycle transitions record relative to
-# that same root.
+# Every routine juggernaut backlog read or mutation goes through this command. It serves
+# `show`, `view`, `list`, `ready`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
+# `start`, `reopen`, `hold`, `unhold`, `public-followup` and `relink` from the store that
+# `config/beads-dir` names (bin/jg-tasks-axi-lib.sh); any other verb exits 2 with nothing
+# run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
+# absolute against the caller's working directory. Hold reasons are plain text.
 #
-# `show` (including `view`) and `list` decode stored captain-hold reasons
-# through bin/jg-hold-reason-lib.sh, which owns the field-only decoding contract.
-# Decoded reasons use quoted strings so embedded line breaks remain intact.
-#
-# Why it exists: a bare `tasks-axi` resolves the tracked `.tasks.toml` paths
-# against its working directory, so from the code root it forks the queue
-# whenever the home lives elsewhere; docs/configuration.md ("Backlog backend")
-# owns that rationale.
-#
-# Addressing is bin/jg-backlog-transition-lib.sh's jg_backlog_tasks_axi_addressing,
-# the same resolution the lifecycle transitions use: tasks-axi runs from the
-# configured data directory's parent, so that home's own `.tasks.toml` (or
-# tasks-axi's built-in defaults, which keep the archive beside the backlog)
-# supplies the adapter, done_keep, and the archive path; a markdown backlog is
-# additionally pinned to `<data>/backlog.md` through TASKS_AXI_FILE. The
-# environment carries the pin rather than a trailing --file so read-only
-# task listings use the same home. A configured non-markdown adapter is addressed by that
-# root alone, so an inherited TASKS_AXI_FILE is cleared for it.
-#
-# The data directory is JG_DATA_OVERRIDE, else $JG_HOME/data, else the code
-# root's data/ (JG_HOME unset keeps the single-home layout unchanged).
+# The data directory is JG_DATA_OVERRIDE, else $JG_HOME/data, else the code root's data/
+# (JG_HOME unset keeps the single-home layout unchanged).
 #
 # Refusals (exit 2, nothing run):
-#   - tasks-axi missing from PATH;
-#   - a caller-supplied --file, because this command owns the addressing and
-#     tasks-axi would silently let the last --file win;
-#   - `add` (or its `create` alias) with --start, so neither spelling places a
-#     row In flight without the dispatch artifacts bin/jg-spawn.sh creates -
-#     the task record, status file, and inbox that go with the row - which such
-#     a row would lack, counting as live work nobody is doing that nothing
-#     later would notice (`start <id>` stays a documented direct transition);
-#   - a data directory that cannot be resolved, or whose backend configuration
-#     cannot be read (bin/jg-tasks-axi-lib.sh owns that diagnostic);
-#   - a markdown `<data>/backlog.md` that is itself a symlink, because the
-#     first write would replace the link with a private copy, exactly the fork
-#     this command exists to prevent. Lifecycle transitions refuse the same file.
+#   - a caller-supplied --file, because this command owns the addressing;
+#   - a home with no store named in `config/beads-dir` (bin/jg-tasks-axi-lib.sh owns that diagnostic);
+#   - `add` (or its `create` alias) with --start, so neither spelling places a row In
+#     flight without the dispatch artifacts bin/jg-spawn.sh creates - the task record,
+#     status file, and inbox that go with the row (`start <id>` stays a documented
+#     direct transition);
 #   - `rm`/`delete`, `done`/`close`, or `update`/`edit --title` dropping `[captain-ask]`,
 #     unless the row has a merged `pr:` link or a Recon report (see the next entry).
-#     A raw `hold` is always refused. Done auto-prune, `prune`, and record-delivery/waive
-#     refuse only an unanswered ask an archive would move past keep (`--no-prune` skips
-#     the done prune).
+#     A raw `hold` is always refused.
 #   - the same close without delivery evidence and without `--captain-quote '<his words>'` or
 #     `--confirm-card <id>` (a separate board card that names the row and that
 #     `bin/jg-captain-hold.sh answered` finds answered): a recorded answer alone
 #     no longer closes a ticket the captain asked for, because a rejected option is a reason to redo
 #     it, never to cancel. The quote or card is recorded in the ticket note (`done`) and in
-#     data/captain-closures.md; both flags are consumed here and never reach tasks-axi.
+#     data/captain-closures.md; both flags are consumed here and never reach the store.
 #   - `add` (or `create`) whose item does not say what kind of work it is and
 #     why: the title must start with a type tag, one of [captain-ask],
 #     [feature], [design-ux], [security] or [blocker], and the first line of
@@ -79,14 +48,9 @@
 #     (JG_TASK_PRIORITY_CHECK overrides the path); when it is not installed this
 #     does nothing.
 # Ticket keys (bin/jg-ticket-key.sh owns the contract): a key such as JG-101 given where a
-# task id goes is resolved to its slug before tasks-axi runs, `show` prints the key under
-# the id, `list --keys` puts each row's key first, and a successful `add` keys the new
-# ticket when the home has a registered prefix.
-# Provider: `config/backlog-backend=beads` serves `show`, `view`, `list`, `ready`, `add`, `update`,
-# `done`, `block`, `unblock`, `start`, `reopen`, `hold` and `unhold` from this home's bd store in the same shape, with no tasks-axi
-# needed (bin/jg-tasks-axi-lib.sh); any other verb exits 2 with nothing run. Its hold reasons are plain text.
-# Otherwise the exit status is tasks-axi's own, unless decoding a read fails;
-# in that case the decoder's nonzero status is returned.
+# task id goes is resolved to its slug first, `show` prints the key under the id, `list --keys`
+# puts each row's key first, and a successful `add` keys the new ticket when the home has a
+# registered prefix.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -113,13 +77,16 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
-# shellcheck source=bin/jg-hold-reason-lib.sh disable=SC1091
-. "$SCRIPT_DIR/jg-hold-reason-lib.sh"
 
 usage() {
   awk '
@@ -169,7 +136,7 @@ for arg in "$@"; do
   fi
   case "$arg" in
     --file|--file=*)
-      fail "this command always addresses this home's backlog at $DATA; drop --file, or run tasks-axi directly for another backlog"
+      fail "this command always addresses this home's backlog; drop --file"
       ;;
     --captain-quote) cap_next=quote ;;
     --captain-quote=*) CAPTAIN_QUOTE=${arg#--captain-quote=} ;;
@@ -215,77 +182,37 @@ done
 ARGS=(${_jg_keyed[@]+"${_jg_keyed[@]}"})
 unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
-JG_BEADS=0
-if jg_backlog_backend_beads "$JG_HOME/config"; then
-  beads_read() { jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}; }
-  set -o pipefail
-  case "${1:-}" in
-    show|view) beads_read | key_tool annotate-show; exit $? ;;
-    list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
-    ready|markdown) beads_read; exit $? ;;
-    add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|public-followup|relink) JG_BEADS=1 ;;
-    *) fail "the beads backlog does not serve ${1:-this command} yet" ;;
-  esac
-fi
-[ "$JG_BEADS" = 1 ] || command -v tasks-axi >/dev/null 2>&1 || fail "tasks-axi is not on PATH; run bin/jg-bootstrap.sh for the install command"
+beads_read() { jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}; }
+set -o pipefail
+case "${1:-}" in
+  show|view) beads_read | key_tool annotate-show; exit $? ;;
+  list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
+  ready|markdown) beads_read; exit $? ;;
+  add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|public-followup|relink) ;;
+  *) fail "the beads backlog does not serve ${1:-this command}" ;;
+esac
 
-JG_BACKLOG_TRANSITION_ERROR=
-if [ "$JG_BEADS" = 0 ] && ! jg_backlog_tasks_axi_addressing "$DATA"; then
-  fail "${JG_BACKLOG_TRANSITION_ERROR:-data directory cannot be resolved: $DATA}"
-fi
-
-if [ -n "${JG_BACKLOG_AXI_FILE:-}" ]; then
-  if [ -L "$JG_BACKLOG_AXI_FILE" ]; then
-    fail "$JG_BACKLOG_AXI_FILE is a symlink; a tasks-axi write would replace it with a regular file and fork the backlog - make it this home's real file"
-  fi
-  export TASKS_AXI_FILE="$JG_BACKLOG_AXI_FILE"
-else
-  unset TASKS_AXI_FILE
-fi
-
-[ "$JG_BEADS" = 1 ] || cd "$JG_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $JG_BACKLOG_AXI_ROOT"
-
-if [ "$JG_BEADS" = 1 ]; then
-  tasks_axi() { jg_backlog_beads_read "$JG_HOME/config" "$@"; }
-else
-  tasks_axi() { tasks-axi "$@"; }
-fi
-
-# The typed public-followup schema in the pinned tasks-axi spells a squad-lead
-# work home with the pre-rename prefix, so this boundary translates in both
-# directions and the rest of the repository keeps one spelling (slice S5).
 _jg_taxi_sl_own="squad_lead:"
 _jg_taxi_sl_wire="$(jg_compat_legacy_of squad-lead):"
-jg_taxi_stream_from_wire() {
-  sed "s/${_jg_taxi_sl_wire}/${_jg_taxi_sl_own}/g"
-}
+backlog_cmd() { jg_backlog_beads_read "$JG_HOME/config" "$@"; }
 # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-# A Beads store never prunes, so there is no archive to guard.
-[ "$JG_BEADS" = 0 ] || guard_captain_ask_archive() { :; }
-captain_guard() {  # <tasks-axi args>
-  local prune_state="done" no_prune=0 keep_arg='' keep_next=0 sub=''
-  local verb id='' value=0 title_next=0 state_next=0 has_title=0 new_title='' arg
+
+captain_guard() {  # <backlog args>
+  local verb id='' value=0 title_next=0 has_title=0 new_title='' arg
   local reason='' reason_next=0 reason_given=0
   [ "${1:-}" = task ] && shift
   verb=${1:-}
   [ "$#" -gt 0 ] && shift
-  if [ "$verb" = public-followup ]; then sub=${1:-}; [ "$#" -gt 0 ] && shift; fi
+  if [ "$verb" = public-followup ]; then shift; fi
   for arg in "$@"; do
     if [ "$arg" = --json ]; then continue; fi
     if [ "$value" = 1 ]; then value=0; continue; fi
     if [ "$reason_next" = 1 ]; then reason_next=0; reason=$arg; reason_given=1; continue; fi
     if [ "$title_next" = 1 ]; then title_next=0; new_title=$arg; continue; fi
-    if [ "$state_next" = 1 ]; then state_next=0; prune_state=$arg; continue; fi
-    if [ "$keep_next" = 1 ]; then keep_next=0; keep_arg=$arg; continue; fi
     case "$arg" in
-      --no-prune) no_prune=1 ;;
       --reason) reason_next=1 ;;
       --reason=*) reason=${arg#--reason=}; reason_given=1 ;;
-      --keep) keep_next=1 ;;
-      --keep=*) keep_arg=${arg#--keep=} ;;
-      --state) state_next=1 ;;
-      --state=*) prune_state=${arg#--state=} ;;
       --title) title_next=1; has_title=1 ;;
       --title=*) has_title=1; new_title=${arg#--title=} ;;
       --pr|--report|--note|--until|--kind|--repo|--priority|--body|--body-file) value=1 ;;
@@ -294,16 +221,7 @@ captain_guard() {  # <tasks-axi args>
     esac
   done
   case "$verb" in
-    prune) guard_captain_ask_archive "$prune_state" "$keep_arg" "" ;;
-    done|close)
-      guard_captain_ask_close "$id"
-      [ "$no_prune" = 1 ] || guard_captain_ask_archive "done" "$keep_arg" "$id"
-      ;;
-    public-followup)
-      case "$sub" in
-        record-delivery|waive) guard_captain_ask_archive "done" "" "$id" ;;
-      esac
-      ;;
+    done|close) guard_captain_ask_close "$id" ;;
     rm|delete) guard_captain_ask_close "$id" ;;
     hold)
       # A hold without a reason is a hold nobody can read: refuse it here so the
@@ -324,7 +242,7 @@ captain_guard() {  # <tasks-axi args>
 }
 # Reads an add/update argument list: ITEM_TITLE (add's title, or update's --title),
 # ITEM_BODY, ITEM_PRIORITY, and ITEM_ID (update's id).
-item_args() {  # <tasks-axi add|update args...>
+item_args() {  # <add|update args...>
   local verb=$1 mint=0 positional=()
   ITEM_TITLE='' ITEM_BODY='' ITEM_PRIORITY='' ITEM_ID=''
   shift
@@ -396,69 +314,25 @@ case "${1:-}" in
     captain_ask_first
     ;;
 esac
-# Public-followup values cross into tasks-axi's own schema; everything else passes
-# through untouched.
-case "${1:-}" in
-  public-followup|task)
-    case "${2:-}${1:-}" in
-      *public-followup*)
-        _jg_wire_args=()
-        for _jg_arg in ${ARGS[@]+"${ARGS[@]}"}; do
-          case "$_jg_arg" in
-            "$_jg_taxi_sl_own"*) _jg_wire_args+=("${_jg_taxi_sl_wire}${_jg_arg#"$_jg_taxi_sl_own"}") ;;
-            *) _jg_wire_args+=("$_jg_arg") ;;
-          esac
-        done
-        ARGS=(${_jg_wire_args[@]+"${_jg_wire_args[@]}"})
-        unset _jg_wire_args _jg_arg
-        ;;
-    esac
-    ;;
-esac
 CLOSE_NOTE_ARGS=()
 captain_guard ${ARGS[@]+"${ARGS[@]}"}
 if [ "${#CLOSE_NOTE_ARGS[@]}" -gt 0 ]; then
   case " ${ARGS[*]} " in *" --note "*) ;; *) ARGS+=("${CLOSE_NOTE_ARGS[@]}") ;; esac
 fi
-if [ "$JG_BEADS" = 1 ]; then
-  JG_BEADS_WIRE_LEAD=$_jg_taxi_sl_wire JG_BEADS_HOME_ID=main
-  _jg_lead_marker=$(jg_compat_marker "$JG_HOME")
-  [ ! -r "$_jg_lead_marker" ] || JG_BEADS_HOME_ID=$_jg_taxi_sl_wire$(cat "$_jg_lead_marker")
-  export JG_BEADS_WIRE_LEAD JG_BEADS_HOME_ID
-  jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
-  _jg_rc=$?
-  case "${1:-}" in add|create) [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true ;; esac
-  exit "$_jg_rc"
-fi
-case "${1:-}" in
-  show|view|list)
-    set -o pipefail
-    if [ "${1:-}" = list ] && [ "$LIST_KEYS" = 1 ]; then
-      tasks-axi ${ARGS[@]+"${ARGS[@]}"} | jg_hold_reason_decode_stream | jg_taxi_stream_from_wire | key_tool annotate
-    elif [ "${1:-}" = list ]; then
-      tasks-axi ${ARGS[@]+"${ARGS[@]}"} | jg_hold_reason_decode_stream | jg_taxi_stream_from_wire
-    else
-      tasks-axi ${ARGS[@]+"${ARGS[@]}"} | jg_hold_reason_decode_stream | jg_taxi_stream_from_wire | key_tool annotate-show
-    fi
-    exit $?
-    ;;
-  add|create)
-    tasks-axi ${ARGS[@]+"${ARGS[@]}"}
-    _jg_rc=$?
-    [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true
-    [ "$_jg_rc" -ne 0 ] || jg_backlog_ticket_publish "$DATA" add "${ARGS[1]-}"
-    exit "$_jg_rc"
-    ;;
-esac
-# A transition this command performs writes the ticket in the same breath, so the
-# board follows the work and never waits for the next tickets-sync poll; the verb
-# map and the writer are bin/jg-backlog-transition-lib.sh's own.
-_jg_status=0
-tasks-axi ${ARGS[@]+"${ARGS[@]}"} || _jg_status=$?
-[ "$_jg_status" -eq 0 ] || exit "$_jg_status"
+JG_BEADS_WIRE_LEAD=$_jg_taxi_sl_wire JG_BEADS_HOME_ID=main
+_jg_lead_marker=$(jg_compat_marker "$JG_HOME")
+[ ! -r "$_jg_lead_marker" ] || JG_BEADS_HOME_ID=$_jg_taxi_sl_wire$(cat "$_jg_lead_marker")
+export JG_BEADS_WIRE_LEAD JG_BEADS_HOME_ID
+jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
+_jg_rc=$?
+case "${1:-}" in add|create) [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true ;; esac
+[ "$_jg_rc" -eq 0 ] || exit "$_jg_rc"
+# A write this command performs puts the ticket on the board in the same breath, so the board
+# follows the work and never waits for the next tickets-sync poll; the verb map and the writer are
+# bin/jg-backlog-transition-lib.sh's own.
 case "${ARGS[0]-}" in
+  add|create) jg_backlog_ticket_publish "$JG_HOME/data" add "${ARGS[1]-}" ;;
   done|close|start|reopen|hold|park|unhold)
-    jg_backlog_ticket_note "$DATA" "${ARGS[0]}" "${ARGS[1]-}" ${ARGS[@]+"${ARGS[@]:2}"}
-    ;;
+    jg_backlog_ticket_note "$JG_HOME/data" "${ARGS[0]}" "${ARGS[1]-}" ${ARGS[@]+"${ARGS[@]:2}"} ;;
 esac
 exit 0

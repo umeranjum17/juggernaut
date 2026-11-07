@@ -24,7 +24,6 @@ run "the policy's own Rego contract tests pass" opa test policy
 run "40 pull requests give their recorded verdicts through the real lint" bash core/merge-on-green/tests/checks-lint-cases.test.sh
 run "recorded checks-gate.log rows give their recorded verdicts through the owner-rules gate" bash core/owner-rules/tests/lint-row-recorded.test.sh
 run "62 homes give their recorded decisions through the real owner-rules merge gate" bash core/owner-rules/tests/gate-matrix.test.sh
-run "73 backlog items give their recorded decisions through the brief rules" bash core/owner-rules/tests/brief-rules-cases.test.sh
 run "41 task records give their recorded decisions through the receipt acceptance" bash core/receipts/tests/receipt-accept-cases.test.sh
 [ "$fails" -eq 0 ] || { printf '%s check(s) failed\n' "$fails" >&2; exit 1; }
 printf 'merge-gate-policy: Rego decides, the lint and the gate gather facts, recorded decisions reproduced\n'

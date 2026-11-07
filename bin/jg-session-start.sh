@@ -129,8 +129,8 @@
 # The tradeoff this ordering accepts: a refused (read-only) session must not
 # go dark. So on refusal, bootstrap still runs (in JG_BOOTSTRAP_DETECT_ONLY=1
 # mode) for its local read-only detect lines - missing tools, the worktree-tangle
-# check, the harness override, crew-dispatch validation, tasks-axi and quota-axi
-# tool checks, tasks-axi availability, and a Beads home's store health - none of
+# check, the harness override, crew-dispatch validation, the quota-axi
+# tool check, and the Beads store health - none of
 # which mutate shared state
 # and all of which are safe to compute without verified lock ownership.
 # It deliberately skips the network-only GitHub-auth probe because a read-only
@@ -163,24 +163,13 @@
 # JG_SESSION_START_CONTEXT_FILE_CAP bytes (default 10000), then a cut marker
 # with the line range, the exact sed command, and an index of the headings in
 # the unprinted part.
-# When compatible tasks-axi is selected and available, the shared tasks-axi
-# backend probe remains the compatibility owner and this script asks
-# `tasks-axi list` for the compact identity fields plus blocked_by, hold_kind,
-# and hold_reason, never body. The groups are the tool's own filters
-# (`--state in_flight`, `--state held`, `--state queued --blocked`, and
-# `tasks-axi ready`), so this script never reimplements task state; the groups
-# can overlap, because an in-flight item that is also held appears under both.
-# When manual mode is selected, or tasks-axi is unavailable or incompatible,
-# this script prints only backlog section headings and item title lines, so
-# title-line hold and blocked-by metadata remain visible while indented bodies
-# stay out of the startup digest; the same never-bound-a-held-or-blocked-row
-# rule applies, recognized there from the title line's own hold/blocked-by
-# markers.
-# On a Beads home the same groups come from the store and no backlog file is
-# needed; a failed read prints its reason, because a store has no title lines.
-# Full bodies are targeted follow-up only: `bin/jg-tasks-axi.sh show <id> --full` when
-# compatible tasks-axi is available, or `data/backlog.md` when the file body is
-# truly needed.
+# The backlog groups come from the Beads store (`list` for the compact identity
+# fields plus blocked_by, hold_kind and hold_reason, never body; the groups are
+# the store's own filters `--state in_flight`, `--state held`,
+# `--state queued --blocked`, and `ready`), so this script never reimplements
+# task state; the groups can overlap, because an in-flight item that is also held
+# appears under both. A failed read prints its reason.
+# Full bodies are targeted follow-up only: `bin/jg-tasks-axi.sh show <id> --full`.
 #
 # STATUS TAILS: JG_SESSION_START_STATUS_TAIL (default 3) bounds how many lines each task's
 # tail prints, and bin/jg-line-cap-lib.sh bounds how long each of those lines
@@ -406,17 +395,7 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/jg-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-line-cap-lib.sh
 . "$SCRIPT_DIR/jg-line-cap-lib.sh"
-# shellcheck source=bin/jg-hold-reason-lib.sh
-. "$SCRIPT_DIR/jg-hold-reason-lib.sh"
 
-# One tasks-axi compatibility verdict per session start. The probe costs three
-# tasks-axi subprocesses and this digest needs the same answer twice - here for
-# the backlog listing and again inside the jg-bootstrap.sh child, which reports
-# an incompatible build as MISSING. Computing it once and handing it to that
-# child collapses six subprocesses to three. jg-tasks-axi-lib.sh owns both reuse
-# layers and the one-hop consumption rule that keeps the verdict out of any
-# agent's environment.
-if jg_tasks_axi_compatible; then TASKS_AXI_COMPATIBLE=1; else TASKS_AXI_COMPATIBLE=0; fi
 
 STATUS_TAIL=${JG_SESSION_START_STATUS_TAIL:-3}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=3 ;; esac
@@ -491,74 +470,20 @@ print_file_capped() {
 }
 
 print_backlog_pointer() {
-  if jg_backlog_backend_beads "$CONFIG"; then
-    printf 'Full task bodies remain available on demand: bin/jg-tasks-axi.sh show <id> --full.\n'
-    return 0
-  fi
-  printf 'Full task bodies remain available on demand: bin/jg-tasks-axi.sh show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
+  printf 'Full task bodies remain available on demand: bin/jg-tasks-axi.sh show <id> --full.\n'
 }
 
-# A queued title line whose own text already marks it held or blocked. The
-# manual renderer has no task model, so this is the only signal it gets, and it
-# is the one tasks-axi's markdown backend writes: "(hold: ...)", "(hold-kind:
-# ...)", and "blocked-by: ...". Bracket expressions rather than backslashes,
-# because awk's -v applies escape processing before the regex is ever compiled.
-MANUAL_KEEP_RE='[(]hold|blocked-by:'
-
-print_backlog_manual_compact() {
-  local path=$1 reason=$2
-  printf 'compact backlog listing (%s; done rows omitted; every in-flight, held, and blocked title line kept; other queued bounded to %s; indented task bodies omitted)\n' \
-    "$reason" "$QUEUED_LIMIT"
-  awk -v max="$QUEUED_LIMIT" -v keep_re="$MANUAL_KEEP_RE" '
-    function state_for_heading(line, heading) {
-      heading = line
-      sub(/^##[[:space:]]+/, "", heading)
-      sub(/[[:space:]]+$/, "", heading)
-      if (heading == "In flight") return "in_flight"
-      if (heading == "Queued") return "queued"
-      if (heading == "Done") return "done"
-      return ""
-    }
-    /^##[[:space:]]+/ {
-      state = state_for_heading($0)
-      # The Done heading is recognized so its items are skipped, never printed.
-      if (state != "" && state != "done") print $0
-      next
-    }
-    state == "in_flight" && /^[-*][[:space:]]+/ { in_flight++; print $0; next }
-    state == "done" && /^[-*][[:space:]]+/ { done_total++; next }
-    state == "queued" && /^[-*][[:space:]]+/ {
-      queued_total++
-      if ($0 ~ keep_re) { gated++; print $0; next }
-      if (plain_shown < max) { plain_shown++; print $0 }
-      next
-    }
-    END {
-      plain_total = queued_total - gated
-      if (in_flight + queued_total + done_total == 0) {
-        print "(no backlog item title lines found)"
-      } else {
-        printf "(shown %d in-flight, %d held or blocked queued, %d of %d other queued title line(s); %d done row(s) omitted)\n", \
-          in_flight, gated, plain_shown, plain_total, done_total
-        if (plain_total > plain_shown) {
-          printf "(%d more queued - raise JG_SESSION_START_QUEUED_LIMIT or read data/backlog.md for the rest)\n", plain_total - plain_shown
-        }
-      }
-    }
-  ' "$path" | jg_hold_reason_decode_stream markdown
-}
-
-# tasks-axi closes every listing with its own help block. This section composes
+# The store closes every listing with its own help block. This section composes
 # four listings, so keeping them would repeat the same pointers four times, once
 # per group, each carrying this home's full backlog path. The section prints one
 # equivalent pointer of its own (print_backlog_pointer), so the per-group help
 # blocks stop at their `help[` header instead.
-strip_axi_help() {
+strip_help_block() {
   awk '/^help\[/ { exit } { print }'
 }
 
 # Bound the dispatchable-now listing without rewriting the tool's own rendering:
-# `tasks-axi ready` rows are the indented lines under its ready[N]{...} header,
+# `ready` rows are the indented lines under its ready[N]{...} header,
 # and every other line it prints (its count, its public-followup line) passes
 # through untouched. Whatever is cut is disclosed exactly.
 print_ready_queued_bounded() {
@@ -602,73 +527,41 @@ bound_held_rows() {
     }'
 }
 
-backlog_rows() {  # <backlog_file> <list|ready> [flags...]
-  local path=$1 verb=$2
-  shift 2
-  if jg_backlog_backend_beads "$CONFIG"; then
-    jg_backlog_beads_read "$CONFIG" "$verb" "$@"
-  else
-    tasks-axi "$verb" --file "$path" "$@"
-  fi
+backlog_rows() {  # <list|ready> [flags...]
+  jg_backlog_beads_read "$CONFIG" "$@"
 }
 
-print_backlog_rows_compact() {  # <backlog_file> <provider name>
-  local path=$1 provider=$2 in_flight held blocked ready err
-  if ! in_flight=$(backlog_rows "$path" list --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
+print_backlog_rows_compact() {
+  local in_flight held blocked ready err
+  if ! in_flight=$(backlog_rows list --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$in_flight
-  elif ! held=$(backlog_rows "$path" list --state held --fields "$BACKLOG_FIELDS" 2>&1); then
+  elif ! held=$(backlog_rows list --state held --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$held
-  elif ! blocked=$(backlog_rows "$path" list --state queued --blocked --fields "$BACKLOG_FIELDS" 2>&1); then
+  elif ! blocked=$(backlog_rows list --state queued --blocked --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$blocked
-  elif ! ready=$(backlog_rows "$path" ready 2>&1); then
+  elif ! ready=$(backlog_rows ready 2>&1); then
     err=$ready
   else
     printf 'compact backlog listing (%s; done rows omitted; every in-flight, captain-held, and blocked row shown in full; other held rows bounded to %s; ready queued bounded to %s; task bodies omitted)\n' \
-      "$provider" "$HELD_LIMIT" "$QUEUED_LIMIT"
+      beads "$HELD_LIMIT" "$QUEUED_LIMIT"
     printf '\nin flight:\n'
-    printf '%s\n' "$in_flight" | jg_hold_reason_decode_stream | strip_axi_help
+    printf '%s\n' "$in_flight" | strip_help_block
     printf '\nheld (captain- or time-gated; an in-flight item that is also held appears in both groups):\n'
-    printf '%s\n' "$held" | jg_hold_reason_decode_stream | strip_axi_help | bound_held_rows
+    printf '%s\n' "$held" | strip_help_block | bound_held_rows
     printf '\nblocked queued:\n'
-    printf '%s\n' "$blocked" | jg_hold_reason_decode_stream | strip_axi_help
+    printf '%s\n' "$blocked" | strip_help_block
     printf '\nready queued (dispatchable now):\n'
     print_ready_queued_bounded "$ready"
     return 0
   fi
-  if [ "$provider" = beads ]; then
-    printf 'beads compact listing failed:\n%s\n' "$err"
-    return 0
-  fi
-  printf 'tasks-axi compact listing failed; falling back to title-line rendering.\n'
-  printf '%s\n' "$err"
-  print_backlog_manual_compact "$path" "fallback"
+  printf 'beads compact listing failed:\n%s\n' "$err"
+  return 0
 }
 
 print_backlog_compact() {
-  local path=$1 label=$2
-  if jg_backlog_backend_beads "$CONFIG"; then
-    subsection "backlog (Beads store)"
-    print_backlog_rows_compact "$path" beads
-    print_backlog_pointer
-    return 0
-  fi
-  subsection "$label"
-  if [ -f "$path" ]; then
-    if [ -s "$path" ]; then
-      if jg_tasks_axi_backend_available "$CONFIG"; then
-        print_backlog_rows_compact "$path" tasks-axi
-      elif jg_backlog_backend_manual "$CONFIG"; then
-        print_backlog_manual_compact "$path" "manual backend"
-      else
-        print_backlog_manual_compact "$path" "tasks-axi unavailable or incompatible"
-      fi
-      print_backlog_pointer
-    else
-      printf '(present, empty)\n'
-    fi
-  else
-    printf 'ABSENT\n'
-  fi
+  subsection "backlog (Beads store)"
+  print_backlog_rows_compact
+  print_backlog_pointer
 }
 
 print_status_tail() {
@@ -865,14 +758,14 @@ stage bootstrap
 subsection "BOOTSTRAP"
 if [ "$READ_ONLY" -eq 1 ]; then
   BOOT_OUT=$(JG_BOOTSTRAP_DETECT_ONLY=1 JG_BOOTSTRAP_NETWORK=skip \
-    JG_TASKS_AXI_COMPATIBLE="$TASKS_AXI_COMPATIBLE" "$SCRIPT_DIR/jg-bootstrap.sh" 2>&1)
+    "$SCRIPT_DIR/jg-bootstrap.sh" 2>&1)
 elif [ "$REEMIT" -eq 1 ]; then
   BOOT_OUT=$(JG_BOOTSTRAP_DETECT_ONLY=1 JG_BOOTSTRAP_LOCKED=1 JG_BOOTSTRAP_NETWORK=skip \
-    JG_TASKS_AXI_COMPATIBLE="$TASKS_AXI_COMPATIBLE" "$SCRIPT_DIR/jg-bootstrap.sh" 2>&1)
+    "$SCRIPT_DIR/jg-bootstrap.sh" 2>&1)
 else
   BOOT_OUT=$(
     "$SCRIPT_DIR/jg-herdr-session-cleanup.sh" 2>&1 || true
-    JG_BOOTSTRAP_NETWORK=skip JG_TASKS_AXI_COMPATIBLE="$TASKS_AXI_COMPATIBLE" \
+    JG_BOOTSTRAP_NETWORK=skip \
       "$SCRIPT_DIR/jg-bootstrap.sh" 2>&1
   )
 fi
@@ -999,7 +892,7 @@ Go to a source directly only when:
   - an individual full status log is needed for older wake-event history, or a
     status line was capped and its tail matters (each task's full log path is
     printed with its tail),
-  - a full task body is needed (bin/jg-tasks-axi.sh show <id> --full, or data/backlog.md),
+  - a full task body is needed (bin/jg-tasks-axi.sh show <id> --full),
   - the backlog listing disclosed omitted queued items and this turn needs them,
   - a held-row or curated-memory section printed a "not listed" or "[cut at" line and this turn needs the rest (the line names the command or line range),
   - the NETWORK CHECKS section reported its checks still IN PROGRESS and this
@@ -1013,7 +906,7 @@ EOF
 # truncated tail must never take.
 stage fleet-state
 section "FLEET STATE"
-print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
+print_backlog_compact
 
 subsection "Work under way (state/*.meta)"
 # A lane the fleet snapshot already calls finished needs no meta dump, endpoint read or status tail:

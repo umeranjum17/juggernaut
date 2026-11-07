@@ -21,6 +21,7 @@ export PATH="$FAKEBIN:$PATH"
 # the way a lead does: it confirms delivery and posts the correlated reply.
 mkdir -p "$FAKEROOT/bin"
 for f in "$ROOT"/bin/*; do ln -s "$f" "$FAKEROOT/bin/${f##*/}"; done
+ln -s "$ROOT/toolchain.versions" "$FAKEROOT/toolchain.versions"
 rm -f "$FAKEROOT/bin/jg-control.sh" "$FAKEROOT/bin/jg-send.sh"
 cat > "$FAKEROOT/bin/jg-control.sh" <<'SH'
 #!/usr/bin/env bash
@@ -41,7 +42,8 @@ setup() {  # <name> -> a main home with one local lead whose own home has no ope
   local d=$TMP_ROOT/$1
   : > "$LOG"
   mkdir -p "$d/main/state" "$d/main/config" "$d/main/data" "$d/lead/data" "$d/lead/state"
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$d/lead/data/backlog.md"
+  jg_test_beads_home "$d/lead"
+  touch -d "2 hours ago" "$(cat "$d/lead/config/beads-dir")"
   printf 'kind=squad_lead\nhome=%s\nworktree=%s\nproject=%s\nendpoint_task_id=lead\nharness=claude\nbackend=tmux\nwindow=juggernaut:jg-lead\n' "$d/lead" "$d/lead" "$d/lead" > "$d/main/state/lead.meta"
   printf -- '- lead - a local lead (home: %s; scope: l; projects: l; added 2026-10-30)\n' "$d/lead" > "$d/main/data/squad_leads.md"
   printf '❯\n' > "$JG_FAKE_TMUX_CAPTURE"
@@ -79,7 +81,7 @@ lead relaunch" "the first steer starts the lead"
 test_lead_with_work_or_an_open_request_relaunches_at_once() {
   local d out
   d=$(setup busy)
-  printf '## In flight\n- [ ] wip - in progress\n\n## Queued\n\n## Done\n' > "$d/lead/data/backlog.md"
+  jg_test_add "$d/lead" jg-wip "[feature] in progress"
   out=$(restart "$d")
   assert_contains "$out" "restarted: lead (claude) at" "a lead with an open item is relaunched"
   assert_equals "$(cat "$LOG")" "lead relaunch" "only the relaunch runs for a lead with work"

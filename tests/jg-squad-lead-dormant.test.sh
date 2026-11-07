@@ -31,8 +31,8 @@ setup() {  # <name> -> a main home with one local lead home that has no open wor
   : > "$LOG"
   : > "$SENDLOG"
   mkdir -p "$d/main/state" "$d/main/config" "$d/main/data" "$d/lead/data" "$d/lead/state"
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$d/lead/data/backlog.md"
-  touch -d '2 hours ago' "$d/lead/data/backlog.md"
+  jg_test_beads_home "$d/lead"
+  touch -d '2 hours ago' "$(cat "$d/lead/config/beads-dir")"
   printf 'kind=squad_lead\nhome=%s\nharness=claude\nbackend=tmux\nwindow=jg-lead\n' "$d/lead" > "$d/main/state/lead.meta"
   printf -- '- lead - a local lead (home: %s; scope: l; projects: l; added 2026-10-30)\n' "$d/lead" > "$d/main/data/squad_leads.md"
   printf '1\n' > "$d/main/config/squad-lead-dormant-secs"
@@ -65,7 +65,7 @@ test_dormant_lead_reads_dormant_and_routed_work_wakes_it() {
   assert_contains "$(env JG_HOME="$d/main" "$HB" rows)" "lead	DORMANT" "the fleet dashboard shows a dormant lead"
   assert_not_contains "$(env JG_HOME="$d/main" "$HB" check)" "lead" "a dormant lead raises no gap or stall alarm"
   assert_equals "$(sweep "$d")" "" "a dormant lead with no work is left alone"
-  printf '## In flight\n- [ ] fresh-work - something to do\n\n## Queued\n\n## Done\n' > "$d/lead/data/backlog.md"
+  jg_test_add "$d/lead" jg-fresh-work "[feature] something to do"
   sweep "$d" > /dev/null
   assert_equals "$(cat "$LOG")" "lead relaunch" "routed work relaunches the lead"
   assert_equals "$(rec_word "$d")" "" "the dormant record drops when the lead wakes"
@@ -92,12 +92,12 @@ test_routed_send_records_then_wakes_the_lead() {
 test_a_lead_with_open_work_or_recent_activity_is_left_alone() {
   local d
   d=$(setup busy)
-  printf '## In flight\n- [ ] wip - in progress\n\n## Queued\n\n## Done\n' > "$d/lead/data/backlog.md"
+  jg_test_add "$d/lead" jg-wip "[feature] in progress"
   assert_equals "$(sweep "$d")" "" "a lead with an open item is not touched"
   assert_equals "$(rec_word "$d")" "" "no record is written for a working lead"
   printf '0\n' > "$d/main/config/squad-lead-dormant-secs"
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$d/lead/data/backlog.md"
-  touch -d '2 hours ago' "$d/lead/data/backlog.md"
+  jg_test_backlog "$d/lead" done jg-wip >/dev/null
+  touch -d '2 hours ago' "$(cat "$d/lead/config/beads-dir")"
   assert_equals "$(sweep "$d")" "" "an idle time of 0 turns the rule off"
   # The rule compares whole-second mtimes (bin/jg-squad-lead-dormant.sh
   # quiet_secs), so a one-second threshold is met by the fraction of a second a
@@ -105,7 +105,7 @@ test_a_lead_with_open_work_or_recent_activity_is_left_alone() {
   # Three seconds keeps the case clear of that granularity: a record touched a
   # moment ago still reads well under the threshold.
   printf '3\n' > "$d/main/config/squad-lead-dormant-secs"
-  touch "$d/lead/data/backlog.md"
+  touch "$(cat "$d/lead/config/beads-dir")"
   assert_equals "$(sweep "$d")" "" "a lead whose records just changed is not idle yet"
   pass "a lead with open work or recent activity is left alone"
 }

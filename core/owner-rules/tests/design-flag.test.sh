@@ -23,28 +23,23 @@ no() { printf 'not ok - %s\n' "$1"; fails=$((fails + 1)); }
 is() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1: got [$2], want [$3]"; fi; }
 
 home=$work/home; mkdir -p "$home/config" "$home/data" "$home/state"
-cat > "$home/data/backlog.md" <<'BL'
-# Backlog
-
-## In flight
-- [ ] req - [captain-ask] Rebuild the dashboard (repo: sample) (kind: ship)
-  design: required
-- [ ] none - [captain-ask] Fix a spacing bug (repo: sample) (kind: ship)
-  design: none
-- [ ] absent - [captain-ask] Bump a dependency (repo: sample) (kind: ship)
-- [ ] typo - [captain-ask] Fix a thing (repo: sample) (kind: ship)
-  desing: required
-- [ ] vague - [captain-ask] Fix a thing (repo: sample) (kind: ship)
-  design: maybe
-- [ ] twice - [captain-ask] Fix a thing (repo: sample) (kind: ship)
-  design: required
-  design: none
-- [ ] nudge - [captain-ask] Redesign the landing page (repo: sample) (kind: ship)
-- [ ] nudge-body - [captain-ask] Fix a thing (repo: sample) (kind: ship)
-  Needs a new screen for settings.
-- [ ] flagged-words - [captain-ask] Redesign the landing page (repo: sample) (kind: ship)
-  design: none
-BL
+. "$addons/lib/beads-test-env.sh"
+root=$(cd "$addons/.." && pwd)
+core_beads_home "$root" "$home"
+export JG_HOME=$home
+add() {  # <id> <title> [<body>]
+  (cd "$home" && bash "$root/bin/jg-tasks-axi.sh" add "$1" "$2" --priority 0 --kind ship --repo sample --body "${3:-Fixture ticket $1}") >/dev/null 2>"$work/add.err" \
+    || { echo "fixture: could not add $1: $(cat "$work/add.err")" >&2; exit 1; }
+}
+add jg-req '[captain-ask] Rebuild the dashboard' 'design: required'
+add jg-none '[captain-ask] Fix a spacing bug' 'design: none'
+add jg-absent '[captain-ask] Bump a dependency'
+add jg-typo '[captain-ask] Fix a thing' 'desing: required'
+add jg-vague '[captain-ask] Fix a thing' 'design: maybe'
+add jg-twice '[captain-ask] Fix a thing' $'design: required\ndesign: none'
+add jg-nudge '[captain-ask] Redesign the landing page'
+add jg-nudge-body '[captain-ask] Fix a thing' 'Needs a new screen for settings.'
+add jg-flagged-words '[captain-ask] Redesign the landing page' 'design: none'
 # check <id> [include]: stderr, BRIEF_INCLUDE_BODY, then rc= (run in a subshell, as the exit paths end it).
 check() {
   local out
@@ -61,41 +56,41 @@ check() {
 }
 BAD() { echo "owner-rules: design: must be required or none (backlog item for $1)"; }
 
-is "required adds the brief line" "$(check req)" "err=
+is "required adds the brief line" "$(check jg-req)" "err=
 body=Design discovery: required
 rc=0"
-is "required keeps the existing include after it" "$(check req 'Home text')" "err=
+is "required keeps the existing include after it" "$(check jg-req 'Home text')" "err=
 body=Design discovery: required
 Home text
 rc=0"
-is "none adds nothing" "$(check none)" "err=
+is "none adds nothing" "$(check jg-none)" "err=
 body=
 rc=0"
-is "absent adds nothing" "$(check absent)" "err=
+is "absent adds nothing" "$(check jg-absent)" "err=
 body=
 rc=0"
-is "D2: a typo is refused" "$(check typo)" "err=$(BAD typo)
+is "D2: a typo is refused" "$(check jg-typo)" "err=$(BAD jg-typo)
 body=
 rc=1"
-is "D2: a value that is not required or none is refused" "$(check vague | head -1)" "err=$(BAD vague)"
-is "D2: two design lines are refused" "$(check twice | head -1)" "err=$(BAD twice)"
-is "D4: design words in the title only nudge" "$(check nudge)" "err=owner-rules: note: this reads like design work; add \"design: required\" or \"design: none\" to the backlog item for nudge
+is "D2: a value that is not required or none is refused" "$(check jg-vague | head -1)" "err=$(BAD jg-vague)"
+is "D2: two design lines are refused" "$(check jg-twice | head -1)" "err=$(BAD jg-twice)"
+is "D4: design words in the title only nudge" "$(check jg-nudge)" "err=owner-rules: note: this reads like design work; add \"design: required\" or \"design: none\" to the backlog item for jg-nudge
 body=
 rc=0"
-is "D4: design words in the body only nudge" "$(check nudge-body | tail -1)" "rc=0"
-is "D4: a design line silences the nudge" "$(check flagged-words)" "err=
+is "D4: design words in the body only nudge" "$(check jg-nudge-body | tail -1)" "rc=0"
+is "D4: a design line silences the nudge" "$(check jg-flagged-words)" "err=
 body=
 rc=0"
 
 # with the fork: the real jg-brief.sh writes the line, and a typo writes no brief
-FM=${1:-}
+FM=${1:-$root}
 if [ -n "$FM" ] && [ -x "$FM/bin/jg-brief.sh" ] && grep -q jg_brief_inherit_shared "$FM/bin/jg-brief.sh"; then
   export HOME=$work/user XDG_DATA_HOME=$work/data
   "$addons/owner-rules/wiring.sh" "$home" >/dev/null
   brief() { JG_HOME=$home JG_ADDONS_DIR=$addons bash "$FM/bin/jg-brief.sh" "$1" sample --mode direct-PR >/dev/null 2>&1; }
-  brief req; grep -qx 'Design discovery: required' "$home/data/req/brief.md" && ok "brief.md carries the line when required" || no "brief.md lacks the line"
-  brief none; [ -s "$home/data/none/brief.md" ] && ! grep -q 'Design discovery' "$home/data/none/brief.md" && ok "brief.md has no line for none" || no "brief.md for none"
-  brief typo && no "typo briefed" || { [ ! -e "$home/data/typo" ] && ok "typo writes no brief" || no "typo left data/typo"; }
+  brief jg-req; grep -qx 'Design discovery: required' "$home/data/jg-req/brief.md" && ok "brief.md carries the line when required" || no "brief.md lacks the line"
+  brief jg-none; [ -s "$home/data/jg-none/brief.md" ] && ! grep -q 'Design discovery' "$home/data/jg-none/brief.md" && ok "brief.md has no line for none" || no "brief.md for none"
+  brief jg-typo && no "typo briefed" || { [ ! -e "$home/data/jg-typo" ] && ok "typo writes no brief" || no "typo left data/jg-typo"; }
 else
   echo "skip - jg-brief.sh journey (no juggernaut checkout given)"
 fi

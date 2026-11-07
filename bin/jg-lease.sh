@@ -5,7 +5,7 @@
 # is owned by bin/jg-lease-lib.sh; this is the command surface the two
 # supervision actors use around the overlap set (steering, stopping, cleanup,
 # backlog status, stuck-worker recovery). "backlog" is the reserved resource
-# the branch prompt claims around its own backlog writes; main's tasks-axi path
+# the branch prompt claims around its own backlog writes; main's the backlog path
 # is deliberately unguarded in this scope.
 #
 # Usage:

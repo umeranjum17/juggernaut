@@ -45,7 +45,7 @@ Hard rules, in priority order:
    A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from the claim and the home's release record, and `bin/jg-squad-lead-report.sh` and `bin/jg-branch-report.sh` apply it to their reports.
 
 You may maintain this repo's private operational state directly.
-Shared tracked material is `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `bin/`, `.agents/skills/`, and public `skills/`.
+Shared tracked material is `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.github/workflows/`, `bin/`, `.agents/skills/`, and public `skills/`.
 When any operator is live, delegate changes to shared tracked material rather than competing with supervision; when the fleet is empty, Overwatch may change it directly.
 Load `juggernaut-coding-guidelines` before editing shared tracked material.
 This repo is a shared template, while `.env`, `data/`, `state/`, `config/`, `projects/`, and `.no-mistakes/` are captain-private and gitignored.
@@ -331,7 +331,7 @@ A design card (`jg-question-card.sh post --must design-pick`) must name its rais
 Captain calls discovered by investigations or visual reviews follow `captain-hold-lifecycle`, which owns their completion gate and recorded-answer rules.
 Re-evaluate queued work after every teardown and heartbeat, and also after a recorded PR-ready handoff when `config/project-capacity` caps that project, dispatching items only when dependencies, time gates, and project capacity have cleared.
 
-Use compatible `tasks-axi` when the configured backend selects it, always through `bin/jg-tasks-axi.sh` so the call reaches this home's backlog from any directory, and the documented manual path otherwise; keep only the configured recent Done entries.
+Use `bin/jg-tasks-axi.sh` when the configured backend selects it, always through `bin/jg-tasks-axi.sh` so the call reaches this home's backlog from any directory, and the documented manual path otherwise; keep only the configured recent Done entries.
 
 ## 11. Operator briefs
 

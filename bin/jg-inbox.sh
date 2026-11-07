@@ -1347,16 +1347,12 @@ cmd_status() {
   # Loaded here so taking a note never depends on the backlog provider.
   # shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
   . "$SELF_DIR/jg-tasks-axi-lib.sh"
-  if jg_backlog_present "$CONFIG" "$DATA/backlog.md"; then
-    printf '\n--- in flight ---\n'
-    if backlog=$(jg_backlog_text "$CONFIG" "$DATA/backlog.md"); then
-      printf '%s\n' "$backlog" | awk '/^## In flight/{f=1;next} /^## /{f=0} f && /^- \[/{print}' \
-        | sed 's/^- \[ \] /  /' | cut -c1-150
-    else
-      printf '  (the backlog cannot be read)\n'
-    fi
+  printf '\n--- in flight ---\n'
+  if backlog=$(jg_backlog_text "$CONFIG"); then
+    printf '%s\n' "$backlog" | awk '/^## In flight/{f=1;next} /^## /{f=0} f && /^- \[/{print}' \
+      | sed 's/^- \[ \] /  /' | cut -c1-150
   else
-    printf '\n(no backlog at %s)\n' "$DATA/backlog.md"
+    printf '  (the backlog cannot be read)\n'
   fi
 
   local any=0

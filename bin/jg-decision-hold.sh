@@ -16,7 +16,7 @@
 #   resolve <origin> <key> --decision-file <f> --routed-to <id>...
 #                                          -> answer <origin>-decision-<key> with the routed ids
 #                                             appended to the decision text, then clear the
-#                                             recorded blocked-by edges through tasks-axi; an
+#                                             recorded blocked-by edges through the backlog; an
 #                                             exact replay of a pre-collapse routed record reuses
 #                                             its historical digest and text before clearing edges
 #   answer|decline|repair <origin> <key> --decision-file <f>

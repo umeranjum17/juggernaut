@@ -2013,21 +2013,15 @@ test_cancelled_fleet_inventory_is_unverified_not_contradictory() {
   make_repo_on_branch "$d/wt" fm/cancelled
   make_fakebin "$d" >/dev/null
   mkdir -p "$d/data" "$d/config" "$d/projects"
-  jg_write_meta "$d/state/cancelled.meta" "window=fm:jg-cancelled" "worktree=$d/wt" \
+  jg_test_beads_home "$d"
+  jg_write_meta "$d/state/jg-cancelled.meta" "window=fm:jg-cancelled" "worktree=$d/wt" \
     "project=sample" "harness=claude" "kind=ship" "mode=no-mistakes"
-  cat > "$d/data/backlog.md" <<'EOF'
-## In flight
-- [ ] cancelled - Validation in progress (repo: sample) (kind: ship) (since 2026-09-26)
-
-## Queued
-
-## Done
-EOF
-  printf 'failed: historical cancellation projection\n' > "$d/state/cancelled.status"
-  backlog_before=$(cat "$d/data/backlog.md")
-  status_before=$(cat "$d/state/cancelled.status")
+  jg_test_add "$d" jg-cancelled "[feature] Validation in progress" && jg_test_backlog "$d" start jg-cancelled
+  printf 'failed: historical cancellation projection\n' > "$d/state/jg-cancelled.status"
+  backlog_before=$(jg_test_backlog "$d" list --state in_flight)
+  status_before=$(cat "$d/state/jg-cancelled.status")
   JG_FAKE_AXI_STATUS="$(run_running fm/cancelled)"
-  out=$(JG_HOME="$d" run_crew_state "$d" cancelled)
+  out=$(JG_HOME="$d" run_crew_state "$d" jg-cancelled)
   assert_contains "$out" 'state: working' 'fixture begins with active validation'
   # Deliberately transition the external instrument fixture to cancelled.
   # This executes Juggernaut end to end; it does not cancel a real daemon run.
@@ -2063,7 +2057,7 @@ error: "cancelled: aborted by user"
 EOF
 )"
   fi
-  out=$(JG_HOME="$d" run_crew_state "$d" cancelled)
+  out=$(JG_HOME="$d" run_crew_state "$d" jg-cancelled)
   assert_contains "$out" 'state: unknown' "$scenario cancellation has no verdict: $out"
   assert_contains "$out" 'source: run-step' "$scenario retains run attribution"
   assert_contains "$out" 'run cancelled: no verdict' "$scenario cancellation outweighs interrupted steps"
@@ -2073,11 +2067,11 @@ EOF
     "$ROOT/bin/jg-fleet-snapshot.sh" --squad-lead-home-summary)
   printf '%s' "$summary" | jq -e '
     .state == "unknown" and .valid == false
-    and .invalidity == {kind:"child_current_unavailable",ids:["cancelled"]}
-    and .reason == "child current state unavailable: cancelled"
+    and .invalidity == {kind:"child_current_unavailable",ids:["jg-cancelled"]}
+    and .reason == "child current state unavailable: jg-cancelled"
   ' >/dev/null || fail "cancellation must not report a terminal/backlog contradiction: $summary"
-  assert_equals "$backlog_before" "$(cat "$d/data/backlog.md")" 'correct backlog is unchanged'
-  assert_equals "$status_before" "$(cat "$d/state/cancelled.status")" 'historical event is unchanged'
+  assert_equals "$backlog_before" "$(jg_test_backlog "$d" list --state in_flight)" 'correct backlog is unchanged'
+  assert_equals "$status_before" "$(cat "$d/state/jg-cancelled.status")" 'historical event is unchanged'
   pass "$scenario cancelled run leaves fleet inventory unverified without a failure contradiction"
 }
 

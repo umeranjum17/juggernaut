@@ -63,8 +63,6 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           ../bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
-      - name: Install tasks-axi for fork lifecycle tests
-        run: npm install --global tasks-axi
       # Every step from here runs unless the run is cancelled, so one red run lists every failing
       # suite instead of the first. tests/core-suites-report-all.test.sh refuses a step without it.
       - name: Wait-timers hook journey
@@ -245,7 +243,7 @@ jobs:
         run: bash task-priority/tests/task-priority.test.sh
       - name: Tickets sync real-board journey
         if: ${{ !cancelled() }}
-        run: command -v identify >/dev/null || sudo apt-get install -y --no-install-recommends imagemagick; npm install --global sign-off-axi@0.9.10 && bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh && bash tickets-sync/tests/beads-read.test.sh
+        run: command -v identify >/dev/null || sudo apt-get install -y --no-install-recommends imagemagick; npm install --global sign-off-axi@0.9.10 && bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh
       # Fixture transcripts and a throwaway home; no real chat data is read or written.
       - name: Fleet pulse test
         if: ${{ !cancelled() }}
@@ -335,9 +333,6 @@ jobs:
       - name: Owner-rules gate recorded decisions
         if: ${{ !cancelled() }}
         run: bash owner-rules/tests/gate-matrix.test.sh
-      - name: Owner-rules brief-rule recorded decisions
-        if: ${{ !cancelled() }}
-        run: bash owner-rules/tests/brief-rules-cases.test.sh
       - name: Completion-receipt acceptance recorded decisions
         if: ${{ !cancelled() }}
         run: bash receipts/tests/receipt-accept-cases.test.sh
@@ -372,7 +367,7 @@ jobs:
       - name: Red-CI ticket test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/red-ci-ticket.test.sh
-      # Real tasks-axi against a fixture home; no forge and no worker is touched.
+      # Real Beads store against a fixture home; no forge and no worker is touched.
       - name: Backlog shipped-reconcile test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/backlog-shipped-reconcile.test.sh

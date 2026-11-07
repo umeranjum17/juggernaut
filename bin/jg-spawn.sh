@@ -557,10 +557,8 @@
 # re-running the transition, so an eligible In-flight item is left untouched.
 # The transition is
 # skipped entirely for --squad-lead spawns (persistent agents are not work
-# items), on a config/backlog-backend=manual home, and in a markdown home that
-# keeps no data/backlog.md. A configured non-markdown adapter remains
-# active without a markdown file; any active automatic backend without
-# compatible tasks-axi refuses before creating lifecycle state.
+# items). Without the Beads backlog the spawn refuses before creating
+# lifecycle state.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|squad_lead> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a squad_lead spawn records
 # mode=squad_lead, yolo=off, home=, and projects=; a scout records neither, and both the
@@ -4840,7 +4838,7 @@ fi
 # The backlog mutation is deliberately the final fallible commit below, so
 # teardown cannot remove a relaunched record while its replacement worker is
 # still being delivered, cannot observe or complete a fresh provisional record
-# between its state check and `tasks-axi start`, and a delivery failure cannot
+# between its state check and `jg-tasks-axi.sh start`, and a delivery failure cannot
 # follow a committed In-flight transition.
 if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
@@ -5301,13 +5299,13 @@ if [ "$BACKLOG_TRANSITION" = 1 ]; then
 fi
 SPAWN_BACKLOG_COMMIT_STATUS=0
 # Both the commit and its preservation read-back run under this task's meta
-# lock, so an unresponsive tasks-axi there would hold the lock - and every
+# lock, so an unresponsive the backlog there would hold the lock - and every
 # lifecycle operation waiting on it - open ended, with even the deferred
 # signals parked in a trap. Bound each invocation
-# (bin/jg-backlog-transition-lib.sh's jg_tasks_axi): a timed-out call
+# (bin/jg-backlog-transition-lib.sh's jg_backlog_serve): a timed-out call
 # fails through the ordinary error plumbing, and the interrupted exit path
 # reports it as the reason the preservation could not be verified.
-JG_TASKS_AXI_TIMEOUT=${JG_TASKS_AXI_TIMEOUT:-30}
+JG_BACKLOG_TIMEOUT=${JG_BACKLOG_TIMEOUT:-30}
 if spawn_commit_backlog_transition; then
   SPAWN_FRESH_COMMIT_PENDING=0
 else

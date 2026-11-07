@@ -23,6 +23,7 @@ main=$d/main home=$d/pool/8/juggernaut now=$(date +%s)
 mkdir -p "$main/bin" "$main/config" "$main/state" "$home/state" "$home/data" "$home/crew"
 cat > "$main/bin/jg-tasks-axi.sh" <<'EOF'
 #!/usr/bin/env bash
+if [ "$1" = markdown ]; then cat "$JG_HOME/data/backlog.md" 2>/dev/null; exit 0; fi  # The text a Beads store renders
 [ "$1" = ready ] || exit 2
 n=$(cat "$JG_HOME/ready-count"); echo "ready[$n]{id,state}:"
 for i in $(seq 1 "$n"); do echo "  item-$i,queued"; done

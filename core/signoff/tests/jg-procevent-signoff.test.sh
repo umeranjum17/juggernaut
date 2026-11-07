@@ -243,45 +243,21 @@ out=$(FEEDBACK_MODE=old adapter poll 2>&1 >/dev/null) || true
   || fail "an older sign-off-axi was asked again or logged again: $out"
 pass "a sign-off-axi without the feedback command skips with one log line and the poll goes on"
 
-TASKS_AXI_BIN=$(command -v tasks-axi 2>/dev/null || :)
-
-# Own minimal beads fixture: the upstream copy lives inside a test body, not in a
-# sourceable helper, so no upstream function is shared here. Keep this small.
-beads_probe() {
-  local base="$TMP_ROOT/beads-probe"
-  mkdir -p "$base/home" && git init -q "$base/graph" || return 1
-  (cd "$base/graph" && bd init) >/dev/null 2>&1 || return 1
-  printf 'backend = "beads"\n[beads]\npath = "%s/graph/.beads"\nbinary = "bd"\nprefix = "fm"\n' "$base" > "$base/home/.tasks.toml"
-  (cd "$base/home" && tasks-axi list) >/dev/null 2>&1
-}
-
-BEADS_AVAILABLE=yes
-if [ -z "$TASKS_AXI_BIN" ] || ! command -v bd >/dev/null 2>&1 || ! beads_probe; then
-  BEADS_AVAILABLE=no
-  echo "using markdown for the real-hold journey: beads is unavailable"
-fi
+# shellcheck source=/dev/null
+. "$JG_CODE_ROOT/core/lib/beads-test-env.sh"
+PATH=$JG_CODE_ROOT/bin:$PATH
 
 make_beads_home() {  # <name>; prints the fixture home
-  local base="$TMP_ROOT/$1" home graph
-  home="$base/home"
-  if [ "$BEADS_AVAILABLE" = no ]; then
-    mkdir -p "$home/data" "$home/config" "$home/projects" "$home/state"
-    jg_test_tasks_toml "$home/.tasks.toml"
-    printf '%s\n' "$home"
-    return
-  fi
-  graph="$base/fm"
-  mkdir -p "$home/data" "$home/config" "$home/projects" "$home/state" "$graph"
-  git init -q "$graph"
-  (cd "$graph" && bd init) >"$base.init.log" 2>&1 || fail "fixture bd init failed for $1"
-  printf 'backend = "beads"\n[beads]\npath = "%s/.beads"\nbinary = "bd"\nprefix = "fm"\n[markdown]\npath = "data/backlog.md"\narchive = "data/done-archive.md"\ndone_keep = 10\n' "$graph" > "$home/.tasks.toml"
-  printf "%s\n" "$home"
+  local home="$TMP_ROOT/$1/home"
+  core_beads_home "$JG_CODE_ROOT" "$home"
+  mkdir -p "$home/projects" "$home/state"
+  printf '%s\n' "$home"
 }
 
 real_env() {  # <home> <command args...>; the real adapter, hold, runner and intake
   local home=$1
   shift
-  PATH="$FAKEBIN:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" JG_CODE_ROOT="$ROOT" \
+  PATH="$FAKEBIN:$PATH" JG_CODE_ROOT="$ROOT" \
     JG_STATE_OVERRIDE="$home/state" JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" \
     JG_ADDONS_DIR="$ADDONS" JG_CONFIG_OVERRIDE="$home/config" JG_PROCEVENT_CLAIM_ROOT="$home/claims" "$@"
 }
@@ -291,7 +267,7 @@ real_home=$(make_beads_home real)
 SIGNOFF_BOARD="$real_home/board.json"
 export SIGNOFF_BOARD
 printf '{}\n' > "$SIGNOFF_BOARD"
-(cd "$real_home" && BEADS_ACTOR=fixture tasks-axi add jg-sample-work "Gated work") >/dev/null 2>&1 \
+(cd "$real_home" && JG_HOME="$real_home" BEADS_ACTOR=fixture jg-tasks-axi.sh add jg-sample-work "Gated work") >/dev/null \
   || fail "could not create the existing work item"
 real_env "$real_home" "$ADAPTER" arm >/dev/null \
   || fail "the real sign-off adapter did not arm"
@@ -331,7 +307,7 @@ jq --arg k "$q" '.[$k] += {answer: "reconcile", label: "", close: "done", at: "2
 out=$(real_env "$real_home" "$ROOT/bin/jg-procevent.sh" start signoff 2>&1) || true
 case "$out" in *"answers-fed: signoff"*) : ;; *) fail "a permanently refused answer was not acknowledged: $out" ;; esac
 [ "$(grep -c 'refused: jg-sample-q' <<<"$out")" = 1 ] || fail "the refusal was not reported exactly once: $out"
-show=$(cd "$real_home" && BEADS_ACTOR=fixture tasks-axi show jg-sample-q --full 2>&1)
+show=$(cd "$real_home" && JG_HOME="$real_home" BEADS_ACTOR=fixture jg-tasks-axi.sh show jg-sample-q --full 2>&1)
 case "$show" in *"held: yes"*) : ;; *) fail "a refused reconcile answer released the hold: $show" ;; esac
 grep -qF 'jg-sample-q' "$real_home/state/signoff-delivered" || fail "the refused answer was not recorded as delivered"
 [ -z "$(real_env "$real_home" "$ADAPTER" poll 2>/dev/null)" ] \

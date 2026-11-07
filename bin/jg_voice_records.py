@@ -277,24 +277,17 @@ def _denied(denies, *fields):
 
 
 def _backlog_lines(home):
-    """Return the backlog's lines; a home on Beads gives them from its store."""
-    backend = _read_config(home, "backlog-backend")
-    if backend is not None and "".join(backend.split()) == "beads":
-        tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-tasks-axi.sh")
-        try:
-            result = subprocess.run(
-                [tool, "markdown"], capture_output=True, text=True, timeout=30,
-                env=dict(os.environ, JG_HOME=home))
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise RecordError("the backlog cannot be read: {}".format(exc))
-        if result.returncode != 0:
-            raise RecordError("the backlog cannot be read: {}".format(result.stderr.strip()))
-        return result.stdout.splitlines()
+    """Return the backlog's lines, rendered from the home's Beads store."""
+    tool = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-tasks-axi.sh")
     try:
-        with open(os.path.join(data_dir(home), "backlog.md"), encoding="utf-8") as handle:
-            return handle.read().splitlines()
-    except FileNotFoundError:
-        return []
+        result = subprocess.run(
+            [tool, "markdown"], capture_output=True, text=True, timeout=30,
+            env=dict(os.environ, JG_HOME=home))
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RecordError("the backlog cannot be read: {}".format(exc))
+    if result.returncode != 0:
+        raise RecordError("the backlog cannot be read: {}".format(result.stderr.strip()))
+    return result.stdout.splitlines()
 
 
 def _parse_backlog(lines):

@@ -80,14 +80,12 @@ def backlog_lines():
     # the check, because an unread hold must never look like no hold.
     global BACKLOG
     if BACKLOG is None:
-        BACKLOG = lines(f'{D}/backlog.md')
-        if ''.join(''.join(lines(f'{home}/config/backlog-backend')).split()) == 'beads':
-            try:
-                r = subprocess.run([f'{MAIN}/bin/jg-tasks-axi.sh', 'markdown'], capture_output=True, text=True, timeout=8,
-                                   env={**os.environ, 'JG_HOME': home})
-                if r.returncode: raise RuntimeError(f'exit {r.returncode}: ' + (r.stderr.strip().splitlines() or [''])[-1])
-            except Exception as e: sys.exit(f'{name}: backlog read failed: {e}')
-            BACKLOG = r.stdout.splitlines()
+        try:
+            r = subprocess.run([f'{MAIN}/bin/jg-tasks-axi.sh', 'markdown'], capture_output=True, text=True, timeout=8,
+                               env={**os.environ, 'JG_HOME': home})
+            if r.returncode: raise RuntimeError(f'exit {r.returncode}: ' + (r.stderr.strip().splitlines() or [''])[-1])
+        except Exception as e: sys.exit(f'{name}: backlog read failed: {e}')
+        BACKLOG = r.stdout.splitlines()
     return BACKLOG
 
 def backlog_held(t):

@@ -89,11 +89,8 @@ JG_ROOT="${JG_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
 # shellcheck source=bin/jg-remote-herdr-owner-lib.sh
 . "$SCRIPT_DIR/jg-remote-herdr-owner-lib.sh"
-REQUIRED_TOOLS=(git jq herdr tasks-axi treehouse)
-# A Beads home's backlog needs no tasks-axi; check_beads_store owns that home's tools.
-if jg_backlog_backend_beads "${JG_CONFIG_OVERRIDE:-${JG_HOME:-$JG_ROOT}/config}"; then
-  REQUIRED_TOOLS=(git jq herdr treehouse)
-fi
+# check_beads_store owns the backlog's own tools (the pinned bd and dolt).
+REQUIRED_TOOLS=(git jq herdr treehouse)
 HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi)
 OPTIONAL_TOOLS=(tmux no-mistakes gh)
 LAUNCH_AGENT_LABEL=dev.juggernaut.herdr.jg-remote
@@ -453,12 +450,7 @@ report_required_tools() {
   for tool in "${REQUIRED_TOOLS[@]}"; do
     resolved=$(command -v "$tool" 2>/dev/null || true)
     if [ -n "$resolved" ] && [ -x "$resolved" ]; then
-      if [ "$tool" = tasks-axi ] && ! jg_tasks_axi_compatible; then
-        printf 'required tasks-axi=MISSING (incompatible)\n'
-        MISSING+=(tasks-axi)
-      else
-        printf 'required %s=%s\n' "$tool" "$resolved"
-      fi
+      printf 'required %s=%s\n' "$tool" "$resolved"
     else
       printf 'required %s=MISSING\n' "$tool"
       MISSING+=("$tool")
@@ -501,7 +493,7 @@ report_required_tools_from_worker() {
     fact=${line#required }
     name=${fact%%=*}
     value=${fact#*=}
-    case "$name" in git|jq|herdr|tasks-axi|treehouse|harness) ;; *) valid=0; continue ;; esac
+    case "$name" in git|jq|herdr|treehouse|harness) ;; *) valid=0; continue ;; esac
     case "$seen" in *" $name "*) valid=0; continue ;; esac
     seen="$seen$name "
     count=$((count + 1))
@@ -748,9 +740,7 @@ check_entrypoint_link() {
 # person can install them, so every gap in its store is a human one.
 check_beads_store() {
   local config=${JG_CONFIG_OVERRIDE:-${JG_HOME:-$JG_ROOT}/config} health
-  if ! jg_backlog_backend_beads "$config"; then
-    set_check beads-store 'skip: this home does not keep its backlog in Beads'
-  elif health=$(jg_backlog_beads_health "$config"); then
+  if health=$(jg_backlog_beads_health "$config"); then
     set_check beads-store "ok: $health"
   else
     set_check beads-store "human: $health" \

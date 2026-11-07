@@ -115,7 +115,7 @@
 #     confused-agent-grade, like the merge residuals jg-pr-merge.sh documents).
 #   - "backlog" is a reserved claimable resource name used by the branch
 #     prompt around its own data/backlog.md writes. This is deliberately
-#     branch-side containment only; main's tasks-axi path has no executable
+#     branch-side containment only; main's the backlog path has no executable
 #     backlog lease guard in this scope.
 #
 # Sourced by bin/jg-send.sh, bin/jg-control.sh, bin/jg-teardown.sh,

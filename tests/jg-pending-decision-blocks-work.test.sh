@@ -8,13 +8,11 @@ set -u
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
-command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 command -v openssl >/dev/null 2>&1 || { echo "skip: openssl not found"; exit 0; }
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 
 jg_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(jg_test_tmproot jg-pending-decision)
-TASKS_AXI_BIN=$(command -v tasks-axi)
 PASS_LINT="$TMP_ROOT/pass-lint.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'echo "checks-lint: PASS"' > "$PASS_LINT"
 chmod +x "$PASS_LINT"
@@ -33,21 +31,27 @@ jg_test_spawn_home "$SH"
 FAKEBIN=$(make_spawn_fakebin "$W/fake")
 jg_test_fake_sleep_noop "$FAKEBIN"
 printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_available_gb=0\n' > "$SH/config/host-memory"
-jg_test_tasks_toml "$SH/.tasks.toml"
-printf '## In flight\n\n## Queued\n\n## Done\n' > "$SH/data/backlog.md"
+jg_test_beads_home "$SH"
 
-tasks_s() { (cd "$SH" && tasks-axi "$@"); }
+# add_row <home> <id> <title> <kind> <repo> [extra-body-line] [more flags]: one fixture row; the first body line is its justification.
+add_row() {
+  local home=$1 id=$2 title=$3 kind=$4 repo=$5 extra=${6:-} prio=2
+  shift 6 2>/dev/null || shift $#
+  case $title in '[captain-ask]'*) prio=0 ;; esac
+  jg_test_backlog "$home" add "$id" "$title" --priority "$prio" --kind "$kind" --repo "$repo" \
+    --body "Fixture ticket $id${extra:+$'\n'$extra}" "$@"
+}
 captain() {  # <home> <fakebin> <args...>
   local h=$1 fb=$2
   shift 2
-  PATH="$fb:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" \
+  PATH="$fb:$PATH" JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" \
     JG_DATA_OVERRIDE="$h/data" JG_CONFIG_OVERRIDE="$h/config" "$ROOT/bin/jg-captain-hold.sh" "$@"
 }
 printf 'Use the compact layout.\n' > "$TMP_ROOT/pick.txt"
 record_pick() {  # <home> <fakebin> <ticket>: hold, then the captain's recorded answer
   captain "$1" "$2" hold "$3" --reason "captain must pick" >/dev/null 2>&1 || fail "could not hold $3"
-  captain "$1" "$2" answer "$3" --decision-file "$TMP_ROOT/pick.txt" --release >/dev/null 2>&1 \
-    || fail "could not record the pick on $3"
+  captain "$1" "$2" answer "$3" --decision-file "$TMP_ROOT/pick.txt" >"$TMP_ROOT/pick.out" 2>&1 \
+    || fail "could not record the pick on $3: $(cat "$TMP_ROOT/pick.out")"
 }
 
 scaffold() {  # <id>
@@ -56,7 +60,7 @@ scaffold() {  # <id>
   sed -i 's/{TASK}/Exercise the decision gate./;s/{JUGGERNAUT_SPEC}/Exercise the decision gate end to end./' "$SH/data/$1/brief.md"
 }
 file_s() {  # <id> <title> [body]: a queued ship ticket in the start home, with its instructions
-  tasks_s add "$1" "$2" --priority 2 --kind ship --repo proj ${3:+--body "$3"} >/dev/null 2>&1 || fail "could not file $1"
+  add_row "$SH" "$1" "$2" ship proj "${3:-}" >/dev/null 2>&1 || fail "could not file $1"
   case "$2" in "[design-ux]"*) ;; *) scaffold "$1" || fail "could not scaffold $1" ;; esac
 }
 spawn() {  # <id>
@@ -67,12 +71,12 @@ spawn() {  # <id>
 refused_clean() { [ ! -e "$SH/state/$1.meta" ] || fail "the refused start of $1 wrote a task record"; }
 
 # S1: the design ticket is only filed - no hold, no ask.
-file_s dz1 "[design-ux] Tickets page design"
-file_s dz2 "[design-ux] Settings page design" "linked-to: sb2"
-file_s sa1 "Build the tickets page" "linked-to: dz1"
-file_s sb2 "Build the settings page"
-file_s sc3 "Build the tickets filters" "parent: dz1"
-for pair in "sa1 dz1" "sb2 dz2" "sc3 dz1"; do  # names it, named by it, parent link
+file_s jg-dz1 "[design-ux] Tickets page design"
+file_s jg-dz2 "[design-ux] Settings page design" "linked-to: jg-sb2"
+file_s jg-sa1 "[feature] Build the tickets page" "linked-to: jg-dz1"
+file_s jg-sb2 "[feature] Build the settings page"
+file_s jg-sc3 "[feature] Build the tickets filters" "parent: jg-dz1"
+for pair in "jg-sa1 jg-dz1" "jg-sb2 jg-dz2" "jg-sc3 jg-dz1"; do  # names it, named by it, parent link
   # shellcheck disable=SC2086
   set -- $pair
   out=$(spawn "$1"); rc=$?
@@ -80,17 +84,17 @@ for pair in "sa1 dz1" "sb2 dz2" "sc3 dz1"; do  # names it, named by it, parent l
   assert_contains "$out" "$2" "S1 the refusal of $1 does not name $2"
   refused_clean "$1"
 done
-file_s su1 "Fix the footer"
-file_s su2 "Fix the header" "parent: upkeep"
-file_s sq1 "[captain-ask] Make the footer taller"
-file_s su3 "Make the footer taller" "linked-to: sq1"
-for t in su1 su2 su3; do
+file_s jg-su1 "[feature] Fix the footer"
+file_s jg-su2 "[feature] Fix the header" "parent: upkeep"
+file_s jg-sq1 "[captain-ask] Make the footer taller"
+file_s jg-su3 "[feature] Make the footer taller" "linked-to: jg-sq1"
+for t in jg-su1 jg-su2 jg-su3; do
   out=$(spawn "$t"); rc=$?
   expect_code 0 "$rc" "S2 $t should start: $out"
 done
-record_pick "$SH" "$FAKEBIN" dz1
-record_pick "$SH" "$FAKEBIN" dz2
-for t in sa1 sb2 sc3; do
+record_pick "$SH" "$FAKEBIN" jg-dz1
+record_pick "$SH" "$FAKEBIN" jg-dz2
+for t in jg-sa1 jg-sb2 jg-sc3; do
   out=$(spawn "$t"); rc=$?
   expect_code 0 "$rc" "S3 $t should start after the recorded pick: $out"
 done
@@ -98,8 +102,7 @@ done
 # ---- the merge side --------------------------------------------------------
 MH="$TMP_ROOT/merge-home"
 mkdir -p "$MH/data" "$MH/state" "$MH/config" "$MH/projects"
-jg_test_tasks_toml "$MH/.tasks.toml"
-printf '## In flight\n\n## Queued\n\n## Done\n' > "$MH/data/backlog.md"
+jg_test_beads_home "$MH"
 MFAKE=$(jg_fakebin "$MH")
 jg_fake_exit0 "$MFAKE" tmux treehouse no-mistakes gh gh-axi
 cat > "$MFAKE/gh" <<'SH'
@@ -119,7 +122,7 @@ SH
 chmod +x "$MFAKE/gh"
 : > "$MH/gh.log"
 
-tasks_m() { (cd "$MH" && tasks-axi "$@"); }
+tasks_m() { jg_test_backlog "$MH" "$@"; }
 PRN=100
 # ship_m <id> [body]: an in-flight ship with an open pull request; sets PR.
 ship_m() {
@@ -129,7 +132,7 @@ ship_m() {
   repo="$MH/projects/sample-$id"
   wt="$MH/projects/$id"
   jg_git_worktree "$repo" "$wt" "fm/$id"
-  tasks_m add "$id" "Ship $id" --kind ship --repo sample ${2:+--body "$2"} --start >/dev/null || fail "could not file $id"
+  { add_row "$MH" "$id" "[feature] Ship $id" ship sample "${2:-}" && tasks_m start "$id"; } >/dev/null || fail "could not file $id"
   jg_write_meta "$MH/state/$id.meta" "worktree=$wt" "project=$repo" "kind=ship" "mode=no-mistakes" "pr=$PR"
   printf 'done: merge ready\n' > "$MH/state/$id.status"
 }
@@ -143,16 +146,16 @@ merge() {  # <id> <url>
 merged_pr() { grep -q "^pr merge ${1##*/} " "$MH/gh.log"; }
 
 # M1: the design ticket is only filed - no hold, no ask.
-tasks_m add mz1 "[design-ux] Tickets page design" --kind ship --repo sample >/dev/null || fail "M1 could not file mz1"
-ship_m ma1 "linked-to: mz1"; pa1=$PR
-ship_m mb2; pb2=$PR
-ship_m mc3 "parent: mz1"; pc3=$PR
-ship_m md4; pd4=$PR
-tasks_m add mh1 "Pick the export format" --kind ship --repo sample >/dev/null || fail "M1 could not file mh1"
-captain "$MH" "$MFAKE" hold mh1 --reason "captain must pick" >/dev/null 2>&1 || fail "M1 could not hold mh1"
-ship_m mf6 "linked-to: mh1"; pf6=$PR
-tasks_m add mz2 "[design-ux] Settings page design" --kind ship --repo sample --body "linked-to: mb2" >/dev/null || fail "M1 could not file mz2"
-for tuple in "ma1 $pa1 mz1" "mb2 $pb2 mz2" "mc3 $pc3 mz1" "mf6 $pf6 mh1"; do
+add_row "$MH" jg-mz1 "[design-ux] Tickets page design" ship sample "" >/dev/null || fail "M1 could not file jg-mz1"
+ship_m jg-ma1 "linked-to: jg-mz1"; pa1=$PR
+ship_m jg-mb2; pb2=$PR
+ship_m jg-mc3 "parent: jg-mz1"; pc3=$PR
+ship_m jg-md4; pd4=$PR
+add_row "$MH" jg-mh1 "[feature] Pick the export format" ship sample "" >/dev/null || fail "M1 could not file jg-mh1"
+captain "$MH" "$MFAKE" hold jg-mh1 --reason "captain must pick" >/dev/null 2>&1 || fail "M1 could not hold jg-mh1"
+ship_m jg-mf6 "linked-to: jg-mh1"; pf6=$PR
+add_row "$MH" jg-mz2 "[design-ux] Settings page design" ship sample "linked-to: jg-mb2" >/dev/null || fail "M1 could not file jg-mz2"
+for tuple in "jg-ma1 $pa1 jg-mz1" "jg-mb2 $pb2 jg-mz2" "jg-mc3 $pc3 jg-mz1" "jg-mf6 $pf6 jg-mh1"; do
   # shellcheck disable=SC2086
   set -- $tuple
   out=$(merge "$1" "$2" 2>&1); rc=$?
@@ -160,20 +163,20 @@ for tuple in "ma1 $pa1 mz1" "mb2 $pb2 mz2" "mc3 $pc3 mz1" "mf6 $pf6 mh1"; do
   assert_contains "$out" "$3" "M1 the refusal of $1 does not name $3"
   merged_pr "$2" && fail "M1 the refused merge of $1 reached the forge"
 done
-ship_m me5 "parent: upkeep"; pe5=$PR
-tasks_m add mq1 "[captain-ask] Make the footer taller" --kind ship --repo sample >/dev/null || fail "M2 file mq1"
-ship_m mg7 "linked-to: mq1"; pg7=$PR
-for pair in "md4 $pd4" "me5 $pe5" "mg7 $pg7"; do
+ship_m jg-me5 "parent: upkeep"; pe5=$PR
+add_row "$MH" jg-mq1 "[captain-ask] Make the footer taller" ship sample "" >/dev/null || fail "M2 file jg-mq1"
+ship_m jg-mg7 "linked-to: jg-mq1"; pg7=$PR
+for pair in "jg-md4 $pd4" "jg-me5 $pe5" "jg-mg7 $pg7"; do
   # shellcheck disable=SC2086
   set -- $pair
   out=$(merge "$1" "$2" 2>&1); rc=$?
   expect_code 0 "$rc" "M2 $1 should merge: $out"
   merged_pr "$2" || fail "M2 the merge of $1 did not reach the forge"
 done
-record_pick "$MH" "$MFAKE" mz1
-record_pick "$MH" "$MFAKE" mz2
-captain "$MH" "$MFAKE" answer mh1 --decision-file "$TMP_ROOT/pick.txt" --release >/dev/null 2>&1 || fail "M3 could not answer mh1"
-for pair in "ma1 $pa1" "mb2 $pb2" "mc3 $pc3" "mf6 $pf6"; do
+record_pick "$MH" "$MFAKE" jg-mz1
+record_pick "$MH" "$MFAKE" jg-mz2
+captain "$MH" "$MFAKE" answer jg-mh1 --decision-file "$TMP_ROOT/pick.txt" >/dev/null 2>&1 || fail "M3 could not answer jg-mh1"
+for pair in "jg-ma1 $pa1" "jg-mb2 $pb2" "jg-mc3 $pc3" "jg-mf6 $pf6"; do
   # shellcheck disable=SC2086
   set -- $pair
   out=$(merge "$1" "$2" 2>&1); rc=$?
@@ -220,7 +223,7 @@ dcard() {  # <post flags...>: post one design card from the merge home
     --outcome yes="It uses the compact layout." --outcome no="It keeps the wide layout." "$@" 2>&1
 }
 board_items() { jq -r '.items | length' "$SO/.sign-off/decisions.json"; }
-ship_m mr1; pr1=$PR
+ship_m jg-mr1; pr1=$PR
 out=$(dcard); rc=$?
 [ "$rc" -ne 0 ] || fail "D1 a design card with no raising ticket was posted: $out"
 assert_contains "$out" "must name the ticket that raised it" "D1 the refusal does not say the raising ticket is missing"
@@ -228,24 +231,24 @@ out=$(dcard --raised-by no-such-ticket); rc=$?
 [ "$rc" -ne 0 ] || fail "D2 a design card naming a ticket this home lacks was posted: $out"
 assert_equals 0 "$(board_items)" "D2 a refused design card reached the board"
 tasks_m show "$DCARD" >/dev/null 2>&1 && fail "D2 a refused design card filed a design row"
-out=$(merge mr1 "$pr1" 2>&1); rc=$?
+out=$(merge jg-mr1 "$pr1" 2>&1); rc=$?
 expect_code 0 "$rc" "D3 the ticket merges while no card is open: $out"
 merged_pr "$pr1" || fail "D3 the merge did not reach the forge"
-ship_m mr2; pr2=$PR
-out=$(dcard --raised-by mr2); rc=$?
+ship_m jg-mr2; pr2=$PR
+out=$(dcard --raised-by jg-mr2); rc=$?
 expect_code 0 "$rc" "D4 a design card naming its raising ticket should post: $out"
 assert_equals 1 "$(board_items)" "D4 the design card did not reach the board"
-out=$(dcard --raised-by mr2); rc=$?
+out=$(dcard --raised-by jg-mr2); rc=$?
 expect_code 0 "$rc" "D4 a repeat post should converge: $out"
-tasks_m show "$DCARD" 2>&1 | grep -q 'linked-to: mr2' || fail "D4 the design row is not linked to the ticket that raised it"
-out=$(merge mr2 "$pr2" 2>&1); rc=$?
+tasks_m show "$DCARD" 2>&1 | grep -q 'linked-to: jg-mr2' || fail "D4 the design row is not linked to the ticket that raised it"
+out=$(merge jg-mr2 "$pr2" 2>&1); rc=$?
 [ "$rc" -ne 0 ] || fail "D5 the merge of the ticket that raised an open design card went through: $out"
 assert_contains "$out" "$DCARD" "D5 the refusal does not name the open design card"
 merged_pr "$pr2" && fail "D5 the refused merge reached the forge"
 printf '{"key":"%s","answer":"yes","label":"yes","close":"done","at":"2026-11-06T07:00:00Z"}\n' "$DCARD" >> "$SO/.sign-off/decisions.answers.jsonl"
 PATH="$MFAKE:$PATH" JG_HOME="$MH" JG_STATE_OVERRIDE="$MH/state" JG_DATA_OVERRIDE="$MH/data" JG_CONFIG_OVERRIDE="$MH/config" \
   SIGN_OFF_HOME="$SO" JG_SEND_SETTLE=0 "$ROOT/bin/jg-board-answers.sh" check >/dev/null 2>&1
-out=$(merge mr2 "$pr2" 2>&1); rc=$?
+out=$(merge jg-mr2 "$pr2" 2>&1); rc=$?
 expect_code 0 "$rc" "D6 the ticket should merge after the recorded pick: $out"
 merged_pr "$pr2" || fail "D6 the merge did not reach the forge after the recorded pick"
 pass "replay: the ticket that raised an open design card is refused at merge, and merges once the pick is recorded"

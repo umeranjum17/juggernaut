@@ -15,7 +15,7 @@
 _JG_SUP_BIN=${BASH_SOURCE[0]%/*}
 
 # jg_ready_work_rows <home>
-# Prints one "<id> <repo>" line per ready backlog item of <home> (tasks-axi
+# Prints one "<id> <repo>" line per ready backlog item of <home> (the backlog
 # ready: queued, not blocked, not held), highest priority first (P0 before P4,
 # an unprioritized item last, ties by id); <repo> is "-" for an item that names
 # none. Returns the ready read's own status so a caller can tell an empty queue

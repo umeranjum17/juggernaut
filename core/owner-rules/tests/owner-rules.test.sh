@@ -30,36 +30,27 @@ home=$work/home; mkdir -p "$home/config" "$home/data" "$home/state"
 # bin/jg-brief.sh owns the no-mistakes risk reason (--risk); this home answers it up front
 # so these cases exercise the feature's owner, hierarchy and design rules only.
 : > "$home/config/delivery-risk-loose"
-cat > "$home/data/backlog.md" <<'BL'
-# Backlog
-
-## In flight
-- [ ] with-ask - [captain-ask] Ship a thing (repo: sample) (kind: ship)
-  A body line.
-- [ ] with-main - Plain title (repo: sample) (kind: ship)
-  type: Main7 asked for this.
-  parent: with-ask
-- [ ] orphan - Plain title (repo: sample) (kind: ship)
-  Main11 asked for this.
-- [ ] bad-parent - Plain title (repo: sample) (kind: ship)
-  Main12 asked for this.
-  parent: nowhere
-- [ ] upkeep - Routine cleanup (repo: sample) (kind: ship)
-  Main14 asked for this.
-  parent: upkeep
-- [ ] cycle-a - Ticket A (repo: sample) (kind: ship)
-  parent: cycle-b
-- [ ] cycle-b - Ticket B (repo: sample) (kind: ship)
-  parent: cycle-a
-- [ ] scout-parentless - Plain title (repo: sample) (kind: ship)
-  Main13 asked for this.
-- [ ] no-ask - Plain title (repo: sample) (kind: ship)
-  Nothing names an owner.
-- [ ] bad-design - [captain-ask] Vague design flag (repo: sample) (kind: ship)
-  design: maybe
-## Done
-- [x] with-ask-longer - Main9 something
-BL
+. "$addons/lib/beads-test-env.sh"
+core_beads_home "$FM" "$home"
+export JG_HOME=$home
+add() {  # <id> <title> <body>
+  local id=$1 title=$2 body=$3 prio=1
+  case $title in "[captain-ask]"*) prio=0 ;; esac
+  (cd "$home" && JG_HOME=$home bash "$FM/bin/jg-tasks-axi.sh" add "$id" "$title" --priority "$prio" --kind ship --repo sample --body "$body") >/dev/null 2>"$work/add.err" \
+    || { echo "fixture: could not add $id: $(cat "$work/add.err")" >&2; exit 1; }
+}
+add jg-with-ask '[captain-ask] Ship a thing' 'A body line.'
+add jg-with-main 'Plain title' $'type: Main7 asked for this.\nparent: jg-with-ask'
+add jg-orphan 'Plain title' 'Main11 asked for this.'
+add jg-bad-parent 'Plain title' $'Main12 asked for this.\nparent: jg-nowhere'
+add jg-upkeep 'Routine cleanup' $'Main14 asked for this.\nparent: upkeep'
+add jg-cycle-a 'Ticket A' 'parent: jg-cycle-b'
+add jg-cycle-b 'Ticket B' 'parent: jg-cycle-a'
+add jg-scout-parentless 'Plain title' 'Main13 asked for this.'
+add jg-no-ask 'Plain title' 'Nothing names an owner.'
+add jg-bad-design '[captain-ask] Vague design flag' 'design: maybe'
+add jg-with-ask-longer 'Main9 something' 'Done item.'
+(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-tasks-axi.sh" done jg-with-ask-longer) >/dev/null 2>&1 || true
 # brief <id> <args...>: stderr, then rc= on the last line.
 brief() {
   local id=$1 out rc; shift
@@ -67,68 +58,42 @@ brief() {
   printf '%s\n' "$out" >> "$work/emitted"
   printf '%s%src=%s\n' "$out" "${out:+$'\n'}" "$rc"
 }
-ASK='owner-rules: no owner ask: name the [captain-ask] item or the MainNNN order this lane serves (add it to the backlog item for no-ask)'
-PARENT='owner-rules: no valid parent: add parent: <backlog item id> or parent: upkeep to the backlog item for orphan'
+ASK='owner-rules: no owner ask: name the [captain-ask] item or the MainNNN order this lane serves (add it to the backlog item for jg-no-ask)'
+PARENT='owner-rules: no valid parent: add parent: <backlog item id> or parent: upkeep to the backlog item for jg-orphan'
 
 # not installed: no check, even for an entry with no owner ask
-is "not installed: no-ask lane is briefed" "$(brief no-ask --mode direct-PR | tail -1)" "rc=0"
-rm -rf -- "$home/data/no-ask"
+is "not installed: jg-no-ask lane is briefed" "$(brief jg-no-ask --mode direct-PR | tail -1)" "rc=0"
+rm -rf -- "$home/data/jg-no-ask"
 
 "$addons/owner-rules/wiring.sh" "$home" >/dev/null
-is "refusal 1: no owner ask" "$(brief no-ask --mode direct-PR)" "$ASK
+is "refusal 1: no owner ask" "$(brief jg-no-ask --mode direct-PR)" "$ASK
 rc=1"
-[ ! -e "$home/data/no-ask" ] && ok "refusal 1 wrote no brief" || no "refusal 1 left data/no-ask"
-is "refusal 1: missing entry is also no owner ask" "$(brief ghost --mode direct-PR | tail -2 | head -1 | cut -c1-27)" "owner-rules: no owner ask: "
-is "refusal 1: a scout still needs an owner ask" "$(brief no-ask --scout | tail -1)" "rc=1"
-is "refusal: no valid parent" "$(brief orphan --mode direct-PR)" "$PARENT
+[ ! -e "$home/data/jg-no-ask" ] && ok "refusal 1 wrote no brief" || no "refusal 1 left data/jg-no-ask"
+is "refusal 1: missing entry is also no owner ask" "$(brief jg-ghost --mode direct-PR | tail -2 | head -1 | cut -c1-27)" "owner-rules: no owner ask: "
+is "refusal 1: a scout still needs an owner ask" "$(brief jg-no-ask --scout | tail -1)" "rc=1"
+is "refusal: no valid parent" "$(brief jg-orphan --mode direct-PR)" "$PARENT
 rc=1"
-is "refusal: missing parent id" "$(brief bad-parent --mode direct-PR | tail -1)" "rc=1"
-[ ! -e "$home/data/orphan" ] && ok "parent refusal wrote no brief" || no "parent refusal left data/orphan"
+is "refusal: missing parent id" "$(brief jg-bad-parent --mode direct-PR | tail -1)" "rc=1"
+[ ! -e "$home/data/jg-orphan" ] && ok "parent refusal wrote no brief" || no "parent refusal left data/jg-orphan"
 
-is "pass: [captain-ask] title, direct-PR" "$(brief with-ask --mode direct-PR)" "rc=0"
-[ -s "$home/data/with-ask/brief.md" ] && ok "pass wrote the brief" || no "pass wrote no brief"
-is "pass: MainNNN body with existing parent id" "$(brief with-main --mode direct-PR)" "rc=0"
-is "pass: upkeep parent" "$(brief upkeep --mode direct-PR)" "rc=0"
-is "pass: scouts keep parent exemption" "$(brief scout-parentless --scout)" "rc=0"
-is "pass: scout is exempt from the owner and parent rules" "$(brief with-ask-longer --scout)" "rc=0"
-is "pass: prefix id does not match a longer id" "$(brief with-ask --scout | tail -1)" "rc=1"
+is "pass: [captain-ask] title, direct-PR" "$(brief jg-with-ask --mode direct-PR)" "rc=0"
+[ -s "$home/data/jg-with-ask/brief.md" ] && ok "pass wrote the brief" || no "pass wrote no brief"
+is "pass: MainNNN body with existing parent id" "$(brief jg-with-main --mode direct-PR)" "rc=0"
+is "pass: jg-upkeep parent" "$(brief jg-upkeep --mode direct-PR)" "rc=0"
+is "pass: scouts keep parent exemption" "$(brief jg-scout-parentless --scout)" "rc=0"
+is "pass: scout is exempt from the owner and parent rules" "$(brief jg-with-ask-longer --scout)" "rc=0"
+is "pass: prefix id does not match a longer id" "$(brief jg-with-ask --scout | tail -1)" "rc=1"
 JG_HOME=$home JG_ADDONS_DIR=$addons JG_SQUAD_LEAD_CHARTER=x bash "$FM/bin/jg-brief.sh" sm --squad-lead --no-projects >/dev/null 2>&1 \
   && ok "pass: squad_lead charter is exempt" || no "squad_lead charter refused"
 
-tree=$(bash "$addons/owner-rules/bin/jg-owner-rules-tree.sh" "$home/data/backlog.md")
-printf '%s\n' "$tree" | grep -qF 'with-main: with-main -> with-ask -> [epic root]' && ok "tree: prints epic parent chain" || no "tree: epic parent chain missing"
-printf '%s\n' "$tree" | grep -qF 'bad-parent: bad-parent -> [missing: nowhere]' && ok "tree: reports missing parent id" || no "tree: missing parent id unreported"
-printf '%s\n' "$tree" | grep -qF 'cycle-a: cycle-a -> cycle-b -> cycle-a -> [cycle: cycle-a]' && ok "tree: reports cycle" || no "tree: cycle unreported"
-printf '%s\n' "$tree" | grep -A8 '^Items with no valid parent:' | grep -qF '  cycle-a' && ok "tree: lists invalid items" || no "tree: invalid items list missing cycle"
+tree=$(bash "$addons/owner-rules/bin/jg-owner-rules-tree.sh" <(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-tasks-axi.sh" markdown))
+printf '%s\n' "$tree" | grep -qF 'jg-with-main: jg-with-main -> jg-with-ask -> [epic root]' && ok "tree: prints epic parent chain" || no "tree: epic parent chain missing"
+printf '%s\n' "$tree" | grep -qF 'jg-cycle-a: jg-cycle-a -> jg-cycle-b -> jg-cycle-a -> [cycle: jg-cycle-a]' && ok "tree: reports cycle" || no "tree: cycle unreported"
+printf '%s\n' "$tree" | grep -A8 '^Items with no valid parent:' | grep -qF '  jg-cycle-a' && ok "tree: lists invalid items" || no "tree: invalid items list missing cycle"
 
 "$addons/owner-rules/unwiring.sh" "$home" >/dev/null
-is "uninstalled: check is off again" "$(brief no-ask --mode direct-PR | tail -1)" "rc=0"
+is "uninstalled: check is off again" "$(brief jg-no-ask --mode direct-PR | tail -1)" "rc=0"
 
-# The leads skill quotes each real refusal line (with $id, $what, ... standing in for the runtime value).
-# Provoke every refusal through the real brief and the installed merge gate, then require each quoted line to
-# match a line they actually emitted.
-"$addons/owner-rules/wiring.sh" "$home" >/dev/null
-brief bad-design --mode direct-PR >/dev/null
-mkdir -p "$work/bin" "$work/ship" "$work/data/jg-merge-on-green" "$home/data/lane/.done-done/runs"
-printf '#!/bin/sh\nexit 0\n' > "$work/bin/gh"; printf '#!/bin/sh\nexit 0\n' > "$work/data/jg-merge-on-green/checks-lint.sh"
-chmod +x "$work/bin/gh" "$work/data/jg-merge-on-green/checks-lint.sh"
-gate() { PATH=$work/bin:$PATH JG_HOME=$home JG_FLEET_BOARD=$work/board.json "$home/config/merge-gate" lane "$1" abc123 https://github.com/o/r/pull/9 2>&1 | tee -a "$work/emitted" >/dev/null; }
-gate "$work/ship"
-printf '{"schema":1,"exit":0,"dirty":false,"commit":"abc123","files":["a.png"],"run_id":"r1"}\n' > "$home/data/lane/.done-done/runs/r1.json"
-gate "$work/ship"
-unmatched=$(python3 - "$addons/owner-rules/skill/SKILL.md" "$work/emitted" <<'PY'
-import re, sys
-quotes = [l.rstrip("\n") for l in open(sys.argv[1]) if l.startswith("owner-rules: ")]
-emitted = open(sys.argv[2]).read().splitlines()
-print(len(quotes))
-for q in quotes:
-    pat = re.escape(q)
-    pat = re.sub(r"\\\$\{?\w+\}?|<[A-Za-z_]+>", ".+", pat)
-    if not any(re.match(pat, e) for e in emitted):
-        print("unmatched: " + q)
-PY
-)
-is "skill quotes all five refusals" "$(printf '%s\n' "$unmatched" | head -1)" "5"
-is "every refusal quoted in the skill is emitted by the brief or the gate" "$(printf '%s\n' "$unmatched" | tail -n +2)" ""
+# The merge gate refusals are proved by gate-matrix.test.sh and owner-rules-gate.test.sh.
 
 [ "$fails" -eq 0 ] && echo "PASS owner-rules" || { echo "FAIL owner-rules: $fails"; exit 1; }

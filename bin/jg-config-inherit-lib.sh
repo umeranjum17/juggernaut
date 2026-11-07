@@ -5,8 +5,7 @@
 # (e.g. primary config/crew-dispatch.json makes a squad_lead use the same dispatch
 # profile rules and primary config/dispatch-never-send keeps the same values
 # out of its dispatch resolver requests, primary config/crew-harness=codex makes a squad_lead's operators
-# spawn on codex too, primary config/backlog-backend=manual makes that home
-# hand-edit backlog files too, primary config/backend pins that home's local
+# spawn on codex too, primary config/backend pins that home's local
 # runtime-backend default for future spawns, primary config/startup-memory-budget
 # bounds that home's startup-memory curation, primary config/juggernaut-role
 # carries the primary's resolved juggernaut-repository role with a
@@ -86,7 +85,7 @@ JG_SHARED_CAPTAIN_MODE="444"
 # Extend here to inherit more of the primary's local config; override via the
 # environment only in tests. Items must not contain whitespace. Keep lane-target last:
 # core/lead-wake/tests/stage-step-b.py strips it as the list suffix to stage the absent feature.
-JG_INHERITABLE_CONFIG="${JG_INHERITABLE_CONFIG:-crew-dispatch.json preferred-stack.json architecture.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode keep-ai-trailers supervision-host-off juggernaut-role tool-models.json lane-target}"
+JG_INHERITABLE_CONFIG="${JG_INHERITABLE_CONFIG:-crew-dispatch.json preferred-stack.json architecture.json dispatch-never-send crew-harness backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode keep-ai-trailers supervision-host-off juggernaut-role tool-models.json lane-target}"
 # Every shipped preference block (defaults/preferences/<block>.json, see bin/jg-pref.sh) is inheritable as
 # config/preferences/<block>.json, so one `jg-pref.sh set` reaches every home through the same push. A new
 # block file joins by existing; no list here changes.

@@ -22,14 +22,11 @@
 # A close that fails is fatal and loud, preserves its pending-close record, and
 # is retried by the next session start. Scratch and retained-data cleanup can
 # instead require a teardown retry before replay, as specified by the recovery
-# contract in bin/jg-backlog-transition-lib.sh. The transition is skipped on a
-# config/backlog-backend=manual home and in a markdown home that keeps no
-# data/backlog.md; those cases print the manual follow-up. A configured
-# non-markdown adapter remains active without a markdown file; any active
-# automatic backend without compatible tasks-axi refuses before cleanup.
+# contract in bin/jg-backlog-transition-lib.sh. Without the Beads backlog
+# the teardown refuses before cleanup.
 # None of this loosens the landed-work gates below: the transition runs only on
 # the paths that already proceed to remove the record.
-# The close - and only the close - is replaced by `tasks-axi reopen` with the
+# The close - and only the close - is replaced by `jg-tasks-axi.sh reopen` with the
 # deliverable recorded while the backlog item is still an open captain call
 # (bin/jg-captain-hold.sh `open` owns that predicate), because the policy holds
 # the very work item a question gates and cleanup must never retire the
@@ -1493,25 +1490,16 @@ backlog_done_args() {
 # invariant). This prints what already happened, so the follow-up wording stays
 # only where a human still owes the edit.
 backlog_refresh_reminder() {
-  local backlog_display root backend=markdown
+  local backlog_display
   [ "$KIND" = squad_lead ] && return 0
   { [ "$CLEANUP_RECOVERY" = orca ] || [ "$CLEANUP_RECOVERY" = treehouse ]; } && return 0
-  if root=$(jg_backlog_root "$DATA"); then
-    backend=$(jg_tasks_axi_backend "$root") || return 2
-  fi
-  if [ "$backend" != markdown ]; then
-    backlog_display="this home's configured tasks-axi backend (data directory $DATA)"
-  elif backlog_display=$(jg_backlog_file "$DATA"); then
-    :
-  else
-    backlog_display="${DATA%/}/backlog.md"
-  fi
+  backlog_display="this home's Beads store"
   if [ "$BACKLOG_CLOSED" = 1 ] && [ "$BACKLOG_TRANSITION" = retain ]; then
     printf '%s\n' "Backlog: $ID stays open in $backlog_display, still held for the captain with its deliverable recorded. Relay the question and close it only with bin/jg-captain-hold.sh answer."
   elif [ "$BACKLOG_CLOSED" = 1 ]; then
     printf '%s\n' "Backlog: $ID is closed in $backlog_display. Run bin/jg-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   else
-    printf '%s\n' "Backlog: $ID just finished ($BACKLOG_SKIP_REASON). Update $backlog_display - move $ID to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
+    printf '%s\n' "Backlog: $ID just finished ($BACKLOG_SKIP_REASON). Close it in $backlog_display with bin/jg-tasks-axi.sh done, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
   fi
 }
 

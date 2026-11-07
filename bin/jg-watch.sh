@@ -2320,7 +2320,7 @@ pause_state_class() {  # <window> <task>
 #
 # `open` is that record's own read-only predicate and owns its semantics: exit 0
 # still an open captain call, 1 not, 2 could not be established. Only a 0 bounds
-# an alarm here, so an unreadable backlog, an incompatible or absent tasks-axi,
+# an alarm here, so an unreadable backlog, an incompatible or absent the backlog,
 # and a row this home does not carry all keep alarming exactly as they do today -
 # a wait this watcher cannot prove is not a wait.
 #

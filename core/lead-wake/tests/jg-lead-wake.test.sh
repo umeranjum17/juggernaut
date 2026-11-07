@@ -2,7 +2,7 @@
 # The fork's lead-wake cases (idle lead, lane floor, transient
 # empty, withdraw, full-but-idle, drain ring), carried so the fork
 # can drop them. lead-wake-e2e.sh runs this from a staged fork's tests/ on the fork's wake harness,
-# which Kun's suites keep. Needs tasks-axi. `ring` runs only the ring case; RING_TEXT sets its steer.
+# which Kun's suites keep. Needs the pinned bd and dolt. `ring` runs only the ring case; RING_TEXT sets its steer.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -18,6 +18,8 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$here/wake-helpers.sh"
 # shellcheck source=/dev/null
 . "$here/lead-wake-harness.sh"
+# shellcheck source=/dev/null
+. "$here/../../lib/beads-test-env.sh"
 # shellcheck disable=SC2034 # WATCH and TMP_ROOT are read by the borrowed fork harness.
 WATCH="$ROOT/bin/jg-watch.sh" DRAIN="$ROOT/bin/jg-wake-drain.sh" TASKS="$ROOT/bin/jg-tasks-axi.sh" TMP_ROOT=$(jg_test_tmproot jg-lead-wake-tests)
 WORKING='state: working · source: run-step · validating (running)'
@@ -26,9 +28,8 @@ RING_TEXT=${RING_TEXT:-Wake row 7 is still queued in this home. Run bin/jg-wake-
 newhome() {  # <name>: a fresh squad_lead home; sets dir state fakebin out
   dir=$(make_case "$1"); state=$dir/state; fakebin=$dir/fakebin; out=$dir/watch.out
   mkdir -p "$dir/data" "$dir/config"; printf '%s\n' "$1" > "$dir/.jg-squad-lead-home"
-  # These cases add bare fixture items for wake behavior, so this home opts out of
-  # the strict backlog intake that slice 3 turned on by default.
-  : > "$dir/config/backlog-intake-loose"
+  # These cases add bare fixture items for wake behavior on a real Beads store.
+  core_beads_home "$ROOT" "$dir"
 }
 tasks() { JG_HOME="$dir" "$TASKS" "$@" >/dev/null || fail "fixture: tasks $*"; }
 ack() { ack_stopped_cycle "$state" >/dev/null || fail "could not acknowledge the cycle"; }
@@ -65,17 +66,17 @@ cycle() {
 
 test_idle_lead() {
   newhome sm-ready-1
-  tasks add beta-two "second ready item"; tasks add alpha-one "first ready item"
-  tasks add gamma "blocked item" --blocked-by alpha-one
-  tasks add held-one "held item"; tasks hold held-one --reason "waiting for approval"
-  tasks add future-one "future item"; tasks hold future-one --reason "scheduled later" --until 2099-01-01 --kind future
+  tasks add jg-beta "second ready item"; tasks add jg-alpha "first ready item"
+  tasks add jg-block "blocked item" --blocked-by jg-alpha
+  tasks add jg-held "held item"; tasks hold jg-held --reason "waiting for approval"
+  tasks add jg-future "future item"; tasks hold jg-future --reason "scheduled later" --until 2099-01-01 --kind future
   # A backed-off idle heartbeat still reads ready work at the base cadence.
   echo 12 > "$state/.heartbeat-streak"; touch "$state/.last-heartbeat"
-  wake "check: ready work waiting with no worker working: alpha-one beta-two - start each or record why it waits"
+  wake "check: ready work waiting with no worker working: jg-alpha jg-beta - dispatch them now, P0 first, up to project capacity"
   drained | grep -F "$(printf '\tcheck\t')" >/dev/null || fail "the ready-work wake was not queued as a check row"
   ack
   absorbed "the same ready set woke the lead again"
-  tasks add delta "third ready item"
+  tasks add jg-delta "third ready item"
   printf 'window=test:jg-busy\nkind=ship\n' > "$state/busy.meta"
   absorbed "ready work woke a lead whose worker is working" JG_FAKE_TMUX_WINDOW=test:jg-busy JG_FAKE_CREW_STATE="$WORKING"
   pass "an idle lead with ready work is woken once per ready set, and never while a worker is working"
@@ -85,11 +86,11 @@ test_lane_floor() {
   newhome sm-lane-floor
   # Four panes stay open; the two spare endpoints are squad_leads, which are not lanes.
   lanes=(JG_FAKE_TMUX_WINDOWS="$(printf 'jg-busyone\njg-busytwo\njg-busythree\njg-busyfour')" JG_FAKE_CREW_STATE="$WORKING")
-  tasks add alpha-one "first ready item"
+  tasks add jg-alpha "first ready item"
   printf '4\n' > "$dir/config/lane-target"
   printf 'window=test:jg-busyone\nkind=ship\n' > "$state/busyone.meta"; printf 'window=test:jg-busytwo\nkind=scout\n' > "$state/busytwo.meta"
   printf 'window=test:jg-busythree\n%b' "$spare" > "$state/busythree.meta"; printf 'window=test:jg-busyfour\n%b' "$spare" > "$state/busyfour.meta"
-  want="check: ready work waiting with free lane slots (2/4 open): alpha-one - start the top ready item now, or record why it waits"
+  want="check: ready work waiting with free lane slots (2/4 open): jg-alpha - dispatch them now, P0 first, up to project capacity"
   wake "$want" "${lanes[@]}"; ack
   absorbed "the same lane-floor condition woke again inside the resurface window" "${lanes[@]}"
   printf 'window=test:jg-busythree\nkind=ship\n' > "$state/busythree.meta"; printf 'window=test:jg-busyfour\nkind=ship\n' > "$state/busyfour.meta"
@@ -118,15 +119,15 @@ test_transient_empty() {
   local before
   newhome sm-ready-empty
   printf '4\n' > "$dir/config/lane-target"
-  tasks add alpha-one "first ready item"; tasks add beta-two "second ready item"; tasks add gamma-three "third ready item"
-  wake "check: ready work waiting with free lane slots (0/4 open): alpha-one beta-two gamma-three - start the top ready item now, or record why it waits"
+  tasks add jg-alpha "first ready item"; tasks add jg-beta "second ready item"; tasks add jg-gamma "third ready item"
+  wake "check: ready work waiting with free lane slots (0/4 open): jg-alpha jg-beta jg-gamma - dispatch them now, P0 first, up to project capacity"
   before=$(cat "$state/.ready-work-surfaced") || fail "the check did not record its surfacing"
   ack
-  tasks hold alpha-one --reason wait; tasks hold beta-two --reason wait; tasks hold gamma-three --reason wait
+  tasks hold jg-alpha --reason wait; tasks hold jg-beta --reason wait; tasks hold jg-gamma --reason wait
   cycle "an empty ready set still woke"
   [ "$(cat "$state/.ready-work-surfaced" 2>/dev/null)" = "$before" ] || fail "the empty ready set erased the resurface record"
   ack_stopped_cycle "$state" >/dev/null 2>&1 || true
-  tasks unhold alpha-one; tasks unhold beta-two; tasks unhold gamma-three
+  tasks unhold jg-alpha; tasks unhold jg-beta; tasks unhold jg-gamma
   cycle "the identical ready-work check replayed inside the resurface window"
   [ "$(cat "$state/.ready-work-surfaced" 2>/dev/null)" = "$before" ] || fail "the absorbed set re-recorded its surfacing"
   pass "a transient empty ready set does not replay the ready-work notification inside the window"
@@ -136,26 +137,26 @@ test_withdraw() {
   row=$(printf '\tcheck\tready-work\t')
   newhome sm-ready-withdraw
   printf '4\n' > "$dir/config/lane-target"
-  tasks add alpha-one "first ready item"; tasks add beta-two "second ready item"
-  wake "check: ready work waiting with free lane slots (0/4 open): alpha-one beta-two - start the top ready item now, or record why it waits"
+  tasks add jg-alpha "first ready item"; tasks add jg-beta "second ready item"
+  wake "check: ready work waiting with free lane slots (0/4 open): jg-alpha jg-beta - dispatch them now, P0 first, up to project capacity"
   grep -F "$row" "$state/.wake-queue" >/dev/null || fail "the ready-work row was not queued"
-  drained | grep -F alpha-one >/dev/null || fail "the drain did not present the unacknowledged ready row"
-  tasks hold alpha-one --reason wait; tasks hold beta-two --reason wait
+  drained | grep -F jg-alpha >/dev/null || fail "the drain did not present the unacknowledged ready row"
+  tasks hold jg-alpha --reason wait; tasks hold jg-beta --reason wait
   cycle "an empty ready set still woke"
   ! grep -F "$row" "$state/.wake-queue" >/dev/null 2>&1 || fail "the stale ready-work row was not withdrawn"
   ! drained | grep -F 'ready work waiting' >/dev/null || fail "the drain re-presented the withdrawn row"
   ack_stopped_cycle "$state" >/dev/null 2>&1 || true
-  tasks unhold alpha-one
+  tasks unhold jg-alpha
   rm -f "$state/.last-ready-work-check"
-  wake "check: ready work waiting with free lane slots (0/4 open): alpha-one - start the top ready item now, or record why it waits" \
+  wake "check: ready work waiting with free lane slots (0/4 open): jg-alpha - dispatch them now, P0 first, up to project capacity" \
     JG_WATCH_HANDLING_SUCCESSOR=1
-  ! drained | grep -F beta-two >/dev/null || fail "the drain presented a held item"
+  ! drained | grep -F jg-beta >/dev/null || fail "the drain presented a held item"
   pass "a stale ready-work row is withdrawn and the check never names a held item"
 }
 test_fleet_pause() {
-  local want='check: ready work waiting with no worker working: alpha-one - start each or record why it waits'
+  local want='check: ready work waiting with no worker working: jg-alpha - dispatch them now, P0 first, up to project capacity'
   newhome sm-ready-pause
-  tasks add alpha-one "first ready item"
+  tasks add jg-alpha "first ready item"
   rm -f "$state/.last-ready-work-check"; wake "$want"; ack
   # Main's fleet pause order in the home's data/: the lead-wake goes silent and
   # the queued row is withdrawn instead of presented at the next drain.
@@ -189,10 +190,10 @@ test_fleet_pause() {
 test_full_idle() {
   local i
   newhome sm-full-idle
-  tasks add alpha-one "first ready item"
+  tasks add jg-alpha "first ready item"
   printf '4\n' > "$dir/config/lane-target"
   for i in 1 2 3 4; do printf 'kind=ship\n' > "$state/lane$i.meta"; done
-  wake "check: ready work waiting with no worker working: alpha-one - start each or record why it waits" \
+  wake "check: ready work waiting with no worker working: jg-alpha - dispatch them now, P0 first, up to project capacity" \
     JG_FAKE_CREW_STATE='state: blocked · source: status-log · parked on a sibling lane'
   ack
   pass "a home with every lane slot open but no worker working is woken"

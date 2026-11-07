@@ -202,7 +202,7 @@ lead_home() {  # <name> <main> -> lead home path
   printf '%s\n' "$l"
 }
 
-backlog() {  # <home> <tasks-axi args...>
+backlog() {  # <home> <backlog args...>
   local h=$1
   shift
   JG_HOME="$h" "$FORK/bin/jg-tasks-axi.sh" "$@" >/dev/null || fail "fixture: tasks $*"

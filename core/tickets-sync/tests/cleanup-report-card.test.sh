@@ -4,7 +4,7 @@
 # carrying it is routed to Overwatch and re-alerted on. The card takes no answer,
 # the finding count and the first findings are on it, the report file beside it
 # still holds every finding, and the asks gate neither counts nor routes it.
-# Real tasks-axi backlog, real sign-off-axi board, real install: nothing is mocked.
+# Real jg-tasks-axi.sh on a Beads store, real sign-off-axi board, real install: nothing is mocked.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -25,11 +25,13 @@ mkdir -p "$HOME" "$JG_HOME"/{data,config,state}
 ln -s "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-printf '[markdown]\npath="data/backlog.md"\narchive="data/done-archive.md"\ndone_keep=0\n' > "$JG_HOME/.tasks.toml"
+# shellcheck source=core/lib/beads-test-env.sh
+. "$root/../lib/beads-test-env.sh"
+core_beads_home "$fork" "$JG_HOME"
 # Eight captain tickets with no ask card and no quoted words are two findings
 # each, so the full finding list is well past the 1000 characters one card used to take.
 (cd "$JG_HOME"; for n in one two three four five six seven eight; do
-  tasks-axi add "ask-$n" "[captain-ask] P2 Umer capped ask $n" --repo alpha --priority 2 --body 'type: captain-ask' >/dev/null
+  jg-tasks-axi.sh add "jg-ask-$n" "[captain-ask] P0 Umer capped ask $n" --repo alpha --priority 0 --body 'type: captain-ask' >/dev/null
 done)
 bash "$root/wiring.sh"
 status=0
@@ -43,14 +45,14 @@ jq -e --arg key "$key" '.decisions[] | select(.key == $key) | .kind == "report"'
   || { echo 'FAIL: the clean-up posted something other than a report card'; exit 1; }
 jq -e --arg key "$key" '.decisions[] | select(.key == $key) | ((.options // []) | length) == 0' "$work/cards.json" >/dev/null \
   || { echo 'FAIL: the report card takes an answer, so the asks gate still sees a must-less ask'; exit 1; }
-jq -e --arg key "$key" '.decisions[] | select(.key == $key) | .sections[].items[].title | test("^no-quote: main/ask-")' "$work/cards.json" >/dev/null \
+jq -e --arg key "$key" '.decisions[] | select(.key == $key) | .sections[].items[].title | test("^no-quote: main/jg-ask-")' "$work/cards.json" >/dev/null \
   || { echo 'FAIL: the report card names none of the flagged tickets'; exit 1; }
 report=$JG_HOME/state/tickets-sync/cleanup-$(date -u +%F).txt
 head -n1 <<<"$out" | grep -q "full list $report$" || { echo "FAIL: the check line does not name the full list: $(head -n1 <<<"$out")"; exit 1; }
 test -s "$report" || { echo "FAIL: no full finding list at $report"; exit 1; }
 test "$(wc -c < "$report")" -gt 1000 || { echo 'FAIL: the fixture never carried more findings than one card holds, so the list was not exercised'; exit 1; }
-grep -q '^no-quote: main/ask-one - captain ticket carries no quoted words$' "$report"
-grep -q '^no-ask-card: main/ask-eight - ' "$report"
+grep -q '^no-quote: main/jg-ask-one - captain ticket carries no quoted words$' "$report"
+grep -q '^no-ask-card: main/jg-ask-eight - ' "$report"
 # The asks gate reads every waiting ask: a report is not one, so it neither counts
 # nor routes it, and no line reaches Main.
 test "$(BOARD=$work/board.json "$JG_HOME/bin/jg-board-gate.sh" waiting)" = 0 \

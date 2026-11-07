@@ -7,15 +7,10 @@
 #
 # Scope-matching is juggernaut's JUDGMENT: you pass the task-id keys you have
 # already judged in-scope for the squad_lead. This script performs only the
-# fleet-level validation that the backlog backend cannot know, then DELEGATES
-# the actual item move to `tasks-axi mv`, the single owner of the backlog
-# format. Delegating the move is the durability end-state: it removes the awk
-# that used to re-implement block extraction and insertion here, so the format
-# has exactly one parser and cannot drift out of sync (the body-orphaning class
-# of bug fixed in PR #401 was exactly that drift).
-#
-# When either home keeps a Beads store, bd export and bd import move the rows and
-# a rerun settles a crash. A remote handoff stages a store's rows in the outbox file.
+# fleet-level validation that the backlog cannot know, then DELEGATES the actual
+# row move to the Beads store: bd export and bd import move the rows (stage, take
+# and drop writes), and a rerun settles a crash. A remote handoff stages the
+# rows in the outbox file.
 #
 # What this script still owns (never delegated):
 #   - resolving the squad_lead home from data/squad_leads.md;
@@ -34,32 +29,18 @@
 #     move is not blocked: rebinding or rechain is a relay-side decision the
 #     caller makes.
 #
-# What `tasks-axi mv <id>... --to <dest>` owns: moving each full item BLOCK
-# byte-exact (header, body lines, blank separators, and indented pseudo-headings
-# such as `  ## Intent`), preserving destination section placement, and moving a
-# whole connected set (a blocker and its dependents) atomically with blocked-by
-# links preserved. It refuses a move that would strand a dependency across the
-# two files; that error is surfaced verbatim and nothing is moved.
-#
-# Item bodies must use at least two leading spaces. The helper refuses a selected
-# item with a single-space or tab-indented continuation rather than risk leaving
-# it orphaned, because tasks-axi treats only two-or-more-space lines as body.
-# The move needs compatible `tasks-axi` on PATH, including atomic multi-ID `mv`
-# support. Bootstrap requires a compatible build fleet-wide, so this works
-# everywhere; the `config/backlog-backend=manual` knob only governs juggernaut's
-# own hand-editing of its own backlog, not this validated helper. Idempotent:
-# re-running converges. Atomic: on any move failure nothing moves.
-# Every move names its markdown backlog files explicitly and pins
-# `--backend markdown`, so a `.tasks.toml` in the caller's working directory
-# cannot redirect the move to another backend.
+# The Beads writes own moving each full row with its body, a whole connected set
+# (a blocker and its dependents) together with links preserved, and refusing a
+# move that would strand a dependency across the two stores; that error is
+# surfaced verbatim. Idempotent: re-running converges.
 # See AGENTS.md project management and task lifecycle.
-# A home with a Beads store has no backlog file, so its rows are classified on a
-# rendered copy and move through the file format: the target files them first,
-# and only then does the source let them go. A failure between the two leaves the
-# prepared wake in place, and rerunning the same handoff finishes the release.
-# Remote routes use an outbox handoff: one atomic local tasks-axi mv removes the
-# selected set from the dispatchable backlog into data/handoff/<id>.outbox.md,
-# then an idempotent confined transfer and jg-backlog-receive.sh deliver it.
+# Rows are classified on a rendered copy of each store: the target files them
+# first, and only then does the source let them go. A failure between the two
+# leaves the prepared wake in place, and rerunning the same handoff finishes the
+# release.
+# Remote routes use an outbox handoff: one atomic local stage selects the set into
+# data/handoff/<id>.outbox.md, then an idempotent confined transfer and
+# jg-backlog-receive.sh deliver it.
 # A present outbox remains the remote retry trigger only until backlog receipt
 # is confirmed, then it is released independently of the best-effort receiver
 # wake. The wake remains separately tracked by one pending-reply correlation and
@@ -114,11 +95,9 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 REG="$DATA/squad_leads.md"
-MAIN_BACKLOG="$DATA/backlog.md"
 CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 MOVE_DIR=
-MAIN_STORE=0
-SUB_STORE=0
+MAIN_BACKLOG=
 # shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
 # shellcheck source=bin/jg-squad-lead-registry-lib.sh
@@ -311,7 +290,7 @@ validate_backlog_file() {
 # header exists in the file. This reads only section headings and item header
 # lines - never item bodies - so it drives the fleet-level classification (in-
 # flight refusal, already-present idempotency, missing-key abort) without
-# re-implementing the block/body move semantics that tasks-axi mv owns.
+# re-implementing the row move semantics that the Beads writes own.
 backlog_key_section() {
   local file=$1 key=$2
   [ -f "$file" ] || return 1
@@ -362,58 +341,21 @@ render_store() { # <config> <name>: renders that home's store to MOVE_DIR/<name>
 }
 
 read_main_store() {
-  jg_backlog_backend_beads "$CONFIG" || return 0
-  MAIN_STORE=1
   render_store "$CONFIG" main || return 1
   MAIN_BACKLOG=$MOVE_DIR/main.md
 }
 
 # Exit 3 says the target may hold rows the source still holds, so the wake stays prepared.
-cross_store_move() { # <keys...>
-  local rows="$MOVE_DIR/rows.md" key rc=0
-  local -a fresh=()
-  if [ "$MAIN_STORE$SUB_STORE" = 11 ]; then
-    rows="$MOVE_DIR/rows.jsonl"
-    jg_backlog_beads_write "$CONFIG" stage --native "$@" >"$rows" || {
-      cat -- "$rows"
-      return 1
-    }
-  elif [ "$MAIN_STORE" = 1 ]; then
-    jg_backlog_beads_write "$CONFIG" stage "$@" >"$rows" || {
-      cat -- "$rows"
-      return 1
-    }
-  else
-    cp -- "$MAIN_BACKLOG" "$MOVE_DIR/from.md" || return 1
-    seed_backlog_scaffold "$rows"
-    tasks-axi mv "$@" --file "$MOVE_DIR/from.md" --to "$rows" --backend markdown || return 1
-  fi
-  if [ "$SUB_STORE" = 1 ]; then
-    jg_backlog_beads_write "$SUB_HOME/config" take "$rows" "$@" || rc=$?
-    [ "$rc" -ne 2 ] || return 1
-    [ "$rc" -eq 0 ] || return 3
-  else
-    for key in "$@"; do
-      backlog_key_section "$SUB_BACKLOG" "$key" >/dev/null 2>&1 || fresh+=("$key")
-    done
-    if [ "${#fresh[@]}" -gt 0 ]; then
-      tasks-axi mv "${fresh[@]}" --file "$rows" --to "$SUB_BACKLOG" --backend markdown || return 1
-    fi
-  fi
-  if [ "$MAIN_STORE" = 1 ]; then
-    jg_backlog_beads_write "$CONFIG" drop "$@" || return 3
-  else
-    seed_backlog_scaffold "$MOVE_DIR/gone.md"
-    tasks-axi mv "$@" --file "$MAIN_BACKLOG" --to "$MOVE_DIR/gone.md" --backend markdown || return 3
-  fi
-}
-
 move_rows() { # <keys...>
-  if [ "$MAIN_STORE$SUB_STORE" = 00 ]; then
-    tasks-axi mv "$@" --file "$MAIN_BACKLOG" --to "$SUB_BACKLOG" --backend markdown
-  else
-    cross_store_move "$@"
-  fi
+  local rows="$MOVE_DIR/rows.jsonl" rc=0
+  jg_backlog_beads_write "$CONFIG" stage --native "$@" >"$rows" || {
+    cat -- "$rows"
+    return 1
+  }
+  jg_backlog_beads_write "$SUB_HOME/config" take "$rows" "$@" || rc=$?
+  [ "$rc" -ne 2 ] || return 1
+  [ "$rc" -eq 0 ] || return 3
+  jg_backlog_beads_write "$CONFIG" drop "$@" || return 3
 }
 
 # A public commitment made through the relay binds its work by home AND id, so an
@@ -811,43 +753,21 @@ remote_deliver_outbox() { # <squad-lead-id> <outbox-path>
 }
 
 remove_interrupted_source_duplicates() { # <outbox> <keys...>
-  local outbox=$1 key progress remaining pass=0
+  local outbox=$1 key
   local -a staged=()
   shift
-  if [ "$MAIN_STORE" = 1 ]; then
-    for key in "$@"; do
-      if backlog_key_section "$outbox" "$key" >/dev/null 2>&1 &&
-        backlog_key_section "$MAIN_BACKLOG" "$key" >/dev/null 2>&1; then staged+=("$key"); fi
-    done
-    [ "${#staged[@]}" -gt 0 ] || return 0
-    jg_backlog_beads_write "$CONFIG" drop "${staged[@]}" >&2 && return 0
-    echo "error: could not complete source removal; outbox remains authoritative at $outbox" >&2
-    return 1
-  fi
-  while :; do
-    remaining=0
-    progress=0
-    for key in "$@"; do
-      backlog_key_section "$outbox" "$key" >/dev/null 2>&1 || continue
-      if backlog_key_section "$MAIN_BACKLOG" "$key" >/dev/null 2>&1; then
-        remaining=$((remaining + 1))
-        if tasks-axi rm "$key" --file "$MAIN_BACKLOG" --backend markdown >/dev/null 2>&1; then
-          progress=$((progress + 1))
-        fi
-      fi
-    done
-    [ "$remaining" -gt 0 ] || return 0
-    [ "$progress" -gt 0 ] || {
-      echo "error: could not complete interrupted source removal; outbox remains authoritative at $outbox" >&2
-      return 1
-    }
-    pass=$((pass + 1))
-    [ "$pass" -le "$#" ] || return 1
+  for key in "$@"; do
+    if backlog_key_section "$outbox" "$key" >/dev/null 2>&1 &&
+      backlog_key_section "$MAIN_BACKLOG" "$key" >/dev/null 2>&1; then staged+=("$key"); fi
   done
+  [ "${#staged[@]}" -gt 0 ] || return 0
+  jg_backlog_beads_write "$CONFIG" drop "${staged[@]}" >&2 && return 0
+  echo "error: could not complete source removal; outbox remains authoritative at $outbox" >&2
+  return 1
 }
 
 remote_handoff() { # <squad-lead-id> <keys...>
-  local id=$1 outbox section main_section out_section key mv_out check_out check_rc=0
+  local id=$1 outbox main_section out_section key check_out check_rc=0
   local -a requested to_move already missing in_flight done_items not_queued
   shift
   requested=("$@")
@@ -861,10 +781,6 @@ remote_handoff() { # <squad-lead-id> <keys...>
       return 1
     }
   fi
-  [ "$MAIN_STORE" = 1 ] || jg_tasks_axi_compatible || {
-    echo "error: a compatible tasks-axi with atomic multi-ID mv support is required to stage remote handoffs; run bin/jg-bootstrap.sh for the required version" >&2
-    return 1
-  }
   to_move=()
   already=()
   missing=()
@@ -925,7 +841,7 @@ remote_handoff() { # <squad-lead-id> <keys...>
     fi
   fi
   seed_backlog_scaffold "$outbox"
-  if [ "${#to_move[@]}" -gt 0 ] && [ "$MAIN_STORE" = 1 ]; then
+  if [ "${#to_move[@]}" -gt 0 ]; then
     if ! jg_backlog_beads_write "$CONFIG" stage "${to_move[@]}" >"$outbox.staging"; then
       cat -- "$outbox.staging" >&2
       rm -f -- "$outbox.staging"
@@ -933,16 +849,10 @@ remote_handoff() { # <squad-lead-id> <keys...>
       return 1
     fi
     mv -f -- "$outbox.staging" "$outbox" || return 1
-  elif [ "${#to_move[@]}" -gt 0 ]; then
-    if ! mv_out=$(tasks-axi mv "${to_move[@]}" --file "$MAIN_BACKLOG" --to "$outbox" --backend markdown 2>&1); then
-      [ -z "$mv_out" ] || printf '%s\n' "$mv_out" >&2
-      echo "error: atomic outbox staging failed; nothing new was handed off" >&2
-      return 1
-    fi
   fi
-  # A hard local kill can land tasks-axi's target persist before its source
-  # persist. The outbox is already authoritative in that state, so converge by
-  # deleting only duplicates that tasks-axi itself confirms are dependency-safe.
+  # A hard local kill can land the outbox before the source drop. The outbox is
+  # already authoritative in that state, so converge by deleting only the rows
+  # the outbox already holds from the source.
   remove_interrupted_source_duplicates "$outbox" "${requested[@]}" || return 1
   remote_deliver_outbox "$id" "$outbox" || return 1
   echo "handed off ${#requested[@]} item(s) to remote squad_lead $id: ${requested[*]}"
@@ -1056,15 +966,10 @@ RAW_HOME=$(squad_lead_home "$ID") || exit 1
   exit 1
 }
 SUB_HOME=$(validate_squad_lead_home "$ID" "$RAW_HOME") || exit 1
-SUB_BACKLOG="$SUB_HOME/data/backlog.md"
-SUB_SHOWN=$SUB_BACKLOG
 read_main_store || exit 1
-if jg_backlog_backend_beads "$SUB_HOME/config"; then
-  SUB_STORE=1
-  render_store "$SUB_HOME/config" sub || exit 1
-  SUB_BACKLOG=$MOVE_DIR/sub.md
-  SUB_SHOWN="the Beads store of squad_lead $ID"
-fi
+render_store "$SUB_HOME/config" sub || exit 1
+SUB_BACKLOG=$MOVE_DIR/sub.md
+SUB_SHOWN="the Beads store of squad_lead $ID"
 validate_backlog_file "main backlog" "$MAIN_BACKLOG" || exit 1
 validate_backlog_file "squad_lead backlog" "$SUB_BACKLOG" || exit 1
 
@@ -1105,7 +1010,7 @@ if [ "${#NOT_QUEUED[@]}" -gt 0 ]; then
   FAILED=1
 fi
 if [ "${#MISSING[@]}" -gt 0 ]; then
-  echo "error: no backlog item matched these keys in $MAIN_BACKLOG: ${MISSING[*]}" >&2
+  echo "error: no backlog item matched these keys in the Beads store: ${MISSING[*]}" >&2
   FAILED=1
 fi
 if [ "$FAILED" -ne 0 ]; then
@@ -1120,15 +1025,13 @@ REQUESTED_BATCH=$(receiver_wake_batch_id "$@") || {
 
 # This batch's prepared wake proves a row on both sides is a move cut short, so it
 # rejoins the set and the source lets it go; the writes that repeat change nothing.
-if [ "$MAIN_STORE$SUB_STORE" != 00 ]; then
-  case "$(cat "$STATE/.backlog-handoff-$ID.wake-pending" 2>/dev/null || true)" in
-  prepared:*:"$REQUESTED_BATCH")
-    for key in "${ALREADY[@]+"${ALREADY[@]}"}"; do
-      if [ "$(backlog_key_section "$MAIN_BACKLOG" "$key" 2>/dev/null)" = '## Queued' ]; then TO_MOVE+=("$key"); fi
-    done
-    ;;
-  esac
-fi
+case "$(cat "$STATE/.backlog-handoff-$ID.wake-pending" 2>/dev/null || true)" in
+prepared:*:"$REQUESTED_BATCH")
+  for key in "${ALREADY[@]+"${ALREADY[@]}"}"; do
+    if [ "$(backlog_key_section "$MAIN_BACKLOG" "$key" 2>/dev/null)" = '## Queued' ]; then TO_MOVE+=("$key"); fi
+  done
+  ;;
+esac
 
 if [ "${#TO_MOVE[@]}" -eq 0 ]; then
   WAKE_PENDING_MARKER="$STATE/.backlog-handoff-$ID.wake-pending"
@@ -1157,11 +1060,6 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-if [ "$MAIN_STORE$SUB_STORE" != 11 ] && ! jg_tasks_axi_compatible; then
-  echo "error: a compatible tasks-axi with atomic multi-ID mv support is required to move backlog items; run bin/jg-bootstrap.sh for the required version" >&2
-  exit 1
-fi
-
 WAKE_PENDING_MARKER="$STATE/.backlog-handoff-$ID.wake-pending"
 if [ -e "$WAKE_PENDING_MARKER" ] || [ -L "$WAKE_PENDING_MARKER" ]; then
   case "$(cat "$WAKE_PENDING_MARKER" 2>/dev/null || true)" in
@@ -1183,41 +1081,24 @@ receiver_wake_mark_prepared "$ID" "$REQUESTED_BATCH" || {
   exit 1
 }
 
-# Seed the destination with juggernaut's standard three-section scaffold when it
-# does not exist yet, so the moved item lands under the right section. (Left to
-# create the file itself, tasks-axi mv writes its own `# Backlog` title format,
-# which is not juggernaut's home-backlog convention.)
-mkdir -p "$SUB_HOME/data"
-SUB_CREATED=0
-if [ ! -f "$SUB_BACKLOG" ]; then
-  printf '## In flight\n\n## Queued\n\n## Done\n' >"$SUB_BACKLOG"
-  SUB_CREATED=1
-fi
-
-# Delegate the move to tasks-axi. Passing the whole in-scope set to one call is a
-# single atomic transaction, so a connected set (blocker + dependents) moves
-# together and, on any failure, neither backlog's content changes - the only
-# cleanup is a scaffold we just created. tasks-axi writes both its success and
-# error output to stdout, so capture it and surface it only on failure.
+# Delegate the move to the Beads writes (stage, take, drop). Capture their output
+# and surface it only on failure.
 MV_RC=0
 MV_OUT=$(move_rows "${TO_MOVE[@]}" 2>&1) || MV_RC=$?
-if [ "$MV_RC" -eq 3 ] && [ "$MAIN_STORE$SUB_STORE" != 00 ]; then
+if [ "$MV_RC" -eq 3 ]; then
   [ -z "$MV_OUT" ] || printf '%s\n' "$MV_OUT" >&2
   echo "error: the move to $ID stopped partway; rerun this same handoff to finish it" >&2
   exit 1
 fi
 if [ "$MV_RC" -ne 0 ]; then
-  if [ "$SUB_CREATED" -eq 1 ]; then
-    rm -f "$SUB_BACKLOG"
-  fi
   receiver_wake_discard_prepared "$ID" || {
-    echo "error: tasks-axi mv failed and receiver wake state could not be cleared" >&2
+    echo "error: the move failed and receiver wake state could not be cleared" >&2
     exit 1
   }
   if [ -n "$MV_OUT" ]; then
     printf '%s\n' "$MV_OUT" >&2
   fi
-  echo "error: tasks-axi mv failed; nothing was moved." >&2
+  echo "error: the move failed; nothing was moved." >&2
   exit 1
 fi
 

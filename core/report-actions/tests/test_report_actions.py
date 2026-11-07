@@ -32,8 +32,8 @@ def main():
             path.chmod(0o755)
         for name in ("send", "handoff", "owner-rules"):
             stub(name)
-        stub("tasks-axi", f'printf "ok: added minted-%s (ship) -> Queued\\n" "$(grep -c "" "{work}/tasks-axi.args")"\n')
-        env = dict(os.environ, TASKS_AXI=str(work / "tasks-axi"), JG_SEND=str(work / "send"), JG_HANDOFF=str(work / "handoff"),
+        stub("tasks", f'printf "ok: added minted-%s (ship) -> Queued\\n" "$(grep -c "" "{work}/tasks.args")"\n')
+        env = dict(os.environ, BACKLOG=str(work / "tasks"), JG_SEND=str(work / "send"), JG_HANDOFF=str(work / "handoff"),
                    JG_OWNER_RULES=str(work / "owner-rules"), JG_HOME=str(work / "home"), JG_DATA_OVERRIDE=str(data))
         def run(*args):
             return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, env=env)
@@ -54,7 +54,7 @@ def main():
         # approve mints one ticket per plan item and prints the started line
         done = run("approve", report("approve"), "--by", "I agree with approve, go ahead")
         check(done.stdout.startswith("started: owner axi-lead; first PR due 2026-02-01; tickets minted-"), f"the started line: {done.stdout}{done.stderr}")
-        minted = read(work / "tasks-axi.args").splitlines()
+        minted = read(work / "tasks.args").splitlines()
         check(len(minted) == 4, f"one ticket per plan item on each approve, got {len(minted)}")
         check("Add the decisions read and the guarded answer write" in minted[-1], "every plan item becomes a ticket")
         check("From report: data/approve/report.md" in minted[-1], "each ticket names its report")
@@ -76,7 +76,7 @@ def main():
         check("closed: rejected (too-risky); no build; the reason is saved as an owner rule" in done.stdout, f"reject must say what happened: {done.stdout}{done.stderr}")
         check("Closed: rejected on " in read(refined), "reject must close the report")
         check("--words report rejected (too-risky): the token path is unproven" in read(work / "owner-rules.args"), f"the reason must be saved as an owner rule: {read(work / 'owner-rules.args')}")
-        check(len(read(work / "tasks-axi.args").splitlines()) == 6, "reject must mint nothing")
+        check(len(read(work / "tasks.args").splitlines()) == 6, "reject must mint nothing")
         check(run("reject", routed, "--reason", "because").returncode == 1, "an unknown reason chip must be refused")
     if fails:
         return 1

@@ -5,8 +5,8 @@ set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ] || ! command -v tasks-axi >/dev/null; then
-  printf 'skip: real store: JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT or tasks-axi is missing\n'; exit 0; fi
+if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
+  printf 'skip: real store: JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT is unset\n'; exit 0; fi
 T=$(jg_test_tmproot jg-beads-followup) CLI="$ROOT/bin/jg-tasks-axi.sh" jail=()
 unset BEADS_DB BEADS_DOLT_SHARED_SERVER
 export TZ=UTC JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
@@ -15,7 +15,6 @@ for h in ta bd; do
   mkdir -p "$T/$h/data" "$T/$h/state" "$T/$h/config" "$T/$h/s"
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$T/$h/data/backlog.md"
 done
-printf 'beads\n' > "$T/bd/config/backlog-backend"
 printf '%s\n' "$T/bd/s/.beads" > "$T/bd/config/beads-dir"
 BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "a store"
 ask() { JG_HOME="$T/$1" "${jail[@]}" "$CLI" "${@:2}"; }
@@ -235,15 +234,14 @@ due 'ask bd' pf-crash
 BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" update pf-crash --if-status open --status in_progress --metadata "{\"delivery_state\":\"delivery-posting\",\"delivery\":{\"attempt_count\":1,\"payload_digest\":\"$sha\"}}" >/dev/null 2>&1 || fail "a crashed attempt"
 for _ in 1 2; do [ "$(ask bd public-followup begin-delivery pf-crash --payload-hash "$sha" --json | jq .already)" = true ] || fail "the rerun must answer already"; done
 [ "$(notes pf-crash)" = 1 ] || fail "the rerun must log the attempt once, got $(notes pf-crash)"
-# The whole promise on a Beads home with no tasks-axi on the path: it posts once, and a second deliver posts nothing.
+# The whole promise on a Beads home with no the backlog on the path: it posts once, and a second deliver posts nothing.
 J=$T/jr
 mkdir -p "$J/data" "$J/config" "$J/s" "$J/state/x-inbox" "$T/fb"
 printf '## In flight\n\n## Queued\n\n## Done\n' > "$J/data/backlog.md"
-printf 'beads\n' > "$J/config/backlog-backend"; printf '%s\n' "$J/s/.beads" > "$J/config/beads-dir"; printf 'FMX_PAIRING_TOKEN=test-token\n' > "$J/.env"
+printf '%s\n' "$J/s/.beads" > "$J/config/beads-dir"; printf 'FMX_PAIRING_TOKEN=test-token\n' > "$J/.env"
 BEADS_DIR=$J/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "a journey store"
 printf '#!/usr/bin/env bash\ncase " $* " in *connector/followup*) echo post >> "%s/posts" ;; esac\nprintf 200\n' "$T" > "$T/fb/curl"; chmod +x "$T/fb/curl"; : > "$T/posts"
 pf() { PATH=$T/fb:/usr/bin:/bin JG_ROOT_OVERRIDE=$ROOT JG_HOME=$J JG_STATE_OVERRIDE=$J/state FMX_NOW_OVERRIDE=1787539200 "${jail[@]}" "$@"; }
-[ -z "$(PATH=$T/fb:/usr/bin:/bin command -v tasks-axi)" ] || fail "the journey needs a path without tasks-axi"
 ask jr add jg-work "[feature] Bound work" --body why >/dev/null 2>&1 || fail "journey work"
 promise 'ask jr' pf-j req >/dev/null; ask jr public-followup bind-work pf-j --relation-file "$T/rel-a.json" >/dev/null 2>&1 || fail "journey bind"
 jq -n '{request_id:"req-1", platform:"discord", text:"please fix"}' > "$J/state/x-inbox/req-1.json"; chmod 700 "$J/state/x-inbox"; chmod 600 "$J/state/x-inbox/req-1.json"

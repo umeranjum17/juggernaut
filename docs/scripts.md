@@ -169,10 +169,10 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-ff-lib.sh`           | Shared guarded fast-forward/reconcile helper for origin pulls and Squad Lead syncs, with durable divergence markers |
 | `jg-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
 | `jg-config-inherit-lib.sh` | Shared primary-to-Squad-Lead inherited local-material propagation and config-reread delivery |
-| `jg-tasks-axi.sh`        | Run `tasks-axi` against this home's backlog from any working directory               |
-| `jg-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
-| `jg-beads-view.py`       | Render `bd` rows in the read shape `tasks-axi` prints                                |
-| `jg-beads-write.py`      | Serve `tasks-axi` writes on a Beads store, in its reply shape                        |
+| `jg-tasks-axi.sh`        | Run `bin/jg-tasks-axi.sh` against this home's backlog from any working directory               |
+| `jg-tasks-axi-lib.sh`    | Shared Beads store selector                  |
+| `jg-beads-view.py`       | Render `bd` rows in the read shape `bin/jg-tasks-axi.sh` prints                                |
+| `jg-beads-write.py`      | Serve `bin/jg-tasks-axi.sh` writes on a Beads store, in its reply shape                        |
 | `jg-beads-followup.py`   | Keep a public follow-up as one native row on a Beads store                           |
 | `jg-beads.sh`            | The one guarded way to run `bd` and `dolt`: pinned builds, one embedded stealth store outside any git tree, no shared server, metrics off, and a store rule that a blocked or held row needs a reason, which `check` reports when missing; every `bd` verb is served but those in its one refusal list, each with its rule |
 | `jg-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |

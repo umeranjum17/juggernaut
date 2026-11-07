@@ -505,7 +505,7 @@ EOF
 # count and why; this prints what it reports.
 #
 # Bounded and silent like OPEN DECISIONS above: nothing prints when the two
-# records agree, which is the common case. If tasks-axi is unavailable, the
+# records agree, which is the common case. If the backlog is unavailable, the
 # guard cannot read the structured record and stays silent. A guard failure
 # never changes the drain's exit status - a supervision turn must still present
 # its wakes when the backlog tool is having a bad day.

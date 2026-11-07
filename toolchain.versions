@@ -6,7 +6,7 @@
 #            `<version>` naming the minimum accepted, for a tool whose own installer cannot address one.
 #   A `<tool>-sha256-<os>-<arch>` row is the sha256 of that tool's extracted binary on that platform.
 # A row with `@` after a first character is npm-installable, so the installer installs exactly that build.
-# Every floor the repo enforces (bootstrap diagnostics, tasks-axi and quota-axi compatibility) derives from
+# Every floor the repo enforces (bootstrap diagnostics and quota-axi compatibility) derives from
 # its row here, so one edit moves installation, detection and the operator-facing diagnostic together.
 # Not pinned here, because they are the user's own installs: node, git, gh, tmux, jq, python3, and each harness CLI.
 #
@@ -20,7 +20,6 @@ no-mistakes 1.46.0
 treehouse 2.0.1
 gh-axi gh-axi@0.1.44
 chrome-devtools-axi chrome-devtools-axi@0.1.44
-tasks-axi tasks-axi@0.2.6
 quota-axi quota-axi@0.1.67
 learn-from-mistakes learn-from-mistakes-axi@0.12.0
 done-done done-done-axi@0.6.18
