@@ -98,7 +98,7 @@ fi
 # A draft lint of a local report file is a rehearsal, not a claim: done-done registers each evidence file's hash
 # under the task as it lints, so a rehearsal would make the PR's own lint reject every file as already used by
 # another PR (measured: the same lane waited about an hour for it). Put the registry back as it was.
-hashes=$DD_HOME/lint.hashes hashes_bak= draft=false
+hashes=$DD_HOME/lint.hashes hashes_bak='' draft=false
 case $source in
   https://*) ;;
   *) draft=true

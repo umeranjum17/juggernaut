@@ -3418,6 +3418,17 @@ post_merge_cleanup() {  # <id>
 # Returns 0 when nothing should be surfaced now, 1 to surface (STALE_CLEANUP_NOTE is set
 # to the refusal when there was one).
 STALE_CLEANUP_WAIT_SECS=${JG_STALE_CLEANUP_WAIT_SECS:-180}
+# True while a detached cleanup of this window is still running. The teardown removes the task's record before it
+# finishes, so a window that is still listed in that gap has no task, and reading it as stopped would wake Main
+# for a worker the cleanup is already closing.
+finished_cleanup_running() {  # <key>
+  local st mh at note
+  [ -r "$STATE/.stale-cleanup-$1" ] || return 1
+  IFS=$'\t' read -r st mh at note < "$STATE/.stale-cleanup-$1" || true
+  [ "$st" = running ] || return 1
+  case "$at" in ''|*[!0-9]*) return 1 ;; esac
+  [ $(( $(date +%s) - at )) -lt "$STALE_CLEANUP_WAIT_SECS" ]
+}
 finished_cleanup_gate() {  # <window> <key> <hash> <task>
   local key=$2 h=$3 task=$4 mf last verb st mh at note now
   STALE_CLEANUP_NOTE=''
@@ -4519,6 +4530,10 @@ EOF
     # exemption below, because a mate's steers land in an inbox too.
     [ -z "$task" ] || inbox_steer_check "$w" "$task"
     key=$(window_key "$w")
+    if [ -z "$task" ] && finished_cleanup_running "$key"; then
+      triage_log "finished worker cleanup closing a window whose record is already gone, nothing to surface: $w"
+      continue
+    fi
     last=$(status_declared_wait_line "$STATE/$task.status")
     if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
       clear_pause_tracking "$key"

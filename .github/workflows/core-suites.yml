@@ -251,7 +251,7 @@ jobs:
         run: bash task-priority/tests/task-priority.test.sh
       - name: Tickets sync real-board journey
         if: ${{ !cancelled() }}
-        run: command -v identify >/dev/null || sudo apt-get install -y --no-install-recommends imagemagick; npm install --global sign-off-axi@0.9.10 && bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/description-linebreaks.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh && bash tickets-sync/tests/beads-read.test.sh
+        run: command -v identify >/dev/null || sudo apt-get install -y --no-install-recommends imagemagick; npm install --global sign-off-axi@0.9.10 && bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/description-linebreaks.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh
       # Fixture transcripts and a throwaway home; no real chat data is read or written.
       - name: Fleet pulse test
         if: ${{ !cancelled() }}
@@ -261,9 +261,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash fleet-report/tests/fleet-report.test.sh
       # Fixture project only: nothing outside a throwaway directory is read or written.
+      # The card goes to a real board, and the board takes a state-map report from sign-off-axi 0.9.14 (0.9.13 refuses it).
       - name: Project state map test
         if: ${{ !cancelled() }}
         run: |
+          npm install --global sign-off-axi@0.9.14
           bash project-state-map/tests/psm-search.test.sh
           bash project-state-map/tests/psm-prove.test.sh
           bash project-state-map/tests/psm-read.test.sh

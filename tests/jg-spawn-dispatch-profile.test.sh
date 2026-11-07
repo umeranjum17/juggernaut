@@ -40,6 +40,14 @@ make_spawn_fakebin() {
   fakebin=$(jg_test_make_spawn_fakebin "$dir")
   cat > "$fakebin/timeout" <<'SH'
 #!/usr/bin/env bash
+# GNU timeout's own shape: options (the bounded runner passes -k <secs>), the bound, then the command.
+while :; do
+  case "${1:-}" in
+    -k|-s) shift 2 ;;
+    --kill-after=*|--signal=*|--foreground|--preserve-status|-v|--verbose) shift ;;
+    *) break ;;
+  esac
+done
 shift
 exec "$@"
 SH

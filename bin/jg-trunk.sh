@@ -107,14 +107,15 @@ open_project() {  # <project-dir>: sets PROJ PN TRUNK
 # The trunk is safe: only this script writes it (JG_TRUNK_WRITER=1 on its own update-ref calls), and even
 # this script can only create it or fast-forward it. A rewind, a force or a delete of refs/heads/<trunk> or
 # a later trunk version (<trunk>-v2, ...) is refused by the project's reference-transaction hook, so no
-# subcommand and no hand can lose a trunk whose release is still open. The one delete it allows is `retire`'s
+# subcommand and no hand can lose a trunk whose release is still open. A transaction that leaves the ref where it
+# is (git 2.56 opens one when a worktree is added on the branch) moves nothing and passes. The one delete it allows is `retire`'s
 # (JG_TRUNK_RETIRE=<ref>), which runs only after the old trunk's release merged and its work is carried.
 ensure_guard() {
   local hook want base
   base=$(pol trunk-branch)
   hook="$(git -C "$PROJ" rev-parse --path-format=absolute --git-common-dir)/hooks/reference-transaction"
   # shellcheck disable=SC2016 # the hook body is written out verbatim; its variables expand in the hook
-  want=$(printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\n[ "$1" = prepared ] || exit 0\nwhile read -r old new ref; do\n  case "$ref" in refs/heads/%s|refs/heads/%s-v[0-9]*) ;; *) continue ;; esac\n  case "$new" in *[!0]*) ;; *) [ "${JG_TRUNK_RETIRE:-}" = "$ref" ] && continue; echo "refused: $ref is a trunk and is never deleted" >&2; exit 1 ;; esac\n  [ -n "${JG_TRUNK_WRITER:-}" ] || { echo "refused: $ref moves only through bin/jg-trunk.sh land; nothing writes it by hand" >&2; exit 1; }\n  cur=$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)\n  [ -z "$cur" ] || git merge-base --is-ancestor "$cur" "$new" || { echo "refused: $ref is never rewound or forced; the trunk only moves forward" >&2; exit 1; }\ndone\nexit 0\n' "$base" "$base")
+  want=$(printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\n[ "$1" = prepared ] || exit 0\nwhile read -r old new ref; do\n  case "$ref" in refs/heads/%s|refs/heads/%s-v[0-9]*) ;; *) continue ;; esac\n  cur=$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)\n  [ -z "$cur" ] || [ "$cur" != "$new" ] || continue\n  case "$new" in *[!0]*) ;; *) [ "${JG_TRUNK_RETIRE:-}" = "$ref" ] && continue; echo "refused: $ref is a trunk and is never deleted" >&2; exit 1 ;; esac\n  [ -n "${JG_TRUNK_WRITER:-}" ] || { echo "refused: $ref moves only through bin/jg-trunk.sh land; nothing writes it by hand" >&2; exit 1; }\n  [ -z "$cur" ] || git merge-base --is-ancestor "$cur" "$new" || { echo "refused: $ref is never rewound or forced; the trunk only moves forward" >&2; exit 1; }\ndone\nexit 0\n' "$base" "$base")
   if [ -e "$hook" ] && [ "$(cat "$hook")" != "$want" ]; then
     grep -q 'managed by bin/jg-trunk.sh' "$hook" || die "$hook is not the trunk guard; move it aside so the trunk can be protected"
   fi
@@ -377,7 +378,7 @@ carried() {  # <old> <target>
 # on it - every hotfix - is carried into the current trunk. A copy holding unlanded work (an uncommitted worktree, the project checkout itself, a tip not carried) is
 # kept and listed, never deleted. Idempotent: it prints nothing when no old trunk is left.
 retire_old() {
-  local cur default main new v b lsha rsha tip wt wb kept blocked sha out
+  local cur default main new v b lsha rsha tip wt kept blocked sha out
   cur=$(cat "$STATE/trunk-version-$PN" 2>/dev/null || echo 1); [ "$cur" -gt 1 ] || return 0
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
   git -C "$PROJ" fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" || { echo "cannot fetch origin/$default; the old trunk is kept"; return 0; }

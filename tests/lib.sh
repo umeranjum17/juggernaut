@@ -105,6 +105,12 @@ unset JG_TASK_ID
 # config/beads-dir.
 unset BEADS_DIR BEADS_DB BEADS_DOLT_SHARED_SERVER
 
+# Name the pinned bd and dolt for every run in the suite. A case home builds its store inside a $(...) subshell,
+# whose exports die with it, so a later run on a restricted PATH would find no bd or dolt to read that store.
+if [ -n "${JG_BEADS_TEST_BD:-}" ] && [ -n "${JG_BEADS_TEST_DOLT:-}" ]; then
+  export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
+fi
+
 # Give a fixture home a real Beads store (the only backlog there is). The pinned builds come from
 # JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT; a suite without them skips plainly. One store is built per
 # suite process and copied into each home, because an init costs seconds.

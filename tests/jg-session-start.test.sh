@@ -61,6 +61,9 @@ new_world() {
   home="$w/home"
   fakebin="$w/fakebin"
   mkdir -p "$home/state" "$home/data" "$home/config" "$fakebin"
+  # Bootstrap reads the backlog first and stops at a home with no store, which hides the tool diagnostics that follow.
+  # The case runs in a $(...) subshell, so a host without the pinned bd and dolt gets no store here, not a suite exit.
+  if [ -n "${JG_BEADS_TEST_BD:-}" ] && [ -n "${JG_BEADS_TEST_DOLT:-}" ]; then jg_test_beads_home "$home"; fi
   git init -q -b main "$root"
   git -C "$root" commit -q --allow-empty -m init
   printf '%s|%s|%s\n' "$root" "$home" "$fakebin"
@@ -920,6 +923,10 @@ SH
 test_output_ordering_diagnostics_lead() {
   local rec root home fakebin out lock_line boot_line wake_line read_once_line
   local context_line fleet_line next_line inventory_line missing_line
+  if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
+    printf 'skip: no Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
+    return 0
+  fi
   rec=$(new_world ordering)
   IFS='|' read -r root home fakebin <<EOF
 $rec

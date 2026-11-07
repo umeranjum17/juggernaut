@@ -469,7 +469,9 @@ make_fake_toolchain_no_tmux() {  # <case-dir> <extra-cli...>
   shift
   fakebin=$(make_fake_toolchain "$dir")
   rm -f "$fakebin/tmux"
-  jg_fake_exit0 "$fakebin" jq "$@"
+  # The case home has its Beads store, so its data folder exists and startup arms contribution observation, which
+  # parses with jq: a real jq stands in when the host has one, so the fixture proves the tools and not a stub's silence.
+  if command -v jq >/dev/null 2>&1; then ln -sf "$(command -v jq)" "$fakebin/jq"; jg_fake_exit0 "$fakebin" "$@"; else jg_fake_exit0 "$fakebin" jq "$@"; fi
   printf '%s\n' "$fakebin"
 }
 
