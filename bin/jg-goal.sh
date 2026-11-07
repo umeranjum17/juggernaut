@@ -5,6 +5,7 @@
 #                           [--attempts <n>] [--fix-steps <n>] [--priority <0-4>] -- <proof argv...>
 #        jg-goal.sh show [<goal-id>]
 #        jg-goal.sh cancel <goal-id> --reason <text>
+#        jg-goal.sh rows
 #
 # A Goal is a Beads epic labelled `goal` in a small Goal-only store of its own, reached only through
 # bin/jg-beads.sh. The store folder is the absolute BEADS_DIR in `config/goal-beads-dir` (or GOAL_BEADS_DIR),
@@ -20,6 +21,7 @@
 # declare runs the proof once and refuses a Goal whose proof is missing, already exits 0 (it proves
 # nothing), cannot run (exit 126 or 127), or does not end within 30 seconds.
 # show prints one Goal's ask, state, steps and open stops, or one line per open Goal.
+# rows prints every Goal-labelled row as one JSON list, for core/goal-loop's check (one read, no write).
 # cancel closes the Goal's open rows and the epic on the owner's word. It tears nothing down and sends
 # no message, so unlanded work stays under the normal cleanup rules.
 set -u
@@ -124,6 +126,8 @@ show_goal() {
         else "step: \(.id) \(.title) \(.status)" end'
 }
 
+rows_goal() { need_store; goalstore list --label goal --all -n 0 --json 2>/dev/null; }
+
 cancel_goal() {
   local id=${1-} reason='' row
   [ -n "$id" ] || die "cancel needs a Goal id"
@@ -150,5 +154,6 @@ case "${1:-}" in
   declare) shift; declare_goal "$@" ;;
   show) shift; show_goal "$@" ;;
   cancel) shift; cancel_goal "$@" ;;
-  *) die "unknown verb $1 (declare, show, cancel)" ;;
+  rows) rows_goal ;;
+  *) die "unknown verb $1 (declare, show, cancel, rows)" ;;
 esac

@@ -172,7 +172,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-config-inherit-lib.sh` | Shared primary-to-Squad-Lead inherited local-material propagation and config-reread delivery |
 | `jg-tasks-axi.sh`        | Run `tasks-axi` against this home's backlog from any working directory               |
 | `jg-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
-| `jg-goal.sh`             | Declare, show and cancel a Goal: a Beads epic with five ordered steps and a finish line whose proof must fail first |
+| `jg-goal.sh`             | Declare, show and cancel a Goal: a Beads epic with five ordered steps and a finish line whose proof must fail first; `rows` prints every Goal row for the loop check |
 | `jg-beads-view.py`       | Render `bd` rows in the read shape `tasks-axi` prints                                |
 | `jg-beads-write.py`      | Serve `tasks-axi` writes on a Beads store, in its reply shape                        |
 | `jg-beads-followup.py`   | Keep a public follow-up as one native row on a Beads store                           |

@@ -379,6 +379,10 @@ jobs:
       - name: Critical-stall test
         if: ${{ !cancelled() }}
         run: bash critical-stall/tests/critical-stall.test.sh
+      # Recorded Goal rows and a fixture home; the real-store case skips without the pinned bd and dolt.
+      - name: Goal loop test
+        if: ${{ !cancelled() }}
+        run: bash goal-loop/tests/goal-loop.test.sh
       # Fixture home, stub gh and receipts; no merge runs.
       - name: Owner-rules gate test
         if: ${{ !cancelled() }}
