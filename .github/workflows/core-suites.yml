@@ -260,6 +260,7 @@ jobs:
         run: |
           bash project-state-map/tests/psm-search.test.sh
           bash project-state-map/tests/psm-prove.test.sh
+          bash project-state-map/tests/psm-card.test.sh
 
       # Fixture home only: no live state or metrics are read.
       - name: Retro metrics test
