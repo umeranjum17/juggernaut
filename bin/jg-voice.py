@@ -9,8 +9,8 @@ overrides) and `max-sentence-words`; its `## Internal terms` table holds the ban
 patterns and the plain wording to use instead. The wording is guidance for a rewrite, never a
 swap: a word swapped into a sentence breaks the sentence ("its whether it can merge").
 
-  jg-voice.py check [--channel C] [--role R] [--line] [text...]   exit 1 when the text breaks a rule
-  jg-voice.py apply [--channel C] [--role R] [--line] [text...]   print the text to send, as the mode says
+  jg-voice.py check [--channel C] [--role R] [--line] [--ask WORDS --ask-date D] [text...]
+  jg-voice.py apply [same options]   print the text to send, as the mode says; exit 1 when it is refused
   jg-voice.py persona [--role R]                       print the role's personality text
 
 Each role (overwatch, squad-lead, worker) has one personality file beside the shared voice
@@ -38,7 +38,17 @@ treats the text as a status line (`verb [key=..]: note`) and only checks the not
 first colon.
 A PR number the same text also links in full (`pull/678`) is not flagged, so `revert-pr678` beside
 its URL passes; the same id with no link, or a link to another PR, is still refused.
-Send points: bin/jg-voice-lib.sh (chat reply, parent channel) and the Telegram send in core/bus.
+
+A reply or report that answers an ask carries an ask block: a `Your ask:` line that quotes his
+words and their date, then `Done:`, `Not done:` and `Next:` lines, and a proof link (2026-11-05:
+"There is no reference: what was my ask and what work was done against it"). The check is
+structural and deterministic, never a model call: a model rewrite cannot invent his words. With
+`--ask <his words> --ask-date <YYYY-MM-DD>`, a message longer than a pure acknowledgement must
+carry the whole block and its quote must be his words; without them, a message that carries a
+`Your ask:` line must still complete the block, so a half-written one is refused at every send
+point. A pure acknowledgement (short, no proof link, no outcome line) answers no ask and passes.
+Send points: bin/jg-voice-lib.sh (chat reply, parent channel) and the Telegram send in core/bus;
+bin/jg-inbox.sh reply passes the note it answers as the ask.
 """
 import os
 import re
@@ -54,6 +64,18 @@ PROTECTED = re.compile(r"(`[^`\n]*`|\S+://\S+|\[[^\]\n]*=[^\]\n]*\]|[\w.-]+=\S+)
 PR_LINK = re.compile(r"\S+://\S+/pull/(\d+)")
 PR_NUMBER = re.compile(r"(?:pr|pull request)[\s#-]*(\d+)", re.I)
 STATUS_LINE = re.compile(r"^([A-Za-z-]+(?: \[[^\]\n]*\])*:)(.*)$", re.S)
+# The ask block: his words and their date, then Done / Not done / Next, then a proof link.
+ASK_LINE = re.compile(r"^[ \t]*(?:[-*][ \t]+)?\*{0,2}your ask\*{0,2}[ \t]*:(.*)$", re.I | re.M)
+ASK_OUTCOME = (("done", "Done"), ("not done", "Not done"), ("next", "Next"))
+PROOF_LINK = re.compile(r"https?://\S+")
+DATE_ISO = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+DATE_WORD = re.compile(r"\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", re.I)
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+ACK_MAX_WORDS = 25
+WORD_STOP = {"that", "this", "with", "from", "have", "your", "will", "what", "when", "then",
+             "them", "they", "their", "there", "here", "also", "into", "than", "just", "only",
+             "more", "most", "some", "such", "about", "after", "before", "been", "being",
+             "does", "did", "each", "because", "please", "very", "much", "make", "made"}
 # A list item line (`1. x`, `2) x`, `- x`, `* x`, a bullet), and a numbered marker inside a line of prose.
 ITEM = re.compile(r"^\s*(?:\d{1,3}[.)]|[-*\u2022])\s+\S")
 INLINE_MARK = re.compile(r"(?:(?<=\s)|^)(\d{1,2})[.)]\s+(?=\S)")
@@ -143,6 +165,70 @@ def load(path):
                 continue
             rules.append((rx, cells[1].lstrip("?").strip()))
     return settings, rules
+
+
+def content_words(text):
+    """Lowercase words of four letters or more, minus the short stopword list. A quote is made of
+    these, so a paraphrase in new words cannot pass as his words."""
+    return [w for w in re.findall(r"[a-z0-9][a-z0-9'-]*", text.lower())
+            if len(w) >= 4 and w not in WORD_STOP]
+
+
+def outcome_line(name):
+    return re.compile(r"^[ \t]*(?:[-*][ \t]+)?\*{0,2}" + name + r"\*{0,2}[ \t]*:", re.I | re.M)
+
+
+def quote_is_his_words(line, ask_words):
+    """Two content words or more, and 60% of them occur in the ask. A verbatim quote passes; a
+    paraphrase in the writer's own words does not. A tiny ask ("x") cannot be quoted, so any
+    words stand in for it."""
+    quoted, asked = content_words(line), set(content_words(ask_words))
+    if not ask_words or len(asked) < 2:
+        return bool(line.strip())
+    if len(quoted) < 2:
+        return False
+    return sum(1 for w in quoted if w in asked) * 100 >= 60 * len(quoted)
+
+
+def date_forms(iso):
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", iso or "")
+    if not m:
+        return [iso] if iso else []
+    y, mo, d = m.group(1), int(m.group(2)), int(m.group(3))
+    mon = MONTHS[mo - 1]
+    return ["%s-%02d-%02d" % (y, mo, d), "%d %s" % (d, mon), "%02d %s" % (d, mon), "%s %d" % (mon, d)]
+
+
+def carries_date(line, ask_date):
+    forms = date_forms(ask_date)
+    if forms:
+        return any(f.lower() in line.lower() for f in forms)
+    return bool(DATE_ISO.search(line) or DATE_WORD.search(line))
+
+
+def ask_report_findings(text, ask_words, ask_date):
+    """-> findings for the ask block. A pure acknowledgement (short, no proof link, no outcome
+    line) answers no ask and passes, so the standing "Captain, standing by." still goes out."""
+    m = ASK_LINE.search(text)
+    if not m:
+        if not ask_words:
+            return []
+        if (len(text.split()) <= ACK_MAX_WORDS and not PROOF_LINK.search(text)
+                and not any(outcome_line(n).search(text) for n, _ in ASK_OUTCOME)):
+            return []
+        return ["it answers the captain's ask but carries no 'Your ask:' line with his words and date"]
+    line = m.group(1).strip()
+    out = []
+    if not carries_date(line, ask_date):
+        out.append("its 'Your ask:' line carries no date (%s)" % (ask_date or "YYYY-MM-DD"))
+    if not quote_is_his_words(line, ask_words):
+        out.append("its 'Your ask:' line does not quote his words")
+    for name, shown in ASK_OUTCOME:
+        if not outcome_line(name).search(text):
+            out.append("it has no '%s:' line" % shown)
+    if not PROOF_LINK.search(text):
+        out.append("it carries no proof link (https://...)")
+    return out
 
 
 def split_status(text, line):
@@ -301,11 +387,16 @@ def main(argv):
         sys.stderr.write(__doc__)
         return 2
     cmd, args, channel, line, role = argv[1], argv[2:], "", False, ""
-    while args and args[0] in ("--channel", "--line", "--role"):
+    ask_words, ask_date = "", ""
+    while args and args[0] in ("--channel", "--line", "--role", "--ask", "--ask-date"):
         if args[0] == "--line":
             line, args = True, args[1:]
         elif args[0] == "--role":
             role, args = (args[1] if len(args) > 1 else ""), args[2:]
+        elif args[0] == "--ask":
+            ask_words, args = (args[1] if len(args) > 1 else ""), args[2:]
+        elif args[0] == "--ask-date":
+            ask_date, args = (args[1] if len(args) > 1 else ""), args[2:]
         else:
             channel, args = (args[1] if len(args) > 1 else ""), args[2:]
     role = sender_role(channel, role)
@@ -327,6 +418,22 @@ def main(argv):
     if not rules and not settings or (mode == "off" and cmd == "apply"):
         sys.stdout.write(text)
         return 0
+    # The ask block is structure, not wording: a model rewrite cannot invent his words, so a
+    # message that breaks it is refused as it stands. In mode `warn` it is reported and sent.
+    findings = ask_report_findings(text, ask_words, ask_date)
+    for f in findings:
+        sys.stderr.write("voice: %s: %s\n" % (channel or "message", f))
+    if findings:
+        if cmd == "check":
+            return 1
+        if mode == "warn":
+            sys.stdout.write(text)
+            return 0
+        sys.stderr.write(
+            "voice: not sent. Re-draft it with an ask block: a 'Your ask:' line that quotes his words\n"
+            "and carries their date, then 'Done:', 'Not done:' and 'Next:' lines, and a proof link.\n"
+            "(rules: %s)\n" % (path or "the voice file"))
+        return 1
     if not line:
         text = layout(text)
     head, note = split_status(text, line)
