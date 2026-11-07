@@ -191,6 +191,10 @@ jg_test_spawn_home() {
 # A Beads id has a prefix and a hyphen, so the fixture task ids do too.
 jg_test_spawn_item() {
   local home=$1 id=$2
+  # A case that takes the home's config away on purpose (no search permission) is filed already and cannot be read.
+  [ -x "$home/config" ] || return 0
+  # A hostile id is a case that spawn must refuse as an invalid task id before it reads any backlog, so there is no ticket to file.
+  case $id in *[!A-Za-z0-9._-]*) return 0 ;; esac
   [ -s "$home/config/beads-dir" ] || jg_test_beads_home "$home"
   jg_test_backlog "$home" show "$id" >/dev/null 2>&1 || jg_test_add "$home" "$id" "[feature] Spawn fixture $id"
 }

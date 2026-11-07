@@ -977,7 +977,7 @@ test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   echo captain > "$home/stub-mode"
   JG_BRANCH_OUTCOME_DEFER_SECS=600 start_host "$home"
   wait_until 150 watcher_live "$home" || fail "settled: the host never started a watcher cycle"
-  append_status "$home" 'PR ready' 'done'
+  append_status "$home" 'change finished' 'done'
   wait_until 250 handled_at_least "$home" 1 || fail "settled: the wake was not handled: $(cat "$home/state/.supervision-host.log")"
   assert_grep '"verdict":"captain"' "$home/state/branch-outcomes.jsonl" "fixture: the stub did not report a captain outcome"
   wait_until 100 grep -q '	deferred	rows=1' "$home/state/.supervision-host.log" || fail "the host never recorded the deferral: $(cat "$home/state/.supervision-host.log")"
@@ -1001,7 +1001,7 @@ test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   echo captain > "$home/stub-mode"
   JG_BRANCH_OUTCOME_DEFER_SECS=2 start_host "$home"
   wait_until 150 watcher_live "$home" || fail "bound: the host never started a watcher cycle"
-  append_status "$home" 'PR ready' 'done'
+  append_status "$home" 'change finished' 'done'
   wait_until 250 host_exited "$home" || fail "bound: an unacknowledged deferred outcome never woke main: $(cat "$home/state/.supervision-host.log")"
   assert_re '^supervision-host: branch-outcome: .*\(through store row 1\); run bin/jg-wake-drain.sh' "$home/host.out" \
     "the bound must wake main with the same drain instruction"
@@ -1014,7 +1014,7 @@ test_settled_captain_outcome_rides_the_next_drain_and_is_bounded() {
   echo captain > "$home/stub-mode"
   JG_BRANCH_OUTCOME_DEFER_SECS=0 start_host "$home"
   wait_until 150 watcher_live "$home" || fail "off: the host never started a watcher cycle"
-  append_status "$home" 'PR ready' 'done'
+  append_status "$home" 'change finished' 'done'
   wait_until 250 host_exited "$home" || fail "off: with deferral off a captain outcome must wake main at once"
   assert_re '^supervision-host: branch-outcome: .*\(store rows 1\); run bin/jg-wake-drain.sh' "$home/host.out" "deferral off must keep the immediate hand-off"
   pass "host: a captain outcome that asks main for no reply rides main's next drain, is bounded, and a zero bound keeps the old hand-off"

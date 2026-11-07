@@ -469,8 +469,26 @@ make_fake_toolchain_no_tmux() {  # <case-dir> <extra-cli...>
   shift
   fakebin=$(make_fake_toolchain "$dir")
   rm -f "$fakebin/tmux"
-  jg_fake_exit0 "$fakebin" jq "$@"
+  # The case home has its Beads store, so its data folder exists and startup arms contribution observation, which
+  # parses with jq: a real jq stands in when the host has one, so the fixture proves the tools and not a stub's silence.
+  if command -v jq >/dev/null 2>&1; then ln -sf "$(command -v jq)" "$fakebin/jq"; jg_fake_exit0 "$fakebin" "$@"; else jg_fake_exit0 "$fakebin" jq "$@"; fi
   printf '%s\n' "$fakebin"
+}
+
+# A base path that hides <cli> even when the host installs it, so a "missing CLI" case proves the dependency check and not the host.
+base_path_without() {  # <case-dir> <cli>
+  local dir=$1/base-without-$2 base=$BASE_PATH d f
+  if ! PATH=$base command -v "$2" >/dev/null 2>&1; then printf '%s\n' "$base"; return 0; fi
+  mkdir -p "$dir"
+  while IFS= read -r d; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*; do
+      [ -x "$f" ] && [ ! -d "$f" ] || continue
+      [ "${f##*/}" != "$2" ] || continue
+      [ -e "$dir/${f##*/}" ] || ln -s "$f" "$dir/${f##*/}"
+    done
+  done < <(printf '%s\n' "$base" | tr ':' '\n')
+  printf '%s\n' "$dir"
 }
 
 test_session_provider_backends_do_not_require_tmux() {
@@ -506,7 +524,7 @@ test_session_provider_backends_gate_own_cli_not_tmux() {
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     # Toolchain has jq + treehouse but NOT the session CLI and NOT tmux.
     fakebin=$(make_fake_toolchain_no_tmux "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
+    out=$(PATH="$fakebin:$(base_path_without "$case_dir" "$cli")" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
       JG_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/jg-bootstrap.sh")
     if [ "$backend" = herdr ]; then
       missing="MISSING_MANUAL: herdr (instructions: https://herdr.dev)"

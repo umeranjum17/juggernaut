@@ -12,7 +12,8 @@ set -eu
 TMP_ROOT=$(jg_test_tmproot jg-escalation-chain)
 FORK="$TMP_ROOT/fork"
 mkdir -p "$FORK"
-cp -a "$ROOT/bin" "$ROOT/core" "$FORK/"
+# toolchain.versions pins the bd and dolt that the copied backlog scripts run.
+cp -a "$ROOT/bin" "$ROOT/core" "$ROOT/toolchain.versions" "$FORK/"
 # The steer and interrupt endpoints record their calls in the calling home.
 for f in jg-send.sh jg-control.sh; do
   # shellcheck disable=SC2016 # the recorder expands its own arguments when run
@@ -30,10 +31,13 @@ home() {  # <name> -> home path
 #!/usr/bin/env bash
 t=; prev=
 for a in "$@"; do [ "$prev" = -t ] && t=$a; prev=$a; done
-listed() { case " ${JG_FAKE_PANES:-} " in *" ${1#fake:} "*) return 0 ;; esac; return 1; }
+# A killed window stays gone, as it does in a real terminal, so a scan that lands after a cleanup does not see it.
+pane_of() { local p=${1#=}; p=${p#fake:}; printf '%s\n' "${p#=}"; }
+killed() { grep -Fxq -- "$(pane_of "$1")" "$JG_HOME/killed" 2>/dev/null; }
+listed() { killed "$1" && return 1; case " ${JG_FAKE_PANES:-} " in *" $(pane_of "$1") "*) return 0 ;; esac; return 1; }
 case "${1:-}" in
-  list-windows) for p in ${JG_FAKE_PANES:-}; do printf '%s\n' "$p"; done ;;
-  kill-window|kill-pane) exit 0 ;;
+  list-windows) for p in ${JG_FAKE_PANES:-}; do killed "$p" || printf '%s\n' "$p"; done ;;
+  kill-window|kill-pane) pane_of "$t" >> "$JG_HOME/killed"; exit 0 ;;
   capture-pane) listed "$t" || exit 1; cat "$JG_HOME/panes/${t#fake:}" 2>/dev/null || printf 'all quiet\n> \n' ;;
   display-message)
     listed "$t" || exit 1
@@ -202,9 +206,11 @@ lead_home() {  # <name> <main> -> lead home path
   printf '%s\n' "$l"
 }
 
+# A home's backlog is a real Beads store, built on first use; its item ids carry the store's prefix.
 backlog() {  # <home> <backlog args...>
   local h=$1
   shift
+  [ -s "$h/config/beads-dir" ] || jg_test_beads_home "$h"
   JG_HOME="$h" "$FORK/bin/jg-backlog.sh" "$@" >/dev/null || fail "fixture: tasks $*"
 }
 
@@ -246,6 +252,10 @@ finished_task() {  # <home> <id> <landed: yes|no>; its pane is jg-<id>, the name
   local h=$1 id=$2 pane=jg-$2 p="$1/proj-$2" wt="$1/wt-$2"
   jg_git_identity fmtest fmtest@example.invalid
   mkdir -p "$h/data"
+  # A teardown closes the task's backlog item, as a spawned task is In flight in the store.
+  jg_test_beads_home "$h"
+  jg_test_add "$h" "$id" "[feature] escalation-chain finished-task fixture"
+  jg_test_backlog "$h" start "$id" >/dev/null
   git init -q -b main "$p"
   git -C "$p" commit -q --allow-empty -m baseline
   git -C "$p" worktree add -q -b "fm/$id" "$wt" main
@@ -283,16 +293,30 @@ stale_wake_decorate_for() {  # <home> <text>
   bash -c '. "$1/bin/jg-classify-lib.sh" && stale_wake_decorate "$2" "$3"' _ "$FORK" "$2" "$1/state"
 }
 
+# The watcher cleans a finished worker up detached; its marker says running until the teardown ends. A scan that
+# overlaps the teardown's last step sees the pane of a task whose record is already gone, so a case that loops
+# over cycles waits the teardown out between them.
+settle_cleanup() {  # <home>
+  local i=0 f
+  while [ "$i" -lt 600 ]; do
+    f=$(find "$1/state" -maxdepth 1 -name '.stale-cleanup-*' ! -name '*.log' ! -name '*.next' 2>/dev/null | head -n 1)
+    { [ -n "$f" ] && grep -q '^running' "$f" 2>/dev/null; } || return 0
+    sleep 0.2
+    i=$((i + 1))
+  done
+}
+
 test_a_finished_landed_worker_is_cleaned_up_without_a_wake() {
   local m n=0
   m=$(home cleanup-landed)
-  finished_task "$m" shipL yes
-  while [ "$n" -lt 20 ] && [ -e "$m/state/shipL.meta" ]; do
+  finished_task "$m" ship-l yes
+  while [ "$n" -lt 20 ] && [ -e "$m/state/ship-l.meta" ]; do
     n=$((n + 1))
-    PANES=jg-shipL cycle "$m"
+    PANES=jg-ship-l cycle "$m"
+    settle_cleanup "$m"
     sleep 0.3
   done
-  [ ! -e "$m/state/shipL.meta" ] || fail "a finished, landed worker was not cleaned up: $(cat "$m/err" "$m/events" "$m"/state/.stale-cleanup-* 2>&1)"
+  [ ! -e "$m/state/ship-l.meta" ] || fail "a finished, landed worker was not cleaned up: $(cat "$m/err" "$m/events" "$m"/state/.stale-cleanup-* 2>&1)"
   grep -q 'return --force' "$m/treehouse.log" || fail "the cleanup did not return the worker's copy: $(cat "$m/treehouse.log" 2>&1)"
   ! grep -q '^stale:' "$m/events" || fail "Main was woken about a worker that was already landed: $(cat "$m/events")"
   ! grep -q $'\tstale\t' "$m/drain" || fail "a stale wake was queued for a landed worker: $(cat "$m/drain")"
@@ -302,17 +326,18 @@ test_a_finished_landed_worker_is_cleaned_up_without_a_wake() {
 test_a_finished_unlanded_worker_is_kept_and_wakes_with_its_reason() {
   local m n=0
   m=$(home cleanup-unlanded)
-  finished_task "$m" shipU no
+  finished_task "$m" ship-u no
   while [ "$n" -lt 20 ] && ! grep -q '^stale:' "$m/events" 2>/dev/null; do
     n=$((n + 1))
-    PANES=jg-shipU cycle "$m"
+    PANES=jg-ship-u cycle "$m"
+    settle_cleanup "$m"
     sleep 0.3
   done
-  [ -e "$m/state/shipU.meta" ] || fail "unlanded work was torn down"
-  [ -d "$m/wt-shipU" ] || fail "the unlanded worktree was removed"
-  git -C "$m/proj-shipU" rev-parse -q --verify refs/heads/fm/shipU >/dev/null || fail "the unlanded branch was lost"
+  [ -e "$m/state/ship-u.meta" ] || fail "unlanded work was torn down"
+  [ -d "$m/wt-ship-u" ] || fail "the unlanded worktree was removed"
+  git -C "$m/proj-ship-u" rev-parse -q --verify refs/heads/fm/ship-u >/dev/null || fail "the unlanded branch was lost"
   [ ! -e "$m/treehouse.log" ] || fail "the unlanded copy was handed back: $(cat "$m/treehouse.log")"
-  grep -qE '^stale: fake:jg-shipU \(finished but not cleaned up: REFUSED.*\) \[task=shipU reason=finished\]$' "$m/events" \
+  grep -qE '^stale: fake:jg-ship-u \(finished but not cleaned up: REFUSED.*\) \[task=ship-u reason=finished\]$' "$m/events" \
     || fail "the refused cleanup did not wake with the task and reason: $(cat "$m/events" "$m/state/.stale-cleanup-"* 2>&1)"
   # A refusal is reported once; the next scans neither repeat it nor retry the teardown.
   PANES=1 cycle "$m"
@@ -535,7 +560,7 @@ test_stalled_backlog_wakes_the_lead_and_main_and_refires() {
   l=$(lead_home backlog-lead "$m")
   lead_meta "$m" lead1 1 "$l"
   printf '2\n' > "$l/config/lane-target"
-  backlog "$l" add alpha "first item" --priority 1
+  backlog "$l" add jg-alpha "first item" --priority 1
   f="$m/state/lead1.status"
   cycle "$l"
   [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "ready work on a free lane armed no episode: $(cat "$l/err")"
@@ -545,9 +570,9 @@ test_stalled_backlog_wakes_the_lead_and_main_and_refires() {
   ! grep -q 'waiting-timer-backlog-overdue' "$f" || fail "Main was told before 10 minutes passed"
   backdate_backlog "$l" 200
   cycle "$l"
-  grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\] \[at=[0-9]*\]: waiting-timer-backlog-overdue: lead1 (ready work alpha, free lanes 0/2 open, nothing started for [0-9]*s' "$f" \
+  grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\] \[at=[0-9]*\]: waiting-timer-backlog-overdue: lead1 (ready work jg-alpha, free lanes 0/2 open, nothing started for [0-9]*s' "$f" \
     || fail "a stalled backlog did not reach Main: $(cat "$f") $(cat "$l/err")"
-  grep -q '^check: ready backlog stalled: alpha waits with free lanes (0/2 open)' "$l/events" || fail "the lead was not woken again: $(cat "$l/events")"
+  grep -q '^check: ready backlog stalled: jg-alpha waits with free lanes (0/2 open)' "$l/events" || fail "the lead was not woken again: $(cat "$l/events")"
   cycle "$l"
   [ "$(grep -c 'waiting-timer-backlog-overdue' "$f")" -eq 1 ] || fail "the stall re-fired inside the interval"
   backdate_backlog "$l" 901
@@ -558,7 +583,7 @@ test_stalled_backlog_wakes_the_lead_and_main_and_refires() {
   PANES=1 CARD_SECS=3600 cycle "$m"
   grep -q 'lead1' "$m/events" || fail "the report raised no Main event: $(cat "$m/events")"
   PANES=1 CARD_SECS=3600 cycle "$m"
-  grep -q '^jg-send lead1 --fire-and-forget [0-9a-f]\{16\} You have ready backlog work that can start now, and nothing has started (ready work alpha' "$m/sent" \
+  grep -q '^jg-send lead1 --fire-and-forget [0-9a-f]\{16\} You have ready backlog work that can start now, and nothing has started (ready work jg-alpha' "$m/sent" \
     || fail "Main did not steer the lead about its stalled backlog: $(cat "$m/sent" 2>&1) $(cat "$m/err")"
   [ ! -s "$m/cards" ] || fail "a stalled backlog posted a board card before its time: $(cat "$m/cards")"
   # Still open when the card time passes: Main posts the board card.
@@ -570,7 +595,7 @@ test_stalled_backlog_wakes_the_lead_and_main_and_refires() {
     || fail "a lead's own park-or-retry call went to the captain's board: $(cat "$m/cards" 2>&1)"
   grep -q '^- Ask: Start the stalled' "$m/data/overwatch-decisions.md" 2>/dev/null \
     || fail "a stalled backlog was not recorded for Main to decide"
-  backlog "$l" hold alpha --reason "waits on the vendor"
+  backlog "$l" hold jg-alpha --reason "waits on the vendor"
   cycle "$l"
   grep -q '^resolved \[key=waiting-timer-.*-ready-backlog\] \[at=[0-9]*\]: waiting-timer-cleared: lead1 ready backlog: no ready work' "$f" \
     || fail "a held item left Main's report open: $(cat "$f")"
@@ -588,8 +613,8 @@ test_stalled_backlog_quiet_when_work_starts_in_time() {
   m=$(home start-main)
   l=$(lead_home start-lead "$m")
   printf '2\n' > "$l/config/lane-target"
-  backlog "$l" add alpha "first item"
-  backlog "$l" add beta "second item"
+  backlog "$l" add jg-alpha "first item"
+  backlog "$l" add jg-beta "second item"
   cycle "$l"
   backdate_backlog "$l" 1000
   printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$l/state/w1.meta"
@@ -631,14 +656,14 @@ test_stalled_backlog_quiet_without_a_free_lane_or_a_ready_item() {
   printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$l/state/w1.meta"
   : > "$l/state/w1.status"
   prime_status_seen "$l/state" "$l/state/w1.status"
-  backlog "$l" add alpha "first item"
+  backlog "$l" add jg-alpha "first item"
   JG_CREW_STATE_BIN="$crew" PANES=1 cycle "$l"
   JG_CREW_STATE_BIN="$crew" PANES=1 cycle "$l"
   [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a home at its floor with a worker working armed a stall"
   grep -q "$(printf '\tlanes-working\t1/1')" "$l/state/.waiting-timers/.ready-backlog-why" \
     || fail "the quiet backlog left no reason: $(cat "$l/state/.waiting-timers/.ready-backlog-why" 2>&1)"
   rm -f "$l/state/w1.meta" "$l/state/w1.status"
-  backlog "$l" hold alpha --reason "waits on the vendor"
+  backlog "$l" hold jg-alpha --reason "waits on the vendor"
   cycle "$l"
   [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a held item armed a stall"
   [ ! -e "$l/state/.waiting-timers/.ready-backlog-why" ] || fail "a home with no ready work kept a quiet reason"
@@ -655,17 +680,17 @@ test_stalled_backlog_at_the_floor_with_no_worker_working_reaches_main_and_the_bo
   printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$l/state/w1.meta"
   : > "$l/state/w1.status"
   prime_status_seen "$l/state" "$l/state/w1.status"
-  backlog "$l" add alpha "first item" --priority 1
-  backlog "$l" add beta "second item"
+  backlog "$l" add jg-alpha "first item" --priority 1
+  backlog "$l" add jg-beta "second item"
   f="$m/state/lead1.status"
   PANES=1 cycle "$l"
-  grep -q '^check: ready work waiting with no worker working: alpha beta' "$l/events" || fail "the lead got no first-sight wake: $(cat "$l/events")"
+  grep -q '^check: ready work waiting with no worker working: jg-alpha jg-beta' "$l/events" || fail "the lead got no first-sight wake: $(cat "$l/events")"
   [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "ready work with no worker working armed no episode: $(cat "$l/err")"
   backdate_backlog "$l" 700
   PANES=1 cycle "$l"
-  grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\] \[at=[0-9]*\]: waiting-timer-backlog-overdue: lead1 (ready work alpha beta, no worker working 1/1 open, nothing started for [0-9]*s' "$f" \
+  grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\] \[at=[0-9]*\]: waiting-timer-backlog-overdue: lead1 (ready work jg-alpha jg-beta, no worker working 1/1 open, nothing started for [0-9]*s' "$f" \
     || fail "an idle lead at its floor did not reach Main: $(cat "$f" 2>&1) $(cat "$l/err")"
-  grep -q '^check: ready backlog stalled: alpha beta waits with no worker working (1/1 open)' "$l/events" || fail "the lead was not woken again: $(cat "$l/events")"
+  grep -q '^check: ready backlog stalled: jg-alpha jg-beta waits with no worker working (1/1 open)' "$l/events" || fail "the lead was not woken again: $(cat "$l/events")"
   PANES=1 CARD_SECS=3600 cycle "$m"
   PANES=1 CARD_SECS=3600 cycle "$m"
   grep -q '^jg-send lead1 --fire-and-forget [0-9a-f]\{16\} You have ready backlog work that can start now' "$m/sent" || fail "Main did not steer the lead: $(cat "$m/sent" 2>&1)"
@@ -697,7 +722,7 @@ test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts() {
   lead_meta "$m" lead1 1 "$l"
   printf '2\n' > "$l/config/lane-target"
   mkdir -p "$l/data"
-  backlog "$l" add alpha "first item" --priority 1
+  backlog "$l" add jg-alpha "first item" --priority 1
   f="$m/state/lead1.status"
   cycle "$l"
   [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "ready work on a free lane armed no episode: $(cat "$l/err")"
@@ -849,12 +874,12 @@ test_stalled_backlog_quiet_when_project_is_at_capacity() {
   printf 'kind=ship\nbackend=tmux\nwindow=fake:1\nproject=%s\n' "$l/projects/proj" > "$l/state/w1.meta"
   : > "$l/state/w1.status"
   prime_status_seen "$l/state" "$l/state/w1.status"
-  backlog "$l" add alpha "capped item" --repo proj
+  backlog "$l" add jg-alpha "capped item" --repo proj
   PANES=1 cycle "$l"
   [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "an item whose project is at capacity armed a stall"
   grep -q "$(printf '\tproject-capacity\t')" "$l/state/.waiting-timers/.ready-backlog-why" \
     || fail "the capacity hold left no reason: $(cat "$l/state/.waiting-timers/.ready-backlog-why" 2>&1)"
-  backlog "$l" add beta "uncapped item"
+  backlog "$l" add jg-beta "uncapped item"
   PANES=1 cycle "$l"
   [ -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "an uncapped item on a free lane armed no stall: $(cat "$l/err")"
   [ ! -e "$l/state/.waiting-timers/.ready-backlog-why" ] || fail "an armed stall kept a quiet reason"
@@ -1143,9 +1168,9 @@ test_ready_work_wakes_the_primary_home_too() {
   local m
   m=$(home ready-main)
   mkdir -p "$m/data"
-  backlog "$m" add alpha "first item" --priority 1
+  backlog "$m" add jg-alpha "first item" --priority 1
   cycle "$m"
-  grep -q '^check: ready work waiting with no worker working: alpha' "$m/events" \
+  grep -q '^check: ready work waiting with no worker working: jg-alpha' "$m/events" \
     || fail "a primary home with ready work and no worker got no wake: $(cat "$m/events")"
   [ ! -e "$m/state/.waiting-timers/.ready-backlog" ] || fail "a primary home with no parent armed a lead escalation"
   # The same set must not ring again inside the resurface window, but a place
@@ -1179,10 +1204,10 @@ test_a_merge_freeze_never_idles_free_lanes() {
     printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\n' "$n" > "$m/state/w$n.meta"
     printf 'paused [at=1]: PR held for the merge freeze\n' > "$m/state/w$n.status"
   done
-  backlog "$m" add alpha "first item" --priority 1
-  backlog "$m" add beta "second item"
+  backlog "$m" add jg-alpha "first item" --priority 1
+  backlog "$m" add jg-beta "second item"
   JG_CREW_STATE_BIN="$crew" PANES='1 2 3 4 5 6' cycle "$m"
-  grep -q '^check: ready work waiting with free lane slots (3/6 open): alpha beta - ' "$m/events" \
+  grep -q '^check: ready work waiting with free lane slots (3/6 open): jg-alpha jg-beta - ' "$m/events" \
     || fail "a merge freeze with 3 live lanes of 6 and 2 ready items raised no wake naming the count and ids: $(cat "$m/events")"
   [ "$(grep -c '^check: ready work waiting' "$m/events")" = 1 ] || fail "the shortfall rang more than once: $(cat "$m/events")"
   pass "live lanes below the floor with ready work wake the home whatever a merge freeze holds, and parked lanes do not count as live"
@@ -1192,17 +1217,17 @@ test_a_fleet_pause_silences_ready_work_but_not_a_blocker() {
   local m before
   m=$(home ready-pause)
   mkdir -p "$m/data"
-  backlog "$m" add alpha "first item" --priority 1
+  backlog "$m" add jg-alpha "first item" --priority 1
   cycle "$m"
-  grep -q '^check: ready work waiting with no worker working: alpha' "$m/events" \
+  grep -q '^check: ready work waiting with no worker working: jg-alpha' "$m/events" \
     || fail "an unpaused primary home got no ready-work wake: $(cat "$m/events")"
   # A lane list parked under the home's own old pause record name is not a pause
   # declaration (bin/jg-pause-lib.sh), so ready-work intake still rings and the
   # live work keeps its alarm.
-  printf '# Paused lanes for the Juggernaut-only push\n\nNo new work; nothing merged.\n- beta: parked\n' \
+  printf '# Paused lanes for the Juggernaut-only push\n\nNo new work; nothing merged.\n- jg-beta: parked\n' \
     > "$m/data/paused-for-juggernaut.md"
   before=$(grep -c '^check: ready work waiting' "$m/events")
-  backlog "$m" add beta "second item" --priority 2
+  backlog "$m" add jg-beta "second item" --priority 2
   touch -d '-15 days' "$m/state/.last-ready-work-check"
   cycle "$m"
   [ "$(grep -c '^check: ready work waiting' "$m/events")" -gt "$before" ] \

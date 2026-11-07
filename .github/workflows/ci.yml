@@ -273,14 +273,15 @@ jobs:
       - name: Run the smoke eval
         run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh --smoke
       # The release train's replay of a design lane, a multi-PR lane and a signature
-      # lookup through the merge path, time-boxed (bin/jg-release-smoke.sh).
-      - name: Install the pinned bd and dolt
+      # lookup through the merge path, time-boxed (bin/jg-release-smoke.sh). The merge path checks the
+      # completion receipt through the guard host, which asks OPA, so the replay installs the pinned one.
+      - name: Install the pinned bd, dolt and OPA
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
         run: |
           set -eu
           export NPM_CONFIG_PREFIX=$HOME/.local
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
-          bin/jg-bootstrap.sh install bd dolt
+          bin/jg-bootstrap.sh install bd dolt opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
       - name: Replay the release lanes
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}

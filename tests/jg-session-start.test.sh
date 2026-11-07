@@ -61,6 +61,9 @@ new_world() {
   home="$w/home"
   fakebin="$w/fakebin"
   mkdir -p "$home/state" "$home/data" "$home/config" "$fakebin"
+  # Bootstrap reads the backlog first and stops at a home with no store, which hides the tool diagnostics that follow.
+  # The case runs in a $(...) subshell, so a host without the pinned bd and dolt gets no store here, not a suite exit.
+  if [ -n "${JG_BEADS_TEST_BD:-}" ] && [ -n "${JG_BEADS_TEST_DOLT:-}" ]; then jg_test_beads_home "$home"; fi
   git init -q -b main "$root"
   git -C "$root" commit -q --allow-empty -m init
   printf '%s|%s|%s\n' "$root" "$home" "$fakebin"
@@ -71,6 +74,10 @@ new_world() {
 # test deliberately breaks one. Mirrors jg-bootstrap.test.sh's fixture.
 make_fake_toolchain() {
   local fakebin=$1
+  # The relaunch builds the spawn core, so the case needs the host's Go even when it is not on the minimal base path.
+  if ! PATH=$BASE_PATH command -v go >/dev/null 2>&1 && command -v go >/dev/null 2>&1; then
+    ln -sf "$(command -v go)" "$fakebin/go"
+  fi
   jg_fake_exit0 "$fakebin" tmux node chrome-devtools-axi
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
@@ -920,6 +927,10 @@ SH
 test_output_ordering_diagnostics_lead() {
   local rec root home fakebin out lock_line boot_line wake_line read_once_line
   local context_line fleet_line next_line inventory_line missing_line
+  if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
+    printf 'skip: no Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
+    return 0
+  fi
   rec=$(new_world ordering)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -1994,6 +2005,9 @@ test_runtime_bound_truncates_loudly_and_exits_zero() {
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
+  # The bound is three seconds and this case proves where a hung git stops the digest. A Beads store would spend
+  # those seconds reading the backlog in the early stages, so the case runs without one, as it always did.
+  rm -f "$home/config/beads-dir"
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   make_hanging_tool "$fakebin" git
