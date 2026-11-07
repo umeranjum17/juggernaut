@@ -2,6 +2,8 @@
 # Behavior tests for bin/jg-goal.sh. The guards run against a recording stand-in for bin/jg-beads.sh.
 # The real store cases need the pinned builds named by JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT, and skip
 # plainly without them. Every store sits in a throwaway folder outside any git tree.
+# This is also the test that owns journeys/goal-loop.sh (the done-done journey that drives a Goal from
+# ask to one finish message on a fake forge), so a change to that journey selects this script.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -10,6 +12,12 @@ GOAL="$ROOT/bin/jg-goal.sh" T=$(jg_test_tmproot jg-goal)
 mkdir -p "$T/home/config" "$T/home/data"
 export JG_HOME=$T/home LOG=$T/beads.log
 unset JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE GOAL_BEADS_DIR
+
+# The journey this test owns ships with it, and runs under done-done where the pinned tools are set up.
+# No CI lane parses journeys/, so this owner is the cheap gate that it is present and still parses.
+[ -x "$ROOT/journeys/goal-loop.sh" ] || fail 'journeys/goal-loop.sh is missing or not executable'
+bash -n "$ROOT/journeys/goal-loop.sh" || fail 'journeys/goal-loop.sh does not parse'
+pass 'the goal-loop journey is present and parses'
 
 # A stand-in wrapper: it records each call, and its `check` can refuse as the real one does with an unpinned tool.
 cat > "$T/beads" <<'SH'
