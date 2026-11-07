@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """jg-beads-followup.py - keep a public follow-up as one native Beads row.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py public-followup <add|bind-work|supersede-work|list> [args...] [--json]
+Usage: BEADS_DIR=<store> jg-beads-write.py public-followup <add|bind-work|supersede-work|work-event|list|ready> [args...] [--json]
 
 --json carries the public_followup payload bin/jg-public-followup.sh reads, one contract on either backlog.
 The row has the public-followup label; metadata.followup holds what never changes, metadata.relations the bound work.
-metadata.delivery_state is the cached answer.
+Each accepted work event is one comment, the record of what landed; metadata.delivery_state is the cached answer.
 A tracks edge joins the row to bound work in this store, and never blocks it; work in another home stays metadata.
-The edge comes before the row write, so a rerun after a crash converges.
+Every write comes after its checks and before the row write, so a rerun after a crash folds the comment and converges.
 One flock beside the store spans each change's read, check and write, and a crash releases it.
 """
 import datetime
@@ -31,8 +31,13 @@ DELIVERABLES = {"pr-merged": ["pr_url"], "report-ready": ["report_path"], "local
                 "failure-outcome": ["error_code"], "explicit-answer": []}
 MUTABLE = ("intent", "pending-work", "ready")
 RELATION = ("relation_id", "work_ref", "role", "required", "generation")
+EVENT = ("schema_version", "event_id", "obligation_id", "relation_id", "generation", "source_home_id", "work_id",
+         "outcome_type", "deliverables", "public_safe_outcome", "occurred_at")
 USAGE = {"bind-work": "bind-work <id> --relation-file <file> [--json]",
-         "supersede-work": "supersede-work <id> --relation <relation-id> --successor-file <file> [--json]"}
+         "supersede-work": "supersede-work <id> --relation <relation-id> --successor-file <file> [--json]",
+         "work-event": "work-event <id> --event-file <file> [--json]"}
+LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+PR_URL = re.compile(r"https://(%s(?:\.%s)*)/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/(pull|pulls)/[1-9][0-9]*\Z" % (LABEL, LABEL))
 WORK_CHANGED = ["work_relations", "delivery.state"]
 TASK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 RFC3339 = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})\Z")
@@ -157,10 +162,87 @@ def relation_of(value, path="relation"):
     return value
 
 
+def event_of(value, path="event"):
+    if not isinstance(value, dict):
+        bad(path + " must be an object")
+    event = record({key: item for key, item in value.items() if key != "successor"}, path, EVENT)
+    if event["schema_version"] != 1:
+        bad(path + ".schema_version must be 1")
+    matching(event["event_id"], r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}\Z", path + ".event_id", "must be a stable event id")
+    matching(event["obligation_id"], TASK_ID, path + ".obligation_id", "must be a task id")
+    matching(event["relation_id"], r"rel-[A-Za-z0-9._-]+\Z", path + ".relation_id", "must start with rel-")
+    generation_of(event["generation"], path + ".generation")
+    home_of(event["source_home_id"], path + ".source_home_id")
+    matching(event["work_id"], TASK_ID, path + ".work_id", "must be a task id")
+    one_of(event["outcome_type"], ("pr-merged", "report-ready", "local-main", "failed", "superseded"), path + ".outcome_type")
+    for name, text in record(event["deliverables"], path + ".deliverables", event["deliverables"]).items():
+        matching(name, r"[a-z][a-z0-9_]{0,63}\Z", "%s.deliverables.%s" % (path, name), "has an invalid deliverable name")
+        safe_text(text, "%s.deliverables.%s" % (path, name), 500)
+    safe_text(event["public_safe_outcome"], path + ".public_safe_outcome", 240)
+    moment(event["occurred_at"], path + ".occurred_at")
+    if "successor" not in value:
+        bad(path + ".successor is required")
+    return event, None if value["successor"] is None else relation_of(value["successor"], path + ".successor")
+
+
+def pull_request(url):
+    found = PR_URL.match(url)
+    return found and not {".", ".."} & set(found.group(2, 3)) and (found[4] == "pull") == (found[1] == "github.com")
+
+
+SHAPES = {"pr_url": pull_request, "report_path": re.compile(r"data/[A-Za-z0-9][A-Za-z0-9._-]*/report\.md\Z").match,
+          "commit_sha": re.compile(r"[a-f0-9]{7,64}\Z").match, "error_code": re.compile(r"[a-z][a-z0-9._-]{0,63}\Z").match}
+
+
+def failure_safe(items):
+    return len(items) <= 1 and all(name == "error_code" and SHAPES[name](text) for name, text in items.items())
+
+
+def meets(event, expected):
+    outcome = {"failure-outcome": "failed", "explicit-answer": "local-main"}.get(expected["type"], expected["type"])
+    items = event["deliverables"]
+    return (event["outcome_type"] == outcome and all(name in DELIVERABLES[expected["type"]] and SHAPES[name](text)
+                                                     for name, text in items.items())
+            and all(name in items for name in expected["required_deliverables"]))
+
+
+def contract(event, successor, expected):
+    if event["outcome_type"] == "superseded":
+        if successor is None:
+            bad("superseded work event requires successor")
+        if event["deliverables"]:
+            bad("superseded work event cannot carry deliverables")
+    elif successor is not None:
+        bad("only a superseded work event may carry successor")
+    elif event["outcome_type"] == "failed" and expected["type"] != "failure-outcome":
+        if not failure_safe(event["deliverables"]):
+            bad("failed work event has unsafe deliverables")
+    elif not meets(event, expected):
+        bad("work event does not satisfy expected outcome and deliverables")
+
+
+def settled(relation, expected):
+    last = relation["accepted_events"][-1] if relation["accepted_events"] else None
+    if last is None or relation["state"] not in ("landed", "failed"):
+        return False
+    if relation["state"] == "landed" or expected["type"] == "failure-outcome":
+        return meets(last, expected)
+    return last["outcome_type"] == "failed" and failure_safe(last["deliverables"])
+
+
+def is_ready(relations, expected, policy):
+    active = [item for item in relations if item["state"] != "superseded"]
+    fulfilling = [item for item in active if item["role"] == "fulfills"]
+    if not fulfilling or not all(settled(item, expected) for item in active if item["required"]):
+        return False
+    return (all if policy == "all-required" else any)(settled(item, expected) for item in fulfilling)
+
+
 def standing(meta, relations):
     if meta["delivery_state"] not in MUTABLE:
         return meta["delivery_state"]
-    return "pending-work" if relations else "intent"
+    expected = meta["followup"]["expected_final"]
+    return "ready" if is_ready(relations, expected, expected["completion_policy"]) else "pending-work" if relations else "intent"
 
 
 def fresh(relation):
@@ -177,8 +259,28 @@ def replace(relations, previous, successor):
         relations.append(fresh(successor))
 
 
+def landing(relations, event, successor):
+    relation = named(relations, event["relation_id"])
+    if relation is None:
+        return
+    relation["accepted_event_ids"].append(event["event_id"])
+    relation["accepted_events"].append(event)
+    if event["outcome_type"] == "superseded":
+        replace(relations, relation, successor)
+    else:
+        relation["state"] = "failed" if event["outcome_type"] == "failed" else "landed"
+
+
 def fold(row):
-    return [{**item, "accepted_event_ids": [], "accepted_events": []} for item in row["metadata"].get("relations", [])]
+    relations = [{**item, "accepted_event_ids": [], "accepted_events": []} for item in row["metadata"].get("relations", [])]
+    for note in json.loads(write.bd("comments", row["id"], "--json")) if row.get("comment_count") else []:
+        try:
+            item = json.loads(note["text"])
+        except ValueError:
+            continue
+        if isinstance(item, dict) and item.get("followup") == "work-event":
+            landing(relations, {key: item[key] for key in EVENT}, item["successor"])
+    return relations
 
 
 def commit(row, relations):
@@ -260,7 +362,9 @@ def answer(found, verb, ident, changed, already=False):
     print("already: true\n" if already else "", end="")
     print("public_followup:\n  id: %s\n  state: %s\n  delivery_state: %s\n  revision: %d\n  relations: %d" % (
         ident, task["state"], state, revision, len(task["public_followup"]["work_relations"])))
-    print("help[1]:\n  - Run `tasks-axi public-followup list --work-ref <home/task>` to reconcile related work")
+    print("help[1]:\n  - Run `tasks-axi public-followup %s" % (
+        "begin-delivery %s --payload-hash <sha256>` after semantic preflight" % ident if state == "ready" else
+        "list --work-ref <home/task>` to reconcile related work"))
 
 
 def add(args):
@@ -324,6 +428,48 @@ def supersede(args):
     answer(found, "supersede-work", ident, WORK_CHANGED)
 
 
+def repeated(found, ident, row, relations, event, successor):
+    holder = next((item for item in relations if event["event_id"] in item["accepted_event_ids"]), None)
+    if holder is None:
+        return False
+    prior = next(item for item in holder["accepted_events"] if item["event_id"] == event["event_id"])
+    after = named(relations, holder["successor_relation_id"]) if holder["successor_relation_id"] else None
+    same = (successor and after and identity(after) == identity(successor)) if prior["outcome_type"] == "superseded" else not successor
+    if prior != event or not same:
+        clash('Event id "%s" was already accepted with different data' % event["event_id"])
+    if row["metadata"]["delivery_state"] != standing(row["metadata"], relations):
+        commit(row, relations)
+    answer(found, "work-event", ident, [], True)
+    return True
+
+
+def work_event(args):
+    found, ids = view.flags(args, ("--event-file",), ("--json",))
+    event, successor = event_of(loaded(found, "--event-file"))
+    ident = one_id(ids, "work-event")
+    if event["obligation_id"] != ident:
+        view.refuse("Work event obligation_id does not match the command id")
+    items, row, relations = obligation(ident)
+    if repeated(found, ident, row, relations, event, successor):
+        return
+    mutable(row, relations)
+    relation = named(relations, event["relation_id"]) or view.refuse('Unknown work relation "%s"' % event["relation_id"])
+    if event["generation"] != relation["generation"] or relation["state"] == "superseded":
+        view.refuse('Stale work event generation for relation "%s"' % event["relation_id"])
+    if (event["source_home_id"], event["work_id"]) != (relation["work_ref"]["home_id"], relation["work_ref"]["task_id"]):
+        view.refuse("Work event source home or task does not match the relation")
+    if relation["state"] != "bound":
+        clash('Relation "%s" already has a terminal work event' % event["relation_id"])
+    contract(event, successor, row["metadata"]["followup"]["expected_final"])
+    if successor:
+        succeeding(relations, relation, successor)
+        track(items, ident, successor)
+    write.bd("comment", ident, json.dumps({"followup": "work-event", **event, "successor": successor}))
+    landing(relations, event, successor)
+    commit(row, relations)
+    answer(found, "work-event", ident, WORK_CHANGED)
+
+
 def promises(items):
     # bd stamps created_at to the second, so the row's own stamp keeps two promises of one second in order.
     order = sorted(filter(promised, items.values()), key=lambda row: (row["created_at"], row["metadata"].get("added_ns", 0)))
@@ -360,11 +506,24 @@ def listing(args):
     shown(found, "public_followups", "list", items, kept, "public_followups: 0 obligations found")
 
 
+def owed(args):
+    found, ids = view.flags(args, (), ("--json",))
+    if ids:
+        view.refuse("Expected no positional arguments, got %d" % len(ids), "usage: tasks-axi public-followup ready [--json]")
+    items = write.rows()
+    kept = promises(items)
+    kept = [item for item in kept if item["public_followup"]["delivery"]["state"] == "ready" and item["state"] != "done"
+            and view.task(items[item["id"]], items)["blocked"] == "no"]
+    shown(found, "ready_public_followups", "ready", items, kept, "ready_public_followups: 0 delivery-ready obligations")
+    if kept and "--json" not in found:
+        print("help[1]:\n  - Run `tasks-axi public-followup begin-delivery <id> --payload-hash <sha256>` after semantic preflight")
+
+
 def main(args):
     verb = args[0] if args else ""
-    changes = {"add": add, "bind-work": bind, "supersede-work": supersede}
-    if verb == "list":
-        listing(args[1:])
+    changes = {"add": add, "bind-work": bind, "supersede-work": supersede, "work-event": work_event}
+    if verb in ("list", "ready"):
+        (listing if verb == "list" else owed)(args[1:])
     elif verb in changes:
         env = os.path.join(os.path.dirname(os.environ["BEADS_DIR"]), ".jg-beads-env")
         os.makedirs(env, exist_ok=True)
