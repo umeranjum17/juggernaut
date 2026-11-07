@@ -492,6 +492,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/proposals/tool-models-by-tool-and-job.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/triage.md",
       "audience": "operator-current"
     },
