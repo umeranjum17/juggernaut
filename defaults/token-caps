@@ -1,0 +1,38 @@
+# Token caps for the session-start digest, read by bin/jg-session-start.sh.
+#
+# One `<name> <positive integer>` per line. A home overrides a value in
+# config/token-caps (same format); a JG_SESSION_START_* variable overrides both
+# for one run. A missing, zero or malformed value falls back to the built-in
+# in the script, so a bad line can never switch a cap off.
+#
+# Every cap cuts only what the digest PRINTS. Nothing is deleted from disk, and each cut prints
+# its remainder, the exact command that shows it, and (for files) a heading index.
+# No cap touches the wake queue, the lock, the network checks, the owner-rules
+# decisions, or captain-held rows; those carry an action and stay whole.
+#
+# Measured on the firstmate-addons home on 2026-11-07 with the commands in the
+# pull request that added this file: the digest was 48,680 bytes, 69 % of it the
+# curated-memory section.
+
+# Per-file bytes printed for data/captain-shared.md and data/learnings.md.
+# Reason: config/startup-memory-budget (7500 estimated tokens at ceil(bytes/3)
+# for captain.md, captain-shared.md and learnings.md together) is about 22,500
+# bytes; 7500 bytes for each of the two long files keeps the printed total inside
+# it. The previous 10000 printed up to 30,000 bytes of the three.
+memory-file-cap 7500
+
+# Per-file bytes printed for data/owner-rules.md (and the fallback for any
+# capped file with no cap of its own). Reason: owner rules are standing
+# decisions only the captain can take, so they keep the previous bound.
+context-file-cap 10000
+
+# Dispatchable queued rows listed. Reason: the rest are disclosed by an exact
+# count and the command that lists them.
+queued-limit 20
+
+# Date-gated, parked and external held rows listed. Captain-owed holds stay whole.
+held-limit 10
+
+# Status lines kept per task. Reason: a status line is a wake event, not
+# current state; bin/jg-crew-state.sh answers current state.
+status-tail 3

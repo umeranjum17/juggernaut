@@ -898,6 +898,15 @@ Until then local files are the only memory owners.
 the internal [`fleet-records` skill](../.agents/skills/fleet-records/SKILL.md) owns what a declaration changes about knowledge routing, and the internal [`intel` skill](../.agents/skills/intel/SKILL.md) owns how curation reads the declaration and protects tier-owned entries from pruning.
 The section counts toward the startup memory budget like the rest of its file, so keep it to the mapping rather than restating these rules.
 
+## Digest print caps (defaults/token-caps, config/token-caps)
+
+`defaults/token-caps` holds the shipped byte and row caps for the session-start digest, each with its reason.
+A home overrides a value in `config/token-caps` (same `<name> <positive integer>` lines); a `JG_SESSION_START_*` variable overrides both for one run.
+A missing, zero, or malformed value falls back to the built-in in `bin/jg-session-start.sh`, so a bad line never switches a cap off.
+The caps only cut what the digest prints.
+Each cut names the remainder and the command that shows it.
+No cap touches the wake queue, the lock, network checks, owner rules, or captain-held rows.
+
 ## Startup memory budget (config/startup-memory-budget)
 
 `config/startup-memory-budget` is the primary-authoritative per-home allowance for the startup prompt-memory surface: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` together.
