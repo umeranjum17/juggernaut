@@ -23,7 +23,7 @@
 #   jg-captain-hold.sh hold <task-id> --reason <reason> \
 #     [--title <title>] [--repo <repo>] [--priority 0-3] [--origin <origin-id>] [--until YYYY-MM-DD] \
 #     [--must <category>]
-#   jg-captain-hold.sh answer <task-id> --decision-file <path> [--release]
+#   jg-captain-hold.sh answer <task-id> --decision-file <path> [--release [--card <card-key>]]
 #   jg-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   jg-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
 #   jg-captain-hold.sh bind <source-id> [<legacy-origin> | --any-origin]
@@ -303,6 +303,8 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-question-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-question-lib.sh"
+# shellcheck source=core/signoff/bin/jg-signoff-feedback-lib.sh
+. "$SCRIPT_DIR/../core/signoff/bin/jg-signoff-feedback-lib.sh"
 
 PARENT_HOLD_PUBLISHED=0
 publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
@@ -1155,14 +1157,28 @@ remove_interrupted_answer_stamp() {  # <task-id>
   rm -f -- "$tmp"
 }
 
+# A release from a board answer tells the owner what started: one reply on the
+# card (sign-off-axi feedback --reply, 500 characters at most). A feedback
+# failure is said on stderr and never fails the release.
+reply_release() {  # <task-id> <title> <card-key>
+  local board text rc=0
+  [ -n "$3" ] && jg_question_signoff_available || return 0
+  board=$(jg_question_board)
+  text="Released $1: $(sanitize_field "$2")"
+  jg_signoff_feedback "$3" ${board:+"$board"} --reply "${text:0:500}" || rc=$?
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || printf 'the release of %s was not reported on card %s\n' "$1" "$3" >&2
+  return 0
+}
+
 command_answer() {
-  local id=${1:-} decision_file='' release=0 show state hold_kind body outcome recorded_mode occurrence
+  local id=${1:-} decision_file='' release=0 card='' title show state hold_kind body outcome recorded_mode occurrence
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --decision-file) shift; decision_file=${1:-} ;;
       --release) release=1 ;;
+      --card) shift; card=${1:-}; validate_slug card-key "$card" ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -1177,6 +1193,10 @@ command_answer() {
   hold_kind=$(show_field_value "$show" hold_kind)
   body=$(show_field "$show" body)
   if [ "$release" = 1 ]; then outcome=released; else outcome=answered; fi
+  title=$(show_field_value "$show" title)
+  if [ "$release" = 1 ] && [ -z "$card" ] && [ "$hold_kind" = captain ]; then
+    card=$(jg_question_hold_card_key "$id" "$("$SCRIPT_DIR/jg-captain-hold.sh" open "$id" --identity 2>/dev/null)") || card=''
+  fi
   # The occurrence the parent line names: the record about to be written is
   # one past those already in the body, and a retry names the newest one.
   occurrence=$(( $(resolution_record_count "$body") + 1 ))
@@ -1240,6 +1260,7 @@ command_answer() {
       fi
       remove_interrupted_answer_stamp "$id"
       publish_parent_resolution_then_retire "$id" $((occurrence - 1)) "$outcome"
+      [ "$release" = 0 ] || reply_release "$id" "$title" "$card"
       printf '%s: %s\n' "$outcome" "$id"
       return 0
     fi
@@ -1253,6 +1274,7 @@ command_answer() {
     body_has_resolution_record "$(show_field "$show" body)" \
       || fail "captain-held task $id did not retain its durable resolution record"
     publish_parent_resolution_then_retire "$id" "$occurrence" "$outcome"
+    [ "$release" = 0 ] || reply_release "$id" "$title" "$card"
     printf '%s: %s\n' "$outcome" "$id"
     return 0
   fi
@@ -1488,7 +1510,7 @@ command_answers() {
       continue
     fi
     # shellcheck disable=SC2086  # release_flag is empty or a single literal flag.
-    if "$0" answer "$id" --decision-file "$tmp" $release_flag </dev/null >/dev/null 2>"$err"; then
+    if "$0" answer "$id" --decision-file "$tmp" $release_flag ${release_flag:+--card "$key"} </dev/null >/dev/null 2>"$err"; then
       # A parent-channel delivery problem is reported on stderr by the answer
       # path even when the close succeeded; keep it visible.
       [ ! -s "$err" ] || cat "$err" >&2

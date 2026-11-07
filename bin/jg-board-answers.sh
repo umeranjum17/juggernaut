@@ -29,8 +29,8 @@
 #            retried each pass and reported once. When the lead moves that
 #            record to its inbox's handled/ (the acknowledgement), the card is
 #            archived (dismiss, done-elsewhere).
-#          UNROUTED: print one line, full answer text first; the watcher turns
-#            it into a wake for Main. Reported once; answers already on the
+#          UNROUTED: raise one check wake for Main in this pass (answer text first;
+#            the line is printed instead only if the wake cannot be raised). Reported once; answers already on the
 #            board at the first pass are recorded, not reported.
 # arm    Write state/board-answers.check.sh, bind it with jg-check-register.sh,
 #        and run one pass; a report that pass makes is printed, never dropped.
@@ -148,7 +148,11 @@ cmd_check() {
       grep -qxF "$key"$'\t'"$at" "$SEEN" && continue
       printf '%s\t%s\n' "$key" "$at" >> "$SEEN"
       [ "$first" = 1 ] && continue
-      report="${report}$(say "$answer${label:+ ($label)}${note:+ - $note} | board answer on $key at $at, not routed to a lead${link:+ | $link}")"$'\n'
+      text="$(say "$answer${label:+ ($label)}${note:+ - $note} | board answer on $key at $at, not routed to a lead${link:+ | $link}")"
+      # A real wake in this pass, one per answer (the key carries the answer time); the line
+      # is only printed when the wake cannot be raised, so the answer is never lost.
+      ( . "$SCRIPT_DIR/jg-wake-lib.sh" && jg_wake_append check "board-answer-unmapped-$key-$at" "check: $text" ) >/dev/null 2>&1 \
+        || report="${report}${text}"$'\n'
       continue
     fi
     if [ "$(rget "$key" answered)" != "$at" ]; then
