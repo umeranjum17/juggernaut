@@ -22,7 +22,7 @@ RESULT=$(awk '
     flush()
     name = $0; sub(/^      - (name: )?/, "", name)
     cond = 0
-    if (name ~ /Install tasks-axi/) started_next = 1
+    if (name ~ /Install the backlog/) started_next = 1
     else if (started_next) started = 1
     next
   }

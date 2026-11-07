@@ -98,7 +98,7 @@ test_add_asks_for_the_kind_and_refuses_a_product_rule() {
     --words "keep CI thin: no full suite on every push" --scope "every project" --enforce bin/jg-lint.sh 2>&1); rc=$?
   assert_equals 2 "$rc" "a product rule was accepted into the owner surface"
   case "$out" in
-    *"bin/jg-tasks-axi.sh add"*) ;;
+    *"bin/jg-backlog.sh add"*) ;;
     *) fail "the product refusal did not point at a ticket: $out" ;;
   esac
   case "$out" in
@@ -204,15 +204,16 @@ reply_payload() {  # <dir> <reply text>
 test_add_files_its_own_enforcement_ticket() {
   local home backlog out rc rows
   home="$TMP_ROOT/ticket"
-  mkdir -p "$home/data"
-  jg_test_tasks_toml "$home/.tasks.toml"
-  backlog="$home/data/backlog.md"
+  jg_test_beads_home "$home"
+  backlog="$home/backlog.dump"
+  dump() { BEADS_DIR=$(cat "$home/config/beads-dir") "$ROOT/bin/jg-beads.sh" list --all --json --limit 0 2>/dev/null | jq -c '.[]' > "$backlog"; }
 
   out=$(JG_HOME="$home" JG_ROOT_OVERRIDE="$ROOT" "$RULES" add --kind owner \
     --words "never forecast a date in a captain report" --scope "every captain-facing report" \
     --enforce bin/jg-live-claim.sh --date 2026-11-01 2>&1) \
     || fail "recording an owner rule with a shipped enforcement point failed: $out"
   assert_contains "$out" 'ticket: owner-rule-' "the recorded rule did not name the ticket it filed"
+  dump
   assert_present "$backlog" "recording an owner rule filed no ticket"
   assert_grep 'never forecast a date in a captain report' "$backlog" \
     "the ticket lost his own words"
@@ -228,6 +229,7 @@ test_add_files_its_own_enforcement_ticket() {
     >/dev/null 2>&1
   rc=$?
   assert_not_equals 0 "$rc" "the same owner words were recorded twice"
+  dump
   rows=$(grep -c 'Enforce the owner rule:' "$backlog")
   assert_equals 1 "$rows" "recording the same words again filed a second ticket"
 
@@ -235,6 +237,7 @@ test_add_files_its_own_enforcement_ticket() {
     --words "ask only when only I can decide" --scope "every escalation" \
     --enforce "a digest rule nobody wrote yet" 2>&1) \
     || fail "recording an owner rule with an unbuilt enforcement point failed: $out"
+  dump
   assert_grep 'Build it: no shipped check, script, or config default enforces this rule yet' "$backlog" \
     "a rule nothing enforces yet did not say what still needs building"
   pass "recording an owner rule files one ticket with his words, scope and enforcement point, and files nothing twice"
@@ -263,7 +266,7 @@ test_turn_boundary_prints_no_block_for_a_question() {
   }
   local key again
   jg_test_raising_ticket "$TMP_ROOT/question-card-home"
-  key=$(JG_HOME="$TMP_ROOT/question-card-home" JG_ROOT_OVERRIDE="$ROOT" SIGN_OFF_HOME="$board" "$CARD" post  --route main --ask-ref chat-1 --must design-pick --raised-by m1 \
+  key=$(JG_HOME="$TMP_ROOT/question-card-home" JG_ROOT_OVERRIDE="$ROOT" SIGN_OFF_HOME="$board" "$CARD" post  --route main --ask-ref chat-1 --must design-pick --raised-by jg-m1 \
     --title "Should the fix merge now?" --why "The fix is green and in scope." \
     --outcome yes="It merges once the captain says so." --outcome no="It waits for his review." \
     --recommend yes --recommend-reason "His word is the merge call." --default no 2>/dev/null)
@@ -274,7 +277,7 @@ test_turn_boundary_prints_no_block_for_a_question() {
     SIGN_OFF_HOME="$board" "$GUARD" >/dev/null 2>&1; rc=$?
   assert_equals 0 "$rc" "a reply citing an open board card was blocked"
 
-  again=$(JG_HOME="$TMP_ROOT/question-card-home" JG_ROOT_OVERRIDE="$ROOT" SIGN_OFF_HOME="$board" "$CARD" post  --route main --ask-ref chat-1 --must design-pick --raised-by m1 \
+  again=$(JG_HOME="$TMP_ROOT/question-card-home" JG_ROOT_OVERRIDE="$ROOT" SIGN_OFF_HOME="$board" "$CARD" post  --route main --ask-ref chat-1 --must design-pick --raised-by jg-m1 \
     --title "Should the fix merge now?" --why "The fix is green and in scope." \
     --outcome yes="It merges once the captain says so." --outcome no="It waits for his review." \
     --recommend yes --recommend-reason "His word is the merge call." --default no 2>/dev/null)

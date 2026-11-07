@@ -21,9 +21,9 @@
       "tool": "0.6.20",
       "steps": {
         "target": {
-          "version": "juggernaut bin/jg-tasks-axi.sh and bin/jg-captain-ask-lib.sh at this commit"
+          "version": "juggernaut bin/jg-backlog.sh and bin/jg-captain-ask-lib.sh at this commit"
         },
-        "start": "a disposable juggernaut home with a real tasks-axi backlog",
+        "start": "a disposable juggernaut home with a real backlog",
         "steps": [
           "try to cancel and close a captain-asked ticket with no words, a blank quote and an unanswered card",
           "close one with a quote and one with an answered confirm card",

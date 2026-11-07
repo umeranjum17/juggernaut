@@ -34,43 +34,7 @@ captain() {  # <home> <args...>
     "${jail[@]}" "$CAPTAIN" "$@" 2>&1
 }
 
-# A home still on the old selector: tasks-axi knows no row, so the id has nowhere left to go.
 jail=()
-old=$T/old
-mkdir -p "$old/data" "$old/state" "$old/config" "$old/projects"
-fb=$(jg_fakebin "$old")
-trap_bd "$fb"
-cat > "$old/.tasks.toml" <<TOML
-backend = "beads"
-
-[beads]
-path = "$T/graph/.beads"
-binary = "bd"
-prefix = "fm"
-TOML
-cat > "$fb/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-case "${1:-} ${2:-}" in
-  --version*) printf '%s\n' 0.2.6 ;;
-  "update --help") printf '%s\n' --archive-body ;;
-  "mv --help") printf '%s\n' 'usage: tasks-axi mv [<id>...]' ;;
-  "hold --help") printf '%s\n' '  --kind captain' ;;
-  show*) printf 'error: no task %s in this backlog\ncode: NOT_FOUND\n' "${2:-}" >&2; exit 1 ;;
-  *) exit 1 ;;
-esac
-SH
-chmod +x "$fb/tasks-axi"
-scout "$old" sample-scout ghost-id
-rc=0
-out=$(captain "$old" verify sample-scout) || rc=$?
-[ "$rc" = 1 ] || fail "verify must refuse an id no row answers to, exit $rc: $out"
-assert_contains "$out" ghost-id "the refusal must name the id"
-[ "$(printf '%s\n' "$out" | grep -c '^jg-captain-hold:')" = 1 ] || fail "the refusal must be one line: $out"
-rc=0
-out=$(printf 'ghost-id\tUse it\tLabel\n' | captain "$old" answers --source fixture) || rc=$?
-[ "$rc" = 1 ] || fail "an unknown key must stay a retryable skip, exit $rc: $out"
-[ ! -e "$T/bd-started" ] || fail "the hold script started bd: $(cat "$T/bd-started")"
-pass "a home on the old selector refuses an unknown id without starting bd"
 
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
@@ -80,9 +44,6 @@ else
   fb=$(jg_fakebin "$home")
   trap_bd "$fb"
   jg_fake_exit0 "$fb" tmux treehouse no-mistakes gh gh-axi
-  printf '#!/usr/bin/env bash\nexit 9\n' > "$fb/tasks-axi"
-  chmod +x "$fb/tasks-axi"
-  printf 'beads\n' > "$home/config/backlog-backend"
   printf '%s\n' "$T/store/.beads" > "$home/config/beads-dir"
   export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT TMPDIR=$T  # The jail's /tmp is gone with each call.
   command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)

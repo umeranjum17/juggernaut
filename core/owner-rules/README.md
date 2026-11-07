@@ -3,7 +3,7 @@
 Three brief-time rules are enforced when a lane's brief is created, not left as prose. The merge gate and publication check are described below.
 
 1. **Owner ask.** A lane (ship or scout) must serve a named owner ask: its backlog item (the entry whose
-   id equals the task id in `data/backlog.md`) has a title starting `[captain-ask]`, or its title or body
+   id equals the task id in the backlog) has a title starting `[captain-ask]`, or its title or body
    names a `MainNNN` order.
 2. **Hierarchy.** Every non-scout lane item whose title does not start `[captain-ask]` needs a body line
    `parent: <backlog item id>` naming an item in the same backlog, or `parent: upkeep` for true upkeep.

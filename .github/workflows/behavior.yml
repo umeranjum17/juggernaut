@@ -61,11 +61,6 @@ jobs:
           set -eu
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Install tasks-axi
-        run: |
-          set -eu
-          npm install -g tasks-axi
-          tasks-axi --version
       # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
       # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
       - name: Install the pinned OPA
@@ -115,11 +110,6 @@ jobs:
           set -eu
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Install tasks-axi
-        run: |
-          set -eu
-          npm install -g tasks-axi
-          tasks-axi --version
       # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
       # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
       - name: Install the pinned OPA
@@ -188,11 +178,6 @@ jobs:
             exit 1
           }
           tmux -V
-      - name: Install tasks-axi for backlog-handoff delegation
-        run: |
-          set -eu
-          npm install -g tasks-axi
-          tasks-axi --version
       # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
       # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
       - name: Install the pinned OPA
@@ -375,12 +360,6 @@ jobs:
             /bin/bash -n "$f" || { echo "::error::stock macOS Bash 3.2 failed to parse $f"; parse_fail=1; }
           done < "$shell_inventory"
           [ "$parse_fail" -eq 0 ] || { echo "::error::stock macOS Bash 3.2 parse sweep failed"; exit 1; }
-
-          command -v npm >/dev/null || { echo "::error::npm is required to install tasks-axi"; exit 1; }
-          npm install -g tasks-axi@0.2.6 >/dev/null
-          PATH="$(npm prefix -g)/bin:$PATH"
-          export PATH
-          command -v tasks-axi >/dev/null || { echo "::error::tasks-axi is required for the stock Bash regression"; exit 1; }
 
           # The full public-followup suite is not a stock-bash snapshot; run only
           # the empty-lock register regression under real /bin/bash 3.2.

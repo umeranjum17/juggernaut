@@ -44,7 +44,7 @@
 # KINDS. new-work and decision-answer are the captain's job and need no link.
 # feedback and micromanagement need <link>: a pull request, merge request, or
 # issue URL on a remote of this Juggernaut checkout, or an id in this home's
-# backlog (bin/jg-tasks-axi.sh show). A file path, memory file, or note is
+# backlog (bin/jg-backlog.sh show). A file path, memory file, or note is
 # refused, because it changes no code.
 #
 # SCORECARD. `scorecard` reports the misses per calendar day and per trailing
@@ -142,7 +142,7 @@ landed_of() {  # <link>
       ;;
     ''|*[!A-Za-z0-9._-]*) echo unknown ;;
     *)
-      out=$("$SCRIPT_DIR/jg-tasks-axi.sh" show "$link" 2>/dev/null) || { echo unknown; return; }
+      out=$("$SCRIPT_DIR/jg-backlog.sh" show "$link" 2>/dev/null) || { echo unknown; return; }
       case "$out" in *'state: done'*) echo yes ;; *) echo no ;; esac
       ;;
   esac
@@ -194,7 +194,7 @@ link_ok() {  # <link>
         | sed -E 's#\.git$##; s#/+$##; s#^.*[:/]([^/:]+/[^/:]+)$#\1#' | grep -qixF "$repo"
       ;;
     ''|*[!A-Za-z0-9._-]*) return 1 ;;
-    *) "$SCRIPT_DIR/jg-tasks-axi.sh" show "$link" >/dev/null 2>&1 ;;
+    *) "$SCRIPT_DIR/jg-backlog.sh" show "$link" >/dev/null 2>&1 ;;
   esac
 }
 

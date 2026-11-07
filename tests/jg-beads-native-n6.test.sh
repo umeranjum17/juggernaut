@@ -11,19 +11,18 @@ if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   exit 0
 fi
 
-WRAPPER="$ROOT/bin/jg-beads.sh" CLI="$ROOT/bin/jg-tasks-axi.sh" T=$(jg_test_tmproot jg-beads-native-n6)
+WRAPPER="$ROOT/bin/jg-beads.sh" CLI="$ROOT/bin/jg-backlog.sh" T=$(jg_test_tmproot jg-beads-native-n6)
 unset BEADS_DB BEADS_DOLT_SHARED_SERVER
 H=$T/home
 mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
 export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-printf 'beads\n' > "$H/config/backlog-backend"
 printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
 jail=()
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 "${jail[@]}" "$WRAPPER" init --prefix jg >/dev/null 2>&1 || fail "init"
 
 bd_() { "${jail[@]}" "$WRAPPER" "$@" 2>/dev/null; }
-tasks() {  # <tasks-axi args...>: the CLI on the Beads home, stdout and stderr together.
+tasks() {  # <backlog args...>: the CLI on the Beads home, stdout and stderr together.
   env HOME="$T/user" TMPDIR="$T" PATH=/usr/bin:/bin JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
     JG_CONFIG_OVERRIDE="$H/config" JG_BOOTSTRAP_NETWORK=skip "${jail[@]}" "$CLI" "$@" 2>&1
 }

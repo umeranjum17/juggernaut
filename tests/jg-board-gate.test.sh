@@ -322,10 +322,8 @@ test_dismiss_sends_a_fitting_reason_and_odd_titles_make_valid_tags() {
 # answer and the card waited as a must ask for days.
 test_check_dismisses_the_card_of_a_settled_hold() {
   local d out key other
-  command -v tasks-axi >/dev/null 2>&1 || { pass "skip: tasks-axi not found"; return 0; }
   d=$(setup settled-hold)
-  jg_test_tasks_toml "$d/home/.tasks.toml"
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$d/home/data/backlog.md"
+  jg_test_beads_home "$d/home"
   mkdir -p "$d/home/state/procevent" "$d/home/projects"
   : > "$d/home/state/procevent/signoff.source"
   printf '{"decision":"yes"}\n' > "$d/decision.json"

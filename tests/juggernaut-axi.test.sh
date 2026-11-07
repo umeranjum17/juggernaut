@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Behavior test for the read verbs of `juggernaut-axi` (slices 1 and 2): status, lanes, wakes,
 # tasks (list, show, ready), holds, and pr.
-# Drives the real CLI over a fixture home and checks the tasks-axi conventions (count line,
+# Drives the real CLI over a fixture home and checks the backlog conventions (count line,
 # tabular rows, plain-words empty state, cut text with --full, --fields, --limit, help[]),
 # TOON/JSON parity, and that reading never changes a record.
 set -u

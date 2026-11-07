@@ -51,8 +51,8 @@
 
 _JG_X_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! command -v jg_backlog_atomic_transition >/dev/null 2>&1; then
-  # shellcheck source=bin/jg-tasks-axi-lib.sh
-  . "$_JG_X_LIB_DIR/jg-tasks-axi-lib.sh"
+  # shellcheck source=bin/jg-backlog-lib.sh
+  . "$_JG_X_LIB_DIR/jg-backlog-lib.sh"
   # shellcheck source=bin/jg-backlog-transition-lib.sh
   . "$_JG_X_LIB_DIR/jg-backlog-transition-lib.sh"
 fi

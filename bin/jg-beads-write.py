@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""jg-beads-write.py - serve tasks-axi's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
+"""jg-beads-write.py - serve the backlog's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
 
 Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|relink> [args...]
        BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
 
-bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-axi.sh's intake and captain guards.
-Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi's lines on stdout.
+bin/jg-backlog-lib.sh's jg_backlog_beads_write starts it after bin/jg-backlog.sh's intake and captain guards.
+Every bd call goes through bin/jg-beads.sh. Replies and refusals print the backlog's lines on stdout.
 kind captain is bd's decision type and shows to callers as captain, any other kind is metadata.kind, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
-and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as tasks-axi writes it.
+and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as the backlog writes it.
 A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; a dated hold is status deferred
 with --until as defer_until at UTC midnight, because bd reads a bare date in local time, and bd ready wakes it to open;
 a held row keeps its assignee, and that owner is what keeps it in flight, across that wake too.
@@ -16,7 +16,7 @@ a held row keeps its assignee, and that owner is what keeps it in flight, across
 cycle, and that refusal reaches stderr with bd's exit status.
 start, reopen and done move status only from the status they expect, so a row that moved first exits 13 and changes
 nothing, with one refusal line on stdout. A held row keeps its status on reopen. start takes an open row or a deferred
-row past its date: one status column cannot read in flight and held at once, so where tasks-axi would start a held or
+row past its date: one status column cannot read in flight and held at once, so where the backlog would start a held or
 done row this refuses.
 A worker's lane owns its row: the assignee is the lane named by JG_BACKLOG_LANE and metadata.agent is JG_BACKLOG_AGENT.
 start claims a row with no owner, and JG_BACKLOG_LANE_HANDOVER=1 takes it from the owner it read, so a row another lane
@@ -62,7 +62,7 @@ def bd(*args):
     if run.returncode == STALE:
         said = [line.split("mismatch: ", 1)[1] for line in (run.stdout + run.stderr).splitlines() if "mismatch: " in line]
         view.refuse("stale write refused: " + (said[0] if said else "the row moved"),
-                    f"Run `tasks-axi show {args[1]}` and decide again", "STALE_WRITE", STALE)
+                    f"Run `jg-backlog.sh show {args[1]}` and decide again", "STALE_WRITE", STALE)
     if run.returncode:
         sys.stderr.write(run.stdout + run.stderr)
         sys.exit(run.returncode)
@@ -136,7 +136,7 @@ def eased(ident):
 def target(items, ident):
     row = view.named(items.values(), ident)
     if row is None:
-        view.refuse('Task "%s" not found in this backlog' % ident, "Run `tasks-axi list` to see existing tasks",
+        view.refuse('Task "%s" not found in this backlog' % ident, "Run `jg-backlog.sh list` to see existing tasks",
                     "NOT_FOUND", 1)
     return row
 
@@ -145,7 +145,7 @@ def plain(items, ident):
     row = target(items, ident)
     if "followup" in (row.get("metadata") or {}):
         view.refuse("Public-followup content and state cannot change through generic commands",
-                    "Use `tasks-axi public-followup record-delivery` or `tasks-axi public-followup waive`")
+                    "Use `jg-backlog.sh public-followup record-delivery` or `jg-backlog.sh public-followup waive`")
     return row
 
 
@@ -225,22 +225,22 @@ def respond(found, action, ident, line, tips, card=True, **extra):
 
 
 def tips_for(ident):
-    return ["Run `tasks-axi start %s` to move it to in flight" % ident,
-            "Run `tasks-axi block %s --by <other>` to record a dependency" % ident]
+    return ["Run `jg-backlog.sh start %s` to move it to in flight" % ident,
+            "Run `jg-backlog.sh block %s --by <other>` to record a dependency" % ident]
 
 
 def add(args):
     found, words = view.flags(args, FIELDS + ("--prefix", "--blocked-by", "--label"), ("--queue", "--mint", "--json"))
     if "--mint" in found:
         if len(words) != 1 or not words[0]:
-            view.refuse("--mint requires a title", 'Run `tasks-axi add "<title>" --mint`')
+            view.refuse("--mint requires a title", 'Run `jg-backlog.sh add "<title>" --mint`')
         if "--prefix" in found:
             view.refuse("--prefix cannot go with --mint: bd names a minted id under the store's own prefix",
-                        'Run `tasks-axi add <prefix>-<name> "<title>"` to choose the id')
+                        'Run `jg-backlog.sh add <prefix>-<name> "<title>"` to choose the id')
     elif not 1 <= len(words) <= 2:
-        view.refuse("Expected 1-2 positional arguments, got %d" % len(words), 'usage: tasks-axi add <id> "<title>" [flags]')
+        view.refuse("Expected 1-2 positional arguments, got %d" % len(words), 'usage: jg-backlog.sh add <id> "<title>" [flags]')
     elif len(words) == 1:
-        view.refuse("A title is required", 'Run `tasks-axi add <id> "<title>"`')
+        view.refuse("A title is required", 'Run `jg-backlog.sh add <id> "<title>"`')
     body = checked(found)
     items = rows()
     title = words[-1]
@@ -275,7 +275,7 @@ def add(args):
 def update(args):
     found, ids = view.flags(args, FIELDS + ("--title",), ("--archive-body", "--json"))
     if len(ids) != 1:
-        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi update <id> [flags]")
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: jg-backlog.sh update <id> [flags]")
     items = rows()
     row = plain(items, ids[0])
     ident = row["id"]
@@ -310,7 +310,7 @@ def update(args):
         changed.append("priority")
     if words:
         changed.append("links")
-    tips = ["Run `tasks-axi show %s --full` to see the result" % ident]
+    tips = ["Run `jg-backlog.sh show %s --full` to see the result" % ident]
     if not cmd:
         respond(found, "update", ident, "updated %s already" % ident, tips, already=True)
         return
@@ -323,7 +323,7 @@ def update(args):
 def done(args):
     found, ids = view.flags(args, ("--pr", "--report", "--note", "--keep"), ("--no-prune", "--json"))
     if len(ids) != 1:
-        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi done <id> [flags]")
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: jg-backlog.sh done <id> [flags]")
     checked(found)
     items = rows()
     row = plain(items, ids[0])
@@ -348,7 +348,7 @@ def done(args):
         bd("update", ident, *cmd)
     tail = "".join(" (%s %s)" % (name, found["--" + name]) for name in ("pr", "report") if "--" + name in found)
     line = "done %s%s -> Done%s" % (ident, " already" if already else "", tail)
-    tips = ["Run `tasks-axi ready` to dispatch work unblocked by this"]
+    tips = ["Run `jg-backlog.sh ready` to dispatch work unblocked by this"]
     extra = {"already": True} if already else {}
     respond(found, "done", ident, line, tips, card=False, **extra, pruned=0)
 
@@ -356,7 +356,7 @@ def done(args):
 def block(args):
     found, ids = view.flags(args, ("--by",), ("--json",))
     if len(ids) != 1:
-        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi block <id> --by <other>")
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: jg-backlog.sh block <id> --by <other>")
     ident, other = ids[0], found.get("--by")
     if not other:
         view.refuse("--by <id> is required", "Name the other task, e.g. `--by treehouse-lease-t4`")
@@ -371,8 +371,8 @@ def block(args):
     already = "blocked-by:" + other in item["deps"].split(",")
     if not already:
         bd("dep", "add", ident, other)
-    tips = ["Run `tasks-axi unblock %s --by <other>` to clear it" % ident,
-            "Run `tasks-axi ready` to see what is still dispatchable"]
+    tips = ["Run `jg-backlog.sh unblock %s --by <other>` to clear it" % ident,
+            "Run `jg-backlog.sh ready` to see what is still dispatchable"]
     line = "block %s %s %s" % (ident, "already blocked-by" if already else "-> blocked-by", other)
     extra = {"already": True} if already else {}
     respond(found, "block", ident, line, tips, card=False, **extra, blocked_by=other)
@@ -381,7 +381,7 @@ def block(args):
 def unblock(args):
     found, ids = view.flags(args, ("--by",), ("--json",))
     if len(ids) != 1:
-        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi unblock <id> --by <other>")
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: jg-backlog.sh unblock <id> --by <other>")
     if not found.get("--by"):
         view.refuse("--by <id> is required", "Name the other task, e.g. `--by treehouse-lease-t4`")
     items = rows()
@@ -391,7 +391,7 @@ def unblock(args):
     already = "blocked-by:" + other not in view.task(row, items)["deps"].split(",")
     if not already:
         bd("dep", "remove", ident, other)
-    tips = ["Run `tasks-axi ready` to see newly unblocked work"]
+    tips = ["Run `jg-backlog.sh ready` to see newly unblocked work"]
     line = "unblock %s %s %s" % (ident, "already not blocked-by" if already else "-> cleared", other)
     extra = {"already": True} if already else {}
     respond(found, "unblock", ident, line, tips, card=False, **extra, blocked_by=other)
@@ -400,14 +400,14 @@ def unblock(args):
 def one_row(verb, args):
     found, ids = view.flags(args, (), ("--json",))
     if len(ids) != 1:
-        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi %s <id>" % verb)
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: the backlog %s <id>" % verb)
     row = plain(rows(), ids[0])
     return found, row["id"], row
 
 
 def start(args):
     found, ident, row = one_row("start", args)
-    tips = ["Run `tasks-axi done %s --pr <url>` when it ships" % ident]
+    tips = ["Run `jg-backlog.sh done %s --pr <url>` when it ships" % ident]
     owner, status, held = lane(row) or unowned(row), row["status"], view.holding(row)
     mine = owner and row.get("assignee") == owner[1]
     if status == "in_progress" or (held and view.flying(row)):
@@ -423,7 +423,7 @@ def start(args):
 
 def reopen(args):
     found, ident, row = one_row("reopen", args)
-    tips = ["Run `tasks-axi start %s` to move it to in flight" % ident]
+    tips = ["Run `jg-backlog.sh start %s` to move it to in flight" % ident]
     if row["status"] not in ("in_progress", "closed"):
         if row.get("assignee"):
             bd("update", ident, *released(row), "--if-status", row["status"])
@@ -444,7 +444,7 @@ def hold_date(value):
 def hold(args):
     found, ids = view.flags(args, ("--reason", "--kind", "--until"), ("--json",))
     if len(ids) != 1:
-        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi hold <id> --reason <text>")
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: jg-backlog.sh hold <id> --reason <text>")
     reason, kind = found.get("--reason"), found.get("--kind")
     if reason is None:
         view.refuse("--reason <text> is required", 'Pass a reason, e.g. --reason "captain decision pending"')
@@ -457,7 +457,7 @@ def hold(args):
     row = plain(items, ids[0])
     ident = row["id"]
     item = view.task(row, items)
-    tips = ["Run `tasks-axi unhold %s` to resume dispatch" % ident, "Run `tasks-axi list --state held` to review paused work"]
+    tips = ["Run `jg-backlog.sh unhold %s` to resume dispatch" % ident, "Run `jg-backlog.sh list --state held` to review paused work"]
     if item["held"] == "yes" and (item["hold_reason"], item["hold_kind"], item["hold_until"]) == (reason, kind or "-", until or "-"):
         respond(found, "hold", ident, "hold %s already held" % ident, tips, already=True)
         return
@@ -476,7 +476,7 @@ def hold(args):
 def unhold(args):
     found, ids = view.flags(args, (), ("--json",))
     if len(ids) != 1:
-        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi unhold <id>")
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: jg-backlog.sh unhold <id>")
     items = rows()
     row = plain(items, ids[0])
     ident = row["id"]
@@ -485,7 +485,7 @@ def unhold(args):
     cmd += ["--defer", ""] if row.get("defer_until") else []
     back = "in_progress" if view.flying(row) else "open"
     cmd += ["--status", back] if row.get("status") not in ("closed", back) else []
-    tips = ["Run `tasks-axi ready` to see dispatchable work"]
+    tips = ["Run `jg-backlog.sh ready` to see dispatchable work"]
     if not cmd:
         respond(found, "unhold", ident, "unhold %s already not held" % ident, tips, already=True)
         return

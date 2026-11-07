@@ -21,10 +21,10 @@ the registry no longer names, parks under main with a `parked-home:<name>` label
 file and `cut` refuses it, so it stays on the old path until proved. settle.json lists each group a person should read.
 
 `cut` moves one home and only `--order`, the text of the order to do so, lets it start. It takes data/backlog.md.lock,
-a non-empty lock every tasks-axi writer refuses on and no reclaim touches, so writes stop for the whole cut and the old
+a non-empty lock every backlog writer refuses on and no reclaim touches, so writes stop for the whole cut and the old
 files can never move again. It refuses if those files differ from the copy, then imports through bin/jg-beads.sh into a
-fresh store, checks the export and counts against the manifest, runs `jg-beads.sh check`, writes config/beads-dir and
-config/backlog-backend, reads every row back through bin/jg-tasks-axi.sh, and makes the old files read-only.
+fresh store, checks the export and counts against the manifest, runs `jg-beads.sh check`, writes config/beads-dir,
+reads every row back through bin/jg-backlog.sh, and makes the old files read-only.
 data/beads-cut.json records each phase and what the home held. A failed step undoes the cut; a killed one leaves the
 record, and `back` finishes the undo. Running `cut` again on a finished home changes nothing.
 
@@ -335,8 +335,8 @@ def beads(store, *args):
 
 def tasks(home_dir, *args):
     env = {k: v for k, v in os.environ.items() if k not in ('BEADS_DIR', 'JG_DATA_OVERRIDE', 'JG_CONFIG_OVERRIDE', 'JG_STATE_OVERRIDE')}
-    run = subprocess.run([f'{HERE}/jg-tasks-axi.sh', *args], capture_output=True, text=True, env={**env, 'JG_HOME': home_dir})
-    if run.returncode: raise Stop(f"jg-tasks-axi.sh {args[0]} failed: {(run.stderr or run.stdout).strip()[-400:]}")
+    run = subprocess.run([f'{HERE}/jg-backlog.sh', *args], capture_output=True, text=True, env={**env, 'JG_HOME': home_dir})
+    if run.returncode: raise Stop(f"jg-backlog.sh {args[0]} failed: {(run.stderr or run.stdout).strip()[-400:]}")
     return run.stdout
 
 def read_back(a, home_dir):
@@ -365,13 +365,13 @@ def cut(a):
     if h in reg['remote']: raise Stop(f'{h}: a remote home stays on the old path until proved')
     if h in reg.get('parked', {}): raise Stop(f'{h}: a parked home has no store; its rows cut with main')
     if not want or not os.path.exists(f'{a.out}/{h}.jsonl'): raise Stop(f'{h}: not in this plan')
-    if (text_of(f'{home_dir}/config/backlog-backend') or '').strip() == 'beads': raise Stop(f'{h}: this home already reads a Beads store')
+    if (text_of(f'{home_dir}/config/beads-dir') or '').strip(): raise Stop(f'{h}: this home already reads a Beads store')
     store = os.path.abspath(a.store)
     parent = os.path.dirname(store)
     if os.path.basename(store) != '.beads': raise Stop('--store must be a BEADS_DIR, a path ending in .beads')
     if os.path.exists(parent) and os.listdir(parent): raise Stop(f'{parent} is not empty; a cut needs a fresh store')
     token = f'beads-cut {h} {int(time.time())}\n'
-    config = {n: text_of(f'{home_dir}/config/{n}') for n in ('backlog-backend', 'beads-dir')}
+    config = {n: text_of(f'{home_dir}/config/{n}') for n in ('beads-dir',)}
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:
@@ -401,7 +401,6 @@ def cut(a):
         beads(store, 'check')
         save(rec, 'verified')
         put(f'{home_dir}/config/beads-dir', store + '\n')
-        put(f'{home_dir}/config/backlog-backend', 'beads\n')
         save(rec, 'switched')
         count = read_back(a, home_dir)
         for f in live: os.chmod(f'{home_dir}/data/{f}', rec['files'][f]['mode'] & ~0o222)

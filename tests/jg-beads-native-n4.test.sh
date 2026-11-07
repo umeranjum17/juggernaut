@@ -6,8 +6,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$HERE/lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
-. "$ROOT/bin/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
+. "$ROOT/bin/jg-backlog-lib.sh"
 WRAPPER=$ROOT/bin/jg-beads.sh
 WRITE=$ROOT/bin/jg-beads-write.py
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
@@ -91,7 +91,7 @@ provider ready | sed -n 1p | grep -q '^count: [0-9]*$' || fail "ready must open 
 assert_contains "$(provider ready)" "ready[" "ready must print its table"
 assert_contains "$(provider ready)" "{id,state,kind,repo,title}:" "ready must keep its columns"
 assert_contains "$(provider ready)" "ready_public_followups: 0 delivery-ready obligations" "ready must keep its follow-up line"
-assert_contains "$(provider ready)" "Run \`tasks-axi start <id>\` to dispatch one of these" "ready must keep its tip"
+assert_contains "$(provider ready)" "Run \`jg-backlog.sh start <id>\` to dispatch one of these" "ready must keep its tip"
 
 # 6. Nothing about the store changed: no table, column, trigger or rule was added.
 same "$("$WRAPPER" dolt sql -q "show create table issues" 2>&1)" "$before" "the issues table must be unchanged"

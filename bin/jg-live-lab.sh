@@ -486,7 +486,7 @@ text = open(path, encoding="utf-8").read()
 text = text.replace("{TASK}", os.environ["TASK_TEXT"], 1).replace("{JUGGERNAUT_SPEC}", os.environ["SPEC_TEXT"], 1)
 open(path, "w", encoding="utf-8").write(text)
 PY
-  (cd "$LAB" && lab_run JG_HOME="$LAB" "$LAB/bin/jg-tasks-axi.sh" add "$WORKER_ID" "[feature] lab gated worker" --kind ship --repo notes --priority 2 --body "the lab drives a gated worker end to end") >/dev/null || return 1
+  (cd "$LAB" && lab_run JG_HOME="$LAB" "$LAB/bin/jg-backlog.sh" add "$WORKER_ID" "[feature] lab gated worker" --kind ship --repo notes --priority 2 --body "the lab drives a gated worker end to end") >/dev/null || return 1
   (cd "$LAB" && lab_run JG_HOME="$LAB" "$LAB/bin/jg-spawn.sh" "$WORKER_ID" "$LAB/projects/notes" \
     --mode local-only --yolo on --harness claude --model claude-haiku-5-5 --effort low)
 }

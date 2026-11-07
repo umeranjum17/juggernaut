@@ -2,7 +2,7 @@
 # fleet-stall e2e: the real check against a fixture fleet - Main's home
 # (JG_STALL_ROOT) with lead records for muxr and writeboost, their two homes
 # (JG_STALL_BASE) with live lanes paused for more than 45 min, and a stub herdr
-# on PATH that shows both leads idle. No jg-flow-check or jg-tasks-axi exists in
+# on PATH that shows both leads idle. No jg-flow-check or jg-backlog exists in
 # the fixture until the last case, so the zero-busy guard stays out of the way
 # before it. A worker on its own
 # local CI and two workers on their own emulator runs, all behind example home
@@ -70,7 +70,7 @@ is "lead waits still count, path-only matches still do not" "$(run)" "muxr(1) wr
 export JG_MAIN_HOME=$JG_STALL_ROOT
 mkdir -p "$JG_STALL_ROOT/config" "$JG_STALL_ROOT/bin" "$JG_STALL_ROOT/working"
 ln -s "${FLEET_FLOW_CHECK:-$here/../../fleet-flow/bin/jg-flow-check.sh}" "$JG_STALL_ROOT/config/jg-flow-check.sh"
-cat > "$JG_STALL_ROOT/bin/jg-tasks-axi.sh" <<'EOF'
+cat > "$JG_STALL_ROOT/bin/jg-backlog.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "count: 3"; echo "ready[3]{id,state}:"; echo "  item-1,queued"; echo "  item-2,queued"; echo "  item-3,queued"
 EOF

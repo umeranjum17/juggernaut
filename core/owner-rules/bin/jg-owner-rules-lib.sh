@@ -16,10 +16,10 @@ jg_owner_rules_check() {
   local data=$1 id=$2 kind=$4 entry title ids verdict bin config backlog=
   bin=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)/bin
   config=${JG_CONFIG_OVERRIDE:-${JG_HOME:-${data%/*}}/config}
-  # shellcheck source=bin/jg-tasks-axi-lib.sh
+  # shellcheck source=bin/jg-backlog-lib.sh
   # shellcheck disable=SC1091
-  . "$bin/jg-tasks-axi-lib.sh"
-  if jg_backlog_present "$config" "$data/backlog.md" && ! backlog=$(jg_backlog_text "$config" "$data/backlog.md" 2>/dev/null); then
+  . "$bin/jg-backlog-lib.sh"
+  if ! backlog=$(jg_backlog_text "$config" 2>/dev/null); then
     echo "owner-rules: cannot read the backlog for $id" >&2
     exit 1
   fi

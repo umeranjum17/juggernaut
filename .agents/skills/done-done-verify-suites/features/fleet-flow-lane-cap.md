@@ -6,7 +6,7 @@ A home's lane cap counts live lanes only. A lane whose last event is more than 4
 
 ## Drive
 
-Run `bash fleet-flow/tests/jg-flow-check.test.sh`. It drives the real check over fixture lead homes with stub `jg-tasks-axi.sh` and `jg-crew-state.sh` (the stub prints a whole emitted line when its fixture holds one, so a kept copy reads exactly as the real script reports it).
+Run `bash fleet-flow/tests/jg-flow-check.test.sh`. It drives the real check over fixture lead homes with stub `jg-backlog.sh` and `jg-crew-state.sh` (the stub prints a whole emitted line when its fixture holds one, so a kept copy reads exactly as the real script reports it).
 
 ## Evidence
 

@@ -267,11 +267,6 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
-      - name: Install tasks-axi
-        run: |
-          set -eu
-          npm install -g tasks-axi
-          tasks-axi --version
       # Run through the read trace: it fails if the suite reads a file that
       # bin/jg-ci-scope.sh would not send to this lane, which is how a change to
       # such a file would skip the lane green (bin/jg-ci-area-reads.sh).
@@ -297,11 +292,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - name: Install tasks-axi
-        run: |
-          set -eu
-          npm install -g tasks-axi
-          tasks-axi --version
       - name: Run the fast evals
         run: bin/jg-ci-area-reads.sh --check evals -- bin/jg-fast-evals.sh
 
@@ -431,8 +421,6 @@ jobs:
           set -eu
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Install tasks-axi
-        run: npm install -g tasks-axi
       # The merge gate's rules are Rego (policy/gate/) and the guard host asks OPA, so the tests that
       # drive them need the pinned binary or they skip.
       - name: Install the pinned OPA

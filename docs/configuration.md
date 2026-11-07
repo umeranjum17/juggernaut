@@ -10,7 +10,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
-| Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
+| Backlog, preferences, and memory | [Backlog](#backlog-configbeads-dir), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
 | Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
@@ -385,40 +385,40 @@ A local `config/overwatch-kpi` reading `off` stops recording, which is for a lab
 `jg-overwatch-kpi.sh scorecard` reports the misses - feedback and micromanagement messages - per calendar day and per trailing week against a target of zero, with the link each one carries.
 The fleet view prints that scorecard on every render from the local ledger alone, so a render makes no network call; `scorecard --landed` adds whether each linked PR merged or each linked backlog ticket closed.
 
-## Backlog backend (.tasks.toml / config/backlog-backend)
+## Backlog (config/beads-dir)
 
-The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
-A home may instead select another tasks-axi adapter such as Beads through its own `.tasks.toml` or `TASKS_AXI_BACKEND`; Juggernaut still uses only tasks-axi verbs for routine backlog reads and mutations, and the adapter maps `start` and evidence-bearing `done` transitions to its native statuses and evidence fields.
-A local `config/backlog-backend` reading `beads` is a separate path: `bin/jg-tasks-axi.sh` serves its reads from the bd store named by the absolute `BEADS_DIR` in `config/beads-dir`, serves `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold` and `unhold` the same way, and refuses every other write for now.
+Every home keeps its backlog in a Beads store.
+The absolute `BEADS_DIR` in `config/beads-dir` names it, and `bin/jg-backlog.sh` is the one command that reads and writes it.
+`bin/jg-beads.sh` is the only guarded way to run `bd` and `dolt`; `bin/jg-beads.sh check` proves the pinned versions, the hold rule and telemetry off.
+The wrapper serves `show`, `list`, `ready`, `add`, `update`, `done`, `block`, `unblock`, `start`, `reopen`, `hold`, `unhold` and `public-followup`, and refuses every other write.
 
 A Goal lives in a small Goal-only Beads store of its own. `config/goal-beads-dir` (or `GOAL_BEADS_DIR`) names its absolute `BEADS_DIR`, outside any git tree, and `bin/jg-goal.sh` reaches it only through `bin/jg-beads.sh`. The pinned bd and dolt must be in place; the wrapper's refusal is the message, and nothing falls back to another bd. Create the store with `BEADS_DIR=<dir> bin/jg-beads.sh init --prefix goal`.
+
 The `start`, `reopen` and `done` moves write only if the row still has the status they read, so a row a second writer moved refuses with exit 13, `code: STALE_WRITE`, and changes nothing.
 [`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh) drives the same provider directly, so spawn, teardown and bootstrap keep their gates on that store.
 `bin/jg-pr-merge.sh`, `bin/jg-merge-local.sh` and `core/merge-on-green/` read holds and linked decisions through `bin/jg-captain-hold.sh`, close rows through that provider, and refuse a merge when the store cannot be read.
-The lane on such a row is the assignee, set to the task record's `spawn_gen`, and `metadata.agent`, set to its harness.
+The lane on a row is the assignee, set to the task record's `spawn_gen`, and `metadata.agent`, set to its harness.
 A fresh spawn takes the row only if it has no owner, so a second spawn on a row another lane holds refuses with exit 13 and starts nothing that stays; a relaunch hands the row over from the owner it read, `done` keeps the assignee as history, and `reopen` clears it.
-The session digest, the fleet snapshot, the inbox status, the owner's asks, the Squad Lead dormant sweep, ticket keys, the what's-left view, voice status, the flow check and the owner rules read that store as well, and a failed read reports the failure rather than an empty backlog.
-Readers of `data/backlog.md` not named here do not yet see that store.
-`bin/jg-backlog-handoff.sh` moves rows between homes when either side keeps a store, by `bd export` and `bd import`, and keeps the body, holds, blockers and links; a row that crosses a file home also loses its other labels, comments and created date.
+The session digest, the fleet snapshot, the inbox status, the owner's asks, the Squad Lead dormant sweep, ticket keys, the what's-left view, voice status, the flow check and the owner rules read that store, and a failed read reports the failure rather than an empty backlog.
+`bin/jg-backlog-handoff.sh` moves rows between homes by `bd export` and `bd import`, and keeps the body, holds, blockers and links.
 A crash leaves the rows on both sides and rerunning the same handoff finishes the move.
-A remote handoff moves rows through a file on either side, and asks the receiver first, so a home that cannot file rows refuses before anything is staged.
-On such a home, bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check`, which proves the pinned versions, the hold rule and telemetry off, and report any failure.
-`bin/jg-remote-doctor.sh` does not require `tasks-axi` on such a home.
+A remote handoff stages the rows on the receiver, and asks it first, so a home that cannot file rows refuses before anything is staged.
+Bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check` and report any failure.
 
-A home moves to that path by one guarded step, [`bin/jg-beads-migrate.py`](../bin/jg-beads-migrate.py) `cut`, run on a written order and never by default.
-The cut holds `data/backlog.md.lock` so no writer can touch the old files, imports the plan, checks the store against the manifest row by row, switches the two config files, and leaves `data/backlog.md` and `data/done-archive.md` read-only.
+[`bin/jg-beads-migrate.py`](../bin/jg-beads-migrate.py) `cut` moves a home that still holds old markdown files (`data/backlog.md`, `data/done-archive.md`) into a store, run on a written order and never by default.
+The cut holds `data/backlog.md.lock` so no writer can touch the old files, imports the plan, checks the store against the manifest row by row, writes `config/beads-dir`, and leaves the old files read-only.
 Any failure puts the home back on its old files by itself.
 `back` undoes a finished or stopped cut, restores the old files and config, and keeps the store aside.
 It refuses while the store holds rows written since the cut, naming them, and `--drop-new-writes` goes back anyway with those rows saved in `data/beads-after-cut.<at>.jsonl`.
 A cut needs a plan from just before it, because it refuses a home whose old files changed since the copy.
 A cut switches the home to the store in the same step, so it runs only once that home's own `bin/` already carries the Beads reader: a home still running an earlier release stays on its old files until it updates.
 The lock stops every writer for the whole cut, so cut a home only while it is quiet, with no lane writing to it.
-A remote home stays on the old path, and a parked home's rows cut with main under a `parked-home:<name>` label.
+A parked home's rows cut with main under a `parked-home:<name>` label.
 Closed rows move with the rest, so `show` and the write verbs find a row by the name it carried before the move as well as by its new id.
 
 ### Backlog intake (config/backlog-intake-loose)
 
-`bin/jg-tasks-axi.sh add` files only work that says what it is and why it matters.
+`bin/jg-backlog.sh add` files only work that says what it is and why it matters.
 The title starts with a type tag: `[captain-ask]`, `[feature]`, `[design-ux]`, `[security]` or `[blocker]`.
 The first line of the body is a one-line justification; for `[captain-ask]` it is the captain's own words.
 Anything else, such as refactors, extra proof, tooling or review follow-ups, goes in a report instead of the backlog.
@@ -443,62 +443,38 @@ When the automatic transition gate applies, dispatch and completion each move th
 The ordinary successful path therefore keeps the backlog and live task set in sync ([`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh)).
 Under that gate, dispatch accepts only an unheld, unblocked Queued or In flight item in this home; a missing, Done, held, or dependency-blocked item is refused before any endpoint or local copy is created.
 
-[`bin/jg-tasks-axi.sh`](../bin/jg-tasks-axi.sh) refuses `add --start` and its `create --start` alias.
+[`bin/jg-backlog.sh`](../bin/jg-backlog.sh) refuses `add --start` and its `create --start` alias.
 Either would place a row In flight without a task record, status file, or inbox, counting it as live work that nobody is doing.
-The wrapper still passes through the documented direct transition `tasks-axi start <id>`.
+The wrapper still passes through the documented direct transition `jg-backlog.sh start <id>`.
 Completion refuses to report success until the item is closed, and session start reconciles this home's own books after an interrupted run.
 
 An owner ask comes first: the wrapper files a `[captain-ask]` item at priority 0, so `ready` offers it before other work, and it refuses an `add`, `update` or retitle that would put such an item at any other priority.
-The same wrapper also refuses to remove or close a `[captain-ask]` row, or to drop its tag through `update` or `edit --title`, unless the row links a merged pull request or a Recon report, or the call carries `--captain-quote '<his words>'`, or `--confirm-card <id>` naming a separate board card that names the row and that `bin/jg-captain-hold.sh answered` finds answered. A recorded answer on the row itself no longer closes it, because a rejected option means redo the options, never cancel. The quote or card lands in the ticket note and in `data/captain-closures.md`; it refuses a raw `hold` of such a row, and an unanswered ask in the archive set blocks a close or prune only when that archive would move it past `done_keep`. The refusal names the row and exits 2. The guard covers only commands run through the wrapper, and the automatic dispatch and completion transitions do not use it ([`bin/jg-tasks-axi.sh`](../bin/jg-tasks-axi.sh) owns the complete refusal list).
+The same wrapper also refuses to remove or close a `[captain-ask]` row, or to drop its tag through `update` or `edit --title`, unless the row links a merged pull request or a Recon report, or the call carries `--captain-quote '<his words>'`, or `--confirm-card <id>` naming a separate board card that names the row and that `bin/jg-captain-hold.sh answered` finds answered. A recorded answer on the row itself no longer closes it, because a rejected option means redo the options, never cancel. The quote or card lands in the ticket note and in `data/captain-closures.md`; it refuses a raw `hold` of such a row, and an unanswered ask in the archive set blocks a close or prune only when that archive would move it past `done_keep`. The refusal names the row and exits 2. The guard covers only commands run through the wrapper, and the automatic dispatch and completion transitions do not use it ([`bin/jg-backlog.sh`](../bin/jg-backlog.sh) owns the complete refusal list).
 
 When a spawn is interrupted after launch delivery began, its exit path re-reads the paired task record and the backlog row under the same per-task lock as the commit, repairs a row the commit believed it had moved, and reports only what was verified or honestly attempted, never intent phrased as outcome ([`bin/jg-spawn.sh`](../bin/jg-spawn.sh); [`tests/jg-backlog-atomicity.test.sh`](../tests/jg-backlog-atomicity.test.sh)).
 
 ### Which backlog receives a transition
 
-Automatic transitions run from the configured data directory's parent, letting that home's effective tasks-axi configuration address its selected adapter while keeping relative Recon report links rooted there.
-A markdown backlog is additionally addressed by an explicit `--file` at `<data>/backlog.md`, so the change lands in the home that owns the task regardless of the caller's working directory.
-
-Any other configured adapter is addressed by that root alone, because `--file` would override the adapter's own workspace path.
+Automatic transitions address the store named by the target home's own `config/beads-dir`, so the change lands in the home that owns the task regardless of the caller's working directory.
 
 ### Exemptions and refusal conditions
 
-The gate does not apply to persistent Squad Leads, manual-backend homes, or markdown homes without a backlog file.
-Those retain their existing persistent-agent, manual, or ad-hoc lifecycle behavior.
-Configured non-markdown adapters remain active without that file.
-Migrated-hold resolution on a beads home reads its graph path, binary, and prefix from the root `.tasks.toml` `[beads]` section only, and refuses (rc=2) when the beads backend is selected elsewhere (a `TASKS_AXI_BACKEND` override or user-level config) with no root-level `[beads]` section.
-
-On an automatic-backend home, missing or incompatible `tasks-axi`, an unresolvable configured data directory, or one containing a control byte fails lifecycle work before mutation.
-An unreadable backend configuration can refuse lifecycle work before the no-backlog exemption applies; repair the configuration named in the diagnostic ([backend resolution contract](../bin/jg-tasks-axi-lib.sh)).
+The gate does not apply to persistent Squad Leads, which are not work items.
+A home with no store, an unresolvable configured data directory, or one containing a control byte fails lifecycle work before mutation; repair the configuration named in the diagnostic ([resolution contract](../bin/jg-backlog-lib.sh)).
 
 ### Handoffs between homes
 
-Squad Lead handoffs bypass that routine-backend choice: `jg-backlog-handoff.sh` keeps only its own fleet-level validation and delegates the item move to `tasks-axi mv`; its [script header](../bin/jg-backlog-handoff.sh) owns route-specific wake outcomes and remote outbox release.
-It moves in-scope `## Queued` items only and refuses `## In flight` and historical `## Done` records, which stay with their home for pruning or archiving.
+`jg-backlog-handoff.sh` keeps its own fleet-level validation and moves the rows through the stores; its [script header](../bin/jg-backlog-handoff.sh) owns route-specific wake outcomes and remote outbox release.
+It moves in-scope queued items only and refuses in-flight and done records, which stay with their home.
 
-Handoff item bodies must use at least two leading spaces, and the helper refuses a selected item with a single-space or tab-indented continuation rather than risk orphaning it.
-Because bootstrap requires `tasks-axi` on `PATH` on every profile, that delegation works fleet-wide, and the `config/backlog-backend=manual` knob governs Juggernaut's own hand-editing of its backlog, not this validated helper.
+### Required tools
 
-### Required tools and manual mode
-
-Compatible means the installed build passes the shared version and feature probe owned by [`bin/jg-tasks-axi-lib.sh`](../bin/jg-tasks-axi-lib.sh), including the atomic multi-ID move required by handoff delegation.
-Bootstrap requires compatible `tasks-axi` on every profile; see "Toolchain" below for missing-tool reporting and silent default-backend behavior.
-
-Set the local, gitignored `config/backlog-backend` file to `manual` to force manual backlog editing and suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not missing-tool reporting.
-A `manual` home owns its backlog file outright: the lifecycle transitions above are skipped there, dispatch and completion never fail over the file's contents, and a completed teardown prints the hand edit that is owed instead.
-
-Absent or `tasks-axi` selects the tasks-axi path.
-On the default markdown adapter, tasks-axi and manual edits produce the same `## In flight`, `## Queued`, and `## Done` sections.
+Bootstrap requires the pinned `bd` and `dolt` (the `toolchain.versions` rows), installed each against its recorded hash and never started; see "Toolchain" below for missing-tool reporting.
 
 ### Using a separate operational home
 
-The tracked `.tasks.toml` paths resolve against the directory tasks-axi runs in, not `JG_HOME`, so a bare `tasks-axi` run from the code root addresses the code root's `data/` whenever the home lives elsewhere.
-tasks-axi replaces its target by renaming a temporary file over it.
-If the target is a symlink, the write replaces it with a regular file.
-Linking the code-root copy into the home therefore forks the queue on the first write instead of keeping the copies in sync.
-
-Run every routine Juggernaut backlog command through [`bin/jg-tasks-axi.sh`](../bin/jg-tasks-axi.sh).
-Like lifecycle transitions, it addresses this home's backlog and archive from any working directory.
-Bootstrap reports a code-root `data/backlog.md` or `data/done-archive.md` that is not this home's own file as a `BACKLOG_RECONCILE: code-root ...` line, even in a read-only session.
+`bin/jg-backlog.sh` reads `config/beads-dir` of `JG_HOME`, so a bare run from the code root addresses the home's own store whenever the home lives elsewhere.
+Run every routine Juggernaut backlog command through [`bin/jg-backlog.sh`](../bin/jg-backlog.sh).
 
 ## Delivery risk (config/delivery-risk-loose)
 
@@ -1320,7 +1296,7 @@ It is primary-authoritative inherited configuration, so one value in the main ho
 An open lane is a `state/<task>.meta` whose `kind` is `ship` or `scout` and whose last status line is not `paused`, `blocked`, `needs-decision`, `done` or `failed`; a Squad Lead endpoint's own meta is not a lane of that home.
 A lane parked on a held PR or a merge freeze is therefore not open, and a freeze never counts as a reason to leave a free lane idle.
 
-In every home, primary or Squad Lead, a scan whose home sits below the floor with `jg-tasks-axi.sh ready` work raises one check wake naming the open and target counts and the first ready ids, re-raised while the condition holds every `JG_READY_WORK_RESURFACE_SECS` (1800 by default), and at once when `bin/jg-teardown.sh` or `bin/jg-pr-check.sh` frees a project place and stamps `state/.capacity-freed`, because that is what makes an already-surfaced set startable.
+In every home, primary or Squad Lead, a scan whose home sits below the floor with `jg-backlog.sh ready` work raises one check wake naming the open and target counts and the first ready ids, re-raised while the condition holds every `JG_READY_WORK_RESURFACE_SECS` (1800 by default), and at once when `bin/jg-teardown.sh` or `bin/jg-pr-check.sh` frees a project place and stamps `state/.capacity-freed`, because that is what makes an already-surfaced set startable.
 Ready intake uses the base heartbeat interval independently of idle-heartbeat backoff and runs before an away heartbeat can end the cycle; held and future-dated work stays excluded by the backlog's ready query.
 When the ready set empties on a successful read - every named item since held or in flight - the check withdraws the queued ready-work row, so a notification whose condition no longer holds stops being presented instead of repeating until an acknowledgement that may never come, and it re-raises from scratch only when the condition holds again.
 That empty observation keeps the resurface record, so a transient empty set cannot reset the `JG_READY_WORK_RESURFACE_SECS` window and replay the identical set inside it.
@@ -1920,12 +1896,12 @@ Every home requires:
 - no-mistakes v1.46.0 or newer.
 - Compatible gh-axi.
 - chrome-devtools-axi.
-- Compatible tasks-axi, as specified in "Backlog backend" above.
+- Pinned `bd` and `dolt`, as specified in "Backlog" above.
 - Compatible quota-axi.
 - done-done (`done-done-axi`, at its [`toolchain.versions`](../toolchain.versions) row).
 - sign-off-axi (at its `toolchain.versions` row).
 
-[`bin/jg-bootstrap.sh`](../bin/jg-bootstrap.sh) owns the axi-family floor policy and the gh-axi floor, while [`bin/jg-tasks-axi-lib.sh`](../bin/jg-tasks-axi-lib.sh) and [`bin/jg-quota-axi-lib.sh`](../bin/jg-quota-axi-lib.sh) hold their own tools' floor constants.
+[`bin/jg-bootstrap.sh`](../bin/jg-bootstrap.sh) owns the axi-family floor policy and the gh-axi floor, while [`bin/jg-quota-axi-lib.sh`](../bin/jg-quota-axi-lib.sh) holds its own tool's floor constants.
 The two companion tools install at the exact published npm version their `toolchain.versions` rows name, never from git, and that row is their floor too.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
 [`toolchain.versions`](../toolchain.versions) is the single owner of the exact version of every tool the toolchain installs, and every floor these checks enforce derives from its rows; its header owns the bump ritual.
@@ -1934,7 +1910,7 @@ This section is the single owner of that universal toolchain list; backend guide
 Both `install.sh` and every session start also run [`bin/jg-axi-link.sh`](../bin/jg-axi-link.sh), which writes one launcher, `~/.local/bin/juggernaut-axi`, that runs `bin/juggernaut-axi` of the home named by `JG_HOME`, of the checkout the current directory is in, or of the home that wrote it.
 A file already there that is not the launcher is left alone and named.
 
-In that list, no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
+In that list, no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and the Beads store plus quota-axi back backlog mutations and quota-aware array dispatch.
 A visual report or decision surface is a sign-off board report, published with sign-off-axi; nothing in this list provides a separate review server.
 
 **Backend requirements**
@@ -1973,9 +1949,9 @@ Sign-off arming stays per home and is never done for the user; the first wiring 
 
 **Missing-tool diagnostics**
 
-`tasks-axi` and `quota-axi` are essential bootstrap tools in every profile.
+`bd`, `dolt` and `quota-axi` are essential bootstrap tools in every profile.
 
-- An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)`; when `config/backlog-backend` is not `manual`, a home with a configured non-markdown adapter or a markdown backlog refuses lifecycle mutation until compatible `tasks-axi` is on `PATH`, while a manual-backend home keeps its backlog hand-edited.
+- An absent or unpinned `bd` or `dolt` reports a `MISSING:` line naming the pinned row; a home with no `config/beads-dir` refuses lifecycle mutation until the store is configured.
 - An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)`.
 - An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; Juggernaut cannot resolve a profile array without a compatible binary.
 
@@ -2362,7 +2338,7 @@ Truthy means anything except unset, empty, `0`, `false`, `no`, or `off`; an expl
 ### Promised public replies (state/public-followup)
 
 A relay request that spawns real work can leave Juggernaut owing a specific public reply in a specific thread.
-That promise is a typed `kind=public-followup` obligation whose state machine is owned entirely by `tasks-axi public-followup`, or by `bin/jg-beads-followup.py` on a Beads home, while the full private conversation context stays only in `state/x-context/`.
+That promise is a typed `kind=public-followup` obligation whose state machine is owned entirely by `jg-backlog.sh public-followup`, or by `bin/jg-beads-followup.py` on a Beads home, while the full private conversation context stays only in `state/x-context/`.
 
 Juggernaut's bounded registration retains the obligation's public-safe request binding so a delivered loop can be rechained without the original inbox.
 `bin/jg-public-followup.sh` is Juggernaut's side: it registers a commitment, reconciles typed terminal work results into it, posts the final reply through `bin/jg-x-reply.sh --followup`, and explicitly rechains or retires the retained loop.
@@ -2394,7 +2370,7 @@ Work routed elsewhere reports a typed terminal result with `bin/jg-public-follow
 `bin/jg-public-followup.sh brief` pre-fills every deliverable value the binding determines, such as `report_path=data/<work-id>/report.md`, and states the accepted format of every value it cannot know.
 
 - The emitter validates deliverable values and known required keys before publishing, including the relative `report_path` format, and names correctable mistakes at the work home.
-- A direct emit reads the obligation from `tasks-axi`; a staged emit cannot read that remote record, so `brief` supplies its required keys in the printed command.
+- A direct emit reads the obligation from the backlog; a staged emit cannot read that remote record, so `brief` supplies its required keys in the printed command.
 - If those flags are omitted from a staged command, it still checks values but cannot detect missing keys until the owning home's `consume` rejects the event and queues a rejection wake.
 - The [emitter header](../bin/jg-public-followup-emit.sh) and its `--help` own the exact flags and outcome-dependent validation rules.
 
@@ -2432,7 +2408,7 @@ Run `bin/jg-public-followup-collect.sh --help` for the staged-result commands th
 
 Activation is the same `.env` `FMX_PAIRING_TOKEN` contract as the rest of Relay, with no second flag.
 
-- A home without that token runs one file test and stops: no `tasks-axi` call, no backlog or request-context scan, and no `state/public-followup/` directory.
+- A home without that token runs one file test and stops: no backlog call, no backlog or request-context scan, and no `state/public-followup/` directory.
 - Ordinary startup, polling, cleanup, and silent read-side subcommands also produce no output; commands that require an active relay report that configuration error after the same gate.
 - A relay-enabled home with no registered commitment stops at an O(1) directory presence check, so the empty state costs no CLI call and adds no periodic scan.
 
@@ -2440,7 +2416,7 @@ Activation is the same `.env` `FMX_PAIRING_TOKEN` contract as the rest of Relay,
 
 Unreconciled terminal results ride the existing 30-second relay poll rather than a new process or timer: `bin/jg-x-poll.sh` compares the pending-event signature against `surfaced` and wakes Juggernaut once per new result set.
 
-- A terminal event `tasks-axi` refuses during `consume` is quarantined with a reason naming the specific deliverable, outcome, or missing key where one is identifiable, and the same poll wakes the owning home with a `public-followup rejected <event-id> ...` line carrying that reason.
+- A terminal event the backlog refuses during `consume` is quarantined with a reason naming the specific deliverable, outcome, or missing key where one is identifiable, and the same poll wakes the owning home with a `public-followup rejected <event-id> ...` line carrying that reason.
 - The refused event stays pending until that wake is recorded, and a queued wake survives a failed read or write to poll output.
 - That makes the wake at-least-once rather than exactly-once: a cleanup that fails after the line was already raised - a wake directory that cannot be written, or a refused event that could not be drained - raises the same refusal again on a later poll.
 - A repeat carries the same event id and the same reason as the quarantined rejection, which is how an already-handled refusal is recognized.
@@ -2933,7 +2909,6 @@ JG_BACKLOG_ROW_TIMEOUT_SECS=10   # seconds bounding each backlog row read (bin/j
 JG_BOOTSTRAP_DETECT_ONLY=0   # internal/read-only session-start mode: skip bootstrap's mutating sweeps and print advisory TANGLE wording
 JG_BOOTSTRAP_NETWORK=all   # internal session-start phase split: all, skip (local steps only), or only (network steps only); see bin/jg-bootstrap.sh
 JG_STARTUP_NETWORK_TIMEOUT=120   # seconds bounding the deferred inactive-outcome scan plus network checks, including the lock waits the worker makes before them; hitting it prints an actionable NETWORK_CHECKS line, and a lock a live process still holds at the deadline ends the worker with a failed-rerun record (publication and delivery are bounded by JG_SESSION_START_TIMEOUT the same way)
-JG_TASKS_AXI_COMPATIBLE=   # internal one-hop handoff of an already-computed tasks-axi compatibility verdict (0 or 1); consumed when bin/jg-tasks-axi-lib.sh is sourced
 JG_GUARD_READ_ONLY=0    # internal/read-only guard mode: keep alarms but suppress drain, supervision repair, and checkout repair commands
 JG_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line; jg-send.sh overrides it to name the requested message specifically
 JG_POLL=15              # seconds between watcher poll cycles

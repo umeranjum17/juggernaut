@@ -36,5 +36,5 @@ The adapter reads deeper requests only and never consumes captain-hold answers.
 
 `tests/jg-procevent-signoff.test.sh` sources `tests/lib.sh` from the Juggernaut
 checkout and needs `JG_CODE_ROOT` set to it. It runs the adapter journey through
-the real runner. The real-hold section is skipped when no beads-capable tasks-axi
+the real runner. The real-hold section is skipped when no beads-capable the backlog
 and bd are installed.

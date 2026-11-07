@@ -13,11 +13,10 @@ if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
 fi
 
 T=$(jg_test_tmproot jg-beads-native-n8)
-WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-tasks-axi.sh
+WRAPPER=$ROOT/bin/jg-beads.sh CLI=$ROOT/bin/jg-backlog.sh
 unset BEADS_DB BEADS_DOLT_SHARED_SERVER BEADS_ACTOR JG_BACKLOG_LANE JG_BACKLOG_AGENT JG_BACKLOG_LANE_HANDOVER
 mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
 export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-printf 'beads\n' > "$T/home/config/backlog-backend"
 printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
 jail=()
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
@@ -32,7 +31,7 @@ as_lane() {  # <lane> <command...>: one write made from that lane.
 field() {  # <id> <jq filter>: one value of the row as bd prints it.
   bd show "$1" --json 2>/dev/null | jq -r "(if type == \"array\" then .[0] else . end) | $2"
 }
-state_of() {  # <id>: the state tasks-axi lists the row under.
+state_of() {  # <id>: the state the backlog lists the row under.
   local state
   for state in in_flight queued "done"; do
     axi list --state "$state" --fields state 2>/dev/null | grep -q "^  $1," && { printf '%s' "$state"; return; }
@@ -92,7 +91,7 @@ axi unhold n8-d >/dev/null || fail "release a queued hold"
 [ "$(field n8-d .status)" = open ] || fail "a release must reopen a queued row"
 printf 'ok - a held queued row stays queued\n'
 
-# A row put in flight outside tasks-axi has no owner, so a hold gives it the actor rather than lose its flight.
+# A row put in flight outside the backlog has no owner, so a hold gives it the actor rather than lose its flight.
 axi add n8-g "[feature] Legacy flight" --priority 2 --body why >/dev/null || fail "seed a legacy row"
 bd update n8-g --status in_progress >/dev/null 2>&1 || fail "put a legacy row in flight"
 axi hold n8-g --reason "wait legacy" >/dev/null || fail "hold a legacy row"

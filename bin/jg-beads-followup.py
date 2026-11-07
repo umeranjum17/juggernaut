@@ -380,7 +380,7 @@ def clash(message):
 
 def one_id(ids, verb):
     if len(ids) != 1:
-        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi public-followup " + USAGE[verb])
+        view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: jg-backlog.sh public-followup " + USAGE[verb])
     return ids[0]
 
 
@@ -442,7 +442,7 @@ def answer(found, verb, ident, changed, already=False):
     print("public_followup:\n  id: %s\n  state: %s\n  delivery_state: %s\n  revision: %d\n  relations: %d" % (
         ident, task["state"], state, revision, len(task["public_followup"]["work_relations"])))
     if state not in FINAL:
-        print("help[1]:\n  - Run `tasks-axi public-followup %s" % (
+        print("help[1]:\n  - Run `jg-backlog.sh public-followup %s" % (
             "begin-delivery %s --payload-hash <sha256>` after semantic preflight" % ident if state == "ready" else
             "record-delivery %s --receipt-file <file>` after receipt reconciliation" % ident if state in POSTING else
             "list --work-ref <home/task>` to reconcile related work"))
@@ -451,7 +451,7 @@ def answer(found, verb, ident, changed, already=False):
 def add(args):
     found, ids = view.flags(args, ("--request-context-file", "--purpose", "--expected-final-file", "--expires-at"), ("--json",))
     if len(ids) != 1 or not TASK_ID.match(ids[0]):
-        view.refuse("add needs one task id", "usage: tasks-axi public-followup add <id> [flags]")
+        view.refuse("add needs one task id", "usage: jg-backlog.sh public-followup add <id> [flags]")
     fixed = {"request": request_of(loaded(found, "--request-context-file")),
              "purpose": one_of(found.get("--purpose"), PURPOSES, "--purpose"),
              "expected_final": expected_of(loaded(found, "--expected-final-file")),
@@ -678,7 +678,7 @@ def shown(found, name, action, items, kept, none):
 def listing(args):
     found, ids = view.flags(args, ("--delivery-state", "--work-ref"), ("--json",))
     if ids:
-        view.refuse("list takes no id", "usage: tasks-axi public-followup list [flags]")
+        view.refuse("list takes no id", "usage: jg-backlog.sh public-followup list [flags]")
     state = found.get("--delivery-state")
     if state is not None and state not in STATES:
         view.refuse("--delivery-state must be one of " + ", ".join(STATES))
@@ -696,14 +696,14 @@ def listing(args):
 def owed(args):
     found, ids = view.flags(args, (), ("--json",))
     if ids:
-        view.refuse("Expected no positional arguments, got %d" % len(ids), "usage: tasks-axi public-followup ready [--json]")
+        view.refuse("Expected no positional arguments, got %d" % len(ids), "usage: jg-backlog.sh public-followup ready [--json]")
     items = write.rows()
     kept = promises(items)
     kept = [item for item in kept if item["public_followup"]["delivery"]["state"] == "ready" and item["state"] != "done"
             and view.task(items[item["id"]], items)["blocked"] == "no"]
     shown(found, "ready_public_followups", "ready", items, kept, "ready_public_followups: 0 delivery-ready obligations")
     if kept and "--json" not in found:
-        print("help[1]:\n  - Run `tasks-axi public-followup begin-delivery <id> --payload-hash <sha256>` after semantic preflight")
+        print("help[1]:\n  - Run `jg-backlog.sh public-followup begin-delivery <id> --payload-hash <sha256>` after semantic preflight")
 
 
 def main(args):
@@ -720,4 +720,4 @@ def main(args):
             changes[verb](args[1:])
     else:
         view.refuse("Unknown public-followup command: " + verb if verb else "Missing public-followup command",
-                    "usage: tasks-axi public-followup <command> [args] [flags]")
+                    "usage: jg-backlog.sh public-followup <command> [args] [flags]")

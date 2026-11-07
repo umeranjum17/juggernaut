@@ -83,18 +83,12 @@ pass "plain note, list, and wake stay on the historical human path"
 
 # A captain ask note must create a backlog ticket before juggernaut is woken.
 home=$(make_home captain-ask)
-cat > "$home/.tasks.toml" <<'EOF'
-backend = "markdown"
-
-[markdown]
-path = "data/backlog.md"
-EOF
-printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$home/data/backlog.md"
+jg_test_beads_home "$home"
 ask_body=$'[captain-ask] Keep the dashboard ticketed\nPreserve this original ask body.'
 ask_out=$(run_inbox "$home" note --request-id ask-ticket-1 --json "$ask_body") || fail "captain ask note should create its ticket and queue"
 ask_id=$(printf '%s' "$ask_out" | json_get id)
 ask_ticket="captain-ask-$ask_id"
-ask_show=$(JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" "$ROOT/bin/jg-tasks-axi.sh" show "$ask_ticket" --full) || fail "captain ask ticket is missing"
+ask_show=$(JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" "$ROOT/bin/jg-backlog.sh" show "$ask_ticket" --full) || fail "captain ask ticket is missing"
 assert_contains "$ask_show" '[captain-ask] Keep the dashboard ticketed' "ticket title should retain the captain-ask tag and request"
 assert_contains "$ask_show" 'Preserve this original ask body.' "ticket should preserve the full original ask"
 asks_out=$(run_inbox "$home" asks) || fail "captain ask listing should succeed"

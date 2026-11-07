@@ -13,7 +13,7 @@
 #
 # WHAT IT DOES NOT DO: it never builds, edits, posts, or judges an event. The
 # staged bytes are handed over verbatim, and the collecting home re-validates
-# every field against its own registration and tasks-axi before accepting one.
+# every field against its own registration and the backlog before accepting one.
 #
 # Usage:
 #   jg-public-followup-collect.sh drain <obligation-id>

@@ -4,20 +4,20 @@
 # Bootstrap prints one block or line per actionable problem, optional verbose
 # BOOTSTRAP_INFO fact, or completed bootstrap no-action fact and is silent when
 # all is well. juggernaut consumes the exact 'MISSING: treehouse (install: ...)',
-# 'MISSING: tasks-axi (install: ...)', 'MISSING: quota-axi (install: ...)',
+# 'MISSING: the backlog (install: ...)', 'MISSING: quota-axi (install: ...)',
 # 'MISSING: gh-axi (install: ...)' and the optional presentation fallback, and
 # 'BOOTSTRAP_INFO: ...' lines, so those contracts are pinned verbatim. The cases
 # are table-driven over the inputs that vary: whether `treehouse get --help`
-# advertises --lease, which (if any) tasks-axi version is on PATH, whether
-# tasks-axi update advertises --archive-body, whether its mv help advertises
+# advertises --lease, which (if any) the backlog version is on PATH, whether
+# jg-backlog.sh update advertises --archive-body, whether its mv help advertises
 # multi-ID moves, whether quota-axi is on PATH,
-# whether the local backend config opts out of tasks-axi backlog mutations,
+# whether the local backend config opts out of the backlog backlog mutations,
 # which no-mistakes version is on PATH, and which gh-axi version is on PATH.
 # Dedicated fleet-sync cases pin the computed bootstrap timeout, explicit
 # override, blank-env defaulting, partial-output relay, and pre-launch timeout
 # scan.
 # Dedicated network-phase cases pin JG_BOOTSTRAP_NETWORK as a true partition of
-# one run into its local and network halves, and the one-hop tasks-axi
+# one run into its local and network halves, and the one-hop the backlog
 # compatibility handoff that keeps a session start from paying for that verdict
 # twice.
 set -u
@@ -27,6 +27,7 @@ set -u
 
 BASE_PATH=${JG_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(jg_test_tmproot jg-bootstrap-tests)
+[ -n "${JG_BEADS_TEST_BD:-}" ] && [ -n "${JG_BEADS_TEST_DOLT:-}" ] || { echo "skip: no Beads build"; exit 0; }
 export JG_BACKEND_CMUX_BUNDLE_BIN="$TMP_ROOT/no-bundled-cmux"
 
 # Every install hint and version floor is pinned in toolchain.versions, so the
@@ -39,7 +40,6 @@ export JG_FAKE_QUOTA_AXI_VERSION=${JG_FAKE_QUOTA_AXI_VERSION:-$(jg_pin_version q
 export JG_FAKE_LEARN_FROM_MISTAKES_AXI_VERSION=${JG_FAKE_LEARN_FROM_MISTAKES_AXI_VERSION:-$(jg_pin_version learn-from-mistakes)}
 export JG_FAKE_DONE_DONE_AXI_VERSION=${JG_FAKE_DONE_DONE_AXI_VERSION:-$(jg_pin_version done-done)}
 export JG_FAKE_SIGN_OFF_AXI_VERSION=${JG_FAKE_SIGN_OFF_AXI_VERSION:-$(jg_pin_version sign-off-axi)}
-MISS_TASKS_AXI="MISSING: tasks-axi (install: npm install -g $(jg_pin_npm tasks-axi))"
 MISS_QUOTA_AXI="MISSING: quota-axi (install: npm install -g $(jg_pin_npm quota-axi))"
 MISS_GH_AXI="MISSING: gh-axi (install: npm install -g $(jg_pin_npm gh-axi) && gh-axi setup hooks)"
 # The patch release one step below a pinned floor, derived rather than typed.
@@ -64,6 +64,8 @@ nats_pin() { jg_pin_version nats 2>/dev/null || printf '0.5.1\n'; }
 make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(jg_fakebin "$dir")
+  # Every case home has its Beads store, so the backlog probe reads a real one.
+  jg_test_beads_home "$dir/home" >/dev/null
   jg_fake_exit0 "$fakebin" tmux node chrome-devtools-axi
   # A user bus whose jg-sentinel service is running, so no case reads the host's own.
   cat > "$fakebin/systemctl" <<'SH'
@@ -118,7 +120,6 @@ SH
   jg_fake_version_tool "$fakebin" nats-server JG_FAKE_NATS_SERVER_VERSION "$(nats_server_pin)"
   jg_fake_version_tool "$fakebin" nats JG_FAKE_NATS_VERSION "$(nats_pin)"
   jg_fake_version_tool "$fakebin" opa JG_FAKE_OPA_VERSION "$(jg_pin_version opa 2>/dev/null || printf '1.22.0\n')"
-  add_tasks_axi "$fakebin" "0.2.6"
   add_quota_axi "$fakebin"
   printf '%s\n' "$fakebin"
 }
@@ -134,33 +135,6 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/quota-axi"
-}
-
-add_tasks_axi() {
-  local fakebin=$1 version=$2 archive_body=${3:-yes} multi_id=${4:-yes} archive_line mv_usage
-  archive_line=""
-  [ "$archive_body" = yes ] && archive_line='  --archive-body'
-  mv_usage='usage: tasks-axi mv <id> [<id>...] --to <path-or-dir>'
-  [ "$multi_id" = yes ] || mv_usage='usage: tasks-axi mv <id> --to <path-or-dir>'
-  cat > "$fakebin/tasks-axi" <<SH
-#!/usr/bin/env bash
-if [ "\${1:-}" = --version ]; then
-  printf '%s\n' '$version'
-  exit 0
-fi
-if [ "\${1:-}" = update ] && [ "\${2:-}" = --help ]; then
-  printf '%s\n' 'usage: tasks-axi update <id> [flags]'
-  printf '%s\n' '  --body-file <path>'
-  [ -z '$archive_line' ] || printf '%s\n' '$archive_line'
-  exit 0
-fi
-if [ "\${1:-}" = mv ] && [ "\${2:-}" = --help ]; then
-  printf '%s\n' '$mv_usage'
-  exit 0
-fi
-exit 0
-SH
-  chmod +x "$fakebin/tasks-axi"
 }
 
 add_real_jq() {
@@ -280,42 +254,19 @@ assert_timeout_report() {
 }
 
 # Each row (fields are '^'-separated; the install URL contains a literal '|'):
-#   <label>^<lease 1/0>^<tasks-axi version or ->^<quota 1/0>^<backend or ->^<mode>^<expect>^<notcontains>
+#   <label>^<lease 1/0>^<quota 1/0>^<mode>^<expect>^<notcontains>
 #   mode=empty -> output must be empty (expect/notcontains ignored)
 #   mode=exact -> output must equal <expect>
 #   mode=grep  -> output must contain <expect> (fixed string); <notcontains> must not appear
 test_bootstrap_reporting() {
-  local label lease tasks quota backend mode expect notcontains case_dir fakebin out n archive_body multi_id
+  local label lease quota mode expect notcontains case_dir fakebin out n
   n=0
-  while IFS='^' read -r label lease tasks quota backend mode expect notcontains; do
+  while IFS='^' read -r label lease quota mode expect notcontains; do
     [ -n "$label" ] || continue
     n=$((n + 1))
     case_dir="$TMP_ROOT/case-$n"
     mkdir -p "$case_dir/home"
-    if [ "$backend" != "-" ]; then
-      mkdir -p "$case_dir/home/config"
-      printf '%s\n' "$backend" > "$case_dir/home/config/backlog-backend"
-    fi
     fakebin=$(make_fake_toolchain "$case_dir")
-    if [ "$tasks" = "-" ]; then
-      rm -f "$fakebin/tasks-axi"
-    else
-      archive_body=yes
-      multi_id=yes
-      case "$tasks" in
-        *:noarchive)
-          archive_body=no
-          tasks=${tasks%:noarchive}
-          ;;
-      esac
-      case "$tasks" in
-        *:nomulti)
-          multi_id=no
-          tasks=${tasks%:nomulti}
-          ;;
-      esac
-      add_tasks_axi "$fakebin" "$tasks" "$archive_body" "$multi_id"
-    fi
     if [ "$quota" = "0" ]; then
       rm -f "$fakebin/quota-axi"
     fi
@@ -337,18 +288,12 @@ test_bootstrap_reporting() {
         ;;
     esac
   done <<ROWS
-treehouse --lease support is accepted silently^1^$(jg_pin_version tasks-axi)^1^manual^empty^^
-treehouse without --lease reports an upgrade, gh auth is fine^0^$(jg_pin_version tasks-axi)^1^-^grep^MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)^NEEDS_GH_AUTH
-compatible tasks-axi is silent by default^1^$(jg_pin_version tasks-axi)^1^-^empty^^
-missing tasks-axi is required by default^1^-^1^-^exact^$MISS_TASKS_AXI^
-incompatible tasks-axi is required by default^1^0.1.0^1^-^exact^$MISS_TASKS_AXI^
-tasks-axi without archive-body is required by default^1^$(jg_pin_version tasks-axi):noarchive^1^-^exact^$MISS_TASKS_AXI^
-tasks-axi without multi-id mv is required by default^1^$(jg_pin_version tasks-axi):nomulti^1^-^exact^$MISS_TASKS_AXI^
-missing quota-axi is required by default^1^$(jg_pin_version tasks-axi)^0^manual^exact^$MISS_QUOTA_AXI^
-manual backlog backend still requires missing tasks-axi^1^-^1^manual^exact^$MISS_TASKS_AXI^
-manual backlog backend suppresses tasks-axi availability^1^$(jg_pin_version tasks-axi)^1^manual^empty^^
+treehouse --lease support is accepted silently^1^1^empty^^
+treehouse without --lease reports an upgrade, gh auth is fine^0^1^grep^MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)^NEEDS_GH_AUTH
+the Beads backlog is silent by default^1^1^empty^^
+missing quota-axi is required by default^1^0^exact^$MISS_QUOTA_AXI^
 ROWS
-  pass "bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts"
+  pass "bootstrap reports treehouse lease + the backlog/quota-axi bootstrap contracts"
 }
 
 test_no_mistakes_min_version() {
@@ -361,7 +306,6 @@ test_no_mistakes_min_version() {
     case_dir="$TMP_ROOT/no-mistakes-$n"
     mkdir -p "$case_dir/home"
     mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
     out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
       JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_NO_MISTAKES_VERSION="$version" "$ROOT/bin/jg-bootstrap.sh")
@@ -393,7 +337,6 @@ test_gh_axi_min_version() {
     n=$((n + 1))
     case_dir="$TMP_ROOT/gh-axi-$n"
     mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
     out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
       JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_GH_AXI_VERSION="$version" "$ROOT/bin/jg-bootstrap.sh")
@@ -414,54 +357,6 @@ ROWS
   pass "bootstrap enforces gh-axi minimum version"
 }
 
-test_tasks_axi_min_version() {
-  local label version mode case_dir fakebin out missing n archive_body multi_id
-  missing=$MISS_TASKS_AXI
-  n=0
-  while IFS='^' read -r label version mode; do
-    [ -n "$label" ] || continue
-    n=$((n + 1))
-    case_dir="$TMP_ROOT/tasks-axi-$n"
-    mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-    fakebin=$(make_fake_toolchain "$case_dir")
-    archive_body=yes
-    multi_id=yes
-    case "$version" in
-      *:noarchive)
-        archive_body=no
-        version=${version%:noarchive}
-        ;;
-    esac
-    case "$version" in
-      *:nomulti)
-        multi_id=no
-        version=${version%:nomulti}
-        ;;
-    esac
-    add_tasks_axi "$fakebin" "$version" "$archive_body" "$multi_id"
-    out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
-      JG_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/jg-bootstrap.sh")
-    case "$mode" in
-      empty)
-        [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
-      missing)
-        [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
-    esac
-  done <<'ROWS'
-minimum tasks-axi version is accepted^0.2.6^empty
-newer tasks-axi patch is accepted^0.2.7^empty
-newer tasks-axi minor is accepted^0.3.0^empty
-newer tasks-axi major is accepted^1.0.0^empty
-older tasks-axi with features reports an upgrade^0.1.1^missing
-the patch just below the floor reports an upgrade^0.2.5^missing
-unparseable tasks-axi version reports an upgrade^tasks-axi development build^missing
-tasks-axi at floor without archive-body reports an upgrade^0.2.6:noarchive^missing
-tasks-axi at floor without multi-id reports an upgrade^0.2.6:nomulti^missing
-ROWS
-  pass "bootstrap enforces tasks-axi minimum version"
-}
-
 # These rows exercise the real bootstrap check with a fake quota-axi answering
 # --version: below the floor produces MISSING, while at or above is silent.
 test_quota_axi_min_version() {
@@ -476,7 +371,6 @@ test_quota_axi_min_version() {
     n=$((n + 1))
     case_dir="$TMP_ROOT/quota-axi-$n"
     mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
     out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
       JG_FAKE_TREEHOUSE_LEASE_HELP=1 JG_FAKE_QUOTA_AXI_VERSION="$version" "$ROOT/bin/jg-bootstrap.sh")
@@ -502,7 +396,6 @@ test_git_is_required_with_supported_install_instruction() {
   local case_dir fakebin bash_env out expected
   case_dir="$TMP_ROOT/git-required"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   fakebin=$(make_fake_toolchain "$case_dir")
   bash_env="$case_dir/no-git.bash"
   cat > "$bash_env" <<'SH'
@@ -529,7 +422,6 @@ test_bootstrap_arms_the_fleet_heartbeat_on_a_primary_home() {
   for case_dir in primary opted-out lead; do
     case_dir="$TMP_ROOT/fleet-heartbeat-$case_dir"
     mkdir -p "$case_dir/home/config" "$case_dir/home/state"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   done
   : > "$TMP_ROOT/fleet-heartbeat-opted-out/home/config/fleet-heartbeat-off"
   printf 'lead1\n' > "$TMP_ROOT/fleet-heartbeat-lead/home/.jg-squad-lead-home"
@@ -552,7 +444,6 @@ test_orca_backend_gates_orca_tool_only_when_selected() {
 
   case_dir="$TMP_ROOT/orca-backend-selected"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' orca > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain "$case_dir")
   out=$(PATH="$fakebin:$(jg_test_base_path_sans "$BASE_PATH" orca)" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
@@ -561,7 +452,6 @@ test_orca_backend_gates_orca_tool_only_when_selected() {
 
   case_dir="$TMP_ROOT/orca-backend-not-selected"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   fakebin=$(make_fake_toolchain "$case_dir")
   out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
     JG_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/jg-bootstrap.sh")
@@ -592,7 +482,6 @@ test_session_provider_backends_do_not_require_tmux() {
     [ -n "$backend" ] || continue
     case_dir="$TMP_ROOT/$backend-no-tmux"
     mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     fakebin=$(make_fake_toolchain_no_tmux "$case_dir" "$cli")
     out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
@@ -614,7 +503,6 @@ test_session_provider_backends_gate_own_cli_not_tmux() {
     [ -n "$backend" ] || continue
     case_dir="$TMP_ROOT/$backend-missing-cli"
     mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     # Toolchain has jq + treehouse but NOT the session CLI and NOT tmux.
     fakebin=$(make_fake_toolchain_no_tmux "$case_dir")
@@ -643,7 +531,6 @@ test_herdr_primary_without_restart_recovery_says_how_to_install_it() {
   local case_dir fakebin out command notice unit special_home escaped_home
   case_dir="$TMP_ROOT/herdr no sentinel"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' herdr > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain_no_tmux "$case_dir" herdr)
   out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
@@ -712,7 +599,6 @@ test_herdr_primary_names_a_machine_unit_serving_another_home() {
   case_dir="$TMP_ROOT/herdr unit home"
   other="$case_dir/other home"
   mkdir -p "$case_dir/home/config" "$other"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' herdr > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain_no_tmux "$case_dir" herdr)
   cat > "$fakebin/systemctl" <<'SH'
@@ -754,7 +640,6 @@ test_cmux_bundled_cli_satisfies_dependency() {
   local case_dir fakebin bundle out
   case_dir="$TMP_ROOT/cmux-bundled-cli"
   mkdir -p "$case_dir/home/config" "$case_dir/bundle"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' cmux > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain_no_tmux "$case_dir")
   jg_fake_exit0 "$case_dir/bundle" cmux
@@ -769,7 +654,6 @@ test_unknown_backend_reports_invalid_configuration() {
   local case_dir fakebin out
   case_dir="$TMP_ROOT/unknown-backend"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' bogus > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain "$case_dir")
   out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
@@ -790,7 +674,6 @@ test_json_backends_require_jq_not_tmux() {
     [ -n "$backend" ] || continue
     case_dir="$TMP_ROOT/$backend-missing-jq"
     mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     # Session CLI present, tmux absent, jq deliberately NOT stubbed and masked below.
     fakebin=$(make_fake_toolchain "$case_dir")
@@ -827,7 +710,6 @@ test_treehouse_lease_check_follows_resolved_backend() {
   # must NOT trip MISSING: treehouse under backend=orca...
   case_dir="$TMP_ROOT/orca-old-treehouse"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' orca > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain "$case_dir")
   rm -f "$fakebin/tmux"
@@ -841,7 +723,6 @@ test_treehouse_lease_check_follows_resolved_backend() {
   # backend that relies on treehouse for worktrees.
   case_dir="$TMP_ROOT/herdr-old-treehouse"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' herdr > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain_no_tmux "$case_dir" herdr)
   out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
@@ -856,7 +737,6 @@ test_fleet_sync_timeout_scales_with_origin_backed_project_count() {
   case_dir="$TMP_ROOT/fleet-timeout-scaled"
   home="$case_dir/home"
   mkdir -p "$home/config"
-  printf '%s\n' manual > "$home/config/backlog-backend"
   add_origin_backed_projects "$home" 18
   add_no_origin_projects "$home" 3
   fakebin=$(make_fake_toolchain "$case_dir")
@@ -874,7 +754,6 @@ test_fleet_sync_timeout_floor_preserves_small_fleets() {
   case_dir="$TMP_ROOT/fleet-timeout-small"
   home="$case_dir/home"
   mkdir -p "$home/config"
-  printf '%s\n' manual > "$home/config/backlog-backend"
   add_origin_backed_projects "$home" 2
   fakebin=$(make_fake_toolchain "$case_dir")
   fake_root=$(make_fake_fleet_sync_root "$case_dir")
@@ -890,7 +769,6 @@ test_fleet_sync_timeout_explicit_override_wins() {
   case_dir="$TMP_ROOT/fleet-timeout-override"
   home="$case_dir/home"
   mkdir -p "$home/config"
-  printf '%s\n' manual > "$home/config/backlog-backend"
   add_origin_backed_projects "$home" 18
   fakebin=$(make_fake_toolchain "$case_dir")
   fake_root=$(make_fake_fleet_sync_root "$case_dir")
@@ -907,7 +785,6 @@ test_fleet_sync_timeout_empty_override_uses_default() {
   case_dir="$TMP_ROOT/fleet-timeout-empty-override"
   home="$case_dir/home"
   mkdir -p "$home/config"
-  printf '%s\n' manual > "$home/config/backlog-backend"
   add_origin_backed_projects "$home" 18
   fakebin=$(make_fake_toolchain "$case_dir")
   fake_root=$(make_fake_fleet_sync_root "$case_dir")
@@ -926,7 +803,6 @@ test_fleet_sync_timeout_is_computed_before_launch() {
   started_marker="$case_dir/fleet-started"
   git_record="$case_dir/git-after-start"
   mkdir -p "$home/config"
-  printf '%s\n' manual > "$home/config/backlog-backend"
   add_origin_backed_projects "$home" 3
   fakebin=$(make_fake_toolchain "$case_dir")
   fake_root=$(make_fake_fleet_sync_root "$case_dir")
@@ -1007,7 +883,7 @@ test_routine_bootstrap_confirmations_are_silent() {
   local out
   out=$(run_routine_bootstrap_fixture bash "$TMP_ROOT/routine-silent")
   [ -z "$out" ] || fail "routine bootstrap confirmations should be silent, got: $out"
-  pass "bootstrap keeps routine tasks-axi, harness, dispatch, and already-live liveness confirmations silent"
+  pass "bootstrap keeps routine the backlog, harness, dispatch, and already-live liveness confirmations silent"
 }
 
 test_routine_bootstrap_contract_runs_under_system_bash() {
@@ -1027,7 +903,6 @@ test_network_phase_partitions_the_run() {
   local case_dir fakebin all_out skip_out only_out combined
   case_dir="$TMP_ROOT/network-phase"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   fakebin=$(make_fake_toolchain "$case_dir")
   # Break the two diagnostics that stand for the two halves: a local tool floor
   # and the network GitHub-auth probe.
@@ -1072,7 +947,6 @@ test_gh_auth_probe_skips_all_local_only_homes() {
   local case_dir fakebin out
   case_dir="$TMP_ROOT/gh-auth-local-only"
   mkdir -p "$case_dir/home/config" "$case_dir/home/data" "$case_dir/home/projects/notes"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf -- '- notes [local-only] - Umer notes (added 2026-10-12)\n' > "$case_dir/home/data/projects.md"
   fakebin=$(make_fake_toolchain "$case_dir")
   printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/gh"
@@ -1093,7 +967,6 @@ test_gh_auth_probe_reads_full_registered_names() {
   local case_dir fakebin out
   case_dir="$TMP_ROOT/gh-auth-spaced-name"
   mkdir -p "$case_dir/home/config" "$case_dir/home/data" "$case_dir/home/projects/my"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf -- '- my notes [direct-PR] - Umer notes (added 2026-10-12)\n- my [local-only] - Umer scratch (added 2026-10-12)\n' > "$case_dir/home/data/projects.md"
   fakebin=$(make_fake_toolchain "$case_dir")
   printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/gh"
@@ -1108,7 +981,6 @@ test_network_sweeps_recheck_lock_ownership() {
   local case_dir fakebin fake_root marker out
   case_dir="$TMP_ROOT/network-lock-handoff"
   mkdir -p "$case_dir/home/config" "$case_dir/home/projects" "$case_dir/home/state"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '222222\n' > "$case_dir/home/state/.lock"
   fakebin=$(make_fake_toolchain "$case_dir")
   fake_root="$case_dir/root"
@@ -1138,7 +1010,7 @@ SH
 
 # The verdict costs three subprocesses, so a caller that already has it can hand
 # it over - but only one hop, and never onward into a spawned agent's
-# environment, where it could outlive a tasks-axi upgrade.
+# environment, where it could outlive a the backlog upgrade.
 # assert_timing_record <log> <scope> <name> <detail> <msg>: one bin/jg-timing-lib.sh
 # record with exactly these fields must exist. Field-exact rather than a substring
 # match, so a detail that landed in the wrong column cannot pass.
@@ -1160,7 +1032,6 @@ test_network_phases_record_per_step_elapsed_times() {
   local case_dir fakebin log fields
   case_dir="$TMP_ROOT/network-timings"
   mkdir -p "$case_dir/home/config" "$case_dir/home/state" "$case_dir/home/data" "$case_dir/home/projects"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' $$ > "$case_dir/home/state/.lock"
   fakebin=$(make_fake_toolchain "$case_dir")
   # A real clone with a real origin, so jg-fleet-sync.sh genuinely iterates it.
@@ -1204,55 +1075,10 @@ test_network_phases_record_per_step_elapsed_times() {
   pass "bootstrap: each deferred network phase, squad_lead, and clone records its own elapsed time"
 }
 
-test_tasks_axi_verdict_handoff_is_consumed_once() {
-  local case_dir fakebin log out
-  case_dir="$TMP_ROOT/tasks-axi-handoff"
-  mkdir -p "$case_dir/home/config"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  log="$case_dir/tasks-axi.log"
-  cat > "$fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${JG_FAKE_TASKS_AXI_LOG:?}"
-printf '0.0.1\n'
-exit 0
-SH
-  chmod +x "$fakebin/tasks-axi"
-
-  # Without the handoff, the incompatible stub is probed and reported.
-  : > "$log"
-  out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
-    JG_FAKE_TASKS_AXI_LOG="$log" JG_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/jg-bootstrap.sh")
-  assert_contains "$out" "MISSING: tasks-axi (install:" "the unaided run did not probe tasks-axi"
-  assert_grep '--version' "$log" "the unaided run never ran the probe"
-
-  # With it, the probe is skipped entirely and the handed-in verdict is used.
-  : > "$log"
-  out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
-    JG_FAKE_TASKS_AXI_LOG="$log" JG_FAKE_TREEHOUSE_LEASE_HELP=1 \
-    JG_TASKS_AXI_COMPATIBLE=1 "$ROOT/bin/jg-bootstrap.sh")
-  assert_not_contains "$out" "MISSING: tasks-axi" "the handed-in verdict was ignored"
-  [ ! -s "$log" ] || fail "the handed-in verdict did not save the probe: $(cat "$log")"
-
-  # A malformed value is not a verdict.
-  : > "$log"
-  out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
-    JG_FAKE_TASKS_AXI_LOG="$log" JG_FAKE_TREEHOUSE_LEASE_HELP=1 \
-    JG_TASKS_AXI_COMPATIBLE=yes "$ROOT/bin/jg-bootstrap.sh")
-  assert_contains "$out" "MISSING: tasks-axi (install:" "a malformed handoff value was trusted"
-
-  # And the handoff never reaches a grandchild: bootstrap spawns agents, and a
-  # verdict cached into an agent's environment would outlive the tool it describes.
-  out=$(JG_TASKS_AXI_COMPATIBLE=1 bash -c '. "$1"; printf "%s\n" "${JG_TASKS_AXI_COMPATIBLE-unset}"' \
-    _ "$ROOT/bin/jg-tasks-axi-lib.sh")
-  [ "$out" = unset ] || fail "sourcing the library left the handoff in the environment: $out"
-  pass "bootstrap: the tasks-axi compatibility verdict travels exactly one process hop"
-}
-
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   local case_dir fakebin out expect
   case_dir="$TMP_ROOT/dispatch-active"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' '{"rules":[{"when":"fresh news","use":{"harness":"grok"},"why":"current context"},{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}]},{"when":"legacy feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"quota-balanced"}],"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5","effort":"high"},{"harness":"grok","model":"grok-4.5","effort":"high"}]}' > "$case_dir/home/config/crew-dispatch.json"
   fakebin=$(make_fake_toolchain "$case_dir")
   add_real_jq "$fakebin"
@@ -1263,6 +1089,7 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
 
   out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
     JG_BOOTSTRAP_VERBOSE_FACTS=1 JG_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/jg-bootstrap.sh")
+  out=$(printf '%s\n' "$out" | grep -v '^BOOTSTRAP_INFO: Beads store ')
 
   expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch rule: fresh news -> grok\nBOOTSTRAP_INFO: crew dispatch rule: big feature -> quota-balanced[claude/claude-sonnet-5/high, codex/gpt-5.5/high]\nBOOTSTRAP_INFO: crew dispatch rule: legacy feature -> quota-balanced[claude, codex]\nBOOTSTRAP_INFO: crew dispatch default: quota-balanced[pi/anthropic/claude-sonnet-5/high, grok/grok-4.5/high]'
   [ "$out" = "$expect" ] || fail "active dispatch verbose info block mismatch"$'\n'"expected: $expect"$'\n'"actual:   $out"
@@ -1277,7 +1104,6 @@ test_crew_dispatch_validation() {
     n=$((n + 1))
     case_dir="$TMP_ROOT/dispatch-$n"
     mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     printf '%s\n' "$body" > "$case_dir/home/config/crew-dispatch.json"
     fakebin=$(make_fake_toolchain "$case_dir")
     add_real_jq "$fakebin"
@@ -1357,7 +1183,6 @@ ROWS
 
   case_dir="$TMP_ROOT/dispatch-opt-in-gate"
   mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   fakebin=$(make_fake_toolchain "$case_dir")
   add_real_jq "$fakebin"
 
@@ -1419,7 +1244,6 @@ fi
 test_bootstrap_reporting
 test_no_mistakes_min_version
 test_gh_axi_min_version
-test_tasks_axi_min_version
 test_quota_axi_min_version
 test_git_is_required_with_supported_install_instruction
 test_orca_backend_gates_orca_tool_only_when_selected
@@ -1444,7 +1268,6 @@ test_gh_auth_probe_skips_all_local_only_homes
 test_gh_auth_probe_reads_full_registered_names
 test_network_sweeps_recheck_lock_ownership
 test_network_phases_record_per_step_elapsed_times
-test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
 test_crew_dispatch_validation
 test_bootstrap_arms_the_fleet_heartbeat_on_a_primary_home

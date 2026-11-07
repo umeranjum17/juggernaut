@@ -5,7 +5,7 @@
 # For every project in <home>/data/projects.md whose clone (<home>/projects/<name>) has a github.com
 # origin, this lists the newest completed run of each workflow on the default branch, on every release/*
 # branch an open PR targets, and on the head of every open PR. A run that ended failure, timed_out or
-# startup_failure and has no ticket yet files one backlog item through bin/jg-tasks-axi.sh:
+# startup_failure and has no ticket yet files one backlog item through bin/jg-backlog.sh:
 #   id    ci-red-run-<run id>      (the run id is the key, so a run files once)
 #   title [blocker] CI red: <workflow> <failing job>: find the root cause
 #   body  run id and URL, failing job, the first failing line of its log, "never re-run; fix the root cause"
@@ -49,8 +49,8 @@ URL: $url
 Failing job: $job
 First failing line: $line
 Never re-run; fix the root cause. bin/jg-ci-rerun.sh refuses a re-run of this run until this ticket carries a 'root-cause:' note."
-  if JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-tasks-axi.sh" add "$item" "$title" --kind ship --body "$body" >/dev/null 2>&1 \
-    || JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-tasks-axi.sh" show "$item" >/dev/null 2>&1; then
+  if JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" add "$item" "$title" --kind ship --body "$body" >/dev/null 2>&1 \
+    || JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-backlog.sh" show "$item" >/dev/null 2>&1; then
     mkdir -p "$MEM" 2>/dev/null && printf '%s\n' "$url" > "$MEM/${repo//\//__}.$id" 2>/dev/null || :
     echo "red-ci-ticket: $url: $wf $job went red; filed $item ($proj); fix the root cause, never re-run"
   fi

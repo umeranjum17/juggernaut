@@ -54,16 +54,16 @@ judge >/dev/null && fail "a line with no edge passed"
 assert_contains "$(cat "$T/err")" "names gate in a line with no edge" "the refusal must name the lost line"
 pass "migration turns body lines into edges and refuses a line with no edge"
 
-if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ] || ! command -v tasks-axi >/dev/null; then printf 'skip: real store: JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT or tasks-axi missing\n'; exit 0; fi
+if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then printf 'skip: real store: JG_BEADS_TEST_BD, JG_BEADS_TEST_DOLT is unset\n'; exit 0; fi
 export TZ=UTC JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT TMPDIR=$T
 command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 home() {  # <name>: a Beads home on its own store.
   mkdir -p "$T/$1/config" "$T/$1/data" "$T/$1/state" "$T/$1/s"
-  printf 'beads\n' >"$T/$1/config/backlog-backend"; printf '%s\n' "$T/$1/s/.beads" >"$T/$1/config/beads-dir"
+  printf '%s\n' "$T/$1/s/.beads" >"$T/$1/config/beads-dir"
   bd_ "$1" init --prefix n5
 }
 bd_() { BEADS_DIR=$T/$1/s/.beads "${jail[@]}" "$WRAPPER" "${@:2}" >/dev/null 2>&1 || fail "$1: bd ${*:2}"; }
-axi() { JG_HOME=$T/$1 "${jail[@]}" "$ROOT/bin/jg-tasks-axi.sh" "${@:2}"; }
+axi() { JG_HOME=$T/$1 "${jail[@]}" "$ROOT/bin/jg-backlog.sh" "${@:2}"; }
 captain() { JG_CAPTAIN_HOLD_NOW=2026-11-07T10:00:00Z JG_HOME=$1 JG_STATE_OVERRIDE=$1/state JG_DATA_OVERRIDE=$1/data JG_CONFIG_OVERRIDE=$1/config "${jail[@]}" "$ROOT/bin/jg-captain-hold.sh" "${@:2}" 2>&1 </dev/null; }
 codes() {  # <home folder> <ids...>: each row's blocking exit code.
   local id rc out=
@@ -74,9 +74,7 @@ stored() { BEADS_DIR=$T/$1/s/.beads "${jail[@]}" "$WRAPPER" list --all --limit 0
 
 # One set of rows on three homes: the file, a real cut of it, and the same rows with no edge, as bd alone would hold them.
 NAMES=(work kid side card back stray ring tied nope)
-said=$(codes "$M" "${NAMES[@]}")
-[ "$said" = "work=0 kid=0 side=1 card=1 back=0 stray=1 ring=0 tied=0 nope=1 " ] || fail "the file home says: $said"
-cp -r "$M" "$T/file"
+said="work=0 kid=0 side=1 card=1 back=0 stray=1 ring=0 tied=0 nope=1 "
 "${jail[@]}" python3 "$MIGRATE" cut --home main --dir "$M" --copy "$T/copy" --out "$T/imp" --store "$T/cut/.beads" --order "Umer ordered this cut" >/dev/null 2>"$T/err" || fail "cut: $(cat "$T/err")"
 [ "$(codes "$M" "${NAMES[@]}")" = "$said" ] || fail "edge store: $(codes "$M" "${NAMES[@]}")"
 home ln
@@ -89,10 +87,10 @@ mv "$M/config/beads-dir" "$T/beads-dir"
 [ "$(codes "$M" work stray)" = "work=2 stray=2 " ] || fail "an unreadable store must exit 2"
 mv "$T/beads-dir" "$M/config/beads-dir"
 printf 'short\n' >"$T/said.txt"
-for h in "$T/file" "$M" "$T/ln"; do out=$(captain "$h" answer gate --decision-file "$T/said.txt") || fail "$h: answer: $out"; done
-said=$(codes "$T/file" "${NAMES[@]}")
-[ "$(codes "$M" "${NAMES[@]}")" = "$said" ] && [ "$(codes "$T/ln" "${NAMES[@]}")" = "$said" ] || fail "an answer must free the rows alike"
-pass "blocking gives the same exit codes on a file home, a cut store and a body-line store"
+for h in "$M" "$T/ln"; do out=$(captain "$h" answer gate --decision-file "$T/said.txt") || fail "$h: answer: $out"; done
+said=$(codes "$M" "${NAMES[@]}")
+[ "$(codes "$T/ln" "${NAMES[@]}")" = "$said" ] || fail "an answer must free the rows alike"
+pass "blocking gives the same exit codes on a cut store and a body-line store"
 
 # Writes: a line lands as its edge, whichever row is filed first, and a body edit or a release moves it.
 home wr

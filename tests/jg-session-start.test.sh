@@ -27,7 +27,7 @@
 #   - the deferred startup stage: slow network and inactive current-state reads
 #     do not delay the digest, the work still runs and lands durable findings, a
 #     network result surfaces exactly once (inline or as a wake, never both), a
-#     read-only session declares the checks it skipped, and the tasks-axi
+#     read-only session declares the checks it skipped, and the backlog
 #     compatibility verdict is paid for once per session start
 set -u
 
@@ -105,108 +105,6 @@ exit 0
 SH
   chmod +x "$fakebin/no-mistakes"
   printf '%s\n' manual > "${fakebin%/*}/home-placeholder" 2>/dev/null || true
-}
-
-# make_fake_tasks_axi_compact <fakebin>: a tasks-axi boundary that answers the
-# four group filters the startup listing composes (in-flight, held, blocked
-# queued, and the dispatchable ready set) and REFUSES anything the recovery
-# listing must never ask for: a body field, an unfiltered whole-backlog listing,
-# or done rows. JG_FAKE_TASKS_AXI_READY sizes the ready set so the queued bound
-# can be driven past its limit.
-make_fake_tasks_axi_compact() {
-  local fakebin=$1
-  cat > "$fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-set -u
-log=${JG_FAKE_TASKS_AXI_LOG:-}
-[ -n "$log" ] && printf '%s\n' "$*" >> "$log"
-ready_count=${JG_FAKE_TASKS_AXI_READY:-2}
-require_file() {
-  case "$*" in *'--file '*) return 0 ;; esac
-  printf '%s\n' 'missing explicit backlog file' >&2
-  exit 9
-}
-task_header() {
-  printf 'count: %s\n' "$1"
-  printf 'tasks[%s]{id,state,kind,repo,title,blocked_by,hold_kind,hold_reason}:\n' "$1"
-}
-list_help() {
-  printf 'help[1]:\n'
-  printf '%s\n' '  - Run `tasks-axi show <id> --full` for full notes on a task'
-}
-case "${1:-}" in
-  --version|-v|-V)
-    printf '%s\n' '0.2.6'
-    exit 0
-    ;;
-  update)
-    if [ "${2:-}" = --help ]; then
-      printf '%s\n' 'usage: tasks-axi update <id> [--archive-body]'
-      exit 0
-    fi
-    ;;
-  mv)
-    if [ "${2:-}" = --help ]; then
-      printf '%s\n' 'usage: tasks-axi mv <dest> [<id>...]'
-      exit 0
-    fi
-    ;;
-  ready)
-    require_file "$@"
-    printf 'count: %s\n' "$ready_count"
-    printf 'ready[%s]{id,state,kind,repo,title}:\n' "$ready_count"
-    i=1
-    while [ "$i" -le "$ready_count" ]; do
-      printf '  ready-%s,queued,ship,juggernaut,Ready item %s\n' "$i" "$i"
-      i=$((i + 1))
-    done
-    printf 'ready_public_followups: 0 delivery-ready obligations\n'
-    printf 'help[1]:\n'
-    printf '%s\n' '  - Run `tasks-axi start <id>` to dispatch one of these'
-    exit 0
-    ;;
-  list)
-    case "$*" in
-      *'--fields '*'body'*|*'--fields='*'body'*)
-        printf '%s\n' 'unexpected body field requested' >&2
-        exit 9
-        ;;
-    esac
-    require_file "$@"
-    case "$*" in
-      *'--state done'*)
-        printf '%s\n' 'startup recovery must never list done rows' >&2
-        exit 9
-        ;;
-      *'--state in_flight'*)
-        task_header 1
-        printf '%s\n' '  compact-startup,in_flight,ship,juggernaut,Compact startup digest,none,captain,captain choice pending'
-        ;;
-      *'--state held'*)
-        task_header $((1 + ${JG_FAKE_TASKS_AXI_HELD_FUTURE:-0}))
-        printf '%s\n' '  held-queued,queued,ship,juggernaut,Held queued work,none,captain,captain choice pending'
-        i=1
-        while [ "$i" -le "${JG_FAKE_TASKS_AXI_HELD_FUTURE:-0}" ]; do
-          printf '  gated-%s,queued,task,"-",Date gated %s,none,future,"parked until later"\n' "$i" "$i"
-          i=$((i + 1))
-        done
-        ;;
-      *'--state queued'*'--blocked'*)
-        task_header 1
-        printf '%s\n' '  blocked-followup,queued,scout,juggernaut,Follow compact startup,compact-startup,"-","-"'
-        ;;
-      *)
-        printf '%s\n' 'startup recovery must not request an unfiltered whole-backlog listing' >&2
-        exit 9
-        ;;
-    esac
-    list_help
-    exit 0
-    ;;
-esac
-exit 1
-SH
-  chmod +x "$fakebin/tasks-axi"
 }
 
 # make_fake_ps_claude <fakebin>: harness_pid()/holder_alive() (jg-lock.sh) walk
@@ -617,7 +515,6 @@ EOF
   printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$mate/.gitignore"
   git -C "$mate" init -q -b main
   printf '%s\n' pi > "$home/config/squad-lead-harness"
-  printf '%s\n' manual > "$home/config/backlog-backend"
   touch "$home/state/.last-watcher-beat"
   {
     printf 'window=juggernaut:jg-%s\n' "$id"
@@ -661,7 +558,6 @@ EOF
   git -C "$mate" init -q -b main
   printf '%s\n' herdr > "$home/config/backend"
   printf '%s\n' pi > "$home/config/squad-lead-harness"
-  printf '%s\n' manual > "$home/config/backlog-backend"
   touch "$home/state/.last-watcher-beat"
   {
     printf 'window=default:p-old\n'
@@ -808,11 +704,11 @@ EOF
   assert_contains "$out" "data/learnings.md" "digest did not label the learnings.md section"
   assert_contains "$out" "data/owner-rules.md" "digest did not print the shared owner-rules surface"
 
-  # Exactly five context ABSENT markers (squad_leads.md, captain-shared.md,
-  # learnings.md, owner-rules.md; backlog.md is covered by its own test) - and
+  # Exactly four context ABSENT markers (squad_leads.md, captain-shared.md,
+  # learnings.md, owner-rules.md) - and
   # the present-but-empty captain.md must NOT print ABSENT.
   absent_count=$(printf '%s\n' "$out" | grep -c '^ABSENT$')
-  [ "$absent_count" -eq 5 ] || fail "expected 5 ABSENT markers (squad_leads.md, captain-shared.md, learnings.md, owner-rules.md, backlog.md), got $absent_count: $out"
+  [ "$absent_count" -eq 4 ] || fail "expected 4 ABSENT markers (squad_leads.md, captain-shared.md, learnings.md, owner-rules.md), got $absent_count: $out"
 
   cap_section=$(printf '%s\n' "$out" | awk '/^data\/captain\.md$/{flag=1;next}/^data\//{flag=0}flag')
   assert_contains "$cap_section" "(present, empty)" "empty-but-present captain.md was not distinguished from ABSENT"
@@ -866,9 +762,9 @@ EOF
   assert_not_contains "$out" "git -C $root checkout main" "read-only bootstrap printed a state-changing checkout remediation"
 
   # Detect-only bootstrap diagnostics still ran (the fakebin's PATH excludes
-  # tasks-axi, so bootstrap's own read-only tool-detection line fires
+  # NATS, so bootstrap's own read-only tool-detection line fires
   # deterministically regardless of what is installed on the test host).
-  assert_contains "$out" "MISSING: tasks-axi (install:" "detect-only bootstrap diagnostics did not run on the read-only path"
+  assert_contains "$out" "MISSING: nats-server (install:" "detect-only bootstrap diagnostics did not run on the read-only path"
 
   # The mutating squad_lead sweep must NOT have run: no SQUAD_LEAD_SYNC/
   # NUDGE_SQUAD_LEADS line, and the sowed squad_lead meta's target dir is
@@ -1115,7 +1011,6 @@ EOF
     make_fake_ps_claude "$fakebin"
     rm -f "$fakebin/tmux"
     jg_fake_exit0 "$fakebin" herdr jq
-    printf '%s\n' manual > "$home/config/backlog-backend"
     mask="$home/mask-tmux.bash"
     cat > "$mask" <<'SH'
 command() {
@@ -2010,32 +1905,6 @@ SH
   pass "session start: a read-only session declares its skipped network checks rather than dropping them"
 }
 
-# The compatibility verdict costs three tasks-axi subprocesses and one session
-# start needs it twice. The digest must pay for it once.
-test_tasks_axi_compatibility_is_probed_once() {
-  local rec root home fakebin log probes
-  rec=$(new_world tasks-axi-once)
-  IFS='|' read -r root home fakebin <<EOF
-$rec
-EOF
-  make_fake_toolchain "$fakebin"
-  make_fake_ps_claude "$fakebin"
-  make_fake_tasks_axi_compact "$fakebin"
-  log="$home/tasks-axi.log"
-  printf '# Backlog\n\n## In flight\n\n## Queued\n' > "$home/data/backlog.md"
-
-  JG_FAKE_TASKS_AXI_LOG="$log" run_session_start "$home" "$root" "$fakebin:$BASE_PATH" >/dev/null
-
-  probes=$(grep -c -- '--version' "$log" || true)
-  [ "$probes" -eq 1 ] \
-    || fail "tasks-axi was version-probed $probes times in one session start: $(cat "$log")"
-  probes=$(grep -c -- 'update --help' "$log" || true)
-  [ "$probes" -eq 1 ] \
-    || fail "tasks-axi update --help ran $probes times in one session start: $(cat "$log")"
-  assert_grep 'ready --file' "$log" "the backlog listing never ran, so the verdict was not actually reused"
-  pass "session start: the tasks-axi compatibility verdict is computed once and reused"
-}
-
 # --- fleet-state digest: compact backlog rendering --------------------------
 
 # A backlog whose Done section, held row, blocked row, and plain queued rows can
@@ -2065,250 +1934,6 @@ EOF
 ## Done
 - [x] landed-earlier - DONE-ROW-LINE already landed and torn down (repo: juggernaut) (kind: ship)
 EOF
-}
-
-test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata() {
-  local rec root home fakebin out log
-  rec=$(new_world backlog-compact-tasks-axi)
-  IFS='|' read -r root home fakebin <<EOF
-$rec
-EOF
-  make_fake_toolchain "$fakebin"
-  make_fake_tasks_axi_compact "$fakebin"
-  make_fake_ps_claude "$fakebin"
-  write_long_body_backlog "$home/data/backlog.md"
-  mkdir -p "$home/projects/juggernaut"
-  printf 'window=jg-sess:compact\nworktree=%s\nproject=juggernaut\nkind=ship\n' "$home/projects/juggernaut" \
-    > "$home/state/compact-startup.meta"
-  log="$home/tasks-axi.log"
-
-  out=$(JG_FAKE_TASKS_AXI_LOG="$log" JG_FAKE_TASKS_AXI_READY=3 \
-    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-
-  assert_contains "$out" "compact backlog listing (tasks-axi; done rows omitted; every in-flight, captain-held, and blocked row shown in full; other held rows bounded to 10; ready queued bounded to 20; task bodies omitted)" \
-    "compatible tasks-axi backend did not render the compact backlog listing"
-  assert_contains "$out" "tasks[1]{id,state,kind,repo,title,blocked_by,hold_kind,hold_reason}:" \
-    "tasks-axi compact listing omitted the expected structured field header"
-  assert_contains "$out" "compact-startup,in_flight,ship,juggernaut,Compact startup digest,none,captain,captain choice pending" \
-    "tasks-axi compact listing omitted in-flight identity, state, or hold metadata"
-  assert_contains "$out" "held-queued,queued,ship,juggernaut,Held queued work,none,captain,captain choice pending" \
-    "tasks-axi compact listing omitted a held row or its hold metadata"
-  assert_contains "$out" 'blocked-followup,queued,scout,juggernaut,Follow compact startup,compact-startup,"-","-"' \
-    "tasks-axi compact listing omitted blocked-by metadata"
-  assert_contains "$out" "ready-3,queued,ship,juggernaut,Ready item 3" \
-    "tasks-axi compact listing omitted a dispatchable queued row inside the bound"
-  assert_not_contains "$out" "OVERSIZED-BODY-LINE" "tasks-axi compact digest leaked an in-flight task body"
-  assert_not_contains "$out" "QUEUED-BODY-LINE" "tasks-axi compact digest leaked a queued task body"
-  assert_not_contains "$out" "DONE-ROW-LINE" "tasks-axi compact digest listed a done row at startup"
-  assert_contains "$out" "--- compact-startup ---" "in-flight meta identity disappeared from startup recovery digest"
-  assert_contains "$out" "worktree=$home/projects/juggernaut" "in-flight recovery worktree identity disappeared from startup digest"
-  assert_contains "$out" "Full task bodies remain available on demand: bin/jg-tasks-axi.sh show <id> --full" \
-    "compact digest omitted the full-body lookup pointer"
-  assert_contains "$out" "ready_public_followups: 0 delivery-ready obligations" \
-    "the composed listing dropped a real signal from the dispatchable set"
-  # One section pointer, not one repeated help block per composed group.
-  assert_not_contains "$out" "help[1]:" \
-    "the composed listing repeated tasks-axi's per-group help block"
-
-  # The fake refuses a body field, an unfiltered listing, and a done listing, so
-  # a clean render already proves those were never asked for; pin the group
-  # filters the listing is built from.
-  assert_grep "--state in_flight --fields blocked_by,hold_kind,hold_reason" "$log" \
-    "session start did not ask tasks-axi for the in-flight group"
-  assert_grep "--state held --fields blocked_by,hold_kind,hold_reason" "$log" \
-    "session start did not ask tasks-axi for the held group"
-  assert_grep "--state queued --blocked --fields blocked_by,hold_kind,hold_reason" "$log" \
-    "session start did not ask tasks-axi for the blocked queued group"
-  assert_grep "ready --file $home/data/backlog.md" "$log" \
-    "session start did not ask tasks-axi for the dispatchable queued set"
-
-  pass "compatible tasks-axi backlog rendering drops done rows and keeps every in-flight, held, and blocked row"
-}
-
-# The bound may only ever cut the dispatchable-now listing, and whatever it cuts
-# must be disclosed with an exact count and the command that shows the rest.
-# Token diet: the digest sections that grew with fleet history are bounded, each
-# discloses how to see the rest, and the ones carrying an action stay whole.
-test_digest_sections_stay_under_their_caps() {
-  local rec root home fakebin out held learn i
-  rec=$(new_world digest-caps)
-  IFS='|' read -r root home fakebin <<EOF
-$rec
-EOF
-  make_fake_toolchain "$fakebin"
-  make_fake_tasks_axi_compact "$fakebin"
-  make_fake_ps_claude "$fakebin"
-  write_long_body_backlog "$home/data/backlog.md"
-  {
-    printf '# Learnings\n'
-    i=1
-    while [ "$i" -le 400 ]; do
-      printf 'learned fact number %s with some padding text to take bytes\n' "$i"
-      i=$((i + 1))
-    done
-    printf '## Late heading\nlate body\n'
-  } > "$home/data/learnings.md"
-
-  out=$(JG_FAKE_TASKS_AXI_HELD_FUTURE=30 JG_SESSION_START_HELD_LIMIT=4 JG_SESSION_START_CONTEXT_FILE_CAP=2000 \
-    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-
-  # Held: the captain-held row stays whole, gated rows are cut at the limit.
-  assert_contains "$out" "held-queued,queued,ship,juggernaut,Held queued work,none,captain,captain choice pending" \
-    "the held bound dropped a captain-held row"
-  assert_contains "$out" "gated-4,queued" "the held bound dropped a row inside its limit"
-  assert_not_contains "$out" "gated-5,queued" "the held bound did not bound date-gated rows"
-  assert_contains "$out" "(26 more held row(s) not listed;" "the held bound did not disclose its exact remainder"
-  assert_contains "$out" "bin/jg-tasks-axi.sh list --state held" "the held bound did not name the command for the rest"
-  held=$(printf '%s\n' "$out" | awk '/^held [(]/{f=1} /^blocked queued:/{f=0} f' | wc -c)
-  [ "$held" -le 1500 ] || fail "held group passed its cap: $held bytes"
-
-  # Curated memory: cut at the cap, with the range, the command, and the headings.
-  assert_contains "$out" "[cut at 2000 bytes: lines " "learnings.md was not cut at its cap"
-  assert_contains "$out" "line 402: ## Late heading" "the cut did not index the headings it left out"
-  assert_not_contains "$out" "learned fact number 400 " "learnings.md body passed its cap"
-  learn=$(printf '%s\n' "$out" | awk '/^data[/]learnings.md$/{f=1} /^data[/]owner-rules.md/{f=0} f' | wc -c)
-  [ "$learn" -le 3500 ] || fail "learnings section passed its cap: $learn bytes"
-
-  # Defaults keep a small file whole.
-  printf 'short learning\n' > "$home/data/learnings.md"
-  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-  assert_contains "$out" "short learning" "a file under the cap was not printed whole"
-  assert_not_contains "$out" "are not printed; read them with sed" "a file under the cap was cut"
-
-  pass "held rows and curated memory are bounded, disclose the rest, and keep captain-held rows whole"
-}
-
-# The caps are documented defaults, not magic numbers: defaults/token-caps sets the
-# memory cap, config/token-caps overrides it for one home, and owner-rules keeps
-# the larger bound so a standing decision is never cut by the memory cap.
-test_token_caps_defaults_and_home_override() {
-  local rec root home fakebin out i f
-  rec=$(new_world token-caps)
-  IFS='|' read -r root home fakebin <<EOF
-$rec
-EOF
-  make_fake_toolchain "$fakebin"
-  make_fake_tasks_axi_compact "$fakebin"
-  make_fake_ps_claude "$fakebin"
-  for f in learnings.md owner-rules.md; do
-    : > "$home/data/$f"
-    i=1
-    while [ "$i" -le 400 ]; do
-      printf 'line %s of %s with padding text to take bytes\n' "$i" "$f" >> "$home/data/$f"
-      i=$((i + 1))
-    done
-  done
-
-  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-  assert_contains "$out" "[cut at 7500 bytes: " "the shipped memory-file-cap default was not applied to learnings.md"
-  assert_contains "$out" "[cut at 10000 bytes: " "owner-rules.md lost the larger context-file-cap"
-
-  printf 'memory-file-cap 3000\nmemory-file-cap notanumber\ncontext-file-cap 0\n' > "$home/config/token-caps"
-  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-  assert_contains "$out" "[cut at 3000 bytes: " "config/token-caps did not override the memory cap"
-  assert_contains "$out" "[cut at 10000 bytes: " "a zero value in config/token-caps switched a cap off"
-
-  out=$(JG_SESSION_START_CONTEXT_FILE_CAP=2000 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-  assert_not_contains "$out" "[cut at 3000 bytes: " "the run variable did not override config/token-caps"
-  assert_contains "$out" "[cut at 2000 bytes: " "the run variable did not set the cap"
-
-  pass "token caps come from defaults/token-caps, a home file overrides them, and a bad value never turns one off"
-}
-
-test_backlog_queued_bound_discloses_its_remainder() {
-  local rec root home fakebin out
-  rec=$(new_world backlog-queued-bound)
-  IFS='|' read -r root home fakebin <<EOF
-$rec
-EOF
-  make_fake_toolchain "$fakebin"
-  make_fake_tasks_axi_compact "$fakebin"
-  make_fake_ps_claude "$fakebin"
-  write_long_body_backlog "$home/data/backlog.md"
-
-  out=$(JG_FAKE_TASKS_AXI_READY=7 JG_SESSION_START_QUEUED_LIMIT=3 \
-    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-
-  assert_contains "$out" "ready-3,queued,ship,juggernaut,Ready item 3" \
-    "the queued bound dropped a row inside its own limit"
-  assert_not_contains "$out" "ready-4,queued" "the queued bound did not actually bound the ready listing"
-  assert_contains "$out" "(shown 3 of 7 ready queued item(s))" \
-    "the bounded queued listing did not report what it showed"
-  assert_contains "$out" "(4 more queued - bin/jg-tasks-axi.sh ready)" \
-    "the bounded queued listing did not disclose an exact remainder and how to see it"
-
-  # The bound is for dispatchable work only: held and blocked rows stay whole.
-  assert_contains "$out" "held-queued,queued,ship,juggernaut,Held queued work,none,captain,captain choice pending" \
-    "the queued bound swallowed a held row"
-  assert_contains "$out" 'blocked-followup,queued,scout,juggernaut,Follow compact startup,compact-startup,"-","-"' \
-    "the queued bound swallowed a blocked row"
-  assert_contains "$out" "compact-startup,in_flight,ship,juggernaut,Compact startup digest,none,captain,captain choice pending" \
-    "the queued bound swallowed an in-flight row"
-
-  pass "the startup backlog bound cuts only dispatchable queued rows and discloses the remainder exactly"
-}
-
-test_backlog_compact_manual_backend_skips_indented_bodies() {
-  local rec root home fakebin out
-  rec=$(new_world backlog-compact-manual)
-  IFS='|' read -r root home fakebin <<EOF
-$rec
-EOF
-  make_fake_toolchain "$fakebin"
-  make_fake_ps_claude "$fakebin"
-  printf '%s\n' manual > "$home/config/backlog-backend"
-  write_long_body_backlog "$home/data/backlog.md"
-
-  out=$(JG_SESSION_START_QUEUED_LIMIT=4 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-
-  assert_contains "$out" "compact backlog listing (manual backend; done rows omitted; every in-flight, held, and blocked title line kept; other queued bounded to 4; indented task bodies omitted)" \
-    "manual backend did not use compact title-line rendering"
-  assert_contains "$out" "## In flight" "manual compact rendering omitted the in-flight section heading"
-  assert_contains "$out" "- [ ] compact-startup - Compact startup digest" \
-    "manual compact rendering omitted the in-flight title line"
-  assert_contains "$out" "(hold: captain choice pending) (hold-kind: captain)" \
-    "manual compact rendering omitted hold metadata"
-  assert_contains "$out" "blocked-by: compact-startup - waits for implementation" \
-    "manual compact rendering omitted blocker metadata"
-  assert_contains "$out" "- [ ] held-queued - Held queued work" \
-    "manual compact rendering dropped a held queued title line"
-  assert_not_contains "$out" "OVERSIZED-BODY-LINE" "manual compact digest leaked an in-flight task body"
-  assert_not_contains "$out" "QUEUED-BODY-LINE" "manual compact digest leaked a queued task body"
-  assert_not_contains "$out" "DONE-ROW-LINE" "manual compact digest listed a done row at startup"
-  assert_not_contains "$out" "## Done" "manual compact digest printed the done heading it never fills"
-  assert_contains "$out" "- [ ] plain-4 - Plain queued item 4" \
-    "manual compact rendering dropped a queued title line inside its bound"
-  assert_not_contains "$out" "- [ ] plain-5 - Plain queued item 5" \
-    "manual compact rendering did not bound its plain queued listing"
-  assert_contains "$out" "(shown 1 in-flight, 2 held or blocked queued, 4 of 25 other queued title line(s); 1 done row(s) omitted)" \
-    "manual compact rendering did not report its bound accounting"
-  assert_contains "$out" "(21 more queued - raise JG_SESSION_START_QUEUED_LIMIT or read data/backlog.md for the rest)" \
-    "manual compact rendering did not disclose an exact queued remainder"
-  assert_contains "$out" "or data/backlog.md" "manual compact digest omitted the data/backlog.md full-body pointer"
-
-  pass "manual backlog rendering drops done rows, keeps every held or blocked title line, and bounds the rest"
-}
-
-test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback() {
-  local rec root home fakebin out
-  rec=$(new_world backlog-compact-unavailable)
-  IFS='|' read -r root home fakebin <<EOF
-$rec
-EOF
-  make_fake_toolchain "$fakebin"
-  make_fake_ps_claude "$fakebin"
-  write_long_body_backlog "$home/data/backlog.md"
-
-  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-
-  assert_contains "$out" "compact backlog listing (tasks-axi unavailable or incompatible; done rows omitted;" \
-    "unavailable tasks-axi did not fall back to compact title-line rendering"
-  assert_contains "$out" "- [ ] compact-startup - Compact startup digest" \
-    "unavailable tasks-axi fallback omitted a backlog title line"
-  assert_not_contains "$out" "OVERSIZED-BODY-LINE" "unavailable tasks-axi fallback leaked an in-flight task body"
-  assert_not_contains "$out" "DONE-ROW-LINE" "unavailable tasks-axi fallback listed a done row at startup"
-
-  pass "unavailable or incompatible tasks-axi falls back to compact manual backlog rendering"
 }
 
 # --- runtime bound -----------------------------------------------------------
@@ -3181,7 +2806,6 @@ test_inactive_reconcile_never_blocks_the_digest
 test_unreachable_network_never_blocks_the_digest
 test_deferred_result_reaches_the_agent_when_the_digest_cannot_print_it
 test_read_only_session_declares_skipped_network_checks
-test_tasks_axi_compatibility_is_probed_once
 test_session_start_preserves_ambiguous_pi_process
 test_session_start_preserves_transiently_unreadable_tmux
 test_session_start_preserves_proven_bare_shell_recovery
@@ -3201,12 +2825,6 @@ test_composition_invokes_real_scripts
 test_branch_outcome_replay_respects_captain_barrier_and_lease_sweep
 test_non_pi_session_start_leaves_branch_state_untouched
 test_session_start_seeds_the_outcome_display_tail_while_away
-test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
-test_digest_sections_stay_under_their_caps
-test_token_caps_defaults_and_home_override
-test_backlog_queued_bound_discloses_its_remainder
-test_backlog_compact_manual_backend_skips_indented_bodies
-test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon

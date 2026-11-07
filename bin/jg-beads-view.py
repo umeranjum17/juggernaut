@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""jg-beads-view.py - render bd rows in the read shape tasks-axi prints.
+"""jg-beads-view.py - render bd rows in the read shape the backlog prints.
 
 Usage: jg-beads.sh list --all --limit 0 --json | jg-beads-view.py <list|ready|show|view|markdown|links> [args...]
 
-Reads stdin only, for bin/jg-tasks-axi-lib.sh's jg_backlog_beads_read, and never starts bd.
+Reads stdin only, for bin/jg-backlog-lib.sh's jg_backlog_beads_read, and never starts bd.
 Beads answers ready and blocked: when JG_BEADS_READY names a file holding `bd ready --json`, ready prints exactly those rows in bd's order,
 and when JG_BEADS_BLOCKED names `bd blocked --json`, the blocked and blocked_by fields and list --blocked read it;
 with neither, the answer is worked out from the rows' blocks edges, which is how a write answers.
 Ours on top of bd's answer: a public-followup row is delivery work, so ready leaves it to its own count.
 bin/jg-beads-write.py imports it, so a write answers in the same shape.
-The links verb is not a tasks-axi read: it prints the ids linked to one row, for bin/jg-captain-hold.sh's blocking gate.
-bd stamps UTC and tasks-axi the local day, so created and closed read as the local day.
+The links verb is not a backlog read: it prints the ids linked to one row, for bin/jg-captain-hold.sh's blocking gate.
+bd stamps UTC and the backlog the local day, so created and closed read as the local day.
 A held row is status on_hold, blocked or deferred, and reads as queued, or in flight while it has an assignee;
 its fields stay readable on a closed row and on a row whose date has passed.
 A dated hold is status deferred: bd ready wakes a past-date row to open and clears defer_until, and until that first
@@ -20,7 +20,7 @@ parent is the parent-child edge target (upkeep by label) and item metadata.legac
 show takes a row's id or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
 markdown prints the store in the backlog file's layout, for readers of that file's lines: ids are item, hold reasons encoded.
-Refusals print tasks-axi's error lines on stdout: exit 2 for a bad flag, exit 1 for an unknown id.
+Refusals print the backlog's error lines on stdout: exit 2 for a bad flag, exit 1 for an unknown id.
 """
 import base64
 import datetime
@@ -168,16 +168,16 @@ def card(item, hint=None):
 def show(tasks, args):
     found, ids = flags(args, (), ("--full",))
     if len(ids) != 1:
-        refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi show <id> [--full]")
+        refuse("Expected 1 positional argument, got %d" % len(ids), "usage: jg-backlog.sh show <id> [--full]")
     hits = [t for t in tasks if t["id"] == ids[0]] or [t for t in tasks if ids[0] in t["names"]]
     if len(hits) == 1:
         item = hits[0]
         card(item, None if "--full" in found else "--full")
         if item["blocked"] == "yes" and item["state"] != "done":
-            print("help[2]:\n  - Run `tasks-axi unblock %s --by <other>` to clear a blocker" % item["id"])
-            print("  - Run `tasks-axi start %s` to move it to in flight" % item["id"])
+            print("help[2]:\n  - Run `jg-backlog.sh unblock %s --by <other>` to clear a blocker" % item["id"])
+            print("  - Run `jg-backlog.sh start %s` to move it to in flight" % item["id"])
         return
-    refuse('Task "%s" not found in this backlog' % ids[0], "Run `tasks-axi list` to see existing tasks", "NOT_FOUND", 1)
+    refuse('Task "%s" not found in this backlog' % ids[0], "Run `jg-backlog.sh list` to see existing tasks", "NOT_FOUND", 1)
 
 
 def ready(tasks, args, answer=None):
@@ -203,8 +203,8 @@ def ready(tasks, args, answer=None):
     else:
         print("ready_public_followups: 0 delivery-ready obligations")
     print("help[1]:")
-    print("  - Run `tasks-axi start <id>` to dispatch one of these" if rows else
-          "  - Run `tasks-axi list --state queued%s` to see all queued work (incl. blocked)" % suffix)
+    print("  - Run `jg-backlog.sh start <id>` to dispatch one of these" if rows else
+          "  - Run `jg-backlog.sh list --state queued%s` to see all queued work (incl. blocked)" % suffix)
 
 
 def listing(tasks, args):
@@ -229,15 +229,15 @@ def listing(tasks, args):
         named = [state or ""] + ["%s=%s" % pair for pair in (("repo", repo), ("kind", kind)) if pair[1]]
         print("tasks: 0 %s" % "".join(word + " " for word in named if word) + "tasks in this backlog")
         if not (state or repo or kind):
-            print('help[2]:\n  - "Run `tasks-axi add <id> \\"<title>\\"` to add a task"')
-            print("  - Run `tasks-axi list --state done` to see completed work")
+            print('help[2]:\n  - "Run `jg-backlog.sh add <id> \\"<title>\\"` to add a task"')
+            print("  - Run `jg-backlog.sh list --state done` to see completed work")
         return
     table("tasks", rows, ROW + extra, "--full" in found)
     both = not state and not kind
     print("help[%d]:" % (2 if both else 1))
-    print("  - Run `tasks-axi show <id>` for full notes on a task")
+    print("  - Run `jg-backlog.sh show <id>` for full notes on a task")
     if both:
-        print("  - Run `tasks-axi ready%s` to see unblocked queued work" % (" --repo=" + repo if repo else ""))
+        print("  - Run `jg-backlog.sh ready%s` to see unblocked queued work" % (" --repo=" + repo if repo else ""))
 
 
 def file_row(item, items):
@@ -247,7 +247,8 @@ def file_row(item, items):
     words += [link.partition(":")[2] for link in links]
     words += ["blocked-by: " + items.get(ident, ident) for ident in waiting]
     tags = [("repo", item["repo"]), ("kind", "-" if item["kind"] == "task" else item["kind"]), ("priority", item["priority"])]
-    if item["held"] == "yes":
+    if item["held"] == "yes" or (item["state"] == "done" and item["hold_kind"] != "-"):
+        # A closed row keeps its hold kind and reason: a non-release answer is not a delivery.
         reason = base64.b64encode(item["hold_reason"].encode()).decode()
         tags += [("hold", "jg-hold-v1:" + reason), ("hold-kind", item["hold_kind"]), ("hold-until", item["hold_until"])]
     words += ["(%s: %s)" % tag for tag in tags if tag[1] != "-"]

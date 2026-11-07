@@ -3,7 +3,7 @@
 # deterministic public-followup consumer.
 #
 # Juggernaut promises a public final reply when a myjuggernaut relay mention (X or
-# Discord) asks for work. `tasks-axi public-followup` is the sole owner of that
+# Discord) asks for work. `jg-backlog.sh public-followup` is the sole owner of that
 # typed obligation and its state machine; state/x-context/ is the sole owner of
 # the private full request context. This library owns Juggernaut's activation
 # gate, private per-home transport paths, retained-loop state and locking
@@ -26,7 +26,7 @@
 #                                    a delivered final keeps the record, so this
 #                                    same check is the fail-loud session-start
 #                                    gate. Relay-enabled homes with no public
-#                                    loops stop here, so no tasks-axi call and
+#                                    loops stop here, so no backlog call and
 #                                    no backlog scan happens.
 #
 # Private transport layout, all under <home>/state/public-followup (mode 0700,
@@ -42,7 +42,7 @@
 #                              loop is still open. Delivery
 #                              stamps state=delivered; only `retire` removes the
 #                              record. The obligation itself always remains
-#                              tasks-axi truth.
+#                              The backlog truth.
 #   events/<event-id>.json     inbound typed terminal events awaiting
 #                              reconciliation, one file per event id.
 #   outbox/<event-id>.json     OUTBOUND typed terminal events a worker in THIS
@@ -56,7 +56,7 @@
 #   consumed/<event-id>        idempotency ledger: an accepted event id is never
 #                              replayed, so duplicate emits and restart replay
 #                              are no-ops.
-#   rejected/<event-id>.json   events tasks-axi refused, kept with a
+#   rejected/<event-id>.json   events the backlog refused, kept with a
 #   rejected/<event-id>.reason one-line reason so a refusal is inspectable and
 #                              never retried in a loop.
 #   rejection-wakes/<event-id> one pending wake line per refusal not yet
@@ -84,8 +84,8 @@
 # those remain that file's contract and are not restated here.
 
 _JG_PF_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _JG_PF_LIB_DIR="."
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$_JG_PF_LIB_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$_JG_PF_LIB_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-x-lib.sh
 . "$_JG_PF_LIB_DIR/jg-x-lib.sh"
 
@@ -164,7 +164,7 @@ jg_pf_active() {
 # --- identifiers ------------------------------------------------------------
 
 # jg_pf_slug_valid <value>: obligation ids, relation ids, work ids, and request
-# ids all compose filenames. They arrive from tasks-axi, the relay, and child
+# ids all compose filenames. They arrive from the backlog, the relay, and child
 # homes, so every one is checked against a conservative slug before use.
 jg_pf_slug_valid() {
   local v=$1
@@ -174,7 +174,7 @@ jg_pf_slug_valid() {
   [ "${#v}" -le 128 ]
 }
 
-# The typed tasks-axi schema owns the home-id prefix for a squad-lead work ref,
+# The typed the backlog schema owns the home-id prefix for a squad-lead work ref,
 # and the pinned release still declares it under its pre-rename spelling, so the
 # value keeps that spelling: it crosses into another tool, it is not a name this
 # repository chooses. Derived rather than spelled, and records written under the
@@ -182,16 +182,16 @@ jg_pf_slug_valid() {
 JG_PF_SQUAD_LEAD_HOME_PREFIX="$(jg_compat_legacy_of squad-lead):"
 JG_PF_SQUAD_LEAD_HOME_PREFIX_ALT=squad_lead:
 
-# Our spelling on the left, the pinned tasks-axi spelling on the right: this pair
+# Our spelling on the left, the pinned the backlog spelling on the right: this pair
 # is the whole boundary, so everything else keeps the current name.
-jg_pf_tasks_axi_home_id() {  # <home-id>
+jg_pf_backlog_home_id() {  # <home-id>
   case "${1-}" in
     "$JG_PF_SQUAD_LEAD_HOME_PREFIX_ALT"*) printf '%s%s\n' "$JG_PF_SQUAD_LEAD_HOME_PREFIX" "${1#"$JG_PF_SQUAD_LEAD_HOME_PREFIX_ALT"}" ;;
     *) printf '%s\n' "${1-}" ;;
   esac
 }
 
-# jg_pf_home_id_valid <home_id>: tasks-axi accepts "main" or a squad-lead home id.
+# jg_pf_home_id_valid <home_id>: the backlog accepts "main" or a squad-lead home id.
 # Validate the same shape here so a malformed source home is refused before it
 # reaches a filename or a CLI call.
 jg_pf_home_id_valid() {
@@ -248,21 +248,21 @@ jg_pf_bound_bytes() {
 
 # --- deliverable rules ------------------------------------------------------
 #
-# tasks-axi is the authority on deliverables, but it exposes no validation-only
+# The backlog is the authority on deliverables, but it exposes no validation-only
 # command, and its refusal of a bad value names none of it. These helpers mirror
 # the rules its work-event consumer applies - EXPECTED_DELIVERABLES,
 # eventMatchesExpected, failureDeliverablesAreSafe, REPORT_PATH_RE,
-# COMMIT_SHA_RE, and SAFE_CODE_RE in tasks-axi's public-followup.js, and isPrUrl
-# in tasks-axi's pr-url.js, which is the seam public-followup.js classifies
+# COMMIT_SHA_RE, and SAFE_CODE_RE in the backlog's public-followup.js, and isPrUrl
+# in the backlog's pr-url.js, which is the seam public-followup.js classifies
 # pr_url through - so a bad value is refused where it is written and a refusal
 # can say which value was wrong. Every rule here is keyed on the promise's
 # expected final and the event's outcome together, because that is the pair
-# tasks-axi keys them on.
-# tasks-axi still re-validates at consume; tests/jg-public-followup.test.sh pins
-# these rules against the real consumer, so re-pin both together when tasks-axi
+# The backlog keys them on.
+# The backlog still re-validates at consume; tests/jg-public-followup.test.sh pins
+# these rules against the real consumer, so re-pin both together when the backlog
 # changes them.
 
-# jg_pf_deliverable_format <key>: the format tasks-axi accepts for <key>, as one
+# jg_pf_deliverable_format <key>: the format the backlog accepts for <key>, as one
 # line for a brief or a refusal. Exit 1 for a key with no known format rule.
 jg_pf_deliverable_format() {
   case "$1" in
@@ -274,7 +274,7 @@ jg_pf_deliverable_format() {
   esac
 }
 
-# jg_pf_deliverable_key_valid <key>: 0 when <key> is a deliverable name tasks-axi
+# jg_pf_deliverable_key_valid <key>: 0 when <key> is a deliverable name the backlog
 # accepts (DELIVERABLE_NAME_RE in its public-followup.js): a lowercase letter,
 # then at most 63 more of [a-z0-9_].
 jg_pf_deliverable_key_valid() {
@@ -285,7 +285,7 @@ jg_pf_deliverable_key_valid() {
 }
 
 # jg_pf_expected_outcome <expected-final>: the one outcome_type that satisfies
-# that expected final (eventMatchesExpected in tasks-axi's public-followup.js).
+# that expected final (eventMatchesExpected in the backlog's public-followup.js).
 # A promise is also answerable with 'failed', which reports that it could not be
 # kept as promised rather than satisfying it. Exit 1 for an unknown type.
 jg_pf_expected_outcome() {
@@ -298,14 +298,14 @@ jg_pf_expected_outcome() {
 }
 
 # jg_pf_deliverable_keys <expected-final> <outcome>: the deliverable keys
-# tasks-axi lets an event with <outcome> carry against a promise whose expected
+# The backlog lets an event with <outcome> carry against a promise whose expected
 # final is <expected-final>, space-separated (empty for none). That is
 # EXPECTED_DELIVERABLES[expected] for the outcome the promise expects, the
 # error_code of failureDeliverablesAreSafe for a failure reported against any
 # other promise, and nothing for superseded. With no <expected-final> - a staged
 # emit cannot read one - the outcome stands in for it, which is the same set
 # whenever the event is the one the promise expects. Exit 1 when neither names a
-# final tasks-axi defines, which it refuses on its own.
+# final the backlog defines, which it refuses on its own.
 jg_pf_deliverable_keys() {
   local expected=${1:-$2}
   case "$2" in
@@ -323,7 +323,7 @@ jg_pf_deliverable_keys() {
 }
 
 # jg_pf_pr_url_valid <url>: 0 when <url> is byte-for-byte a canonical pull
-# request URL. Mirrors isPrUrl in tasks-axi's pr-url.js: exactly
+# request URL. Mirrors isPrUrl in the backlog's pr-url.js: exactly
 # https://github.com/<owner>/<repo>/pull/<n> on github.com, or
 # https://<lowercase-dns-host>/<owner>/<repo>/pulls/<n> on any other host, with
 # <n> positive and without leading zeros. The route and the host decide each
@@ -351,11 +351,11 @@ jg_pf_pr_url_valid() {
 }
 
 # jg_pf_deliverable_problem <expected-final> <outcome> <key> <value>: silent exit
-# 0 when tasks-axi would accept <key>=<value> on a work event with <outcome>
+# 0 when the backlog would accept <key>=<value> on a work event with <outcome>
 # against a promise whose expected final is <expected-final> (empty when the
 # caller cannot read one); otherwise print one line naming the key, the specific
 # problem, and the applicable correction, and exit 1. The 500-character bound
-# and single-line rule are safeText's, which tasks-axi applies to every deliverable
+# and single-line rule are safeText's, which the backlog applies to every deliverable
 # value whatever its key; the per-key formats follow it.
 jg_pf_deliverable_problem() {
   local expected=$1 outcome=$2 key=$3 value=$4 allowed format re=''
@@ -374,7 +374,7 @@ jg_pf_deliverable_problem() {
   fi
   case "$value" in
     '')
-      printf "deliverable '%s' has no value; tasks-axi accepts no empty deliverable\n" "$key"
+      printf "deliverable '%s' has no value; the backlog accepts no empty deliverable\n" "$key"
       return 1
       ;;
     ' '*|*' ')
@@ -387,7 +387,7 @@ jg_pf_deliverable_problem() {
       ;;
   esac
   if [ "${#value}" -gt 500 ]; then
-    printf "deliverable '%s' is %s characters long; tasks-axi accepts at most 500\n" "$key" "${#value}"
+    printf "deliverable '%s' is %s characters long; the backlog accepts at most 500\n" "$key" "${#value}"
     return 1
   fi
   case "$key" in
@@ -410,23 +410,23 @@ jg_pf_deliverable_problem() {
 
 # --- the promised contract --------------------------------------------------
 
-# A Beads home keeps its promises in bd, so only an old backlog needs tasks-axi installed.
+# A home keeps its promises in its Beads store, so a store is the whole requirement.
 jg_pf_backlog_tool() {  # <home>
-  jg_backlog_backend_beads "$1/config" || command -v tasks-axi >/dev/null 2>&1
+  jg_backlog_beads_store "$1/config" >/dev/null 2>&1
 }
 
 # jg_pf_obligation_json <home> <obligation-id>: the complete typed obligation
 # payload on stdout, empty when that home's backlog simply has no such
 # public-followup item, and a non-zero exit ONLY when the backlog could not be
 # read at all. Callers depend on that distinction to report the right thing, so
-# jq runs without -e here. tasks-axi is the single source of truth for what a
+# jq runs without -e here. the backlog is the single source of truth for what a
 # promise expects, so every reader of that contract comes through this one call
 # rather than a copy of it. An inherited JG_DATA_OVERRIDE is cleared because a
 # caller such as bound work names the owning home in the argument while its own
 # data override is still in the environment.
 jg_pf_obligation_json() {
   local home=$1 id=$2 out
-  out=$(JG_HOME="$home" JG_DATA_OVERRIDE='' "$_JG_PF_LIB_DIR/jg-tasks-axi.sh" \
+  out=$(JG_HOME="$home" JG_DATA_OVERRIDE='' "$_JG_PF_LIB_DIR/jg-backlog.sh" \
     public-followup list --json 2>/dev/null) || return 1
   [ -n "$out" ] || return 1
   printf '%s' "$out" | jq -c --arg id "$id" \

@@ -25,17 +25,18 @@ export HOME=$d/user XDG_CONFIG_HOME=$d/xdg-config XDG_DATA_HOME=$d/xdg-data TMPD
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 mkdir -p "$HOME" "$TMPDIR" "$d/fork"
-cp -a "$JG_TEST_FORK/bin" "$d/fork/"
+cp -a "$JG_TEST_FORK/bin" "$JG_TEST_FORK/toolchain.versions" "$d/fork/"
+. "$addons/lib/beads-test-env.sh"
 # No rewriting: jg-dod-lib.sh and jg-merge-outcome-lib.sh load the feature
 # library themselves from JG_ADDONS_DIR, and jg-merge-local.sh calls the hooks.
 
 fail() { echo "not ok - $*" >&2; exit 1; }
 run_merge() { JG_HOME=$home bash "$d/fork/bin/jg-merge-local.sh" task > "$d/out" 2>&1; }
-for mode in present absent; do
+for mode in present; do  # the gate hooks are native to jg-merge-local; no absent mode remains
   home=$d/$mode
   repo=$home/project
   mkdir -p "$home/state" "$home/config" "$home/data"
-  printf 'manual\n' > "$home/config/backlog-backend"
+  core_beads_home "$d/fork" "$home"
   git init -q -b main "$repo"
   git -C "$repo" config user.name Umer
   git -C "$repo" config user.email umer@example.invalid

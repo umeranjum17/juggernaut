@@ -35,7 +35,7 @@
 #                          one of --home and --stage-in is required;
 #                          `jg-public-followup.sh brief` prints whichever the
 #                          bound work home actually needs.
-#   --obligation <id>      tasks-axi public-followup obligation id.
+#   --obligation <id>      jg-backlog.sh public-followup obligation id.
 #   --relation <id>        The relation_id this work fulfills or contributes to.
 #   --source-home <id>     This worker's stable home identity, exactly as bound:
 #                          "main" or "squad_lead:<stable-id>".
@@ -43,12 +43,12 @@
 #   --generation <n>       The bound relation generation (integer >= 1).
 #   --outcome <type>       Typed outcome. With --home, an outcome that cannot
 #                          satisfy the registered expected final is refused here,
-#                          and so is 'superseded', which tasks-axi takes only
-#                          with a successor this result cannot carry. tasks-axi
+#                          and so is 'superseded', which the backlog takes only
+#                          with a successor this result cannot carry. the backlog
 #                          still owns the vocabulary.
 #   --deliverable k=v      Repeatable safe deliverable (for example
 #                          pr_url=https://...). A key this promise does not carry
-#                          on this outcome, or a value tasks-axi refuses - a bad
+#                          on this outcome, or a value the backlog refuses - a bad
 #                          format such as an absolute report_path, more than 500
 #                          characters, or anything but safe single-line text - is
 #                          refused here with the specific problem and applicable
@@ -62,7 +62,7 @@
 #                          that obligation's own record is on another machine;
 #                          `jg-public-followup.sh brief` prints one per required
 #                          key. With --home the obligation's required keys are
-#                          read from tasks-axi and enforced whether or not the
+#                          read from the backlog and enforced whether or not the
 #                          flag is passed; a staged emit enforces exactly the
 #                          keys it was given, because the outcome alone cannot
 #                          tell a key this promise requires from one it does
@@ -90,7 +90,7 @@
 # artifacts by a child. --stage-in writes into the CALLER'S OWN home instead, so
 # that gate does not apply and does not run: the registration and the relay
 # consent both live on the other machine, and the collecting home re-validates
-# every field against its own registration and tasks-axi before accepting the
+# every field against its own registration and the backlog before accepting the
 # event. A staged event is never posted, never read as a public reply, and never
 # consumed by the staging home's own reconciliation.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
@@ -229,10 +229,10 @@ case "$GENERATION" in
 esac
 [ "$GENERATION" -ge 1 ] || die "generation must be >= 1, got '$GENERATION'"
 
-# tasks-axi accepts a superseded event only with a successor, and a typed
+# The backlog accepts a superseded event only with a successor, and a typed
 # terminal result carries none, so such an event could only ever be quarantined.
 case "$OUTCOME" in
-  superseded) die "a superseded outcome cannot be reported this way: tasks-axi requires a successor obligation for it, which a typed terminal result does not carry" ;;
+  superseded) die "a superseded outcome cannot be reported this way: the backlog requires a successor obligation for it, which a typed terminal result does not carry" ;;
 esac
 
 # Resolve the owning home to a real absolute directory before composing any path
@@ -272,7 +272,7 @@ if [ "$HOME_MODE" = owning ]; then
   command -v jq >/dev/null 2>&1 || die "jq is required to build a typed terminal event" 1
 
   jg_pf_backlog_tool "$HOME_DIR" \
-    || die "tasks-axi is required to read what this obligation promised" 1
+    || die "the backlog is required to read what this obligation promised" 1
 
   REGISTRY="$(jg_pf_registry_dir "$STATE")/$OBLIGATION"
   if [ ! -f "$REGISTRY" ] || [ -L "$REGISTRY" ]; then
@@ -281,7 +281,7 @@ if [ "$HOME_MODE" = owning ]; then
 
   # The registration is the owning home's own record of what it bound, so checking
   # the identity tuple against it catches a mis-briefed worker at the edge with a
-  # clear message. tasks-axi still re-validates everything at consume time and
+  # clear message. the backlog still re-validates everything at consume time and
   # remains the authority; this is a cheap early refusal, not a second gatekeeper.
   reg_mismatch() {
     local field=$1 expected=$2 got=$3
@@ -295,21 +295,21 @@ if [ "$HOME_MODE" = owning ]; then
 else
   # Staging home: the registration and the relay consent live on the other
   # machine, so neither gate can run here and neither is skipped as a shortcut.
-  # The collecting home applies both, plus tasks-axi, before it accepts anything.
+  # The collecting home applies both, plus the backlog, before it accepts anything.
   command -v jq >/dev/null 2>&1 || die "jq is required to build a typed terminal event" 1
 fi
 
-# tasks-axi's own obligation record is what this promise expects, so --home
-# applies tasks-axi's rules against it exactly as `brief` reads it, for every
+# The backlog's own obligation record is what this promise expects, so --home
+# applies the backlog's rules against it exactly as `brief` reads it, for every
 # registration this home holds. A staged emit is on the other side of a machine
 # boundary from that record and is told the required keys by `brief` as
 # --require-deliverable flags.
 EXPECTED_FINAL=
 if [ "$HOME_MODE" = owning ]; then
   OBLIGATION_JSON=$(jg_pf_obligation_json "$HOME_DIR" "$OBLIGATION") \
-    || die "could not read public-followup obligation '$OBLIGATION' through tasks-axi" 1
+    || die "could not read public-followup obligation '$OBLIGATION' through the backlog" 1
   [ -n "$OBLIGATION_JSON" ] \
-    || die "public-followup obligation '$OBLIGATION' is missing from tasks-axi" 1
+    || die "public-followup obligation '$OBLIGATION' is missing from the backlog" 1
   EXPECTED_FINAL=$(printf '%s' "$OBLIGATION_JSON" \
     | jq -r '.public_followup.expected_final.type // empty' 2>/dev/null)
   jg_pf_expected_outcome "$EXPECTED_FINAL" >/dev/null 2>&1 || EXPECTED_FINAL=
@@ -329,7 +329,7 @@ if [ -n "$EXPECTED_FINAL" ] && [ "$OUTCOME" != failed ]; then
     || die "outcome '$OUTCOME' cannot satisfy this obligation: its $EXPECTED_FINAL final needs outcome '$EXPECTED_OUTCOME', and only 'failed' may answer it otherwise"
 fi
 
-# A key or a value tasks-axi would refuse is refused here, where the worker can
+# A key or a value the backlog would refuse is refused here, where the worker can
 # still correct it, instead of travelling to the owning home to be quarantined.
 i=0
 while [ "$i" -lt "${#DELIVERABLE_KEYS[@]}" ]; do
@@ -361,7 +361,7 @@ while [ "$i" -lt "${#REQUIRED_KEYS[@]}" ]; do
     [ "${DELIVERABLE_KEYS[$j]}" != "$key" ] || break
     j=$((j + 1))
   done
-  [ "$j" -lt "${#DELIVERABLE_KEYS[@]}" ] || die "required deliverable '$key' is missing; expected $(jg_pf_deliverable_format "$key" || printf '%s' 'the value tasks-axi requires for it')"
+  [ "$j" -lt "${#DELIVERABLE_KEYS[@]}" ] || die "required deliverable '$key' is missing; expected $(jg_pf_deliverable_format "$key" || printf '%s' 'the value the backlog requires for it')"
 done
 
 case "$TEXT_MODE" in
@@ -389,9 +389,9 @@ DELIVERABLES_JSON=$(
   } | jq -Rsc 'split("\n") | .[:-1] | [range(0; length; 2) as $i | {key: .[$i], value: .[$i+1]}] | from_entries | to_entries | sort_by(.key) | from_entries'
 ) || die "could not encode deliverables" 1
 
-# The event id hashes the identity fields tasks-axi validates, so it is derived
+# The event id hashes the identity fields the backlog validates, so it is derived
 # from the same spelling that goes into the typed document (slice S5).
-SOURCE_HOME_WIRE=$(jg_pf_tasks_axi_home_id "$SOURCE_HOME") \
+SOURCE_HOME_WIRE=$(jg_pf_backlog_home_id "$SOURCE_HOME") \
   || die "could not derive the source home id" 1
 EVENT_ID=$(jg_pf_event_id \
   "$OBLIGATION" "$RELATION" "$SOURCE_HOME_WIRE" "$WORK_ID" "$GENERATION" "$OUTCOME" \

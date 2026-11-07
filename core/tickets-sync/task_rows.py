@@ -1,4 +1,4 @@
-"""Read tasks-axi tabular output for the ticket publisher."""
+"""Read the backlog tabular output for the ticket publisher."""
 import json
 import re
 

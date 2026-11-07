@@ -67,7 +67,6 @@ cp -a "$ROOT/bin" "$JG_HOME/"
 cp "$ROOT/.opencode/plugins/jg-primary-watch-arm.js" "$JG_HOME/.opencode/plugins/"
 cp "$ROOT/.opencode/plugins/lib/jg-operational-input.js" "$JG_HOME/.opencode/plugins/lib/"
 printf '{"type":"module"}\n' > "$JG_HOME/.opencode/plugins/package.json"
-printf 'manual\n' > "$JG_HOME/config/backlog-backend"
 printf 'lead\n' > "$JG_HOME/.jg-squad-lead-home"
 printf '# Isolated verification agent\nNo real fleet work. Only after an actual WATCHER FIRED message: run bin/jg-wake-drain.sh | tee -a data/drain.txt, execute its printed WAKE_ACK_REQUIRED command, then cp state/.wake-queue.seq state/lead-handled. Never manually arm monitoring. Reply briefly.\n' > "$JG_HOME/AGENTS.md"
 git -C "$JG_HOME" init -q

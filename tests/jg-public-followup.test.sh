@@ -8,8 +8,8 @@
 # ORIGINAL thread exactly once.
 #
 # Everything here is hermetic: the relay is a fakebin `curl`, so no port, no
-# server, and no public post. tasks-axi and jq are the real tools, because
-# tasks-axi owns the obligation state machine and stubbing it would test nothing.
+# server, and no public post. the backlog and jq are the real tools, because
+# The backlog owns the obligation state machine and stubbing it would test nothing.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -17,6 +17,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=bin/jg-timeout-lib.sh
 . "$ROOT/bin/jg-timeout-lib.sh"
+# shellcheck source=core/lib/beads-test-env.sh
+. "$ROOT/core/lib/beads-test-env.sh"
 
 PF="$ROOT/bin/jg-public-followup.sh"
 EMIT="$ROOT/bin/jg-public-followup-emit.sh"
@@ -67,7 +69,6 @@ trap 'pf_test_cleanup; exit 130' INT
 trap 'pf_test_cleanup; exit 143' TERM
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
-command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 
 # A fakebin `curl` standing in for the relay. It logs every call so a test can
 # prove exactly how many public posts happened, and honours FAKE_FOLLOWUP_CODE so
@@ -120,14 +121,7 @@ SH
 make_home() {  # <name> [relay-on|relay-off]
   local home="$TMP_ROOT/$1" relay=${2:-relay-on}
   mkdir -p "$home/data" "$home/state" "$home/config" "$home/projects"
-  jg_test_tasks_toml "$home/.tasks.toml"
-  cat > "$home/data/backlog.md" <<'EOF'
-## In flight
-
-## Queued
-
-## Done
-EOF
+  core_beads_home "$ROOT" "$home" || return 1
   [ "$relay" = relay-off ] || printf 'FMX_PAIRING_TOKEN=test-token\n' > "$home/.env"
   make_fake_curl "$home" >/dev/null
   jg_fake_exit0 "$home/fakebin" tmux treehouse no-mistakes gh gh-axi
@@ -155,19 +149,19 @@ run_pf_sysbash() {  # <home> <args...>
     FMX_NOW_OVERRIDE="${FMX_NOW_OVERRIDE:-$PF_TEST_NOW}" /bin/bash "$PF" "$@"
 }
 
-# tasks-axi's pinned public-followup schema names a squad_lead home with the
+# The backlog's pinned public-followup schema names a squad_lead home with the
 # pre-rename prefix, so the fixtures translate at that boundary exactly as
-# bin/jg-tasks-axi.sh does for production calls.
+# bin/jg-backlog.sh does for production calls.
 taxi_home() {  # <home-id>
   case "$1" in
     squad_lead:*) printf '%s:%s\n' "second$(printf mate)" "${1#squad_lead:}" ;; # the pre-rename home id the store still holds
     *) printf '%s\n' "$1" ;;
   esac
 }
-tasks_in() {  # <home> <tasks-axi args...>
+tasks_in() {  # <home> <backlog args...>
   local home=$1
   shift
-  (cd "$home" && tasks-axi "$@")
+  (cd "$home" && JG_HOME="$home" "$ROOT/bin/jg-backlog.sh" "$@")
 }
 
 # seed_commitment <home> <obligation> <request> <platform> <work-home> <work-id>
@@ -284,53 +278,6 @@ expect_failure() {
 
 # --- 0. the suite's seeding never reaches a real backlog ------------------------
 
-# An operator shell exports TASKS_AXI_FILE at its live home's backlog, and
-# tasks-axi resolves that env ahead of the fixture's .tasks.toml. This suite
-# seeds obligations with bare `tasks-axi` from the fixture home, so before
-# tests/lib.sh cleared the ambient overrides, every seed landed in the operator's
-# real backlog while the consumer read the empty fixture. Re-enter the suite's
-# seeding exactly as a test process begins (source tests/lib.sh, then seed from
-# the fixture) under a decoy "live" backlog and a backend tasks-axi refuses: the
-# decoy must stay byte-identical and the fixture must hold the obligation.
-test_ambient_tasks_axi_env_never_reaches_a_real_backlog() {
-  local home decoy_dir decoy fixture_state
-  home=$(make_home ambient-env)
-  decoy_dir="$TMP_ROOT/ambient-live/data"
-  decoy="$decoy_dir/backlog.md"
-  mkdir -p "$decoy_dir"
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$decoy"
-  cp "$decoy" "$decoy.expected"
-  jq -n '{request_id:"req-amb", platform:"discord",
-          context_binding:{version:"ctx1", value:"ctx1_req-amb"},
-          public_safe_summary:"seeded under an ambient tasks-axi override",
-          received_at:"2026-07-30T10:00:00Z",
-          followup_expires_at:"2026-08-06T10:00:00Z",
-          reservation_expires_at:"2026-08-06T10:00:00Z"}' > "$home/request.json"
-  jq -n '{type:"pr-merged", project:"juggernaut",
-          required_deliverables:["pr_url"], completion_policy:"all-required"}' \
-    > "$home/expected.json"
-
-  TASKS_AXI_FILE="$decoy" TASKS_AXI_BACKEND=no-such-backend bash -c '
-    set -u
-    . "$1/tests/lib.sh"
-    [ -z "${TASKS_AXI_FILE+x}" ] || { echo "TASKS_AXI_FILE survived tests/lib.sh"; exit 1; }
-    [ -z "${TASKS_AXI_BACKEND+x}" ] || { echo "TASKS_AXI_BACKEND survived tests/lib.sh"; exit 1; }
-    cd "$2" && tasks-axi public-followup add pf-ambient \
-      --request-context-file "$2/request.json" --purpose promised-final \
-      --expected-final-file "$2/expected.json" --expires-at 2026-10-01T00:00:00Z >/dev/null
-  ' _ "$ROOT" "$home" \
-    || fail "seeding under an ambient tasks-axi override did not reach the fixture backlog"
-
-  cmp -s "$decoy" "$decoy.expected" \
-    || fail "the suite's seeding wrote the ambient TASKS_AXI_FILE backlog instead of the fixture"
-  [ "$(find "$decoy_dir" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort | tr '\n' ' ')" = "backlog.md backlog.md.expected " ] \
-    || fail "the suite's seeding left an artifact beside the ambient TASKS_AXI_FILE backlog: $(find "$decoy_dir" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort | tr '\n' ' ')"
-  fixture_state=$(task_state "$home" pf-ambient)
-  [ "$fixture_state" != absent ] \
-    || fail "the fixture backlog does not hold the obligation seeded under the ambient override"
-  pass "the suite's seeding never reaches a backlog named by ambient TASKS_AXI_FILE/BACKEND"
-}
-
 # --- 0. bounded, single-line, character-safe outcome text -----------------------
 
 # The outcome sentence becomes a public reply, so bounding it must not mangle
@@ -445,7 +392,7 @@ test_restart_e2e_delivers_exactly_once() {
 # A promised-final expecting pr-merged whose bound work ends failed (the only
 # typed outcome a failed or parked lane can report) must still become
 # deliverable, so the owed public reply carries the honest outcome instead of
-# stranding at pending-work with no delivery path. Needs tasks-axi 0.2.6.
+# stranding at pending-work with no delivery path. Needs the backlog 0.2.6.
 test_failed_work_on_pr_merged_promise_delivers_honest_outcome() {
   local home log out posts
   home=$(make_home failed-deliver)
@@ -508,7 +455,7 @@ test_duplicate_event_and_replay_are_noops() {
 
 # --- 3. refusals ---------------------------------------------------------------
 
-# Everything tasks-axi is the authority on - source home, work id, generation,
+# Everything the backlog is the authority on - source home, work id, generation,
 # schema, and permitted deliverables - must be refused rather than half-applied,
 # and quarantined rather than retried forever.
 test_invalid_events_are_refused_and_quarantined() {
@@ -548,12 +495,12 @@ test_invalid_events_are_refused_and_quarantined() {
   assert_present "$rejected/deadbeef.reason" "a refusal must keep an inspectable reason"
 
   # A deliverable the expected-final type does not permit, from a producer that
-  # skipped the emitter's own refusal: tasks-axi still refuses the semantics.
+  # skipped the emitter's own refusal: the backlog still refuses the semantics.
   publish_raw_event "$events" pf-refuse main work-real pr-merged \
     '{"report_path":"data/x/report.md"}' >/dev/null \
     || fail "could not publish the unsupported deliverable"
   out=$(run_pf "$home" consume) || fail "consume must survive an unsupported deliverable"
-  assert_contains "$out" "rejected " "an unsupported deliverable must be refused by tasks-axi"
+  assert_contains "$out" "rejected " "an unsupported deliverable must be refused by the backlog"
   [ "$(delivery_state "$home" pf-refuse)" = pending-work ] \
     || fail "a refused event must leave the commitment untouched"
 
@@ -890,6 +837,7 @@ test_squad_lead_teardown_resolves_parent_from_durable_record_when_env_lost() {
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$parent" && pwd -P)
+  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
 
@@ -927,6 +875,7 @@ test_squad_lead_teardown_durable_record_missing_parent_registration_still_refuse
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$parent" && pwd -P)
+  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
   assert_local_squad_lead_parent_record "$child" "$parent_resolved"
@@ -958,6 +907,7 @@ test_squad_lead_teardown_durable_record_with_unknown_field_succeeds() {
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$parent" && pwd -P)
+  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
   assert_local_squad_lead_parent_record "$child" "$parent_resolved"
@@ -966,7 +916,6 @@ test_squad_lead_teardown_durable_record_with_unknown_field_succeeds() {
   ln -s "$parent" "$parent_alias"
   jg_write_meta "$parent/state/mate.meta" "kind=squad_lead" "home=$child"
   jg_git_init_commit "$child/projects/worktree"
-  printf 'manual\n' > "$child/config/backlog-backend"
   jg_write_meta "$child/state/work-clean.meta" \
     "window=juggernaut:jg-work-clean" "endpoint_task_id=work-clean" \
     "worktree=$child/projects/worktree" "project=$child/projects/worktree" \
@@ -993,12 +942,12 @@ test_squad_lead_teardown_rejects_conflicting_live_and_durable_parent_bindings() 
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$durable_parent" && pwd -P)
+  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
   assert_local_squad_lead_parent_record "$child" "$parent_resolved"
   jg_write_meta "$durable_parent/state/mate.meta" "kind=squad_lead" "home=$child"
   jg_git_init_commit "$child/projects/worktree"
-  printf 'manual\n' > "$child/config/backlog-backend"
   jg_write_meta "$child/state/work-conflict.meta" \
     "window=juggernaut:jg-work-conflict" "endpoint_task_id=work-conflict" \
     "worktree=$child/projects/worktree" "project=$child/projects/worktree" \
@@ -1024,6 +973,7 @@ test_squad_lead_teardown_rejects_unsafe_durable_parent_records() {
     JG_SQUAD_LEAD_CHARTER='Unsafe durable-record regression charter.' \
       JG_HOME="$parent" "$ROOT/bin/jg-home-seed.sh" mate "$child" --no-projects >/dev/null \
       || fail "real squad_lead seeding failed for $case_name"
+    core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store for $case_name"
     child=$(cd "$child" && pwd -P)
     make_fake_curl "$child" >/dev/null
     jg_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
@@ -1087,12 +1037,12 @@ test_squad_lead_teardown_rejects_nul_bearing_durable_parent_record() {
     || fail "real squad_lead seeding failed"
   child=$(cd "$child" && pwd -P)
   parent_resolved=$(cd "$parent" && pwd -P)
+  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
   assert_local_squad_lead_parent_record "$child" "$parent_resolved"
   jg_write_meta "$parent/state/mate.meta" "kind=squad_lead" "home=$child"
   jg_git_init_commit "$child/projects/worktree"
-  printf 'manual\n' > "$child/config/backlog-backend"
   jg_write_meta "$child/state/work-child.meta" \
     "window=juggernaut:jg-work-child" "endpoint_task_id=work-child" \
     "worktree=$child/projects/worktree" "project=$child/projects/worktree" \
@@ -1117,74 +1067,6 @@ test_squad_lead_teardown_rejects_nul_bearing_durable_parent_record() {
   assert_present "$child/state/work-child.meta" \
     "a NUL-bearing durable parent record must preserve child work metadata"
   pass "a NUL-bearing durable parent record fails closed before cleanup"
-}
-
-test_relay_disabled_unmarked_teardown_skips_public_path() {
-  local home tasks_log out rc
-  home=$(make_home teardown-disabled-unmarked relay-off)
-  jg_git_init_commit "$home/projects/worktree"
-  tasks_log="$home/tasks-axi.log"; : > "$tasks_log"
-  printf 'manual\n' > "$home/config/backlog-backend"
-  cat > "$home/fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-echo "$*" >> "$FAKE_TASKS_AXI_LOG"
-exit 99
-SH
-  chmod +x "$home/fakebin/tasks-axi"
-  jg_write_meta "$home/state/work-disabled.meta" \
-    "window=juggernaut:jg-work-disabled" "endpoint_task_id=work-disabled" \
-    "worktree=$home/projects/worktree" "project=$home/projects/worktree" \
-    "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
-
-  rc=0
-  out=$(PATH="$home/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
-    JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
-    JG_CONFIG_OVERRIDE="$home/config" FAKE_TASKS_AXI_LOG="$tasks_log" \
-    "$TEARDOWN" work-disabled 2>&1) || rc=$?
-  [ "$rc" -eq 0 ] || fail "relay-disabled unmarked teardown must not refuse public-followup cleanup (rc=$rc): $out"
-  [ ! -s "$tasks_log" ] || fail "relay-disabled unmarked teardown must not invoke tasks-axi: $(tr '\n' ';' < "$tasks_log")"
-  assert_not_contains "$out" "still owes a public reply" \
-    "relay-disabled unmarked teardown must not run the public commitment guard"
-  assert_absent "$home/state/public-followup" \
-    "relay-disabled unmarked teardown must not create a public-followup artifact"
-  pass "relay-disabled unmarked teardown runs no public-followup work"
-}
-
-test_relay_disabled_parent_allows_marked_child_teardown() {
-  local parent child tasks_log out rc
-  parent=$(make_home teardown-disabled-parent relay-off)
-  child=$(make_home teardown-disabled-child relay-off)
-  jg_git_init_commit "$child/projects/worktree"
-  printf '%s\n' disabled-mate > "$child/.jg-squad-lead-home"
-  printf -- '- disabled-mate - synthetic (home: %s; scope: synthetic; projects: ; added 2026-07-30)\n' \
-    "$child" > "$parent/data/squad_leads.md"
-  jg_write_meta "$parent/state/disabled-mate.meta" "kind=squad_lead" "home=$child"
-  tasks_log="$child/tasks-axi.log"; : > "$tasks_log"
-  printf 'manual\n' > "$child/config/backlog-backend"
-  cat > "$child/fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-echo "$*" >> "$FAKE_TASKS_AXI_LOG"
-exit 99
-SH
-  chmod +x "$child/fakebin/tasks-axi"
-  jg_write_meta "$child/state/work-disabled.meta" \
-    "window=juggernaut:jg-work-disabled" "endpoint_task_id=work-disabled" \
-    "worktree=$child/projects/worktree" "project=$child/projects/worktree" \
-    "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
-
-  rc=0
-  out=$(PATH="$child/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$child" \
-    JG_STATE_OVERRIDE="$child/state" JG_DATA_OVERRIDE="$child/data" \
-    JG_CONFIG_OVERRIDE="$child/config" \
-    JG_PUBLIC_FOLLOWUP_PRIMARY_HOME="$parent" FAKE_TASKS_AXI_LOG="$tasks_log" \
-    "$TEARDOWN" work-disabled 2>&1) || rc=$?
-  [ "$rc" -eq 0 ] || fail "relay-disabled parent must allow marked-child teardown (rc=$rc): $out"
-  [ ! -s "$tasks_log" ] || fail "relay-disabled parent must not invoke tasks-axi for a marked child"
-  assert_not_contains "$out" "still owes a public reply" \
-    "relay-disabled parent must not run the public commitment guard"
-  assert_absent "$child/state/public-followup" \
-    "relay-disabled parent must not create a public-followup artifact"
-  pass "a marked child proceeds without tasks-axi when its parent relay is disabled"
 }
 
 test_squad_lead_parent_binding_matches_literal_id() {
@@ -1234,24 +1116,6 @@ test_traversal_registration_is_refused_before_delivery() {
   [ "$(task_state "$home" pf-traversal)" != 'done' ] \
     || fail "an invalid work home must not close the obligation"
   pass "traversal-shaped registrations are rejected before path construction or posting"
-}
-
-test_pending_rejects_malformed_listing() {
-  local home out
-  home=$(make_home pending-malformed)
-  seed_commitment "$home" pf-malformed req-malformed discord main work-malformed
-  cat > "$home/fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-printf '%s' '{"public_followups":['
-SH
-  chmod +x "$home/fakebin/tasks-axi"
-
-  out=$(run_pf "$home" pending) || fail "pending must survive malformed tasks-axi output"
-  assert_contains "$out" "cannot read this home's public commitments through tasks-axi" \
-    "malformed backlog output must use the loud fallback"
-  assert_present "$home/state/public-followup/registry/pf-malformed" \
-    "malformed backlog output must retain the registration"
-  pass "pending keeps registrations when tasks-axi returns malformed JSON"
 }
 
 test_private_context_survives_inbox_cleanup() {
@@ -1319,91 +1183,6 @@ test_cleanup_refuses_while_a_public_reply_is_owed() {
 
 # --- 7. zero overhead for homes that do not use the relay ----------------------
 
-# The hard acceptance criterion. A home that never opted into the myjuggernaut
-# relay must see no process, no tasks-axi call, no scan, no output, and no file.
-test_relay_disabled_home_pays_nothing() {
-  local home tasks_log out rc before after cmd
-  home=$(make_home relay-disabled relay-off)
-  tasks_log="$home/tasks-axi.log"; : > "$tasks_log"
-  # Any tasks-axi invocation at all is a failure here, so make it loud.
-  cat > "$home/fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-echo "$*" >> "$FAKE_TASKS_AXI_LOG"
-exit 0
-SH
-  chmod +x "$home/fakebin/tasks-axi"
-
-  before=$(find "$home/state" | LC_ALL=C sort)
-  for cmd in "consume" "pending" "guard-work main any-task" "retire anything"; do
-    rc=0
-    # shellcheck disable=SC2086  # each cmd is a deliberate argument list
-    out=$(PATH="$home/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
-      JG_STATE_OVERRIDE="$home/state" FAKE_TASKS_AXI_LOG="$tasks_log" "$PF" $cmd 2>&1) || rc=$?
-    [ "$rc" -eq 0 ] || fail "'$cmd' must be a silent success in a relay-disabled home (rc=$rc)"
-    [ -z "$out" ] || fail "'$cmd' must print nothing in a relay-disabled home, got: $out"
-  done
-
-  # New fields and the open-loop gate must not create work in a disabled home.
-  # shellcheck disable=SC1091
-  . "$ROOT/bin/jg-public-followup-lib.sh"
-  jg_pf_has_open_loops "$home/state" \
-    && fail "a relay-disabled home must not grow an open-loop registry"
-  jg_pf_has_delivered_open_loops "$home/state" \
-    && fail "a relay-disabled home must not grow a delivered open-loop registry"
-
-  rc=0
-  PATH="$home/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
-    JG_STATE_OVERRIDE="$home/state" FAKE_TASKS_AXI_LOG="$tasks_log" "$PF" active || rc=$?
-  [ "$rc" -eq 1 ] || fail "'active' must report inactive in a relay-disabled home"
-
-  [ ! -s "$tasks_log" ] \
-    || fail "a relay-disabled home must never invoke tasks-axi: $(cat "$tasks_log")"
-  after=$(find "$home/state" | LC_ALL=C sort)
-  [ "$before" = "$after" ] \
-    || fail "a relay-disabled home must gain no public-followup artifact"
-  assert_absent "$home/state/public-followup" \
-    "a relay-disabled home must never get a public-followup directory"
-
-  # A child cannot force artifacts into a home that never opted in either.
-  rc=0
-  out=$("$EMIT" --home "$home" --obligation pf-x --relation rel-code \
-    --source-home main --work-id w --generation 1 --outcome pr-merged \
-    --outcome-text 'x' 2>&1) || rc=$?
-  [ "$rc" -eq 0 ] || fail "emitting into a relay-disabled home must be a silent no-op (rc=$rc)"
-  [ -z "$out" ] || fail "emitting into a relay-disabled home must produce no output: $out"
-  assert_absent "$home/state/public-followup" \
-    "a refused emit must not create a public-followup directory"
-  pass "a relay-disabled home runs no tasks-axi call, prints nothing, and gains no artifact"
-}
-
-# An opted-in home that has never made a public commitment must not start paying
-# either: the second gate is a directory presence check, not a backlog scan.
-test_relay_enabled_empty_state_makes_no_calls() {
-  local home tasks_log out rc cmd
-  home=$(make_home relay-enabled-empty)
-  tasks_log="$home/tasks-axi.log"; : > "$tasks_log"
-  cat > "$home/fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-echo "$*" >> "$FAKE_TASKS_AXI_LOG"
-exit 0
-SH
-  chmod +x "$home/fakebin/tasks-axi"
-
-  for cmd in "consume" "pending" "guard-work main any-task"; do
-    rc=0
-    # shellcheck disable=SC2086  # each cmd is a deliberate argument list
-    out=$(PATH="$home/fakebin:$PATH" JG_ROOT_OVERRIDE="$ROOT" JG_HOME="$home" \
-      JG_STATE_OVERRIDE="$home/state" FAKE_TASKS_AXI_LOG="$tasks_log" "$PF" $cmd 2>&1) || rc=$?
-    [ "$rc" -eq 0 ] || fail "'$cmd' must be a silent success with no commitments (rc=$rc)"
-    [ -z "$out" ] || fail "'$cmd' must print nothing with no commitments, got: $out"
-  done
-  [ ! -s "$tasks_log" ] \
-    || fail "an empty relay home must not query the backlog: $(cat "$tasks_log")"
-  pass "a relay-enabled home with no commitments makes no backlog call and stays silent"
-}
-
-# The relay's own refusal of an exhausted follow-up binding is a captain
-# decision, not something to retry into a public thread.
 test_exhausted_binding_is_not_retried() {
   local home log out posts
   home=$(make_home exhausted)
@@ -1518,6 +1297,7 @@ test_dropped_baton_now_surfaces_open_loop() {
   JG_SQUAD_LEAD_CHARTER='Baton repro charter.' JG_HOME="$parent" \
     "$ROOT/bin/jg-home-seed.sh" mate "$child" --no-projects >/dev/null || fail "seed failed"
   child=$(cd "$child" && pwd -P)
+  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
   log="$TMP_ROOT/curl.log"; : > "$log"
@@ -1568,6 +1348,7 @@ test_control_registered_followon_is_guarded() {
   JG_SQUAD_LEAD_CHARTER='Baton control charter.' JG_HOME="$parent" \
     "$ROOT/bin/jg-home-seed.sh" mate "$child" --no-projects >/dev/null || fail "seed failed"
   child=$(cd "$child" && pwd -P)
+  core_beads_home "$ROOT" "$child" || fail "the seeded home needs its own store"
   make_fake_curl "$child" >/dev/null
   jg_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
   seed_repro_commitment "$parent" public-final-pi-rearm-ship req-pirearm2 \
@@ -1645,62 +1426,6 @@ SH
   assert_grep '"request_id":"req-rechain"' "$log" \
     "both posts must target the original request"
   pass "rechain posts the shipped follow-on into the same thread"
-}
-
-test_rechain_resumes_after_partial_add() {
-  local home log real_tasks marker out count
-  home=$(make_home rechain-resume)
-  log="$home/curl.log"; : > "$log"
-  seed_repro_commitment "$home" public-final-resume-a req-resume main scout-resume
-  "$EMIT" --home "$home" --obligation public-final-resume-a --relation rel-code \
-    --source-home main --work-id scout-resume --generation 1 \
-    --outcome report-ready --deliverable report_path=data/scout-resume/report.md \
-    --outcome-text 'Reproduced. A fix is waiting.' >/dev/null || fail "emit failed"
-  FAKE_CURL_LOG="$log" run_pf "$home" consume >/dev/null || fail "consume failed"
-  FAKE_CURL_LOG="$log" run_pf "$home" deliver public-final-resume-a >/dev/null \
-    || fail "deliver failed"
-
-  real_tasks=$(command -v tasks-axi)
-  marker="$home/rechain-bind-failed"
-  cat > "$home/fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-if [ "$1" = public-followup ] && [ "$2" = bind-work ] \
-    && [ "$3" = public-final-resume-b ] && [ ! -e "$RECHAIN_FAIL_MARKER" ]; then
-  : > "$RECHAIN_FAIL_MARKER"
-  exit 73
-fi
-exec "$REAL_TASKS_AXI" "$@"
-SH
-  chmod +x "$home/fakebin/tasks-axi"
-
-  REAL_TASKS_AXI="$real_tasks" RECHAIN_FAIL_MARKER="$marker" \
-    expect_failure "rechain must expose a resumable partial add" \
-    run_pf "$home" rechain public-final-resume-b --from public-final-resume-a \
-      --work-home main --work-id ship-resume --expected pr-merged
-  assert_contains "$EXPECT_OUT" "retry this same rechain command" \
-    "a partial add must direct the caller to the resumable path"
-  count=$(tasks_in "$home" public-followup list --json \
-    | jq '[.public_followups[] | select(.id == "public-final-resume-b")] | length')
-  [ "$count" = 1 ] || fail "the interrupted rechain must leave exactly one recoverable obligation"
-  assert_present "$home/state/public-followup/registry/public-final-resume-a" \
-    "a partial rechain must retain the source loop"
-  assert_absent "$home/state/public-followup/registry/public-final-resume-b" \
-    "a failed bind must not publish a registration"
-
-  out=$(REAL_TASKS_AXI="$real_tasks" RECHAIN_FAIL_MARKER="$marker" \
-    run_pf "$home" rechain public-final-resume-b --from public-final-resume-a \
-      --work-home main --work-id ship-resume --expected pr-merged) \
-    || fail "retrying the same rechain command must resume: $out"
-  assert_contains "$out" "retired public-final-resume-a" \
-    "the resumed rechain must retire its source"
-  count=$(tasks_in "$home" public-followup list --json \
-    | jq '[.public_followups[] | select(.id == "public-final-resume-b")] | length')
-  [ "$count" = 1 ] || fail "the resumed rechain must not duplicate the obligation"
-  assert_present "$home/state/public-followup/registry/public-final-resume-b" \
-    "the resumed rechain must publish the destination registration"
-  assert_absent "$home/state/public-followup/registry/public-final-resume-a" \
-    "the resumed rechain must close the source registration"
-  pass "rechain resumes the same obligation after an interrupted bind"
 }
 
 test_rechain_claims_delivered_source_once() {
@@ -2042,64 +1767,6 @@ test_rechain_refuses_unclaimed_existing_destination() {
   pass "rechain refuses an unrelated existing destination"
 }
 
-test_pending_skips_concurrent_retirement() {
-  local home log real_tasks pending_pid locker_pid rc=0
-  home=$(make_home pending-retirement-race)
-  log="$home/curl.log"; : > "$log"
-  seed_commitment "$home" pf-race req-race discord main work-race
-  emit_terminal "$home" "$home" pf-race main work-race >/dev/null || fail "race emit failed"
-  run_pf "$home" consume >/dev/null || fail "race consume failed"
-  FAKE_CURL_LOG="$log" run_pf "$home" deliver pf-race >/dev/null || fail "race deliver failed"
-  sed -e 's/^state=delivered$/state=open/' \
-      -e '/^delivered_at=/d' -e '/^delivered_obligation=/d' \
-      "$home/state/public-followup/registry/pf-race" > "$home/race-open"
-  mv "$home/race-open" "$home/state/public-followup/registry/pf-race"
-  chmod 600 "$home/state/public-followup/registry/pf-race"
-
-  seed_commitment "$home" pf-race-other req-race-other discord main work-race-other
-
-  JG_RACE_HOME="$home" JG_RACE_ROOT="$ROOT" bash -c '
-    . "$JG_RACE_ROOT/bin/jg-public-followup-lib.sh"
-    jg_pf_registry_lock_acquire "$JG_RACE_HOME/state" pf-race || exit 1
-    : > "$JG_RACE_HOME/lock-ready"
-    while [ ! -e "$JG_RACE_HOME/release-lock" ]; do sleep 0.02; done
-    sleep 0.1
-    mkdir -p "$JG_RACE_HOME/state/public-followup/retired"
-    printf "reason=concurrent close\nretired_at=2026-08-01T00:00:00Z\n" \
-      > "$JG_RACE_HOME/state/public-followup/retired/pf-race"
-    chmod 600 "$JG_RACE_HOME/state/public-followup/retired/pf-race"
-    rm -f "$JG_RACE_HOME/state/public-followup/registry/pf-race"
-    jg_pf_registry_lock_release "$JG_RACE_HOME/state" pf-race
-  ' &
-  locker_pid=$!
-  for _ in $(seq 1 100); do [ -e "$home/lock-ready" ] && break; sleep 0.02; done
-  [ -e "$home/lock-ready" ] || fail "race locker did not start"
-
-  real_tasks=$(command -v tasks-axi)
-  cat > "$home/fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-"$REAL_TASKS_AXI" "$@"
-rc=$?
-if [ "$1" = public-followup ] && [ "$2" = list ]; then
-  : > "$PENDING_LISTED"
-fi
-exit "$rc"
-SH
-  chmod +x "$home/fakebin/tasks-axi"
-  REAL_TASKS_AXI="$real_tasks" PENDING_LISTED="$home/pending-listed" \
-    run_pf "$home" pending > "$home/pending-race.out" 2>&1 &
-  pending_pid=$!
-  for _ in $(seq 1 100); do [ -e "$home/pending-listed" ] && break; sleep 0.02; done
-  [ -e "$home/pending-listed" ] || fail "pending did not snapshot the backlog"
-  : > "$home/release-lock"
-  wait "$locker_pid" || fail "race retirement failed"
-  wait "$pending_pid" || rc=$?
-  [ "$rc" -eq 0 ] || fail "pending aborted on concurrent retirement: $(cat "$home/pending-race.out")"
-  assert_grep 'unresolved pf-race-other ' "$home/pending-race.out" \
-    "pending must continue surfacing unrelated loops after concurrent retirement: $(cat "$home/pending-race.out")"
-  pass "pending skips a registration retired during settlement"
-}
-
 test_retire_reason_closes_the_open_loop() {
   local home log out registry_file receipt_mode
   home=$(make_home retire-reason)
@@ -2248,45 +1915,6 @@ test_expiry_escalation_uses_now_override() {
   assert_contains "$EXPECT_OUT" "thread window cannot be checked" \
     "rechain must fail closed when its retained expiry cannot be parsed"
   pass "expiry escalation is pinned by FMX_NOW_OVERRIDE"
-}
-
-test_brief_fails_without_typed_deliverable_keys() {
-  local home real_tasks invalid
-  home=$(make_home brief-keys)
-  seed_commitment "$home" pf-brief req-brief discord main work-brief
-  real_tasks=$(command -v tasks-axi)
-  cat > "$home/fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-if [ "${FAKE_INVALID_KEYS:-}" = unreadable ]; then
-  exit 69
-fi
-"$REAL_TASKS_AXI" "$@" | jq --argjson invalid "$FAKE_INVALID_KEYS" '
-  if .public_followups then
-    .public_followups |= map(
-      if .id == "pf-brief" then
-        .public_followup.expected_final.required_deliverables = $invalid
-      else . end)
-  else . end'
-SH
-  chmod +x "$home/fakebin/tasks-axi"
-  REAL_TASKS_AXI="$real_tasks" FAKE_INVALID_KEYS=unreadable expect_failure \
-    "brief must fail when typed deliverable keys cannot be read" \
-    run_pf "$home" brief pf-brief
-  assert_contains "$EXPECT_OUT" "could not read public-followup obligation" \
-    "brief must explain why it cannot produce executable instructions"
-  assert_not_contains "$EXPECT_OUT" "<key>=<value>" \
-    "brief must never substitute a generic deliverable placeholder"
-
-  for invalid in '["pr_url",7]' '["pr_url",""]' '["PR_URL"]' '["pr-url"]'; do
-    REAL_TASKS_AXI="$real_tasks" FAKE_INVALID_KEYS="$invalid" expect_failure \
-      "brief must reject an invalid required deliverable array" \
-      run_pf "$home" brief pf-brief
-    assert_contains "$EXPECT_OUT" "no readable required deliverable keys" \
-      "brief must reject the complete contract when any key is invalid"
-    assert_not_contains "$EXPECT_OUT" "--deliverable pr_url=" \
-      "brief must not emit a partial contract from an invalid key array"
-  done
-  pass "brief fails explicitly when typed deliverable keys are unavailable"
 }
 
 test_prechange_registration_is_open_and_unrechainable() {
@@ -3220,7 +2848,7 @@ test_local_work_home_emit_path_is_unchanged() {
 
 # seed_typed_commitment <home> <obligation> <request> <expected-type> <keys-json> <work-home> <work-id>
 # A promised-final commitment of any expected-final type, so a deliverable rule
-# can be pinned against the real tasks-axi consumer for every key it checks.
+# can be pinned against the real Beads backlog consumer for every key it checks.
 seed_typed_commitment() {
   local home=$1 obligation=$2 request=$3 expected=$4 keys=$5 work_home=$6 work_id=$7
   jq -n --arg r "$request" \
@@ -3278,7 +2906,7 @@ run_poll() {  # <home>
 
 # The reported failure, first part: the instructions a bound worker received
 # printed a bare "<value>" for report_path, so the worker guessed an absolute
-# path. The brief knows the only report path tasks-axi accepts for its own work
+# path. The brief knows the only report path the backlog accepts for its own work
 # id, and must state the format of anything it cannot know.
 test_brief_prefills_known_deliverables_and_states_formats() {
   local home out command
@@ -3289,14 +2917,14 @@ test_brief_prefills_known_deliverables_and_states_formats() {
   assert_not_contains "$out" "<value>" "a brief must never print a bare value placeholder"
   command=$(brief_emit_command "$out")
   assert_contains "$command" "--deliverable report_path=data/work-report/report.md" \
-    "a report-ready brief must pre-fill the report path tasks-axi accepts for its work id"
+    "a report-ready brief must pre-fill the report path the backlog accepts for its work id"
 
   # Writing only the outcome sentence makes the printed command complete, and
-  # its result satisfies tasks-axi.
+  # its result satisfies the backlog.
   command=${command//<one bounded public-safe sentence>/The investigation report is ready.}
   bash -c "$command" >/dev/null || fail "the pre-filled emit command must run as printed"
   out=$(run_pf "$home" consume) || fail "consume failed: $out"
-  assert_contains "$out" "ready pf-brief-report" "the pre-filled report path must satisfy tasks-axi"
+  assert_contains "$out" "ready pf-brief-report" "the pre-filled report path must satisfy the backlog"
 
   # A value the brief cannot know keeps a named placeholder plus its format.
   seed_typed_commitment "$home" pf-brief-pr req-brief-pr pr-merged '["pr_url"]' main work-pr
@@ -3305,9 +2933,9 @@ test_brief_prefills_known_deliverables_and_states_formats() {
   assert_contains "$out" "--deliverable pr_url=<pr_url>" \
     "a value the brief cannot know keeps a named placeholder"
   assert_contains "$out" "https://github.com/<owner>/<repo>/pull/<n>" \
-    "the brief must state the GitHub pull request URL shape tasks-axi accepts"
+    "the brief must state the GitHub pull request URL shape the backlog accepts"
   assert_contains "$out" "https://<host>/<owner>/<repo>/pulls/<n>" \
-    "the brief must state the Forgejo pull request URL shape tasks-axi accepts"
+    "the brief must state the Forgejo pull request URL shape the backlog accepts"
   pass "brief pre-fills the report path and states the format of every value it cannot know"
 }
 
@@ -3315,7 +2943,7 @@ test_brief_prefills_known_deliverables_and_states_formats() {
 # home unchallenged and was refused only later, in another home. The emitter
 # must refuse it at the edge, naming the key, the bad value, and the format, for
 # both the direct and the staged destination.
-test_emit_refuses_a_deliverable_tasks_axi_would_reject() {
+test_emit_refuses_a_deliverable_the_backlog_would_reject() {
   local home staging
   home=$(make_home emit-format)
   seed_repro_commitment "$home" pf-emit-format req-emit-format main work-format
@@ -3353,7 +2981,7 @@ test_emit_refuses_a_deliverable_tasks_axi_would_reject() {
     --outcome-text 'Wrong key for a report.'
   assert_contains "$EXPECT_OUT" "report-ready" "the refusal must name the outcome"
   assert_contains "$EXPECT_OUT" "report_path" "the refusal must name the key this promise carries"
-  pass "the emitter refuses a deliverable tasks-axi would reject, naming key, value, and format"
+  pass "the emitter refuses a deliverable the backlog would reject, naming key, value, and format"
 }
 
 # A repeated --deliverable key would serialize only its last value, so which
@@ -3453,11 +3081,11 @@ CASES
   pass "the emitter refuses an event missing a required deliverable in both destinations"
 }
 
-# The emitter mirrors tasks-axi's work-event rules because tasks-axi exposes no
+# The emitter mirrors the backlog's work-event rules because the backlog exposes no
 # validation-only command. Pin the two together across the whole contract:
 # every expected final against every outcome, then missing, extra, and
 # malformed deliverables. Each case runs through the real emitter AND, bypassing
-# it, through the real tasks-axi consumer against a really registered
+# it, through the real Beads backlog consumer against a really registered
 # obligation, and both must reach the table's verdict, so neither side can drift
 # from the other silently. A stage-in case is briefed exactly as `brief` briefs
 # a remote worker - one --require-deliverable per key the obligation requires -
@@ -3470,7 +3098,7 @@ pad_run() {
   printf '%s' "${out:0:$n}"
 }
 
-test_emit_rules_agree_with_tasks_axi() {
+test_emit_rules_agree_with_the_backlog() {
   local home n=0 expected required outcome deliverables verdict mode
   local emit_verdict axi_verdict obligation out pair key pad staging registry
   local -a emit_args emit_destination
@@ -3496,7 +3124,7 @@ test_emit_rules_agree_with_tasks_axi() {
     seed_typed_commitment "$home" "$obligation" "req-agree-$n" "$expected" "$required" \
       main "work-agree-$n"
     # A registration written before this home recorded anything about the
-    # promise: the contract has to come from tasks-axi for it to be enforced.
+    # promise: the contract has to come from the backlog for it to be enforced.
     if [ "$mode" = legacy ]; then
       registry="$home/state/public-followup/registry/$obligation"
       grep -v '^expected_final=' "$registry" | grep -v '^required_deliverables=' > "$registry.strip" \
@@ -3542,9 +3170,9 @@ EOF
     esac
 
     [ "$axi_verdict" = "$verdict" ] \
-      || fail "case $n ($expected final, $outcome outcome, $deliverables): tasks-axi says $axi_verdict, the table says $verdict - re-pin the mirrored rule"
+      || fail "case $n ($expected final, $outcome outcome, $deliverables): the backlog says $axi_verdict, the table says $verdict - re-pin the mirrored rule"
     [ "$emit_verdict" = "$axi_verdict" ] \
-      || fail "case $n ($expected final, $outcome outcome, $deliverables, ${mode:-direct} emit): the emitter says $emit_verdict but tasks-axi says $axi_verdict"
+      || fail "case $n ($expected final, $outcome outcome, $deliverables, ${mode:-direct} emit): the emitter says $emit_verdict but the backlog says $axi_verdict"
   done <<'CASES'
 pr-merged|["pr_url"]|pr-merged|{"pr_url":"https://github.com/example/repo/pull/12"}|accept
 pr-merged|["pr_url"]|report-ready|{"report_path":"data/work-a/report.md"}|reject
@@ -3622,11 +3250,11 @@ report-ready|["report_path"]|report-ready|{"report_path":"/abs/data/work-a/repor
 failure-outcome|["error_code"]|failed|{}|reject|stage-in
 CASES
   [ "$n" -ge 74 ] || fail "the agreement table ran only $n cases"
-  pass "the emitter's work-event rules agree with the real tasks-axi consumer on $n cases"
+  pass "the emitter's work-event rules agree with the real Beads backlog consumer on $n cases"
 }
 
 # The reported failure, third part: consume quarantined the event with only
-# tasks-axi's generic sentence, and nothing woke the owning home. A rejection
+# The backlog's generic sentence, and nothing woke the owning home. A rejection
 # must record the specific reason and raise one wake through the relay poll.
 test_rejected_event_wakes_owning_home_with_specific_reason() {
   local home event_id out first second reason
@@ -3722,7 +3350,7 @@ test_emit_requires_promised_deliverable_under_any_successful_outcome() {
     --source-home main --work-id work-swap --generation 1 --outcome superseded \
     --outcome-text 'This work was superseded.'
   assert_contains "$EXPECT_OUT" "successor" \
-    "the refusal must say what tasks-axi needs for a superseded event"
+    "the refusal must say what the backlog needs for a superseded event"
   "$EMIT" --stage-in "$staging" --obligation pf-outcome-swap --relation rel-code \
     --source-home squad_lead:axi-a1 --work-id work-swap --generation 1 --outcome failed \
     --require-deliverable pr_url --deliverable error_code=ci-red \
@@ -3765,7 +3393,7 @@ test_emit_requires_error_code_on_a_failure_promise() {
     || fail "the failure promise must be reportable once it carries its error_code"
   out=$(run_pf "$home" consume) || fail "consume failed: $out"
   assert_contains "$out" "ready pf-failure-promise" \
-    "the error_code the emitter required must be the one tasks-axi accepts"
+    "the error_code the emitter required must be the one the backlog accepts"
   pass "a failure promise keeps needing its own error_code"
 }
 
@@ -3938,7 +3566,6 @@ if [ -n "${JG_TEST_ONLY:-}" ]; then
   exit 0
 fi
 
-test_ambient_tasks_axi_env_never_reaches_a_real_backlog
 test_outcome_text_is_bounded_without_corrupting_characters
 test_restart_e2e_delivers_exactly_once
 test_failed_work_on_pr_merged_promise_delivers_honest_outcome
@@ -3959,15 +3586,10 @@ test_squad_lead_teardown_durable_record_with_unknown_field_succeeds
 test_squad_lead_teardown_rejects_conflicting_live_and_durable_parent_bindings
 test_squad_lead_teardown_rejects_unsafe_durable_parent_records
 test_squad_lead_teardown_rejects_nul_bearing_durable_parent_record
-test_relay_disabled_unmarked_teardown_skips_public_path
-test_relay_disabled_parent_allows_marked_child_teardown
 test_squad_lead_parent_binding_matches_literal_id
 test_traversal_registration_is_refused_before_delivery
-test_pending_rejects_malformed_listing
 test_private_context_survives_inbox_cleanup
 test_cleanup_refuses_while_a_public_reply_is_owed
-test_relay_disabled_home_pays_nothing
-test_relay_enabled_empty_state_makes_no_calls
 test_exhausted_binding_is_not_retried
 test_relay_poll_stays_inert_and_surfaces_once
 test_session_start_surfaces_only_when_owed
@@ -3975,7 +3597,6 @@ test_typed_records_exclude_raw_public_material
 test_dropped_baton_now_surfaces_open_loop
 test_control_registered_followon_is_guarded
 test_rechain_delivers_second_post_on_same_thread
-test_rechain_resumes_after_partial_add
 test_rechain_claims_delivered_source_once
 test_failed_rechain_retirement_keeps_source_claimed
 test_first_register_succeeds_with_empty_lock_list_under_bash32
@@ -3985,11 +3606,9 @@ test_retire_after_squad_lead_home_removal
 test_retire_refuses_unbound_existing_squad_lead
 test_retire_refuses_reassigned_squad_lead_home
 test_rechain_refuses_unclaimed_existing_destination
-test_pending_skips_concurrent_retirement
 test_retire_reason_closes_the_open_loop
 test_retention_creates_no_false_teardown_refusal
 test_expiry_escalation_uses_now_override
-test_brief_fails_without_typed_deliverable_keys
 test_prechange_registration_is_open_and_unrechainable
 test_x_request_teardown_refuses_when_final_unposted
 test_squad_lead_promotion_uses_teardown_parent_resolution
@@ -4015,10 +3634,10 @@ test_local_work_home_emit_path_is_unchanged
 test_remote_collection_is_idempotent
 test_stage_in_refuses_ambiguous_or_unusable_homes
 test_brief_prefills_known_deliverables_and_states_formats
-test_emit_refuses_a_deliverable_tasks_axi_would_reject
+test_emit_refuses_a_deliverable_the_backlog_would_reject
 test_emit_refuses_a_repeated_deliverable_key
 test_emit_refuses_a_missing_required_deliverable
-test_emit_rules_agree_with_tasks_axi
+test_emit_rules_agree_with_the_backlog
 test_rejected_event_wakes_owning_home_with_specific_reason
 test_remote_rejected_event_wakes_owning_home
 test_emit_requires_promised_deliverable_under_any_successful_outcome

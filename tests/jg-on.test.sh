@@ -28,7 +28,6 @@ trap cleanup EXIT
 LOCAL_HOME="$TMP_ROOT/local-home"
 REMOTE_ROOT="$TMP_ROOT/remote-root"
 REMOTE_HOME="$TMP_ROOT/remote-home"
-TOOL_PROBE_LOG="$TMP_ROOT/tool-probe.log"
 FAKEBIN=$(jg_fakebin "$TMP_ROOT/fakebin")
 SSH_LOG="$TMP_ROOT/ssh.log"
 SSH_COUNT="$TMP_ROOT/ssh.count"
@@ -58,16 +57,8 @@ cat > "$REMOTE_ROOT/bin/jg-probe-path.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$PATH"
 SH
-cat > "$REMOTE_ROOT/bin/tasks-axi" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\${JG_REMOTE_JOB_ACTIVE:-absent}" >> "$TOOL_PROBE_LOG"
-case "\${1:-}:\${2:-}" in
-  --version:*) printf '0.2.6\n' ;;
-  update:--help) printf '%s\n' --archive-body ;;
-  mv:--help) printf '%s\n' 'usage: tasks-axi mv <id> [<id>...]' ;;
-esac
-SH
-cp "$ROOT/bin/jg-remote-doctor.sh" "$ROOT/bin/jg-tasks-axi-lib.sh" \
+printf '#!/usr/bin/env bash\nexit 0\n' > "$REMOTE_ROOT/bin/treehouse"
+cp "$ROOT/bin/jg-remote-doctor.sh" "$ROOT/bin/jg-backlog-lib.sh" \
   "$ROOT/bin/jg-remote-herdr-owner-lib.sh" "$ROOT/bin/jg-backend.sh" "$REMOTE_ROOT/bin/"
 mkdir -p "$REMOTE_ROOT/bin/backends"
 cp "$ROOT/bin/backends/herdr.sh" "$REMOTE_ROOT/bin/backends/herdr.sh"
@@ -76,7 +67,7 @@ cat > "$REMOTE_ROOT/bin/jg-mutate.sh" <<'SH'
 printf 'mutation\n' >> "$1"
 SH
 chmod +x "$REMOTE_ROOT/bin"/*.sh
-chmod +x "$REMOTE_ROOT/bin/tasks-axi"
+chmod +x "$REMOTE_ROOT/bin/treehouse"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
@@ -342,14 +333,12 @@ assert_contains "$out" 'required git=' "the remote doctor did not report the req
 pass "the remote doctor reports the same PATH the entrypoint hands its children"
 
 jg_on ios jg-probe-two.sh >/dev/null
-: > "$TOOL_PROBE_LOG"
 set +e
 out=$(jg_on ios jg-remote-doctor.sh 2>&1)
 set -e
 assert_contains "$out" 'check remote-job-probe=ok: the remote job worker completed the required-tool probe' \
   "the doctor did not use a completed worker probe for tool readiness"
-assert_grep '1' "$TOOL_PROBE_LOG" "the required-tool probe did not execute inside the worker"
-assert_not_contains "$(cat "$TOOL_PROBE_LOG")" absent "the bootstrap process probed required tools locally"
+assert_contains "$out" "required treehouse=$REMOTE_ROOT/bin/treehouse" "the tool resolved outside the worker PATH"
 pass "the remote doctor derives tool readiness from the installed worker"
 
 DOCTOR_BIN="$TMP_ROOT/doctor-bin"
@@ -369,9 +358,9 @@ out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" "$ROO
 rc=$?
 set -e
 [ "$rc" -ne 0 ] || fail "the remote doctor passed with a missing required tool"
-assert_contains "$out" 'required herdr=MISSING' "the remote doctor did not mark a missing required tool"
-assert_contains "$out" 'required tasks-axi=MISSING' "the remote doctor did not mark every missing required tool"
-assert_contains "$out" 'required tools do not resolve on the remote runtime PATH: herdr tasks-axi treehouse harness' "the remote doctor did not name the missing tools"
+assert_contains "$out" 'required harness=MISSING' "the remote doctor did not mark a missing required tool"
+assert_contains "$out" 'required treehouse=MISSING' "the remote doctor did not mark every missing required tool"
+assert_contains "$out" 'treehouse harness' "the remote doctor did not name the missing tools"
 assert_contains "$out" '.local/bin' "the remote doctor did not offer the wrapper escape hatch"
 ln -sf "$(command -v git)" "$DOCTOR_BIN/git"
 # The direct doctor fixture needs the complete required tool set. These stubs
@@ -379,17 +368,9 @@ ln -sf "$(command -v git)" "$DOCTOR_BIN/git"
 # lifecycle behavior against controlled launchctl fixtures.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$DOCTOR_BIN/jq"
 printf '#!/usr/bin/env bash\nprintf "{\\\"server\\\":{\\\"running\\\":false}}\\n"\n' > "$DOCTOR_BIN/herdr"
-cat > "$DOCTOR_BIN/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-case "${1:-}:${2:-}" in
-  --version:*) printf '0.2.6\n' ;;
-  update:--help) printf '%s\n' --archive-body ;;
-  mv:--help) printf '%s\n' 'usage: tasks-axi mv <id> [<id>...]' ;;
-esac
-SH
 printf '#!/usr/bin/env bash\nexit 0\n' > "$DOCTOR_BIN/treehouse"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$DOCTOR_BIN/claude"
-chmod +x "$DOCTOR_BIN/jq" "$DOCTOR_BIN/herdr" "$DOCTOR_BIN/tasks-axi" "$DOCTOR_BIN/treehouse" "$DOCTOR_BIN/claude"
+chmod +x "$DOCTOR_BIN/jq" "$DOCTOR_BIN/herdr" "$DOCTOR_BIN/treehouse" "$DOCTOR_BIN/claude"
 set +e
 out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" "$ROOT/bin/jg-remote-doctor.sh" 2>&1)
 rc=$?
@@ -402,7 +383,6 @@ else
   assert_contains "$out" 'optional tmux=absent' "the remote doctor did not report an absent optional tool"
 fi
 assert_contains "$out" "required herdr=$DOCTOR_BIN/herdr" "the remote doctor did not require herdr"
-assert_contains "$out" "required tasks-axi=$DOCTOR_BIN/tasks-axi" "the remote doctor did not require compatible tasks-axi"
 assert_contains "$out" "required treehouse=$DOCTOR_BIN/treehouse" "the remote doctor did not require treehouse"
 assert_contains "$out" "required harness=claude:$DOCTOR_BIN/claude" "the remote doctor did not require a verified harness"
 assert_not_contains "$out" 'required tools do not resolve' "a resolved required tool was still reported missing"

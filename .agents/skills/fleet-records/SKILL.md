@@ -43,14 +43,14 @@ Route durable knowledge to its most specific owner:
 
 ## Backlog
 
-The configured `tasks-axi` backend is the durable queue; the tracked default is `data/backlog.md`.
+The Beads store named by `config/beads-dir` is the durable queue; `bin/jg-backlog.sh markdown` renders it as backlog lines.
 It tracks work items only, never agents; persistent Squad Leads never appear as backlog items.
 Work routed to a Squad Lead is recorded in that Squad Lead home's own backlog, not the main backlog.
-A new item needs a type tag and a justification line, or `bin/jg-tasks-axi.sh add` refuses it; `docs/configuration.md` "Backlog intake" owns the rule.
+A new item needs a type tag and a justification line, or `bin/jg-backlog.sh add` refuses it; `docs/configuration.md` "Backlog intake" owns the rule.
 When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item and hold it through that wrapper.
 When the automatic transition gate applies, dispatch and completion move the item themselves - `bin/jg-spawn.sh` and `bin/jg-teardown.sh` own those transitions and refuse rather than report success without them - so what remains yours is filing the item before dispatch, recording decisions, and keeping notes current; `docs/configuration.md` owns gate applicability and the manual-backend exception.
 
-`.tasks.toml`, `docs/configuration.md`, and current `tasks-axi --help` own the backlog schema, compatibility, retention, and routine command syntax.
+`docs/configuration.md` and current `bin/jg-backlog.sh help` own the backlog schema, compatibility, retention, and routine command syntax.
 `squad-lead-provisioning` and `bin/jg-backlog-handoff.sh` own cross-home handoff safety.
 
 ## Task notes

@@ -29,17 +29,19 @@ mkdir -p "$HOME" "$JG_HOME"/{data,config,state,projects/alpha} "$TMPDIR"
 ln -s "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-printf '[markdown]\npath="data/backlog.md"\narchive="data/done-archive.md"\ndone_keep=0\n' > "$JG_HOME/.tasks.toml"
-(cd "$JG_HOME"; tasks-axi add stuck 'Umer stuck telescope focus' --repo alpha --priority 1 --body $'release: next\nparent: upkeep' >/dev/null
- tasks-axi start stuck >/dev/null)
+mkdir -p "$work/store"
+printf '%s\n' "$work/store/.beads" > "$JG_HOME/config/beads-dir"
+BEADS_DIR="$work/store/.beads" "$fork/bin/jg-beads.sh" init --prefix stage >/dev/null 2>&1 || { echo 'cannot create the Beads store (set JG_BEADS_BD and JG_BEADS_DOLT to the pinned builds)' >&2; exit 1; }
+(cd "$JG_HOME"; "$fork/bin/jg-backlog.sh" add stage-stuck '[feature] Umer stuck telescope focus' --repo alpha --priority 1 --body $'Stage proof row\nrelease: next\nparent: upkeep' >/dev/null
+ "$fork/bin/jg-backlog.sh" start stage-stuck >/dev/null)
 git init -q "$JG_HOME/projects/alpha"
 git -C "$JG_HOME/projects/alpha" remote add origin https://github.com/example/ownvoice.git
 # More than six hours ago so the board draws stuck Nh.
 old=$(( $(date +%s) - 8 * 3600 ))
-printf 'working [at=%s]: building Umer stuck telescope focus\n' "$old" > "$JG_HOME/state/stuck.status"
+printf 'working [at=%s]: building Umer stuck telescope focus\n' "$old" > "$JG_HOME/state/stage-stuck.status"
 bash "$repo/tickets-sync/wiring.sh"
 "$JG_HOME/state/tickets-sync.check.sh" | tee "$evidence/sync.out"
-tid=$(printf 'jg-%s' "$(printf '%s' main/stuck | sha256sum | cut -c1-32)")
+tid=$(printf 'jg-%s' "$(printf '%s' main/stage-stuck | sha256sum | cut -c1-32)")
 sign-off-axi ticket "$work/board.json" --id "$tid" --json | tee "$evidence/ticket.json" | jq -e --argjson old "$old" \
   '.ticket.stage == "building" and .ticket.last_event_at == $old and .ticket.progress == 30' >/dev/null
 # serve stays in the foreground; run it in the background and stop by board path.

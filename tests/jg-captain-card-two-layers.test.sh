@@ -64,12 +64,12 @@ test_both_captain_facing_paths_run_the_check() {
 #!/usr/bin/env bash
 b=$SIGN_OFF_HOME/.sign-off/decisions.json
 if [ "$1" = list ]; then jq -c '{decisions: [.items[]]}' "$b"
-else jq '.items += [{key: "card"}]' "$b" > "$b.t" && mv "$b.t" "$b" && echo card; fi
+else jq '.items += [{key: "jg-card"}]' "$b" > "$b.t" && mv "$b.t" "$b" && echo jg-card; fi
 SH
   chmod +x "$d/fakebin/sign-off-axi"
   card() {  # [extra flags] -> post one card through the real tool
     env PATH="$d/fakebin:$PATH" JG_HOME="$d/home" JG_ROOT_OVERRIDE="$d/home" SIGN_OFF_HOME="$d/so" \
-      bash "$ROOT/bin/jg-question-card.sh" post  --route main --ask-ref m1 --must design-pick --raised-by m1 \
+      bash "$ROOT/bin/jg-question-card.sh" post  --route main --ask-ref jg-m1 --must design-pick --raised-by jg-m1 \
       --title "Ship the sign-in fix?" --why "It is ready." \
       --outcome yes="It ships Friday." --outcome no="It waits a week." "$@" 2>&1
   }

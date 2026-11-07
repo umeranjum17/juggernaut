@@ -194,7 +194,7 @@ JG_BACKEND_HERDR_PRESENTATION_CONFIG="herdr-presentation-spaces"
 # (a deliberate opt-in, honored even below the version floor), or "default"
 # (this home configured nothing, so the floor decides).
 # Values are read with the whole-file whitespace-stripped convention the other
-# scalar config items already use (config/backlog-backend, config/crew-harness),
+# scalar config items already use (config/crew-harness),
 # plus case folding. An empty file is the historical presence-based opt-in form
 # and still means an explicit "on", so no home that deliberately enabled the
 # projection can lose it. An unrecognized value warns and falls back to the

@@ -64,7 +64,6 @@ trap '{
 # --- the fixture fleet: a supervising home with two squad_lead homes ---------
 mkdir -p "$P/config" "$P/state" "$P/data" "$work/home-a/state" "$work/home-b/state"
 printf '# Parked homes: no work, nothing merges.\nhome-b\n' > "$P/config/parked-homes"
-printf 'manual\n' > "$P/config/backlog-backend"
 printf 'Shared captain context for every mate.\n' > "$P/data/captain-shared.md"
 : > "$P/data/squad_leads.md"
 printf 'home-a\n' > "$work/home-a/.jg-squad-lead-home"
@@ -152,11 +151,12 @@ now_a=$(find "$P/state/home-a.inbox" -maxdepth 1 -name '*.msg' 2>/dev/null | wc 
   || ok "restart pass wrote nothing to the parked home"
 
 # --- 4. config push: jg-config-push.sh ----------------------------------------
+printf "codex\n" > "$P/config/crew-harness"
 out=$(fork jg-config-push.sh 2>&1)
 has "config push names the parked skip" <(printf "%s" "$out") "home-b: skipped - its home is parked"
-[ -e "$work/home-b/config/backlog-backend" ] && no "config push wrote nothing into the parked home" \
+[ -e "$work/home-b/config/crew-harness" ] && no "config push wrote nothing into the parked home" \
   || ok "config push wrote nothing into the parked home"
-[ -f "$work/home-a/config/backlog-backend" ] && ok "config push still reaches the unparked home" \
+[ -f "$work/home-a/config/crew-harness" ] && ok "config push still reaches the unparked home" \
   || no "config push did not reach the unparked home"
 
 # --- 5. pending-reply retries: jg_pending_reply_tick --------------------------

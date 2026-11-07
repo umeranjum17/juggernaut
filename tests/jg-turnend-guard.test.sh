@@ -651,21 +651,30 @@ test_hook_silent_in_idle_squad_lead_home() {
 # scan is what wakes it to dispatch them. An empty or all-held queue stays idle.
 test_hook_blocks_idle_squad_lead_with_ready_backlog() {
   local dir out status ids
+  if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
+    echo 'skip - the ready-work case needs a real store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT'; return 0
+  fi
   dir=$(make_squad_lead_dir "$TMP_ROOT/hook-squad-lead-ready")
   mkdir -p "$dir/data" "$dir/config"
   : > "$dir/config/backlog-intake-loose"  # bare fixture items for the ready-work case
-  cp "$ROOT"/bin/jg-*-lib.sh "$ROOT/bin/jg-tasks-axi.sh" "$dir/bin/"
-  tasks() { JG_HOME="$dir" "$dir/bin/jg-tasks-axi.sh" "$@" >/dev/null || fail "fixture: tasks $*"; }
-  tasks add held-one "held item"; tasks hold held-one --reason "waiting for approval"
+  # shellcheck source=/dev/null
+  . "$ROOT/core/lib/beads-test-env.sh"
+  core_beads_home "$ROOT" "$dir"
+  cp "$ROOT"/bin/jg-*-lib.sh "$ROOT/bin/jg-backlog.sh" "$ROOT/bin/jg-beads.sh" \
+    "$ROOT/bin/jg-beads-view.py" "$ROOT/bin/jg-beads-write.py" "$ROOT/bin/jg-beads-followup.py" \
+    "$ROOT/bin/jg-beads-links.py" \
+    "$ROOT/bin/jg-ticket-key.sh" "$dir/bin/"
+  tasks() { local o; o=$(JG_HOME="$dir" "$dir/bin/jg-backlog.sh" "$@" 2>&1) || fail "fixture: tasks $*: $o"; }
+  tasks add jg-held-one "held item"; tasks hold jg-held-one --reason "waiting for approval"
   out=$(run_hook "$dir" false); status=$?
   expect_code 0 "$status" "a lead whose only backlog item is held must stay idle"
   [ -z "$out" ] || fail "held-only backlog produced guard output: $out"
-  tasks add zed-low "unprioritized item"; tasks add urgent-one "urgent item" --priority 0
+  tasks add jg-zed-low "unprioritized item"; tasks add jg-urgent-one "urgent item" --priority 0
   out=$(run_hook "$dir" false); status=$?
   expect_code 2 "$status" "an idle lead with ready backlog work must keep a live watcher"
   assert_contains "$out" "2 ready backlog item(s) wait for this idle lead" "block banner must name the ready work"
   ids=$(bash -c '. "$1"; jg_ready_work_ids "$2"' _ "$dir/bin/jg-supervision-lib.sh" "$dir")
-  [ "$ids" = "urgent-one zed-low" ] || fail "ready work must list P0 first, got: $ids"
+  [ "$ids" = "jg-urgent-one jg-zed-low" ] || fail "ready work must list P0 first, got: $ids"
   pass "jg-turnend-guard: an idle squad_lead with ready backlog work keeps a watcher (P0 first); held-only stays idle"
 }
 

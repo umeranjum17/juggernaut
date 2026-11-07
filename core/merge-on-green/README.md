@@ -78,7 +78,7 @@ A red CI run produces a root-cause ticket, never a re-run. `red-ci-ticket.sh che
 `merge-on-green.sh check` (after the stale-PR alarm), so the same installed watcher check carries it and no model turn is spent.
 For each project in `data/projects.md` whose clone has a github.com `origin`, it reads the newest completed run of each workflow on
 the default branch, on every `release/*` branch an open PR targets, and on the head of every open PR. A run that ended `failure`,
-`timed_out` or `startup_failure` and has no ticket yet files one backlog item through `bin/jg-tasks-axi.sh`:
+`timed_out` or `startup_failure` and has no ticket yet files one backlog item through `bin/jg-backlog.sh`:
 
 - id `ci-red-run-<run id>`, so a run files once, and title `[blocker] CI red: <workflow> <failing job>: find the root cause`.
 - body: the run id and URL, the failing job, the first failing line of its log, and `Never re-run; fix the root cause`.
@@ -175,7 +175,7 @@ the lead installs it from merged main, never from a branch.
 
 ## Test
 
-`merge-on-green/tests/backlog-shipped-reconcile.test.sh` drives the reconcile against a fixture home with a real markdown backlog and the real `tasks-axi`: shipped rows with a gone worker close, and live, unproven, held, queued, squad_lead, pending-close and no-`pr=` rows stay.
+`merge-on-green/tests/backlog-shipped-reconcile.test.sh` drives the reconcile against a fixture home with a real markdown backlog and the real `bin/jg-backlog.sh`: shipped rows with a gone worker close, and live, unproven, held, queued, squad_lead, pending-close and no-`pr=` rows stay.
 
 `merge-on-green/tests/stale-pr-alarm.test.sh` drives the alarm against recorded PR fixtures (`tests/fixtures/stale-pr-alarm/`) behind a `gh-axi` stub: every reason, a release PR with and without started CI, a healthy PR and a recent one silent, no repeat on the second poll, a re-stall alerting again, a forge failure silent, and the alarm running from `merge-on-green.sh check`.
 

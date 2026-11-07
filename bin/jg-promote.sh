@@ -81,8 +81,8 @@ CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 . "$SCRIPT_DIR/jg-pr-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 # shellcheck source=bin/jg-public-followup-lib.sh

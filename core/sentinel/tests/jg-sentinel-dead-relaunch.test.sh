@@ -28,9 +28,10 @@ set -u
 SENTINEL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/jg-sentinel.sh"
 # shellcheck source=/dev/null
 . "$JG_UPSTREAM_ROOT/tests/lib.sh"
+# shellcheck source=/dev/null
+. "$JG_UPSTREAM_ROOT/core/lib/beads-test-env.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
-command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 
 TMP_ROOT=$(jg_test_tmproot jg-sentinel-dead)
 HOME_DIR=$TMP_ROOT/home
@@ -44,8 +45,7 @@ mkdir -p "$HOME_DIR/data" "$STATE" "$HOME_DIR/config" "$HOME_DIR/projects"
 # The sentinel runs the host tool's scripts from JG_HOME/bin, so this fixture home
 # borrows the checkout's bin/.
 ln -s "$ROOT/bin" "$HOME_DIR/bin"
-jg_test_tasks_toml "$HOME_DIR/.tasks.toml"
-printf '## In flight\n\n## Queued\n\n## Done\n' > "$HOME_DIR/data/backlog.md"
+core_beads_home "$JG_UPSTREAM_ROOT" "$HOME_DIR"
 
 # The herdr stand-in answers only `status`, reporting the server stopped. Every
 # other call fails, so each lane's pane reads missing.
@@ -79,7 +79,7 @@ EOF
   printf '%s\n' "$4" > "$STATE/$id.status"
 }
 
-lane held 1 "$((RESTART - 3600))" "working [at=$((RESTART - 60))]: implementing the brief"
+lane jg-held 1 "$((RESTART - 3600))" "working [at=$((RESTART - 60))]: implementing the brief"
 lane acted 2 "$((RESTART - 3600))" "working [at=$((RESTART - 60))]: implementing the brief"
 lane paused 3 "$((RESTART - 3600))" "paused [at=$((RESTART - 60))]: waiting on the validation run"
 lane stopped 4 "$((RESTART - 3600))" "working [at=$((RESTART - 60))]: implementing the brief"
@@ -110,10 +110,10 @@ PATH="$FAKEBIN_STOP:$PATH" JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE" \
 printf 'v1 gen=s%s.1.1 seq=2 state=idle source=claude-hook event=stop ts=%s\n' \
   "$((RESTART - 3600))" "$NOW" > "$STATE/acted.busy-state"
 
-PATH="$FAKEBIN:$PATH" REAL_TASKS_AXI="$(command -v tasks-axi)" \
+PATH="$FAKEBIN:$PATH" \
   JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$HOME_DIR/data" \
   JG_CONFIG_OVERRIDE="$HOME_DIR/config" "$ROOT/bin/jg-captain-hold.sh" \
-  hold held --title "Captain call for held lane" --reason "captain must decide the held lane" \
+  hold jg-held --title "Captain call for held lane" --reason "captain must decide the held lane" \
   --repo sample >/dev/null || fail "could not hold the lane's captain call"
 
 snapshot() {
@@ -121,7 +121,7 @@ snapshot() {
 }
 
 reconcile_dry() {
-  PATH="$FAKEBIN:$PATH" REAL_TASKS_AXI="$(command -v tasks-axi)" \
+  PATH="$FAKEBIN:$PATH" \
     JG_HOME="$HOME_DIR" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$HOME_DIR/data" \
     JG_CONFIG_OVERRIDE="$HOME_DIR/config" JG_SENTINEL_HERDR_SESSION="$SESSION" \
     JG_SENTINEL_EPISODE="$SESSION:$RESTART" JG_SENTINEL_DRY_RUN=1 \
@@ -132,7 +132,7 @@ before=$(snapshot)
 OUT=$(reconcile_dry) || true
 after=$(snapshot)
 
-printf '%s\n' "$OUT" | grep -q '^held: captain hold open; left alone$' \
+printf '%s\n' "$OUT" | grep -q '^jg-held: captain hold open; left alone$' \
   || fail "held dead lane was not skipped as a captain hold: $OUT"
 printf '%s\n' "$OUT" | grep -q '^acted: acted since the restart; left alone$' \
   || fail "dead lane that acted since the restart was not skipped: $OUT"

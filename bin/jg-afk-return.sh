@@ -16,7 +16,7 @@
 # THE RETURN BRIEF (stdout, on begin and on every check) is rendered from durable
 # records, never from conversation memory: the archived away-posture record
 # (bin/jg-afk-contract.sh), the supervision outcome store
-# (bin/jg-branch-outcome.sh), the held set in the backlog (tasks-axi), and the
+# (bin/jg-branch-outcome.sh), the held set in the backlog, and the
 # status logs. Its order is fixed: supervisor health across the away window
 # first, then the captain's away instructions - their words verbatim, including
 # superseded in-session mandates - followed by the away session's account of
@@ -95,9 +95,6 @@ RETURN_GRACE=${JG_GUARD_GRACE:-300}
 # shellcheck source=bin/jg-afk-contract.sh
 . "$SCRIPT_DIR/jg-afk-contract.sh"
 CONTRACT="$SCRIPT_DIR/jg-afk-contract.sh"
-# Functions only: decodes the stored hold reasons the catch-up listing shows.
-# shellcheck source=bin/jg-hold-reason-lib.sh
-. "$SCRIPT_DIR/jg-hold-reason-lib.sh"
 
 usage() {
   sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -493,7 +490,7 @@ epoch_to_iso() {  # <epoch>
   date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$1"
 }
 
-strip_axi_help() {
+strip_help_block() {
   awk '/^help\[/ { skip = 1; next } skip && /^  / { next } { skip = 0; print }'
 }
 
@@ -610,15 +607,15 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
   printf 'Waiting on you:\n'
   count=0
   HELD_READ_FAILED=0
-  HELD_READ_PATH=$(jg_backlog_file "$DATA" 2>/dev/null || printf '%s/backlog.md' "$DATA")
+  HELD_READ_PATH=$DATA/backlog.md
   if held=$(jg_backlog_row_list "$DATA" --state held --fields hold_kind,hold_reason,hold_until 2>&1); then
-    rows=$(printf '%s\n' "$held" | strip_axi_help | grep -v '^count: ' | grep -v '^tasks\[0\]' || true)
+    rows=$(printf '%s\n' "$held" | strip_help_block | grep -v '^count: ' | grep -v '^tasks\[0\]' || true)
     if printf '%s\n' "$held" | grep -q '^count: 0'; then
       :
     elif [ -n "$rows" ]; then
       count=$((count + 1))
       printf '  held in the backlog:\n'
-      printf '%s\n' "$rows" | jg_hold_reason_decode_stream | sed 's/^/    /'
+      printf '%s\n' "$rows" | sed 's/^/    /'
     fi
   else
     held_err=$(printf '%s' "$held" | head -1 | clean_field)
@@ -936,8 +933,8 @@ main() {
   # read-only guard is literal.
   # shellcheck source=bin/jg-wake-lib.sh
   . "$SCRIPT_DIR/jg-wake-lib.sh"
-  # shellcheck source=bin/jg-tasks-axi-lib.sh
-  . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+  # shellcheck source=bin/jg-backlog-lib.sh
+  . "$SCRIPT_DIR/jg-backlog-lib.sh"
   # shellcheck source=bin/jg-backlog-transition-lib.sh
   . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
   # shellcheck source=bin/jg-pr-lib.sh

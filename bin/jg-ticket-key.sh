@@ -30,11 +30,10 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
 KEYS="$DATA/ticket-keys.tsv"
 COUNTERS="$DATA/ticket-counters.tsv"
-BACKLOG="$DATA/backlog.md"
 TAB=$'\t'
-# shellcheck source=bin/jg-tasks-axi-lib.sh
+# shellcheck source=bin/jg-backlog-lib.sh
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 die() { printf 'jg-ticket-key: %s\n' "$*" >&2; exit 2; }
@@ -90,8 +89,8 @@ assign() {  # <slug> [<project>]; the caller holds the lock
 # Open tickets as `since<TAB>slug<TAB>repo-less title`, oldest first.
 open_items() {
   local text
-  jg_backlog_present "$CONFIG" "$BACKLOG" || return 0
-  text=$(jg_backlog_text "$CONFIG" "$BACKLOG") || return 1
+  jg_backlog_beads_store "$CONFIG" >/dev/null 2>&1 || return 0
+  text=$(jg_backlog_text "$CONFIG") || return 1
   printf '%s\n' "$text" | awk '
     /^## / { open = ($0 !~ /^## Done/); next }
     open && /^- \[.\] / {

@@ -451,7 +451,7 @@ family_for_basename() {
     jg-sentinel-herdr-restart-live-e2e.test.sh)
       printf '%s\n' real-herdr-gated
       ;;
-    jg-backlog-handoff.test.sh|jg-on.test.sh|jg-remote-reply.test.sh|\
+    jg-on.test.sh|jg-remote-reply.test.sh|\
     jg-remote-squad-lead-lifecycle-e2e.test.sh|jg-squad-lead-lifecycle-e2e.test.sh)
       printf '%s\n' squad_lead
       ;;
@@ -685,7 +685,6 @@ tests/jg-afk-inject-e2e.test.sh 42474
 tests/jg-agents-md-floor.test.sh 542
 tests/jg-agy-signals-live-e2e.test.sh 84
 tests/jg-backend-tmux-smoke.test.sh 312
-tests/jg-backlog-handoff.test.sh 78753
 tests/jg-beads-migrate.test.sh 1700
 tests/jg-behavior-determinism.test.sh 22547
 tests/jg-board-answers.test.sh 6382
@@ -739,7 +738,6 @@ tests/jg-herdr-go.test.sh 1222
 tests/jg-guard-host.test.sh 6431
 tests/jg-herdr-names.test.sh 2803
 tests/jg-herdr-version-floor-live-e2e.test.sh 142
-tests/jg-hold-reason-gate.test.sh 2789
 tests/jg-hometag-lead-label.test.sh 394
 tests/jg-retired-catalog-check.test.sh 309
 tests/jg-host-wiring.test.sh 1330
@@ -813,11 +811,9 @@ tests/jg-stack-owner.test.sh 635
 tests/jg-bus-health.test.sh 5000
 tests/jg-bus-health-extra.test.sh 4000
 tests/jg-tangle-guard.test.sh 24870
-tests/jg-tasks-axi.test.sh 47421
 tests/jg-teardown-core.test.sh 4222
 tests/jg-teardown.test.sh 516785
 tests/jg-test-run.test.sh 11831
-tests/jg-ticket-key.test.sh 2223
 tests/jg-ticket-writeback.test.sh 83
 tests/jg-tmp-sweep.test.sh 5192
 tests/jg-tokens-retro.test.sh 597
@@ -873,7 +869,6 @@ tests/jg-version-branch-sync.test.sh 33220
 tests/jg-wake-batching.test.sh 52062
 tests/jg-watch-beacon.test.sh 45490
 tests/jg-whats-left.test.sh 3479
-tests/jg-owner-asks.test.sh 2000
 tests/jg-captain-approval.test.sh 2100
 tests/jg-pending-decision-blocks-work.test.sh 66000
 tests/jg-triage.test.sh 2000
@@ -1621,8 +1616,8 @@ families_for_changed_path() {
     bin/jg-lint.sh|bin/jg-lint-workflows.sh|bin/jg-install-shellcheck.sh|\
     bin/jg-install-actionlint.sh|\
     bin/jg-committed-binary-check.sh|bin/jg-ports-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-recon-depth.sh|bin/jg-loss-claim-check.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
-    bin/jg-captain-hold.sh|bin/jg-hold-reason-lib.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
-    bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-tasks-axi-lib.sh|\
+    bin/jg-captain-hold.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
+    bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-backlog-lib.sh|\
     bin/jg-vendor-auth-probe.sh|\
     bin/jg-primary-scope-lib.sh|bin/jg-project-mode.sh|bin/jg-forge-detect.sh|bin/jg-promote.sh|\
     bin/jg-ff-lib.sh|bin/jg-gotmp*|bin/*pretool*)
@@ -1647,7 +1642,7 @@ families_for_changed_path() {
     docs/jg-test-isolation-proof.json)
       printf '%s\n' pure-contract-unit
       ;;
-    .github/*|.gitattributes|.done-done.yaml|.tasks.toml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
+    .github/*|.gitattributes|.done-done.yaml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
     docs/configuration.md|docs/supervision-protocols/*)
       printf '%s\n' pure-contract-unit
       ;;

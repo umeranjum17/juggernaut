@@ -199,13 +199,13 @@ An operator can use the same wrapper shape when a tool needs a manual selection:
 
 ```sh
 mkdir -p ~/.local/bin
-cat > ~/.local/bin/tasks-axi <<'SH'
+cat > ~/.local/bin/bd <<'SH'
 #!/usr/bin/env bash
 tool_bin="$HOME/.nvm/versions/node/<selected-version>/bin"
 PATH="$tool_bin:$PATH"
-exec "$tool_bin/tasks-axi" "$@"
+exec "$tool_bin/bd" "$@"
 SH
-chmod +x ~/.local/bin/tasks-axi
+chmod +x ~/.local/bin/bd
 ```
 
 - Replace the placeholder with the remote account's selected nvm version.
@@ -319,7 +319,7 @@ A file at `~/.local/bin/jg-remote-entrypoint.sh` that is not Juggernaut's own sy
 
 | Requirement | Tools |
 | --- | --- |
-| Always required | `git`, compatible `tasks-axi` unless the home keeps a [Beads store](configuration.md), and the Herdr row of the [backend toolchain table](configuration.md#toolchain) |
+| Always required | `git`, the pinned `bd` and `dolt` of the [Beads store](configuration.md), and the Herdr row of the [backend toolchain table](configuration.md#toolchain) |
 | At least one of | `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, or `kimi` |
 | Additionally required on macOS | `lsof`, so the doctor and guard can prove which process owns the session socket |
 
@@ -618,13 +618,13 @@ bin/jg-backlog-handoff.sh <id> <item-key>...
 For a remote route, the handoff takes these steps:
 
 1. The receiver first proves it can file rows; a refusal stops the handoff before anything is staged.
-   `tasks-axi mv`, or on a [Beads store](configuration.md) a staged file and then a delete, moves the dependency-closed set from the primary backlog into `data/handoff/<id>.outbox.md`.
+   a staged file and then a delete in the [Beads store](configuration.md) moves the dependency-closed set from the primary backlog into `data/handoff/<id>.outbox.md`.
 2. The outbox is then copied to the remote handoff scratch directory.
 3. `jg-backlog-receive.sh` atomically ingests every destination-absent key (a key the remote backlog does not already hold) under the remote backlog's own lock.
 
 The [`bin/jg-backlog-handoff.sh`](../bin/jg-backlog-handoff.sh) header owns remote outbox release after receipt and stable wake-correlation retry behavior.
 Bootstrap retries pending outboxes and wakes, and emits `SQUAD_LEAD_HANDOFF:` only when an outbox remains.
-There is no two-phase journal and no additional tasks-axi release requirement.
+There is no two-phase journal and no additional backlog release requirement.
 
 ## Sync, update, and retirement
 

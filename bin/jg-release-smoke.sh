@@ -30,7 +30,7 @@
 # which lane it was in. Typical wall time is a few seconds.
 #
 # EXIT. 0 when all three lanes held, 1 when a lane failed or the budget ran out,
-# 2 on a usage error. A missing tool (git, jq, tasks-axi) fails the run naming it,
+# 2 on a usage error. A missing tool (git, jq, the pinned bd and dolt) fails the run naming it,
 # because a smoke that skipped a lane proved nothing about it. The last line is
 # `release smoke: PASS|FAIL ... seconds=<n>`. JG_RELEASE_SMOKE_KEEP=1 keeps the
 # scratch directory for inspection and prints its path.
@@ -64,7 +64,7 @@ fail() {
   exit 1
 }
 
-for tool in git jq tasks-axi timeout; do
+for tool in git jq timeout "${JG_BEADS_BD:-bd}" "${JG_BEADS_DOLT:-dolt}"; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is not installed, so the lanes that need it cannot be replayed"
 done
 
@@ -81,14 +81,15 @@ export GIT_AUTHOR_NAME=smoke GIT_AUTHOR_EMAIL=smoke@example.invalid
 export GIT_COMMITTER_NAME=smoke GIT_COMMITTER_EMAIL=smoke@example.invalid
 export HOME=$T/user-home
 mkdir -p "$HOME"
-unset TASKS_AXI_FILE TASKS_AXI_BACKEND
 export JG_TASK_PRIORITY_CHECK=/nonexistent
 
 H=$T/home
 FAKE=$T/fakebin
 mkdir -p "$H/config" "$T/merge-config" "$H/state" "$H/data" "$FAKE"
-printf 'backend = "markdown"\n\n[markdown]\npath = "data/backlog.md"\narchive = "data/done-archive.md"\ndone_keep = 10\n' > "$H/.tasks.toml"
-printf '## In flight\n\n## Queued\n\n## Done\n' > "$H/data/backlog.md"
+printf '%s\n' "$H/beads/.beads" > "$H/config/beads-dir"
+printf "%s\n" "$H/beads/.beads" > "$T/merge-config/beads-dir"
+mkdir -p "$H/beads"
+BEADS_DIR="$H/beads/.beads" "$REPO/bin/jg-beads.sh" init --prefix smoke >/dev/null 2>&1 || fail "cannot create the Beads store"
 printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$T/pass-lint.sh"
 chmod +x "$T/pass-lint.sh"
 printf 'Use the compact layout.\n' > "$T/pick.txt"
@@ -162,7 +163,7 @@ hold() {  # <captain-hold args...>
   timeout "$(left)" env JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" \
     JG_CONFIG_OVERRIDE="$H/config" PATH="$FAKE:$PATH" "$REPO/bin/jg-captain-hold.sh" "$@"
 }
-tasks() { (cd "$H" && timeout "$(left)" tasks-axi "$@"); }
+tasks() { timeout "$(left)" env JG_HOME="$H" JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" "$REPO/bin/jg-backlog.sh" "$@"; }
 
 # merge <id> <pr-number> <base> <project> [<extra meta line>]: one real merge attempt.
 # Sets MERGE_OUT and MERGE_RC; MERGE_CALLED says whether the forge saw a merge.
@@ -192,18 +193,19 @@ must_merge() {  # <what>
 # ---- lane 1: design -------------------------------------------------------
 LANE=design
 mkproject "$T/p-design" release/c-6
-tasks add dz1 "[design-ux] Tickets page design" --kind ship --repo sample >/dev/null || fail "cannot file the design ticket"
-tasks add sa1 "Build the tickets page" --kind ship --repo sample --body "linked-to: dz1" >/dev/null || fail "cannot file the linked ship"
-tasks add su1 "Fix the footer" --kind ship --repo sample >/dev/null || fail "cannot file the unrelated ship"
-GH_HEAD_REF=fm/sa1 merge sa1 201 release/c-6 "$T/p-design"
-must_refuse "linked ship with an open design pick" "dz1"
-merge su1 202 release/c-6 "$T/p-design"
+tasks add smoke-dz1 "[design-ux] Tickets page design" --kind ship --repo sample --body "The page needs a design pick." >/dev/null || fail "cannot file the design ticket"
+tasks add smoke-sa1 "[feature] Build the tickets page" --kind ship --repo sample --body "Customers need the page.
+linked-to: smoke-dz1" >/dev/null || fail "cannot file the linked ship"
+tasks add smoke-su1 "[feature] Fix the footer" --kind ship --repo sample --body "The footer is broken." >/dev/null || fail "cannot file the unrelated ship"
+GH_HEAD_REF=fm/smoke-sa1 merge smoke-sa1 201 release/c-6 "$T/p-design"
+must_refuse "linked ship with an open design pick" "smoke-dz1"
+merge smoke-su1 202 release/c-6 "$T/p-design"
 must_merge "unrelated ship while a design pick is open"
-hold hold dz1 --reason "captain must pick" >/dev/null 2>&1 || fail "cannot hold the design ticket"
-hold answer dz1 --decision-file "$T/pick.txt" --release >/dev/null 2>&1 || fail "cannot record the design pick"
-merge sa1 201 release/c-6 "$T/p-design"
+hold hold smoke-dz1 --reason "captain must pick" >/dev/null 2>&1 || fail "cannot hold the design ticket"
+hold answer smoke-dz1 --decision-file "$T/pick.txt" --release >/dev/null 2>&1 || fail "cannot record the design pick"
+merge smoke-sa1 201 release/c-6 "$T/p-design"
 must_merge "linked ship after the pick was recorded"
-echo "lane: design ok - linked merge refused naming dz1, unrelated merge moved, merged after the recorded pick"
+echo "lane: design ok - linked merge refused naming smoke-dz1, unrelated merge moved, merged after the recorded pick"
 
 # ---- lane 2: multi-pr -----------------------------------------------------
 LANE=multi-pr

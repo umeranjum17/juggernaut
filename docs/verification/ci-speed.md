@@ -65,7 +65,7 @@ The whole run took 7.1 minutes at the median.
   It found and closed real holes: a change to `toolchain.versions`, `bin/jg-stack.sh` or the workflow file itself skipped the Bus service and Smoke lanes green.
 - Go build cache seeded from the release branch: a cold build is 2.4 seconds locally and 7 seconds on a runner, a warm one 0.15 seconds.
   The first hit shows after the first push that follows the merge.
-  The ShellCheck, actionlint, nats and tasks-axi installs take 0 to 1 second, so they are not cached.
+  The ShellCheck, actionlint, nats and the backlog installs take 0 to 1 second, so they are not cached.
 
 ## Limits
 

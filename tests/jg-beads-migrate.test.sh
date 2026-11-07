@@ -156,7 +156,7 @@ PY
   export JG_BEADS_BD=$JG_TEST_BD JG_BEADS_DOLT=$JG_TEST_DOLT
   migrate cut --home main --dir "$M" --copy "$T/copy" --out "$T/bad" --store "$T/s/bad/.beads" --order go >/dev/null 2>"$T/err" && fail "a store that differs from the manifest was cut"
   grep -q 'differs from the manifest' "$T/err" || fail "a failed cut gave no reason: $(cat "$T/err")"
-  [ ! -e "$M/data/backlog.md.lock" ] && [ ! -e "$M/data/beads-cut.json" ] && [ ! -e "$M/config/backlog-backend" ] || fail "a failed cut left the home moved"
+  [ ! -e "$M/data/backlog.md.lock" ] && [ ! -e "$M/data/beads-cut.json" ] || fail "a failed cut left the home moved"
   [ -d "$(echo "$T"/s/bad.back.*)" ] || fail "a failed cut's store was not kept aside"
 
   # A killed cut leaves its record: a second cut refuses, and back finishes the undo.
