@@ -3942,15 +3942,30 @@ rejected_checks_record() {
 # slow sweep skips board-answers.check.sh so a pass is never run twice.
 run_fast_checks() {
   local out reason shim="$STATE/board-answers.check.sh"
-  [ -f "$SCRIPT_DIR/jg-board-answers.sh" ] && [ ! -L "$SCRIPT_DIR/jg-board-answers.sh" ] || return 0
   [ "$(age_of "$STATE/.last-fast-check")" -ge "$FAST_CHECK_INTERVAL" ] || return 0
   touch "$STATE/.last-fast-check"
-  JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-board-answers.sh" tick || exit 1
-  out=$JG_CHECK_RESULT
-  [ -n "$out" ] || return 0
-  reason="check: $shim: $out"
-  jg_wake_append check "$shim" "$reason" || exit 1
-  wake "$reason"
+  if [ -f "$SCRIPT_DIR/jg-board-answers.sh" ] && [ ! -L "$SCRIPT_DIR/jg-board-answers.sh" ]; then
+    JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-board-answers.sh" tick || exit 1
+    out=$JG_CHECK_RESULT
+    if [ -n "$out" ]; then
+      reason="check: $shim: $out"
+      jg_wake_append check "$shim" "$reason" || exit 1
+      wake "$reason"
+    fi
+  fi
+  # The machine's four services belong to Main, and a unit that is dead or serves
+  # another home is exactly the missing alert this path exists for, so it is read
+  # here on the fast cadence and not on the slow sweep (bin/jg-unit-claim.sh owns
+  # the verdict and the words).
+  if [ -f "$SCRIPT_DIR/jg-unit-claim.sh" ] && [ ! -L "$SCRIPT_DIR/jg-unit-claim.sh" ]; then
+    JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-unit-claim.sh" status || exit 1
+    out=$JG_CHECK_RESULT
+    if [ -n "$out" ]; then
+      reason="check: unit-claim: $out"
+      jg_wake_append check unit-claim "$reason" || exit 1
+      wake "$reason"
+    fi
+  fi
 }
 
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).

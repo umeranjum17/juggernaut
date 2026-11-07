@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, PRESENTATION_UNAVAILABLE, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, SENTINEL, CREW_DISPATCH invalid, FLEET_SYNC, NETWORK_CHECKS, HOME_SUMMARY, BACKLOG_RECONCILE, SQUAD_LEAD_SYNC, SQUAD_LEAD_LIVENESS, SQUAD_LEAD_HANDOFF, NUDGE_SQUAD_LEADS, or FMX - or reports that an interrupted backlog cleanup may have left an endpoint or local copy, or when a standalone bin/jg-bootstrap.sh or bin/jg-startup-network.sh run prints one of those lines.
+  Use whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, PRESENTATION_UNAVAILABLE, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, UNIT_HOME, SENTINEL, CREW_DISPATCH invalid, FLEET_SYNC, NETWORK_CHECKS, HOME_SUMMARY, BACKLOG_RECONCILE, SQUAD_LEAD_SYNC, SQUAD_LEAD_LIVENESS, SQUAD_LEAD_HANDOFF, NUDGE_SQUAD_LEADS, or FMX - or reports that an interrupted backlog cleanup may have left an endpoint or local copy, or when a standalone bin/jg-bootstrap.sh or bin/jg-startup-network.sh run prints one of those lines.
   A silent bootstrap section, or any other BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -36,6 +36,7 @@ When any diagnostic needs captain attention, report the plain consequence and re
   Treat backlog reads and writes as unsafe until the printed reason is fixed; a missing or unpinned bd or dolt is a human install, and `bin/jg-beads.sh init` restores a gone rule but never a changed one.
 - `STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>` - the visible startup-memory budget is not a safe one-line positive decimal file; do not infer the default or propagate it.
   Correct the local primary file, then rerun session start so the normal convergence path can deliver the validated value to Squad Lead homes.
+- `UNIT_HOME: <unit> serves <other home>, not this home` or `UNIT_HOME: <unit> is installed but not running` - one of the machine's four long-running services does not serve Main, so this home gets no alert from it. Main moves them at every session start (`bin/jg-unit-claim.sh claim`), so a line that survives the digest means that move failed: the claim's own failure line above it names the real cause. A Squad Lead home is refused that command on purpose, because Main owns the units there too.
 - `SENTINEL: jg-sentinel is not running ... (install: <command>)` - nothing outside the agent runtime recovers supervision and workers after the Herdr server is killed.
   Installing a host service is outward-facing, so ask the captain once and run the printed command only on their word; until then the restart-recovery gap stays open.
 - `CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>` - the optional dispatch profile file exists but failed low-cost bootstrap validation; stop profile-based dispatch, report the actionable error, and require correction of the malformed schema, unverified harness name, or invalid harness/effort pair rather than falling back around it or selecting a bad profile.

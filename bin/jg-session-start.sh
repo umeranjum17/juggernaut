@@ -835,6 +835,15 @@ if [ "$READ_ONLY" -eq 0 ]; then
   if [ "$REEMIT" -eq 0 ]; then
     "$SCRIPT_DIR/jg-home-summary-refresh.sh" --best-effort || true
   fi
+  # The machine's four long-running services belong to Main, and bin/jg-unit-claim.sh
+  # owns why: one that serves another home sends every stuck-worker, blocked-pane
+  # and stopped-service alert there instead of here, and nothing else notices. The
+  # claim runs on the home's own copy before the digest reads that state, and says
+  # nothing when they already serve here. It reads JG_HOME's own units, so a state
+  # override (a test) never reaches it.
+  if [ "$REEMIT" -eq 0 ] && [ "$STATE" = "$JG_HOME/state" ]; then
+    "$SCRIPT_DIR/jg-unit-claim.sh" claim || true
+  fi
   # Every network call and the potentially slow inactive-outcome startup scan
   # are launched HERE, detached and bounded, so they run concurrently with the
   # whole digest below instead of in front of it. Step 7 harvests whatever has

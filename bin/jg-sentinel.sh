@@ -17,6 +17,8 @@
 #   JG_HOME=<home> jg-sentinel.sh ring       ring the primary now for a queued captain note (jg-inbox.sh runs it)
 #   JG_HOME=<home> jg-sentinel.sh reconcile  nudge or relaunch this home's direct reports, once per episode
 #   JG_HOME=<home> jg-sentinel.sh unit       print a systemd user service running `loop`
+#                             (Main only: a Squad Lead home is refused, and
+#                             bin/jg-unit-claim.sh owns why Main owns the units)
 #
 # tick, under the home's state/.sentinel.lock:
 #   1. Reads the Herdr server identity for JG_SENTINEL_HERDR_SESSION (default the
@@ -162,6 +164,12 @@ case "$DRY_RUN" in 0|1) ;; *) echo "jg-sentinel: JG_SENTINEL_DRY_RUN must be 0 o
 [ "$DRY_RUN" = 0 ] || [ "$CMD" = reconcile ] || { echo "jg-sentinel: JG_SENTINEL_DRY_RUN applies only to reconcile" >&2; exit 2; }
 
 if [ "$CMD" = unit ]; then
+  # The machine's services belong to Main (bin/jg-unit-claim.sh owns why): a
+  # Squad Lead home that installs its own takes Main's alerts away with them.
+  if [ -e "$JG_HOME/.jg-squad-lead-home" ] || [ -L "$JG_HOME/.jg-squad-lead-home" ]; then
+    "$SCRIPT_DIR/jg-unit-claim.sh" refuse jg-sentinel unit
+    exit 2
+  fi
   unit_quote() {
     local value=$1
     value=${value//\\/\\\\}
