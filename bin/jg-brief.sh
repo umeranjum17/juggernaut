@@ -1007,6 +1007,7 @@ The report's first section is \`## 1. Answer (five lines)\`: the answer to the o
 $SIGNOFF_LINE
 A report page opens with that same Answer: put the first Answer line, in plain words and at most 30 words, in the picture heading (\`visual.heading\`), never a finding, a number or an example from the evidence.
 Before you post it and again before done, run \`$JG_ROOT/bin/jg-report-opening-check.sh $DATA/$ID/report.md --card <the report.json you post>\` until it prints PASS; teardown refuses a posted page that fails it.
+If the report names three or more states or moving parts of the project, it must carry the project's state map: run \`$JG_ROOT/core/project-state-map/bin/psm-wide-check.sh $DATA/$ID/report.md --project $(basename "$REPO") --state $STATE --config $CONFIG\` and add the map card or a State map section; teardown refuses a wide report without it once the first week has passed.
 Before reporting done, read and follow \`$JG_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
 When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; juggernaut may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.

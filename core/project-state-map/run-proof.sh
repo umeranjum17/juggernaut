@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sealed done-done proof for the project state map (screen: the three card pictures at 390 px).
-# Runs the search, prove, read, card, refresh and ask test tables, the acceptance chain on the fixture project, searches this repository as a real project, proves the fixture map,
+# Runs the search, prove, read, card, refresh, ask and wide-report test tables, the acceptance chain on the fixture project, searches this repository as a real project, proves the fixture map,
 # draws its card and captures the three pictures at 390 px.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
@@ -45,6 +45,8 @@ t=$(mktemp -d); trap 'rm -rf -- "$t"; timeout 20 chrome-devtools-axi stop >/dev/
   bash "$repo/core/project-state-map/tests/psm-refresh.test.sh"
   echo "== ask test table"
   bash "$repo/core/project-state-map/tests/psm-ask.test.sh"
+  echo "== wide-report test table"
+  bash "$repo/core/project-state-map/tests/psm-wide.test.sh"
   echo "== acceptance chain on the fixture project: card, unchanged, force"
   bash "$repo/core/project-state-map/tests/psm-acceptance.sh" "$evidence"
   echo "== search a real project (this repository)"
@@ -57,6 +59,6 @@ test "${PIPESTATUS[0]}" -eq 0
 cat >"$evidence/steps.json" <<'J'
 {"target":{"version":"core/project-state-map/bin/psm-search.sh from this checkout"},
  "start":"the fixture project for the table, and this repository as a real project",
- "steps":["run the search, prove, read and card test tables over the fixture project","prove the fixture map and list what was dropped","read the fixture hits from a replayed reply and prove the result","draw the card and capture its three pictures at 390 px","refresh the fixture project twice and with force, checking model calls and the live card","ask for a fresh map by name: the second ask says unchanged, force reruns","search this repository and write the hit list"],
+ "steps":["run the search, prove, read and card test tables over the fixture project","prove the fixture map and list what was dropped","read the fixture hits from a replayed reply and prove the result","draw the card and capture its three pictures at 390 px","refresh the fixture project twice and with force, checking model calls and the live card","ask for a fresh map by name: the second ask says unchanged, force reruns","check a wide report: refused without the map after the warn week, passed with it, a narrow report passed","search this repository and write the hit list"],
  "result":"every table row prints PASS, the planted false lines are listed as dropped, and the real search prints a file count, a hit count and sample hits"}
 J
