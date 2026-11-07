@@ -329,9 +329,9 @@ test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
 }
 
 sweep() {  # one check sweep over the fixture home, then wait for the detached landings it started
-  local i out
+  local out
   out=$(JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D") || fail "the check must not fail: $out"
-  for i in $(seq 1 100); do grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state || break; sleep 0.2; done
+  for _ in $(seq 1 100); do grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state || break; sleep 0.2; done
   printf '%s' "$out"
 }
 

@@ -56,7 +56,7 @@ EVAL_HOME="$SCRATCH/home"
 eval_home() {
   ( cd "$JG_ROOT" && \
     JG_HOME="$EVAL_HOME" JG_STATE_OVERRIDE="$EVAL_HOME/state" JG_DATA_OVERRIDE="$EVAL_HOME/data" \
-    TMPDIR="$SCRATCH/tmp" "$@" )
+    JG_TASK_PRIORITY_CHECK=/nonexistent TMPDIR="$SCRATCH/tmp" "$@" )
 }
 
 # A fresh home renders its fleet view.
@@ -85,7 +85,13 @@ eval_brief_scaffold() {
 
 # A ticket added through the backlog wrapper is the ticket the list returns.
 eval_ticket_round_trip() {
-  local out
+  local out store="$SCRATCH/beads/.beads"
+  # The backlog is a Beads store (pinned bd and dolt, run only through bin/jg-beads.sh); the
+  # throwaway home gets its own, so the eval never reads or writes a real one.
+  mkdir -p "$SCRATCH/beads" "$EVAL_HOME/config"
+  printf '%s\n' "$store" > "$EVAL_HOME/config/beads-dir"
+  BEADS_DIR=$store "$JG_ROOT/bin/jg-beads.sh" init --prefix eval >"$SCRATCH/beads-init.log" 2>&1 \
+    || { echo "the throwaway Beads store was not created: $(tail -n 1 "$SCRATCH/beads-init.log")"; return 1; }
   eval_home bin/jg-backlog.sh add eval-one '[feature] eval ticket' \
     --body 'why: the fast evals prove the backlog wrapper keeps a ticket' >"$SCRATCH/ticket-add.log" 2>&1 \
     || { echo "ticket add exited nonzero: $(tail -n 1 "$SCRATCH/ticket-add.log")"; return 1; }

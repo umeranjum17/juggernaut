@@ -60,8 +60,19 @@ EOF
 chmod +x "$T/fakebin/tmux" "$T/fakebin/gh"
 : > "$T/tmux.log"
 
+# The backlog is a Beads store (pinned bd and dolt, run only through bin/jg-beads.sh): a spawn reads it
+# first and refuses a task with no item there, so the home gets its own store and the two spawned tasks
+# get their items.
+BD=${JG_BEADS_BD:-${JG_BEADS_TEST_BD:-$(command -v bd)}}
+DOLT=${JG_BEADS_DOLT:-${JG_BEADS_TEST_DOLT:-$(command -v dolt)}}
+[ -n "$BD" ] && [ -n "$DOLT" ] || fail "the pinned bd and dolt are required (bin/jg-bootstrap.sh install bd dolt)"
+mkdir -p "$T/beads"
+printf '%s\n' "$T/beads/.beads" > "$H/config/beads-dir"
+JG_BEADS_BD=$BD JG_BEADS_DOLT=$DOLT BEADS_DIR="$T/beads/.beads" "$REPO/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 \
+  || fail "cannot create the Beads store"
 env_run() {
-  env JG_SPAWN_CORE_BIN="$T/spawn-core" JG_ROOT_OVERRIDE='' JG_HOME="$H" \
+  env JG_BEADS_BD="$BD" JG_BEADS_DOLT="$DOLT" JG_TASK_PRIORITY_CHECK=/nonexistent \
+    JG_SPAWN_CORE_BIN="$T/spawn-core" JG_ROOT_OVERRIDE='' JG_HOME="$H" \
     JG_STATE_OVERRIDE="$H/state" JG_DATA_OVERRIDE="$H/data" JG_CONFIG_OVERRIDE="$H/config" \
     JG_PROJECTS_OVERRIDE="$T/projects" JG_SPAWN_NO_GUARD=1 JG_BACKEND=tmux \
     PATH="$T/fakebin:/usr/bin:/bin" "$@"
@@ -80,6 +91,12 @@ spawn() {  # <id> <spawn-args...>
 launched() { grep -q 'new-window' "$T/tmux.log"; }
 reset_tmux() { : > "$T/tmux.log"; }
 LINE='release/c-4 is frozen and takes no new work; target release/c-5 instead'
+file_item() {  # <id>: the backlog item a spawn of that task needs
+  env_run "$REPO/bin/jg-backlog.sh" add "$1" "[feature] Frozen-release fixture $1" --priority 1 --kind ship \
+    --repo proj --body "Fixture ticket $1" >/dev/null 2>&1 || fail "cannot file the backlog item $1"
+}
+file_item next-ok
+file_item red-ok
 
 # Host memory pressure on the machine running this proof must not hold a launch
 # the journey means to see reach its window step.

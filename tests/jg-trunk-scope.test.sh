@@ -23,7 +23,7 @@ TMP_ROOT=$(jg_test_tmproot jg-trunk-scope)
 world() {
   W="$TMP_ROOT/$1"; H="$W/home"; P="$H/projects/proj"
   mkdir -p "$H/state" "$H/data" "$H/config" "$W/fakebin"
-  : > "$H/data/backlog.md"
+  jg_test_beads_home "$H"
   printf -- '- proj [%s] - fixture (added 2026-11-07)\n' "$2" > "$H/data/projects.md"
   jg_git_init_commit "$P"; git -C "$P" branch -M main
   git -C "$P" branch trunk

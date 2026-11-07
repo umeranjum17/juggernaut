@@ -5,4 +5,4 @@
 # One row per path: the path, then the replacement in plain words.
 # A path ending in / is a directory and covers everything under it.
 # Add a row only when the replacement is shipped and runs; list the rest as unconfirmed in the doc.
-core/lead-wake/  the ready-work policy in bin/jg-watch.sh
+# (No row is listed now: core/lead-wake/ was deleted, and a deletion is the end of its row.)
