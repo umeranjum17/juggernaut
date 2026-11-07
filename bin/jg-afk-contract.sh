@@ -24,6 +24,10 @@
 # quiet record, a refresh included, rewrites it as away, and a quiet entry never
 # turns a standing away record quiet (the captain's return comes first).
 #
+# TELEGRAM REACH. Entering away mode arms bin/jg-away-reach.sh and the archive at return disarms
+# it, with no further command: a thirty-minute update and every urgent ask go to the captain's
+# private chat from the watcher's shell check, whether or not a model is awake.
+#
 # ENTRY IS THE GO. `/watchover` itself is the captain's go: `enter` writes the record
 # in the same turn, before any other work, and never waits for a further human
 # response, because the captain who typed /watchover may not look at the screen again.
@@ -619,6 +623,14 @@ jg_afk_contract_locked_cmd() {  # <command> [args...]
   return "$rc"
 }
 
+# Entering away mode arms the Telegram reach and leaving it disarms it (bin/jg-away-reach.sh owns
+# the thirty-minute update and the urgent path). Never a gate: a reach that cannot arm says so on
+# stderr and the record stands.
+jg_afk_contract_reach() {  # arm | disarm
+  [ -x "$JG_AFK_CONTRACT_DIR/jg-away-reach.sh" ] || return 0
+  JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$JG_AFK_CONTRACT_STATE" "$JG_AFK_CONTRACT_DIR/jg-away-reach.sh" "$1" || true
+}
+
 jg_afk_contract_main() {
   local cmd=${1:-} path
   [ -n "$cmd" ] || { jg_afk_contract_usage >&2; return 2; }
@@ -626,7 +638,8 @@ jg_afk_contract_main() {
   case "$cmd" in
     enter)
       jg_afk_contract_parse_inputs "$@" || return 2
-      jg_afk_contract_locked_cmd jg_afk_contract_cmd_enter ;;
+      jg_afk_contract_locked_cmd jg_afk_contract_cmd_enter || return $?
+      jg_afk_contract_reach arm ;;
     propose|confirm)
       jg_afk_contract_log "'$cmd' was retired with the wait-for-go gate: /watchover is itself the go, so run 'enter' to write the record in the same turn"
       return 2 ;;
@@ -653,7 +666,9 @@ jg_afk_contract_main() {
     clauses|flags|refused|grants)
       jg_afk_contract_log "'$cmd' was retired with the clause and merge-grant apparatus: the record is the captain's words (read them with 'words' or 'readback')"
       return 2 ;;
-    archive) jg_afk_contract_locked_cmd jg_afk_contract_cmd_archive ;;
+    archive)
+      jg_afk_contract_locked_cmd jg_afk_contract_cmd_archive || return $?
+      jg_afk_contract_reach disarm >/dev/null ;;
     archived)
       [ "$#" -eq 1 ] || { jg_afk_contract_usage >&2; return 2; }
       path="$(jg_afk_contract_archive_dir)/$1.afk-contract"
