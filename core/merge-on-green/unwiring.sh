@@ -17,7 +17,7 @@ if [ -e "$f" ]; then
   [ -x "$FMH/bin/jg-check-unregister.sh" ] || { echo "remove manually: $f" >&2; exit 1; }
   if [ "$DRY" -eq 1 ]; then echo "would run: $FMH/bin/jg-check-unregister.sh merge-on-green"; else env -u JG_STATE_OVERRIDE JG_HOME="$FMH" "$FMH/bin/jg-check-unregister.sh" merge-on-green; fi
 fi
-for f in merge-on-green.sh checks-lint.sh jg-checks-lint.sh stale-pr-alarm.sh red-ci-ticket.sh backlog-shipped-reconcile.sh .done-done.yaml; do
+for f in merge-on-green.sh checks-lint.sh jg-checks-lint.sh stale-pr-alarm.sh merge-ready-batch.sh red-ci-ticket.sh backlog-shipped-reconcile.sh .done-done.yaml; do
   [ ! -e "$DEST/$f" ] || { echo "remove: $DEST/$f"; [ "$DRY" -eq 1 ] || rm -f -- "$DEST/$f"; }
 done
 [ "$DRY" -eq 1 ] || rmdir "$DEST" 2>/dev/null || true

@@ -272,6 +272,11 @@ done
 # branch, raises one alert per PR. It lives in stale-pr-alarm.sh beside this script and is skipped when absent.
 [ ! -x "$SRC/stale-pr-alarm.sh" ] || JG_STALE_PR_LIMIT=$DEADLINE "$SRC/stale-pr-alarm.sh" check "$FMH"
 
+# Merge-ready batch: PR-ready outcomes reach the lead as ONE line per ten-minute window, each with its authority
+# verdict (mergeable, needs the captain's word, NOT mergeable). It lives in merge-ready-batch.sh beside this script,
+# merges nothing itself, and is skipped when absent.
+[ ! -x "$SRC/merge-ready-batch.sh" ] || JG_CHECK_TIMEOUT=${JG_CHECK_TIMEOUT:-30} "$SRC/merge-ready-batch.sh" check "$FMH"
+
 # Stranded-merge sweep: a closed release branch ahead of the default branch for 48 h raises one alert. It lives in
 # stranded-merge-sweep.sh beside this script, asks the forge at most once an hour, and is skipped when absent.
 [ ! -x "$SRC/stranded-merge-sweep.sh" ] || JG_STRANDED_LIMIT=$DEADLINE "$SRC/stranded-merge-sweep.sh" check "$FMH"

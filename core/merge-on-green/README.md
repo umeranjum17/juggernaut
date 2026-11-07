@@ -35,6 +35,12 @@ A task is judged on its own PR's checks alone: a red PR elsewhere, including ano
 After the merges, the check counts each repo's open PRs (the repos named by the tasks' recorded `pr=` URLs) and prints one alert when a count passes `config/open-pr-cap` (a whole number, default 8).
 The alert is remembered per repo and count in `<home>/data/jg-merge-on-green/open-pr-cap/`, so it repeats only when the count changes, and a repo back under the cap forgets it; a forge failure is silent and retried next sweep.
 
+## Merge-ready batch
+
+A ship's PR-ready report no longer wakes the lead on its own (`batch@ship-pr` in `defaults/wake-routing`; a Recon, a lead and a task with no record keep their routing). `merge-ready-batch.sh check <jg-home>` runs inside every `merge-on-green.sh check`, so it spends no model turn. The first PR-ready outcome whose head it has not reported opens a window; when the window is `JG_MERGE_READY_SECONDS` old (default 600) it prints ONE line naming every outstanding outcome, and that line wakes the lead once. An outcome that arrives mid-window rides this batch's end; none waits past the window and the individual rows stay queued, so nothing is dropped.
+
+Each outcome carries its own authority verdict, and the batch merges nothing: `mergeable` (yolo=on or merge=approved and not merge=manual, no blocker from `bin/jg-pr-state.sh --all`, a PASS run receipt for this head), `needs the captain's word`, `NOT mergeable: <reason>`, or `no longer waiting: <state>`. The merge stays with `bin/jg-pr-merge.sh`. A mergeable outcome still unmerged is read again each batch, so one that turns red is named; an unchanged outcome is not repeated. Test: `core/merge-on-green/tests/merge-ready-batch.test.sh`.
+
 ## Stale-PR alarm
 
 `stale-pr-alarm.sh check <jg-home>` runs at the end of every `merge-on-green.sh check`, so the same installed

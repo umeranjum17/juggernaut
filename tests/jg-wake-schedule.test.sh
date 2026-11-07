@@ -360,7 +360,7 @@ test_batch_urgent_bypass() {
   dir=$(new_home batch-urgent)
   for n in 1 2 3; do merged_row "$dir" "$n"; done
   printf 'blocked [at=%s]: stuck\n' "$(date +%s)" > "$dir/state/b.status"
-  printf 'done [at=%s]: PR https://example.test/pr/1\n' "$(date +%s)" > "$dir/state/d.status"
+  printf 'done [at=%s]: report written\n' "$(date +%s)" > "$dir/state/d.status"
   printf 'needs-decision [at=%s]: pick\n' "$(date +%s)" > "$dir/state/n.status"
   printf 'failed [at=%s]: broke\n' "$(date +%s)" > "$dir/state/f.status"
   assert_equals now "$(route "$dir" check inbox:3 'check: captain inbox note 3')" "a captain note bypasses the batch"
@@ -387,6 +387,25 @@ test_batch_urgent_bypass() {
   pass "captain, failed, blocked, needs-decision, done, security and stale events bypass the batch"
 }
 
+# --- 7. a PR-ready outcome rides the ten-minute merge-ready batch, never its own wake -----------
+# core/merge-on-green/merge-ready-batch.sh is the one line per window that names every PR-ready outcome with
+# its authority verdict, and it wakes the lead; the individual PR-ready row stays queued (nothing dropped).
+test_merge_ready_batches() {
+  local dir
+  dir=$(new_home merge-ready)
+  printf 'done [at=%s]: PR https://example.test/pr/1\n' "$(date +%s)" > "$dir/state/ship.status"
+  printf 'kind=ship\n' > "$dir/state/ship.meta"
+  assert_equals batch "$(route "$dir" signal ship.status 'signal: ship.status')" "a PR-ready report must ride the batch, not wake alone"
+  assert_equals now "$(route "$dir" check state/merge-on-green.check.sh 'merge-on-green: merge-ready batch, 2 outcome(s): a x: mergeable;')" "the batch line wakes the lead once"
+  assert_equals now "$(route "$dir" check state/merge-on-green.check.sh 'merge-on-green: NOT merging a x: refused')" "a refusal still wakes at once"
+  printf 'failed [at=%s]: broke\n' "$(date +%s)" > "$dir/state/ship.status"
+  assert_equals now "$(route "$dir" signal ship.status 'signal: ship.status')" "a failed report is never batched"
+  printf 'done [at=%s]: PR https://example.test/pr/2\n' "$(date +%s)" > "$dir/state/recon.status"
+  printf 'kind=scout\n' > "$dir/state/recon.meta"
+  assert_equals now "$(route "$dir" signal recon.status 'signal: recon.status')" "a Recon result is never batched"
+  pass "a PR-ready outcome waits for the merge-ready batch; the batch line and a refusal wake"
+}
+
 if [ "${WAKE_SCHEDULE_ONLY:-}" = batch-threshold ]; then
   test_batch_threshold
   test_batch_urgent_bypass
@@ -401,4 +420,5 @@ test_planned_wait_is_quiet
 test_wake_misses_after_c5
 test_batch_threshold
 test_batch_urgent_bypass
+test_merge_ready_batches
 echo "wake schedule: routine rides the digest, an unchanged fleet is silent, urgent still wakes, the c-5 misses settle"
