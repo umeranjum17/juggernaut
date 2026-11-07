@@ -9,6 +9,7 @@
 #        jg-goal.sh stop <goal-id> --kind <kind> --reason <text>
 #        jg-goal.sh resume <stop-row>
 #        jg-goal.sh notice <goal-id> <stop-row>
+#        jg-goal.sh released <goal-id> <ref>
 #        jg-goal.sh finish <goal-id>
 #        jg-goal.sh proof-start <goal-id>
 #        jg-goal.sh prove <goal-id>
@@ -34,6 +35,9 @@
 # notice and finish are the Goal's only messages, one for each stop row and one for the finish. Each is
 # keyed in the epic's metadata (goal:<id>:stop:<row> and goal:<id>:finish) before it is printed, so a restart
 # or a second pass prints nothing twice. finish closes the epic. Its claim goes through bin/jg-live-claim.sh.
+# released records the version the released step shipped (a tag or a commit), on the epic. finish then claims
+# `live: <ref> @ <where>`, so bin/jg-live-claim.sh keeps it only when the home's release record names the ref and its
+# services run; with no ref, or a ref it does not know, the message says merged-not-released.
 # proof-start, prove and proof-failed are the check's three steps for the `proven` row. proof-start refuses to
 # run when the finish line no longer hashes to finish_hash, in the epic or in data/goals/<id>/finish.json: that
 # is an owner-must stop, never a pass (exit 3). prove closes the proven row and keeps the proof log's path; it is
@@ -206,7 +210,7 @@ notice_goal() {
 }
 
 finish_goal() {
-  local id=${1-} json new=1 ask claim
+  local id=${1-} json new=1 ask claim ref
   [ -n "$id" ] || die "finish needs a Goal id"
   need_store
   json=$(goalstore show "$id" --json 2>/dev/null | jq -c '.[0] // empty') && [ -n "$json" ] || die "no Goal $id"
@@ -214,9 +218,19 @@ finish_goal() {
   goalstore close "$id" --reason "goal finished" >/dev/null 2>&1 || die "could not close $id"
   [ "$new" = 1 ] || return 0
   ask=$(jq -r '.metadata.goal.ask // .title' <<< "$json")
-  claim=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-live-claim.sh" "done" "the Goal is done: $ask" 2>/dev/null)
+  ref=$(jq -r '.metadata.released_ref // ""' <<< "$json")
+  claim=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-live-claim.sh" "done" "the Goal is done: $ask${ref:+ - live: $ref @ $(jq -r '.metadata.goal.finish.where // "this home"' <<< "$json")}" 2>/dev/null)
   printf '%s finished - %s (where: %s; proof log: %s)\n' "$id" "${claim:-the Goal is done: $ask}" \
     "$(jq -r '.metadata.goal.finish.where // "this home"' <<< "$json")" "$(jq -r '.metadata.proof_log // "none"' <<< "$json")"
+}
+
+released_goal() {
+  local id=${1-} ref=${2-}
+  [ -n "$id" ] && [ -n "$ref" ] || die "released needs a Goal id and the released ref"
+  need_store
+  is_goal "$id" || die "no Goal $id"
+  goalstore update "$id" --set-metadata "released_ref=$ref" >/dev/null 2>&1 || die "could not record the released ref"
+  printf 'released %s: %s\n' "$id" "$ref"
 }
 
 goal_json() { goalstore show "$1" --json 2>/dev/null | jq -c '.[0] // empty'; }
@@ -314,6 +328,7 @@ case "${1:-}" in
   stop) shift; stop_goal "$@" ;;
   resume) shift; resume_goal "$@" ;;
   notice) shift; notice_goal "$@" ;;
+  released) shift; released_goal "$@" ;;
   finish) shift; finish_goal "$@" ;;
   proof-start) shift; proof_start "$@" ;;
   prove) shift; prove_goal "$@" ;;

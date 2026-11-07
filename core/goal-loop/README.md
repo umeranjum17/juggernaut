@@ -11,7 +11,7 @@ and reduces each open Goal to one state: `next` (the first step not closed is op
 A stop is one `on_hold` row under the Goal (`jg-goal.sh stop <goal> --kind <owner-must|credential|quota|external|limit>
 --reason <text>`; the store refuses it with no reason). A new stop raises one message with its reason and the action
 needed, then the Goal costs no wake. Closing the row (`jg-goal.sh resume <row>`) is the whole resume. A finished Goal
-raises one finish message, through `bin/jg-live-claim.sh`, and the check closes its epic. Each message is keyed on the
+raises one finish message, through `bin/jg-live-claim.sh`, and the check closes its epic. The lead records the shipped version with `jg-goal.sh released <goal> <ref>`; the finish message names it only where the home's release record has it, and says merged-not-released otherwise. Each message is keyed on the
 epic (`goal:<id>:stop:<row>`, `goal:<id>:finish`) before it is printed, so a restart sends none twice. A message whose
 write fails rings once for that reason and is tried again on the next pass.
 
@@ -23,10 +23,15 @@ step and wakes the lead. The same failure `limits.attempts` times running, or mo
 `limit` stop instead. A finish line that no longer hashes to the declared one is an `owner-must` stop and the proof is
 never run. A runner whose process died with no exit file counts as a failed proof (`lost`).
 
+A Goal whose step waits for the lead (its `data/jg-goal-loop/<goal>.next` record) is also work for two other readers:
+the turn-end guard counts it as a supervision need in any home, so an idle lead cannot end its turn blind
+(`JG_SUP_GOAL_NEXT` in `bin/jg-supervision-lib.sh`), and `bin/jg-fleet-heartbeat.sh` counts it as ready work and names
+it in the home's row. The registered goal-loop check alone is not a need.
+
 A `next` wake rings once per Goal and step, again after `JG_GOAL_RESURFACE_SECS` (1800) while the step stays open,
 and at once if the Goal left `next` and came back. Records sit in `data/jg-goal-loop/`. A home with no
 `config/goal-beads-dir` is silent; a store the wrapper refuses raises one wake per reason, with the wrapper's text as
 the reason and no fallback to another bd. `goal-loop.sh state <home>` prints the reduction.
 
 Install: `core/goal-loop/wiring.sh <home>` (run by `bin/jg-host-wiring.sh`); `unwiring.sh <home>` removes the shim, the
-registration and the installed copy and leaves Goal rows alone. Proof: `bash core/goal-loop/tests/goal-loop.test.sh`.
+registration and the installed copy and leaves Goal rows alone. Proof: `bash core/goal-loop/tests/goal-loop.test.sh`, and `journeys/goal-loop.sh` (a fake forge in real time, about 4 minutes; the lead is a script).
