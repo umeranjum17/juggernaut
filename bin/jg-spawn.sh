@@ -2123,6 +2123,14 @@ devin)
   }
   ;;
 pi | pi-signed)
+  # A Claude model never runs on Pi: it has no Anthropic login of its own, so the lane would start and then
+  # fail on its first turn. Refuse here, before any pane or record exists, and name the way out.
+  case "${MODEL##*/}:${MODEL%%/*}" in
+  claude-*:* | claude:* | *:anthropic)
+    echo "error: $HARNESS cannot run the Claude model '$MODEL'; Pi has no Claude login, so the lane would fail on its first turn. Use --harness claude for a Claude model, or pick a Pi model such as openai-codex/gpt-5.6-sol" >&2
+    exit 1
+    ;;
+  esac
   PI_BIN=$(resolve_pi_executable "$HARNESS") || {
     echo "error: $HARNESS executable not found on PATH; install it or select a different verified harness" >&2
     exit 1

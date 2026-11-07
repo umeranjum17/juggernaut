@@ -160,6 +160,7 @@ case "${1:-}" in
         printf zsh > "$D/command"
         rm -f "$D/exit-modal"
       fi
+      if [ "$payload" = C-u ] && [ -f "$D/clears-on-cu" ]; then cp "$D/empty-pane" "$D/pane"; fi
       if [ "$payload" = Escape ] && [ -f "$D/devin" ]; then
         case "$(cat "$D/devin")" in
           running) printf armed > "$D/devin" ;;
@@ -1335,7 +1336,39 @@ test_submitted_claude_exit_confirmation() {
   pass "submitted Claude exit confirms stop once and refuses detach without generic Enter retries"
 }
 
+# Text sitting in the composer: the refusal names the self-service way out, and --clear-composer takes it without
+# ever typing the exit command onto the text. A composer that will not clear refuses with the state it found.
+test_clear_composer_is_the_way_out_of_the_pending_refusal() {
+  local dir out rc
+  dir=$(new_case clear-composer)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  printf '%s\n' '──────────────' '❯ half a steer' '──────────────' > "$dir/fake/pane"
+  printf '%s\n' '──────────────' '❯ ' '──────────────' > "$dir/fake/empty-pane"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  [ "$rc" != 0 ] || fail "pending composer text must refuse a plain exit: $out"
+  assert_contains "$out" "jg-control.sh t1 exit --clear-composer" "the refusal must name the self-service way out"
+  [ ! -s "$dir/fake/literal" ] || fail "the refused exit must type nothing"
+  : > "$dir/fake/clears-on-cu"
+  out=$(run_control "$dir" t1 exit --clear-composer); rc=$?
+  expect_code 0 "$rc" "--clear-composer must clear the text and exit: $out"
+  assert_contains "$out" "composer state was 'pending'; cleared with Ctrl+U, now empty" "it must say which state it found"
+  [ "$(head -n 1 "$dir/fake/keys")" = C-u ] || fail "the composer must be cleared before anything else is sent"
+  [ "$(head -n 1 "$dir/fake/literal")" = /exit ] || fail "the exit command must follow the clear, never precede it"
+  rm -f "$dir/fake/clears-on-cu"; : > "$dir/fake/literal"; : > "$dir/fake/keys"
+  printf 'claude' > "$dir/fake/command"
+  printf '%s\n' '──────────────' '❯ half a steer' '──────────────' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 exit --clear-composer); rc=$?
+  [ "$rc" != 0 ] || fail "a composer that will not clear must refuse: $out"
+  assert_contains "$out" "was 'pending'" "the stuck refusal must name the state it found"
+  [ ! -s "$dir/fake/literal" ] || fail "a composer that will not clear must never be typed onto"
+  out=$(run_control "$dir" t1 interrupt --clear-composer); rc=$?
+  [ "$rc" != 0 ] || fail "--clear-composer on interrupt must be refused: $out"
+  pass "jg-control: --clear-composer is a self-service way out that never types onto existing text"
+}
+
 test_existing_claude_exit_confirmation
+test_clear_composer_is_the_way_out_of_the_pending_refusal
 test_claude_exit_confirmation_refusals
 test_submitted_claude_exit_confirmation
 
