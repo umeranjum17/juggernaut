@@ -1004,6 +1004,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/project-state-map.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/quota-axi-pool/README.md",
       "audience": "operator-current"
     },
