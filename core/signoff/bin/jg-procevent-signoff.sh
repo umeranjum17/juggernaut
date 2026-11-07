@@ -41,10 +41,8 @@
 #            this result: it records each answer in the captured poll lines as
 #            delivered. The intake exits 0 when every answer was taken, and 3 when
 #            every skip is permanent (the reserved reconcile value, already closed,
-#            not held for the captain, unknown close mode, migrated hold whose marker
-#            line matches several rows), so only a transient skip or failure leaves
-#            an answer undelivered; a migrated-hold scan that cannot read its graph,
-#            or an ambiguous configured-prefix match, is transient.
+#            not held for the captain, unknown close mode), so only a transient skip
+#            or failure leaves an answer undelivered.
 #
 # Read mark: the runner announces each captured result to this home's handler (Main,
 # or the lead in a squad_lead home), who concludes it with `bin/jg-procevent.sh

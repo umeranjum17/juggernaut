@@ -426,15 +426,11 @@ Three legacy inputs are resolved in place:
 - A channel key that names no task resolves the same way when the source's binding carries a concrete legacy origin.
 - Resolution records written by the old script are recognized wherever a record is read.
 
-### Legacy ids on the Beads backend
+### Legacy ids on a Beads store
 
-On the Beads backend, an attested legacy markdown id that resolves to no task is accepted through the row the markdown-to-beads hold migration produced.
-That row is found by the authoritative evidence first: a row whose notes carry the marker line `migrated from data/backlog.md id <legacy id>`, either alone or followed by ` on <date>` as jg-hold-migration wrote it on 2026-09-04.
-
-Only when no row carries that marker line is the legacy id tried under the configured beads prefix.
-That name-only guess is accepted solely for a single row still held for the captain.
-Two such rows refuse rather than attest.
-Because that acceptance rests on a name rather than on evidence, `complete` names the resolved row beside each prefix-attested legacy id in its completion line, so the guess is auditable after the fact.
+On a Beads store, an attested old id reaches its row through the name the provider's own `show` answers to.
+The hold script makes no second lookup and never starts `bd` itself; every store read goes through [`bin/jg-beads.sh`](../bin/jg-beads.sh).
+An id that no row answers to is refused once, naming the id.
 
 A markdown home keeps its legacy rows verbatim, so its resolution is unchanged.
 
@@ -515,19 +511,14 @@ A codepoint at or below U+00FF is the one a stream with no raw layer emits as a 
 It uses one row per character class, because any character above U+00FF makes the whole string print as UTF-8 and would mask the latin-1 case in a mixed body.
 That latin-1 byte loss also reproduces natively on the fleet host carrying the older library, with no shim.
 
-### Markdown-to-beads migration family
+### Beads store family
 
-The markdown-to-beads migration family runs the same suite's beads fixture (bd-driven scratch graph, self-skipping on markdown-only tasks-axi installs).
-It proves:
+[`tests/jg-beads-native-hold.test.sh`](../tests/jg-beads-native-hold.test.sh) proves:
 
-- `verify` and `complete` resolve an attested legacy id through a migrated row's marker note.
-- They resolve it through the configured prefix when no row carries a note, naming the resolved row in the completion line.
-- They resolve it through the marker note of a pre-collapse derived identity.
-- A marker-noted row wins over an unrelated captain-held row occupying the bare prefix namesake.
-- An unresolvable id is refused once naming the id (never an empty name).
-- The attested id stays in `decision_keys=` for idempotent re-verification.
+- A home whose `.tasks.toml` still says beads never starts `bd` from the hold script, and an unknown id is refused once naming the id.
+- On a real store, `verify` and `complete` resolve an attested old id through the row's stored old name, and the attested id stays in `decision_keys=` for idempotent re-verification.
 
-One case in that family needs no beads install and always runs.
+One case in the lifecycle suite needs no beads install and always runs.
 It uses a stubbed tasks-axi that fails any markdown file override, and proves the captain-hold hold, answer, and close mutations reach a beads-configured home without one.
 
 ### Reconcile coverage

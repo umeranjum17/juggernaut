@@ -424,9 +424,9 @@ The optional local, gitignored presence flag `config/backlog-intake-loose` turns
 ### Captain holds on Beads
 
 Captain-hold row creation is owned by [`bin/jg-captain-hold.sh`](../bin/jg-captain-hold.sh) `hold`: when no work item exists, it creates an ordinary backlog row (`--kind captain` metadata; Beads native type `task`) and then applies the captain hold.
-Captain rows have no Beads due semantics, so that create path waives a Beads `due.required` setting rather than passing a synthetic `--due`; `--until` remains the optional hold deferral.
+Captain rows have no due date; `--until` remains the optional hold deferral.
 
-Do not register a Beads `types.custom` `captain` type for this: captain is a hold kind, and the fleet Beads `due.required` policy for ordinary work stays in the federated beads config.
+Do not register a Beads `types.custom` `captain` type for this: captain is a hold kind.
 
 ### Automatic dispatch and completion
 
