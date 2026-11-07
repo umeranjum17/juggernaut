@@ -421,6 +421,10 @@ if [ "${#CLOSE_NOTE_ARGS[@]}" -gt 0 ]; then
   case " ${ARGS[*]} " in *" --note "*) ;; *) ARGS+=("${CLOSE_NOTE_ARGS[@]}") ;; esac
 fi
 if [ "$JG_BEADS" = 1 ]; then
+  JG_BEADS_WIRE_LEAD=$_jg_taxi_sl_wire JG_BEADS_HOME_ID=main
+  _jg_lead_marker=$(jg_compat_marker "$JG_HOME")
+  [ ! -r "$_jg_lead_marker" ] || JG_BEADS_HOME_ID=$_jg_taxi_sl_wire$(cat "$_jg_lead_marker")
+  export JG_BEADS_WIRE_LEAD JG_BEADS_HOME_ID
   jg_backlog_beads_write "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}
   _jg_rc=$?
   case "${1:-}" in add|create) [ "$_jg_rc" -ne 0 ] || key_tool sync >&2 || true ;; esac
