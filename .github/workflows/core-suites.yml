@@ -265,6 +265,7 @@ jobs:
           bash project-state-map/tests/psm-refresh.test.sh
           bash project-state-map/tests/psm-ask.test.sh
           bash project-state-map/tests/psm-wide.test.sh
+          bash project-state-map/tests/psm-first-run.test.sh
 
       # Fixture home only: no live state or metrics are read.
       - name: Retro metrics test
