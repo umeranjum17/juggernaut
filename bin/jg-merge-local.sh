@@ -144,26 +144,9 @@ if ! git -C "$PROJ" merge-base --is-ancestor "$DEFAULT" "$BRANCH"; then
 fi
 
 before=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
-hold_status=0
-JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
-  "$SCRIPT_DIR/jg-captain-hold.sh" open "$ID" --distinguish-absent || hold_status=$?
-case "$hold_status" in
-  0)
-    echo "error: task $ID is still held for the captain; release it before merging" >&2
-    exit 1
-    ;;
-  1|3) ;;
-  *)
-    echo "error: could not determine whether task $ID is still held for the captain; refusing to merge" >&2
-    exit 1
-    ;;
-esac
 candidate=$(git -C "$PROJ" rev-parse --verify "refs/heads/$BRANCH^{commit}")
-if declare -F jg_dod_receipt_accept >/dev/null; then jg_dod_receipt_accept "$STATE" "$ID" "$META" "$candidate" >&2 || exit 1; fi
-if declare -F jg_dod_design_gate >/dev/null; then jg_dod_design_gate "$STATE" "$ID" "$META" "$candidate" >&2 || exit 1; fi
-if declare -F jg_dod_demo_gate >/dev/null; then jg_dod_demo_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$STATE" "$ID" "$META" "$candidate" >&2 || exit 1; fi
-if declare -F jg_dod_nav_gate >/dev/null; then jg_dod_nav_gate "$ID" "$META" "$(git -C "$PROJ" log --format=%B "$DEFAULT..$candidate")" >&2 || exit 1; fi
-if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$candidate" - >&2 || exit 1; fi
+# The shared landing gates (bin/jg-merge-gate-lib.sh) run with the hold check first, as before.
+jg_dod_local_landing_gates "$SCRIPT_DIR" "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$STATE" "$ID" "$META" "$PROJ" "$DEFAULT" "$candidate" || exit 1
 merge_status=0
 git -C "$PROJ" merge --ff-only "$candidate" >/dev/null || merge_status=$?
 jg_lock_release "$MERGE_CONTROL_LOCK" || true

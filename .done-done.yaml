@@ -65,6 +65,8 @@ journeys:
     command: bash journeys/release-shipped-merge-refusal.sh
   critical-path:
     command: bash journeys/critical-path.sh
+  trunk-landing:
+    command: bash journeys/trunk-landing.sh
   proof-attach:
     command: bash journeys/proof-attach.sh
   design-call-gate:
