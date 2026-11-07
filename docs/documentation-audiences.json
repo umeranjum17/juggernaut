@@ -936,6 +936,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/goal-loop/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/host-memory/README.md",
       "audience": "operator-current"
     },
