@@ -223,7 +223,7 @@ if jg_backlog_backend_beads "$JG_HOME/config"; then
     show|view) beads_read | key_tool annotate-show; exit $? ;;
     list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
     ready|markdown) beads_read; exit $? ;;
-    add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold) JG_BEADS=1 ;;
+    add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|public-followup) JG_BEADS=1 ;;
     *) fail "the beads backlog does not serve ${1:-this command} yet" ;;
   esac
 fi

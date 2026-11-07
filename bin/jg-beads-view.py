@@ -88,7 +88,7 @@ def flying(row):
 def mentions(row):
     """The names a row links to: its edges, and the linked-to: and parent: lines a migrated body still carries."""
     words = re.split(r"[,;\s]+", " ".join(LINK_LINE.findall(row.get("description") or "")))
-    return {d["depends_on_id"] for d in row.get("dependencies") or []} | {
+    return {d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") != "tracks"} | {
         word for word in words if LINK_WORD.match(word) and word.lower() != "upkeep"}
 
 
@@ -171,7 +171,7 @@ def ready(tasks, args):
     found, _ = flags(args, ("--repo",), ())
     repo = found.get("--repo")
     rows = [t for t in tasks if t["state"] == "queued" and t["held"] == "no" and t["blocked"] == "no"
-            and repo in (None, t["repo"])]
+            and t["kind"] != "public-followup" and repo in (None, t["repo"])]
     suffix = " --repo=" + repo if repo else ""
     print("count: %d" % len(rows))
     if rows:

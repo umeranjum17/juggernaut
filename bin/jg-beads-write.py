@@ -2,7 +2,7 @@
 """jg-beads-write.py - serve tasks-axi's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
 
 Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold> [args...]
-       BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...>
+       BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
 
 bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-axi.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi's lines on stdout.
@@ -94,6 +94,14 @@ def target(items, ident):
     if row is None:
         view.refuse('Task "%s" not found in this backlog' % ident, "Run `tasks-axi list` to see existing tasks",
                     "NOT_FOUND", 1)
+    return row
+
+
+def plain(items, ident):
+    row = target(items, ident)
+    if "followup" in (row.get("metadata") or {}):
+        view.refuse("Public-followup content and state cannot change through generic commands",
+                    "Use `tasks-axi public-followup record-delivery` or `tasks-axi public-followup waive`")
     return row
 
 
@@ -223,7 +231,7 @@ def update(args):
     if len(ids) != 1:
         view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi update <id> [flags]")
     items = rows()
-    row = target(items, ids[0])
+    row = plain(items, ids[0])
     ident = row["id"]
     item = view.task(row, items)
     if not set(found) - {"--json"}:
@@ -270,7 +278,7 @@ def done(args):
         view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi done <id> [flags]")
     checked(found)
     items = rows()
-    row = target(items, ids[0])
+    row = plain(items, ids[0])
     ident = row["id"]
     item = view.task(row, items)
     already = item["state"] == "done"
@@ -341,7 +349,7 @@ def one_row(verb, args):
     found, ids = view.flags(args, (), ("--json",))
     if len(ids) != 1:
         view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi %s <id>" % verb)
-    row = target(rows(), ids[0])
+    row = plain(rows(), ids[0])
     return found, row["id"], row
 
 
@@ -391,7 +399,7 @@ def hold(args):
         view.refuse("--kind must be one of " + ", ".join(HOLD_KINDS))
     until = hold_date(found["--until"]) if "--until" in found else None
     items = rows()
-    row = target(items, ids[0])
+    row = plain(items, ids[0])
     ident = row["id"]
     item = view.task(row, items)
     tips = ["Run `tasks-axi unhold %s` to resume dispatch" % ident, "Run `tasks-axi ready --include-held` to review paused work"]
@@ -414,7 +422,7 @@ def unhold(args):
     if len(ids) != 1:
         view.refuse("Expected 1 positional argument, got %d" % len(ids), "usage: tasks-axi unhold <id>")
     items = rows()
-    row = target(items, ids[0])
+    row = plain(items, ids[0])
     ident = row["id"]
     meta = row.get("metadata") or {}
     cmd = [word for key in HOLD_FIELDS if key in meta for word in ("--unset-metadata", key)]
@@ -449,6 +457,8 @@ def stage(args):
         if waits and row["id"] not in moving and item["state"] != "done":
             view.refuse('Task "%s" is still blocking active tasks: %s' % (sorted(waits)[0], item["item"]),
                         "Move them together, or unblock them first")
+    if not native and any("followup" in (row.get("metadata") or {}) for row in picked):
+        view.refuse("a public follow-up cannot cross to a backlog file: its record would be lost")
     if native:
         print("".join(line + "\n" for line in exported() if json.loads(line).get("id") in moving), end="")
         return
@@ -499,6 +509,8 @@ def take(args):
         row = view.named(found, key)
         if row is None:
             view.refuse('Task "%s" is not in %s' % (key, path))
+        if not path.endswith(".jsonl") and row["metadata"].get("kind") == "public-followup":
+            view.refuse('Task "%s" is a public follow-up, and a backlog file does not carry its record' % key)
         if "-" not in row["id"]:
             view.refuse('Task "%s" has no dash, and a Beads id needs one' % key, "Rename it first")
         if view.named(items.values(), key) is None:
@@ -533,7 +545,8 @@ def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
              "block": block, "unblock": unblock, "start": start, "reopen": reopen, "hold": hold, "unhold": unhold,
-             "stage": stage, "take": take, "drop": drop}.get(verb)
+             "stage": stage, "take": take, "drop": drop,
+             "public-followup": lambda args: __import__("jg-beads-followup").main(args)}.get(verb)
     if serve is None:
         view.refuse("Unknown write verb: " + verb)
     serve(sys.argv[2:])

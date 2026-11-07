@@ -173,6 +173,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
 | `jg-beads-view.py`       | Render `bd` rows in the read shape `tasks-axi` prints                                |
 | `jg-beads-write.py`      | Serve `tasks-axi` writes on a Beads store, in its reply shape                        |
+| `jg-beads-followup.py`   | Keep a public follow-up as one native row on a Beads store                           |
 | `jg-beads.sh`            | The one guarded way to run `bd` and `dolt`: pinned builds, one embedded stealth store outside any git tree, no shared server, metrics off, and a store rule that a blocked or held row needs a reason, which `check` reports when missing; every `bd` verb is served but those in its one refusal list, each with its rule |
 | `jg-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |
 | `jg-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
