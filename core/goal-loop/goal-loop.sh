@@ -10,6 +10,10 @@
 #   waiting   the current step is taken (in progress); nothing to raise
 #   next      the current step is open and nobody has taken it; the lead is woken to run it
 # The steps are ship, merged, released, running and proven, in that order; the first step not closed is current.
+# An open `fix` step (added when a proof fails) is current before them. The lead runs ship and fix; the check
+# itself owns proven: it starts the Goal's proof detached (proof-run.sh), reads the result on a later pass, and
+# closes the step only when the proof exits 0 from an unchanged finish line (jg-goal.sh prove). It never wakes
+# the lead for proven. A failed proof adds a fix step, and a repeated failure or a changed finish line stops the Goal.
 # The check is level-triggered: a wake rings once for a Goal and step, again only after JG_GOAL_RESURFACE_SECS
 # (1800) while the step is still open, and a Goal that leaves `next` forgets its record, so the same step
 # rings at once if it comes back. Records sit in <home>/data/jg-goal-loop/, never in state/.
@@ -28,6 +32,8 @@ HOME_DIR=$(cd "$2" && pwd -P)
 GOAL=${JG_GOAL_BIN:-$HOME_DIR/bin/jg-goal.sh}
 DATA=$HOME_DIR/data/jg-goal-loop
 RESURFACE=${JG_GOAL_RESURFACE_SECS:-1800}
+RUNNER=${JG_GOAL_PROOF_RUN:-$(dirname "${BASH_SOURCE[0]}")/proof-run.sh}
+PROOF_SECS=${JG_GOAL_PROOF_SECS:-900}
 case $RESURFACE in ''|*[!0-9]*) RESURFACE=1800 ;; esac
 now=$(date +%s)
 umask 077
@@ -59,6 +65,7 @@ states=$(jq -r '
      | map(select(.status != "closed")) | first) as $cur
   | ($e.metadata.goal.ask // $e.title | gsub("[\\t\\n]"; " ")) as $ask
   | ($e.metadata // {}) as $m | ("sent_goal_" + ($e.id | gsub("[^A-Za-z0-9]"; "_")) + "_") as $sk
+  | (($kids | map(select(.metadata.kind == "fix" and .status != "closed")) | first) // $cur) as $cur
   | (if $hold then ["stopped", $hold.id]
      elif $cur == null then ["finished", ""]
      elif $cur.status == "open" then ["next", $cur.metadata.kind]
@@ -72,15 +79,35 @@ states=$(jq -r '
 announce() {  # <goal id> <verb> <args...>
   local id=$1 out sig
   shift
-  if out=$(JG_HOME=$HOME_DIR timeout 25 "$GOAL" "$@" 2>&1 < /dev/null); then
-    [ -z "$out" ] || echo "goal-loop: $out"
-    rm -f "$DATA/write-failed"
-    return 0
-  fi
+  out=$(JG_HOME=$HOME_DIR timeout 25 "$GOAL" "$@" 2>&1 < /dev/null)
+  case $? in  # 3 is a verb that made a stop instead of acting
+    0) [ -z "$out" ] || echo "goal-loop: $out"; rm -f "$DATA/write-failed"; return 0 ;;
+    3) rm -f "$DATA/write-failed"; return 3 ;;
+  esac
   sig=$(printf '%s' "$id $out" | cksum | cut -d' ' -f1)
-  [ "$(cat "$DATA/write-failed" 2>/dev/null)" = "$sig" ] && return 0
+  [ "$(cat "$DATA/write-failed" 2>/dev/null)" = "$sig" ] && return 1
   printf '%s\n' "$sig" > "$DATA/write-failed"
   echo "goal-loop: $id: jg-goal.sh $1 failed - $(printf '%s' "$out" | grep -m1 . | cut -c1-200); it is tried again on the next pass"
+  return 1
+}
+
+# The proven step belongs to the check: start the proof once (detached), then read its exit on a later pass.
+proof_tick() {  # <goal id> <state>
+  local id=$1 dir=$HOME_DIR/data/goals/$1 argv=() code
+  if [ "$2" = next ]; then
+    [ -x "$RUNNER" ] || { echo "goal-loop: $id: the proof runner is missing ($RUNNER)"; return 0; }
+    announce "$id" proof-start "$id" || return 0
+    mapfile -t argv < <(jq -r '.proof[]' "$dir/finish.json" 2>/dev/null)
+    [ "${#argv[@]}" -gt 0 ] || return 0
+    if command -v setsid >/dev/null 2>&1; then setsid -f "$RUNNER" "$dir" "$HOME_DIR" "$PROOF_SECS" "${argv[@]}" >/dev/null 2>&1 < /dev/null
+    else nohup "$RUNNER" "$dir" "$HOME_DIR" "$PROOF_SECS" "${argv[@]}" >/dev/null 2>&1 < /dev/null & fi
+  elif [ -f "$dir/proof.exit" ]; then
+    code=$(cat "$dir/proof.exit")
+    if [ "$code" = 0 ]; then announce "$id" prove "$id"; else announce "$id" proof-failed "$id" "$code"; fi
+  elif [ -f "$dir/proof.pid" ] && ! kill -0 "$(cat "$dir/proof.pid")" 2>/dev/null; then
+    announce "$id" proof-failed "$id" lost
+  fi
+  return 0
 }
 
 seen=' '
@@ -90,6 +117,7 @@ while IFS=$'\t' read -r id st step ask sent; do
   rec=$DATA/$id.next
   [ "$st" != stopped ] || [ "$sent" = sent ] || announce "$id" notice "$id" "$step"
   [ "$st" != finished ] || announce "$id" finish "$id"
+  if [ "$step" = proven ] && { [ "$st" = next ] || [ "$st" = waiting ]; }; then proof_tick "$id" "$st"; rm -f "$rec"; continue; fi
   if [ "$st" != next ]; then rm -f "$rec"; continue; fi
   if [ -f "$rec" ]; then
     read -r last_step last_at < "$rec"
