@@ -9,7 +9,7 @@ Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi
 kind is metadata.kind, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
 and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as tasks-axi writes it.
 A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; --until is defer_until at UTC
-midnight, because bd reads a bare date in local time; metadata.hold_from keeps an in-flight row's status for unhold.
+midnight, because bd reads a bare date in local time; a held row keeps its assignee, and that owner is what keeps it in flight.
 --archive-body needs nothing further: the store's own history keeps the replaced body.
 A rerun converges: an existing id, blocker, link or note is left alone. bd refuses an id with no dash and a dependency
 cycle, and that refusal reaches stderr with bd's exit status.
@@ -19,6 +19,8 @@ status column cannot read in flight and held at once, so where tasks-axi would s
 A worker's lane owns its row: the assignee is the lane named by JG_BACKLOG_LANE and metadata.agent is JG_BACKLOG_AGENT.
 start claims a row with no owner, and JG_BACKLOG_LANE_HANDOVER=1 takes it from the owner it read, so a row another lane
 took first exits 13. done keeps the assignee as history, reopen clears both, and each moves only from the owner it read.
+With no lane named, start claims an unowned row for the actor (BEADS_ACTOR, else juggernaut), so every in-flight row has an owner.
+bin/jg-beads.sh makes the lane the actor of every bd call, so a comment or an event carries who wrote it.
 bd takes --if-assignee or --force, never both, so closing a blocked row is guarded by status alone.
 stage, take and drop move queued rows, and bd export and bd import carry them.
 stage prints rows as a backlog file, or with --native as export lines, and refuses to leave an active dependent behind.
@@ -46,7 +48,7 @@ PR_ERROR = ("--pr must be a canonical pull request URL: https://github.com/<owne
 FIELDS = ("--kind", "--repo", "--body", "--body-file", "--pr", "--report", "--priority")
 STALE = 13
 HOLD_KINDS = ("captain", "external", "load", "parked", "future")
-HOLD_FIELDS = ("hold_reason", "hold_kind", "hold_from")
+HOLD_FIELDS = ("hold_reason", "hold_kind")
 
 
 def bd(*args):
@@ -68,6 +70,13 @@ def lane(row):
         return []
     owner = row.get("assignee") or "" if os.environ.get("JG_BACKLOG_LANE_HANDOVER") else ""
     return ["-a", name, "--if-assignee", owner] + (["--set-metadata", "agent=" + agent] if agent else [])
+
+
+def unowned(row):
+    """Return the flags that give a row with no owner the actor as owner, or nothing when it has one."""
+    if row.get("assignee"):
+        return []
+    return ["-a", os.environ.get("JG_BACKLOG_LANE") or os.environ.get("BEADS_ACTOR") or "juggernaut", "--if-assignee", ""]
 
 
 def released(row):
@@ -339,13 +348,13 @@ def one_row(verb, args):
 def start(args):
     found, ident, row = one_row("start", args)
     tips = ["Run `tasks-axi done %s --pr <url>` when it ships" % ident]
-    claim = lane(row)
+    owner = lane(row) or unowned(row)
     if view.flying(row):
-        if claim and row.get("assignee") != claim[1]:
-            bd("update", ident, *claim, "--if-status", row["status"])
+        if owner and row.get("assignee") != owner[1]:
+            bd("update", ident, *owner, "--if-status", row["status"])
         respond(found, "start", ident, "start %s already in flight" % ident, tips, card=False, already=True)
         return
-    bd("update", ident, "--status", "in_progress", "--if-status", "open", *claim)
+    bd("update", ident, "--status", "in_progress", "--if-status", "open", *owner)
     respond(found, "start", ident, "start %s -> In flight" % ident, tips, card=False)
 
 
@@ -393,7 +402,7 @@ def hold(args):
     cmd = ["--set-metadata", "hold_reason=" + reason]
     cmd += ["--set-metadata", "hold_kind=" + kind] if kind else ["--unset-metadata", "hold_kind"] if "hold_kind" in meta else []
     cmd += ["--defer", until + "T00:00:00Z" if until else ""] if until or row.get("defer_until") else []
-    cmd += ["--set-metadata", "hold_from=in_progress"] if status == "in_progress" else []
+    cmd += unowned(row) if status == "in_progress" else []
     cmd += ["--status", "on_hold"] if status in ("open", "in_progress") else []
     bd("update", ident, *cmd)
     named = ", ".join(filter(None, [kind, until and "until " + until]))
