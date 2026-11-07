@@ -75,7 +75,7 @@ same "'fm-$TWIN' in rows, 'jg-$BUCKET' in rows, 'fm-$BUCKET' in rows, man['bucke
 same "[l for l in rows['jg-$TWIN']['labels'] if 'upkeep' in l or 'hold-' in l]" "['hold-dropped-by-source', 'upkeep']" "twin labels wrong"
 same "rows['jg-$OLD']['status'],'upkeep' in rows['jg-$OLD']['labels'],rows['jg-$OLD']['metadata']['past_hold'],man['held']['fm-$OLD']['disposition']" "open True no reason recorded before migration dropped-by-newer-twin" "newest twin did not win"
 g=jg-$(sum main/gate)
-same "rows['$g']['status'],rows['$g']['metadata']['hold_reason'],rows['$g']['metadata']['hold_kind'],rows['$g']['defer_until']" "on_hold waits on Umer external 2027-01-02T00:00:00Z" "hold not decoded"
+same "rows['$g']['status'],rows['$g']['metadata']['hold_reason'],rows['$g']['metadata']['hold_kind'],rows['$g']['defer_until']" "deferred waits on Umer external 2027-01-02T00:00:00Z" "hold not decoded"
 same "[(d['depends_on_id'],d['type']) for d in rows['jg-$TWIN']['dependencies']]" "[('$g', 'blocks')]" "blocked-by did not become a dependency"
 same "rows['fm-$BARE']['status'],rows['fm-$BARE']['metadata']['hold_reason'],sorted(rows['fm-$BARE']['labels'])" "on_hold no reason recorded before migration ['hold-reason-missing', 'home:main', 'parent-dangling', 'unplaced']" "held row with no home did not park under main"
 same "rows['jg-$HELD']['status'],man['held']['jg-$HELD']['disposition'],rows['jg-$HELD']['closed_at'] != ''" "closed dropped-by-source True" "source close did not account for the hold"
@@ -95,7 +95,7 @@ grep -q 'unplaced=' "$T/settled" || fail "plan printed no settle counts"
 mkdir -p "$T/runs"
 for h in main lead far; do
   cp "$T/imp/$h.jsonl" "$T/runs/$h.export.jsonl"
-  for s in open in_progress on_hold closed; do
+  for s in open in_progress on_hold deferred closed; do
     printf '%s %s\n' "$s" "$(grep -c "\"status\": \"$s\"" "$T/imp/$h.jsonl")"
   done >"$T/runs/$h.counts"
 done

@@ -8,14 +8,16 @@ bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-ax
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi's lines on stdout.
 kind captain is bd's decision type and shows to callers as captain, any other kind is metadata.kind, repo is the project:<repo> label, the first PR is external_ref, later ones are metadata.prs,
 and reports are metadata.reports, each comma-joined; a PR or report also joins the title, as tasks-axi writes it.
-A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; --until is defer_until at UTC
-midnight, because bd reads a bare date in local time; a held row keeps its assignee, and that owner is what keeps it in flight.
+A hold is status on_hold with metadata.hold_reason and hold_kind, kept in plain text; a dated hold is status deferred
+with --until as defer_until at UTC midnight, because bd reads a bare date in local time, and bd ready wakes it to open;
+a held row keeps its assignee, and that owner is what keeps it in flight, across that wake too.
 --archive-body needs nothing further: the store's own history keeps the replaced body.
 --mint leaves the id to bd, which names it under the store's prefix. A rerun converges: an existing id, blocker, link or note is left alone. bd refuses an id with no dash and a dependency
 cycle, and that refusal reaches stderr with bd's exit status.
 start, reopen and done move status only from the status they expect, so a row that moved first exits 13 and changes
-nothing, with one refusal line on stdout. A held row keeps its status on reopen. start takes only an open row: one
-status column cannot read in flight and held at once, so where tasks-axi would start a held or done row this refuses.
+nothing, with one refusal line on stdout. A held row keeps its status on reopen. start takes an open row or a deferred
+row past its date: one status column cannot read in flight and held at once, so where tasks-axi would start a held or
+done row this refuses.
 A worker's lane owns its row: the assignee is the lane named by JG_BACKLOG_LANE and metadata.agent is JG_BACKLOG_AGENT.
 start claims a row with no owner, and JG_BACKLOG_LANE_HANDOVER=1 takes it from the owner it read, so a row another lane
 took first exits 13. done keeps the assignee as history, reopen clears both, and each moves only from the owner it read.
@@ -356,13 +358,16 @@ def one_row(verb, args):
 def start(args):
     found, ident, row = one_row("start", args)
     tips = ["Run `tasks-axi done %s --pr <url>` when it ships" % ident]
-    owner = lane(row) or unowned(row)
-    if view.flying(row):
-        if owner and row.get("assignee") != owner[1]:
-            bd("update", ident, *owner, "--if-status", row["status"])
+    owner, status, held = lane(row) or unowned(row), row["status"], view.holding(row)
+    mine = owner and row.get("assignee") == owner[1]
+    if status == "in_progress" or (held and view.flying(row)):
+        if owner and not mine:
+            bd("update", ident, *owner, "--if-status", status)
         respond(found, "start", ident, "start %s already in flight" % ident, tips, card=False, already=True)
         return
-    bd("update", ident, "--status", "in_progress", "--if-status", "open", *owner)
+    # A due row is deferred until the first bd ready wakes it to open; a lane held in flight comes back to its row.
+    due = status == "deferred" and not held
+    bd("update", ident, "--status", "in_progress", "--if-status", "deferred" if due else "open", *(["--defer", ""] if due else []), *([] if mine else owner))
     respond(found, "start", ident, "start %s -> In flight" % ident, tips, card=False)
 
 
@@ -402,8 +407,8 @@ def hold(args):
     row = plain(items, ids[0])
     ident = row["id"]
     item = view.task(row, items)
-    tips = ["Run `tasks-axi unhold %s` to resume dispatch" % ident, "Run `tasks-axi ready --include-held` to review paused work"]
-    if (item["hold_reason"], item["hold_kind"], item["hold_until"]) == (reason, kind or "-", until or "-"):
+    tips = ["Run `tasks-axi unhold %s` to resume dispatch" % ident, "Run `tasks-axi list --state held` to review paused work"]
+    if item["held"] == "yes" and (item["hold_reason"], item["hold_kind"], item["hold_until"]) == (reason, kind or "-", until or "-"):
         respond(found, "hold", ident, "hold %s already held" % ident, tips, already=True)
         return
     status, meta = row.get("status"), row.get("metadata") or {}
@@ -411,7 +416,8 @@ def hold(args):
     cmd += ["--set-metadata", "hold_kind=" + kind] if kind else ["--unset-metadata", "hold_kind"] if "hold_kind" in meta else []
     cmd += ["--defer", until + "T00:00:00Z" if until else ""] if until or row.get("defer_until") else []
     cmd += unowned(row) if status == "in_progress" else []
-    cmd += ["--status", "on_hold"] if status in ("open", "in_progress") else []
+    want = "deferred" if until else "on_hold"
+    cmd += ["--status", want] if status not in ("closed", want) else []
     bd("update", ident, *cmd)
     named = ", ".join(filter(None, [kind, until and "until " + until]))
     respond(found, "hold", ident, "hold %s -> held%s" % (ident, " (%s)" % named if named else ""), tips)
@@ -427,7 +433,8 @@ def unhold(args):
     meta = row.get("metadata") or {}
     cmd = [word for key in HOLD_FIELDS if key in meta for word in ("--unset-metadata", key)]
     cmd += ["--defer", ""] if row.get("defer_until") else []
-    cmd += ["--status", "in_progress" if view.flying(row) else "open"] if row.get("status") in view.HELD else []
+    back = "in_progress" if view.flying(row) else "open"
+    cmd += ["--status", back] if row.get("status") not in ("closed", back) else []
     tips = ["Run `tasks-axi ready` to see dispatchable work"]
     if not cmd:
         respond(found, "unhold", ident, "unhold %s already not held" % ident, tips, already=True)

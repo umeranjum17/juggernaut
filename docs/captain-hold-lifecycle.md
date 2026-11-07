@@ -67,7 +67,7 @@ Repeat and edge cases:
 - Retries of an active hold preserve its hold-set timestamp.
 - Re-holding released work starts a new timestamped lifecycle.
 - A closed task is refused rather than reopened.
-- `--until` stores the captain's own deferral date through tasks-axi's date gate.
+- `--until` stores the captain's own deferral date through the backlog's date gate, as a native `deferred` row on Beads.
 - Before the backend hold runs, `--origin` records the origin the call is held for on its own `Captain hold origin:` body line, which `complete` and `verify` check using backend identities rather than alias spellings.
   If that write fails, the backend hold is not attempted.
 - The reason may contain parentheses, semicolons, quotes, and line breaks.
@@ -103,7 +103,7 @@ A matching retry also completes any resolution-first normalization left unfinish
 On a task closed outside the script, `answer` records the missing block only when the captain-hold annotations tasks-axi preserves through a close prove the captain owned it.
 It also verifies the task stays closed.
 
-A hold whose `--until` date has passed keeps those annotations while tasks-axi reports it no longer held.
+A hold whose `--until` date has passed keeps those annotations while the backlog reports it no longer held.
 An expired deferral therefore remains answerable.
 
 ### Recording a reviewed inventory (`complete`)

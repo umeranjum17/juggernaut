@@ -426,6 +426,10 @@ The optional local, gitignored presence flag `config/backlog-intake-loose` turns
 
 Captain-hold row creation is owned by [`bin/jg-captain-hold.sh`](../bin/jg-captain-hold.sh) `hold`: when no work item exists, it creates an ordinary backlog row (`--kind captain`, stored as Beads native type `decision`) and then applies the captain hold.
 Captain rows have no due date; `--until` remains the optional hold deferral.
+A hold with `--until` is a native `deferred` row and a hold with no date is `on_hold`.
+`bd ready` wakes a deferred row once its date passes: the row reads `open`, its date clears, and its hold reason and kind stay, so it remains answerable and the work behind it stays stopped until it closes.
+`start` takes a due row in either form and refuses one whose date is still ahead.
+`bin/jg-beads.sh` refuses a `create` or `update` that defers a row with no reason in the same call, or strips a deferred row's reason; that rule is ours and no store CHECK holds it, so `bin/jg-beads.sh check` names any deferred row that arrived with no reason by another door, such as `bd defer`, which stays whole and keeps none, or an import.
 
 Do not register a Beads `types.custom` `captain` type for this: captain is a hold kind.
 

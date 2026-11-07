@@ -12,8 +12,11 @@
 # and the hold rule: a blocked or on_hold row must name a non-blank metadata.hold_reason. bd needs no
 # reason and its hooks cannot refuse, so the rule is a Dolt CHECK that every writer meets. Run again
 # on a store missing the rule, `init` adds it; on a store with the rule, it refuses.
+# A deferred row must have a reason too, but that rule is ours and sits here, never in the store:
+# create and update refuse a call that defers a row without naming the reason, or strips it from one.
 # `check` proves the pins and the store, then reads the rule with dolt: a rule gone or changed exits
-# 2 naming it, and a read that fails reports that failure, never a missing rule. It then reads
+# 2 naming it, and a read that fails reports that failure, never a missing rule. A deferred row
+# with no reason, which only `defer`, `import` or `batch` can leave, exits 2 naming the row. It then reads
 # telemetry back from dolt and exits 2 on a flag not off or on a trace either tool leaves in this
 # store's forced home once its metrics run. Its last line sums the store up for the start checks.
 # `dolt version` and `dolt sql -q` run the pinned dolt in the store's database folder, and a query
@@ -36,6 +39,7 @@
 #     call off BEADS_DIR, and --mem-profile or --cpu-profile, which write outside it.
 #   - a call in bd_refusals: it reaches a server, a remote or a network, turns metrics on, writes
 #     into a git tree or its hooks, or exposes a secret. The message starts `refused (<rule>):`.
+#   - a create or update that defers a row, or strips a deferred row's reason, with no reason named.
 #   - a bd or dolt whose sha256 is not its toolchain.versions row for this platform, checked
 #     before its first run, even for a version. JG_BEADS_BD and JG_BEADS_DOLT name the binary;
 #     otherwise each comes from PATH.
@@ -56,7 +60,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The hold rule. bd keeps ephemeral rows in wisps, so that table carries it too, under its own name.
 HOLD_RULES='issues hold_needs_reason
 wisps wisp_hold_needs_reason'
-HOLD_CHECK="status NOT IN ('blocked','on_hold') OR CHAR_LENGTH(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata,'\$.hold_reason')),''))) > 0"
+HOLD_REASON="CHAR_LENGTH(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata,'\$.hold_reason')),''))) > 0"
+HOLD_CHECK="status NOT IN ('blocked','on_hold') OR $HOLD_REASON"
 # The same rule as the pinned dolt stores it, so a weaker rule under the right name reads as changed.
 HOLD_STORED="((NOT((\`status\` IN ('blocked', 'on_hold')))) OR (char_length(trim(both ' ' from coalesce(json_unquote(json_extract(\`metadata\`, '\$.hold_reason')),''))) > 0))"
 
@@ -153,6 +158,12 @@ hold_rule_gaps() {  # <dolt>
   done <<< "$HOLD_RULES"
 }
 
+# Prints the deferred rows with no reason. defer, import and batch are the writes reason_check leaves whole. Runs in the database folder.
+reasonless_rows() {  # <dolt>
+  "$1" sql -r csv -q "SELECT id FROM issues WHERE status='deferred' AND NOT ($HOLD_REASON) UNION SELECT id FROM wisps WHERE status='deferred' AND NOT ($HOLD_REASON)" \
+    | tail -n +2
+}
+
 run_init() {  # --prefix <prefix>
   local bd dolt gaps table rule
   [ "$#" -eq 2 ] && [ "$1" = --prefix ] || die "usage: jg-beads.sh init --prefix <prefix>"
@@ -201,6 +212,8 @@ run_check() {
   gaps=$(hold_rule_gaps "$PINNED_TOOL") || exit $?
   [ -z "$gaps" ] || die "hold rule missing or changed in $BEADS_DIR: $(cut -d' ' -f2 <<< "$gaps" | tr '\n' ' ')"
   printf 'rule: hold_needs_reason (issues, wisps)\n'
+  gaps=$(reasonless_rows "$PINNED_TOOL") || die "cannot read the deferred rows of $BEADS_DIR"
+  [ -z "$gaps" ] || die "deferred with no reason in $BEADS_DIR: $(tr '\n' ' ' <<< "$gaps")"
   telemetry_check "$PINNED_TOOL"
   printf 'healthy: bd %s, dolt %s, hold rule present, telemetry off\n' "$(jg_pin_version bd)" "$(jg_pin_version dolt)"
 }
@@ -323,6 +336,35 @@ bd_refusals() {  # <bd args...>
   esac
 }
 
+# Our reason rule for a dated hold, on top of Beads and not inside it: a call that makes a row deferred names the reason,
+# and a call that strips the reason moves the row out of deferred. --defer defers a row by itself; --defer "" clears it.
+reason_check() {  # <create|update> [args...]
+  local verb=$1 named word deferring=0 reason=0 moves=0 strips=0
+  named=$(printf '%s\n' "$@")
+  while [ "$#" -gt 0 ]; do
+    word=$1
+    shift
+    case "$word" in
+      -s|--status|--defer|--metadata|--set-metadata|--unset-metadata) word=$word=${1-}; [ "$#" -eq 0 ] || shift ;;
+    esac
+    case "$word" in
+      -sdeferred|-s=deferred|--status=deferred) deferring=1 ;;
+      -s?*|--status=*) moves=1 ;;
+      --defer=) ;;
+      --defer=*) deferring=1 ;;
+      --set-metadata=hold_reason=*[![:space:]]*) reason=1 ;;
+      --set-metadata=hold_reason=*|--unset-metadata=hold_reason) strips=1 ;;
+      --metadata=*) [[ "$word" =~ \"hold_reason\"[[:space:]]*:[[:space:]]*\"[[:space:]]*[^\"[:space:]] ]] && reason=1 || strips=1 ;;
+    esac
+  done
+  [ "$deferring" = 0 ] || [ "$reason" = 1 ] \
+    || die "a deferred row needs a reason: pass --set-metadata hold_reason=<text> in the same call"
+  [ "$verb" = update ] && [ "$strips" = 1 ] && [ "$moves" = 0 ] || return 0
+  while read -r word; do
+    [ -z "$word" ] || ! grep -Fqx -- "$word" <<< "$named" || die "$word is deferred and needs its reason: unhold it first"
+  done < <("$PINNED_TOOL" list --status deferred --limit 0 --json | sed -n 's/^ *"id": "\(.*\)",\{0,1\}$/\1/p')
+}
+
 run_bd() {  # <verb> [args...]
   local arg
   for arg in "$@"; do
@@ -337,6 +379,7 @@ run_bd() {  # <verb> [args...]
   pin_check bd
   store_mode_check
   cd -- "$STORE_PARENT" || die "cannot enter $STORE_PARENT"
+  case "$1" in create|update) reason_check "$@" ;; esac
   exec "$PINNED_TOOL" "$@"
 }
 

@@ -106,6 +106,7 @@ same() {  # <wrapper args...>: stdout and exit status match across providers.
   local a b ra=0 rb=0
   a=$(JG_HOME="$T/ta" "$CLI" "$@" 2>/dev/null) || ra=$?
   b=$(JG_HOME="$T/bd" "${jail[@]}" "$CLI" "$@" 2>/dev/null) || rb=$?
+  a=${a//ready --include-held/list --state held}  # The one line that differs: a store's tip names a verb it serves.
   [ "$a" = "$b" ] && [ "$ra" = "$rb" ] || fail "$* differs, rc $ra/$rb: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b"))"
 }
 callers() {  # The read shapes each backlog caller parses.
@@ -182,7 +183,7 @@ crossings() {  # One row set walks store to store, store to file and file to sto
   file jg-mv-stay "[feature] Stay row" --priority 2 --body why
   file jg-mv-dep "[feature] Dep row" --priority 2 --body why --blocked-by jg-mv-stay
   file jg-mv-far "[feature] Far row" --priority 2 --body why
-  BEADS_DIR=$T/xa/s/.beads "${jail[@]}" "$WRAPPER" update jg-mv-far --status deferred --defer 2030-01-02 >/dev/null || fail "defer a row"
+  BEADS_DIR=$T/xa/s/.beads "${jail[@]}" "$WRAPPER" update jg-mv-far --status deferred --defer 2030-01-02 --set-metadata hold_reason=later >/dev/null || fail "defer a row"
   BEADS_DIR=$T/xa/s/.beads "${jail[@]}" "$WRAPPER" dep add jg-mv-far jg-mv-base --type related >/dev/null || fail "relate two rows"
   before=$(card "$T/xa" jg-mv-base; card "$T/xa" jg-mv-tail)
   out=$(walk "$T/xa" "$tool" jg-mv-stay)
