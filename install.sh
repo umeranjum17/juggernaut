@@ -118,10 +118,13 @@ fi
 # 4. Install every pinned tool: npm at exactly its row, curl-installed tools at or above their floor.
 changed=0
 while read -r tool spec _; do
-  case "$tool" in ''|'#'*|bd|dolt|*-sha256-*) continue ;; esac
+  case "$tool" in ''|'#'*|*-sha256-*) continue ;; esac
   [ -n "${spec:-}" ] || continue
   want=$(jg_pin_version "$tool")
-  have=$(bash "$root/bin/jg-bootstrap.sh" version "$tool" 2>/dev/null || true)
+  case "$tool" in
+    bd|dolt) have=$(jg_pin_hashed_version "$tool") ;; # A version probe would start the binary.
+    *) have=$(bash "$root/bin/jg-bootstrap.sh" version "$tool" 2>/dev/null || true) ;;
+  esac
   if [ "$want" = not-yet-published ]; then
     say "$tool: skipped, not published as a versioned artifact yet"
     continue
