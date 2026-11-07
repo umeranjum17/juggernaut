@@ -58,7 +58,8 @@ export JG_HOME=$FMH JG_CONFIG_OVERRIDE=$FMH/config
 if [ -s "$MEM/outbox" ]; then mv -f -- "$MEM/outbox" "$MEM/outbox.$$" && cat "$MEM/outbox.$$" && rm -f -- "$MEM/outbox.$$"; fi
 # Only a project registered local-trunk is ever touched; no-mistakes, direct-PR and local-only projects keep their own rules.
 local_trunk() { [ "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$(basename "$1")" 2>/dev/null | cut -d' ' -f1)" = local-trunk ] && echo yes || echo no; }
-# Once a project's release PR has merged, cut its next trunk version (bin/jg-trunk.sh rollover); looked at every 5 minutes.
+# Once a project's release PR has merged, cut its next trunk version (bin/jg-trunk.sh rollover) and clean the old trunk
+# up unforced (retire); looked at every 5 minutes.
 for tip in "$STATE"/trunk-tip-*; do
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}; proj=$FMH/projects/$pn
@@ -66,6 +67,9 @@ for tip in "$STATE"/trunk-tip-*; do
   [ ! -e "$MEM/.rollover-$pn" ] || [ -n "$(find "$MEM/.rollover-$pn" -mmin +4 2>/dev/null)" ] || continue
   : > "$MEM/.rollover-$pn"
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" rollover "$proj" 2>/dev/null | sed 's/^/trunk-landing: /'
+  # An old trunk kept for unlanded work is looked at again; a changed listing is reported, an unchanged one is not.
+  out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" retire "$proj" 2>/dev/null | sed 's/^/trunk-landing: /')
+  if [ "$out" != "$(cat "$MEM/.retire-$pn" 2>/dev/null)" ]; then printf '%s\n' "$out" > "$MEM/.retire-$pn"; [ -z "$out" ] || printf '%s\n' "$out"; fi
 done
 report() { [ "$(cat "$MEM/$1.reported" 2>/dev/null)" = "$3" ] || { echo "trunk-landing: $2"; printf '%s\n' "$3" > "$MEM/$1.reported"; }; }
 for meta in "$STATE"/*.meta; do

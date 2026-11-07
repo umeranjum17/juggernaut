@@ -747,6 +747,12 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
   WAIT_BLOCK="$WAIT_SECTION"$'\n\n'
 fi
 
+# The local-trunk landing rule, in one place for the lane brief and the squad lead charter (local-trunk projects only).
+TRUNK_REBASE_RULE="Before your commit can land, rebase it on the LATEST tip of the local trunk, taken at that moment (the trunk moves while you work; a base you took earlier is stale).
+If the rebase conflicts, YOU resolve every conflict in your own change, then prove it again at the new head; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict or a stale base exists, and a landing that is refused for either reason is fixed by rebasing and proving again."
+jg_brief_local_trunk() {  # <project>: true when the project is registered local-trunk
+  [ "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" = local-trunk ]
+}
 if [ "$KIND" = squad_lead ]; then
 SQUAD_LEAD_PROJECTS=""
 idx=1
@@ -768,6 +774,18 @@ else
   PROJECT_CLONES_BODY=$(printf '%s\n' "$SQUAD_LEAD_PROJECTS" | tr ' ' '\n' | sed 's/^/- /')
   PROJECT_CLONES_NOTE="The projects above are local clones for work you supervise; they are not an exclusive ownership claim."
 fi
+TRUNK_LEAD_SECTION=
+for lead_proj in $SQUAD_LEAD_PROJECTS; do
+  if jg_brief_local_trunk "$lead_proj"; then
+    TRUNK_LEAD_SECTION="
+# Local trunk projects
+$lead_proj is registered local-trunk (and any other project listed here that is): its lanes land on the local trunk, never through a feature pull request, and a lane is exactly one commit on the trunk tip.
+Put this rule in the brief of every worker you start on such a project, and hold it yourself: $TRUNK_REBASE_RULE
+Projects registered in any other delivery mode keep their own rules unchanged.
+"
+    break
+  fi
+done
 cat > "$BRIEF" <<EOF
 You are a persistent squad lead managed by the main juggernaut. Work on your own; do not wait for a human.
 
@@ -779,7 +797,7 @@ $SQUAD_LEAD_SCOPE
 
 # Project clones
 $PROJECT_CLONES_BODY
-
+$TRUNK_LEAD_SECTION
 # Operating model
 You are in an isolated juggernaut home. The local \`AGENTS.md\` is your job description, and your local \`data/\`, \`state/\`, \`config/\`, and \`projects/\` dirs are yours to operate.
 $PROJECT_CLONES_NOTE
@@ -1050,12 +1068,13 @@ PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
 # A project registered local-trunk (docs/trunk-flow.md) ships its lanes as local-only tasks that land on the local
 # trunk by themselves. Only that posture gets this section; every other project's brief is exactly as it was.
 TRUNK_SECTION=
-if [ "$MODE" = local-only ] && [ "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$REPO" 2>/dev/null | cut -d' ' -f1)" = local-trunk ]; then
+if [ "$MODE" = local-only ] && jg_brief_local_trunk "$REPO"; then
   TRUNK_SECTION="
 # Local trunk lane
 This project is registered local-trunk: there is no feature pull request, and the only pull request is the release one, raised on the captain's word.
 Your branch must be exactly ONE commit on top of the local trunk tip (the \`trunk\` branch of the project), and the commit message must carry its ticket reference (the task id or its ticket key).
-If the trunk has advanced, rebase onto it and fix every conflict yourself, then prove again: a conflicting change is refused with its paths named and is never landed dirty.
+$TRUNK_REBASE_RULE
+A stale or conflicting change is refused with its paths named and is never landed dirty.
 When the sealed done-done proof has passed at that exact head, publish the completion receipt for it and report ready. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
 "
 fi

@@ -10,6 +10,7 @@
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red pins the home back to the last green one
 #        jg-trunk.sh release <project-dir>             push the trunk and open the ONE release PR trunk -> default branch; refuses without his word
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (trunk-v2, ...) from the default branch
+#        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
 #
 # The flow is the same for every project IN local-trunk MODE (data/projects.md `[local-trunk]`); every subcommand
@@ -106,13 +107,14 @@ open_project() {  # <project-dir>: sets PROJ PN TRUNK
 # The trunk is safe: only this script writes it (JG_TRUNK_WRITER=1 on its own update-ref calls), and even
 # this script can only create it or fast-forward it. A rewind, a force or a delete of refs/heads/<trunk> or
 # a later trunk version (<trunk>-v2, ...) is refused by the project's reference-transaction hook, so no
-# subcommand and no hand can lose a trunk whose release is still open.
+# subcommand and no hand can lose a trunk whose release is still open. The one delete it allows is `retire`'s
+# (JG_TRUNK_RETIRE=<ref>), which runs only after the old trunk's release merged and its work is carried.
 ensure_guard() {
   local hook want base
   base=$(pol trunk-branch)
   hook="$(git -C "$PROJ" rev-parse --path-format=absolute --git-common-dir)/hooks/reference-transaction"
   # shellcheck disable=SC2016 # the hook body is written out verbatim; its variables expand in the hook
-  want=$(printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\n[ "$1" = prepared ] || exit 0\nwhile read -r old new ref; do\n  case "$ref" in refs/heads/%s|refs/heads/%s-v[0-9]*) ;; *) continue ;; esac\n  case "$new" in *[!0]*) ;; *) echo "refused: $ref is a trunk and is never deleted" >&2; exit 1 ;; esac\n  [ -n "${JG_TRUNK_WRITER:-}" ] || { echo "refused: $ref moves only through bin/jg-trunk.sh land; nothing writes it by hand" >&2; exit 1; }\n  cur=$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)\n  [ -z "$cur" ] || git merge-base --is-ancestor "$cur" "$new" || { echo "refused: $ref is never rewound or forced; the trunk only moves forward" >&2; exit 1; }\ndone\nexit 0\n' "$base" "$base")
+  want=$(printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\n[ "$1" = prepared ] || exit 0\nwhile read -r old new ref; do\n  case "$ref" in refs/heads/%s|refs/heads/%s-v[0-9]*) ;; *) continue ;; esac\n  case "$new" in *[!0]*) ;; *) [ "${JG_TRUNK_RETIRE:-}" = "$ref" ] && continue; echo "refused: $ref is a trunk and is never deleted" >&2; exit 1 ;; esac\n  [ -n "${JG_TRUNK_WRITER:-}" ] || { echo "refused: $ref moves only through bin/jg-trunk.sh land; nothing writes it by hand" >&2; exit 1; }\n  cur=$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)\n  [ -z "$cur" ] || git merge-base --is-ancestor "$cur" "$new" || { echo "refused: $ref is never rewound or forced; the trunk only moves forward" >&2; exit 1; }\ndone\nexit 0\n' "$base" "$base")
   if [ -e "$hook" ] && [ "$(cat "$hook")" != "$want" ]; then
     grep -q 'managed by bin/jg-trunk.sh' "$hook" || die "$hook is not the trunk guard; move it aside so the trunk can be protected"
   fi
@@ -195,6 +197,8 @@ cmd_init() {
 
 cmd_land() {
   local id=${1-} META branch cand tip n red hit rc=0 linked gate cmd
+  case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; rebase the lane on the latest $(pol trunk-branch) tip, fix its conflicts and prove it again" ;; esac
+  [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
   jg_pr_task_id_valid "$id" || die "invalid task id"
   META="$STATE/$id.meta"; [ -f "$META" ] || die "no meta for task $id at $META"
   open_project "$(jg_dod_meta_value "$META" project)"
@@ -355,8 +359,67 @@ rollover_if_merged() {
   put "$STATE/trunk-branch-$PN" "$new"; put "$STATE/trunk-version-$PN" "$ver"; put "$STATE/trunk-rolled-$PN" "$url"
   rm -f -- "$STATE/trunk-red-$PN"
   row trunk-versions.tsv "$PN" "$ver" "$new" "$base" "$(date +%s)"
-  echo "release merged: the project is now on $new (version $ver) cut from $default at ${base:0:12}; $TRUNK is left as it was"
-  TRUNK=$new
+  echo "release merged: the project is now on $new (version $ver) cut from $default at ${base:0:12}"
+  local old=$TRUNK; TRUNK=$new
+  echo "$old is cleaned up only when its work is proved on $default and carried into $new"
+  retire_old
+}
+
+# Every commit of <old> is in <target>: by ancestry, or by patch when the release was squashed or the fix was cherry-picked.
+carried() {  # <old> <target>
+  git -C "$PROJ" merge-base --is-ancestor "$1" "$2" 2>/dev/null && return 0
+  ! git -C "$PROJ" cherry "$2" "$1" 2>/dev/null | grep -q '^+'
+}
+
+# After a release merged and the next trunk was cut, clean the OLD trunk up: delete its remote branch, its local
+# branch and any worktree on it. UNFORCED (no --force, no -D, a compare-and-swap ref delete), and only when its
+# release is proved on the default branch (the tip it released is in it, by ancestry or by patch) AND every commit
+# on it - every hotfix - is carried into the current trunk. A copy holding unlanded work (an uncommitted worktree, the project checkout itself, a tip not carried) is
+# kept and listed, never deleted. Idempotent: it prints nothing when no old trunk is left.
+retire_old() {
+  local cur default main new v b lsha rsha tip wt wb kept blocked sha out
+  cur=$(cat "$STATE/trunk-version-$PN" 2>/dev/null || echo 1); [ "$cur" -gt 1 ] || return 0
+  default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
+  git -C "$PROJ" fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" || { echo "cannot fetch origin/$default; the old trunk is kept"; return 0; }
+  main=$(rev "refs/remotes/origin/$default") || return 0; new=$(rev "refs/heads/$TRUNK") || return 0
+  while IFS=$'\t' read -r v b; do
+    [ -n "$b" ] && [ "$v" -lt "$cur" ] && [ "$b" != "$TRUNK" ] || continue
+    lsha=$(rev "refs/heads/$b" || true); rsha=$(git -C "$PROJ" ls-remote --heads origin "refs/heads/$b" 2>/dev/null | cut -f1)
+    [ -n "$lsha$rsha" ] || continue
+    blocked=; rel=$(awk -F'\t' -v p="$PN" -v b="$b" '$1 == p && $2 == b { t = $3 } END { print t }' "$DATA/trunk-releases.tsv" 2>/dev/null || true)
+    if [ -z "$rel" ]; then blocked="no release of $b is recorded"
+    elif ! carried "$rel" "$main"; then blocked="its release ${rel:0:12} is not proved on origin/$default"; fi
+    for tip in $lsha $rsha; do
+      [ -z "$blocked" ] || break
+      git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null || git -C "$PROJ" fetch -q origin "refs/heads/$b" 2>/dev/null </dev/null || true
+      git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null || { blocked="the tip ${tip:0:12} cannot be read"; break; }
+      if ! carried "$tip" "$new"; then
+        out=$(git -C "$PROJ" cherry "$new" "$tip" | sed -n 's/^+ //p' | while read -r sha; do git -C "$PROJ" log -1 --format='%h %s' "$sha"; done | paste -sd';' -)
+        blocked="hotfix not carried into $TRUNK: $out"; break
+      fi
+    done
+    if [ -n "$blocked" ]; then echo "kept $b: $blocked"; continue; fi
+    kept=
+    while IFS= read -r wt; do
+      [ -n "$wt" ] || continue
+      if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then echo "kept worktree $wt: it holds uncommitted work on $b"; kept=1
+      elif [ "$(realpath "$wt")" = "$(realpath "$PROJ")" ]; then echo "kept $PROJ: the project checkout itself is on $b"; kept=1
+      elif git -C "$PROJ" worktree remove "$wt" 2>/dev/null </dev/null; then echo "removed worktree $wt"
+      else echo "kept worktree $wt: it could not be removed without force"; kept=1; fi
+    done < <(git -C "$PROJ" worktree list --porcelain | awk -v b="refs/heads/$b" '/^worktree /{w=substr($0,10)} $0=="branch " b {print w}')
+    if [ -n "$rsha" ]; then
+      git -C "$PROJ" push -q origin --delete "$b" 2>/dev/null </dev/null && echo "deleted remote $b" || echo "kept remote $b: the delete was refused"
+    fi
+    if [ -n "$lsha" ] && [ -z "$kept" ]; then
+      JG_TRUNK_RETIRE="refs/heads/$b" git -C "$PROJ" update-ref -d "refs/heads/$b" "$lsha" && echo "deleted local $b" || echo "kept local $b: the delete was refused"
+    elif [ -n "$lsha" ]; then echo "kept local $b: a copy of it holds unlanded work"; fi
+    [ -n "$kept" ] || row trunk-retired.tsv "$PN" "$b" "$(date +%s)"
+  done < <(awk -F'\t' -v p="$PN" '$1 == p { print $2 "\t" $3 }' "$DATA/trunk-versions.tsv" 2>/dev/null)
+}
+
+cmd_retire() {
+  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
+  retire_old
 }
 
 cmd_rollover() {
@@ -408,6 +471,7 @@ case "${1:-}" in
   live) shift; cmd_live "$@" ;;
   ci) shift; cmd_ci "$@" ;;
   rollover) shift; cmd_rollover "$@" ;;
+  retire) shift; cmd_retire "$@" ;;
   release) shift; cmd_release "$@" ;;
   due) shift; cmd_due "$@" ;;
   -h|--help|help) usage ;;
