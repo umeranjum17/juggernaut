@@ -225,6 +225,22 @@ SH
 }
 test_check_names_a_finished_lane_nobody_closed
 
+test_a_goal_step_waiting_is_ready_work_named_in_the_row() {
+  local d out
+  d=$(setup goal-step)
+  rm -f "$d/main/state/ship-a."*  # no lane working: a Goal step waiting is a gap
+  mkdir -p "$d/main/data/jg-goal-loop"
+  assert_equals "$(verdict "$(hb "$d" rows)" overwatch)" IDLE "no lane and no Goal step is idle"
+  printf 'ship 1\n' > "$d/main/data/jg-goal-loop/goal-a.next"
+  out=$(hb "$d" rows)
+  assert_equals "$(verdict "$out" overwatch)" GAP "a Goal step waiting for the lead is a gap"
+  assert_contains "$out" "1 Goal step(s) next" "the row names the Goal step"
+  rm -f "$d/main/data/jg-goal-loop/goal-a.next"
+  assert_equals "$(verdict "$(hb "$d" rows)" overwatch)" IDLE "a taken step closes the gap"
+  pass "rows count a Goal step waiting for the lead as ready work and name it"
+}
+test_a_goal_step_waiting_is_ready_work_named_in_the_row
+
 test_rows_give_every_home_one_verdict
 test_an_open_wait_is_a_gap_and_filled_lanes_are_moving
 test_a_paused_wait_is_named_as_paused_and_is_no_gap

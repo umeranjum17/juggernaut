@@ -393,6 +393,8 @@ block_stop() {
       printf '●  %s process-event source(s) registered, but no live watcher holds this home lock (last beat: %s).\n' "$JG_SUP_SOURCES" "$JG_SUP_BEACON_DESC"
     elif [ "$JG_SUP_CHECKS" -gt 0 ]; then
       printf '●  %s registered custom check(s), but no live watcher holds this home lock (last beat: %s).\n' "$JG_SUP_CHECKS" "$JG_SUP_BEACON_DESC"
+    elif [ "$JG_SUP_GOAL_NEXT" -gt 0 ]; then
+      printf '●  %s Goal step(s) wait for this idle lead, but no live watcher holds this home lock (last beat: %s).\n' "$JG_SUP_GOAL_NEXT" "$JG_SUP_BEACON_DESC"
     elif [ "$JG_SUP_READY_WORK" -gt 0 ]; then
       printf '●  %s ready backlog item(s) wait for this idle lead, but no live watcher holds this home lock (last beat: %s).\n' "$JG_SUP_READY_WORK" "$JG_SUP_BEACON_DESC"
     else
@@ -669,6 +671,8 @@ if [ "$terminal_status" -eq 0 ]; then
     NEED_DESC="$JG_SUP_SOURCES process-event source(s) registered"
   elif [ "$JG_SUP_CHECKS" -gt 0 ]; then
     NEED_DESC="$JG_SUP_CHECKS registered custom check(s)"
+  elif [ "$JG_SUP_GOAL_NEXT" -gt 0 ]; then
+    NEED_DESC="$JG_SUP_GOAL_NEXT Goal step(s) waiting for this idle lead"
   elif [ "$JG_SUP_READY_WORK" -gt 0 ]; then
     NEED_DESC="$JG_SUP_READY_WORK ready backlog item(s) waiting for this idle lead"
   else
