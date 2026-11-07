@@ -308,6 +308,14 @@ jobs:
       - name: Checks lint keeps first-draft line test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-keeps-first-draft-line.test.sh
+      # The lint stamps its receipt only on the head it judged, never on a lane member's other head.
+      - name: Checks lint receipt head test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/checks-lint-receipt-head.test.sh
+      # A draft lint of a local report leaves the evidence registry as it found it.
+      - name: Checks lint draft registry test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/checks-lint-draft-registry.test.sh
       # The merge holds the task control lock while the lint publishes its receipt: no deadlock, and the PR url is kept.
       - name: Checks lint receipt-lock test
         if: ${{ !cancelled() }}
