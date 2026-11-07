@@ -50,7 +50,7 @@
 # needs a must category, and a hold with none is refused and recorded for
 # Overwatch (bin/jg-board-gate.sh route) instead of held. Creating a missing row uses
 # `tasks-axi add --kind captain`: that kind is backlog metadata, and the Beads
-# adapter maps it to native issue type `task`. Captain holds have no due
+# adapter stores it as native issue type `decision`. Captain holds have no due
 # semantics (`--until` is the optional hold deferral). When the optional
 # task-priority feature is installed, a created task needs `--priority 0-3`; the
 # feature's refusal is returned as-is (bin/jg-tasks-axi.sh owns that hook).
@@ -967,7 +967,7 @@ command_hold() {
       "$priority_check" add "$id" "$title" --kind captain ${priority:+--priority "$priority"} >/dev/null \
         || exit 1
     fi
-    # --kind captain stays metadata; Beads native type is task.
+    # --kind captain is Beads native type decision.
     if [ -n "$body" ]; then
       tasks_axi add "$id" "$title" --kind captain --repo "$repo" ${priority:+--priority "$priority"} --body "$body" >/dev/null \
         || fail "could not create task $id"

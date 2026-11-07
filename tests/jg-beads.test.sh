@@ -964,8 +964,8 @@ else
     TMPDIR=$T spawned
     TMPDIR=$T asks
     TMPDIR=$T answers
-    out=$(TMPDIR=$T JG_HOME="$T/bd" "${jail[@]}" "$CLI" add --mint "[feature] Mint me" --prefix zz --priority 2 --body why --json) || fail "real mint"
-    assert_contains "$out" '"id": "zz-feature-mint-me-' "a minted id must carry the prefix and the title"
+    out=$(TMPDIR=$T JG_HOME="$T/bd" "${jail[@]}" "$CLI" add --mint "[feature] Mint me" --priority 2 --body why --json) || fail "real mint"
+    assert_contains "$out" '"id": "jg-' "a minted id must be bd's, under the store prefix"
   fi
   id=jg-one-a
   # A held row needs a reason on every route in, and the store itself refuses each one.
