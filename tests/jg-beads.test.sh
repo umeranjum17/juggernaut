@@ -129,6 +129,7 @@ callers() {  # The read shapes each backlog caller parses.
   same list --json
   assert_contains "$(. "$ROOT/bin/jg-supervision-lib.sh"; jg_ready_work_rows "$T/bd")" "jg-one-a acme" "supervision must see ready work"
   readers
+  moves
 }
 reader() {  # <home> <command...>: a reader of that home's backlog, with no tasks-axi on its path.
   local home=$1
@@ -156,6 +157,54 @@ owner_rule() {  # <home> <id>: the owner rule's verdict on that row, and its exi
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
   reader "$1" env JG_GUARD_HOST_BIN="${GUARD:-}" OPA="${OPA:-}" bash -c '. "$1/core/owner-rules/bin/jg-owner-rules-lib.sh"; jg_owner_rules_check "$2/data" "$3" direct-PR ship' _ "$ROOT" "$1" "$2" || rc=$?
   printf 'rc=%s\n' "$rc"
+}
+moves() {  # A handoff has no file to move a row through on a store, so either side refuses and nothing moves.
+  local want='keeps its backlog in a Beads store' before out rc=0
+  out=$(reader "$T/bd" "$ROOT/bin/jg-backlog-handoff.sh" design jg-one-a) || rc=$?
+  expect_code 1 "$rc" "a handoff from a store"
+  assert_contains "$out" "this home $want" "a handoff from a store must say why"
+  mkdir -p "$T/mv/data" "$T/mv/state" "$T/mv/config" "$T/sub/data" "$T/sub/bin" "$T/sub/config"
+  printf 'design\n' > "$T/sub/.jg-squad-lead-home"
+  : > "$T/sub/AGENTS.md"
+  cp "$T/bd/config/"* "$T/sub/config/"
+  printf -- '- design - work (home: %s; scope: work; projects: acme; added 2026-07-09)\n' "$T/sub" > "$T/mv/data/squad_leads.md"
+  printf '## In flight\n\n## Queued\n\n- [ ] jg-one-a - One (repo: acme)\n\n## Done\n' > "$T/mv/data/backlog.md"
+  before=$(cat "$T/mv/data/backlog.md")
+  rc=0
+  out=$(reader "$T/mv" "$ROOT/bin/jg-backlog-handoff.sh" design jg-one-a) || rc=$?
+  expect_code 1 "$rc" "a handoff to a store"
+  assert_contains "$out" "squad_lead design $want" "a handoff to a store must say why"
+  assert_equals "$(cat "$T/mv/data/backlog.md")" "$before" "a refused handoff must leave the row where it was"
+  [ ! -e "$T/sub/data/backlog.md" ] || fail "a refused handoff must file no row a store cannot see"
+  mkdir -p "$T/bd/state/handoff"
+  cp "$T/mv/data/backlog.md" "$T/bd/state/handoff/design.outbox.md"
+  rc=0
+  out=$(reader "$T/bd" "$ROOT/bin/jg-backlog-receive.sh" state/handoff/design.outbox.md 1 "$(printf 'a%.0s' {1..64})" 1) || rc=$?
+  expect_code 1 "$rc" "a receipt on a store"
+  assert_contains "$out" "this home $want" "a receipt on a store must say why"
+  [ -f "$T/bd/state/handoff/design.outbox.md" ] || fail "a refused receipt must keep the delivered rows for retry"
+  [ ! -e "$T/bd/data/backlog.md" ] || fail "a refused receipt must file no row a store cannot see"
+  rm -f "$T/bd/state/handoff/design.outbox.md"
+}
+asks() {  # These rows land on the store alone, so this runs after everything that compares the two.
+  local note chat
+  # The jail has no message bus, so a note saves unannounced and exits nonzero: its JSON line is the result.
+  note=$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" note --request-id bd-ask --json '[captain-ask] Keep it ticketed' | grep -m1 '^{' | jq -r .id)
+  assert_contains "$(reader "$T/bd" "$CLI" show "captain-ask-$note" --full)" 'Keep it ticketed' "a captain ask must land in the store with no tasks-axi"
+  chat=$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" note --request-id bd-chat --json '[chat test] Build it' | grep -m1 '^{' | jq -r .id)
+  assert_contains "$(reader "$T/bd" "$ROOT/bin/jg-inbox.sh" approve "$chat" "captain-ask-$note")" "approved captain-ask-$note" "an approval must record with no tasks-axi"
+}
+answers() {  # An answer closes the held row, so this runs after everything that compares it.
+  local out
+  mkdir -p "$T/fb"
+  printf '#!/bin/sh\nexit 1\n' > "$T/fb/tmux"
+  chmod +x "$T/fb/tmux"
+  printf 'window=juggernaut:jg-lane\nkind=ship\nharness=codex\n' > "$T/bd/state/lane.meta"
+  out=$(reader "$T/bd" env PATH="$T/fb:/usr/bin:/bin" "$ROOT/bin/jg-send.sh" lane --resolve-key nope 'An answer') || true
+  assert_contains "$out" 'no open decision or blocker' "an unknown key must stay refused"
+  out=$(reader "$T/bd" env PATH="$T/fb:/usr/bin:/bin" "$ROOT/bin/jg-send.sh" lane --resolve-key jg-wait 'An answer') || true
+  assert_not_contains "$out" 'no open decision or blocker' "an answer must find a held row with no tasks-axi on its path"
+  rm -f "$T/bd/state/lane.meta"
 }
 readers() {  # What reads the backlog file reads the same rows from the store.
   local pick out home flying
@@ -687,6 +736,7 @@ JSON
     printf 'skip: owner rule verdicts: the guard needs Go and OPA\n'
   fi
   ROWS=$T/rows.json callers
+  ROWS=$T/rows.json answers
   # A failed read says so, and a lead's store decides whether that lead can sleep.
   : > "$LOG.down"
   out=$(reader "$T/bd" timeout 90 "$ROOT/bin/jg-session-start.sh")
@@ -848,6 +898,8 @@ else
     TMPDIR=$T gates
     TMPDIR=$T transitions  # After the holds: its races move rows on the Beads store alone.
     TMPDIR=$T spawned
+    TMPDIR=$T asks
+    TMPDIR=$T answers
     out=$(TMPDIR=$T JG_HOME="$T/bd" "${jail[@]}" "$CLI" add --mint "[feature] Mint me" --prefix zz --priority 2 --body why --json) || fail "real mint"
     assert_contains "$out" '"id": "zz-feature-mint-me-' "a minted id must carry the prefix and the title"
   fi

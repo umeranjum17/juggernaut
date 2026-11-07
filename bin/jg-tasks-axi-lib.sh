@@ -205,6 +205,13 @@ jg_backlog_backend_beads() {
   [ "$(jg_backlog_backend_value "$1")" = beads ]
 }
 
+# A handoff moves rows between backlog files, and a Beads store has no file to move them through.
+jg_backlog_refuse_beads_move() {  # <config_dir> <who>
+  jg_backlog_backend_beads "$1" || return 0
+  printf 'error: %s keeps its backlog in a Beads store, and a handoff can only move rows between backlog files; nothing was moved\n' "$2" >&2
+  return 1
+}
+
 # Reads through bin/jg-beads.sh, the only way bd runs; bin/jg-beads-view.py owns the
 # field mapping. bd's stderr carries routine warnings, so it surfaces only on failure.
 # The store path is never derived, because a store inside a home's git clone is refused.

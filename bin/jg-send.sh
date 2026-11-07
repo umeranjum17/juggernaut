@@ -636,7 +636,6 @@ RESOLVE_CLOSE_MAX=$JG_LINE_CAP_DEFAULT
 # preserves even past a hold-until date.
 jg_send_hold_resolved_id() { # <task-id> <decision-key>
   local show id state hold_kind
-  command -v tasks-axi >/dev/null 2>&1 || return 1
   for id in "$2" "$1-decision-$2"; do
     show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-tasks-axi.sh" show "$id" --full 2>/dev/null) || continue
     state=$(printf '%s\n' "$show" | sed -n 's/^  state: //p' | head -1)
