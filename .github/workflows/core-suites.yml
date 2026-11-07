@@ -257,7 +257,9 @@ jobs:
       # Fixture project only: nothing outside a throwaway directory is read or written.
       - name: Project state map test
         if: ${{ !cancelled() }}
-        run: bash project-state-map/tests/psm-search.test.sh
+        run: |
+          bash project-state-map/tests/psm-search.test.sh
+          bash project-state-map/tests/psm-prove.test.sh
 
       # Fixture home only: no live state or metrics are read.
       - name: Retro metrics test
