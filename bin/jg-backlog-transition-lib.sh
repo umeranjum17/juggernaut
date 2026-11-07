@@ -848,7 +848,15 @@ jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
   [ -z "$meta" ] || jg_backlog_record_remove "$meta" "task record" "$state" || return 1
-  jg_backlog_done "$data" "$id" "$@" || return 1
+  if ! jg_backlog_done "$data" "$id" "$@"; then
+    # A backlog that never held this row has nothing left to close, which is
+    # what a close asks for; a lane dispatched with no row, or a fixture home,
+    # reaches teardown exactly like that. Any other failure stays a failure.
+    case ${JG_BACKLOG_TRANSITION_ERROR-} in
+      *'not found in this backlog'*) JG_BACKLOG_TRANSITION_ERROR= ;;
+      *) return 1 ;;
+    esac
+  fi
   jg_backlog_record_remove "$marker" "pending-close record" "$state"
 }
 
