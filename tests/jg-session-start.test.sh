@@ -74,6 +74,10 @@ new_world() {
 # test deliberately breaks one. Mirrors jg-bootstrap.test.sh's fixture.
 make_fake_toolchain() {
   local fakebin=$1
+  # The relaunch builds the spawn core, so the case needs the host's Go even when it is not on the minimal base path.
+  if ! PATH=$BASE_PATH command -v go >/dev/null 2>&1 && command -v go >/dev/null 2>&1; then
+    ln -sf "$(command -v go)" "$fakebin/go"
+  fi
   jg_fake_exit0 "$fakebin" tmux node chrome-devtools-axi
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
@@ -2001,6 +2005,9 @@ test_runtime_bound_truncates_loudly_and_exits_zero() {
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
+  # The bound is three seconds and this case proves where a hung git stops the digest. A Beads store would spend
+  # those seconds reading the backlog in the early stages, so the case runs without one, as it always did.
+  rm -f "$home/config/beads-dir"
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
   make_hanging_tool "$fakebin" git

@@ -134,7 +134,9 @@ jg_test_beads_home() {  # <home> [<prefix>=jg]
       || fail "could not initialise the Beads template store"
   fi
   store=$home-store
-  mkdir -p "$home/config" "$home/data"
+  # The backlog reader drops whitespace from the store path it reads, so a home whose path holds a space keeps its store elsewhere.
+  case $store in *[[:space:]]*) store=$(jg_test_tmpdir)/beads-stores/$(printf '%s' "$home" | cksum | cut -d' ' -f1) ;; esac
+  mkdir -p "$home/config" "$home/data" "${store%/*}"
   rm -rf "$store"
   cp -a "$tpl/$prefix" "$store" || fail "could not copy the Beads store"
   printf '%s\n' "$store/.beads" > "$home/config/beads-dir"
