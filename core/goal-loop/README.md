@@ -15,6 +15,14 @@ raises one finish message, through `bin/jg-live-claim.sh`, and the check closes 
 epic (`goal:<id>:stop:<row>`, `goal:<id>:finish`) before it is printed, so a restart sends none twice. A message whose
 write fails rings once for that reason and is tried again on the next pass.
 
+The `proven` step is the check's own: no lead is woken for it. When it is next, the check launches `proof-run.sh`
+detached (the finish line's proof argv, in the home, ending after `JG_GOAL_PROOF_SECS`, default 900) and a later pass
+reads `proof.exit` beside the log. Exit 0 closes the step (`jg-goal.sh prove`) and the Goal finishes, with the proof
+log named in the finish message. A failure keeps its log, reopens the step and adds a `fix` step, which is the next
+step and wakes the lead. The same failure `limits.attempts` times running, or more than `limits.fix_steps` fixes, is a
+`limit` stop instead. A finish line that no longer hashes to the declared one is an `owner-must` stop and the proof is
+never run. A runner whose process died with no exit file counts as a failed proof (`lost`).
+
 A `next` wake rings once per Goal and step, again after `JG_GOAL_RESURFACE_SECS` (1800) while the step stays open,
 and at once if the Goal left `next` and came back. Records sit in `data/jg-goal-loop/`. A home with no
 `config/goal-beads-dir` is silent; a store the wrapper refuses raises one wake per reason, with the wrapper's text as

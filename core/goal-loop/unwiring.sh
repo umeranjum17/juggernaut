@@ -9,6 +9,6 @@ if [ -e "$f" ]; then
   [ -x "$FMH/bin/jg-check-unregister.sh" ] || { echo "remove manually: $f" >&2; exit 1; }
   if [ "$DRY" -eq 1 ]; then echo "would run: $FMH/bin/jg-check-unregister.sh goal-loop"; else env -u JG_STATE_OVERRIDE JG_HOME="$FMH" "$FMH/bin/jg-check-unregister.sh" goal-loop; fi
 fi
-[ ! -e "$DEST/goal-loop.sh" ] || { echo "remove: $DEST/goal-loop.sh"; [ "$DRY" -eq 1 ] || rm -f -- "$DEST/goal-loop.sh"; }
+for f in goal-loop.sh proof-run.sh; do [ ! -e "$DEST/$f" ] || { echo "remove: $DEST/$f"; [ "$DRY" -eq 1 ] || rm -f -- "$DEST/$f"; }; done
 [ "$DRY" -eq 1 ] || rmdir "$DEST" 2>/dev/null || true
 [ "$DRY" -eq 0 ] || echo 'dry run: nothing written'
