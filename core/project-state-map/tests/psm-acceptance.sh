@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Acceptance chain on the fixture project (report section 11): refresh makes the card, a second run is unchanged with
-# no model call, a force run replaces the card, and the card's picture reads at 390 px. Prints each step and fails on a miss.
+# no model call, a force run replaces the card, the card's picture reads at 390 px, and a wide report needs the map. Prints each step and fails on a miss.
 # Usage: psm-acceptance.sh <evidence-dir>   (needs sign-off-axi and chrome-devtools-axi)
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -38,4 +38,15 @@ second=$(cat "$a/state/card-key")
 live=$(jq -r --slurpfile gone <(jq -s '.' "$a/board/.sign-off/decisions.dismissed.jsonl") '[.items[] | select(.key as $k | all($gone[0][]; (.key // .item.key) != $k))] | map(.key) | join(",")' "$board")
 echo "live card: $live"
 [ "$live" = "$second" ] || miss 'the forced card should be the only live card'
-echo "ACCEPTANCE PASS (card, dropped line counted, 390 px picture, unchanged, force)"
+echo "== report gate: a report naming three areas"
+home=$a/home; mkdir -p "$home/state/project-state-map" "$home/config"; cp -r "$a/state" "$home/state/project-state-map/proj"
+wide() { PSM_NOW=$1 bash "$here/../bin/psm-wide-check.sh" "$2" --project proj --state "$home/state" --config "$home/config"; }
+printf '# Findings\n\nThe Ticket stage, the Gate state and the Stuck flag all need work.\n' > "$a/wide.md"
+printf '# Findings\n\nThe Stuck flag needs work.\n' > "$a/narrow.md"
+now=$(date +%s); wide "$now" "$a/wide.md" 2>&1 | cut -c1-70
+rc=0; wide $((now + 8 * 86400)) "$a/wide.md" || rc=$?
+[ "$rc" = 1 ] || miss 'a wide report with no map should be refused once the warn week has passed'
+cp "$a/wide.md" "$a/withmap.md"; printf '\nMap: %s\n' "$second" >> "$a/withmap.md"
+wide $((now + 8 * 86400)) "$a/withmap.md" || miss 'a wide report with the map link should pass'
+wide $((now + 8 * 86400)) "$a/narrow.md" || miss 'a report naming one area should pass'
+echo "ACCEPTANCE PASS (card, dropped line counted, 390 px picture, unchanged, force, wide report refused without the map and passed with it, narrow report passed)"

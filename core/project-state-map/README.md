@@ -31,11 +31,17 @@ No step ever changes a project file.
   When the code has not changed it prints "unchanged" and `current card: <key>` and costs nothing; when it changed, or with `--force`, it refreshes and replaces the card.
   A live read still needs the project's opt-in word in the config, or `--opt-in` on the ask.
   `psm-card.sh --rev` gives each card a new key, because a board refuses a key it already holds.
+- `bin/psm-wide-check.sh <report.md> --project name --state dir [--config dir]` is the wide-report rule: a report that names three or more of the project's stored states and parts (by name or id, from `proved.json`) must carry the map, as the card id `state-map-<name>-...` or a "State map" heading.
+  It counts names against the stored map with no model call.
+  The first check starts a week of warning, then a wide report without the map is refused; a line `warn` in `config/project-state-map-wide` keeps it at warning.
+  A project with no stored map is skipped.
+  Teardown runs it on a Recon report, and the Recon brief names it, as with the opening check.
 
 ## Check
 - `bash tests/psm-refresh.test.sh` refreshes a copy of the fixture project with a stub model: one call and one post on the first run, none when unchanged, a new card on `--force`, a refresh only when a hit line changes, refusals leaving the old card, the tick, and a real board when `sign-off-axi` is installed.
 - `bash tests/psm-ask.test.sh` asks by project name and by directory: the second ask says unchanged with no model call and no post, force reruns and dismisses the old card, an unknown project, a missing opt-in and a missing board are refused.
-- `bash tests/psm-acceptance.sh <evidence-dir>` is the acceptance chain on the fixture project, with a 390 px picture (needs `sign-off-axi` and `chrome-devtools-axi`).
+- `bash tests/psm-wide.test.sh` checks the rule: one or two areas pass, a wide report is warned in the first week and refused after it, the map card or a State map section passes it, the warn-only switch, names matched by id, and a project with no map is skipped.
+- `bash tests/psm-acceptance.sh <evidence-dir>` is the acceptance chain on the fixture project, with a 390 px picture and the report gate (needs `sign-off-axi` and `chrome-devtools-axi`).
 - `bash tests/psm-read.test.sh` reads the fixture hits with a replayed reply and a stub model: the map keeps the hit key, a live read needs the opt-in, secret-looking files are not sent, the cap and a cap of 0 stop the call, and a bad reply is refused.
 - `bash tests/psm-search.test.sh` runs the search over `tests/fixture-project`, which has known states and parts: the known hit list, a git repo giving the same hits with secrets skipped, the project left unchanged, the hit hash following hit text only, the caps, and refused input.
 - `bash tests/psm-prove.test.sh` proves `tests/fixture-map.json`, which plants false lines: the true machines stay, the false ones are dropped and counted, and the project is left unchanged.
