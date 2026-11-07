@@ -15,7 +15,11 @@
 # rings at once if it comes back. Records sit in <home>/data/jg-goal-loop/, never in state/.
 # A home with no Goal store configured is silent. A store that cannot be read raises one wake line per
 # reason; the wrapper's own refusal text is the reason, and no other bd is tried.
-# Every read is bounded with timeout, so the watcher's kill cannot cut a write: the check only reads Beads.
+# A stop gets one message (jg-goal.sh notice) and a finish gets one message and closes the epic (jg-goal.sh finish).
+# Each message is keyed on the epic before it is printed, so a second pass or a restart prints nothing twice.
+# A stopped Goal costs no wake after its message. Closing the stop row (jg-goal.sh resume) is the whole resume.
+# Reads are bounded with timeout. The only writes are those two, each a short guarded row update, and each is
+# recorded before it is acted on, so a cut write is repeated safely on the next pass.
 set -u
 case "${1:-}" in check|state) ;; *) echo "usage: goal-loop.sh check|state <jg-home>" >&2; exit 2 ;; esac
 [ "$#" -eq 2 ] && [ -d "$2/state" ] || { echo "usage: goal-loop.sh check|state <jg-home>" >&2; exit 2; }
@@ -44,7 +48,7 @@ if ! rows=$(JG_HOME=$HOME_DIR timeout 20 "$GOAL" rows 2>"$err"); then
 fi
 rm -f "$DATA/store-refused"
 
-# One reduction for every Goal: <id> TAB <state> TAB <step or stop row> TAB <ask>.
+# One reduction for every Goal: <id> TAB <state> TAB <step or stop row> TAB <ask> TAB <message already sent>.
 states=$(jq -r '
   def rank: ["ship","merged","released","running","proven"];
   . as $all
@@ -54,18 +58,38 @@ states=$(jq -r '
   | ($kids | map(select(.metadata.kind as $k | rank | index($k))) | sort_by(.metadata.kind as $k | rank | index($k))
      | map(select(.status != "closed")) | first) as $cur
   | ($e.metadata.goal.ask // $e.title | gsub("[\\t\\n]"; " ")) as $ask
+  | ($e.metadata // {}) as $m | ("sent_goal_" + ($e.id | gsub("[^A-Za-z0-9]"; "_")) + "_") as $sk
   | (if $hold then ["stopped", $hold.id]
      elif $cur == null then ["finished", ""]
      elif $cur.status == "open" then ["next", $cur.metadata.kind]
      else ["waiting", $cur.metadata.kind] end) as $r
-  | [$e.id, $r[0], $r[1], $ask] | @tsv' <<< "$rows" 2>/dev/null) || { echo "goal-loop: the Goal rows were not readable JSON" >&2; exit 1; }
+  | (if $r[0] == "stopped" then $m | has($sk + "stop_" + ($r[1] | gsub("[^A-Za-z0-9]"; "_")))
+     elif $r[0] == "finished" then $m | has($sk + "finish") else false end) as $sent
+  | [$e.id, $r[0], $r[1], $ask, (if $sent then "sent" else "new" end)] | @tsv' <<< "$rows" 2>/dev/null) || { echo "goal-loop: the Goal rows were not readable JSON" >&2; exit 1; }
 [ "$verb" = check ] || { [ -z "$states" ] || printf '%s\n' "$states"; exit 0; }
 
+# Run one write verb of jg-goal.sh and print its message. A write that fails rings once per reason.
+announce() {  # <goal id> <verb> <args...>
+  local id=$1 out sig
+  shift
+  if out=$(JG_HOME=$HOME_DIR timeout 25 "$GOAL" "$@" 2>&1 < /dev/null); then
+    [ -z "$out" ] || echo "goal-loop: $out"
+    rm -f "$DATA/write-failed"
+    return 0
+  fi
+  sig=$(printf '%s' "$id $out" | cksum | cut -d' ' -f1)
+  [ "$(cat "$DATA/write-failed" 2>/dev/null)" = "$sig" ] && return 0
+  printf '%s\n' "$sig" > "$DATA/write-failed"
+  echo "goal-loop: $id: jg-goal.sh $1 failed - $(printf '%s' "$out" | grep -m1 . | cut -c1-200); it is tried again on the next pass"
+}
+
 seen=' '
-while IFS=$'\t' read -r id st step ask; do
+while IFS=$'\t' read -r id st step ask sent; do
   [ -n "$id" ] || continue
   seen="$seen$id "
   rec=$DATA/$id.next
+  [ "$st" != stopped ] || [ "$sent" = sent ] || announce "$id" notice "$id" "$step"
+  [ "$st" != finished ] || announce "$id" finish "$id"
   if [ "$st" != next ]; then rm -f "$rec"; continue; fi
   if [ -f "$rec" ]; then
     read -r last_step last_at < "$rec"
@@ -73,7 +97,7 @@ while IFS=$'\t' read -r id st step ask; do
   fi
   printf '%s %s\n' "$step" "$now" > "$rec"
   echo "goal-loop: $id is ready for its $step step ($ask) - run it, then close its $step row; bin/jg-goal.sh show $id lists the steps"
-done <<< "$states"
+done <<< "${states//$'\t\t'/$'\t-\t'}"
 for rec in "$DATA"/*.next; do  # a Goal that is closed or cancelled leaves its record behind
   [ -e "$rec" ] || continue
   name=${rec##*/}

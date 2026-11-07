@@ -6,6 +6,10 @@
 #        jg-goal.sh show [<goal-id>]
 #        jg-goal.sh cancel <goal-id> --reason <text>
 #        jg-goal.sh rows
+#        jg-goal.sh stop <goal-id> --kind <kind> --reason <text>
+#        jg-goal.sh resume <stop-row>
+#        jg-goal.sh notice <goal-id> <stop-row>
+#        jg-goal.sh finish <goal-id>
 #
 # A Goal is a Beads epic labelled `goal` in a small Goal-only store of its own, reached only through
 # bin/jg-beads.sh. The store folder is the absolute BEADS_DIR in `config/goal-beads-dir` (or GOAL_BEADS_DIR),
@@ -22,6 +26,11 @@
 # nothing), cannot run (exit 126 or 127), or does not end within 30 seconds.
 # show prints one Goal's ask, state, steps and open stops, or one line per open Goal.
 # rows prints every Goal-labelled row as one JSON list, for core/goal-loop's check (one read, no write).
+# stop makes one on_hold row under the Goal, with metadata.hold_kind (owner-must, credential, quota, external
+# or limit) and a reason the store insists on. resume closes that row, and that is the whole resume.
+# notice and finish are the Goal's only messages, one for each stop row and one for the finish. Each is
+# keyed in the epic's metadata (goal:<id>:stop:<row> and goal:<id>:finish) before it is printed, so a restart
+# or a second pass prints nothing twice. finish closes the epic. Its claim goes through bin/jg-live-claim.sh.
 # cancel closes the Goal's open rows and the epic on the owner's word. It tears nothing down and sends
 # no message, so unlanded work stays under the normal cleanup rules.
 set -u
@@ -128,6 +137,78 @@ show_goal() {
 
 rows_goal() { need_store; goalstore list --label goal --all -n 0 --json 2>/dev/null; }
 
+KINDS='owner-must credential quota external limit'
+
+is_goal() { goalstore show "$1" --json 2>/dev/null | jq -e '.[0].labels | index("goal")' >/dev/null; }
+
+stop_goal() {
+  local id=${1-} kind='' reason='' row
+  [ -n "$id" ] || die "stop needs a Goal id"
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --kind) kind=${2-}; shift 2 || die "--kind needs a value" ;;
+      --reason) reason=${2-}; shift 2 || die "--reason needs a value" ;;
+      *) die "stop: unknown argument $1" ;;
+    esac
+  done
+  case " $KINDS " in *" $kind "*) ;; *) die "stop needs --kind, one of: $KINDS" ;; esac
+  [ -n "${reason//[[:space:]]/}" ] || die "stop needs --reason"
+  need_store
+  is_goal "$id" || die "no Goal $id"
+  row=$(goalstore create "stop: $kind" -t task --parent "$id" --silent \
+    --metadata "$(jq -nc --arg k "$kind" --arg r "$reason" '{hold_kind:$k, hold_reason:$r}')" 2>/dev/null) || die "the Goal store did not take the stop"
+  goalstore update "$row" --status on_hold >/dev/null 2>&1 || { goalstore close "$row" --force --reason "stop failed" >/dev/null 2>&1; die "could not hold $row"; }
+  printf '%s\n' "$row"
+}
+
+resume_goal() {
+  local row=${1-} json
+  [ -n "$row" ] || die "resume needs a stop row"
+  need_store
+  json=$(goalstore show "$row" --json 2>/dev/null | jq -c '.[0] // empty') && [ -n "$json" ] || die "no row $row"
+  jq -e '(.status == "on_hold" or .status == "blocked") and (.metadata.hold_reason // "") != ""' <<< "$json" >/dev/null || die "$row is not an open stop"
+  goalstore close "$row" --force --reason "resumed" >/dev/null 2>&1 || die "could not close $row"
+  printf 'resumed %s\n' "$row"
+}
+
+# Record a message key on the epic: exit 0 when it is new, 1 when that message already went out.
+mark_sent() {  # <goal-id> <key>
+  local k="sent_${2//[!A-Za-z0-9]/_}"
+  goalstore show "$1" --json 2>/dev/null | jq -e --arg k "$k" '.[0].metadata | has($k)' >/dev/null && return 1
+  goalstore update "$1" --set-metadata "$k=$(date +%s)" >/dev/null 2>&1 || die "could not record the message $2"
+}
+
+notice_goal() {
+  local id=${1-} row=${2-} json action
+  [ -n "$id" ] && [ -n "$row" ] || die "notice needs a Goal id and a stop row"
+  need_store
+  json=$(goalstore show "$row" --json 2>/dev/null | jq -c '.[0] // empty') && [ -n "$json" ] || die "no row $row"
+  mark_sent "$id" "goal:$id:stop:$row" || return 0
+  case "$(jq -r '.metadata.hold_kind // ""' <<< "$json")" in
+    owner-must) action='the owner must decide' ;;
+    credential) action='the owner must sign in or act on the account' ;;
+    quota) action='no worker has quota; it can resume when one does' ;;
+    external) action='it waits on an outside party' ;;
+    limit) action='the same failure kept repeating; the owner must change the plan or cancel it' ;;
+    *) action='it needs a decision' ;;
+  esac
+  jq -r --arg id "$id" --arg a "$action" '"\($id) is stopped (\(.metadata.hold_kind // "no kind")): \(.metadata.hold_reason) - \($a); bin/jg-goal.sh resume \(.id) when it is settled"' <<< "$json"
+}
+
+finish_goal() {
+  local id=${1-} json new=1 ask claim
+  [ -n "$id" ] || die "finish needs a Goal id"
+  need_store
+  json=$(goalstore show "$id" --json 2>/dev/null | jq -c '.[0] // empty') && [ -n "$json" ] || die "no Goal $id"
+  mark_sent "$id" "goal:$id:finish" || new=0
+  goalstore close "$id" --reason "goal finished" >/dev/null 2>&1 || die "could not close $id"
+  [ "$new" = 1 ] || return 0
+  ask=$(jq -r '.metadata.goal.ask // .title' <<< "$json")
+  claim=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-live-claim.sh" "done" "the Goal is done: $ask" 2>/dev/null)
+  printf '%s finished - %s (where: %s)\n' "$id" "${claim:-the Goal is done: $ask}" "$(jq -r '.metadata.goal.finish.where // "this home"' <<< "$json")"
+}
+
 cancel_goal() {
   local id=${1-} reason='' row
   [ -n "$id" ] || die "cancel needs a Goal id"
@@ -155,5 +236,9 @@ case "${1:-}" in
   show) shift; show_goal "$@" ;;
   cancel) shift; cancel_goal "$@" ;;
   rows) rows_goal ;;
-  *) die "unknown verb $1 (declare, show, cancel, rows)" ;;
+  stop) shift; stop_goal "$@" ;;
+  resume) shift; resume_goal "$@" ;;
+  notice) shift; notice_goal "$@" ;;
+  finish) shift; finish_goal "$@" ;;
+  *) die "unknown verb $1 (declare, show, cancel, rows, stop, resume, notice, finish)" ;;
 esac
