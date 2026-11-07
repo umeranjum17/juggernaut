@@ -16,7 +16,8 @@
 # `config/backlog-backend=beads` serves backlog reads from this home's bd store,
 # named by the absolute BEADS_DIR in `config/beads-dir`; jg_backlog_beads_read
 # owns that read, jg_backlog_beads_write owns add, update, done, block, unblock, start,
-# reopen, hold and unhold, and bin/jg-tasks-axi.sh refuses every other verb on it for now.
+# reopen, hold, unhold and the stage, take and drop a handoff moves rows with,
+# and bin/jg-tasks-axi.sh refuses every other verb on it for now.
 # Absent or any other value keeps the default tasks-axi backend path, falling
 # back to manual mutation when the tool is not compatible.
 # jg_tasks_axi_backend_resolve owns backend precedence: TASKS_AXI_BACKEND when
@@ -205,13 +206,6 @@ jg_backlog_backend_beads() {
   [ "$(jg_backlog_backend_value "$1")" = beads ]
 }
 
-# A handoff moves rows between backlog files, and a Beads store has no file to move them through.
-jg_backlog_refuse_beads_move() {  # <config_dir> <who>
-  jg_backlog_backend_beads "$1" || return 0
-  printf 'error: %s keeps its backlog in a Beads store, and a handoff can only move rows between backlog files; nothing was moved\n' "$2" >&2
-  return 1
-}
-
 # Reads through bin/jg-beads.sh, the only way bd runs; bin/jg-beads-view.py owns the
 # field mapping. bd's stderr carries routine warnings, so it surfaces only on failure.
 # The store path is never derived, because a store inside a home's git clone is refused.
@@ -248,7 +242,14 @@ jg_backlog_beads_health() {  # <config_dir>
   return "$rc"
 }
 
-jg_backlog_beads_write() {  # <config_dir> <add|update|done|block|unblock|start|reopen|hold|unhold and aliases> [args...]
+# A remote handoff stages rows in an outbox file, and no store feeds or files that outbox yet.
+jg_backlog_refuse_beads_move() {  # <config_dir> <who>
+  jg_backlog_backend_beads "$1" || return 0
+  printf 'error: %s keeps its backlog in a Beads store, and a remote handoff can only move rows between backlog files; nothing was moved\n' "$2" >&2
+  return 1
+}
+
+jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [args...]
   local bin_dir store
   store=$(jg_backlog_beads_store "$1") || return 2
   shift

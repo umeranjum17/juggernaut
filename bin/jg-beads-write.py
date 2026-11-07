@@ -2,6 +2,7 @@
 """jg-beads-write.py - serve tasks-axi's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
 
 Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold> [args...]
+       BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...>
 
 bin/jg-tasks-axi-lib.sh's jg_backlog_beads_write starts it after bin/jg-tasks-axi.sh's intake and captain guards.
 Every bd call goes through bin/jg-beads.sh. Replies and refusals print tasks-axi's lines on stdout.
@@ -19,6 +20,11 @@ A worker's lane owns its row: the assignee is the lane named by JG_BACKLOG_LANE 
 start claims a row with no owner, and JG_BACKLOG_LANE_HANDOVER=1 takes it from the owner it read, so a row another lane
 took first exits 13. done keeps the assignee as history, reopen clears both, and each moves only from the owner it read.
 bd takes --if-assignee or --force, never both, so closing a blocked row is guarded by status alone.
+stage, take and drop move queued rows, and bd export and bd import carry them.
+stage prints rows as a backlog file, or with --native as export lines, and refuses to leave an active dependent behind.
+take files rows from either in one bd import, skips any already here, and refuses a blocker that neither moves nor is here.
+A backlog file's rows carry what its format holds, and the since date stays behind. drop deletes rows filed elsewhere, in
+one bd call, and leaves any row that moved out of the queue.
 """
 import datetime
 import hashlib
@@ -413,10 +419,112 @@ def unhold(args):
     respond(found, "unhold", ident, "unhold %s -> cleared" % ident, tips)
 
 
+def exported():
+    name = "export-%d.jsonl" % os.getpid()
+    bd("export", "-o", name)
+    path = os.path.join(os.path.dirname(os.environ["BEADS_DIR"].rstrip("/")), name)
+    with open(path, encoding="utf-8") as source:
+        lines = source.read().splitlines()
+    os.unlink(path)
+    return lines
+
+
+def stage(args):
+    native = args[:1] == ["--native"]
+    items = rows()
+    picked = [target(items, key) for key in args[native:]]
+    moving = {row["id"] for row in picked}
+    for row in items.values():
+        item = view.task(row, items)
+        waits = set(item["blocked_by"].split(",")) & moving
+        if waits and row["id"] not in moving and item["state"] != "done":
+            view.refuse('Task "%s" is still blocking active tasks: %s' % (sorted(waits)[0], item["item"]),
+                        "Move them together, or unblock them first")
+    if native:
+        print("".join(line + "\n" for line in exported() if json.loads(line).get("id") in moving), end="")
+        return
+    names = {ident: view.task(row, items)["item"] for ident, row in items.items()}
+    print("## In flight\n\n## Queued\n")
+    for row in picked:
+        item = view.task(row, items)
+        print(view.file_row(item, names))
+        print("".join("  %s\n" % line for line in item["body"].splitlines() if line.strip()), end="")
+    print("\n## Done")
+
+
+def file_rows(path):
+    """A backlog file's rows as bd import rows, read by the parser the cut uses."""
+    parse_item = __import__("jg-beads-migrate").parse_item
+    found, row, section = [], None, ""
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with open(path, encoding="utf-8") as source:
+        for line in source.read().splitlines():
+            head = re.match(r"- \[(.)\] (\S+)(?: - )?(.*)", line)
+            if line.startswith("## "):
+                section, row = line[3:].strip(), None
+            elif head:
+                item = parse_item("", "", section, head)
+                words = item["title"].split()
+                meta = {"kind": item["kind"], "hold_reason": item["hold"], "hold_kind": item["hold_kind"],
+                        "prs": ",".join(item["prs"][1:]), "reports": ",".join(word for word in words if REPORT.match(word))}
+                row = {"id": item["item"], "title": item["title"], "status": item["status"], "issue_type": "task",
+                       "priority": int(item["priority"] or 2), "description": "", "created_at": stamp, "updated_at": stamp,
+                       "metadata": {name: value for name, value in meta.items() if value},
+                       "labels": ["project:" + item["repo"]] if item["repo"] else [],
+                       "dependencies": [{"issue_id": item["item"], "depends_on_id": other, "type": "blocks"}
+                                        for other in item["blocked"]]}
+                row.update({"external_ref": item["prs"][0]} if item["prs"] else {})
+                row.update({"defer_until": item["hold_until"] + "T00:00:00Z"} if item["hold_until"] else {})
+                found.append(row)
+            elif row and line.startswith("  "):
+                row["description"] += ("\n" if row["description"] else "") + line[2:]
+    return found
+
+
+def take(args):
+    path, keys = args[0], args[1:]
+    with open(path, encoding="utf-8") as source:
+        found = [json.loads(line) for line in source] if path.endswith(".jsonl") else file_rows(path)
+    items, picked = rows(), []
+    for key in keys:
+        row = view.named(found, key)
+        if row is None:
+            view.refuse('Task "%s" is not in %s' % (key, path))
+        if "-" not in row["id"]:
+            view.refuse('Task "%s" has no dash, and a Beads id needs one' % key, "Rename it first")
+        if view.named(items.values(), key) is None:
+            picked.append(row)
+    moving = {row["id"] for row in picked}
+    for row in picked:
+        for edge in row.get("dependencies") or []:
+            here = view.named(items.values(), edge["depends_on_id"])
+            if here:
+                edge["depends_on_id"] = here["id"]
+            elif edge["depends_on_id"] not in moving and edge.get("type") == "blocks":
+                view.refuse('Cannot move "%s": its blocker "%s" would be stranded' % (row["id"], edge["depends_on_id"]),
+                            "Add it to the same move, or move it first")
+    if picked:
+        with open(path + ".take.jsonl", "w", encoding="utf-8") as sink:
+            sink.write("".join(json.dumps(row) + "\n" for row in picked))
+        bd("import", path + ".take.jsonl")
+        os.unlink(path + ".take.jsonl")
+
+
+def drop(keys):
+    items = rows()
+    found = [row for row in (view.named(items.values(), key) for key in keys) if row]
+    moved = [row["id"] for row in found if view.task(row, items)["state"] != "queued"]
+    if moved:
+        view.refuse("these rows left the queue during the move and stay here: " + ", ".join(moved))
+    if found:
+        bd("delete", *[row["id"] for row in found], "--force")
+
+
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
-             "block": block, "unblock": unblock, "start": start, "reopen": reopen, "hold": hold, "unhold": unhold}.get(verb)
+             "block": block, "unblock": unblock, "start": start, "reopen": reopen, "hold": hold, "unhold": unhold,
+             "stage": stage, "take": take, "drop": drop}.get(verb)
     if serve is None:
         view.refuse("Unknown write verb: " + verb)
     serve(sys.argv[2:])

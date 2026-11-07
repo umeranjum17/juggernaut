@@ -106,7 +106,7 @@ def parse_item(home, f, sec, m):
     status = 'closed' if closed else 'on_hold' if hold is not None else 'in_progress' if sec == 'In flight' else 'open'
     title = re.sub(r'\s*blocked-by: \S+', '', re.sub(TAG, '', rest)).strip()
     return dict(home=home, item=m[2], title=title or m[2], status=status, hold=hold, file=f, body=[], parent=None,
-                blocked=re.findall(r'blocked-by: ([^\s)]+)', rest), repo=tag('repo'), priority=tag('priority'),
+                blocked=re.findall(r'blocked-by: ([^\s)]+)', rest), repo=tag('repo'), priority=tag('priority'), kind=tag('kind'),
                 when=tag('done') or tag('merged') or tag('since'), hold_kind=tag('hold-kind'),
                 hold_until=tag('hold-until'), prs=re.findall(r'https://\S+/pull/\d+', rest))
 
