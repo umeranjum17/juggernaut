@@ -10,7 +10,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
-| Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), and [host memory guard](#host-memory-guard-confighost-memory) |
+| Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
 | Release branch that follows main | [Version branch](#version-branch-configversion-branch-releasec-n) |
@@ -906,6 +906,22 @@ A missing, zero, or malformed value falls back to the built-in in `bin/jg-sessio
 The caps only cut what the digest prints.
 Each cut names the remainder and the command that shows it.
 No cap touches the wake queue, the lock, network checks, owner rules, or captain-held rows.
+
+## Supervisor context cap (config/supervisor-context-cap)
+
+`config/supervisor-context-cap` sets how many tokens a supervisor's conversation may reach before the harness compacts it.
+Each line is `<lead|main> <tokens, 50000 or more|off>`; `#` starts a comment.
+Default: `lead 150000`, `main off`. With no file the defaults apply.
+A malformed line stops the launch with an error; it is never read as a default or as off.
+
+Why 150000: the escalation token audit measured a wake at 509k tokens when Main started under 150k and 2,058k over 600k.
+Each model call re-reads the whole conversation, so the cap cuts the cost of every wake.
+
+Leads get the cap in their per-launch settings, so a new lead launch picks it up.
+Main stays off until the lead pilot passes (`docs/context-bound.md`, "Pilot"). To turn Main on, set `main 150000` in the file, run `python3 bin/jg-context-bound.py apply main --home <home>`, and restart Main.
+`apply` changes only the two cap keys in the home's local settings; `off` removes only those keys.
+
+The cap never edits records on disk. Holds, decisions, owner rules, proofs and pending asks are re-read whole from disk after a compaction, and the captain's own words are re-printed verbatim (`docs/context-bound.md`, "The record is kept").
 
 ## Startup memory budget (config/startup-memory-budget)
 

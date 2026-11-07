@@ -97,7 +97,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-primary-scope-lib.sh` | Shared marker-or-plain-checkout primary-home predicate for tracked hooks             |
 | `jg-session-lock-lib.sh` | Shared session-lock ownership from harness ancestry or a trusted Claude session id for jg-lock.sh and the Claude Stop auto-arm, plus the read-only lock inspection behind `jg-lock.sh status` and `jg-inbox.sh ready` |
 | `jg-claude-stop-autoarm.sh` | Claude Stop `asyncRewake` hook owning tokenless watcher continuity with single-flight exit-2 rewake (docs/watcher-continuity.md) |
-| `jg-context-bound.py` | Measure a session with the token audit's counter, print the captain's own words and the history path after a compaction (docs/context-bound.md) |
+| `jg-context-bound.py` | Measure a session with the token audit's counter, print the captain's own words and the history path after a compaction, and resolve and apply the per-role supervisor context cap (docs/context-bound.md) |
 | `jg-turnend-guard.sh`    | Shared primary turn-end guard predicate so no turn ends blind (docs/turnend-guard.md) |
 | `jg-turnend-guard-grok.sh` | Grok Stop-hook adapter for the primary turn-end guard                              |
 | `jg-kimi-turnend-hook.sh` | Surgically install or remove Kimi's guarded global crew turn-end hook                |
