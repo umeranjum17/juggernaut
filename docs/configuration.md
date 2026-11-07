@@ -2324,7 +2324,7 @@ Truthy means anything except unset, empty, `0`, `false`, `no`, or `off`; an expl
 ### Promised public replies (state/public-followup)
 
 A relay request that spawns real work can leave Juggernaut owing a specific public reply in a specific thread.
-That promise is a typed `kind=public-followup` obligation whose state machine is owned entirely by `tasks-axi public-followup`, while the full private conversation context stays only in `state/x-context/`.
+That promise is a typed `kind=public-followup` obligation whose state machine is owned entirely by `tasks-axi public-followup`, or by `bin/jg-beads-followup.py` on a Beads home, while the full private conversation context stays only in `state/x-context/`.
 
 Juggernaut's bounded registration retains the obligation's public-safe request binding so a delivered loop can be rechained without the original inbox.
 `bin/jg-public-followup.sh` is Juggernaut's side: it registers a commitment, reconciles typed terminal work results into it, posts the final reply through `bin/jg-x-reply.sh --followup`, and explicitly rechains or retires the retained loop.

@@ -210,6 +210,18 @@ miss pf-six er-due
 miss pf-six er-ctx --json
 miss pf-six er-due --json
 begin pf-six "$sha" --json
+# A blocker stops an attempt from starting, comes too late once one has, and never strands a waiver: bd enforces the edge only within one id prefix, so this one shares it.
+due same pf-seven; due same pf-eight
+jq '.relation_id = "rel-other"' "$T/rel-a.json" > "$T/rel-other.json"
+same block pf-seven --by jg-plain
+begin pf-seven "$sha"
+same unblock pf-seven --by jg-plain
+begin pf-seven "$sha"
+same block pf-seven --by jg-plain
+same public-followup bind-work pf-seven --relation-file "$T/rel-other.json"
+post pf-seven rc --json
+same block pf-eight --by pf-one
+waive pf-eight 'owed nothing' captain --json
 same public-followup list --json
 same public-followup ready
 same ready
@@ -223,6 +235,26 @@ due 'ask bd' pf-crash
 BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" update pf-crash --if-status open --status in_progress --metadata "{\"delivery_state\":\"delivery-posting\",\"delivery\":{\"attempt_count\":1,\"payload_digest\":\"$sha\"}}" >/dev/null 2>&1 || fail "a crashed attempt"
 for _ in 1 2; do [ "$(ask bd public-followup begin-delivery pf-crash --payload-hash "$sha" --json | jq .already)" = true ] || fail "the rerun must answer already"; done
 [ "$(notes pf-crash)" = 1 ] || fail "the rerun must log the attempt once, got $(notes pf-crash)"
+# The whole promise on a Beads home with no tasks-axi on the path: it posts once, and a second deliver posts nothing.
+J=$T/jr
+mkdir -p "$J/data" "$J/config" "$J/s" "$J/state/x-inbox" "$T/fb"
+printf '## In flight\n\n## Queued\n\n## Done\n' > "$J/data/backlog.md"
+printf 'beads\n' > "$J/config/backlog-backend"; printf '%s\n' "$J/s/.beads" > "$J/config/beads-dir"; printf 'FMX_PAIRING_TOKEN=test-token\n' > "$J/.env"
+BEADS_DIR=$J/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "a journey store"
+printf '#!/usr/bin/env bash\ncase " $* " in *connector/followup*) echo post >> "%s/posts" ;; esac\nprintf 200\n' "$T" > "$T/fb/curl"; chmod +x "$T/fb/curl"; : > "$T/posts"
+pf() { PATH=$T/fb:/usr/bin:/bin JG_ROOT_OVERRIDE=$ROOT JG_HOME=$J JG_STATE_OVERRIDE=$J/state FMX_NOW_OVERRIDE=1787539200 "${jail[@]}" "$@"; }
+[ -z "$(PATH=$T/fb:/usr/bin:/bin command -v tasks-axi)" ] || fail "the journey needs a path without tasks-axi"
+ask jr add jg-work "[feature] Bound work" --body why >/dev/null 2>&1 || fail "journey work"
+promise 'ask jr' pf-j req >/dev/null; ask jr public-followup bind-work pf-j --relation-file "$T/rel-a.json" >/dev/null 2>&1 || fail "journey bind"
+jq -n '{request_id:"req-1", platform:"discord", text:"please fix"}' > "$J/state/x-inbox/req-1.json"; chmod 700 "$J/state/x-inbox"; chmod 600 "$J/state/x-inbox/req-1.json"
+pf bash -c ". '$ROOT/bin/jg-x-lib.sh'; fmx_context_registry_set '$J/state' req-1 discord 1900" || fail "journey context"
+pf "$ROOT/bin/jg-public-followup.sh" register pf-j --relation rel-a --work-home main --work-id jg-work --generation 1 >/dev/null || fail "journey register"
+pf "$ROOT/bin/jg-public-followup-emit.sh" --home "$J" --obligation pf-j --relation rel-a --source-home main --work-id jg-work --generation 1 --outcome pr-merged --deliverable pr_url=https://github.com/example/repo/pull/7 --outcome-text 'Fixed' >/dev/null || fail "journey emit"
+pf "$ROOT/bin/jg-public-followup.sh" consume >/dev/null || fail "journey consume"
+pf "$ROOT/bin/jg-public-followup.sh" deliver pf-j >/dev/null || fail "journey deliver"
+pf "$ROOT/bin/jg-public-followup.sh" deliver pf-j >/dev/null || fail "journey repeat"
+[ "$(wc -l < "$T/posts")" = 1 ] || fail "one post from two delivers, got $(wc -l < "$T/posts")"
+[ "$(ask jr public-followup list --delivery-state posted --json | jq '.public_followups | length')" = 1 ] || fail "the promise must end posted"
 # A crash between the comment and the row write folds on the rerun, so the answer stays one event.
 promise 'ask bd' pf-gap req >/dev/null
 ask bd public-followup bind-work pf-gap --relation-file "$T/rel-a.json" >/dev/null
