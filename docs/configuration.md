@@ -398,7 +398,7 @@ The session digest, the fleet snapshot, the inbox status, the owner's asks, the 
 Readers of `data/backlog.md` not named here do not yet see that store.
 `bin/jg-backlog-handoff.sh` moves rows between homes when either side keeps a store, by `bd export` and `bd import`, and keeps the body, holds, blockers and links; a row that crosses a file home also loses its other labels, comments and created date.
 A crash leaves the rows on both sides and rerunning the same handoff finishes the move.
-A remote handoff and `bin/jg-backlog-receive.sh` still refuse before moving anything on a store home, because they move rows through a file.
+A remote handoff moves rows through a file on either side, and asks the receiver first, so a home that cannot file rows refuses before anything is staged.
 On such a home, bootstrap and `bin/jg-remote-doctor.sh` run `bin/jg-beads.sh check`, which proves the pinned versions, the hold rule and telemetry off, and report any failure.
 `bin/jg-remote-doctor.sh` does not require `tasks-axi` on such a home.
 

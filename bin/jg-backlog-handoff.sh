@@ -15,7 +15,7 @@
 # of bug fixed in PR #401 was exactly that drift).
 #
 # When either home keeps a Beads store, bd export and bd import move the rows and
-# a rerun settles a crash; a remote handoff still refuses on a store home.
+# a rerun settles a crash. A remote handoff stages a store's rows in the outbox file.
 #
 # What this script still owns (never delegated):
 #   - resolving the squad_lead home from data/squad_leads.md;
@@ -812,7 +812,18 @@ remote_deliver_outbox() { # <squad-lead-id> <outbox-path>
 
 remove_interrupted_source_duplicates() { # <outbox> <keys...>
   local outbox=$1 key progress remaining pass=0
+  local -a staged=()
   shift
+  if [ "$MAIN_STORE" = 1 ]; then
+    for key in "$@"; do
+      if backlog_key_section "$outbox" "$key" >/dev/null 2>&1 &&
+        backlog_key_section "$MAIN_BACKLOG" "$key" >/dev/null 2>&1; then staged+=("$key"); fi
+    done
+    [ "${#staged[@]}" -gt 0 ] || return 0
+    jg_backlog_beads_write "$CONFIG" drop "${staged[@]}" >&2 && return 0
+    echo "error: could not complete source removal; outbox remains authoritative at $outbox" >&2
+    return 1
+  fi
   while :; do
     remaining=0
     progress=0
@@ -836,12 +847,12 @@ remove_interrupted_source_duplicates() { # <outbox> <keys...>
 }
 
 remote_handoff() { # <squad-lead-id> <keys...>
-  local id=$1 outbox section main_section out_section key mv_out
+  local id=$1 outbox section main_section out_section key mv_out check_out check_rc=0
   local -a requested to_move already missing in_flight done_items not_queued
   shift
   requested=("$@")
   outbox="$DATA/handoff/$id.outbox.md"
-  jg_backlog_refuse_beads_move "$CONFIG" 'this home' || return 1
+  read_main_store || return 1
   validate_backlog_file "main backlog" "$MAIN_BACKLOG" || return 1
   validate_backlog_file "remote handoff outbox" "$outbox" || return 1
   if [ ! -e "$outbox" ] && [ ! -L "$outbox" ]; then
@@ -850,7 +861,7 @@ remote_handoff() { # <squad-lead-id> <keys...>
       return 1
     }
   fi
-  jg_tasks_axi_compatible || {
+  [ "$MAIN_STORE" = 1 ] || jg_tasks_axi_compatible || {
     echo "error: a compatible tasks-axi with atomic multi-ID mv support is required to stage remote handoffs; run bin/jg-bootstrap.sh for the required version" >&2
     return 1
   }
@@ -903,8 +914,26 @@ remote_handoff() { # <squad-lead-id> <keys...>
       return 1
     }
   fi
-  seed_backlog_scaffold "$outbox"
+  # Exit 3 is the receiver's own no: nothing is staged. Anything else, such as an
+  # unreachable host or an older receiver, keeps the outbox retry that follows.
   if [ "${#to_move[@]}" -gt 0 ]; then
+    check_out=$("$SCRIPT_DIR/jg-on.sh" "$id" jg-backlog-receive.sh --check </dev/null 2>&1) || check_rc=$?
+    if [ "$check_rc" -eq 3 ]; then
+      [ -z "$check_out" ] || printf '%s\n' "$check_out" >&2
+      echo "error: squad_lead $id cannot receive rows now; nothing new was staged" >&2
+      return 1
+    fi
+  fi
+  seed_backlog_scaffold "$outbox"
+  if [ "${#to_move[@]}" -gt 0 ] && [ "$MAIN_STORE" = 1 ]; then
+    if ! jg_backlog_beads_write "$CONFIG" stage "${to_move[@]}" >"$outbox.staging"; then
+      cat -- "$outbox.staging" >&2
+      rm -f -- "$outbox.staging"
+      echo "error: atomic outbox staging failed; nothing new was handed off" >&2
+      return 1
+    fi
+    mv -f -- "$outbox.staging" "$outbox" || return 1
+  elif [ "${#to_move[@]}" -gt 0 ]; then
     if ! mv_out=$(tasks-axi mv "${to_move[@]}" --file "$MAIN_BACKLOG" --to "$outbox" --backend markdown 2>&1); then
       [ -z "$mv_out" ] || printf '%s\n' "$mv_out" >&2
       echo "error: atomic outbox staging failed; nothing new was handed off" >&2

@@ -129,7 +129,6 @@ callers() {  # The read shapes each backlog caller parses.
   same list --json
   assert_contains "$(. "$ROOT/bin/jg-supervision-lib.sh"; jg_ready_work_rows "$T/bd")" "jg-one-a acme" "supervision must see ready work"
   readers
-  moves
 }
 reader() {  # <home> <command...>: a reader of that home's backlog, with no tasks-axi on its path.
   local home=$1
@@ -157,22 +156,6 @@ owner_rule() {  # <home> <id>: the owner rule's verdict on that row, and its exi
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
   reader "$1" env JG_GUARD_HOST_BIN="${GUARD:-}" OPA="${OPA:-}" bash -c '. "$1/core/owner-rules/bin/jg-owner-rules-lib.sh"; jg_owner_rules_check "$2/data" "$3" direct-PR ship' _ "$ROOT" "$1" "$2" || rc=$?
   printf 'rc=%s\n' "$rc"
-}
-moves() {  # A remote handoff and a receipt still move rows through a file, so a store refuses them and nothing moves.
-  local want='keeps its backlog in a Beads store' out rc=0
-  printf -- '- design - work (host: far; root: /r; home: /r/design; scope: work; projects: acme; added 2026-07-09)\n' > "$T/bd/data/squad_leads.md"
-  out=$(reader "$T/bd" "$ROOT/bin/jg-backlog-handoff.sh" design jg-one-a) || rc=$?
-  expect_code 1 "$rc" "a remote handoff from a store"
-  assert_contains "$out" "this home $want" "a remote handoff from a store must say why"
-  rm -f "$T/bd/data/squad_leads.md"; rc=0
-  mkdir -p "$T/bd/state/handoff"
-  printf '## In flight\n\n## Queued\n\n- [ ] jg-one-a - One (repo: acme)\n\n## Done\n' > "$T/bd/state/handoff/design.outbox.md"
-  out=$(reader "$T/bd" "$ROOT/bin/jg-backlog-receive.sh" state/handoff/design.outbox.md 1 "$(printf 'a%.0s' {1..64})" 1) || rc=$?
-  expect_code 1 "$rc" "a receipt on a store"
-  assert_contains "$out" "this home $want" "a receipt on a store must say why"
-  [ -f "$T/bd/state/handoff/design.outbox.md" ] || fail "a refused receipt must keep the delivered rows for retry"
-  [ ! -e "$T/bd/data/backlog.md" ] || fail "a refused receipt must file no row a store cannot see"
-  rm -f "$T/bd/state/handoff/design.outbox.md"
 }
 crossings() {  # One row set walks store to store, store to file and file to store, and arrives whole each time.
   local h next=xb before out rc=0 tool="$PATH"
@@ -235,6 +218,59 @@ crossings() {  # One row set walks store to store, store to file and file to sto
   out=$(reader "$T/xb" "$CLI" list)
   assert_contains "$out" "Routed row" "an approved report must reach the lead through the move"
   printf 'ok - a handoff moved rows whole across every mix of store and file\n'
+}
+reaches() {  # A remote handoff leaves and reaches a store, and a receiver that says no stops it before staging.
+  local out before tool="$PATH"
+  cat > "$T/fake-ssh" <<'SH'
+#!/usr/bin/env bash
+while [ "$1" != -- ]; do shift; done
+root=$(base64 -d <<<"$5"); home=$(base64 -d <<<"$6")
+mapfile -d '' -t argv < <(base64 -d <<<"$7")
+[ ! -e "$home/down" ] || exit 255
+cd "$home" || exit 255
+exec env JG_HOME="$home" JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" JG_CONFIG_OVERRIDE="$home/config" "$root/bin/${argv[0]}" "${argv[@]:1}"
+SH
+  chmod +x "$T/fake-ssh"
+  route() { printf -- '- %s - work (host: far; root: %s; home: %s; scope: work; projects: acme; added 2026-07-09)\n' "$2" "$ROOT" "$3" >> "$1/data/squad_leads.md"; }
+  send() {  # <home> <path> <lead> <key>...: a wake that cannot land is the one expected stop, so the rows are what is checked.
+    local home=$1 path=$2 lead=$3 said
+    shift 3
+    said=$(reader "$home" env PATH="$path" JG_SSH_BIN="$T/fake-ssh" "$ROOT/bin/jg-backlog-handoff.sh" "$lead" "$@") || true
+    rm -f "$home/state/.backlog-handoff-$lead.wake-pending"
+    printf '%s\n' "$said"
+  }
+  route "$T/xa" to-xb "$T/xb"
+  route "$T/xb" to-xf "$T/xf"
+  route "$T/xf" to-xa "$T/xa"
+  file jg-rm-base "[feature] Remote base" --repo acme --kind ship --priority 1 --body $'line one\nline two'
+  file jg-rm-tail "[feature] Remote tail" --repo acme --priority 2 --body why --blocked-by jg-rm-base
+  reader "$T/xa" "$CLI" hold jg-rm-tail --reason "owner call" --kind captain --until 2030-01-02 >/dev/null || fail "hold the remote tail"
+  before=$(card "$T/xa" jg-rm-base; card "$T/xa" jg-rm-tail)
+  mv "$T/xb/config/beads-dir" "$T/xb/config/beads-dir.off"
+  printf '%s\n' "$T/xb/gone/.beads" > "$T/xb/config/beads-dir"
+  out=$(send "$T/xa" /usr/bin:/bin to-xb jg-rm-base jg-rm-tail)
+  assert_contains "$out" "cannot receive rows now" "a receiver that says no must stop the handoff"
+  [ ! -e "$T/xa/data/handoff/to-xb.outbox.md" ] || fail "a refusal must stage nothing"
+  assert_equals "$(card "$T/xa" jg-rm-base; card "$T/xa" jg-rm-tail)" "$before" "a refusal must leave the rows"
+  mv -f "$T/xb/config/beads-dir.off" "$T/xb/config/beads-dir"
+  touch "$T/xb/down"
+  out=$(send "$T/xa" /usr/bin:/bin to-xb jg-rm-base jg-rm-tail)
+  assert_contains "$out" "outbox preserved" "an unreachable lead must keep the rows for retry"
+  rm -f "$T/xb/down"
+  send "$T/xa" /usr/bin:/bin to-xb jg-rm-base jg-rm-tail >/dev/null  # Store to store over a route needs no tasks-axi.
+  assert_equals "$(card "$T/xb" jg-rm-base; card "$T/xb" jg-rm-tail)" "$before" "store to a remote store must keep every field"
+  [ ! -e "$T/xa/data/handoff/to-xb.outbox.md" ] || fail "a receipt must release the outbox"
+  mkdir -p "$T/xb/data/handoff"  # A crash after staging leaves the rows on both sides.
+  # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
+  reader "$T/xb" bash -c '. "$1/bin/jg-tasks-axi-lib.sh"; jg_backlog_beads_write "$2/config" stage jg-rm-base jg-rm-tail' _ "$ROOT" "$T/xb" > "$T/xb/data/handoff/to-xf.outbox.md"
+  reader "$T/xb" "$CLI" show jg-rm-base >/dev/null || fail "a crash must leave the source row"
+  send "$T/xb" "$tool" to-xf jg-rm-base jg-rm-tail >/dev/null
+  assert_not_contains "$(reader "$T/xb" "$CLI" list)" jg-rm-base "a rerun must release the source row"
+  assert_equals "$(card "$T/xf" jg-rm-base; card "$T/xf" jg-rm-tail)" "$before" "store to a remote file must keep every field"
+  send "$T/xf" "$tool" to-xa jg-rm-base jg-rm-tail >/dev/null
+  assert_equals "$(card "$T/xa" jg-rm-base; card "$T/xa" jg-rm-tail)" "$before" "file to a remote store must keep every field"
+  assert_not_contains "$(cat "$T/xf/data/backlog.md")" jg-rm "a receipt on a store must release the file rows"
+  printf 'ok - a remote handoff moved rows whole through a store on either side\n'
 }
 asks() {  # These rows land on the store alone, so this runs after everything that compares the two.
   local note chat
@@ -960,6 +996,7 @@ else
     TMPDIR=$T journey
     TMPDIR=$T gates
     TMPDIR=$T crossings
+    TMPDIR=$T reaches
     TMPDIR=$T transitions  # After the holds: its races move rows on the Beads store alone.
     TMPDIR=$T spawned
     TMPDIR=$T asks
