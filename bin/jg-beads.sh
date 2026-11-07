@@ -16,7 +16,7 @@
 # create and update refuse a call that defers a row without naming the reason, or strips it from one.
 # `check` proves the pins and the store, then reads the rule with dolt: a rule gone or changed exits
 # 2 naming it, and a read that fails reports that failure, never a missing rule. A deferred row
-# with no reason, which only `import` can bring in, exits 2 naming the row. It then reads
+# with no reason, which only `import` or `batch` can bring in, exits 2 naming the row. It then reads
 # telemetry back from dolt and exits 2 on a flag not off or on a trace either tool leaves in this
 # store's forced home once its metrics run. Its last line sums the store up for the start checks.
 # `dolt version` and `dolt sql -q` run the pinned dolt in the store's database folder, and a query
@@ -39,7 +39,7 @@
 #     call off BEADS_DIR, and --mem-profile or --cpu-profile, which write outside it.
 #   - a call in bd_refusals: it reaches a server, a remote or a network, turns metrics on, writes
 #     into a git tree or its hooks, or exposes a secret. The message starts `refused (<rule>):`.
-#   - a create or update that defers a row, or strips a deferred row's reason, with no reason named.
+#   - a create or update that defers a row, or strips a deferred row's reason, with no reason named, and bd defer, which keeps none.
 #   - a bd or dolt whose sha256 is not its toolchain.versions row for this platform, checked
 #     before its first run, even for a version. JG_BEADS_BD and JG_BEADS_DOLT name the binary;
 #     otherwise each comes from PATH.
@@ -158,7 +158,7 @@ hold_rule_gaps() {  # <dolt>
   done <<< "$HOLD_RULES"
 }
 
-# Prints the deferred rows with no reason. import is the one write reason_check cannot read. Runs in the database folder.
+# Prints the deferred rows with no reason. import and batch are the writes reason_check cannot read. Runs in the database folder.
 reasonless_rows() {  # <dolt>
   "$1" sql -r csv -q "SELECT id FROM issues WHERE status='deferred' AND NOT ($HOLD_REASON) UNION SELECT id FROM wisps WHERE status='deferred' AND NOT ($HOLD_REASON)" \
     | tail -n +2
@@ -334,6 +334,8 @@ bd_refusals() {  # <bd args...>
     'config set-many '*) for arg in "${words[@]:2}"; do config_key_check "${arg%%=*}" "${arg#*=}"; done ;;
     'sql '*) query_check "$*" ;;
   esac
+}
+
 # Our reason rule for a dated hold, on top of Beads and not inside it: a call that makes a row deferred names the reason,
 # and a call that strips the reason moves the row out of deferred. --defer defers a row by itself; --defer "" clears it.
 reason_check() {  # <create|update> [args...]
@@ -377,7 +379,10 @@ run_bd() {  # <verb> [args...]
   pin_check bd
   store_mode_check
   cd -- "$STORE_PARENT" || die "cannot enter $STORE_PARENT"
-  case "$1" in create|update) reason_check "$@" ;; esac
+  case "$1" in
+    create|update) reason_check "$@" ;;
+    defer) die "a deferred row needs a reason and bd defer keeps none: use update <id> --status deferred --set-metadata hold_reason=<text>" ;;
+  esac
   exec "$PINNED_TOOL" "$@"
 }
 

@@ -60,7 +60,7 @@ same "$(row n3-dated 'r["status"], r.get("defer_until"), m.get("hold_reason")')"
 seed n3-bare
 for call in "update n3-bare --status deferred" "update n3-bare --status=deferred" "update n3-bare -s deferred" \
   "update n3-bare --defer 2099-01-01" "update n3-bare --defer=2099-01-01" "create bare --id n3-new --force --defer 2099-01-01" \
-  "create bare --id n3-new --force --status deferred"; do
+  "create bare --id n3-new --force --status deferred" "defer n3-bare --until 2099-01-01"; do
   # shellcheck disable=SC2086  # Each call is a word list.
   refused 2 "$WRAPPER" $call
 done
