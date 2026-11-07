@@ -65,3 +65,7 @@ assert_absent "$S/away-reach.check.sh" "quiet mode does not arm the reach"
 rm -f "$S/.afk-contract"
 "$REACH" arm >/dev/null
 assert_absent "$S/away-reach.check.sh" "arming with no away record leaves nothing armed"
+if [ -n "${AWAY_REACH_SHOW:-}" ]; then
+  printf 'PASS: every check held. The messages the captain would get on Telegram, in order:\n'
+  sed 's/^---$/-----/' "$SENT"
+fi
