@@ -49,6 +49,8 @@ journeys:
     timeout: 45m
   fleet-report:
     command: bash core/fleet-report/run-proof.sh
+  project-state-map:
+    command: bash core/project-state-map/run-proof.sh
   status-digest:
     command: bash journeys/status-digest.sh
   release-readiness:
