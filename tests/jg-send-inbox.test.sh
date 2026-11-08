@@ -201,11 +201,13 @@ test_resend_enqueues_new_sequence() {
   dir=$(setup_case resend)
   err="$dir/send.err"
   run_send "$dir" "$err" -- t1 "check the CI result" || fail "first send failed"
+  # The worker read the first steer, so the next send owes a fresh bell.
+  mv "$dir/home/state/t1.inbox/001.msg" "$dir/home/state/t1.inbox/handled/" || fail "could not acknowledge the first steer"
   run_send "$dir" "$err" -- t1 "check the CI result" || fail "second send failed"
-  [ -f "$dir/home/state/t1.inbox/001.msg" ] && [ -f "$dir/home/state/t1.inbox/002.msg" ] ||
+  [ -f "$dir/home/state/t1.inbox/handled/001.msg" ] && [ -f "$dir/home/state/t1.inbox/002.msg" ] ||
     fail "a re-send should enqueue a new sequence:"$'\n'"$(ls "$dir/home/state/t1.inbox")"
   doorbells=$(grep -cF 'Juggernaut instruction waiting' "$dir/send.log" || true)
-  [ "$doorbells" = 1 ] || fail "each send rings once (the log is truncated per send), got $doorbells"
+  [ "$doorbells" = 1 ] || fail "a send after an acknowledged one rings once (the log is truncated per send), got $doorbells"
   typed=$(cat "$dir/send.log")
   assert_contains "$typed" "numeric order" \
     "a newer record's doorbell should preserve inbox sequence ordering"
@@ -213,6 +215,49 @@ test_resend_enqueues_new_sequence() {
   *"check the CI result"*) fail "a re-send typed the payload" ;;
   esac
   pass "jg-send inbox: a re-send is a new durable record, never a retyped payload"
+}
+
+# Contract: one bell per unread batch. While an earlier unhandled record has
+# been rung, later sends only record; the bell already names the whole inbox.
+# The record stays durable and the re-ring ladder (oldest unhandled) is untouched.
+test_one_bell_for_a_batch_of_waiting_steers() {
+  local dir err rung typed n
+  dir=$(setup_case onebell)
+  err="$dir/send.err"
+  : >"$dir/all.log"
+  for n in one two three; do
+    run_send "$dir" "$err" -- t1 "steer $n" || fail "send $n failed"
+    cat "$dir/send.log" >>"$dir/all.log"
+  done
+  [ -f "$dir/home/state/t1.inbox/001.msg" ] && [ -f "$dir/home/state/t1.inbox/002.msg" ] \
+    && [ -f "$dir/home/state/t1.inbox/003.msg" ] || fail "all three steers must be durably recorded"
+  rung=$(grep -cF 'Juggernaut instruction waiting' "$dir/all.log" || true)
+  [ "$rung" = 1 ] || fail "three sends to a busy inbox must ring once, got $rung"
+  assert_contains "$(cat "$err")" "already rung" "the quiet send should say why it did not ring"
+  # The ladder continues from the oldest unhandled record, as before.
+  typed=$(JG_TASK_INBOX_GRACE_SECS=0 bash -c '. "$1"; jg_task_inbox_due_action "$2" t1' _ "$ROOT/bin/jg-task-inbox-lib.sh" "$dir/home/state")
+  case "$typed" in
+  "ring "*/001.msg) ;;
+  *) fail "the ladder should re-ring from the oldest unhandled record, got: $typed" ;;
+  esac
+  # Once the worker drained the batch, the next send rings again.
+  mv "$dir/home/state/t1.inbox/"0*.msg "$dir/home/state/t1.inbox/handled/" || fail "could not acknowledge the batch"
+  run_send "$dir" "$err" -- t1 "steer four" || fail "send four failed"
+  rung=$(grep -cF 'Juggernaut instruction waiting' "$dir/send.log" || true)
+  [ "$rung" = 1 ] || fail "a send after the batch was acknowledged must ring, got $rung"
+  pass "jg-send inbox: any number of waiting steers earns one doorbell, and an acknowledged batch re-arms it"
+}
+
+# A bell that never landed (rc!=0) is not a rung record, so the next send tries again.
+test_failed_bell_does_not_silence_later_sends() {
+  local dir err
+  dir=$(setup_case failedbell)
+  err="$dir/send.err"
+  run_send "$dir" "$err" JG_FAKE_TMUX_COMPOSER=pending -- t1 "first, skipped" || fail "first send failed"
+  [ ! -s "$dir/send.log" ] || fail "the pending composer should have skipped the first ring"
+  run_send "$dir" "$err" -- t1 "second, rings" || fail "second send failed"
+  grep -qF 'Juggernaut instruction waiting' "$dir/send.log" || fail "a send after a skipped ring must still ring"
+  pass "jg-send inbox: a ring that did not land never silences the next send"
 }
 
 test_pending_composer_skips_ring_advisorily() {
@@ -510,6 +555,8 @@ test_text_steer_rides_inbox
 test_deep_home_doorbell_stays_short
 test_multiline_steer_is_legal
 test_resend_enqueues_new_sequence
+test_one_bell_for_a_batch_of_waiting_steers
+test_failed_bell_does_not_silence_later_sends
 test_pending_composer_skips_ring_advisorily
 test_failed_ring_is_still_sent
 test_fire_and_forget_unlanded_ring_owes_one_retry

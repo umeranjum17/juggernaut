@@ -60,6 +60,10 @@
 # the composer visibly holds pending text the ring is skipped with a notice and
 # the watcher re-rings an ordinary record later; no composer verdict is
 # delivery proof on this plane, and a failed ring never fails the send.
+# One bell per unread batch: when an earlier unhandled record already has a
+# landed ring, the send records and does not ring again (the bell names the
+# whole inbox); jg_task_inbox_bell_standing owns that rule and the re-ring
+# ladder is unchanged.
 #
 # TYPED - the LOCAL text that must reach the terminal itself: a harness-native
 # invocation (a leading "/", or a leading "$" to a codex target) must reach
@@ -1186,7 +1190,11 @@ else
     # because the watcher owns loss detection from here, either through its
     # bounded re-ring ladder or direct unavailable-endpoint recovery.
     ring_rc=0
-    jg_task_inbox_ring "$TARGET_BACKEND" "$T" "$INBOX_RECORD" "$EXPECTED_LABEL" || ring_rc=$?
+    if jg_task_inbox_bell_standing "$STATE" "$INBOX_TASK_ID" "$INBOX_RECORD"; then
+      ring_rc=4
+    else
+      jg_task_inbox_ring "$TARGET_BACKEND" "$T" "$INBOX_RECORD" "$EXPECTED_LABEL" || ring_rc=$?
+    fi
     ring_retry="the watcher will re-ring"
     if [ -n "$FIRE_AND_FORGET_ID" ] \
       && [ -e "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}/wait-no-turns" ]; then
@@ -1201,6 +1209,7 @@ else
       esac
     fi
     case "$ring_rc" in
+    4) echo "jg-send: no new doorbell: an earlier waiting steer was already rung and the bell names the whole inbox; the steer is durably recorded at $INBOX_RECORD and the watcher re-rings from the oldest unhandled record if the bell was swallowed" >&2 ;;
     1) echo "jg-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at $INBOX_RECORD and $ring_retry. To ring now, submit the pending text with 'jg-send.sh $INBOX_TASK_ID --key Enter' (or clear the composer); the next ring then lands." >&2 ;;
     2) echo "jg-send: doorbell did not reach $T${JG_TASK_INBOX_RING_REASON:+ ($JG_TASK_INBOX_RING_REASON)}; the steer is durably recorded at $INBOX_RECORD and $ring_retry" >&2 ;;
     3) echo "jg-send: doorbell not typed because the agent in $T has exited; the steer is durably recorded at $INBOX_RECORD for recovery (stuck-operator-recovery), and the watcher will not re-ring a dead pane${WAKE_STARTED:+ - its squad lead was woken and drains the inbox when it comes up}" >&2 ;;

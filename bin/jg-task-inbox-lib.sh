@@ -427,6 +427,29 @@ jg_task_inbox_doorbell_line() {  # <record-path>
     "$quoted"
 }
 
+# Whether an earlier unhandled record in the inbox already has a standing bell:
+# a ring that landed (a `rung` word in the delivery record) and no
+# acknowledgement yet. The doorbell names the whole inbox, so a worker that heard
+# it reads every waiting record; ringing again for each later record only repeats
+# the line into its composer. Only a ring that returned 0 writes `rung`, so a
+# skipped or failed ring never silences a later send. The re-ring ladder does not
+# call this: it re-rings the oldest unhandled record on its own schedule.
+jg_task_inbox_bell_standing() {  # <state-dir> <task-id> <this-record-path>
+  local dir this f n rung
+  dir=$(jg_task_inbox_dir "$1" "$2")
+  this=${3##*/}
+  [ -s "$dir/.delivery.jsonl" ] && command -v jq >/dev/null 2>&1 || return 1
+  rung=$(jq -r 'select(.word == "rung") | .seq' "$dir/.delivery.jsonl" 2>/dev/null) || return 1
+  [ -n "$rung" ] || return 1
+  for f in "$dir"/*.msg; do
+    [ -e "$f" ] || continue
+    [ "${f##*/}" != "$this" ] || continue
+    n=$(jg_task_inbox_seq_of "${f##*/}") || continue
+    printf '%s\n' "$rung" | grep -qx "$n" && return 0
+  done
+  return 1
+}
+
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
 # composer pre-check, then the backend's submit machinery with a minimal retry
 # budget, verdict discarded.
