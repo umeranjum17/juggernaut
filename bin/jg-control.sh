@@ -135,8 +135,8 @@
 #   - A composer that visibly holds pending text refuses before an exit command
 #     is typed, so existing text is preserved instead of being concatenated.
 #     `--clear-composer` (exit and relaunch) is the way out of that refusal: it
-#     names the composer state it found, discards the text with Ctrl+U (up to
-#     three presses), reads the composer again, and types the exit command only
+#     names the composer state it found, uses the adapter's clear key, reads
+#     the composer again, and types the exit command only
 #     once the read says `empty`. A composer that is still not empty refuses
 #     with its state, so the exit command can never land on existing text.
 #
@@ -754,23 +754,41 @@ identity=0' "$screen" 2>/dev/null) || content=
   done
 }
 
-# clear_composer <state found>: the self-service way out of the composer refusal. It discards the composer text with
-# Ctrl+U, reads the composer again after each press and returns only on `empty`; anything else dies naming the state
-# it found and the state it left, so the exit command is never typed onto existing text.
+# clear_composer <state found>: discard only on explicit request. Pi's whole
+# editor clear needs proven pending input and is sent once: a second Ctrl+C
+# could exit. Return 2 only when the process classifier proves it stopped.
 clear_composer() {
-  local found=$1 now=$1 i=0
-  jg_control_backend_supports_key "$BACKEND" C-u \
-    || die "task $ID's composer state is '$found' and the $BACKEND backend cannot deliver the Ctrl+U that clears it; clear the composer by hand, then retry '$VERB'"
+  local found=$1 now=$1 i=0 key state display
+  key=$(jg_control_composer_clear_key "$HARNESS") || die "no verified composer clear for $HARNESS"
+  display=$key
+  case "$key" in C-u) display=Ctrl+U ;; C-c) display=Ctrl+C ;; esac
+  jg_control_backend_supports_key "$BACKEND" "$key" \
+    || die "task $ID's composer state is '$found' and the $BACKEND backend cannot deliver its $key clear key"
+  if [ "$key" = C-c ] && [ "$found" != pending ]; then
+    die "task $ID's composer state is '$found', not proven pending editor input; refusing $key because it could answer an unknown surface"
+  fi
   while [ "$i" -lt 3 ] && [ "$now" != empty ]; do
-    jg_backend_send_key "$BACKEND" "$T" C-u "$LABEL" \
-      || die "task $ID's composer state is '$found' and Ctrl+U was not delivered; nothing was typed"
+    if [ "$key" != C-c ] || [ "$i" = 0 ]; then
+      jg_backend_validate_task_endpoint "$META" "$ID" >/dev/null || return 1
+      state=$(agent_state)
+      [ "$state" != dead ] || return 2
+      [ "$state" = alive ] || die "task $ID's endpoint reads '$state'; refusing composer clear"
+      if [ "$key" = C-c ]; then
+        now=$(jg_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) || now=unknown
+        [ "$now" != empty ] || break
+        [ "$now" = pending ] || die "task $ID's editor changed to '$now'; refusing $key"
+      fi
+      jg_backend_send_key "$BACKEND" "$T" "$key" "$LABEL" \
+        || die "task $ID's composer state is '$found' and $key was not delivered; nothing was typed"
+    fi
     i=$((i + 1))
     sleep "$POLL"
+    if [ "$key" = C-c ] && [ "$(agent_state)" = dead ]; then return 2; fi
     now=$(jg_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) || now=unknown
   done
   [ "$now" = empty ] \
-    || die "task $ID's composer state was '$found'; Ctrl+U sent $i times left it '$now', so the exit command was not typed. Clear the composer by hand, then retry '$VERB'"
-  echo "note: task $ID's composer state was '$found'; cleared with Ctrl+U, now empty" >&2
+    || die "task $ID's composer state was '$found'; $key clear left it '$now', so the exit command was not typed"
+  echo "note: task $ID's composer state was '$found'; cleared with $display, now empty" >&2
 }
 
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
@@ -885,7 +903,13 @@ do_exit() {
   # submits the pending text instead of looping on interrupt: Enter submits it
   # through the data plane, and --clear-composer discards it.
   if [ "$CLEAR_COMPOSER" = 1 ] && [ "$composer_state" != empty ]; then
-    clear_composer "$composer_state"
+    local clear_rc=0
+    clear_composer "$composer_state" || clear_rc=$?
+    case "$clear_rc" in
+      0) ;;
+      2) retire_busy_incarnation; printf 'stopped'; return 0 ;;
+      *) return "$clear_rc" ;;
+    esac
     composer_state=empty
   fi
   case "$composer_state" in

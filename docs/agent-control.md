@@ -50,7 +50,11 @@ muse is the one verified adapter that restores the cancelled prompt back into it
 The clear is refused before anything is sent when the recorded backend cannot deliver it.
 
 `exit` reads the composer's state before typing the exit command and requires the exact `empty` verdict; a `pending` verdict refuses by naming the pending text and its recovery (submit it with `--key Enter`, or clear it with the harness clear key where `bin/jg-control-lib.sh` names one), and any other verdict (`unknown`, `pending-unproven`, or an unreadable read) refuses as not proven empty while naming the same clear recovery, matching the fail-safe contract every other consumer that can overwrite composer input follows.
-Passing `--clear-composer` to `exit` or `relaunch` is the self-service way out: it presses the clear key (at most three times), re-reads the composer after each press, goes on only once it reads `empty`, and otherwise refuses without typing anything. It names the state it found on stderr and never concatenates onto the existing text.
+Passing `--clear-composer` to `exit` or `relaunch` selects the adapter-owned explicit discard key in `bin/jg-control-lib.sh` and still requires an empty editor before typing an exit command.
+Pi and Pi-signed use one Ctrl+C on proven pending editor input because Ctrl+U deletes only to the current line start; unknown surfaces refuse that key, and later polls never repeat it.
+Other adapters retain up to three Ctrl+U presses.
+A concurrent agent exit completes only when the existing process classifier proves it stopped.
+The command names the state it found on stderr and never concatenates onto existing text.
 `exit` also refuses, naming the dialog as `blocked on a prompt`, when the screen shows a recognised dialog that a further Enter would answer, whether the dialog was open before the exit command was typed or the submitting Enter opened it; it sends no Escape and chooses no option, so closing the dialog is left to the operator.
 A stopped agent whose pane still shows the dialog text is not refused.
 [`jg_composer_blocking_dialog`](../bin/jg-composer-lib.sh) owns the recognised set, which today is only Claude's background-task exit picker; [its verification record](verification/runtime-backends.md#claude-background-task-exit-picker) lists the dialogs that are not covered.

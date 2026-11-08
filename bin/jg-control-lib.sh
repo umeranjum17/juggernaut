@@ -186,6 +186,15 @@ jg_control_interrupt_clear_key() {  # <harness>
   jg_hq_value "${1-}" interrupt_clear_key
 }
 
+# Explicit composer discard is separate from interrupt cleanup. Pi's Ctrl+U
+# deletes only to the current line start; Ctrl+C clears its whole editor.
+# Other adapters keep the existing line-clear sequence.
+jg_control_composer_clear_key() {  # <harness>
+  local key
+  key=$(jg_hq_value "${1-}" composer_clear_key) || return 1
+  printf '%s' "${key:-C-u}"
+}
+
 # cursor's transcript DOES type an aborted close, but its write latency after
 # an interrupt was measured as variable - sometimes seconds, sometimes not
 # within 20 - so a cancellation claim built on it would be unreliable. Normal

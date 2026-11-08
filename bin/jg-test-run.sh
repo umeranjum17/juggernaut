@@ -460,7 +460,7 @@ family_for_basename() {
       printf '%s\n' session-bootstrap
       ;;
     jg-claude-stop-autoarm-live-e2e.test.sh|\
-    jg-composer-matrix-live-e2e.test.sh|jg-codex-continuity-live-e2e.test.sh|\
+    jg-composer-matrix-live-e2e.test.sh|jg-control-pi-live-e2e.test.sh|jg-codex-continuity-live-e2e.test.sh|\
     jg-codex-hook-layer-live-e2e.test.sh|jg-grok-continuity-live-e2e.test.sh|\
     jg-cursor-primary-live-e2e.test.sh|jg-harness-adapter-instructions-live-e2e.test.sh|\
     jg-devin-signals-live-e2e.test.sh|\
