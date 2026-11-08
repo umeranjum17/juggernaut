@@ -43,9 +43,7 @@
 # The landed-work test is Go (core/teardown/cmd/jg-teardown, through bin/jg-teardown-core.sh),
 # and that command's header is its one owner: the forge proof, the PR discovery and content
 # legs, the dirty, unpushed and local-only refusals, and what a check that cannot run costs are
-# documented where they are decided, so this file does not restate them. A project in local-trunk
-# mode also proves a landing when the copy's HEAD is on its local trunk and on a pushed release
-# branch (core/teardown/cmd/jg-teardown/landed.go).
+# documented where they are decided, so this file does not restate them.
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
 # hard-resets/removes the worktree, kills its processes, and closes its backlog
 # item.
@@ -1741,9 +1739,12 @@ validate_worktree_teardown_safety() {
   [ -z "${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}" ] || args+=(--cached-branch "$TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY")
   [ -z "$PR_URL" ] || args+=(--pr-url "$PR_URL")
   [ -z "$BASE_BRANCH" ] || args+=(--base-branch "$BASE_BRANCH")
-  # A project in local-trunk mode (bin/jg-trunk.sh init left state/trunk-tip-<project>) can prove
-  # a landing from its trunk and pushed release branch instead of a merged forge PR.
-  [ ! -e "$STATE/trunk-tip-$(basename "$PROJ")" ] || args+=(--trunk-branch "$(jg_trunk_policy trunk-branch "$(basename "$PROJ")")")
+  # Only a registered local-trunk project uses the recorded current trunk (including rollovers).
+  local project_mode
+  project_mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$(basename "$PROJ")") || return 1
+  if [ "${project_mode%% *}" = local-trunk ] && [ -e "$STATE/trunk-tip-$(basename "$PROJ")" ]; then
+    args+=(--trunk-branch "$(jg_trunk_branch "$(basename "$PROJ")" "$STATE")")
+  fi
   if [ -n "$PR_URL" ]; then
     ! jg_dod_pr_outside_origin "$WT" "$PR_URL" || args+=(--pr-outside-origin)
     if jg_pr_url_parse "$PR_URL" && [ "$JG_PR_PROVIDER" = forgejo ]; then

@@ -216,29 +216,15 @@ func (l *landing) prIsMerged(branch string) int {
 	return 0
 }
 
-// landedOnTrunk: local-trunk proof of a landing. This copy's HEAD must be an ancestor of the local
-// trunk tip AND of a pushed release branch (origin's release/*, freshly fetched): a commit on the
-// local trunk alone has not been released, and one on a branch nobody pushed is not landed. When
-// it is not proved the gap says why and the ordinary forge proof still gets its turn.
+// landedOnTrunk: the local trunk already holds this copy's exact HEAD. Cleanup does not require
+// a release push. When it is not proved the gap says why and the ordinary forge proof gets its turn.
 func (l *landing) landedOnTrunk() bool {
 	trunk := "refs/heads/" + l.trunkBranch
 	if !gitOK(l.wt, "merge-base", "--is-ancestor", "HEAD", trunk) {
 		l.gap = "this copy's HEAD is not on the local " + l.trunkBranch
 		return false
 	}
-	if !gitOK(l.wt, "remote", "get-url", "origin") ||
-		!gitOK(l.wt, "fetch", "--quiet", "origin", "+refs/heads/release/*:refs/remotes/origin/release/*") {
-		l.gap = "this copy's HEAD is on the local " + l.trunkBranch + " but origin's release branches could not be fetched to check it was pushed"
-		return false
-	}
-	refs, _ := git(l.wt, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/release/")
-	for _, ref := range strings.Fields(refs) {
-		if gitOK(l.wt, "merge-base", "--is-ancestor", "HEAD", ref) {
-			return true
-		}
-	}
-	l.gap = "this copy's HEAD is on the local " + l.trunkBranch + " but on no pushed release branch yet"
-	return false
+	return true
 }
 
 func orStr(s, fallback string) string {

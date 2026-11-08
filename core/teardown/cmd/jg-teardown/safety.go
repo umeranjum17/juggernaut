@@ -85,7 +85,7 @@ func (s *safety) check() int {
 	unpushed := firstLines(unpushedRaw, 5)
 
 	switch {
-	case unpushed != "" && s.mode == "local-only":
+	case unpushed != "" && s.mode == "local-only" && s.trunkBranch == "":
 		def, ok := defaultBranch(s.project)
 		if !ok {
 			return refuse("REFUSED: cannot determine default branch for " + s.project + "; expected origin/HEAD, main, or master.")
@@ -112,6 +112,10 @@ func (s *safety) check() int {
 		fmt.Fprintln(os.Stderr, "REFUSED: worktree "+wt+" has uncommitted changes.")
 		reportDirt(dirty)
 		return refuse("Commit them (or get the captain's explicit OK to discard, then --force).")
+	case s.mode == "local-only" && s.trunkBranch != "":
+		if !s.landedOnTrunk() {
+			return refuse("REFUSED: "+s.gap+".", "Land this branch on the local "+s.trunkBranch+" before cleanup.")
+		}
 	case s.mode != "local-only":
 		// A pushed branch is not a landing: the forge must prove the merge.
 		branch := s.cachedBranch

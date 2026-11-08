@@ -30,6 +30,7 @@ home=$work/home; mkdir -p "$home/config" "$home/data" "$home/state"
 # bin/jg-brief.sh owns the no-mistakes risk reason (--risk); this home answers it up front
 # so these cases exercise the feature's owner, hierarchy and design rules only.
 : > "$home/config/delivery-risk-loose"
+# shellcheck source=core/lib/beads-test-env.sh
 . "$addons/lib/beads-test-env.sh"
 core_beads_home "$FM" "$home"
 export JG_HOME=$home
@@ -50,7 +51,7 @@ add jg-scout-parentless 'Plain title' 'Main13 asked for this.'
 add jg-no-ask 'Plain title' 'Nothing names an owner.'
 add jg-bad-design '[captain-ask] Vague design flag' 'design: maybe'
 add jg-with-ask-longer 'Main9 something' 'Done item.'
-(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" done jg-with-ask-longer) >/dev/null 2>&1 || true
+(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" 'done' jg-with-ask-longer) >/dev/null 2>&1 || true
 # brief <id> <args...>: stderr, then rc= on the last line.
 brief() {
   local id=$1 out rc; shift
@@ -68,32 +69,56 @@ rm -rf -- "$home/data/jg-no-ask"
 "$addons/owner-rules/wiring.sh" "$home" >/dev/null
 is "refusal 1: no owner ask" "$(brief jg-no-ask --mode direct-PR)" "$ASK
 rc=1"
-[ ! -e "$home/data/jg-no-ask" ] && ok "refusal 1 wrote no brief" || no "refusal 1 left data/jg-no-ask"
+if [ ! -e "$home/data/jg-no-ask" ]; then ok "refusal 1 wrote no brief"; else no "refusal 1 left data/jg-no-ask"; fi
 is "refusal 1: missing entry is also no owner ask" "$(brief jg-ghost --mode direct-PR | tail -2 | head -1 | cut -c1-27)" "owner-rules: no owner ask: "
 is "refusal 1: a scout still needs an owner ask" "$(brief jg-no-ask --scout | tail -1)" "rc=1"
 is "refusal: no valid parent" "$(brief jg-orphan --mode direct-PR)" "$PARENT
 rc=1"
 is "refusal: missing parent id" "$(brief jg-bad-parent --mode direct-PR | tail -1)" "rc=1"
-[ ! -e "$home/data/jg-orphan" ] && ok "parent refusal wrote no brief" || no "parent refusal left data/jg-orphan"
+if [ ! -e "$home/data/jg-orphan" ]; then ok "parent refusal wrote no brief"; else no "parent refusal left data/jg-orphan"; fi
 
 is "pass: [captain-ask] title, direct-PR" "$(brief jg-with-ask --mode direct-PR)" "rc=0"
-[ -s "$home/data/jg-with-ask/brief.md" ] && ok "pass wrote the brief" || no "pass wrote no brief"
+if [ -s "$home/data/jg-with-ask/brief.md" ]; then ok "pass wrote the brief"; else no "pass wrote no brief"; fi
 is "pass: MainNNN body with existing parent id" "$(brief jg-with-main --mode direct-PR)" "rc=0"
 is "pass: jg-upkeep parent" "$(brief jg-upkeep --mode direct-PR)" "rc=0"
 is "pass: scouts keep parent exemption" "$(brief jg-scout-parentless --scout)" "rc=0"
 is "pass: scout is exempt from the owner and parent rules" "$(brief jg-with-ask-longer --scout)" "rc=0"
 is "pass: prefix id does not match a longer id" "$(brief jg-with-ask --scout | tail -1)" "rc=1"
-JG_HOME=$home JG_ADDONS_DIR=$addons JG_SQUAD_LEAD_CHARTER=x bash "$FM/bin/jg-brief.sh" sm --squad-lead --no-projects >/dev/null 2>&1 \
-  && ok "pass: squad_lead charter is exempt" || no "squad_lead charter refused"
+if JG_HOME=$home JG_ADDONS_DIR=$addons JG_SQUAD_LEAD_CHARTER=x bash "$FM/bin/jg-brief.sh" sm --squad-lead --no-projects >/dev/null 2>&1; then
+  ok "pass: squad_lead charter is exempt"
+else no "squad_lead charter refused"; fi
 
 tree=$(bash "$addons/owner-rules/bin/jg-owner-rules-tree.sh" <(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" markdown))
-printf '%s\n' "$tree" | grep -qF 'jg-with-main: jg-with-main -> jg-with-ask -> [epic root]' && ok "tree: prints epic parent chain" || no "tree: epic parent chain missing"
-printf '%s\n' "$tree" | grep -qF 'jg-cycle-a: jg-cycle-a -> jg-cycle-b -> jg-cycle-a -> [cycle: jg-cycle-a]' && ok "tree: reports cycle" || no "tree: cycle unreported"
-printf '%s\n' "$tree" | grep -A8 '^Items with no valid parent:' | grep -qF '  jg-cycle-a' && ok "tree: lists invalid items" || no "tree: invalid items list missing cycle"
+if printf '%s\n' "$tree" | grep -qF 'jg-with-main: jg-with-main -> jg-with-ask -> [epic root]'; then ok "tree: prints epic parent chain"; else no "tree: epic parent chain missing"; fi
+if printf '%s\n' "$tree" | grep -qF 'jg-cycle-a: jg-cycle-a -> jg-cycle-b -> jg-cycle-a -> [cycle: jg-cycle-a]'; then ok "tree: reports cycle"; else no "tree: cycle unreported"; fi
+if printf '%s\n' "$tree" | grep -A8 '^Items with no valid parent:' | grep -qF '  jg-cycle-a'; then ok "tree: lists invalid items"; else no "tree: invalid items list missing cycle"; fi
+
+# A real store larger than Linux's per-argument limit: import in one batch, then drive the same brief command.
+python3 - "$work/large.jsonl" <<'PY'
+import json, sys
+with open(sys.argv[1], 'w') as out:
+    for n in range(5160):
+        row = dict(_type='issue', id=f'jg-owner-rules-large-parent-{n:04d}-abcdefghijklmnop',
+                   title='Umer backlog fixture', status='open', priority=2, issue_type='task',
+                   created_at='2026-11-08T00:00:00Z', updated_at='2026-11-08T00:00:00Z', created_by='test')
+        out.write(json.dumps(row) + '\n')
+PY
+BEADS_DIR=$(cat "$home/config/beads-dir") "$FM/bin/jg-beads.sh" import "$work/large.jsonl" >"$work/import.log" 2>&1 \
+  || { cat "$work/import.log"; exit 1; }
+add jg-large-child 'Plain title' $'Main15 asked for this.\nparent: jg-owner-rules-large-parent-5159-abcdefghijklmnop'
+bytes=$(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" markdown | \
+  awk '/^- \[[^]]\] / { row = substr($0, 7); split(row, fields, /[[:space:]]+/); print fields[1] }' | \
+  jq -Rsc 'split("\n") | map(select(. != ""))' | wc -c)
+if [ "$bytes" -gt 131072 ]; then ok "fixture ids exceed 128 KiB ($bytes bytes)"; else no 'fixture below argument limit'; exit 1; fi
+is "large backlog: existing parent near the end still briefs" "$(brief jg-large-child --mode direct-PR)" "rc=0"
+if [ -s "$home/data/jg-large-child/brief.md" ]; then ok 'large backlog wrote the brief'; else no 'large backlog wrote no brief'; fi
+is "large backlog: missing parent still refuses" "$(brief jg-bad-parent --mode direct-PR | tail -1)" 'rc=1'
+is "large backlog: missing owner ask still refuses" "$(brief jg-no-ask --mode direct-PR | tail -2 | head -1 | cut -c1-27)" 'owner-rules: no owner ask: '
+if [ ! -e "$home/data/jg-bad-parent" ]; then ok 'large backlog refusal wrote no brief'; else no 'large backlog refusal left a brief'; fi
 
 "$addons/owner-rules/unwiring.sh" "$home" >/dev/null
 is "uninstalled: check is off again" "$(brief jg-no-ask --mode direct-PR | tail -1)" "rc=0"
 
 # The merge gate refusals are proved by gate-matrix.test.sh and owner-rules-gate.test.sh.
 
-[ "$fails" -eq 0 ] && echo "PASS owner-rules" || { echo "FAIL owner-rules: $fails"; exit 1; }
+if [ "$fails" -eq 0 ]; then echo "PASS owner-rules"; else echo "FAIL owner-rules: $fails"; exit 1; fi
