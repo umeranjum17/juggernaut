@@ -1205,6 +1205,7 @@ $SHARED_INFRA_RULE
    Binding evidence rule: every file the \`evidence:\` line cites must be a file your own done-done run wrote, inside that run's capture folder under \`$DATA/$ID/\`, so the run record ties it to the commit it sealed. A file you copied or saved into \`$DATA/\` by hand is not evidence: nothing ties it to a commit, the judge is never asked, and the PR cannot merge. A tooling change with no user-visible screen still needs \`screen: none\` alone on its own line in the Checks block, and still needs the run-owned text captures (the run's own log or output files) cited in \`evidence:\`.
    d. Before the PR exists, write the same \`## Checks\` block to a draft file (for example \`$DATA/$ID/checks-draft.md\`) and run \`JG_HOME=$JG_HOME $JG_ROOT/core/merge-on-green/checks-lint.sh <draft file> <evidence folder>\` until it prints PASS, so a lint failure shows before the PR is open. Paste the passing block into the PR body, then run the same command with \`<PR url>\` in place of the draft file until it prints PASS.
    e. Publish the receipt bound to the PR head with the Completion receipt command under Definition of done, with \`JG_RECEIPT_PR=<PR url>\` set to the PR's full URL: a receipt for a PR needs it.
+9. If your fix is for a state that should not exist, make the implicit state machine explicit: find the machine, write its transition table, give it one owner, and test each transition (the \`diagnostic-reasoning\` skill, section "Make the implicit state machine explicit").
 
 $WAIT_BLOCK$INBOX_SECTION
 

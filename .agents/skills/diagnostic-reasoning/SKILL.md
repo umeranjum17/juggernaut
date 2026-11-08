@@ -52,6 +52,19 @@ If a load-bearing element is missing, route a focused follow-up investigation in
 A diagnosis or implementation-ready recommendation is evidence, not authorization to change code.
 Implementation still requires the captain's request or another existing lifecycle authority, and the reproduction should become the regression test when a fix is authorized.
 
+## Make the implicit state machine explicit
+
+Use this fix type when the bug is a state that should not exist: a flag pair, status string, or file that can hold a combination nothing is meant to produce, or a transition that several scripts perform on their own.
+That is an implicit state machine, and patching one symptom leaves the other writers free to break it again.
+
+1. Find the machine: list every value the state can take and every place that reads or writes it (`git grep`).
+2. Write its transition table: each allowed from-state, event, and to-state, and name the combinations that must be impossible.
+3. Give it one owner: one function or script performs every transition and refuses an undeclared one with a named reason; all other callers go through it.
+4. Test each transition: one integration test per allowed transition and one per refused transition, through the real caller.
+
+Keep the change inside the machine you found.
+Converting machines the bug did not touch is a separate task.
+
 ## Vet a measured number before reporting it
 
 Apply this to every timing, cost, count, or rate you are about to report or act on, such as merge minutes, quota use, or a test duration.

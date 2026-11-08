@@ -1968,3 +1968,24 @@ test_scout_depth_levels() {
   pass "jg-brief.sh: --depth keeps quick byte-identical, defaults to standard, and adds the deep stages only for deep"
 }
 test_scout_depth_levels
+
+# A bug that is a state which should not exist is fixed by making the implicit
+# state machine explicit; the ship brief points fix lanes at the method that
+# the diagnostic-reasoning skill owns, and the skill still carries the section.
+test_ship_brief_points_at_explicit_state_machine_fix() {
+  local home id brief
+  home="$TMP_ROOT/state-machine-home"
+  mkdir -p "$home/config" "$home/data" && : > "$home/config/delivery-risk-loose"
+  id="brief-state-machine"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  assert_grep "make the implicit state machine explicit" "$brief" \
+    "ship brief lost the explicit-state-machine fix type"
+  assert_grep "diagnostic-reasoning" "$brief" \
+    "explicit-state-machine line does not name the skill that owns the method"
+  assert_grep "## Make the implicit state machine explicit" "$ROOT/.agents/skills/diagnostic-reasoning/SKILL.md" \
+    "diagnostic-reasoning lost its explicit-state-machine section"
+  pass "jg-brief.sh: ship brief points fix lanes at the explicit state machine fix type"
+}
+test_ship_brief_points_at_explicit_state_machine_fix
