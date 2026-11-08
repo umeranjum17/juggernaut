@@ -36,11 +36,6 @@ if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || ! jg_pr_task_id_valid "$1"; then
   echo "usage: JG_HOME=<home> jg-run-receipt.sh <id> PASS|FAIL <evidence-file> [repo]" >&2
   exit 2
 fi
-# These adapters do not themselves call Claude; when a pool is configured,
-# downstream tools inherit its account rather than an ambient default login.
-# shellcheck source=account-pool/bin/jg-pool-claude-env.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/account-pool/bin/jg-pool-claude-env.sh"
-if [ -f "$JG_HOME/config/account-pool" ]; then jg_pool_claude_env || exit 1; fi
 
 ID=$1 VERDICT=$2 EVIDENCE=$3 REPO=${4:-.}
 case "$VERDICT" in PASS|FAIL) ;; *) echo 'error: verdict must be PASS or FAIL' >&2; exit 2 ;; esac
@@ -135,7 +130,7 @@ fi
 TMP=
 # Keep the newest receipt for this head too, so a lane that lands several pull requests can have the right one
 # put back into the slot (jg-receipt-restore.sh) instead of republishing by hand before each merge.
-ARCH_TMP=$(mktemp "$STATE/.$ID.run-receipt.XXXXXX") \
+if ! { ARCH_TMP=$(mktemp "$STATE/.$ID.run-receipt.XXXXXX") \
   && cp -- "$STATE/$ID.run-receipt.json" "$ARCH_TMP" \
-  && mv -f -- "$ARCH_TMP" "$STATE/$ID.run-receipt.$HEAD_SHA.json" || rm -f -- "${ARCH_TMP:-}"
+  && mv -f -- "$ARCH_TMP" "$STATE/$ID.run-receipt.$HEAD_SHA.json"; }; then rm -f -- "${ARCH_TMP:-}"; fi
 printf 'receipt: %s %s head=%s\n' "$ID" "$VERDICT" "$HEAD_SHA"

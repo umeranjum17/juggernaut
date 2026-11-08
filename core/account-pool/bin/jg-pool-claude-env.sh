@@ -12,6 +12,10 @@ done
 unset _jg_old _jg_new 2>/dev/null || true
 
 jg_pool_claude_env() {
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    [ -d "$CLAUDE_CONFIG_DIR" ] && return 0
+    echo 'pool: explicit Claude account folder is missing' >&2; return 1
+  fi
   local home=${JG_HOME:?set JG_HOME} command=byokit-accounts state='' line out='' reason='' cache folder var age
   local -a shed=()
   cache=$home/state/claude-tool-pick.json

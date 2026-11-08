@@ -111,15 +111,44 @@ open_project() {  # <project-dir>: sets PROJ PN TRUNK
 # is (git 2.56 opens one when a worktree is added on the branch) moves nothing and passes. The one delete it allows is `retire`'s
 # (JG_TRUNK_RETIRE=<ref>), which runs only after the old trunk's release merged and its work is carried.
 ensure_guard() {
-  local hook want base
+  local hook want base effective delegate
   base=$(pol trunk-branch)
   hook="$(git -C "$PROJ" rev-parse --path-format=absolute --git-common-dir)/hooks/reference-transaction"
   # shellcheck disable=SC2016 # the hook body is written out verbatim; its variables expand in the hook
   want=$(printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\n[ "$1" = prepared ] || exit 0\nwhile read -r old new ref; do\n  case "$ref" in refs/heads/%s|refs/heads/%s-v[0-9]*) ;; *) continue ;; esac\n  cur=$(git rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)\n  [ -z "$cur" ] || [ "$cur" != "$new" ] || continue\n  case "$new" in *[!0]*) ;; *) [ "${JG_TRUNK_RETIRE:-}" = "$ref" ] && continue; echo "refused: $ref is a trunk and is never deleted" >&2; exit 1 ;; esac\n  [ -n "${JG_TRUNK_WRITER:-}" ] || { echo "refused: $ref moves only through bin/jg-trunk.sh land; nothing writes it by hand (transaction: $old -> $new, now ${cur:-none})" >&2; exit 1; }\n  [ -z "$cur" ] || git merge-base --is-ancestor "$cur" "$new" || { echo "refused: $ref is never rewound or forced; the trunk only moves forward" >&2; exit 1; }\ndone\nexit 0\n' "$base" "$base")
-  if [ -e "$hook" ] && [ "$(cat "$hook")" != "$want" ]; then
-    grep -q 'managed by bin/jg-trunk.sh' "$hook" || die "$hook is not the trunk guard; move it aside so the trunk can be protected"
+  install_trunk_hook "$hook" "$want"
+  effective=$(git -C "$PROJ" rev-parse --path-format=absolute --git-path hooks/reference-transaction) || die "cannot resolve the effective reference-transaction hook"
+  if [ -f "$effective" ] && grep -q '^# managed by bin/jg-git-strip-ai-trailers.sh$' "$effective"; then
+    effective=$("$SCRIPT_DIR/jg-git-strip-ai-trailers.sh" upstream-hooks "$(dirname "$effective")" "$PROJ")/reference-transaction || die "cannot resolve the repository hook beneath the launch overlay"
   fi
-  mkdir -p "$(dirname "$hook")"; printf '%s\n' "$want" > "$hook"; chmod +x "$hook"
+  [ "$effective" != "$hook" ] || return 0
+  # The managed owner-guard wrapper already chains the repository's common
+  # hook. Preserve that installer's file instead of trying to replace it.
+  if [ -x "$effective" ] && grep -q '^# jg-owner-guard global hook template ' "$effective"; then return 0; fi
+  # A configured shared directory delegates to each repository's own guard, never
+  # captures one project's branch policy or replaces an unrecognized user hook.
+  # shellcheck disable=SC2016 # The delegate resolves the repository when Git invokes it.
+  delegate='#!/bin/sh
+# managed by bin/jg-trunk.sh: delegate to the repository trunk guard
+common=$(git rev-parse --path-format=absolute --git-common-dir) || exit 1
+hook=$common/hooks/reference-transaction
+[ ! -x "$hook" ] || exec "$hook" "$@"
+exit 0'
+  install_trunk_hook "$effective" "$delegate"
+
+}
+
+install_trunk_hook() {  # <path> <body>: install atomically; never replace another owner's hook.
+  local hook=$1 want=$2 tmp
+  if [ -e "$hook" ]; then
+    [ "$(cat "$hook")" != "$want" ] || return 0
+    grep -q '^# managed by bin/jg-trunk.sh:' "$hook" || die "$hook is not the trunk guard; preserve it and compose its owner before using this hook directory"
+  fi
+  mkdir -p "$(dirname "$hook")" || die "cannot create the active hook directory"
+  tmp=$(mktemp "$(dirname "$hook")/.trunk-hook.XXXXXX") || die "cannot install $hook; refresh a read-only launch overlay through its installer"
+  if ! printf '%s\n' "$want" > "$tmp" || ! chmod +x "$tmp" || ! mv -f "$tmp" "$hook"; then
+    rm -f "$tmp"; die "cannot install trunk protection at $hook"
+  fi
 }
 
 # The trunk must be where the lander last left it.
@@ -132,12 +161,12 @@ tip_ok() {
 
 # Run a gate command at a commit's exact tree in a clean clone; the log is kept under data/.
 run_gate() {  # <commit> <command> <label>
-  local log="$DATA/trunk/gate-$PN-${1:0:12}-$3.log" rc=0
+  local log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}-$(date +%s)-$$}-$3.log" rc=0
   mkdir -p "$DATA/trunk"
   WORK=$(mktemp -d)
   git clone -q --shared --no-checkout "$PROJ" "$WORK/tree" || die "cannot clone $PROJ for the gate"
   git -C "$WORK/tree" checkout -q --detach "$1" || die "cannot check out ${1:0:12} for the gate"
-  (cd "$WORK/tree" && env -u JG_TASK_ID bash -c "$2") > "$log" 2>&1 || rc=$?
+  (cd "$WORK/tree" && env -u JG_TASK_ID JG_TRUNK_GATE_OUTPUT="${log%.log}.proof" bash -c "$2") > "$log" 2>&1 || rc=$?
   rm -rf -- "$WORK"; WORK=
   [ "$rc" -eq 0 ] || { tail -n 20 "$log" >&2; refuse "gate '$3' failed (exit $rc) at ${1:0:12}; full log: $log"; }
 }
@@ -196,7 +225,7 @@ cmd_init() {
   echo "trunk $TRUNK created at ${base:0:12} in $PROJ"
 }
 
-cmd_land() {
+land_candidate() {
   local id=${1-} META branch cand tip n red hit rc=0 linked gate cmd
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; rebase the lane on the latest $(pol trunk-branch) tip, fix its conflicts and prove it again" ;; esac
   [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
@@ -212,6 +241,8 @@ cmd_land() {
   branch=$(jg_dod_meta_value "$META" branch); branch=${branch:-fm/$id}
   git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "task $id has an invalid ship branch '$branch'"
   cand=$(rev "refs/heads/$branch") || die "branch $branch does not exist in $PROJ"
+  [ "$cand" = "$LAND_HEAD" ] || refuse "branch changed during admission; request and prove its new head"
+  if git -C "$PROJ" merge-base --is-ancestor "$cand" "$tip"; then echo "already landed $id at $cand; not live"; return 0; fi
   if ! git -C "$PROJ" merge-base --is-ancestor "$tip" "$cand"; then
     hit=$(conflict_paths "$tip" "$cand")
     [ -z "$hit" ] || refuse "$branch conflicts with $TRUNK (${tip:0:12}) in: $hit; a lane rebases and fixes it, then proves it again; it is never landed dirty"
@@ -254,6 +285,81 @@ cmd_land() {
   JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$id" --stage "done" --state "done" || true
   if declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "$CONFIG" "$JG_HOME" "$id" "$META" "$cand" - >&2; fi
   echo "landed $id on $TRUNK (${tip:0:12} -> ${cand:0:12}, gate=$gate) in $PROJ; not live: it goes live only on the captain's word"
+}
+
+# Manual and automatic callers share admission before either can wait on the project lock.
+# Exit 75 is in progress, 74 a bounded transient read failure, 1 a final refusal.
+# Context changes admit a new attempt; every attempt keeps its own output and gate logs.
+cmd_land() {
+  local id=${1:-} meta proj branch cand mem context key previous count=0 kind reason attempt rc=0 proof_home account run_lock held_by
+  if [ "$#" -ne 1 ] || ! jg_pr_task_id_valid "$id"; then refuse "land takes only the task id; a landing is never forced"; fi
+  meta=$STATE/$id.meta; [ -f "$meta" ] || die "no meta for task $id at $meta"
+  proj=$(jg_dod_meta_value "$meta" project)
+  branch=$(jg_dod_meta_value "$meta" branch); branch=${branch:-fm/$id}
+  git check-ref-format --branch "$branch" >/dev/null 2>&1 || refuse "invalid ship branch"
+  cand=$(git -C "$proj" rev-parse --verify "refs/heads/$branch^{commit}") || die "branch $branch does not exist in $proj"
+  [ -z "${JG_TRUNK_EXPECT_HEAD:-}" ] || [ "$cand" = "$JG_TRUNK_EXPECT_HEAD" ] || refuse "the requested head changed before admission"
+  proof_home=${DONE_DONE_HOME:-$HOME/.done-done}; account=${CLAUDE_CONFIG_DIR:-}
+  if [ -f "$DATA/$id/merge-card.json" ]; then
+    previous=$(jq -c --arg h "$cand" 'select(.head == $h and .verdict == "pass") | .context // {}' "$DATA/$id/merge-card.json") || refuse "cannot read the declared proof context"
+    previous=${previous:-\{\}}
+    proof_home=${DONE_DONE_HOME:-$(jq -r '.home // empty' <<<"$previous")}; proof_home=${proof_home:-$HOME/.done-done}
+    account=${CLAUDE_CONFIG_DIR:-$(jq -r '.account // empty' <<<"$previous")}
+  fi
+  mem=$DATA/jg-trunk-landing; mkdir -p "$mem"
+  # No runtime status, clocks or attempt output belong to the declared context.
+  context=$({
+    printf '%s\n' "$proj" "$cand" "$proof_home" "$account" "$PATH" \
+      "${JG_BEADS_TEST_BD:-}" "${JG_BEADS_TEST_DOLT:-}" "${GOCACHE:-}" "${GOMODCACHE:-}"
+    cat "$meta"
+    jq -Sc 'del(.at)' "$STATE/$id.run-receipt.json" 2>/dev/null || true
+    for key in "$STATE/trunk-tip-$(basename "$proj")" \
+      "$CONFIG/trunk-policy" "$CONFIG/merge-gate" "$CONFIG/owner-details-patterns" \
+      "$DATA/$id/checks.md" "$DATA/$id/proof-authorizations/$cand.sig" \
+      "$proof_home/config.yaml"; do
+      printf '%s\n' "$key"; [ ! -f "$key" ] || git hash-object "$key"
+    done
+    awk -F'\t' -v h="$cand" -v p="$DATA/$id/" '($3 == h || index($2,p) == 1) && $4 != "card" {r=$2 FS $3 FS $4 FS $5} END {print r}' "$DATA/checks-gate.log" 2>/dev/null || true
+  } | git hash-object --stdin)
+  key=$mem/$id.$cand.$context
+  run_lock=$STATE/.trunk-run-$id-$cand.lock
+  held_by=${JG_TRUNK_RUN_HELD_BY:-}
+  if [ -z "$held_by" ] || ! jg_pid_alive "$held_by" || [ "$(cat "$run_lock/pid" 2>/dev/null || true)" != "$held_by" ]; then
+    if ! jg_lock_try_acquire "$run_lock"; then
+      echo "IN_PROGRESS: $id at $cand already has an active landing or cleanup"; return 75
+    fi
+    LOCKS="$run_lock $LOCKS"
+  fi
+  if ! jg_lock_try_acquire "$STATE/.landing-$id-$cand.lock"; then
+    echo "IN_PROGRESS: $id at $cand already has an active landing attempt"; return 75
+  fi
+  LOCKS="$STATE/.landing-$id-$cand.lock $LOCKS"
+  previous=$(cat "$key.state" 2>/dev/null || true)
+  read -r kind count reason <<<"${previous:-new 0}"
+  case $kind in
+    final) printf '%s\n' "$reason"; return 1 ;;
+  esac
+  attempt=$(mktemp -d "$mem/$id.$cand.attempt-XXXXXX") || die "cannot retain landing attempt"
+  LAND_ATTEMPT=$attempt/gate LAND_HEAD=$cand
+  printf 'running %s\n' "$count" > "$key.state"
+  ( LOCKS=''; trap cleanup EXIT
+    printf 'landing context: project=%s target=%s head=%s context=%s\n' "$proj" "$(cat "$STATE/trunk-tip-$(basename "$proj")" 2>/dev/null || true)" "$cand" "$context"
+    land_candidate "$id"
+  ) > "$attempt/landing.log" 2>&1 || rc=$?
+  cat "$attempt/landing.log"
+  reason=$(grep -E '^(REFUSED|error):' "$attempt/landing.log" | tail -n 1)
+  reason=${reason:-"REFUSED: landing failed (exit $rc); see $attempt/landing.log"}
+  reason="$reason; full log: $attempt/landing.log"
+  [ "$rc" -eq 0 ] || printf '%s\n' "$reason"
+  kind=final
+  if [ "$rc" -eq 0 ]; then kind=landed; reason="landed $id at $cand; not live"
+  elif grep -qE "^(REFUSED|error):.*(away mode|linked to a decision| is red|still held)" "$attempt/landing.log"; then kind="wait"
+  elif ! grep -q "^REFUSED: gate '" "$attempt/landing.log" &&
+    grep -qE '^(jg-captain-hold: )?backlog show [A-Za-z0-9._-]+ exceeded its [0-9]+s backlog read bound$' "$attempt/landing.log"; then
+    count=$((count + 1)); [ "$count" -ge 3 ] || { kind=retry; rc=74; }
+  fi
+  printf '%s %s %s\n' "$kind" "$count" "$reason" > "$key.state"
+  return "$rc"
 }
 
 cmd_verify() {

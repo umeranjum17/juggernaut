@@ -9,7 +9,7 @@
 # The captain's rule (2026-10-29): a card for UI or video work is never text-only,
 # and no model decides that. This script decides, from files:
 #   - non-UI work is a merge that declares `screen: none` (merge-card screen-none);
-#     it needs the sealed clean done-done receipt (merge-card receipt-json) at the head;
+#     it needs sealed capture metadata at the head (merge-card capture-json), marked unverified;
 #   - every other task is UI or video work and needs proof media (png jpg webp gif
 #     mp4 webm) under $JG_HOME/data/<task-id> (two folders deep, at most 12).
 # attach refuses (exit 1, one line naming the fix) when that proof is missing.
@@ -20,7 +20,7 @@
 # GitHub has no upload path for a PR body, so the images live on the board card.
 # The board is --board, else the one jg_board_file names (bin/jg-board-link-lib.sh).
 # --require 1 is the merge gate's: a missing add-on, tool or board refuses instead of skipping.
-# find prints `mode:`, `receipt:` and `media:` lines. Exit 0 also when the board tools
+# find prints `mode:`, `receipt:`, `verification:` and `media:` lines; receipt is the legacy capture-id label. Exit 0 also when the board tools
 # or the merge-card feature are absent (one line says proof was skipped).
 # card asks only whether the board already holds a live evidence card with pictures for
 # the PR at the head: exit 0 when it does (or the board tools are absent), exit 1 with the
@@ -80,20 +80,20 @@ if [ "$CMD" = card ]; then
 fi
 
 mc() { JG_HOME=$JG_HOME "$MC" "$@"; }
-mode=ui receipt=
+mode=ui capture=
 mc screen-none "$ID" "$PR" >/dev/null 2>&1 && mode=text
-receipt=$(mc receipt-json "$ID" "$HEAD" 2>/dev/null | jq -c . 2>/dev/null)
+capture=$(mc capture-json "$ID" "$HEAD" 2>/dev/null | jq -c . 2>/dev/null)
 media=$([ ! -d "$DIR" ] || find "$DIR" -maxdepth 2 \( -name merge-card-media -o -name proof-card -o -name .done-done \) -prune \
   -o -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.mp4' -o -iname '*.webm' \) -print | LC_ALL=C sort | head -n 12)
 if [ "$CMD" = find ]; then
-  printf 'mode: %s\nreceipt: %s\n' "$mode" "$(jq -r '.run_id // "none"' <<<"${receipt:-null}")"
+  printf 'mode: %s\nreceipt: %s\nverification: unverified\n' "$mode" "$(jq -r '.run_id // "none"' <<<"${capture:-null}")"
   printf '%s\n' "$media" | sed '/^$/d; s/^/media: /'
   exit 0
 fi
 
 # The gate: what a card for this kind of work must carry.
 if [ "$mode" = text ]; then
-  [ -n "$receipt" ] || refuse "non-UI work (screen: none) needs a sealed clean done-done run at $HEAD; run: done-done run -- <the command that proves it>"
+  [ -n "$capture" ] || refuse "non-UI work (screen: none) needs a sealed clean done-done run at $HEAD; run: done-done run -- <the command that proves it>"
 elif [ -z "$media" ]; then
   refuse "UI or video work has no proof media under $DIR; add a screenshot or clip there, or declare \`screen: none\` in the PR's ## Checks block when there is no screen"
 fi
@@ -123,13 +123,13 @@ if [ -n "$cards" ] && jq -e --arg h "$HEAD" --argjson w "$([ "$mode" = ui ] && e
   echo "proof: $key is already on the board with its proof"
 fi
 
-outcome=$(jq -r '.outcome // empty' <<<"${receipt:-null}")
+outcome=$(jq -r '.outcome // empty' <<<"${capture:-null}")
 [ "$PR" = - ] || [ -n "$outcome" ] || outcome=$(gh pr view "$PR" --json body --jq .body 2>/dev/null | sed -n 's/^outcome: *//p' | head -n 1)
 label=$([ "$PR" = - ] || printf '%s' "${PR#*://}" | awk -F/ 'NF >= 5 { printf "%s #%s", $3, $5 }')
 case $KIND in ready) verb="Ready for review" ;; review) verb="Needs review" ;; *) verb="Merged" ;; esac
 title=${outcome:-${label:-$ID}: $verb}
-# sign-off wants text in both fields of the run's receipt.
-[ -z "$receipt" ] || receipt=$(jq -c --arg o "${outcome:-$title}" '.outcome = ($o[:1000]) | .evidence = (if (.evidence // "") == "" then "sealed done-done run \(.run_id)" else .evidence end)' <<<"$receipt")
+# sign-off wants text in both fields of the run's capture.
+[ -z "$capture" ] || capture=$(jq -c --arg o "${outcome:-$title}" '.outcome = ($o[:1000]) | .evidence = (if (.evidence // "") == "" then "sealed done-done run \(.run_id)" else .evidence end)' <<<"$capture")
 n=0
 out_dir=$DIR/proof-card
 if [ -z "$card_done" ]; then
@@ -140,11 +140,11 @@ if [ -z "$card_done" ]; then
   done <<<"$media"
   list=$(cd "$out_dir" && for i in $(seq 1 "$n"); do printf '%s\n' "$i".*; done | jq -R . | jq -s .)
   [ "$n" -gt 0 ] || list='[]'
-  about="$verb. Proof attached by script: $n media file(s), done-done receipt $(jq -r '.run_id // "none"' <<<"${receipt:-null}")."
-  jq -n --arg key "$card_key" --arg title "$title" --arg about "$about" --arg link "$link" --argjson media "$list" --argjson run "${receipt:-null}" '
+  about="$verb. Unverified capture attached by script: $n media file(s), done-done capture $(jq -r '.run_id // "none"' <<<"${capture:-null}")."
+  jq -n --arg key "$card_key" --arg title "$title" --arg about "$about" --arg link "$link" --argjson media "$list" --argjson run "${capture:-null}" '
     def clean(max): gsub("[\u0000-\u0009\u000b-\u001f\u007f-\u009f]"; " ") | if length > max then .[:max - 3] + "..." else . end;
     {contract: 1, kind: "evidence", schema: 1, key: $key, title: ($title | clean(160)), about: ($about | clean(500)), link: $link}
-    + (if $media != [] then {media: $media} else {} end) + (if $run != null then {run: ($run | del(.files))} else {} end)' > "$out_dir/card.json" || die "cannot write the card"
+    + (if $media != [] then {media: $media} else {} end) + (if $run != null then {run: ($run | del(.files, .verification) | .proof = "unverified capture; " + .proof)} else {} end)' > "$out_dir/card.json" || die "cannot write the card"
   if [ -n "$restore" ]; then sign-off-axi restore "$card_key" "$BOARD" || die "sign-off-axi could not restore $card_key"
   else sign-off-axi post "$BOARD" --kind evidence --from "$out_dir/card.json" --filer juggernaut-proof || die "sign-off-axi could not post $card_key"; fi
   for k in $old_keys; do sign-off-axi dismiss "$k" "$BOARD" >/dev/null || die "could not archive the old card $k"; done
@@ -159,7 +159,8 @@ if [ "$PR" != - ]; then
   section="<!-- jg-proof -->
 ## Proof
 mode: $mode ($KIND)
-receipt: $(jq -r '.run_id // "none"' <<<"${receipt:-null}")
+verification: unverified
+receipt: $(jq -r '.run_id // "none"' <<<"${capture:-null}")
 $(while IFS= read -r f; do [ -z "$f" ] || printf -- '- %s sha256:%s\n' "${f##*/}" "$(sha256sum "$f" | cut -c1-12)"; done <<<"$media")
 <!-- /jg-proof -->"
   body=$(gh pr view "$PR" --json body --jq .body 2>/dev/null) || die "cannot read the PR body of $PR"

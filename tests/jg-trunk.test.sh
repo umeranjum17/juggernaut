@@ -164,7 +164,7 @@ test_every_unsafe_landing_refuses() {
   lane ugly UGLY; refused 'a failing lint' ugly "gate 'lint' failed"
   printf 'SECRETWORD\n' > "$HOME_D/config/owner-details-patterns"; lane leak SECRETWORD; refused 'an owner-guard hit' leak 'owner-guard'; rm "$HOME_D/config/owner-details-patterns"
   lane bad BAD;  refused 'a failing gate' bad "gate 'full' failed"
-  assert_contains "$(ls "$HOME_D/data/trunk")" gate-proj "a failed gate must keep its log"
+  [ -n "$(find "$HOME_D/data/jg-trunk-landing" -name gate-full.log -print)" ] || fail "a failed gate must keep its attempt log"
   lane t1 ok; lane t2 ok2 t2.txt
   trunk land t1 >/dev/null 2>&1 || fail "t1 must land"
   refused 'a lane based on a moved tip' t2 'trunk moved'
@@ -419,6 +419,72 @@ test_the_bundled_hook_moves_a_home_that_runs_the_project() {
   assert_contains "$(cat "$HOME_D/data/trunk-live.tsv")" hook-failed "a home that did not move must be recorded as such"
   pass 'the bundled hook fast-forwards the home and a dirty home is recorded as not moved'
 }
+
+test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection() {
+  local c before out rc=0 hook_kind owner_hash
+  for hook_kind in configured owner-guard; do
+  rc=0
+  world "hook-context-$hook_kind"
+  lane hook good; c=$(git -C "$PROJ" rev-parse fm/hook); before=$(tip)
+  mkdir -p "$W/repository-hooks"
+  if [ "$hook_kind" = owner-guard ]; then
+    sed -e 's/__NAME__/reference-transaction/g' -e "s|__CAT__|$(command -v cat)|g" \
+      -e "s|__MKTEMP__|$(command -v mktemp)|g" -e "s|__RM__|$(command -v rm)|g" \
+      "$ROOT/core/owner-guard/global-hook.sh" > "$W/repository-hooks/reference-transaction"
+    chmod 555 "$W/repository-hooks/reference-transaction"
+    owner_hash=$(git hash-object "$W/repository-hooks/reference-transaction")
+  fi
+  git -C "$PROJ" config core.hooksPath "$W/repository-hooks"
+  "$ROOT/bin/jg-git-strip-ai-trailers.sh" install "$W/launch-hooks" "$PROJ"
+  "$ROOT/bin/jg-git-strip-ai-trailers.sh" env-file "$W/launch-hooks" "$W/launch-env"
+  # A real child shell inherits exactly the env-file entry the spawn path emits.
+  (
+    # shellcheck source=/dev/null # The real launch helper emitted this environment file.
+    . "$W/launch-env"
+    trunk due "$PROJ" >/dev/null 2>&1 || true
+    [ "$(git -C "$PROJ" rev-parse --path-format=absolute --git-path hooks/reference-transaction)" = "$W/launch-hooks/reference-transaction" ] || fail "the launched environment lost its configured hook directory"
+    out=$(git -C "$PROJ" update-ref refs/heads/trunk "$c" "$before" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || fail "the task overlay bypassed the repository trunk guard"
+    assert_contains "$out" 'moves only through' 'the actual configured hook must refuse the unauthorized movement'
+    [ "$(tip)" = "$before" ] || fail "a refused transaction moved the trunk"
+    trunk land hook >/dev/null 2>&1 || fail "the same configured hook must allow the guarded landing"
+  ) || fail "configured hook journey failed"
+  [ "$(tip)" = "$c" ] || fail "the authorized landing did not move the trunk"
+  if [ "$hook_kind" = owner-guard ]; then
+    [ "$(git hash-object "$W/repository-hooks/reference-transaction")" = "$owner_hash" ] || fail "the existing owner hook was changed"
+  fi
+  pass "the spawned Git environment preserves $hook_kind hooks and repository trunk protection"
+  done
+}
+
+test_admission_is_shared_by_manual_and_automatic_requests() {
+  local c out rc=0 first_log
+  world admission
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  lane once BAD; c=$(git -C "$PROJ" rev-parse fm/once)
+  printf 'gate-full=echo first >> "%s/calls"; while [ ! -e "%s/release" ]; do sleep 0.1; done; echo original; exit 1\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
+  JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
+  for _ in $(seq 1 100); do [ ! -s "$W/calls" ] || break; sleep 0.1; done
+  [ -s "$W/calls" ] || fail "automatic request did not enter its gate"
+  out=$(trunk land once 2>&1) || rc=$?
+  : > "$W/release" # release our own attempt even when the assertion below fails
+  [ "$rc" = 75 ] || fail "a concurrent manual request must report in progress (75): $out"
+  assert_contains "$out" IN_PROGRESS "a concurrent request must name its typed outcome"
+  sweep >/dev/null
+  first_log=$(find "$HOME_D/data/jg-trunk-landing" -name gate-full.log -print | head -n 1)
+  out=$(trunk land once 2>&1) && fail "an unchanged failed gate must stay refused"
+  [ "$(wc -l < "$W/calls" | tr -d ' ')" = 1 ] || fail "unchanged failure reran its gate"
+  printf 'gate-full=echo second >> "%s/calls"; echo changed; exit 1\n' "$W" >> "$HOME_D/config/trunk-policy"
+  trunk land once >/dev/null 2>&1 && fail "a changed failing context must refuse"
+  [ "$(wc -l < "$W/calls" | tr -d ' ')" = 2 ] || fail "changed context must get one attempt"
+  [ "$(cat "$first_log")" = original ] || fail "a later attempt overwrote the original gate log"
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name gate-full.log | wc -l | tr -d ' ')" = 2 ] || fail "every attempt must keep its gate log"
+  [ "$(tip)" != "$c" ] || fail "failed proof must never move the trunk"
+  pass 'automatic/manual requests share admission, unchanged failure stays cached, and changed attempts retain their logs'
+}
+
+test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection
+test_admission_is_shared_by_manual_and_automatic_requests
 
 test_legacy_mode_stays_interoperable
 test_a_good_lane_lands_but_goes_live_only_on_his_word

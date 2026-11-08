@@ -40,6 +40,25 @@ print_limits() {
   TEST_SPEED_LIMITS_FILE=$1 bash "$RUNNER" --show-limits 2>/dev/null
 }
 
+test_required_shards_keep_the_union_and_a_failed_shard() {
+  local fixture=$TMP_ROOT/required out rc=0
+  mkdir -p "$fixture/tests"
+  cp -R "$ROOT/bin" "$fixture/bin"
+  cp -R "$ROOT/defaults" "$fixture/defaults"
+  cp "$ROOT/tests/git-config-helpers.sh" "$fixture/tests/"
+  jg_git_init_commit "$fixture"
+  git -C "$fixture" add bin defaults tests/git-config-helpers.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'fixture scaffolding'
+  write_script "$fixture/tests/required-feature.test.sh" 'echo "Umer fixture failure"; exit 1'
+  git -C "$fixture" add tests
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'fixture feature'
+  out=$(bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$TMP_ROOT/required-results" 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "a failed required shard must refuse: $out"
+  jq -e '.summary.lanes == 8 and .summary.total == 1 and .summary.failed == 1 and .summary.failed_lanes == 1 and (.scripts | length) == 1' \
+    "$TMP_ROOT/required-results/required.json" >/dev/null || fail "required aggregate lost a shard, failure or selected script: $out"
+  pass 'the eight required shards keep the selected union and retain a failed shard in the aggregate'
+}
+
 test_shards_split_a_selection_without_losing_or_repeating_a_script() {
   local scripts k out all seen rc=0
   scripts="tests/jg-ship-local.test.sh tests/jg-pr-wait.test.sh tests/jg-brief.test.sh tests/jg-send-inbox.test.sh tests/jg-prompt-gate.test.sh tests/jg-owner-rules.test.sh tests/jg-mail.test.sh"
@@ -140,6 +159,17 @@ test_a_run_past_the_gate_budget_fails_without_starting_the_next_test() {
   pass 'a run past the gate budget fails without starting the next test'
 }
 
+test_a_wall_failure_with_no_functional_failure_stays_red_in_aggregate() {
+  local script=$TMP_ROOT/wall-only.test.sh json=$TMP_ROOT/wall-only.json rc=0
+  write_script "$script" 'sleep 2'
+  bash "$RUNNER" --gate --max-wall-ms 1000 --json "$json" "$script" > "$TMP_ROOT/wall-only.log" 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail 'a wall-only overrun must fail the command'
+  jq -e '.summary.failed == 0 and .summary.exit != 0' "$json" >/dev/null || fail 'timing JSON must retain the failed gate verdict with zero functional failures'
+  bash "$RUNNER" --aggregate-json "$TMP_ROOT/wall-aggregate.json" "$json" >/dev/null || fail 'the timing aggregation must run'
+  jq -e '.summary.failed == 0 and .summary.failed_lanes == 1' "$TMP_ROOT/wall-aggregate.json" >/dev/null || fail 'the aggregate must not turn a wall-only failure green'
+  pass 'a wall-only gate failure stays red in its timing artifact and aggregate'
+}
+
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run() {
   local limits hung rc=0 started ended
   limits="$TMP_ROOT/hang-limits"
@@ -179,6 +209,7 @@ test_a_weight_cap_defers_slow_suites_and_names_them() {
   pass 'a weight cap defers slow suites and names them'
 }
 
+test_required_shards_keep_the_union_and_a_failed_shard
 test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
 test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time
@@ -186,6 +217,7 @@ test_the_unit_limit_is_5_seconds_in_config
 test_a_unit_test_over_its_limit_warns_naming_itself_and_its_time
 test_the_gate_wall_limit_is_10_minutes_in_config
 test_a_run_past_the_gate_budget_fails_without_starting_the_next_test
+test_a_wall_failure_with_no_functional_failure_stays_red_in_aggregate
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them

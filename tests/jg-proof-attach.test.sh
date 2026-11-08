@@ -31,8 +31,9 @@ row() {  # <name> <task> <body> <board-json>: fresh task folder and board for on
   printf '%s\n' "$3" > "$STUB_BODY"; printf '%s\n' "$4" > "$STUB_BOARD"
 }
 shot() { printf 'png' > "$home/data/$1/shot.png"; }
-seal() {  # <task>: a sealed clean done-done run at HEAD
+seal() {  # <task>: a real capture listed by a sealed clean run at HEAD
   mkdir -p "$home/data/$1/.done-done/runs"
+  printf 'Parser fixture capture\n' > "$home/data/$1/out.txt"
   printf '{"schema":1,"exit":0,"dirty":false,"commit":"%s","run_id":"20261029T000000Z-01234567-ab","started_at":"1","files":["out.txt"]}' "$HEAD" > "$home/data/$1/.done-done/runs/r.json"
 }
 run() { out=$(bash ${PROOF_X:+-x} "$ROOT/bin/jg-proof-attach.sh" "$@" --pr "$PR" --board "$root/b.json" 2>&1); rc=$?; }
@@ -59,6 +60,20 @@ row text-ok t3 $'## Checks\nscreen: none\noutcome: Parser is faster' "$EMPTY"; s
 run attach ready t3
 assert_equals 0 "$rc" "non-UI work with a sealed receipt is allowed text-only ($out)"
 assert_equals null "$(jq -c '.media // null' "$home/data/t3/proof-card/card.json")" "non-UI card has no media"
+assert_contains "$(jq -r '.run.proof' "$home/data/t3/proof-card/card.json")" "unverified capture" "raw attachment is explicitly unverified"
+assert_contains "$(cat "$STUB_BODY")" "verification: unverified" "PR attachment does not assert proof approval"
+raw_rc=0
+# Internal modes supplied through the environment cannot turn discovery into authorization.
+discovering=1 recording=1 "$ROOT/core/merge-card/merge-card" receipt-json t3 "$HEAD" > "$root/raw-receipt.json" 2>/dev/null || raw_rc=$?
+assert_equals 1 "$raw_rc" "raw attachment cannot satisfy approved receipt lookup"
+assert_equals '' "$(cat "$root/raw-receipt.json")" "unapproved lookup returns no JSON"
+touch "$home/config/owner-rules"
+JG_MAIN_HOME=$home "$ROOT/core/owner-rules/bin/jg-owner-rules-gate.sh" init-key >/dev/null || fail "cannot create fixture proof key"
+sign_rc=0
+JG_MAIN_HOME=$home "$ROOT/core/owner-rules/bin/jg-owner-rules-gate.sh" sign t3 "$HEAD" "$PR" > "$root/raw-sign.log" 2>&1 || sign_rc=$?
+assert_equals 1 "$sign_rc" "raw attachment cannot authorize an owner signature"
+[ ! -f "$home/data/t3/proof-authorizations/$HEAD.sig" ] || fail "unapproved capture got an owner signature"
+rm -f -- "$home/config/owner-rules"
 row text-bad t4 $'## Checks\nscreen: none' "$EMPTY"
 run attach ready t4
 assert_equals 1 "$rc" "non-UI work without a sealed receipt is refused"
@@ -92,7 +107,8 @@ JG_ADDONS_DIR=$root/retired export JG_ADDONS_DIR
 run find t9
 unset JG_ADDONS_DIR
 assert_contains "$out" "mode: text" "find reports text mode for screen: none despite a stale override"
-assert_contains "$out" "receipt: 20261029T000000Z-01234567-ab" "find reports the sealed receipt"
+assert_contains "$out" "receipt: 20261029T000000Z-01234567-ab" "find reports the sealed capture"
+assert_contains "$out" "verification: unverified" "find marks discovery as unverified"
 pass "find lists evidence and recognizes screen: none"
 
 # verify-merge-card-posts-after-pr-239: the real post-merge hook path files a card with only JG_HOME set.
