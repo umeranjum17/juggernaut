@@ -79,6 +79,7 @@ plan=(
   merge-on-green:home
   goal-loop:home
   critical-stall:home
+  stall-action:home
   quota-failover:all
   limit-prompt-move:all-nodry
   model-gate:env

@@ -1044,6 +1044,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/stall-action/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/status-wait-check/README.md",
       "audience": "operator-current"
     },
