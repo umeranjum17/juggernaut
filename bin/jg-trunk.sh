@@ -9,6 +9,8 @@
 #        jg-trunk.sh release <project-dir>             push the batch to the next release/c-N and open the one release PR
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
 #
+# The trunk is the project's newest trunk-v<N> branch, falling back to `trunk`.
+#
 # The ship branch (state/<id>.meta branch=, default fm/<id>) must hold EXACTLY ONE commit on
 # top of the trunk tip. A moved tip or a second commit refuses; the lane rebases and proves again.
 # `land` runs the same gates as bin/jg-merge-local.sh (bin/jg-merge-gate-lib.sh owns them), plus
@@ -67,12 +69,22 @@ cleanup() { local l; for l in $LOCKS; do jg_lock_release "$l" || true; done; [ -
 trap cleanup EXIT
 lock() { jg_lock_acquire_wait "$1"; LOCKS="$1 $LOCKS"; }
 
+# The project's CURRENT trunk: the newest local trunk-v<N> branch, else the configured name
+# (default `trunk`). A project with no trunk at all resolves to the plain name, so tip_ok keeps
+# its exact "no trunk for <project>" refusal.
+current_trunk() {
+  git -C "$PROJ" for-each-ref --format='%(refname:strip=2)' 'refs/heads/trunk-v*' 2>/dev/null \
+    | awk '/^trunk-v[0-9]+$/ { n = substr($0, 8) + 0; if (!seen || n > best) { best = n; seen = 1; name = $0 } } END { if (seen) print name }' \
+    | grep . || pol trunk-branch
+}
+
 open_project() {  # <project-dir>: sets PROJ PN TRUNK
   PROJ=${1:?project directory required}
   git -C "$PROJ" rev-parse --git-dir >/dev/null 2>&1 || die "$PROJ is not a git repository"
   PN=$(basename "$PROJ")
-  TRUNK=$(pol trunk-branch)
+  TRUNK=$(current_trunk)
   git check-ref-format --branch "$TRUNK" >/dev/null 2>&1 || die "invalid trunk-branch '$TRUNK'"
+  export JG_TRUNK_BRANCH=$TRUNK
   [ "$(pol trunk-owner)" = this-home ] || refuse "trunk-owner=$(pol trunk-owner) is not built; only this-home is, and the owner is an open captain call"
 }
 
