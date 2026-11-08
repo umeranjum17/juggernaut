@@ -344,9 +344,10 @@ jobs:
           bin/jg-herdr-ci-cleanup.sh snapshot "$RUNNER_TEMP/jg-herdr/sessions-before.json"
       - name: Run real-Herdr family (serial, required)
         id: run-real-herdr-family
-        # Heavy tier step tripwire: above the healthy 7-10 minute wall and far
+        # Heavy tier step tripwire: above the healthy wall (about 25 minutes on a
+        # runner since the spawn suites file their tickets in a Beads store) and
         # below the job backstop, so a hang fails this step and cleanup runs.
-        timeout-minutes: 20
+        timeout-minutes: 35
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/jg-test"
