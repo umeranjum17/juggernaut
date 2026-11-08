@@ -4,8 +4,8 @@
 # Usage: jg-whats-left.sh [write|show]
 #
 #   write  (default) render state/whats-left.md and print nothing.
-#   show   print the view; first re-render it when any backlog or status record
-#          is newer than the file, so a look never shows a stale list.
+#   show   print the view after re-rendering it, so a look never shows a stale
+#          list.
 #
 # The view is a projection of jg-bearings-snapshot.sh, which reads the records
 # that already exist (backlog, task status, captain holds). It keeps no list of
@@ -26,6 +26,9 @@ case "$TIMEOUT" in ''|*[!0-9]*|0) TIMEOUT=45 ;; esac
 # shellcheck source=bin/jg-timeout-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-timeout-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 
 case "${1:-write}" in
   -h|--help) sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -69,13 +72,8 @@ render() {
   mv -f -- "$tmp" "$VIEW" || { rm -f -- "$tmp"; return 1; }
 }
 
-stale() {
-  [ -s "$VIEW" ] || return 0
-  [ -n "$(find "$DATA/backlog.md" "$STATE" -maxdepth 1 \( -name backlog.md -o -name '*.status' -o -name '*.meta' \) -newer "$VIEW" -print -quit 2>/dev/null)" ]
-}
-
 if [ "$MODE" = show ]; then
-  if stale; then render || [ -s "$VIEW" ] || exit 1; fi
+  render || [ -s "$VIEW" ] || exit 1
   cat -- "$VIEW"
 else
   render

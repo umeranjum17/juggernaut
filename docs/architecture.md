@@ -363,9 +363,9 @@ When called with `JG_HOME=<this-juggernaut-home>` or when `JG_HOME` is already s
 The parent guards every reply-bearing marked request against a missing correlated report without reading the Squad Lead conversation; `bin/jg-pending-reply-lib.sh` owns the correlation, recovery, escalation, and retention contract, while `bin/jg-send.sh` owns the explicit fire-and-forget exception.
 When a marked turn ends with no correlated report, the parent itself appends one correlated `note` line that names the lead's last stamped status from this turn and resolves the request (`resolved_via=turn-end`), so no repost and no second lead turn follow; the repost stays the fallback only when the log holds no such line.
 Explicit backend-target sends and direct human typing stay unmarked, so captain intervention in a Squad Lead pane remains conversational.
-After seeding a Squad Lead, `jg-backlog-handoff.sh` validates the fleet-specific handoff, atomically delegates already-judged in-scope queued item moves to `tasks-axi mv`, and then attempts a marked routed-work wake through the receiver's recorded endpoint.
+After seeding a Squad Lead, `jg-backlog-handoff.sh` validates the fleet-specific handoff, atomically delegates already-judged in-scope queued item moves to `bin/jg-backlog.sh` moves, and then attempts a marked routed-work wake through the receiver's recorded endpoint.
 The [`jg-backlog-handoff.sh`](../bin/jg-backlog-handoff.sh) header owns route-specific wake outcomes, remote outbox release after receipt, and stable wake-correlation retry behavior.
-`tests/jg-backlog-handoff.test.sh` and `tests/jg-remote-backlog-handoff.test.sh` pin the local and remote delivery boundaries.
+`tests/jg-beads.test.sh` and `tests/jg-remote-backlog-handoff.test.sh` pin the local and remote delivery boundaries.
 An unreachable remote host is unknown rather than dead, preserves its route and durable work, and is never failed over or relaunched locally.
 Idle Squad Lead panes are healthy; teardown is explicit and refuses while the Squad Lead home has in-flight work unless the captain has approved discard with `--force`.
 
@@ -492,14 +492,14 @@ Attached images are recorded as compact `{media_type, bytes, source_path}` metad
 Relay remains layered on top of the existing check mechanism without changing its request-handling behavior.
 
 A promised *final* public reply is a stronger commitment than a milestone follow-up, because forgetting it is publicly visible.
-It is therefore not carried in conversation memory at all: intake turns it into a typed `kind=public-followup` obligation owned by `tasks-axi public-followup`, and every later step reads that obligation from disk.
+It is therefore not carried in conversation memory at all: intake turns it into a typed `kind=public-followup` obligation owned by `jg-backlog.sh public-followup`, and every later step reads that obligation from disk.
 The mechanism boundary is deliberately narrow.
-`tasks-axi` owns the obligation state machine and the authoritative validation of a terminal result's source home, work id, generation, schema, outcome, and deliverables.
+`bin/jg-backlog.sh` owns the obligation state machine and the authoritative validation of a terminal result's source home, work id, generation, schema, outcome, and deliverables.
 `state/x-context/` remains the only owner of the private full request context.
 `bin/jg-x-reply.sh` remains the only thing that posts.
 `bin/jg-public-followup.sh` composes those three and adds the activation gate, a private terminal-event inbox, the idempotent delivery sequence, and retained-loop disposition: delivery stamps the registration delivered, `rechain` hands its thread binding to one follow-on obligation, and `retire` is the only close.
 Work routed to another home reports a *typed* terminal result through `bin/jg-public-followup-emit.sh`; Juggernaut never recovers the source home, work id, outcome, or deliverables by parsing a free-form `done:` sentence, and the child never learns the thread.
-The emitter mirrors `tasks-axi`'s deliverable rules to reject correctable mistakes at their source, while reconciliation still revalidates through `tasks-axi` and queues an at-least-once wake when `tasks-axi` refuses an event.
+The emitter mirrors `bin/jg-backlog.sh`'s deliverable rules to reject correctable mistakes at their source, while reconciliation still revalidates through `bin/jg-backlog.sh` and queues an at-least-once wake when `bin/jg-backlog.sh` refuses an event.
 When that home is a remote Squad Lead, no local path reaches the owning home, so the result is staged where the work runs and the owning home pulls it over the same SSH route with `bin/jg-public-followup-collect.sh`.
 Because a terminal event's id is derived from its identity tuple rather than generated, duplicate reports and restart replay converge without coordination.
 Reconciliation rides the existing relay poll and the session-start digest instead of a new watcher, daemon, or timer, and both are gated on the same `.env` activation contract so a home that never opted into the relay executes none of it.
@@ -517,7 +517,7 @@ The destination for each kind of knowledge, including project-intrinsic knowledg
 Memory writes use inspect-then-update rather than blind append; the internal [`intel` skill](../.agents/skills/intel/SKILL.md) owns tier markers, decay, cold archival, and offload.
 The same pass also persists open-work record state the session is holding - filing a thread that was never recorded and correcting one the session knows went stale - bounded to the open work that session is actually holding.
 It is deliberately not a reconciliation of durable records against repository or PR reality: its input is the volatile context, so it can only preserve what the session still knows, and no reconciliation that outlives a session exists today.
-Task-scoped notes use `bin/jg-tasks-axi.sh show <id> --full` followed by `bin/jg-tasks-axi.sh update <id> --body-file <path>`, adding `--archive-body` when the prior body should remain recoverable.
+Task-scoped notes use `bin/jg-backlog.sh show <id> --full` followed by `bin/jg-backlog.sh update <id> --body-file <path>`, adding `--archive-body` when the prior body should remain recoverable.
 The stow pass never writes a skill, but a separately executed, captain-approved migration may move conditional knowledge into a user-owned local skill excluded from the Juggernaut clone; changes to Juggernaut's tracked skills remain deliberate repository work through the normal PR pipeline.
 Invoked in a primary home, `/intel` then cascades the same sweep to every registered Squad Lead, enumerated through `bin/jg-stow-cascade.sh`: each home is accounted and curated against its own startup-memory allowance, a live Squad Lead sweeps its own session, and a slow or unreachable home is reported as an exception rather than blocking the primary.
 

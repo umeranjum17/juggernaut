@@ -63,8 +63,17 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           ../bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
-      - name: Install tasks-axi for fork lifecycle tests
-        run: npm install --global tasks-axi
+      # The backlog is a Beads store: the suites that file and read tickets in a fixture home run against the
+      # pinned bd and dolt (run only through bin/jg-beads.sh), or they skip.
+      - name: Install the backlog tools (pinned bd and dolt)
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          ../bin/jg-bootstrap.sh install bd dolt
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "JG_BEADS_TEST_BD=$NPM_CONFIG_PREFIX/bin/bd" >> "$GITHUB_ENV"
+          echo "JG_BEADS_TEST_DOLT=$NPM_CONFIG_PREFIX/bin/dolt" >> "$GITHUB_ENV"
       # Every step from here runs unless the run is cancelled, so one red run lists every failing
       # suite instead of the first. tests/core-suites-report-all.test.sh refuses a step without it.
       - name: Wait-timers hook journey
@@ -74,9 +83,6 @@ jobs:
       - name: Receipts hook journeys
         if: ${{ !cancelled() }}
         run: bash receipts/tests/receipts-hook-e2e.sh
-      - name: Lead-wake hook journeys
-        if: ${{ !cancelled() }}
-        run: bash lead-wake/tests/lead-wake-e2e.sh
       - name: Report actions replay
         if: ${{ !cancelled() }}
         run: python3 report-actions/tests/test_report_actions.py
@@ -186,7 +192,7 @@ jobs:
       - name: Key-in-env check test
         if: ${{ !cancelled() }}
         run: bash key-in-env-check/tests/key-in-env-check-e2e.sh
-      # Fixture Main and lead homes with stub jg-tasks-axi.sh and jg-crew-state.sh: lane slots and dry.
+      # Fixture Main and lead homes with stub jg-backlog.sh and jg-crew-state.sh: lane slots and dry.
       - name: Home flow check test
         if: ${{ !cancelled() }}
         run: bash fleet-flow/tests/jg-flow-check.test.sh
@@ -245,7 +251,7 @@ jobs:
         run: bash task-priority/tests/task-priority.test.sh
       - name: Tickets sync real-board journey
         if: ${{ !cancelled() }}
-        run: command -v identify >/dev/null || sudo apt-get install -y --no-install-recommends imagemagick; npm install --global sign-off-axi@0.9.10 && bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh
+        run: command -v identify >/dev/null || sudo apt-get install -y --no-install-recommends imagemagick; npm install --global sign-off-axi@0.9.10 && bash tickets-sync/tests/sync.test.sh && bash tickets-sync/tests/skip-bad-ticket.test.sh && bash tickets-sync/tests/description-linebreaks.test.sh && bash tickets-sync/tests/cleanup-report-card.test.sh
       # Fixture transcripts and a throwaway home; no real chat data is read or written.
       - name: Fleet pulse test
         if: ${{ !cancelled() }}
@@ -254,6 +260,20 @@ jobs:
       - name: Fleet report test
         if: ${{ !cancelled() }}
         run: bash fleet-report/tests/fleet-report.test.sh
+      # Fixture project only: nothing outside a throwaway directory is read or written.
+      # The card goes to a real board, and the board takes a state-map report from sign-off-axi 0.9.14 (0.9.13 refuses it).
+      - name: Project state map test
+        if: ${{ !cancelled() }}
+        run: |
+          npm install --global sign-off-axi@0.9.14
+          bash project-state-map/tests/psm-search.test.sh
+          bash project-state-map/tests/psm-prove.test.sh
+          bash project-state-map/tests/psm-read.test.sh
+          bash project-state-map/tests/psm-card.test.sh
+          bash project-state-map/tests/psm-refresh.test.sh
+          bash project-state-map/tests/psm-ask.test.sh
+          bash project-state-map/tests/psm-wide.test.sh
+          bash project-state-map/tests/psm-first-run.test.sh
 
       # Fixture home only: no live state or metrics are read.
       - name: Retro metrics test
@@ -267,6 +287,10 @@ jobs:
       - name: Model pool helper test
         if: ${{ !cancelled() }}
         run: bash account-pool/tests/model-pool.test.sh
+      # Fixture home only: config/tool-models.json moves the route chain and the pool's default Claude model.
+      - name: Pool tool models test
+        if: ${{ !cancelled() }}
+        run: bash account-pool/tests/tool-models.test.sh
       # Fixture pool readings and stub upstream quota-axi: Claude row follows jg-model-pool.
       - name: Quota-axi pool test
         if: ${{ !cancelled() }}
@@ -308,6 +332,14 @@ jobs:
       - name: Checks lint keeps first-draft line test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/checks-lint-keeps-first-draft-line.test.sh
+      # The lint stamps its receipt only on the head it judged, never on a lane member's other head.
+      - name: Checks lint receipt head test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/checks-lint-receipt-head.test.sh
+      # A draft lint of a local report leaves the evidence registry as it found it.
+      - name: Checks lint draft registry test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/checks-lint-draft-registry.test.sh
       # The merge holds the task control lock while the lint publishes its receipt: no deadlock, and the PR url is kept.
       - name: Checks lint receipt-lock test
         if: ${{ !cancelled() }}
@@ -335,9 +367,6 @@ jobs:
       - name: Owner-rules gate recorded decisions
         if: ${{ !cancelled() }}
         run: bash owner-rules/tests/gate-matrix.test.sh
-      - name: Owner-rules brief-rule recorded decisions
-        if: ${{ !cancelled() }}
-        run: bash owner-rules/tests/brief-rules-cases.test.sh
       - name: Completion-receipt acceptance recorded decisions
         if: ${{ !cancelled() }}
         run: bash receipts/tests/receipt-accept-cases.test.sh
@@ -349,6 +378,10 @@ jobs:
       - name: Completion-receipt superseded-copy test
         if: ${{ !cancelled() }}
         run: bash receipts/tests/receipt-superseded-copy.test.sh
+      # A lane's one receipt slot gets the receipt published for the head being merged put back, with no hand republish.
+      - name: Completion-receipt lane restore test
+        if: ${{ !cancelled() }}
+        run: bash receipts/tests/receipt-lane-restore.test.sh
       # Real commits in real repositories, forge read stubbed: one lane lands several pull requests, each with the receipt for its own head.
       - name: Completion-receipt multi-PR lane test
         if: ${{ !cancelled() }}
@@ -366,16 +399,23 @@ jobs:
       - name: Stale-PR alarm test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/stale-pr-alarm.test.sh
+      - name: Stranded-merge sweep test
+        if: ${{ !cancelled() }}
+        run: bash merge-on-green/tests/stranded-merge-sweep.test.sh
       - name: Red-CI ticket test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/red-ci-ticket.test.sh
-      # Real tasks-axi against a fixture home; no forge and no worker is touched.
+      # Real Beads store against a fixture home; no forge and no worker is touched.
       - name: Backlog shipped-reconcile test
         if: ${{ !cancelled() }}
         run: bash merge-on-green/tests/backlog-shipped-reconcile.test.sh
       - name: Critical-stall test
         if: ${{ !cancelled() }}
         run: bash critical-stall/tests/critical-stall.test.sh
+      # Recorded Goal rows and a fixture home; the real-store case skips without the pinned bd and dolt.
+      - name: Goal loop test
+        if: ${{ !cancelled() }}
+        run: bash goal-loop/tests/goal-loop.test.sh
       # Fixture home, stub gh and receipts; no merge runs.
       - name: Owner-rules gate test
         if: ${{ !cancelled() }}

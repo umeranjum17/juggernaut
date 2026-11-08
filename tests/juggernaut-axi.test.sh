@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Behavior test for the read verbs of `juggernaut-axi` (slices 1 and 2): status, lanes, wakes,
 # tasks (list, show, ready), holds, and pr.
-# Drives the real CLI over a fixture home and checks the tasks-axi conventions (count line,
+# Drives the real CLI over a fixture home and checks the backlog conventions (count line,
 # tabular rows, plain-words empty state, cut text with --full, --fields, --limit, help[]),
 # TOON/JSON parity, and that reading never changes a record.
 set -u
@@ -16,14 +16,26 @@ AXI="$ROOT/bin/juggernaut-axi"
 TMP_ROOT=$(jg_test_tmproot juggernaut-axi)
 H=$TMP_ROOT/home
 mkdir -p "$H/data" "$H/state" "$H/config" "$H/projects" "$TMP_ROOT/fixture-root"
-{
-  printf '## In flight\n- [ ] w1 - Worker one (repo: alpha) (kind: ship)\n- [ ] w2 - Worker two (repo: alpha) (kind: ship)\n- [ ] w3 - Scout three (repo: beta) (kind: scout)\n\n## Queued\n'
-  printf -- '- [ ] q-ready - Ready alpha work (repo: alpha) (kind: ship) (priority: 1) (since 2026-10-30)\n'
-  printf -- '- [ ] q-blocked - Waits on worker one blocked-by: w1 (repo: alpha) (kind: ship) (priority: 2) (since 2026-10-30)\n'
-  printf -- '- [ ] q-captain - Needs the captain (repo: beta) (kind: ship) (priority: 1) (since 2026-10-30) (hold: pick the name) (hold-kind: captain)\n'
-  printf -- '- [ ] q-future - Parked behind the move (repo: beta) (kind: ship) (priority: 3) (since 2026-10-30) (hold: after the move) (hold-kind: future)\n'
-  printf '\n## Done\n'
-} > "$H/data/backlog.md"
+# The backlog is a Beads store: three tasks In flight and four queued, one blocked on a worker, one held for
+# the captain and one parked behind a move.
+jg_test_beads_home "$H"
+bk() { jg_test_backlog "$H" "$@" >/dev/null || fail "backlog $*"; }
+fix() {  # <id> <title> <priority> <repo> <kind> [add args]
+  local id=$1 title=$2 prio=$3 repo=$4 kind=$5
+  shift 5
+  bk add "$id" "[feature] $title" --priority "$prio" --kind "$kind" --repo "$repo" --body "Fixture task $id" "$@"
+}
+hold_row() {  # <id> <reason> <kind>
+  BEADS_DIR=$(cat "$H/config/beads-dir") JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT \
+    "$ROOT/bin/jg-beads-write.py" hold "$1" --reason "$2" --kind "$3" >/dev/null || fail "hold $1"
+}
+fix w-1 'Worker one' 1 alpha ship; bk start w-1
+fix w-2 'Worker two' 1 alpha ship; bk start w-2
+fix w-3 'Scout three' 1 beta scout; bk start w-3
+fix q-ready 'Ready alpha work' 1 alpha ship
+fix q-blocked 'Waits on worker one' 2 alpha ship --blocked-by w-1
+fix q-captain 'Needs the captain' 1 beta ship; hold_row q-captain 'pick the name' captain
+fix q-future 'Parked behind the move' 3 beta ship; hold_row q-future 'after the move' future
 export JG_HOME=$H JG_ROOT_OVERRIDE=$TMP_ROOT/fixture-root
 LONG=$(printf 'long-note-%.0s' $(seq 30))
 for t in w1:ship:alpha w2:ship:alpha w3:scout:beta; do
@@ -85,7 +97,7 @@ assert_contains "$("$AXI" lanes --help)" "usage: juggernaut-axi lanes" "lanes ha
 assert_contains "$("$AXI" wakes --help)" "usage: juggernaut-axi wakes" "wakes has its own help"
 assert_contains "$("$AXI" tickets --json)" "juggernaut-axi.v1" "existing views still answer"
 # tasks: list, show, ready
-before=$(sha256sum "$H/data/backlog.md")
+before=$(jg_test_backlog "$H" list --json | sha256sum)
 tl=$("$AXI" tasks)
 assert_contains "$tl" "view: tasks" "tasks names its view"
 assert_contains "$tl" "count: 7 of 7 total" "tasks counts its rows"
@@ -97,7 +109,7 @@ assert_equals q-blocked "$("$AXI" tasks --blocked --json | jq -r '.tasks[].id')"
 assert_equals "q-captain q-future" "$("$AXI" tasks --repo beta --kind ship --json | jq -r '[.tasks[].id] | join(" ")')" "--repo and --kind combine"
 assert_contains "$("$AXI" tasks --limit 2)" "tasks beyond limit,5" "the omitted tasks are counted"
 assert_contains "$("$AXI" tasks --fields blocked_by,hold_kind)" "title,blocked_by,hold_kind}" "--fields adds columns"
-assert_equals w1 "$("$AXI" tasks --fields blocked_by --json | jq -r '.tasks[] | select(.id == "q-blocked") | .blocked_by')" "blocked_by names the open blocker"
+assert_equals w-1 "$("$AXI" tasks --fields blocked_by --json | jq -r '.tasks[] | select(.id == "q-blocked") | .blocked_by')" "blocked_by names the open blocker"
 none=$("$AXI" tasks --state "done")
 assert_contains "$none" "tasks: 0 tasks match these filters" "an empty list says so in words"
 assert_contains "$none" "count: 0 of 0 total" "an empty tasks list still counts"
@@ -107,7 +119,7 @@ assert_contains "$sh1" "view: task" "show names its view"
 assert_contains "$sh1" "hold_kind: captain" "show states the hold kind"
 assert_contains "$sh1" "hold_reason: pick the name" "show states the hold reason"
 assert_contains "$sh1" "held: yes" "show states the task is held"
-assert_contains "$("$AXI" tasks show q-blocked)" "blocked_by: w1" "show names the blocker"
+assert_contains "$("$AXI" tasks show q-blocked)" "blocked_by: w-1" "show names the blocker"
 assert_equals 1 "$("$AXI" tasks show q-ready --json | jq '[.task] | length')" "show --json carries the task"
 "$AXI" tasks show no-such-task >/dev/null 2>"$TMP_ROOT/err"; rc=$?
 assert_equals 2 "$rc" "an unknown task exits 2"
@@ -128,7 +140,7 @@ assert_equals live "$("$AXI" holds --bucket live --json | jq -r '.holds[0].bucke
 assert_contains "$("$AXI" holds --kind parked)" "holds: 0 holds match these filters" "an empty hold list says so in words"
 assert_contains "$("$AXI" holds --limit 1)" "holds beyond limit,1" "the omitted holds are counted"
 "$AXI" holds --kind bogus >/dev/null 2>&1 && fail "an unknown hold kind must be refused"
-assert_equals "$before" "$(sha256sum "$H/data/backlog.md")" "reading tasks and holds changes no record"
+assert_equals "$before" "$(jg_test_backlog "$H" list --json | sha256sum)" "reading tasks and holds changes no record"
 
 # pr: a stub gh stands in for GitHub; the real jg-pr-state.sh reads it
 mkdir -p "$TMP_ROOT/bin"

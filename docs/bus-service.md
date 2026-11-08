@@ -55,6 +55,24 @@ running pid 123, listening 127.0.0.1:4222` and `wake-engine installed jg-bus, en
 The first part that cannot be made whole stops the run with one line,
 `STACK_FAILED: <part>: <what is missing>; blocks <what depends on it>`.
 
+### The four services belong to Main
+
+`jg-sentinel`, `jg-wake-engine`, `jg-wake-watcher` and `jg-router` are systemd
+USER units, so exactly one home can run each of them, and a home that installs
+them for itself takes them from the home that had them. A Squad Lead home did
+that once: it kept running, and Main's stuck-worker, blocked-pane and
+stopped-service alerts went to the lead's home instead, unseen. So Main claims
+them and a Squad Lead home never does:
+
+- at every Main session start, `bin/jg-unit-claim.sh claim` rewrites each
+  installed unit that serves another home or is not running, reloads, restarts
+  it, and verifies it serves this home; it says nothing when all four already do;
+- `bin/jg-watch.sh` reads the same verdict on its fast check, so a unit that
+  dies or starts serving another home reaches Main inside two minutes;
+- `bin/jg-stack.sh up` and `bin/jg-sentinel.sh unit` refuse in a Squad Lead home,
+  naming Main as the owner, and the boot banner prints no line and no command
+  there.
+
 The Dapr sidecar is one per machine, like the bus unit, so the same owner rule governs them.
 Only the home that owns the bus unit (`bin/jg-bus.sh owner` prints `self` there) installs the pinned `daprd`, and writes, enables and starts its unit.
 Any other home prints `<part>: owned by <home>, which installs and runs it; this home changes nothing` and reports the part as it finds it, so a second home's session start can no longer rewrite the owner's units or ports.
@@ -165,6 +183,17 @@ own leftover `state/bus/accounts.conf` and the other consumers named the home fr
 their own, so on the unit's server the name presented and the name recorded could differ and the
 bus could not publish.
 
+An event counts as handled only after its handler returned. The consumer fetches it without
+acknowledging it (`jsclient.go`, a small pull client on the standard library, because the Go module
+carries no NATS library), runs the handler, and then acknowledges it. While a slow handler runs it
+tells the server the event is in progress, so the event is not delivered again under it. A handler that
+fails asks the server to deliver the event again after a delay (5 s, then 10 s; `JG_BUS_RETRY_DELAY`
+sets the base). After the last try (3; `JG_BUS_MAX_TRIES`) the event is appended with its cause to
+`state/bus/<part>.dead.jsonl` and closed, so a failure is kept where it can be read and not dropped.
+A crash between the fetch and the acknowledgement leaves the event for the server to deliver again,
+which both handlers allow because they are idempotent. The wake watcher follows the same rule for
+its fold (`core/bus/cmd/jg-bus/watcher.go`).
+
 A failure other than "nothing arrived" ends the process with its reason, and the unit's
 `Restart=always` brings it back; both units require the NATS unit. The stack restarts a
 consumer whose binary was rebuilt after it started, so a release never leaves the old
@@ -172,10 +201,10 @@ command running.
 
 `bin/jg-bus.sh probe [wake-engine|router]` prints one line per part and exits 1 when the
 part has no consumer: the process id, the stream's message count and last sequence, the
-consumer's delivered, acknowledged and pending counts, and the engine's own `handled` and
-`failed` counters (kept in `state/bus/<part>.counts.json`). Run it before and after a real
+consumer's delivered, acknowledged and pending counts, and the engine's own `handled`, `retried` and
+`failed` counters (kept in `state/bus/<part>.counts.json`; `failed` counts events on the dead list). Run it before and after a real
 wake to see the counters move; a reply the board has no route for stays with Main and is
-counted as `failed`, as `jg-bus reply` refuses it.
+counted as `retried` for each early try and as `failed` after the last, as `jg-bus reply` refuses it.
 
 Dapr is installed and started by the stack as before. The engine and the router do not use
 it: they read the stream directly, which the existing decision allows because Dapr carries
@@ -238,3 +267,11 @@ paths that will run their events on it switch one at a time, each with its own
 parity replay and its own deletion of the code it replaces. `docs/bus-live.md`
 holds the wake queue and inbox switch, `docs/captain-channel.md` the captain
 channel.
+
+## Health run and outage messages
+
+`jg-bus health run` logs in as every JetStream account in the machine's accounts file and runs `nats stream ls -n` as that account. This is the test that catches error 10028: after a failed reload the server stays up and `nats account info` still exits 0, but the account has no JetStream.
+
+Two failed runs open one outage per service and send one message to the owner. Two passing runs close it and send one more. Each closed outage adds a row to `state/outage-history.jsonl`. A message the chat refused stays queued, the failure goes to the channel log, and the run exits 1. A home with no chat only keeps the history. The run uses no model, no wake path and no herdr.
+
+The run also tests the memory budget (a warning past 80% of the JetStream caps), the reader of the notification engine and of the monitoring loop, and the temporary disk (past 85%). `jg-bus health unit` and `jg-bus health unit timer` print the systemd user service and its 60 second timer. `jg-bus health install` writes both and starts the timer. Only the machine's bus owner runs it. A lab leaves tests out with `JG_HEALTH_SKIP=wake,disk`.

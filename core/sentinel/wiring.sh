@@ -16,6 +16,11 @@ DRY=0
 [ "$#" -eq 1 ] && [ -f "$1/bin/jg-control.sh" ] || { echo "usage: wiring.sh [--dry-run] <jg-home>" >&2; exit 2; }
 FMH=$(cd "$1" && pwd -P)
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+# The sentinel unit is one per machine and belongs to Main: a Squad Lead home that installs it takes Main's alerts away
+# (bin/jg-unit-claim.sh owns the reason and the refusal sentence).
+if [ -e "$FMH/.jg-squad-lead-home" ] || [ -L "$FMH/.jg-squad-lead-home" ]; then
+  "$SRC/../../bin/jg-unit-claim.sh" refuse jg-sentinel-wiring install || exit 2
+fi
 DEST=${XDG_DATA_HOME:-$HOME/.local/share}/jg-sentinel
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 UNIT=$UNIT_DIR/jg-sentinel.service

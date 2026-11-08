@@ -16,12 +16,12 @@ if [ -n "${JG_TASK_ID:-}" ]; then
   home=${JG_HOME:-}
   # jg-spawn.sh exports JG_HOME; a pane started before that (or by a server without it) still carries
   # JG_TASK_INBOX, the absolute <home>/state/<task>.inbox path, so the home resolves from there.
-  if { [ -z "$home" ] || [ ! -x "$home/bin/jg-tasks-axi.sh" ]; } && [ -n "${JG_TASK_INBOX:-}" ] && [ "$(basename -- "$(dirname -- "$JG_TASK_INBOX")")" = state ]; then
+  if { [ -z "$home" ] || [ ! -x "$home/bin/jg-backlog.sh" ]; } && [ -n "${JG_TASK_INBOX:-}" ] && [ "$(basename -- "$(dirname -- "$JG_TASK_INBOX")")" = state ]; then
     home=$(dirname -- "$(dirname -- "$JG_TASK_INBOX")")
   fi
-  if [ -z "$home" ] || [ ! -x "$home/bin/jg-tasks-axi.sh" ]; then
+  if [ -z "$home" ] || [ ! -x "$home/bin/jg-backlog.sh" ]; then
     echo "pane-titles: no backlog helper under JG_HOME (${JG_HOME:-unset}); using the task id as the title" >&2
-  elif ! shown=$(JG_HOME="$home" "$home/bin/jg-tasks-axi.sh" show "$JG_TASK_ID" --full); then
+  elif ! shown=$(JG_HOME="$home" "$home/bin/jg-backlog.sh" show "$JG_TASK_ID" --full); then
     echo "pane-titles: cannot read backlog title for task $JG_TASK_ID; using the task id as the title" >&2
   elif backlog_title=$(printf '%s\n' "$shown" | sed -n 's/^  title: //p' | head -1); [ -z "$backlog_title" ]; then
     echo "pane-titles: task $JG_TASK_ID has no backlog title; using the task id as the title" >&2

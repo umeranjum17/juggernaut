@@ -19,7 +19,7 @@ mkdir -p "$H/state" "$H/config" "$TMP_ROOT/bin" "$TMP_ROOT/board"
 cp -R "$ROOT/bin" "$H/bin"
 git init -q -b main "$H"
 : > "$H/AGENTS.md"
-jg_test_tasks_toml "$H/.tasks.toml"
+jg_test_beads_home "$H"
 
 cat > "$TMP_ROOT/probe" <<'SH'
 #!/usr/bin/env bash

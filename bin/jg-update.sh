@@ -154,7 +154,10 @@ ensure_bus_service() {  # <home>
 
 # The services come with the release: run the updated checkout's own install command so a
 # release never lands on a machine without them. A failure is reported, never fatal to the update.
-if [ "${JG_STACK_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-stack.sh" ]; then
+# A Squad Lead home runs none of the machine's services (Main owns them, bin/jg-unit-claim.sh
+# owns why), so it only registers its own bus account below.
+if [ "${JG_STACK_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-stack.sh" ] \
+  && [ ! -e "$JG_HOME/.jg-squad-lead-home" ] && [ ! -L "$JG_HOME/.jg-squad-lead-home" ]; then
   JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-stack.sh" up || echo "stack: not whole after the update (see the STACK_FAILED line above)" >&2
   # Prove it after the release: one line per service, and the verdict a live claim reads.
   [ ! -x "$JG_ROOT/bin/jg-live-services.sh" ] || JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-live-services.sh" || true

@@ -16,7 +16,7 @@
 #   resolve <origin> <key> --decision-file <f> --routed-to <id>...
 #                                          -> answer <origin>-decision-<key> with the routed ids
 #                                             appended to the decision text, then clear the
-#                                             recorded blocked-by edges through tasks-axi; an
+#                                             recorded blocked-by edges through the backlog; an
 #                                             exact replay of a pre-collapse routed record reuses
 #                                             its historical digest and text before clearing edges
 #   answer|decline|repair <origin> <key> --decision-file <f>
@@ -80,7 +80,7 @@ compose() {  # <origin> <key>
 }
 
 task_show() {
-  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-tasks-axi.sh" show "$1" --full 2>/dev/null
+  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-backlog.sh" show "$1" --full 2>/dev/null
 }
 
 show_field() {
@@ -190,7 +190,7 @@ command_resolve() {
   for dep in $routed; do
     show=$(task_show "$dep") || fail "routed task $dep disappeared before routing"
     if list_has_key "$(normalized_blocked_by "$show")" "$id"; then
-      JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-tasks-axi.sh" unblock "$dep" --by "$id" >/dev/null \
+      JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-backlog.sh" unblock "$dep" --by "$id" >/dev/null \
         || fail "could not route the recorded decision to $dep"
     fi
   done

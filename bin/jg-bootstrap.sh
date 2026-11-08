@@ -12,13 +12,14 @@
 #                 "BACKEND_INVALID: <name> (known: <names>)",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "SENTINEL: jg-sentinel is not running ... (install: <command>)",
-#                 "UNIT_HOME: <unit> is running for <other home> ... (move it: <command>)",
+#                 "UNIT_HOME: <unit> is <what is wrong with it>, so this home gets no alert from it",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "HOME_SUMMARY: <ledger never published|not republished since
 #                 <stamp>>; <n> failed attempt(s) ... last: <recorded failure>",
 #                 "BACKLOG_RECONCILE: <id>: <what this home could not reconcile>",
 #                 "BACKLOG_RECONCILE: code-root <file> is not this home's <file>; ...",
+#                 "BEADS_UNHEALTHY: <why the store failed jg-beads.sh check>",
 #                 "TANGLE: <remediation>",
 #                 "SQUAD_LEAD_SYNC: squad_lead <id>: skipped: <reason>",
 #                 "NUDGE_SQUAD_LEADS: squad_lead <id>: send failed: <reason>",
@@ -64,9 +65,7 @@
 #          The AXI-family floor policy is owned beside GH_AXI_MIN below; the
 #          per-tool owners point there. An installed essential build below its
 #          floor reports MISSING like no-mistakes.
-#          tasks-axi feature probes remain a separate defense-in-depth check.
-#          tasks-axi and quota-axi are essential bootstrap tools.
-#          A compatible tasks-axi default backend is silent.
+#          quota-axi is an essential bootstrap tool.
 #          quota-axi is required for the agent-owned dispatch-profile array
 #          procedure in .agents/skills/quota-array-dispatch/SKILL.md.
 #          done-done and sign-off-axi are the published proof and decision tools;
@@ -107,9 +106,6 @@
 #          reads or writes another home; the fleet snapshot's classifier and
 #          bin/jg-squad-lead-reconcile.sh's nudge stay as backstops. Replayed
 #          transitions and restored In-flight rows print BOOTSTRAP_INFO facts.
-#          The `code-root <file>` variant is a detect-only local check that runs
-#          even in a read-only session; detect_code_root_backlog_fork owns what
-#          it reports.
 #          Set JG_BOOTSTRAP_DETECT_ONLY=1 to skip the six MUTATING sweeps
 #          (backlog_record_reconcile, squad_lead_sync,
 #          squad_lead_liveness_sweep, squad_lead_handoff_resume, x_mode_setup,
@@ -196,8 +192,8 @@ STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-pin-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-pin-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh disable=SC1091
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 # shellcheck source=bin/jg-quota-axi-lib.sh disable=SC1091
@@ -889,6 +885,12 @@ bus_release_asset() {
   version=$(jg_pin_version "$1") || return 1
   platform=$(bus_release_platform) || return 1
   os=${platform% *} arch=${platform#* }
+  # The backlog store: bd's archive holds the binary at its root, dolt's under bin/.
+  [ "$1" != bd ] || {
+    printf 'https://github.com/gastownhall/beads/releases/download/v%s/beads_%s_%s_%s.tar.gz .tar.gz\n' \
+      "$version" "$version" "$os" "$arch"
+    return 0
+  }
   case "$1" in
     nats-server) repo=nats-io/nats-server; stem="nats-server-v$version-$os-$arch"; ext=tar.gz ;;
     nats) repo=nats-io/natscli; stem="nats-$version-$os-$arch"; ext=zip ;;
@@ -903,6 +905,7 @@ bus_release_asset() {
       stem="opa_${os}_$arch"
       { [ "$os" = darwin ] && [ "$arch" = amd64 ]; } || stem=${stem}_static
       printf 'https://github.com/open-policy-agent/opa/releases/download/v%s/%s -.bin\n' "$version" "$stem"; return 0 ;;
+    dolt) repo=dolthub/dolt; stem="dolt-$os-$arch"; ext=tar.gz ;;
     *) return 1 ;;
   esac
   printf '%s %s.%s\n' \
@@ -918,9 +921,15 @@ bus_install_hint() {  # <tool>
 }
 
 # bus_tool_install <tool>: download the pinned archive and install the binary.
+# bd and dolt are pinned by binary hash and run only through bin/jg-beads.sh, so a
+# build off its pin never lands and neither one starts here, even for a version.
 bus_tool_install() {
-  local tool=$1 asset url stem ext dir dest tmp out member=$1
+  local tool=$1 asset url stem ext dir dest tmp out member=$1 want=
   [ "$tool" != dapr-scheduler ] || member=scheduler
+  [ "$tool" != dolt ] || member=bin/dolt
+  if [ "$tool" = bd ] || [ "$tool" = dolt ]; then
+    want=$(jg_pin_sha_want "$tool") || { echo "error: toolchain.versions has no $tool build for this platform" >&2; return 1; }
+  fi
   asset=$(bus_release_asset "$tool") || { echo "error: no pinned release for $tool" >&2; return 1; }
   url=${asset% *}
   stem=${asset#* }
@@ -960,10 +969,14 @@ bus_tool_install() {
   if [ ! -f "$tmp/$stem/$member" ]; then
     rm -rf -- "$tmp"; echo "error: $tool is not in $url" >&2; return 1
   fi
+  if [ -n "$want" ] && [ "$(jg_pin_sha_of "$tmp/$stem/$member")" != "$want" ]; then
+    rm -rf -- "$tmp"; echo "error: $url does not hold the pinned $tool" >&2; return 1
+  fi
   mkdir -p "$dir" || { rm -rf -- "$tmp"; return 1; }
   chmod 0755 "$tmp/$stem/$member" || { rm -rf -- "$tmp"; return 1; }
   mv -f -- "$tmp/$stem/$member" "$dest" || { rm -rf -- "$tmp"; return 1; }
   rm -rf -- "$tmp"
+  [ -z "$want" ] || { printf '%s: %s\n' "$tool" "$(jg_pin_version "$tool")"; return 0; }
   # The scheduler has no version flag, so the pin it was installed at is its version.
   if [ "$tool" = dapr-scheduler ]; then
     jg_pin_version "$tool" >"$dest.version" || return 1
@@ -1016,7 +1029,7 @@ missing_tool_diagnostic() {
 # jg_backend_required_tools (bin/jg-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi learn-from-mistakes done-done sign-off-axi nats-server nats opa"
+COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi quota-axi learn-from-mistakes done-done sign-off-axi nats-server nats opa"
 BACKEND=$(jg_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(jg_backend_required_tools "$BACKEND"); then
@@ -1031,9 +1044,7 @@ NO_MISTAKES_MIN=$(jg_pin_version no-mistakes) || NO_MISTAKES_MIN=0.0.0
 # version of that tool, captain-bumped periodically to keep the whole fleet on the
 # newest axi tools. It is NOT the minimum feature-introduced version. These floors
 # are expected to drift upward as new versions ship. Never lower a floor to the
-# earliest release that happens to satisfy some depended-on behavior. The
-# tasks-axi feature probes are an independent defense-in-depth concern, not part
-# of its floor.
+# earliest release that happens to satisfy some depended-on behavior.
 GH_AXI_MIN=$(jg_pin_version gh-axi) || GH_AXI_MIN=0.0.0
 LEARN_FROM_MISTAKES_AXI_MIN=$(jg_pin_version learn-from-mistakes) || LEARN_FROM_MISTAKES_AXI_MIN=0.0.0
 # The proof and decision tools Juggernaut publishes install at the exact build
@@ -1516,7 +1527,7 @@ backlog_record_reconcile() {
       # already owns. A held row is the captain's to move, and a closed row is a
       # contradiction this sweep must not resolve by resurrecting the item.
       if [ "$row" = "queued no no" ]; then
-        if jg_backlog_start "$DATA" "$id"; then
+        if jg_backlog_lane_start "$meta" "$DATA" "$id" "$STATE"; then
           echo "BOOTSTRAP_INFO: marked $id in flight to match the worker this home already owns"
         else
           echo "BACKLOG_RECONCILE: $id: worker record exists but its backlog item could not be moved to In flight: $JG_BACKLOG_TRANSITION_ERROR"
@@ -1552,6 +1563,9 @@ startup_memory_budget_setup() {
 # belongs to the network half of a split run; JG_STACK_SKIP=1 turns it off for a fixture.
 bus_service() {
   local out
+  # A Squad Lead home runs none of the machine's services: Main owns them, and
+  # `jg-stack.sh up` refuses there for that reason.
+  [ ! -e "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ] || return 0
   network_phase || return 0
   [ "${JG_STACK_SKIP:-0}" != 1 ] || return 0
   if out=$("$SCRIPT_DIR/jg-stack.sh" up 2>&1); then
@@ -1602,12 +1616,10 @@ if [ "${1:-}" = "install" ]; then
     # The bus binaries are release archives with their own unpacking rules, so
     # they install through the one function that owns those rules rather than
     # through a command string.
-    case $t in
-      nats-server|nats|daprd|dapr-scheduler|opa)
-        bus_tool_install "$t" || { echo "error: installing $t failed" >&2; exit 1; }
-        continue
-        ;;
-    esac
+    if bus_release_asset "$t" >/dev/null 2>&1; then
+      bus_tool_install "$t" || { echo "error: installing $t failed" >&2; exit 1; }
+      continue
+    fi
     # Manual guidance is checked before the install command, because a tool with manual
     # instructions has no row in toolchain.versions: probing install_cmd first would surface
     # the pin table's refusal ahead of the guidance the user actually needs.
@@ -1733,9 +1745,6 @@ detect_local_tools() {
   if command -v quota-axi >/dev/null 2>&1 && ! jg_quota_axi_compatible; then
     echo "MISSING: quota-axi (install: $(install_cmd quota-axi))"
   fi
-  if command -v tasks-axi >/dev/null 2>&1 && ! jg_tasks_axi_compatible; then
-    echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
-  fi
 }
 
 detect_local_config() {
@@ -1765,11 +1774,7 @@ detect_local_config() {
     echo "MISSING_MANUAL: cursor-agent (instructions: $(manual_install_url cursor-agent))"
   fi
   crew_dispatch_validate
-  if [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \
-    && ! jg_backlog_backend_manual "$CONFIG" && jg_tasks_axi_compatible; then
-    echo "BOOTSTRAP_INFO: tasks-axi available"
-  fi
-  detect_code_root_backlog_fork
+  detect_beads_health
   detect_home_summary_publication
   detect_sentinel_service
   detect_unit_homes
@@ -1779,6 +1784,15 @@ detect_local_config() {
 # recovers from, as a systemd user service someone installs once. Without it a
 # killed server leaves supervision and every worker down until noticed, so a
 # primary Herdr home on a systemd host says so on every start until installed.
+detect_beads_health() {
+  local health
+  if health=$(jg_backlog_beads_health "$CONFIG"); then
+    [ "${JG_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: Beads store $health"
+  else
+    echo "BEADS_UNHEALTHY: $health"
+  fi
+}
+
 detect_sentinel_service() {
   [ "$BACKEND" = herdr ] || return 0
   [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ -L "$(jg_compat_marker "$JG_HOME")" ] && return 0
@@ -1793,49 +1807,14 @@ detect_sentinel_service() {
 # A machine-wide user unit serves the home named in its own JG_HOME, and being
 # active says nothing about which home that is. A unit left pointing at another
 # home keeps running while this home gets no wake, no restart recovery and no
-# reply routing from it, so each one is compared with this home and a mismatch
-# is reported with the step that moves it. Detect-only: nothing is rewired here.
-# A unit that is absent, inactive or unreadable says nothing; detect_sentinel_service
-# and `jg-stack.sh status` own those cases.
+# reply routing from it. bin/jg-unit-claim.sh owns that read, the move Main makes
+# on it at session start, and the UNIT_HOME line printed here when one is wrong.
+# A unit that is absent, inactive or unreadable is not this section's case:
+# detect_sentinel_service and `jg-stack.sh status` own those.
 detect_unit_homes() {
   [ "$BACKEND" = herdr ] || return 0
-  [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ -L "$(jg_compat_marker "$JG_HOME")" ] && return 0
-  command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1 || return 0
-  local unit prefix=${JG_STACK_UNIT_PREFIX:-jg} env served quoted_home quoted_sentinel quoted_stack fix
-  printf -v quoted_home %q "$JG_HOME"
-  printf -v quoted_sentinel %q "$JG_ROOT/bin/jg-sentinel.sh"
-  printf -v quoted_stack %q "$JG_ROOT/bin/jg-stack.sh"
-  for unit in jg-sentinel "$prefix-wake-engine" "$prefix-wake-watcher" "$prefix-router"; do
-    systemctl --user is-active --quiet "$unit" 2>/dev/null || continue
-    env=$(systemctl --user show -p Environment --value "$unit" 2>/dev/null) || continue
-    # A home path may hold spaces, so cut at the next NAME= word, not at the first space.
-    served=$(printf '%s\n' "$env" | sed -n 's/^\(.* \)\{0,1\}"\{0,1\}JG_HOME=\(.*\)$/\2/p' | sed 's/[[:space:]]\{1,\}"\{0,1\}[A-Za-z_][A-Za-z0-9_]*=.*$//; s/"$//')
-    [ -n "$served" ] || continue
-    [ "$served" -ef "$JG_HOME" ] 2>/dev/null && continue
-    if [ "$unit" = jg-sentinel ]; then
-      fix="JG_HOME=$quoted_home $quoted_sentinel unit > ~/.config/systemd/user/jg-sentinel.service && systemctl --user daemon-reload && systemctl --user restart jg-sentinel"
-    else
-      fix="JG_HOME=$quoted_home $quoted_stack up"
-    fi
-    echo "UNIT_HOME: $unit is running for $served, not this home, so this home gets nothing from it (move it: $fix)"
-  done
-}
-
-# Shadow-backlog check. When this home's data directory is not the code root's,
-# a code-root data/backlog.md or data/done-archive.md that is not this home's
-# own file is a queue a cwd-relative tasks-axi write has already forked; a link
-# into the home does not survive such a write (docs/configuration.md "Backlog
-# backend" owns why). Detect-only: neither copy is a safe winner, so nothing is
-# merged here.
-detect_code_root_backlog_fork() {
-  local name root_copy
-  [ "$JG_ROOT/data" -ef "$DATA" ] && return 0
-  for name in backlog.md done-archive.md; do
-    root_copy="$JG_ROOT/data/$name"
-    [ -e "$root_copy" ] || [ -L "$root_copy" ] || continue
-    [ "$root_copy" -ef "$DATA/$name" ] && continue
-    echo "BACKLOG_RECONCILE: code-root $root_copy is not this home's $DATA/$name; tasks-axi wrote the code root instead of this home, so rows in it may be missing here - merge it into this home's copy and move it aside"
-  done
+  [ -x "$SCRIPT_DIR/jg-unit-claim.sh" ] || return 0
+  "$SCRIPT_DIR/jg-unit-claim.sh" status 2>/dev/null || true
 }
 
 # This home's ledger publication is deliberately best-effort: every lifecycle

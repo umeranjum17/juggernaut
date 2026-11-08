@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Home flow check (flow playbook R1-R3). Read-only, local files only (runs inside the
-# watcher's 30 s check window, so no GitHub call).
+# Home flow check (flow playbook R1-R3). Read-only, local files and the home's own store only
+# (runs inside the watcher's 30 s check window, so no GitHub call).
 # Usage: jg-flow-check.sh <home>              lines for the lead, at most 5, each ringing once per rung of the RUNG_HOURS ladder
 #        jg-flow-check.sh <home> --can-start  exit 0 when the lead may start a lane, 1 otherwise (prints why)
 #        jg-flow-check.sh <home> --target     P50/P85 lane hours from lanes landed in 14 days
@@ -8,7 +8,7 @@
 #                                             home open working ready donewait oldest_wait_h min_since_working counted dry parked stalled
 #        jg-flow-check.sh <home> --resume     task ids of lane-cap parked lanes to restart on their branch, one per free slot, oldest first
 # Line order: land, over-cap, wait, red, split, budget, key, pull. Format: <task> <actor> <age> <next action>.
-# Captain-held = a captain-hold key in the status file, or an open backlog line with hold-kind captain (data/backlog.md);
+# Captain-held = a captain-hold key in the status file, or an open backlog line with hold-kind captain;
 # captain-held lanes raise no wait or red line.
 # Lane = live state/<task>.meta with kind=ship|scout. Lane age starts at the birth of data/<task>/.
 # A lane in a long external wait, held gate or kept copy of a stopped lane (see FREE_AFTER) keeps its record, worktree
@@ -73,11 +73,26 @@ def open_keys(ls, fallback):
         elif v in ('resolved', 'captain-held'): op.pop(k, None)
     return op
 
+BACKLOG = None
+
+def backlog_lines():
+    # Read once a run. A home on Beads has no backlog file, so its store gives the same lines; a failed read stops
+    # the check, because an unread hold must never look like no hold.
+    global BACKLOG
+    if BACKLOG is None:
+        try:
+            r = subprocess.run([f'{MAIN}/bin/jg-backlog.sh', 'markdown'], capture_output=True, text=True, timeout=8,
+                               env={**os.environ, 'JG_HOME': home})
+            if r.returncode: raise RuntimeError(f'exit {r.returncode}: ' + (r.stderr.strip().splitlines() or [''])[-1])
+        except Exception as e: sys.exit(f'{name}: backlog read failed: {e}')
+        BACKLOG = r.stdout.splitlines()
+    return BACKLOG
+
 def backlog_held(t):
     # jg-captain-hold.sh hold writes "(hold-kind: captain)" on the open backlog line; the hold is inactive on and
-    # after its "(hold-until: DATE)" date. Local file only.
+    # after its "(hold-until: DATE)" date.
     today = time.strftime('%Y-%m-%d', time.gmtime(NOW))
-    for l in lines(f'{D}/backlog.md'):
+    for l in backlog_lines():
         if l.startswith(f'- [ ] {t} '):
             u = HOLD_UNTIL.search(l)
             return bool(HOLD_KIND.search(l)) and not (u and u.group(1) <= today)
@@ -165,7 +180,7 @@ HARD = CAP + 2
 
 def ready_ids():
     # Raises on a failed query: a failed read must never look like a proven zero.
-    r = subprocess.run([f'{MAIN}/bin/jg-tasks-axi.sh', 'ready'], capture_output=True, text=True, timeout=8,
+    r = subprocess.run([f'{MAIN}/bin/jg-backlog.sh', 'ready'], capture_output=True, text=True, timeout=8,
                        env={**os.environ, 'JG_HOME': home})
     if r.returncode: raise RuntimeError(f'ready query exit {r.returncode}: ' + (r.stderr.strip().splitlines() or [''])[-1])
     return re.findall(r'^\s{2}([\w.-]+),queued', r.stdout, re.M)

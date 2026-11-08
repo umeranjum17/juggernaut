@@ -146,7 +146,7 @@
 #   check: ready work waiting with free lane slots: (<open>/<target> open): <ids> - dispatch them now, P0 first, up to project capacity
 #   check: ready work waiting with no worker working: <ids> - dispatch them now, P0 first, up to project capacity
 #                          a primary or squad_lead home's base-cadence scan found dispatchable
-#                          queued work (jg-tasks-axi.sh ready) while the home sits
+#                          queued work (jg-backlog.sh ready) while the home sits
 #                          below its lane floor: with config/lane-target naming a
 #                          positive integer, fewer live lanes than that target
 #                          (a lane whose last status line is paused, blocked,
@@ -256,6 +256,15 @@ else
 fi
 unset _jg_d
 set -u
+
+# Remember where a nonzero exit came from, so a silent `|| exit 1` names itself
+# in watcher_cleanup instead of leaving the primary an unexplained status 1.
+WATCH_EXIT_FROM=
+exit() {
+  local rc=$?
+  WATCH_EXIT_FROM="line ${BASH_LINENO[0]} in ${FUNCNAME[1]:-main}"
+  builtin exit "${1:-$rc}"
+}
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -414,6 +423,7 @@ WATCHER_STALL_BOUND=$(jg_watcher_stall_bound "$POLL")
 HEARTBEAT=${JG_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${JG_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${JG_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps and ask-default decide ticks
+FAST_CHECK_INTERVAL=${JG_FAST_CHECK_INTERVAL:-30}  # seconds between board-answer ticks (must stay under a minute)
 CHECK_TIMEOUT=${JG_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${JG_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -2310,7 +2320,7 @@ pause_state_class() {  # <window> <task>
 #
 # `open` is that record's own read-only predicate and owns its semantics: exit 0
 # still an open captain call, 1 not, 2 could not be established. Only a 0 bounds
-# an alarm here, so an unreadable backlog, an incompatible or absent tasks-axi,
+# an alarm here, so an unreadable backlog, an incompatible or absent the backlog,
 # and a row this home does not carry all keep alarming exactly as they do today -
 # a wait this watcher cannot prove is not a wait.
 #
@@ -3408,11 +3418,25 @@ post_merge_cleanup() {  # <id>
 # Returns 0 when nothing should be surfaced now, 1 to surface (STALE_CLEANUP_NOTE is set
 # to the refusal when there was one).
 STALE_CLEANUP_WAIT_SECS=${JG_STALE_CLEANUP_WAIT_SECS:-180}
+# True while a detached cleanup of this window is still running. The teardown removes the task's record before it
+# finishes, so a window that is still listed in that gap has no task, and reading it as stopped would wake Main
+# for a worker the cleanup is already closing.
+finished_cleanup_running() {  # <key>
+  local st mh at note
+  [ -r "$STATE/.stale-cleanup-$1" ] || return 1
+  IFS=$'\t' read -r st mh at note < "$STATE/.stale-cleanup-$1" || true
+  [ "$st" = running ] || return 1
+  case "$at" in ''|*[!0-9]*) return 1 ;; esac
+  [ $(( $(date +%s) - at )) -lt "$STALE_CLEANUP_WAIT_SECS" ]
+}
 finished_cleanup_gate() {  # <window> <key> <hash> <task>
   local key=$2 h=$3 task=$4 mf last verb st mh at note now
   STALE_CLEANUP_NOTE=''
   mf="$STATE/.stale-cleanup-$key"
-  [ -n "$task" ] && [ -e "$STATE/$task.meta" ] || return 1
+  [ -n "$task" ] || return 1
+  # The caller read this task's record earlier in the same pass; a record gone since is a teardown that finished
+  # meanwhile (the cleanup this gate starts, or another), so there is nothing left to surface.
+  [ -e "$STATE/$task.meta" ] || return 0
   case "$(jg_meta_get "$STATE/$task.meta" kind)" in scout|squad_lead) return 1 ;; esac
   last=$(last_status_line "$STATE/$task.status")
   verb=''
@@ -3711,7 +3735,11 @@ pr_poll_publish_release() {
 
 WATCH_CHILD_RECORDER_PID=
 watcher_cleanup() {
+  local watch_rc=$?
   local cleanup_status=0 owns_lock=0 transition=release-lock
+  if [ "$watch_rc" -ne 0 ] && [ -n "$WATCH_EXIT_FROM" ] && [ "$watch_rc" -lt 128 ]; then
+    echo "watcher: FAILED - exited $watch_rc at jg-watch.sh $WATCH_EXIT_FROM"
+  fi
   if [ -n "$WATCH_CHILD_RECORDER_PID" ]; then
     kill -TERM "$WATCH_CHILD_RECORDER_PID" 2>/dev/null || true
     wait "$WATCH_CHILD_RECORDER_PID" 2>/dev/null || true
@@ -3921,6 +3949,50 @@ rejected_checks_record() {
   done
 }
 
+# The captain's board answers must reach Main within a minute, so they do not
+# wait for the slow sweep below. bin/jg-board-answers.sh tick heals its own
+# registration (re-arms it, or says once that it could not) and then runs one
+# check pass; a line it prints becomes a check wake like any check result. The
+# slow sweep skips board-answers.check.sh so a pass is never run twice.
+run_fast_checks() {
+  local out reason shim="$STATE/board-answers.check.sh"
+  [ "$(age_of "$STATE/.last-fast-check")" -ge "$FAST_CHECK_INTERVAL" ] || return 0
+  touch "$STATE/.last-fast-check"
+  if [ -f "$SCRIPT_DIR/jg-board-answers.sh" ] && [ ! -L "$SCRIPT_DIR/jg-board-answers.sh" ]; then
+    JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-board-answers.sh" tick || exit 1
+    out=$JG_CHECK_RESULT
+    if [ -n "$out" ]; then
+      reason="check: $shim: $out"
+      jg_wake_append check "$shim" "$reason" || exit 1
+      wake "$reason"
+    fi
+  fi
+  # A worker's done starts its landing here, in every home: core/trunk-landing lands a task whose done-done receipt
+  # is a PASS for its exact head into the local trunk and cleans it up, with no lead or human step.
+  if [ -f "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ] && [ ! -L "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ]; then
+    run_check_capture "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" check "$JG_HOME" || exit 1
+    out=$JG_CHECK_RESULT
+    if [ -n "$out" ]; then
+      reason="check: trunk-landing: $out"
+      jg_wake_append check trunk-landing "$reason" || exit 1
+      wake "$reason"
+    fi
+  fi
+  # The machine's four services belong to Main, and a unit that is dead or serves
+  # another home is exactly the missing alert this path exists for, so it is read
+  # here on the fast cadence and not on the slow sweep (bin/jg-unit-claim.sh owns
+  # the verdict and the words).
+  if [ -f "$SCRIPT_DIR/jg-unit-claim.sh" ] && [ ! -L "$SCRIPT_DIR/jg-unit-claim.sh" ]; then
+    JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-unit-claim.sh" status || exit 1
+    out=$JG_CHECK_RESULT
+    if [ -n "$out" ]; then
+      reason="check: unit-claim: $out"
+      jg_wake_append check unit-claim "$reason" || exit 1
+      wake "$reason"
+    fi
+  fi
+}
+
 # Slow per-task checks (juggernaut writes these, e.g. a merged-PR poll).
 # Time-based via .last-check mtime so the cadence survives watcher restarts.
 # A due check runs on every cycle that reaches it, including a cycle whose
@@ -3938,6 +4010,7 @@ run_due_checks() {
     contribution_check_output=
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
+      [ "$(basename "$c")" = board-answers.check.sh ] && continue  # run_fast_checks owns it
       is_pr_poll=0
       if [ "$(basename "$c")" = x-watch.check.sh ]; then
         if fmx_poll_shim_valid "$c" "$JG_HOME" "$JG_ROOT" \
@@ -4135,7 +4208,8 @@ while :; do
   # worker's acknowledgement of an inbox record is a `mv` into handled/, so this
   # poll carries that move to the bus as the record's acknowledgement; a bus the
   # poll cannot reach is silent and can never fail or delay a wake.
-  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>&1 || true
+  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>"$STATE/.inbox-settle.err" \
+    || echo "watcher: inbox settle failed: $(tr '\n' ' ' < "$STATE/.inbox-settle.err" | cut -c1-200)" >&2
   # Migration step 5e shadow: the same task leases and busy events, mirrored to
   # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
   # test, and a mirror that cannot reach its bus can never fail or delay a wake.
@@ -4198,6 +4272,12 @@ while :; do
   # source from being restarted.
   if [ -d "$STATE/procevent" ]; then
     JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-procevent.sh" reconcile >/dev/null 2>&1 || true
+  fi
+
+  # Merge alerts the board refused while it was down are posted once it is back
+  # (bin/jg-merge-alert.sh drain); a no-op with nothing queued, and it never wakes.
+  if [ -d "$STATE/merge-alerts/pending" ]; then
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-merge-alert.sh" drain >/dev/null 2>&1 || true
   fi
 
   # The decision must read the wake queue as it stood at cycle start, because
@@ -4391,6 +4471,7 @@ EOF
     "$SCRIPT_DIR/jg-comms-feed.sh" sync >/dev/null 2>&1 || true
   fi
 
+  run_fast_checks
   run_due_checks
   if [ -n "$signal_wake" ]; then
     wake "$signal_wake"
@@ -4452,6 +4533,10 @@ EOF
     # exemption below, because a mate's steers land in an inbox too.
     [ -z "$task" ] || inbox_steer_check "$w" "$task"
     key=$(window_key "$w")
+    if [ -z "$task" ] && finished_cleanup_running "$key"; then
+      triage_log "finished worker cleanup closing a window whose record is already gone, nothing to surface: $w"
+      continue
+    fi
     last=$(status_declared_wait_line "$STATE/$task.status")
     if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
       clear_pause_tracking "$key"

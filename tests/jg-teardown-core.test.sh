@@ -72,6 +72,28 @@ check "a merged PR with no recorded URL and no URL from the forge is not landed"
 rm -f "$FORGE"
 out=$(land --base-branch main); rc=$?
 check "content already on the default branch lands a branch with no PR" "$rc|$out" "0|landed=yes"
+
+# A pull request merged into its own base branch: the release branch carries the merge and the
+# default branch does not. The copy sits on the merged release tip, so the merge landed there
+# even though main has not caught up, and the notice for this merged pull request must stop.
+g init -q --bare -b main "$lab/rel-origin.git"
+g clone -q "$lab/rel-origin.git" "$lab/rel-proj" 2>/dev/null
+( cd "$lab/rel-proj" && g checkout -q -b main && echo base > f && g add f && g commit -q -m base \
+  && git push -q origin main \
+  && g checkout -q -b release/c-15 && echo rel > r && g add r && g commit -q -m "release work" \
+  && echo work > w && g add w && g commit -q -m "squash (#9)" && git push -q origin release/c-15 \
+  && git remote set-head origin main >/dev/null )
+g clone -q -b release/c-15 "$lab/rel-origin.git" "$lab/rel-wt" 2>/dev/null
+prhead=$(git -C "$lab/rel-wt" rev-parse HEAD~1)
+rel_land() { "$core" landed --worktree "$lab/rel-wt" --branch task --project "$lab/rel-proj" --pr-url https://github.com/o/r/pull/9; }
+printf 'MERGED%s%s%shttps://github.com/o/r/pull/9%srelease/c-15\n' "$tab" "$prhead" "$tab" "$tab" > "$FORGE"
+out=$(rel_land); rc=$?
+check "a PR merged into its release base branch lands a copy on it, though main lacks the merge" "$rc|$out" "0|landed=yes
+pr_url=https://github.com/o/r/pull/9"
+printf 'OPEN%s%s%shttps://github.com/o/r/pull/9%srelease/c-15\n' "$tab" "$prhead" "$tab" "$tab" > "$FORGE"
+out=$(rel_land); rc=$?
+check "a pull request the forge reports open still refuses, so its notice still fires" "$rc|$(printf '%s' "$out" | grep -c 'as OPEN, not merged')" "1|1"
+printf 'MERGED%s%s%s\n' "$tab" "$head" "$tab" > "$FORGE"
 out=$(JG_TEARDOWN_CORE_BIN=$lab/none/jg-teardown-core JG_TEARDOWN_CORE_GO=$lab/no-such-go "$core" landed --worktree "$lab/wt" --project "$lab/proj" 2>&1); rc=$?
 check "no binary and no toolchain exits 2, never 0" "$rc" 2
 check "a request with no worktree exits 2" "$("$core" landed --project "$lab/proj" >/dev/null 2>&1; echo $?)" 2
@@ -173,6 +195,25 @@ out=$(child_check "$lab/scratch" 2>&1); rc=$?
 check "a directory git does not list is not a child worktree" "$rc|$out" "1|REFUSED: unsafe child worktree removal target $lab/scratch is not a git worktree for $lab/proj"
 check "worktree-registered answers by exit code" "$("$core" worktree-registered --project "$lab/proj" -- "$lab/childwt"; echo $?)$("$core" worktree-registered --project "$lab/proj" -- "$lab/scratch"; echo $?)" "01"
 check "a validator with no target exits 2" "$("$core" validate-removal --jg-home x --jg-root y >/dev/null 2>&1; echo $?)" 2
+
+# Local-trunk landing: a copy is landed when its HEAD is on the local trunk AND on a pushed release
+# branch; neither alone, and a project not in trunk mode (no --trunk-branch) is unchanged. The copy
+# is a real worktree of the project, so it sees the project's trunk ref as teardown's copies do.
+rm -f "$FORGE"
+( cd "$lab/proj" && g fetch -q origin && g worktree add -q -b trunkwork "$lab/twt" origin/main )
+( cd "$lab/twt" && echo t > t && g add t && g commit -q -m trunkwork )
+trunk_land() { "$core" landed --worktree "$lab/twt" --branch trunkwork --project "$lab/proj" --trunk-branch trunk; }
+( cd "$lab/proj" && g branch -q trunk trunkwork )
+out=$(trunk_land); rc=$?
+check "a trunk commit that no release branch holds is not landed" "$rc|$(printf '%s' "$out" | grep -c 'on no pushed release branch yet')" "1|1"
+( cd "$lab/twt" && g push -q origin trunkwork:refs/heads/release/c-2 )
+out=$(trunk_land); rc=$?
+check "a commit on the trunk and a pushed release branch is landed" "$rc|$out" "0|landed=yes"
+out=$("$core" landed --worktree "$lab/twt" --branch trunkwork --project "$lab/proj"); rc=$?
+check "the same copy without trunk mode is still refused" "$rc|$(printf '%s' "$out" | grep -c '^landed=no')" "1|1"
+( cd "$lab/proj" && g branch -q -D trunk && g branch -q trunk main )
+out=$(trunk_land); rc=$?
+check "a pushed release commit that is not on the local trunk is not landed" "$rc|$(printf '%s' "$out" | grep -c "is not on the local trunk")" "1|1"
 
 [ "$fails" -eq 0 ] || { printf '%d check(s) failed\n' "$fails"; exit 1; }
 printf 'all jg-teardown-core tests passed\n'

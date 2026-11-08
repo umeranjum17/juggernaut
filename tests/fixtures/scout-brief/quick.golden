@@ -73,7 +73,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 # Juggernaut instruction inbox
 Juggernaut steers you through durable message files in '@HOME@/state/gold-scout.inbox'.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '@HOME@/state/gold-scout.inbox'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '@HOME@/state/gold-scout.inbox'/NNN.msg '@HOME@/state/gold-scout.inbox'/handled/`.
-The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. It proves only that you read the message. When you have acted on it, say so with proof: `'@ROOT@/bin/jg-delivery.sh' handled gold-scout NNN --evidence <status|commit|reply|task|pr>:<pointer>` (or `failed gold-scout NNN --reason <why>` if you cannot). An empty or absent inbox needs no action.
 
 # Definition of done
 Write your findings to `@HOME@/data/gold-scout/report.md`.
@@ -82,6 +82,7 @@ The report's first section is `## 1. Answer (five lines)`: the answer to the own
 A visual deliverable goes on a sign-off board report, never a retired review surface: publish or update it with sign-off-axi and return the sign-off report link only, in the report and in your done line.
 A report page opens with that same Answer: put the first Answer line, in plain words and at most 30 words, in the picture heading (`visual.heading`), never a finding, a number or an example from the evidence.
 Before you post it and again before done, run `@ROOT@/bin/jg-report-opening-check.sh @HOME@/data/gold-scout/report.md --card <the report.json you post>` until it prints PASS; teardown refuses a posted page that fails it.
+If the report names three or more states or moving parts of the project, it must carry the project's state map: run `@ROOT@/core/project-state-map/bin/psm-wide-check.sh @HOME@/data/gold-scout/report.md --project some-proj --state @HOME@/state --config @HOME@/config` and add the map card or a State map section; teardown refuses a wide report without it once the first week has passed.
 Before reporting done, read and follow `@ROOT@/.agents/skills/captain-hold-lifecycle/SKILL.md` and pass its shared completion gate for the report and any visual review.
 When the report is complete, append `done [at=<epoch>]: {one-line conclusion}` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; juggernaut may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.

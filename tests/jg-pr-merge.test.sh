@@ -55,9 +55,7 @@ make_case() {
   mkdir -p "$case_dir/state" "$case_dir/home/data" "$case_dir/home/config" "$fakebin"
   jg_git_init_commit "$case_dir/wt"
   git -C "$case_dir/wt" update-ref refs/remotes/origin/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
-  jg_test_tasks_toml "$case_dir/home/.tasks.toml"
-  printf '%s\n' '## In flight' '' '## Queued' '' '## Done' \
-    > "$case_dir/home/data/backlog.md"
+  jg_test_beads_home "$case_dir/home"
   jg_write_meta "$case_dir/state/task-x1.meta" \
     "window=jg-task-x1" \
     "worktree=$case_dir/wt" \
@@ -2229,6 +2227,45 @@ test_release_pull_request_defaults_to_a_merge_commit() {
   pass "jg-pr-merge merges a release pull request with a merge commit and a feature pull request with a squash"
 }
 
+# A release branch recorded as carried is closed: a merge into it never reaches
+# the default branch, so the merge is refused and the refusal names the live
+# release branch (bin/jg-version-branch-lib.sh jg_release_shipped owns "shipped").
+test_merge_into_a_carried_release_branch_is_refused() {
+  local case_dir head rc err
+  head=1313131313131313131313131313131313131313
+  case_dir=$(make_case carried-release-base)
+  mkdir -p "$case_dir/wt" "$case_dir/home/config"
+  add_gh_mocks "$case_dir" "$head"
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-1 "$(git -C "$case_dir/project" rev-parse HEAD)"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-2 "$(git -C "$case_dir/project" rev-parse HEAD)"
+  sed -i 's/"baseRefName":"main"/"baseRefName":"release\/c-1","headRefName":"fm\/task-x1"/' "$case_dir/github-view.json"
+  rc=0
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/34 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  [ "$rc" -eq 0 ] || fail "an unshipped release/c-1 must still take the merge (rc $rc)"
+  assert_logged_gh_merge "$case_dir" 34 example/repo --squash
+
+  case_dir=$(make_case carried-release-refused)
+  mkdir -p "$case_dir/wt" "$case_dir/home/config"
+  add_gh_mocks "$case_dir" "$head"
+  jg_git_init_commit "$case_dir/project"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-1 "$(git -C "$case_dir/project" rev-parse HEAD)"
+  git -C "$case_dir/project" update-ref refs/heads/release/c-2 "$(git -C "$case_dir/project" rev-parse HEAD)"
+  printf '# closed\nrelease/c-1\n' > "$case_dir/home/config/version-branch-carried"
+  : > "$case_dir/gh-axi.log"
+  sed -i 's/"baseRefName":"main"/"baseRefName":"release\/c-1","headRefName":"fm\/task-x1"/' "$case_dir/github-view.json"
+  rc=0
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/35 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  [ "$rc" -ne 0 ] || fail "a merge into a carried release branch must be refused"
+  err=$(cat "$case_dir/stderr" "$case_dir/stdout")
+  assert_contains "$err" "release/c-1 already shipped" "the refusal does not name the carried branch"
+  assert_contains "$err" "the open release branch is release/c-2" "the refusal does not name the live release branch"
+  assert_no_grep ' pr merge' "$case_dir/gh-axi.log" "a refused merge reached the forge"
+  pass "a merge into a carried release branch is refused and names the live release branch"
+}
+
 test_method_equals_merge_method_not_overridden() {
   local case_dir
   case_dir=$(make_case method-equals-merge-method)
@@ -3392,6 +3429,7 @@ test_repo_override_args_refuse_before_recording
 test_bundled_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_release_pull_request_defaults_to_a_merge_commit
+test_merge_into_a_carried_release_branch_is_refused
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
 test_github_still_forwards_sha_arg
@@ -3418,179 +3456,6 @@ test_forgejo_missing_tool_refuses_before_recording
 test_forgejo_rejected_merge_is_never_trusted_by_exit_status
 test_forgejo_transient_confirm_read_failure_still_persists_authority
 test_forgejo_merge_method_and_extra_args
-
-# The merge gate asks whether the task is still held for the captain. A home
-# that carries no backlog records no captain calls at all, so nothing can be
-# held and the merge must proceed; a backlog that EXISTS but cannot be read may
-# hide a live hold, so that one must refuse. The two states are distinct and
-# only the second is a refusal.
-test_absent_backlog_still_merges() {
-  local case_dir rc
-  case_dir=$(make_case absent-backlog-merges)
-  mkdir -p "$case_dir/wt"
-  add_gh_mocks "$case_dir" 6161616161616161616161616161616161616161
-  : > "$case_dir/gh-axi.log"
-  rm -f "$case_dir/home/data/backlog.md"
-
-  set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/61 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "absent-backlog-merges: a home with no backlog must still merge"
-  assert_no_grep 'held for the captain' "$case_dir/stderr" \
-    "absent-backlog-merges: an absent backlog was read as a captain hold"
-  assert_logged_gh_merge "$case_dir" 61 example/repo --squash
-  pass "jg-pr-merge proceeds when the home carries no backlog at all"
-}
-
-test_unreadable_backlog_refuses_the_merge() {
-  local case_dir rc
-  case_dir=$(make_case unreadable-backlog-refuses)
-  mkdir -p "$case_dir/wt"
-  add_gh_mocks "$case_dir" 6262626262626262626262626262626262626262
-  : > "$case_dir/gh-axi.log"
-  chmod 000 "$case_dir/home/data/backlog.md"
-
-  set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/62 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-  chmod 644 "$case_dir/home/data/backlog.md"
-
-  expect_code 1 "$rc" "unreadable-backlog-refuses: an unreadable authority record must refuse"
-  assert_grep 'refusing to merge' "$case_dir/stderr" \
-    "unreadable-backlog-refuses: the refusal did not say it refused to merge"
-  assert_no_grep 'pr merge' "$case_dir/gh.log" \
-    "unreadable-backlog-refuses: the forge merge ran despite an unreadable record"
-  pass "jg-pr-merge refuses when the backlog exists but cannot be read"
-}
-
-test_unreadable_backend_config_refuses_the_merge() {
-  local case_dir rc
-  case_dir=$(make_case unreadable-backend-config-refuses)
-  mkdir -p "$case_dir/wt"
-  add_gh_mocks "$case_dir" 6363636363636363636363636363636363636363
-  : > "$case_dir/gh-axi.log"
-  rm -f "$case_dir/home/data/backlog.md"
-  chmod 000 "$case_dir/home/.tasks.toml"
-
-  set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/63 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-  chmod 644 "$case_dir/home/.tasks.toml"
-
-  expect_code 1 "$rc" "unreadable-backend-config-refuses: an unreadable authority route must refuse"
-  assert_grep 'tasks-axi backend configuration cannot be read' "$case_dir/stderr" \
-    "unreadable-backend-config-refuses: the unreadable authority route was not named"
-  assert_no_grep 'pr merge' "$case_dir/gh.log" \
-    "unreadable-backend-config-refuses: the forge merge ran despite an unreadable authority route"
-  pass "jg-pr-merge refuses when its configured backend cannot be read"
-}
-
-test_unreadable_user_backend_config_refuses_the_merge() {
-  local case_dir rc user_config
-  case_dir=$(make_case unreadable-user-backend-config-refuses)
-  user_config="$case_dir/user-home/.tasks-axi/config.toml"
-  mkdir -p "$case_dir/wt" "${user_config%/*}"
-  add_gh_mocks "$case_dir" 6464646464646464646464646464646464646464
-  : > "$case_dir/gh-axi.log"
-  rm -f "$case_dir/home/.tasks.toml" "$case_dir/home/data/backlog.md"
-  printf '%s\n' 'backend = "beads"' > "$user_config"
-  chmod 000 "$user_config"
-
-  set +e
-  JG_TEST_USER_HOME="$case_dir/user-home" \
-    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/64 \
-      > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-  chmod 644 "$user_config"
-
-  expect_code 1 "$rc" "unreadable-user-backend-config-refuses: an unreadable authority route must refuse"
-  assert_grep "tasks-axi backend configuration cannot be read at $user_config" "$case_dir/stderr" \
-    "unreadable-user-backend-config-refuses: the unreadable authority route was not named"
-  assert_no_grep 'pr merge' "$case_dir/gh.log" \
-    "unreadable-user-backend-config-refuses: the forge merge ran despite an unreadable authority route"
-  pass "jg-pr-merge refuses when its user backend configuration cannot be read"
-}
-
-test_untraversable_user_backend_config_directory_refuses_the_merge() {
-  local case_dir rc user_config
-  case_dir=$(make_case untraversable-user-backend-config-directory-refuses)
-  user_config="$case_dir/user-home/.tasks-axi/config.toml"
-  mkdir -p "$case_dir/wt" "${user_config%/*}"
-  add_gh_mocks "$case_dir" 6666666666666666666666666666666666666666
-  : > "$case_dir/gh-axi.log"
-  rm -f "$case_dir/home/.tasks.toml" "$case_dir/home/data/backlog.md"
-  printf '%s\n' 'backend = "beads"' > "$user_config"
-  chmod 000 "${user_config%/*}"
-
-  set +e
-  JG_TEST_USER_HOME="$case_dir/user-home" \
-    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/66 \
-      > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-  chmod 755 "${user_config%/*}"
-
-  expect_code 1 "$rc" "untraversable-user-backend-config-directory-refuses: an unreadable authority route must refuse"
-  assert_grep "tasks-axi backend configuration cannot be read at $user_config" "$case_dir/stderr" \
-    "untraversable-user-backend-config-directory-refuses: the unreadable authority route was not named"
-  assert_no_grep 'pr merge' "$case_dir/gh.log" \
-    "untraversable-user-backend-config-directory-refuses: the forge merge ran despite an unreadable authority route"
-  pass "jg-pr-merge refuses when its user backend configuration directory cannot be traversed"
-}
-
-test_absent_user_backend_config_directory_and_backlog_still_merge() {
-  local case_dir rc
-  case_dir=$(make_case absent-user-backend-config-directory-and-backlog-merges)
-  mkdir -p "$case_dir/wt" "$case_dir/user-home"
-  add_gh_mocks "$case_dir" 6767676767676767676767676767676767676767
-  : > "$case_dir/gh-axi.log"
-  rm -f "$case_dir/home/.tasks.toml" "$case_dir/home/data/backlog.md"
-
-  set +e
-  JG_TEST_USER_HOME="$case_dir/user-home" \
-    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/67 \
-      > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "absent-user-backend-config-directory-and-backlog-merges: sound defaults and no backlog must permit merging"
-  [ "$(grep -c '^pr merge ' "$case_dir/gh.log")" -eq 1 ] \
-    || fail "absent-user-backend-config-directory-and-backlog-merges: the forge must merge exactly once"
-  assert_logged_gh_merge "$case_dir" 67 example/repo --squash
-  pass "jg-pr-merge proceeds once when its user configuration directory and backlog are genuinely absent"
-}
-
-test_backend_override_bypasses_unreadable_user_config() {
-  local case_dir rc user_config
-  case_dir=$(make_case backend-override-bypasses-unreadable-user-config)
-  user_config="$case_dir/user-home/.tasks-axi/config.toml"
-  mkdir -p "$case_dir/wt" "${user_config%/*}"
-  add_gh_mocks "$case_dir" 6565656565656565656565656565656565656565
-  : > "$case_dir/gh-axi.log"
-  rm -f "$case_dir/home/.tasks.toml" "$case_dir/home/data/backlog.md"
-  printf '%s\n' 'backend = "beads"' > "$user_config"
-  chmod 000 "$user_config"
-
-  set +e
-  TASKS_AXI_BACKEND=markdown JG_TEST_USER_HOME="$case_dir/user-home" \
-    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/65 \
-      > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-  chmod 644 "$user_config"
-
-  expect_code 0 "$rc" "backend-override-bypasses-unreadable-user-config: an explicit backend must bypass config"
-  assert_logged_gh_merge "$case_dir" 65 example/repo --squash
-  pass "jg-pr-merge honors a backend override over an unreadable user configuration"
-}
 
 test_github_red_checks_refuse_and_allow_red_waives_named() {
   local case_dir rc head
@@ -5026,13 +4891,6 @@ test_queued_github_merge_leaves_the_poll_armed
 test_distinct_merged_prs_keep_distinct_wakes
 test_uncommitted_marker_retry_is_never_silent
 test_squad_lead_without_parent_binding_is_loud
-test_absent_backlog_still_merges
-test_unreadable_backlog_refuses_the_merge
-test_unreadable_backend_config_refuses_the_merge
-test_unreadable_user_backend_config_refuses_the_merge
-test_untraversable_user_backend_config_directory_refuses_the_merge
-test_absent_user_backend_config_directory_and_backlog_still_merge
-test_backend_override_bypasses_unreadable_user_config
 test_github_red_checks_refuse_and_allow_red_waives_named
 test_github_draft_or_unreadable_draft_state_refuses
 test_superseded_failed_check_run_no_longer_refuses

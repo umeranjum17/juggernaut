@@ -53,6 +53,12 @@ now      *       *                blocked*
 # keep the row below.
 silent@merge-owned signal  *.status         done*: PR *
 now      check   *merge-on-green.check.sh   *NOT merging*
+# The merge-ready batch (core/merge-on-green/merge-ready-batch.sh) is the one line per ten-minute window that
+# carries every outstanding PR-ready outcome with its authority verdict; it wakes the lead once.
+now      check   *merge-on-green.check.sh   *merge-ready batch*
+# A ship's (task record kind ship) PR-ready report that the watcher does not merge asks for nothing before the batch: the batch line,
+# one per ten minutes, names it with its verdict. The row stays queued, so nothing is dropped.
+batch@ship-pr signal  *.status         done*: PR *
 now      *       *                done*
 batch    signal  *.turn-ended     *
 batch    check   merged-*         *
@@ -70,6 +76,10 @@ batch    check   post-merge-ci-*  *
 # a board row the work has already settled, or a pass summary, is not a decision.
 # bin/jg-ticket.sh writes the state where the work happens, so the check that
 # reports any remainder rides the next digest instead of waking a model.
+# The route-chain probe prints a line only when a route moved or went down or up, so each line
+# is news and wakes at once; any other output from it (an error) rides the digest.
+now      check   *route-chain.check.sh      *route-chain: head=*
+batch    check   *route-chain.check.sh      *
 batch    check   *tickets-stale.check.sh    *
 batch    check   *tickets-sync.check.sh     *
 # Wakes that need no model (a class may carry `@condition`; bin/jg-wake-lib.sh owns them):

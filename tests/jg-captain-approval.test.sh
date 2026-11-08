@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A build of a [captain-ask] ticket, or of one born from a Recon or plan, needs the captain's word on the board.
 # Real bin/jg-spawn.sh, bin/jg-send.sh, bin/jg-captain-hold.sh and bin/jg-inbox.sh over a fixture home with a
-# markdown backlog; only the terminal, the worktree tool and the model are stand-ins, so a spawn that passes
+# Beads backlog; only the terminal, the worktree tool and the model are stand-ins, so a spawn that passes
 # the gate is the one that launches and writes its task record.
 #
 # T1 a ship spawn for a [captain-ask] ticket, or one born from a Recon, is refused and leaves no task record.
@@ -17,12 +17,10 @@ set -u
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
-command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 command -v openssl >/dev/null 2>&1 || { echo "skip: openssl not found"; exit 0; }
 
 jg_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(jg_test_tmproot jg-captain-approval)
-TASKS_AXI_BIN=$(command -v tasks-axi)
 
 W="$TMP_ROOT/world"
 HOME_DIR="$W/home"
@@ -42,14 +40,13 @@ jg_test_spawn_home "$HOME_DIR"
 FAKEBIN=$(make_spawn_fakebin "$W/fake")
 jg_test_fake_sleep_noop "$FAKEBIN"
 printf 'wait_pressure=100\nalert_pressure=100\nwait_available_gb=0\nalert_available_gb=0\n' > "$HOME_DIR/config/host-memory"
-jg_test_tasks_toml "$HOME_DIR/.tasks.toml"
-printf '## In flight\n\n## Queued\n\n## Done\n' > "$HOME_DIR/data/backlog.md"
+jg_test_beads_home "$HOME_DIR"
 
-tasks() { (cd "$HOME_DIR" && tasks-axi "$@"); }
+tasks() { jg_test_backlog "$HOME_DIR" "$@"; }
 captain() {  # <home> <args...>
   local h=$1
   shift
-  PATH="$FAKEBIN:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" \
+  PATH="$FAKEBIN:$PATH" JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" \
     JG_DATA_OVERRIDE="$h/data" JG_CONFIG_OVERRIDE="$h/config" "$ROOT/bin/jg-captain-hold.sh" "$@"
 }
 body_of() { tasks show "$1" --full 2>/dev/null; }
@@ -58,9 +55,10 @@ N=0
 # ticket <title> [body]: a queued ticket; sets TID.
 ticket() {
   N=$((N + 1))
-  TID=ap$N
-  tasks add "$TID" "$1" --priority 2 --kind ship --repo proj ${2:+--body "$2"} >/dev/null 2>&1 \
-    || fail "could not add the ticket $TID"
+  TID=jg-ap$N
+  local prio=2; [[ "$1" == \[captain-ask\]* ]] && prio=0
+  tasks add "$TID" "$1" --priority "$prio" --kind ship --repo proj --body "${2:-Fixture ticket $TID}" >"$W/add.out" 2>&1 \
+    || fail "could not add the ticket $TID: $(cat "$W/add.out")"
 }
 scaffold() {  # <id> [brief-args...]
   local id=$1
@@ -87,7 +85,7 @@ out=$(spawn "$cask" ship); rc=$?
 expect_code 1 "$rc" "T1 a [captain-ask] ship should be refused: $out"
 assert_contains "$out" "approved-by-captain" "T1 the refusal does not name the missing line"
 refused_clean "$cask"
-ticket "Wire the cache" $'Plan from the Recon.\nborn-from: recon'; recon=$TID
+ticket "[feature] Wire the cache" $'Plan from the Recon.\nborn-from: recon'; recon=$TID
 scaffold "$recon" --mode direct-PR || fail "T1 could not scaffold the recon-born ticket"
 out=$(spawn "$recon" ship); rc=$?
 expect_code 1 "$rc" "T1 a Recon-born ship should be refused: $out"
@@ -95,7 +93,7 @@ refused_clean "$recon"
 pass "T1 a captain-ask ticket and a Recon-born ticket are refused without the line"
 
 # T2
-ticket "Plain fix"; plain=$TID
+ticket "[feature] Plain fix"; plain=$TID
 scaffold "$plain" --mode direct-PR || fail "T2 could not scaffold"
 out=$(spawn "$plain" ship); rc=$?
 expect_code 0 "$rc" "T2 a plain ticket should spawn: $out"
@@ -129,23 +127,22 @@ pass "T4 the same spawn passes after the captain's answer, and a copied line sta
 # T5
 S="$W/send"
 mkdir -p "$S/state" "$S/config" "$S/data"
-cp "$HOME_DIR/.tasks.toml" "$S/.tasks.toml"
-printf '## In flight\n\n## Queued\n\n## Done\n' > "$S/data/backlog.md"
-(cd "$S" && tasks-axi add sg1 "[captain-ask] gated send" --priority 2 --kind ship --repo proj >/dev/null 2>&1) || fail "T5 could not add sg1"
+jg_test_beads_home "$S"
+jg_test_add "$S" jg-sg1 "[captain-ask] gated send"
 jg_write_meta "$S/state/t1.meta" "window=sess:jg-t1" "kind=ship" "harness=claude"
 send() {  # <message>
   PATH="$FAKEBIN:$PATH" JG_ROOT_OVERRIDE="$S" JG_HOME="$S" JG_SEND_SETTLE=0 JG_SEND_LOG="$S/send.log" \
     "$ROOT/bin/jg-send.sh" t1 "$1" 2>&1
 }
-out=$(send "[order] ticket=sg1 build the gated change"); rc=$?
+out=$(send "[order] ticket=jg-sg1 build the gated change"); rc=$?
 expect_code 1 "$rc" "T5 an order to build a captain-ask ticket should be refused: $out"
 assert_contains "$out" "approved-by-captain" "T5 the steer refusal does not name the missing line"
 [ ! -e "$S/state/t1.inbox/001.msg" ] || fail "T5 the refused steer was recorded"
-out=$(send "[order] ticket=sg1 kind=recon survey the options"); rc=$?
+out=$(send "[order] ticket=jg-sg1 kind=recon survey the options"); rc=$?
 expect_code 0 "$rc" "T5 a Recon steer should pass: $out"
-captain "$S" hold sg1 --reason "captain must decide" >/dev/null 2>&1 || fail "T5 hold failed"
-captain "$S" answer sg1 --decision-file "$W/decision.txt" --release >/dev/null 2>&1 || fail "T5 answer failed"
-out=$(send "[order] ticket=sg1 build the gated change"); rc=$?
+captain "$S" hold jg-sg1 --reason "captain must decide" >/dev/null 2>&1 || fail "T5 hold failed"
+captain "$S" answer jg-sg1 --decision-file "$W/decision.txt" --release >/dev/null 2>&1 || fail "T5 answer failed"
+out=$(send "[order] ticket=jg-sg1 build the gated change"); rc=$?
 expect_code 0 "$rc" "T5 the order should pass after the captain's answer: $out"
 pass "T5 a build order is refused until the captain's answer, and a Recon order is never refused"
 

@@ -9,6 +9,7 @@ set -u
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 T=$(jg_test_tmproot board-link)
 mkdir -p "$T/state" "$T/bin"
+jg_test_raising_ticket "$T"
 export JG_HOME=$T
 unset JG_SIGNOFF_URL_FILE
 
@@ -39,7 +40,7 @@ esac
 FAKE
 chmod +x "$T/bin/sign-off-axi"
 export FAKE_RAISED=$T/raised
-card() { PATH="$T/bin:$PATH" bash "$ROOT/bin/jg-question-card.sh" post  --route main --title "Q?" --ask-ref m1 --must design-pick \
+card() { PATH="$T/bin:$PATH" bash "$ROOT/bin/jg-question-card.sh" post  --route main --title "Q?" --ask-ref jg-m1 --must design-pick --raised-by jg-m1 \
   --outcome yes="It is." --outcome no="It is not." 2>"$T/err"; }
 
 out=$(card) || fail "question card post failed"

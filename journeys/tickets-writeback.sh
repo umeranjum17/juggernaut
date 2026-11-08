@@ -19,7 +19,7 @@ cd "$REPO" || exit 1
 failed=0
 
 # 1. The poll, the check and the reconcile, through the feature's own suite on a
-#    disposable fleet board: real tasks-axi, real sign-off-axi, no live board. The
+#    disposable fleet board: real Beads backlog, real sign-off-axi, no live board. The
 #    suite times a drifted reconcile and a settled one and prints both.
 JG_TEST_FORK=$REPO bash core/tickets-sync/tests/sync.test.sh >"$OUT/tickets-sync-test.log" 2>&1 || failed=1
 if grep -q '^PASS:' "$OUT/tickets-sync-test.log" && ! grep -q '^FAIL' "$OUT/tickets-sync-test.log"; then

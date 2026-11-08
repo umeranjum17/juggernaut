@@ -85,11 +85,12 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$SCRIPT_DIR" && pwd -P)
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 # shellcheck source=bin/jg-remote-job-lib.sh
 . "$SCRIPT_DIR/jg-remote-job-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-remote-herdr-owner-lib.sh
 . "$SCRIPT_DIR/jg-remote-herdr-owner-lib.sh"
-REQUIRED_TOOLS=(git jq herdr tasks-axi treehouse)
+# check_beads_store owns the backlog's own tools (the pinned bd and dolt).
+REQUIRED_TOOLS=(git jq herdr treehouse)
 HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi)
 OPTIONAL_TOOLS=(tmux no-mistakes gh)
 LAUNCH_AGENT_LABEL=dev.juggernaut.herdr.jg-remote
@@ -449,12 +450,7 @@ report_required_tools() {
   for tool in "${REQUIRED_TOOLS[@]}"; do
     resolved=$(command -v "$tool" 2>/dev/null || true)
     if [ -n "$resolved" ] && [ -x "$resolved" ]; then
-      if [ "$tool" = tasks-axi ] && ! jg_tasks_axi_compatible; then
-        printf 'required tasks-axi=MISSING (incompatible)\n'
-        MISSING+=(tasks-axi)
-      else
-        printf 'required %s=%s\n' "$tool" "$resolved"
-      fi
+      printf 'required %s=%s\n' "$tool" "$resolved"
     else
       printf 'required %s=MISSING\n' "$tool"
       MISSING+=("$tool")
@@ -473,7 +469,7 @@ report_required_tools() {
 
 report_required_tools_from_worker() {
   local job_id probe_stdout probe_stderr probe_exit line fact name value
-  local expected=6 count=0 valid=1 seen=' '
+  local expected=$((${#REQUIRED_TOOLS[@]} + 1)) count=0 valid=1 seen=' '
   if ! job_id=$(jg_remote_job_stage "${HOME:-}" "$JG_ROOT" "${JG_HOME:-}" \
     jg-remote-doctor.sh --worker-tool-probe </dev/null); then
     set_check remote-job-probe "fixable: the remote job worker could not accept the required-tool probe" \
@@ -497,7 +493,7 @@ report_required_tools_from_worker() {
     fact=${line#required }
     name=${fact%%=*}
     value=${fact#*=}
-    case "$name" in git|jq|herdr|tasks-axi|treehouse|harness) ;; *) valid=0; continue ;; esac
+    case "$name" in git|jq|herdr|treehouse|harness) ;; *) valid=0; continue ;; esac
     case "$seen" in *" $name "*) valid=0; continue ;; esac
     seen="$seen$name "
     count=$((count + 1))
@@ -740,6 +736,18 @@ check_entrypoint_link() {
     "rerun this command with --fix to create it"
 }
 
+# A home on the Beads backlog needs the pinned bd and dolt on this host, and only a
+# person can install them, so every gap in its store is a human one.
+check_beads_store() {
+  local config=${JG_CONFIG_OVERRIDE:-${JG_HOME:-$JG_ROOT}/config} health
+  if health=$(jg_backlog_beads_health "$config"); then
+    set_check beads-store "ok: $health"
+  else
+    set_check beads-store "human: $health" \
+      'install the bd and dolt builds toolchain.versions pins, then repair the store with jg-beads.sh'
+  fi
+}
+
 run_checks() { # <resolved-login-shell>
   local shell=$1
   CHECK_NAMES=()
@@ -751,6 +759,7 @@ run_checks() { # <resolved-login-shell>
   check_launch_agent "$shell"
   check_herdr_server
   check_entrypoint_link
+  check_beads_store
 }
 
 # --- repairs ----------------------------------------------------------------

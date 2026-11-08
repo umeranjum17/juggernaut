@@ -717,7 +717,7 @@ IFS= read -r -d '' INBOX_SECTION <<EOF || true
 # Juggernaut instruction inbox
 Juggernaut steers you through durable message files in $INBOX_DIR.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list $INBOX_DIR/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: \`mv $INBOX_DIR/NNN.msg $INBOX_DIR/handled/\`.
-The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+The move IS the acknowledgement: without it juggernaut rings again and eventually treats you as stuck. It proves only that you read the message. When you have acted on it, say so with proof: \`$(shell_quote "$JG_ROOT/bin/jg-delivery.sh") handled $ID NNN --evidence <status|commit|reply|task|pr>:<pointer>\` (or \`failed $ID NNN --reason <why>\` if you cannot). An empty or absent inbox needs no action.
 EOF
 if [ -e "$CONFIG/wait-no-turns" ]; then
   INBOX_SECTION+="Do not poll or list the inbox while waiting; a waiting instruction rings."$'\n'
@@ -747,6 +747,12 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
   WAIT_BLOCK="$WAIT_SECTION"$'\n\n'
 fi
 
+# The local-trunk landing rule, in one place for the lane brief and the squad lead charter (local-trunk projects only).
+TRUNK_REBASE_RULE="Before your commit can land, rebase it on the LATEST tip of the local trunk, taken at that moment (the trunk moves while you work; a base you took earlier is stale).
+If the rebase conflicts, YOU resolve every conflict in your own change, then prove it again at the new head; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict or a stale base exists, and a landing that is refused for either reason is fixed by rebasing and proving again."
+jg_brief_local_trunk() {  # <project>: true when the project is registered local-trunk
+  [ "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" = local-trunk ]
+}
 if [ "$KIND" = squad_lead ]; then
 SQUAD_LEAD_PROJECTS=""
 idx=1
@@ -768,6 +774,18 @@ else
   PROJECT_CLONES_BODY=$(printf '%s\n' "$SQUAD_LEAD_PROJECTS" | tr ' ' '\n' | sed 's/^/- /')
   PROJECT_CLONES_NOTE="The projects above are local clones for work you supervise; they are not an exclusive ownership claim."
 fi
+TRUNK_LEAD_SECTION=
+for lead_proj in $SQUAD_LEAD_PROJECTS; do
+  if jg_brief_local_trunk "$lead_proj"; then
+    TRUNK_LEAD_SECTION="
+# Local trunk projects
+$lead_proj is registered local-trunk (and any other project listed here that is): its lanes land on the local trunk, never through a feature pull request, and a lane is exactly one commit on the trunk tip.
+Put this rule in the brief of every worker you start on such a project, and hold it yourself: $TRUNK_REBASE_RULE
+Projects registered in any other delivery mode keep their own rules unchanged.
+"
+    break
+  fi
+done
 cat > "$BRIEF" <<EOF
 You are a persistent squad lead managed by the main juggernaut. Work on your own; do not wait for a human.
 
@@ -779,7 +797,7 @@ $SQUAD_LEAD_SCOPE
 
 # Project clones
 $PROJECT_CLONES_BODY
-
+$TRUNK_LEAD_SECTION
 # Operating model
 You are in an isolated juggernaut home. The local \`AGENTS.md\` is your job description, and your local \`data/\`, \`state/\`, \`config/\`, and \`projects/\` dirs are yours to operate.
 $PROJECT_CLONES_NOTE
@@ -1007,6 +1025,7 @@ The report's first section is \`## 1. Answer (five lines)\`: the answer to the o
 $SIGNOFF_LINE
 A report page opens with that same Answer: put the first Answer line, in plain words and at most 30 words, in the picture heading (\`visual.heading\`), never a finding, a number or an example from the evidence.
 Before you post it and again before done, run \`$JG_ROOT/bin/jg-report-opening-check.sh $DATA/$ID/report.md --card <the report.json you post>\` until it prints PASS; teardown refuses a posted page that fails it.
+If the report names three or more states or moving parts of the project, it must carry the project's state map: run \`$JG_ROOT/core/project-state-map/bin/psm-wide-check.sh $DATA/$ID/report.md --project $(basename "$REPO") --state $STATE --config $CONFIG\` and add the map card or a State map section; teardown refuses a wide report without it once the first week has passed.
 Before reporting done, read and follow \`$JG_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
 When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; juggernaut may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
@@ -1046,6 +1065,19 @@ Replace the survey line below with the record, then run \`$JG_ROOT/bin/jg-prior-
 Prior art (survey): <replace with \`Prior art pick: <name>\` and \`Licence: <licence - usable here or not>\` lines, or with \`Prior art: none needed - <why this work is neither new nor complex>\`>
 EOF
 PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
+# A project registered local-trunk (docs/trunk-flow.md) ships its lanes as local-only tasks that land on the local
+# trunk by themselves. Only that posture gets this section; every other project's brief is exactly as it was.
+TRUNK_SECTION=
+if [ "$MODE" = local-only ] && jg_brief_local_trunk "$REPO"; then
+  TRUNK_SECTION="
+# Local trunk lane
+This project is registered local-trunk: there is no feature pull request, and the only pull request is the release one, raised on the captain's word.
+Your branch must be exactly ONE commit on top of the local trunk tip (the \`trunk\` branch of the project), and the commit message must carry its ticket reference (the task id or its ticket key).
+$TRUNK_REBASE_RULE
+A stale or conflicting change is refused with its paths named and is never landed dirty.
+When the sealed done-done proof has passed at that exact head, publish the completion receipt for it and report ready. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
+"
+fi
 DESIGN_SECTION=
 if [ -n "$DESIGN_CALL" ]; then
   DESIGN_SECTION="
@@ -1122,7 +1154,7 @@ cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
 $TASK_SECTION
-$PRIOR_ART_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
+$PRIOR_ART_SECTION$TRUNK_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
 $STACK_BLOCK$RULES_BLOCK
 

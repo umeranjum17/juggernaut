@@ -22,7 +22,8 @@
 #
 # Usage: jg-wake-bus.sh raise <kind> <key> <payload> <class> | settle <kind> <key> <payload>
 #        | ack <id>... | ids <kind> <key> | ids-through <max-seq> [<seqs-file>] | count
-#        | inbox-raise <task> <seq> <delivery> <body-sha> | inbox-settle | render
+#        | inbox-raise <task> <seq> <delivery> <body-sha> | inbox-handled <task> <seq> <outcome> <evidence>
+#        | inbox-settle | render
 #        | endpoint
 #   bin/jg-wake-bus-probe.sh measures the whole path on this machine.
 #   endpoint prints "<server url> <wake stream> <raise subject> <account user> <password file>",
@@ -78,7 +79,7 @@ bus_gate() {
     return 1
   fi
   if ! bus stream ls >/dev/null 2>&1; then
-    printf 'skip: no bus at %s\n' "$BUS_URL"
+    printf 'skip: the event system at %s does not answer\n' "$BUS_URL"
     return 1
   fi
 }
@@ -214,9 +215,22 @@ live_inbox_raise() { # <task> <seq> <delivery> <body-sha>
   live_render
 }
 
+# live_inbox_handled <task> <seq> <outcome> <evidence>: the worker's claim that it handled (or
+# refused) one steer, with the pointer to what shows it. A new event of its own on the inbox
+# stream - never the transport's ack, which only ever means "read" - so a sender or the delivery
+# record can consume it. It folds into nothing: where=handled is no queue row.
+live_inbox_handled() { # <task> <seq> <outcome> <evidence>
+  local id
+  id="inbox/$(live_home_key)/$1/$2/handled"
+  live_publish "$SUBJECT_PREFIX".inbox.handled "$id" \
+    "$(jq -nc --arg id "$id" --arg home "$(live_home_key)" --arg task "$1" --argjson seq "$2" \
+      --arg outcome "$3" --arg evidence "$4" --argjson at "$(date -u +%s)" \
+      '{v:1,id:$id,home:$home,where:"handled",task:$task,seq:$seq,at:$at,outcome:$outcome,evidence:$evidence}')"
+}
+
 # live_inbox_settle: a worker acknowledges a steer by moving its record into
 # handled/, so this is the one observer that carries that move to the bus. A
-# record still in its inbox is left alone; one that is gone is acknowledged.
+# record still in its inbox is left alone; one that is in handled/ is acknowledged; one that is in neither is not.
 # Cheap: it reads the local replica, not the bus. The record's number is the last part
 # of its own id, and its file is that number padded the way bin/jg-task-inbox-lib.sh
 # names it, so a replica an older render wrote with the stream's sequence still settles.
@@ -226,14 +240,18 @@ live_inbox_settle() {
   live_events | jq -r 'select((.ack // false) != true and .task != null) | [.id, .task, (.id | split("/") | last)] | @tsv' 2>/dev/null | while IFS=$'\t' read -r id task seq; do
       [ -n "${task:-}" ] || continue
       case "$seq" in ''|*[!0-9]*) continue ;; esac
-      [ -e "$STATE/$task.inbox/$(printf '%03d' "$((10#$seq))").msg" ] && continue
+      # Acknowledged only when the worker moved the record into handled/. A record
+      # that is in neither place was lost, not handled, so it stays unacknowledged.
+      [ -e "$STATE/$task.inbox/handled/$(printf '%03d' "$((10#$seq))").msg" ] || continue
       printf '%s\n' "$id"
     done > "$STATE/.wake-bus.inbox-acks.$$" || return 0
+  local rc=0
   if [ -s "$STATE/.wake-bus.inbox-acks.$$" ]; then
     # shellcheck disable=SC2046  # one id per line, each one event id
-    live_ack $(cat "$STATE/.wake-bus.inbox-acks.$$")
+    live_ack $(cat "$STATE/.wake-bus.inbox-acks.$$") || rc=$?
   fi
   rm -f -- "$STATE/.wake-bus.inbox-acks.$$"
+  return "$rc"
 }
 
 # live_count: how many rows the read model holds, which is how a consumer knows
@@ -287,6 +305,9 @@ while [ "$#" -gt 0 ]; do
     inbox-raise)
       [ "$#" -ge 5 ] || { printf 'jg-wake-bus.sh: inbox-raise needs <task> <seq> <delivery> <body-sha>\n' >&2; exit 2; }
       CMD=inbox-raise; INBOX_TASK=$2; INBOX_SEQ=$3; INBOX_DELIVERY=$4; INBOX_SHA=$5; shift 5 ;;
+    inbox-handled)
+      [ "$#" -ge 5 ] || { printf 'jg-wake-bus.sh: inbox-handled needs <task> <seq> <outcome> <evidence>\n' >&2; exit 2; }
+      CMD=inbox-handled; INBOX_TASK=$2; INBOX_SEQ=$3; INBOX_DELIVERY=$4; INBOX_SHA=$5; shift 5 ;;
     inbox-settle) CMD=inbox-settle; shift ;;
     ack)
       CMD=ack; shift
@@ -343,6 +364,7 @@ case "$CMD" in
   ids-through) live_ids_through "$RAISE_KIND" "$RAISE_KEY" ;;
   count) live_count ;;
   inbox-raise) live_inbox_raise "$INBOX_TASK" "$INBOX_SEQ" "$INBOX_DELIVERY" "$INBOX_SHA" ;;
+  inbox-handled) live_inbox_handled "$INBOX_TASK" "$INBOX_SEQ" "$INBOX_DELIVERY" "$INBOX_SHA" ;;
   inbox-settle) live_inbox_settle ;;
   render) live_render ;;
   endpoint) printf '%s\t%s\t%s\t%s\t%s\n' "$BUS_URL" "$WAKE_STREAM" "$SUBJECT_PREFIX.wake.raise" "${NATS_USER:-}" "${ACCOUNT_PASS_FILE:-}" ;;

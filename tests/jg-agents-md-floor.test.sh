@@ -96,7 +96,7 @@ done <<'LEDGER'
 7|.agents/skills/task-dispatch/SKILL.md|A project's declared machine capacity (`config/project-capacity`) still bounds that
 7|.agents/skills/task-dispatch/SKILL.md|Serialize only for a true semantic dependency, shared mutable
 7|.agents/skills/task-dispatch/SKILL.md|Write the task-specific brief under the brief rules below
-7|.agents/skills/task-dispatch/SKILL.md|When the configured tasks-axi backlog gate applies, the spawn
+7|.agents/skills/task-dispatch/SKILL.md|When the configured the backlog backlog gate applies, the spawn
 7|.agents/skills/task-dispatch/SKILL.md|After spawning, confirm the worker is processing the brief
 7|.agents/skills/task-dispatch/SKILL.md|A persistent Squad Lead is recorded in the Squad
 7|.agents/skills/task-dispatch/SKILL.md|Steer a worker with ordinary text through fail-closed `jg-send`:
@@ -104,12 +104,12 @@ done <<'LEDGER'
 7|.agents/skills/task-dispatch/SKILL.md|When a steer answers an open keyed decision or
 7|.agents/skills/task-dispatch/SKILL.md|For the parent-owned correlation, recovery, and escalation contract on
 7|.agents/skills/task-dispatch/SKILL.md|When the captain adds or changes an ask mid-task,
-10|.agents/skills/fleet-records/SKILL.md|The configured `tasks-axi` backend is the durable queue; the
+10|.agents/skills/fleet-records/SKILL.md|The Beads store named by `config/beads-dir` is the durable queue;
 10|.agents/skills/fleet-records/SKILL.md|It tracks work items only, never agents; persistent Squad
 10|.agents/skills/fleet-records/SKILL.md|Work routed to a Squad Lead is recorded in
 10|.agents/skills/fleet-records/SKILL.md|When a main-side thread such as a pending captain
 10|.agents/skills/fleet-records/SKILL.md|When the automatic transition gate applies, dispatch and completion
-10|.agents/skills/fleet-records/SKILL.md|`.tasks.toml`, `docs/configuration.md`, and current `tasks-axi --help` own the backlog
+10|.agents/skills/fleet-records/SKILL.md|`docs/configuration.md` and current `bin/jg-backlog.sh help` own the backlog
 10|.agents/skills/fleet-records/SKILL.md|`squad-lead-provisioning` and `bin/jg-backlog-handoff.sh` own cross-home handoff safety.
 10|.agents/skills/fleet-records/SKILL.md|Keep free-form notes free of temporary paths, moving versions,
 10|.agents/skills/fleet-records/SKILL.md|Inspect the current task note before replacing its considered

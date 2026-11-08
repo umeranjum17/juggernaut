@@ -57,9 +57,10 @@ meta_get() { # <meta-file> <key> -> last value, the same rule jg_meta_get applie
   printf '%s' "$value"
 }
 
-first_reason() { # first non-empty line of a command's output, trimmed to keep the wake line short
+first_reason() { # first reason line of a command's output, trimmed to keep the wake line short.
+  # `armed:` (jg-pr-check) and `WARNING:` (jg-guard) lines are notices, not refusals: skipped.
   local r
-  r=$(printf '%s' "$1" | sed '/^[[:space:]]*$/d' | head -1)
+  r=$(printf '%s' "$1" | sed -E '/^[[:space:]]*$/d; /^[[:space:]]*(armed:|WARNING:)/d' | head -1)
   [ -n "$r" ] || r="exit code ${2:-?} with no output"
   [ "${#r}" -le 140 ] || r=${r:0:137}'...'
   printf '%s' "$r"
@@ -81,7 +82,8 @@ MERGE_LATENCY_LIMIT=${JG_MERGE_LATENCY_LIMIT_MINUTES:-5}
 case "$MERGE_LATENCY_LIMIT" in ''|*[!0-9]*) MERGE_LATENCY_LIMIT=5 ;; esac
 record_latency() { # <task> <pr>
   local done_at merged_at when minutes
-  done_at=$(sed -n 's/^done \[at=\([0-9][0-9]*\)\]:.*/\1/p' "$STATE/$1.status" 2>/dev/null | tail -1)
+  # A worker's hand-off line: `done` or `ready`, `[at=<epoch>]` with optional extra keys.
+  done_at=$(sed -n -E 's/^(done|ready)[[:space:]]*\[at=([0-9]+)[^]]*\].*/\2/p' "$STATE/$1.status" 2>/dev/null | tail -1)
   [ -n "$done_at" ] || return 0
   merged_at=
   when=$(timeout "$BUDGET" gh pr view "$2" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || when=
@@ -171,6 +173,8 @@ for m in "$STATE"/*.meta; do
 
   # 2. The completion receipt must be a PASS for exactly this head and spawn generation.
   rcpt=$STATE/$task.run-receipt.json
+  # The lane's one slot may hold another member's receipt: put back the one published for this head, if any.
+  "$SRC/../receipts/bin/jg-receipt-restore.sh" "$STATE" "$task" "$pr_head" >/dev/null 2>&1 || :
   if [ ! -f "$rcpt" ]; then
     refuse "no run receipt at state/$task.run-receipt.json" ''
     continue
@@ -211,7 +215,9 @@ for m in "$STATE"/*.meta; do
   # start one only when it still fits inside the watcher's whole-check bound; the fit arithmetic
   # doubles as the merge's bound, so the whole remaining window is available to it.
   mbudget=$(( START + ${JG_CHECK_TIMEOUT:-30} - $(date +%s) - 1 ))
-  [ "$mbudget" -ge "$BUDGET" ] || break
+  # A merge needs two command-bounds of room (a third of the check bound each, so two thirds): the
+  # forge call plus the read-back. Less than that only gets the merge cut mid-way and retried forever.
+  [ "$mbudget" -ge $(( BUDGET * 2 )) ] || break
   mkdir -p "$DATA" || { echo "merge-on-green: NOT merging $task $pr: cannot write $DATA; $LEAD_NOTE"; continue; }
   printf '%s\n' "$pr_head" > "$DATA/$task.head" || { echo "merge-on-green: NOT merging $task $pr: cannot write $DATA/$task.head; $LEAD_NOTE"; continue; }
   merge_out=$(JG_HOME="$FMH" timeout "$mbudget" "$FMH/bin/jg-pr-merge.sh" "$task" "$pr" 2>&1); merge_rc=$?
@@ -267,6 +273,15 @@ done
 # Stale-PR alarm: an open PR with no checks and no update for 24 h, or based on an already merged release
 # branch, raises one alert per PR. It lives in stale-pr-alarm.sh beside this script and is skipped when absent.
 [ ! -x "$SRC/stale-pr-alarm.sh" ] || JG_STALE_PR_LIMIT=$DEADLINE "$SRC/stale-pr-alarm.sh" check "$FMH"
+
+# Merge-ready batch: PR-ready outcomes reach the lead as ONE line per ten-minute window, each with its authority
+# verdict (mergeable, needs the captain's word, NOT mergeable). It lives in merge-ready-batch.sh beside this script,
+# merges nothing itself, and is skipped when absent.
+[ ! -x "$SRC/merge-ready-batch.sh" ] || JG_CHECK_TIMEOUT=${JG_CHECK_TIMEOUT:-30} "$SRC/merge-ready-batch.sh" check "$FMH"
+
+# Stranded-merge sweep: a closed release branch ahead of the default branch for 48 h raises one alert. It lives in
+# stranded-merge-sweep.sh beside this script, asks the forge at most once an hour, and is skipped when absent.
+[ ! -x "$SRC/stranded-merge-sweep.sh" ] || JG_STRANDED_LIMIT=$DEADLINE "$SRC/stranded-merge-sweep.sh" check "$FMH"
 
 # Red-CI ticket: a red run on the default branch, a version branch or an open PR files one root-cause ticket, once
 # per run id. It lives in red-ci-ticket.sh beside this script and is skipped when absent.

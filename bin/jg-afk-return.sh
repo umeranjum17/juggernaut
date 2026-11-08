@@ -5,6 +5,9 @@
 # Usage:
 #   jg-afk-return.sh          Stop away mode, render the return brief, and open/check the gate.
 #   jg-afk-return.sh begin    Same as the default command.
+#   jg-afk-return.sh begin --message <text>  Same, unless <text> is a Telegram note this home
+#                            filed: a phone reply never ends away mode, so it prints `stay` and
+#                            changes nothing. Only a terminal message returns the captain.
 #   jg-afk-return.sh check    Re-render the brief and close the gate only after blockers resolve.
 #   jg-afk-return.sh guard    Read-only consult: exit 3 while away mode is still
 #                            active, exit 4 while return catch-up is pending.
@@ -13,7 +16,7 @@
 # THE RETURN BRIEF (stdout, on begin and on every check) is rendered from durable
 # records, never from conversation memory: the archived away-posture record
 # (bin/jg-afk-contract.sh), the supervision outcome store
-# (bin/jg-branch-outcome.sh), the held set in the backlog (tasks-axi), and the
+# (bin/jg-branch-outcome.sh), the held set in the backlog, and the
 # status logs. Its order is fixed: supervisor health across the away window
 # first, then the captain's away instructions - their words verbatim, including
 # superseded in-session mandates - followed by the away session's account of
@@ -92,9 +95,6 @@ RETURN_GRACE=${JG_GUARD_GRACE:-300}
 # shellcheck source=bin/jg-afk-contract.sh
 . "$SCRIPT_DIR/jg-afk-contract.sh"
 CONTRACT="$SCRIPT_DIR/jg-afk-contract.sh"
-# Functions only: decodes the stored hold reasons the catch-up listing shows.
-# shellcheck source=bin/jg-hold-reason-lib.sh
-. "$SCRIPT_DIR/jg-hold-reason-lib.sh"
 
 usage() {
   sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -490,7 +490,7 @@ epoch_to_iso() {  # <epoch>
   date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$1"
 }
 
-strip_axi_help() {
+strip_help_block() {
   awk '/^help\[/ { skip = 1; next } skip && /^  / { next } { skip = 0; print }'
 }
 
@@ -607,15 +607,15 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
   printf 'Waiting on you:\n'
   count=0
   HELD_READ_FAILED=0
-  HELD_READ_PATH=$(jg_backlog_file "$DATA" 2>/dev/null || printf '%s/backlog.md' "$DATA")
+  HELD_READ_PATH=$DATA/backlog.md
   if held=$(jg_backlog_row_list "$DATA" --state held --fields hold_kind,hold_reason,hold_until 2>&1); then
-    rows=$(printf '%s\n' "$held" | strip_axi_help | grep -v '^count: ' | grep -v '^tasks\[0\]' || true)
+    rows=$(printf '%s\n' "$held" | strip_help_block | grep -v '^count: ' | grep -v '^tasks\[0\]' || true)
     if printf '%s\n' "$held" | grep -q '^count: 0'; then
       :
     elif [ -n "$rows" ]; then
       count=$((count + 1))
       printf '  held in the backlog:\n'
-      printf '%s\n' "$rows" | jg_hold_reason_decode_stream | sed 's/^/    /'
+      printf '%s\n' "$rows" | sed 's/^/    /'
     fi
   else
     held_err=$(printf '%s' "$held" | head -1 | clean_field)
@@ -910,6 +910,15 @@ EOF
 
 main() {
   local mode=${1:-begin} rc window_epoch contract_epoch
+  if [ "$mode" = begin ] && [ "${2:-}" = --message ]; then
+    # shellcheck source=bin/jg-operational-input.sh
+    . "$SCRIPT_DIR/jg-operational-input.sh"
+    if jg_operational_telegram_note "${3-}" "$STATE"; then
+      printf 'jg-afk-return: stay - a Telegram note is not the captain returning; away mode unchanged\n'
+      return 0
+    fi
+    shift 2
+  fi
   case "$mode" in
     begin|check) ;;
     guard) return_guard; return ;;
@@ -924,8 +933,8 @@ main() {
   # read-only guard is literal.
   # shellcheck source=bin/jg-wake-lib.sh
   . "$SCRIPT_DIR/jg-wake-lib.sh"
-  # shellcheck source=bin/jg-tasks-axi-lib.sh
-  . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+  # shellcheck source=bin/jg-backlog-lib.sh
+  . "$SCRIPT_DIR/jg-backlog-lib.sh"
   # shellcheck source=bin/jg-backlog-transition-lib.sh
   . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
   # shellcheck source=bin/jg-pr-lib.sh

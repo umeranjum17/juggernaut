@@ -16,10 +16,10 @@
 #   roots: resolved root/config/data/state/projects directories.
 #   backlog: {path,present,records[]} where records are ordered as written in
 #     data/backlog.md and cover In flight, Queued, and Done.
-#     Canonical tasks-axi rows are structured; free-form non-empty lines in
+#     Canonical backlog rows are structured; free-form non-empty lines in
 #     those sections are preserved as unstructured records.
 #     Structured rows preserve captain-hold metadata such as hold_kind,
-#     hold_reason, and hold_until when tasks-axi emits it. They also carry
+#     hold_reason, and hold_until when the backlog emits it. They also carry
 #     normalized current_role, requires_child_metadata, blocked_by_ids,
 #     unresolved_blocker_ids, captain_actionable, hold_set, hold_age_days,
 #     and hold_bucket fields.
@@ -169,7 +169,7 @@ fi
 case "$SNAPSHOT_EPOCH" in ''|*[!0-9]*) SNAPSHOT_EPOCH=$(date +%s) ;; esac
 # The observation date gates captain-hold deferral: a `hold-until` date still in
 # the future keeps a captain hold out of captain_actionable until it is due
-# (tasks-axi's own contract: the hold is inactive on and after that date).
+# (the backlog's own contract: the hold is inactive on and after that date).
 SNAPSHOT_TODAY=${SNAPSHOT_NOW%%T*}
 case "$SNAPSHOT_TODAY" in
   [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) : ;;
@@ -257,6 +257,8 @@ esac
 . "$SCRIPT_DIR/jg-merge-authority-lib.sh"
 # shellcheck source=bin/jg-hold-reason-lib.sh
 . "$SCRIPT_DIR/jg-hold-reason-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 
 usage() {
   cat <<'EOF'
@@ -277,7 +279,7 @@ inventory contradictions or unavailable child state invalid.
 kind=squad_lead meta records are not child inventory for unowned_current or
 terminal_in_flight; they never have backlog rows.
 Its invalidity object names the normalized failure kind and affected ids.
-Actionable tasks-axi captain holds appear as decisions_open and stay visible in
+Actionable captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, hold_until,
 hold_bucket, hold_age_days, and plural blocker fields for downstream
 projections. A captain hold is actionable only when every blocker is Done, any
@@ -411,14 +413,14 @@ first_pr_url_in_file() {  # <file>
 
 backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
   local backlog=${1:-$BACKLOG}
-  if [ ! -f "$backlog" ]; then
+  local text
+  if ! text=$(jg_backlog_text "$CONFIG" 2>/dev/null); then
     jq -n --arg path "$backlog" '{path:$path,present:false,records:[]}'
     return 0
   fi
 
   set -o pipefail
-  # shellcheck disable=SC2094
-  jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
+  printf '%s\n' "$text" | jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
     --argjson age_days "$JG_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" '
     def trim: gsub("^[[:space:]]+|[[:space:]]+$"; "");
     def timestamp_epoch($d):
@@ -441,7 +443,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
     def metadata($rest; $key):
       cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + ":[[:space:]]*(?<v>[^,)]*)");
     # LOAD-BEARING, do not remove as a duplicate definition of the kind field.
-    # tasks-axi 0.2.5 omits the (kind: ...) metadata when a title starts with
+    # The markdown view omits the (kind: ...) metadata when a title starts with
     # uppercase SCOUT or SHIP at a JavaScript word boundary (ASCII letters,
     # digits, and underscore are word characters), so those rows carry no
     # explicit kind to read. Without this fallback a scout whose title starts
@@ -599,7 +601,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
           | .captain_actionable = (.hold_bucket == "live")
         else . end)
     | del(.section,.order)
-  ' < "$backlog" | jg_hold_reason_decode_stream json
+  ' | jg_hold_reason_decode_stream json
 )
 
 SNAPSHOT_TASK_DIR=

@@ -158,54 +158,6 @@ other-session:jg-design" \
   pass "send: a bare jg-<id> squad_lead enqueues a marked request and rings the meta window"
 }
 
-phase_handoff() {
-  # The move is delegated to `tasks-axi mv`; skip cleanly when it is absent (the
-  # downstream recovery and teardown phases do not depend on this phase).
-  if ! command -v tasks-axi >/dev/null 2>&1; then
-    echo "skip: tasks-axi not found (backlog handoff delegates to it)"
-    return 0
-  fi
-  cat > "$HOME_DIR/data/backlog.md" <<'EOF'
-## In flight
-- [ ] live-task - active work (repo: alpha, since 2026-06-20)
-
-## Queued
-- [ ] feat-x - add feature x (repo: alpha)
-- [ ] feat-y - add feature y (repo: beta) blocked-by: feat-x - waits
-- [ ] bug-z - fix bug z (repo: gamma)
-
-## Done
-- [x] old-task - shipped thing - local main (merged 2026-06-19)
-EOF
-  local out before
-  out=$(PATH="$FAKEBIN:$PATH" JG_HOME="$HOME_DIR" JG_FAKE_TMUX_LOG="$LOG" \
-    JG_FAKE_TMUX_CAPTURE="$PANE" \
-    "$ROOT/bin/jg-backlog-handoff.sh" design feat-x feat-y) \
-    || fail "handoff failed for in-scope items"
-  assert_contains "$out" "handed off 2 item(s) to design" "handoff did not report the moved items"
-
-  assert_no_grep 'feat-x' "$HOME_DIR/data/backlog.md" "feat-x was not removed from the main backlog"
-  assert_no_grep 'feat-y' "$HOME_DIR/data/backlog.md" "feat-y was not removed from the main backlog"
-  assert_grep 'bug-z' "$HOME_DIR/data/backlog.md" "out-of-scope bug-z was wrongly removed"
-  assert_grep 'live-task' "$HOME_DIR/data/backlog.md" "in-flight item was wrongly removed"
-
-  assert_grep '- [ ] feat-x - add feature x (repo: alpha)' "$SUB/data/backlog.md" "feat-x did not arrive verbatim"
-  assert_grep '- [ ] feat-y - add feature y (repo: beta) blocked-by: feat-x - waits' "$SUB/data/backlog.md" "feat-y line not preserved verbatim"
-  awk '/^## Queued/{q=1;next} /^## /{q=0} q && /feat-x/{found=1} END{exit found?0:1}' "$SUB/data/backlog.md" \
-    || fail "feat-x did not land under the Queued section"
-
-  # Idempotent: a second handoff neither errors nor duplicates, and leaves main alone.
-  before=$(cat "$HOME_DIR/data/backlog.md")
-  PATH="$FAKEBIN:$PATH" JG_HOME="$HOME_DIR" JG_FAKE_TMUX_LOG="$LOG" \
-    JG_FAKE_TMUX_CAPTURE="$PANE" \
-    "$ROOT/bin/jg-backlog-handoff.sh" design feat-x feat-y >/dev/null 2>&1 \
-    || fail "idempotent re-run failed"
-  [ "$(grep -cF -- '- [ ] feat-x - add feature x (repo: alpha)' "$SUB/data/backlog.md")" -eq 1 ] \
-    || fail "idempotent re-run duplicated feat-x in the subhome backlog"
-  [ "$before" = "$(cat "$HOME_DIR/data/backlog.md")" ] || fail "idempotent re-run mutated the main backlog"
-  pass "handoff: in-scope items move verbatim, out-of-scope stays, idempotent"
-}
-
 phase_recovery() {
   # Simulate a restart: drop the live meta, then respawn from the registry +
   # persistent home (no explicit home argument).
@@ -333,6 +285,5 @@ setup_world
 phase_seed
 phase_spawn
 phase_send
-phase_handoff
 phase_recovery
 phase_teardown

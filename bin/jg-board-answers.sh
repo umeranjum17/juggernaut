@@ -6,7 +6,8 @@
 #   jg-board-answers.sh route <card-key> <lead> [<decision-key>]
 #   jg-board-answers.sh route-answer <card-key> <at> <answer> [<label>]
 #   jg-board-answers.sh [check|poll]
-#   jg-board-answers.sh arm | disarm
+#   jg-board-answers.sh arm | rearm | disarm
+#   jg-board-answers.sh tick
 #
 # route  Record that <lead> (a task id in this home) owns the card; written by
 #        `jg-question-card.sh post --route <lead> [--decision-key <slug>]`. The
@@ -28,11 +29,26 @@
 #            retried each pass and reported once. When the lead moves that
 #            record to its inbox's handled/ (the acknowledgement), the card is
 #            archived (dismiss, done-elsewhere).
-#          UNROUTED: print one line, full answer text first; the watcher turns
-#            it into a wake for Main. Reported once; answers already on the
-#            board at the first pass are recorded, not reported.
+#          UNROUTED: raise one check wake for Main in this pass (answer text
+#            first); the line is printed instead only when the wake cannot be
+#            raised, so the answer is never lost. Reported once; answers already
+#            on the board at the first pass are recorded, not reported.
 # arm    Write state/board-answers.check.sh, bind it with jg-check-register.sh,
-#        and run one pass. disarm removes the shim and its trust binding.
+#        and run one pass; a report that pass makes is printed, never dropped.
+#        rearm is the same without the pass. disarm removes the shim and its
+#        trust binding and leaves a marker so tick does not arm it again.
+# tick   What the watcher runs every JG_FAST_CHECK_INTERVAL seconds (30), apart
+#        from its slow check sweep, so an answer wakes within the minute. Heals
+#        first: a registration that is missing, unbound, edited or not private
+#        is re-armed, and when that fails ONE line names the check and the
+#        cause (state/.board-answers-rearm-alert holds it until it recovers).
+#        Then one `check` pass. An unreadable board is reported once, not on
+#        every tick. A re-arm is logged to state/board-answers.rearm.log. A
+#        Squad Lead home, or a state directory that is not this home's own,
+#        is never armed by tick.
+# A design card (jg-question-card.sh post --must design-pick) also has a marker
+# state/design-cards/<card-key>; its answer is recorded on the card's backlog row
+# (jg-captain-hold.sh design-pick), which releases the work linked to it.
 # State: state/board-routes/<card-key>, state/.board-answers-seen. Unrouted keys
 # starting `jg-` belong to the captain-hold card adapter and are skipped.
 set -u
@@ -44,6 +60,9 @@ ROUTES="$STATE/board-routes"
 SEEN="$STATE/.board-answers-seen"
 CLOSED="$STATE/.board-answers-card-closed"
 SHIM="$STATE/board-answers.check.sh"
+DISARMED="$STATE/.board-answers-disarmed"
+ALERTED="$STATE/.board-answers-rearm-alert"
+UNREADABLE="$STATE/.board-answers-unreadable"
 # shellcheck source=bin/jg-compat.sh
 . "$SCRIPT_DIR/jg-compat.sh"
 # shellcheck source=bin/jg-question-lib.sh
@@ -52,6 +71,10 @@ SHIM="$STATE/board-answers.check.sh"
 . "$SCRIPT_DIR/jg-board-link-lib.sh"
 # shellcheck source=bin/jg-classify-lib.sh
 . "$SCRIPT_DIR/jg-classify-lib.sh"
+# shellcheck source=bin/jg-pr-lib.sh
+. "$SCRIPT_DIR/jg-pr-lib.sh"
+# shellcheck source=bin/jg-check-lib.sh
+. "$SCRIPT_DIR/jg-check-lib.sh"
 die() { printf 'jg-board-answers: %s\n' "$1" >&2; exit "${2:-1}"; }
 key_ok() { case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac; }
 rget() { sed -n "s/^$2=//p" "$ROUTES/$1" 2>/dev/null | tail -1; }
@@ -85,15 +108,34 @@ answer_text() {  # <key> <at> <answer> <label> <note> <link>
     "$1" "$2" "$3" "${4:+ ($4)}" "${5:+ - note: $5}" "${6:+ Card: $6.}"
 }
 
+# A design card's answer closes its backlog row, which releases the work linked to it
+# (bin/jg-captain-hold.sh design-pick). Only a card with a marker pays for the backlog read.
+designed() {  # <card-key> <answer>
+  [ -f "$STATE/design-cards/$1" ] || return 0
+  "$SCRIPT_DIR/jg-captain-hold.sh" design-pick "$1" --words "$2" >/dev/null 2>&1 || true
+}
+
+# A board that cannot be read is said in full by `check`; under `tick` (a pass
+# every half minute) the same words are said once and again only after a pass
+# that read the board, so a missing tool cannot wake Main every tick.
+unreadable() {
+  if [ -z "${BOARD_ANSWERS_TICK:-}" ]; then say "$1"; return; fi
+  [ "$(cat "$UNREADABLE" 2>/dev/null)" = "$1" ] && return
+  printf '%s\n' "$1" > "$UNREADABLE" 2>/dev/null || true
+  say "$1"
+}
+
 cmd_check() {
   local json board key answer label note at lead dk link text id out first=0 report='' shown
-  jg_question_signoff_available || { say "board answers cannot be read: sign-off-axi is not on PATH"; return 0; }
+  jg_question_signoff_available || { unreadable "board answers cannot be read: sign-off-axi is not on PATH"; return 0; }
   board=$(jg_question_board)
-  json=$(sign-off-axi answers ${board:+"$board"} --json 2>/dev/null) || { say "board answers cannot be read: sign-off-axi answers failed"; return 0; }
+  json=$(sign-off-axi answers ${board:+"$board"} --json 2>/dev/null) || { unreadable "board answers cannot be read: sign-off-axi answers failed"; return 0; }
+  rm -f -- "$UNREADABLE"
   [ -f "$SEEN" ] || { first=1; : > "$SEEN"; }
   mkdir -p "$ROUTES"
   while IFS=$'\037' read -r key at answer label note; do
     key_ok "$key" && [ -n "$at" ] && [ -n "$answer" ] || continue
+    designed "$key" "$answer"
     # The chat message for this card shows the board's answer and drops its buttons. A repeat is a no-op there.
     if ! grep -qxF "$key" "$CLOSED" 2>/dev/null; then
       printf '%s\n' "$key" >> "$CLOSED"
@@ -107,7 +149,12 @@ cmd_check() {
       grep -qxF "$key"$'\t'"$at" "$SEEN" && continue
       printf '%s\t%s\n' "$key" "$at" >> "$SEEN"
       [ "$first" = 1 ] && continue
-      report="${report}$(say "$answer${label:+ ($label)}${note:+ - $note} | board answer on $key at $at, not routed to a lead${link:+ | $link}")"$'\n'
+      text="$(say "$answer${label:+ ($label)}${note:+ - $note} | board answer on $key at $at, not routed to a lead${link:+ | $link}")"
+      # A real wake in this pass, one per answer (the key carries the answer time); the line
+      # is only printed when the wake cannot be raised, so the answer is never lost.
+      # shellcheck source=/dev/null
+      ( . "$SCRIPT_DIR/jg-wake-lib.sh" && jg_wake_append check "board-answer-unmapped-$key-$at" "check: $text" ) >/dev/null 2>&1 \
+        || report="${report}${text}"$'\n'
       continue
     fi
     if [ "$(rget "$key" answered)" != "$at" ]; then
@@ -134,6 +181,7 @@ cmd_route_answer() {
   key_ok "$key" || die "route-answer needs a card key" 2
   { [ -n "$at" ] && [ -n "$answer" ]; } || die "route-answer needs the answer time and the captain's answer" 2
   mkdir -p "$ROUTES"
+  designed "$key" "$answer"
   lead=$(rget "$key" lead)
   if [ -z "$lead" ]; then
     case "$key" in jg-*) die "refused: $key belongs to the captain-hold adapter, not a routed card" 3 ;; esac
@@ -148,14 +196,53 @@ cmd_route_answer() {
   printf 'routed: %s -> %s\n' "$key" "$lead"
 }
 
-cmd_arm() {
-  local tmp
-  tmp=$(umask 077; mktemp "$STATE/.jg-board-answers.XXXXXX") || die "cannot write the check shim"
+write_registration() {  # 0 = shim written and bound; else the cause on stdout
+  local tmp err
+  tmp=$(umask 077; mktemp "$STATE/.jg-board-answers.XXXXXX" 2>&1) || { printf 'cannot write the check shim: %s' "$tmp"; return 1; }
   { printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec %q check\n' "$JG_HOME" "$SCRIPT_DIR/jg-board-answers.sh" > "$tmp" \
-    && chmod 0700 "$tmp" && mv -f -- "$tmp" "$SHIM"; } || { rm -f -- "$tmp"; die "cannot write the check shim"; }
-  JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-check-register.sh" board-answers || die "cannot register the check"
-  cmd_check > /dev/null
+    && chmod 0700 "$tmp" && mv -fT -- "$tmp" "$SHIM"; } || { rm -f -- "$tmp"; printf 'cannot write the check shim'; return 1; }
+  err=$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-check-register.sh" board-answers 2>&1 >/dev/null) \
+    || { printf 'cannot register the check: %s' "${err:-no reason given}"; return 1; }
+  rm -f -- "$DISARMED"
+}
+
+cmd_rearm() {
+  local cause
+  cause=$(write_registration) || die "$cause"
+}
+
+cmd_arm() {
+  cmd_rearm
   printf 'armed: board-answers\n'
+  cmd_check
+}
+
+registration_ok() { jg_custom_check_registered "$STATE" board-answers; }
+
+cmd_tick() {
+  local cause
+  export BOARD_ANSWERS_TICK=1
+  if [ ! -e "$DISARMED" ] && ! registration_ok; then
+    # Squad Lead homes are read by their primary home, and a state directory
+    # that is not this home's own is a fixture or an override: neither is armed here.
+    # With no board file there is nothing to watch yet; the tick after one appears arms.
+    if [ -e "$(jg_compat_marker "$JG_HOME")" ] || [ "$STATE" != "$JG_HOME/state" ] || [ ! -d "$STATE" ] \
+      || [ -z "$(jg_question_board)" ]; then
+      return 0
+    fi
+    if cause=$(write_registration) && registration_ok; then
+      printf '%s re-armed: board-answers\n' "$(date +%s)" >> "$STATE/board-answers.rearm.log" 2>/dev/null || true
+      rm -f -- "$ALERTED"
+    else
+      cause=${cause:-the registration did not verify after it was written}
+      if [ "$(cat "$ALERTED" 2>/dev/null)" != "$cause" ]; then
+        printf '%s\n' "$cause" > "$ALERTED" 2>/dev/null || true
+        say "board-answers check is not registered and could not be re-armed, so board answers do not reach Main: $cause"
+      fi
+      return 0
+    fi
+  fi
+  cmd_check
 }
 
 case "${1:-check}" in
@@ -163,6 +250,8 @@ case "${1:-check}" in
   route-answer) shift; cmd_route_answer "$@" ;;
   check|poll) cmd_check ;;
   arm) cmd_arm ;;
-  disarm) rm -f -- "$SHIM" "$STATE/board-answers.check-trust"; printf 'disarmed: board-answers\n' ;;
+  rearm) cmd_rearm ;;
+  tick) cmd_tick ;;
+  disarm) rm -f -- "$SHIM" "$STATE/board-answers.check-trust"; : > "$DISARMED"; printf 'disarmed: board-answers\n' ;;
   *) die "unknown command: $1" 2 ;;
 esac

@@ -23,7 +23,7 @@
 #   jg-captain-hold.sh hold <task-id> --reason <reason> \
 #     [--title <title>] [--repo <repo>] [--priority 0-3] [--origin <origin-id>] [--until YYYY-MM-DD] \
 #     [--must <category>]
-#   jg-captain-hold.sh answer <task-id> --decision-file <path> [--release]
+#   jg-captain-hold.sh answer <task-id> --decision-file <path> [--release [--card <card-key>]]
 #   jg-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   jg-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
 #   jg-captain-hold.sh bind <source-id> [<legacy-origin> | --any-origin]
@@ -33,6 +33,9 @@
 #   jg-captain-hold.sh verify <origin-id>
 #   jg-captain-hold.sh answered <task-id>
 #   jg-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
+#   jg-captain-hold.sh blocking <task-id>
+#   jg-captain-hold.sh design-card <card-key> --raised-by <ticket> --title <question>
+#   jg-captain-hold.sh design-pick <card-key> --words <the captain's words>
 #   jg-captain-hold.sh diverged
 #   jg-captain-hold.sh reconcile list
 #   jg-captain-hold.sh reconcile close <task-id> --evidence-file <path>
@@ -46,22 +49,18 @@
 # (bin/jg-ask-gate-lib.sh): on the when-it-matters leash an armed sign-off card
 # needs a must category, and a hold with none is refused and recorded for
 # Overwatch (bin/jg-board-gate.sh route) instead of held. Creating a missing row uses
-# `tasks-axi add --kind captain`: that kind is backlog metadata, and the Beads
-# adapter maps it to native issue type `task`. Captain holds have no due
-# semantics (`--until` is the optional hold deferral), so the create waives
-# Beads `due.required` through `BD_DUE_REQUIRED` rather than inventing a due
-# date or registering a `types.custom` captain issue type. When the optional
+# `add --kind captain`: that kind is backlog metadata, and the Beads
+# store keeps it as native issue type `decision`. Captain holds have no due
+# semantics (`--until` is the optional hold deferral). When the optional
 # task-priority feature is installed, a created task needs `--priority 0-3`; the
-# feature's refusal is returned as-is (bin/jg-tasks-axi.sh owns that hook).
+# feature's refusal is returned as-is (bin/jg-backlog.sh owns that hook).
 # The command records a UTC `Captain hold set:` timestamp in the task body:
 # repeating an active hold preserves the existing timestamp, while re-holding
 # released work starts a new lifecycle. A task already closed is refused rather
 # than reopened.
 # `--origin` also records the origin on a `Captain hold origin:` body line, which
-# `complete` and `verify` check. The reason may hold parentheses and line breaks:
-# tasks-axi refuses them, so `hold` escapes them where it writes the reason and
-# readers decode them (bin/jg-hold-reason-lib.sh owns the encoding).
-# `--until` records the captain's own deferral date through `tasks-axi hold
+# `complete` and `verify` check. The reason may hold parentheses and line breaks.
+# `--until` records the captain's own deferral date through `hold
 # --until`, so a "revisit later" answer is stored as a date instead of a live
 # card.
 # When this home has armed the sign-off adapter, an undated `hold` also
@@ -80,18 +79,18 @@
 # act. It requires a non-empty captain decision file of at most 8192 bytes and
 # writes a resolution block while preserving the leading hold-set stamp until
 # the close succeeds (the previous body is preserved and archived through
-# tasks-axi --archive-body). It closes a question with `tasks-axi done` - or,
-# with `--release`, lifts the hold with `tasks-axi unhold` so a captain-gated
+# --archive-body). It closes a question with `done` - or,
+# with `--release`, lifts the hold with `unhold` so a captain-gated
 # WORK item resumes without closing - and restores resolution-first body
 # ordering. An exact retry also completes unfinished ordering normalization and
 # is idempotent only when its requested close mode
 # matches the newest record; a changed decision or a mode mismatch is rejected.
 # A re-held task may record a new answer on top. On a task already closed outside this script,
 # `answer` records the missing resolution block (the old `repair` path) only
-# when the task still carries the captain-hold provenance tasks-axi preserves
+# when the task still carries the captain-hold provenance the store preserves
 # through a close, so an ordinary finished task cannot be dressed up as an
 # answered captain call. A hold that expired by date (`--until` in the past) is
-# still answerable: the surviving hold annotations, not tasks-axi's live
+# still answerable: the surviving hold annotations, not the live
 # `held:` bit, prove the captain owned it.
 #
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
@@ -107,8 +106,8 @@
 # and feeds nothing. A replayed delivery whose answer digest and requested
 # close mode both match the newest record is reported `closed:` and is a no-op;
 # a mode mismatch is skipped. The command exits 3 when every skip was permanent
-# (the reserved reconcile value, already closed, not held for the captain, unknown
-# close mode, or migrated hold ambiguous) and 1 for any other skip; the reserved
+# (the reserved reconcile value, already closed, not held for the captain, or
+# unknown close mode) and 1 for any other skip; the reserved
 # reconcile value is refused for good, reported once on
 # stderr, and counts as a permanent skip. `--source` is provenance text recorded in the
 # durable decision, never a behavior switch: this command has no per-channel
@@ -177,16 +176,9 @@
 # `decisions_reviewed=1` and `decision_keys=` keys, and an inventory entry that
 # names no existing task resolves through the legacy `<origin>-decision-<entry>`
 # identity, so pre-collapse metadata written by jg-decision-hold.sh verifies
-# unchanged. An entry that exists as a task id is always that task. On the
-# Beads backend an attested legacy markdown id that resolves to no task is
-# accepted through the migrated row jg-hold-migration produced, found by the
-# authoritative evidence first: a row whose notes carry the marker line
-# "migrated from data/backlog.md id <legacy id>", alone or followed by
-# " on <date>". Only when no row carries that line is the legacy id tried under
-# the configured beads prefix, and that name-only guess is accepted solely for
-# a single row still held for the captain; two such rows refuse rather than
-# attest, and `complete` names each prefix-resolved row beside its attested
-# legacy id so the guess stays auditable.
+# unchanged. An entry that exists as a task id is always that task. On a Beads
+# store an attested old id reaches its row through the name the provider's own
+# `show` answers to, so no id here needs a second lookup.
 #
 # `open` is the read-only predicate a mechanical closer asks before it may
 # retire a task's row: is this task still an open captain call? Exit 0 means it
@@ -212,7 +204,23 @@
 # the task's last status line - and on a 0 bounds repeated alarms from new pane
 # hashes for the decision.
 #
-# `answered` is the read-only predicate bin/jg-tasks-axi.sh asks before it lets a
+# `blocking` is the read-only predicate bin/jg-spawn.sh (a ship start) and
+# bin/jg-pr-merge.sh (a merge) ask: is a captain call open on this task or on
+# any task linked to it, in either direction? A call is open when its task is
+# held (`open`'s reading), or when it is a not-done `[design-ux]` ticket with no
+# recorded pick, from the moment it is filed. A `[captain-ask]` ticket is an
+# order, not a question: it counts only while held.
+# Links are read one hop, live; only this home's backlog is seen. Exit 0 prints
+# `<task-id><TAB><title>` per open call; 1 means none; 2 means it could not be
+# established, which a caller must treat as a refusal.
+#
+# `design-card` and `design-pick` are the two ends of a design card's row, called by
+# bin/jg-question-card.sh (post, --must design-pick) and bin/jg-board-answers.sh. The
+# post files a `[design-ux]` row keyed by the card with `linked-to: <raising ticket>`,
+# so `blocking` finds it from that ticket; a card naming no raising ticket (or one this
+# home lacks) is refused. The answer records the captain's words on the row and closes it.
+#
+# `answered` is the read-only predicate bin/jg-backlog.sh asks before it lets a
 # `[captain-ask]` row leave the backlog: exit 0 when the task body carries a
 # recorded captain answer (an evidence-only `reconciled` record or an open hold-set stamp does not count),
 # 1 when it does not, and any other non-zero status when the task cannot be read.
@@ -271,18 +279,15 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-classify-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-classify-lib.sh"
-# shellcheck source=bin/jg-tasks-axi-lib.sh
+# shellcheck source=bin/jg-backlog-lib.sh
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-wake-lib.sh"
-# shellcheck source=bin/jg-hold-reason-lib.sh
-# shellcheck disable=SC1091
-. "$SCRIPT_DIR/jg-hold-reason-lib.sh"
 # shellcheck source=bin/jg-parent-channel-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-parent-channel-lib.sh"
@@ -293,6 +298,8 @@ DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 # shellcheck source=bin/jg-question-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/jg-question-lib.sh"
+# shellcheck source=core/signoff/bin/jg-signoff-feedback-lib.sh
+. "$SCRIPT_DIR/../core/signoff/bin/jg-signoff-feedback-lib.sh"
 
 PARENT_HOLD_PUBLISHED=0
 publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
@@ -369,7 +376,7 @@ raise_hold_card() {  # <task-id> <task-title> <reason> <done|release> <must>
   out=$("$SCRIPT_DIR/jg-question-card.sh" post \
     --route main \
     --ask-ref "$id" --key "$key" --title "$title" --about "$reason" --why "$(card_why "$reason")" \
-    ${must:+--must "$must"} ${ticket:+--ticket "$ticket"} \
+    ${must:+--must "$must"} ${ticket:+--ticket "$ticket"} --filer captain-hold \
     --outcome yes="Answer recorded: yes." \
     --outcome no="Answer recorded: no." \
     --recommend yes --recommend-reason "The hold records no recommendation." \
@@ -473,31 +480,17 @@ load_decision() {  # <path>; sets DECISION_TEXT and DECISION_DIGEST
   DECISION_DIGEST=$(sha256_text "$decision")
 }
 
-# Mutations address the configured data directory's backlog from its root, the
-# way bin/jg-backlog-transition-lib.sh addresses every transition, so a home
-# with a relocated data directory keeps one backlog. The explicit --file file
-# belongs to the markdown backend only; a non-markdown backend is addressed by
-# the root's own tasks-axi configuration, exactly like the transition library's
-# mutate path.
-tasks_axi() {
-  local data file root backend
+# Mutations address this home's Beads store, named by config/beads-dir.
+backlog_cmd() {
+  local data
   data=$(jg_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
-  root=$(jg_backlog_root "$data") || fail "$JG_BACKLOG_TRANSITION_ERROR"
-  backend=$(jg_tasks_axi_backend "$root") || return 2
-  if [ "$backend" = markdown ]; then
-    file=$(jg_backlog_file "$data") || fail "$JG_BACKLOG_TRANSITION_ERROR"
-    (cd "$root" && tasks-axi "$@" --file "$file")
-  else
-    (cd "$root" && tasks-axi "$@")
-  fi
+  jg_backlog_beads_serve "$(jg_backlog_config_of "$data")" "$@"
 }
 
 # shellcheck source=bin/jg-captain-ask-lib.sh disable=SC1091
 . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-require_tasks_axi() {
-  jg_tasks_axi_compatible || fail "compatible tasks-axi is required"
-  tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null \
-    || fail "tasks-axi does not expose the captain-hold contract"
+require_backlog() {
+  jg_backlog_beads_store "$(jg_backlog_config_of "$(jg_backlog_data_absolute "$DATA")")" >/dev/null || exit 2
 }
 
 # Read one row into TASK_SHOW_OUTPUT; a non-zero return means the row is
@@ -516,7 +509,7 @@ task_show() {  # <id>; sets TASK_SHOW_OUTPUT
   if [ "$status" -eq 124 ]; then
     reason=${TASK_SHOW_OUTPUT%%$'\n'*}
     printf 'jg-captain-hold: %s\n' \
-      "${reason:-tasks-axi show $1 exceeded its backlog read bound}" >&2
+      "${reason:-backlog show $1 exceeded its backlog read bound}" >&2
     exit 124
   fi
   return "$status"
@@ -681,205 +674,12 @@ verify_hold_durable() {  # <task-id>
   fail "captain-held task $id is neither held for the captain nor closed with a recorded captain answer"
 }
 
-# --- migrated legacy-id resolution on the Beads backend ---------------------
-#
-# A home that moved its backlog from markdown to Beads no longer carries the
-# legacy hold ids a scout report attested: the migration rehomed every held
-# row under a prefixed jg- id and recorded its markdown identity in the row's
-# notes as "migrated from data/backlog.md id <legacy id>", alone or followed by
-# " on <date>" (jg-hold-migration wrote the dated form on 2026-09-04). When an
-# attested legacy id resolves to no task, the beads backend accepts the row the
-# migration produced, found by scanning the configured graph's notes for either
-# form of that marker line, and only when no row carries the marker by
-# prepending the configured prefix to the legacy id - a name-only guess, so it
-# is accepted solely for a row still held for the captain and only when it is
-# the single such row. A markdown home keeps its legacy rows verbatim, so its
-# exact-id resolution is unchanged.
-
-CAPTAIN_MIGRATION_SCAN_LOADED=0
-CAPTAIN_MIGRATION_SCAN_JSON=
-NL_SEP=$'\n'
-
-# Section-aware [beads] extraction from a .tasks.toml: only keys inside the
-# [beads] section, comments stripped. Prints "<key> <value>" lines.
-captain_beads_toml_entries() {  # <toml-file>
-  [ -f "$1" ] || return 0
-  LC_ALL=C awk '
-    function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
-    BEGIN { inbeads = 0 }
-    {
-      line = $0
-      sub(/[[:space:]]*#.*/, "", line)
-      line = trim(line)
-      if (line ~ /^\[[^]]+\]$/) { inbeads = (line == "[beads]"); next }
-      if (!inbeads) next
-      if (line ~ /^(prefix|path|binary)[[:space:]]*=/) {
-        key = line
-        sub(/[[:space:]]*=.*/, "", key)
-        sub(/^[^=]*=[[:space:]]*/, "", line)
-        gsub(/^"|"$/, "", line); gsub(/^'\''|'\''$/, "", line)
-        printf "%s %s\n", key, line
-      }
-    }
-  ' "$1"
-}
-
-captain_beads_setting() {  # <entries-output> <setting>
-  printf '%s\n' "$1" | sed -n "s/^$2 //p" | head -1
-}
-
-# Read the configured beads graph's row listing for a migration-note scan.
-# The listing is deliberately re-read per unresolvable key: the cache below
-# lives and dies with the command-substitution subshell every resolve_entry
-# call site runs in, so it cannot persist across keys - bounded by a scout
-# report's handful of attested ids. Returns 0 when the listing loads, and 2
-# with the reason on stderr when the graph cannot be read.
-captain_migration_scan_load() {  # <resolved-data-dir>
-  local data=$1 root entries bd_bin bd_path backend
-  [ "$CAPTAIN_MIGRATION_SCAN_LOADED" = 1 ] && return 0
-  root=$(jg_backlog_root "$data") || {
-    printf 'jg-captain-hold: the configured data directory cannot be resolved for a migration scan: %s\n' "$JG_BACKLOG_TRANSITION_ERROR" >&2
-    return 2
-  }
-  backend=$(jg_tasks_axi_backend "$root") || return 2
-  if [ "$backend" != beads ]; then
-    CAPTAIN_MIGRATION_SCAN_LOADED=1
-    return 0
-  fi
-  entries=$(captain_beads_toml_entries "$root/.tasks.toml")
-  bd_bin=$(captain_beads_setting "$entries" binary)
-  bd_path=$(captain_beads_setting "$entries" path)
-  bd_bin=${bd_bin:-bd}
-  if [ -z "$bd_path" ]; then
-    printf 'jg-captain-hold: the beads backend carries no graph path in %s, so a migrated hold cannot be found\n' "$root/.tasks.toml" >&2
-    return 2
-  fi
-  # A relative [beads] path resolves against the backlog root, the same rule
-  # every other .tasks.toml path consumer uses, never against the process CWD.
-  case "$bd_path" in
-    /*) ;;
-    *) bd_path="$root/$bd_path" ;;
-  esac
-  command -v "$bd_bin" >/dev/null 2>&1 || {
-    printf 'jg-captain-hold: the beads binary %s is not on PATH, so a migrated hold cannot be found\n' "$bd_bin" >&2
-    return 2
-  }
-  command -v jq >/dev/null 2>&1 || {
-    printf 'jg-captain-hold: jq is required to scan the beads graph for a migrated hold\n' >&2
-    return 2
-  }
-  local bd_err
-  bd_err=$(mktemp "${TMPDIR:-/tmp}/jg-captain-hold-bd.XXXXXX") || {
-    printf 'jg-captain-hold: cannot stage the beads graph read diagnostics\n' >&2
-    return 2
-  }
-  if ! CAPTAIN_MIGRATION_SCAN_JSON=$(BEADS_DIR="$bd_path" "$bd_bin" list --all --json 2>"$bd_err"); then
-    printf 'jg-captain-hold: reading the beads graph at %s failed (%s), so a migrated hold cannot be found\n' \
-      "$bd_path" "$(sanitize_field "$(head -c 200 "$bd_err" | tr '\n' ' ')")" >&2
-    rm -f "$bd_err"
-    return 2
-  fi
-  rm -f "$bd_err"
-  CAPTAIN_MIGRATION_SCAN_LOADED=1
-  return 0
-}
-
-# Resolve one attested legacy id to the migrated row that carries it on the
-# beads backend. Prints "<row id> <how>" and returns 0 when exactly one
-# migration matches, returns 1 when none does, and returns 2 with the reason on
-# stderr when the scan itself cannot run or is ambiguous. The marker note is the
-# authoritative evidence and is scanned first; the bare configured prefix is a
-# guess, so it only runs when no marker line matches any identity and it accepts
-# a row solely when that row is itself still held for the captain.
-resolve_migrated_entry() {  # <origin-or-empty> <entry>
-  local origin=$1 entry=$2 data root entries prefix derived show backend
-  local candidate candidate_matches prefixed matches count prefixed_matches prefixed_count
-  data=$(jg_backlog_data_absolute "$DATA") || {
-    printf 'jg-captain-hold: the migrated hold of %s cannot be resolved: %s\n' \
-      "$entry" "${JG_BACKLOG_TRANSITION_ERROR:-the configured data directory $DATA cannot be resolved}" >&2
-    return 2
-  }
-  root=$(jg_backlog_root "$data") || {
-    printf 'jg-captain-hold: the migrated hold of %s cannot be resolved: %s\n' \
-      "$entry" "${JG_BACKLOG_TRANSITION_ERROR:-the configured data directory $DATA cannot be resolved}" >&2
-    return 2
-  }
-  backend=$(jg_tasks_axi_backend "$root") || return 2
-  [ "$backend" = beads ] || return 1
-  # Every identity this entry could have been migrated under: the raw entry,
-  # and - for a pre-collapse channel key - the derived legacy identity its
-  # origin would have minted, because jg-hold-migration recorded the DERIVED
-  # id in each migrated row's marker note.
-  CAPTAIN_MIGRATION_IDENTITIES=$entry
-  if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ]; then
-    derived=$(legacy_hold_id "$origin" "$entry")
-    if [ "$derived" != "$entry" ]; then
-      CAPTAIN_MIGRATION_IDENTITIES="$CAPTAIN_MIGRATION_IDENTITIES $derived"
-    fi
-  fi
-  captain_migration_scan_load "$data" || return 2
-  matches=
-  if [ -n "$CAPTAIN_MIGRATION_SCAN_JSON" ]; then
-    for candidate in $CAPTAIN_MIGRATION_IDENTITIES; do
-      candidate_matches=$(printf '%s\n' "$CAPTAIN_MIGRATION_SCAN_JSON" | jq -r \
-        --arg exact "migrated from data/backlog.md id $candidate" \
-        --arg dated "migrated from data/backlog.md id $candidate on " \
-        '.[] | select(((.notes // "") | split("\n")) | any(. == $exact or startswith($dated))) | .id' 2>/dev/null) || {
-        printf 'jg-captain-hold: the beads graph scan for the migrated hold of %s could not be parsed\n' "$candidate" >&2
-        return 2
-      }
-      matches="${matches}${matches:+$NL_SEP}${candidate_matches}"
-    done
-    count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')
-    case "$count" in
-      0) : ;;
-      1) printf '%s migrated-note' "$(printf '%s\n' "$matches" | sed '/^$/d' | sed -n 1p)"; return 0 ;;
-      *)
-        printf 'jg-captain-hold: the migrated hold of %s is ambiguous: %s rows carry its marker line (identities tried: %s)\n' \
-          "$entry" "$count" "$(printf '%s' "$CAPTAIN_MIGRATION_IDENTITIES" | tr ' ' ',')" >&2
-        return 3
-        ;;
-    esac
-  fi
-  # No marker line anywhere: a mechanical migration keeps the legacy id under
-  # the configured prefix, but that name alone is evidence of nothing, so only
-  # a row still held for the captain - and only one of them - is accepted.
-  entries=$(captain_beads_toml_entries "$root/.tasks.toml")
-  prefix=$(captain_beads_setting "$entries" prefix)
-  [ -n "$prefix" ] || return 1
-  prefixed_matches=
-  for candidate in $CAPTAIN_MIGRATION_IDENTITIES; do
-    case "$prefix" in
-      *-) prefixed="$prefix$candidate" ;;
-      *) prefixed="$prefix-$candidate" ;;
-    esac
-    # Same shell rule as task_show_or_fail: the row is read out of
-    # TASK_SHOW_OUTPUT, so the read cannot sit inside a command substitution.
-    task_show "$prefixed" 2>/dev/null || {
-      [ "$?" -ne 124 ] || return 124
-      continue
-    }
-    show=$TASK_SHOW_OUTPUT
-    [ "$(show_field_value "$show" hold_kind)" = captain ] || continue
-    prefixed_matches="${prefixed_matches}${prefixed_matches:+$NL_SEP}$prefixed"
-  done
-  prefixed_count=$(printf '%s\n' "$prefixed_matches" | sed '/^$/d' | wc -l | tr -d ' ')
-  case "$prefixed_count" in
-    0) return 1 ;;
-    1) printf '%s migrated-prefix' "$prefixed_matches"; return 0 ;;
-  esac
-  printf 'jg-captain-hold: the migrated hold of %s is ambiguous: %s captain-held rows carry the configured prefix (identities tried: %s)\n' \
-    "$entry" "$prefixed_count" "$(printf '%s' "$CAPTAIN_MIGRATION_IDENTITIES" | tr ' ' ',')" >&2
-  return 2
-}
-
 # Resolve one inventory entry or channel key to the task that carries it: the
-# exact task id when it exists, else the legacy derived identity, else - on the
-# beads backend - the migrated row the markdown-to-beads hold migration wrote.
-# Prints "<resolved id> <how>", where <how> is exact, legacy, migrated-note or
-# migrated-prefix, so a caller can record which evidence carried the attestation.
+# exact task id when it exists, else the legacy derived identity. Prints
+# "<resolved id> <how>", where <how> is exact or legacy, so a caller can record
+# which evidence carried the attestation.
 resolve_entry() {  # <origin-or-empty> <entry>; prints "<id> <how>" or fails
-  local origin=$1 entry=$2 legacy migrated rc
+  local origin=$1 entry=$2 legacy
   if task_show "$entry"; then
     printf '%s exact' "$entry"
     return 0
@@ -890,19 +690,9 @@ resolve_entry() {  # <origin-or-empty> <entry>; prints "<id> <how>" or fails
       printf '%s legacy' "$legacy"
       return 0
     fi
+    fail "no captain-held task $entry in this home's configured backlog (data directory $DATA); the nearest legacy identity $legacy also resolves to nothing"
   fi
-  rc=0
-  migrated=$(resolve_migrated_entry "$origin" "$entry") || rc=$?
-  case "$rc" in
-    0) printf '%s' "$migrated"; return 0 ;;
-    2 | 3) return "$rc" ;;
-    124) return 124 ;;
-  esac
-  if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ]; then
-    legacy=$(legacy_hold_id "$origin" "$entry")
-    fail "no captain-held task $entry and no migrated hold for it in this home's configured backlog (data directory $DATA); the nearest legacy identity $legacy also resolves to nothing"
-  fi
-  fail "no captain-held task $entry and no migrated hold for it in this home's configured backlog (data directory $DATA)"
+  fail "no captain-held task $entry in this home's configured backlog (data directory $DATA)"
 }
 
 body_hold_set_timestamp() {  # <decoded-task-body>
@@ -938,7 +728,7 @@ write_hold_set_stamp() {  # <task-id> <shown-body> <timestamp> <preserve-existin
     rm -f -- "$tmp"
     fail "cannot stage the hold-set stamp for $id"
   fi
-  if ! tasks_axi update "$id" --body-file "$tmp" >/dev/null; then
+  if ! backlog_cmd update "$id" --body-file "$tmp" >/dev/null; then
     rm -f -- "$tmp"
     fail "could not record the hold-set stamp on $id"
   fi
@@ -985,7 +775,7 @@ write_hold_origin() {  # <task-id> <shown-body> <origin-or-empty>
     rm -f -- "$tmp"
     fail "cannot stage the hold origin for $id"
   fi
-  if ! tasks_axi update "$id" --body-file "$tmp" >/dev/null; then
+  if ! backlog_cmd update "$id" --body-file "$tmp" >/dev/null; then
     rm -f -- "$tmp"
     fail "could not record the hold origin on $id"
   fi
@@ -1066,8 +856,7 @@ command_hold() {
   if [ -z "${reason//[[:space:]]/}" ]; then
     fail 'hold needs --reason "<what the captain has to decide>"; nothing was recorded'
   fi
-  # bin/jg-hold-reason-lib.sh owns the storage constraint and reversible encoding.
-  stored_reason=$(jg_hold_reason_encode "$reason") || fail "could not encode the hold reason"
+  stored_reason=$reason
   if [ -n "$origin" ]; then
     validate_slug origin-id "$origin"
   fi
@@ -1109,7 +898,7 @@ command_hold() {
     *) fail "JG_CAPTAIN_HOLD_NOW must be a UTC YYYY-MM-DDTHH:MM:SSZ timestamp" ;;
   esac
   acquire_task_control_lock "$id"
-  require_tasks_axi
+  require_backlog
   if task_show "$id"; then
     show=$TASK_SHOW_OUTPUT
     state=$(show_field "$show" state)
@@ -1142,14 +931,12 @@ command_hold() {
       "$priority_check" add "$id" "$title" --kind captain ${priority:+--priority "$priority"} >/dev/null \
         || exit 1
     fi
-    # tasks-axi add never passes --due. Beads due.required would refuse this
-    # create, and captain holds have no due semantics, so waive it for this
-    # call only. --kind captain stays metadata; Beads native type is task.
+    # --kind captain is Beads native type decision.
     if [ -n "$body" ]; then
-      BD_DUE_REQUIRED=false tasks_axi add "$id" "$title" --kind captain --repo "$repo" ${priority:+--priority "$priority"} --body "$body" >/dev/null \
+      backlog_cmd add "$id" "$title" --kind captain --repo "$repo" ${priority:+--priority "$priority"} --body "$body" >/dev/null \
         || fail "could not create task $id"
     else
-      BD_DUE_REQUIRED=false tasks_axi add "$id" "$title" --kind captain --repo "$repo" ${priority:+--priority "$priority"} >/dev/null \
+      backlog_cmd add "$id" "$title" --kind captain --repo "$repo" ${priority:+--priority "$priority"} >/dev/null \
         || fail "could not create task $id"
     fi
   fi
@@ -1167,10 +954,10 @@ command_hold() {
     write_hold_origin "$id" "$(show_field "$show" body)" "$origin" || exit $?
   fi
   if [ -n "$until" ]; then
-    tasks_axi hold "$id" --reason "$stored_reason" --kind captain --until "$until" >/dev/null \
+    backlog_cmd hold "$id" --reason "$stored_reason" --kind captain --until "$until" >/dev/null \
       || hold_status=$?
   else
-    tasks_axi hold "$id" --reason "$stored_reason" --kind captain >/dev/null \
+    backlog_cmd hold "$id" --reason "$stored_reason" --kind captain >/dev/null \
       || hold_status=$?
   fi
   if [ "$hold_status" -ne 0 ]; then
@@ -1255,7 +1042,7 @@ write_resolution_record() {  # <task-id> <mode> <shown-body>
     rm -f -- "$tmp"
     fail "cannot stage the resolution record for $id"
   fi
-  if ! tasks_axi update "$id" --body-file "$tmp" --archive-body >/dev/null; then
+  if ! backlog_cmd update "$id" --body-file "$tmp" --archive-body >/dev/null; then
     rm -f -- "$tmp"
     fail "could not record the captain decision on $id"
   fi
@@ -1292,10 +1079,10 @@ apply_pending_retained_artifact() {  # <task-id>
 
 close_answered() {  # <task-id> <release-0-or-1>
   if [ "$2" = 1 ]; then
-    tasks_axi unhold "$1" >/dev/null && jg_backlog_ticket_note "$DATA" unhold "$1"
+    backlog_cmd unhold "$1" >/dev/null && jg_backlog_ticket_note "$DATA" unhold "$1"
   else
     apply_pending_retained_artifact "$1" || return 1
-    tasks_axi "done" "$1" "${RETAINED_CLOSE_ARGS[@]+"${RETAINED_CLOSE_ARGS[@]}"}" >/dev/null \
+    backlog_cmd "done" "$1" "${RETAINED_CLOSE_ARGS[@]+"${RETAINED_CLOSE_ARGS[@]}"}" >/dev/null \
       && jg_backlog_ticket_note "$DATA" "done" "$1" "${RETAINED_CLOSE_ARGS[@]+"${RETAINED_CLOSE_ARGS[@]}"}"
   fi
 }
@@ -1325,21 +1112,35 @@ remove_interrupted_answer_stamp() {  # <task-id>
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-captain-hold-normalize.XXXXXX") \
     || fail "cannot stage the closed body for $id"
   if ! printf '%s\n' "$body" > "$tmp" \
-    || ! tasks_axi update "$id" --body-file "$tmp" >/dev/null; then
+    || ! backlog_cmd update "$id" --body-file "$tmp" >/dev/null; then
     rm -f -- "$tmp"
     fail "could not restore the resolution record ordering for $id"
   fi
   rm -f -- "$tmp"
 }
 
+# A release from a board answer tells the owner what started: one reply on the
+# card (sign-off-axi feedback --reply, 500 characters at most). A feedback
+# failure is said on stderr and never fails the release.
+reply_release() {  # <task-id> <title> <card-key>
+  local board text rc=0
+  [ -n "$3" ] && jg_question_signoff_available || return 0
+  board=$(jg_question_board)
+  text="Released $1: $(sanitize_field "$2")"
+  jg_signoff_feedback "$3" ${board:+"$board"} --reply "${text:0:500}" || rc=$?
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || printf 'the release of %s was not reported on card %s\n' "$1" "$3" >&2
+  return 0
+}
+
 command_answer() {
-  local id=${1:-} decision_file='' release=0 show state hold_kind body outcome recorded_mode occurrence
+  local id=${1:-} decision_file='' release=0 card='' title show state hold_kind body outcome recorded_mode occurrence
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --decision-file) shift; decision_file=${1:-} ;;
       --release) release=1 ;;
+      --card) shift; card=${1:-}; validate_slug card-key "$card" ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -1347,13 +1148,17 @@ command_answer() {
   validate_slug task-id "$id"
   load_decision "$decision_file"
   acquire_task_control_lock "$id"
-  require_tasks_axi
+  require_backlog
   task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   show=$TASK_SHOW_OUTPUT
   state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
   body=$(show_field "$show" body)
   if [ "$release" = 1 ]; then outcome=released; else outcome=answered; fi
+  title=$(show_field_value "$show" title)
+  if [ "$release" = 1 ] && [ -z "$card" ] && [ "$hold_kind" = captain ]; then
+    card=$(jg_question_hold_card_key "$id" "$("$SCRIPT_DIR/jg-captain-hold.sh" open "$id" --identity 2>/dev/null)") || card=''
+  fi
   # The occurrence the parent line names: the record about to be written is
   # one past those already in the body, and a retry names the newest one.
   occurrence=$(( $(resolution_record_count "$body") + 1 ))
@@ -1379,7 +1184,7 @@ command_answer() {
     fi
     [ "$release" = 0 ] || fail "task $id is already closed; --release cannot reopen it"
     # Closed outside this script: record the captain's answer retroactively.
-    # tasks-axi keeps hold_kind through a close, so it is the surviving proof
+    # The store keeps hold_kind through a close, so it is the surviving proof
     # this really was the captain's item rather than ordinary finished work.
     [ "$hold_kind" = captain ] \
       || fail "task $id was never held for the captain; nothing to record an answer on"
@@ -1402,7 +1207,6 @@ command_answer() {
     # its own record on top. Either way the close mode is the caller's flag,
     # checked against an interrupted close's recorded mode so a retry cannot
     # silently flip a release into a close.
-    [ "$release" = 1 ] || guard_captain_ask_archive "done" "" "$id"
     if body_has_resolution_record "$body" \
       && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
       && ! recorded_resolution_completed "$body"; then
@@ -1417,6 +1221,7 @@ command_answer() {
       fi
       remove_interrupted_answer_stamp "$id"
       publish_parent_resolution_then_retire "$id" $((occurrence - 1)) "$outcome"
+      [ "$release" = 0 ] || reply_release "$id" "$title" "$card"
       printf '%s: %s\n' "$outcome" "$id"
       return 0
     fi
@@ -1430,6 +1235,7 @@ command_answer() {
     body_has_resolution_record "$(show_field "$show" body)" \
       || fail "captain-held task $id did not retain its durable resolution record"
     publish_parent_resolution_then_retire "$id" "$occurrence" "$outcome"
+    [ "$release" = 0 ] || reply_release "$id" "$title" "$card"
     printf '%s: %s\n' "$outcome" "$id"
     return 0
   fi
@@ -1566,7 +1372,7 @@ command_answers() {
   fi
   [ -n "$source" ] || fail "--source provenance is required so the durable decision records where the answer came from"
   source=$(sanitize_field "$source")
-  require_tasks_axi
+  require_backlog
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-keyed-decision.XXXXXX") || fail "cannot stage the captain decision"
   err=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-keyed-decision-err.XXXXXX") \
     || { rm -f -- "$tmp"; fail "cannot stage the captain decision diagnostics"; }
@@ -1602,13 +1408,6 @@ command_answers() {
     resolve_rc=0
     id=$(resolve_entry "$origin" "$key" 2>"$err") || resolve_rc=$?
     id=${id%% *}
-    if [ "$resolve_rc" = 2 ] || [ "$resolve_rc" = 3 ]; then
-      reason=$(tr -d '\n' < "$err")
-      printf 'skipped: %s (migrated-hold scan refused%s)\n' "$key" "${reason:+: $reason}"
-      skipped=$((skipped + 1))
-      if [ "$resolve_rc" = 3 ]; then permanent=$((permanent + 1)); fi
-      continue
-    fi
     if [ "$resolve_rc" -ne 0 ]; then
       # resolve_entry runs in a command substitution, so task_show's exit
       # cannot stop this loop; only its status crosses back. 124 means the
@@ -1672,7 +1471,7 @@ command_answers() {
       continue
     fi
     # shellcheck disable=SC2086  # release_flag is empty or a single literal flag.
-    if "$0" answer "$id" --decision-file "$tmp" $release_flag </dev/null >/dev/null 2>"$err"; then
+    if "$0" answer "$id" --decision-file "$tmp" $release_flag ${release_flag:+--card "$key"} </dev/null >/dev/null 2>"$err"; then
       # A parent-channel delivery problem is reported on stderr by the answer
       # path even when the close succeeded; keep it visible.
       [ ! -s "$err" ] || cat "$err" >&2
@@ -1768,7 +1567,7 @@ command_reconcile_requests() {
   [ -n "$source" ] || fail "--source provenance is required"
   origin=$(read_binding "$source_id") || fail "cannot verify the binding for source $source_id"
   [ -n "$origin" ] || fail "source $source_id is not bound; no reconcile requests were created"
-  require_tasks_axi
+  require_backlog
   while IFS= read -r row; do
     id=${row%%"$tab"*}
     note=''
@@ -1860,7 +1659,7 @@ reconcile_close() {
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
     || fail "task $id has no pending board-created reconcile request"
-  require_tasks_axi
+  require_backlog
   task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
@@ -1887,7 +1686,6 @@ reconcile_close() {
   [ "$hold_kind" = captain ] \
     || fail "task $id is not held for the captain; there is no captain call to reconcile"
   guard_captain_ask "$id"
-  guard_captain_ask_archive "done" "" "$id"
   if body_has_resolution_record "$body" \
     && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
     && ! recorded_resolution_completed "$body"; then
@@ -1933,7 +1731,7 @@ reconcile_note() {
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
     || fail "task $id has no pending board-created reconcile request"
-  require_tasks_axi
+  require_backlog
   command_open "$id" \
     || fail "task $id is not an open captain call; a note cannot keep a closed call open"
   task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
@@ -1957,7 +1755,7 @@ reconcile_note() {
     rm -f -- "$tmp"
     fail "cannot stage the reconcile note for $id"
   fi
-  if ! tasks_axi update "$id" --body-file "$tmp" --archive-body >/dev/null; then
+  if ! backlog_cmd update "$id" --body-file "$tmp" --archive-body >/dev/null; then
     rm -f -- "$tmp"
     fail "could not record the reconcile note on $id"
   fi
@@ -1970,7 +1768,7 @@ reconcile_note() {
 
 command_complete() {
   local origin=${1:-} meta previous='' supplied='' keys='' entry key status_file open has_meta=0 transfer_rc transfers=() resolved
-  local resolved_how attested_by_prefix='' origin_state unrecorded_origin=''
+  local origin_state unrecorded_origin=''
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   validate_slug origin-id "$origin"
   shift
@@ -1982,7 +1780,7 @@ command_complete() {
     CAPTAIN_META_LOCK_HELD=1
     [ -f "$meta" ] || fail "task metadata disappeared while recording completion"
   fi
-  require_tasks_axi
+  require_backlog
   origin_exists_here "$origin" || fail "origin $origin is not owned by the active home $JG_HOME"
   if [ "$#" -eq 1 ] && [ "$1" = --none ]; then
     supplied=''
@@ -2004,13 +1802,9 @@ command_complete() {
       resolved=$(verify_entry_durable "$origin" "$entry") || exit $?
       origin_state=${resolved##* }
       resolved=${resolved% *}
-      resolved_how=${resolved##* }
       resolved=${resolved%% *}
       if [ "$origin_state" = unrecorded ]; then
         unrecorded_origin="${unrecorded_origin}${unrecorded_origin:+ }$resolved"
-      fi
-      if [ "$resolved_how" = migrated-prefix ]; then
-        attested_by_prefix="${attested_by_prefix}${attested_by_prefix:+ }$entry=$resolved"
       fi
     done <<EOF
 $(printf '%s\n' "$keys" | tr ',' '\n')
@@ -2050,8 +1844,7 @@ EOF
       fi
     fi
   fi
-  printf 'complete: %s captain-call inventory reviewed%s%s%s\n' "$origin" "${keys:+ ($keys)}" \
-    "${attested_by_prefix:+ [attested through the configured prefix: $attested_by_prefix]}" \
+  printf 'complete: %s captain-call inventory reviewed%s%s\n' "$origin" "${keys:+ ($keys)}" \
     "${unrecorded_origin:+ [no recorded origin on: $unrecorded_origin; not checked against $origin]}"
 }
 
@@ -2061,7 +1854,7 @@ command_verify() {
   validate_slug origin-id "$origin"
   meta="$STATE/$origin.meta"
   [ -f "$meta" ] || fail "origin metadata is absent: $meta"
-  require_tasks_axi
+  require_backlog
   reviewed=$(meta_value "$meta" decisions_reviewed)
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed captain-call inventory"
   keys=$(meta_value "$meta" decision_keys)
@@ -2115,9 +1908,9 @@ EOF
 # of fact can prove its first reading wrong - so the report says only that the
 # two records disagree and names both reconciliation directions above.
 #
-# Cost stays flat on a healthy home: one `tasks-axi list`, one key scan per
+# Cost stays flat on a healthy home: one backlog listing, one key scan per
 # status log, and the precise per-key fold only for a key that already names a
-# still-open task. If tasks-axi is unavailable or its listing cannot be parsed,
+# still-open task. If the backlog is unavailable or its listing cannot be parsed,
 # the guard cannot read the structured record and prints nothing.
 #
 # Output: one `<task-id>\t<origin>\t<key>\t<title>` line per divergence, in
@@ -2157,15 +1950,11 @@ command_diverged() {
   local ids resolve f origin tokens id keys key show title
   [ "$#" -eq 0 ] || { usage >&2; exit 2; }
   # Both records must belong to the SAME home or the comparison is meaningless:
-  # tasks-axi reads $JG_HOME's backlog, so a state dir pointed somewhere else
+  # The backlog is $JG_HOME's, so a state dir pointed somewhere else
   # would report one home's status logs against another home's tasks. Every
   # production caller pairs the two; a mismatch stays silent rather than
   # inventing a cross-home divergence.
   [ "$STATE" = "$JG_HOME/state" ] || return 0
-  # A read-only listing on a per-wake path, so it skips the mutation-oriented
-  # compatibility floor and its extra probes: a listing this parser cannot read
-  # simply yields no candidates and the report stays silent.
-  command -v tasks-axi >/dev/null 2>&1 || return 0
   ids=$(open_task_ids) || return 0
   [ -n "$ids" ] || return 0
   resolve=${JG_CLASSIFY_RESOLVE_VERB:-$JG_CLASSIFY_RESOLVE_VERB_DEFAULT}
@@ -2224,7 +2013,7 @@ command_answered() {  # <task-id>
 # printed to stderr, because a mechanical closer must never read "cannot tell"
 # as permission to close.
 command_open() {  # <task-id> [--identity] [--distinguish-absent]
-  local id='' identity=0 distinguish_absent=0 data state root file backend show shown_body
+  local id='' identity=0 distinguish_absent=0 data state show shown_body
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --identity) identity=1 ;;
@@ -2245,24 +2034,6 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
   esac
   data=$(jg_backlog_data_absolute "$DATA") \
     || { printf 'jg-captain-hold: data directory cannot be resolved: %s\n' "$DATA" >&2; exit 2; }
-  root=$(jg_backlog_root "$data") \
-    || { printf 'jg-captain-hold: %s\n' "$JG_BACKLOG_TRANSITION_ERROR" >&2; exit 2; }
-  if ! backend=$(jg_tasks_axi_backend_resolve "$root"); then
-    exit 2
-  fi
-  if [ "$backend" = markdown ]; then
-    file=$(jg_backlog_file "$data") \
-      || { printf 'jg-captain-hold: %s\n' "$JG_BACKLOG_TRANSITION_ERROR" >&2; exit 2; }
-    if [ ! -e "$file" ] && [ ! -L "$file" ]; then
-      # No backlog file at all: this home records no captain calls, so the task
-      # is absent from it rather than held. A record that EXISTS but cannot be
-      # read is a different state and still leaves by the exit 2 paths below,
-      # because that one may hide a live hold.
-      [ "$distinguish_absent" = 0 ] || return 3
-      return 1
-    fi
-  fi
-  jg_tasks_axi_compatible || { printf 'jg-captain-hold: compatible tasks-axi is required\n' >&2; exit 2; }
   if jg_backlog_row_probe "$data" "$id"; then
     state=${JG_BACKLOG_ROW_STATE%% *}
     if [ "$state" != "done" ] && [ "$JG_BACKLOG_ROW_HOLD_KIND" = captain ]; then
@@ -2289,6 +2060,147 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
   exit 2
 }
 
+# Ids a body links to: the words on `linked-to:` and `parent:` lines; a word that
+# is no task links nothing, and `upkeep` (a bucket) is dropped.
+body_link_targets() {  # <decoded body>
+  printf '%s\n' "$1" | sed -n -E 's/^[[:space:]]*(linked-to|parent):[[:space:]]*(.*)$/\2/p' \
+    | tr ',;[:space:]' '\n' | LC_ALL=C grep -E '^[A-Za-z0-9._-]+$' | LC_ALL=C grep -vix upkeep | LC_ALL=C sort -u
+}
+
+# Is <task-id> an open decision (see `blocking`)? 0 yes, 1 no; unreadable exits 2.
+decision_open() {  # <task-id>
+  local target=$1 status=0 show
+  (command_open "$target" --distinguish-absent) || status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) ;;
+    3) return 1 ;;
+    *) exit 2 ;;
+  esac
+  task_show "$target" || { printf 'jg-captain-hold: task %s could not be read\n' "$target" >&2; exit 2; }
+  show=$TASK_SHOW_OUTPUT
+  [ "$(show_field "$show" state)" != "done" ] || return 1
+  case "$(show_field_value "$show" title)" in *"[design-ux]"*) ;; *) return 1 ;; esac  # the one design tag
+  status=0
+  (command_answered "$target") || status=$?
+  case "$status" in 0) return 1 ;; 1) ;; *) exit 2 ;; esac
+  captain_ask_build_approved "$target" "$show" && return 1
+  return 0
+}
+
+# THE place that scopes which open decisions stop which work: only those LINKED
+# to <task-id> (either direction); unrelated work keeps moving. To make every
+# open decision stop all work, print every open decision here instead. A
+# `parent:` id links only when it is a real task, so `parent: upkeep` links nothing.
+# One pass over the backlog finds the rows linking here; only those are checked.
+# That pass is the provider's `links` read, which is every edge.
+linked_open_decisions() {  # <task-id>; prints the open decisions linked to it, one id per line
+  local id=$1 mine target
+  mine=$(backlog_cmd links "$id") \
+    || { printf 'jg-captain-hold: task %s could not be read for its links\n' "$id" >&2; exit 2; }
+  while IFS= read -r target; do
+    [ -z "$target" ] || ! decision_open "$target" || printf '%s\n' "$target"
+  done <<<"$mine"
+}
+
+command_blocking() {  # <task-id>
+  local id=${1:-} status=0 target blockers n=0
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  (command_open "$id" --distinguish-absent) || status=$?
+  case "$status" in
+    0) blockers=$id ;;
+    1) blockers='' ;;
+    3) return 1 ;;
+    *) exit 2 ;;
+  esac
+  blockers="$blockers"$'\n'"$(linked_open_decisions "$id")" || exit 2
+  while IFS= read -r target; do
+    [ -n "$target" ] || continue
+    n=$((n + 1))
+    task_show "$target" || true
+    printf '%s\t%s\n' "$target" "$(sanitize_field "$(show_field_value "$TASK_SHOW_OUTPUT" title)")"
+  done <<EOF
+$(printf '%s\n' "$blockers" | LC_ALL=C sort -u)
+EOF
+  [ "$n" -gt 0 ]
+}
+
+# A design card (`jg-question-card.sh post --must design-pick`) is also a
+# `[design-ux]` backlog row keyed by the card and linked to the ticket that
+# raised it, so `blocking` finds it from that ticket; the link is never optional.
+# On a Beads store the row is labelled `decision` and blocks that ticket by an edge,
+# and a retry lays a missing edge. A card naming no raising ticket, or one this
+# home does not carry, is refused.
+command_design_card() {  # <card-key> --raised-by <ticket> --title <question>
+  local key=${1:-} raised='' title='' repo priority_check mark filed=0 label=()
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --raised-by) shift; raised=${1:-} ;;
+      --title) shift; title=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug card-key "$key"
+  [ -n "$raised" ] || fail "refused: a design card must name the ticket that raised it; pass --raised-by <ticket>"
+  validate_slug raised-by "$raised"
+  validate_one_line title "$title"
+  [ -n "${title//[[:space:]]/}" ] || fail "a design card needs --title"
+  require_backlog
+  task_show "$raised" || fail "refused: $raised, named as the ticket that raised the design card, is not in this home's backlog"
+  repo=$(show_field_value "$TASK_SHOW_OUTPUT" repo)
+  [ -n "$repo" ] || repo=juggernaut
+  validate_one_line repo "$repo"
+  # The marker lets the board-answers check find the card's answer without reading the backlog for every answer.
+  mark=$STATE/design-cards/$key
+  mkdir -p "$STATE/design-cards" || fail "cannot create $STATE/design-cards"
+  ! task_show "$key" || filed=1
+  if [ "$filed" = 0 ]; then
+    priority_check=${JG_TASK_PRIORITY_CHECK:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-task-priority/check.sh}
+    if [ -x "$priority_check" ]; then
+      "$priority_check" add "$key" "[design-ux] $title" --kind captain --priority 1 >/dev/null || exit 1
+    fi
+    label=(--label decision)
+    backlog_cmd add "$key" "[design-ux] $title" --kind captain --repo "$repo" --priority 1 ${label[@]+"${label[@]}"} \
+      --body "$(printf 'Design pick for the captain, raised by %s.\nlinked-to: %s' "$raised" "$raised")" >/dev/null \
+      || fail "could not file the design row for card $key"
+  fi
+  backlog_cmd block "$raised" --by "$key" >/dev/null \
+    || fail "could not link the design row for card $key to $raised"
+  : > "$mark"
+  if [ "$filed" = 1 ]; then printf 'design-card: %s already filed\n' "$key"; return 0; fi
+  printf 'design-card: %s linked to %s\n' "$key" "$raised"
+}
+
+# The captain answered the card: record his words on its design row and close it,
+# which releases the work linked to it. A card with no design row is no design
+# card, so that is a quiet no-op; an unreadable backlog is not.
+command_design_pick() {  # <card-key> --words <the captain's words>
+  local key=${1:-} words='' mark
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --words) shift; words=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug card-key "$key"
+  [ -n "${words//[[:space:]]/}" ] || fail "design-pick needs --words \"<the captain's words>\""
+  mark=$STATE/design-cards/$key
+  task_show "$key" || { rm -f -- "$mark"; return 0; }
+  case "$(show_field_value "$TASK_SHOW_OUTPUT" title)" in *"[design-ux]"*) ;; *) rm -f -- "$mark"; return 0 ;; esac
+  [ "$(show_field "$TASK_SHOW_OUTPUT" state)" != "done" ] || { rm -f -- "$mark"; return 0; }
+  require_backlog
+  backlog_cmd "done" "$key" --note "Captain's pick: $(printf '%s' "$words" | tr '\n\r' '  ' | cut -c1-500)" >/dev/null \
+    || fail "could not record the pick on design row $key"
+  rm -f -- "$mark"
+  printf 'design-pick: %s recorded\n' "$key"
+}
+
 case "${1:-}" in
   hold) shift; command_hold "$@" ;;
   answer) shift; command_answer "$@" ;;
@@ -2301,6 +2213,9 @@ case "${1:-}" in
   verify) shift; command_verify "$@" ;;
   answered) shift; command_answered "$@" ;;
   open) shift; command_open "$@" ;;
+  blocking) shift; command_blocking "$@" ;;
+  design-card) shift; command_design_card "$@" ;;
+  design-pick) shift; command_design_pick "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;

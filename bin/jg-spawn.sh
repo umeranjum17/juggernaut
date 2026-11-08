@@ -557,10 +557,8 @@
 # re-running the transition, so an eligible In-flight item is left untouched.
 # The transition is
 # skipped entirely for --squad-lead spawns (persistent agents are not work
-# items), on a config/backlog-backend=manual home, and in a markdown home that
-# keeps no data/backlog.md. A configured non-markdown adapter remains
-# active without a markdown file; any active automatic backend without
-# compatible tasks-axi refuses before creating lifecycle state.
+# items). Without the Beads backlog the spawn refuses before creating
+# lifecycle state.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|squad_lead> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a squad_lead spawn records
 # mode=squad_lead, yolo=off, home=, and projects=; a scout records neither, and both the
@@ -621,8 +619,8 @@ esac
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 
@@ -652,6 +650,11 @@ if [ -n "${JG_STATE_OVERRIDE:-}" ]; then
 fi
 if [ -n "${JG_DATA_OVERRIDE:-}" ]; then
   JG_DATA_OVERRIDE=$(resolve_directory_input JG_DATA_OVERRIDE "$JG_DATA_OVERRIDE") || exit 1
+fi
+# The backlog store is named by config/beads-dir read from here, and a spawn changes directory before that read, so a
+# relative config override is made absolute with the state and data ones.
+if [ -n "${JG_CONFIG_OVERRIDE:-}" ]; then
+  JG_CONFIG_OVERRIDE=$(resolve_directory_input JG_CONFIG_OVERRIDE "$JG_CONFIG_OVERRIDE") || exit 1
 fi
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
@@ -767,6 +770,18 @@ jg_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/jg-dod-lib.sh"
 # shellcheck source=bin/jg-version-branch-lib.sh
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
+
+# The project's local trunk branch (bin/jg-trunk.sh), printed when the project is registered local-trunk and has one.
+# Only a local-trunk project is touched here; no-mistakes, direct-PR and local-only projects go the way they always did. A
+# local-trunk project ships no feature pull request: a lane starts on the trunk tip and its one commit lands there.
+spawn_trunk_branch() {
+  local pn; pn=$(basename "$PROJ_ABS")
+  [ "$(JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1)" = local-trunk ] || return 1
+  [ -e "$STATE/trunk-tip-$pn" ] || return 1
+  JG_CONFIG_OVERRIDE=$CONFIG jg_trunk_branch "$pn" "$STATE"
+}
 # shellcheck source=bin/jg-role-lib.sh
 . "$SCRIPT_DIR/jg-role-lib.sh"
 # shellcheck source=bin/jg-trace-context-lib.sh
@@ -2123,6 +2138,14 @@ devin)
   }
   ;;
 pi | pi-signed)
+  # A Claude model never runs on Pi: it has no Anthropic login of its own, so the lane would start and then
+  # fail on its first turn. Refuse here, before any pane or record exists, and name the way out.
+  case "${MODEL##*/}:${MODEL%%/*}" in
+  claude-*:* | claude:* | *:anthropic)
+    echo "error: $HARNESS cannot run the Claude model '$MODEL'; Pi has no Claude login, so the lane would fail on its first turn. Use --harness claude for a Claude model, or pick a Pi model such as openai-codex/gpt-5.6-sol" >&2
+    exit 1
+    ;;
+  esac
   PI_BIN=$(resolve_pi_executable "$HARNESS") || {
     echo "error: $HARNESS executable not found on PATH; install it or select a different verified harness" >&2
     exit 1
@@ -2737,7 +2760,8 @@ if [ "$KIND" = ship ]; then
     exit 1
   fi
   [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
-  STANDING_MODE=$("$JG_ROOT/bin/jg-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d' ' -f1) || STANDING_MODE=
+  STANDING_MODE=$("$JG_ROOT/bin/jg-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d" " -f1) || STANDING_MODE=
+  [ "$STANDING_MODE" != local-trunk ] || STANDING_MODE=local-only  # a local-trunk lane ships as a local-only task
   # The brief/spawn agreement (branch, mode, upstream consent, forge, yolo on gerrit) is the Go
   # spawn core's (core/spawn/cmd/jg-spawn-core/delivery.go), which prints its own refusal.
   # The registered forge is the captain's confirmed binding (bin/jg-project-mode.sh), read
@@ -2747,6 +2771,13 @@ if [ "$KIND" = ship ]; then
     --branch "$BRANCH" --relaunch="$RELAUNCH" --upstream-consent "$UPSTREAM_CONSENT" \
     --brief "$BRIEF" --source-brief "$SOURCE_BRIEF" --project "$PROJ_NAME" \
     --standing-forge "$STANDING_FORGE" || exit 1
+  # No feature pull requests: a project with a local trunk (bin/jg-trunk.sh init) ships every lane
+  # local-only; the only pull request is the release one. A current explicit captain instruction
+  # can still choose a pull request mode by removing the trunk record, never by this spawn.
+  if [ "$MODE" != local-only ] && spawn_trunk_branch >/dev/null; then
+    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local-only and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
+    exit 1
+  fi
   # Self-repository publication gate (bin/jg-role-lib.sh): a ship task whose
   # project is juggernaut's own repository may launch a publishing contract only
   # under an explicit grant - this home's maintainer scope in
@@ -2900,7 +2931,7 @@ spawn_worktree_has_origin_config() { # <worktree>
 }
 
 freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
-  local worktree=$1 base=${2:-} default target expected actual status
+  local worktree=$1 base=${2:-} default target expected actual status trunk
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
@@ -2912,6 +2943,13 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
       echo "error: pooled worktree '$worktree' is not clean; refusing to discard uncommitted work while refreshing its base" >&2
     fi
     return 1
+  fi
+  if trunk=$(spawn_trunk_branch); then
+    git -C "$worktree" reset -q --hard "refs/heads/$trunk" || {
+      echo "error: could not start pooled worktree '$worktree' on the local trunk '$trunk'; refusing to launch" >&2
+      return 1
+    }
+    return 0
   fi
   if ! spawn_worktree_has_origin_config "$worktree"; then
     [ -z "$base" ] || {
@@ -3044,6 +3082,7 @@ herdr_projection_existing_meta_allows_flat() { # <meta>
 # costs nothing to unwind, while the same refusal after publication would strand
 # a live pane. The authoritative mutation still runs under the meta lock below.
 BACKLOG_TRANSITION=0
+BACKLOG_LANE_HANDOVER=0
 BACKLOG_ROW_STATE=
 if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
@@ -3056,9 +3095,18 @@ if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
       # shellcheck source=bin/jg-captain-ask-lib.sh
       . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
       guard_captain_ask_build "$ID" "$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$ID" --full)"
+      # A decision open on this ticket or on linked work blocks the start.
+      SPAWN_LINKED_STATUS=0
+      SPAWN_LINKED_CALLS=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
+        "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$ID") || SPAWN_LINKED_STATUS=$?
+      case "$SPAWN_LINKED_STATUS" in
+        0) fail "task $ID is linked to a decision still open for the captain: $(printf '%s\n' "$SPAWN_LINKED_CALLS" | awk -F'\t' 'NF { printf "%s%s (%s)", sep, $1, $2; sep = "; " }'); answer it, then start the task" ;;
+        1) ;;
+        *) fail "could not determine whether a decision linked to task $ID is still open for the captain" ;;
+      esac
     fi
   elif [ "$JG_BACKLOG_ROW_RESULT" = not_found ]; then
-    echo "error: task $ID has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/jg-tasks-axi.sh add $ID '[<type>] <title>' --kind $KIND --body '<why>') and re-run" >&2
+    echo "error: task $ID has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/jg-backlog.sh add $ID '[<type>] <title>' --kind $KIND --body '<why>') and re-run" >&2
     exit 1
   else
     echo "error: task $ID's backlog item could not be read before dispatch ($JG_BACKLOG_ROW_ERROR)" >&2
@@ -3072,8 +3120,10 @@ if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
     fi
   elif [ "$RELAUNCH" -eq 1 ] && [ "${BACKLOG_ROW_STATE%% *}" = in_flight ]; then
     # A relaunch replaces the agent of an item already In flight; a hold or
-    # blocker on it is not a reason to strand the task, and there is no row to move.
+    # blocker on it is not a reason to strand the task, and there is no row to
+    # move; only the lane that owns it changes.
     BACKLOG_TRANSITION=0
+    BACKLOG_LANE_HANDOVER=1
   elif ! jg_backlog_row_dispatchable "$BACKLOG_ROW_STATE"; then
     echo "error: this home's backlog item $ID is not dispatchable in state $BACKLOG_ROW_STATE; refusing before creating its endpoint or local copy" >&2
     exit 1
@@ -4220,7 +4270,17 @@ BUSY_GEN=
       if [ "$KEEP_AI_TRAILERS" != 1 ]; then
         session_keys='"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false},'
       fi
-      [ -z "$CLAUDE_TOKEN_KEYS" ] || session_keys="$session_keys$CLAUDE_TOKEN_KEYS,"
+      # Supervisor context cap (config/supervisor-context-cap): the lead's own env, merged with the token saver's env key.
+      lead_cap_pairs=$(python3 "$SCRIPT_DIR/jg-context-bound.py" env lead --pairs --config "$CONFIG") || exit 1
+      lead_keys=$CLAUDE_TOKEN_KEYS
+      if [ -n "$lead_cap_pairs" ]; then
+        case "$lead_keys" in
+          *'"env":{'*) lead_keys=${lead_keys/'"env":{'/'"env":{'$lead_cap_pairs,} ;;
+          '') lead_keys="\"env\":{$lead_cap_pairs}" ;;
+          *) lead_keys="$lead_keys,\"env\":{$lead_cap_pairs}" ;;
+        esac
+      fi
+      [ -z "$lead_keys" ] || session_keys="$session_keys$lead_keys,"
       printf '{%s%s}\n' "$session_keys" "$hooks_json" >"$STATE_REAL/$ID.claude-settings.json"
     else
       mkdir -p "$WT/.claude"
@@ -4768,6 +4828,10 @@ fi
 # serialized exactly as before. The call itself is deferred to the final commit
 # point below so every earlier launch-delivery failure remains unwindable.
 spawn_commit_backlog_transition() {
+  if [ "$BACKLOG_LANE_HANDOVER" = 1 ]; then
+    jg_backlog_atomic_transition handover "$STATE/$ID.meta" "$DATA" "$ID" "$STATE"
+    return
+  fi
   [ "$BACKLOG_TRANSITION" = 1 ] || return 0
   jg_backlog_atomic_transition dispatch "$STATE/$ID.meta" "$DATA" "$ID" "$STATE"
 }
@@ -4799,7 +4863,7 @@ spawn_report_preserved_state() {
   fi
   # The commit reported success, but the row does not read back In flight:
   # move it now under the same lock and verify the result before naming it.
-  jg_backlog_start "$DATA" "$ID" || repair_error=$JG_BACKLOG_TRANSITION_ERROR
+  jg_backlog_lane_start "$STATE/$ID.meta" "$DATA" "$ID" "$STATE" || repair_error=$JG_BACKLOG_TRANSITION_ERROR
   if [ -z "$repair_error" ] &&
     jg_backlog_row_probe "$DATA" "$ID" &&
     [ "$JG_BACKLOG_ROW_STATE" = "in_flight no no" ]; then
@@ -4824,7 +4888,7 @@ fi
 # The backlog mutation is deliberately the final fallible commit below, so
 # teardown cannot remove a relaunched record while its replacement worker is
 # still being delivered, cannot observe or complete a fresh provisional record
-# between its state check and `tasks-axi start`, and a delivery failure cannot
+# between its state check and `jg-backlog.sh start`, and a delivery failure cannot
 # follow a committed In-flight transition.
 if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
@@ -5285,13 +5349,13 @@ if [ "$BACKLOG_TRANSITION" = 1 ]; then
 fi
 SPAWN_BACKLOG_COMMIT_STATUS=0
 # Both the commit and its preservation read-back run under this task's meta
-# lock, so an unresponsive tasks-axi there would hold the lock - and every
+# lock, so an unresponsive the backlog there would hold the lock - and every
 # lifecycle operation waiting on it - open ended, with even the deferred
 # signals parked in a trap. Bound each invocation
-# (bin/jg-backlog-transition-lib.sh's jg_tasks_axi): a timed-out call
+# (bin/jg-backlog-transition-lib.sh's jg_backlog_serve): a timed-out call
 # fails through the ordinary error plumbing, and the interrupted exit path
 # reports it as the reason the preservation could not be verified.
-JG_TASKS_AXI_TIMEOUT=${JG_TASKS_AXI_TIMEOUT:-30}
+JG_BACKLOG_TIMEOUT=${JG_BACKLOG_TIMEOUT:-30}
 if spawn_commit_backlog_transition; then
   SPAWN_FRESH_COMMIT_PENDING=0
 else

@@ -32,6 +32,12 @@ test_classes() {
   assert_equals "$(route "$home" "$state" check "$state/tickets-sync.check.sh" \
     'tickets-sync: 1 homes read; 2 tickets changed')" batch \
     "a tickets poll summary must not wake a model"
+  assert_equals "$(route "$home" "$state" check "$state/route-chain.check.sh" \
+    'route-chain: head=route:commandcode/x down=route:ollama-cloud/y(ollama_credit_empty)')" now \
+    "a changed route state must wake at once"
+  assert_equals "$(route "$home" "$state" check "$state/route-chain.check.sh" \
+    'route-chain probe: quota-axi timed out')" batch \
+    "any other route-chain output rides the digest"
   printf 'working [at=1]: editing\n' > "$state/lane.status"
   printf 'needs-decision [at=2]: pick one\n' > "$state/pick.status"
   assert_equals "$(route "$home" "$state" signal pick.status "signal: x")" now \
@@ -225,17 +231,17 @@ test_merge_owned_done() (
   task nokind "$ready" yolo=on "pr=$pr" "pr_head=$head"
   assert_equals "$(route "$dir" "$state" signal nokind.status x)" silent "a record with no kind is a ship"
   task off "$ready" yolo=off "pr=$pr" "pr_head=$head"
-  assert_equals "$(route "$dir" "$state" signal off.status x)" now "a PR the watcher does not own keeps waking"
+  assert_equals "$(route "$dir" "$state" signal off.status x)" batch "a PR the watcher does not own rides the merge-ready batch"
   task manual "$ready" yolo=on "pr=$pr" "pr_head=$head" merge=manual
-  assert_equals "$(route "$dir" "$state" signal manual.status x)" now "merge=manual keeps waking"
+  assert_equals "$(route "$dir" "$state" signal manual.status x)" batch "merge=manual rides the merge-ready batch"
   task nopr "$ready" kind=ship yolo=on
-  assert_equals "$(route "$dir" "$state" signal nopr.status x)" now "a done line with no recorded PR keeps waking"
+  assert_equals "$(route "$dir" "$state" signal nopr.status x)" batch "a done line with no recorded PR rides the merge-ready batch"
   task nohead "$ready" kind=ship yolo=on "pr=$pr"
-  assert_equals "$(route "$dir" "$state" signal nohead.status x)" now "a PR with no recorded head is not the watcher's yet"
+  assert_equals "$(route "$dir" "$state" signal nohead.status x)" batch "a PR with no recorded head is not the watcher's yet, so it rides the merge-ready batch"
   : > "$state/nometa.status"; printf '%s\n' "$ready" > "$state/nometa.status"
   assert_equals "$(route "$dir" "$state" signal nometa.status x)" now "a task with no record keeps waking"
   task other "done [at=1]: PR https://example.test/o/r/pull/8" kind=ship yolo=on "pr=$pr" "pr_head=$head"
-  assert_equals "$(route "$dir" "$state" signal other.status x)" now "a done line naming another PR keeps waking"
+  assert_equals "$(route "$dir" "$state" signal other.status x)" batch "a done line naming another PR rides the merge-ready batch"
   task noreport "done [at=1]: ready branch wf5, nothing pushed" kind=ship yolo=on "pr=$pr" "pr_head=$head"
   assert_equals "$(route "$dir" "$state" signal noreport.status x)" now "a done line that reports no PR keeps waking"
   task merged "done [at=1]: merged $pr" kind=ship yolo=on "pr=$pr" "pr_head=$head"
@@ -246,7 +252,7 @@ test_merge_owned_done() (
   assert_equals "$(route "$dir" "$state" signal recon.status x)" now "a Recon report keeps waking"
   task spent "$ready" kind=ship yolo=on "pr=$pr" "pr_head=$head"
   mkdir -p "$dir/data/jg-merge-on-green"; printf '%s\n' "$head" > "$dir/data/jg-merge-on-green/spent.head"
-  assert_equals "$(route "$dir" "$state" signal spent.status x)" now "a head the watcher already attempted keeps waking"
+  assert_equals "$(route "$dir" "$state" signal spent.status x)" batch "a head the watcher already attempted rides the merge-ready batch"
   printf 'done [at=3]: PR %s checks green\n' "$pr" > "$state/spent.status"
   printf 'cafe\n' > "$dir/data/jg-merge-on-green/spent.head"
   assert_equals "$(route "$dir" "$state" signal spent.status x)" silent "a new head is the watcher's again"

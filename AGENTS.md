@@ -45,7 +45,7 @@ Hard rules, in priority order:
    A report that a user-visible change is fixed or done carries the released version that is running and where it is observable, or it says plainly that the change is merged but not released; `bin/jg-live-claim.sh` decides that from the claim and the home's release record, and `bin/jg-squad-lead-report.sh` and `bin/jg-branch-report.sh` apply it to their reports.
 
 You may maintain this repo's private operational state directly.
-Shared tracked material is `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `bin/`, `.agents/skills/`, and public `skills/`.
+Shared tracked material is `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.github/workflows/`, `bin/`, `.agents/skills/`, and public `skills/`.
 When any operator is live, delegate changes to shared tracked material rather than competing with supervision; when the fleet is empty, Overwatch may change it directly.
 Load `juggernaut-coding-guidelines` before editing shared tracked material.
 This repo is a shared template, while `.env`, `data/`, `state/`, `config/`, `projects/`, and `.no-mistakes/` are captain-private and gitignored.
@@ -176,6 +176,8 @@ The path's worker, automated gates, and captain approval remain authoritative:
 - **direct-PR** has the worker push and open a PR without the no-mistakes pipeline, then waits for the configured merge authority.
 - **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before Overwatch uses the guarded fast-forward merge path.
 
+A project registered **local-trunk** (`data/projects.md`, `docs/trunk-flow.md`) runs the trunk flow, and no other project does: the `core/trunk-landing` check lands a lane's one commit once its done-done receipt is a PASS for that exact head, landing never goes live, the trunk goes live and out as the ONE release pull request only on the captain's recorded word (`jg-trunk.sh word`), no feature pull request exists there, and a red CI pins the home back to the last green commit. no-mistakes, direct-PR and local-only projects keep their own rules exactly as written above.
+
 Delivery mode and `yolo` are orthogonal.
 `yolo` governs merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, Overwatch merges green, in-scope work itself.
 `docs/fast-merge-path.md` owns the fast required set, the tree-keyed proof, and the recorded done-to-merged minutes; the only required checks are its fast set, and every heavier suite runs after the merge.
@@ -186,7 +188,8 @@ Without a current explicit captain instruction that states the concrete merge, t
 Load `ask-user-authority` and `validation-supervision` before deciding or answering any ask-user finding; the implementation worker never answers its own finding.
 Use `bin/jg-pr-merge.sh` for every task PR merge so merge metadata is recorded and an unproved merge is refused instead of reported as landed, and use `bin/jg-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
 An open PR states its wait on its own page; that path and `bin/jg-pr-wait.sh` own the status.
-After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
+After an autonomous merge, give the captain a one-line full-URL or local-main outcome, except a merge that belongs to a Goal's step: it goes into that Goal's one finish message.
+A Goal (`bin/jg-goal.sh`) is worked by `core/goal-loop`: when a step waits for you, take it or end the turn only through a stop (`jg-goal.sh stop`), because the turn-end guard counts a waiting step as work.
 
 ### Validate
 
@@ -323,12 +326,15 @@ Reach the captain immediately for:
 
 Load `fleet-records` before adding, editing, handing off, or closing a backlog item or task note; it owns the backlog schema pointers, gate mechanics, and note hygiene.
 
-A decision is simply a task held for the captain: create the task with `bin/jg-tasks-axi.sh add` when needed, then always hold it through `bin/jg-captain-hold.sh hold <id> --reason "<reason>"`, with `--until <date>` when the captain defers it.
+A decision is simply a task held for the captain: create the task with `bin/jg-backlog.sh add` when needed, then always hold it through `bin/jg-captain-hold.sh hold <id> --reason "<reason>"`, with `--until <date>` when the captain defers it.
 A held item never stops the fleet: keep it held and dispatch everything it does not block.
+An open decision does block the work linked to it: a task body names sibling work with a `linked-to: <ticket-id>[, <ticket-id>]` line, or a `parent: <ticket-id>` line naming a real ticket, and `bin/jg-captain-hold.sh blocking <id>` makes `bin/jg-spawn.sh` and `bin/jg-pr-merge.sh` refuse that work until the decision is answered.
+A held task, or a `[design-ux]` ticket with no recorded pick, is open from the moment it is filed; a `[captain-ask]` ticket is an order and counts only while held.
+A design card (`jg-question-card.sh post --must design-pick`) must name its raising ticket with `--raised-by <ticket>`, and the post files the `[design-ux]` row linked to it, so the open pick stops that ticket's merge.
 Captain calls discovered by investigations or visual reviews follow `captain-hold-lifecycle`, which owns their completion gate and recorded-answer rules.
 Re-evaluate queued work after every teardown and heartbeat, and also after a recorded PR-ready handoff when `config/project-capacity` caps that project, dispatching items only when dependencies, time gates, and project capacity have cleared.
 
-Use compatible `tasks-axi` when the configured backend selects it, always through `bin/jg-tasks-axi.sh` so the call reaches this home's backlog from any directory, and the documented manual path otherwise; keep only the configured recent Done entries.
+Use `bin/jg-backlog.sh` for every backlog read and write, always through it so the call reaches this home's Beads store from any directory; keep only the configured recent Done entries.
 
 ## 11. Operator briefs
 

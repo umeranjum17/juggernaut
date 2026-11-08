@@ -42,6 +42,22 @@ die() {
 
 log() { printf 'jg-model-pool: %s\n' "$*" >&2; }
 
+# The Claude model a pick uses when the request names none: the claude model an entry tagged model-pool in
+# config/tool-models.json (bin/jg-tool-models.sh) names, read at every call, else the built-in Haiku.
+pool_default_model() {
+  local tm line harness model
+  tm=$here/../../../bin/jg-tool-models.sh
+  if [ -x "$tm" ]; then
+    line=$(JG_TOOL_MODELS=${JG_TOOL_MODELS:-${cfg_path:+${cfg_path%/*}/tool-models.json}} "$tm" resolve model-pool) || line=''
+    read -r harness model _ <<<"$line"
+    case "${model:-default}" in
+    default | *[!A-Za-z0-9._:/@-]*) ;;
+    *) if [ "$harness" = claude ]; then printf '%s\n' "$model"; return 0; fi ;;
+    esac
+  fi
+  printf 'claude-haiku-5-5\n'
+}
+
 read_req() {
   local raw
   raw=$(cat)
@@ -140,7 +156,7 @@ rank_claude() {
 }
 
 emit_claude() {
-  local command=$1 state=$2 id=$3 folder=$4 account=$5 model=${6:-claude-haiku-5-5} out
+  local command=$1 state=$2 id=$3 folder=$4 account=$5 model=${6:-$(pool_default_model)} out
   if credits_enabled "$account"; then
     log "credits-check refuse id=$id usage_credits_or_overage=enabled"
     return 1
@@ -210,7 +226,8 @@ clause_allows() {
 pick_work() {
   local req=$1 command=$2 state=$3 attempted model hard ranked first id folder account i n route skipped
   attempted=$(jq -c '.attempted // []' <<<"$req")
-  model=$(jq -r '.model // "claude-haiku-5-5"' <<<"$req")
+  model=$(jq -r '.model // empty' <<<"$req")
+  [ -n "$model" ] || model=$(pool_default_model)
   hard=$(jq -r '.hard // false' <<<"$req")
   deadline_ok "$(jq -r '.deadline // empty' <<<"$req")"
   ranked=$(rank_claude "$state" "$attempted")

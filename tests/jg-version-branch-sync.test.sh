@@ -346,9 +346,9 @@ test_spawn_and_brief_default_to_the_version_branch() {
   git clone -q "$w/origin.git" "$proj" 2>/dev/null
   git -C "$proj" remote set-head origin main >/dev/null 2>&1 || true
   # A real scaffold, so the default is proven on the brief the spawn then reads.
-  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" t11 proj --mode direct-PR --project "$proj" >/dev/null 2>&1 \
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" jg-t11 proj --mode direct-PR --project "$proj" >/dev/null 2>&1 \
     || fail "jg-brief.sh with a project directory did not scaffold"
-  brief="$home/data/t11/brief.md"
+  brief="$home/data/jg-t11/brief.md"
   awk '{ gsub(/\{TASK\}/, "Ship the version-branch default."); gsub(/\{JUGGERNAUT_SPEC\}/, "Exercise the default base end to end."); print }' \
     "$brief" > "$brief.filled" || fail "could not fill the scaffolded brief"
   mv "$brief.filled" "$brief" || fail "could not fill the scaffolded brief"
@@ -362,10 +362,10 @@ test_spawn_and_brief_default_to_the_version_branch() {
   fakebin=$(make_spawn_fakebin "$w/fake-spawn")
   jg_test_fake_sleep_noop "$fakebin"
   out=$(jg_test_run_spawn "$home" "$wt" "$fakebin" \
-    t11 "$proj" codex --mode direct-PR --yolo off)
+    jg-t11 "$proj" codex --mode direct-PR --yolo off)
   status=$?
   expect_code 0 "$status" "a ship spawn with no --base-branch should launch: $out"
-  assert_grep 'base_branch=release/c-1' "$home/state/t11.meta" \
+  assert_grep 'base_branch=release/c-1' "$home/state/jg-t11.meta" \
     "the spawned task did not record the version branch as its base"
   tip=$(git -C "$proj" rev-parse origin/release/c-1)
   assert_equals "$tip" "$(git -C "$wt" rev-parse HEAD)" \
@@ -373,9 +373,9 @@ test_spawn_and_brief_default_to_the_version_branch() {
 
   # The other half: a brief that records no base is refused by name rather than
   # launched onto the default branch.
-  jg_test_spawn_brief "$home" t12
+  jg_test_spawn_brief "$home" jg-t12
   out=$(jg_test_run_spawn "$home" "$wt" "$fakebin" \
-    t12 "$proj" codex --mode direct-PR --yolo off)
+    jg-t12 "$proj" codex --mode direct-PR --yolo off)
   status=$?
   expect_code 1 "$status" "a brief with no base on a version-branch project should be refused"
   assert_contains "$out" "release/c-1" "the refusal does not name the version branch"
@@ -524,5 +524,27 @@ SH
   pass "T16 a release branch is shipped only when its release pull request merged"
 }
 
+test_a_carried_release_branch_counts_as_shipped() {
+  local w rc cfg
+  w=$(mktemp -d) || fail "cannot create the fixture"
+  cfg=$w/config
+  mkdir -p "$w/bin" "$cfg"
+  printf '#!/usr/bin/env bash\necho "gh must not be asked" >&2\nexit 1\n' > "$w/bin/gh"
+  chmod +x "$w/bin/gh"
+  shipped() { PATH="$w/bin:$PATH" JG_CONFIG_OVERRIDE=$cfg bash -c '. "$1"; jg_release_shipped o/r "$2" main' _ "$VERSION_LIB" "$@"; }
+  shipped release/c-10; rc=$?
+  assert_equals 2 "$rc" "without a carried record an unreadable forge stays unreadable"
+  printf '# closed by the c-16 carry\nrelease/c-10\n' > "$cfg/version-branch-carried"
+  shipped release/c-10; rc=$?
+  assert_equals 0 "$rc" "a carried release branch is shipped with no merged release pull request"
+  shipped release/c-11; rc=$?
+  assert_equals 2 "$rc" "a branch the record does not list is still decided by the forge"
+  rows=$(printf '5\thttps://x/pull/5\trelease/c-10\n' | PATH="$w/bin:$PATH" JG_CONFIG_OVERRIDE=$cfg bash -c '. "$1"; jg_release_orphans_of release/c-16 o/r main' _ "$VERSION_LIB")
+  assert_equals "$(printf '5\thttps://x/pull/5\trelease/c-10')" "$rows" "a pull request left on a carried release is an orphan"
+  rm -rf -- "$w"
+  pass "T17 a carried release branch counts as shipped"
+}
+
 test_release_shipped_means_its_release_pull_request_merged
+test_a_carried_release_branch_counts_as_shipped
 echo "all jg-version-branch-sync tests passed"

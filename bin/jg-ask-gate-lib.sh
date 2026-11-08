@@ -11,10 +11,12 @@
 # What a must is (2026-10-31): "When it matters" means money, security, a public
 # release, discarding unseen work, a product call only he can make, or his
 # approval of a plan before any code is written (plan-approval, 2026-11-05: asks
-# whose answer starts a build from a captain ask or a Recon). Anything else is
-# ours and never becomes a card, so the list below is exactly those six.
+# whose answer starts a build from a captain ask or a Recon), or the word that
+# releases work (release-word, 2026-11-06: the go that cuts, promotes or ships a
+# release train). Anything else is ours and never becomes a card, so the list
+# below is exactly those seven.
 
-JG_ASK_MUST_CATEGORIES='money security public-release discard-unlanded design-pick plan-approval'
+JG_ASK_MUST_CATEGORIES='money security public-release discard-unlanded design-pick plan-approval release-word'
 
 # The card rules (2026-10-31), applied by jg_ask_card_refusal to every card any
 # path raises. His board is his decisions alone:

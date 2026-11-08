@@ -35,6 +35,12 @@ A task is judged on its own PR's checks alone: a red PR elsewhere, including ano
 After the merges, the check counts each repo's open PRs (the repos named by the tasks' recorded `pr=` URLs) and prints one alert when a count passes `config/open-pr-cap` (a whole number, default 8).
 The alert is remembered per repo and count in `<home>/data/jg-merge-on-green/open-pr-cap/`, so it repeats only when the count changes, and a repo back under the cap forgets it; a forge failure is silent and retried next sweep.
 
+## Merge-ready batch
+
+A ship's PR-ready report no longer wakes the lead on its own (`batch@ship-pr` in `defaults/wake-routing`; a Recon, a lead and a task with no record keep their routing). `merge-ready-batch.sh check <jg-home>` runs inside every `merge-on-green.sh check`, so it spends no model turn. The first PR-ready outcome whose head it has not reported opens a window; when the window is `JG_MERGE_READY_SECONDS` old (default 600) it prints ONE line naming every outstanding outcome, and that line wakes the lead once. An outcome that arrives mid-window rides this batch's end; none waits past the window and the individual rows stay queued, so nothing is dropped.
+
+Each outcome carries its own authority verdict, and the batch merges nothing: `mergeable` (yolo=on or merge=approved and not merge=manual, no blocker from `bin/jg-pr-state.sh --all`, a PASS run receipt for this head), `needs the captain's word`, `NOT mergeable: <reason>`, or `no longer waiting: <state>`. The merge stays with `bin/jg-pr-merge.sh`. A mergeable outcome still unmerged is read again each batch, so one that turns red is named; an unchanged outcome is not repeated. Test: `core/merge-on-green/tests/merge-ready-batch.test.sh`.
+
 ## Stale-PR alarm
 
 `stale-pr-alarm.sh check <jg-home>` runs at the end of every `merge-on-green.sh check`, so the same installed
@@ -52,13 +58,27 @@ The alert is remembered per PR and reason in `<home>/data/jg-merge-on-green/stal
 poll stays silent. A PR that closes, heals or changes reason forgets it, and a new stall alerts again. A forge
 failure is silent and retried next sweep. The check never closes or rebases a PR, and the open-PR cap above is unchanged.
 
+## Stranded-merge sweep
+
+A merged PR that never reaches the default branch is lost work: six PRs sat on `release/c-10` this way.
+`stranded-merge-sweep.sh check <jg-home>` runs after the stale-PR alarm in every `merge-on-green.sh check`, with no model turn.
+For each project with a github.com `origin`, it asks the forge how far each closed release branch (every `release/c-N` below the newest) is ahead of the default branch.
+A branch ahead by 0 is fine.
+A branch listed in `config/version-branch-carried` has had its work carried to a newer release, so it is counted and never alarmed.
+Any other closed branch ahead by more than 0 is stamped when first seen.
+After 48 hours (`JG_STRANDED_HOURS`) one line `stranded-merge-sweep: <repo>: <branch> is ahead of <default> by <n> commits ...` is printed, and it repeats only when the count changes.
+The forge is asked at most once an hour (`JG_STRANDED_SWEEP_MIN`), which keeps the watcher check fast.
+A forge failure is silent and retried next sweep.
+`stranded-merge-sweep.sh report <jg-home>` prints each closed branch with its ahead count and state.
+`merge-on-green/tests/stranded-merge-sweep.test.sh` drives it against a `gh-axi` stub.
+
 ## Red-CI ticket
 
 A red CI run produces a root-cause ticket, never a re-run. `red-ci-ticket.sh check <jg-home>` runs at the end of every
 `merge-on-green.sh check` (after the stale-PR alarm), so the same installed watcher check carries it and no model turn is spent.
 For each project in `data/projects.md` whose clone has a github.com `origin`, it reads the newest completed run of each workflow on
 the default branch, on every `release/*` branch an open PR targets, and on the head of every open PR. A run that ended `failure`,
-`timed_out` or `startup_failure` and has no ticket yet files one backlog item through `bin/jg-tasks-axi.sh`:
+`timed_out` or `startup_failure` and has no ticket yet files one backlog item through `bin/jg-backlog.sh`:
 
 - id `ci-red-run-<run id>`, so a run files once, and title `[blocker] CI red: <workflow> <failing job>: find the root cause`.
 - body: the run id and URL, the failing job, the first failing line of its log, and `Never re-run; fix the root cause`.
@@ -80,7 +100,7 @@ so the lead relays it. Nothing is printed
 when nothing happened. One merge attempt per task per head: the attempted head is remembered in
 `<home>/data/jg-merge-on-green/<task>.head`, so a refused head stays quiet until the lead pushes a
 new one. Every command is bounded with `timeout` (a third of `JG_CHECK_TIMEOUT` each, floor 5 s):
-gate commands start only before 80% of the bound, a merge only when it fits inside the whole bound,
+gate commands start only before 80% of the bound, a merge only when two such bounds (two thirds of the check bound) are left,
 so the watcher's kill can at worst cut a gate command (harmlessly retried next sweep), never a
 merge.
 
@@ -97,7 +117,7 @@ The lead then hears about the PR from this check's `done: merged` line or its `N
 
 A ship whose PR merged leaves its backlog row In flight when teardown never ran.
 `backlog-shipped-reconcile.sh check <jg-home>` runs at the end of every `merge-on-green.sh check` (after the red-CI ticket), so no model turn is spent.
-For each worker record with a `pr=` it moves the row to Done through `tasks-axi done --pr` when the PR is shipped, the row reads In flight and not held, and no worker is live.
+For each worker record with a `pr=` it moves the row to Done through the home's backlog provider (`done --pr`) when the PR is shipped, the row reads In flight and not held, and no worker is live.
 Shipped means the merge poll recorded the PR as merged (`state/<id>.pr-poll-merge-notified`), or a line of `data/releases` lists its number in `prs=`.
 No live worker means `bin/jg-crew-state.sh` reports done or failed, or reports that the endpoint or worktree is gone; working, parked, paused, blocked and unreadable states are left alone.
 A squad_lead record, a pending close (`state/<id>.backlog-close`), a held row and a queued row are never touched.
@@ -155,7 +175,7 @@ the lead installs it from merged main, never from a branch.
 
 ## Test
 
-`merge-on-green/tests/backlog-shipped-reconcile.test.sh` drives the reconcile against a fixture home with a real markdown backlog and the real `tasks-axi`: shipped rows with a gone worker close, and live, unproven, held, queued, squad_lead, pending-close and no-`pr=` rows stay.
+`merge-on-green/tests/backlog-shipped-reconcile.test.sh` drives the reconcile against a fixture home with a real markdown backlog and the real `bin/jg-backlog.sh`: shipped rows with a gone worker close, and live, unproven, held, queued, squad_lead, pending-close and no-`pr=` rows stay.
 
 `merge-on-green/tests/stale-pr-alarm.test.sh` drives the alarm against recorded PR fixtures (`tests/fixtures/stale-pr-alarm/`) behind a `gh-axi` stub: every reason, a release PR with and without started CI, a healthy PR and a recent one silent, no repeat on the second poll, a re-stall alerting again, a forge failure silent, and the alarm running from `merge-on-green.sh check`.
 

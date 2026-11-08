@@ -794,6 +794,8 @@ out=$(JG_SQUAD_LEAD_CHARTER='Own iOS delivery on the build Mac.' \
 assert_contains "$out" "home=remote-mac:$REMOTE_HOME" "remote seed did not report the host-qualified home"
 assert_grep 'host: remote-mac; root:' "$PARENT/data/squad_leads.md" "registry did not record the remote host dimension"
 assert_present "$REMOTE_HOME/.jg-squad-lead-home" "remote provisioning did not publish the identity marker"
+# The structured-home projection reads the home's Beads store, which provisioning does not create.
+jg_test_beads_home "$REMOTE_HOME" ios
 assert_present "$REMOTE_HOME/projects/alpha/.git" "remote provisioning did not clone the project on that host"
 assert_grep "$REMOTE_HOME/state/parent-replies.status" "$REMOTE_HOME/data/charter.md" "remote charter did not use its append-only reply log"
 assert_no_grep "$PARENT/state/ios.status" "$REMOTE_HOME/data/charter.md" "remote charter retained the inaccessible local status path"
@@ -839,6 +841,7 @@ mkdir -p "$LOCAL_HOME/data" "$LOCAL_HOME/state" "$LOCAL_HOME/config" "$LOCAL_HOM
 printf 'local\n' > "$LOCAL_HOME/.jg-squad-lead-home"
 printf 'fixture\n' > "$LOCAL_HOME/AGENTS.md"
 printf '## In flight\n\n## Queued\n\n## Done\n' > "$LOCAL_HOME/data/backlog.md"
+jg_test_beads_home "$LOCAL_HOME" local
 cat >> "$PARENT/data/squad_leads.md" <<EOF
 - local - Local delivery (home: $LOCAL_HOME; scope: local work; projects: alpha; added 2026-08-02)
 EOF

@@ -3,17 +3,13 @@
 #
 # Usage:
 #   jg-backlog-receive.sh state/handoff/<squad-lead-id>.outbox.md <bytes> <sha256> <generation>
+#   jg-backlog-receive.sh --check    exits 3 with the reason when this home cannot file rows
 #
 # The delivered file must be a non-symlink backlog-format scratch file confined
-# to JG_HOME/state/handoff. Every item must be Queued. Keys already present in
-# data/backlog.md are skipped; every remaining key moves in one dependency-closed
-# `tasks-axi mv` transaction under tasks-axi's own locks. On an ambiguous caller
-# retry, destination-present classification makes this operation idempotent.
-#
-# If tasks-axi reports a lock failure, this host may remove and retry once only
-# for its own backlog or delivered lock whose pid is dead and whose mtime is at
-# least 30 seconds old. No live or uncertain lock is touched. On confirmed
-# receipt the delivered scratch file is removed; no other path is deletable.
+# to JG_HOME/state/handoff. Every item must be Queued. Every delivered key is
+# filed through the Beads store's own take verb, which a retry repeats with no
+# effect. On confirmed receipt the delivered scratch file is removed; no other
+# path is deletable.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -41,15 +37,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DEST="$JG_HOME/data/backlog.md"
-LOCK_STALE_SECS=30
 
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi
 }
@@ -75,35 +70,10 @@ list_keys() { # <file>
   ' "$1"
 }
 
-lock_age() {
-  local modified now
-  if [ "$(uname 2>/dev/null)" = Darwin ]; then
-    modified=$(/usr/bin/stat -f '%m' "$1" 2>/dev/null) || return 1
-  else
-    modified=$(stat -c '%Y' "$1" 2>/dev/null) || return 1
-  fi
-  now=$(date +%s) || return 1
-  case "$modified$now" in *[!0-9]*) return 1 ;; esac
-  printf '%s\n' "$((now - modified))"
-}
-
-remove_dead_stale_lock() { # <lock-path>
-  local lock=$1 token pid age
-  [ -f "$lock" ] && [ ! -L "$lock" ] || return 1
-  IFS= read -r token < "$lock" || return 1
-  pid=${token%%:*}
-  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  kill -0 "$pid" 2>/dev/null && return 1
-  age=$(lock_age "$lock") || return 1
-  [ "$age" -ge "$LOCK_STALE_SECS" ] || return 1
-  rm -f -- "$lock"
-}
-
-run_move() { # <keys...>
-  # Pin the markdown backend so a .tasks.toml in the caller's directory cannot redirect the move.
-  tasks-axi mv "$@" --file "$DELIVERED" --to "$DEST" --backend markdown
-}
-
+if [ "$#" -eq 1 ] && [ "$1" = --check ]; then
+  jg_backlog_beads_health "$JG_HOME/config" >&2 || { echo "error: this home's Beads store cannot file rows" >&2; exit 3; }
+  exit 0
+fi
 [ "$#" -eq 4 ] || usage
 REL=$1
 EXPECTED_BYTES=$2
@@ -156,6 +126,8 @@ ACTUAL_BYTES=$(LC_ALL=C wc -c < "$DELIVERED" | tr -d ' ')
 [ "$ACTUAL_BYTES" -eq "$EXPECTED_BYTES" ] || die "delivered outbox length does not match its commitment"
 ACTUAL_HASH=$(sha256_file "$DELIVERED") || die "cannot hash delivered outbox"
 [ "$ACTUAL_HASH" = "$EXPECTED_HASH" ] || die "delivered outbox digest does not match its commitment"
+DEST="$PARENT_REAL/.$ID.store-view.md"
+jg_backlog_beads_read "$JG_HOME/config" markdown > "$DEST" || die "this home's Beads store cannot be read; delivered outbox is preserved for retry"
 [ ! -L "$DEST" ] || die "destination backlog must not be a symlink"
 if [ -e "$DEST" ] && [ ! -f "$DEST" ]; then die "destination backlog is not a regular file"; fi
 
@@ -168,12 +140,6 @@ for key in "${KEYS[@]}"; do
   [ "$section" = '## Queued' ] || die "delivered outbox contains non-Queued item $key under $section"
 done
 
-mkdir -p "$JG_HOME/data"
-DEST_CREATED=0
-if [ ! -f "$DEST" ]; then
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$DEST"
-  DEST_CREATED=1
-fi
 TO_MOVE=()
 ALREADY=()
 for key in "${KEYS[@]}"; do
@@ -184,25 +150,17 @@ for key in "${KEYS[@]}"; do
   fi
 done
 
-if [ "${#TO_MOVE[@]}" -gt 0 ]; then
-  jg_tasks_axi_compatible || die "a compatible tasks-axi is required for atomic backlog receipt; run bin/jg-bootstrap.sh for the required version"
-  if ! MOVE_OUT=$(run_move "${TO_MOVE[@]}" 2>&1); then
-    recovered=0
-    for lock in "$DELIVERED.lock" "$DEST.lock"; do
-      if remove_dead_stale_lock "$lock"; then recovered=1; fi
-    done
-    if [ "$recovered" -ne 1 ] || ! MOVE_OUT=$(run_move "${TO_MOVE[@]}" 2>&1); then
-      [ "$DEST_CREATED" -eq 0 ] || rm -f -- "$DEST"
-      [ -z "$MOVE_OUT" ] || printf '%s\n' "$MOVE_OUT" >&2
-      die "atomic backlog receipt failed; delivered outbox is preserved for retry"
-    fi
-  fi
+if ! MOVE_OUT=$(jg_backlog_beads_write "$JG_HOME/config" take "$DELIVERED" "${KEYS[@]}" 2>&1); then
+  [ -z "$MOVE_OUT" ] || printf '%s\n' "$MOVE_OUT" >&2
+  die "backlog receipt failed; delivered outbox is preserved for retry"
 fi
+jg_backlog_beads_read "$JG_HOME/config" markdown > "$DEST" || die "receipt verification could not read the store; delivered outbox is preserved"
 
 for key in "${KEYS[@]}"; do
   backlog_key_section "$DEST" "$key" >/dev/null 2>&1 \
     || die "receipt verification failed for $key; delivered outbox is preserved"
 done
+rm -f -- "$DEST"
 rm -f -- "$DELIVERED" || die "receipt succeeded but delivered scratch cleanup failed"
 jg_lock_release "$TRANSFER_LOCK" || die "receipt succeeded but transfer lock cleanup failed"
 trap - EXIT

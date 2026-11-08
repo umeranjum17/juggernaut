@@ -61,11 +61,6 @@ jobs:
           set -eu
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Install tasks-axi
-        run: |
-          set -eu
-          npm install -g tasks-axi
-          tasks-axi --version
       # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
       # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
       - name: Install the pinned OPA
@@ -75,6 +70,17 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      # The backlog is a Beads store: the suites that file and read tickets in a fixture home run against the
+      # pinned bd and dolt (run only through bin/jg-beads.sh), or they skip.
+      - name: Install the backlog tools (pinned bd and dolt)
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install bd dolt
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "JG_BEADS_TEST_BD=$NPM_CONFIG_PREFIX/bin/bd" >> "$GITHUB_ENV"
+          echo "JG_BEADS_TEST_DOLT=$NPM_CONFIG_PREFIX/bin/dolt" >> "$GITHUB_ENV"
       - name: Run portable parallel shard 1
         run: |
           set -eu
@@ -115,11 +121,6 @@ jobs:
           set -eu
           bin/jg-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Install tasks-axi
-        run: |
-          set -eu
-          npm install -g tasks-axi
-          tasks-axi --version
       # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
       # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
       - name: Install the pinned OPA
@@ -129,6 +130,17 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      # The backlog is a Beads store: the suites that file and read tickets in a fixture home run against the
+      # pinned bd and dolt (run only through bin/jg-beads.sh), or they skip.
+      - name: Install the backlog tools (pinned bd and dolt)
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install bd dolt
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "JG_BEADS_TEST_BD=$NPM_CONFIG_PREFIX/bin/bd" >> "$GITHUB_ENV"
+          echo "JG_BEADS_TEST_DOLT=$NPM_CONFIG_PREFIX/bin/dolt" >> "$GITHUB_ENV"
       - name: Run portable parallel shard 2
         run: |
           set -eu
@@ -159,7 +171,7 @@ jobs:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -188,11 +200,6 @@ jobs:
             exit 1
           }
           tmux -V
-      - name: Install tasks-axi for backlog-handoff delegation
-        run: |
-          set -eu
-          npm install -g tasks-axi
-          tasks-axi --version
       # The completion-receipt gate runs the merge path's Rego rules through the guard host, which
       # needs OPA at the version toolchain.versions pins; core-suites installs it the same way.
       - name: Install the pinned OPA
@@ -202,6 +209,17 @@ jobs:
           mkdir -p "$NPM_CONFIG_PREFIX/bin"
           bin/jg-bootstrap.sh install opa
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+      # The backlog is a Beads store: the suites that file and read tickets in a fixture home run against the
+      # pinned bd and dolt (run only through bin/jg-beads.sh), or they skip.
+      - name: Install the backlog tools (pinned bd and dolt)
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install bd dolt
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "JG_BEADS_TEST_BD=$NPM_CONFIG_PREFIX/bin/bd" >> "$GITHUB_ENV"
+          echo "JG_BEADS_TEST_DOLT=$NPM_CONFIG_PREFIX/bin/dolt" >> "$GITHUB_ENV"
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
           # job-total rather than a literal, so shrinking or growing the matrix
@@ -259,6 +277,18 @@ jobs:
           # worktree acquisition (presentation, workspace-per-home, autodetect).
           bin/jg-install-treehouse.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # A spawn reads the home's backlog first, and the backlog is a Beads store: the spawn suites in this
+      # family file their fixture tickets in the pinned bd and dolt (run only through bin/jg-beads.sh),
+      # or they skip.
+      - name: Install the backlog tools (pinned bd and dolt)
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install bd dolt
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "JG_BEADS_TEST_BD=$NPM_CONFIG_PREFIX/bin/bd" >> "$GITHUB_ENV"
+          echo "JG_BEADS_TEST_DOLT=$NPM_CONFIG_PREFIX/bin/dolt" >> "$GITHUB_ENV"
       - name: Assert Herdr pin and protocol floor
         run: |
           set -eu
@@ -314,9 +344,10 @@ jobs:
           bin/jg-herdr-ci-cleanup.sh snapshot "$RUNNER_TEMP/jg-herdr/sessions-before.json"
       - name: Run real-Herdr family (serial, required)
         id: run-real-herdr-family
-        # Heavy tier step tripwire: above the healthy 7-10 minute wall and far
+        # Heavy tier step tripwire: above the healthy wall (about 25 minutes on a
+        # runner since the spawn suites file their tickets in a Beads store) and
         # below the job backstop, so a hang fails this step and cleanup runs.
-        timeout-minutes: 20
+        timeout-minutes: 35
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/jg-test"
@@ -375,12 +406,6 @@ jobs:
             /bin/bash -n "$f" || { echo "::error::stock macOS Bash 3.2 failed to parse $f"; parse_fail=1; }
           done < "$shell_inventory"
           [ "$parse_fail" -eq 0 ] || { echo "::error::stock macOS Bash 3.2 parse sweep failed"; exit 1; }
-
-          command -v npm >/dev/null || { echo "::error::npm is required to install tasks-axi"; exit 1; }
-          npm install -g tasks-axi@0.2.6 >/dev/null
-          PATH="$(npm prefix -g)/bin:$PATH"
-          export PATH
-          command -v tasks-axi >/dev/null || { echo "::error::tasks-axi is required for the stock Bash regression"; exit 1; }
 
           # The full public-followup suite is not a stock-bash snapshot; run only
           # the empty-lock register regression under real /bin/bash 3.2.

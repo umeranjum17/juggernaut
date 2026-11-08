@@ -12,6 +12,8 @@ journeys:
     command: bash journeys/wake-watcher.sh
   wake-batching:
     command: bash journeys/wake-batching.sh
+  ports-adapter-refusal:
+    command: bash journeys/ports-adapter-refusal.sh
   rejected-state-check-once:
     command: bash journeys/rejected-state-check-once.sh
   wake-schedule:
@@ -47,6 +49,8 @@ journeys:
     timeout: 45m
   fleet-report:
     command: bash core/fleet-report/run-proof.sh
+  project-state-map:
+    command: bash core/project-state-map/run-proof.sh
   status-digest:
     command: bash journeys/status-digest.sh
   release-readiness:
@@ -61,8 +65,12 @@ journeys:
     command: bash journeys/release-shipped-merge-refusal.sh
   critical-path:
     command: bash journeys/critical-path.sh
+  trunk-landing:
+    command: bash journeys/trunk-landing.sh
   proof-attach:
     command: bash journeys/proof-attach.sh
+  merge-proof-gate:
+    command: bash journeys/merge-proof-gate.sh
   design-call-gate:
     command: bash journeys/design-call-gate.sh
   merge-gate-policy:
@@ -183,6 +191,8 @@ journeys:
     command: bash journeys/axi-digest.sh
   remote-squad-lead-lifecycle:
     command: bash journeys/remote-squad-lead-lifecycle.sh
+  unit-claim:
+    command: bash journeys/unit-claim.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

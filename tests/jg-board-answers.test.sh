@@ -25,7 +25,8 @@ case "$cmd" in
   answers) jq -s 'reduce .[] as $a ({}; .[$a.key] = ($a | del(.key)))' "${board%.json}.answers.jsonl" ;;
   dismiss) echo "dismiss $*" >> "$SIGNOFF_LOG" ;;
   list) jq -c '{decisions: [.items[] | {key}]}' "$board" ;;
-  raise) k=$(printf '%s\n' "$*" | sed 's/.*--title \([^ ]*\).*/\1/')
+  raise) k=$(printf '%s\n' "$*" | sed 's/.*--title \([^ ]*\).*/\1/' | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' '-')
+    k=jg-${k%-}
     jq --arg k "$k" '.items += [{key: $k}]' "$board" > "$board.tmp" && mv "$board.tmp" "$board" ;;
 esac
 SH
@@ -100,12 +101,15 @@ test_unrouted_answer_wakes_main_with_the_answer_first() {
   [ -z "$out" ] || fail "an answer already on the board at the first pass was reported: $out"
   answer "$d" free-card "ship it"
   out=$(run "$d" "$BA" check)
-  case "$out" in
-    "ship it ("*") | board answer on free-card at $AT, not routed to a lead"*) : ;;
-    *) fail "the unrouted wake line does not lead with the answer: $out" ;;
-  esac
+  [ -z "$out" ] || fail "the unrouted answer was printed although its wake was raised: $out"
+  grep -q "board-answer-unmapped-free-card-$AT" "$d/home/state/.wake-queue" \
+    || fail "no wake row was raised in the pass for the unmapped answer"
+  grep -q 'ship it (.*) | board answer on free-card at .*, not routed to a lead' "$d/home/state/.wake-queue" \
+    || fail "the unrouted wake does not lead with the answer"
   out=$(run "$d" "$BA" check)
   [ -z "$out" ] || fail "an unrouted answer was reported twice: $out"
+  [ "$(grep -c "board-answer-unmapped-free-card-$AT" "$d/home/state/.wake-queue")" = 1 ] \
+    || fail "the unmapped answer was queued more than once"
   pass "an unrouted answer wakes Main once, answer text first; old answers stay quiet"
 }
 
@@ -129,25 +133,27 @@ test_failed_delivery_is_retried_and_reported_once() {
 test_question_card_route_records_the_owner() {
   local d out
   d=$(setup card)
-  out=$(run_key "$d" "$CARD" post --route muxr --decision-key use-key --title "Q for muxr?" --ask-ref m1 --must design-pick \
+  jg_test_raising_ticket "$d/home"
+  out=$(run_key "$d" "$CARD" post --route muxr --decision-key use-key --title "Q for muxr?" --ask-ref jg-m1 --must design-pick --raised-by jg-m1 \
     --outcome yes="It is." --outcome no="It is not.")
   assert_equals $'lead=muxr\ndecision=use-key' "$(cat "$d/home/state/board-routes/$out")" "the route was not recorded under the printed card key"
-  out=$(run "$d" "$CARD" post --route ghost --title "Q2?" --ask-ref m1 --must design-pick \
+  out=$(run "$d" "$CARD" post --route ghost --title "Q2?" --ask-ref jg-m1 --must design-pick --raised-by jg-m1 \
     --outcome yes="It is." --outcome no="It is not.") && fail "a route to an unknown lead was accepted"
   [ "$(jq '.items | length' "$d/so/.sign-off/decisions.json")" = 1 ] || fail "a refused route still posted a card"
-  run "$d" "$CARD" post --decision-key x --title "Q3?" --ask-ref m1 --must design-pick --outcome yes="It is." --outcome no="It is not." > /dev/null && fail "--decision-key without --route was accepted"
+  run "$d" "$CARD" post --decision-key x --title "Q3?" --ask-ref jg-m1 --must design-pick --raised-by jg-m1 --outcome yes="It is." --outcome no="It is not." > /dev/null && fail "--decision-key without --route was accepted"
   pass "jg-question-card post --route records the owning lead and refuses an unknown one before posting"
 }
 
 test_card_posted_without_a_route_finds_its_lead_and_the_answer_skips_main() {
   local d out rec
   d=$(setup autoroute)
-  out=$(run_key "$d" "$CARD" post --title "Q4 for the key?" --ask-ref "$KEY" --must design-pick \
+  jg_test_raising_ticket "$d/home"
+  out=$(run_key "$d" "$CARD" post --title "Q4 for the key?" --ask-ref "$KEY" --must design-pick --raised-by jg-m1 \
     --outcome yes="It is." --outcome no="It is not.")
   assert_equals $'lead=muxr\ndecision='"$KEY" "$(cat "$d/home/state/board-routes/$out")" "the lead was not found from the open decision"
-  run "$d" "$CARD" post --title "Q5 for nobody?" --ask-ref m1 --must design-pick --outcome yes="It is." --outcome no="It is not." \
+  run "$d" "$CARD" post --title "Q5 for nobody?" --ask-ref jg-m1 --must design-pick --raised-by jg-m1 --outcome yes="It is." --outcome no="It is not." \
     | grep -q -- "--route <lead>.*--route main" || fail "an unownable card was not refused with the flag to pass"
-  out=$(run_key "$d" "$CARD" post --route main --title "Q6 for the owner?" --ask-ref m1 --must design-pick \
+  out=$(run_key "$d" "$CARD" post --route main --title "Q6 for the owner?" --ask-ref jg-m1 --must design-pick --raised-by jg-m1 \
     --outcome yes="It is." --outcome no="It is not.")
   [ -n "$out" ] && [ ! -e "$d/home/state/board-routes/$out" ] || fail "a Main-owned card was not posted, or got a lead route: $out"
   answer "$d" "$(run_key "$d" "$CARD" keys | head -1)" yes

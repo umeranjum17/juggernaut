@@ -83,18 +83,12 @@ pass "plain note, list, and wake stay on the historical human path"
 
 # A captain ask note must create a backlog ticket before juggernaut is woken.
 home=$(make_home captain-ask)
-cat > "$home/.tasks.toml" <<'EOF'
-backend = "markdown"
-
-[markdown]
-path = "data/backlog.md"
-EOF
-printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$home/data/backlog.md"
+jg_test_beads_home "$home"
 ask_body=$'[captain-ask] Keep the dashboard ticketed\nPreserve this original ask body.'
 ask_out=$(run_inbox "$home" note --request-id ask-ticket-1 --json "$ask_body") || fail "captain ask note should create its ticket and queue"
 ask_id=$(printf '%s' "$ask_out" | json_get id)
 ask_ticket="captain-ask-$ask_id"
-ask_show=$(JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" "$ROOT/bin/jg-tasks-axi.sh" show "$ask_ticket" --full) || fail "captain ask ticket is missing"
+ask_show=$(JG_HOME="$home" JG_DATA_OVERRIDE="$home/data" "$ROOT/bin/jg-backlog.sh" show "$ask_ticket" --full) || fail "captain ask ticket is missing"
 assert_contains "$ask_show" '[captain-ask] Keep the dashboard ticketed' "ticket title should retain the captain-ask tag and request"
 assert_contains "$ask_show" 'Preserve this original ask body.' "ticket should preserve the full original ask"
 asks_out=$(run_inbox "$home" asks) || fail "captain ask listing should succeed"
@@ -699,10 +693,12 @@ pass "reply --option records the choice for the gateway and refuses a malformed 
 home=$(make_home decide-link)
 mkdir -p "$home/state/inbox"
 for n in aaaaaa bbbbbb cccccc dddddd eeeeee ffffff; do
-  printf 'id=1700000000-%s\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nask\n' "$n" > "$home/state/inbox/1700000000-$n.note"
+  printf 'id=1700000000-%s\nat=2026-01-01T00:00:00Z\nsource=text\nannounce_marker=1\n--\nChoose how the reply path should work.\n' "$n" > "$home/state/inbox/1700000000-$n.note"
 done
 decide_link='https://board.example/?token=abc#decide/pick-1'
 three_lines=$'Which way?\nA) Keep it\nB) Change it\nC) Drop it'
+# A reply that answers his note carries the ask block (2026-11-05): his words and their date, done, not done, next and a proof link.
+ask_block=$'Your ask: "Choose how the reply path should work." (2026-01-01)\nDone: the options are ready for you.\nNot done: nothing.\nNext: pick one.'
 
 set +e
 out=$(run_inbox "$home" reply 1700000000-aaaaaa -- "$three_lines" 2>&1); code=$?
@@ -716,7 +712,7 @@ out=$(run_inbox "$home" reply 1700000000-aaaaaa --option A --option B --option C
 set -e
 expect_code 1 "$code" "three --option labels with no board link are refused"
 
-run_inbox "$home" reply 1700000000-bbbbbb -- "$three_lines"$'\n'"$decide_link" >/dev/null || fail "three options with a #decide link should pass"
+run_inbox "$home" reply 1700000000-bbbbbb -- "$ask_block"$'\n'"$three_lines"$'\n'"$decide_link" >/dev/null || fail "three options with a #decide link should pass"
 assert_present "$home/state/inbox/.replies/1700000000-bbbbbb" "three options with a #decide link record the reply"
 
 run_inbox "$home" reply 1700000000-cccccc -- $'Which way?\nA) Keep it\nB) Change it' >/dev/null || fail "two options with no link should pass"
@@ -727,12 +723,12 @@ out=$(run_inbox "$home" reply 1700000000-eeeeee -- "Please make a design pick be
 set -e
 expect_code 1 "$code" "a design pick with no board link is refused"
 assert_contains "$out" "#decide/" "the design-pick refusal names the missing link"
-run_inbox "$home" reply 1700000000-eeeeee -- "Please make a design pick: $decide_link" >/dev/null || fail "a design pick with a #decide link should pass"
+run_inbox "$home" reply 1700000000-eeeeee -- "$ask_block"$'\n'"Please make a design pick: $decide_link" >/dev/null || fail "a design pick with a #decide link should pass"
 
 run_inbox "$home" reply 1700000000-ffffff -- "The fix landed." >/dev/null || fail "a reply with no pick should pass"
 set +e
 out=$(run_inbox "$home" followup 1700000000-ffffff -- "$three_lines" 2>&1); code=$?
 set -e
 expect_code 1 "$code" "followup refuses three options with no board link"
-run_inbox "$home" followup 1700000000-ffffff -- "$three_lines"$'\n'"$decide_link" >/dev/null || fail "followup with a #decide link should pass"
+run_inbox "$home" followup 1700000000-ffffff -- "$ask_block"$'\n'"$three_lines"$'\n'"$decide_link" >/dev/null || fail "followup with a #decide link should pass"
 pass "reply and followup refuse a big choice or design pick without a #decide board link"

@@ -1,8 +1,7 @@
 # shellcheck shell=bash
 # Fused backlog transitions for the scripts that own a task's physical record.
-# Usage: . bin/jg-tasks-axi-lib.sh; . bin/jg-backlog-transition-lib.sh
-# (this library reads that one's backend gate and never sources it itself, so a
-# caller that already sourced it keeps its memoised compatibility verdict).
+# Usage: . bin/jg-backlog-lib.sh; . bin/jg-backlog-transition-lib.sh
+# (this library reads that one's Beads store helpers and never sources it itself).
 #
 # INVARIANT. In ordinary successful lifecycle state, `state/<id>.meta` exists
 # <=> this home's backlog row for <id> is In flight; the one teardown crash
@@ -11,8 +10,8 @@
 # same process, under the per-task meta lock it already holds, before it reports
 # success. Nothing else - not a later agent turn, not a printed reminder - is
 # load-bearing for the pairing.
-#   bin/jg-spawn.sh      meta published => `tasks-axi start`
-#   bin/jg-teardown.sh   meta removed => `tasks-axi done`, or `tasks-axi reopen`
+#   bin/jg-spawn.sh      meta published => backlog `start`
+#   bin/jg-teardown.sh   meta removed => backlog `done`, or `reopen`
 #                        with the deliverable recorded when the row is still an
 #                        open captain call (bin/jg-captain-hold.sh `open`), so
 #                        cleanup never retires the captain's own question
@@ -21,22 +20,14 @@
 # cross-home nudge stay defense in depth, not the primary mechanism.
 #
 # SCOPE. jg_backlog_transition_applies is the single gate. It excludes
-# squad_leads (persistent agents are never backlog items, the fleet-records skill),
-# homes whose configured backlog backend is manual and markdown homes that keep
-# no backlog file. Those return-1 exemptions are never errors; an
-# unresolvable configured data directory, a backend resolution error, or
-# incompatible tasks-axi instead returns 2 so callers refuse before mutation.
+# squad_leads (persistent agents are never backlog items, the fleet-records skill).
+# An unresolvable configured data directory or an unusable Beads store returns 2
+# so callers refuse before mutation.
 #
-# ADDRESSING. Every call runs from the configured data directory's parent so
-# that home's `.tasks.toml` supplies the adapter selection, done_keep, and the
-# archive path. A markdown backlog also passes `--file <data>/backlog.md` so the
-# change lands in the home that owns the task regardless of the caller's working
-# directory. A configured non-markdown adapter is addressed by that root alone,
-# because `--file` would override the adapter's own workspace path. The parent of
-# the data directory is the addressing root rather than JG_HOME, so a home whose
-# data directory is relocated keeps its backlog and its archive together. A root
-# with no `.tasks.toml` gets tasks-axi's built-in defaults.
-# bin/jg-tasks-axi-lib.sh owns backend precedence and configuration failures.
+# ADDRESSING. Every row read and mutation runs the Beads provider against the
+# store config/beads-dir names. Only the data directory is authorized, because it
+# keeps no backlog file. Each write checks the status it read, so a row that moved
+# underneath a transition refuses with bd's exit 13 and changes nothing.
 #
 # CRASH RECOVERY. Only teardown needs a durable record: it removes the meta and
 # with it the completion links, so a process killed between the two halves would
@@ -49,7 +40,7 @@
 # While matching task metadata still exists, a scratch registry (including a
 # symlink) or data/<id>/ directory blocks replay before metadata removal: rerun
 # teardown to finish process and scratch cleanup instead of losing ownership.
-# `tasks-axi done` on an already-closed task backfills links
+# `done` on an already-closed task backfills links
 # without moving the close date, so replay is idempotent. Spawn needs no marker:
 # it publishes the meta first, so a crash
 # leaves the meta itself as the evidence that the row is owed a start.
@@ -67,7 +58,7 @@ JG_BACKLOG_TRANSITION_ERROR=
 JG_BACKLOG_ROW_RESULT=
 JG_BACKLOG_ROW_STATE=
 JG_BACKLOG_ROW_ERROR=
-# Set by jg_backlog_row_probe on a found row: the tasks-axi hold kind, empty when
+# Set by jg_backlog_row_probe on a found row: the hold kind, empty when
 # the row is not held.
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
 JG_BACKLOG_ROW_HOLD_KIND=
@@ -77,8 +68,7 @@ JG_BACKLOG_ROW_HOLD_KIND=
 JG_BACKLOG_CLOSE_REPLAY_RESULT=
 
 # Bounded execution is jg-timeout-lib.sh's alone; source it rather than
-# re-deriving a deadline here. It is stateless, so the memoisation reason this
-# library does not source jg-tasks-axi-lib.sh does not apply.
+# re-deriving a deadline here.
 # shellcheck source=bin/jg-timeout-lib.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-timeout-lib.sh"
 # jg-pr-lib.sh owns which URL is a Gerrit change. It is functions and empty
@@ -159,7 +149,7 @@ jg_backlog_file() {  # <data-dir>
   fi
 }
 
-# The directory a backlog's own `.tasks.toml` is resolved from.
+# The directory that holds the data directory.
 jg_backlog_root() {  # <data-dir>
   local data parent
   data=$(jg_backlog_data_absolute "$1") || {
@@ -198,162 +188,88 @@ jg_backlog_data_relative() {  # <data-dir>
 }
 
 
-# The parent an authorized data directory was named from, kept in the caller's
-# own path shape. jg_backlog_record_parent_authorized only applies its JG_HOME
-# containment guard to a root that still spells out `$JG_HOME`, so a root
-# already resolved through `pwd -P` would skip that guard whenever the data
-# directory is a symlink.
-jg_backlog_authorized_root() {  # <authorized-data-dir>
-  local data=$1 parent
-  while [ "$data" != / ] && [ "${data%/}" != "$data" ]; do
-    data=${data%/}
-  done
-  case "$data" in
-    /) parent=/ ;;
-    */*)
-      parent=${data%/*}
-      [ -n "$parent" ] || parent=/
-      ;;
-    *) parent=. ;;
-  esac
-  printf '%s\n' "$parent"
+# The config directory of the home that owns <data>, by jg_backlog_ticket_publish's rule.
+jg_backlog_config_of() {  # <data-dir>
+  printf '%s\n' "${JG_CONFIG_OVERRIDE:-${JG_HOME:-${1%/*}}/config}"
 }
 
-# Any adapter selection or exemption derived from a home's `.tasks.toml` is only
-# as safe as that file, so validate it before reading it.
-jg_backlog_config_present() {  # <root> <authorized-root>
-  local root=$1 authorized_root=$2 tasks_config="$1/.tasks.toml"
-  if [ -e "$tasks_config" ] || [ -L "$tasks_config" ]; then
-    # Leave a dangling config symlink for the backend resolver to diagnose as
-    # unreadable; reject an existing special file through the home-bound
-    # validator before any backend parser can touch it.
-    if [ -L "$tasks_config" ] && [ ! -e "$tasks_config" ]; then
-      return 0
-    fi
-    jg_backlog_record_present "$tasks_config" "tasks-axi config" "$authorized_root" || return 1
-  fi
-  return 0
-}
-
-# Every home is bound to its own data directory, whichever adapter it configures,
-# so the boundary is authorized first and unconditionally. Only the markdown
-# backlog's regular-file requirement is adapter-specific: another adapter keeps
-# its rows in its own workspace and need not carry <data>/backlog.md at all.
-jg_backlog_source_present() {  # <data-dir> <authorized-data-dir> [root authorized-root]
-  local data=$1 authorized_data=$2 root=${3:-} authorized_root=${4:-} file backend
-  if [ -z "$root" ]; then
-    root=$(jg_backlog_root "$data") || return 1
-    authorized_root=$(jg_backlog_authorized_root "$authorized_data")
-  fi
-  if [ -z "$authorized_root" ]; then
-    authorized_root=$(jg_backlog_authorized_root "$authorized_data")
-  fi
-  jg_backlog_config_present "$root" "$authorized_root" || return 1
-  backend=$(jg_tasks_axi_backend "$root" 2>&1) || {
-    JG_BACKLOG_TRANSITION_ERROR=$backend
-    return 2
-  }
+# The data boundary is authorized first and unconditionally; the Beads store
+# keeps no backlog file, so only the data directory's parent is checked.
+jg_backlog_source_present() {  # <data-dir> <authorized-data-dir>
+  local data=$1 authorized_data=$2 file
   file=$(jg_backlog_file "$data") || return 1
-  if [ "$backend" = markdown ]; then
-    jg_backlog_record_present "$file" "backlog file" "$authorized_data"
-    return $?
-  fi
   jg_backlog_record_parent_authorized "$file" "backlog data directory" "$authorized_data" parent-only
 }
 
 # Resolve how the owning home's backlog is addressed, for reads and mutations
-# alike: sets JG_BACKLOG_AXI_ROOT to the cd target and JG_BACKLOG_AXI_FILE to
-# the markdown --file path, empty for every other backend. This is the single
-# place that decision is made. A markdown backlog is addressed as
-# <data>/backlog.md so the change lands in the home that owns the task
-# regardless of the caller's working directory; any other configured adapter
-# is addressed by that root alone, because --file would override the adapter's
-# own workspace path. The caller invokes jg_tasks_axi inside its own subshell
-# - the bound wrapper execs, so a nested subshell here would add a process
-# layer between tasks-axi and the caller, which the lock-holding callers'
-# interruption contract counts on not existing.
-jg_backlog_tasks_axi_addressing() {  # <data-dir>
-  JG_BACKLOG_AXI_FILE=
-  local data root backend
+# alike: sets JG_BACKLOG_AXI_ROOT to the cd target and JG_BACKLOG_AXI_BEADS to
+# the config directory of the home. This is the single place that decision is
+# made. The caller invokes jg_backlog_serve inside its own subshell - the bound
+# wrapper execs, so a nested subshell here would add a process layer between the
+# store tool and the caller, which the lock-holding callers' interruption
+# contract counts on not existing.
+jg_backlog_addressing() {  # <data-dir>
+  local data root config
   data=$(jg_backlog_data_absolute "$1") || return $?
   root=$(jg_backlog_root "$data") || return $?
-  backend=$(jg_tasks_axi_backend "$root" 2>&1) || {
-    JG_BACKLOG_TRANSITION_ERROR=$backend
-    return 2
-  }
+  config=$(jg_backlog_config_of "$data")
   JG_BACKLOG_AXI_ROOT=$root
-  if [ "$backend" = markdown ]; then
-    JG_BACKLOG_AXI_FILE=$(jg_backlog_file "$data") || return 1
-  fi
+  JG_BACKLOG_AXI_BEADS=$config
 }
 
 jg_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>
-  local config=$1 data authorized_data=$2 kind=$3 file root backend authorized_root
+  local config=$1 authorized_data=$2 kind=$3
   JG_BACKLOG_TRANSITION_SKIP=
   if [ "$kind" = squad_lead ]; then
     JG_BACKLOG_TRANSITION_SKIP="squad_leads are not backlog items"
     return 1
   fi
-  if jg_backlog_backend_manual "$config"; then
-    JG_BACKLOG_TRANSITION_SKIP="config/backlog-backend selects manual editing"
-    return 1
-  fi
-  if ! data=$(jg_backlog_data_absolute "$2"); then
+  jg_backlog_data_absolute "$2" >/dev/null || {
     JG_BACKLOG_TRANSITION_ERROR="data directory cannot be resolved: $2"
     return 2
-  fi
-  root=$(jg_backlog_root "$data") || return 2
-  authorized_root=$(jg_backlog_authorized_root "$authorized_data")
-  jg_backlog_config_present "$root" "$authorized_root" || return 2
-  backend=$(jg_tasks_axi_backend "$root" 2>&1) || {
-    JG_BACKLOG_TRANSITION_ERROR=$backend
-    return 2
   }
-  if [ "$backend" = markdown ]; then
-    file=$(jg_backlog_file "$data") || return 2
-    if [ ! -e "$file" ] && [ ! -L "$file" ]; then
-      JG_BACKLOG_TRANSITION_SKIP="this home keeps no markdown backlog at $file"
-      return 1
-    fi
-  fi
-  if ! jg_backlog_source_present "$data" "$authorized_data" "$root" "$authorized_root"; then
+  if ! JG_BACKLOG_TRANSITION_ERROR=$(jg_backlog_beads_store "$config" 2>&1 >/dev/null); then
     return 2
   fi
-  if ! jg_tasks_axi_compatible; then
-    JG_BACKLOG_TRANSITION_ERROR="automatic backlog transitions require tasks-axi ${JG_TASKS_AXI_MIN:-(unknown minimum)} or newer with the required update and mv features"
-    return 2
-  fi
+  jg_backlog_source_present "$2" "$authorized_data" || return 2
   return 0
 }
 
-# Run `tasks-axi` with an optional JG_TASKS_AXI_TIMEOUT bound. A caller that
+# Run the Beads provider with an optional JG_BACKLOG_TIMEOUT bound. A caller that
 # holds a lock across the call - the spawn commit and its preservation
 # read-back run under the per-task meta lock - sets the bound, so an
-# unresponsive tasks-axi cannot hold that lock open indefinitely. The bound is
+# unresponsive store cannot hold that lock open indefinitely. The bound is
 # jg_exec_timed's (bin/jg-timeout-lib.sh), with one further bound of grace
-# before KILL so a tasks-axi that ignores SIGTERM cannot outlive it either; the
+# before KILL so a store that ignores SIGTERM cannot outlive it either; the
 # callers treat jg_timed_out statuses as the bound expiring and report the
 # timeout as the reason through their existing error plumbing. A bound that
-# cannot be enforced on this host fails closed instead of running unbounded.
-# Must be the last command of a subshell: the exec keeps the tasks-axi process
-# exactly where the plain call sat, and the bound kills the child, not the
-# caller.
-jg_tasks_axi_timeout_expired() {  # <status>
+# cannot be enforced on this host stops safely instead of running unbounded.
+# Must be the last command of a subshell: the exec keeps the process exactly
+# where the plain call sat, and the bound kills the child, not the caller.
+jg_backlog_timeout_expired() {  # <status>
   jg_timed_out "$1"
 }
 
-jg_tasks_axi() {
-  local bound=${JG_TASKS_AXI_TIMEOUT:-}
-  if [ -z "$bound" ]; then
-    exec tasks-axi "$@"
-  fi
-  jg_exec_timed "$bound" "$bound" tasks-axi "$@"
+# JG_BACKLOG_TOOL is the command that answers a verb for the addressing just
+# resolved: a shell serving the Beads provider.
+jg_backlog_tool() {
+  # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
+  JG_BACKLOG_TOOL=(bash -c '. "$1"; shift; jg_backlog_beads_serve "$@"' jg-beads
+    "$(dirname "${BASH_SOURCE[0]}")/jg-backlog-lib.sh" "$JG_BACKLOG_AXI_BEADS")
 }
 
-# Print one row's `tasks-axi show` output (plus stderr) from the addressing
-# jg_backlog_tasks_axi_addressing resolved, with `--file` only for the markdown
-# backend. Addressing or backend-resolution errors return before tasks-axi runs;
-# otherwise its exit status is preserved. Extra flags (--full) pass through.
+jg_backlog_serve() {
+  local bound=${JG_BACKLOG_TIMEOUT:-}
+  jg_backlog_tool
+  if [ -z "$bound" ]; then
+    exec "${JG_BACKLOG_TOOL[@]}" "$@"
+  fi
+  jg_exec_timed "$bound" "$bound" "${JG_BACKLOG_TOOL[@]}" "$@"
+}
+
+# Print one row's `show` output (plus stderr) from the addressing
+# jg_backlog_addressing resolved. Addressing errors return before the store
+# runs; otherwise its exit status is preserved. Extra flags (--full) pass through.
 #
 # Every read is bounded, because a wedged backend read here is what blinds a
 # whole session start: bin/jg-bootstrap.sh's reconcile and close-replay sweeps
@@ -381,29 +297,27 @@ jg_backlog_row_show() {  # <resolved-data-dir> <id> [flag...]
   # value too large for the shell to compare at all.
   case "$secs" in ''|*[!0-9]*) secs=10 ;; esac
   [ "$secs" -gt 0 ] 2>/dev/null || secs=10
-  jg_backlog_tasks_axi_addressing "$data"
+  jg_backlog_addressing "$data"
   addressing_status=$?
   if [ "$addressing_status" -ne 0 ]; then
     [ -z "${JG_BACKLOG_TRANSITION_ERROR:-}" ] || printf '%s\n' "$JG_BACKLOG_TRANSITION_ERROR" >&2
     return "$addressing_status"
   fi
   if [ "$JG_BACKLOG_ROW_SHOW_WEDGED" = 1 ]; then
-    printf 'tasks-axi show %s skipped: the backlog backend already exceeded its %ss read bound\n' "$id" "$secs"
+    printf 'backlog show %s skipped: the backlog backend already exceeded its %ss read bound\n' "$id" "$secs"
     return 124
   fi
-  if [ -n "$JG_BACKLOG_AXI_FILE" ]; then
-    set -- "$@" --file "$JG_BACKLOG_AXI_FILE"
-  fi
+  jg_backlog_tool
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
-  out=$(jg_run_timed "$secs" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec tasks-axi show "$@"' \
-    _ "$JG_BACKLOG_AXI_ROOT" "$id" "$@" 2>&1)
+  out=$(jg_run_timed "$secs" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec "$@"' \
+    _ "$JG_BACKLOG_AXI_ROOT" "${JG_BACKLOG_TOOL[@]}" show "$id" "$@" 2>&1)
   status=$?
   # A backend that wrote a header or a progress line before wedging leaves that
   # fragment as the first output line, and every caller reads the first line as
   # the failure reason. Whatever a timed-out read managed to emit is incomplete
   # by definition, so the bound speaks for it instead.
   if [ "$status" -eq 124 ]; then
-    printf 'tasks-axi show %s exceeded its %ss backlog read bound\n' "$id" "$secs"
+    printf 'backlog show %s exceeded its %ss backlog read bound\n' "$id" "$secs"
   else
     printf '%s\n' "$out"
   fi
@@ -413,17 +327,13 @@ jg_backlog_row_show() {  # <resolved-data-dir> <id> [flag...]
 jg_backlog_row_list() {  # <resolved-data-dir> [flag...]
   local data=$1 addressing_status
   shift
-  jg_backlog_tasks_axi_addressing "$data"
+  jg_backlog_addressing "$data"
   addressing_status=$?
   if [ "$addressing_status" -ne 0 ]; then
     [ -z "${JG_BACKLOG_TRANSITION_ERROR:-}" ] || printf '%s\n' "$JG_BACKLOG_TRANSITION_ERROR" >&2
     return "$addressing_status"
   fi
-  if [ -n "$JG_BACKLOG_AXI_FILE" ]; then
-    (cd "$JG_BACKLOG_AXI_ROOT" 2>/dev/null && jg_tasks_axi list "$@" --file "$JG_BACKLOG_AXI_FILE" 2>&1)
-  else
-    (cd "$JG_BACKLOG_AXI_ROOT" 2>/dev/null && jg_tasks_axi list "$@" 2>&1)
-  fi
+  (cd "$JG_BACKLOG_AXI_ROOT" 2>/dev/null && jg_backlog_serve list "$@" 2>&1)
 }
 
 jg_backlog_row_probe() {  # <data-dir> <id>
@@ -453,10 +363,10 @@ jg_backlog_row_probe() {  # <data-dir> <id>
     else
       JG_BACKLOG_ROW_ERROR=$(printf '%s\n' "$out" | sed -n '1p')
       if [ -z "$JG_BACKLOG_ROW_ERROR" ]; then
-        if jg_tasks_axi_timeout_expired "$command_status" && [ -n "${JG_TASKS_AXI_TIMEOUT:-}" ]; then
-          JG_BACKLOG_ROW_ERROR="tasks-axi show $id did not finish within ${JG_TASKS_AXI_TIMEOUT}s"
+        if jg_backlog_timeout_expired "$command_status" && [ -n "${JG_BACKLOG_TIMEOUT:-}" ]; then
+          JG_BACKLOG_ROW_ERROR="backlog show $id did not finish within ${JG_BACKLOG_TIMEOUT}s"
         else
-          JG_BACKLOG_ROW_ERROR="tasks-axi show $id failed with no output"
+          JG_BACKLOG_ROW_ERROR="backlog show $id failed with no output"
         fi
       fi
     fi
@@ -467,7 +377,7 @@ jg_backlog_row_probe() {  # <data-dir> <id>
   blocked=$(printf '%s\n' "$out" | sed -n 's/^  blocked: *//p' | head -1)
   hold_kind=$(printf '%s\n' "$out" | sed -n 's/^  hold_kind: *//p' | head -1)
   if [ -z "$state" ]; then
-    JG_BACKLOG_ROW_ERROR="tasks-axi show $id returned no state"
+    JG_BACKLOG_ROW_ERROR="backlog show $id returned no state"
     return 1
   fi
   JG_BACKLOG_ROW_RESULT=found
@@ -552,10 +462,10 @@ jg_backlog_ticket_publish() {  # <data-dir> <verb> <id>
   return 0
 }
 
-# Run one tasks-axi mutation against <home>'s backlog, capturing its first
+# Run one backlog mutation against <home>'s backlog, capturing its first
 # output line in JG_BACKLOG_TRANSITION_ERROR on failure. The home boundary is
-# authorized through jg_backlog_source_present first; jg_backlog_tasks_axi owns
-# how the selected adapter is addressed (ADDRESSING above).
+# authorized through jg_backlog_source_present first; jg_backlog_addressing owns
+# how the store is addressed (ADDRESSING above).
 jg_backlog_mutate() {  # <data-dir> <verb> <id> [flag...]
   local data authorized_data=$1 verb=$2 id=$3 out command_status source_status
   if ! data=$(jg_backlog_data_absolute "$1"); then
@@ -567,22 +477,18 @@ jg_backlog_mutate() {  # <data-dir> <verb> <id> [flag...]
   jg_backlog_source_present "$data" "$authorized_data"
   source_status=$?
   [ "$source_status" -eq 0 ] || return "$source_status"
-  jg_backlog_tasks_axi_addressing "$data"
+  jg_backlog_addressing "$data"
   source_status=$?
   [ "$source_status" -eq 0 ] || return "$source_status"
-  if [ -n "$JG_BACKLOG_AXI_FILE" ]; then
-    out=$(cd "$JG_BACKLOG_AXI_ROOT" 2>/dev/null && jg_tasks_axi "$verb" "$id" "$@" --file "$JG_BACKLOG_AXI_FILE" 2>&1)
-  else
-    out=$(cd "$JG_BACKLOG_AXI_ROOT" 2>/dev/null && jg_tasks_axi "$verb" "$id" "$@" 2>&1)
-  fi
+  out=$(cd "$JG_BACKLOG_AXI_ROOT" 2>/dev/null && jg_backlog_serve "$verb" "$id" "$@" 2>&1)
   command_status=$?
   [ "$command_status" -ne 0 ] || { jg_backlog_ticket_note "$data" "$verb" "$id" "$@"; return 0; }
   JG_BACKLOG_TRANSITION_ERROR=$(printf '%s\n' "$out" | sed -n '1p')
   if [ -z "$JG_BACKLOG_TRANSITION_ERROR" ]; then
-    if jg_tasks_axi_timeout_expired "$command_status" && [ -n "${JG_TASKS_AXI_TIMEOUT:-}" ]; then
-      JG_BACKLOG_TRANSITION_ERROR="tasks-axi $verb $id did not finish within ${JG_TASKS_AXI_TIMEOUT}s"
+    if jg_backlog_timeout_expired "$command_status" && [ -n "${JG_BACKLOG_TIMEOUT:-}" ]; then
+      JG_BACKLOG_TRANSITION_ERROR="backlog $verb $id did not finish within ${JG_BACKLOG_TIMEOUT}s"
     else
-      JG_BACKLOG_TRANSITION_ERROR="tasks-axi $verb $id failed with no output"
+      JG_BACKLOG_TRANSITION_ERROR="backlog $verb $id failed with no output"
     fi
   fi
   return "$command_status"
@@ -592,7 +498,27 @@ jg_backlog_start() {  # <data-dir> <id>
   jg_backlog_mutate "$1" start "$2"
 }
 
-# tasks-axi takes a --pr link only as a canonical GitHub or Forgejo pull request
+# A row names the lane that owns it: the spawn generation in the task record, so
+# every fresh spawn and relaunch is a new lane, with the record's harness as
+# metadata.agent. bin/jg-beads-write.py owns the claim and its refusal.
+jg_backlog_lane_start() {  # <meta> <data-dir> <id> <state-dir>
+  local meta=$1 data=$2 id=$3 state=$4 agent
+  jg_backlog_meta_spawn_gen_optional "$meta" "$state" || return 1
+  agent=$(LC_ALL=C sed -n 's/^harness=//p' "$meta" | tail -n 1)
+  JG_BACKLOG_LANE=$JG_BACKLOG_META_SPAWN_GEN JG_BACKLOG_AGENT=$agent jg_backlog_start "$data" "$id"
+}
+
+# A row already In flight needs no move, so only Beads has work here: the new
+# lane claims it, or takes it from the lane this spawn replaces on a relaunch.
+jg_backlog_lane_claim() {  # <meta> <data-dir> <id> <state-dir>
+  jg_backlog_lane_start "$@"
+}
+
+jg_backlog_lane_handover() {  # <meta> <data-dir> <id> <state-dir>
+  JG_BACKLOG_LANE_HANDOVER=1 jg_backlog_lane_claim "$@"
+}
+
+# The backlog takes a --pr link only as a canonical GitHub or Forgejo pull request
 # and refuses anything else, so a Gerrit change URL is recorded on the row as a
 # note instead. The subshell keeps the parse from overwriting a caller's
 # JG_PR_* identity.
@@ -669,7 +595,7 @@ jg_backlog_retain() {  # <data-dir> <id> [flag...]
     if [ "$command_status" -ne 0 ]; then
       JG_BACKLOG_TRANSITION_ERROR=$(printf '%s\n' "$out" | sed -n '1p')
       [ -n "$JG_BACKLOG_TRANSITION_ERROR" ] \
-        || JG_BACKLOG_TRANSITION_ERROR="tasks-axi show $id failed with no output"
+        || JG_BACKLOG_TRANSITION_ERROR="backlog show $id failed with no output"
       return "$command_status"
     fi
     # The leading quote selects a JSON-encoded bare string, which is exactly the
@@ -896,8 +822,8 @@ jg_backlog_dispatch_transition() {
     return 1
   fi
   case "$row" in
-    in_flight\ no\ no) return 0 ;;
-    queued\ no\ no) jg_backlog_start "$data" "$id" ;;
+    in_flight\ no\ no) jg_backlog_lane_claim "$meta" "$data" "$id" "$state" ;;
+    queued\ no\ no) jg_backlog_lane_start "$meta" "$data" "$id" "$state" ;;
   esac
 }
 
@@ -922,7 +848,15 @@ jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
   [ -z "$meta" ] || jg_backlog_record_remove "$meta" "task record" "$state" || return 1
-  jg_backlog_done "$data" "$id" "$@" || return 1
+  if ! jg_backlog_done "$data" "$id" "$@"; then
+    # A backlog that never held this row has nothing left to close, which is
+    # what a close asks for; a lane dispatched with no row, or a fixture home,
+    # reaches teardown exactly like that. Any other failure stays a failure.
+    case ${JG_BACKLOG_TRANSITION_ERROR-} in
+      *'not found in this backlog'*) JG_BACKLOG_TRANSITION_ERROR= ;;
+      *) return 1 ;;
+    esac
+  fi
   jg_backlog_record_remove "$marker" "pending-close record" "$state"
 }
 
@@ -943,6 +877,7 @@ jg_backlog_atomic_transition() {
     publish) jg_backlog_record_publish "$@" ;;
     remove) jg_backlog_record_remove "$@" ;;
     dispatch) jg_backlog_dispatch_transition "$@" ;;
+    handover) jg_backlog_lane_handover "$@" ;;
     rollback) jg_backlog_dispatch_rollback "$@" ;;
     close) jg_backlog_close_transition "$@" ;;
     retain) jg_backlog_retain_transition "$@" ;;

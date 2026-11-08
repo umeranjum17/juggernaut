@@ -22,14 +22,11 @@
 # A close that fails is fatal and loud, preserves its pending-close record, and
 # is retried by the next session start. Scratch and retained-data cleanup can
 # instead require a teardown retry before replay, as specified by the recovery
-# contract in bin/jg-backlog-transition-lib.sh. The transition is skipped on a
-# config/backlog-backend=manual home and in a markdown home that keeps no
-# data/backlog.md; those cases print the manual follow-up. A configured
-# non-markdown adapter remains active without a markdown file; any active
-# automatic backend without compatible tasks-axi refuses before cleanup.
+# contract in bin/jg-backlog-transition-lib.sh. Without the Beads backlog
+# the teardown refuses before cleanup.
 # None of this loosens the landed-work gates below: the transition runs only on
 # the paths that already proceed to remove the record.
-# The close - and only the close - is replaced by `tasks-axi reopen` with the
+# The close - and only the close - is replaced by `jg-backlog.sh reopen` with the
 # deliverable recorded while the backlog item is still an open captain call
 # (bin/jg-captain-hold.sh `open` owns that predicate), because the policy holds
 # the very work item a question gates and cleanup must never retire the
@@ -46,7 +43,9 @@
 # The landed-work test is Go (core/teardown/cmd/jg-teardown, through bin/jg-teardown-core.sh),
 # and that command's header is its one owner: the forge proof, the PR discovery and content
 # legs, the dirty, unpushed and local-only refusals, and what a check that cannot run costs are
-# documented where they are decided, so this file does not restate them.
+# documented where they are decided, so this file does not restate them. A project in local-trunk
+# mode also proves a landing when the copy's HEAD is on its local trunk and on a pushed release
+# branch (core/teardown/cmd/jg-teardown/landed.go).
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
 # hard-resets/removes the worktree, kills its processes, and closes its backlog
 # item.
@@ -328,7 +327,7 @@ teardown_require_backend_prerequisites() {  # <backend> <task-id>
   fi
 }
 for _teardown_source in \
-  jg-tasks-axi-lib.sh \
+  jg-backlog-lib.sh \
   jg-backlog-transition-lib.sh \
   jg-timeout-lib.sh \
   jg-backend.sh \
@@ -357,8 +356,8 @@ do
   teardown_require_source "$SCRIPT_DIR/$_teardown_source"
 done
 unset _teardown_source
-# shellcheck source=bin/jg-tasks-axi-lib.sh
-. "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+# shellcheck source=bin/jg-backlog-lib.sh
+. "$SCRIPT_DIR/jg-backlog-lib.sh"
 # shellcheck source=bin/jg-backlog-transition-lib.sh
 . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
 # shellcheck source=bin/jg-backend.sh
@@ -373,6 +372,8 @@ unset _teardown_source
 . "$SCRIPT_DIR/jg-gate-refuse-lib.sh"
 # shellcheck source=bin/jg-pr-lib.sh
 . "$SCRIPT_DIR/jg-pr-lib.sh"
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
 . "$SCRIPT_DIR/jg-dod-lib.sh"
 # shellcheck source=bin/jg-public-followup-lib.sh
@@ -527,7 +528,7 @@ if [ ! -e "$META" ] && [ ! -L "$META" ] && [ ! -e "$STATE/$ID.backlog-close" ]; 
     echo "error: teardown refused: $JG_BACKLOG_TRANSITION_ERROR" >&2
     exit 1
   }
-  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID.probe-at" "$STATE/$ID.account-probe-at"
+  rm -f "$STATE/$ID.run-receipt.json" "$STATE/$ID".run-receipt.????????????????????????????????????????.json "$STATE/$ID.probe-at" "$STATE/$ID.account-probe-at"
   echo "task $ID is already cleaned up: its task record $META does not exist; nothing to tear down"
   exit 0
 fi
@@ -1493,25 +1494,16 @@ backlog_done_args() {
 # invariant). This prints what already happened, so the follow-up wording stays
 # only where a human still owes the edit.
 backlog_refresh_reminder() {
-  local backlog_display root backend=markdown
+  local backlog_display
   [ "$KIND" = squad_lead ] && return 0
   { [ "$CLEANUP_RECOVERY" = orca ] || [ "$CLEANUP_RECOVERY" = treehouse ]; } && return 0
-  if root=$(jg_backlog_root "$DATA"); then
-    backend=$(jg_tasks_axi_backend "$root") || return 2
-  fi
-  if [ "$backend" != markdown ]; then
-    backlog_display="this home's configured tasks-axi backend (data directory $DATA)"
-  elif backlog_display=$(jg_backlog_file "$DATA"); then
-    :
-  else
-    backlog_display="${DATA%/}/backlog.md"
-  fi
+  backlog_display="this home's Beads store"
   if [ "$BACKLOG_CLOSED" = 1 ] && [ "$BACKLOG_TRANSITION" = retain ]; then
     printf '%s\n' "Backlog: $ID stays open in $backlog_display, still held for the captain with its deliverable recorded. Relay the question and close it only with bin/jg-captain-hold.sh answer."
   elif [ "$BACKLOG_CLOSED" = 1 ]; then
-    printf '%s\n' "Backlog: $ID is closed in $backlog_display. Run bin/jg-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
+    printf '%s\n' "Backlog: $ID is closed in $backlog_display. Run bin/jg-backlog.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   else
-    printf '%s\n' "Backlog: $ID just finished ($BACKLOG_SKIP_REASON). Update $backlog_display - move $ID to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
+    printf '%s\n' "Backlog: $ID just finished ($BACKLOG_SKIP_REASON). Close it in $backlog_display with bin/jg-backlog.sh done, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
   fi
 }
 
@@ -1749,6 +1741,9 @@ validate_worktree_teardown_safety() {
   [ -z "${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}" ] || args+=(--cached-branch "$TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY")
   [ -z "$PR_URL" ] || args+=(--pr-url "$PR_URL")
   [ -z "$BASE_BRANCH" ] || args+=(--base-branch "$BASE_BRANCH")
+  # A project in local-trunk mode (bin/jg-trunk.sh init left state/trunk-tip-<project>) can prove
+  # a landing from its trunk and pushed release branch instead of a merged forge PR.
+  [ ! -e "$STATE/trunk-tip-$(basename "$PROJ")" ] || args+=(--trunk-branch "$(jg_trunk_policy trunk-branch "$(basename "$PROJ")")")
   if [ -n "$PR_URL" ]; then
     ! jg_dod_pr_outside_origin "$WT" "$PR_URL" || args+=(--pr-outside-origin)
     if jg_pr_url_parse "$PR_URL" && [ "$JG_PR_PROVIDER" = forgejo ]; then
@@ -2861,6 +2856,18 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
     echo "Repost the page under the same key with the Answer in the picture heading, then retry." >&2
     exit 1
   fi
+  # A report that names three or more of the project's states and parts must carry the
+  # project's state map (core/project-state-map/bin/psm-wide-check.sh warns for a week first).
+  WIDE_RC=0
+  WIDE_CHECK=$("$SCRIPT_DIR/../core/project-state-map/bin/psm-wide-check.sh" "$REPORT" \
+    --project "$(basename "${PROJ:-unknown}")" --state "$STATE" --config "$CONFIG" 2>&1 >/dev/null) || WIDE_RC=$?
+  if [ "$WIDE_RC" -eq 1 ]; then
+    echo "REFUSED: scout task $ID wrote a wide report without the project's state map." >&2
+    printf '%s\n' "$WIDE_CHECK" | sed 's/^/  /' >&2
+    echo "Add the map card or a State map section to the report, then retry." >&2
+    exit 1
+  fi
+  [ -z "$WIDE_CHECK" ] || printf '%s\n' "$WIDE_CHECK" >&2
   # A standard or deep Recon's report must pass the depth gate (bin/jg-recon-gate.sh;
   # quick and a legacy brief are exempt), so a shallow report is not cleaned up as done.
   RECON_GATE_RC=0
@@ -2890,7 +2897,7 @@ if [ "$FORCE" != "--force" ] \
       "$SCRIPT_DIR/jg-public-followup.sh" guard-work "$PUBLIC_FOLLOWUP_WORK_HOME" "$ID" 2>/dev/null); then
     echo "REFUSED: task $ID still owes a public reply through the myjuggernaut relay." >&2
     printf '%s\n' "$PUBLIC_FOLLOWUP_BLOCKING" >&2
-    echo "Deliver it with bin/jg-public-followup.sh deliver <obligation-id>, waive it with bin/jg-tasks-axi.sh public-followup waive, or use --force after explicit discard approval." >&2
+    echo "Deliver it with bin/jg-public-followup.sh deliver <obligation-id>, waive it with bin/jg-backlog.sh public-followup waive, or use --force after explicit discard approval." >&2
     exit 1
   fi
 fi

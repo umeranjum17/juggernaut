@@ -3,8 +3,8 @@
 # lifecycle verbs addressed to an exact task id.
 #
 # Usage: jg-control.sh <task-id> interrupt
-#        jg-control.sh <task-id> exit
-#        jg-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
+#        jg-control.sh <task-id> exit [--clear-composer]
+#        jg-control.sh <task-id> relaunch [--clear-composer] [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
 #                                         (--note <text> | --note-file <path>)
 #
@@ -134,6 +134,11 @@
 #     classified state acts.
 #   - A composer that visibly holds pending text refuses before an exit command
 #     is typed, so existing text is preserved instead of being concatenated.
+#     `--clear-composer` (exit and relaunch) is the way out of that refusal: it
+#     names the composer state it found, discards the text with Ctrl+U (up to
+#     three presses), reads the composer again, and types the exit command only
+#     once the read says `empty`. A composer that is still not empty refuses
+#     with its state, so the exit command can never land on existing text.
 #
 # Candidate execution without installation: invoke the candidate root's
 # bin/jg-control.sh with JG_HOME set to the owning home and JG_ROOT_OVERRIDE
@@ -294,6 +299,7 @@ NEW_HARNESS=
 NEW_MODEL=
 NEW_EFFORT=
 HARNESS_SET=0
+CLEAR_COMPOSER=0
 MODEL_SET=0
 EFFORT_SET=0
 NOTE=
@@ -320,6 +326,7 @@ for control_arg in "$@"; do
     continue
   fi
   case "$control_arg" in
+    --clear-composer) CLEAR_COMPOSER=1 ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
     --model) control_want_value=model ;;
@@ -346,6 +353,7 @@ if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
     || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
 fi
+[ "$CLEAR_COMPOSER" = 0 ] || [ "$VERB" = exit ] || [ "$VERB" = relaunch ] || die "--clear-composer applies to 'exit' and 'relaunch' only"
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
@@ -633,8 +641,8 @@ clear_retired_meta_busy_gen() {  # <gen>
   [ -n "$gen" ] || return 0
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
   if ! declare -F jg_backlog_atomic_transition >/dev/null 2>&1; then
-    # shellcheck source=bin/jg-tasks-axi-lib.sh
-    . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+    # shellcheck source=bin/jg-backlog-lib.sh
+    . "$SCRIPT_DIR/jg-backlog-lib.sh"
     # shellcheck source=bin/jg-backlog-transition-lib.sh
     . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
   fi
@@ -710,7 +718,7 @@ complete_exit_confirmation() {
 }
 
 wait_exit_stopped() {
-  local elapsed=0 state rc confirmed=${1:-0} retries=1 screen content
+  local elapsed=0 state rc confirmed=${1:-0} retries=1 screen content retry_ok
   while :; do
     state=$(agent_state)
     [ "$state" != dead ] || return 0
@@ -722,13 +730,15 @@ wait_exit_stopped() {
         1)
           # A slash popup can consume the first Enter. Retry only while the
           # current composer still proves this exact exit command, never on
-          # an opaque modal or an unrelated pending draft.
-          if [ "$HARNESS" = claude ] && [ "$retries" -lt "$EXIT_RETRIES" ]; then
+          # an opaque modal or an unrelated pending draft. Pi's popup does
+          # the same, and its submit loop reads that pane as delivered.
+          case "$HARNESS" in claude|pi|pi-signed) retry_ok=1 ;; *) retry_ok=0 ;; esac
+          if [ "$retry_ok" = 1 ] && [ "$retries" -lt "$EXIT_RETRIES" ]; then
             screen=$(jg_backend_visible_capture "$BACKEND" "$T" "$LABEL" 2>/dev/null) || screen=
             content=$(jg_composer_extract_selected_content 'styled=0
 cursor=0
 identity=0' "$screen" 2>/dev/null) || content=
-            if [ "${content//[$' \t\r\n']/}" = /exit ]; then
+            if [ "${content//[$' \t\r\n']/}" = "$(jg_control_exit_command "$HARNESS")" ]; then
               jg_backend_validate_task_endpoint "$META" "$ID" || return 1
               [ "$(agent_state)" = alive ] || return 1
               jg_backend_send_key "$BACKEND" "$T" Enter "$LABEL" || return 1
@@ -744,10 +754,29 @@ identity=0' "$screen" 2>/dev/null) || content=
   done
 }
 
+# clear_composer <state found>: the self-service way out of the composer refusal. It discards the composer text with
+# Ctrl+U, reads the composer again after each press and returns only on `empty`; anything else dies naming the state
+# it found and the state it left, so the exit command is never typed onto existing text.
+clear_composer() {
+  local found=$1 now=$1 i=0
+  jg_control_backend_supports_key "$BACKEND" C-u \
+    || die "task $ID's composer state is '$found' and the $BACKEND backend cannot deliver the Ctrl+U that clears it; clear the composer by hand, then retry '$VERB'"
+  while [ "$i" -lt 3 ] && [ "$now" != empty ]; do
+    jg_backend_send_key "$BACKEND" "$T" C-u "$LABEL" \
+      || die "task $ID's composer state is '$found' and Ctrl+U was not delivered; nothing was typed"
+    i=$((i + 1))
+    sleep "$POLL"
+    now=$(jg_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) || now=unknown
+  done
+  [ "$now" = empty ] \
+    || die "task $ID's composer state was '$found'; Ctrl+U sent $i times left it '$now', so the exit command was not typed. Clear the composer by hand, then retry '$VERB'"
+  echo "note: task $ID's composer state was '$found'; cleared with Ctrl+U, now empty" >&2
+}
+
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence submit_retries=$EXIT_RETRIES interrupt_result=not-needed dialog clear_key
+  local state cmd hazard verdict composer_state cancel absence submit_retries=$EXIT_RETRIES interrupt_result=not-needed dialog
   require_state_verified_backend exit
   state=$(agent_state)
   case "$state" in
@@ -854,24 +883,18 @@ do_exit() {
   fi
   # The refusal names the working recovery so the next operator clears or
   # submits the pending text instead of looping on interrupt: Enter submits it
-  # through the data plane, and the harness's clear key (when the capability
-  # table above names one) discards it.
-  clear_key=$(jg_control_interrupt_clear_key "$HARNESS" 2>/dev/null || true)
+  # through the data plane, and --clear-composer discards it.
+  if [ "$CLEAR_COMPOSER" = 1 ] && [ "$composer_state" != empty ]; then
+    clear_composer "$composer_state"
+    composer_state=empty
+  fi
   case "$composer_state" in
     empty) ;;
     pending)
-      if [ -n "$clear_key" ]; then
-        die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Submit it with 'jg-send.sh $ID --key Enter', or clear it with 'jg-send.sh $ID --key $clear_key', then retry '$VERB'."
-      else
-        die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Submit it with 'jg-send.sh $ID --key Enter', or clear the composer, then retry '$VERB'."
-      fi
+      die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Submit it with 'jg-send.sh $ID --key Enter', or discard it and go on with 'jg-control.sh $ID $VERB --clear-composer'."
       ;;
     *)
-      if [ -n "$clear_key" ]; then
-        die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer with 'jg-send.sh $ID --key $clear_key', then retry '$VERB'."
-      else
-        die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'."
-      fi
+      die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Discard what is there and go on with 'jg-control.sh $ID $VERB --clear-composer'."
       ;;
   esac
   # The submit verdict is NOT the postcondition here: a successful exit command

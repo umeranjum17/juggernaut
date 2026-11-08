@@ -4,7 +4,7 @@
 #        then, after reading PASS, merge in a later separate call (bin/jg-pr-merge.sh).
 # Needs under "## Checks": outcome:, repro:, proof:, evidence:. proof names a command or path; repro is
 # not n/a on a fix PR; evidence files exist, are non-empty, are newer than the lane's first launch
-# (data/<task>/ birth), and at least one has a hash no other PR used, and no two are identical. "evidence: not proven: <cause>"
+# (data/<task>/ birth), and at least one has a hash no other PR used (or is named for this PR's head: a file name or subfolder in a shared stack folder holding the head sha, 7+ hex chars), and no two are identical. "evidence: not proven: <cause>"
 # passes (file the proof gap as a task). How proof or repro is worded is never checked (owner, 1 Nov): no skill
 # name, no "systematic-debugging" marker. Bot PRs pass. 1,000+ added non-generated lines
 # are ADVICE only, never a refusal and never a FAIL row (owner, 1 Nov: "don't fail anything, let it go"): the run
@@ -179,6 +179,12 @@ def publish(ok, why):
         cand = subprocess.run(['git', '-C', repo, 'rev-parse', '--verify', 'HEAD^{commit}'], capture_output=True, text=True, timeout=60).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         cand = ''
+    # The receipt binds the candidate worktree's HEAD. A lint of a PR head that worktree is not on (a lane member
+    # pushed from another copy) must not stamp this verdict on the wrong head, overwriting the slot another
+    # head's receipt holds: publish only when this run judged the head the worktree is on.
+    if re.fullmatch(r'[0-9a-f]{40}', str(head)) and cand != head:
+        print(f'checks-lint: receipt not published: the lint judged {head} but task {task} sits on {cand or "no commit"}; publish it from a copy on {head} with jg-run-receipt.sh')
+        return
     prior = None
     if ok:  # a standing PASS for this same candidate keeps its fuller evidence; a FAIL is superseded
         try:
@@ -298,8 +304,13 @@ for n in toks:
     present = os.path.isfile(p) and os.path.getsize(p) > 0
     hsh = hashlib.sha256(open(p, 'rb').read()).hexdigest() if present else ''
     o = seen.get(hsh)  # same task's earlier lint (local body or PR) is not reuse
+    # A stack's shared evidence folder holds one proof per head: a file named for this PR's head, or inside a
+    # subfolder named for it, belongs to this head even when a sibling PR's lint hashed it first. A file named
+    # for another head is not this head's proof, so it keeps the ordinary reuse rule.
+    rel = os.path.relpath(p, ev) if os.path.abspath(p).startswith(os.path.abspath(ev) + os.sep) else n
+    own_head = head not in ('', '-') and any(head.startswith(h) for h in re.findall(r'(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])', rel))
     efiles[n] = {'path': p, 'present': present, 'older': bool(present and born and os.path.getmtime(p) < born),
-                 'sha256': hsh, 'fresh': present and (o is None or o in (src, task) or bool(task and f'/{task}/' in o)),
+                 'sha256': hsh, 'fresh': present and (own_head or o is None or o in (src, task) or bool(task and f'/{task}/' in o)),
                  'fix': '' if present else ev_fix(n, p)}
 facts = {'author': author, 'title': title, 'size': {'added': size},
          'checks': checks, 'evidence': {'folder': ev, 'tokens': toks, 'files': efiles}}

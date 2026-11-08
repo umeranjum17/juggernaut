@@ -298,7 +298,7 @@ t = open(p, encoding="utf-8").read()
 t = t.replace("{TASK}", os.environ["TASK_TEXT"], 1).replace("{JUGGERNAUT_SPEC}", os.environ["SPEC_TEXT"], 1)
 open(p, "w", encoding="utf-8").write(t)
 PY
-  fm "$LEAD" bash -c 'cd "$JG_HOME" && bin/jg-tasks-axi.sh add "$1" "[feature] lab worker" --kind ship --repo notes --body "the lab restarts a live worker"' _ "$1" >/dev/null \
+  fm "$LEAD" bash -c 'cd "$JG_HOME" && bin/jg-backlog.sh add "$1" "[feature] lab worker" --kind ship --repo notes --body "the lab restarts a live worker"' _ "$1" >/dev/null \
     || fail "cannot file backlog item $1"
 }
 # Claude sessions sharing one .claude.json can lose each other's writes, such as

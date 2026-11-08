@@ -41,7 +41,7 @@ for h in byokit:10 crewhouse:3 desklink:9 muxr:8 takeone:1 writeboost:4; do
   # before it prints, so this bound must sit above that, or a slow probe reads as no answer and the guard goes quiet.
   w=$(timeout 20 "$R/config/jg-flow-check.sh" "$B/$n/juggernaut" --summary 2>/dev/null | cut -f3)
   # Ready work only: held and blocked items are queued but not startable.
-  q=$(JG_HOME="$B/$n/juggernaut" timeout 15 "$R/bin/jg-tasks-axi.sh" ready 2>/dev/null | sed -n 's/^count: //p')
+  q=$(JG_HOME="$B/$n/juggernaut" timeout 15 "$R/bin/jg-backlog.sh" ready 2>/dev/null | sed -n 's/^count: //p')
   [ "${w:-1}" = 0 ] && [ "${q:-0}" -gt 0 ] && { hits="$hits $name(0-busy,$q-ready)"; continue; }
   c=0
   for s in "$B/$n/juggernaut"/state/*.status; do

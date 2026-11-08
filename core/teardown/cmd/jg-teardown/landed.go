@@ -13,6 +13,7 @@ type forgejoRef struct{ host, path, number, login string }
 // proved; it is the sentence the refusal prints, so every non-zero path sets it first.
 type landing struct {
 	wt, branch, project, prURL, baseBranch string
+	trunkBranch, trunkGap                  string
 	outsideOrigin                          bool
 	forgejo                                *forgejoRef
 	gap                                    string
@@ -39,6 +40,7 @@ func landedFlags(fs *flag.FlagSet, l *landing) (build func()) {
 	fs.StringVar(&l.wt, "worktree", "", "the task's worktree")
 	fs.StringVar(&l.project, "project", "", "the project clone")
 	fs.StringVar(&l.prURL, "pr-url", "", "the PR recorded for the task")
+	fs.StringVar(&l.trunkBranch, "trunk-branch", "", "the project's local trunk branch, when the project is in local-trunk mode")
 	fs.StringVar(&l.baseBranch, "base-branch", "", "the task's recorded base branch")
 	fs.BoolVar(&l.outsideOrigin, "pr-outside-origin", false, "the recorded PR lives outside this copy's origin repository")
 	fHost := fs.String("forgejo-host", "", "Forgejo host of the recorded PR")
@@ -81,10 +83,17 @@ func runLanded(args []string) int {
 func oneLine(s string) string { return strings.ReplaceAll(s, "\n", " ") }
 
 // workIsLanded: true when a merged PR proves the current local work is contained in the PR head,
-// or - unless the forge reports the PR open or closed - the default branch already holds it:
-// this exact HEAD when GitHub cannot be read, else its content (the no-PR and non-GitHub
-// fallback). False leaves the reason in gap.
+// or - unless the forge reports the PR open or closed - a branch that carries the merge already
+// holds it: this exact HEAD when GitHub cannot be read, else its content (the no-PR and non-GitHub
+// fallback). That branch is the pull request's own base branch when the forge names it, so a merge
+// into a release branch lands here before the default branch holds it. False leaves the reason in gap.
 func (l *landing) workIsLanded() bool {
+	if l.trunkBranch != "" {
+		if l.landedOnTrunk() {
+			return true
+		}
+		l.trunkGap = l.gap
+	}
 	rc := l.prIsMerged(l.branch)
 	exact := false
 	switch rc {
@@ -99,12 +108,17 @@ func (l *landing) workIsLanded() bool {
 		return true
 	}
 	l.gap = l.gap + "; and " + l.contentGap
+	if l.trunkGap != "" {
+		l.gap += "; and " + l.trunkGap
+	}
 	return false
 }
 
 // prIsMerged: 0 proved, 2 the forge reports the PR open or closed (decisive: no fallback can
 // stand in for that merge), 3 a GitHub forge cannot be read (only this exact HEAD on origin's
-// default branch can stand in), 1 inconclusive.
+// default branch can stand in), 1 inconclusive. A merged PR also hands its own base branch to
+// the content fallback, because a merge into a release branch lands there and not yet on the
+// default branch.
 func (l *landing) prIsMerged(branch string) int {
 	var target string
 	// A cross-repo lane's recorded PR lives outside this copy's origin repository, so its head
@@ -149,23 +163,31 @@ func (l *landing) prIsMerged(branch string) int {
 		l.gap = "the forge reports PR " + orStr(resolved, target) + " merged, but its head " + orNone(head) + " could not be fetched to check it holds this copy's work"
 	} else {
 		l.gap = "the forge could not be read for PR " + target
-		view, err := run(l.wt, "gh", "pr", "view", target, "--json", "state,headRefOid,url",
-			"-q", `.state + "\t" + .headRefOid + "\t" + .url`)
+		view, err := run(l.wt, "gh", "pr", "view", target, "--json", "state,headRefOid,url,baseRefName",
+			"-q", `.state + "\t" + .headRefOid + "\t" + .url + "\t" + (.baseRefName // "")`)
 		if err != nil {
 			view = ""
 		}
-		state, rest, ok1 := strings.Cut(view, "\t")
-		h, u, ok2 := strings.Cut(rest, "\t")
-		if view == "" || !ok1 || !ok2 || state == "" {
+		// state, head, url, and, when the forge names one, the base branch the merge landed on.
+		fields := strings.Split(view, "\t")
+		if view == "" || len(fields) < 3 || fields[0] == "" {
 			if l.forgeIsGitHub() {
 				return 3
 			}
 			return 1
 		}
+		state, h, u := fields[0], fields[1], fields[2]
 		head, resolved = h, u
 		if state != "MERGED" && state != "merged" {
 			l.gap = "the forge reports PR " + orStr(resolved, target) + " as " + state + ", not merged"
 			return 2
+		}
+		// The merge landed on the pull request's own base branch, so that branch is what proves
+		// this copy's work landed. A release branch carries the merge before the default branch
+		// does, and a recorded base can go stale when the pull request is retargeted, so the live
+		// base wins over both the default branch and the task's record.
+		if len(fields) >= 4 && fields[3] != "" {
+			l.baseBranch = fields[3]
 		}
 		l.gap = "the forge reports PR " + orStr(resolved, target) + " merged, but its head " + orNone(head) + " could not be fetched to check it holds this copy's work"
 	}
@@ -194,6 +216,31 @@ func (l *landing) prIsMerged(branch string) int {
 	return 0
 }
 
+// landedOnTrunk: local-trunk proof of a landing. This copy's HEAD must be an ancestor of the local
+// trunk tip AND of a pushed release branch (origin's release/*, freshly fetched): a commit on the
+// local trunk alone has not been released, and one on a branch nobody pushed is not landed. When
+// it is not proved the gap says why and the ordinary forge proof still gets its turn.
+func (l *landing) landedOnTrunk() bool {
+	trunk := "refs/heads/" + l.trunkBranch
+	if !gitOK(l.wt, "merge-base", "--is-ancestor", "HEAD", trunk) {
+		l.gap = "this copy's HEAD is not on the local " + l.trunkBranch
+		return false
+	}
+	if !gitOK(l.wt, "remote", "get-url", "origin") ||
+		!gitOK(l.wt, "fetch", "--quiet", "origin", "+refs/heads/release/*:refs/remotes/origin/release/*") {
+		l.gap = "this copy's HEAD is on the local " + l.trunkBranch + " but origin's release branches could not be fetched to check it was pushed"
+		return false
+	}
+	refs, _ := git(l.wt, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/release/")
+	for _, ref := range strings.Fields(refs) {
+		if gitOK(l.wt, "merge-base", "--is-ancestor", "HEAD", ref) {
+			return true
+		}
+	}
+	l.gap = "this copy's HEAD is on the local " + l.trunkBranch + " but on no pushed release branch yet"
+	return false
+}
+
 func orStr(s, fallback string) string {
 	if s != "" {
 		return s
@@ -203,12 +250,13 @@ func orStr(s, fallback string) string {
 
 func orNone(s string) string { return orStr(s, "<none>") }
 
-// contentInDefault: is the branch's content already present in the up-to-date default branch?
-// Fetches first, then 3-way merges the default branch with HEAD: when HEAD introduces nothing
-// the default branch does not already contain (its change landed via squash) the merged tree
-// equals the default branch's tree. Inconclusive (no default ref, a failed fetch, a conflict)
-// is false and names the gap in contentGap, so the caller refuses rather than guesses. With
-// exact, only HEAD itself reachable from origin's freshly fetched branch counts.
+// contentInDefault: is the branch's content already present in the up-to-date branch that carries
+// the merge? That is the task's recorded base branch, else the base branch a merged pull request
+// names, and the default branch when neither names one. Fetches first, then 3-way merges that
+// branch with HEAD: when HEAD introduces nothing the branch does not already contain (its change
+// landed via squash) the merged tree equals the branch's tree. Inconclusive (no ref, a failed
+// fetch, a conflict) is false and names the gap in contentGap, so the caller refuses rather than
+// guesses. With exact, only HEAD itself reachable from origin's freshly fetched branch counts.
 func (l *landing) contentInDefault(exact bool) bool {
 	name := l.baseBranch
 	l.contentGap = "the default branch could not be determined"

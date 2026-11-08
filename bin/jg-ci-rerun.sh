@@ -32,13 +32,13 @@ concl=$("$GH" api "repos/$repo/actions/runs/$id" --jq .conclusion 2>/dev/null) \
 case $concl in
   failure|timed_out|startup_failure)
     ticket=ci-red-run-$id
-    show=$(JG_HOME=$JG_HOME "$BIN/jg-tasks-axi.sh" show "$ticket" 2>/dev/null) || {
+    show=$(JG_HOME=$JG_HOME "$BIN/jg-backlog.sh" show "$ticket" 2>/dev/null) || {
       echo "jg-ci-rerun: refused: run $id is red ($concl) and has no root-cause ticket yet. Never re-run to see if it passes." >&2
       echo "jg-ci-rerun: the watcher files $ticket on its next poll. Find the root cause, add a 'root-cause: <cause>' line to that ticket, then re-run." >&2
       exit 1; }
     printf '%s\n' "$show" | grep -Eq '(body: "|\\n)root-cause:[[:space:]]*[^[:space:]\\]' || {
       echo "jg-ci-rerun: refused: run $id is red ($concl) and ticket $ticket has no root-cause note. Never re-run to see if it passes." >&2
-      echo "jg-ci-rerun: find the root cause, then add a line 'root-cause: <cause>' to the ticket body (jg-tasks-axi.sh update $ticket --body ...), then re-run." >&2
+      echo "jg-ci-rerun: find the root cause, then add a line 'root-cause: <cause>' to the ticket body (jg-backlog.sh update $ticket --body ...), then re-run." >&2
       exit 1; }
     ;;
 esac

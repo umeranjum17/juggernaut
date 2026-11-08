@@ -11,7 +11,7 @@ set -u
 
 KPI="$ROOT/bin/jg-overwatch-kpi.sh"
 GUARD="$ROOT/bin/jg-turnend-guard.sh"
-SCRIPT_DIR_TASKS="$ROOT/bin/jg-tasks-axi.sh"
+SCRIPT_DIR_TASKS="$ROOT/bin/jg-backlog.sh"
 TMP_ROOT=$(jg_test_tmproot jg-overwatch-kpi)
 jg_git_identity fmtest fmtest@example.invalid
 
@@ -164,26 +164,26 @@ test_scorecard_counts_misses_and_excludes_the_old_ones() {
 test_landed_asks_the_forge_and_the_backlog() {
   local home="$TMP_ROOT/landed" fakebin
   make_home "$home"
-  jg_test_tasks_toml "$home/.tasks.toml"
+  jg_test_beads_home "$home"
   mkdir -p "$home/data" "$TMP_ROOT/fakebin"
   fakebin="$TMP_ROOT/fakebin"
   printf '#!/bin/sh\nprintf "number: 41\\nmerged: yes\\n"\n' > "$fakebin/gh-axi"
   chmod +x "$fakebin/gh-axi"
-  in_home "$home" "$SCRIPT_DIR_TASKS" add export-fix-q1 "[feature] add CSV export" --body "users cannot export their data without it" >/dev/null 2>&1 \
+  in_home "$home" "$SCRIPT_DIR_TASKS" add jg-exportq1 "[feature] add CSV export" --body "users cannot export their data without it" >/dev/null 2>&1 \
     || fail "creating the backlog ticket failed"
-  in_home "$home" "$SCRIPT_DIR_TASKS" 'done' export-fix-q1 >/dev/null 2>&1 \
+  in_home "$home" "$SCRIPT_DIR_TASKS" 'done' jg-exportq1 >/dev/null 2>&1 \
     || fail "closing the backlog ticket failed"
   submit "$home" "stop shipping the export without the CSV column"
   in_home "$home" "$KPI" tag feedback https://github.com/acme/juggernaut/pull/41 >/dev/null \
     || fail "tagging a PR-linked miss failed"
   submit "$home" "and the export ticket is still open?"
-  in_home "$home" "$KPI" tag micromanagement export-fix-q1 >/dev/null \
+  in_home "$home" "$KPI" tag micromanagement jg-exportq1 >/dev/null \
     || fail "tagging a backlog-linked miss failed"
   local card
   card=$(PATH="$fakebin:$PATH" in_home "$home" "$KPI" scorecard --landed) \
     || fail "the landed scorecard refused to run"
   assert_contains "$card" "pull/41  landed: yes" "the merged PR was not reported as landed"
-  assert_contains "$card" "export-fix-q1  landed: yes" "the done backlog ticket was not reported as landed"
+  assert_contains "$card" "jg-exportq1  landed: yes" "the done backlog ticket was not reported as landed"
   pass "a miss reports whether its linked PR merged or its backlog ticket closed"
 }
 

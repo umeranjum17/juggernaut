@@ -150,6 +150,16 @@ test_plan_approval_is_a_must_and_a_made_up_category_is_not() {
   pass "a plan-approval ask is a must and a made-up category is still refused"
 }
 
+test_release_word_is_a_must_and_a_made_up_category_is_not() {
+  local d out key detail
+  d=$(setup release-word)
+  key=$(ask_key "$d" --must release-word) || fail "a release-word ask was refused: $(ask "$d" --must release-word)"
+  detail=$(jq -r --arg k "$key" '.items[] | select(.key == $k) | .detail' "$d/so/.sign-off/decisions.json")
+  assert_equals "must: release-word" "$detail" "the release-word card does not carry its category"
+  assert_equals "1" "$(run "$d" "$GATE" waiting)" "the release-word ask was not counted as waiting"
+  pass "a release-word ask is a must and is counted as waiting"
+}
+
 test_check_re_pings_an_old_must_ask_once() {
   local d out
   d=$(setup old-must)
@@ -312,10 +322,8 @@ test_dismiss_sends_a_fitting_reason_and_odd_titles_make_valid_tags() {
 # answer and the card waited as a must ask for days.
 test_check_dismisses_the_card_of_a_settled_hold() {
   local d out key other
-  command -v tasks-axi >/dev/null 2>&1 || { pass "skip: tasks-axi not found"; return 0; }
   d=$(setup settled-hold)
-  jg_test_tasks_toml "$d/home/.tasks.toml"
-  printf '## In flight\n\n## Queued\n\n## Done\n' > "$d/home/data/backlog.md"
+  jg_test_beads_home "$d/home"
   mkdir -p "$d/home/state/procevent" "$d/home/projects"
   : > "$d/home/state/procevent/signoff.source"
   printf '{"decision":"yes"}\n' > "$d/decision.json"

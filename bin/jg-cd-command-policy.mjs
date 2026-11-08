@@ -4,7 +4,7 @@
 //
 // A stray persistent top-level `cd projects/<clone>` silently relocates the
 // primary shell, so the next juggernaut-owned command (a backlog write, an
-// jg-* lifecycle call, tasks-axi) runs inside a project clone instead of the
+// jg-* lifecycle call, the backlog) runs inside a project clone instead of the
 // home. This policy blocks exactly that class of command; the environmental
 // scoping to the real primary checkout lives in the bin/jg-cd-pretool-check.sh
 // transport, not here. See docs/cd-guard.md for the full contract.

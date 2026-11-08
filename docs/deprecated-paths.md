@@ -13,7 +13,6 @@ Those paths are under "Unconfirmed" with the question that decides them.
 
 | Path | Replaced by | Replacing change | On a live code path |
 | --- | --- | --- | --- |
-| `core/lead-wake/` | The ready-work policy in `bin/jg-watch.sh` (`lane_target_value`, `ready_work_waits_idle`, `warn_invalid_lane_target_once`), raising its wake through the bus-backed queue | #378 deleted the withdraw rewrite this feature carried and moved the queue to the bus; #347 folded the feature catalog into the core | No. Nothing sources `core/lead-wake/bin/jg-lead-wake-lib.sh`, and the watcher has no `lead_wake_tick` call. Only its own tests run, in `.github/workflows/core-suites.yml`. |
 
 ## Unconfirmed
 

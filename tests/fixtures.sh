@@ -180,11 +180,31 @@ jg_test_spawn_home() {
   if [ -n "$harness" ]; then
     printf '%s\n' "$harness" > "$home/config/crew-harness"
   fi
+  # A spawn reads the backlog before it creates anything, and a home with no store refuses it, so the
+  # fixture home gets a real one (the suite skips plainly without the pinned bd and dolt).
+  jg_test_beads_home "$home"
+}
+
+# jg_test_spawn_item <home> <id>
+# A spawn reads the backlog first: a home with no store refuses it, and so does a task with no item
+# there, so the fixture home gets both (the suite skips plainly without the pinned bd and dolt).
+# A Beads id has a prefix and a hyphen, so the fixture task ids do too.
+jg_test_spawn_item() {
+  local home=$1 id=$2
+  # A case that takes the home's config away on purpose (no search permission) is filed already and cannot be read.
+  [ -x "$home" ] || return 0
+  # An entry that is there but cannot be searched (a mode-600 directory, or a link into one) is such a case; a missing one is not.
+  if [ -e "$home/config" ] || [ -L "$home/config" ]; then [ -d "$home/config" ] && [ -x "$home/config" ] || return 0; fi
+  # A hostile id is a case that spawn must refuse as an invalid task id before it reads any backlog, so there is no ticket to file.
+  case $id in *[!A-Za-z0-9._-]*) return 0 ;; esac
+  [ -s "$home/config/beads-dir" ] || jg_test_beads_home "$home"
+  jg_test_backlog "$home" show "$id" >/dev/null 2>&1 || jg_test_add "$home" "$id" "[feature] Spawn fixture $id"
 }
 
 # jg_test_spawn_brief <home> <id> [captain-intent]
 jg_test_spawn_brief() {
   local home=$1 id=$2 intent=${3:-brief for $2}
+  jg_test_spawn_item "$home" "$id"
   mkdir -p "$home/data/$id"
   cat > "$home/data/$id/brief.md" <<EOF
 # Task
@@ -240,6 +260,7 @@ jg_test_run_spawn() {
   # in through JG_TEST_XDG_DATA_HOME.
   local spawn_home=$home/user-home
   mkdir -p "$spawn_home"
+  case ${1:-} in ''|-*) ;; *) jg_test_spawn_item "$home" "$1" ;; esac
   JG_ROOT_OVERRIDE='' JG_HOME="$home" HOME="$spawn_home" \
     CLAUDE_CONFIG_DIR="${JG_TEST_CLAUDE_CONFIG_DIR:-}" \
     XDG_DATA_HOME="${JG_TEST_XDG_DATA_HOME:-$spawn_home/.local/share}" \

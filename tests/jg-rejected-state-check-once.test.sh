@@ -72,7 +72,7 @@ cycle() {
   done
   kill -TERM "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || rc=$?
-  case "$rc" in 0|124|143) ;; *) fail "watcher failed (rc=$rc): $(cat "$dir/err")" ;; esac
+  case "$rc" in 0|124|143) ;; *) fail "watcher failed (rc=$rc): $(cat "$dir/err" "$dir/out" 2>/dev/null)" ;; esac
   [ -e "$dir/state/.last-check" ] || fail "the watcher never reached its due-check sweep: $(cat "$dir/err")"
   JG_HOME="$dir" JG_STATE_OVERRIDE="$dir/state" "$DRAIN" > "$dir/drain" 2> "$dir/ack"
   seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9]*\) --recovery-generation .*/\1/p' "$dir/ack")

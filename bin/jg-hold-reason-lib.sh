@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # jg-hold-reason-lib.sh - the one reversible encoding of a captain-hold reason.
 #
-# tasks-axi stores a hold reason as one markdown line inside a parenthesised tag,
-# so its own `hold` refuses parentheses and line breaks. A decision reason is
-# ordinary prose, so bin/jg-captain-hold.sh encodes the reason where it writes
-# it and every reader that shows it decodes it again, instead of banning the
-# characters. Stored reasons use the reserved jg-hold-v1: prefix followed by
-# base64-encoded UTF-8 text. Unmarked reasons are plain text. Readers decode only
-# the hold-reason field, once, and keep line breaks in quoted output strings.
+# The backlog markdown view shows a hold reason as one line inside a
+# parenthesised tag, so the view (bin/jg-beads-view.py) writes the reason in the
+# reserved jg-hold-v1: prefix followed by base64-encoded UTF-8 text, and every
+# reader of that view decodes it again. Unmarked reasons are plain text.
+# Readers decode only the hold-reason field, once, and keep line breaks in
+# quoted output strings.
 #
 # Source this file; it defines functions only.
 

@@ -243,14 +243,23 @@ need_region() {
   [ -n "$REGION" ] || REGION=$(require_setting inbox-region JG_INBOX_REGION "AWS region")
 }
 
+# A model config/tool-models.json names for a tool (bin/jg-tool-models.sh) outranks the one-line config
+# file and yields to the environment variable. These models run on Bedrock, so the entry names harness pi
+# and a model with the provider prefix amazon-bedrock/; no entry keeps the config file.
+tool_model() {  # <tool>
+  JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" "$SELF_DIR/jg-tool-models.sh" model "$1" pi amazon-bedrock/
+}
+
 need_stt_model() {
   need_region
+  [ -n "$STT_MODEL" ] || STT_MODEL=$(tool_model inbox-stt)
   [ -n "$STT_MODEL" ] || STT_MODEL=$(require_setting inbox-stt-model \
     JG_INBOX_STT_MODEL "speech-to-text model")
 }
 
 need_ask_model() {
   need_region
+  [ -n "$ASK_MODEL" ] || ASK_MODEL=$(tool_model inbox-ask)
   [ -n "$ASK_MODEL" ] || ASK_MODEL=$(require_setting inbox-ask-model \
     JG_INBOX_ASK_MODEL "side-question model")
 }
@@ -469,16 +478,15 @@ cmd_approve() {  # <note-id> <ticket-id>
     '[chat '*) ;;
     *) die "note $id is not a captain chat note; only his own words approve a build" ;;
   esac
-  need tasks-axi
   fail() { die "$@"; }
   # shellcheck source=bin/jg-captain-ask-lib.sh
   . "$SELF_DIR/jg-captain-ask-lib.sh"
-  show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" show "$ticket" --full 2>/dev/null) \
+  show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" show "$ticket" --full 2>/dev/null) \
     || die "cannot read ticket $ticket"
   current=$(printf '%s\n' "$show" | sed -n 's/^  body: //p' | head -1 | perl -MJSON::PP -e 'local $/; my $v = <STDIN>; $v = JSON::PP->new->utf8->allow_nonref->decode($v) if $v =~ /^"/; binmode STDOUT, ":raw"; utf8::encode($v) if utf8::is_utf8($v); print $v')
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/jg-inbox-approve.XXXXXX") || die "cannot stage the approval"
   printf '%s\n\n%s\n' "$current" "$(captain_ask_approval_line "$ticket" "note:$id")" > "$tmp"
-  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" update "$ticket" --body-file "$tmp" >/dev/null \
+  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" update "$ticket" --body-file "$tmp" >/dev/null \
     || { rm -f -- "$tmp"; die "could not record the approval on $ticket"; }
   rm -f -- "$tmp"
   printf 'approved %s by note %s\n' "$ticket" "$id"
@@ -490,13 +498,12 @@ ensure_captain_ask_ticket() {  # <note-id> <note-body>
   local id=$1 body=$2 first title ticket show
   first=${body%%$'\n'*}
   case "$first" in '[captain-ask]'*) ;; *) return 0 ;; esac
-  need tasks-axi
   ticket=$(captain_ask_ticket_id "$id")
-  if show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" show "$ticket" --full 2>/dev/null); then
+  if show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" show "$ticket" --full 2>/dev/null); then
     return 0
   fi
   title=$first
-  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" add "$ticket" "$title" \
+  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" add "$ticket" "$title" \
     --kind captain --priority 0 --body "$body" >/dev/null || die "captain ask note $id is saved but its ticket $ticket could not be created"
 }
 
@@ -649,7 +656,7 @@ cmd_asks() {
     case "$first" in '[captain-ask]'*) ;; *) continue ;; esac
     id=${path##*/}; id=${id%.note}
     ticket=$(captain_ask_ticket_id "$id")
-    show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-tasks-axi.sh" show "$ticket" --full 2>/dev/null) || die "captain ask note $id has no readable ticket $ticket"
+    show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SELF_DIR/jg-backlog.sh" show "$ticket" --full 2>/dev/null) || die "captain ask note $id has no readable ticket $ticket"
     state=$(printf '%s\n' "$show" | sed -n 's/^  state: //p' | head -1)
     [ -n "$state" ] || die "captain ask ticket $ticket has no readable state"
     printf '%s\t%s\t%s\t%s\n' "$ticket" "$state" "$id" "$first"
@@ -769,7 +776,7 @@ reply_needs_board_link() {  # <body> <--option count>
 }
 
 cmd_reply() {
-  local json=0 id body path staging seq target n usage attach="" file evidence text_args=() rest=0 options="" nopt=0 change=0 opt
+  local json=0 id body path staging seq target n usage attach="" file evidence text_args=() rest=0 options="" nopt=0 change=0 opt ask_words ask_date
   usage="usage: jg-inbox.sh reply [--json] <id> [--attach <path>]... [--evidence-from <status-line>] [--option <label>]... [--allow-change] [--] <text>... (or: ... -)"
   if [ "${1:-}" = "--json" ]; then
     json=1
@@ -851,7 +858,10 @@ cmd_reply() {
   fi
   if [ -n "${body//[[:space:]]/}" ]; then
     # The captain voice file (bin/jg-voice.py) decides: a model rewrite in plain sentences, or a refusal with the terms to fix.
-    jg_voice_apply chat-reply "$body" || die "reply refused by the captain voice file; rewrite it in plain words"
+    # The note this reply answers is his ask, so the reply carries his words and their date (2026-11-05).
+    ask_words=$(read_note_body "$path")
+    ask_date=$(sed -n 's/^at=\([0-9-]*\).*/\1/p' "$path" | head -n 1)
+    jg_voice_apply chat-reply "$body" --ask "$ask_words" --ask-date "$ask_date" || die "reply refused by the captain voice file; rewrite it in plain words"
     body=$JG_VOICE_OUT
     # A bare board link gets the access token, or the reply is refused. After the voice step, so the token never reaches a model rewrite.
     jg_board_link_fix "$body" || die "reply refused: it holds a board link without its access token"
@@ -1338,7 +1348,7 @@ audio_seconds=$secs"
 # ---------------------------------------------------------------- status
 
 cmd_status() {
-  local pending=0
+  local pending=0 backlog
   [ -d "$INBOX" ] && pending=$(find "$INBOX" -maxdepth 1 -name '*.note' 2>/dev/null | wc -l | tr -d ' ')
 
   printf '=== juggernaut status (read-only, no wake sent) ===\n'
@@ -1346,12 +1356,15 @@ cmd_status() {
   printf 'time     %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'inbox    %s note(s) waiting for juggernaut\n' "$pending"
 
-  if [ -f "$DATA/backlog.md" ]; then
-    printf '\n--- in flight ---\n'
-    awk '/^## In flight/{f=1;next} /^## /{f=0} f && /^- \[/{print}' \
-      "$DATA/backlog.md" | sed 's/^- \[ \] /  /' | cut -c1-150
+  # Loaded here so taking a note never depends on the backlog provider.
+  # shellcheck source=bin/jg-backlog-lib.sh disable=SC1091
+  . "$SELF_DIR/jg-backlog-lib.sh"
+  printf '\n--- in flight ---\n'
+  if backlog=$(jg_backlog_text "$CONFIG"); then
+    printf '%s\n' "$backlog" | awk '/^## In flight/{f=1;next} /^## /{f=0} f && /^- \[/{print}' \
+      | sed 's/^- \[ \] /  /' | cut -c1-150
   else
-    printf '\n(no backlog at %s)\n' "$DATA/backlog.md"
+    printf '  (the backlog cannot be read)\n'
   fi
 
   local any=0

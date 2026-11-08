@@ -265,7 +265,7 @@ CHANGED_CEILING_FLOOR_SECS=120
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
-PORTABLE_SERIAL_SHARDS=7
+PORTABLE_SERIAL_SHARDS=11
 
 # Conservative balance hint for a portable-serial script with no measurement.
 # Rounded above the current CI mean, including the capability-skipped scripts.
@@ -426,7 +426,7 @@ cpu_count() {
 family_for_basename() {
   case "$1" in
     jg-brief.test.sh|jg-crew-state.test.sh|\
-    jg-prior-art-gate.test.sh|jg-recon-gate.test.sh|jg-recon-depth.test.sh|\
+    jg-prior-art-gate.test.sh|jg-recon-gate.test.sh|jg-recon-depth.test.sh|jg-loss-claim-check.test.sh|\
     jg-captain-hold-lifecycle.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
@@ -439,7 +439,7 @@ family_for_basename() {
     jg-reply-engine.test.sh|jg-pending-reply-turn-end.test.sh|\
     jg-metrics-shadow-parity.test.sh|\
     jg-bus-service.test.sh|\
-    jg-wake-queue-live.test.sh|jg-wake-engine.test.sh|jg-wake-watcher.test.sh|\
+    jg-wake-queue-live.test.sh|jg-wake-engine.test.sh|jg-wake-watcher.test.sh|jg-delivery-record.test.sh|\
     jg-bus-account-isolation.test.sh|\
     jg-escalation-workflows.test.sh|jg-bus-leaf-parity.test.sh)
       printf '%s\n' watcher-wake-lock
@@ -451,7 +451,7 @@ family_for_basename() {
     jg-sentinel-herdr-restart-live-e2e.test.sh)
       printf '%s\n' real-herdr-gated
       ;;
-    jg-backlog-handoff.test.sh|jg-on.test.sh|jg-remote-reply.test.sh|\
+    jg-on.test.sh|jg-remote-reply.test.sh|\
     jg-remote-squad-lead-lifecycle-e2e.test.sh|jg-squad-lead-lifecycle-e2e.test.sh)
       printf '%s\n' squad_lead
       ;;
@@ -680,17 +680,20 @@ list_portable_serial() {
 # balance rather than coverage. That doc owns the refresh procedure.
 portable_serial_weight_hints() {
   cat <<'EOF'
-tests/board-link.test.sh 276
+tests/board-link.test.sh 1700
 tests/jg-afk-inject-e2e.test.sh 42474
 tests/jg-agents-md-floor.test.sh 542
 tests/jg-agy-signals-live-e2e.test.sh 84
 tests/jg-backend-tmux-smoke.test.sh 312
-tests/jg-backlog-handoff.test.sh 78753
-tests/jg-behavior-determinism.test.sh 22547
+tests/jg-beads-migrate.test.sh 1700
+tests/jg-beads-native-followup.test.sh 150000
+tests/jg-beads-native-n5.test.sh 140000
+tests/jg-behavior-determinism.test.sh 172000
 tests/jg-board-answers.test.sh 6382
+tests/jg-board-answers-latency.test.sh 90000
 tests/jg-board-asks.test.sh 643
-tests/jg-board-gate.test.sh 2029
-tests/jg-bus-gateway.test.sh 8000
+tests/jg-board-gate.test.sh 40000
+tests/jg-bus-gateway.test.sh 45000
 tests/jg-bus-leaf-parity.test.sh 10999
 tests/jg-bus.test.sh 86
 tests/jg-axi-link.test.sh 900
@@ -713,7 +716,8 @@ tests/jg-control.test.sh 94076
 tests/jg-cursor-primary-live-e2e.test.sh 138
 tests/jg-dapr-workflow.test.sh 139
 tests/jg-deprecated-paths-check.test.sh 3000
-tests/jg-decisions-reconcile.test.sh 5757
+tests/jg-ports-check.test.sh 3000
+tests/jg-decisions-reconcile.test.sh 55000
 tests/jg-design-gate-first-draft.test.sh 882
 tests/jg-design-gate.test.sh 812
 tests/jg-devin-signals-live-e2e.test.sh 174
@@ -725,6 +729,7 @@ tests/jg-fleet-heartbeat.test.sh 3664
 tests/jg-fleet-sync.test.sh 41550
 tests/jg-flow.test.sh 909
 tests/jg-gate-refuse.test.sh 16669
+tests/jg-goal-loop-journey.test.sh 144000
 tests/jg-grok-continuity-live-e2e.test.sh 80
 tests/jg-harness-adapter-instructions-live-e2e.test.sh 177
 tests/jg-harness-quirks.test.sh 527
@@ -735,7 +740,6 @@ tests/jg-herdr-go.test.sh 1222
 tests/jg-guard-host.test.sh 6431
 tests/jg-herdr-names.test.sh 2803
 tests/jg-herdr-version-floor-live-e2e.test.sh 142
-tests/jg-hold-reason-gate.test.sh 2789
 tests/jg-hometag-lead-label.test.sh 394
 tests/jg-retired-catalog-check.test.sh 309
 tests/jg-host-wiring.test.sh 1330
@@ -756,7 +760,7 @@ tests/jg-on.test.sh 20997
 tests/jg-opencode-primary-live-e2e.test.sh 80
 tests/jg-overwatch-kpi.test.sh 2289
 tests/jg-owner-correction.test.sh 2003
-tests/jg-owner-rules.test.sh 4142
+tests/jg-owner-rules.test.sh 4200
 tests/jg-pending-reply-turn-end.test.sh 3000
 tests/jg-pi-branch-live-e2e.test.sh 140
 tests/jg-pi-primary-live-e2e.test.sh 83
@@ -773,7 +777,7 @@ tests/jg-project-mode.test.sh 134
 tests/jg-prompt-gate-live-e2e.test.sh 179
 tests/jg-prompt-gate.test.sh 101581
 tests/jg-proof-attach.test.sh 980
-tests/jg-public-followup.test.sh 478002
+tests/jg-public-followup.test.sh 260000
 tests/jg-quota-array-dispatch-live-e2e.test.sh 85
 tests/jg-release-readiness.test.sh 11877
 tests/jg-release-tag.test.sh 1500
@@ -786,7 +790,7 @@ tests/jg-self-repo-role.test.sh 18448
 tests/jg-send-dormant-lead.test.sh 3878
 tests/jg-send-inbox-doorbell-live-e2e.test.sh 84
 tests/jg-send-inbox.test.sh 53586
-tests/jg-session-start.test.sh 426719
+tests/jg-session-start.test.sh 748000
 tests/jg-sessionstart-hook-live-e2e.test.sh 84
 tests/jg-ship-local.test.sh 669
 tests/jg-spawn-core.test.sh 1238
@@ -799,23 +803,27 @@ tests/jg-bus-service.test.sh 616
 tests/jg-wake-queue-live.test.sh 19169
 tests/jg-wake-watcher.test.sh 41813
 tests/jg-wake-engine.test.sh 65412
+tests/jg-delivery-record.test.sh 200
 tests/jg-bus-account-isolation.test.sh 63398
 tests/jg-squad-lead-lifecycle-e2e.test.sh 14484
 tests/jg-supervision-host-live-e2e.test.sh 84
 tests/jg-supervision-host.test.sh 1062710
 tests/jg-status-digest.test.sh 1261
 tests/jg-stack-owner.test.sh 635
-tests/jg-tangle-guard.test.sh 24870
-tests/jg-tasks-axi.test.sh 47421
+tests/jg-bus-health.test.sh 5000
+tests/jg-bus-health-extra.test.sh 4000
+tests/jg-tangle-guard.test.sh 58000
 tests/jg-teardown-core.test.sh 4222
-tests/jg-teardown.test.sh 516785
+tests/jg-teardown.test.sh 902000
 tests/jg-test-run.test.sh 11831
-tests/jg-ticket-key.test.sh 2223
 tests/jg-ticket-writeback.test.sh 83
 tests/jg-tmp-sweep.test.sh 5192
 tests/jg-tokens-retro.test.sh 597
+tests/jg-trunk.test.sh 13000
+tests/jg-trunk-spawn.test.sh 49000
+tests/jg-trunk-scope.test.sh 8000
 tests/jg-worker-rules.test.sh 3493
-tests/jg-turnend-guard.test.sh 45675
+tests/jg-turnend-guard.test.sh 97000
 tests/jg-update.test.sh 16890
 tests/jg-wake-daemon-lifecycle-e2e.test.sh 15568
 tests/jg-wake-core.test.sh 4843
@@ -824,10 +832,12 @@ tests/jg-wake-route.test.sh 24386
 tests/token-cuts-live.test.sh 30146
 tests/jg-wake-drain-open-decisions-cursor.test.sh 148819
 tests/jg-wake-next.test.sh 4641
-tests/jg-planned-wait.test.sh 12000
+tests/jg-planned-wait.test.sh 80000
 tests/jg-watch-inventory.test.sh 4395
 tests/jg-watch-handoff.test.sh 51760
 tests/jg-watcher-lock.test.sh 210766
+tests/jg-watch-silent-exit.test.sh 5000
+tests/jg-lock-pi-session-id.test.sh 1000
 tests/jg-worker-account-live-e2e.test.sh 192
 tests/juggernaut-axi-serve.test.sh 1466
 tests/juggernaut-axi.test.sh 29551
@@ -836,8 +846,8 @@ tests/migration-card-live.test.sh 83
 tests/merge-card-title.test.sh 1218
 tests/merge-gate-one-entry.test.sh 7202
 tests/jg-bus-machine-service.test.sh 88
-tests/jg-captain-card-two-layers.test.sh 1592
-tests/jg-card-rules.test.sh 1195
+tests/jg-captain-card-two-layers.test.sh 2200
+tests/jg-card-rules.test.sh 3900
 tests/jg-chat-store.test.sh 7108
 tests/jg-dispatch-resolve-codex-routing.test.sh 641
 tests/jg-dispatch-resolve-tiers.test.sh 874
@@ -850,21 +860,30 @@ tests/jg-launch-env-strip.test.sh 462
 tests/jg-lavish-guard.test.sh 361
 tests/jg-lavish-session-check.test.sh 365
 tests/jg-licence-check.test.sh 131
+tests/jg-path-guard.test.sh 60
 tests/jg-live-claim.test.sh 568
+tests/jg-loss-claim-check.test.sh 400
 tests/jg-prior-art-gate.test.sh 468
 tests/jg-recon-depth.test.sh 300
 tests/jg-recon-gate.test.sh 1500
 tests/jg-running-products.test.sh 204
 tests/jg-stack.test.sh 44236
 tests/jg-turnend-guard-no-false-blocks.test.sh 335
-tests/jg-version-branch-sync.test.sh 33220
+tests/jg-version-branch-sync.test.sh 88000
 tests/jg-wake-batching.test.sh 52062
 tests/jg-watch-beacon.test.sh 45490
 tests/jg-whats-left.test.sh 3479
-tests/jg-owner-asks.test.sh 2000
-tests/jg-captain-approval.test.sh 2100
+tests/jg-captain-approval.test.sh 113000
+tests/jg-pending-decision-blocks-work.test.sh 294000
 tests/jg-triage.test.sh 2000
 tests/jg-nudge-residue.test.sh 6000
+tests/jg-wake-schedule.test.sh 78000
+tests/jg-critical-path-spawn.test.sh 57000
+tests/jg-release-smoke.test.sh 56000
+tests/jg-beads-native-n3.test.sh 44000
+tests/jg-beads-native-n8.test.sh 43000
+tests/jg-public-followup-b.test.sh 500000
+tests/jg-public-followup-c.test.sh 500000
 EOF
 }
 
@@ -1597,7 +1616,14 @@ families_for_changed_path() {
       printf '%s\n' live-harness-optin
       ;;
     bin/jg-bearings-snapshot.sh|bin/jg-fleet-snapshot.sh|bin/jg-fleet-view.sh|bin/jg-contributions.sh|bin/jg-contributions.jq|\
-    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh|bin/jg-owner-asks.sh|bin/jg-triage.sh)
+    bin/jg-home-summary-refresh.sh|bin/jg-whats-left.sh|bin/jg-owner-asks.sh|bin/jg-triage.sh|\
+    bin/jg-hold-reason-lib.sh|bin/jg-landed-lib.sh)
+      # The last two are sourced only by the snapshot scripts above, which no
+      # suite drives, so they have no test owner either.
+      ;;
+    .done-done-receipts/*.json|BACKLOG.md)
+      # A sealed done-done receipt is run evidence, and BACKLOG.md is the Beads
+      # card index: neither is code a suite reads.
       ;;
     bin/jg-install-herdr.sh|bin/jg-install-treehouse.sh|bin/jg-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
@@ -1607,9 +1633,9 @@ families_for_changed_path() {
       ;;
     bin/jg-lint.sh|bin/jg-lint-workflows.sh|bin/jg-install-shellcheck.sh|\
     bin/jg-install-actionlint.sh|\
-    bin/jg-committed-binary-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-recon-depth.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
-    bin/jg-captain-hold.sh|bin/jg-hold-reason-lib.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
-    bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-tasks-axi-lib.sh|\
+    bin/jg-committed-binary-check.sh|bin/jg-ports-check.sh|bin/jg-brief.sh|bin/jg-prior-art-gate.sh|bin/jg-recon-gate.sh|bin/jg-recon-depth.sh|bin/jg-loss-claim-check.sh|bin/jg-ensure-agents-md.sh|bin/jg-crew-state.sh|\
+    bin/jg-captain-hold.sh|bin/jg-decision-hold.sh|bin/jg-supervision*|bin/jg-transition-lib.sh|\
+    bin/jg-tmux-lib.sh|bin/jg-marker-lib.sh|bin/jg-operational-input.sh|bin/jg-backlog-lib.sh|\
     bin/jg-vendor-auth-probe.sh|\
     bin/jg-primary-scope-lib.sh|bin/jg-project-mode.sh|bin/jg-forge-detect.sh|bin/jg-promote.sh|\
     bin/jg-ff-lib.sh|bin/jg-gotmp*|bin/*pretool*)
@@ -1623,7 +1649,9 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
       ;;
-    .agents/skills/*/SKILL.md)
+    .agents/skills/*/SKILL.md|.agents/skills/done-done-verify-suites/features/*.md)
+      # The verify skill's feature map is documentation the skill indexes, so it
+      # selects the same contract family as the skill itself.
       printf '%s\n' pure-contract-unit
       ;;
     .github/workflows/ci.yml|.github/workflows/behavior.yml|.no-mistakes.yaml)
@@ -1634,7 +1662,7 @@ families_for_changed_path() {
     docs/jg-test-isolation-proof.json)
       printf '%s\n' pure-contract-unit
       ;;
-    .github/*|.gitattributes|.done-done.yaml|.tasks.toml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
+    .github/*|.gitattributes|.done-done.yaml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
     docs/configuration.md|docs/supervision-protocols/*)
       printf '%s\n' pure-contract-unit
       ;;
@@ -1686,8 +1714,12 @@ families_for_changed_path() {
     journeys/*)
       # A done-done journey is owned by the test that names it: a direct
       # reference is per-script evidence, so select that script, not its family.
+      # A journey with no test but a `.done-done.yaml` entry is owned by its
+      # sealed done-done run, which is the proof; an unregistered one stays
+      # unmapped.
       scripts_for_test_reference "$path" \
         || families_for_test_reference "$path" \
+        || { grep -qF "command: bash $path" "$ROOT/.done-done.yaml" 2>/dev/null; } \
         || printf '%s\n' "__unmapped__:$path"
       ;;
     core/*)

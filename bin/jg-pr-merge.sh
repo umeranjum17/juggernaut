@@ -1125,9 +1125,9 @@ github_shipped_release_refusal() {  # <base> <pr-number>
   esac
   jg_release_older_than "$base" "$open" || open=
   if [ -n "$open" ]; then
-    printf '%s\n' "  - $base already shipped (its pull request into $default is merged), so a merge into it never reaches the default branch; the open release branch is $open - run: gh pr edit $number --base $open"
+    printf '%s\n' "  - $base already shipped (its release pull request into $default is merged, or the branch was closed by carrying its work to a newer release), so a merge into it never reaches the default branch; the open release branch is $open - run: gh pr edit $number --base $open"
   else
-    printf '%s\n' "  - $base already shipped (its pull request into $default is merged) and no newer release branch is open, so a merge into it never reaches the default branch; open the next release branch, then retarget this pull request"
+    printf '%s\n' "  - $base already shipped (its release pull request into $default is merged, or the branch was closed by carrying its work to a newer release) and no newer release branch is open, so a merge into it never reaches the default branch; open the next release branch, then retarget this pull request"
   fi
   return 1
 }
@@ -1617,7 +1617,7 @@ record_pr_metadata() {
 }
 
 require_released_captain_hold() {
-  local hold_status=0
+  local hold_status=0 linked_calls
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
     "$SCRIPT_DIR/jg-captain-hold.sh" open "$ID" --distinguish-absent || hold_status=$?
   case "$hold_status" in
@@ -1625,11 +1625,20 @@ require_released_captain_hold() {
       echo "error: task $ID is still held for the captain; release it before merging" >&2
       return 1
       ;;
-    1|3) return 0 ;;
+    1|3) ;;
     *)
       echo "error: could not determine whether task $ID is still held for the captain; refusing to merge" >&2
       return 1
       ;;
+  esac
+  # A call open on linked work stops the merge too, read live (`blocking` owns links).
+  hold_status=0
+  linked_calls=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$ID") || hold_status=$?
+  case "$hold_status" in
+    0) echo "error: task $ID is linked to a decision still open for the captain; answer it before merging: $(printf '%s' "$linked_calls" | tr '\t\n' ' ;')" >&2; return 1 ;;
+    1) return 0 ;;
+    *) echo "error: could not determine whether work linked to task $ID is still held for the captain; refusing to merge" >&2; return 1 ;;
   esac
 }
 
@@ -1946,6 +1955,7 @@ case "$PROVIDER" in
       exit 1
     fi
     if declare -F jg_dod_merge_gate >/dev/null; then github_gate 'proof or evidence gate refused the merge' jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$JG_PR_MERGE_HEAD" "$URL" || exit 1; fi
+    if declare -F jg_dod_proof_gate >/dev/null; then github_gate 'proof card missing' jg_dod_proof_gate "$JG_HOME" "$ID" "$JG_PR_MERGE_HEAD" "$URL" || exit 1; fi
     # The evidence lint runs here, in the merge's own call, so the lead no
     # longer spends one model turn reading PASS and a second one merging. It is
     # the lint the merge-on-green gate runs, over the same evidence folder
@@ -2048,6 +2058,7 @@ case "$PROVIDER" in
   gitlab)
     gitlab_verify_mergeable || exit 1
     if declare -F jg_dod_merge_gate >/dev/null; then jg_dod_merge_gate "${JG_CONFIG_OVERRIDE:-$JG_HOME/config}" "$JG_HOME" "$ID" "$META" "$JG_PR_MERGE_HEAD" "$URL" >&2 || exit 1; fi
+    if declare -F jg_dod_proof_gate >/dev/null; then jg_dod_proof_gate "$JG_HOME" "$ID" "$JG_PR_MERGE_HEAD" "$URL" >&2 || exit 1; fi
     # --sha binds the merge to the head this run verified, so a push that lands
     # in between is refused by GitLab instead of merged unverified. --yes only
     # skips the interactive confirmation, which no supervised run can answer;

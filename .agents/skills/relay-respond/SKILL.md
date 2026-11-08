@@ -153,7 +153,7 @@ The watcher coalesces same-key `check:` wakes, so one `x-mention` wake can stand
 Treat `state/x-inbox/` as the source of truth and process **every** file you find there, not just the `request_id` named in the wake.
 
 1. **Gather live fleet state once.** Compose answers from what this instance genuinely knows right now:
-   - `data/backlog.md` "## In flight" - the work currently moving.
+   - `bin/jg-backlog.sh list` - the work currently moving (the in-progress rows).
    - `state/*.status` - the latest status event of each in-flight job, for fresh phase detail.
    - `data/projects.md` - the active projects, for naming what you work on in plain terms.
    Translate every internal item into an outcome. Example: a backlog line `fix-login-k3 - repair OAuth redirect (repo: yourapp)` becomes "patching a sign-in redirect bug on one of the apps" - no id, no repo name unless it is already public.
@@ -253,7 +253,7 @@ The follow-up budget above is a courtesy.
 A **promised final reply** - "I'll report back when this lands" - is a commitment, and forgetting it is publicly visible.
 Never carry one in your head: the moment you promise a specific outcome in a public thread, turn it into durable state and let the scripts reconcile it.
 This section is the sole owner of that procedure.
-`tasks-axi public-followup --help` owns the typed obligation, its states, and its file contracts; `bin/jg-public-followup.sh --help` owns Juggernaut's flags; do not restate either here.
+`jg-backlog.sh public-followup --help` owns the typed obligation, its states, and its file contracts; `bin/jg-public-followup.sh --help` owns Juggernaut's flags; do not restate either here.
 
 This is also the **only** mechanism that reaches work outside this home.
 The lightweight link of step 3 writes into this home's own task record, so it can never bind a Squad Lead's task; `--work-home squad lead:<id>` here can.
@@ -261,7 +261,7 @@ So treat Squad-Lead-routed Relay work as a promised final by construction: the a
 
 **When you promise a final (including every Relay request whose work is routed to a Squad Lead):**
 
-1. Create the typed obligation with `bin/jg-tasks-axi.sh public-followup add` and bind the work with its `bind-work`, keeping the public-safe summary and the opaque thread binding in the obligation and the full request context where the poll already put it.
+1. Create the typed obligation with `bin/jg-backlog.sh public-followup add` and bind the work with its `bind-work`, keeping the public-safe summary and the opaque thread binding in the obligation and the full request context where the poll already put it.
    When the public ask plainly implies follow-on work ("look into X and fix it"), register the promised-final against the outcome and deliver any interim report as a separate `--purpose milestone` obligation on the same thread.
    An ask that genuinely terminates at a report stays `report-ready`; do not invent a ship commitment for work the captain has not authorized.
 2. Register it with `bin/jg-public-followup.sh register <obligation-id> --relation <relation-id> --work-home <main|squad lead:<id>> --work-id <task-id> --generation <n>`.

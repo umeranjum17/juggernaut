@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only tasks-axi backfill and incremental publication via sign-off-axi ticket.
+"""Read-only backlog backfill and incremental publication via sign-off-axi ticket.
 
 --check reads without writing and prints one line per ticket whose board state
 disagrees with its PR and backlog item, plus every board ticket no home's work
@@ -18,7 +18,6 @@ import subprocess as sp
 import sys
 import time
 import shutil
-import tomllib
 import xml.etree.ElementTree as xml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -41,11 +40,12 @@ def run(args, env=None, cwd=None, missing=False):
 # What one ticket's publish can fail with; a bad record is skipped, never fatal to the pass.
 TICKET_ERRORS = (OSError, ValueError, KeyError, RuntimeError, sp.TimeoutExpired)
 
-def rows(args, env, cwd=None):
-    text = run(args + ['--limit', '100000', '--fields', 'held,hold_kind,hold_reason,closed,created,priority,body,links'], env, cwd)
+def rows(args, env, cwd=None, extra=''):
+    # A Beads home's list answers whole titles and bodies on --full, so it needs no read of each truncated row.
+    text = run(args + ['--limit', '100000', '--fields', 'held,hold_kind,hold_reason,closed,created,priority,body,links' + extra] + (['--full'] if extra else []), env, cwd)
     result = toon_rows(text)
     if result is None or re.search(r'count: \d+ of (?!0\b)\d+ total', text) and len(result) >= 100000:
-        raise RuntimeError('tasks-axi returned an unreadable or capped task list')
+        raise RuntimeError('the backlog returned an unreadable or capped task list')
     return result
 
 ICONS = Path(__file__).resolve().parent / 'icons'
@@ -144,7 +144,6 @@ def sync():
         with (state / 'progress.log').open('a') as log: log.write(message + '\n')
     with (state / 'lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        (state / '.tasks.toml').write_text('[markdown]\narchive="unused-archive.md"\n')
         ledger_file = state / ('published-' + hashlib.sha256(str(board).encode()).hexdigest()[:12] + '.json')
         ledger = json.loads(ledger_file.read_text()) if ledger_file.exists() else {}
         pr_file = state / 'prs.json'
@@ -156,7 +155,7 @@ def sync():
         for line in registry.read_text().splitlines() if registry.exists() else []:
             m = re.match(r'- (\S+) - .*\(home: ([^;]+);', line)
             if m: homes[m[1]] = Path(m[2])
-            elif re.match(r'- \S+ - .*\(host:', line): raise RuntimeError('remote home requires a tasks-axi reader: ' + line.split(' - ')[1])
+            elif re.match(r'- \S+ - .*\(host:', line): raise RuntimeError('remote home requires a backlog reader: ' + line.split(' - ')[1])
         parked_file = home / 'config/parked-homes'
         parked = {l.split('#')[0].strip() for l in parked_file.read_text().splitlines()} if parked_file.exists() else set()
         cutoff = (dt.date.today() - dt.timedelta(days=7)).isoformat()
@@ -189,9 +188,9 @@ def sync():
             temp = path.with_suffix('.tmp'); temp.write_text(json.dumps(value)); temp.replace(path)
         seen = set()
         skipped_ids = set()
-        def publish(tid, desired, derived=(), where='', reason=''):
+        def publish(tid, desired, derived=(), where='', reason='', description=''):
             # One bad record never stops the pass: name it and the home and item behind it once, then go on.
-            try: _publish(tid, desired, derived, reason)
+            try: _publish(tid, desired, derived, reason, description)
             except TICKET_ERRORS as error:
                 if tid in skipped_ids: return
                 skipped_ids.add(tid)
@@ -209,7 +208,7 @@ def sync():
             existing[tid]['assignee'] = desired['assignee']
         def legacy_owner(tid, desired):
             if tid.startswith('jg-'): owner_line('fm-' + tid[3:], desired)
-        def _publish(tid, desired, derived=(), reason=''):
+        def _publish(tid, desired, derived=(), reason='', description=''):
             nonlocal changed, feed_ends
             seen.add(tid)
             if options.check:
@@ -247,9 +246,15 @@ def sync():
             for key, value in desired.items():
                 if key != 'assignee': args += ['--' + key, str(value)]
             if desired.get('hold') == 'yes': args += ['--hold-reason', reason]
+            # The board refuses a new ticket without a description and wants its "# Ask", "# Why" and "# Done when"
+            # headings each at the start of a line, so the task body goes whole, line breaks kept. Only a new row sends it,
+            # so words written on the board afterwards stay.
+            summary = '' if old else description or desired.get('title') or tid
+            if summary: args += ['--description', summary]
             run(args); changed += 1
             if 'assignee' in desired:
-                feed[tid] = write_assignee(feed_file, tid, feed.get(tid, {}), desired, feed_ends, reason)
+                # The owner line is the whole record, so a new row's description rides along or the line would drop it.
+                feed[tid] = write_assignee(feed_file, tid, {**feed.get(tid, {}), **({'description': summary} if summary else {})}, desired, feed_ends, reason)
                 feed_ends = True
             updated = dict(old)
             for key, value in desired.items():
@@ -274,68 +279,17 @@ def sync():
             elif tid.startswith('jg-') and tid != upkeep_id and (old.get('project', '').lower() in INTERNAL or not old.get('asked') and not old.get('parent')):
                 publish(tid, dict(project='' if old.get('project', '').lower() in INTERNAL else old.get('project', ''), parent=old.get('parent') or ('' if old.get('asked') else upkeep_id)), where=f'board/{tid}')
         for name, source in ordered:
-            env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_ROOT_OVERRIDE', 'TASKS_AXI_FILE', 'TASKS_AXI_BACKEND')}
+            env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_ROOT_OVERRIDE')}
             env['JG_HOME'] = str(source)
-            reader = ['bash', str(home / 'bin/jg-tasks-axi.sh')]
-            tasks = rows(reader + ['list'], env) + rows(reader + ['list', '--state', 'done'], env)
-            address = run(['bash', '-c', '. "$1/jg-tasks-axi-lib.sh"; . "$1/jg-backlog-transition-lib.sh"; jg_backlog_tasks_axi_addressing "$JG_HOME/data" || exit; printf "%s\\n%s\\n" "$JG_BACKLOG_AXI_ROOT" "$JG_BACKLOG_AXI_FILE"', 'tickets-sync', str(home / 'bin')], env).splitlines()
-            root, file = address
-            if not file: raise RuntimeError(f'{name}: archive backfill requires markdown addressing')
-            settings = {}
-            for config in (Path.home() / '.tasks-axi/config.toml', Path(root) / '.tasks.toml'):
-                if config.exists(): settings.update(tomllib.loads(config.read_text()).get('markdown', {}))
-            archive = Path(root) / settings.get('archive', str(Path(file).parent / 'done-archive.md'))
-            archive_copy = state / f'{name}-archive.md'
-            if archive.exists():
-                archive_copy.write_text(re.sub(r'^## Archived[^\n]*$', '## Done', archive.read_text(), flags=re.M))
-            archived = rows(['tasks-axi', 'list', '--state', 'done', '--backend', 'markdown', '--file', str(archive_copy)], env, state) if archive.exists() else []
-            backlog_ids = {r['id'] for r in tasks}
-            tasks = {r['id']: r for r in archived + tasks}
-            full_file = state / f'{name}-full.json'
-            full_cache = json.loads(full_file.read_text()) if full_file.exists() else {}
-            def source_of(item):
-                return Path(root) / file if item in backlog_ids else archive
-            def full_record(item):
-                return run(reader + ['show', item, '--full'], env) if item in backlog_ids else run(['tasks-axi', 'show', item, '--full', '--file', str(archive_copy)], env, state)
-            def full_fields(text):
-                return {k: json.loads(v) if v.startswith('"') else v for k, v in re.findall(r'^  (title|body): (.*)$', text, re.M)}
-            # Only a row the list truncated needs its full record, and only when the pass can use one: the row it will
-            # publish, a row another row names as its parent, or a request row whose words the ancestry inference reads.
-            # A row the pass skips publishes nothing, so reading its whole body would only spend a subprocess. The cache
-            # is keyed by source revision, so a row already read from an unchanged file needs nothing either.
-            named = set()
-            for r in tasks.values():
-                parent = re.search(r'^\s*parent:\s*(\S+)', r.get('body', ''), re.M | re.I)
-                if parent and parent[1] != 'upkeep': named.add(parent[1])
-            def unneeded(item, r):
-                if item in named or '[captain-ask]' in r['title'] and not re.search(r'^\s*parent:', r.get('body', ''), re.M | re.I):
-                    return False
-                return r['state'] == 'done' and r.get('closed', '-') < cutoff \
-                    and ticket_id(name, r['id']) not in ledger and ticket_id(name, r['id']) not in existing
-            pending = []
-            for item, r in tasks.items():
-                if '\n... (truncated, ' not in r['title'] + r.get('body', '') or unneeded(item, r): continue
-                cached = full_cache.setdefault(str(source_of(item)), {})
-                stamp = str(source_of(item).stat().st_mtime_ns)
-                if cached.get('stamp') != stamp: cached.clear(); cached.update(stamp=stamp, rows={})
-                if item not in cached['rows']: pending.append(item)
-            # Those reads are independent of each other, so the pass runs them side by side: a whole backfill lands in
-            # one wake instead of a budget's worth per check. The budget still bounds a large home, and whatever the
-            # cache already holds is saved before the pass stops.
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                futures = {pool.submit(full_record, item): item for item in pending}
-                for future in as_completed(futures):
-                    item = futures[future]
-                    full_cache[str(source_of(item))]['rows'][item] = full_fields(future.result())
-                    if not options.reconcile and time.monotonic() - started > budget:
-                        for other in futures: other.cancel()
-                        save(full_file, full_cache); save(cursor, dict(home=name))
-                        note('tickets-sync: reading full request context; continuing next check')
-                        return
-            for item, r in tasks.items():
-                cached = full_cache.get(str(source_of(item)))
-                if cached and item in cached['rows']: r.update(cached['rows'][item])
-            save(full_file, full_cache)
+            reader = ['bash', str(home / 'bin/jg-backlog.sh')]
+            # A Beads home answers every row, done ones and whole bodies included, from one provider read.
+            tasks = rows(reader + ['list'], env, extra=',parent,item')
+            # The rest of the pass keys a row by the item name its state files and parent lines use.
+            by_id = {r['id']: r for r in tasks}
+            for r in tasks:
+                parent = r['parent'] if r['parent'] == 'upkeep' else by_id[r['parent']]['item'] if r['parent'] in by_id else ''
+                if parent: r['body'] += f"\nparent: {parent}"
+            tasks = {r['item']: dict(r, id=r['item']) for r in tasks}
             if options.close and name == options.close.partition('/')[0]:
                 if options.close.partition('/')[2] not in tasks: raise RuntimeError('--close item not found: ' + options.close)
                 closures[options.close] = options.reason
@@ -404,7 +358,7 @@ def sync():
                     desired['stage'] = stage
                     if event is not None: desired['last-event-at'] = event
                 if all(i['name'] != name or i['row']['id'] != item for i in items): items.append(dict(tid=tid, name=name, row=r, event=event, parked=name in parked, source=source))
-                publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason)
+                publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason, body.strip())
         if options.cleanup:
             carded = {d['ticket'] for d in json.loads(run(['sign-off-axi', 'list', str(board), '--json'])).get('decisions', []) if d.get('ticket')}
             def cards():

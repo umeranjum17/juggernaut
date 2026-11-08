@@ -6,7 +6,7 @@
 # the tabular array form
 # (key[N]{fields}: + comma rows at +2 indent), and the empty-array form (key: []),
 # per the TOON spec. Quoting follows the spec exactly. An array of plain scalars
-# (the help[] next-step lines tasks-axi prints) is key[N]: with one "- item" per line.
+# (the help[] next-step lines the backlog prints) is key[N]: with one "- item" per line.
 # shellcheck disable=SC2034,SC2016
 JG_TOON_JQ='
   def q:

@@ -11,10 +11,41 @@ trap 'rm -rf -- "$tmp"' EXIT
 pass() { printf 'ok - %s\n' "$*"; }
 no() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
 
+# The suite never writes to a home it was handed by the shell that runs it: a supervisor exports its
+# live home as JG_HOME (and, mid-migration, FM_HOME), and this suite used to rewire that home through
+# the one entry-point run that names no home. Prove the isolation by running the suite once more with
+# a throwaway home in those variables and requiring that home to come out byte-identical. The inner
+# run is this same file with the marker set, so the check does not recurse.
+if [ -z "${JG_SUITE_INHERITED_HOME:-}" ]; then
+  inherited=$tmp/inherited-home
+  mkdir -p "$inherited/config" "$inherited/bin" "$inherited/state" "$inherited/data"
+  # A live home carries this checker, so a leak registers state checks and cannot pass unseen.
+  install -m 755 "$here/bin/jg-check-register.sh" "$inherited/bin/"
+  printf 'kept\n' >"$inherited/config/merge-gate"
+  printf 'kept\n' >"$inherited/config/launch-env-hook"
+  inherited_state() { (cd "$inherited" && find . -type f -exec sha256sum {} + | sort); }
+  inherited_before=$(inherited_state)
+  if ! JG_SUITE_INHERITED_HOME=$inherited JG_HOME=$inherited FM_HOME=$inherited \
+    bash "${BASH_SOURCE[0]}" >"$tmp/inherited.log" 2>&1; then
+    cat "$tmp/inherited.log" >&2
+    no 'the suite failed when it inherited a home in its environment'
+  fi
+  if [ "$(inherited_state)" != "$inherited_before" ]; then
+    printf 'not ok - the suite wired the home it inherited from its environment:\n' >&2
+    diff <(printf '%s\n' "$inherited_before") <(inherited_state) >&2 || true
+    exit 1
+  fi
+  pass 'a run that inherits a home in its environment leaves that home untouched'
+fi
+
 home=$tmp/home
 mkdir -p "$home/config" "$home/bin" "$home/state" "$home/data" "$tmp/user"
+# Every write this suite makes lands in the throwaway home named here: JG_HOME is pinned to it and the
+# home- and state-naming variables a live shell carries are cleared, so no fallback can reach a real
+# one. A run that must name no home, or another home, clears JG_HOME for that one call.
+export JG_HOME=$home
+unset JG_MAIN_HOME JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_CONFIG_OVERRIDE JG_ROOT_OVERRIDE
 export HOME=$tmp/user
-unset JG_HOME
 export XDG_DATA_HOME=$HOME/.local/share XDG_CONFIG_HOME=$HOME/.config
 # Keep the guard's global hooks path inside the fixture, never the runner's real git configuration.
 export GIT_CONFIG_GLOBAL=$HOME/.gitconfig GIT_CONFIG_SYSTEM=/dev/null
@@ -104,11 +135,15 @@ done
 [ -z "$missing" ] || no "jg-host-wiring.sh does not run these wired features:$missing"
 pass 'the host-wiring entry point runs every core feature that carries wiring'
 
-# The entry point refuses to guess a home, and a plan-covered step is reached through it.
-if "$here/bin/jg-host-wiring.sh" >"$tmp/nohome.log" 2>&1; then no 'a run with no home was accepted'; fi
+# The entry point refuses to guess a home, with the usage status, before it writes anything: a bare
+# nonzero exit is also what a wiring step leaves behind after it has already rewritten the home, so the
+# status is checked, not merely the failure.
+rc=0
+env -u JG_HOME "$here/bin/jg-host-wiring.sh" >"$tmp/nohome.log" 2>&1 || rc=$?
+[ "$rc" -eq 2 ] || { cat "$tmp/nohome.log" >&2; no "a run with no home exited $rc, not the usage refusal 2"; }
 pass 'the entry point refuses a run with no home named'
 
-HOME=$tmp/user XDG_DATA_HOME=$tmp/user/.local/share XDG_CONFIG_HOME=$tmp/user/.config \
+env -u JG_HOME HOME="$tmp/user" XDG_DATA_HOME="$tmp/user/.local/share" XDG_CONFIG_HOME="$tmp/user/.config" \
   bash "$here/bin/jg-host-wiring.sh" --dry-run --home "$home" >"$tmp/dry.log" 2>&1 || true
 grep -q '^== git-identity' "$tmp/dry.log" || { cat "$tmp/dry.log" >&2; no 'a dry run did not reach the git-identity step'; }
 pass 'a dry run reaches each step and prints what it would write'
@@ -119,7 +154,7 @@ mkdir -p "$lead/config" "$lead/bin" "$lead/state" "$lead/data"
 printf 'lead\n' >"$lead/.jg-squad-lead-home"
 for mode in --dry-run '--dry-run --unwire'; do
   # shellcheck disable=SC2086
-  bash "$here/bin/jg-host-wiring.sh" $mode --home "$lead" >"$tmp/lead.log" 2>&1 || true
+  env -u JG_HOME bash "$here/bin/jg-host-wiring.sh" $mode --home "$lead" >"$tmp/lead.log" 2>&1 || true
   grep -q 'Squad Lead home; skipping the machine-wide units: sentinel host-memory lookout-adapter' "$tmp/lead.log" ||
     { cat "$tmp/lead.log" >&2; no "a lead home ($mode) did not name the skipped machine-wide units"; }
   if grep -Eq '^== (sentinel|host-memory|lookout-adapter):' "$tmp/lead.log"; then no "a lead home ($mode) reached a machine-wide step"; fi

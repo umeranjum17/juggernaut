@@ -105,3 +105,13 @@ rc=0; "$UNINSTALL" >"$d/out/refuse" 2>&1 || rc=$?
 grep -q 'did not exist before install' "$d/out/refuse" || fail "refusal does not say why"
 grep -qx "ExecStart=\"$DEST/bin/jg-sentinel.sh\" loop" "$UNIT" || fail "refused uninstall touched the unit"
 pass "uninstall refuses to stop a sentinel that had no unit before install"
+
+# A Squad Lead home may not install the machine's sentinel: it would take Main's stuck-worker and blocked-pane alerts away.
+lead=$d/lead; mkdir -p "$lead/bin"; : > "$lead/bin/jg-control.sh"; : > "$lead/.jg-squad-lead-home"
+before_lead=$(snapshot); : > "$LOG"
+rc=0; "$INSTALL" "$lead" >"$d/out/lead" 2>&1 || rc=$?
+[ "$rc" -eq 2 ] || fail "install in a Squad Lead home should exit 2, got $rc"
+grep -q 'Main owns the machine services' "$d/out/lead" || fail "Squad Lead refusal does not say why: $(cat "$d/out/lead")"
+[ ! -s "$LOG" ] || fail "a Squad Lead install called systemctl"
+[ "$(snapshot)" = "$before_lead" ] || fail "a Squad Lead install wrote to the tree"
+pass "install in a Squad Lead home is refused with a plain reason and changes nothing"

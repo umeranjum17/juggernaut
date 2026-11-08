@@ -7,6 +7,8 @@
 # failing route down until its retry time, and writes ONE status line when the route the chain leads with moves.
 # A provider the fleet cannot read counts as up, so a missing reader never takes a working route out of service.
 # One quota-axi answer and one Ollama balance read serve the whole pass.
+# A pass prints ONE line, with no epoch, only when the route state moved since the last pass (the fleet pulse turns
+# a check's output into a wake, so an unchanged state prints nothing); `status` prints the full table on demand.
 # Usage: jg-route-probe [probe [--force] | status]   (JG_ROUTE_PROBE_SECONDS default 180, JG_ROUTE_RETRY_SECONDS
 # default 900, JG_ROUTE_QUOTA_AXI, OLLAMA_API_KEY_FILE; the key is never printed)
 set -uo pipefail
@@ -93,12 +95,22 @@ status_rows() {
   done < <(jq -c '.[]' <<<"$1")
 }
 
+# state_line <chain-json>: the route state without any retry time, so it changes only when a route's state does.
+state_line() {
+  local r id down=''
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    id=$(jq -r .id <<<"$r")
+    jg_route_down "$id" && down="$down${down:+, }$id($(jg_route_cause "$id"))"
+  done < <(jq -c '.[]' <<<"$1")
+  printf 'route-chain: head=%s down=%s' "${2:-none}" "${down:-none}"
+}
+
 probe() {
-  local force=${1:-} chain route id verdict status cause before after
+  local force=${1:-} chain route id verdict status cause before after line
   chain=$(jg_route_chain_json "$POOL") || exit 1
   if [ "$force" != --force ] && [ -f "$MARK" ] &&
     [ "$(($(date +%s) - $(stat -c %Y -- "$MARK" 2>/dev/null || echo 0)))" -lt "$CADENCE" ]; then
-    status_rows "$chain"
     return 0
   fi
   mkdir -p -- "$STATE" 2>/dev/null || true
@@ -116,7 +128,12 @@ probe() {
   after=$(head_of "$chain")
   printf '%s' "$after" >"$STATE/.route-chain.head" 2>/dev/null || true
   [ -z "$before" ] || [ "$before" = "$after" ] || jg_route_switch "$before" "$after" "$(jg_route_cause "$before")"
-  status_rows "$chain"
+  line=$(state_line "$chain" "$after")
+  # The first pass only records the state; a later pass prints when, and only when, it differs from the recorded one.
+  if [ -f "$STATE/.route-chain.printed" ] && [ "$(cat -- "$STATE/.route-chain.printed")" != "$line" ]; then
+    printf '%s\n' "$line"
+  fi
+  printf '%s' "$line" >"$STATE/.route-chain.printed" 2>/dev/null || true
 }
 
 case ${1:-probe} in

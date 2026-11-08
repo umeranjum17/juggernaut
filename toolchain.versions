@@ -4,8 +4,9 @@
 #   <tool>   the command name the repo calls and a version check runs.
 #   <spec>   `<npm-package>@<version>` when npm can install the exact build, otherwise a bare
 #            `<version>` naming the minimum accepted, for a tool whose own installer cannot address one.
+#   A `<tool>-sha256-<os>-<arch>` row is the sha256 of that tool's extracted binary on that platform.
 # A row with `@` after a first character is npm-installable, so the installer installs exactly that build.
-# Every floor the repo enforces (bootstrap diagnostics, tasks-axi and quota-axi compatibility) derives from
+# Every floor the repo enforces (bootstrap diagnostics and quota-axi compatibility) derives from
 # its row here, so one edit moves installation, detection and the operator-facing diagnostic together.
 # Not pinned here, because they are the user's own installs: node, git, gh, tmux, jq, python3, and each harness CLI.
 #
@@ -19,7 +20,6 @@ no-mistakes 1.46.0
 treehouse 2.0.1
 gh-axi gh-axi@0.1.44
 chrome-devtools-axi chrome-devtools-axi@0.1.44
-tasks-axi tasks-axi@0.2.6
 quota-axi quota-axi@0.1.67
 learn-from-mistakes learn-from-mistakes-axi@0.12.0
 done-done done-done-axi@0.6.18
@@ -42,3 +42,14 @@ opa 1.22.0
 lookout-axi lookout-axi@0.1.0
 byokit-accounts @byokit/accounts@0.34.0
 takeone-axi takeone-axi@0.4.0
+# The backlog store: bin/jg-beads.sh runs a binary only when it hashes to these rows, so install.sh and bin/jg-bootstrap.sh read the hash and never start one.
+bd 1.3.4
+bd-sha256-linux-amd64 9185e9798ba044b288e781f7d57f28a48f558654e94572473e49991826e69930
+bd-sha256-linux-arm64 dbc0ea57d30947deaaa0c53269f4e40b66a045a2c457b66f5cd111751d86ea20
+bd-sha256-darwin-amd64 b98484a3b99745ffc042d87b48ffd457696d50e6bab64ef181aa033dcdcf2473
+bd-sha256-darwin-arm64 e657e1f04aedcb4188d923d49cda1f3477aba94175eaae8c4c611fbb04f6fdb7
+dolt 2.6.0
+dolt-sha256-linux-amd64 e11610a7bc44c4176d035e9864edf4839bb155ed815a4a5b673cb7e66cc011f5
+dolt-sha256-linux-arm64 9fa9e7f270598b4f3ed3bb83731353a6aef4da8004c51e2f8655ee18527ab495
+dolt-sha256-darwin-amd64 9540fc8e8825a60940da27195875e50bdd840494c13b6a74060a89affc9ecab8
+dolt-sha256-darwin-arm64 e33033fd384c909b7f8c2525c27c9e3c5203c08045d36d63976b8b03787c5172

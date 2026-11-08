@@ -35,6 +35,10 @@
 #            runtime files go, so a home upgraded across that release ends with nothing of it left.
 #   callers  bin/jg-bootstrap.sh and bin/jg-update.sh run `up`, so a release never lands on a machine
 #            without its services; install.sh runs it last.
+#   refuse   the machine's four long-running services (jg-sentinel, jg-wake-engine,
+#            jg-wake-watcher, jg-router) belong to Main, and bin/jg-unit-claim.sh owns
+#            why: a Squad Lead home that installs them takes Main's alerts away with
+#            them, so `up` refuses there with exit 2 and `status` still reports.
 # Env: JG_HOME, JG_STATE_OVERRIDE; JG_STACK_UNIT_PREFIX (unit names, default jg); JG_STACK_SUPERVISOR
 # (auto|systemd|detached); JG_STACK_SKIP=1 makes `up` a no-op for a fixture that must bind no port.
 set -u
@@ -55,6 +59,12 @@ export PATH=$NPM_CONFIG_PREFIX/bin:$PATH
 mode=${1:-up}
 case $mode in up|status) ;; -h|--help) awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0"; exit 0 ;; *) echo "usage: jg-stack.sh [up|status]" >&2; exit 2 ;; esac
 [ "$mode" = status ] || [ "${JG_STACK_SKIP:-0}" != 1 ] || exit 0
+# A Squad Lead home never claims the machine's services: it would take Main's
+# alerts away with them (bin/jg-unit-claim.sh owns the reason).
+if [ "$mode" = up ] && { [ -e "$JG_HOME/.jg-squad-lead-home" ] || [ -L "$JG_HOME/.jg-squad-lead-home" ]; }; then
+  "$SCRIPT_DIR/jg-unit-claim.sh" refuse jg-stack up
+  exit 2
+fi
 
 fail() {  # <part> <what is missing> <what it blocks>
   printf 'STACK_FAILED: %s: %s; blocks %s\n' "$1" "$2" "$3"

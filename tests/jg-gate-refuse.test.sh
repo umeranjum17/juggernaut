@@ -315,7 +315,7 @@ test_spawn_refuses_and_admits() {
 
   # no-regression: neutral cwd, marker UNSET, genuine isolated worktree.
   out=$(run_spawn "$NORMAL_CWD" "$home" spawn-ok "$proj" "$wt" "$fakebin"); rc=$?
-  expect_code 0 "$rc" "spawn: a normal session must still spawn"
+  expect_code 0 "$rc" "spawn: a normal session must still spawn: $out"
   assert_contains "$out" "spawned spawn-ok" "spawn: normal launch should report success"
   assert_not_contains "$out" "$ENV_MSG" "spawn: normal launch must not print the gate refusal"
   assert_not_contains "$out" "$PATH_MSG" "spawn: normal launch must not print the backstop refusal"
@@ -415,6 +415,10 @@ make_teardown_case() {
   local name=$1 case_dir fakebin t
   case_dir="$TMP/$name"; fakebin="$case_dir/fakebin"
   mkdir -p "$case_dir/state" "$case_dir/config" "$case_dir/data" "$fakebin"
+  # A teardown closes the task's backlog item, as a spawned task is In flight in the store.
+  jg_test_beads_home "$case_dir"
+  jg_test_add "$case_dir" task-x1 "[feature] gate-refuse teardown fixture"
+  jg_test_backlog "$case_dir" start task-x1 >/dev/null
   for t in treehouse tmux; do
     printf '#!/usr/bin/env bash\nexit 0\n' > "$fakebin/$t"
     chmod +x "$fakebin/$t"

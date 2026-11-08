@@ -632,13 +632,12 @@ RESOLVE_CLOSE_MAX=$JG_LINE_CAP_DEFAULT
 # captain-held task that carries it: the key as a task id itself (the collapsed
 # identity - a captain call IS a task held for the captain), then the legacy
 # derived `<task>-decision-<key>` identity for pre-collapse rows. Answerable
-# means not closed and still carrying the captain-hold annotations tasks-axi
+# means not closed and still carrying the captain-hold annotations the backlog
 # preserves even past a hold-until date.
 jg_send_hold_resolved_id() { # <task-id> <decision-key>
   local show id state hold_kind
-  command -v tasks-axi >/dev/null 2>&1 || return 1
   for id in "$2" "$1-decision-$2"; do
-    show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-tasks-axi.sh" show "$id" --full 2>/dev/null) || continue
+    show=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE='' "$SCRIPT_DIR/jg-backlog.sh" show "$id" --full 2>/dev/null) || continue
     state=$(printf '%s\n' "$show" | sed -n 's/^  state: //p' | head -1)
     hold_kind=$(printf '%s\n' "$show" | sed -n 's/^  hold_kind: //p' | head -1)
     [ "$state" != "done" ] || continue
@@ -878,8 +877,8 @@ else
     [[ "$MESSAGE" =~ (^|[[:space:]])ticket=([A-Za-z0-9._-]+)([[:space:]]|$) ]]; then
     order_ticket=${BASH_REMATCH[2]}
     DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
-    # shellcheck source=bin/jg-tasks-axi-lib.sh
-    . "$SCRIPT_DIR/jg-tasks-axi-lib.sh"
+    # shellcheck source=bin/jg-backlog-lib.sh
+    . "$SCRIPT_DIR/jg-backlog-lib.sh"
     # shellcheck source=bin/jg-backlog-transition-lib.sh
     . "$SCRIPT_DIR/jg-backlog-transition-lib.sh"
     if jg_backlog_row_probe "$DATA" "$order_ticket"; then

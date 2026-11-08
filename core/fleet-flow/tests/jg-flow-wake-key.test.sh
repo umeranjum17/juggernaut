@@ -9,6 +9,9 @@ d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
 main=$d/main home=$d/pool/8/juggernaut t0=1700000000 h=3600
 mkdir -p "$main/bin" "$main/config" "$home/state" "$home/data"
+# The check reads the home's holds through its backlog command; a stub with no rows holds nothing.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$main/bin/jg-backlog.sh"
+chmod +x "$main/bin/jg-backlog.sh"
 fail=0
 expect() { if [ "$2" = "$3" ]; then echo "ok: $1"; else echo "FAIL: $1: want [$2] got [$3]"; fail=1; fi; }
 lane() {  # <task> <seconds waiting at t0>

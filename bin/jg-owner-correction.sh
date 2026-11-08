@@ -12,7 +12,7 @@
 # The record is the newest captain message in data/overwatch-kpi.jsonl whose
 # newest tag kind is feedback or micromanagement: a record, never a reading of his
 # tone. The artefacts are data/owner-rules.md written at or after it
-# (bin/jg-owner-rules.sh add), or an enforcement ticket (bin/jg-tasks-axi.sh add).
+# (bin/jg-owner-rules.sh add), or an enforcement ticket (bin/jg-backlog.sh add).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,7 +42,7 @@ captured() {  # <epoch> -> 0 when a rule or a ticket landed at or after it
   # A row's creation is a date, so a ticket filed earlier the same UTC day counts.
   # ponytail: day-granularity ticket evidence; add a per-ticket created epoch if a
   # same-day false capture ever matters.
-  newest=$("$SCRIPT_DIR/jg-tasks-axi.sh" list --fields created --limit 500 2>/dev/null \
+  newest=$("$SCRIPT_DIR/jg-backlog.sh" list --fields created --limit 500 2>/dev/null \
     | grep -oE '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' 2>/dev/null | LC_ALL=C sort | tail -1)
   [ -n "$newest" ] || return 1
   [[ ! $newest < $(date -u -d "@$1" +%F 2>/dev/null || date -u -r "$1" +%F) ]]

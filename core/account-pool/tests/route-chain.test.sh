@@ -88,12 +88,19 @@ is "Command Code probed up" "$(state_of route:commandcode/deepseek/deepseek-v4.1
 is "Kimi probed down (signed out, pi name mapped to quota-axi kimi)" "$(state_of route:kimi-coding/kimi-for-coding)" down
 is "Cursor probed down (quota)" "$(state_of route:cursor/auto)" down
 is "no switch line while the head holds" "$(log_lines)" 0
+is "first pass records the state and prints nothing" "$out" ""
+probe_run
+is "an unchanged state prints nothing" "$out" ""
 
 # 4. The kill: Ollama's credit is gone. The probe writes ONE switch line and work continues on Command Code.
 balance 0
 probe_run
 is "Ollama probed down (credit empty)" "$(state_of route:ollama-cloud/deepseek-v4.1-flash)" down
 is "one switch line" "$(log_lines)" 1
+is "a changed state prints exactly one line" "$(wc -l <<<"$out")" 1
+case $out in route-chain:\ head=route:commandcode/*down=*route:ollama-cloud/deepseek-v4.1-flash\(ollama_credit_empty\)*) ok=yes ;; *) ok=no ;; esac
+is "the line names the new head and the dead route" "$ok" yes
+is "the line carries no epoch" "$(grep -Ec '[0-9]{10}' <<<"$out")" 0
 line=$(cat "$w/home/state/route-chain.log")
 case $line in
 *"from=route:ollama-cloud/deepseek-v4.1-flash"*"to=route:commandcode/deepseek/deepseek-v4.1-flash"*"why=ollama_credit_empty"*) ok=yes ;;
@@ -105,6 +112,7 @@ is "work continues on Command Code" "$(jq -r .id <<<"$out")" "route:commandcode/
 is "skipping the down route wrote no second line" "$(log_lines)" 1
 probe_run
 is "a second pass on the same dead route writes no new line" "$(log_lines)" 1
+is "a second pass on the same dead route prints nothing" "$out" ""
 
 # 5. Retried later: once the retry time has passed the route is probed again and the head returns.
 balance 299.95

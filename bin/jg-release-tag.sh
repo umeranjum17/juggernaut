@@ -17,6 +17,12 @@
 # whose notes carry that pull request's title and URL and those of every pull
 # request merged into the release branch.
 #
+# Each release is also written to this home's release record, one line
+# `<tag> <date> repo=<owner/name> commit=<sha> prs=<numbers>` in
+# `${JG_DATA_OVERRIDE:-$JG_HOME/data}/releases`, which bin/jg-live-claim.sh
+# reads to say a change is live; it is its only writer, appends once per
+# repository and tag, and is skipped when the script has no home to write to.
+#
 # Guards:
 #   - idempotent: an existing release page for the tag ends the pass;
 #   - never force, delete or move a tag: a tag that exists without a page gets a
@@ -32,6 +38,26 @@ _JG_RELEASE_TAG_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$_JG_RELEASE_TAG_DIR/jg-pr-lib.sh"
 
 say() { printf 'release tag: %s\n' "$*"; }
+
+# Append the release to the home's record once; `prs` is the comma list of the pull requests it carries.
+record_release() {  # <tag> <commit> <prs>
+  local file=${JG_DATA_OVERRIDE:-${JG_HOME:+$JG_HOME/data}}
+  [ -n "$file" ] || return 0
+  file=$file/releases
+  mkdir -p "${file%/*}" || { say "cannot write the release record $file"; return 1; }
+  awk -v t="$1" -v r="repo=$repo" '$1 == t { for (i = 2; i <= NF; i++) if ($i == r) found = 1 } END { exit found ? 0 : 1 }' "$file" 2>/dev/null && return 0
+  printf '%s %s repo=%s commit=%s%s\n' "$1" "$(date -u +%Y-%m-%d)" "$repo" "$2" "${3:+ prs=$3}" >> "$file" \
+    || { say "cannot write the release record $file"; return 1; }
+}
+
+# Pull requests merged into the release branch: `number<TAB>- title (url)` per line.
+release_carried() {  # <release-branch>
+  gh pr list --repo "$repo" --base "$1" --state merged --limit 200 \
+    --json number,title,url --jq 'sort_by(.number) | .[] | "\(.number)\t- \(.title) (\(.url))"' 2>/dev/null
+}
+carried_numbers() {  # <release pr url> <carried lines> -> comma list
+  { printf '%s\n' "${1##*/}"; printf '%s\n' "$2" | cut -f1; } | grep -E '^[0-9]+$' | sort -un | paste -sd, -
+}
 
 url=${1:-}
 dir=${2:-}
@@ -72,6 +98,8 @@ case "$sha" in
 esac
 
 if page=$(gh release view "$tag" --repo "$repo" --json url --jq .url 2>/dev/null) && [ -n "$page" ]; then
+  carried=$(release_carried "$head") || carried=
+  record_release "$tag" "$sha" "$(carried_numbers "$url" "$carried")"
   say "$tag already released, nothing to do: $page"
   exit 0
 fi
@@ -88,8 +116,8 @@ fi
 
 pinned=--target
 printf '%s\n' "$tags" | grep -qxF -- "$tag" && pinned=--verify-tag
-included=$(gh pr list --repo "$repo" --base "$head" --state merged --limit 200 \
-  --json number,title,url --jq 'sort_by(.number) | .[] | "- \(.title) (\(.url))"' 2>/dev/null) || included=
+carried=$(release_carried "$head") || carried=
+included=$(printf '%s\n' "$carried" | cut -f2-)
 notes="Release pull request: $title ($url)"
 [ -z "$included" ] || notes="$notes
 
@@ -105,3 +133,4 @@ fi || {
   exit 1
 }
 say "created $tag at $sha: $(printf '%s\n' "$out" | tail -1)"
+record_release "$tag" "$sha" "$(carried_numbers "$url" "$carried")" || exit 1

@@ -69,9 +69,9 @@ Handle it start to finish in one turn sequence:
 
 1. Drain first: run `bin/jg-wake-drain.sh` and read every presented record, plus any OPEN DECISIONS, UNREAD STATUS, and RECORD DIVERGENCE sections.
 2. For each task you are about to mutate, claim its lease first: `bin/jg-lease.sh claim <task>`.
-   Claim the reserved `backlog` lease around backlog writes (`bin/jg-lease.sh claim backlog`, then `bin/jg-tasks-axi.sh ...`, then release).
+   Claim the reserved `backlog` lease around backlog writes (`bin/jg-lease.sh claim backlog`, then `bin/jg-backlog.sh ...`, then release).
    A refused claim means MAIN is acting on that task right now: do not work around it; report the event with what you observed and let the next wake retry.
-3. Handle with real tools: `bin/jg-crew-state.sh <task>` for current state (a status line is a wake event, not current-state truth), `bin/jg-send.sh` for a short steer, `bin/jg-control.sh <task> interrupt|exit|relaunch` for lifecycle, `bin/jg-pr-check.sh <task> <url>` when the task's ready status or `pr=` metadata names the PR's URL, `bin/jg-tasks-axi.sh` for backlog moves, and `bin/jg-teardown.sh <task>` for the ordinary cleanup of a task whose PR has landed.
+3. Handle with real tools: `bin/jg-crew-state.sh <task>` for current state (a status line is a wake event, not current-state truth), `bin/jg-send.sh` for a short steer, `bin/jg-control.sh <task> interrupt|exit|relaunch` for lifecycle, `bin/jg-pr-check.sh <task> <url>` when the task's ready status or `pr=` metadata names the PR's URL, `bin/jg-backlog.sh` for backlog moves, and `bin/jg-teardown.sh <task>` for the ordinary cleanup of a task whose PR has landed.
 4. Report exactly once per handled event through the report surface the wake names (the jg_branch_report tool, or the `bin/jg-branch-report.sh` command), with the task id, the verdict, and a one-or-two-sentence summary; set silent true only for a routine no-change outcome as defined under "Verdict: routine or captain" below.
    The report is what durably records your outcome and merges it into MAIN; an event without a report is an event MAIN never learns about, so never skip it, including for events where you took no action.
 5. Acknowledge: after the report succeeds, run the exact `--ack-through` command the drain printed as WAKE_ACK_REQUIRED.
