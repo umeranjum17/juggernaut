@@ -45,11 +45,46 @@ jg_backlog_beads_write() {  # <config_dir> <a verb of bin/jg-beads-write.py> [ar
   BEADS_DIR=$store python3 "$bin_dir/jg-beads-write.py" "$@"
 }
 
+# The rows a read needs, as bd's JSON. Sets `one` (the id a fast show fetched) and `open` (a listing left its closed rows out) for the caller.
+# It leaves its mode in <err_file>.mode (one or open) for the caller, since a command substitution cannot set the caller's variables.
+# A show asks bd for its one row and falls back to the whole store for a row it cannot name (a moved row's old name, an unknown id).
+# A plain list asks bd for the open rows only; --all, --state done and every other verb read the whole store.
+# JG_BACKLOG_SNAPSHOT names one file per supervision cycle: the first whole read fills it, and every later list or whole read of that cycle reuses it.
+jg_backlog_beads_rows() {  # <store> <bin_dir> <err_file> <verb> [args...]: prints rows
+  local store=$1 bin_dir=$2 err=$3 verb=${4:-} word id="" snap=${JG_BACKLOG_SNAPSHOT:-} history="" out one open=""
+  shift 4
+  case "$verb" in
+    show|view)
+      for word in "$@"; do case "$word" in -*) ;; *) id=$word ;; esac; done
+      if [ -n "$id" ] && out=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" show "$id" --json 2>>"$err") \
+        && one=$(printf '%s' "$out" | python3 "$bin_dir/jg-beads-view.py" --one "$id" 2>/dev/null); then
+        printf 'partial' >"$err.mode"
+        printf '%s' "$one"
+        return 0
+      fi ;;
+    list)
+      case " $* " in *" --all "*|*" --state done "*|*" --state=done "*) history=1 ;; esac
+      [ -n "$history" ] || [ -n "$snap" ] || open=1 ;;
+  esac
+  [ -z "$open" ] || printf 'partial' >"$err.mode"
+  if [ -n "$snap" ] && [ -s "$snap" ]; then
+    cat -- "$snap"
+    return 0
+  fi
+  if [ -n "$open" ]; then
+    BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --status open,in_progress,on_hold,blocked,deferred --limit 0 --json 2>>"$err"
+    return
+  fi
+  out=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --all --limit 0 --json 2>>"$err") || return
+  [ -z "$snap" ] || { printf '%s' "$out" >"$snap.$$" && mv -f -- "$snap.$$" "$snap"; } 2>/dev/null
+  printf '%s' "$out"
+}
+
 # Beads answers ready and blocked, so the read asks bd for them before it lists the rows:
 # `bd ready` first, because that call wakes a dated hold whose day has come and the listing must show it awake.
 # A list asks `bd blocked` only when it shows blocked rows or the blocked fields, because the call costs about 0.3 s.
 jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links> [args...]
-  local bin_dir store err rows rc=0 scratch word repo="" want_ready="" want_blocked=""
+  local bin_dir store err rows rc=0 scratch word repo="" want_ready="" want_blocked="" partial=""
   store=$(jg_backlog_beads_store "$1") || return 2
   shift
   bin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -71,14 +106,15 @@ jg_backlog_beads_read() {  # <config_dir> <show|view|list|ready|markdown|links> 
     BEADS_DIR=$store "$bin_dir/jg-beads.sh" blocked --json >"$scratch/blocked" 2>"$err" || rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
-    rows=$(BEADS_DIR=$store "$bin_dir/jg-beads.sh" list --all --limit 0 --json 2>>"$err") || rc=$?
+    rows=$(jg_backlog_beads_rows "$store" "$bin_dir" "$err" "$@") || rc=$?
+    [ ! -e "$err.mode" ] || partial=1
   fi
   [ "$rc" -eq 0 ] || cat -- "$err" >&2
   if [ "$rc" -eq 0 ]; then
     printf '%s' "$rows" | JG_BEADS_READY=${want_ready:+$scratch/ready} JG_BEADS_BLOCKED=${want_blocked:+$scratch/blocked} \
-      python3 "$bin_dir/jg-beads-view.py" "$@" || rc=$?
+      JG_BEADS_PARTIAL=$partial python3 "$bin_dir/jg-beads-view.py" "$@" || rc=$?
   fi
-  rm -f -- "$scratch/ready" "$scratch/blocked" "$scratch/err"
+  rm -f -- "$scratch/ready" "$scratch/blocked" "$scratch/err" "$scratch/err.mode"
   rmdir -- "$scratch"
   return "$rc"
 }

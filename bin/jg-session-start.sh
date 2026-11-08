@@ -571,7 +571,16 @@ backlog_rows() {  # <list|ready> [flags...]
   jg_backlog_beads_read "$CONFIG" "$@"
 }
 
+# The four reads of the compact listing share one store read: the first fills the snapshot file and the rest reuse it.
 print_backlog_rows_compact() {
+  local snap_dir rc=0
+  snap_dir=$(mktemp -d "${TMPDIR:-/tmp}/jg-backlog-snap.XXXXXX") || snap_dir=
+  JG_BACKLOG_SNAPSHOT=${snap_dir:+$snap_dir/rows} print_backlog_rows_compact_reads || rc=$?
+  [ -z "$snap_dir" ] || rm -rf -- "$snap_dir"
+  return "$rc"
+}
+
+print_backlog_rows_compact_reads() {
   local in_flight held blocked ready err
   if ! in_flight=$(backlog_rows list --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$in_flight
