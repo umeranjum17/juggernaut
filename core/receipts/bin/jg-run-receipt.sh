@@ -36,11 +36,6 @@ if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || ! jg_pr_task_id_valid "$1"; then
   echo "usage: JG_HOME=<home> jg-run-receipt.sh <id> PASS|FAIL <evidence-file> [repo]" >&2
   exit 2
 fi
-# These adapters do not themselves call Claude; when a pool is configured,
-# downstream tools inherit its account rather than an ambient default login.
-# shellcheck source=account-pool/bin/jg-pool-claude-env.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/account-pool/bin/jg-pool-claude-env.sh"
-if [ -f "$JG_HOME/config/account-pool" ]; then jg_pool_claude_env || exit 1; fi
 
 ID=$1 VERDICT=$2 EVIDENCE=$3 REPO=${4:-.}
 case "$VERDICT" in PASS|FAIL) ;; *) echo 'error: verdict must be PASS or FAIL' >&2; exit 2 ;; esac
@@ -71,7 +66,7 @@ if ! jg_backlog_meta_spawn_gen_optional "$META" "$STATE"; then
   exit 1
 fi
 MODE=$(jg_dod_meta_value "$META" mode)
-case "$MODE" in local-only|direct-PR|no-mistakes) ;; *) echo 'error: receipt requires a ship delivery mode' >&2; exit 1 ;; esac
+case "$MODE" in local-trunk|local-only|direct-PR|no-mistakes) ;; *) echo 'error: receipt requires a ship delivery mode' >&2; exit 1 ;; esac
 HEAD_SHA=$(git -C "$REPO" rev-parse --verify 'HEAD^{commit}')
 if [ "$VERDICT" = PASS ] && [ -n "$(git -C "$REPO" status --porcelain)" ]; then
   echo 'error: PASS requires a clean candidate checkout' >&2
@@ -94,7 +89,7 @@ trim() { local v=${1-}; v=${v#"${v%%[![:space:]]*}"}; printf '%s' "${v%"${v##*[!
 pr_was_set=false
 [ -z "${JG_RECEIPT_PR+x}" ] || pr_was_set=true
 PR_URL=$(trim "${JG_RECEIPT_PR-}")
-if [ -z "$PR_URL" ] && command -v gh >/dev/null; then
+if [ "$MODE" != local-trunk ] && [ -z "$PR_URL" ] && command -v gh >/dev/null; then
   PR_URL=$(trim "$(cd "$REPO" && gh pr view --json url --jq .url 2>/dev/null || true)")
   BRANCH=$(trim "$(jg_dod_meta_value "$META" branch)")
   if [ -z "$PR_URL" ] && [ -n "$BRANCH" ]; then
@@ -135,7 +130,7 @@ fi
 TMP=
 # Keep the newest receipt for this head too, so a lane that lands several pull requests can have the right one
 # put back into the slot (jg-receipt-restore.sh) instead of republishing by hand before each merge.
-ARCH_TMP=$(mktemp "$STATE/.$ID.run-receipt.XXXXXX") \
+if ! { ARCH_TMP=$(mktemp "$STATE/.$ID.run-receipt.XXXXXX") \
   && cp -- "$STATE/$ID.run-receipt.json" "$ARCH_TMP" \
-  && mv -f -- "$ARCH_TMP" "$STATE/$ID.run-receipt.$HEAD_SHA.json" || rm -f -- "${ARCH_TMP:-}"
+  && mv -f -- "$ARCH_TMP" "$STATE/$ID.run-receipt.$HEAD_SHA.json"; }; then rm -f -- "${ARCH_TMP:-}"; fi
 printf 'receipt: %s %s head=%s\n' "$ID" "$VERDICT" "$HEAD_SHA"

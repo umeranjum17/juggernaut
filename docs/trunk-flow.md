@@ -6,13 +6,15 @@ How a change reaches the captain's users, for every project registered `local-tr
 
 The trunk flow is a fourth delivery posture, `local-trunk` (`data/projects.md`: `- <name> [local-trunk] - ...`). **Every rule below applies to a project registered local-trunk and to no other.** A project registered `no-mistakes`, `direct-PR` or `local-only` (or not registered) keeps its own rules exactly as before: `direct-PR` still pushes and opens its PR, `no-mistakes` still runs its pipeline, `local-only` still stops at a ready branch and is merged locally by `bin/jg-merge-local.sh`. Each trunk entry point reads the project's registered mode first and refuses or ignores any other: every `jg-trunk.sh` subcommand refuses it naming the registered mode, the landing check skips it, the spawn refusal and the lane brief section apply only to local-trunk, and no trunk hook is installed in it. `tests/jg-trunk-scope.test.sh` proves one case per mode and fails if any of them is treated as local-trunk.
 
-In a local-trunk project the lanes ship as `local-only` tasks (nothing is pushed), and `bin/jg-project-mode.sh` reports `local-only` to mechanical callers; only `--raw` says `local-trunk`.
+In a local-trunk project the lanes ship as `local-trunk` tasks (nothing is pushed), and both normal and `--raw` output from `bin/jg-project-mode.sh` retain `local-trunk`.
+Pass `--mode local-trunk` to the brief, spawn and Recon promotion; the generated delivery contract, recorded task mode and completion receipt retain that identity.
+Existing in-flight `mode=local-only` tasks remain accepted by the trunk lander and landing check only when their project is registered `local-trunk`; their records and receipt mode are never rewritten.
 
 ## The standing orders, and where each is enforced
 
 | Order | Enforced by |
 | --- | --- |
-| Landing is automatic once the done-done proof passes, in every home | `core/trunk-landing` runs on the watcher's 30-second tick in every home (`run_fast_checks` in the watcher), so a worker's done starts the landing within seconds. It runs `jg-trunk.sh land <task>` for every `local-only` task of a local-trunk project whose `state/<task>.run-receipt.json` is a PASS for the exact branch head, then `bin/jg-teardown.sh <task>` UNFORCED (a refusal is reported and nothing is discarded). No lead or human step. |
+| Landing is automatic once the done-done proof passes, in every home | `core/trunk-landing` runs on the watcher's 30-second tick in every home (`run_fast_checks` in the watcher), so a worker's done starts the landing within seconds. It runs `jg-trunk.sh land <task>` for every `local-trunk` task (or legacy `local-only` task) of a local-trunk project whose `state/<task>.run-receipt.json` is a PASS for the exact branch head, then `bin/jg-teardown.sh <task>` UNFORCED (a refusal is reported and nothing is discarded). No lead or human step. |
 | A landing is as visible as a merge was | `land` records the same fleet-ledger `merged` event, ticket close and post-merge hook as `bin/jg-merge-local.sh`, and the check reports every landing, refusal and cleanup to the lead. The commit must carry its ticket reference (the task id or ticket key). |
 | Landing needs a PASS receipt at the exact head, and exactly one commit on the trunk tip | `land` refuses a missing, FAIL, other-head or other-incarnation receipt, a branch with zero or several commits over the trunk, and a trunk that moved. |
 | A home's `main` moves only along the trunk | `bin/jg-home-guard.sh` installs a git `reference-transaction` hook in each home (its installer is the only writer; removing the hook is the rollback). It refuses a move of `main`, or of a detached HEAD in the home's own checkout, to a commit that is not the trunk tip, an ancestor of it, or a release merge of trunk commits (`origin/main` after the release PR merged). The live move sets `JG_TRUNK_LIVE=1` to admit a fast-forward to a newer tip and the contained re-point, and the pin-back sets `JG_TRUNK_PINBACK=1` to admit one move to the HEAD recorded before the last live move; nothing else bypasses it. |
@@ -26,7 +28,7 @@ In a local-trunk project the lanes ship as `local-only` tasks (nothing is pushed
 | A conflicting change is rebased and fixed, never landed dirty | `land` refuses with the conflicting paths named. The lane rebases onto the trunk tip, fixes the conflict, proves again, and the check lands the new head. |
 | The trunk goes live only on the captain's word | `land` never moves the home. `jg-trunk.sh word live <project> "<his words>"` records the word for one commit; `jg-trunk.sh live <project>` refuses without it and spends it. A worker cannot record a word. |
 | The release is the trunk going into main as ONE pull request, on his word | `jg-trunk.sh release` refuses without a recorded `release` word for the tip. It pushes the trunk (never forced) and opens one pull request from the trunk itself into the default branch. There is no release branch. While that pull request is open, a later release only pushes the new commits into it. |
-| No feature pull requests | The only pull request is the release one. Lanes ship `local-only`; the spawn refuses any other mode on a local-trunk project. |
+| No feature pull requests | The only pull request is the release one. Lanes ship `local-trunk`; legacy `local-only` contracts remain accepted, and PR modes are refused. |
 | CI runs after live; a red CI pins back | `jg-trunk.sh ci <project> <sha> red` writes the red pin, stops landings except a commit with `fixes-red: <sha>`, and moves the home back to the newest earlier commit that went live and was not red (else the last release). `ci ... green` records the result and advances the green pin. |
 
 ## Lifecycle of one ticket
@@ -37,6 +39,10 @@ In a local-trunk project the lanes ship as `local-only` tasks (nothing is pushed
 4. On the captain's word: `jg-trunk.sh verify`, `word live`, `live`.
 5. On the captain's word: `word release`, `release`. CI runs on the pushed trunk; a red result goes to `jg-trunk.sh ci`.
 6. When the release PR merges, the next trunk version is cut from the default branch and the cycle starts again on it; the old trunk is cleaned up once everything on it is carried.
+
+## Moving a home onto the trunk
+
+The lander takes one commit, so a home whose `main` carries the same changes under other SHAs is not an ancestor of the trunk. It moves anyway, and only after proof: `bin/jg-home-contained.sh <home-head> <trunk-tip>` exits 0 when every path the home changed is byte-identical at the tip or was changed later by a trunk commit, and exits 1 listing the uncontained paths. With a clean working tree and that exit 0, the home moves by `git reset --keep <trunk-tip>`; never a merge, stash or force. The mover is slice T2.
 
 ## Records
 

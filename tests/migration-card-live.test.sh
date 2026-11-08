@@ -22,8 +22,15 @@ BOARD=$T/board/board.json
 ROWS=$DIR/live.tsv
 SERVER_PID=
 LOG=$T/bus.log
+MIGRATION_ORIGINAL_PATH=$PATH
 # shellcheck disable=SC2329 # Registered by the EXIT trap below.
-cleanup() { [ -z "$SERVER_PID" ] || kill "$SERVER_PID" 2>/dev/null || true; }
+cleanup() {
+  local pid
+  for pid in "$SERVER_PID" "${ACC_PID:-}" "${BOT_PID:-}"; do
+    [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
+  done
+  PATH=$MIGRATION_ORIGINAL_PATH jg_test_cleanup
+}
 trap cleanup EXIT
 
 mkdir -p "$HOME_DIR/config" "$HOME_DIR/state" "$T/bin" "$T/board" "$T/store"
@@ -38,7 +45,9 @@ done
 [ -n "$PORT" ] || fail "the test bus did not start"
 URL=nats://127.0.0.1:$PORT
 
-export JG_HOME=$HOME_DIR PATH=$T/bin:$PATH FAKE_LOG=$T/calls.log
+MIGRATION_BASE=$(jg_test_base_path_sans "${JG_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" juggernaut-axi)
+export JG_NATS_SERVER=$NATS_SERVER JG_NATS_BIN=$NATS_BIN
+export JG_HOME=$HOME_DIR PATH=$T/bin:$MIGRATION_BASE FAKE_LOG=$T/calls.log
 printf 'set nats-url %s\n' "$URL" >"$HOME_DIR/config/captain-channel"
 printf '{"schema":2,"items":[]}\n' >"$BOARD"
 printf 'branch=release/c-2\ntarget=100000\nboard=%s\ncard=migration-card\nbaseline-deleted=0\nbaseline-added=0\nfiler=test\nproject=Test\n' \
@@ -141,6 +150,15 @@ assert_contains "$(cat "$page/index.html")" "<meta name=viewport" "the page keep
 assert_contains "$(cat "$page/index.html")" '<a href="https://example.test/o/r/pull/7">#7</a>' "the card links the pull request that finishes a pending part"
 assert_contains "$(cat "$page/index.html")" "parts run on this machine" "the card opens with the one-line answer"
 
+# A fixture-installed CLI changes the measured state and removes its feature link.
+printf '#!/usr/bin/env bash\nprintf "juggernaut-axi fixture\\n"\n' > "$T/bin/juggernaut-axi"
+chmod +x "$T/bin/juggernaut-axi"
+"$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the installed CLI probe did not run"
+assert_contains "$(row 'juggernaut-axi')" "live|$T/bin/juggernaut-axi" "the installed CLI is measured live"
+assert_equals "-" "$(awk -F'\t' '$1 == "juggernaut-axi" { print $4 }' "$ROWS")" "the installed CLI names no feature pull request"
+rm -f "$T/bin/juggernaut-axi"
+"$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the absent CLI probe did not run"
+
 link=$("$ROOT/bin/jg-migration-live.sh" --link 2>/dev/null) || fail "--link found no card"
 assert_contains "$link" "file://$T/board/reports/" "without a board address the link is the card page"
 printf 'https://board.example.test/?token=abc#decide/x\n' >"$HOME_DIR/state/signoff-board.url"
@@ -179,7 +197,6 @@ if [ -n "${JG_BUS_BIN:-}" ] || command -v "${JG_BUS_GO:-go}" >/dev/null 2>&1; th
   printf 'host: 127.0.0.1\nport: -1\njetstream { store_dir: "%s" }\ninclude accounts.conf\n' "$T/acc-store" >"$BUSD/bus.conf"
   "$NATS_SERVER" -c "$BUSD/bus.conf" >"$T/acc.log" 2>&1 &
   ACC_PID=$!
-  trap 'cleanup; kill "$ACC_PID" 2>/dev/null || true' EXIT
   APORT=
   for _ in $(seq 1 200); do
     APORT=$(sed -n 's/.*Listening for client connections on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$T/acc.log" 2>/dev/null | head -n 1)
@@ -280,7 +297,6 @@ F
   BOT_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
   python3 "$T/fake-bot.py" "$BOT_PORT" "$CALLS" &
   BOT_PID=$!
-  trap 'cleanup; kill "$BOT_PID" 2>/dev/null || true' EXIT
   printf 'set telegram-allow-user 4242\nset telegram-api-url http://127.0.0.1:%s\n' "$BOT_PORT" >"$C/config/captain-channel"
   # The suite library points every run at an off channel so no test reaches a real chat; this case owns its fake bot, so it takes the home's own channel file back.
   real_pass() { JG_CAPTAIN_CHANNEL='' JG_HOME=$C JG_STATE_OVERRIDE=$C/state FAKE_LOG=$T/chat-calls.log JG_MIGRATION_LIVE_BIN=$T/probe-stub.sh JG_MIGRATION_CARD_NOW=$1 \
@@ -304,6 +320,8 @@ F
   assert_equals 2 "$(grep -c '^sendMessage ' "$CALLS")" "a quiet day is a plain chat message"
   assert_contains "$(tail -n 1 "$CALLS")" "No migration row changed since" "a no-change day says so plainly"
   kill "$BOT_PID" 2>/dev/null || true
+  wait "$BOT_PID" 2>/dev/null || true
+  BOT_PID=
 else
   echo "skip: the real chat push needs the Go toolchain (or JG_BUS_BIN) and python3"
 fi

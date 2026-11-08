@@ -196,8 +196,7 @@ check "a directory git does not list is not a child worktree" "$rc|$out" "1|REFU
 check "worktree-registered answers by exit code" "$("$core" worktree-registered --project "$lab/proj" -- "$lab/childwt"; echo $?)$("$core" worktree-registered --project "$lab/proj" -- "$lab/scratch"; echo $?)" "01"
 check "a validator with no target exits 2" "$("$core" validate-removal --jg-home x --jg-root y >/dev/null 2>&1; echo $?)" 2
 
-# Local-trunk landing: a copy is landed when its HEAD is on the local trunk AND on a pushed release
-# branch; neither alone, and a project not in trunk mode (no --trunk-branch) is unchanged. The copy
+# Local-trunk landing needs no release push; a project not in trunk mode is unchanged. The copy
 # is a real worktree of the project, so it sees the project's trunk ref as teardown's copies do.
 rm -f "$FORGE"
 ( cd "$lab/proj" && g fetch -q origin && g worktree add -q -b trunkwork "$lab/twt" origin/main )
@@ -205,7 +204,7 @@ rm -f "$FORGE"
 trunk_land() { "$core" landed --worktree "$lab/twt" --branch trunkwork --project "$lab/proj" --trunk-branch trunk; }
 ( cd "$lab/proj" && g branch -q trunk trunkwork )
 out=$(trunk_land); rc=$?
-check "a trunk commit that no release branch holds is not landed" "$rc|$(printf '%s' "$out" | grep -c 'on no pushed release branch yet')" "1|1"
+check "a trunk commit with no release ref is landed" "$rc|$out" "0|landed=yes"
 ( cd "$lab/twt" && g push -q origin trunkwork:refs/heads/release/c-2 )
 out=$(trunk_land); rc=$?
 check "a commit on the trunk and a pushed release branch is landed" "$rc|$out" "0|landed=yes"

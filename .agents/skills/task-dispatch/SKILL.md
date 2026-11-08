@@ -48,6 +48,7 @@ A deep Recon needs one separate critic worker after the researcher's draft, neve
 
 ## Delivery mode, branch, and consent flags
 
+For a registered `local-trunk` project, keep `local-trunk` as the task mode through landing and cleanup (`docs/trunk-flow.md`); never translate it to `local-only`.
 Pass the mode explicitly to the brief, and pass both values explicitly to the spawn and any Recon promotion; each command refuses to guess the values it consumes.
 Resolve the project's registered ship-branch prefix the same way, via `bin/jg-project-mode.sh --branch-prefix --kind <feature|bug|chore> <project>`, and pass it explicitly to the brief, ship spawn, and Recon promotion as `--branch-prefix`; a registered prefix wins, otherwise the kind of the backlog item names the branch (`feature/`, `fix/`, `chore/`), and with no kind it stays `fm/`.
 When the work must start from and target a branch other than the project's default, such as a named feature or release branch, pass it to the ship or Recon brief and spawn as `--base-branch <branch>`; any promotion reads it from task meta.

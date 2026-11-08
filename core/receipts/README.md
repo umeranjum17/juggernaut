@@ -40,7 +40,7 @@ the feature loaded, then checks the helpers, the PR candidate hook through the r
   and `evidence` is the evidence file's full contents (it must be nonempty;
   the file is embedded, never stored as a pointer).
 - Guards: PASS requires a clean candidate tree, and the task meta must carry
-  a ship delivery mode (`local-only`, `direct-PR` or `no-mistakes`). A
+  a ship delivery mode (`local-trunk`, `local-only`, `direct-PR` or `no-mistakes`). A
   `JG_RECEIPT_PR` that is set but names nothing is refused and published
   nowhere: acceptance compares that field with the recorded `pr=`, so an
   empty one blocks a lane that did everything right.

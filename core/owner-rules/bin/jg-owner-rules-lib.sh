@@ -30,9 +30,15 @@ jg_owner_rules_check() {
   title=${title#*"$id"}
   title=${title# - }
   ids=$(awk '/^- \[[^]]\] / { row = substr($0, 7); split(row, fields, /[[:space:]]+/); print fields[1] }' <<<"$backlog")
-  if ! verdict=$(jq -n --arg id "$id" --arg kind "$kind" --arg title "$title" \
-    --argjson lines "$(printf '%s\n' "$entry" | jq -Rsc 'split("\n")[:-1]')" --argjson ids "$(printf '%s\n' "$ids" | jq -Rsc 'split("\n") | map(select(. != ""))')" \
-    '{id: $id, kind: $kind, title: $title, entry_lines: $lines, ids: $ids}' | "$bin/jg-guard-host.sh" eval gate.brief_rules 2>&1); then
+  # Backlog arrays travel on stdin: even one argv element is size-limited on a large home.
+  if ! verdict=$(
+    set -o pipefail
+    {
+      printf '%s\n' "$entry" | jq -Rsc 'split("\n")[:-1]'
+      printf '%s\n' "$ids" | jq -Rsc 'split("\n") | map(select(. != ""))'
+    } | jq -s --arg id "$id" --arg kind "$kind" --arg title "$title" \
+      '{id: $id, kind: $kind, title: $title, entry_lines: .[0], ids: .[1]}' | "$bin/jg-guard-host.sh" eval gate.brief_rules 2>&1
+  ); then
     echo "owner-rules: cannot evaluate the brief rules for $id: ${verdict:-no answer}" >&2
     exit 1
   fi

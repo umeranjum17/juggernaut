@@ -19,7 +19,7 @@ mkdir -p "$T/store" "$T/home/config" "$T/home/data" "$T/home/state"
 export TZ=UTC TMPDIR=$T BEADS_DIR=$T/store/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 printf '%s\n' "$BEADS_DIR" > "$T/home/config/beads-dir"
 jail=()
-command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
+command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 
 bd() { "${jail[@]}" "$WRAPPER" "$@"; }
 axi() { JG_HOME="$T/home" "${jail[@]}" "$CLI" "$@"; }
@@ -39,7 +39,7 @@ state_of() {  # <id>: the state the backlog lists the row under.
 }
 shape() { bd dolt sql -q 'show tables' 2>&1; bd dolt sql -q 'show create table issues' 2>&1; bd dolt sql -q 'select constraint_name from information_schema.check_constraints order by 1' 2>&1; }
 
-bd init --prefix jg >/dev/null 2>&1 || fail "init the store"
+bd init --prefix jg >"$T/real-init.log" 2>&1 || fail "init the store: $(cat "$T/real-init.log")"
 before=$(shape)
 for id in n8-a n8-b n8-c n8-d n8-e n8-f; do axi add "$id" "[feature] Row $id" --priority 2 --body why >/dev/null || fail "seed $id"; done
 

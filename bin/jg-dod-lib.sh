@@ -6,7 +6,7 @@
 # receives. Both paths must hand the worker the same contract: a promoted
 # no-mistakes worker that never received the ask-user escalation rule or the
 # `--yes` ban is the exact delivery hole this single owner exists to close.
-# jg_dod_block <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>]
+# jg_dod_block <no-mistakes|direct-PR|local-only|local-trunk> <task-id> [branch] [<forge>]
 # prints the block on stdout with no trailing blank line. The caller validates the
 # mode; an unknown mode is refused rather than silently rendered as the pipeline
 # contract.
@@ -188,8 +188,8 @@ jg_forge_valid_for_mode() {  # <forge> <mode> <caller>
       echo "error: $caller: unknown forge '$forge' (expected none, gerrit, or forgejo)" >&2
       return 1 ;;
   esac
-  if [ "$forge" != none ] && [ "$mode" = local-only ]; then
-    echo "error: $caller: forge=$forge cannot ship mode=local-only - that mode publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; ship no-mistakes or direct-PR, which publish through the forge" >&2
+  if [ "$forge" != none ] && { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+    echo "error: $caller: forge=$forge cannot ship mode=$mode - that mode publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; ship no-mistakes or direct-PR, which publish through the forge" >&2
     return 1
   fi
   return 0
@@ -210,8 +210,8 @@ jg_base_branch_valid() {  # <base> <mode> <forge> <caller>
     echo "error: $caller: base branch '$base' is not a valid git branch name" >&2
     return 1
   fi
-  if [ "$mode" = local-only ]; then
-    echo "error: $caller: a base branch cannot ship mode=local-only, whose landing fast-forwards local main; ship no-mistakes or direct-PR, which open a pull request against the base" >&2
+  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+    echo "error: $caller: a base branch cannot ship mode=$mode; local delivery selects its own landing branch; ship no-mistakes or direct-PR, which open a pull request against the base" >&2
     return 1
   fi
   if [ "$forge" != none ]; then
@@ -232,7 +232,7 @@ jg_brief_base_branches() {  # <brief>
   ' "$1"
 }
 
-jg_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>] [<base>]
+jg_ship_rule_one() {  # <no-mistakes|direct-PR|local-only|local-trunk> <task-id> [branch] [<forge>] [<base>]
   local mode=$1 id=$2 forge=${4:-none} base=${5:-}
   local branch=${3:-fm/$id} target='the default branch'
   jg_forge_valid_for_mode "$forge" "$mode" jg_ship_rule_one || return 1
@@ -245,6 +245,9 @@ jg_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<
   case "$mode" in
     direct-PR)
       printf '%s\n' "1. Never push to $target (push only your \`$branch\` branch). Never merge a PR."
+      ;;
+    local-trunk)
+      printf '%s\n' "1. Never push, open a PR, merge, go live or release. Work only on your \`$branch\` branch; juggernaut lands it on the local trunk."
       ;;
     local-only)
       printf '%s\n' "1. Never push to any remote and never open a PR. Work only on your \`$branch\` branch; juggernaut handles the merge into local \`main\`."
@@ -450,8 +453,8 @@ jg_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
   jg_forge_valid_for_mode "$forge" "$mode" jg_dod_block || return 1
   jg_base_branch_valid "$base" "$mode" "$forge" jg_dod_block || return 1
   if [ -n "$consent" ]; then
-    if [ "$mode" = local-only ]; then
-      echo "error: jg_dod_block: upstream consent authorizes a publication that local-only never performs; drop it" >&2
+    if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+      echo "error: jg_dod_block: upstream consent authorizes a publication that $mode never performs; drop it" >&2
       return 1
     fi
     contract_consent=" upstream-consent=$consent"
@@ -530,6 +533,19 @@ Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
 That \`done:\` is accepted only when this copy's HEAD - your latest commit - is pushed to your PR branch; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; juggernaut relays the outcome.
+EOF
+      ;;
+    local-trunk:*)
+      cat <<EOF
+# Definition of done
+Delivery contract: mode=local-trunk
+Ship branch: $branch
+This task ships **local-trunk**: one commit on the latest local trunk, no feature PR, no push, no release.
+The commit message must carry this task id or its ticket key.
+Rebase your one commit on the latest trunk tip, resolve every conflict and run sealed done-done verification at that exact clean head.
+Publish the completion receipt, then append \`done [at=<epoch>]: ready in branch $branch (local-trunk)\` and stop.
+Juggernaut's existing trunk landing check lands that exact head and cleans up unforced.
+Going live and releasing still require the captain's recorded word.
 EOF
       ;;
     local-only:*)
@@ -633,7 +649,7 @@ jg_dod_should_gate_ship_done() {  # <kind> <mode> <line>
   [ "$(status_line_verb "$3")" = "done" ] || return 1
   note=$(status_line_note "$3")
   case "$2" in
-    direct-PR|local-only) return 0 ;;
+    direct-PR|local-only|local-trunk) return 0 ;;
     no-mistakes|'')
       jg_dod_note_reports_ci_ready "$note" || jg_dod_note_reports_published_change "$note" ;;
     *) return 1 ;;
@@ -768,7 +784,7 @@ jg_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
   local wt=$1 project=$2 mode=$3 sha=$4
   jg_dod_ref_contains "$wt" refs/remotes "$sha" && return 0
   jg_dod_ref_contains "$project" refs/remotes "$sha" && return 0
-  [ "$mode" = local-only ] && jg_dod_ref_contains "$project" refs/heads "$sha"
+  { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; } && jg_dod_ref_contains "$project" refs/heads "$sha"
 }
 
 # 0 when <url> names a pull request outside <worktree>'s origin repository:
@@ -935,7 +951,7 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   fi
   if declare -F jg_receipts_accept_done >/dev/null; then jg_receipts_accept_done "$wt" "$mode" "$line" "$state" "$id" "$meta" "$forge_head" || return 1; fi
   [ -z "$run_out" ] || jg_dod_nm_custody_released "$run_out" || return 1
-  if [ "$mode" = local-only ] && [ -n "$run_out" ]; then
+  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; } && [ -n "$run_out" ]; then
     jg_dod_nm_custody_returned "$wt" "$run_out" || return 1
   fi
   if url=$(jg_dod_pr_url_from_done_note "$(status_line_note "$line")") \

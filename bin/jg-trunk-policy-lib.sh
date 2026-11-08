@@ -10,15 +10,15 @@
 #   trunk-branch          trunk       name of the local trunk branch
 #   trunk-owner           this-home   which home owns the trunk; only this-home is built
 #   away-landing          held        held: no landing while state/.afk exists; allowed
-#   protected-landing     refuse      refuse: a commit touching protected-paths keeps the
-#                                     pull request path; gate: it may land after the full gate
+#   protected-landing     refuse      refuse: a commit touching protected-paths stays unlanded;
+#                                     gate: it may land after the configured gates
 #   protected-paths       (gate machinery, below) space-separated globs
 #   gate-mode             full        full: the lander runs gate-full before landing
 #                                     smoke: it runs gate-smoke and the full suite runs in
 #                                     `verify`; the home never moves past the last full pass
 #   gate-lint             bin/jg-lint.sh   the lint every landing passes, whichever gate-mode
 #   gate-full             the CI invariants that need no network (no tracked personal paths, no
-#                         committed binaries, regression coverage), then the whole suite
+#                         committed binaries, regression coverage), then the fast required eight shards
 #   gate-rerun            bin/jg-test-run.sh --jobs 1   the command that reruns the scripts a failed full gate
 #                                     named, on the trunk tip's tree, to tell the tip's own red from the lane's;
 #                                     the script paths are appended to it
@@ -31,7 +31,7 @@
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
 
 # shellcheck disable=SC2016 # the command substitution runs in the gate's shell, not here
-_JG_TRUNK_GATE_FULL='test -z "$(git ls-files -- data state config projects .no-mistakes)" && bin/jg-committed-binary-check.sh && bin/jg-test-run.sh --check-coverage && bin/jg-test-run.sh --all'
+_JG_TRUNK_GATE_FULL='test -z "$(git ls-files -- data state config projects .no-mistakes)" && bin/jg-committed-binary-check.sh && bin/jg-test-run.sh --check-coverage && bin/jg-test-run.sh --required-shards HEAD^ "${JG_TRUNK_GATE_OUTPUT:?}"'
 
 jg_trunk_policy() {  # <key> [<project>]
   local key=$1 proj=${2-} file val=

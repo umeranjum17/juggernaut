@@ -9,8 +9,10 @@
 #   jg-git-strip-ai-trailers.sh install <hooks-dir> <worktree>
 #       Recreate <hooks-dir> as a core.hooksPath for this launch: a commit-msg
 #       hook that runs this strip, plus one wrapper per client-side hook name
-#       git documents except reference-transaction and post-index-change,
-#       which are deliberately excluded (see JG_GIT_CLIENT_HOOKS below).
+#       git documents except post-index-change (see JG_GIT_CLIENT_HOOKS below).
+#   jg-git-strip-ai-trailers.sh upstream-hooks <hooks-dir> <worktree>
+#       Resolve the repository hook directory beneath this launch overlay, using
+#       the same environment filtering as its runtime wrappers.
 #       Each wrapper removes this directory's own core.hooksPath entry from
 #       GIT_CONFIG_*, keeping every inherited entry (a scoped credential.helper,
 #       safe.directory) for the repository's hook, and then resolves
@@ -192,7 +194,7 @@ write_executable() {
 # so the wrapper runs none; any other failure reruns the lookup to show git's
 # error and refuses.
 runtime_chain_body() {
-  local ours=$1
+  local ours=$1 resolve_only=${2:-0}
   cat <<EOF
 ours=$(quote_for_hook "$ours")
 case \${GIT_CONFIG_COUNT:-} in
@@ -219,6 +221,10 @@ orig=\$(unset GIT_CONFIG_PARAMETERS; git rev-parse --path-format=absolute --git-
   echo "jg-git-strip-ai-trailers: cannot resolve this repository's hooks directory; refusing to skip its \$name hook" >&2
   exit 1
 }
+if [ "$resolve_only" = 1 ]; then
+  printf '%s\n' "\$orig"
+  exit 0
+fi
 if [ "\$orig" = "\$ours" ]; then
   exit 0
 fi
@@ -234,15 +240,10 @@ EOF
 # them up in a fleet worker's own worktree. commit-msg is written separately
 # because it is the one that carries the strip.
 #
-# reference-transaction and post-index-change are deliberately excluded, ruled
-# 2026-09-17. git invokes them twice per updated ref and on every index write,
-# so a wrapper for either turns a stat git used to skip into hundreds of forks
-# on one bulk command. Measured on git 2.50.1: a fetch of 300 new refs goes
-# 0.23s -> 24.6s, and a no-op /bin/sh hook still costs 4.9s, so the price is
-# git's invocation rather than the wrapper body. Neither name is one
-# commit-message or lint tooling installs, which is what this chaining exists
-# to preserve. A project that does install one loses chaining for it inside
-# fleet panes only.
+# post-index-change stays excluded because it runs on every index write.
+# reference-transaction is required: the repository's trunk guard must also run
+# inside the task overlay. Its fork cost cannot authorize bypassing ref protection.
+# The same wrapper resolves hooks at invocation time, including guards installed after launch.
 #
 # The names kept are not free either, and that cost is accepted, ruled
 # 2026-09-17. Every wrapper call forks bash plus one git rev-parse. A plain
@@ -254,7 +255,7 @@ EOF
 # pre-push, and a slower rebase inside a pane is the accepted price.
 JG_GIT_CLIENT_HOOKS='applypatch-msg pre-applypatch post-applypatch pre-commit
 pre-merge-commit prepare-commit-msg post-commit pre-rebase post-checkout
-post-merge pre-push post-rewrite pre-auto-gc sendemail-validate'
+post-merge pre-push post-rewrite pre-auto-gc sendemail-validate reference-transaction'
 
 write_env_file() {
   local hooks_dir=$1 out=$2 count=${GIT_CONFIG_COUNT:-0} tmp
@@ -304,6 +305,7 @@ install_hooks() {
 
   write_executable "$hooks_dir/commit-msg" <<EOF
 #!/usr/bin/env bash
+# managed by bin/jg-git-strip-ai-trailers.sh
 set -u
 $(quote_for_hook "$SELF") "\$1" || exit \$?
 $(runtime_chain_body "$hooks_dir")
@@ -312,6 +314,7 @@ EOF
   for name in $JG_GIT_CLIENT_HOOKS; do
     write_executable "$hooks_dir/$name" <<EOF
 #!/usr/bin/env bash
+# managed by bin/jg-git-strip-ai-trailers.sh
 set -u
 $(runtime_chain_body "$hooks_dir")
 EOF
@@ -325,6 +328,11 @@ install)
   [ "$#" -eq 3 ] || usage
   unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
   install_hooks "$2" "$3"
+  ;;
+upstream-hooks)
+  [ "$#" -eq 3 ] || usage
+  cd "$3" || exit 1
+  bash -c "$(runtime_chain_body "$2" 1)"
   ;;
 env-file)
   [ "$#" -eq 3 ] || usage

@@ -13,6 +13,9 @@
 #   jg-test-run.sh --proven-isolated
 #   jg-test-run.sh tests/<name>.test.sh [more scripts...]
 #
+# Local trunk required set (eight sequential shards, each with the CI bound):
+#   jg-test-run.sh --required-shards <base-ref> <output-dir>
+# Writes one timing JSON per shard and required.json via --aggregate-json; any shard failure refuses.
 # Inspection (no execution):
 #   jg-test-run.sh --list --all
 #   jg-test-run.sh --list --family <name>
@@ -460,7 +463,7 @@ family_for_basename() {
       printf '%s\n' session-bootstrap
       ;;
     jg-claude-stop-autoarm-live-e2e.test.sh|\
-    jg-composer-matrix-live-e2e.test.sh|jg-codex-continuity-live-e2e.test.sh|\
+    jg-composer-matrix-live-e2e.test.sh|jg-control-pi-live-e2e.test.sh|jg-codex-continuity-live-e2e.test.sh|\
     jg-codex-hook-layer-live-e2e.test.sh|jg-grok-continuity-live-e2e.test.sh|\
     jg-cursor-primary-live-e2e.test.sh|jg-harness-adapter-instructions-live-e2e.test.sh|\
     jg-devin-signals-live-e2e.test.sh|\
@@ -1227,6 +1230,7 @@ failed = 0
 skipped = 0
 total = 0
 wall_ms = 0
+failed_lanes = 0
 for path in inputs:
     doc = json.loads(path.read_text(encoding="utf-8"))
     summary = doc.get("summary") or {}
@@ -1239,6 +1243,7 @@ for path in inputs:
         "summary": summary,
     }
     lanes.append(lane)
+    failed_lanes += bool(summary.get("exit", summary.get("failed", 0)))
     total += int(summary.get("total") or 0)
     failed += int(summary.get("failed") or 0)
     skipped += int(summary.get("skipped_gate") or 0)
@@ -1259,6 +1264,7 @@ agg = {
         "failed": failed,
         "skipped_gate": skipped,
         "critical_path_duration_ms": wall_ms,
+        "failed_lanes": failed_lanes,
     },
     "scripts": all_scripts,
     "slowest": all_scripts[:15],
@@ -1917,10 +1923,10 @@ write_json_artifact() {
     die "--json requires python3 to emit a valid timing artifact"
   fi
 
-  python3 - "$out" "$started" "$finished" "$run_id" "$total" "$failed" "$skipped" "$duration" "$selection" "$records_file" "$families_file" <<'PY'
+  python3 - "$out" "$started" "$finished" "$run_id" "$total" "$failed" "$skipped" "$duration" "$selection" "$records_file" "$families_file" "${12:-0}" <<'PY'
 import json, sys
 
-out, started, finished, run_id, total, failed, skipped, duration, selection, records_file, families_file = sys.argv[1:]
+out, started, finished, run_id, total, failed, skipped, duration, selection, records_file, families_file, gate_exit = sys.argv[1:]
 
 scripts = []
 with open(records_file, encoding="utf-8") as fh:
@@ -1963,6 +1969,7 @@ doc = {
         "failed": int(failed),
         "skipped_gate": int(skipped),
         "duration_ms": int(duration),
+        "exit": int(gate_exit),
     },
     "scripts": scripts,
     "families": families,
@@ -1972,6 +1979,22 @@ with open(out, "w", encoding="utf-8") as fh:
     fh.write("\n")
 PY
 }
+
+if [ "${1:-}" = --required-shards ]; then
+  [ "$#" -eq 3 ] || die "--required-shards needs <base-ref> <output-dir>"
+  required_base=$2 required_dir=$3 required_rc=0
+  mkdir -p "$required_dir" || die "cannot create required-set output directory"
+  required_json=()
+  for required_shard in 1 2 3 4 5 6 7 8; do
+    required_file=$required_dir/shard-$required_shard.json
+    required_json+=("$required_file")
+    bash "$ROOT/bin/jg-test-run.sh" --changed --base "$required_base" --exclude-family real-herdr-gated \
+      --max-weight-ms 60000 --shard "${required_shard}of8" --gate --max-wall-ms 600000 \
+      --json "$required_file" || required_rc=1
+  done
+  bash "$ROOT/bin/jg-test-run.sh" --aggregate-json "$required_dir/required.json" "${required_json[@]}" || required_rc=1
+  exit "$required_rc"
+fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -2353,7 +2376,7 @@ if [ "${#SCRIPTS[@]}" -eq 0 ]; then
     mkdir -p "$(dirname "$JSON_PATH")"
     write_json_artifact "$JSON_PATH" "$RUN_STARTED_ISO" "$empty_finished_iso" \
       "jg-test-run-${RUN_STARTED_MS}-$$" 0 0 0 "$empty_duration" \
-      "$SELECTION_DESC" "$empty_rec" "$empty_fam"
+      "$SELECTION_DESC" "$empty_rec" "$empty_fam" "$empty_rc"
     rm -f "$empty_rec" "$empty_fam"
   fi
   exit "$empty_rc"
@@ -2856,6 +2879,7 @@ if [ -s "$RECORDS" ]; then
   done
 fi
 
+if [ -n "$MAX_WALL_MS" ] && [ "$RUN_DURATION" -gt "$MAX_WALL_MS" ]; then AGG_RC=1; fi
 if [ -n "$JSON_PATH" ]; then
   mkdir -p "$(dirname "$JSON_PATH")"
   # Families file may be unsorted; write_json reads as-is (deterministic sort in python).
@@ -2868,7 +2892,7 @@ if [ -n "$JSON_PATH" ]; then
   write_json_artifact "$JSON_PATH" \
     "$RUN_STARTED_ISO" "$RUN_FINISHED_ISO" "$RUN_ID" \
     "$TOTAL" "$FAILED" "$SKIPPED_GATE" "$RUN_DURATION" \
-    "$SELECTION_DESC" "$RECORDS" "$FAMILIES_TSV"
+    "$SELECTION_DESC" "$RECORDS" "$FAMILIES_TSV" "$AGG_RC"
   json_rc=$?
   set -e
   if [ "$json_rc" -eq 0 ]; then

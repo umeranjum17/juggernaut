@@ -14,6 +14,7 @@ Recording that PR also publishes its one-line wait on the PR page, so anyone rea
 Otherwise run `bin/jg-pr-check.sh <id> <PR url>` yourself with the URL copied from that ready signal or the resolved checks-green `jg-crew-state.sh` line - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
 `bin/jg-dod-lib.sh` owns the named-head gate on that ready signal: a ship `done:` whose named head exists only in the worker's disposable copy is not ready (`bin/jg-crew-state.sh` reports blocked, `bin/jg-pr-check.sh` refuses to register, and a Squad Lead does not publish that done upstream).
 That blocked reading is the gate working, not a stuck worker, so steer the worker on the commit the refusal names rather than waiting.
+For `local-trunk`, use the automatic exact-head landing and cleanup path in `docs/trunk-flow.md`; live and release still need the captain's recorded word.
 A direct-PR worker pushes that commit to its PR branch, and a local-only worker commits it on its ship branch.
 A no-mistakes worker re-validates it with /no-mistakes so the pipeline stays the one publisher; it never pushes from its copy.
 In no-mistakes mode the earlier `done [at=<epoch>]: {summary}` is the pipeline handoff and is not gated.

@@ -338,12 +338,12 @@ every_project_local_only() {
   for proj in "$PROJECTS"/*; do
     [ -d "$proj" ] || continue
     mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" "${proj##*/}" 2>/dev/null) || return 1
-    [ "${mode%% *}" = local-only ] || return 1
+    { [ "${mode%% *}" = local-only ] || [ "${mode%% *}" = local-trunk ]; } || return 1
   done
   while IFS= read -r name; do
     [ -d "$PROJECTS/$name" ] || return 1
     mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" "$name" 2>/dev/null) || return 1
-    [ "${mode%% *}" = local-only ] || return 1
+    { [ "${mode%% *}" = local-only ] || [ "${mode%% *}" = local-trunk ]; } || return 1
     seen=1
   done < <(sed -nE 's/^- (.+)$/\1/p' "$DATA/projects.md" | sed -E 's/ (\[| - ).*//')
   [ "$seen" = 1 ]
@@ -369,7 +369,7 @@ fleet_sync_relay_filtered_output() {
   local tmp=$1 line
   while IFS= read -r line; do
     case "$line" in
-      *': skipped: local-only project') ;;
+      *': skipped: local-only project'|*': skipped: local-trunk project') ;;
       *': skipped: no origin remote') ;;
       *': skipped:'*) echo "FLEET_SYNC: $line" ;;
       *': STUCK:'*) echo "FLEET_SYNC: $line" ;;

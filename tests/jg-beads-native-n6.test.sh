@@ -18,8 +18,8 @@ mkdir -p "$H/config" "$H/state" "$H/data" "$T/user" "$T/real"
 export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
 printf '%s\n' "$BEADS_DIR" > "$H/config/beads-dir"
 jail=()
-command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
-"${jail[@]}" "$WRAPPER" init --prefix jg >/dev/null 2>&1 || fail "init"
+command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
+"${jail[@]}" "$WRAPPER" init --prefix jg >"$T/real-init.log" 2>&1 || fail "init: $(cat "$T/real-init.log")"
 
 bd_() { "${jail[@]}" "$WRAPPER" "$@" 2>/dev/null; }
 tasks() {  # <backlog args...>: the CLI on the Beads home, stdout and stderr together.

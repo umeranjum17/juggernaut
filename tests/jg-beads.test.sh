@@ -1098,8 +1098,8 @@ else
   mkdir -p "$T/real"
   export BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
   jail=()
-  command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
-  "${jail[@]}" "$WRAPPER" init --prefix jg 2>/dev/null || fail "real init"
+  command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
+  "${jail[@]}" "$WRAPPER" init --prefix jg >"$T/real-init.log" 2>&1 || fail "real init: $(cat "$T/real-init.log")"
   [ -e "$T/real/.beads.gate.lock" ] || fail "the gate lock must sit beside the store"
   assert_contains "$("${jail[@]}" "$WRAPPER" dolt sql -q 'select count(*) as dirty from dolt_status' 2>&1)" "| 0 " "init must commit the rule"
   "${jail[@]}" "$WRAPPER" check >/dev/null || fail "real check"

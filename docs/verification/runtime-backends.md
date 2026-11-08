@@ -2870,3 +2870,21 @@ The task's `live-proof/` artifacts hold the rerunnable script and the full trans
 This live proof covers the watcher and queue boundary; it does not establish live daemon-consumer delivery.
 `bin/jg-test-run.sh tests/jg-daemon.test.sh` exercises that consumer routing separately with portable regressions for busy escalation and busy-bookkeeping failures in away and quiet mode.
 Repeat the hooked-worker check above, or the Pi script in the `busy-stuck-rootcause` live-proof artifacts, before publication if watcher or task-inbox busy code changes; `bin/jg-test-run.sh tests/jg-task-inbox.test.sh` refreshes the portable ladder regressions.
+
+## Pi multiline editor discard and managed native switch
+
+Verified on 2026-11-08 with Pi 1.0.0, codex-cli 0.159.2 and Herdr 0.9.1.
+`JG_CONTROL_PI_LIVE=1 bash tests/jg-control-pi-live-e2e.test.sh` drives the real control and spawn commands in a named Herdr lab, then prints:
+
+```text
+ok - real Pi multiline clear and managed Codex switch preserve work, child state and queued input
+```
+
+Pi's Ctrl+U deletes to the current line start, so the previous three-press clear left an eight-line draft pending.
+The adapter's explicit discard uses one Ctrl+C on proven pending editor input; ordinary exit still refuses that draft, and an unowned target refuses before any clear key.
+The live journey requires the replacement's `SWITCH_OK` response and a verified native exit, while checking the original Pi PID disappeared and HEAD, dirty/untracked work, child state and queued instructions stayed intact.
+It uses the installed Codex CLI with its normal credential location, handles only the exact synthetic lab folder's native trust choice, and copies no credentials.
+`JG_CONTROL_PI_PACKAGES_JSON` selects a JSON array of installed Pi package paths for the same journey with disposable extension memory and session state; this variant also passed.
+Future verification defaults to the cheap native `gpt-6-luna` model.
+A separate observed Hermes Memory 0.9.9 shared-store shutdown wait is outside this guarantee: the final shutdown handler remained live, so control correctly refused a replacement instead of declaring it stopped.
+The current clear mechanics are owned by `bin/jg-control-lib.sh` and `bin/harness-quirks/pi.json`.
