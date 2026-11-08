@@ -193,6 +193,12 @@ lead_nokey=$(lead_gate)
 printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$home" > "$lead/.jg-squad-lead-parent"
 jq --arg k "$cardkey" --arg h "$head" '.items = [{kind:"evidence",key:$k,run:{commit:$h}}]' "$work/board.json" > "$work/board.tmp" && mv "$work/board.tmp" "$work/board.json"
 [[ $(lead_gate | tail -1) == rc=0 ]] && ok "lead home: the merge gate finds Main's public key from the parent binding" || no "lead home did not find Main's key: $(lead_gate)"
+# A lead home signs with Main's key in place: the key is never copied, and the signature lands in the lead's own data.
+rm -rf "$lead/data/lane/proof-authorizations"
+[[ $(lead_gate | tail -1) == rc=1 ]] && ok "lead home: without its signature the gate refuses" || no "lead gate passed with no signature"
+lead_sign=$(env -u JG_MAIN_HOME PATH="$work/bin:$PATH" XDG_DATA_HOME="$work/data" JG_HOME="$lead" "$addons/owner-rules/bin/jg-owner-rules-gate.sh" sign lane "$head" "$pr" 2>&1)
+[[ $lead_sign == *"signed the local receipt"* && -f "$lead/data/lane/proof-authorizations/$head.sig" && ! -e "$lead/config/owner-rules-proof.key" ]] && ok "lead home: signs with Main's key, key not copied" || no "lead sign: $lead_sign"
+[[ $(lead_gate | tail -1) == rc=0 ]] && ok "lead home: the gate accepts the lead's own signature" || no "lead signature rejected: $(lead_gate)"
 printf 'schema=jg-squad-lead-parent.v1\nroute=remote\n' > "$lead/.jg-squad-lead-parent"
 lead_bad=$(lead_gate)
 [[ $lead_bad == *"fix: export JG_MAIN_HOME=<absolute path of Main's home>"* && $lead_bad == *rc=1 ]] && ok "lead home: an unusable binding names the exact fix" || no "unusable binding: $lead_bad"

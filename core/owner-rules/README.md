@@ -34,7 +34,7 @@ A refusal exits 1 before `jg-brief.sh` writes `data/<id>/brief.md`, with a one-l
 
 3. **Locally signed done-done receipt.** The gate requires a sealed clean run at the exact merge head and refuses an unsigned or changed receipt, even when `merge-card receipt` accepts its run record.
    Run `jg-owner-rules-gate.sh init-key` once in the captain's home to create its local key pair.
-   After the passed-proof recipe succeeds on the captain's machine, `jg-owner-rules-gate.sh sign <id> <head> <pr-url|->` signs the normalized receipt with the private key at `${JG_MAIN_HOME:-$JG_HOME}/config/owner-rules-proof.key`.
+   After the passed-proof recipe succeeds on the captain's machine, `jg-owner-rules-gate.sh sign <id> <head> <pr-url|->` signs the normalized receipt with the private key at `${JG_MAIN_HOME:-$JG_HOME}/config/owner-rules-proof.key`; in a lead home with `JG_MAIN_HOME` unset, that is Main's home found through `.jg-squad-lead-parent`, the key is read in place and never copied, and the signature is written under the lead's own `data/`.
    The gate verifies it with `${JG_MAIN_HOME:-$JG_HOME}/config/owner-rules-proof.pub` and binds the signature to the task, PR scope, exact head, and receipt contents.
    Keep both keys out of the repository; the private key stays on the captain's machine.
    A missing signature can be created only by running the explicit signing command after the proof recipe succeeds.
