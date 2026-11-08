@@ -1075,6 +1075,7 @@ test_watch_restart_attaches_to_healthy_peer() {
   printf '%s\n' "$dir" > "$state/.watch.lock/jg-home"
   printf '%s\n' "$WATCH" > "$state/.watch.lock/watcher-path"
   printf '%s\n' "$identity" > "$state/.watch.lock/pid-identity"
+  printf '%s\n' "$identity" > "$state/.watch.lock/scan-complete"
   touch "$state/.last-watcher-beat"
   PATH="$fakebin:$PATH" JG_HOME="$dir" JG_POLL=5 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_ARM_ATTACH_POLL=0.1 JG_ARM_CONFIRM_TIMEOUT=1 "$WATCH_ARM" --restart > "$out" &
   armpid=$!
@@ -1490,6 +1491,8 @@ test_arm_waits_for_peer_beacon_after_child_stands_down() {
   printf '%s\n' "$dir" > "$state/.watch.lock/jg-home"
   printf '%s\n' "$WATCH" > "$state/.watch.lock/watcher-path"
   printf '%s\n' "$identity" > "$state/.watch.lock/pid-identity"
+  printf '%s\n' foreign-identity > "$state/.watch.lock/scan-complete"
+  touch "$state/.last-watcher-beat"
   # Same budget contract as the self-eviction case: the owned child's real
   # startup and stand-down happen inside the arm's confirmation window, so the
   # window stays production-sized (issue #2844).
@@ -1507,6 +1510,7 @@ test_arm_waits_for_peer_beacon_after_child_stands_down() {
   done
   grep -qF "watcher: already running pid $peer" "$state"/.watch-arm-output.* 2>/dev/null \
     || fail "arm child did not stand down behind the peer watcher"
+  printf '%s\n' "$identity" > "$state/.watch.lock/scan-complete"
   touch "$state/.last-watcher-beat"
   i=0
   while [ "$i" -lt 80 ]; do

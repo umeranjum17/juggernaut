@@ -25,10 +25,9 @@
 # escalates. Every other rung, once reached, fires again every
 # JG_PROMPT_REALERT_SECS while the wait stays open, and a new supervisor session
 # re-presents every open wait on its first tick.
-# A re-raise wakes a model only when the wait changed since the last raise (new
-# owner, reason, deadline, blocker text, or one hop up the ladder); an unchanged
-# open wait is logged to state/.waiting-timers/.unchanged.log and the clock moves
-# on, with one backstop raise per hop once the hop's longest interval has passed.
+# An unresolved wait re-fires at every due recheck until its source clears.
+# Queue acknowledgement is not handling. Expected pauses retain the change gate
+# and its bounded backstop; unchanged pauses are logged without another wake.
 # Parent reports use the existing local/remote parent channel. Only the main
 # home posts a board card, so only what Main cannot settle reaches the captain.
 # An episode key is waiting-timer-<home>-<task>-g<generation>-<source key>, so a
@@ -82,7 +81,7 @@ jg_wait_timer_report() {  # <status-line>
   }
 }
 
-# Re-raise gate (README "Re-raise only when the wait changed"). The sidecar
+# Pause re-raise gate (README "Re-raise until the wait is handled"). The sidecar
 # state/.waiting-timers/.raised/<task> holds what the last raise said: a
 # fingerprint of the wait, when that hop's first raise happened, and whether the
 # hop's backstop raise was spent. It lives beside the episode record, not in it,
@@ -742,11 +741,12 @@ EOF
     for native in "$parent" "$card" "$last"; do [ "$native" -le "$fired" ] || fired=$native; done
     [ "$last" -eq 1 ] || [ "$((now - fired))" -ge "$every" ] || continue
     forced=0; [ "$last" -ne 1 ] || forced=1
+    # Reading or acknowledging a wake is not an unblock. An unresolved blocker
+    # must ring at every due recheck until its source clears, even unchanged.
+    status_is_paused "$declaration" || forced=1
     last=$now
     jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
-    # The clock has moved on. Wake a model only if the wait changed since its last
-    # raise, or this hop has now outlived its longest interval without a backstop
-    # raise; a new supervisor session (last=1) is always told again.
+    # Expected pauses keep the change gate; unresolved waits always re-fire.
     if status_is_paused "$declaration"; then
       hop=pause hopstart=$owner ceiling=$paused_alert
     else

@@ -3783,17 +3783,7 @@ watcher_stop_signals
 # ${BASHPID:-$$} from this same main shell). Read directly, never via a command
 # substitution, so it matches the stored holder pid for the self-eviction check.
 WATCHER_PID=${BASHPID:-$$}
-# Retain the last proven scan through handoff. Do not renew it until this
-# cycle makes progress: a stalled successor must still age past grace.
-# A cycle that starts over a beacon still fresh took over from a healthy
-# predecessor (a --take-over, or a hand-off after a delivered wake), so its
-# first scan may publish at each finished unit like any later scan
-# (watcher_beat's header). One that starts over a stale or absent beacon is
-# recovering a lapse and keeps proving it with a whole scan.
-WATCH_BEAT_INHERITED=0
-_beat_age=$(jg_path_age "$STATE/.last-watcher-beat" 2>/dev/null || echo)
-case "$_beat_age" in ''|*[!0-9]*) ;; *) [ "$_beat_age" -lt "$WATCHER_STALE_GRACE" ] && WATCH_BEAT_INHERITED=1 ;; esac
-unset _beat_age
+# Retain the predecessor's beacon until this cycle completes real work.
 printf '%s\n' "$JG_HOME" > "$WATCH_LOCK/jg-home" || true
 printf '%s\n' "$WATCH_PATH" > "$WATCH_LOCK/watcher-path" || true
 # shellcheck disable=SC2034 # Consumed by wake() in the separately linted transition owner.
@@ -3893,16 +3883,9 @@ resurface_after_downtime() {
 # still ages past the grace and the real detector still fires. Best-effort: a
 # transient write failure must not abort a running scan, and the next progress
 # point retries it.
-# Only a cycle that has already proven one complete scan, or that started over
-# a still-fresh beacon from a healthy predecessor (a take-over; its first scan
-# can outlast the grace while the retained beacon ages), publishes mid-scan.
-# Any other first scan announces nothing until it finishes, so the arm's
-# startup confirmation keeps requiring resumed supervision and a first scan
-# that hangs in its first check is still not reported healthy. The supervision
-# read covers that first scan through its live-holder rule instead
-# (bin/jg-supervision-lib.sh).
+# A completed bounded unit proves progress even in a recovering first scan.
+# A PID alone, or a first check that hangs, never reaches this function.
 watcher_beat() {
-  [ "${WATCH_SCAN_COMPLETE:-0}" = 1 ] || [ "${WATCH_BEAT_INHERITED:-0}" = 1 ] || return 0
   touch "$STATE/.last-watcher-beat" 2>/dev/null || true
 }
 
@@ -4186,6 +4169,10 @@ while :; do
   if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" != "$WATCHER_PID" ]; then
     exit 0
   fi
+
+  # Due board/landing checks must run before queue resurfacing or recovery can
+  # exit this cycle. Otherwise an urgent queue can starve ready/PASS work forever.
+  run_fast_checks
 
   # One window inventory serves this whole cycle: the stale ladder, the busy reads
   # and the event wait all read it instead of re-walking every meta record per
@@ -4471,7 +4458,6 @@ EOF
     "$SCRIPT_DIR/jg-comms-feed.sh" sync >/dev/null 2>&1 || true
   fi
 
-  run_fast_checks
   run_due_checks
   if [ -n "$signal_wake" ]; then
     wake "$signal_wake"
@@ -4853,13 +4839,11 @@ EOF
   # Re-delivering rows the ordinary scan already recorded is the resurface
   # timer's job (own_queue_resurface), not a second wake path here.
 
-  # Renew liveness only after a complete supervision scan. The predecessor's
+  # Complete the scan's liveness publication before startup readiness. The predecessor's
   # beacon stays readable during handoff but keeps its original age while
   # checks block. Actionable wakes stamp in watcher_cleanup after lock release.
   touch "$STATE/.last-watcher-beat" || exit 1
-  # This cycle has now proven one whole scan, so the bounded units of every
-  # later scan may publish liveness themselves (watcher_beat's header).
-  WATCH_SCAN_COMPLETE=1
+  printf '%s\n' "$JG_WATCH_DELIVERY_IDENTITY" > "$WATCH_OWNER_DIR/scan-complete" || exit 1
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
   # else the blind poll sleep. See event_wait_or_sleep.

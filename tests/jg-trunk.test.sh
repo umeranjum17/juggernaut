@@ -380,10 +380,33 @@ test_the_registered_check_lands_a_proved_task_without_a_human() {
 }
 
 test_the_watcher_runs_the_landing_check_on_its_fast_tick() {
-  # a done must start the landing within seconds in every home, so the watcher's 30-second tick runs the check
-  awk '/^run_fast_checks\(\)/,/^}/' "$ROOT/bin/jg-watch.sh" | grep -q 'core/trunk-landing/trunk-landing.sh" check' \
-    || fail "the watcher's fast tick must run core/trunk-landing/trunk-landing.sh check"
-  pass "the watcher's fast tick runs the landing check"
+  local c out rc=0 st
+  world outer-watch
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  printf 'off\n' > "$HOME_D/config/wake-bus"
+  lane ready one; c=$(git -C "$PROJ" rev-parse fm/ready)
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/tmux"; chmod +x "$W/fakebin/tmux"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$W/fakebin/systemctl"; chmod +x "$W/fakebin/systemctl"
+  printf '#!/usr/bin/env bash\nsleep 0.2\nexec %s "$@"\n' "$(command -v setsid)" > "$W/fakebin/setsid"; chmod +x "$W/fakebin/setsid"
+  JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" bash -c \
+    '. "$1"; jg_wake_append check urgent "check: waiting-state urgent blocker"' _ "$ROOT/bin/jg-wake-lib.sh" \
+    || fail "could not queue the urgent wake"
+  JG_HOME="$HOME_D" "$ROOT/bin/jg-bus.sh" watcher oldest >/dev/null || fail "could not observe the queued wake"
+  sleep 2
+  out=$(env -u JG_TASK_ID PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" \
+    JG_STATE_OVERRIDE="$HOME_D/state" JG_CONFIG_OVERRIDE="$HOME_D/config" JG_POLL=1 JG_SIGNAL_GRACE=0 \
+    JG_WATCH_HANDLING_SUCCESSOR=1 JG_SQUAD_LEAD_WAKE_STALL_SECS=1 JG_FAST_CHECK_INTERVAL=0 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 \
+    timeout 60 "$HOME_D/bin/jg-watch.sh" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "outer watcher failed ($rc): $out"
+  assert_contains "$out" 'check: waiting-state urgent blocker' 'the urgent wake must still be delivered'
+  st="$HOME_D/data/jg-trunk-landing/ready.$c.state"
+  [ -e "$st" ] || fail "urgent queue exit skipped the eligible ready/PASS landing check: $out"
+  printf 'outer-check: ready/PASS dispatch exists before urgent wake exit; fixture=%s\n' "$W"
+  for _ in $(seq 1 600); do grep -Eq '^landed( |$)' "$st" && break; sleep 0.1; done
+  grep -Eq '^landed( |$)' "$st" || fail "detached landing did not finish: $(cat "$st" "$HOME_D/data/jg-trunk-landing/ready.$c.log")"
+  [ "$(tip)" = "$c" ] || fail "outer watcher dispatched but did not land the exact ready head"
+  [ ! -e "$W/live-moves" ] || fail "outer watcher must never release or go live"
+  pass 'real outer watcher dispatches and lands ready/PASS before an urgent queued wake exits; never goes live'
 }
 
 test_the_landing_check_cuts_the_next_trunk_once_the_release_merged() {
@@ -584,6 +607,11 @@ test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes() 
   [ "$rc" = 2 ] || fail "an unknown commit must exit 2, got $rc"
   pass 'jg-home-contained proves tree containment: same bytes, a superseding trunk commit, or the named uncontained paths'
 }
+
+if [ "${JG_TRUNK_OUTER_ONLY:-0}" = 1 ]; then
+  test_the_watcher_runs_the_landing_check_on_its_fast_tick
+  exit
+fi
 
 test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection
 test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes

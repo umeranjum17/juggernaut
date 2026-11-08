@@ -162,9 +162,8 @@ test_lib_switch_and_trust_dialogs() {
 # them shows the pane unblocked, yet the wait is never dropped. An approvable
 # read is approved again every interval, a secrets read is rejected and the
 # worker is told why, and any other prompt wakes Main once at first sight. The
-# wait-timers chain then re-checks the unchanged wait every interval without waking
-# a model: each silent re-check is a line in state/.waiting-timers/.unchanged.log
-# (core/wait-timers/README.md "Re-raise only when the wait changed").
+# wait-timers chain then re-checks the unchanged wait every interval and raises its owner again until the source clears
+# (core/wait-timers/README.md "Re-raise until the wait is handled").
 test_prompt_still_up_is_acted_on_every_interval() {
   command -v tmux >/dev/null 2>&1 || { printf '# skip: tmux not found\n'; return 0; }
   local lab w=jglab:jg-lead1 n approvals wakes ack ack_args
@@ -199,22 +198,22 @@ test_prompt_still_up_is_acted_on_every_interval() {
       read -ra ack_args <<< "${ack#*jg-wake-drain.sh}"
       [ -z "$ack" ] || JG_HOME="$lab" JG_STATE_OVERRIDE="$lab/state" "$ROOT/bin/jg-wake-drain.sh" \
         "${ack_args[@]}" >/dev/null 2>&1 || fail "the wake acknowledgement failed: $(cat "$TMP_ROOT/drain.err")"
-      [ "$(grep -c "$2" "${5:-$1}" 2>/dev/null || printf 0)" -lt "$3" ] \
+      [ "$(grep -c "$2" "${5:-$1}" 2>/dev/null || true)" -lt "$3" ] \
         || [ "$(grep -c '"root":"inbox"' "$lab/state/prompt-approvals.jsonl" 2>/dev/null || true)" -lt "${4:-0}" ] || return 0
     done
   }
 
   # Main is woken at first sight. The prompt stays up and unchanged, so the wait-timers chain
-  # re-checks it every interval and logs each silent re-check instead of waking a model again.
-  silent="$lab/state/.waiting-timers/.unchanged.log"
+  # re-alerts its owner every interval until an action clears the source.
+  realert_log="$TMP_ROOT/a.out"
   show "$TMP_ROOT/approvable.txt"
-  watch_until "$TMP_ROOT/a.out" "[[:space:]]lead1[[:space:]].*not raised" 2 3 "$silent"
+  watch_until "$TMP_ROOT/a.out" "check: waiting-state lead1 .*still open" 2 3 "$realert_log"
   approvals=$(grep -c '"root":"inbox"' "$lab/state/prompt-approvals.jsonl" 2>/dev/null || true)
   wakes=$(grep -c "stale: $w (permission prompt: .*not answered: inbox; the approval sent under a minute ago did not take" "$TMP_ROOT/a.out" || true)
   n=$(grep -c "check: waiting-state lead1 (prompt, .*level=owner; still open" "$TMP_ROOT/a.out" || true)
-  silent_n=$(grep -c "[[:space:]]lead1[[:space:]].*not raised" "$silent" 2>/dev/null || printf 0)
-  [ "${approvals:-0}" -ge 3 ] && [ "$wakes" -ge 1 ] && [ "$silent_n" -ge 2 ] && [ "$n" -eq 0 ] \
-    || fail "an approvable prompt left on screen was not re-approved every interval, woken at first sight, and re-checked silently by the chain (approvals=$approvals wakes=$wakes silent re-checks=$silent_n re-alerts=$n): $(cat "$TMP_ROOT/a.out")"
+  realerts=$(grep -c "check: waiting-state lead1 .*still open" "$realert_log" 2>/dev/null || true)
+  [ "${approvals:-0}" -ge 3 ] && [ "$wakes" -ge 1 ] && [ "$realerts" -ge 2 ] && [ "$n" -ge 1 ] \
+    || fail "an approvable prompt left on screen was not re-approved every interval, woken at first sight, and re-alerted by the chain (approvals=$approvals wakes=$wakes re-alerts=$realerts re-alerts=$n): $(cat "$TMP_ROOT/a.out")"
 
   show "$TMP_ROOT/secret.txt"
   watch_until "$TMP_ROOT/s.out" "stale: $w (permission prompt" 1
@@ -226,17 +225,17 @@ test_prompt_still_up_is_acted_on_every_interval() {
     || fail "a rejection that did not take was not reported: $(cat "$TMP_ROOT/s.out")"
 
   show "$TMP_ROOT/outside.txt"
-  # Silent re-checks are counted from here: the lines above belong to earlier scenarios' prompts.
-  base=$(grep -c "[[:space:]]lead1[[:space:]].*not raised" "$silent" 2>/dev/null || printf 0)
-  watch_until "$TMP_ROOT/b.out" "[[:space:]]lead1[[:space:]].*not raised" $((base + 2)) 0 "$silent"
+  # Count re-alerts for the external prompt separately.
+  realert_log="$TMP_ROOT/b.out"
+  watch_until "$TMP_ROOT/b.out" "check: waiting-state lead1 .*still open" 2 0 "$realert_log"
   n=$(grep -c "stale: $w (permission prompt: .*not answered: outside this fleet's own roots" "$TMP_ROOT/b.out" || true)
   [ "$n" -eq 1 ] || fail "an unanswered prompt did not wake Main exactly once at first sight (wakes=$n): $(cat "$TMP_ROOT/b.out")"
-  silent_n=$(grep -c "[[:space:]]lead1[[:space:]].*not raised" "$silent" 2>/dev/null || printf 0)
-  [ "$silent_n" -ge $((base + 2)) ] || fail "the chain did not re-check an unanswered prompt every interval (silent re-checks=$((silent_n - base))): $(cat "$TMP_ROOT/b.out")"
+  realerts=$(grep -c "check: waiting-state lead1 .*still open" "$realert_log" 2>/dev/null || true)
+  [ "$realerts" -ge 2 ] || fail "the chain did not re-alert an unanswered prompt every interval (re-alerts=$realerts): $(cat "$TMP_ROOT/b.out")"
   n=$(grep -c "check: waiting-state lead1 (prompt, .*level=owner; still open.* source=\[prompt: Access external directory $lab/projects" "$TMP_ROOT/b.out" || true)
-  [ "$n" -eq 0 ] || fail "an unchanged unanswered prompt woke a model again instead of staying silent (re-alerts=$n): $(cat "$TMP_ROOT/b.out")"
+  [ "$n" -ge 1 ] || fail "an unchanged unanswered prompt was not raised after acknowledgement (re-alerts=$n): $(cat "$TMP_ROOT/b.out")"
   [ "$(grep -c '"root"' "$lab/state/prompt-approvals.jsonl")" = "$approvals" ] || fail "a read outside the roots was approved"
-  pass "a prompt that never leaves the screen is approved, rejected, or re-checked silently every interval"
+  pass "a prompt that never leaves the screen is approved, rejected, or re-alerted every interval"
 }
 
 test_allowed_reads_are_approved

@@ -30,7 +30,7 @@
 #   watcher: started pid=<N> (beacon fresh)              - it launched one and confirmed it
 #   watcher: attached pid=<N> (beacon <age>s)            - a live+fresh successor holds the lock;
 #                                                          this arm attaches and follows it
-#   watcher: FAILED - no live watcher with a fresh beacon  - could not confirm one
+#   watcher: FAILED - no live watcher with a fresh beacon and completed startup scan  - could not confirm one
 #   watcher: FAILED - cycle ended without an actionable reason
 #                                                        - a clean cycle ended with no wake and no
 #                                                          verified healthy successor
@@ -312,17 +312,15 @@ clear_stale_recorded_watcher_lock() {
   jg_recovery_transition "$STATE/.watcher-down" clear-stale-lock "$WATCH_LOCK" downtime
 }
 
-# A watcher is "healthy" iff the lock names a live process that is genuinely THIS
-# home's watcher (the identity match guards against a recycled/reused pid) AND the
-# liveness beacon is fresh within GRACE. Sets HEALTHY_PID on success. This is the
-# single honesty gate: a dead pid, a reused pid, or a stale beacon all fail it, so
-# this script can never report a watcher that is not really there.
+# Startup confirmation requires a live identity-matched watcher, a fresh progress
+# beacon and a complete first scan in that identity's lock. Sets HEALTHY_PID on success.
 HEALTHY_PID=
 HEALTHY_IDENTITY=
 healthy_watcher() {
   HEALTHY_PID=
   HEALTHY_IDENTITY=
   jg_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$JG_HOME" || return 1
+  [ ! -L "$WATCH_LOCK/scan-complete" ] && [ "$(cat "$WATCH_LOCK/scan-complete" 2>/dev/null)" = "$JG_WATCHER_HEALTHY_IDENTITY" ] || return 1
   HEALTHY_PID=$JG_WATCHER_HEALTHY_PID
   HEALTHY_IDENTITY=$JG_WATCHER_HEALTHY_IDENTITY
 }
@@ -690,7 +688,7 @@ trap 'handle_arm_signal TERM 143' TERM
 trap 'handle_arm_signal INT 130' INT
 
 child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
-  echo "watcher: FAILED - no live watcher with a fresh beacon"
+  echo "watcher: FAILED - no live watcher with a fresh beacon and completed startup scan"
   exit 1
 }
 # date(1) exposes whole seconds. Keep the configured confirmation budget from
@@ -832,5 +830,5 @@ cleanup_child
 wait "$child" 2>/dev/null
 rc=$?
 cycle_log_append "$rc" "$(cycle_signal_name "$rc")" confirmation-timeout none
-echo "watcher: FAILED - no live watcher with a fresh beacon"
+echo "watcher: FAILED - no live watcher with a fresh beacon and completed startup scan"
 exit 1
