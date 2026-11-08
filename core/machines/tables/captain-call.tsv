@@ -1,0 +1,13 @@
+machine	captain-call	task held for the captain	bin/jg-captain-hold.sh
+state	none	initial	No captain call is open on this task, and no captain answer is recorded.	-
+state	open	normal	The task waits for the captain's answer.	-
+state	answered	normal	The captain's answer is recorded on the task.	-
+state	diverged	normal	The worker's log says the call is resolved, but the backlog still holds the task for the captain.	-
+edge	none	hold	open	bin/jg-captain-hold.sh:command_hold	bin/jg-captain-hold.sh hold {id} --reason <reason>	the task exists and is not closed	call-hold
+edge	open	answer	answered	bin/jg-captain-hold.sh:command_answer	bin/jg-captain-hold.sh answer {id} --decision-file <file> [--release]	the file holds the captain's words	call-answer
+edge	open	reconcile	none	bin/jg-captain-hold.sh:reconcile_close	bin/jg-captain-hold.sh reconcile close {id} --evidence-file <file>	a board request is pending and the file holds the evidence that made the call moot	call-reconcile
+edge	open	resolved-in-log	diverged	bin/jg-lavish-guard.sh:--append	-	the worker writes a resolved line carrying the call's key	call-diverge
+edge	diverged	answer	answered	bin/jg-captain-hold.sh:command_answer	bin/jg-captain-hold.sh answer {id} --decision-file <file> [--release]	the file holds the captain's words	call-diverged-answer
+edge	diverged	reconcile	none	bin/jg-captain-hold.sh:reconcile_close	bin/jg-captain-hold.sh reconcile close {id} --evidence-file <file>	a board request is pending and the file holds the evidence that made the call moot	call-diverged-reconcile
+edge	answered	hold	open	bin/jg-captain-hold.sh:command_hold	bin/jg-captain-hold.sh hold {id} --reason <reason>	the task is held again after its answer	call-rehold
+observer	bash "$JG_MACHINES_TABLES/../observers/call.sh" "$1"
