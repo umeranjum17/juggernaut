@@ -54,6 +54,10 @@ export JG_GATE_REFUSE_BYPASS=1
 # JG_TEST_HARNESS harness pin). Normal primary launches do not arm it, so a
 # leaked harness pin alone stays inert outside a suite.
 export JG_TEST_SEAM=1
+# A fixture spawn that never chooses a model still launches: bin/jg-spawn.sh refuses an unchosen model
+# (owner rule "No worker lane on Luna") unless both this and JG_TEST_SEAM are set.
+# tests/jg-spawn-model.test.sh unsets it, because refusing the unchosen model is what it proves.
+export JG_SPAWN_TEST_MODEL_OPTIONAL=1
 # A fixture binds no port and installs no service: bin/jg-stack.sh up is a no-op under this.
 # tests/jg-stack.test.sh unsets it, because starting the stack is what it proves.
 export JG_STACK_SKIP=1

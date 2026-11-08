@@ -196,6 +196,10 @@ Such a model fails every turn with a provider error and is retried at once, so t
 An OpenCode launch with no model starts on the model its own TUI used last, so that model is checked the same way and the refusal says to pin one.
 `JG_ALLOW_NON_AGENT_MODEL=1` lets a deliberate pick launch anyway.
 
+A model the list excludes may still run one job.
+`config/model-ban-lifts` holds one line per lift, `<task-id> <provider>/<model> <scope words>`, and `bin/jg-model-allowlist.sh watch` stays silent for exactly that task and model.
+A line with no scope, a comment, and any other task running the same model lift nothing.
+
 ## Pi supervision branch
 
 On a Pi primary, an in-process supervision branch handles eligible task-local wake rows and selected heartbeat reviews.
@@ -1731,6 +1735,7 @@ Squad Lead homes inherit the file with the other shared config.
 | Tool tag | Read by | What the entry sets |
 |---|---|---|
 | `squad-lead` | `bin/jg-harness.sh` (`squad_lead_line`), used by `bin/jg-spawn.sh` and `bin/jg-control.sh` | Harness, model, and effort of a Squad Lead launch. A per-lead pin in `config/squad_leads/<id>/harness` still wins, and the entry wins over `config/squad-lead-harness`. |
+| `worker-default` | `bin/jg-spawn.sh` | Model a worker launch records when no model was chosen and the entry names the launching harness. `bin/jg-spawn.sh` otherwise refuses a spawn or relaunch whose model is empty or `default`. |
 | `done-done-judge` | `core/merge-card/merge-card` | Model that judges the Evidence card. The harness must be `pi`, and the model carries its provider prefix. |
 | `supervision-engine` | `bin/jg-supervision-engine-lib.sh` | Default model of the supervision engine when its harness matches the entry. |
 | `no-mistakes-review` | `core/pipeline-quota-failover/pi-quota-failover` | Model of the no-mistakes review chain, and of the account-pool route that names no model. The harness must be `pi`, and the model carries its provider prefix. The installed wrapper finds the home through `PI_QUOTA_FAILOVER_JG_HOME`, then `JG_HOME`, then `~/juggernaut`; `PI_QUOTA_FAILOVER_CHAIN` still wins. |

@@ -121,7 +121,10 @@
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
 #   axes chosen by juggernaut at intake. A model the home's
 #   config/model-allow-list.json does not allow is refused here with one line
-#   (bin/jg-model-allowlist.sh owns that rule). They are only threaded into harnesses whose
+#   (bin/jg-model-allowlist.sh owns that rule). A spawn or relaunch whose model is empty or
+#   `default` is refused for every harness and kind, naming the owner rule "No worker lane on
+#   Luna", unless the home declares a worker-default entry for that harness in
+#   config/tool-models.json; the resolved model is what the task record keeps. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed. Ultra is the explicit
 #   exception: bin/jg-harness.sh validate-native-effort owns its model scope;
@@ -796,6 +799,8 @@ spawn_trunk_branch() {
 . "$SCRIPT_DIR/jg-worker-account-lib.sh"
 # shellcheck source=bin/jg-model-allowlist.sh
 . "$SCRIPT_DIR/jg-model-allowlist.sh"
+# shellcheck source=bin/jg-tool-models.sh
+. "$SCRIPT_DIR/jg-tool-models.sh"
 # Account pool (core/account-pool): the pool hook every launch and relaunch routes through, and a
 # no-op in a fixture checkout copied from bin/ alone, which carries no core/ tree.
 _jg_ap=$SCRIPT_DIR/../core/account-pool/bin/jg-account-pool-lib.sh
@@ -2227,6 +2232,20 @@ if [ "$KIND" = squad_lead ] && [ -z "$ARG3" ]; then
       *) echo "warning: config/squad-lead-harness effort token '$SM_EFFORT' is not one of low, medium, high, xhigh, max, ultra; ignoring" >&2 ;;
       esac
     fi
+  fi
+fi
+# No lane runs on a model nobody chose: an empty or `default` model is refused for every harness and
+# every kind, on a fresh spawn and on a relaunch. A harness default reaches a task record only when
+# the home declares it (a "worker-default" rule in config/tool-models.json that names this harness),
+# and then it is recorded as the resolved model. A raw launch command names no adapter, so it has no model to choose. JG_TEST_SEAM=1 with JG_SPAWN_TEST_MODEL_OPTIONAL=1
+# (tests/lib.sh arms both for fixture suites that never choose a model) steps this aside.
+if { [ -z "$MODEL" ] || [ "$MODEL" = default ]; } && [ "$RAW_LAUNCH" != 1 ]; then
+  declared_model=$(jg_tool_models_model worker-default "$HARNESS" 2>/dev/null) || declared_model=''
+  if [ -n "$declared_model" ]; then
+    MODEL=$declared_model
+  elif ! { [ "${JG_TEST_SEAM:-}" = 1 ] && [ "${JG_SPAWN_TEST_MODEL_OPTIONAL:-}" = 1 ]; }; then
+    echo "error: spawn refused - task $ID has no chosen model for $HARNESS, and no worker lane runs on a harness default (owner rule 2026-11-08 \"No worker lane on Luna\"). Pass --model <name> (a dispatch profile supplies it), or declare this harness's default with a worker-default rule in config/tool-models.json" >&2
+    exit 1
   fi
 fi
 # Ultra is an explicit native capability, never a Pi thinking-level alias.
