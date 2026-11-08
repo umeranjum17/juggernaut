@@ -754,6 +754,7 @@ tests/jg-merge-on-green.test.sh 900
 tests/jg-lint-root-memory.test.sh 4969
 tests/jg-context-bound.test.sh 72
 tests/jg-mail.test.sh 15199
+tests/jg-machine-shadow.test.sh 5000
 tests/jg-merge-gate-lib.test.sh 578
 tests/jg-merge-gate-policy.test.sh 30967
 tests/jg-metrics-shadow-parity.test.sh 102
@@ -840,6 +841,7 @@ tests/jg-watch-inventory.test.sh 4395
 tests/jg-watch-handoff.test.sh 51760
 tests/jg-watcher-lock.test.sh 210766
 tests/jg-watch-silent-exit.test.sh 5000
+tests/jg-watch-silence-prune.test.sh 5000
 tests/jg-lock-pi-session-id.test.sh 1000
 tests/jg-worker-account-live-e2e.test.sh 192
 tests/juggernaut-axi-serve.test.sh 1466
