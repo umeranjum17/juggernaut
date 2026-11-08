@@ -38,6 +38,11 @@ This touches only the Juggernaut repo and its own worktrees, never anything unde
 
 ## What it does
 
+0. **A local-trunk project is not updated from origin.**
+   When this Juggernaut is registered `local-trunk` (`data/projects.md`), its code comes from its local trunk, so update it with `bin/jg-trunk.sh live <project-dir>` and not from origin.
+   A home that has the guard (`bin/jg-home-guard.sh`) refuses any move of its `main` or detached HEAD that is not along that trunk; the only other source it accepts is `origin/main` after the release pull request merged.
+   Do not move a home's `main` by hand.
+
 1. **Run the updater:**
    ```sh
    bin/jg-update.sh
