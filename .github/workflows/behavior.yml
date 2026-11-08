@@ -277,6 +277,18 @@ jobs:
           # worktree acquisition (presentation, workspace-per-home, autodetect).
           bin/jg-install-treehouse.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # A spawn reads the home's backlog first, and the backlog is a Beads store: the spawn suites in this
+      # family file their fixture tickets in the pinned bd and dolt (run only through bin/jg-beads.sh),
+      # or they skip.
+      - name: Install the backlog tools (pinned bd and dolt)
+        run: |
+          set -eu
+          export NPM_CONFIG_PREFIX=$HOME/.local
+          mkdir -p "$NPM_CONFIG_PREFIX/bin"
+          bin/jg-bootstrap.sh install bd dolt
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "JG_BEADS_TEST_BD=$NPM_CONFIG_PREFIX/bin/bd" >> "$GITHUB_ENV"
+          echo "JG_BEADS_TEST_DOLT=$NPM_CONFIG_PREFIX/bin/dolt" >> "$GITHUB_ENV"
       - name: Assert Herdr pin and protocol floor
         run: |
           set -eu
