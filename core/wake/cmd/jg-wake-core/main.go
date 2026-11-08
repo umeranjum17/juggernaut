@@ -37,6 +37,8 @@
 //	    cleaned of tabs and newlines.
 //	jg-wake-core [flags] realert <kind> <key> <payload>
 //	    record a delivered `now` event in state/.wake-realert for the re-alert window.
+//	The route-stdin, classify-stdin, realert-stdin and realert-record-stdin variants
+//	omit the payload argument and read its full bytes from stdin.
 //	jg-wake-core [flags] digest [mark]
 //	    exit 0 and print how many queued rows wait for a turn when `set digest-count` rows have queued
 //	    or `set digest-minutes` has passed
@@ -65,6 +67,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -97,6 +100,19 @@ func run(args []string, out, errw io.Writer) int {
 		return 2
 	}
 	cmd, rest := rest[0], rest[1:]
+	switch cmd {
+	case "route-stdin", "classify-stdin", "realert-stdin", "realert-record-stdin":
+		if len(rest) != 2 {
+			fmt.Fprintf(errw, "jg-wake-core: %s takes <kind> <key> and payload on stdin\n", cmd)
+			return 2
+		}
+		payload, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(errw, "jg-wake-core: read payload: %v\n", err)
+			return 2
+		}
+		cmd, rest = strings.TrimSuffix(cmd, "-stdin"), append(rest, string(payload))
+	}
 	switch cmd {
 	case "dedupe":
 		return one(rest, errw, "dedupe", "a rows file", func(a string) int { return e.dedupe(a, out, errw) })

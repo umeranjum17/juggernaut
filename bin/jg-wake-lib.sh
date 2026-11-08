@@ -2430,6 +2430,11 @@ jg_wake_clean_field() {
 # is the store; bin/jg-wake-bus.sh is its one owner, and docs/bus-live.md is the
 # contract. Callers never spell the environment out themselves.
 jg_wake_bus() {
+  # Shell functions can hold the full line; exec arguments cannot.
+  case "${1:-}" in
+    raise) printf '%s' "$4" | jg_wake_bus raise-stdin "$2" "$3" "$5"; return $? ;;
+    settle) printf '%s' "$4" | jg_wake_bus settle-stdin "$2" "$3"; return $? ;;
+  esac
   JG_HOME="${JG_HOME:-$JG_ROOT}" JG_STATE_OVERRIDE="$STATE" \
     "$JG_WAKE_LIB_DIR/jg-wake-bus.sh" "$@"
 }
@@ -2452,6 +2457,10 @@ jg_wake_append() {
 # owns the contract. Where that command cannot run an event is `now`, never hidden.
 # jg_wake_core <command...>: the Go command, told this home's resolved paths.
 jg_wake_core() {
+  case "${1:-}" in
+    route|classify|realert|realert-record)
+      printf '%s' "$4" | jg_wake_core "$1-stdin" "$2" "$3"; return $? ;;
+  esac
   JG_STATE_OVERRIDE="$STATE" "$JG_WAKE_LIB_DIR/jg-wake-core.sh" \
     --state "$STATE" --home "$JG_HOME" --root "$JG_WAKE_DEFAULT_ROOT" --queue "$JG_WAKE_QUEUE" \
     --routing "${JG_WAKE_ROUTING:-}" --config "${JG_CONFIG_OVERRIDE:-}" \
@@ -2551,7 +2560,7 @@ _jg_wake_ledger_record() {
 # JG_WAKE_CYCLE_URGENT latches once any row this cycle was `now`.
 # shellcheck disable=SC2034 # JG_WAKE_LAST and JG_WAKE_CYCLE_URGENT are read by wake() in the separately linted transition owner.
 jg_wake_append_locked() {
-  local kind=$1 key=$2 payload=$3 clean_key clean_payload class word status=0
+  local kind=$1 key=$2 payload=$3 clean_key clean_payload class word chat_payload status=0
   case "$kind" in
     signal|stale|check|heartbeat) ;;
     *) printf 'jg_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
@@ -2592,9 +2601,13 @@ jg_wake_append_locked() {
   # the call site that already records the wake, so the channel needs no scan of
   # its own; a chat problem can never fail a wake.
   if [ -x "$JG_WAKE_LIB_DIR/jg-chat.sh" ]; then
+    chat_payload=$clean_payload
+    if [ "${#chat_payload}" -gt 4096 ]; then
+      chat_payload="${chat_payload:0:2048} [full event: $STATE/.wake-bus.events.jsonl or $STATE/.wake-bus.outbox.jsonl; key: $clean_key]"
+    fi
     JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
       "$JG_WAKE_LIB_DIR/jg-chat.sh" note '#fleet' "${clean_key%.status}" - wake - \
-      "$kind: $clean_key $clean_payload${word:+ [status=$word]}" >/dev/null 2>&1 || true
+      "$kind: $clean_key $chat_payload${word:+ [status=$word]}" >/dev/null 2>&1 || true
   fi
   return 0
 }

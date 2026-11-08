@@ -17,8 +17,22 @@
 # cover a race, and the phrase list is a product contract worth a dedicated test.
 set -u
 
+# Re-enter the real journey as a child with hostile inherited owner paths.
+if [ -z "${JG_WAKE_FIXTURE_SENTINEL:-}" ]; then
+  exec env JG_WAKE_FIXTURE_SENTINEL=/nonexistent/Umer-owner-sentinel \
+    JG_HOME=/nonexistent/Umer-owner-sentinel FM_HOME=/nonexistent/Umer-owner-sentinel \
+    JG_STATE_OVERRIDE=/nonexistent/Umer-owner-sentinel/state \
+    JG_CONFIG_OVERRIDE=/nonexistent/Umer-owner-sentinel/config \
+    JG_DATA_OVERRIDE=/nonexistent/Umer-owner-sentinel/data \
+    JG_ROOT_OVERRIDE=/nonexistent/Umer-owner-sentinel bash "$0"
+fi
+
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
+for owner_var in JG_HOME FM_HOME JG_STATE_OVERRIDE JG_CONFIG_OVERRIDE JG_DATA_OVERRIDE JG_ROOT_OVERRIDE; do
+  case "${!owner_var-}" in "$JG_WAKE_FIXTURE_SENTINEL"*) fail "owner sentinel leaked into child: $owner_var" ;; esac
+done
+pass "wake fixture: inherited owner paths never reach the journey child"
 
 WATCH="$ROOT/bin/jg-watch.sh"
 DRAIN="$ROOT/bin/jg-wake-drain.sh"

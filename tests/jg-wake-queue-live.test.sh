@@ -24,7 +24,7 @@ HOME_DIR="$DIR/home"
 STATE_DIR="$HOME_DIR/state"
 SERVER_PID=
 # shellcheck disable=SC2329 # Registered by the EXIT trap below.
-cleanup() { [ -z "$SERVER_PID" ] || kill "$SERVER_PID" 2>/dev/null || true; }
+cleanup() { [ -z "$SERVER_PID" ] || kill "$SERVER_PID" 2>/dev/null || true; jg_test_cleanup; }
 trap cleanup EXIT
 
 mkdir -p "$STATE_DIR" "$HOME_DIR/config" "$DIR/store"
@@ -437,7 +437,126 @@ test_a_row_owed_by_the_outbox_is_acknowledged_once() {
   pass "a row owed by the outbox is acknowledged once"
 }
 
+# Retain an oversized line through routing, publication, an outage and interrupted recovery.
+test_oversized_tickets_wake_survives_transport_and_restart() {
+  local key="$STATE_DIR/tickets-stale.check.sh" payload id pid d="$DIR/large-kill"
+  python3 - "$DIR/payload" <<'PYDATA'
+import pathlib, sys
+prefix, suffix = 'tickets-stale: owner=Umer '+chr(34)+'path'+chr(92)+'name'+chr(34)+' {{Count}} ', ' END-UMER'
+pathlib.Path(sys.argv[1]).write_text(prefix + 'x' * (135569 - len(prefix + suffix)) + suffix)
+PYDATA
+  payload=$(cat "$DIR/payload")
+  assert_equals 135569 "${#payload}" "the real single line must exceed the argv limit"
+  printf 'batch check *tickets-stale.check.sh *END-UMER\n' > "$DIR/large-routing"
+  export JG_WAKE_ROUTING="$DIR/large-routing"
+  jg_wake_append check "$key" "$payload" || fail "135569-byte producer failed"
+  assert_equals "batch:$key" "$JG_WAKE_LAST" "full-payload routing must not fall back to now"
+  [ ! -s "$STATE_DIR/.wake-bus.outbox.jsonl" ] || fail "the large event never reached the bus"
+  id=$(bus ids check "$key")
+  # Throw away only this fixture's replica to prove the bytes came from the bus.
+  rm -f "$STATE_DIR/.wake-bus.events.jsonl" "$STATE_DIR/.wake-bus.cursor"
+  bus render || fail "rebuilding the large event from the bus failed"
+  assert_large_event "$id" batch
+  bus ack "$id" || fail "acknowledging the large event failed"
+
+  printf 'off\n' > "$HOME_DIR/config/wake-bus"
+  jg_wake_append check "$key" "$payload" || fail "the unavailable bus lost the large event"
+  id=$(jq -r --arg key "$key" 'select(.key == $key) | .id' "$STATE_DIR/.wake-bus.outbox.jsonl")
+  assert_large_event "$id" batch
+  rm -f "$HOME_DIR/config/wake-bus"
+  mkdir -p "$d"
+  kill_shim "$d"
+  printf 'stream get' > "$d/pattern"; printf '1' > "$d/hang-at"
+  JG_NATS_BIN="$d/nats-shim" setsid "$ROOT/bin/jg-wake-bus.sh" render > "$d/render.log" 2>&1 &
+  pid=$!
+  for _ in $(seq 200); do [ -e "$d/reached" ] && break; sleep 0.05; done
+  [ -e "$d/reached" ] || fail "the large-event render never reached the interruption point"
+  kill -9 -- "-$pid" || fail "could not interrupt the fixture render"
+  wait "$pid" 2>/dev/null || true
+  rm -f "$d/pattern" "$STATE_DIR/.wake-bus.events.jsonl" "$STATE_DIR/.wake-bus.cursor"
+  bus render || fail "recovering the interrupted large-event render failed"
+  bus render || fail "repeating the large-event recovery failed"
+  [ ! -s "$STATE_DIR/.wake-bus.outbox.jsonl" ] || fail "the recovered event is still owed"
+  assert_large_event "$id" batch
+  assert_equals 1 "$(awk -F '\t' -v key="$key" '$4 == key { n++ } END { print n+0 }' "$STATE_DIR/.wake-queue")" \
+    "recovery must deliver the full event exactly once"
+  bus ack "$id" || fail "acknowledging the recovered event failed"
+
+  printf 'now check *tickets-stale.check.sh *END-UMER\nset re-alert-minutes 30\n' > "$DIR/large-routing"
+  jg_wake_append check "$key" "$payload" || fail "the urgent large event failed"
+  assert_equals "now:$key" "$JG_WAKE_LAST" "the urgent large event must keep its class"
+  jg_wake_append check "$key" "$payload" || fail "the repeated large event failed"
+  assert_equals "batch:$key" "$JG_WAKE_LAST" "the full event must reach the re-alert recorder"
+  jg_wake_withdraw check "$key" || fail "withdrawing the large events failed"
+  jg_wake_settle check "$key" "$payload" || fail "settling the large event failed"
+  id=$(jq -r --arg key "$key" 'select(.where == "settled" and .key == $key) | .id' "$STATE_DIR/.wake-bus.events.jsonl")
+  assert_large_event "$id" silent
+  export JG_WAKE_ROUTING="$HOME_DIR/config/wake-routing"
+  pass "135569-byte tickets wake preserves bytes, owner, identity, routing and interrupted delivery"
+}
+
+assert_large_event() { # <id> <class>: compare full bytes without passing them in argv
+  python3 - "$STATE_DIR/.wake-bus.events.jsonl" "$DIR/payload" "$1" "$2" "$HOME_DIR" <<'PYDATA' || fail "large event or full-data pointer changed"
+import hashlib, json, pathlib, sys
+file, expected, identity, urgency, home = sys.argv[1:]
+events = [json.loads(line) for line in pathlib.Path(file).read_text().splitlines()]
+events = [event for event in events if event['id'] == identity]
+assert len(events) == 1, 'identity must survive exactly once'
+event = events[0]
+assert event['payload'].encode() == pathlib.Path(expected).read_bytes(), 'full authoritative bytes'
+assert event['class'] == urgency and event['kind'] == 'check'
+assert event['key'] == home + '/state/tickets-stale.check.sh'
+owner = pathlib.Path(home).name + ':' + hashlib.sha256(home.encode()).hexdigest()[:8]
+assert event['home'] == owner and identity.startswith(('settled/' if urgency == 'silent' else 'wake/') + owner + '/')
+chat = [json.loads(line) for line in pathlib.Path(home, 'state/chat.jsonl').read_text().splitlines()]
+text = chat[-1]['text']
+assert len(text.encode()) < 4000 and 'full event: ' in text
+assert home + '/state/.wake-bus.events.jsonl' in text
+assert home + '/state/.wake-bus.outbox.jsonl' in text
+PYDATA
+}
+
+test_order_survives_concurrent_offline_raises_and_replay() {
+  python3 - "$JG_BUS_BIN" "$DIR/order-home" <<'PYDATA' || fail "durable wake ordering failed"
+import json, os, pathlib, subprocess, sys, time
+binary, home = sys.argv[1:]
+state = pathlib.Path(home, 'state'); state.mkdir(parents=True)
+config = pathlib.Path(home, 'config'); config.mkdir()
+(config/'wake-bus').write_text('off\n')
+env = dict(os.environ, JG_HOME=home, JG_WAKE_HOME_KEY='order-probe', JG_BUS_SUBJECT_PREFIX='jg.order-probe')
+cmd = [binary, 'wake']
+# A previously durable event ahead of the current clock must remain oldest.
+seed = int(time.time()*1000)+60000
+event = dict(v=1, id='wake/order-probe/seed', home='order-probe', where='queue', at=int(time.time()), rseq=seed, kind='check', key='seed', payload='Umer', **{'class':'now'})
+(state/'.wake-bus.outbox.jsonl').write_text(json.dumps(dict(event, subject='jg.order-probe.wake.raise'))+'\n')
+for n in range(24):
+    subprocess.run(cmd+['raise',str(state),'check',f'serial-{n}','Umer','now'],env=env,check=True)
+jobs = [subprocess.Popen(cmd+['raise',str(state),'check',f'concurrent-{n}','Umer','now'],env=env) for n in range(24)]
+assert all(p.wait()==0 for p in jobs)
+events = [json.loads(s) for s in (state/'.wake-bus.outbox.jsonl').read_text().splitlines()]
+serial = [e for e in events if e['key'].startswith('serial-')]
+assert [e['rseq'] for e in serial] == list(range(seed+1,seed+25)), 'sequential raises must increase even behind a historical clock'
+assert len(events)==49 and len({e['rseq'] for e in events})==49, 'concurrent reservations must be unique'
+expected = {e['id']:e['rseq'] for e in events}
+(config/'wake-bus').write_text('on\n')
+subprocess.run(cmd+['render',str(state)],env=env,check=True)
+subprocess.run(cmd+['render',str(state)],env=env,check=True)
+replayed = [json.loads(s) for s in (state/'.wake-bus.events.jsonl').read_text().splitlines()]
+assert {e['id']:e['rseq'] for e in replayed} == expected, 'offline replay must retain every identity and sequence'
+rows = [int(s.split('\t')[1]) for s in (state/'.wake-queue').read_text().splitlines()]
+assert rows == sorted(expected.values()), 'the queue must use the same order after replay'
+PYDATA
+  pass "24 sequential and 24 concurrent raises preserve durable order through offline replay"
+}
+
+if [ "${JG_WAKE_PAYLOAD_ONLY:-0}" = 1 ]; then
+  test_oversized_tickets_wake_survives_transport_and_restart
+  exit $?
+fi
+
 result=0
+test_order_survives_concurrent_offline_raises_and_replay || result=1
+test_oversized_tickets_wake_survives_transport_and_restart || result=1
 test_raise_reaches_the_read_model || result=1
 test_acknowledgement_removes_the_row_everywhere || result=1
 test_one_real_wake_reads_end_to_end_through_the_go_path || result=1

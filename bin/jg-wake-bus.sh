@@ -24,6 +24,8 @@
 #        | ack <id>... | ids <kind> <key> | ids-through <max-seq> [<seqs-file>] | count
 #        | inbox-raise <task> <seq> <delivery> <body-sha> | inbox-handled <task> <seq> <outcome> <evidence>
 #        | inbox-settle | render
+#        | raise-stdin <kind> <key> <class> | settle-stdin <kind> <key>
+#          Payload comes verbatim from stdin, avoiding the OS argument-size limit.
 #        | endpoint
 #   bin/jg-wake-bus-probe.sh measures the whole path on this machine.
 #   endpoint prints "<server url> <wake stream> <raise subject> <account user> <password file>",
@@ -138,8 +140,10 @@ live_render() { wake_go render "$STATE"; }
 
 # A raise and a record-only wake are built and delivered by the Go command, which owes an
 # event it cannot publish; the read model follows.
-live_raise() { wake_go raise "$STATE" "$@" || return 1; live_render; return 0; } # <kind> <key> <payload> <class>
-live_settle() { wake_go settle "$STATE" "$@" || return 1; live_render; } # <kind> <key> <payload>
+live_raise() { printf '%s' "$3" | live_raise_stdin "$1" "$2" "$4"; } # <kind> <key> <payload> <class>
+live_settle() { printf '%s' "$3" | live_settle_stdin "$1" "$2"; }
+live_raise_stdin() { wake_go raise-stdin "$STATE" "$@" || return 1; live_render; return 0; }
+live_settle_stdin() { wake_go settle-stdin "$STATE" "$@" || return 1; live_render; }
 
 # live_publish <subject> <id> <json>: publish one event, or owe it in the outbox.
 live_publish() { wake_go deliver "$STATE" "$@"; }
@@ -289,6 +293,12 @@ while [ "$#" -gt 0 ]; do
     raise)
       [ "$#" -ge 5 ] || { printf 'jg-wake-bus.sh: raise needs <kind> <key> <payload> <class>\n' >&2; exit 2; }
       CMD=raise; RAISE_KIND=$2; RAISE_KEY=$3; RAISE_PAYLOAD=$4; RAISE_CLASS=$5; shift 5 ;;
+    raise-stdin)
+      [ "$#" -ge 4 ] || { printf 'jg-wake-bus.sh: raise-stdin needs <kind> <key> <class>\n' >&2; exit 2; }
+      CMD=raise-stdin; RAISE_KIND=$2; RAISE_KEY=$3; RAISE_CLASS=$4; shift 4 ;;
+    settle-stdin)
+      [ "$#" -ge 3 ] || { printf 'jg-wake-bus.sh: settle-stdin needs <kind> <key>\n' >&2; exit 2; }
+      CMD=settle-stdin; RAISE_KIND=$2; RAISE_KEY=$3; shift 3 ;;
     settle)
       [ "$#" -ge 4 ] || { printf 'jg-wake-bus.sh: settle needs <kind> <key> <payload>\n' >&2; exit 2; }
       CMD=settle; RAISE_KIND=$2; RAISE_KEY=$3; RAISE_PAYLOAD=$4; shift 4 ;;
@@ -359,6 +369,8 @@ if [ -n "${JG_NATS_BIN:-}" ]; then BUS_NATS=$JG_NATS_BIN; else BUS_NATS=$(comman
 case "$CMD" in
   raise) live_raise "$RAISE_KIND" "$RAISE_KEY" "$RAISE_PAYLOAD" "$RAISE_CLASS" ;;
   settle) live_settle "$RAISE_KIND" "$RAISE_KEY" "$RAISE_PAYLOAD" ;;
+  raise-stdin) live_raise_stdin "$RAISE_KIND" "$RAISE_KEY" "$RAISE_CLASS" ;;
+  settle-stdin) live_settle_stdin "$RAISE_KIND" "$RAISE_KEY" ;;
   ack) live_ack ${ACK_IDS[@]+"${ACK_IDS[@]}"} ;;
   ids) live_ids "$RAISE_KIND" "$RAISE_KEY" ;;
   ids-through) live_ids_through "$RAISE_KIND" "$RAISE_KEY" ;;
