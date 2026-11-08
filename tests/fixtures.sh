@@ -192,7 +192,9 @@ jg_test_spawn_home() {
 jg_test_spawn_item() {
   local home=$1 id=$2
   # A case that takes the home's config away on purpose (no search permission) is filed already and cannot be read.
-  [ ! -d "$home/config" ] || [ -x "$home/config" ] || return 0
+  [ -x "$home" ] || return 0
+  # An entry that is there but cannot be searched (a mode-600 directory, or a link into one) is such a case; a missing one is not.
+  if [ -e "$home/config" ] || [ -L "$home/config" ]; then [ -d "$home/config" ] && [ -x "$home/config" ] || return 0; fi
   # A hostile id is a case that spawn must refuse as an invalid task id before it reads any backlog, so there is no ticket to file.
   case $id in *[!A-Za-z0-9._-]*) return 0 ;; esac
   [ -s "$home/config/beads-dir" ] || jg_test_beads_home "$home"

@@ -265,7 +265,7 @@ CHANGED_CEILING_FLOOR_SECS=120
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
-PORTABLE_SERIAL_SHARDS=8
+PORTABLE_SERIAL_SHARDS=11
 
 # Conservative balance hint for a portable-serial script with no measurement.
 # Rounded above the current CI mean, including the capability-skipped scripts.
@@ -688,12 +688,12 @@ tests/jg-backend-tmux-smoke.test.sh 312
 tests/jg-beads-migrate.test.sh 1700
 tests/jg-beads-native-followup.test.sh 150000
 tests/jg-beads-native-n5.test.sh 140000
-tests/jg-behavior-determinism.test.sh 120000
+tests/jg-behavior-determinism.test.sh 172000
 tests/jg-board-answers.test.sh 6382
 tests/jg-board-answers-latency.test.sh 90000
 tests/jg-board-asks.test.sh 643
-tests/jg-board-gate.test.sh 2029
-tests/jg-bus-gateway.test.sh 8000
+tests/jg-board-gate.test.sh 40000
+tests/jg-bus-gateway.test.sh 45000
 tests/jg-bus-leaf-parity.test.sh 10999
 tests/jg-bus.test.sh 86
 tests/jg-axi-link.test.sh 900
@@ -717,7 +717,7 @@ tests/jg-cursor-primary-live-e2e.test.sh 138
 tests/jg-dapr-workflow.test.sh 139
 tests/jg-deprecated-paths-check.test.sh 3000
 tests/jg-ports-check.test.sh 3000
-tests/jg-decisions-reconcile.test.sh 5757
+tests/jg-decisions-reconcile.test.sh 55000
 tests/jg-design-gate-first-draft.test.sh 882
 tests/jg-design-gate.test.sh 812
 tests/jg-devin-signals-live-e2e.test.sh 174
@@ -777,7 +777,7 @@ tests/jg-project-mode.test.sh 134
 tests/jg-prompt-gate-live-e2e.test.sh 179
 tests/jg-prompt-gate.test.sh 101581
 tests/jg-proof-attach.test.sh 980
-tests/jg-public-followup.test.sh 478002
+tests/jg-public-followup.test.sh 260000
 tests/jg-quota-array-dispatch-live-e2e.test.sh 85
 tests/jg-release-readiness.test.sh 11877
 tests/jg-release-tag.test.sh 1500
@@ -790,7 +790,7 @@ tests/jg-self-repo-role.test.sh 18448
 tests/jg-send-dormant-lead.test.sh 3878
 tests/jg-send-inbox-doorbell-live-e2e.test.sh 84
 tests/jg-send-inbox.test.sh 53586
-tests/jg-session-start.test.sh 426719
+tests/jg-session-start.test.sh 748000
 tests/jg-sessionstart-hook-live-e2e.test.sh 84
 tests/jg-ship-local.test.sh 669
 tests/jg-spawn-core.test.sh 1238
@@ -812,18 +812,18 @@ tests/jg-status-digest.test.sh 1261
 tests/jg-stack-owner.test.sh 635
 tests/jg-bus-health.test.sh 5000
 tests/jg-bus-health-extra.test.sh 4000
-tests/jg-tangle-guard.test.sh 24870
+tests/jg-tangle-guard.test.sh 58000
 tests/jg-teardown-core.test.sh 4222
-tests/jg-teardown.test.sh 516785
+tests/jg-teardown.test.sh 902000
 tests/jg-test-run.test.sh 11831
 tests/jg-ticket-writeback.test.sh 83
 tests/jg-tmp-sweep.test.sh 5192
 tests/jg-tokens-retro.test.sh 597
 tests/jg-trunk.test.sh 13000
-tests/jg-trunk-spawn.test.sh 12000
+tests/jg-trunk-spawn.test.sh 49000
 tests/jg-trunk-scope.test.sh 8000
 tests/jg-worker-rules.test.sh 3493
-tests/jg-turnend-guard.test.sh 45675
+tests/jg-turnend-guard.test.sh 97000
 tests/jg-update.test.sh 16890
 tests/jg-wake-daemon-lifecycle-e2e.test.sh 15568
 tests/jg-wake-core.test.sh 4843
@@ -832,7 +832,7 @@ tests/jg-wake-route.test.sh 24386
 tests/token-cuts-live.test.sh 30146
 tests/jg-wake-drain-open-decisions-cursor.test.sh 148819
 tests/jg-wake-next.test.sh 4641
-tests/jg-planned-wait.test.sh 12000
+tests/jg-planned-wait.test.sh 80000
 tests/jg-watch-inventory.test.sh 4395
 tests/jg-watch-handoff.test.sh 51760
 tests/jg-watcher-lock.test.sh 210766
@@ -869,14 +869,21 @@ tests/jg-recon-gate.test.sh 1500
 tests/jg-running-products.test.sh 204
 tests/jg-stack.test.sh 44236
 tests/jg-turnend-guard-no-false-blocks.test.sh 335
-tests/jg-version-branch-sync.test.sh 33220
+tests/jg-version-branch-sync.test.sh 88000
 tests/jg-wake-batching.test.sh 52062
 tests/jg-watch-beacon.test.sh 45490
 tests/jg-whats-left.test.sh 3479
-tests/jg-captain-approval.test.sh 2100
-tests/jg-pending-decision-blocks-work.test.sh 66000
+tests/jg-captain-approval.test.sh 113000
+tests/jg-pending-decision-blocks-work.test.sh 294000
 tests/jg-triage.test.sh 2000
 tests/jg-nudge-residue.test.sh 6000
+tests/jg-wake-schedule.test.sh 78000
+tests/jg-critical-path-spawn.test.sh 57000
+tests/jg-release-smoke.test.sh 56000
+tests/jg-beads-native-n3.test.sh 44000
+tests/jg-beads-native-n8.test.sh 43000
+tests/jg-public-followup-b.test.sh 500000
+tests/jg-public-followup-c.test.sh 500000
 EOF
 }
 
