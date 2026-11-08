@@ -857,6 +857,7 @@ tests/jg-dispatch-resolve-tiers.test.sh 874
 tests/jg-done-checks.test.sh 7083
 tests/jg-fleet-autosync.test.sh 6509
 tests/jg-fleet-rules.test.sh 336
+tests/jg-git-hooks-refresh.test.sh 300
 tests/jg-install-herdr-retry.test.sh 226
 tests/jg-installed-drift.test.sh 267
 tests/jg-launch-env-strip.test.sh 462

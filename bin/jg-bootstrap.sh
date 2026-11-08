@@ -1642,6 +1642,13 @@ if [ "${1:-}" = "install" ]; then
   exit 0
 fi
 
+# Launch hook overlays (state/<id>.git-hooks) are written once at spawn; refresh them at every locked
+# session start so an update that changes the installed hook set reaches launches already running.
+if [ "${JG_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase && [ -x "$SCRIPT_DIR/jg-git-strip-ai-trailers.sh" ]; then
+  "$SCRIPT_DIR/jg-git-strip-ai-trailers.sh" refresh "$STATE" ||
+    echo "BOOTSTRAP_WARN: launch hook overlays not all refreshed (see the error above)" >&2
+fi
+
 # This is the first mutating sweep at a locked session boundary. Detect-only
 # sessions never touch state, and the deferred network pass never repeats it:
 # the local pass that ran first already closed that window.

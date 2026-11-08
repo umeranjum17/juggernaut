@@ -27,6 +27,13 @@
 #       repository hook, as in plain git; any other failed lookup exits
 #       nonzero rather than skipping the repository's hook. Does not touch the
 #       project's git config; the caller prefixes the pane with env-file below.
+#   jg-git-strip-ai-trailers.sh refresh <state-dir>
+#       Bring each <state-dir>/<id>.git-hooks that install wrote up to this
+#       checkout's current wrapper set, so a launch made before the installed
+#       hook set changed gains the new wrappers. It touches only a directory
+#       whose commit-msg names that exact path as its own, replaces wrappers by
+#       rename, keeps the directory read-only, and leaves a current one alone.
+#       Bootstrap runs it at every locked session start.
 #   jg-git-strip-ai-trailers.sh env-file <hooks-dir> <out-file>
 #       Write <out-file> as one plain export statement that appends
 #       core.hooksPath=<hooks-dir> after the GIT_CONFIG_COUNT entries this
@@ -97,6 +104,7 @@ usage() {
 usage:
   jg-git-strip-ai-trailers.sh <msgfile>
   jg-git-strip-ai-trailers.sh install <hooks-dir> <worktree>
+  jg-git-strip-ai-trailers.sh refresh <state-dir>
   jg-git-strip-ai-trailers.sh env-file <hooks-dir> <out-file>
 EOF
   exit 2
@@ -303,23 +311,55 @@ install_hooks() {
   chmod 700 "$hooks_dir" 2>/dev/null || true
   hooks_dir=$(CDPATH='' cd -- "$hooks_dir" && pwd -P) || return 1
 
-  write_executable "$hooks_dir/commit-msg" <<EOF
-#!/usr/bin/env bash
-# managed by bin/jg-git-strip-ai-trailers.sh
-set -u
-$(quote_for_hook "$SELF") "\$1" || exit \$?
-$(runtime_chain_body "$hooks_dir")
-EOF
-
-  for name in $JG_GIT_CLIENT_HOOKS; do
-    write_executable "$hooks_dir/$name" <<EOF
-#!/usr/bin/env bash
-# managed by bin/jg-git-strip-ai-trailers.sh
-set -u
-$(runtime_chain_body "$hooks_dir")
-EOF
+  for name in commit-msg $JG_GIT_CLIENT_HOOKS; do
+    hook_text "$name" "$hooks_dir" | write_executable "$hooks_dir/$name" || return 1
   done
   chmod 500 "$hooks_dir"
+}
+
+# The wrapper text for hook <name> in the directory <ours>.
+hook_text() {
+  local name=$1 ours=$2
+  printf '#!/usr/bin/env bash\n# managed by bin/jg-git-strip-ai-trailers.sh\nset -u\n'
+  [ "$name" != commit-msg ] || printf '%s %s\n' "$(quote_for_hook "$SELF")" "\"\$1\" || exit \$?"
+  runtime_chain_body "$ours"
+}
+
+# Bring every <state-dir>/<id>.git-hooks this installer wrote up to the hook
+# set and wrapper text this checkout installs, so a launch made before the
+# installed hook set changed gains the new wrappers. Only a directory whose
+# commit-msg names that exact path as its own is touched, so another home's
+# directory or a hand-made one is left alone. Each wrapper is replaced by
+# rename, so a running git never finds one half-written, and the directory
+# returns to read-only; a current directory is not modified. Nothing is
+# deleted: a wrapper for a name that left the set stays, and only chains.
+refresh_hooks() {
+  local state=$1 d real name tmp rc=0 unlocked
+  [ -d "$state" ] || return 0
+  for d in "$state"/*.git-hooks; do
+    [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/commit-msg" ] || continue
+    real=$(CDPATH='' cd -- "$d" && pwd -P) || continue
+    grep -qxF "ours=$(quote_for_hook "$real")" "$d/commit-msg" || continue
+    unlocked=0
+    for name in commit-msg $JG_GIT_CLIENT_HOOKS; do
+      if [ -f "$real/$name" ] && [ "$(hook_text "$name" "$real"; echo x)" = "$(cat "$real/$name"; echo x)" ]; then
+        continue
+      fi
+      if [ "$unlocked" = 0 ]; then
+        chmod u+w "$real" || { rc=1; break; }
+        unlocked=1
+      fi
+      if ! { tmp=$(mktemp "$real/.refresh.XXXXXX") && hook_text "$name" "$real" >"$tmp" &&
+        chmod 500 "$tmp" && mv -f "$tmp" "$real/$name"; }; then
+        echo "error: could not refresh $real/$name" >&2
+        rc=1
+        continue
+      fi
+      echo "refreshed: $real/$name"
+    done
+    [ "$unlocked" = 0 ] || chmod 500 "$real"
+  done
+  return "$rc"
 }
 
 CMD=${1:-}
@@ -333,6 +373,10 @@ upstream-hooks)
   [ "$#" -eq 3 ] || usage
   cd "$3" || exit 1
   bash -c "$(runtime_chain_body "$2" 1)"
+  ;;
+refresh)
+  [ "$#" -eq 2 ] || usage
+  refresh_hooks "$2"
   ;;
 env-file)
   [ "$#" -eq 3 ] || usage
