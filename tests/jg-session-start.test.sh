@@ -725,6 +725,55 @@ EOF
 
 # --- lock refusal: read-only path --------------------------------------------
 
+# Every learning stays discoverable even past both the body and old 40-heading caps.
+test_learnings_index_and_body_cap() {
+  local rec root home fakebin out section index cap i name range first last body expected printed
+  rec=$(new_world learnings-index)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '# Learnings\n\n' > "$home/data/learnings.md"
+  for i in $(seq 1 55); do
+    printf '## Learning %02d: retain the complete name even when it exceeds the old one hundred character index truncation boundary\nBody %02d: unique knowledge stays on disk.\n\n' "$i" "$i"
+  done >> "$home/data/learnings.md"
+  # A body lookup must include the final line even when it has no newline.
+  printf 'Final unique knowledge without a newline.' >> "$home/data/learnings.md"
+  expected=$(cat "$home/data/learnings.md")
+  for cap in 160 100000; do
+    out=$(JG_SESSION_START_CONTEXT_FILE_CAP=$cap run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+    section=$(printf '%s\n' "$out" | sed -n '/^data\/learnings.md$/,/^data\/owner-rules.md /p' | sed '$d')
+    if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
+      printf '%s\n' "$out" > "$DONE_DONE_EVIDENCE_ROOT/learnings-start-$cap.txt"
+    fi
+    index=$(printf '%s\n' "$section" | sed -n '/^Learning index (all headings;/,$p')
+    [ "$(printf '%s\n' "$index" | grep -c '^  lines ')" -eq 56 ] || fail "expected all 56 headings exactly once at cap $cap: $index"
+    for i in $(seq 1 55); do
+      printf -v name '## Learning %02d: retain the complete name even when it exceeds the old one hundred character index truncation boundary' "$i"
+      [ "$(printf '%s\n' "$index" | grep -Fc "$name")" -eq 1 ] || fail "index duplicated or omitted $name"
+      range=$(printf '%s\n' "$index" | grep -F "$name" | sed 's/^  lines \([0-9]*-[0-9]*\):.*/\1/')
+      first=${range%-*}; last=${range#*-}
+      body=$(sed -n "${first},${last}p" "$home/data/learnings.md")
+      assert_contains "$body" "$name" "lookup lost the complete heading"
+      assert_contains "$body" "$(printf 'Body %02d: unique knowledge stays on disk.' "$i")" "lookup lost unique knowledge"
+    done
+    assert_contains "$body" 'Final unique knowledge without a newline.' "final body lookup lost an unterminated line"
+    assert_contains "$index" "sed -n '<first>,<last>p' $home/data/learnings.md" "index lacks its full-body reader"
+    if [ "$cap" -eq 160 ]; then
+      assert_contains "$section" '[cut at 160 bytes:' "body cap disappeared"
+      printed=$(printf '%s\n' "$section" | sed '1,2d; /\[cut at/,$d')
+      [ "${#printed}" -le "$cap" ] || fail "printed body exceeded its configured cap"
+      assert_not_contains "$section" 'Body 01:' "body exceeded its configured cap"
+    else
+      assert_not_contains "$section" '[cut at' "uncapped file was labelled cut"
+      assert_contains "$section" 'Body 55:' "small file body was not printed"
+    fi
+    [ "$(cat "$home/data/learnings.md")" = "$expected" ] || fail "startup changed the knowledge store"
+    pass "learning index cap=$cap: zero omitted names, zero duplicate index names, 55 full-body lookups, all knowledge retained"
+  done
+}
+
 test_lock_refusal_read_only_path() {
   local rec root home fakebin holder_pid out status
   rec=$(new_world lock-refusal)
@@ -2807,6 +2856,7 @@ if [ -n "${JG_SESSION_START_ONLY:-}" ]; then
 fi
 
 test_context_digest_absent_empty_present
+test_learnings_index_and_body_cap
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
 test_trace_context_effective_state_is_frozen_after_lock

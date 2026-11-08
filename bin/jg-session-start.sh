@@ -162,7 +162,8 @@
 # CURATED MEMORY: captain-shared.md, learnings.md and owner-rules.md print up to
 # JG_SESSION_START_CONTEXT_FILE_CAP bytes (defaults/token-caps owns the defaults), then a cut marker
 # with the line range, the exact sed command, and an index of the headings in
-# the unprinted part.
+# the unprinted part. Learnings instead index every heading once, without a
+# name or count cap, and give line ranges for the existing file-backed reader.
 # The backlog groups come from the Beads store (`list` for the compact identity
 # fields plus blocked_by, hold_kind and hold_reason, never body; the groups are
 # the store's own filters `--state in_flight`, `--state held`,
@@ -467,14 +468,29 @@ print_file_or_absent() {
   fi
 }
 
-# print_file_capped <path> <label>: print_file_or_absent for the long curated
+# Each heading names a stored learning or section. Ranges include its complete
+# body up to the next heading, including a final line without a newline.
+print_learning_index() {
+  local path=$1
+  printf "\nLearning index (all headings; full bodies: sed -n '<first>,<last>p' %q):\n" "$path"
+  awk '
+    /^#/ {
+      if (name != "") printf "  lines %d-%d: %s\n", first, NR - 1, name
+      first = NR; name = $0
+    }
+    END { if (name != "") printf "  lines %d-%d: %s\n", first, NR, name }
+  ' "$path"
+}
+
+# print_file_capped <path> <label> [cap] [all-learnings]: print_file_or_absent for the long curated
 # memory files. A file over CONTEXT_FILE_CAP bytes prints its first lines up to
 # the cap, then discloses the remainder (line range, byte count) with an index of
 # its headings so the session can read exactly the part it needs.
 print_file_capped() {
-  local path=$1 label=$2 cap=${3:-$CONTEXT_FILE_CAP} size keep lines headings
+  local path=$1 label=$2 cap=${3:-$CONTEXT_FILE_CAP} index=${4:-} size keep lines headings
   if [ ! -s "$path" ] || [ "$(wc -c < "$path")" -le "$cap" ]; then
     print_file_or_absent "$path" "$label"
+    if [ "$index" = all-learnings ] && [ -s "$path" ]; then print_learning_index "$path"; fi
     return 0
   fi
   size=$(wc -c < "$path")
@@ -482,11 +498,15 @@ print_file_capped() {
   keep=$(head -c "$cap" "$path" | wc -l)
   lines=$(wc -l < "$path")
   head -n "$keep" "$path"
-  headings=$(tail -n +"$((keep + 1))" "$path" | grep -n '^#' | awk -F: -v off="$keep" '{ n = $1 + off; sub(/^[0-9]+:/, ""); printf "  line %d: %s\n", n, substr($0, 1, 100) }' | head -40)
+  headings=
+  if [ "$index" != all-learnings ]; then
+    headings=$(tail -n +"$((keep + 1))" "$path" | grep -n '^#' | awk -F: -v off="$keep" '{ n = $1 + off; sub(/^[0-9]+:/, ""); printf "  line %d: %s\n", n, substr($0, 1, 100) }' | head -40)
+  fi
   printf '\n[cut at %s bytes: lines %s-%s (%s bytes in all) are not printed; read them with sed -n %s,%sp %s%s]\n' \
     "$cap" "$((keep + 1))" "$lines" "$size" "$((keep + 1))" "$lines" "$path" \
     "${headings:+. Headings in the unprinted part:}"
   [ -z "$headings" ] || printf '%s\n' "$headings"
+  if [ "$index" = all-learnings ]; then print_learning_index "$path"; fi
 }
 
 print_backlog_pointer() {
@@ -1088,7 +1108,7 @@ print_file_or_absent "$DATA/projects.md" "data/projects.md"
 print_file_or_absent "$(jg_compat_pick "$DATA/squad_leads.md")" "data/squad_leads.md"
 print_file_or_absent "$DATA/captain.md" "data/captain.md"
 print_file_capped "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in squad_lead homes)" "$MEMORY_FILE_CAP"
-print_file_capped "$DATA/learnings.md" "data/learnings.md" "$MEMORY_FILE_CAP"
+print_file_capped "$DATA/learnings.md" "data/learnings.md" "$MEMORY_FILE_CAP" all-learnings
 print_file_capped "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
 # The role's personality file adds tone only; the voice rules stay in captain-voice.md (bin/jg-voice.py).
 if voice_persona=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" python3 "$SCRIPT_DIR/jg-voice.py" persona 2>/dev/null) && [ -n "$voice_persona" ]; then
