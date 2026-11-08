@@ -1,6 +1,7 @@
 """Daily card reconcile: archive waiting sign-off cards whose source is closed; list the ones it cannot judge."""
 import datetime as dt
 import re
+from lane import delivery_urls
 
 PR_URL = re.compile(r'https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)')
 REPORT = {'evidence'}  # sign-off hides these a day after filing by itself
@@ -24,34 +25,60 @@ def norm(text):
 def pr_state(url, run, cache):
     """'merged', 'closed' or 'open' for a PR link; cached so one PR is read once a pass."""
     if url not in cache:
-        repo, number = PR_URL.fullmatch(url)[1:]
+        repo, number = PR_URL.fullmatch(url).groups()
         out = run(['gh-axi', 'api', f'repos/{repo}/pulls/{number}', '--jq', '{merged,state}'])
         v = dict(re.findall(r'^(merged|state) *: *(\S+)$', out, re.M))
         cache[url] = 'merged' if v.get('merged') == 'true' else 'closed' if v.get('state') == 'closed' else 'open'
     return cache[url]
 
 
-def judge(card, ctx, now, others):
-    """(verdict, reason, why): verdict 'dismiss' (reason is a sign-off-axi --reason), 'keep' (source still open) or 'unclear'."""
-    text = ' '.join(str(card.get(k, '')) for k in ('title', 'about', 'why', 'detail', 'link'))
-    # 1. The board ticket or the backlog item the card answers.
+def sources(card, ctx):
+    """(board ticket, backlog item, task ref) a card answers; the first two may be None."""
     ticket = ctx['tickets'].get(card.get('ticket'))
-    if ticket:
-        if ticket.get('state') == 'done': return 'dismiss', 'done-elsewhere', f"ticket {card['ticket']} is done"
-        return 'keep', '', f"ticket {card['ticket']} is {ticket.get('state') or 'open'}"
     # A task's own card is keyed fm-<hash>-<task id>-<UTC stamp>; a lead's ask card is ask-<ref> or carries ask_ref.
     named = re.fullmatch(r'(?:fm|jg)-[0-9a-f]{8}-(.+)-\d{8}T\d{6}Z', card['key'])
     ref = card.get('ask_ref') or (named[1] if named else re.sub(r'^ask-', '', card['key']))
-    item = ctx['items'].get(ref) or ctx['items'].get(re.sub(r'^ask-', '', card['key']))
+    return ticket, ctx['items'].get(ref) or ctx['items'].get(re.sub(r'^ask-', '', card['key'])), ref
+
+
+def card_urls(card):
+    text = ' '.join(str(card.get(k, '')) for k in ('title', 'about', 'why', 'detail', 'link'))
+    return {m[0] for m in PR_URL.finditer(text)}
+
+
+UNMERGED = 'every linked change is closed unmerged, so the question about it waits for the captain'
+
+
+def judge(card, ctx, now, others):
+    """(verdict, reason, why): verdict 'dismiss' (reason is a sign-off-axi --reason), 'keep' or 'unclear'.
+
+    A question about work whose every linked change was closed unmerged is the question whether to delete that
+    closed work, so the work being closed is the reason it exists and never a reason to dismiss it: it stays until
+    the captain answers. This holds on every route, so it wraps the rest."""
+    verdict = decide(card, ctx, now, others)
+    if verdict[0] == 'dismiss':
+        ticket, item, _ = sources(card, ctx)
+        urls = card_urls(card) | set((ticket or {}).get('prs') or []) | set(delivery_urls(item) if item else [])
+        if urls and {pr_state(u, ctx['run'], ctx['prs']) for u in urls} == {'closed'}:
+            return 'keep', '', UNMERGED
+    return verdict
+
+
+def decide(card, ctx, now, others):
+    # 1. The board ticket or the backlog item the card answers.
+    ticket, item, ref = sources(card, ctx)
+    if ticket:
+        if ticket.get('state') == 'done': return 'dismiss', 'done-elsewhere', f"ticket {card['ticket']} is done"
+        return 'keep', '', f"ticket {card['ticket']} is {ticket.get('state') or 'open'}"
     if item:
         if item['state'] == 'done': return 'dismiss', 'done-elsewhere', f'task {ref} is closed in the backlog'
         if item.get('held') != 'yes': return 'dismiss', 'done-elsewhere', f'task {ref} is no longer held, so it moved on without this card'
         return 'keep', '', f'task {ref} is still held'
-    # 2. Pull requests the card links: all closed means nothing is left to decide.
-    urls = sorted(set(m[0] for m in PR_URL.finditer(text)))
-    states = [pr_state(u, ctx['run'], ctx['prs']) for u in urls]
-    if states and 'open' not in states:
-        return 'dismiss', 'done-elsewhere' if 'merged' in states else 'not-relevant', f"every linked PR is {'/'.join(sorted(set(states)))}"
+    # 2. Pull requests the card links: none open means nothing is left to decide.
+    states = [pr_state(u, ctx['run'], ctx['prs']) for u in sorted(card_urls(card))]
+    if states and set(states) == {'closed'}: return 'keep', '', UNMERGED
+    if 'merged' in states and 'open' not in states:
+        return 'dismiss', 'done-elsewhere', f"every linked PR is {'/'.join(sorted(set(states)))}"
     if 'open' in states: return 'keep', '', 'a linked PR is still open'
     if captain_words(card): return 'unclear', '', 'holds the captain\'s words and no source says it is closed'
     # 3. Weaker signals: an expired sign-in, a newer card for the same thing.

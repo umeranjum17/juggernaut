@@ -50,6 +50,8 @@ journeys:
     command: bash core/tickets-sync/run-board-proof.sh && bash core/tickets-sync/run-tidy-proof.sh
   tickets-writeback:
     command: bash journeys/tickets-writeback.sh
+  tickets-cleanup-acts:
+    command: bash core/tickets-sync/run-cleanup-proof.sh
   ready-backlog-stall:
     command: bash journeys/ready-backlog-stall.sh
     timeout: 45m

@@ -276,7 +276,7 @@ printf 'schema=jg-task-inbox.v1\nat=2026-10-28T10:00:00Z\n--\nCaptain: Umer want
 printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec python3 %q --cleanup 2>&1\n' "$JG_HOME" "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" > "$work/cleanup.sh"
 sign-off-axi raise "$work/board.json" --ticket "$(ticket_id main/jg-ask3)" --ask-ref jg-ask3 --key jg-ask3 --title "Show quotes always?" --why "Captain ask on record." --outcome yes=Done --outcome no=Not --recommend yes --recommend-reason ok --default yes >/dev/null
 out=$(bash "$work/cleanup.sh")
-grep -q '^tickets-cleanup: flagged .*duplicate.*no-ask-card.*no-quote.*stale' <<<"$out"
+grep -q '^tickets-cleanup: closed 1 duplicate; flagged .*no-ask-card.*no-quote.*stale' <<<"$out"
 grep -q '1 quotes back-filled' <<<"$out"
 grep -q "quoted-at: 2026-10-28" <(cd "$JG_HOME"; jg-backlog.sh show jg-ask3 --full)
 grep -q "source: $JG_HOME/state/lane.inbox/001.msg" <(cd "$JG_HOME"; jg-backlog.sh show jg-ask3 --full)

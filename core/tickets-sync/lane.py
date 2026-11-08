@@ -9,6 +9,15 @@ import time
 PR = re.compile(r'https://github\.com/([\w.-]+/[\w.-]+)/pull/([1-9]\d*)\b')
 
 
+def delivery_urls(row):
+    """Every pull request a ticket names as its own delivery: `pr:` notes, links and title.
+
+    Other URLs in a note may be prerequisites, so they are never delivery evidence."""
+    notes = '\n'.join(l for l in row.get('body', '').splitlines() if re.match(r'\s*pr:', l, re.I))
+    found = PR.finditer(notes + '\n' + row.get('links', '') + '\n' + row.get('title', ''))
+    return sorted({m[0] for m in found})
+
+
 def evidence(source, item, row):
     """Whether the lane or the item says the work was dropped, and the delivery PR the records link; never the stage."""
     state = source / 'state'
@@ -29,7 +38,7 @@ def evidence(source, item, row):
     explicit = re.search(r'^\s*(?:status|resolution):\s*(superseded|cancelled|canceled)\b', body, re.M | re.I)
     own = re.search(r'^\s*pr:\s*(' + PR.pattern + ')', body, re.M | re.I)
     # Title/links are task delivery links; arbitrary URLs inside notes may be prerequisites.
-    match = PR.search(row.get('links', '') + '\n' + row['title'])
+    match = PR.search(row.get('links', '') + '\n' + row.get('title', ''))
     link = props.get('pr') or (own[1] if own else '') or (match[0] if match else '') or link
     return terminal or bool(explicit), link
 
