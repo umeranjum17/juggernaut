@@ -62,6 +62,8 @@ That is an implicit state machine, and patching one symptom leaves the other wri
 3. Give it one owner: one function or script performs every transition and refuses an undeclared one with a named reason; all other callers go through it.
 4. Test each transition: one integration test per allowed transition and one per refused transition, through the real caller.
 
+The [state-machine index](../../../docs/state-machines.md) lists each table with its owner, and `jg-machine` prints a record's state and legal moves.
+
 Keep the change inside the machine you found.
 Converting machines the bug did not touch is a separate task.
 

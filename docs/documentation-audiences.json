@@ -556,6 +556,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/state-machines.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/state-shadow.md",
       "audience": "maintainer-architecture"
     },
