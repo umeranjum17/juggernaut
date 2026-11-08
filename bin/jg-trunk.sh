@@ -4,7 +4,7 @@
 #
 # Usage: jg-trunk.sh init <project-dir> [<base-ref>]   create the trunk (default: the newest release/c-N, else HEAD)
 #        jg-trunk.sh land <task-id>                    land the task's one proved commit on the trunk; never goes live
-#        jg-trunk.sh verify <project-dir>              run the full suite at the trunk tip: green moves the pin, red stops landings
+#        jg-trunk.sh verify <project-dir> [<sha>]      run the whole suite at a landed commit (default: the tip): green moves the pin, a red it caused reverts it
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out
 #        jg-trunk.sh live <project-dir>                move the home to the last fully green commit; refuses without his word
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red pins the home back to the last green one
@@ -14,29 +14,38 @@
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
 #
 # The flow is the same for every project IN local-trunk MODE (data/projects.md `[local-trunk]`); every subcommand
-# refuses any other project, whose own delivery rules are unchanged: a lane's one commit lands on the local trunk by itself once its
-# sealed done-done proof passed (core/trunk-landing is the registered check that calls `land`), the trunk
+# refuses any other project, whose own delivery rules are unchanged: a lane's one commit lands on the local trunk by itself once the
+# lane reports done (core/trunk-landing is the registered check that calls `land`), the trunk
 # goes live only on the captain's word, and the only pull request is the release one. There is no feature
-# pull request and no release branch. Local gates decide landing (done-done receipt, lint, owner-guard, the
-# gate chain, the lander's own gate); CI runs after live, and a red CI pins the home back.
+# pull request and no release branch.
 #
-# The full gate charges a lane only for what it broke. When it fails, the lander reruns exactly the failing test
+# A landing is ONE fast check and needs no worker turn and no Overwatch turn. `land` rebases the lane's one commit onto the
+# trunk tip by itself (a clean three-way merge; the lane branch follows it), runs the lint over the changed files (gate-lint),
+# runs the changed files' tests (gate-full) judged against the trunk tip's own result, and lands. Only a conflict in the lane's
+# own change stops it, and the refusal names the paths. The captain hold, the design, demo and nav gates, the ticket reference,
+# the linked-decision block, a red trunk and owner-guard still apply. The done-done seal, the merge-card and the owner signature
+# never refuse a landing: what exists is recorded after it (data/trunk-landing-proofs.tsv), what is missing is recorded as absent.
+#
+# The changed-files gate charges a lane only for what it broke. When it fails, the lander first reruns the failing scripts once on
+# the lane, and a script that passes on the rerun is flaky and not charged. It then reruns exactly the failing test
 # scripts on the trunk tip's own tree in a clean clone, in the environment the gate ended with (policy gate-rerun),
 # and compares each one's exit status and failing test names. A script that fails the same way on the tip is the tip's
 # red: it does not block the lane, and it is reported once per script and tip tree (one wake, one note on the
-# gate-red-ticket ticket). A failure first gets one rerun on the candidate: a script that passes on the rerun is flaky and
-# not charged. A script that fails only on the candidate, passes on the tip, or fails differently blocks
+# gate-red-ticket ticket). A script that fails only on the candidate, passes on the tip, or fails differently blocks
 # the lane, and so does any failure no test script accounts for. The tip's result is kept by tree
 # (data/trunk/tip-results-<project>-<tree>.tsv), so it is computed once. A landing that set a red or a flaky failure
-# aside is recorded as full-tip-red or full-rerun and never moves the green pin.
+# aside is recorded as full-tip-red or full-rerun.
+#
+# After the landing, `verify <project> <commit>` (started by the landing check) runs the whole suite (gate-verify) at that commit:
+# green moves the green pin; a script that fails there and passes on the commit's parent charges that one commit, which is
+# reverted by itself (a new commit on the tip, never a rewind) and the lane's ticket is told; a red that cannot be charged to one
+# commit, or a revert that does not apply cleanly, writes the red pin and stops landings except a fixes-red commit.
 #
 # The ship branch (state/<id>.meta branch=, default fm/<id>) must hold EXACTLY ONE commit on
-# top of the trunk tip, and state/<id>.run-receipt.json must be a PASS for that exact commit. A moved
-# tip or a second commit refuses; a moved tip that conflicts names the conflicting paths. The lane
-# rebases, fixes and proves again; a conflicting change is never landed dirty.
-# `land` runs the same gates as bin/jg-merge-local.sh (bin/jg-merge-gate-lib.sh owns them), plus
-# the linked-decision block, then the lander's own gate at the candidate's exact tree in a clean
-# clone, then moves the trunk with a compare-and-swap `update-ref`, so a racing lander or a lane
+# top of the trunk tip or on a base it can be rebased from. A second commit refuses; a conflict names the conflicting paths.
+# The lane fixes it, reports ready again and the check lands the new head; a conflicting change is never landed dirty.
+# `land` runs the lander's own gates at the candidate's exact tree in a clean clone, then moves the trunk with a
+# compare-and-swap `update-ref`, so a racing lander or a lane
 # that moved the ref is refused rather than overwritten. The trunk tip is recorded in
 # state/trunk-tip-<project>; a tip that differs from that record was moved by someone other than
 # this script (a lane can `git branch -f`), and every subcommand refuses until it is explained.
@@ -49,8 +58,8 @@
 # When the release PR has merged, `rollover` (also run by `release`, and by the landing check) cuts the NEXT trunk
 # version from the default branch, moves the project onto it and records it (state/trunk-branch-<project>,
 # state/trunk-version-<project>, data/trunk-versions.tsv). The old trunk is left exactly as it was.
-# Pin-back: state/trunk-green-<project> is the last commit that passed the FULL suite. `live`
-# moves the home only to that commit, so a smoke-only landing is not live until `verify` passes.
+# Pin-back: state/trunk-green-<project> is the last commit that passed the whole suite. `live`
+# moves the home only to that commit, so a landing is not live until `verify` passes.
 # A red `verify` or a red `ci` writes state/trunk-red-<project>; while it exists only a commit whose
 # message has the line `fixes-red: <red sha>` may land, and `release` refuses. A red `ci` also moves
 # the home back to the newest earlier commit that went live and was not red (else the last release).
@@ -276,7 +285,9 @@ report_tip_red() {  # <tip> <script>...
 # a script that fails the same way on the tip is the tip's red, reported once and not charged to the lane;
 # a script that fails only on the candidate, passes on the tip, or fails differently blocks it.
 # Sets GATE_KIND to full, to full-rerun when every failure passed on its one rerun, or to full-tip-red when the tip's own reds were set aside.
-full_gate() {  # <candidate> <command> <tip>
+# Returns 0 when the candidate is cleared, 2 when it is charged with a failure its base does not have, and 1 when it failed for a
+# reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
+full_gate() {  # <candidate> <command> <base>
   local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky=''
   GATE_KIND=full
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
@@ -286,7 +297,8 @@ full_gate() {  # <candidate> <command> <tip>
   unexplained=$(gate_unexplained "$log" "$mine")
   if [ -n "$unexplained" ] || [ ! -s "$envf" ]; then
     rm -f -- "$envf"; tail -n 20 "$log" >&2
-    refuse "gate 'full' failed (exit $rc) at ${cand:0:12}; full log: $log"
+    echo "REFUSED: gate 'full' failed (exit $rc) at ${cand:0:12}; full log: $log" >&2
+    return 1
   fi
   # A flaky failure gets one rerun before it is judged: the scripts are rerun once on the candidate, and only
   # what fails again counts (as that second run saw it). A script the rerun does not report keeps its first result.
@@ -318,7 +330,8 @@ full_gate() {  # <candidate> <command> <tip>
   [ -z "$old" ] || report_tip_red "$3" $old
   if [ -n "$bad" ]; then
     tail -n 20 "$log" >&2
-    refuse "gate 'full' failed (exit $rc) at ${cand:0:12}; this lane introduced or changed the failure of:$bad; full log: $log"
+    echo "REFUSED: gate 'full' failed (exit $rc) at ${cand:0:12}; this lane introduced or changed the failure of:$bad; full log: $log" >&2
+    return 2
   fi
   echo "note: ${cand:0:12} fails only what the $TRUNK tip ${3:0:12} already fails the same way; set aside, not charged to this lane:$old" >&2
   GATE_KIND=full-tip-red
@@ -328,19 +341,6 @@ full_gate() {  # <candidate> <command> <tip>
 conflict_paths() {  # <tip> <candidate>
   local out; out=$(git -C "$PROJ" merge-tree --write-tree --name-only --no-messages "$1" "$2" 2>/dev/null) && return 0
   printf '%s\n' "$out" | sed 1d | paste -sd' ' -
-}
-
-# The sealed done-done proof: a PASS receipt for this task's incarnation at the candidate's exact head.
-receipt_pass() {  # <id> <meta> <candidate>
-  local r="$STATE/$1.run-receipt.json" v h g
-  "$SCRIPT_DIR/../core/receipts/bin/jg-receipt-restore.sh" "$STATE" "$1" "$3" >/dev/null 2>&1 || :
-  [ -f "$r" ] || refuse "no done-done receipt for $1 at state/$1.run-receipt.json; the lane publishes one for ${3:0:12}"
-  command -v jq >/dev/null 2>&1 || refuse "jq is required to read the done-done receipt"
-  jq -e . "$r" >/dev/null 2>&1 || refuse "the done-done receipt for $1 is not readable JSON"
-  v=$(jq -r '.verdict // ""' "$r"); h=$(jq -r '.head // ""' "$r"); g=$(jq -r '.spawn_gen // ""' "$r")
-  [ "$v" = PASS ] || refuse "the done-done receipt for $1 is ${v:-empty}, not PASS"
-  [ "$h" = "$3" ] || refuse "the done-done receipt for $1 is for ${h:0:12}, not the lane head ${3:0:12}; prove the final head again"
-  [ "$g" = "$(jg_dod_meta_value "$2" spawn_gen)" ] || refuse "the done-done receipt for $1 belongs to another incarnation of the task"
 }
 
 # The captain's recorded word: spent by the command it allows, valid for one commit only.
@@ -378,32 +378,75 @@ cmd_init() {
   echo "trunk $TRUNK created at ${base:0:12} in $PROJ"
 }
 
+# The lane's one commit on the latest tip, made by the lander itself: a three-way merge of the commit onto the tip, committed
+# with the lane's own author, date and message. Prints the new commit; prints nothing when the merge conflicts.
+rebase_commit() {  # <tip> <candidate>
+  local tree ident=()
+  tree=$(git -C "$PROJ" merge-tree --write-tree --merge-base="$2^" "$1" "$2" 2>/dev/null) || return 1
+  [ -n "$(git -C "$PROJ" config user.name 2>/dev/null || true)" ] || ident=(-c user.name=jg-trunk -c user.email=jg-trunk@localhost)
+  git -C "$PROJ" log -1 --format=%B "$2" | GIT_AUTHOR_NAME=$(git -C "$PROJ" log -1 --format=%an "$2") GIT_AUTHOR_EMAIL=$(git -C "$PROJ" log -1 --format=%ae "$2") \
+    GIT_AUTHOR_DATE=$(git -C "$PROJ" log -1 --format=%aI "$2") git -C "$PROJ" "${ident[@]+"${ident[@]}"}" commit-tree "$tree" -p "$1"
+}
+
+# The lane follows its rebased commit, so cleanup finds the branch where the trunk is: in its own clean worktree by
+# `reset --keep`, or by a compare-and-swap ref move when no worktree holds the branch. Dirty work is never touched.
+lane_follow() {  # <branch> <old> <new> <worktree>
+  if [ -d "${4:-}" ] && [ "$(git -C "$4" symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$1" ]; then
+    [ -n "$(git -C "$4" status --porcelain 2>/dev/null)" ] || git -C "$4" reset -q --keep "$3" 2>/dev/null || :
+  elif ! git -C "$PROJ" worktree list --porcelain | grep -qx "branch refs/heads/$1"; then
+    git -C "$PROJ" update-ref -m "trunk: follow the rebased lane" "refs/heads/$1" "$3" "$2" 2>/dev/null || :
+  fi
+}
+
+# The done-done seal, the merge-card and the owner signature no longer gate a landing. What is there is recorded after it,
+# as a fact about the landed commit; a missing one is recorded as absent and never refuses or redoes anything.
+record_proofs() {  # <id> <lane head> <landed commit>
+  local r="$STATE/$1.run-receipt.json" d="$DATA/$1" receipt=absent sig=absent card=absent
+  if [ -f "$r" ] && command -v jq >/dev/null 2>&1; then receipt="$(jq -r '.verdict // "unreadable"' "$r" 2>/dev/null || echo unreadable)@$(jq -r '.head // ""' "$r" 2>/dev/null | cut -c1-12)"; fi
+  [ ! -e "$d/proof-authorizations/$2.sig" ] || sig=present
+  { [ -f "$d/merge-card.json" ] && grep -q "$2" "$d/merge-card.json"; } && card=present
+  row trunk-landing-proofs.tsv "$1" "$PN" "$3" "$(date +%s)" "receipt=$receipt" "signature=$sig" "merge-card=$card"
+}
+
+# Tell the lane's ticket and Overwatch that its landed commit was reverted, with the reason. Best effort: the revert stands.
+tell_lane() {  # <id> <note>
+  jg_wake_append check "trunk-reverted-$PN-$(printf '%s' "$2" | cksum | cut -d' ' -f1)" "$2" >/dev/null 2>&1 || echo "warning: could not raise the revert alert" >&2
+  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" update "$1" --append-notes "$2" >/dev/null 2>&1 || echo "warning: could not add the revert note to $1" >&2
+  [ ! -f "$STATE/$1.meta" ] || JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-send.sh" "$1" "$2" >/dev/null 2>&1 || :
+}
+
 land_candidate() {
-  local id=${1-} META branch cand tip n red hit rc=0 linked gate cmd GATE_KIND=''
-  case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; rebase the lane on the latest $(pol trunk-branch) tip, fix its conflicts and prove it again" ;; esac
+  local id=${1-} META branch cand tip base n red hit rc=0 linked cmd head GATE_KIND='' fresh
+  case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
   jg_pr_task_id_valid "$id" || die "invalid task id"
   META="$STATE/$id.meta"; [ -f "$META" ] || die "no meta for task $id at $META"
   open_project "$(jg_dod_meta_value "$META" project)"
   case $(jg_dod_meta_value "$META" mode) in local-trunk|local-only|trunk) ;; *) die "task $id is not a local-trunk task (legacy local-only/trunk also accepted); merge PR tasks with bin/jg-pr-merge.sh" ;; esac
-  [ "$(pol owner-rules)" = keep ] || refuse "owner-rules=$(pol owner-rules) is not decided; the owner rule gates keep running until the captain replaces them"
   if [ "$(pol away-landing)" = held ] && [ -e "$STATE/.afk" ]; then refuse "away mode: trunk landings stay held until the captain returns (away-landing=held)"; fi
   jg_lease_forbid_branch "trunk landing (jg-trunk)"
   lock "$STATE/.control-$id.lock"; lock "$STATE/.trunk-$PN.lock"
   tip_ok; tip=$(rev "refs/heads/$TRUNK")
   branch=$(jg_dod_meta_value "$META" branch); branch=${branch:-fm/$id}
   git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "task $id has an invalid ship branch '$branch'"
-  cand=$(rev "refs/heads/$branch") || die "branch $branch does not exist in $PROJ"
-  [ "$cand" = "$LAND_HEAD" ] || refuse "branch changed during admission; request and prove its new head"
+  head=$(rev "refs/heads/$branch") || die "branch $branch does not exist in $PROJ"
+  [ "$head" = "$LAND_HEAD" ] || refuse "branch changed during admission; request and prove its new head"
+  cand=$head
   if git -C "$PROJ" merge-base --is-ancestor "$cand" "$tip"; then echo "already landed $id at $cand; not live"; return 0; fi
+  # The lander rebases the lane's one commit onto the latest tip by itself. Only a conflict stops it, and the lane resolves that.
   if ! git -C "$PROJ" merge-base --is-ancestor "$tip" "$cand"; then
-    hit=$(conflict_paths "$tip" "$cand")
-    [ -z "$hit" ] || refuse "$branch conflicts with $TRUNK (${tip:0:12}) in: $hit; a lane rebases and fixes it, then proves it again; it is never landed dirty"
-    refuse "trunk moved: rebase $branch onto $TRUNK (${tip:0:12}) and prove it again"
+    base=$(git -C "$PROJ" merge-base "$tip" "$cand" 2>/dev/null) || refuse "$branch shares no history with $TRUNK (${tip:0:12}); start the lane on the trunk tip"
+    n=$(git -C "$PROJ" rev-list --count "$base..$cand")
+    [ "$n" = 1 ] || refuse "one commit per ticket: $branch has $n commits over $TRUNK; squash it to one"
+    fresh=$(rebase_commit "$tip" "$cand") || {
+      hit=$(conflict_paths "$tip" "$cand")
+      refuse "$branch conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; a lane rebases and fixes it, then reports ready again; it is never landed dirty"
+    }
+    lane_follow "$branch" "$cand" "$fresh" "$(jg_dod_meta_value "$META" worktree)"
+    cand=$fresh
   fi
   n=$(git -C "$PROJ" rev-list --count "$tip..$cand")
-  [ "$n" = 1 ] || refuse "one commit per ticket: $branch has $n commits over $TRUNK; squash it to one"
-  receipt_pass "$id" "$META" "$cand"
+  [ "$n" = 1 ] && [ "$(git -C "$PROJ" rev-list --parents -n 1 "$cand" | wc -w)" = 2 ] || refuse "one commit per ticket: $branch has $n commits over $TRUNK; squash it to one"
   git -C "$PROJ" log -1 --format=%B "$cand" | grep -Eq "(^|[^[:alnum:]-])($id|[A-Z]{2,4}-[0-9]+)([^[:alnum:]-]|$)" \
     || refuse "the commit must carry its ticket reference (the task id $id or its ticket key) in its message"
   if [ -e "$STATE/trunk-red-$PN" ]; then
@@ -419,25 +462,21 @@ land_candidate() {
     1) ;;
     *) refuse "could not read the decisions linked to task $id" ;;
   esac
-  jg_dod_local_landing_gates "$SCRIPT_DIR" "$CONFIG" "$JG_HOME" "$STATE" "$id" "$META" "$PROJ" "$TRUNK" "$cand" || exit 1
+  jg_dod_local_landing_gates "$SCRIPT_DIR" "$CONFIG" "$JG_HOME" "$STATE" "$id" "$META" "$PROJ" "$TRUNK" "$cand" trunk || exit 1
   printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$cand" "$TRUNK" "$tip" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused $id"
+  # One fast check: the lint over the changed files, then the changed files' tests judged against the tip's own result.
   run_gate "$cand" "$(pol gate-lint)" lint
-  gate=$(pol gate-mode)
-  case $gate in
-    full) full_gate "$cand" "$(pol gate-full)" "$tip" ;;
-    smoke) cmd=$(pol gate-smoke); [ -n "$cmd" ] || refuse "gate-mode=smoke but no gate-smoke command is chosen"; run_gate "$cand" "$cmd" "$gate" ;;
-    *) refuse "unknown gate-mode '$gate'" ;;
-  esac
+  full_gate "$cand" "$(pol gate-full)" "$tip" || exit 1
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$tip" || refuse "$TRUNK changed while landing $id"
   put "$STATE/trunk-tip-$PN" "$cand"
-  # Only a candidate that passed the whole suite moves the green pin; one that set the tip's own red aside does not.
-  [ "$gate" != full ] || [ "$GATE_KIND" != full ] || put "$STATE/trunk-green-$PN" "$cand"
-  row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "${GATE_KIND:-$gate}"
+  # A landing never moves the green pin: only `verify` (the whole suite, after the landing) does.
+  row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND"
+  record_proofs "$id" "$head" "$cand" || :
   # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event, the ticket close and the post-merge hook.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$id" local || true
   JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$id" --stage "done" --state "done" || true
   if declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "$CONFIG" "$JG_HOME" "$id" "$META" "$cand" - >&2; fi
-  echo "landed $id on $TRUNK (${tip:0:12} -> ${cand:0:12}, gate=${GATE_KIND:-$gate}) in $PROJ; not live: it goes live only on the captain's word"
+  echo "landed $id on $TRUNK (${tip:0:12} -> ${cand:0:12}, gate=$GATE_KIND) in $PROJ; not live: it goes live only on the captain's word"
 }
 
 # Manual and automatic callers share admission before either can wait on the project lock.
@@ -495,6 +534,7 @@ cmd_land() {
   attempt=$(mktemp -d "$mem/$id.$cand.attempt-XXXXXX") || die "cannot retain landing attempt"
   LAND_ATTEMPT=$attempt/gate LAND_HEAD=$cand
   printf 'running %s\n' "$count" > "$key.state"
+  # shellcheck disable=SC2030 # the landing subshell starts with no locks of its own
   ( LOCKS=''; trap cleanup EXIT
     printf 'landing context: project=%s target=%s head=%s context=%s\n' "$proj" "$(cat "$STATE/trunk-tip-$(basename "$proj")" 2>/dev/null || true)" "$cand" "$context"
     land_candidate "$id"
@@ -515,13 +555,62 @@ cmd_land() {
   return "$rc"
 }
 
+# Take the lock off early so a long run does not hold it; the exit trap releases only what is still held.
+# shellcheck disable=SC2031 # LOCKS is the top-level list; the landing subshell has its own copy and never calls this
+unlock() { jg_lock_release "$1" || true; LOCKS=${LOCKS/"$1 "/}; }
+
+# Undo one landed commit by itself: a new commit on the tip that carries the commit's inverse, so the trunk only moves forward.
+# Returns 1, changing nothing, when the commit cannot be undone cleanly or is itself an undo.
+revert_commit() {  # <sha> <reason>
+  local sha=$1 tip tree msg id ident=() new
+  lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
+  msg=$(git -C "$PROJ" log -1 --format=%B "$sha")
+  if printf '%s\n' "$msg" | grep -q '^reverts: '; then unlock "$STATE/.trunk-$PN.lock"; return 1; fi
+  tree=$(git -C "$PROJ" merge-tree --write-tree --merge-base="$sha" "$tip" "$sha^" 2>/dev/null) || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
+  id=$(awk -F'\t' -v c="$sha" '$3 == c { i = $1 } END { print i }' "$DATA/trunk-landings.tsv" 2>/dev/null)
+  [ -n "$(git -C "$PROJ" config user.name 2>/dev/null || true)" ] || ident=(-c user.name=jg-trunk -c user.email=jg-trunk@localhost)
+  new=$(printf 'Revert "%s"\n\nreverts: %s\nticket: %s\n\n%s\n' "$(git -C "$PROJ" log -1 --format=%s "$sha")" "$sha" "${id:-unknown}" "$2" \
+    | git -C "$PROJ" "${ident[@]+"${ident[@]}"}" commit-tree "$tree" -p "$tip") || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: revert ${sha:0:12}" "refs/heads/$TRUNK" "$new" "$tip" || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
+  put "$STATE/trunk-tip-$PN" "$new"
+  row trunk-landings.tsv "revert-${id:-unknown}" "$PN" "$new" "$(date +%s)" reverts-"${sha:0:12}"
+  unlock "$STATE/.trunk-$PN.lock"
+  tell_lane "${id:-unknown}" "$TRUNK commit ${sha:0:12} (${id:-unknown}) went red after it landed and was reverted by itself in ${new:0:12}: $2. Fix it on a new lane."
+  echo "reverted ${sha:0:12} (${id:-unknown}) in ${new:0:12}: $2"
+}
+
+# The whole suite at a landed commit, after the landing (the landing check starts it for each landing). Green moves the pin;
+# a script that fails there and passes on the commit's parent charges that one commit, which is reverted; a red nobody
+# can charge to one commit stops landings until a fixes-red commit lands.
 cmd_verify() {
-  local tip rc=0
-  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
-  ( run_gate "$tip" "$(pol gate-full)" full ) || rc=$?
-  if [ "$rc" -ne 0 ]; then put "$STATE/trunk-red-$PN" "$tip"; echo "trunk is RED at ${tip:0:12}; landings stop except a fixes-red commit" >&2; exit 1; fi
-  put "$STATE/trunk-green-$PN" "$tip"; rm -f "$STATE/trunk-red-$PN"
-  echo "trunk green at ${tip:0:12}"
+  local sha tip rc=0 parent green why
+  open_project "${1-}"; lock "$STATE/.trunk-verify-$PN.lock"
+  lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
+  sha=$tip; [ -z "${2-}" ] || sha=$(rev "$2") || die "'${2-}' does not resolve in $PROJ"
+  git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
+  unlock "$STATE/.trunk-$PN.lock"
+  parent=$(rev "$sha^" || true)
+  if [ -n "$parent" ]; then full_gate "$sha" "$(pol gate-verify)" "$parent" || rc=$?
+  else run_gate "$sha" "$(pol gate-verify)" full || rc=$?; fi
+  case $rc in
+    0)
+      [ "${GATE_KIND:-full}" = full ] || { echo "verify: ${sha:0:12} passed only with a flaky or pre-existing red set aside; the green pin stays" >&2; return 0; }
+      lock "$STATE/.trunk-$PN.lock"
+      green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+      if [ -z "$green" ] || git -C "$PROJ" merge-base --is-ancestor "$green" "$sha"; then put "$STATE/trunk-green-$PN" "$sha"; fi
+      if [ -e "$STATE/trunk-red-$PN" ] && git -C "$PROJ" merge-base --is-ancestor "$(cat "$STATE/trunk-red-$PN")" "$sha"; then rm -f -- "$STATE/trunk-red-$PN"; fi
+      unlock "$STATE/.trunk-$PN.lock"
+      echo "trunk green at ${sha:0:12}" ;;
+    2)
+      why="the whole suite fails on it where its parent ${parent:0:12} passes"
+      if revert_commit "$sha" "$why"; then exit 1; fi
+      lock "$STATE/.trunk-$PN.lock"; put "$STATE/trunk-red-$PN" "$sha"; unlock "$STATE/.trunk-$PN.lock"
+      jg_wake_append check "trunk-red-$PN-${sha:0:12}" "$TRUNK is red at ${sha:0:12}: $why, and it could not be reverted by itself; landings stop except a fixes-red commit" >/dev/null 2>&1 || :
+      echo "trunk is RED at ${sha:0:12}; it could not be reverted by itself; landings stop except a fixes-red commit" >&2; exit 1 ;;
+    *)
+      lock "$STATE/.trunk-$PN.lock"; put "$STATE/trunk-red-$PN" "$sha"; unlock "$STATE/.trunk-$PN.lock"
+      echo "trunk is RED at ${sha:0:12}; landings stop except a fixes-red commit" >&2; exit 1 ;;
+  esac
 }
 
 # Move the home to <sha> through the project's live hook and record it. Exit 3 when the home did not move.

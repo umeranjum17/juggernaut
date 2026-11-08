@@ -19,7 +19,7 @@ A refusal exits 1 before `jg-brief.sh` writes `data/<id>/brief.md`, with a one-l
 
 - `bin/jg-owner-rules-lib.sh` - `jg_owner_rules_check <data> <id> <mode> <kind>`; it reads the item into facts and `policy/gate/brief_rules.rego` decides.
 - The merge gate, `bin/jg-owner-rules-gate.sh`, gathers its facts the same way: `policy/gate/owner_proof.rego` owns the refusal order and `policy/gate/lint_row.rego` the lint rule.
-- `jg-owner-rules-gate.sh diagnose <id> <worktree|-> <head> <pr-url|->` prints the facts the gate judges (`receipt=`, `signature=`, `lint=`, `screen_none=`) and refuses nothing; `bin/jg-trunk-preflight.sh` reads gates 4 and 5 from it.
+- `jg-owner-rules-gate.sh diagnose <id> <worktree|-> <head> <pr-url|->` prints the facts the gate judges (`receipt=`, `signature=`, `lint=`, `screen_none=`) and refuses nothing. A local-trunk landing does not run this gate (`docs/trunk-flow.md`); it records the signature after the landing when it exists.
 - `bin/jg-owner-rules-tree.sh <backlog-file>` - read-only hierarchy report for every backlog item.
 - Seam: `brief-inherit`'s `jg_brief_inherit_shared` (already called by the fork's `jg-brief.sh`) calls it when
   `config/owner-rules` exists. Without that file the check is a no-op, so an unmodified upstream Juggernaut is

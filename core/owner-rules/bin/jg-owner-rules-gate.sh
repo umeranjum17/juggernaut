@@ -2,8 +2,8 @@
 # jg-owner-rules-gate.sh <task-id> <worktree|-> <head|-> <pr-url|-> - local proof authorization and merge gate.
 # Run `init-key` once in the captain's home, then use `sign <task-id> <head> <pr-url|->` only after the passed-proof recipe succeeds.
 # `diagnose <task-id> <worktree|-> <head> <pr-url|->` changes nothing and refuses nothing: it prints the facts the gate judges
-# (`receipt=`, `signature=`, `lint=`, `screen_none=`), or `owner-rules=off` in a home that has not enabled the gate, so
-# bin/jg-trunk-preflight.sh names every missing input from the gate's own evaluation.
+# (`receipt=`, `signature=`, `lint=`, `screen_none=`), or `owner-rules=off` in a home that has not enabled the gate, so a
+# missing input can be read from the gate's own evaluation. A local-trunk landing (bin/jg-trunk.sh) does not run this gate.
 # The private key stays in the main home's config; the merge gate verifies its detached signature with the public key.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.

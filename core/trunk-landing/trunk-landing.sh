@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
-# trunk-landing watcher check: land a task into the local trunk by itself once its done-done proof passed.
+# trunk-landing watcher check: land a task into the local trunk by itself once its worker reports done.
 # Usage: trunk-landing.sh check <jg-home>
+#        trunk-landing.sh next <jg-home>                      (what a finished landing starts: the next ready lane, silently)
 #        trunk-landing.sh run <jg-home> <task-id> <head>      (what `check` starts in the background)
 #
 # For each state/<task>.meta in the home with mode=local-trunk (or legacy local-only) whose project is registered local-trunk and has a trunk
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
-# state/<task>.run-receipt.json is a PASS for the branch's exact head, `check` starts
-# `bin/jg-trunk.sh land <task>` detached (the gate chain is far longer than a check's time limit) and records
-# the outcome in <home>/data/jg-trunk-landing/<task>.<head>.state. No human or lead step lands a task, and the
-# check never goes live: that stays the captain's word (jg-trunk.sh live). A landed task is then cleaned up with
-# bin/jg-teardown.sh, never forced: a refusal is reported and the worktree stays. The watcher runs this check on
-# its fast tick, so a worker's done starts the landing within seconds in every home; the outcome line of a landing
-# already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
+# state/<task>.status ends with a `done` line, `check` starts `bin/jg-trunk.sh land <task>` detached and records
+# the outcome in <home>/data/jg-trunk-landing/<task>.<head>.state. The worker's done is the only signal: no receipt, seal,
+# merge-card or signature is waited for (the landing records them after it, when they exist). The lander rebases the lane's
+# commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land one at a time, oldest done first, and a
+# finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step.
+# After a landing `bin/jg-trunk.sh verify` runs the whole suite at that commit apart from the next landing and reverts the
+# commit by itself if it caused a red. The check never goes live: that stays the captain's word (jg-trunk.sh live).
+# A landed task is then cleaned up with bin/jg-teardown.sh, never forced: a refusal is reported and the worktree stays.
+# The watcher runs this check on its fast tick, so a worker's done starts the landing within seconds in every home; the outcome
+# line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
 # A sweep prints one line per outcome, once: `landed ... cleaned up`, or `not landed: <reason>`. A refusal that only needs time
 # (away mode, a decision still open on linked work, a red trunk) is retried each sweep without repeating the line;
-# Other refusals are rechecked through jg-trunk admission, which caches unchanged failing contexts and
-# bounds transient read retries; its per-attempt logs are retained. bin/jg-trunk.sh owns every refusal and names the conflicting paths.
+# Other refusals (a conflict, a second commit, a failing check) are rechecked through jg-trunk admission, which caches an unchanged
+# failing context and bounds transient read retries; its per-attempt logs are retained. A lane fixes the refusal and reports a
+# new head. bin/jg-trunk.sh owns every refusal and names the conflicting paths.
 set -u
 case "${1:-}" in
-  check) [ "$#" -eq 2 ] || { echo "usage: trunk-landing.sh check <jg-home>" >&2; exit 2; } ;;
+  check|next) [ "$#" -eq 2 ] || { echo "usage: trunk-landing.sh check|next <jg-home>" >&2; exit 2; } ;;
   run) [ "$#" -eq 4 ] || { echo "usage: trunk-landing.sh run <jg-home> <task-id> <head>" >&2; exit 2; } ;;
-  *) echo "usage: trunk-landing.sh check <jg-home> | run <jg-home> <task-id> <head>" >&2; exit 2 ;;
+  *) echo "usage: trunk-landing.sh check|next <jg-home> | run <jg-home> <task-id> <head>" >&2; exit 2 ;;
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -36,7 +41,7 @@ mkdir -p "$MEM" || exit 0
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
 
 if [ "$1" = run ]; then
-  id=$3; head=$4; out=; rc=0; why=
+  id=$3; head=$4; out=; rc=0; why=; res=; now=
   [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $head =~ ^[0-9a-f]{40,64}$ ]] || exit 2
   run_lock=$STATE/.trunk-run-$id-$head.lock
   jg_lock_try_acquire "$run_lock" || exit 0
@@ -47,11 +52,23 @@ if [ "$1" = run ]; then
   printf '%s\n' "$out" > "$request_log"
   printf '%s\n' "$out" > "$MEM/$id.$head.log"
   if [ "$rc" -eq 0 ]; then
+    proj=$(mval "$STATE/$id.meta" project)
+    fresh=; printf '%s\n' "$out" | grep -q '^landed ' && fresh=1
+    # The lander rebased the lane, so its branch is now at the landed commit: the same verdict stands for that head.
+    br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
+    now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
     out=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && out='cleaned up' || out="cleanup refused, nothing was forced: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
     printf 'landed %s\n' "$out" > "$MEM/$id.$head.state"
+    [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$out" > "$MEM/$id.$now.state"
     jg_lock_acquire_wait "$MEM/.outbox.lock"
     printf 'trunk-landing: landed %s (local-trunk) on the local trunk (not live: that needs the captain'"'"'s word); %s\n' "$id" "$out" >> "$MEM/outbox"
     jg_lock_release "$MEM/.outbox.lock"
+    # The whole suite runs at the landed commit apart from the landings, and reverts that one commit if it caused a red.
+    cand=$(awk -F'\t' -v i="$id" '$1 == i { c = $3 } END { print c }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
+    if [ -n "$fresh" ] && [ -n "$cand" ] && [ -d "$proj" ]; then
+      JG_HOME="$FMH" setsid nohup "$FMH/bin/jg-trunk.sh" verify "$proj" "$cand" >"$MEM/$id.$head.verify.log" 2>&1 < /dev/null &
+    fi
+    "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
   fi
   why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error|IN_PROGRESS):' | tail -n 1 | cut -c1-300)
@@ -59,9 +76,15 @@ if [ "$1" = run ]; then
     74|75) printf 'wait %s\n' "${why:-landing in progress or transient read failure; see $request_log}" > "$MEM/$id.$head.state"; exit 0 ;;
   esac
   case $why in
-    *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*) printf 'wait %s\n' "$why" > "$MEM/$id.$head.state" ;;
-    *) printf 'final %s\n' "${why:-landing failed; see $request_log}" > "$MEM/$id.$head.state" ;;
+    *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*|*'changed while landing'*) res="wait $why" ;;
+    *) res="final ${why:-landing failed; see $request_log}" ;;
   esac
+  printf '%s\n' "$res" > "$MEM/$id.$head.state"
+  # The lander rebased the lane, so its branch may now be at another head: the same verdict stands for that head.
+  br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
+  now=$(git -C "$(mval "$STATE/$id.meta" project)" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
+  [ -z "$now" ] || [ "$now" = "$head" ] || printf '%s\n' "$res" > "$MEM/$id.$now.state"
+  "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
 fi
 
@@ -69,7 +92,8 @@ command -v jq >/dev/null 2>&1 || exit 0
 export JG_HOME=$FMH JG_CONFIG_OVERRIDE=$FMH/config
 # shellcheck source=bin/jg-trunk-policy-lib.sh disable=SC1091
 . "$FMH/bin/jg-trunk-policy-lib.sh"
-if jg_lock_try_acquire "$MEM/.outbox.lock"; then
+QUIET=; [ "$1" != next ] || QUIET=1
+if [ -z "$QUIET" ] && jg_lock_try_acquire "$MEM/.outbox.lock"; then
   if [ -s "$MEM/outbox" ]; then mv -f -- "$MEM/outbox" "$MEM/outbox.$$" && cat "$MEM/outbox.$$" && rm -f -- "$MEM/outbox.$$"; fi
   jg_lock_release "$MEM/.outbox.lock"
 fi
@@ -78,6 +102,7 @@ local_trunk() { [ "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$(basen
 # Once a project's release PR has merged, cut its next trunk version (bin/jg-trunk.sh rollover) and clean the old trunk
 # up unforced (retire); looked at every 5 minutes.
 for tip in "$STATE"/trunk-tip-*; do
+  [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
   pn=${tip##*/trunk-tip-}; proj=$FMH/projects/$pn
   [ -d "$proj" ] && [ -s "$DATA_DIR/trunk-releases.tsv" ] && [ "$(local_trunk "$proj")" = yes ] || continue
@@ -90,8 +115,34 @@ for tip in "$STATE"/trunk-tip-*; do
 done
 report() {
   local reason=${3%%; full log:*}
+  [ -z "$QUIET" ] || return 0
   [ "$(cat "$MEM/$1.reported" 2>/dev/null)" = "$reason" ] || { echo "trunk-landing: $2"; printf '%s\n' "$reason" > "$MEM/$1.reported"; }
 }
+# Whether a `running <epoch> [<pid>]` state line is a live landing: its owner is alive, or it was just started and has not
+# published its owner yet.
+run_alive() {
+  local _w ep pid
+  read -r _w ep pid <<<"$1"
+  if [ -n "${pid:-}" ]; then jg_pid_alive "$pid"; else [ $(( $(date +%s) - ${ep:-0} )) -lt 120 ]; fi
+}
+# A landing in progress: lanes land one at a time, so a second lane never races the first for the trunk. Only a lane's own
+# `<task>.<head>.state` counts; the lander's admission records (`<task>.<head>.<context>.state`) are not landings.
+busy() {
+  local f l
+  for f in "$MEM"/*.state; do
+    [ -f "$f" ] || continue
+    ! printf '%s' "${f##*/}" | grep -Eq '\.[0-9a-f]{40,64}\.[0-9a-f]{40,64}\.state$' || continue
+    l=$(cat "$f" 2>/dev/null || true)
+    case $l in running*) run_alive "$l" && return 0 ;; esac
+  done
+  return 1
+}
+# The worker's own ready report: the last line of its status file is `done [at=<epoch>]: ...`. Prints the epoch of that report.
+ready_at() {
+  local line; line=$(tail -n 1 "$STATE/$1.status" 2>/dev/null || true)
+  case $line in done\ *|done:*) printf '%s\n' "$(printf '%s' "$line" | sed -n 's/^done[^[]*\[at=\([0-9]*\)\].*/\1/p')" | grep . || echo 0 ;; *) return 1 ;; esac
+}
+cands=
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
   id=$(basename "$meta" .meta)
@@ -104,25 +155,35 @@ for meta in "$STATE"/*.meta; do
   head=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}") || continue
   st=$MEM/$id.$head.state; line=$(cat "$st" 2>/dev/null || true)
   case $line in landed*) continue ;; esac
-  rcpt=$STATE/$id.run-receipt.json
-  [ "$(jq -r '.verdict // ""' "$rcpt" 2>/dev/null)" = PASS ] && [ "$(jq -r '.head // ""' "$rcpt" 2>/dev/null)" = "$head" ] || continue
+  at=$(ready_at "$id") || continue
   case $line in
-    running*) read -r _ _ owner_pid <<<"$line"; jg_pid_alive "${owner_pid:-}" && continue ;;
-    final*) report "$id.$head" "$id not landed: ${line#final }" "${line#final }" ;;
-    wait*) report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
+    running*) run_alive "$line" && continue ;;
+    final*) report "$id.$head" "$id not landed: ${line#final }" "${line#final }"; continue ;;
+    wait*) [ -z "$QUIET" ] || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac
-  printf 'running %s\n' "$(date +%s)" > "$st"
+  cands="$cands$at $id $head"$'\n'
+done
+# Oldest done first. A landing already running holds the rest back; its end starts the next one (`next`).
+[ -n "$cands" ] || exit 0
+if ! mkdir "$MEM/.start" 2>/dev/null; then
+  [ -n "$(find "$MEM/.start" -mmin +1 2>/dev/null)" ] || exit 0
+  rmdir "$MEM/.start" 2>/dev/null; mkdir "$MEM/.start" 2>/dev/null || exit 0
+fi
+if ! busy; then
+  read -r _ id head <<< "$(printf '%s' "$cands" | sort -n -k1,1 -k2,2 | head -n 1)"
+  printf 'running %s\n' "$(date +%s)" > "$MEM/$id.$head.state"
   launch_log=$(mktemp "$MEM/$id.$head.launch-XXXXXX.log") || exit 1
   setsid nohup "$SELF" run "$FMH" "$id" "$head" >"$launch_log" 2>&1 < /dev/null &
   launch_pid=$!
-  # The outer watcher stops a completed check's process group. Do not return
-  # until the child has detached and published ownership of this attempt.
+  # The outer watcher stops a completed check's process group. Do not return until the child has detached and
+  # published ownership of this attempt.
   for _ in {1..100}; do
-    line=$(cat "$st" 2>/dev/null || true)
+    line=$(cat "$MEM/$id.$head.state" 2>/dev/null || true)
     read -r phase _ owner_pid <<<"$line"
     [ "$phase" = running ] && [ -z "${owner_pid:-}" ] || break
     kill -0 "$launch_pid" 2>/dev/null || break
     sleep 0.01
   done
-done
+fi
+rmdir "$MEM/.start" 2>/dev/null
 exit 0

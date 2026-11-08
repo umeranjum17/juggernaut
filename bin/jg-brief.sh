@@ -748,8 +748,8 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
 fi
 
 # The local-trunk landing rule, in one place for the lane brief and the squad lead charter (local-trunk projects only).
-TRUNK_REBASE_RULE="Before your commit can land, rebase it on the LATEST tip of the local trunk, taken at that moment (the trunk moves while you work; a base you took earlier is stale).
-If the rebase conflicts, YOU resolve every conflict in your own change, then prove it again at the new head; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict or a stale base exists, and a landing that is refused for either reason is fixed by rebasing and proving again."
+TRUNK_REBASE_RULE="Juggernaut's landing check rebases your commit onto the latest tip of the local trunk by itself, lints the changed files, runs the changed files' tests against the tip's own result and lands it; you never rebase for it, and the done-done seal, the merge-card and the owner signature are recorded after the landing and never block it.
+If the landing check reports that your change conflicts with the trunk, YOU resolve every conflict in your own change, then report ready again; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict exists, and a landing that is refused is fixed in the lane and reported ready again."
 jg_brief_local_trunk() {  # <project>: true when the project is registered local-trunk
   [ "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" = local-trunk ]
 }
@@ -1075,7 +1075,7 @@ This project is registered local-trunk: there is no feature pull request, and th
 Your branch must be exactly ONE commit on top of the local trunk tip (the \`trunk\` branch of the project), and the commit message must carry its ticket reference (the task id or its ticket key).
 $TRUNK_REBASE_RULE
 A stale or conflicting change is refused with its paths named and is never landed dirty.
-When the sealed done-done proof has passed at that exact head, publish the completion receipt for it and report ready. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
+Run the light gate on your changed files (the lint, then their tests), commit, and report ready with your done line. Juggernaut's landing check then lands the commit on the trunk and cleans up unforced; you never land, push, go live or release.
 "
 fi
 DESIGN_SECTION=

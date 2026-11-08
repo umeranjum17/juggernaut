@@ -13,25 +13,25 @@
 #   protected-landing     refuse      refuse: a commit touching protected-paths stays unlanded;
 #                                     gate: it may land after the configured gates
 #   protected-paths       (gate machinery, below) space-separated globs
-#   gate-mode             full        full: the lander runs gate-full before landing
-#                                     smoke: it runs gate-smoke and the full suite runs in
-#                                     `verify`; the home never moves past the last full pass
-#   gate-lint             bin/jg-lint.sh   the lint every landing passes, whichever gate-mode
-#   gate-full             the CI invariants that need no network (no tracked personal paths, no
-#                         committed binaries, regression coverage), then the fast required eight shards
+#   gate-lint             bin/jg-lint.sh --changed-base HEAD^   the lint every landing passes, over the changed files only
+#   gate-full             the landing's tests: the CI invariants that need no network (no tracked personal
+#                         paths, no committed binaries, regression coverage), then only the test scripts
+#                         the changed files map to (HEAD^ is the trunk tip: the lander rebases the lane first)
+#   gate-verify           the same invariants, then the whole suite: `verify` runs it on a landed commit after
+#                         the landing, and a script that fails there and passes on the commit's parent
+#                         reverts that one commit by itself
 #   gate-rerun            bin/jg-test-run.sh --jobs 1   the command that reruns the scripts a failed full gate
 #                                     named, on the trunk tip's tree, to tell the tip's own red from the lane's;
 #                                     the script paths are appended to it
 #   gate-red-ticket       core-self-checks-red   the ticket that receives one note for each new tip red
 #                                     (empty: no note, the alert still goes out)
-#   gate-smoke            (none)      smoke is refused until a command is chosen
-#   owner-rules           keep        keep: every owner rule gate in config/merge-gate still
-#                                     runs; any other value is refused as not decided
 #   release-after-hours   48          age of the oldest unreleased commit that makes a release due
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
 
 # shellcheck disable=SC2016 # the command substitution runs in the gate's shell, not here
-_JG_TRUNK_GATE_FULL='test -z "$(git ls-files -- data state config projects .no-mistakes)" && bin/jg-committed-binary-check.sh && bin/jg-test-run.sh --check-coverage && bin/jg-test-run.sh --required-shards HEAD^ "${JG_TRUNK_GATE_OUTPUT:?}"'
+_JG_TRUNK_GATE_VERIFY='test -z "$(git ls-files -- data state config projects .no-mistakes)" && bin/jg-committed-binary-check.sh && bin/jg-test-run.sh --check-coverage && bin/jg-test-run.sh --all'
+# The landing's tests are the same invariants with the changed files' tests in place of the whole suite.
+_JG_TRUNK_GATE_FULL="${_JG_TRUNK_GATE_VERIFY% --all} --changed --base HEAD^ --exclude-family real-herdr-gated --max-weight-ms 60000"
 
 jg_trunk_policy() {  # <key> [<project>]
   local key=$1 proj=${2-} file val=
@@ -47,13 +47,11 @@ jg_trunk_policy() {  # <key> [<project>]
       away-landing) val=held ;;
       protected-landing) val=refuse ;;
       protected-paths) val=$_JG_TRUNK_PROTECTED ;;
-      gate-mode) val=full ;;
-      gate-lint) val=bin/jg-lint.sh ;;
+      gate-lint) val='bin/jg-lint.sh --changed-base HEAD^' ;;
       gate-full) val=$_JG_TRUNK_GATE_FULL ;;
+      gate-verify) val=$_JG_TRUNK_GATE_VERIFY ;;
       gate-rerun) val='bin/jg-test-run.sh --jobs 1' ;;
       gate-red-ticket) val=core-self-checks-red ;;
-      gate-smoke) val= ;;
-      owner-rules) val=keep ;;
       release-after-hours) val=48 ;;
       *) return 1 ;;
     esac

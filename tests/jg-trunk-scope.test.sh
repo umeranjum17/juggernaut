@@ -71,7 +71,7 @@ world direct-pr direct-PR
 b=$(brief d1 direct-PR)
 assert_contains "$b" "open a PR with \`gh-axi\`" "T2 direct-PR must still tell the worker to open its PR"
 assert_not_contains "$b" "Local trunk lane" "T2 a direct-PR brief must carry no trunk section"
-assert_not_contains "$b" "LATEST tip of the local trunk" "T2 a direct-PR brief must carry no trunk rebase rule"
+assert_not_contains "$b" "rebases your commit onto the latest tip of the local trunk" "T2 a direct-PR brief must carry no trunk rebase rule"
 lead=$(charter lead-d proj); assert_not_contains "$lead" "Local trunk projects" "T2 a direct-PR project's squad lead charter must carry no trunk rule"
 pass "T2 direct-PR still opens its PR"
 
@@ -80,7 +80,7 @@ b=$(brief n1 no-mistakes --risk release)
 assert_contains "$b" "no-mistakes" "T3 no-mistakes must keep its pipeline contract"
 assert_contains "$b" "/no-mistakes" "T3 no-mistakes must still hand off to the pipeline"
 assert_not_contains "$b" "Local trunk lane" "T3 a no-mistakes brief must carry no trunk section"
-assert_not_contains "$b" "LATEST tip of the local trunk" "T3 a no-mistakes brief must carry no trunk rebase rule"
+assert_not_contains "$b" "rebases your commit onto the latest tip of the local trunk" "T3 a no-mistakes brief must carry no trunk rebase rule"
 lead=$(charter lead-n proj); assert_not_contains "$lead" "Local trunk projects" "T3 a no-mistakes project's squad lead charter must carry no trunk rule"
 pass "T3 no-mistakes still runs its pipeline"
 
@@ -89,7 +89,7 @@ b=$(brief l1 local-only)
 assert_contains "$b" "ready in branch" "T4 local-only must still stop at a ready branch"
 assert_contains "$b" "guarded fast-forward path" "T4 local-only must still merge locally"
 assert_not_contains "$b" "Local trunk lane" "T4 a local-only brief must carry no trunk section"
-assert_not_contains "$b" "LATEST tip of the local trunk" "T4 a local-only brief must carry no trunk rebase rule"
+assert_not_contains "$b" "rebases your commit onto the latest tip of the local trunk" "T4 a local-only brief must carry no trunk rebase rule"
 lead=$(charter lead-l proj); assert_not_contains "$lead" "Local trunk projects" "T4 a local-only project's squad lead charter must carry no trunk rule"
 if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
   printf 'skip: T4 local merge needs a Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
@@ -107,12 +107,12 @@ assert_contains "$b" "Delivery contract: mode=local-trunk" "T5 the task contract
 assert_not_contains "$b" "mode=local-only" "T5 no silent task-mode conversion"
 assert_not_contains "$b" "current default branch" "T5 trunk lanes must not rebase onto main"
 assert_contains "$b" "Local trunk lane" "T5 a local-trunk project's lane brief must carry the trunk section"
-assert_contains "$b" "rebase it on the LATEST tip of the local trunk" "T5 the lane brief must tell the worker to rebase on the latest trunk tip"
+assert_contains "$b" "rebases your commit onto the latest tip of the local trunk by itself" "T5 the lane brief must say the landing check rebases the commit"
 assert_contains "$b" "YOU resolve every conflict" "T5 the lane brief must make the worker resolve conflicts"
 assert_contains "$b" "never force a landing" "T5 the lane brief must forbid a forced landing"
 lead=$(charter lead-t proj)
 assert_contains "$lead" "Local trunk projects" "T5 a local-trunk project's squad lead charter must carry the trunk rule"
-assert_contains "$lead" "rebase it on the LATEST tip of the local trunk" "T5 the charter must carry the rebase rule"
+assert_contains "$lead" "rebases your commit onto the latest tip of the local trunk by itself" "T5 the charter must carry the rebase rule"
 assert_contains "$lead" "never force a landing" "T5 the charter must forbid a forced landing"
 jgt verify "$P" 2>&1 | grep -q "is registered" && fail "T5 a local-trunk project must not be refused as another mode"
 [ "$(JG_HOME="$H" "$ROOT/bin/jg-project-mode.sh" proj 2>/dev/null)" = "local-trunk off" ] || fail "T5 mechanical callers must retain local-trunk"
