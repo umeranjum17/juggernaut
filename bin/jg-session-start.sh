@@ -159,11 +159,12 @@
 #     Date-gated, parked, and external holds are bounded by
 #     JG_SESSION_START_HELD_LIMIT (default 10) with a count and the
 #     command that lists them (a real home carried 132 of them, 42KB).
-# CURATED MEMORY: captain-shared.md, learnings.md and owner-rules.md print up to
-# JG_SESSION_START_CONTEXT_FILE_CAP bytes (defaults/token-caps owns the defaults), then a cut marker
+# CURATED MEMORY: captain-shared.md and learnings.md use the memory-file cap
+# (defaults/token-caps owns the defaults), then a cut marker
 # with the line range, the exact sed command, and an index of the headings in
 # the unprinted part. Learnings instead index every heading once, without a
 # name or count cap, and give line ranges for the existing file-backed reader.
+# captain.md and every existing local owner-rule body print in full.
 # The backlog groups come from the Beads store (`list` for the compact identity
 # fields plus blocked_by, hold_kind and hold_reason, never body; the groups are
 # the store's own filters `--state in_flight`, `--state held`,
@@ -435,9 +436,8 @@ HELD_LIMIT=${JG_SESSION_START_HELD_LIMIT:-$(token_cap held-limit 10)}
 case "$HELD_LIMIT" in ''|*[!0-9]*) HELD_LIMIT=10 ;; esac
 CONTEXT_FILE_CAP=${JG_SESSION_START_CONTEXT_FILE_CAP:-$(token_cap context-file-cap 10000)}
 case "$CONTEXT_FILE_CAP" in ''|*[!0-9]*|0) CONTEXT_FILE_CAP=10000 ;; esac
-# The two long captain-memory files get the smaller memory cap; owner-rules keeps
-# the full context-file cap because it carries standing decisions. The run
-# override sets both, as it always has.
+# The two long captain-memory files get the smaller memory cap. The run
+# override sets both caps, as it always has; owner rules print in full.
 MEMORY_FILE_CAP=${JG_SESSION_START_CONTEXT_FILE_CAP:-$(token_cap memory-file-cap 7500)}
 case "$MEMORY_FILE_CAP" in ''|*[!0-9]*|0) MEMORY_FILE_CAP=$CONTEXT_FILE_CAP ;; esac
 BACKLOG_FIELDS=blocked_by,hold_kind,hold_reason
@@ -1109,7 +1109,7 @@ print_file_or_absent "$(jg_compat_pick "$DATA/squad_leads.md")" "data/squad_lead
 print_file_or_absent "$DATA/captain.md" "data/captain.md"
 print_file_capped "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in squad_lead homes)" "$MEMORY_FILE_CAP"
 print_file_capped "$DATA/learnings.md" "data/learnings.md" "$MEMORY_FILE_CAP" all-learnings
-print_file_capped "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
+print_file_or_absent "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
 # The role's personality file adds tone only; the voice rules stay in captain-voice.md (bin/jg-voice.py).
 if voice_persona=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" python3 "$SCRIPT_DIR/jg-voice.py" persona 2>/dev/null) && [ -n "$voice_persona" ]; then
   subsection "captain voice personality (config/captain-voice-<role>.md; tone only, the rules are in captain-voice.md)"

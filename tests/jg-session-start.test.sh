@@ -723,6 +723,69 @@ EOF
   pass "context digest distinguishes ABSENT, empty-but-present, and populated files"
 }
 
+# Owner rules are mandatory local knowledge, including bodies beyond the old cap.
+test_context_owner_rules_whole() {
+  local rec root home fakebin mode out before after
+  rec=$(new_world owner-rules-whole)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  python3 - "$home/data" <<'PYTHON'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+for name in ("captain", "captain-shared", "learnings", "owner-rules"):
+    body = "".join(
+        f"## {name} entry {entry}\n- Kind: owner\n"
+        + "".join(f"{name} {entry} knowledge {line:04d}: Umer keeps this exact fact.\n"
+                  for line in range(240))
+        + f"{name} entry {entry} final fact: café; `literal` $text \tend.\n"
+        for entry in range(1, 4)
+    )
+    (root / f"{name}.md").write_text(body)
+PYTHON
+  before=$(for f in "$home"/data/{captain,captain-shared,learnings,owner-rules}.md; do hash_file_for_test "$f"; done)
+  for mode in default override; do
+    out="$TMP_ROOT/owner-rules-$mode.txt"
+    if [ "$mode" = default ]; then
+      (unset JG_SESSION_START_CONTEXT_FILE_CAP; run_session_start "$home" "$root" "$fakebin:$BASE_PATH") > "$out"
+    else
+      JG_SESSION_START_CONTEXT_FILE_CAP=256 run_session_start "$home" "$root" "$fakebin:$BASE_PATH" > "$out"
+    fi
+    python3 - "$home/data" "$out" "$mode" <<'PYTHON' || fail "owner-rule whole-body journey failed ($mode)"
+from pathlib import Path
+import re
+import sys
+root, output, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+digest = output.read_bytes()
+for name in ("captain", "captain-shared", "learnings", "owner-rules"):
+    source = (root / f"{name}.md").read_bytes()
+    label = re.escape(f"data/{name}.md".encode())
+    section = re.split(rb"\n" + label + rb"(?: \([^\n]*\))?\n-+\n", digest, maxsplit=1)[1]
+    section = section.split(b"\ndata/", 1)[0]
+    if name in ("captain", "owner-rules"):
+        assert source in section, f"{name}: full source bytes missing ({mode})"
+        assert b"[cut at " not in section, f"{name}: unexpected cut ({mode})"
+    else:
+        cap = 7500 if mode == "default" else 256
+        keep = source[:cap].count(b"\n")
+        prefix = b"".join(source.splitlines(keepends=True)[:keep])
+        assert section.startswith(prefix), f"{name}: capped prefix changed ({mode})"
+        assert f"[cut at {cap} bytes:".encode() in section, f"{name}: cap changed ({mode})"
+        assert source not in section, f"{name}: cap removed ({mode})"
+print(f"PASS {mode}: every owner-rule body and captain byte printed; shared/learnings caps preserved")
+PYTHON
+    if [ -n "${DONE_DONE_EVIDENCE_ROOT:-}" ]; then
+      cp "$out" "$DONE_DONE_EVIDENCE_ROOT/owner-rules-$mode.txt"
+    fi
+  done
+  after=$(for f in "$home"/data/{captain,captain-shared,learnings,owner-rules}.md; do hash_file_for_test "$f"; done)
+  [ "$before" = "$after" ] || fail "startup changed source memory bytes"
+  pass "full owner-rule bodies survive default and override caps; all source memory unchanged"
+}
+
 # --- lock refusal: read-only path --------------------------------------------
 
 # Every learning stays discoverable even past both the body and old 40-heading caps.
@@ -2857,6 +2920,7 @@ fi
 
 test_context_digest_absent_empty_present
 test_learnings_index_and_body_cap
+test_context_owner_rules_whole
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
 test_trace_context_effective_state_is_frozen_after_lock

@@ -187,6 +187,8 @@ journeys:
     command: bash journeys/token-cuts-live.sh
   context-bound-at-wake:
     command: bash journeys/context-bound-at-wake.sh
+  owner-rules-whole:
+    command: bash journeys/owner-rules-whole.sh
   axi-digest:
     command: bash journeys/axi-digest.sh
   remote-squad-lead-lifecycle:

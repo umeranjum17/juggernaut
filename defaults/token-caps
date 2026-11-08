@@ -21,9 +21,8 @@
 # it. The previous 10000 printed up to 30,000 bytes of the three.
 memory-file-cap 7500
 
-# Per-file bytes printed for data/owner-rules.md (and the fallback for any
-# capped file with no cap of its own). Reason: owner rules are standing
-# decisions only the captain can take, so they keep the previous bound.
+# Fallback for a capped file with no cap of its own.
+# Owner-rule bodies always print in full and do not use this cap.
 context-file-cap 10000
 
 # Dispatchable queued rows listed. Reason: the rest are disclosed by an exact
