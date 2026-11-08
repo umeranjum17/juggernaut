@@ -6,7 +6,8 @@
 #        jg-trunk.sh land <task-id>                    land the task's one proved commit on the trunk; never goes live
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the whole suite at a landed commit (default: the tip): green moves the pin, a red it caused reverts it
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out
-#        jg-trunk.sh live <project-dir>                move the home to the last fully green commit; refuses without his word
+#        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word (or a waiver); --home moves one lead only
+#        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red pins the home back to the last green one
 #        jg-trunk.sh release <project-dir>             push the trunk and open the ONE release PR trunk -> default branch; refuses without his word
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (trunk-v2, ...) from the default branch
@@ -65,6 +66,13 @@
 # the home back to the newest earlier commit that went live and was not red (else the last release).
 # The captain's word: `word` writes state/trunk-word-<live|release>-<project>, bound to the one commit
 # it names and spent by the command it allows. A worker never records one.
+#
+# Live moves EVERY home: it exports the tip's own bin/ and core/ to state/trunk-live-tool/<sha>/ and runs that copy's
+# bin/jg-update.sh --base <sha> (see its header for the rows and skips), so the first move is done by the new code even
+# while the homes still run the old one. A project whose tip has no bin/jg-update.sh is moved by this script's own copy.
+# The waiver (config/trunk-live-waiver, one line per project: `<project> <owner-rule-id> <epoch> until=stable`, written
+# only by `waiver`) stands in for the word on every commit of that project: live then spends no word and its row says
+# waiver=<rule>. Deleting the project's line restores the need for his word; docs/trunk-flow.md owns the condition.
 #
 # Exit 3 means the home did not move (the live hook failed); a landed commit stays landed.
 #
@@ -614,28 +622,75 @@ cmd_verify() {
 }
 
 # Move the home to <sha> through the project's live hook and record it. Exit 3 when the home did not move.
-go_live() {  # <sha> <tip>
-  local sha=$1 hook status=landed-not-live here there
+go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-back moves this one
+  local sha=$1 hook status=landed-not-live here there why
   hook="$CONFIG/live-hook.$PN"
   if [ ! -x "$hook" ]; then
     here=$(git -C "$JG_ROOT" remote get-url origin 2>/dev/null || echo a); there=$(git -C "$PROJ" remote get-url origin 2>/dev/null || echo b)
     [ "$here" != "$there" ] || hook="$SCRIPT_DIR/jg-trunk-live-home.sh"
+    [ "$here" != "$there" ] || [ -z "${LIVE_FLEET:-}" ] || hook=fleet
   fi
-  if [ -x "$hook" ]; then
+  if [ "$hook" = fleet ]; then
+    if why=$(fleet_move "$sha" 2>&1); then status=live; else
+      printf '%s\n' "$why"; row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:$(printf '%s' "$why" | tail -n 1 | cut -c1-200)"
+      echo "error: the fleet move failed for ${sha:0:12}; see the rows in trunk-live.tsv" >&2; exit 3
+    fi
+    printf '%s\n' "$why"
+    [ -z "${LIVE_HOME:-}" ] || status=canary
+  elif [ -x "$hook" ]; then
     "$hook" "$PROJ" "$sha" || { row trunk-live.tsv "$PN" "$sha" "$(date +%s)" hook-failed; echo "error: live hook failed for ${sha:0:12}; the home stays where it was" >&2; exit 3; }
     status=live
   fi
   [ "$sha" = "$2" ] || status="$status,pinned-behind-${2:0:12}"
+  [ -z "${LIVE_WAIVER:-}" ] || status="$status,waiver=$LIVE_WAIVER"
   row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "$status"
   echo "live: $PN at ${sha:0:12} ($status)"
 }
 
+# Run the tip's own mover (an export of its bin/ and core/) over every home; its exit code and last line are the verdict.
+fleet_move() {  # <sha>
+  local sha=$1 tool="$STATE/trunk-live-tool/$1" tmp mover="$SCRIPT_DIR/jg-update.sh" paths args
+  if git -C "$PROJ" cat-file -e "$sha:bin/jg-update.sh" 2>/dev/null; then
+    if [ ! -x "$tool/bin/jg-update.sh" ]; then
+      mkdir -p "$STATE/trunk-live-tool"; tmp=$(mktemp -d "$STATE/trunk-live-tool/.export.XXXXXX") || die "cannot make the export directory"
+      paths=$(git -C "$PROJ" ls-tree --name-only "$sha" bin core | paste -sd' ' -)
+      # shellcheck disable=SC2086 # the paths are plain names, split on purpose
+      git -C "$PROJ" archive "$sha" $paths | tar -x -C "$tmp" || die "cannot export ${sha:0:12} from $PROJ"
+      rm -rf -- "$tool"; mv -- "$tmp" "$tool"
+    fi
+    find "$STATE/trunk-live-tool" -mindepth 1 -maxdepth 1 ! -name "$sha" -exec rm -rf -- {} +
+    mover="$tool/bin/jg-update.sh"
+  fi
+  echo "live: moving every home with $mover"
+  args=(--base "$sha" --project "$PROJ" --branch "$TRUNK")
+  [ -z "${LIVE_HOME:-}" ] || args+=(--home "$LIVE_HOME")
+  JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" "$mover" "${args[@]}"
+}
+
+waiver_rule() { awk -v p="$PN" '$1 == p { r = $2 } END { print r }' "$CONFIG/trunk-live-waiver" 2>/dev/null || true; }
+
 cmd_live() {
   local green tip
+  case ${2-} in '') ;; --home) LIVE_HOME=${3:?--home needs a lead home path} ;; *) die "usage: jg-trunk.sh live <project-dir> [--home <lead-home>]" ;; esac
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null) || refuse "no fully green trunk commit yet; the home stays where it is"
-  need_word live "$green"
-  go_live "$green" "$tip"; spend_word live
+  LIVE_WAIVER=$(waiver_rule); LIVE_FLEET=1
+  [ -n "$LIVE_WAIVER" ] || need_word live "$green"
+  go_live "$green" "$tip"
+  [ -n "$LIVE_WAIVER" ] || [ -n "${LIVE_HOME:-}" ] || spend_word live
+}
+
+# The captain waived his go-live word for one project until the stable point; only the Overwatch path records it.
+cmd_waiver() {
+  local rule=${3-} others
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never writes a go-live waiver"
+  [ "${2-}" = --rule ] && [ -n "$rule" ] || refuse "a go-live waiver names the owner rule that grants it: jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>"
+  case $rule in owner-rule-[A-Za-z0-9]*) ;; *) refuse "'$rule' is not an owner rule id (owner-rule-<id>)" ;; esac
+  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"
+  mkdir -p "$CONFIG"
+  others=$(grep -v "^$PN " "$CONFIG/trunk-live-waiver" 2>/dev/null || true)
+  put "$CONFIG/trunk-live-waiver" "${others:+$others$'\n'}$PN $rule $(date +%s) until=stable"
+  echo "go-live waiver recorded for $PN under $rule; delete its line in config/trunk-live-waiver to restore the word"
 }
 
 cmd_word() {
@@ -820,6 +875,7 @@ case "${1:-}" in
   verify) shift; cmd_verify "$@" ;;
   word) shift; cmd_word "$@" ;;
   live) shift; cmd_live "$@" ;;
+  waiver) shift; cmd_waiver "$@" ;;
   ci) shift; cmd_ci "$@" ;;
   rollover) shift; cmd_rollover "$@" ;;
   retire) shift; cmd_retire "$@" ;;

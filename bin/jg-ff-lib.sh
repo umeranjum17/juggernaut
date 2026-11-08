@@ -479,12 +479,16 @@ ff_maybe_clear_stale_index_lock() { # <dir> <label> <merge-output>
 # Guards are identical in both modes: never force/merge/stash; skip a dirty or
 # wrong-branch target and leave its work untouched. An optional squad_lead id
 # enables the content-equivalent divergence proof and durable marker described
-# in this file's header.
+# in this file's header. contained_repoint=yes (the fleet live move, jg-update.sh
+# --base) runs that same proof WITHOUT a squad_lead id or reconciliation state: a
+# clean target whose HEAD is not an ancestor of the base but whose complete tree
+# result the base already holds is re-pointed with reset --keep; any other
+# divergence is skipped untouched.
 FF_STATUS=""
 FF_INSTR=""
 ff_target() {
   local dir=$1 label=$2 base_mode=$3 allow_detached=${4:-no} ignore_seed_marker=${5:-no}
-  local squad_lead_id=${6:-} reconciliation_state=${7:-}
+  local squad_lead_id=${6:-} reconciliation_state=${7:-} contained_repoint=${8:-no}
   FF_STATUS="skipped"
   FF_INSTR=""
 
@@ -559,7 +563,7 @@ ff_target() {
     return 0
   fi
   if ! git -C "$dir" merge-base --is-ancestor HEAD "$base" 2>/dev/null; then
-    if [ -n "$squad_lead_id" ] && [ -n "$reconciliation_state" ] \
+    if { [ "$contained_repoint" = yes ] || { [ -n "$squad_lead_id" ] && [ -n "$reconciliation_state" ]; }; } \
       && divergence_is_redundant "$dir" "$local_rev" "$base_rev"; then
       instr=$(changed_instr "$dir" "$base")
       before=$(git -C "$dir" rev-parse --short HEAD)

@@ -68,6 +68,21 @@
 # After the fast-forward it runs bin/jg-stack.sh up, so the release arrives with its services, and
 # bin/jg-host-wiring.sh, so every installed host copy (the merge watcher included) equals core again.
 #
+# FLEET LIVE MOVE (--base): a project registered local-trunk is moved from its LOCAL trunk, never from origin.
+# `jg-trunk.sh live` exports the trunk tip's own bin/ and runs this script from that copy:
+#   jg-update.sh --base <sha> --project <project-dir> --branch <trunk-branch> [--home <lead-home>]
+# One home at a time, registered Squad Lead homes first and Main's clone LAST (pool worktrees and lane branches are not
+# homes and are never touched). Each home gets exactly one row in data/trunk-live.tsv:
+#   <project>:<home-id> <sha> <epoch> <status> <pre-move HEAD>      (Main's home id is "primary")
+#   live                        fast-forwarded, or already there
+#   live,re-pointed-from:<sha>  HEAD was not an ancestor but the tip holds its whole tree: reset --keep, never a merge
+#   skipped:dirty | skipped:unlanded:<paths> | skipped:<other reason>   not touched
+#   rolled-back:<reason>        the health check failed: the home is pinned back to its pre-move HEAD and the rollout stops
+# After a home moves, bin/jg-home-guard.sh install <home> and bin/jg-home-health.sh check <home> <sha> run when present.
+# Moving anything clears state/squad-lead-summary-cache (an observational cache). Main's move writes
+# state/trunk-live-restart-pending for the next locked session start. --home moves that one lead only (the canary).
+# Without --base a local-trunk project is refused: its code comes from its trunk, not from origin.
+#
 # Usage: jg-update.sh [--help]
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
@@ -104,13 +119,27 @@ SQUAD_LEADS_MD="$(jg_compat_pick "$JG_HOME/data/squad_leads.md")"
 
 "$SCRIPT_DIR/jg-guard.sh" || true
 
-usage() { echo "usage: jg-update.sh [--help]" >&2; }
+usage() { echo "usage: jg-update.sh [--help | --base <sha> --project <dir> --branch <trunk> [--home <lead-home>]]" >&2; }
 
-if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  usage
-  exit 0
+BASE="" PROJECT="" TRUNK_BRANCH=trunk ONLY_HOME=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help|-h) usage; exit 0 ;;
+    --base) BASE=${2:-}; shift 2 || { usage; exit 1; } ;;
+    --project) PROJECT=${2:-}; shift 2 || { usage; exit 1; } ;;
+    --branch) TRUNK_BRANCH=${2:-}; shift 2 || { usage; exit 1; } ;;
+    --home) ONLY_HOME=${2:-}; shift 2 || { usage; exit 1; } ;;
+    *) usage; exit 1 ;;
+  esac
+done
+if [ -n "$BASE" ]; then
+  [ -n "$PROJECT" ] && [ -n "$TRUNK_BRANCH" ] || { usage; exit 1; }
+elif [ -n "$PROJECT$ONLY_HOME" ]; then
+  usage; exit 1
+elif [ "$(env JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="${JG_DATA_OVERRIDE:-$JG_HOME/data}" "$SCRIPT_DIR/jg-project-mode.sh" --raw juggernaut 2>/dev/null | cut -d' ' -f1 || true)" = local-trunk ]; then
+  echo "REFUSED: juggernaut is registered local-trunk; update this project from its trunk (jg-trunk.sh live), not from origin" >&2
+  exit 1
 fi
-[ $# -eq 0 ] || { usage; exit 1; }
 
 # --- main juggernaut repo ---------------------------------------------------
 
@@ -120,7 +149,7 @@ reread_juggernaut="no"
 # takes the same allowance a Squad Lead home already takes. Nothing else relaxes: a
 # dirty tree, a named branch that is not the default, a fetch failure, and a unique
 # local commit are all still skipped, so nothing is forced, merged, or stashed.
-ff_target "$JG_ROOT" "juggernaut" origin yes no
+if [ -n "$BASE" ]; then FF_STATUS=skipped; FF_INSTR=""; else ff_target "$JG_ROOT" "juggernaut" origin yes no; fi
 if [ "$FF_STATUS" = "updated" ]; then
   if [ -n "$FF_INSTR" ]; then
     reread_juggernaut="yes"
@@ -152,6 +181,8 @@ ensure_bus_service() {  # <home>
   fi
 }
 
+# (--base mode moves code only: the services and host wiring below stay with a release.)
+if [ -z "$BASE" ]; then
 # The services come with the release: run the updated checkout's own install command so a
 # release never lands on a machine without them. A failure is reported, never fatal to the update.
 # A Squad Lead home runs none of the machine's services (Main owns them, bin/jg-unit-claim.sh
@@ -174,6 +205,7 @@ fi
 if [ "${JG_HOST_WIRING_SKIP:-0}" != 1 ] && [ -x "$JG_ROOT/bin/jg-host-wiring.sh" ]; then
   env JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" "$JG_ROOT/bin/jg-host-wiring.sh" "$JG_HOME" >&2 \
     || echo "host wiring: not whole after the update (see the jg-host-wiring lines above)" >&2
+fi
 fi
 
 # --- squad_leads -----------------------------------------------------------
@@ -243,6 +275,94 @@ jg_ff_after_squad_lead_settled() {  # <id> <home> <window> <status> <instr>
   claim_settled_squad_lead "$1"
 }
 
+# --- fleet live move (--base): see the header ---------------------------------
+DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
+FLEET_RC=0
+
+# Move one home to $BASE and write its row. Sets MOVE_RESULT=moved|skipped|stopped.
+move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
+  local key=$1 dir=$2 label=$3 seed=$4 pre out mb paths status tmp
+  MOVE_RESULT=skipped
+  pre=$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)
+  if ! git -C "$dir" cat-file -e "$BASE^{commit}" 2>/dev/null; then
+    git -C "$dir" fetch -q "$PROJECT" "refs/heads/$TRUNK_BRANCH" 2>/dev/null || true
+  fi
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jg-live-move.XXXXXX") || return 0
+  ff_target "$dir" "$label" "$BASE" yes "$seed" "" "" yes > "$tmp"
+  out=$(cat "$tmp"); rm -f -- "$tmp"; printf '%s\n' "$out"
+  case "$FF_STATUS" in
+    updated|current)
+      status=live
+      case "$out" in *"reconciled redundant divergence"*) status="live,re-pointed-from:${pre:0:12}" ;; esac
+      MOVE_RESULT=moved ;;
+    *)
+      case "$out" in
+        *"dirty working tree"*) status="skipped:dirty" ;;
+        *"diverged from"*)
+          mb=$(git -C "$dir" merge-base "$pre" "$BASE" 2>/dev/null || true)
+          paths=$(comm -12 <(git -C "$dir" diff --name-only "$mb" "$pre" 2>/dev/null | sort) \
+            <(git -C "$dir" diff --name-only "$BASE" "$pre" 2>/dev/null | sort) | head -n 5 | paste -sd, -)
+          status="skipped:unlanded:${paths:-diverged}" ;;
+        *) status="skipped:$(first_line "${out#*skipped: }")" ;;
+      esac ;;
+  esac
+  if [ "$MOVE_RESULT" = moved ]; then
+    [ "$FF_STATUS" != updated ] || [ ! -x "$dir/bin/jg-procevent-when.sh" ] \
+      || JG_HOME="$dir" JG_ROOT_OVERRIDE="$dir" "$dir/bin/jg-procevent-when.sh" rebind-all || true
+    [ ! -x "$SCRIPT_DIR/jg-home-guard.sh" ] || "$SCRIPT_DIR/jg-home-guard.sh" install "$dir" || true
+    if [ -x "$SCRIPT_DIR/jg-home-health.sh" ] && ! out=$("$SCRIPT_DIR/jg-home-health.sh" check "$dir" "$BASE" 2>&1); then
+      JG_TRUNK_PINBACK=1 git -C "$dir" reset -q --keep "$pre" || true
+      status="rolled-back:$(first_line "$(printf '%s\n' "$out" | tail -n 1)")"; MOVE_RESULT=stopped
+      echo "$label: health check failed, pinned back to ${pre:0:12}: $status"
+    fi
+  fi
+  mkdir -p "$DATA"
+  printf '%s:%s\t%s\t%s\t%s\t%s\n' "$(basename "$PROJECT")" "$key" "$BASE" "$(date +%s)" "$status" "$pre" >> "$DATA/trunk-live.tsv"
+}
+
+fleet_live_move() {
+  local line id home moved=0 found=0 abs_only=""
+  [ -z "$ONLY_HOME" ] || abs_only=$(resolve_path "$ONLY_HOME")
+  if [ -f "$SQUAD_LEADS_MD" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in "- "*) ;; *) continue ;; esac
+      squad_lead_registry_parse_line "$line" || continue
+      id=$SQUAD_LEAD_REGISTRY_ID; home=$SQUAD_LEAD_REGISTRY_HOME
+      [ "$SQUAD_LEAD_REGISTRY_REMOTE" -eq 0 ] || continue
+      [ -z "$abs_only" ] || [ "$(resolve_path "$home")" = "$abs_only" ] || continue
+      [ "$(resolve_path "$home")" != "$(resolve_path "$JG_ROOT")" ] || continue
+      found=1
+      if ! validate_squad_lead_home "$id" "$home"; then
+        echo "squad_lead $id: skipped: unsafe home: $VALIDATION_ERROR"
+        printf '%s:%s\t%s\t%s\tskipped:unsafe-home\t\n' "$(basename "$PROJECT")" "$id" "$BASE" "$(date +%s)" >> "$DATA/trunk-live.tsv"
+        continue
+      fi
+      move_home "$id" "$VALIDATED_HOME" "squad_lead $id" yes
+      [ "$MOVE_RESULT" != moved ] || { moved=1; claim_settled_squad_lead "$id"; }
+      [ "$MOVE_RESULT" != stopped ] || { FLEET_RC=1; return 0; }
+    done < "$SQUAD_LEADS_MD"
+  fi
+  if [ -n "$abs_only" ]; then
+    [ "$found" -eq 1 ] || { echo "error: no registered lead home at $ONLY_HOME" >&2; FLEET_RC=1; }
+  else
+    # Main last: its move leaves a marker for the next locked session start.
+    move_home primary "$JG_ROOT" juggernaut no
+    case "$MOVE_RESULT" in
+      moved)
+        moved=1
+        [ -z "$FF_INSTR" ] || reread_juggernaut=yes
+        printf 'sha=%s\nat=%s\n' "$BASE" "$(date +%s)" > "$STATE/trunk-live-restart-pending" ;;
+      *) FLEET_RC=1 ;;
+    esac
+  fi
+  if [ "$moved" -eq 1 ] && [ -d "$STATE/squad-lead-summary-cache" ] && [ ! -L "$STATE/squad-lead-summary-cache" ]; then
+    find "$STATE/squad-lead-summary-cache" -maxdepth 1 -type f -name '*.json' -delete
+  fi
+}
+
+if [ -n "$BASE" ]; then fleet_live_move; fi
+if [ -z "$BASE" ]; then
+
 # Live direct reports first: state/<id>.meta with kind=squad_lead carries the
 # authoritative home= path.
 sweep_live_squad_lead_metas "$STATE" origin yes
@@ -306,6 +426,7 @@ if [ -f "$SQUAD_LEADS_MD" ]; then
     fi
   done < "$SQUAD_LEADS_MD"
 fi
+fi
 
 # --- caller action summary -------------------------------------------------
 
@@ -316,3 +437,4 @@ fi
 echo "reread-juggernaut: $reread_juggernaut"
 echo "restart-squad-leads:${FF_RESTART_WINDOWS:- none}"
 echo "nudge-squad-leads:${FF_STEER_WINDOWS:- none}"
+exit "$FLEET_RC"

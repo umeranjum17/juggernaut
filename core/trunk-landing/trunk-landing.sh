@@ -12,7 +12,7 @@
 # commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land one at a time, oldest done first, and a
 # finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step.
 # After a landing `bin/jg-trunk.sh verify` runs the whole suite at that commit apart from the next landing and reverts the
-# commit by itself if it caused a red. The check never goes live: that stays the captain's word (jg-trunk.sh live).
+# commit by itself if it caused a red. The check never goes live on its own authority: that stays the captain's word (jg-trunk.sh live), EXCEPT for a project with a line in config/trunk-live-waiver (jg-trunk.sh waiver): after its landing the check runs `live` once per trunk tip and reports the outcome.
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced: a refusal is reported and the worktree stays.
 # The watcher runs this check on its fast tick, so a worker's done starts the landing within seconds in every home; the outcome
 # line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
@@ -57,11 +57,17 @@ if [ "$1" = run ]; then
     # The lander rebased the lane, so its branch is now at the landed commit: the same verdict stands for that head.
     br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
     now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
+    live="not live: that needs the captain's word"; pn=$(basename "$proj"); tipsha=$(cat "$STATE/trunk-tip-$pn" 2>/dev/null || true)
+    if [ -n "$tipsha" ] && awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-live-waiver" 2>/dev/null && [ ! -e "$MEM/.live-$pn-$tipsha" ]; then
+      : > "$MEM/.live-$pn-$tipsha"
+      live="live under the captain's waiver"
+      lout=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" live "$proj" 2>&1) || live="NOT live: $(printf '%s' "$lout" | tail -n 1 | cut -c1-200)"
+    fi
     out=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && out='cleaned up' || out="cleanup refused, nothing was forced: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
     printf 'landed %s\n' "$out" > "$MEM/$id.$head.state"
     [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$out" > "$MEM/$id.$now.state"
     jg_lock_acquire_wait "$MEM/.outbox.lock"
-    printf 'trunk-landing: landed %s (local-trunk) on the local trunk (not live: that needs the captain'"'"'s word); %s\n' "$id" "$out" >> "$MEM/outbox"
+    printf 'trunk-landing: landed %s (local-trunk) on the local trunk (%s); %s\n' "$id" "$live" "$out" >> "$MEM/outbox"
     jg_lock_release "$MEM/.outbox.lock"
     # The whole suite runs at the landed commit apart from the landings, and reverts that one commit if it caused a red.
     cand=$(awk -F'\t' -v i="$id" '$1 == i { c = $3 } END { print c }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
