@@ -623,7 +623,7 @@ cmd_verify() {
 
 # Move the home to <sha> through the project's live hook and record it. Exit 3 when the home did not move.
 go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-back moves this one
-  local sha=$1 hook status=landed-not-live here there why
+  local sha=$1 hook status=landed-not-live here there why hook_out hook_rc reason
   hook="$CONFIG/live-hook.$PN"
   if [ ! -x "$hook" ]; then
     here=$(git -C "$JG_ROOT" remote get-url origin 2>/dev/null || echo a); there=$(git -C "$PROJ" remote get-url origin 2>/dev/null || echo b)
@@ -638,7 +638,13 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
     printf '%s\n' "$why"
     [ -z "${LIVE_HOME:-}" ] || status=canary
   elif [ -x "$hook" ]; then
-    "$hook" "$PROJ" "$sha" || { row trunk-live.tsv "$PN" "$sha" "$(date +%s)" hook-failed; echo "error: live hook failed for ${sha:0:12}; the home stays where it was" >&2; exit 3; }
+    hook_out=$("$hook" "$PROJ" "$sha" 2>&1) && hook_rc=0 || hook_rc=$?
+    [ -z "$hook_out" ] || printf '%s\n' "$hook_out" >&2
+    if [ "$hook_rc" -ne 0 ]; then  # the hook's last line is its reason (bin/jg-trunk-live-home.sh)
+      reason=$(printf '%s\n' "$hook_out" | tr '\t' ' ' | awk 'NF { l = $0 } END { print substr(l, 1, 200) }')
+      row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:${reason:-hook exited $hook_rc}"
+      echo "error: live hook failed for ${sha:0:12}: ${reason:-hook exited $hook_rc}; the home stays where it was" >&2; exit 3
+    fi
     status=live
   fi
   [ "$sha" = "$2" ] || status="$status,pinned-behind-${2:0:12}"
