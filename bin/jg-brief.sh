@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only|local-trunk> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
 #        jg-brief.sh <task-id> <repo-name> --scout [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
 #   --medium names the project's medium at intake, so the brief can carry this
@@ -412,15 +412,15 @@ done
 # missing or invalid value stops the scaffold rather than silently defaulting.
 if [ "$KIND" = ship ]; then
   [ "$MODE_SET" -eq 1 ] || {
-    echo "error: ship briefs require --mode <no-mistakes|direct-PR|local-only>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
+    echo "error: ship briefs require --mode <no-mistakes|direct-PR|local-only|local-trunk>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
     exit 1
   }
   case "$MODE" in
-    no-mistakes|direct-PR|local-only) ;;
+    no-mistakes|direct-PR|local-only|local-trunk) ;;
     no-mistakes-prod-only)
       echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake" >&2
       exit 1 ;;
-    *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only (got '$MODE')" >&2; exit 1 ;;
+    *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only, local-trunk (got '$MODE')" >&2; exit 1 ;;
   esac
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a squad_lead charter is not a delivery contract" >&2
@@ -543,7 +543,7 @@ fi
 # brief that disagrees, so the two can never drift.
 # bin/jg-version-branch-lib.sh owns which branch that is, and a project without
 # one keeps the default-branch setup sentence and its --base-branch flag path.
-if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
+if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] \
   && [ "$FORGE" = none ] && [ "$PROJECT_DIR_SET" -eq 1 ] && [ -n "$PROJECT_DIR" ]; then
   BASE_BRANCH=$(jg_current_version_branch "$PROJECT_DIR") || BASE_BRANCH=
 fi
@@ -602,7 +602,7 @@ fi
 # Self-repository pre-gate for a publishing ship brief: detectable only when
 # --project was passed, so the check runs here only then. bin/jg-spawn.sh
 # repeats it at launch with the resolved project path.
-if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$PROJECT_DIR_SET" -eq 1 ]; then
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ "$PROJECT_DIR_SET" -eq 1 ]; then
   [ -n "$PROJECT_DIR" ] || {
     echo "error: --project requires a non-empty directory" >&2
     exit 1
@@ -1045,7 +1045,7 @@ case "$MODE" in
   direct-PR)
     SETUP2=""
     ;;
-  local-only)
+  local-only|local-trunk)
     SETUP2=""
     ;;
   *)  # no-mistakes
@@ -1065,10 +1065,10 @@ Replace the survey line below with the record, then run \`$JG_ROOT/bin/jg-prior-
 Prior art (survey): <replace with \`Prior art pick: <name>\` and \`Licence: <licence - usable here or not>\` lines, or with \`Prior art: none needed - <why this work is neither new nor complex>\`>
 EOF
 PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
-# A project registered local-trunk (docs/trunk-flow.md) ships its lanes as local-only tasks that land on the local
+# A project registered local-trunk (docs/trunk-flow.md) ships local-trunk tasks; legacy local-only tasks land on the local
 # trunk by themselves. Only that posture gets this section; every other project's brief is exactly as it was.
 TRUNK_SECTION=
-if [ "$MODE" = local-only ] && jg_brief_local_trunk "$REPO"; then
+if { [ "$MODE" = local-only ] || [ "$MODE" = local-trunk ]; } && jg_brief_local_trunk "$REPO"; then
   TRUNK_SECTION="
 # Local trunk lane
 This project is registered local-trunk: there is no feature pull request, and the only pull request is the release one, raised on the captain's word.

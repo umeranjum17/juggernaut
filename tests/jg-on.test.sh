@@ -353,8 +353,10 @@ cat > "$DOCTOR_BIN/uname" <<'SH'
 printf 'Linux\n'
 SH
 chmod +x "$DOCTOR_BIN/uname"
+# Keep required-tool absence independent of the host's installed harnesses.
+DOCTOR_BASE=$(jg_test_base_path_sans /usr/bin:/bin:/usr/sbin:/sbin treehouse claude codex opencode pi pi-signed grok kimi)
 set +e
-out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" "$ROOT/bin/jg-remote-doctor.sh" 2>&1)
+out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:$DOCTOR_BASE" "$ROOT/bin/jg-remote-doctor.sh" 2>&1)
 rc=$?
 set -e
 [ "$rc" -ne 0 ] || fail "the remote doctor passed with a missing required tool"
@@ -372,11 +374,11 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$DOCTOR_BIN/treehouse"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$DOCTOR_BIN/claude"
 chmod +x "$DOCTOR_BIN/jq" "$DOCTOR_BIN/herdr" "$DOCTOR_BIN/treehouse" "$DOCTOR_BIN/claude"
 set +e
-out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" "$ROOT/bin/jg-remote-doctor.sh" 2>&1)
+out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:$DOCTOR_BASE" "$ROOT/bin/jg-remote-doctor.sh" 2>&1)
 rc=$?
 set -e
 assert_contains "$out" "required git=$DOCTOR_BIN/git" "the remote doctor did not report where the required tool resolved"
-doctor_tmux=$(PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" command -v tmux 2>/dev/null || true)
+doctor_tmux=$(PATH="$DOCTOR_BIN:$DOCTOR_BASE" command -v tmux 2>/dev/null || true)
 if [ -n "$doctor_tmux" ]; then
   assert_contains "$out" "optional tmux=$doctor_tmux" "the remote doctor did not report the resolved optional tool"
 else

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Resolve a project's REGISTERED delivery posture from the data/projects.md registry.
 # Default usage prints two words to stdout: "<mode> <yolo>" where mode is one of
-# no-mistakes|direct-PR|local-only and yolo is on|off.
+# no-mistakes|direct-PR|local-only|local-trunk and yolo is on|off.
 # --branch-prefix instead prints one value: the project's registered ship-branch
 # prefix, "fm/" when the project registers none, is unregistered, or the registry
 # is absent, so every existing installation keeps its current "fm/<task-id>"
@@ -46,9 +46,9 @@
 #   no-mistakes            full pipeline -> PR -> configured merge authority (default)
 #   direct-PR              push + PR via gh-axi, no pipeline
 #   local-only             local branch, no remote/PR, guarded local merge
-#   local-trunk            the local trunk flow (docs/trunk-flow.md, bin/jg-trunk.sh): lanes ship as local-only
+#   local-trunk            the local trunk flow (docs/trunk-flow.md, bin/jg-trunk.sh): lanes ship as local-trunk
 #                          tasks and land on a local trunk by themselves; goes live and out as ONE release PR
-#                          only on the captain's word. Mechanical output maps it to local-only; --raw keeps it.
+#                          only on the captain's word. Mechanical and --raw output both retain local-trunk.
 #                          Every trunk rule applies to a local-trunk project ONLY: no-mistakes, direct-PR and
 #                          local-only keep their own rules exactly as before.
 #   no-mistakes-prod-only  a conditional policy, not a task mode: juggernaut
@@ -299,7 +299,7 @@ case "$forge" in
     exit 3 ;;
 esac
 if [ "$forge" != none ] && { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
-  echo "refused: $NAME is registered local-only with forge=$forge in $REG; local-only publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; register no-mistakes or direct-PR to publish through the forge, or drop the forge token to keep the project local" >&2
+  echo "refused: $NAME is registered $mode with forge=$forge in $REG; $mode publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; register no-mistakes or direct-PR to publish through the forge, or drop the forge token to keep the project local" >&2
   exit 3
 fi
 if [ "$WANT_FORGE" -eq 1 ]; then
@@ -314,11 +314,5 @@ fi
 # rigorous leg; --raw callers get the annotation itself (see the header).
 if [ "$RAW" -eq 0 ] && [ "$mode" = no-mistakes-prod-only ]; then
   mode=no-mistakes
-fi
-# local-trunk is a project posture, not a task mode: its lanes ship as local-only tasks (nothing is pushed), so a
-# mechanical caller sees local-only. Only --raw tells them apart, and only bin/jg-trunk.sh, its landing check, the
-# brief and the spawn read it (docs/trunk-flow.md).
-if [ "$RAW" -eq 0 ] && [ "$mode" = local-trunk ]; then
-  mode=local-only
 fi
 echo "$mode $yolo"

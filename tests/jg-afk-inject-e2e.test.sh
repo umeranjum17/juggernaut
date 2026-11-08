@@ -44,7 +44,17 @@ DAEMON_PID=
 SUPERVISOR_PANE=
 LOOP_SCRIPT=
 
-fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
+fail() {
+  printf 'not ok - %s\n' "$1" >&2
+  local file
+  for file in "$LOG_FILE" "$STATE_DIR/daemon.out" "$STATE_DIR/daemon.err" "$STATE_DIR/transport.log"; do
+    [ -f "$file" ] || continue
+    printf '\n%s:\n' "${file##*/}" >&2
+    cat "$file" >&2
+  done
+  cleanup_all
+  exit 1
+}
 pass() { printf 'ok - %s\n' "$1"; }
 
 cleanup_all() {
@@ -64,7 +74,13 @@ trap cleanup_all EXIT
 # --- setup ------------------------------------------------------------------
 
 STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/jg-afk-e2e.XXXXXX")
-mkdir -p "$STATE_DIR"
+export JG_HOME="$STATE_DIR/home" JG_ROOT_OVERRIDE="$ROOT"
+export XDG_CONFIG_HOME="$JG_HOME/config" XDG_CACHE_HOME="$JG_HOME/cache" XDG_STATE_HOME="$JG_HOME/state"
+export XDG_RUNTIME_DIR="$JG_HOME/run"
+export JG_KV_URL=nats://127.0.0.1:1 JG_WAKE_BUS_URL=nats://127.0.0.1:1 JG_STATE_BUS_URL=nats://127.0.0.1:1
+# A fixture is not the machine-service owner; host service findings are not test events.
+mkdir -p "$JG_HOME/config" "$JG_HOME/data" "$JG_HOME/state"
+mkdir -m 700 "$XDG_RUNTIME_DIR"
 LOG_FILE="$STATE_DIR/submitted.log"
 : > "$LOG_FILE"
 
@@ -142,6 +158,10 @@ sleep 1  # let the loop start and settle
 TMUX_SHIM_DIR=$(mktemp -d "${TMPDIR:-/tmp}/jg-shim.XXXXXX")
 cat > "$TMUX_SHIM_DIR/tmux" <<SHIM
 #!/usr/bin/env bash
+if [ "\${1:-}" = send-keys ]; then
+  printf '%q ' "\$@" >> "$STATE_DIR/transport.log"
+  printf '\n' >> "$STATE_DIR/transport.log"
+fi
 if [ "\${1:-}" = "send-keys" ] && [ -f "$STATE_DIR/.swallow-enter" ]; then
   shift
   _args=()
@@ -221,6 +241,7 @@ reset_state() {
          "$STATE_DIR"/.swallow-enter \
          2>/dev/null || true
   : > "$LOG_FILE"
+  : > "$STATE_DIR/transport.log"
 }
 
 # --- pane_input_pending environment self-check ------------------------------

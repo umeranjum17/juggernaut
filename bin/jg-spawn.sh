@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a operator in a treehouse or Orca worktree, or a
 # squad_lead in its isolated juggernaut home.
-# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> [<juggernaut-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --squad-lead
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -2683,7 +2683,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     # before. A mode that publishes nothing keeps no base, because
     # jg_base_branch_valid refuses one there.
     PROJ_FORGE=
-    if [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ]; then
+    if [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
       PROJ_FORGE=$("$JG_ROOT/bin/jg-project-mode.sh" --forge "$(basename "$PROJ_ABS")" 2>/dev/null) || PROJ_FORGE=
       if [ -z "$PROJ_FORGE" ] || [ "$PROJ_FORGE" = none ]; then
         BASE_BRANCH=$(jg_current_version_branch "$PROJ_ABS") || BASE_BRANCH=
@@ -2761,7 +2761,6 @@ if [ "$KIND" = ship ]; then
   fi
   [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
   STANDING_MODE=$("$JG_ROOT/bin/jg-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d" " -f1) || STANDING_MODE=
-  [ "$STANDING_MODE" != local-trunk ] || STANDING_MODE=local-only  # a local-trunk lane ships as a local-only task
   # The brief/spawn agreement (branch, mode, upstream consent, forge, yolo on gerrit) is the Go
   # spawn core's (core/spawn/cmd/jg-spawn-core/delivery.go), which prints its own refusal.
   # The registered forge is the captain's confirmed binding (bin/jg-project-mode.sh), read
@@ -2772,10 +2771,14 @@ if [ "$KIND" = ship ]; then
     --brief "$BRIEF" --source-brief "$SOURCE_BRIEF" --project "$PROJ_NAME" \
     --standing-forge "$STANDING_FORGE" || exit 1
   # No feature pull requests: a project with a local trunk (bin/jg-trunk.sh init) ships every lane
-  # local-only; the only pull request is the release one. A current explicit captain instruction
+  # local-trunk; legacy local-only records remain interoperable. The only PR is the release one. A current explicit captain instruction
   # can still choose a pull request mode by removing the trunk record, never by this spawn.
-  if [ "$MODE" != local-only ] && spawn_trunk_branch >/dev/null; then
-    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local-only and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
+  if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ "$STANDING_MODE" = local-trunk ]; then
+    echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local-trunk and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
+    exit 1
+  fi
+  if [ "$MODE" = local-trunk ] && { [ "$STANDING_MODE" != local-trunk ] || ! spawn_trunk_branch >/dev/null; }; then
+    echo "error: $ID requires a registered local-trunk project with an initialized trunk; run bin/jg-trunk.sh init first" >&2
     exit 1
   fi
   # Self-repository publication gate (bin/jg-role-lib.sh): a ship task whose
@@ -2784,7 +2787,7 @@ if [ "$KIND" = ship ]; then
   # config/juggernaut-role, or this one task's recorded upstream consent. Every
   # other project passes through unchanged; local-only publishes nothing and
   # never reaches this gate.
-  if [ "$MODE" != local-only ]; then
+  if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
     gate_rc=0
     jg_role_gate_self_publish "$JG_HOME" "$CONFIG" "$PROJ_ABS" "$JG_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
     case $gate_rc in

@@ -55,7 +55,9 @@ SH
   cat > "$W/fakebin/gh-axi" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$W/gh-calls"
-if [ "\$2" = view ]; then printf 'state: %s\n' "\$(cat "$W/pr-state" 2>/dev/null || echo open)"; exit 0; fi
+if [ "\$2" = view ]; then
+  [ "\$3" = 9 ] && [ "\$4" = --repo ] && [ "\$5" = o/r ] || { echo 'error: gh-axi requires a PR number and --repo' >&2; exit 1; }
+  printf 'state: %s\n' "\$(cat "$W/pr-state" 2>/dev/null || echo open)"; exit 0; fi
 printf 'https://github.com/o/r/pull/9\n'
 SH
   cat > "$HOME_D/config/live-hook.proj" <<SH
@@ -88,7 +90,7 @@ commit_in() {  # <worktree> <file> <content> <message> [<note>]
 }
 # prove <id> [PASS|FAIL]: the sealed done-done receipt for the lane's current head.
 prove() {
-  printf '{"schema":1,"task":"%s","mode":"local-only","spawn_gen":"g-%s","head":"%s","pr":"","verdict":"%s","at":1,"evidence":"done-done run: ok"}\n' \
+  printf '{"schema":1,"task":"%s","mode":"local-trunk","spawn_gen":"g-%s","head":"%s","pr":"","verdict":"%s","at":1,"evidence":"done-done run: ok"}\n' \
     "$1" "$1" "$(git -C "$PROJ" rev-parse "fm/$1")" "${2:-PASS}" > "$HOME_D/state/$1.run-receipt.json"
 }
 # lane <id> <content> [<file>] [<note>]: a lane off the trunk tip with one commit and a PASS receipt.
@@ -96,7 +98,7 @@ lane() {
   local id=$1 wt="$W/lanes/$1"
   git -C "$PROJ" worktree add -q -b "fm/$id" "$wt" trunk
   commit_in "$wt" "${3:-work.txt}" "$2" "ticket $id" "${4-}"
-  jg_write_meta "$HOME_D/state/$id.meta" "project=$PROJ" "mode=local-only" "branch=fm/$id" "worktree=$wt" "spawn_gen=g-$id"
+  jg_write_meta "$HOME_D/state/$id.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/$id" "worktree=$wt" "spawn_gen=g-$id"
   prove "$id"
 }
 # relane <id> <content>: the lane is rebased onto the trunk tip with one new commit and proved again.
@@ -110,6 +112,16 @@ refused() {  # <what> <id> <expect>: landing refuses, mentions <expect>, and lea
   [ "$rc" -ne 0 ] || fail "$1 must refuse, but it landed: $out"
   assert_contains "$out" "$3" "$1 must say why"
   [ "$(tip)" = "$before" ] || fail "$1 moved the trunk"
+}
+
+test_legacy_mode_stays_interoperable() {
+  world legacy
+  lane old one
+  sed -i 's/^mode=local-trunk$/mode=local-only/' "$HOME_D/state/old.meta"
+  sed -i 's/"mode":"local-trunk"/"mode":"local-only"/' "$HOME_D/state/old.run-receipt.json"
+  trunk land old >/dev/null 2>&1 || fail "legacy local-only records must still land"
+  grep -qx mode=local-only "$HOME_D/state/old.meta" || fail "legacy records must not be rewritten"
+  pass 'a legacy local-only record lands without a mode rewrite'
 }
 
 test_a_good_lane_lands_but_goes_live_only_on_his_word() {
@@ -270,7 +282,7 @@ test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut()
   assert_contains "$(cat "$HOME_D/data/trunk-versions.tsv")" "$(printf 'proj\t2\ttrunk-v2\t%s' "$old")" "the version must be recorded"
   out=$(trunk rollover "$PROJ" 2>&1) && fail "one release rolls over once"
   git -C "$PROJ" worktree add -q -b fm/n1 "$W/lanes/n1" trunk-v2; commit_in "$W/lanes/n1" work.txt next "ticket n1"
-  jg_write_meta "$HOME_D/state/n1.meta" "project=$PROJ" "mode=local-only" "branch=fm/n1" "worktree=$W/lanes/n1" "spawn_gen=g-n1"; prove n1
+  jg_write_meta "$HOME_D/state/n1.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/n1" "worktree=$W/lanes/n1" "spawn_gen=g-n1"; prove n1
   out=$(trunk land n1 2>&1) || fail "a lane must land on the next trunk: $out"
   [ "$(git -C "$PROJ" rev-parse trunk-v2)" = "$(git -C "$PROJ" rev-parse fm/n1)" ] || fail "the next trunk must hold the landed commit"
   pass 'the trunk is safe until its release lands, then the next version is cut and the project moves onto it'
@@ -293,7 +305,7 @@ test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried() {
   [ -d "$wt" ] || fail "a worktree on it must not be removed"
   git -C "$PROJ" worktree add -q -b fm/hx2 "$W/lanes/hx2" trunk-v2; git -C "$W/lanes/hx2" cherry-pick -n "$hot" >/dev/null 2>&1 || fail "the hotfix must cherry-pick"
   git -C "$W/lanes/hx2" -c user.name=t -c user.email=t@example.invalid commit -q -m "ticket hx2: carry hotfix hx"
-  jg_write_meta "$HOME_D/state/hx2.meta" "project=$PROJ" "mode=local-only" "branch=fm/hx2" "worktree=$W/lanes/hx2" "spawn_gen=g-hx2"; prove hx2
+  jg_write_meta "$HOME_D/state/hx2.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/hx2" "worktree=$W/lanes/hx2" "spawn_gen=g-hx2"; prove hx2
   trunk land hx2 >/dev/null 2>&1 || fail "the carried hotfix must land on trunk-v2"
   out=$(trunk retire "$PROJ" 2>&1) || fail "retire must not fail: $out"
   assert_contains "$out" "kept worktree $wt: it holds uncommitted work" "a worktree with unlanded work must be kept and listed"
@@ -408,6 +420,7 @@ test_the_bundled_hook_moves_a_home_that_runs_the_project() {
   pass 'the bundled hook fast-forwards the home and a dirty home is recorded as not moved'
 }
 
+test_legacy_mode_stays_interoperable
 test_a_good_lane_lands_but_goes_live_only_on_his_word
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_every_unsafe_landing_refuses

@@ -149,7 +149,7 @@ func rigorRank(mode string) int {
 		return 3
 	case "direct-PR":
 		return 2
-	case "local-only":
+	case "local-only", "local-trunk":
 		return 1
 	}
 	return 0

@@ -3,7 +3,7 @@
 # Usage: trunk-landing.sh check <jg-home>
 #        trunk-landing.sh run <jg-home> <task-id> <head>      (what `check` starts in the background)
 #
-# For each state/<task>.meta in the home with mode=local-only whose project is registered local-trunk and has a trunk
+# For each state/<task>.meta in the home with mode=local-trunk (or legacy local-only) whose project is registered local-trunk and has a trunk
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
 # state/<task>.run-receipt.json is a PASS for the branch's exact head, `check` starts
 # `bin/jg-trunk.sh land <task>` detached (the gate chain is far longer than a check's time limit) and records
@@ -40,7 +40,7 @@ if [ "$1" = run ]; then
   if [ "$rc" -eq 0 ]; then
     printf 'landed\n' > "$MEM/$id.$head.state"
     out=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && out='cleaned up' || out="cleanup refused, nothing was forced: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
-    printf 'trunk-landing: landed %s on the local trunk (not live: that needs the captain'"'"'s word); %s\n' "$id" "$out" >> "$MEM/outbox"
+    printf 'trunk-landing: landed %s (local-trunk) on the local trunk (not live: that needs the captain'"'"'s word); %s\n' "$id" "$out" >> "$MEM/outbox"
     exit 0
   fi
   why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error):' | tail -n 1 | cut -c1-300)
@@ -75,7 +75,8 @@ report() { [ "$(cat "$MEM/$1.reported" 2>/dev/null)" = "$3" ] || { echo "trunk-l
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
   id=$(basename "$meta" .meta)
-  [ "$(mval "$meta" mode)" = local-only ] || continue
+  # Compatibility is read-only and applies only to registered local-trunk projects below.
+  case $(mval "$meta" mode) in local-trunk|local-only) ;; *) continue ;; esac
   proj=$(mval "$meta" project); [ -d "$proj" ] || continue
   [ -e "$STATE/trunk-tip-$(basename "$proj")" ] || continue
   [ "$(local_trunk "$proj")" = yes ] || continue

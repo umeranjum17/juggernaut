@@ -359,8 +359,8 @@ sync_project() {
     return 0
   fi
   mode=${mode_line%% *}
-  if [ "$mode" = "local-only" ]; then
-    echo "$label: skipped: local-only project"
+  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+    echo "$label: skipped: $mode project"
     return 0
   fi
   if ! git -C "$PROJ" remote get-url origin >/dev/null 2>&1; then

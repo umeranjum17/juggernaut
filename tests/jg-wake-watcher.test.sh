@@ -73,6 +73,59 @@ fi
 export JG_BUS_ROOT=$ROOT JG_HOME=$DIR/replay-home JG_STATE_OVERRIDE=$DIR/replay-home/state
 mkdir -p "$JG_STATE_OVERRIDE"
 
+# Exercise the real producer offline before the replay/live consumer checks.
+# No clock stub: a future high-water floor forces the same branch as equal-clock
+# calls and rollback, even if the real clock advances during the concurrent burst.
+order_home=$DIR/order-home
+mkdir -p "$order_home/config" "$order_home/state/bus"
+printf 'off\n' > "$order_home/config/wake-bus"
+raise_order() {
+  JG_HOME="$order_home" JG_WAKE_HOME_KEY=order "$BUS_BIN" wake raise "$order_home/state" check "$1" "$1" now
+}
+for n in $(seq 1 20); do raise_order "sequential-$n" || fail "sequential raise $n"; done
+jq -s -e 'length == 20 and ([.[].rseq] == ([.[].rseq] | sort | unique))
+  and ([.[].id] | unique | length == 20)' "$order_home/state/.wake-bus.outbox.jsonl" >/dev/null \
+  || fail "quick sequential raises lost order or identity"
+pass "quick sequential CLI raises preserve producer order and unique identities"
+
+floor=$(( ($(date +%s) + 86400) * 1000 ))
+printf '%s\n' "$floor" > "$order_home/state/bus/wake-order"
+pids=''
+for n in $(seq 1 32); do raise_order "concurrent-$n" & pids="$pids $!"; done
+for pid in $pids; do wait "$pid" || fail "concurrent raise $pid"; done
+# A later CLI process must observe the previous processes' committed high water.
+JG_HOME="$order_home" JG_WAKE_HOME_KEY=order "$BUS_BIN" wake settle "$order_home/state" check after-burst after-burst \
+  || fail "settle after the producer burst"
+jq -s -e --argjson floor "$floor" 'length == 53
+  and ([.[].id] | unique | length == 53)
+  and ([.[] | select(.key | startswith("concurrent-")) | .rseq] | sort == [range($floor+1; $floor+33)])
+  and (last.rseq == $floor+33 and last.where == "settled")
+  and all(.[]; .rseq > 0 and .rseq < 9007199254740992 and .rseq == (.rseq | floor))' \
+  "$order_home/state/.wake-bus.outbox.jsonl" >/dev/null || fail "equal/rollback clock concurrency lost a number, precision or identity"
+pass "same-clock/rollback floor: 32 concurrent CLI raises and the later settle have unique exact ordered numbers"
+
+# A historical equal-sequence tie keeps the read model's existing line-order rule.
+jq -c 'select(.key == "sequential-2" or .key == "sequential-1") | .rseq = 7000' \
+  "$order_home/state/.wake-bus.outbox.jsonl" > "$DIR/ties.jsonl"
+"$BUS_BIN" watcher replay "$DIR/ties.jsonl" --home order > "$DIR/ties-replay.jsonl" || fail "tie replay"
+tail -n 1 "$DIR/ties-replay.jsonl" | jq -e '.rows | length == 2 and (.[0] | contains("sequential-1"))' >/dev/null \
+  || fail "historical ties changed their deterministic order"
+printf 'not-a-number\n' > "$order_home/state/bus/wake-order"
+if raise_order corrupt >"$DIR/order-error" 2>&1; then fail "a corrupt ordering record was accepted"; fi
+grep -q 'cannot assign row sequence:.*invalid syntax' "$DIR/order-error" || fail "ordering refusal lost its real cause"
+[ "$(wc -l < "$order_home/state/.wake-bus.outbox.jsonl" | tr -d ' ')" = 53 ] || fail "a refused raise wrote an event"
+pass "historical ties stay deterministic and a corrupt ordering record refuses with its cause"
+
+printf '9007199254740990\n' > "$order_home/state/bus/wake-order"
+raise_order last-exact || fail "the last exact sequence was refused"
+"$BUS_BIN" watcher replay "$order_home/state/.wake-bus.outbox.jsonl" --home order > "$DIR/limit-replay.jsonl" || fail "exact-limit replay"
+tail -n 1 "$DIR/limit-replay.jsonl" | jq -e '.rows | any(.[]; contains("\t9007199254740991\tcheck\tlast-exact\t"))' >/dev/null \
+  || fail "the consumer rounded the last exact row number"
+if raise_order exhausted >"$DIR/order-error" 2>&1; then fail "an inexact sequence was accepted"; fi
+grep -q 'sequence exceeds the exact integer range' "$DIR/order-error" || fail "numeric exhaustion lost its cause"
+[ "$(wc -l < "$order_home/state/.wake-bus.outbox.jsonl" | tr -d ' ')" = 54 ] || fail "numeric exhaustion wrote an event"
+pass "the last exact 53-bit integer survives the real consumer and the next raise refuses"
+
 # replay <label> [--corrupt]: compare every step of every home; prints the number of steps compared.
 replay() {
   local corrupt=${1:-} homes home n i checked=0 diffs=0 goout want got goline
@@ -158,7 +211,13 @@ for _ in $(seq 1 40); do "$BUS" bootstrap >/dev/null 2>&1; "$BUS" stream >/dev/n
 "$BUS" stream || fail "the captain stream was not created"
 
 # Before the service runs, the view is the render's own inputs, and says so.
-"$WAKE" raise check ready-work "check: ready work waiting (0/4 open): alpha-one" now || fail "the raise did not publish"
+printf 'off\n' > "$HOME_DIR/config/wake-bus"
+"$WAKE" raise check ready-work "check: ready work waiting (0/4 open): alpha-one" now || fail "the offline raise failed"
+identity=$(jq -c '[.id, .rseq]' "$HOME_DIR/state/.wake-bus.outbox.jsonl")
+printf 'nats-url nats://127.0.0.1:%s\n' "$port" > "$HOME_DIR/config/wake-bus"
+"$WAKE" render || fail "the owed wake did not publish"
+[ "$(jq -c '[.id, .rseq]' "$HOME_DIR/state/.wake-bus.events.jsonl")" = "$identity" ] || fail "publication changed the owed row identity"
+pass "an offline row keeps its exact id and sequence when published to the real stream"
 msg=$("$BUS" watcher oldest 2>&1 >/dev/null)
 case "$msg" in *"wake-watcher service is not running"*) ;; *) fail "a stopped service was not named: $msg" ;; esac
 "$BUS" watcher oldest 2>/dev/null | grep -q 'alpha-one' || fail "the degraded view lost the queued wake"

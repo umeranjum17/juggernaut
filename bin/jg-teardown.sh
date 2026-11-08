@@ -1478,7 +1478,9 @@ backlog_done_args() {
       BACKLOG_DONE_ARGS=(--report "$data_relative/$ID/report.md")
       ;;
     *)
-      if [ "$MODE" = local-only ]; then
+      if [ "$MODE" = local-trunk ]; then
+        BACKLOG_DONE_ARGS=(--note "local-trunk")
+      elif [ "$MODE" = local-only ]; then
         BACKLOG_DONE_ARGS=(--note "local main")
       elif [ -n "$PR_URL" ]; then
         BACKLOG_DONE_ARGS=(--pr "$PR_URL")
@@ -3374,7 +3376,7 @@ if [ -d "$STATE" ] && [ "$KIND" != squad_lead ]; then
     "$SCRIPT_DIR/jg-inactive-reconcile.sh" retire "$ID" || true
 fi
 rm -f "$STATE/$ID.models"
-if [ "$KIND" != scout ] && [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ]; then
+if [ "$KIND" != scout ] && [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
   "$JG_ROOT/bin/jg-fleet-sync.sh" "$PROJ" || true
 fi
 # A squad_lead retirement may remove the home containing an overridden control

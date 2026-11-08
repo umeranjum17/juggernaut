@@ -20,9 +20,17 @@ path it watched.
 
 Two things follow, and both are the point of the switch:
 
-- **The server assigns the row's sequence.** It is the message's stream sequence,
-  so a row's number survives a crash, a restart and two producers at once, which
-  is what the sequence file and its lock were for.
+- **The producer fixes the row's sequence before publishing.** `jg-bus wake`
+  allocates `rseq` as the greater of epoch milliseconds and the previous number
+  plus one, under a per-home kernel lock on `state/bus/wake-order.lock`.
+  The high-water number in `state/bus/wake-order` is replaced atomically; the
+  kernel releases the lock when the process exits.
+  Equal clocks, concurrent producers and clock rollback therefore keep distinct,
+  increasing row numbers across CLI restarts, below the exact 53-bit integer limit.
+  A corrupt or exhausted number refuses the raise with its cause.
+  First use starts beyond the legacy random suffix range in the current second.
+  This number also makes the event id unique and stays unchanged when an offline
+  event reaches the bus later; the stream sequence orders transport, not queue rows.
 - **An unacknowledged event stays on the server.** Nothing has to notice that a
   consumer died, so the queue's own append-recovery marker and the `.wake-settled`
   file are gone with the mechanisms they served.
@@ -76,10 +84,10 @@ folds the bus into them, atomically, and every reader that used to `awk` the
 queue - the drain, the guard, the session digest, the mail check, the lead and
 host-memory wakers - keeps working unchanged.
 
-Three files hold the live path's own state, and all three are caches of the bus:
+The live path keeps its replica, cursor and unpublished events separately:
 
 - `state/.wake-bus.events.jsonl` - this home's unsettled events, each with its
-  stream sequence; an inbox record keeps its own number, its file's in the task's inbox.
+  fixed producer row sequence; an inbox record keeps its own number, its file's in the task's inbox.
   An acknowledgement drops its raise with it, so the fold stays small.
 - `state/.wake-bus.cursor` - the last sequence already applied, per stream, with
   the creation time of the stream it was taken on, which is what makes a render cost
@@ -91,12 +99,12 @@ Three files hold the live path's own state, and all three are caches of the bus:
   home whose bus is briefly unreachable loses no wake: the event waits here and
   the next render publishes it.
 
-Losing all three is safe: the next render rebuilds them from the stream.
+The replica and cursor can be rebuilt from the stream; the outbox and producer high-water number must be retained.
 
 ## Producers and consumers
 
-- `jg_wake_append` publishes a raise and renders. It takes no lock, because the
-  server serialises its own appends and the sequence file is gone.
+- `jg_wake_append` delegates row identity to `jg-bus wake`, publishes and renders.
+  It never locks or rewrites the queue; the producer ordering contract above is shared by raises and settled records.
 - `jg_wake_withdraw` reads the matching ids from the replica and acknowledges
   them, which replaces the whole-file rewrite it used to do.
 - The drain acknowledges row by row: `bin/jg-wake-bus.sh ids-through <cutoff>
@@ -146,7 +154,7 @@ first render after the file is gone.
 ## Test
 
 `tests/jg-wake-queue-live.test.sh` starts a throwaway server and proves the cycle
-that matters: a raise reaches the read model with the server's sequence, the drain
+that matters: a raise reaches the read model with its fixed producer sequence, the drain
 presents it and its acknowledgement removes it from the bus and from the read
 model, a record-only row lands in the record model, a withdraw removes only its
 own row, an inbox record is raised at the writer and acknowledged when its

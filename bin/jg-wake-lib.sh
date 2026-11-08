@@ -2521,9 +2521,8 @@ jg_wake_append_locked() {
     return 0
   fi
 
-  # The server assigns the row's sequence and keeps the event, so nothing here
-  # allocates a number, appends to a file, or arms a recovery marker for a queue
-  # whose consumer might be down.
+  # jg-bus fixes the row identity before publishing (docs/bus-live.md), so an
+  # offline event retains its number when the bus accepts it later.
   word=$(jg_wake_status_word "$clean_key")
   JG_WAKE_WORD=$word jg_wake_bus raise "$kind" "$clean_key" "$clean_payload" "$class" || status=$?
   if [ "$status" -ne 0 ]; then

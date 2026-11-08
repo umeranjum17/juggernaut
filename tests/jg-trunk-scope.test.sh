@@ -102,7 +102,10 @@ fi
 pass "T4 local-only still stops at a ready branch and merges locally"
 
 world trunkmode local-trunk
-b=$(brief t1 local-only)
+b=$(brief t1 local-trunk)
+assert_contains "$b" "Delivery contract: mode=local-trunk" "T5 the task contract must retain its mode"
+assert_not_contains "$b" "mode=local-only" "T5 no silent task-mode conversion"
+assert_not_contains "$b" "current default branch" "T5 trunk lanes must not rebase onto main"
 assert_contains "$b" "Local trunk lane" "T5 a local-trunk project's lane brief must carry the trunk section"
 assert_contains "$b" "rebase it on the LATEST tip of the local trunk" "T5 the lane brief must tell the worker to rebase on the latest trunk tip"
 assert_contains "$b" "YOU resolve every conflict" "T5 the lane brief must make the worker resolve conflicts"
@@ -112,7 +115,30 @@ assert_contains "$lead" "Local trunk projects" "T5 a local-trunk project's squad
 assert_contains "$lead" "rebase it on the LATEST tip of the local trunk" "T5 the charter must carry the rebase rule"
 assert_contains "$lead" "never force a landing" "T5 the charter must forbid a forced landing"
 jgt verify "$P" 2>&1 | grep -q "is registered" && fail "T5 a local-trunk project must not be refused as another mode"
-[ "$(JG_HOME="$H" "$ROOT/bin/jg-project-mode.sh" proj 2>/dev/null)" = "local-only off" ] || fail "T5 mechanical callers must see a local-trunk project as local-only"
+[ "$(JG_HOME="$H" "$ROOT/bin/jg-project-mode.sh" proj 2>/dev/null)" = "local-trunk off" ] || fail "T5 mechanical callers must retain local-trunk"
 [ "$(JG_HOME="$H" "$ROOT/bin/jg-project-mode.sh" --raw proj 2>/dev/null)" = "local-trunk off" ] || fail "T5 --raw must say local-trunk"
 pass "T5 a project registered local-trunk is a trunk project"
+# Drive the public ready-work reader with a priority history above the OS single-argument limit.
+# Only the backlog text source is a stand-in; the reader, awk and ordering are real processes.
+large="$TMP_ROOT/large-ready"; mkdir -p "$large/bin"
+cp "$ROOT/bin/jg-supervision-lib.sh" "$large/bin/"
+cat > "$large/bin/jg-backlog.sh" <<'SH'
+#!/usr/bin/env bash
+case $1 in ready) cat "$JG_HOME/ready.txt" ;; list) cat "$JG_HOME/priorities.txt" ;; esac
+SH
+chmod +x "$large/bin/jg-backlog.sh"
+python3 - "$large" <<'PYDATA'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); rows=[(i % 5, f"jg-history-{i:06d}") for i in range(8000)]
+p.joinpath('priorities.txt').write_text(''.join(f'  {task},"{priority}"\n' for priority,task in rows))
+p.joinpath('ready.txt').write_text('ready[8000]:\n' + ''.join(f'  {task},work,queued,acme\n' for _,task in reversed(rows)))
+p.joinpath('expected.txt').write_text(''.join(f'{task} acme\n' for _,task in sorted(rows)))
+PYDATA
+bash -c '. "$1"; jg_ready_work_rows "$2"' _ "$large/bin/jg-supervision-lib.sh" "$large" > "$large/actual.txt" 2> "$large/err.txt"
+cmp -s "$large/expected.txt" "$large/actual.txt" || fail "large ready history lost rows or priority ordering: $(cat "$large/err.txt")"
+: > "$large/priorities.txt"; printf 'ready[0]:\n' > "$large/ready.txt"
+out=$(bash -c '. "$1"; jg_ready_work_rows "$2"' _ "$large/bin/jg-supervision-lib.sh" "$large")
+[ -z "$out" ] || fail "an empty priority history and ready queue must stay empty"
+pass 'supervision retains and orders 8000 ready entries without an argv-sized priority table'
 printf 'jg-trunk-scope: ok\n'

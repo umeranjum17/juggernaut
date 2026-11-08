@@ -10,12 +10,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -159,6 +160,46 @@ func object(kv ...string) string {
 	return e.marshal()
 }
 
+// nextWakeSequence fixes the row order before publication, including while offline.
+// The kernel releases the lock on exit; atomic replacement keeps an interrupted
+// write from resetting the high-water mark. It is ordering state, not a queue.
+func (a *app) nextWakeSequence(state string) (int64, error) {
+	path := filepath.Join(state, "bus", "wake-order")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return 0, err
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return 0, err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return 0, err
+	}
+	var previous int64
+	data, err := os.ReadFile(path)
+	if err == nil {
+		previous, err = strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	} else if os.IsNotExist(err) {
+		// Legacy producers used a random suffix within the current second.
+		// Start beyond that range so their existing rows remain older.
+		previous = time.Now().Unix()*1000 + 999
+		err = nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", path, err)
+	}
+	seq := time.Now().UnixMilli()
+	if seq <= previous {
+		seq = previous + 1
+	}
+	// JSON, jq and awk readers must all represent the integer exactly.
+	if previous < 0 || previous >= 1<<53-1 || seq <= 0 || seq > 1<<53-1 {
+		return 0, fmt.Errorf("%s: sequence exceeds the exact integer range", path)
+	}
+	return seq, a.writeAtomic(path, []byte(fmt.Sprintln(seq)))
+}
+
 func (a *app) wakeBus(args []string) int {
 	need := map[string]int{"raise": 5, "settle": 4, "deliver": 4, "render": 1}
 	if len(args) == 0 || need[args[0]] == 0 || len(args)-1 < need[args[0]] {
@@ -180,9 +221,13 @@ func (a *app) wakeBus(args []string) int {
 		} else {
 			class = p[4]
 		}
-		id := fmt.Sprintf("%s/%s/%s-%d-%d", kind, w.key, at, os.Getpid(), rand.Intn(32768))
+		seq, err := a.nextWakeSequence(w.state)
+		if err != nil {
+			return die("wake %s: cannot assign row sequence: %v", args[0], err)
+		}
+		id := fmt.Sprintf("%s/%s/%d-%d", kind, w.key, seq, os.Getpid())
 		kv := []string{"v", "1", "id", jqString(id), "home", hk, "where", jqString(where),
-			"at", at, "rseq", fmt.Sprint(now*1000 + int64(rand.Intn(32768)%1000)), "kind", jqString(p[1]),
+			"at", at, "rseq", fmt.Sprint(seq), "kind", jqString(p[1]),
 			"key", jqString(p[2]), "payload", jqString(p[3]), "class", jqString(class)}
 		if word := os.Getenv("JG_WAKE_WORD"); word != "" { // the status word, kept for routing audits
 			kv = append(kv, "word", jqString(word))

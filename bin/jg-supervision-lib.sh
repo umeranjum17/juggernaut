@@ -24,22 +24,22 @@ jg_ready_work_rows() {
   local home=$1 out rc prios
   out=$(JG_HOME="$home" "$_JG_SUP_BIN/jg-backlog.sh" ready 2>/dev/null); rc=$?
   prios=$(JG_HOME="$home" "$_JG_SUP_BIN/jg-backlog.sh" list --state queued --fields priority 2>/dev/null) || prios=
-  printf '%s\n' "$out" | awk -v p="$prios" '
-    BEGIN {
-      n = split(p, L, "\n")
-      for (i = 1; i <= n; i++) if (L[i] ~ /^  /) {
-        line = L[i]; sub(/^  /, "", line)
+  awk '
+    NR == FNR {
+      if ($0 ~ /^  /) {
+        line = $0; sub(/^  /, "", line)
         id = line; sub(/,.*/, "", id)
         pr = line; sub(/.*,/, "", pr); gsub(/"/, "", pr)
         prio[id] = (pr ~ /^[0-9]+$/) ? pr : 9
       }
+      next
     }
     /^ready\[[0-9]+\]/ { on = 1; next }
     on && /^  / {
       sub(/^  /, ""); split($0, f, ","); repo = f[4]; gsub(/"/, "", repo)
       print ((f[1] in prio) ? prio[f[1]] : 9), f[1], (repo == "" ? "-" : repo); next
     }
-    { on = 0 }' | sort -k1,1n -k2,2 | awk '{ print $2, $3 }'
+    { on = 0 }' <(printf '%s\n' "$prios") <(printf '%s\n' "$out") | sort -k1,1n -k2,2 | awk '{ print $2, $3 }'
   return "$rc"
 }
 

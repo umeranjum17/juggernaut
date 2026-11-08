@@ -42,7 +42,7 @@ Choose that posture when adding or creating the project:
 - `no-mistakes` runs the full validation pipeline before a PR.
 - `direct-PR` pushes and opens a PR without the no-mistakes pipeline.
 - `local-only` has no required remote or PR and lands only through the approved local fast-forward path.
-- `local-trunk` is the local trunk flow (`docs/trunk-flow.md`): lanes ship `local-only` and land on a local trunk by themselves, the trunk goes live only on the captain's word, and the one release pull request goes out on his word. Register it only when the captain chooses it; it never changes how the other modes work.
+- `local-trunk` is the local trunk flow (`docs/trunk-flow.md`): lanes ship `local-trunk` and land on a local trunk by themselves, the trunk goes live only on the captain's word, and the one release pull request goes out on his word. Register it only when the captain chooses it; it never changes how the other modes work.
 - `no-mistakes-prod-only` is a conditional policy rather than one flat mode: genuinely internal-only tooling, automation, contributor or operator process, and release or submission work ships `direct-PR`, while product-facing, mixed, and uncertain work ships `no-mistakes`.
 
 `no-mistakes-prod-only` is the default for a newly added or created remote-backed project when the captain specifies nothing, and a project with no remote defaults to `local-only`.

@@ -10,8 +10,8 @@
 #   trunk-branch          trunk       name of the local trunk branch
 #   trunk-owner           this-home   which home owns the trunk; only this-home is built
 #   away-landing          held        held: no landing while state/.afk exists; allowed
-#   protected-landing     refuse      refuse: a commit touching protected-paths keeps the
-#                                     pull request path; gate: it may land after the full gate
+#   protected-landing     refuse      refuse: a commit touching protected-paths stays unlanded;
+#                                     gate: it may land after the configured gates
 #   protected-paths       (gate machinery, below) space-separated globs
 #   gate-mode             full        full: the lander runs gate-full before landing
 #                                     smoke: it runs gate-smoke and the full suite runs in

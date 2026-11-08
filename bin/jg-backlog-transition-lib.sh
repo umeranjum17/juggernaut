@@ -988,7 +988,7 @@ jg_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
     0) ;;
     2)
       case "${args[0]}" in
-        --note) [ "${args[1]}" = "local%20main" ] ;;
+        --note) case ${args[1]} in local%20main|local-trunk) true ;; *) false ;; esac ;;
         --pr)
           arg_value=${args[1]}
           [ "${#arg_value}" -le 2048 ] \
@@ -1162,7 +1162,7 @@ jg_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
   mode=$JG_BACKLOG_CLOSE_VALIDATED_MODE
   [ "$mode" = close ] || mode_flags=(--retain)
   args=("${JG_BACKLOG_CLOSE_VALIDATED_ARGS[@]+"${JG_BACKLOG_CLOSE_VALIDATED_ARGS[@]}"}")
-  if [ "${args[0]-}" = --note ]; then
+  if [ "${args[0]-}" = --note ] && [ "${args[1]-}" = local%20main ]; then
     args[1]="local main"
   fi
   meta="$state/$id.meta"

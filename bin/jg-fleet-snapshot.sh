@@ -470,8 +470,8 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
     def strip_title_artifacts:
       sub("[[:space:]]+-[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
       | sub("[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
-      | sub("[[:space:]]+-[[:space:]]+local main$"; "")
-      | sub("[[:space:]]+local main$"; "")
+      | sub("[[:space:]]+-[[:space:]]+(local main|local-trunk)$"; "")
+      | sub("[[:space:]]+(local main|local-trunk)$"; "")
       | sub("[[:space:]]+-[[:space:]]*$"; "");
     def clean_title:
       strip_trailing_metadata
@@ -493,7 +493,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
         else ($reason | clean_title | if . == "" then null else . end)
         end;
     def local_note($rest):
-      cap(($rest | strip_trailing_metadata); ".*(?:^|[[:space:]]+-[[:space:]]+|[[:space:]])(?<v>local main)$");
+      cap(($rest | strip_trailing_metadata); ".*(?:^|[[:space:]]+-[[:space:]]+|[[:space:]])(?<v>local main|local-trunk)$");
     def completion($rest):
       (metadata_word($rest; "merged")) as $merged
       | (metadata_word($rest; "reported")) as $reported
@@ -568,7 +568,7 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
               // (if any(.body_lines[];
                     test("^Resolution recorded by jg-(captain|decision)-hold\\.$"))
                   then null
-                  else cap(.body_lines[-1]; "^(?<v>local main)$")
+                  else cap(.body_lines[-1]; "^(?<v>local main|local-trunk)$")
                   end))
           | .body_excerpt = ((.body_lines | join(" "))[:240])
         else . end)

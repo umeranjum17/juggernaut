@@ -203,7 +203,7 @@ cmd_land() {
   jg_pr_task_id_valid "$id" || die "invalid task id"
   META="$STATE/$id.meta"; [ -f "$META" ] || die "no meta for task $id at $META"
   open_project "$(jg_dod_meta_value "$META" project)"
-  case $(jg_dod_meta_value "$META" mode) in local-only|trunk) ;; *) die "task $id is not a local-only or trunk task; merge PR tasks with bin/jg-pr-merge.sh" ;; esac
+  case $(jg_dod_meta_value "$META" mode) in local-trunk|local-only|trunk) ;; *) die "task $id is not a local-trunk task (legacy local-only/trunk also accepted); merge PR tasks with bin/jg-pr-merge.sh" ;; esac
   [ "$(pol owner-rules)" = keep ] || refuse "owner-rules=$(pol owner-rules) is not decided; the owner rule gates keep running until the captain replaces them"
   if [ "$(pol away-landing)" = held ] && [ -e "$STATE/.afk" ]; then refuse "away mode: trunk landings stay held until the captain returns (away-landing=held)"; fi
   jg_lease_forbid_branch "trunk landing (jg-trunk)"
@@ -227,7 +227,7 @@ cmd_land() {
     git -C "$PROJ" log -1 --format=%B "$cand" | grep -qx "fixes-red: $red" || refuse "$TRUNK is red at ${red:0:12}; only a commit with the line 'fixes-red: $red' may land"
   fi
   if hit=$(touches_protected "$tip" "$cand") && [ "$(pol protected-landing)" = refuse ]; then
-    refuse "$hit is a protected path; this commit keeps the pull request path (protected-landing=refuse)"
+    refuse "$hit is a protected path; landing requires approval of protected-landing=gate (current protected-landing=refuse)"
   fi
   linked=$(JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id") || rc=$?
   case $rc in
@@ -339,7 +339,9 @@ cmd_ci() {
 # The release PR of the last release, and whether it has merged. The trunk stays untouched until it has.
 last_release_url() { awk -F'\t' -v p="$PN" '$1 == p { u = $6 } END { print u }' "$DATA/trunk-releases.tsv" 2>/dev/null || true; }
 pr_state() {  # <url>: open|merged|closed|unknown
-  local st; st=$( (cd "$PROJ" && gh-axi pr view "$1" 2>/dev/null) | awk '$1 == "state:" { print tolower($2); exit }')
+  local st
+  jg_pr_url_parse "$1" && [ "$JG_PR_PROVIDER" = github ] || { printf 'unknown\n'; return; }
+  st=$( (cd "$PROJ" && gh-axi pr view "$JG_PR_NUMBER" --repo "$JG_PR_PATH") | awk '$1 == "state:" { print tolower($2); exit }')
   printf '%s\n' "${st:-unknown}"
 }
 
