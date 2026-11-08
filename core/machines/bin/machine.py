@@ -2,7 +2,7 @@
 """Machine tables: the state of a record and its legal moves, read from one TSV table (core/machines/README.md)."""
 import os, re, subprocess, sys
 
-USAGE = "usage: jg-machine.sh show|next <machine> <id> | check <machine> [--corpus <file>]"
+USAGE = "usage: jg-machine.sh show|next <machine> <id> | check <machine> [--corpus <file>] | coverage|diagram <machine> | edge-check <machine> <from> <to>"
 
 
 def die(msg, rc=2):
@@ -104,11 +104,51 @@ def check(m, corpus):
     sys.exit(1 if findings else 0)
 
 
+def coverage(m):
+    """An edge with no test id (empty or '-') is untested."""
+    bad = [e for e in m["edges"] if e["test"] in ("", "-")]
+    for e in bad:
+        print(f"untested {m['name']} {e['from']} {e['event']} {e['to']}")
+    print(f"{'fail' if bad else 'ok'} {m['name']}: {len(m['edges'])} edges, {len(bad)} untested")
+    sys.exit(1 if bad else 0)
+
+
+def diagram(m):
+    """Mermaid state diagram, generated from the table and never hand-drawn."""
+    print("stateDiagram-v2")
+    for k, s in m["states"].items():
+        if s["kind"] == "initial":
+            print(f"  [*] --> {k}")
+    for e in m["edges"]:
+        print(f"  {e['from']} --> {e['to']}: {e['event']}")
+    for k, s in m["states"].items():
+        if s["kind"] == "terminal":
+            print(f"  {k} --> [*]")
+
+
+def edge_check(m, frm, to):
+    """Read-only answer for a writer: is the move from -> to legal? Exit 0 legal, 1 not."""
+    for x in (frm, to):
+        if x not in m["states"]:
+            die(f"{m['name']}: {x} is not a state", 1)
+    hit = [e for e in m["edges"] if e["from"] == frm and e["to"] == to]
+    for e in hit:
+        print(f"legal {m['name']} {frm} {to}\t{e['event']}\t{e['writer']}")
+    if not hit:
+        print(f"illegal {m['name']} {frm} {to}")
+    sys.exit(0 if hit else 1)
+
+
 def main(a):
     if len(a) == 2 and a[0] == "check":
         check(load(a[1]), None)
     if len(a) == 4 and a[0] == "check" and a[2] == "--corpus":
         check(load(a[1]), a[3])
+    if len(a) == 2 and a[0] in ("coverage", "diagram"):
+        {"coverage": coverage, "diagram": diagram}[a[0]](load(a[1]))
+        return
+    if len(a) == 4 and a[0] == "edge-check":
+        edge_check(load(a[1]), a[2], a[3])
     if len(a) != 3 or a[0] not in ("show", "next"):
         die(USAGE)
     m = load(a[1])

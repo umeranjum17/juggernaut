@@ -60,3 +60,18 @@ for _ in 1 2 3 4; do
 done
 assert_equals published "$(cat "$T/rec/a1")" "the walk reached the terminal state"
 pass "AX: next names the command and the move lands on its to"
+
+# SM1b: coverage names an edge with no test, diagram is generated from the table, edge-check answers one move.
+jm coverage doc; expect_code 0 "$RC" "every edge has a test"; assert_equals "ok doc: 3 edges, 0 untested" "$OUT" "coverage golden"
+{ cat "$T/tables/doc.tsv"; tab edge draft withdraw draft author:withdraw - "the author changes mind" -; } > "$T/tables/cov.tsv"
+jm coverage cov; expect_code 1 "$RC" "an untested edge"
+assert_equals "$(printf 'untested cov draft withdraw draft\nfail cov: 4 edges, 1 untested')" "$OUT" "coverage names the edge"
+pass "coverage matches golden output"
+jm diagram doc; expect_code 0 "$RC" "diagram"
+assert_equals "$(printf 'stateDiagram-v2\n  [*] --> draft\n  draft --> review: submit\n  review --> published: approve\n  review --> draft: reject\n  published --> [*]')" "$OUT" "diagram golden"
+pass "diagram matches golden output"
+jm edge-check doc review published; expect_code 0 "$RC" "a legal move"; assert_equals "$(printf 'legal doc review published\tapprove\treviewer:approve')" "$OUT" "edge-check legal golden"
+jm edge-check doc draft published; expect_code 1 "$RC" "an illegal move"; assert_equals "illegal doc draft published" "$OUT" "edge-check illegal golden"
+jm edge-check doc draft nowhere; expect_code 1 "$RC" "a move to a state the table lacks"; assert_contains "$OUT" "nowhere is not a state" "edge-check names the missing state"
+jm edge-check doc draft; expect_code 2 "$RC" "edge-check needs from and to"
+pass "edge-check matches golden output"

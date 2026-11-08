@@ -447,3 +447,7 @@ jobs:
       - name: Lookout front and install dry-run test
         if: ${{ !cancelled() }}
         run: bash lookout-adapter/tests/front.test.sh
+      # Machine tables: the sealed acceptance in a throwaway home; no real home is read.
+      - name: Machine tables sealed proof
+        if: ${{ !cancelled() }}
+        run: bash machines/run-proof.sh

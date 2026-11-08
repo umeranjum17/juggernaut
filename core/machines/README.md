@@ -9,6 +9,9 @@ The records stay the truth: the table never stores a state, and the command neve
 - `jg-machine.sh show <machine> <id>` prints the state, its kind, its captain sentence and its required fields.
 - `jg-machine.sh next <machine> <id>` prints the state and each legal move.
 - `jg-machine.sh check <machine> [--corpus <file>]` lints the table, and with a corpus replays it against the table.
+- `jg-machine.sh coverage <machine>` lists each edge whose test id is empty or `-` and exits 1 when there is one.
+- `jg-machine.sh diagram <machine>` prints a Mermaid state diagram generated from the table.
+- `jg-machine.sh edge-check <machine> <from> <to>` prints `legal` with the event and writer, or `illegal`, and exits 1 for an illegal move; it only reads, so a writer may call it in shadow.
 
 `show` and `next` print tab-separated `key<TAB>value` lines.
 A move line is `move<TAB>event<TAB>to<TAB>writer<TAB>command<TAB>guard`, with `{id}` already replaced in the command.
@@ -47,6 +50,11 @@ Every command lints the table first and refuses it, naming each defect, when it 
 A corpus file has one line per observation: a state name, or `from<TAB>event<TAB>to` for a move.
 `check` reports each line the table lacks and exits 1.
 A line listed in `known-baseline.tsv` (`machine<TAB>corpus line`) is reported as `baseline` and does not fail.
+
+## Sealed proof
+
+`core/machines/run-proof.sh` is the acceptance run: it runs the machine tests and checks every shipped table in a throwaway home.
+`.github/workflows/core-suites.yml` runs it after the merge.
 
 ## Test
 
