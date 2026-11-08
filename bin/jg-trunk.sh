@@ -20,6 +20,16 @@
 # pull request and no release branch. Local gates decide landing (done-done receipt, lint, owner-guard, the
 # gate chain, the lander's own gate); CI runs after live, and a red CI pins the home back.
 #
+# The full gate charges a lane only for what it broke. When it fails, the lander reruns exactly the failing test
+# scripts on the trunk tip's own tree in a clean clone, in the environment the gate ended with (policy gate-rerun),
+# and compares each one's exit status and failing test names. A script that fails the same way on the tip is the tip's
+# red: it does not block the lane, and it is reported once per script and tip tree (one wake, one note on the
+# gate-red-ticket ticket). A failure first gets one rerun on the candidate: a script that passes on the rerun is flaky and
+# not charged. A script that fails only on the candidate, passes on the tip, or fails differently blocks
+# the lane, and so does any failure no test script accounts for. The tip's result is kept by tree
+# (data/trunk/tip-results-<project>-<tree>.tsv), so it is computed once. A landing that set a red or a flaky failure
+# aside is recorded as full-tip-red or full-rerun and never moves the green pin.
+#
 # The ship branch (state/<id>.meta branch=, default fm/<id>) must hold EXACTLY ONE commit on
 # top of the trunk tip, and state/<id>.run-receipt.json must be a PASS for that exact commit. A moved
 # tip or a second commit refuses; a moved tip that conflicts names the conflicting paths. The lane
@@ -130,16 +140,159 @@ tip_ok() {
   [ "$want" = "$have" ] || refuse "$TRUNK is at ${have:0:12} but the lander last left it at ${want:0:12}; something else moved it, so nothing lands or releases until that is explained"
 }
 
-# Run a gate command at a commit's exact tree in a clean clone; the log is kept under data/.
-run_gate() {  # <commit> <command> <label>
-  local log="$DATA/trunk/gate-$PN-${1:0:12}-$3.log" rc=0
+# Run a command at a commit's exact tree in a clean clone, logging to <log>; returns the command's exit status.
+# <envfile>, when given, receives the environment the command ended with (NUL separated), so a rerun can use the same one.
+gate_exec() {  # <commit> <command> <log> [<envfile>]
+  local rc=0 cmd=$2
   mkdir -p "$DATA/trunk"
   WORK=$(mktemp -d)
   git clone -q --shared --no-checkout "$PROJ" "$WORK/tree" || die "cannot clone $PROJ for the gate"
   git -C "$WORK/tree" checkout -q --detach "$1" || die "cannot check out ${1:0:12} for the gate"
-  (cd "$WORK/tree" && env -u JG_TASK_ID bash -c "$2") > "$log" 2>&1 || rc=$?
+  # shellcheck disable=SC2016 # the trap body expands in the gate's shell
+  [ -z "${4:-}" ] || cmd="trap 'env -0 > \"\$JG_GATE_ENV_OUT\"' EXIT; $2"
+  (cd "$WORK/tree" && JG_GATE_ENV_OUT="${4:-/dev/null}" env -u JG_TASK_ID bash -c "$cmd") > "$3" 2>&1 || rc=$?
   rm -rf -- "$WORK"; WORK=
+  return "$rc"
+}
+
+# Run a gate command at a commit's exact tree in a clean clone; the log is kept under data/.
+run_gate() {  # <commit> <command> <label>
+  local log="$DATA/trunk/gate-$PN-${1:0:12}-$3.log" rc=0
+  gate_exec "$1" "$2" "$log" || rc=$?
   [ "$rc" -eq 0 ] || { tail -n 20 "$log" >&2; refuse "gate '$3' failed (exit $rc) at ${1:0:12}; full log: $log"; }
+}
+
+# Every script the test runner finished in a gate log, as: script TAB exit status TAB failure signature.
+# The signature of a pass is "-". Of a failure it is the script's own "not ok" lines (else its last three lines),
+# sorted, with temp paths and long numbers masked so a pid or a mktemp name cannot make one red look like two.
+gate_results() {  # <log>
+  awk '
+    function norm(s) { gsub(/\/(tmp|var\/folders)\/[^ \t:]*/, "PATH", s); gsub(/[0-9][0-9][0-9][0-9]+/, "N", s); return s }
+    /^JG_TEST_BEGIN / { cur = $3; nf = 0; nt = 0; split("", f); split("", t); next }
+    /^JG_TEST_END / {
+      ex = $0; sub(/.* exit=/, "", ex); sub(/ .*/, "", ex); sig = "-"
+      if (ex != "0") {
+        sig = ""
+        if (nf > 0) {
+          for (i = 2; i <= nf; i++) { v = f[i]; for (j = i - 1; j >= 1 && f[j] > v; j--) f[j + 1] = f[j]; f[j + 1] = v }
+          for (i = 1; i <= nf; i++) if (i == 1 || f[i] != f[i - 1]) sig = sig (sig == "" ? "" : " | ") f[i]
+        } else {
+          for (i = (nt > 3 ? nt - 2 : 1); i <= nt; i++) sig = sig (sig == "" ? "" : " | ") t[i]
+        }
+      }
+      print $3 "\t" ex "\t" sig; cur = ""; next
+    }
+    cur != "" && $0 !~ /^[ \t]*$/ { l = norm($0); t[++nt] = l; if ($0 ~ /^not ok/) f[++nf] = l }
+  ' "$1"
+}
+
+# The failures a full gate left behind that no test script accounts for: a gate that failed for another reason
+# (a check before the runner, a runner that died) is never forgiven. Prints nothing when every failure is a script's.
+gate_unexplained() {  # <log> <results>
+  local counted claimed
+  claimed=$(printf '%s\n' "$2" | awk -F'\t' '$2 != "0"' | grep -c . || true)
+  counted=$(sed -n 's/^JG_TEST_SUMMARY .* failed=\([0-9][0-9]*\) .*/\1/p' "$1" | awk '{ n += $1 } END { print n + 0 }')
+  [ "$claimed" -gt 0 ] && [ "$claimed" = "$counted" ] || echo "the runner reported $counted failed scripts and $claimed finished red"
+}
+
+# Rerun test scripts (policy gate-rerun) at a commit's tree in a clean clone, in the environment a gate ended with
+# (<envfile>, minus what only describes that one shell). <scripts> are already shell-quoted, each led by a space.
+rerun_scripts() {  # <commit> <envfile> <log> <quoted scripts>
+  # shellcheck disable=SC2016 # the loop expands in the rerun's shell
+  gate_exec "$1" "$(printf 'while IFS= read -r -d "" kv; do case "$kv" in PWD=*|OLDPWD=*|SHLVL=*|_=*|JG_GATE_ENV_OUT=*) ;; *) export "$kv" ;; esac; done < %q; %s%s' "$2" "$(pol gate-rerun)" "$4")" "$3" || :
+}
+
+# What the trunk tip's own tree does with <scripts>, keyed by tree: computed once, reused by every lane.
+# Prints script TAB exit TAB signature for each script the tip has a result for.
+tip_results() {  # <tip> <envfile> <script>...
+  local tip=$1 envf=$2 tree cache log s line need=''
+  shift 2
+  tree=$(git -C "$PROJ" rev-parse "$tip^{tree}")
+  cache="$DATA/trunk/tip-results-$PN-$tree.tsv"
+  touch "$cache"
+  for s in "$@"; do
+    git -C "$PROJ" cat-file -e "$tip:$s" 2>/dev/null || continue
+    awk -F'\t' -v s="$s" '$1 == s { f = 1 } END { exit !f }' "$cache" || need="$need $(printf '%q' "$s")"
+  done
+  if [ -n "$need" ]; then
+    log="$DATA/trunk/gate-$PN-${tip:0:12}-tip-$(date +%s).log"
+    rerun_scripts "$tip" "$envf" "$log" "$need"
+    while IFS= read -r line; do
+      s=${line%%$'\t'*}
+      case " $need " in *" $(printf '%q' "$s") "*) printf '%s\n' "$line" >> "$cache" ;; esac
+    done < <(gate_results "$log")
+  fi
+  for s in "$@"; do awk -F'\t' -v s="$s" '$1 == s' "$cache" | head -n 1; done
+}
+
+# One alert and one note per pre-existing red script and tip tree, however many lanes meet it.
+report_tip_red() {  # <tip> <script>...
+  local tip=$1 tree ledger fresh='' s ticket note
+  shift
+  tree=$(git -C "$PROJ" rev-parse "$tip^{tree}")
+  ledger="$DATA/trunk/tip-red-reported-$PN.tsv"; touch "$ledger"
+  for s in "$@"; do grep -qxF "$tree	$s" "$ledger" || fresh="$fresh $s"; done
+  [ -n "$fresh" ] || return 0
+  note="$TRUNK tip ${tip:0:12} is red in:$fresh. It was red before any lane touched it, so no lane is charged for it."
+  jg_wake_append check "trunk-tip-red-$PN-${tree:0:12}" "$note" >/dev/null 2>&1 || echo "warning: could not raise the tip-red alert" >&2
+  ticket=$(pol gate-red-ticket)
+  if [ -n "$ticket" ]; then
+    JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" update "$ticket" --append-notes "$note" >/dev/null 2>&1 \
+      || echo "warning: could not add the tip-red note to $ticket" >&2
+  fi
+  for s in $fresh; do printf '%s\t%s\n' "$tree" "$s" >> "$ledger"; done
+}
+
+# The lander's full gate. A red candidate is judged against the trunk tip's own result for the same scripts:
+# a script that fails the same way on the tip is the tip's red, reported once and not charged to the lane;
+# a script that fails only on the candidate, passes on the tip, or fails differently blocks it.
+# Sets GATE_KIND to full, to full-rerun when every failure passed on its one rerun, or to full-tip-red when the tip's own reds were set aside.
+full_gate() {  # <candidate> <command> <tip>
+  local cand=$1 log="$DATA/trunk/gate-$PN-${1:0:12}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky=''
+  GATE_KIND=full
+  envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
+  gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
+  [ "$rc" -ne 0 ] || { rm -f -- "$envf"; return 0; }
+  mine=$(gate_results "$log" | awk -F'\t' '$2 != "0"')
+  unexplained=$(gate_unexplained "$log" "$mine")
+  if [ -n "$unexplained" ] || [ ! -s "$envf" ]; then
+    rm -f -- "$envf"; tail -n 20 "$log" >&2
+    refuse "gate 'full' failed (exit $rc) at ${cand:0:12}; full log: $log"
+  fi
+  # A flaky failure gets one rerun before it is judged: the scripts are rerun once on the candidate, and only
+  # what fails again counts (as that second run saw it). A script the rerun does not report keeps its first result.
+  quoted=$(printf '%s\n' "$mine" | while IFS= read -r line; do printf ' %q' "${line%%$'\t'*}"; done)
+  rerun_scripts "$cand" "$envf" "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log" "$quoted"
+  again=$(gate_results "$DATA/trunk/gate-$PN-${cand:0:12}-full-rerun.log")
+  settled=''
+  while IFS= read -r line; do
+    s=${line%%$'\t'*}
+    now=$(printf '%s\n' "$again" | awk -F'\t' -v s="$s" '$1 == s { print; exit }')
+    if [ -z "$now" ]; then settled="$settled$line"$'\n'
+    elif [ "$(printf '%s' "$now" | cut -f2)" != 0 ]; then settled="$settled$now"$'\n'
+    else flaky="$flaky $s"; fi
+  done <<< "$mine"
+  mine=$(printf '%s' "$settled")
+  [ -z "$flaky" ] || echo "note: passed on the rerun, so judged flaky and not charged:$flaky" >&2
+  if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND=full-rerun; return 0; fi
+  # shellcheck disable=SC2046
+  tipres=$(tip_results "$3" "$envf" $(printf '%s\n' "$mine" | cut -f1))
+  rm -f -- "$envf"
+  while IFS= read -r line; do
+    s=${line%%$'\t'*}; ex=$(printf '%s' "$line" | cut -f2); sig=$(printf '%s' "$line" | cut -f3-)
+    tex=$(printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { print $2; exit }')
+    tsig=$(printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { sub(/^[^\t]*\t[^\t]*\t/, ""); print; exit }')
+    if [ -n "$sig" ] && [ "$tex" = "$ex" ] && [ "$tsig" = "$sig" ]; then old="$old $s"; else bad="$bad $s"; fi
+  done <<< "$mine"
+  # The tip's own red is a fact about the tip, so it is reported even when this lane is also refused.
+  # shellcheck disable=SC2086
+  [ -z "$old" ] || report_tip_red "$3" $old
+  if [ -n "$bad" ]; then
+    tail -n 20 "$log" >&2
+    refuse "gate 'full' failed (exit $rc) at ${cand:0:12}; this lane introduced or changed the failure of:$bad; full log: $log"
+  fi
+  echo "note: ${cand:0:12} fails only what the $TRUNK tip ${3:0:12} already fails the same way; set aside, not charged to this lane:$old" >&2
+  GATE_KIND=full-tip-red
 }
 
 # The paths where <candidate> cannot merge cleanly onto <tip>; prints nothing when it merges clean.
@@ -197,7 +350,7 @@ cmd_init() {
 }
 
 cmd_land() {
-  local id=${1-} META branch cand tip n red hit rc=0 linked gate cmd
+  local id=${1-} META branch cand tip n red hit rc=0 linked gate cmd GATE_KIND=''
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; rebase the lane on the latest $(pol trunk-branch) tip, fix its conflicts and prove it again" ;; esac
   [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
   jg_pr_task_id_valid "$id" || die "invalid task id"
@@ -240,20 +393,20 @@ cmd_land() {
   run_gate "$cand" "$(pol gate-lint)" lint
   gate=$(pol gate-mode)
   case $gate in
-    full) cmd=$(pol gate-full) ;;
-    smoke) cmd=$(pol gate-smoke); [ -n "$cmd" ] || refuse "gate-mode=smoke but no gate-smoke command is chosen" ;;
+    full) full_gate "$cand" "$(pol gate-full)" "$tip" ;;
+    smoke) cmd=$(pol gate-smoke); [ -n "$cmd" ] || refuse "gate-mode=smoke but no gate-smoke command is chosen"; run_gate "$cand" "$cmd" "$gate" ;;
     *) refuse "unknown gate-mode '$gate'" ;;
   esac
-  run_gate "$cand" "$cmd" "$gate"
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$tip" || refuse "$TRUNK changed while landing $id"
   put "$STATE/trunk-tip-$PN" "$cand"
-  [ "$gate" != full ] || put "$STATE/trunk-green-$PN" "$cand"
-  row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$gate"
+  # Only a candidate that passed the whole suite moves the green pin; one that set the tip's own red aside does not.
+  [ "$gate" != full ] || [ "$GATE_KIND" != full ] || put "$STATE/trunk-green-$PN" "$cand"
+  row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "${GATE_KIND:-$gate}"
   # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event, the ticket close and the post-merge hook.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$id" local || true
   JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$id" --stage "done" --state "done" || true
   if declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "$CONFIG" "$JG_HOME" "$id" "$META" "$cand" - >&2; fi
-  echo "landed $id on $TRUNK (${tip:0:12} -> ${cand:0:12}, gate=$gate) in $PROJ; not live: it goes live only on the captain's word"
+  echo "landed $id on $TRUNK (${tip:0:12} -> ${cand:0:12}, gate=${GATE_KIND:-$gate}) in $PROJ; not live: it goes live only on the captain's word"
 }
 
 cmd_verify() {

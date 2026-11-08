@@ -19,6 +19,11 @@
 #   gate-lint             bin/jg-lint.sh   the lint every landing passes, whichever gate-mode
 #   gate-full             the CI invariants that need no network (no tracked personal paths, no
 #                         committed binaries, regression coverage), then the whole suite
+#   gate-rerun            bin/jg-test-run.sh --jobs 1   the command that reruns the scripts a failed full gate
+#                                     named, on the trunk tip's tree, to tell the tip's own red from the lane's;
+#                                     the script paths are appended to it
+#   gate-red-ticket       core-self-checks-red   the ticket that receives one note for each new tip red
+#                                     (empty: no note, the alert still goes out)
 #   gate-smoke            (none)      smoke is refused until a command is chosen
 #   owner-rules           keep        keep: every owner rule gate in config/merge-gate still
 #                                     runs; any other value is refused as not decided
@@ -45,6 +50,8 @@ jg_trunk_policy() {  # <key> [<project>]
       gate-mode) val=full ;;
       gate-lint) val=bin/jg-lint.sh ;;
       gate-full) val=$_JG_TRUNK_GATE_FULL ;;
+      gate-rerun) val='bin/jg-test-run.sh --jobs 1' ;;
+      gate-red-ticket) val=core-self-checks-red ;;
       gate-smoke) val= ;;
       owner-rules) val=keep ;;
       release-after-hours) val=48 ;;

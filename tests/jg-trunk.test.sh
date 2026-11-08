@@ -27,6 +27,10 @@
 # T7 The registered check core/trunk-landing lands a task whose receipt is a PASS for its exact head with
 #    no human step and never goes live; it ignores a task without that receipt, reports a refusal once
 #    (a conflict names its paths), retries a refusal that only needs time, cleans a landed task up unforced, and runs on the watcher's fast tick.
+# T11 The full gate charges a lane only for what it broke: a script red on the trunk tip in the same way does not block
+#    (it is reported once per tip tree, and the green pin stays), while a script that fails only on the lane, passes on the
+#    tip, or fails differently on the lane blocks it, with the tip's rerun done in the environment the gate ended with.
+#    A failure gets one rerun on the lane before it is judged: one that passes on the rerun is flaky and not charged.
 # T6 A red CI pins the home back to the last green live commit and stops landings; a worker
 #    cannot record the captain's word.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
@@ -408,6 +412,83 @@ test_the_bundled_hook_moves_a_home_that_runs_the_project() {
   pass 'the bundled hook fast-forwards the home and a dirty home is recorded as not moved'
 }
 
+# A stand-in for bin/jg-test-run.sh that keeps its marker contract: it runs t/*.test.sh (or the paths it is given) in the clone.
+rig() {
+  cat > "$W/rig.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --all ] || set -- t/*.test.sh
+total=0 failed=0
+for s in "$@"; do
+  echo "JG_TEST_BEGIN 2026-01-01T00:00:00Z $s family=x expected_gate_skip=none"
+  bash "$s" 2>&1; rc=$?
+  echo "JG_TEST_END 2026-01-01T00:00:00Z $s exit=$rc duration_ms=1 gate_skip=false"
+  total=$((total + 1)); [ "$rc" -eq 0 ] || failed=$((failed + 1))
+done
+echo "JG_TEST_SUMMARY total=$total failed=$failed skipped_gate=0 duration_ms=1"
+[ "$failed" -eq 0 ]
+SH
+  printf 'gate-full=export GATE_MARK=yes; bash %s/rig.sh --all\ngate-rerun=bash %s/rig.sh\ngate-red-ticket=ticket-red\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/backlog-calls"\n' "$W" > "$W/root/bin/jg-backlog.sh"; chmod +x "$W/root/bin/jg-backlog.sh"
+}
+# The tip carries a red that shows only in the gate's environment, and a script that passes.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+seed_red_tip() {
+  git -C "$PROJ" worktree add -q -b seed "$W/seed" trunk
+  commit_in "$W/seed" t/a.test.sh '[ "${GATE_MARK:-}" = yes ] && { echo "not ok - tip case" >&2; exit 1; }; exit 0' "seed a"
+  commit_in "$W/seed" t/c.test.sh 'exit 0' "seed c"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed" rev-parse HEAD)"
+  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
+}
+
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
+  local out tipc green
+  world base; rig; seed_red_tip; tipc=$(tip)
+  # A lane that adds a failing script of its own: blocked by name, and the tip's red is reported.
+  lane intro 'echo "not ok - lane case" >&2; exit 1' t/b.test.sh
+  refused 'a failure only the lane has' intro 't/b.test.sh'
+  assert_contains "$(trunk land intro 2>&1 || true)" "introduced or changed" "the refusal must say the lane caused it"
+  # A lane that makes the tip's red worse (an added failing case in the same script): blocked.
+  lane worse '[ "${GATE_MARK:-}" = yes ] && { echo "not ok - tip case" >&2; echo "not ok - new case" >&2; exit 1; }; exit 0' t/a.test.sh
+  refused 'a different red in the same script' worse 't/a.test.sh'
+  # A lane that breaks a script that passes on the tip: blocked.
+  lane breaks 'echo "not ok - broke c" >&2; exit 1' t/c.test.sh
+  refused 'a script that passes on the tip' breaks 't/c.test.sh'
+  # Reported once for the tip tree: one wake and one note, however many lanes met it; and the tip was rerun once.
+  [ "$(grep -c . "$W/backlog-calls")" = 1 ] || fail "the tip's red must be noted once: $(cat "$W/backlog-calls")"
+  [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the tip's red must raise one alert: $(cat "$HOME_D/state/.wake-queue" 2>&1)"
+  assert_contains "$(cat "$W/backlog-calls")" "update ticket-red --append-notes" "the note goes to the red ticket"
+  assert_contains "$(cat "$W/backlog-calls")" "t/a.test.sh" "the note names the red script"
+  [ "$(grep -c '^t/a.test.sh' "$HOME_D/data/trunk/"tip-results-proj-*.tsv)" = 1 ] || fail "the tip's result for a script is computed once"
+  assert_contains "$(cat "$HOME_D/data/trunk/tip-red-reported-proj.tsv")" "t/a.test.sh" "the report is recorded by script and tip tree"
+  [ "$(tip)" = "$tipc" ] || fail "no refused lane moves the trunk"
+  # A lane that touches only what is unrelated lands; the tip's red is set aside, not charged, and the green pin stays.
+  lane good 'exit 0' t/d.test.sh
+  green=$(cat "$HOME_D/state/trunk-green-proj")
+  out=$(trunk land good 2>&1) || fail "a lane that adds no red must land on a red tip: $out"
+  assert_contains "$out" "not charged to this lane" "the landing must say it set the tip's red aside"
+  assert_contains "$out" "gate=full-tip-red" "the landing must record that the gate was set against the tip"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "a landing that set red aside must not move the green pin"
+  [ "$(grep -c . "$W/backlog-calls")" = 1 ] && [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the same tip tree is not reported twice"
+  pass 'the full gate blocks only what the lane broke: new, worse and broken-passing scripts block; the tip'"'"'s own red lands, reported once'
+}
+
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_flaky_failure_gets_one_rerun_before_it_is_judged() {
+  local out green
+  world flaky; rig; seed_red_tip; green=$(cat "$HOME_D/state/trunk-green-proj")
+  # Fails the first time the gate runs it and passes the second: judged flaky, so the lane lands beside the tip's own red.
+  lane once "[ -e $W/seen ] || { : > $W/seen; echo 'not ok - flaky case' >&2; exit 1; }; exit 0" t/f.test.sh
+  out=$(trunk land once 2>&1) || fail "a failure that passes on its one rerun must not block: $out"
+  assert_contains "$out" "judged flaky" "the landing must say it set a flaky failure aside"
+  assert_contains "$out" "gate=full-tip-red" "the tip's own red is still set aside and recorded"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "a rerun landing must not move the green pin"
+  # The same script failing on both runs is the lane's own failure.
+  lane twice 'echo "not ok - solid case" >&2; exit 1' t/g.test.sh
+  refused 'a failure that repeats on the rerun' twice 't/g.test.sh'
+  pass 'a failure gets one rerun before it is judged: a flaky one is set aside, a repeated one blocks'
+}
+
 test_a_good_lane_lands_but_goes_live_only_on_his_word
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_every_unsafe_landing_refuses
@@ -420,4 +501,6 @@ test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried
 test_the_registered_check_lands_a_proved_task_without_a_human
 test_the_landing_check_cuts_the_next_trunk_once_the_release_merged
 test_the_watcher_runs_the_landing_check_on_its_fast_tick
+test_the_full_gate_charges_a_lane_only_for_what_it_broke
+test_a_flaky_failure_gets_one_rerun_before_it_is_judged
 printf 'jg-trunk: ok\n'

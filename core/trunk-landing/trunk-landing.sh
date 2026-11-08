@@ -53,7 +53,7 @@ fi
 
 command -v jq >/dev/null 2>&1 || exit 0
 export JG_HOME=$FMH JG_CONFIG_OVERRIDE=$FMH/config
-# shellcheck source=bin/jg-trunk-policy-lib.sh
+# shellcheck source=bin/jg-trunk-policy-lib.sh disable=SC1091
 . "$FMH/bin/jg-trunk-policy-lib.sh"
 if [ -s "$MEM/outbox" ]; then mv -f -- "$MEM/outbox" "$MEM/outbox.$$" && cat "$MEM/outbox.$$" && rm -f -- "$MEM/outbox.$$"; fi
 # Only a project registered local-trunk is ever touched; no-mistakes, direct-PR and local-only projects keep their own rules.

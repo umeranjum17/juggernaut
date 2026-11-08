@@ -29,6 +29,7 @@ command -v openssl >/dev/null 2>&1 || { echo "owner-rules: OpenSSL is required f
 # The merge gate and sign follow it, so a lead home signs with Main's key in place (never copied) and keeps the signature in its own data;
 # init-key still creates a pair only in the home it runs in.
 if [ -z "${JG_MAIN_HOME:-}" ] && [ "$mode" != init-key ]; then
+  # shellcheck source=/dev/null
   . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../bin" && pwd -P)/jg-squad-lead-parent-lib.sh"
   JG_MAIN_HOME=$JG_HOME hops=0
   while [ -e "$JG_MAIN_HOME/.jg-squad-lead-parent" ]; do

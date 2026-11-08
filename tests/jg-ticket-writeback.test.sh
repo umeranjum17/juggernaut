@@ -31,7 +31,9 @@ ticket_field() {  # <id> <jq path>
 publish() {  # <task>: the poll's own ticket creation, so the writer has a row to correct
   local id
   id=$(ticket_id "$1")
-  sign-off-axi ticket "$board" --id "$id" --title "Ticket for $1" --progress 0 --state queued --stage queued >/dev/null
+  # A new ticket needs its own description (sign-off-axi refuses one without), as the poll gives it.
+  sign-off-axi ticket "$board" --id "$id" --title "Ticket for $1" --progress 0 --state queued --stage queued \
+    --description "$(printf 'Ticket for %s.\n# Ask\n- Show the work on the board.\n# Why\n- The board follows the work.\n# Done when\n- The ticket reads done.' "$1")" >/dev/null
 }
 
 (cd "$home" && jg-backlog.sh add jg-shipone 'Ship the first thing' --repo demo --priority 1 --body 'release: c-2' >/dev/null

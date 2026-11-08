@@ -13,7 +13,7 @@ mkdir -p "$HOME" "$JG_HOME"/{data,config,state}
 ln -s "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
-# shellcheck source=core/lib/beads-test-env.sh
+# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
 . "$root/lib/beads-test-env.sh"
 core_beads_home "$fork" "$JG_HOME"
 body=$(printf 'Umer wants the summary first.\n# Ask\nKeep the line breaks.\n# Why\nThe board refuses a collapsed body.\n# Done when\nThe ticket shows on the board.')

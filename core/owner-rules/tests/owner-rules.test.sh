@@ -50,7 +50,7 @@ add jg-scout-parentless 'Plain title' 'Main13 asked for this.'
 add jg-no-ask 'Plain title' 'Nothing names an owner.'
 add jg-bad-design '[captain-ask] Vague design flag' 'design: maybe'
 add jg-with-ask-longer 'Main9 something' 'Done item.'
-(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" done jg-with-ask-longer) >/dev/null 2>&1 || true
+(cd "$home" && JG_HOME=$home bash "$FM/bin/jg-backlog.sh" 'done' jg-with-ask-longer) >/dev/null 2>&1 || true
 # brief <id> <args...>: stderr, then rc= on the last line.
 brief() {
   local id=$1 out rc; shift

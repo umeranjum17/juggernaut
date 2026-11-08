@@ -23,7 +23,7 @@ if grep -qx -- "\$1" "$d/live" 2>/dev/null; then echo 'state: working · source:
 STUB
 chmod +x "$FM/bin/jg-crew-state.sh"
 
-# shellcheck source=core/lib/beads-test-env.sh
+# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
 . "$REPO/core/lib/beads-test-env.sh"
 core_beads_home "$REPO" "$FM"
 export JG_HOME=$FM
@@ -62,7 +62,7 @@ P=https://github.com/ex/r/pull
 check "merged PR with a gone worker is reported" "$(printf '%s\n' "$out" | grep -c 'jg-merged-gone moved out of in flight: its PR '$P'/71 is merged')" 1
 check "released PR with a gone worker is reported" "$(printf '%s\n' "$out" | grep -c 'jg-released-gone moved out of in flight: its PR '$P'/73 is released')" 1
 check "exactly two rows are reported" "$(printf '%s\n' "$out" | grep -c '^backlog-shipped-reconcile: ')" 2
-check "Done holds the two shipped rows" "$(section done)" "merged-gone released-gone "
+check "Done holds the two shipped rows" "$(section 'done')" "merged-gone released-gone "
 check "In flight keeps every row that must stay" "$(section in_flight)" "held-merged lead-x live-merged no-evidence no-pr other-pr pending-close "
 check "Queued is untouched" "$(section queued)" "queued-merged "
 check "the closed row records its PR" "$(jg-backlog.sh show jg-merged-gone --full | grep -q "$P/71" && echo 1)" 1

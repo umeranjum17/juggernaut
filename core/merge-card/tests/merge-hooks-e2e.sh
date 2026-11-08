@@ -32,6 +32,7 @@ cp -a "$JG_TEST_FORK/bin" "$JG_TEST_FORK/toolchain.versions" "$d/fork/"
 
 fail() { echo "not ok - $*" >&2; exit 1; }
 run_merge() { JG_HOME=$home bash "$d/fork/bin/jg-merge-local.sh" task > "$d/out" 2>&1; }
+# shellcheck disable=SC2043
 for mode in present; do  # the gate hooks are native to jg-merge-local; no absent mode remains
   home=$d/$mode
   repo=$home/project

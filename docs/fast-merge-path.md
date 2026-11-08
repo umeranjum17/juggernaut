@@ -44,6 +44,10 @@ forces a re-seal: the receipt already names those files.
 A receipt that exists and does not prove the tree refuses by name rather than
 quietly turning back into a CI wait.
 
+The local trunk lander keeps the same tree key for its full gate.
+When that gate fails, it reruns the failing scripts on the trunk tip's tree once, stores the tip's result by tree, and charges the lane only for failures that differ from the tip's.
+`docs/trunk-flow.md` owns the rule.
+
 ## 3. Green means merged, with no model turn in between
 
 `core/merge-on-green/merge-on-green.sh check <home>` is the deterministic watcher check,

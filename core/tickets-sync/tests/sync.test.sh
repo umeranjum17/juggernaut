@@ -26,12 +26,12 @@ printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 printf '%s\n' "- parked - Umer project (home: $work/parked; scope: demo)" > "$JG_HOME/data/squad_leads.md"
 printf 'parked\n' > "$JG_HOME/config/parked-homes"
-# shellcheck source=core/lib/beads-test-env.sh
+# shellcheck source=core/lib/beads-test-env.sh disable=SC1091
 . "$root/lib/beads-test-env.sh"
 core_beads_home "$fork" "$JG_HOME"
 core_beads_home "$fork" "$work/parked"
 (cd "$JG_HOME"; jg-backlog.sh add jg-parent '[captain-ask] P1 Parent: Umer release' --repo alpha --priority 0 --body 'type: captain-ask: "Umer telescope focus should be simple"' >/dev/null
- jg-backlog.sh done jg-parent --captain-quote 'Umer focus should be simple' >/dev/null
+ jg-backlog.sh 'done' jg-parent --captain-quote 'Umer focus should be simple' >/dev/null
  jg-backlog.sh add jg-long "Umer 🚢 $(printf 'long title %.0s' {1..30})" --repo alpha --priority 1 --body $'release: v1\nhttps://github.com/example/alpha/pull/123\nhttps://github.com/example/alpha/pull/456' >/dev/null
  jg-backlog.sh start jg-long >/dev/null
  jg-backlog.sh add jg-upkeep 'Umer maintenance' --repo alpha --priority 2 --body 'parent: upkeep' >/dev/null
@@ -44,7 +44,7 @@ core_beads_home "$fork" "$work/parked"
  jg-backlog.sh add jg-internal 'Umer internal maintenance' --repo herdr --priority 2 --body 'parent: upkeep' >/dev/null
  jg-backlog.sh add jg-child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nrelease: v1\nparent: jg-parent' >/dev/null)
 (cd "$work/parked"; JG_HOME="$work/parked" jg-backlog.sh add jg-parent 'Umer paused project' --repo beta --priority 2 >/dev/null)
-(cd "$JG_HOME"; jg-backlog.sh add jg-recent 'Umer shipped feature' --repo alpha --priority 2 >/dev/null; jg-backlog.sh done jg-recent >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh add jg-recent 'Umer shipped feature' --repo alpha --priority 2 >/dev/null; jg-backlog.sh 'done' jg-recent >/dev/null)
 git init -q "$JG_HOME/projects/alpha"
 git -C "$JG_HOME/projects/alpha" remote add origin https://github.com/example/alpha-app.git
 printf 'window=default:w9:p1\nendpoint_task_id=jg-long\nharness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount=found-claude\n' > "$JG_HOME/state/jg-long.meta"
@@ -149,7 +149,7 @@ mv "$JG_HOME/state/tickets-sync"/published-*.json "$JG_HOME/state/tickets-sync/l
 "$JG_HOME/state/tickets-sync.check.sh"
 test "$before" = "$(sha256sum "$work/board.tickets.jsonl" "$work/board.projects.jsonl")"
 test "$source_before" = "$(cd "$JG_HOME" && jg-backlog.sh list; cd "$work/parked" && JG_HOME="$work/parked" jg-backlog.sh list)"
-(cd "$JG_HOME"; jg-backlog.sh done jg-child --captain-quote 'Umer settings' --pr https://github.com/example/alpha/pull/1 >/dev/null; jg-backlog.sh done jg-inferred >/dev/null)
+(cd "$JG_HOME"; jg-backlog.sh 'done' jg-child --captain-quote 'Umer settings' --pr https://github.com/example/alpha/pull/1 >/dev/null; jg-backlog.sh 'done' jg-inferred >/dev/null)
 "$JG_HOME/state/tickets-sync.check.sh"
 sign-off-axi ticket "$work/board.json" --id "$child" --json > "$work/closed.json"
 jq -e '.ticket | .progress == 100 and .hold == false and (.prs | index("https://github.com/example/alpha/pull/1") != null)' "$work/closed.json"
