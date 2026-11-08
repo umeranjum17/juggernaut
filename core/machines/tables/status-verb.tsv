@@ -1,0 +1,34 @@
+# status-verb: the verb a worker puts at the front of a status line (state/<id>.status). Report-only (SM3): nothing here changes a classifier verdict.
+# Rules: a verb a lane protocol uses outside the core set is an `extension` row, so it still surfaces as itself; a verb with no row is drift, found by tests/jg-machine-status.test.sh --drift.
+# Rules: `blocked` names a real stop and says why (required field `reason`); a quiet checkpoint is never `blocked`, it is `working`.
+# Kinds: `terminal` is a verb jg-classify answers is-terminal for; `extension` surfaces as itself; the rest are recognized and not captain-relevant.
+# Not modelled: a `blocked` line that names a future `until` time is a declared wait to the classifier, like `paused`.
+machine	status-verb	state/<id>.status prefix	core/classify/cmd/jg-classify/classify.go
+state	working	initial	The worker is working.	-
+state	needs-decision	terminal	The worker needs a decision from above before it can go on.	reason
+state	blocked	terminal	The worker is stopped by something it cannot clear, and says what.	reason
+state	paused	normal	The worker waits on purpose for a condition that clears by itself.	reason
+state	done	terminal	The worker finished its task.	-
+state	failed	terminal	The worker's task failed.	-
+state	resolved	normal	A decision or stop the worker opened was closed.	-
+state	captain-held	normal	The captain holds this task on purpose.	-
+state	note	normal	The worker left a note and nothing needs action.	-
+state	ready	extension	The lane says its change is ready for the next step.	-
+state	ready-to-sign	extension	The lane's proof is complete for one head and waits for the landing signature.	-
+state	progress	extension	The lane reports a step of progress.	-
+state	checks-lint-pass	extension	The lane's checks block passed the lint.	-
+state	baseline-attribution	extension	The lane attributes a red check to the baseline.	-
+edge	working	post-needs-decision	needs-decision	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with needs-decision	tests/jg-machine-status.test.sh
+edge	working	post-blocked	blocked	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with blocked	tests/jg-machine-status.test.sh
+edge	working	post-paused	paused	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with paused	tests/jg-machine-status.test.sh
+edge	working	post-done	done	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with done	tests/jg-machine-status.test.sh
+edge	working	post-failed	failed	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with failed	tests/jg-machine-status.test.sh
+edge	working	post-resolved	resolved	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with resolved	tests/jg-machine-status.test.sh
+edge	working	post-captain-held	captain-held	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with captain-held	tests/jg-machine-status.test.sh
+edge	working	post-note	note	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with note	tests/jg-machine-status.test.sh
+edge	working	post-ready	ready	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with ready	tests/jg-machine-status.test.sh
+edge	working	post-ready-to-sign	ready-to-sign	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with ready-to-sign	tests/jg-machine-status.test.sh
+edge	working	post-progress	progress	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with progress	tests/jg-machine-status.test.sh
+edge	working	post-checks-lint-pass	checks-lint-pass	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with checks-lint-pass	tests/jg-machine-status.test.sh
+edge	working	post-baseline-attribution	baseline-attribution	bin/jg-lavish-guard.sh:append	-	a worker appends a status line that opens with baseline-attribution	tests/jg-machine-status.test.sh
+observer	"$JG_MACHINES_TABLES/../../../bin/jg-classify.sh" last-line "${JG_STATE_OVERRIDE:-${JG_HOME:-.}/state}/$1.status" | sed -E 's/^[[:space:]]*([a-z][a-z-]*).*/\1/'
