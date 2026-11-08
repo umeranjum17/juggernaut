@@ -167,9 +167,42 @@ test_critic_is_required() {
   printf 'Critic: rg-own\nRound 1: new gaps 0\n' > "$HOME_DIR/data/rg-own/critic.md"
   expect_refused rg-own "needs a separate critic worker" "a deep Recon whose critic names its own task id"
   make_recon rg-four deep
-  printf 'Critic: other-worker\nRound 1: new gaps 2\nRound 2: new gaps 1\nRound 3: new gaps 1\nRound 4: new gaps 0\n' > "$HOME_DIR/data/rg-four/critic.md"
-  expect_refused rg-four "allows 3" "a deep critic that ran four rounds"
+  printf 'Critic: other-worker\nRound 1: new gaps 2\nRound 2: new gaps 1\nRound 3: new gaps 1\nRound 4: new gaps 1\nClosure check: 1 closed by other-worker\n' > "$HOME_DIR/data/rg-four/critic.md"
+  expect_refused rg-four "allows 3" "a deep critic that ran a fourth new-gap round"
   pass "jg-recon-gate.sh: the critic must exist, be separate for deep, and end on a round with no new gaps"
+}
+
+# K6: a gap found in the last round can be fixed but never re-checked by a
+# further round, so a closure line by the same critic stands in for that round.
+test_closure_check_closes_the_last_round() {
+  local dir
+  make_recon rg-close deep
+  printf 'Critic: other-worker\nRound 1: new gaps 2\nRound 2: new gaps 1\nRound 3: new gaps 2\n- gap a\n- gap b\nClosure check: 2 closed by other-worker\n' > "$HOME_DIR/data/rg-close/critic.md"
+  run_gate rg-close
+  expect_code 0 "$RC" "a third-round gap closed by the same critic should pass (got: $OUT)"
+  make_recon rg-three-zero deep
+  printf 'Critic: other-worker\nRound 1: new gaps 2\nRound 2: new gaps 1\nRound 3: new gaps 1\nClosure check: 1 closed by other-worker\nRound 4: new gaps 0\n' > "$HOME_DIR/data/rg-three-zero/critic.md"
+  run_gate rg-three-zero
+  expect_code 0 "$RC" "three new-gap rounds then a clean round should pass: the cap counts new-gap rounds (got: $OUT)"
+  make_recon rg-other deep
+  printf 'Critic: other-worker\nRound 1: new gaps 1\nClosure check: 1 closed by someone-else\n' > "$HOME_DIR/data/rg-other/critic.md"
+  expect_refused rg-other "not the critic 'other-worker'" "a closure by a different worker"
+  make_recon rg-selfclose deep
+  printf 'Critic: other-worker\nRound 1: new gaps 1\nClosure check: 1 closed by self\n' > "$HOME_DIR/data/rg-selfclose/critic.md"
+  expect_refused rg-selfclose "closure check" "a closure the researcher certifies itself"
+  make_recon rg-owncl deep
+  printf 'Critic: other-worker\nRound 1: new gaps 1\nClosure check: 1 closed by rg-owncl\n' > "$HOME_DIR/data/rg-owncl/critic.md"
+  expect_refused rg-owncl "closure check" "a closure naming the researcher's own task id"
+  make_recon rg-short deep
+  printf 'Critic: other-worker\nRound 1: new gaps 3\nClosure check: 2 closed by other-worker\n' > "$HOME_DIR/data/rg-short/critic.md"
+  expect_refused rg-short "closes 2 of 3" "a closure that leaves a gap open"
+  make_recon rg-stale deep
+  printf 'Critic: other-worker\nRound 1: new gaps 1\nClosure check: 1 closed by other-worker\nRound 2: new gaps 2\n' > "$HOME_DIR/data/rg-stale/critic.md"
+  expect_refused rg-stale "round 2 found 2 new gaps" "a closure written before the last round"
+  make_recon rg-stdself standard
+  printf 'Critic: self\nRound 1: new gaps 1\nClosure check: 1 closed by self\n' > "$HOME_DIR/data/rg-stdself/critic.md"
+  expect_refused rg-stdself "closure check" "a standard self-critic certifying its own closure"
+  pass "jg-recon-gate.sh: a closure check by the same separate critic closes the last round's gaps, never a self-certified one"
 }
 
 test_source_budget() {
@@ -221,6 +254,7 @@ test_deep_may_not_skip_plan_or_acceptance
 test_unverified_load_bearing_claims
 test_refuted_and_single_source_deep_claims
 test_critic_is_required
+test_closure_check_closes_the_last_round
 test_source_budget
 test_quick_and_legacy_are_exempt
 test_usage_errors

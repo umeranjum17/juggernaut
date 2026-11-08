@@ -13,8 +13,11 @@
 #     claim is still cited in the report body;
 #   - a deep claim is `verified` on one source with no hands-on run;
 #   - critic.md is missing, names no `Critic:`, has no `Round n: new gaps k` line,
-#     or its last round found new gaps; a deep critic may not be `self` or the
-#     researcher's own task id, and a deep Recon allows 3 rounds;
+#     or its last round found new gaps with no `Closure check: <k> closed by
+#     <critic>` line after it (the same critic as `Critic:`, never `self` or the
+#     researcher's own task id, closing all k gaps); a deep critic may not be
+#     `self` or the researcher's own task id, and a deep Recon allows 3 rounds
+#     that found new gaps;
 #   - sources.jsonl is under the level's budget: standard 8 sources over 3 kinds,
 #     deep 20 over 5.
 # Quick is exempt, and so is a brief with no depth line (a brief made before the
@@ -165,10 +168,29 @@ else:
     if not rounds:
         refuse("critic.md has no 'Round <n>: new gaps <k>' line")
     else:
-        if int(rounds[-1][1]) > 0:
-            refuse(f"critic.md round {rounds[-1][0]} found {rounds[-1][1]} new gaps; close them and run another round")
-        if depth == "deep" and len(rounds) > 3:
-            refuse(f"critic.md has {len(rounds)} rounds; a deep Recon allows 3")
+        last_n, last_k = rounds[-1][0], int(rounds[-1][1])
+        if last_k > 0:
+            # A fixed last-round gap cannot get another round once the cap is
+            # spent, so a closure line by the same separate critic, written after
+            # that round, stands in for it. Never the researcher's own word.
+            last_pos = [m.start() for m in re.finditer(r"^Round[ \t]+\d+:[ \t]*new gaps[ \t]+\d+", critic, re.M)][-1]
+            closure = re.search(r"^Closure check:[ \t]*(\d+)[ \t]+closed by[ \t]+(\S+)[ \t]*$", critic[last_pos:], re.M)
+            fix = f"critic.md round {last_n} found {last_k} new gaps; close them and run another round, or end with 'Closure check: {last_k} closed by <the critic>'"
+            if not closure:
+                refuse(fix)
+            else:
+                by = closure.group(2).lower()
+                if by in ("self", task.lower()):
+                    refuse(f"critic.md closure check is certified by '{closure.group(2)}'; only the separate critic may close a gap. {fix}")
+                elif not who or by != who.group(1).strip().lower():
+                    refuse(f"critic.md closure check names '{closure.group(2)}', not the critic '{who.group(1).strip() if who else ''}'. {fix}")
+                elif int(closure.group(1)) != last_k:
+                    refuse(f"critic.md closure check closes {closure.group(1)} of {last_k} gaps in round {last_n}. {fix}")
+        # The cap counts rounds that found new gaps: the clean round that ends
+        # a critic file, or the closure line, is not one of them.
+        gap_rounds = sum(1 for _, k in rounds if int(k) > 0)
+        if depth == "deep" and gap_rounds > 3:
+            refuse(f"critic.md has {gap_rounds} rounds with new gaps; a deep Recon allows 3")
 
 if refusals:
     for r in refusals:

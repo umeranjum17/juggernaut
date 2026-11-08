@@ -73,8 +73,9 @@ Round 1: new gaps 3
 Round 2: new gaps 0
 ```
 
-The last `Round` line must say `new gaps 0`.
-A deep Recon allows 3 rounds.
+The last `Round` line must say `new gaps 0`, or be followed by `Closure check: <k> closed by <critic>`, where `<k>` is that round's gap count and `<critic>` is the same id as the `Critic:` line.
+The closure line is the critic's word that the researcher fixed every gap of the last round; `self` and the researcher's own task id never close a gap.
+A deep Recon allows 3 rounds that found new gaps; the clean round or closure line after them does not count.
 Gaps the critic finds go back to stage 3 as the next sweep round.
 
 ## Deep: one researcher, one critic
@@ -114,5 +115,5 @@ A deep Recon may not.
 ## What the gate refuses
 
 `bin/jg-recon-gate.sh <task>` is the owner of these checks; its header lists them.
-A missing section, a load-bearing claim that is neither verified nor named in section 7, a missing critic or a critic whose last round found new gaps, and a missed source budget each refuse.
+A missing section, a load-bearing claim that is neither verified nor named in section 7, a missing critic or a critic whose last round found new gaps with no closure line, and a missed source budget each refuse.
 A "board link missing" refusal is not built yet: it waits for the board report surface.
