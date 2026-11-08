@@ -758,6 +758,7 @@ tests/jg-machine-shadow.test.sh 5000
 tests/jg-merge-gate-lib.test.sh 578
 tests/jg-merge-gate-policy.test.sh 30967
 tests/jg-metrics-shadow-parity.test.sh 102
+tests/jg-machine-task.test.sh 1800
 tests/jg-muse-signals-live-e2e.test.sh 180
 tests/jg-omp-primary-live-e2e.test.sh 171
 tests/jg-on.test.sh 20997
