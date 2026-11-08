@@ -1,0 +1,28 @@
+machine	trunk-pointers	state/trunk-{tip,green,released,rolled,word-live}-<project> and data/trunk-live.tsv	bin/jg-trunk.sh
+state	released	initial	The trunk and the last release are the same commit.	-
+state	rolled	normal	The release pull request merged and a new trunk version was cut.	-
+state	landed	normal	A commit landed on the trunk that has not passed the full suite.	-
+state	green	normal	The trunk tip passed the full suite and is not live.	-
+state	word-given	normal	The captain said go live and the home has not moved yet.	-
+state	live	normal	The home runs the trunk tip.	-
+state	pinned-behind	normal	A red check pinned the home back to the last good commit.	-
+state	hook-failed	normal	The live hook failed, so the home stayed where it was.	-
+edge	released	land	landed	bin/jg-trunk.sh:cmd_land	-	a lane passes the gate chain	jg-machine-landing.test.sh
+edge	rolled	land	landed	bin/jg-trunk.sh:cmd_land	-	a lane passes the gate chain	jg-machine-landing.test.sh
+edge	released	rollover	rolled	bin/jg-trunk.sh:cmd_rollover	-	the release pull request merged	jg-machine-landing.test.sh
+edge	landed	land	landed	bin/jg-trunk.sh:cmd_land	-	the tip moves again	jg-machine-landing.test.sh
+edge	landed	verify	green	bin/jg-trunk.sh:cmd_verify	-	the full suite passes	jg-machine-landing.test.sh
+edge	landed	ci-red	pinned-behind	bin/jg-trunk.sh:cmd_ci	-	CI is red at the tip	jg-machine-landing.test.sh
+edge	green	land	landed	bin/jg-trunk.sh:cmd_land	-	the tip moves past green	jg-machine-landing.test.sh
+edge	green	word	word-given	bin/jg-trunk.sh:cmd_word	-	the captain says go live	jg-machine-landing.test.sh
+edge	green	ci-red	pinned-behind	bin/jg-trunk.sh:cmd_ci	-	CI is red at the tip	jg-machine-landing.test.sh
+edge	green	release	released	bin/jg-trunk.sh:cmd_release	-	the captain says release and the tip is green	jg-machine-landing.test.sh
+edge	word-given	live	live	bin/jg-trunk.sh:cmd_live	-	the live hook moves the home to the green tip	jg-machine-landing.test.sh
+edge	word-given	hook-fail	hook-failed	bin/jg-trunk.sh:go_live	-	the live hook exits non-zero	jg-machine-landing.test.sh
+edge	word-given	land	landed	bin/jg-trunk.sh:cmd_land	-	the tip moves past green	jg-machine-landing.test.sh
+edge	word-given	release	released	bin/jg-trunk.sh:cmd_release	-	the captain says release and the tip is green	jg-machine-landing.test.sh
+edge	live	land	landed	bin/jg-trunk.sh:cmd_land	-	the tip moves past green	jg-machine-landing.test.sh
+edge	live	release	released	bin/jg-trunk.sh:cmd_release	-	the captain says release	jg-machine-landing.test.sh
+edge	hook-failed	live	live	bin/jg-trunk.sh:cmd_live	-	the live hook works the second time	jg-machine-landing.test.sh
+edge	pinned-behind	ci-green	green	bin/jg-trunk.sh:cmd_ci	-	a later commit is green	jg-machine-landing.test.sh
+observer	p=$1; [ -n "${JG_HOME:-}" ] || { echo no-jg-home; exit 0; }; s=$JG_HOME/state; rd() { cat "$s/$1-$p" 2>/dev/null; }; t=$(rd trunk-tip); g=$(rd trunk-green); r=$(rd trunk-released); w=$(cut -f1 "$s/trunk-word-live-$p" 2>/dev/null); l=$(awk -F'\t' -v p="$p" -v g="$g" '$1==p&&$2==g{x=$4} END{print x}' "$JG_HOME/data/trunk-live.tsv" 2>/dev/null); [ -n "$t" ] || exit 0; if [ "$t" = "$r" ]; then [ -e "$s/trunk-rolled-$p" ] && echo rolled || echo released; exit 0; fi; case $l in hook-failed) echo hook-failed;; live,pinned-behind*) echo pinned-behind;; live) [ "$t" = "$g" ] && echo live || echo landed;; *) if [ "$t" != "$g" ]; then echo landed; elif [ -n "$w" ] && [ "$w" = "$g" ]; then echo word-given; else echo green; fi;; esac
