@@ -926,6 +926,7 @@ tests/jg-unit-claim.test.sh 7478
 tests/jg-update-local-base.test.sh 4000
 tests/jg-voice.test.sh 6554
 tests/jg-watch-arm-handling-delivered.test.sh 959
+tests/jg-learnings.test.sh 43017
 EOF
 }
 
@@ -1534,6 +1535,9 @@ families_for_changed_path() {
       printf '%s\n' real-herdr-gated
       printf '%s\n' live-harness-optin
       printf '%s\n' afk
+      ;;
+    bin/jg-learnings.py)
+      printf '%s\n' __script__:jg-learnings.test.sh
       ;;
     bin/jg-startup-memory-budget.sh|bin/jg-startup-memory-budget-lib.sh)
       printf '%s\n' squad_lead
