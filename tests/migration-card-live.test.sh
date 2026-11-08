@@ -283,7 +283,7 @@ F
   trap 'cleanup; kill "$BOT_PID" 2>/dev/null || true' EXIT
   printf 'set telegram-allow-user 4242\nset telegram-api-url http://127.0.0.1:%s\n' "$BOT_PORT" >"$C/config/captain-channel"
   # The suite library points every run at an off channel so no test reaches a real chat; this case owns its fake bot, so it takes the home's own channel file back.
-  real_pass() { JG_CAPTAIN_CHANNEL= JG_HOME=$C JG_STATE_OVERRIDE=$C/state FAKE_LOG=$T/chat-calls.log JG_MIGRATION_LIVE_BIN=$T/probe-stub.sh JG_MIGRATION_CARD_NOW=$1 \
+  real_pass() { JG_CAPTAIN_CHANNEL='' JG_HOME=$C JG_STATE_OVERRIDE=$C/state FAKE_LOG=$T/chat-calls.log JG_MIGRATION_LIVE_BIN=$T/probe-stub.sh JG_MIGRATION_CARD_NOW=$1 \
     timeout 240 "$ROOT/bin/jg-migration-card.sh" live --quiet; }
   set_rows pending
   out=$(real_pass "$T0" 2>&1)

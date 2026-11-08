@@ -7,11 +7,21 @@ if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
 fi
 export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT JG_TASK_PRIORITY_CHECK=/nonexistent
 core_beads_home() {
-  local fork=$1 home=$2 prefix=${3:-jg} store
+  local fork=$1 home=$2 prefix=${3:-jg} store tpl
   store=$home-store
-  mkdir -p "$home/config" "$home/data" "$store"
-  BEADS_DIR=$store/.beads "$fork/bin/jg-beads.sh" init --prefix "$prefix" >/dev/null 2>"${TMPDIR:-/tmp}/beads-init.err" \
-    || { echo "FAIL: could not initialise the Beads store for $home: $(tail -3 "${TMPDIR:-/tmp}/beads-init.err" 2>/dev/null)"; exit 1; }
+  # A fresh `bd init` costs seconds, and a suite builds a home per case. The first home per prefix initialises a
+  # template beside the homes and every later one copies it, so the cost is paid once per suite.
+  tpl=${home%/*}/.beads-template-$prefix
+  if [ ! -d "$tpl/.beads" ]; then
+    rm -rf "$tpl.partial"
+    mkdir -p "$tpl.partial"
+    BEADS_DIR=$tpl.partial/.beads "$fork/bin/jg-beads.sh" init --prefix "$prefix" >/dev/null 2>"${TMPDIR:-/tmp}/beads-init.err" \
+      || { echo "FAIL: could not initialise the Beads store for $home: $(tail -3 "${TMPDIR:-/tmp}/beads-init.err" 2>/dev/null)"; exit 1; }
+    mv "$tpl.partial" "$tpl"
+  fi
+  mkdir -p "$home/config" "$home/data"
+  rm -rf "$store"
+  cp -a "$tpl" "$store" || { echo "FAIL: could not copy the Beads store for $home"; exit 1; }
   printf '%s\n' "$store/.beads" > "$home/config/beads-dir"
   : > "$home/config/backlog-intake-loose"
   case ":$PATH:" in *":$fork/bin:"*) ;; *) PATH=$fork/bin:$PATH; export PATH ;; esac
