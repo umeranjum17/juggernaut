@@ -968,6 +968,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/machines/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/merge-card/README.md",
       "audience": "operator-current"
     },
