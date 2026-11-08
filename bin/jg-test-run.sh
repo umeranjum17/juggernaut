@@ -1481,6 +1481,12 @@ families_for_changed_path() {
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
       ;;
+    tests/journeys/fleet-autopilot/*)
+      # The fleet-autopilot journey (run.sh, lab.sh, homes.sh, lanes.sh and its faults) is no suite of its own: its proof
+      # is the sealed done-done run of run.sh. It drives the Herdr lab helper, so a change to it re-runs the
+      # real-Herdr family, the same family the lab helper selects.
+      printf '%s\n' real-herdr-gated
+      ;;
     bin/jg-herdr-session-cleanup.sh)
       printf '%s\n' session-bootstrap
       printf '%s\n' real-herdr-gated
