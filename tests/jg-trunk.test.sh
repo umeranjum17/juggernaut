@@ -182,7 +182,35 @@ test_the_bundled_hook_moves_a_home_that_runs_the_project() {
   pass 'the bundled hook fast-forwards the home and a dirty home is recorded as not moved'
 }
 
+test_the_current_trunk_is_the_newest_versioned_branch() {
+  local out c
+  world versioned
+  git -C "$PROJ" branch trunk-v2 trunk; git -C "$PROJ" branch trunk-v10 trunk; git -C "$PROJ" branch trunk-v3 trunk
+  git -C "$PROJ" branch -D trunk >/dev/null
+  git -C "$PROJ" worktree add -q -b fm/v1 "$W/lanes/v1" trunk-v10
+  commit_in "$W/lanes/v1" work.txt good "ticket v1"
+  jg_write_meta "$HOME_D/state/v1.meta" "project=$PROJ" "mode=trunk" "branch=fm/v1" "worktree=$W/lanes/v1" "spawn_gen=g-v1"
+  c=$(git -C "$PROJ" rev-parse fm/v1)
+  out=$(trunk land v1 2>&1) || fail "a lane must land on the newest trunk-vN: $out"
+  [ "$(git -C "$PROJ" rev-parse trunk-v10)" = "$c" ] || fail "the newest trunk-vN must move, not a fixed trunk"
+  git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null && fail "land must not recreate the fixed name trunk"
+  [ "$(cat "$W/live-moves")" = "$c" ] || fail "go live must run at the versioned trunk commit"
+  pass 'every subcommand resolves the newest trunk-vN, not the fixed name trunk'
+}
+
+test_a_project_with_no_trunk_keeps_its_plain_refusal() {
+  local out rc=0
+  world notrunk
+  rm -f "$HOME_D/state/trunk-tip-proj"; git -C "$PROJ" branch -D trunk >/dev/null
+  out=$(trunk live "$PROJ" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "live without a trunk must refuse"
+  assert_contains "$out" "REFUSED: no trunk for proj; run: jg-trunk.sh init $PROJ" "the no-trunk refusal wording must not change"
+  pass 'a project with no trunk keeps its exact refusal'
+}
+
 test_a_good_lane_lands_and_goes_live
+test_the_current_trunk_is_the_newest_versioned_branch
+test_a_project_with_no_trunk_keeps_its_plain_refusal
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_every_unsafe_landing_refuses
 test_a_seam_is_the_only_place_behaviour_changes
