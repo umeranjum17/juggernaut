@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # jg-owner-rules-gate.sh <task-id> <worktree|-> <head|-> <pr-url|-> - local proof authorization and merge gate.
 # Run `init-key` once in the captain's home, then use `sign <task-id> <head> <pr-url|->` only after the passed-proof recipe succeeds.
+# `diagnose <task-id> <worktree|-> <head> <pr-url|->` changes nothing and refuses nothing: it prints the facts the gate judges
+# (`receipt=`, `signature=`, `lint=`, `screen_none=`), or `owner-rules=off` in a home that has not enabled the gate, so
+# bin/jg-trunk-preflight.sh names every missing input from the gate's own evaluation.
 # The private key stays in the main home's config; the merge gate verifies its detached signature with the public key.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
@@ -12,9 +15,10 @@ done
 unset _jg_old _jg_new 2>/dev/null || true
 set -u
 mode=gate
-case ${1:-} in sign|init-key) mode=$1; shift ;; esac
+case ${1:-} in sign|init-key|diagnose) mode=$1; shift ;; esac
 if [ -z "${JG_HOME:-}" ] || [ ! -e "$JG_HOME/config/owner-rules" ]; then
   [ "$mode" = gate ] && exit 0
+  [ "$mode" != diagnose ] || { echo "owner-rules=off"; exit 0; }
   echo "owner-rules: config/owner-rules is not enabled" >&2
   exit 1
 fi
@@ -98,7 +102,7 @@ guard_host=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)/bin/jg-guar
 none=false
 "$mc" screen-none "$1" "$4" && none=true
 # The top line: a screen-free merge is on the text-only card path, and no capture is asked for.
-[ "$none" = false ] || echo "owner-rules: $what declares screen: none, so it takes the text-only Evidence card path; no capture is needed"
+[ "$none" = false ] || [ "$mode" = diagnose ] || echo "owner-rules: $what declares screen: none, so it takes the text-only Evidence card path; no capture is needed"
 receipt_ok=false
 "$mc" receipt "$1" "$3" && receipt_ok=true
 # The signature is local authorization for this exact task, PR scope, head, and receipt contents.
@@ -115,13 +119,17 @@ fi
 # merge's rows name the report file and carry head `-`, so they match on the task's own folder instead.
 lint_log=$JG_HOME/data/checks-gate.log
 [ -r "$lint_log" ] || lint_log=/dev/null
-src=$4; [ "$4" != - ] || src="<report file>"
+src=$4; [ "$4" != - ] || src=$JG_HOME/data/$1/checks.md
 lint=error
 if lint_verdict=$(jq -Rn --arg pr "$4" --arg head "$3" --arg task "$1" \
   '{pr: $pr, head: $head, task: $task, rows: [inputs | split("\t") | select(length >= 4) | {src: .[1], head: .[2], verdict: .[3]}]}' \
   "$lint_log" | "$guard_host" eval gate.lint_row 2>&1); then
   lint=fail
   [ "$(jq -r '.ok' <<<"$lint_verdict" 2>/dev/null)" != true ] || lint=pass
+fi
+if [ "$mode" = diagnose ]; then
+  printf 'receipt=%s\nsignature=%s\nlint=%s\nscreen_none=%s\n' "$receipt_ok" "$sig" "$lint" "$none"
+  exit 0
 fi
 # Canary config lists exact JG_HOME paths; without it every home keeps today's gate behavior.
 canary=$JG_HOME/config/owner-rules-canary waiver=''

@@ -30,8 +30,8 @@ In a local-trunk project the lanes ship as `local-only` tasks (nothing is pushed
 
 ## Lifecycle of one ticket
 
-1. The lane starts on the trunk tip and makes one commit.
-2. The lane runs the verify skill sealed under done-done and publishes the PASS receipt for that head, then reports ready.
+1. The lane starts on the trunk tip and runs `bin/jg-trunk-preflight.sh --at-start <id>`: the exact commands for the first five landing gates and the list of the rest. It makes one commit.
+2. The lane runs the verify skill sealed under done-done and publishes the PASS receipt for that head, then runs `bin/jg-trunk-preflight.sh <id>` at that head. It names every missing gate in landing order (sealed run with its steps record, merge-card check, receipt, checks-lint row, owner signature, the local landing gates, owner-guard, gate-lint, gate tools) in one run and writes `data/<id>/preflight.<head>.json` on a PASS. The signature is the signer's step after the lane's ready line, so a lane run lists it as awaiting; `--landing` judges it as the lander does. The lane reports ready only after a PASS.
 3. The `trunk-landing` check lands it on the trunk and reports `landed`. If it refuses, the report names the reason once (a conflict names its paths); the lane fixes and proves a new head. A refusal that only needs time (away mode, an open linked decision, a red trunk) retries on its own.
 4. On the captain's word: `jg-trunk.sh verify`, `word live`, `live`.
 5. On the captain's word: `word release`, `release`. CI runs on the pushed trunk; a red result goes to `jg-trunk.sh ci`.
@@ -43,4 +43,4 @@ In a local-trunk project the lanes ship as `local-only` tasks (nothing is pushed
 
 ## Tests
 
-`tests/jg-trunk.test.sh` (run by the done-done journey `trunk-landing`) fails when any behaviour above is removed.
+`tests/jg-trunk.test.sh` (run by the done-done journey `trunk-landing`) fails when any behaviour above is removed. `tests/jg-trunk-preflight.test.sh` fails when the preflight stops naming a missing gate or drifts from the lander.
