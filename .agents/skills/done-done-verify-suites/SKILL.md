@@ -7,6 +7,9 @@ description: Verify Juggernaut core changes through their executable integration
 
 ## Feature map
 
+- Cold status-span classification: run `done-done run status-cold-scan` (`bash journeys/status-cold-scan.sh`); the shared reader used by the watcher and drain classifies 20,000 historical progress lines plus a live blocker in one Go call, retains the blocker and endpoint, preserves all status bytes, and advances no presentation cursor.
+  Inspect the run-owned `cold-span.txt`, `timing.log` and `result.log`; `bash tests/jg-classify-go.test.sh` and `bash tests/jg-wake-drain-open-decisions-cursor.test.sh` cover event grammar and incremental drain integration (screen: none).
+
 - Complete learnings index at session start: run `done-done run axi-digest` (`bash journeys/axi-digest.sh`); the real session-start command over an isolated synthetic home with 55 learnings and a 160-byte body cap proves zero omitted or duplicate index names, complete names beyond 100 characters, every full body readable through its indexed `sed` range, the final line without a newline retained, and the body cap unchanged; it also proves a file below the cap gets the full index and leaves the file unchanged.
   The run captures both startup digests and its result log (screen: none).
 - Full local owner rules at startup: run `done-done run owner-rules-whole` (`bash journeys/owner-rules-whole.sh`); the real session-start command over a throwaway home prints every byte of three owner-rule bodies each beyond the old 10,000-byte cap, both with default caps and a 256-byte override, leaves all source memory unchanged, keeps captain memory whole and shared/learnings memory capped, and preserves absent and empty markers; inspect the run-owned `startup.log`, `owner-rules-default.txt` and `owner-rules-override.txt` (screen: none).

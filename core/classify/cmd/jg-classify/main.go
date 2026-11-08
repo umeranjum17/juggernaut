@@ -11,6 +11,7 @@
 //	jg-classify paused-until <line>                    epoch the pause expects to clear
 //	jg-classify utc-epoch <YYYY-MM-DDTHH:MM[:SS]Z>     UTC ISO time to epoch seconds
 //	jg-classify facts                                  one tab-separated verdict row per stdin line
+//	jg-classify span-events <kind>                      captured stdin span's needs flag and events
 //	jg-classify verb|note|untimed|stamp-line|at-epoch <line>      the status-line grammar
 //	jg-classify key <keyless> <line>                   the decision key, exit 1 for a bad slug
 //	jg-classify open-decisions|current-line|own-open-decisions <status-file> [kind]
@@ -51,6 +52,9 @@ func run(args []string, in *os.File, out, errw *os.File) int {
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
+	if cmd == "span-events" && len(rest) == 1 {
+		return spanEvents(rest[0], in, out)
+	}
 	if code, handled := decideCommand(cmd, rest, out); handled {
 		return code
 	}

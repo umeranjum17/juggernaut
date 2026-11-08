@@ -2,6 +2,8 @@ app: juggernaut
 journeys:
   trunk-cleanup:
     command: bash journeys/trunk-cleanup.sh
+  status-cold-scan:
+    command: bash journeys/status-cold-scan.sh
   teardown-missing-record:
     command: bash journeys/teardown-missing-record.sh
   live-services:
