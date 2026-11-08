@@ -12,6 +12,14 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 MAIL="$ROOT/bin/jg-mail.sh"
+
+# jg_real_python echoes the interpreter's own executable path. `command -v
+# python3` can return a version-manager shim (mise) that re-searches PATH for
+# "python3"; a fake python3 wrapper that execs that shim is then found again
+# first, and the exec loop never ends.
+jg_real_python() {
+  python3 -c 'import sys; print(sys.executable)'
+}
 TMP_ROOT=$(jg_test_tmproot jg-mail)
 HOME_DIR="$TMP_ROOT/home"
 mkdir -p "$HOME_DIR"
@@ -2032,7 +2040,7 @@ test_poll_retries_transient_fetch_and_surfaces_real_metadata() {
   homedir_bin="$retry_home/bin"
   mkdir -p "$homedir_bin" "$retry_home/state"
   [ -e "$homedir_bin/jg-wake-lib.sh" ] || ln -s "$ROOT/bin/jg-wake-lib.sh" "$homedir_bin/jg-wake-lib.sh"
-  real_py=$(command -v python3)
+  real_py=$(jg_real_python)
   harness="$TMP_ROOT/retry-poll-harness.py"
   control="$TMP_ROOT/retry-fetch-count"
   printf '0' > "$control"
@@ -2399,7 +2407,7 @@ test_poll_sanitizes_header_fields() {
   homedir_bin="$iso_home/bin"
   mkdir -p "$homedir_bin"
   [ -e "$homedir_bin/jg-wake-lib.sh" ] || ln -s "$ROOT/bin/jg-wake-lib.sh" "$homedir_bin/jg-wake-lib.sh"
-  real_py=$(command -v python3)
+  real_py=$(jg_real_python)
   harness="$TMP_ROOT/sanitize-poll-harness.py"
 
   # Drive the real poll_list/clean path through a stubbed IMAP connection so a
