@@ -2792,6 +2792,10 @@ run_check_process() {
   fi
 }
 
+check_capture_skip() { # <label>
+  triage_log "watcher check skipped: $1 (capture failed)"
+}
+
 run_check() {
   ( run_check_process "$@" ) 2>/dev/null || true
 }
@@ -2799,11 +2803,12 @@ run_check() {
 JG_ACTIVE_CHECK_PID=
 JG_ACTIVE_CHECK_PGID=
 JG_CHECK_OUTPUT=
-JG_CHECK_RESULT=
+JG_CHECK_OUTPUT_TMP=
 JG_CHECK_SIGNAL_PENDING=
 
 jg_check_output_cleanup() {
-  [ -z "$JG_CHECK_OUTPUT" ] || rm -f -- "$JG_CHECK_OUTPUT"
+  [ -z "$JG_CHECK_OUTPUT_TMP" ] || rm -f -- "$JG_CHECK_OUTPUT_TMP"
+  JG_CHECK_OUTPUT_TMP=
   JG_CHECK_OUTPUT=
 }
 
@@ -2849,18 +2854,20 @@ watcher_stop_signals() {
 }
 
 run_check_capture() {
-  local pgid
+  local pgid key output tmp
   jg_check_output_cleanup
-  JG_CHECK_RESULT=
-  JG_CHECK_OUTPUT=$(mktemp "$STATE/.jg-check-output.XXXXXX") || return 1
-  chmod 0600 "$JG_CHECK_OUTPUT" || { jg_check_output_cleanup; return 1; }
+  key=${JG_CHECK_OUTPUT_KEY:-check}
+  output="$STATE/.jg-check-output-$key"
+  tmp=$(mktemp "$output.XXXXXX") || return 1
+  JG_CHECK_OUTPUT_TMP=$tmp
+  chmod 0600 "$JG_CHECK_OUTPUT_TMP" || { jg_check_output_cleanup; return 1; }
   JG_CHECK_SIGNAL_PENDING=
   # Defer stop signals only until the check's process group is recorded for
   # watcher_cleanup. Keep command substitutions out of this window: bash 5.2
   # can drop a trap that is pending when one is parsed (watcher_stop_signals).
   trap 'JG_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   set -m
-  ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT" 2>/dev/null &
+  ( JG_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$JG_CHECK_OUTPUT_TMP" 2>/dev/null &
   JG_ACTIVE_CHECK_PID=$!
   JG_ACTIVE_CHECK_PGID=$JG_ACTIVE_CHECK_PID
   set +m
@@ -2875,8 +2882,29 @@ run_check_capture() {
   wait "$JG_ACTIVE_CHECK_PID" 2>/dev/null || true
   JG_ACTIVE_CHECK_PID=
   jg_active_check_stop || return 1
-  JG_CHECK_RESULT=$(cat "$JG_CHECK_OUTPUT" 2>/dev/null || true)
-  jg_check_output_cleanup
+  mv -f -- "$JG_CHECK_OUTPUT_TMP" "$output" || { jg_check_output_cleanup; return 1; }
+  JG_CHECK_OUTPUT_TMP=
+  JG_CHECK_OUTPUT=$output
+}
+
+check_output_reference() {
+  case "$JG_CHECK_OUTPUT" in
+    "$JG_HOME"/*) printf '%s\n' "${JG_CHECK_OUTPUT#"$JG_HOME"/}" ;;
+    *) printf '%s\n' "$JG_CHECK_OUTPUT" ;;
+  esac
+}
+
+check_result_reason() { # <label>
+  local label=$1 max=${JG_WATCH_CHECK_REASON_MAX_BYTES:-4096} ref prefix suffix keep summary
+  [ -s "$JG_CHECK_OUTPUT" ] || return 1
+  case "$max" in ''|*[!0-9]*|0) max=4096 ;; esac
+  ref=$(check_output_reference)
+  prefix="check: $label: "
+  suffix=" [full output: $ref]"
+  keep=$((max - ${#prefix} - ${#suffix}))
+  [ "$keep" -ge 0 ] || keep=0
+  summary=$(head -c "$keep" "$JG_CHECK_OUTPUT" 2>/dev/null | tr '\t\r\n' '   ')
+  JG_CHECK_REASON="$prefix$summary$suffix"
 }
 
 JG_CAPTURE_OUTPUT=
@@ -3997,14 +4025,15 @@ rejected_checks_record() {
 # check pass; a line it prints becomes a check wake like any check result. The
 # slow sweep skips board-answers.check.sh so a pass is never run twice.
 run_fast_checks() {
-  local out reason shim="$STATE/board-answers.check.sh"
+  local reason shim="$STATE/board-answers.check.sh"
   [ "$(age_of "$STATE/.last-fast-check")" -ge "$FAST_CHECK_INTERVAL" ] || return 0
   touch "$STATE/.last-fast-check"
   if [ -f "$SCRIPT_DIR/jg-board-answers.sh" ] && [ ! -L "$SCRIPT_DIR/jg-board-answers.sh" ]; then
-    JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-board-answers.sh" tick || exit 1
-    out=$JG_CHECK_RESULT
-    if [ -n "$out" ]; then
-      reason="check: $shim: $out"
+    JG_CHECK_OUTPUT_KEY='board-answers'
+    if ! JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-board-answers.sh" tick; then
+      check_capture_skip "$shim"
+    elif check_result_reason "$shim"; then
+      reason=$JG_CHECK_REASON
       jg_wake_append check "$shim" "$reason" || exit 1
       wake "$reason"
     fi
@@ -4012,10 +4041,11 @@ run_fast_checks() {
   # A worker's done starts its landing here, in every home: core/trunk-landing lands a task whose done-done receipt
   # is a PASS for its exact head into the local trunk and cleans it up, with no lead or human step.
   if [ -f "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ] && [ ! -L "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ]; then
-    run_check_capture "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" check "$JG_HOME" || exit 1
-    out=$JG_CHECK_RESULT
-    if [ -n "$out" ]; then
-      reason="check: trunk-landing: $out"
+    JG_CHECK_OUTPUT_KEY=trunk-landing
+    if ! run_check_capture "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" check "$JG_HOME"; then
+      check_capture_skip trunk-landing
+    elif check_result_reason trunk-landing; then
+      reason=$JG_CHECK_REASON
       jg_wake_append check trunk-landing "$reason" || exit 1
       wake "$reason"
     fi
@@ -4025,10 +4055,11 @@ run_fast_checks() {
   # here on the fast cadence and not on the slow sweep (bin/jg-unit-claim.sh owns
   # the verdict and the words).
   if [ -f "$SCRIPT_DIR/jg-unit-claim.sh" ] && [ ! -L "$SCRIPT_DIR/jg-unit-claim.sh" ]; then
-    JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-unit-claim.sh" status || exit 1
-    out=$JG_CHECK_RESULT
-    if [ -n "$out" ]; then
-      reason="check: unit-claim: $out"
+    JG_CHECK_OUTPUT_KEY=unit-claim
+    if ! JG_HOME="$JG_HOME" run_check_capture "$SCRIPT_DIR/jg-unit-claim.sh" status; then
+      check_capture_skip unit-claim
+    elif check_result_reason unit-claim; then
+      reason=$JG_CHECK_REASON
       jg_wake_append check unit-claim "$reason" || exit 1
       wake "$reason"
     fi
@@ -4057,8 +4088,11 @@ run_due_checks() {
       if [ "$(basename "$c")" = x-watch.check.sh ]; then
         if fmx_poll_shim_valid "$c" "$JG_HOME" "$JG_ROOT" \
           && [ -f "$JG_ROOT/bin/jg-x-poll.sh" ] && [ ! -L "$JG_ROOT/bin/jg-x-poll.sh" ]; then
-          JG_HOME="$JG_HOME" run_check_capture "$JG_ROOT/bin/jg-x-poll.sh" || exit 1
-          out=$JG_CHECK_RESULT
+          JG_CHECK_OUTPUT_KEY=x-watch
+          if ! JG_HOME="$JG_HOME" run_check_capture "$JG_ROOT/bin/jg-x-poll.sh"; then
+            check_capture_skip "$c"
+            continue
+          fi
         else
           rejected_checks="$rejected_checks $c"
           continue
@@ -4081,13 +4115,21 @@ run_due_checks() {
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
             continue
           fi
-          run_check_capture "$SCRIPT_DIR/jg-pr-poll.sh" --validated \
-            "$provider" "$url" "$host" "$path" "$number" || exit 1
-          out=$JG_CHECK_RESULT
+          JG_CHECK_OUTPUT_KEY=$id
+          if ! run_check_capture "$SCRIPT_DIR/jg-pr-poll.sh" --validated \
+            "$provider" "$url" "$host" "$path" "$number"; then
+            pr_poll_control_release || exit 1
+            check_capture_skip "$c"
+            continue
+          fi
         elif jg_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$JG_CUSTOM_CHECK_SNAPSHOT
-          run_check_capture "$custom_snapshot" || exit 1
-          out=$JG_CHECK_RESULT
+          JG_CHECK_OUTPUT_KEY=$id
+          if ! run_check_capture "$custom_snapshot"; then
+            jg_custom_check_snapshot_cleanup
+            check_capture_skip "$c"
+            continue
+          fi
           jg_custom_check_snapshot_cleanup
         else
           jg_custom_check_snapshot_cleanup
@@ -4095,8 +4137,9 @@ run_due_checks() {
           continue
         fi
       fi
-      if [ -n "$out" ]; then
+      if [ -s "$JG_CHECK_OUTPUT" ]; then
         if [ "$(basename "$c")" = contributions.check.sh ]; then
+          out=$(cat "$JG_CHECK_OUTPUT" 2>/dev/null || true)
           contribution_check_output=
           contribution_check_diagnostics=
           while IFS= read -r contribution_check_line; do
@@ -4110,13 +4153,14 @@ run_due_checks() {
 $out
 EOF
           if [ -n "$contribution_check_diagnostics" ]; then
-            out=${contribution_check_diagnostics%$'\n'}
+            printf '%s\n' "${contribution_check_diagnostics%$'\n'}" > "$JG_CHECK_OUTPUT"
           elif [ -n "$contribution_check_output" ]; then
             continue
           fi
         fi
-        reason="check: $c: $out"
-        if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
+        check_result_reason "$c" || continue
+        reason=$JG_CHECK_REASON
+        if [ "$is_pr_poll" -eq 1 ] && [ "$(cat "$JG_CHECK_OUTPUT" 2>/dev/null)" = merged ]; then
           if [ "$(jg_meta_get "$STATE/$id.meta" kind)" = squad_lead ]; then
             # A merge poll armed on a squad_lead is residue: the mate is a
             # persistent worker, never landed work, and the merge it detected
