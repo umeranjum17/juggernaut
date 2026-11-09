@@ -1,0 +1,4 @@
+# The most settings allowed to have a default in bin/ or core/ and no entry in docs/configuration.md.
+# bin/jg-config-doc.sh reads the first number below and exits 1 when the tree has more.
+# A change that documents settings lowers this number to the new count in the same change.
+593
