@@ -435,6 +435,9 @@ jobs:
       - name: Merge-card evidence-root message test
         if: ${{ !cancelled() }}
         run: bash merge-card/tests/dd-root-message.test.sh
+      - name: Merge-card post-merge wiring test
+        if: ${{ !cancelled() }}
+        run: bash merge-card/tests/wiring.test.sh
       - name: Owner-rules design flag test
         if: ${{ !cancelled() }}
         run: bash owner-rules/tests/design-flag.test.sh

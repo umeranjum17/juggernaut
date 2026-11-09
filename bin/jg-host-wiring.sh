@@ -77,6 +77,7 @@ plan=(
   zai-quota-check:env
   nm-drain:home
   merge-on-green:home
+  merge-card:home
   goal-loop:home
   critical-stall:home
   stall-action:home
