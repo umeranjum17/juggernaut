@@ -709,6 +709,22 @@ cmd_land_batch() {
   done
 }
 
+# The effective reference-transaction hook is an environment fact of an admission attempt: a hook-install refusal is cached per
+# context, so the context names where the hook is, whether its directory takes a write, and the bytes of any hook this script does
+# not own. The guard this script installs is not a fact (the first attempt writes it), so an absent or managed hook reads `ours`.
+# A repaired overlay or permission changes the fact and admits exactly one new attempt; an unchanged one admits none.
+hook_fact() {  # <project-dir>
+  local effective common f
+  effective=$(git -C "$1" rev-parse --path-format=absolute --git-path hooks/reference-transaction 2>/dev/null || true)
+  common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)/hooks/reference-transaction
+  printf 'hook-fact %s dir-writable=%s\n' "$effective" "$([ -n "$effective" ] && [ -w "$(dirname "$effective")" ] && echo yes || echo no)"
+  for f in "$effective" "$common"; do
+    printf '%s ' "$f"
+    if [ ! -f "$f" ] || grep -q '^# managed by bin/jg-trunk.sh:' "$f"; then echo ours
+    else printf '%s %s\n' "$([ -x "$f" ] && echo x || echo -)" "$(git hash-object "$f")"; fi
+  done
+}
+
 # Manual and automatic callers share admission before either can wait on the project lock.
 # Exit 75 is in progress, 74 a bounded transient read failure, 1 a final refusal.
 # Context changes admit a new attempt; every attempt keeps its own output and gate logs.
@@ -733,6 +749,7 @@ cmd_land() {
   context=$({
     printf '%s\n' "$proj" "$cand" "$proof_home" "$account" "$PATH" \
       "${JG_BEADS_TEST_BD:-}" "${JG_BEADS_TEST_DOLT:-}" "${GOCACHE:-}" "${GOMODCACHE:-}"
+    hook_fact "$proj"
     cat "$meta"
     jq -Sc 'del(.at)' "$STATE/$id.run-receipt.json" 2>/dev/null || true
     for key in "$STATE/trunk-tip-$(basename "$proj")" \

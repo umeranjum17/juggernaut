@@ -764,6 +764,27 @@ test_admission_is_shared_by_manual_and_automatic_requests() {
   pass 'automatic/manual requests share admission, unchanged failure stays cached, and changed attempts retain their logs'
 }
 
+test_a_repaired_hook_overlay_admits_exactly_one_fresh_attempt() {
+  local out n
+  world hook-repair
+  lane fix good
+  mkdir -p "$W/repository-hooks"
+  printf '#!/bin/sh\nexit 0\n' > "$W/repository-hooks/reference-transaction"; chmod 755 "$W/repository-hooks/reference-transaction"
+  git -C "$PROJ" config core.hooksPath "$W/repository-hooks"
+  out=$(trunk land fix 2>&1) && fail "an unrecognized effective hook must refuse the landing"
+  assert_contains "$out" 'is not the trunk guard' 'the hook refusal must name its cause'
+  n=$(find "$HOME_D/data/jg-trunk-landing" -name 'fix.*.attempt-*' | wc -l | tr -d ' ')
+  trunk land fix >/dev/null 2>&1 && fail "an unchanged hook refusal must stay refused"
+  trunk land fix >/dev/null 2>&1 && fail "a repeated unchanged check must stay refused"
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name 'fix.*.attempt-*' | wc -l | tr -d ' ')" = "$n" ] || fail "an unchanged hook must not admit another attempt"
+  # The overlay is repaired: the effective hook now chains the repository's own guard.
+  # shellcheck disable=SC2016 # the delegate hook body is written out verbatim
+  printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: delegate to the repository trunk guard\ncommon=$(git rev-parse --path-format=absolute --git-common-dir) || exit 1\nhook=$common/hooks/reference-transaction\n[ ! -x "$hook" ] || exec "$hook" "$@"\nexit 0\n' > "$W/repository-hooks/reference-transaction"
+  trunk land fix >/dev/null 2>&1 || fail "a repaired hook overlay must admit one fresh attempt that lands"
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name 'fix.*.attempt-*' | wc -l | tr -d ' ')" = $((n + 1)) ] || fail "a repaired hook must admit exactly one new attempt"
+  pass 'a changed effective hook overlay admits exactly one fresh attempt, and an unchanged refusal is not repeated'
+}
+
 test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes() {
   local g="$TMP_ROOT/contained" t m h rc=0 out
   jg_git_init_commit "$g"; commit_in "$g" a.txt one "base"; t=$(git -C "$g" rev-parse HEAD)
@@ -790,6 +811,7 @@ fi
 test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection
 test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes
 test_admission_is_shared_by_manual_and_automatic_requests
+test_a_repaired_hook_overlay_admits_exactly_one_fresh_attempt
 
 test_legacy_mode_stays_interoperable
 # shellcheck disable=SC2016 # the policy lines are written out verbatim and expand when the gate runs them
