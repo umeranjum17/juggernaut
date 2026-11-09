@@ -13,12 +13,16 @@ It prints nothing, so it never wakes anyone.
 - The bound is 5 minutes for a worker and 10 for a lead.
   `config/stall-bound-workers` and `config/stall-bound-leads` (whole minutes) replace them.
 - One hash covers the whole pane tail, so a hung foreground call and a hung background terminal both count.
+- An agent whose busy record says idle is exempt only while nothing runs for it.
+  If a command that is neither a harness nor a bare shell has run in its worktree for 2 minutes or more (`JG_STALL_ACTION_BG_MIN_AGE`), the idle agent counts as stalled once its pane has stayed unchanged past the bound.
+  This is the hung background terminal behind an idle foreground, for example a background checkpoint.
+  The probe reads `/proc`; where that is missing the idle record exempts as before.
 
 ## What is never touched
 
 - A task with a declared wait (`paused:` or captain-held).
 - A task whose latest status event is `done`, `failed`, `needs-decision` or `blocked`.
-- A task with a verified exit, or whose busy record says the agent is idle.
+- A task with a verified exit, or whose busy record says the agent is idle and no background command runs for it.
 - A task acted on in the last 30 minutes.
 
 ## Action
@@ -27,7 +31,7 @@ For each stalled hash the check does two steps, recorded once in `data/stall-act
 
 - `bin/jg-control.sh <task> interrupt`.
   A failed interrupt is tried once more on a later sweep, then given up for that hash.
-- `bin/jg-send.sh <task>` with a short note that the last call was cut off.
+- `bin/jg-send.sh <task>` with a short note that the last call was cut off (or, for a hung background command, that it was).
   A lead gets it as a fire-and-forget record.
 
 A new hash is a new stall.

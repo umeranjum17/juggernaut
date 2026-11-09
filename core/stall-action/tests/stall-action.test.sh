@@ -35,6 +35,7 @@ cat > "$d/peek" <<'STUB'
 cat "$PANES/$1"
 STUB
 chmod +x "$d/peek"; export PANES=$d/panes; mkdir -p "$PANES"
+export JG_STALL_ACTION_PROC_LIB=$ROOT/bin/jg-agent-process-lib.sh   # the real process classifier
 export JG_STALL_ACTION_CONTROL=$d/control JG_STALL_ACTION_SEND=$d/send JG_STALL_ACTION_PEEK=$d/peek
 NOW=$(date +%s); export JG_STALL_ACTION_NOW=$NOW
 fails=0
@@ -125,6 +126,37 @@ check "e: a failing interrupt is tried twice for one hash and no re-ring is sent
 rm -f "$STUB_FAIL"
 sweep
 check "e: no third try on the same hash" "$(calls control f1)$(calls send f1)" 00
+
+# g: a hung BACKGROUND terminal behind an idle foreground. The agent reads idle (its turn ended) while a command it
+# started keeps running in its worktree with no output: a real `sleep 1000` stands in for it (amendment F). Only the
+# agent's own busy record says idle, so the process table is the evidence that something is still running.
+export JG_STALL_ACTION_BG_MIN_AGE=0
+: > "$FM/data/stall-action/actions.jsonl"
+WT=$d/wt-hung; WTQ=$d/wt-quiet; mkdir -p "$WT" "$WTQ"
+(cd "$WT" && exec sleep 1000) & HUNG=$!         # the background command; killed below
+trap 'kill "$HUNG" 2>/dev/null || true; rm -rf -- "$d"' EXIT
+sleep 0.3
+bg_lane() {  # <task> <kind> <minutes unchanged> <worktree> [busy state]: an agent that reads idle (or the given state)
+  lane "$1" "$2" "$3"; printf 'worktree=%s\n' "$4" >> "$FM/state/$1.meta"
+  echo "v1 gen=g seq=2 state=${5:-idle} source=claude-hook event=stop ts=$NOW" > "$FM/state/$1.busy-state"
+}
+bg_lane bgw ship 6 "$WT";                  status bgw "working [at=$NOW]: waiting on the background run"
+bg_lane bgquiet ship 6 "$WTQ";             status bgquiet "working [at=$NOW]: nothing running"
+bg_lane bgchange ship 1 "$WT";             status bgchange "working [at=$NOW]: x"
+bg_lane bgpause ship 30 "$WT";             status bgpause "paused [at=$NOW]: waiting for the run"
+bg_lane bglead squad_lead 11 "$WT";        status bglead "working [at=$NOW]: background checkpoint"
+bg_lane bgleadq squad_lead 11 "$WTQ";      status bgleadq "working [at=$NOW]: idle between checkpoints"
+sweep
+check "g: an idle worker with a hung background command is interrupted once" "$(calls control 'bgw interrupt')" 1
+check "g: and re-rung once, with the note naming the background command" "$(grep -c '^send bgw .*background command' "$STUB_LOG")" 1
+check "g: an idle lead with a hung background command is interrupted once" "$(calls control 'bglead interrupt')" 1
+check "g: an idle worker and an idle lead with nothing running are untouched" "$(calls control bgquiet)$(calls control bgleadq)" 00
+check "g: a changing pane and a declared pause are untouched while the command runs" "$(calls control bgchange)$(calls control bgpause)" 00
+sweep
+check "g: the next sweep over the same hash does nothing" "$(calls control bgw)$(calls control bglead)" 00
+kill "$HUNG" 2>/dev/null || true; wait "$HUNG" 2>/dev/null || true
+unset JG_STALL_ACTION_BG_MIN_AGE
+for t in bgw bgquiet bgchange bgpause bglead bgleadq; do rm -f "$FM/state/$t.meta" "$FM/state/$t.busy-state"; done
 
 # f: the wiring installs and registers, the unwiring removes.
 cat > "$FM/bin/jg-check-register.sh" <<'STUB'
