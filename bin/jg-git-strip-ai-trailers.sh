@@ -199,8 +199,11 @@ write_executable() {
 # when the lookup still names this launch's own hooks dir, meaning those files
 # point here, so the wrapper cannot recurse into itself. An empty
 # core.hooksPath makes that lookup fail, but plain git reads it as "no hooks",
-# so the wrapper runs none; any other failure reruns the lookup to show git's
-# error and refuses.
+# so the wrapper runs none. A repository that git is still creating (git init,
+# and the init inside git clone) writes its HEAD through a reference-transaction
+# before its objects directory exists, so git cannot yet resolve it either; it
+# has no hook of its own to chain to, so the wrapper runs none. Any other
+# failure reruns the lookup to show git's error and refuses.
 runtime_chain_body() {
   local ours=$1 resolve_only=${2:-0}
   cat <<EOF
@@ -223,6 +226,9 @@ esac
 name=\${0##*/}
 orig=\$(unset GIT_CONFIG_PARAMETERS; git rev-parse --path-format=absolute --git-path hooks 2>/dev/null) || {
   if hooks_path=\$(unset GIT_CONFIG_PARAMETERS; git config --get --type=path core.hooksPath 2>/dev/null) && [ -z "\$hooks_path" ]; then
+    exit 0
+  fi
+  if [ -n "\${GIT_DIR:-}" ] && [ ! -d "\$GIT_DIR/objects" ]; then
     exit 0
   fi
   (unset GIT_CONFIG_PARAMETERS; git rev-parse --path-format=absolute --git-path hooks >/dev/null)

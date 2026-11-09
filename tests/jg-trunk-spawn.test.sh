@@ -86,6 +86,12 @@ printf 'real task journey; commit and receipt; no live or release requested\n' >
 JG_HOME="$HOME_DIR" "$ROOT/core/receipts/bin/jg-run-receipt.sh" "$id" PASS "$HOME_DIR/data/$id/evidence.txt" "$wt" >/dev/null || fail "real receipt publisher"
 [ "$(jq -r .mode "$HOME_DIR/state/$id.run-receipt.json")" = local-trunk ] || fail "receipt mode changed"
 [ -z "$(git -C "$PROJ" for-each-ref --format='%(refname)' refs/remotes/origin/release/)" ] || fail "fixture must have no remote release ref"
+# The landing starts on the worker's own done and the lane's whole proof at that head: the receipt above, the merge-card's
+# approved cited evidence, and a sealed clean done-done run holding that evidence.
+d="$HOME_DIR/data/$id"; mkdir -p "$d/.done-done/runs"; printf 'ok\n' > "$d/run.log"
+printf '{"head":"%s","verdict":"pass","check":{"claim":"a user can land","evidence":["%s/run.log"]}}\n' "$head" "$d" > "$d/merge-card.json"
+printf '{"schema":1,"run_id":"20261109T000000Z-%s-ab","commit":"%s","exit":0,"dirty":false,"started_at":"2026-11-09T00:00:00Z","files":["run.log"]}\n' "${head:0:8}" "$head" > "$d/.done-done/runs/run-$head.json"
+printf 'done [at=%s]: ready in branch %s (local-trunk)\n' "$(date +%s)" "$branch" >> "$HOME_DIR/state/$id.status"
 JG_HOME="$HOME_DIR" PATH="$FAKEBIN:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_DIR" >/dev/null
 for _ in $(seq 1 150); do
   [ ! -s "$HOME_DIR/data/jg-trunk-landing/outbox" ] || break

@@ -47,6 +47,9 @@
 #    cannot record the captain's word.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 set -u
+# The fixture lanes are judged in their own proof context: the account or done-done home of whoever runs this suite (a worker pane,
+# or a sealed run with an explicit DONE_DONE_HOME) must not reach the merge-card check, which refuses a context that differs.
+unset CLAUDE_CONFIG_DIR DONE_DONE_HOME
 
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
