@@ -103,6 +103,8 @@
 #     ready_work counts the home's queued items that are unblocked and not held, and
 #     idle_with_ready_work is true when a valid home has no active child work while
 #     ready_work is above zero: a lead that should have been woken to dispatch.
+#     An open captain decision or an external hold elsewhere in the home never
+#     masks it: only a worker actually working does.
 #   squad_lead_landed: {records[],truncated[],unreadable[],partial[]} - the
 #     compatibility landed-work roll-up derived from squad_lead_current. Readable
 #     structured homes are partial, not unreadable, when an unavailable child state
@@ -1918,7 +1920,7 @@ squad_lead_current_json() {  # <parent-tasks-json-file> <output-file>
          spawn_gen:($spawn_gen | if . == "" then null else . end),
          current:{state:$state,reason:(if $summary_valid then null else "structured home state invalid: " + ($summary.reason // "unknown reason") end)},invalidity:$summary.invalidity,
          ready_work:($summary.ready_work // 0),
-         idle_with_ready_work:($summary_valid and $summary.state == "no_active_work" and ($summary.ready_work // 0) > 0),
+         idle_with_ready_work:($summary_valid and (($summary.counts.active_children // (($summary.active_children // []) | length)) == 0) and ($summary.ready_work // 0) > 0),
          reconcile_inventory:$summary.invalidity,
          provenance:{selected:"structured-home",structured_home:$home,summary_source:$summary_source,summary_valid:$summary_valid,
            trust:(if $summary_valid then "complete" else "partial-structured" end),parent_event_role:"historical-only"},
