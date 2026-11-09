@@ -329,7 +329,7 @@ WATCH_HOME_EXISTED=0
 . "$SCRIPT_DIR/jg-project-capacity-lib.sh"
 # Stale test-browser reaper and machine load alarm: on by default, no feature to
 # install, and it stops only a browser in a fleet temp or scratch profile root whose
-# owning worker is gone and whose age is past the limit.
+# owner is gone and whose age is past the limit (bin/jg-reaper-lib.sh owns the rule).
 # shellcheck source=bin/jg-reaper-lib.sh
 . "$SCRIPT_DIR/jg-reaper-lib.sh"
 # Where this checkout's features live (in-repo core/ first, then the pre-fold clone).
