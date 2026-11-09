@@ -1140,6 +1140,13 @@ STACK_BLOCK=
 RULES_SECTION=$(jg_rules_section "$CONFIG")
 RULES_BLOCK=
 [ -z "$RULES_SECTION" ] || RULES_BLOCK="$RULES_SECTION"$'\n'
+# Every ship brief carries the build rule, once, verbatim from the captain.
+IFS= read -r -d '' BUILD_RULE_BLOCK <<'EOF' || true
+# Build rule
+Always build code cleanly, modularly, and with proper architecture and separation of concerns. Never simply bolt on a feature because I asked for it. If you can't find an easy way to build it naturally, and you'd recommend a refactor to make the whole thing cleanly, stop your work ahead of time and say so.
+To say so, append `needs-decision [at=<epoch>]: {the refactor that would make this clean}` to the status file and stop.
+EOF
+BUILD_RULE_BLOCK=$'\n'${BUILD_RULE_BLOCK%$'\n'}$'\n'
 
 RULE1=$(jg_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 RISK_SECTION=
@@ -1156,7 +1163,7 @@ You are a operator: an autonomous worker agent managed by juggernaut. Work on yo
 $TASK_SECTION
 $PRIOR_ART_SECTION$TRUNK_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
-$STACK_BLOCK$RULES_BLOCK
+$STACK_BLOCK$RULES_BLOCK$BUILD_RULE_BLOCK
 
 # Setup
 $SETUP_BASE

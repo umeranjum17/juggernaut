@@ -2011,3 +2011,28 @@ test_local_trunk_brief_never_tells_worker_to_rebase() {
   pass "jg-brief.sh: a local-trunk brief carries no instruction to rebase onto the latest trunk tip"
 }
 test_local_trunk_brief_never_tells_worker_to_rebase
+
+# Every ship brief carries the captain's build rule once, verbatim, in its own
+# section, with the needs-decision way to stop for a refactor; scouts and
+# charters do not build, so they carry none.
+test_ship_brief_carries_the_build_rule() {
+  local home id brief rule
+  home="$TMP_ROOT/build-rule-home"
+  mkdir -p "$home/config" "$home/data" && : > "$home/config/delivery-risk-loose"
+  rule="Always build code cleanly, modularly, and with proper architecture and separation of concerns. Never simply bolt on a feature because I asked for it. If you can't find an easy way to build it naturally, and you'd recommend a refactor to make the whole thing cleanly, stop your work ahead of time and say so."
+  for id in build-rule-nm:no-mistakes build-rule-dp:direct-PR build-rule-lo:local-only; do
+    mode=${id##*:}; id=${id%%:*}
+    JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$id: jg-brief.sh --mode $mode failed"
+    brief="$home/data/$id/brief.md"
+    assert_grep "# Build rule" "$brief" "$id: ship brief missing the Build rule section"
+    grep -qxF "$rule" "$brief" || fail "$id: ship brief lacks the build rule verbatim"
+    [ "$(grep -cF "bolt on a feature" "$brief")" = 1 ] || fail "$id: build rule is repeated in the brief"
+    assert_grep "needs-decision [at=<epoch>]: {the refactor that would make this clean}" "$brief" \
+      "$id: build rule does not name the needs-decision line for a refactor"
+  done
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" build-rule-scout some-proj --scout >/dev/null 2>&1
+  assert_no_grep "bolt on a feature" "$home/data/build-rule-scout/brief.md" "scout brief carries the build rule"
+  pass "jg-brief.sh: every ship brief carries the build rule once, verbatim"
+}
+test_ship_brief_carries_the_build_rule
