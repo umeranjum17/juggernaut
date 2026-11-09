@@ -63,6 +63,22 @@ landed_project() {  # <commit>
   local pn; pn=$(awk -F'\t' -v c="$1" '$3 == c { p = $2 } END { print p }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
   [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && printf '%s\n' "$FMH/projects/$pn"
 }
+# The state line of a refused landing, from the verdict bin/jg-trunk.sh prints for it (`refusal-class <id>: wait|retry|final`; no verdict
+# is final). A `retry` is tried again by `check` after a 2 minute backoff, up to RETRY_CAP tries in all; the last one is final, and `check`
+# reports every final once, so a lane the machine failed is never forgotten and never retried for ever.
+RETRY_CAP=3
+refusal_state() {  # <id> <head> <jg-trunk output> <reason>
+  local class n
+  class=$(printf '%s\n' "$3" | sed -n "s/^refusal-class $1: //p" | tail -n 1)
+  case $class in
+    wait) printf 'wait %s\n' "$4" ;;
+    retry)
+      n=$(( $(cat "$MEM/$1.$2.retries" 2>/dev/null || echo 0) + 1 ))
+      if [ "$n" -ge "$RETRY_CAP" ]; then printf 'final gave up after %s tries: %s\n' "$n" "$4"
+      else printf '%s\n' "$n" > "$MEM/$1.$2.retries"; printf 'retry %s %s\n' "$n" "$4"; fi ;;
+    *) printf 'final %s\n' "$4" ;;
+  esac
+}
 
 # The post-landing job: the whole suite at the landed commit (bin/jg-trunk.sh verify). A red one is reported; the live step is not
 # its business, so a landing never waits on a go-live.
@@ -136,11 +152,7 @@ if [ "$1" = runbatch ]; then
     why=$(printf '%s\n' "$out" | grep -E "^returned $id: " | tail -n 1 | sed "s/^returned $id: //")
     [ -n "$why" ] || why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error|IN_PROGRESS):' | tail -n 1)
     why=$(printf '%s' "${why:-landing failed; see $request_log}" | cut -c1-300)
-    case $why in
-      *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*|*'changed while landing'*|*'kept moving'*) res="wait $why" ;;
-      *) res="final $why" ;;
-    esac
-    printf '%s\n' "$res" > "$MEM/$id.$head.state"
+    printf '%s\n' "$(refusal_state "$id" "$head" "$out" "$why")" > "$MEM/$id.$head.state"
   done
   # The whole suite runs once, at the top of the stack, and reverts the lane that caused a red by itself.
   if [ -n "$fresh_top" ]; then
@@ -188,18 +200,13 @@ if [ "$1" = run ]; then
     exit 0
   fi
   why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error|IN_PROGRESS):' | tail -n 1 | cut -c1-300)
-  case $rc in
-    74|75) printf 'wait %s\n' "${why:-landing in progress or transient read failure; see $request_log}" > "$MEM/$id.$head.state"; exit 0 ;;
-  esac
-  case $why in
-    *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*|*'changed while landing'*|*'kept moving'*) res="wait $why" ;;
-    *) res="final ${why:-landing failed; see $request_log}" ;;
-  esac
+  [ "$rc" -ne 75 ] || { printf 'wait %s\n' "${why:-landing in progress; see $request_log}" > "$MEM/$id.$head.state"; exit 0; }
+  res=$(refusal_state "$id" "$head" "$out" "${why:-landing failed; see $request_log}")
   printf '%s\n' "$res" > "$MEM/$id.$head.state"
   # The lander rebased the lane, so its branch may now be at another head: the same verdict stands for that head.
   br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
   now=$(git -C "$(mval "$STATE/$id.meta" project)" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
-  [ -z "$now" ] || [ "$now" = "$head" ] || printf '%s\n' "$res" > "$MEM/$id.$now.state"
+  [ -z "$now" ] || [ "$now" = "$head" ] || { printf '%s\n' "$res" > "$MEM/$id.$now.state"; cp -f -- "$MEM/$id.$head.retries" "$MEM/$id.$now.retries" 2>/dev/null || :; }
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
 fi
@@ -294,6 +301,7 @@ for meta in "$STATE"/*.meta; do
   case $line in
     running*) run_alive "$line" && continue ;;
     final*) report "$id.$head" "$id not landed: ${line#final }" "${line#final }"; lane_refusal_reach "$id" "$head" "$proj" "$branch" "${line#final }"; continue ;;
+    retry*) [ -n "$(find "$st" -mmin +2 2>/dev/null)" ] || continue ;;  # the backoff: 2 minutes since the refusal was recorded
     wait*) [ -z "$QUIET" ] || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac
   # <epoch done> <task> <head> <project> <1, or 0 for a lane marked `land-next`>

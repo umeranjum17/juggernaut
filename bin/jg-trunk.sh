@@ -5,6 +5,7 @@
 # Usage: jg-trunk.sh init <project-dir> [<base-ref>]   create the trunk (default: the newest release/c-N, else HEAD)
 #        jg-trunk.sh proof <task-id>                   print the proof inputs the task's head still lacks (receipt, merge-card evidence, sealed run); exit 1 when any
 #        jg-trunk.sh land <task-id>                    land the task's one proved commit on the trunk; never goes live
+#        jg-trunk.sh classify <output-file> [<gate-log>...]   print wait, retry or final for a refused landing's output
 #        jg-trunk.sh land-batch <id>[@<head>]...       land 2 to batch-max queued lanes as one stack: one gate over their changed files, one move; a red stack is halved to find and return only the lane that caused it
 #        jg-trunk.sh flush <project-dir>               Overwatch only: land every ready lane of the project now, in batches, whatever the threshold says
 #        jg-trunk.sh land-next <task-id>               Overwatch only: mark one ready lane so the landing check lands it at once, ahead of the queue
@@ -259,6 +260,24 @@ run_gate() {  # <commit> <command> <label>
   local log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}-$(date +%s)-$$}-$3.log" rc=0
   gate_exec "$1" "$2" "$log" || rc=$?
   [ "$rc" -eq 0 ] || { tail -n 20 "$log" >&2; refuse "gate '$3' failed (exit $rc) at ${1:0:12}; full log: $log"; }
+}
+
+# What a refused landing means, read from its output (and any gate logs after it): `wait` (only time clears it), `retry` (the machine failed it, not the lane: a full
+# or quota-limited temp directory, a failed checkout, a gate shard whose result is missing, a slow backlog read) or `final` (a change is
+# needed: a conflict, a lint or test red charged to the lane). The last refusal line decides; a gate or read refusal is a `retry` only when
+# the output also shows the machine failure. The landing check (core/trunk-landing/trunk-landing.sh) reads this verdict from the
+# `refusal-class` line, and owns the retry count and backoff: this function is the only list of either phrase set.
+classify_refusal() {  # <output file> [<gate log>...]
+  local last
+  last=$(grep -E '^(REFUSED|error):' "$1" | tail -n 1)
+  case $last in
+    *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*|*'changed while landing'*|*'kept moving'*|*'proof inputs are incomplete'*) echo wait; return ;;
+    "REFUSED: gate "*|"REFUSED: could not read the decisions"*|"REFUSED: this lane is the red"*|"error: cannot check out"*) ;;
+    *) echo final; return ;;
+  esac
+  # Single-quoted, so the slow-read phrase stays the exact text tests/jg-backlog-row-show.test.sh pins in this file.
+  if grep -qE 'Disk quota exceeded$|No space left on device$|^jg-test-run: aggregate input not found: |^error: cannot check out |backlog read bound( after [0-9]+ attempts \([0-9s, ]+\))?$|^REFUSED: could not read the decisions' "$@" 2>/dev/null
+  then echo retry; else echo final; fi
 }
 
 # Every script the test runner finished in a gate log, as: script TAB exit status TAB failure signature.
@@ -585,7 +604,7 @@ land_candidate() {
 
 # --- The merge queue: two or more queued lanes land as one stack (docs/trunk-flow.md "Batch landing") ---
 # B_* are the lanes of one batch, by position: id, original lane commit (C0), its commit as it now sits in the stack (CUR), lane head, branch, record, why it was returned.
-B_ID=(); B_C0=(); B_CUR=(); B_HEAD=(); B_BRANCH=(); B_META=(); B_WHY=(); B_TIP=; B_BASE0=; CHAIN=(); CHAIN_CHANGED=; LANDED=(); LAST_RED=
+B_ID=(); B_C0=(); B_CUR=(); B_HEAD=(); B_BRANCH=(); B_META=(); B_WHY=(); B_CLASS=(); B_TIP=; B_BASE0=; CHAIN=(); CHAIN_CHANGED=; LANDED=(); LAST_RED=; LAST_RED_CLASS=
 
 # The lanes <idx>... stacked on <top>, in order: a commit already on its place stays, any other is rebased by the lander onto it.
 # A lane that no longer merges clean drops out (B_WHY). Sets CHAIN (the lanes that stack) and CHAIN_CHANGED (1 when any commit was rebuilt or dropped).
@@ -630,7 +649,7 @@ batch_gate() {  # <top> <stack size>   (B_TIP is the trunk tip the stack sits on
   elif [ -n "$full" ]; then full_gate "$1" "$(gate_from "$full" "HEAD~$2")" "$B_TIP" 2>>"$errf" || rc=$?
   else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >>"$errf"; fi
   cat "$errf" >&2
-  [ "$rc" -eq 0 ] || LAST_RED=$(grep -E '^(REFUSED|error):' "$errf" | tail -n 1 | sed 's/^[A-Za-z]*: //')
+  [ "$rc" -eq 0 ] || { LAST_RED=$(grep -E '^(REFUSED|error):' "$errf" | tail -n 1 | sed 's/^[A-Za-z]*: //'); LAST_RED_CLASS=$(classify_refusal "$errf"); }
   rm -f -- "$errf"
   [ "$rc" -eq 0 ]
 }
@@ -686,7 +705,7 @@ cmd_land_batch() {
       IFS=$'\t' read -r "B_HEAD[i]" "B_CUR[i]" "B_BRANCH[i]" res < "$errf.res"
       if [ -n "$res" ]; then B_WHY[i]="already landed $id at ${B_CUR[$i]}; not live"; else B_C0[i]=${B_HEAD[$i]}; top=${B_CUR[$i]}; todo+=("$i"); fi
     else
-      B_WHY[i]=$(grep -E '^(REFUSED|error):' "$errf" | tail -n 1); B_WHY[i]=${B_WHY[$i]:-"REFUSED: admission failed for $id"}
+      B_WHY[i]=$(grep -E '^(REFUSED|error):' "$errf" | tail -n 1); B_WHY[i]=${B_WHY[$i]:-"REFUSED: admission failed for $id"}; B_CLASS[i]=$(classify_refusal "$errf")
     fi
     cat "$errf" >&2; rm -f -- "$errf" "$errf.res"
   done
@@ -705,7 +724,7 @@ cmd_land_batch() {
     top=${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}
     if [ "$flag" = 1 ] && [ -z "$CHAIN_CHANGED" ]; then :; elif batch_gate "$top" "${#CHAIN[@]}"; then if land_group; then continue; fi; moved=1; break; fi
     if [ "${#CHAIN[@]}" -eq 1 ]; then
-      B_WHY[CHAIN[0]]="REFUSED: this lane is the red in its batch: $LAST_RED"; continue
+      B_WHY[CHAIN[0]]="REFUSED: this lane is the red in its batch: $LAST_RED"; B_CLASS[CHAIN[0]]=$LAST_RED_CLASS; continue
     fi
     half=$(( ${#CHAIN[@]} / 2 )); first=("${CHAIN[@]:0:half}"); rest=("${CHAIN[@]:half}")
     stack+=("1:${rest[*]}" "0:${first[*]}")
@@ -720,7 +739,7 @@ cmd_land_batch() {
   [ "${#remaining[@]}" -gt 0 ] || break
   rounds=$((rounds + 1))
   if [ "$rounds" -ge 3 ]; then
-    for i in "${remaining[@]}"; do B_WHY[i]="REFUSED: the trunk kept moving while its batch was gated; it lands on the next try"; done
+    for i in "${remaining[@]}"; do B_WHY[i]="REFUSED: the trunk kept moving while its batch was gated; it lands on the next try"; B_CLASS[i]="wait"; done
     break
   fi
   todo=("${remaining[@]}"); B_TIP=$(rev "refs/heads/$TRUNK"); B_BASE0=$B_TIP
@@ -728,7 +747,7 @@ cmd_land_batch() {
   done
   for ((i = 0; i < n; i++)); do
     [ -n "${B_WHY[$i]:-}" ] || continue
-    case ${B_WHY[$i]} in "already landed"*) echo "${B_WHY[$i]}" ;; *) echo "returned ${B_ID[$i]}: ${B_WHY[$i]}" ;; esac
+    case ${B_WHY[$i]} in "already landed"*) echo "${B_WHY[$i]}" ;; *) echo "returned ${B_ID[$i]}: ${B_WHY[$i]}"; echo "refusal-class ${B_ID[$i]}: ${B_CLASS[$i]:-final}" ;; esac
   done
 }
 
@@ -749,7 +768,8 @@ hook_fact() {  # <project-dir>
 }
 
 # Manual and automatic callers share admission before either can wait on the project lock.
-# Exit 75 is in progress, 74 a bounded transient read failure, 1 a final refusal.
+# Exit 75 is in progress, 74 a refusal classed retry (classify_refusal: the machine failed, not the lane), 1 any other refusal. A refusal
+# also prints `refusal-class <id>: wait|retry|final`, which the landing check acts on; the count and the backoff are its own.
 # Context changes admit a new attempt; every attempt keeps its own output and gate logs.
 cmd_land() {
   local id=${1:-} meta proj branch cand mem context key previous count=0 kind reason attempt rc=0 proof_home account run_lock held_by
@@ -800,7 +820,7 @@ cmd_land() {
   previous=$(cat "$key.state" 2>/dev/null || true)
   read -r kind count reason <<<"${previous:-new 0}"
   case $kind in
-    final) printf '%s\n' "$reason"; return 1 ;;
+    final) printf '%s\n' "$reason"; printf 'refusal-class %s: final\n' "$id"; return 1 ;;
   esac
   attempt=$(mktemp -d "$mem/$id.$cand.attempt-XXXXXX") || die "cannot retain landing attempt"
   LAND_ATTEMPT=$attempt/gate LAND_HEAD=$cand
@@ -814,13 +834,11 @@ cmd_land() {
   reason=$(grep -E '^(REFUSED|error):' "$attempt/landing.log" | tail -n 1)
   reason=${reason:-"REFUSED: landing failed (exit $rc); see $attempt/landing.log"}
   reason="$reason; full log: $attempt/landing.log"
-  [ "$rc" -eq 0 ] || printf '%s\n' "$reason"
-  kind=final
   if [ "$rc" -eq 0 ]; then kind=landed; reason="landed $id at $cand; not live"
-  elif grep -qE "^(REFUSED|error):.*(away mode|linked to a decision| is red|still held|the trunk kept moving|proof inputs are incomplete)" "$attempt/landing.log"; then kind="wait"
-  elif ! grep -q "^REFUSED: gate '" "$attempt/landing.log" &&
-    grep -qE '^(jg-captain-hold: )?backlog show [A-Za-z0-9._-]+ exceeded its [0-9]+s backlog read bound( after [0-9]+ attempts \([0-9s, ]+\))?$' "$attempt/landing.log"; then
-    count=$((count + 1)); [ "$count" -ge 3 ] || { kind=retry; rc=74; }
+  else
+    kind=$(classify_refusal "$attempt/landing.log" "$attempt"/gate-*.log)
+    printf '%s\n' "$reason"; printf 'refusal-class %s: %s\n' "$id" "$kind"
+    [ "$kind" != retry ] || { count=$((count + 1)); rc=74; }
   fi
   printf '%s %s %s\n' "$kind" "$count" "$reason" > "$key.state"
   return "$rc"
@@ -1288,6 +1306,7 @@ case "${1:-}" in
   land-batch) shift; cmd_land_batch "$@" ;;
   flush) shift; cmd_flush "$@" ;;
   land-next) shift; cmd_land_next "$@" ;;
+  classify) shift; [ "$#" -ge 1 ] && [ -f "$1" ] || die "classify takes an output file and, after it, any gate logs"; classify_refusal "$@" ;;
   verify) shift; cmd_verify "$@" ;;
   proof) shift; cmd_proof "$@" ;;
   word) shift; cmd_word "$@" ;;

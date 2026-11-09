@@ -8,8 +8,8 @@ state	final	terminal	The landing was refused for a reason that needs a change, s
 edge	new	start	running	core/trunk-landing/trunk-landing.sh:check	-	the receipt is a PASS for this head and the head is not on the trunk	jg-machine-landing.test.sh
 edge	running	land	landed	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-trunk.sh land exits 0	jg-machine-landing.test.sh
 edge	running	refuse-wait	wait	core/trunk-landing/trunk-landing.sh:run	-	the refusal only needs time	jg-machine-landing.test.sh
-edge	running	refuse-final	final	core/trunk-landing/trunk-landing.sh:run	-	any other refusal	jg-machine-landing.test.sh
-edge	running	retry	retry	bin/jg-trunk.sh:cmd_land (c63db7ed)	-	a backlog read bound passed, fewer than 3 times	jg-machine-landing.test.sh
+edge	running	refuse-final	final	core/trunk-landing/trunk-landing.sh:run	-	any other refusal, or the third refusal that is classed retry	jg-machine-landing.test.sh
+edge	running	retry	retry	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-trunk.sh classify_refusal says retry (the machine failed, not the lane), fewer than 3 times	jg-machine-landing.test.sh
 edge	wait	restart	running	core/trunk-landing/trunk-landing.sh:check	-	each sweep	jg-machine-landing.test.sh
-edge	retry	restart	running	bin/jg-trunk.sh:cmd_land (c63db7ed)	-	each sweep	jg-machine-landing.test.sh
+edge	retry	restart	running	core/trunk-landing/trunk-landing.sh:check	-	each sweep once 2 minutes have passed	jg-machine-landing.test.sh
 observer	[ -n "${JG_HOME:-}" ] || { echo no-jg-home; exit 0; }; f=$JG_HOME/data/jg-trunk-landing/$1.state; [ -f "$f" ] || { echo new; exit 0; }; read -r w a b < "$f"; [ "$w" = running ] || { echo "$w"; exit 0; }; case $a in ''|*[!0-9]*) echo running-no-epoch; exit 0;; esac; a=$((10#$a)); [ "$a" -gt 0 ] || { echo running-no-epoch; exit 0; }; [ $(( $(date +%s) - a )) -le 21600 ] || { echo running-expired; exit 0; }; case $b in *[!0-9]*) echo running-bad-pid;; *) echo running;; esac

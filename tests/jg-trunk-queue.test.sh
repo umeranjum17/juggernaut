@@ -60,6 +60,7 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   out=$(trunk land-batch c1 c2 c3 2>&1) || fail "a stack with one conflicting lane must still land the others: $out"
   assert_contains "$out" "returned c2: REFUSED: fm/c2 conflicts with trunk" "the conflicting lane is returned"
   assert_contains "$out" "work.txt" "the conflict names its paths"
+  assert_contains "$out" "refusal-class c2: final" "a conflict is final"
   [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket c1,ticket c3" ] || fail "the others land in order"
   [ "$(runs)" = 1 ] || fail "the conflict costs no extra gate run, got $(runs)"
   # A red stack is halved: the guilty lane alone is returned, the green part lands, and only the needed runs are spent.
@@ -67,11 +68,17 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   lane d1 one g1.txt; lane d2 two g2.txt; lane d3 BAD g3.txt; lane d4 four g4.txt
   out=$(trunk land-batch d1 d2 d3 d4 2>&1) || fail "a red stack must still land its green part: $out"
   assert_contains "$out" "returned d3: REFUSED: this lane is the red in its batch" "only the guilty lane is returned"
+  assert_contains "$out" "refusal-class d3: final" "a red the lane caused is final"
   case $out in *"returned d1"*|*"returned d2"*|*"returned d4"*) fail "a green lane must not be returned: $out" ;; esac
   [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket d1,ticket d2,ticket d4" ] || fail "the green part lands in order"
   [ "$(runs)" = 4 ] || fail "four lanes with one red take 4 gate runs (stack, first half, guilty, last lane), got $(runs)"
   [ "$(git -C "$PROJ" rev-parse fm/d3)" = "$(git -C "$W/lanes/d3" rev-parse HEAD)" ] || fail "the returned lane is left exactly as it was"
   ! git -C "$PROJ" cat-file -e trunk:g3.txt 2>/dev/null || fail "the red lane's change is not on the trunk"
+  # The same red on a full temp directory is the machine's: the returned lane is classed retry, not final.
+  printf 'gate-full=echo "cat: write error: Disk quota exceeded"; ! git grep -q BAD\n' >> "$HOME_D/config/trunk-policy"
+  lane q1 one h1.txt; lane q2 BAD h2.txt
+  out=$(trunk land-batch q1 q2 2>&1) || fail "a red stack must still land its green part: $out"
+  assert_contains "$out" "refusal-class q2: retry" "a red the machine caused is classed retry"
   # One queued lane keeps the single path, and the batch refuses what a single landing refuses.
   rc=0; out=$(trunk land-batch lonely 2>&1) || rc=$?; [ "$rc" -ne 0 ] || fail "a batch of one is refused: $out"
   assert_contains "$out" "2 or more" "a lone lane is told to use land"

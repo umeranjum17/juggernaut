@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared fixture for the bin/jg-trunk.sh integration suites tests/jg-trunk.test.sh, tests/jg-trunk-live.test.sh,
-# tests/jg-trunk-gate.test.sh, tests/jg-trunk-queue.test.sh and tests/jg-trunk-verify.test.sh: real git repositories,
+# tests/jg-trunk-gate.test.sh, tests/jg-trunk-queue.test.sh, tests/jg-trunk-retry.test.sh and tests/jg-trunk-verify.test.sh: real git repositories,
 # a local bare origin, the real gate chain and a stub for the captain-hold reader. Each suite sources it and runs only
 # its own cases, so each stays well under the per-script bound. It is sourced, never run.
 set -u

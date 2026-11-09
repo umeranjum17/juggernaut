@@ -10,8 +10,8 @@
 # home on the last fully green commit until verify passes; the release is ONE pull request from the trunk itself
 # with no release branch; and a red CI pins the home back to the last green commit.
 # Real bin/jg-trunk.sh, bin/jg-trunk-live-home.sh, core/trunk-landing and the shared landing gates run over real git
-# repositories, a bare origin and a recording forge (tests/jg-trunk.test.sh and its -live, -gate, -queue and -verify
-# parts own the cases; tests/jg-trunk-scope.test.sh
+# repositories, a bare origin and a recording forge (tests/jg-trunk.test.sh and its -live, -gate, -queue, -retry and
+# -verify parts own the cases; tests/jg-trunk-scope.test.sh
 # proves direct-PR, no-mistakes and local-only projects are untouched; tests/jg-trunk-spawn.test.sh
 # owns the spawn side: a project with a trunk takes no feature pull request and its lane starts on the trunk tip).
 set -u
@@ -27,6 +27,7 @@ git -C "$candidate/tree" checkout -q --detach "$(git -C "$root" rev-parse HEAD)"
 rc=0
 (cd "$candidate/tree" && bash bin/jg-test-run.sh \
   tests/jg-trunk.test.sh tests/jg-trunk-live.test.sh tests/jg-trunk-gate.test.sh tests/jg-trunk-queue.test.sh \
+  tests/jg-trunk-retry.test.sh \
   tests/jg-trunk-verify.test.sh tests/jg-trunk-spawn.test.sh tests/jg-trunk-scope.test.sh \
   tests/jg-on.test.sh tests/migration-card-live.test.sh tests/jg-afk-inject-e2e.test.sh \
   tests/jg-wake-watcher.test.sh tests/jg-beads.test.sh tests/jg-beads-native-n6.test.sh \
