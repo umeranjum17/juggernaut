@@ -45,6 +45,10 @@
 # one-shot identity, "sig" a whole-file signature. A partial last line waits for
 # the next pass, and a pass appends its messages before it saves its offsets, so
 # an interrupted pass repeats a message rather than losing one.
+# <state>/.comms-feed-pass lists the homes and source paths the last full pass
+# read, stamped with that pass's start time (<state>/.comms-feed-pass.start). A
+# sync whose list is unchanged and whose every listed path is strictly older
+# than that stamp has nothing new to read, so it exits before loading anything.
 # `state` is what the source recorded when the line was written: an append-only
 # feed never revises an earlier line.
 #
@@ -58,6 +62,7 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 FEED="${JG_COMMS_FEED:-$STATE/comms-feed.jsonl}"
 CURSOR="$STATE/.comms-feed-cursor"
+PASS="$STATE/.comms-feed-pass"
 LOCK="$STATE/.comms-feed.lock"
 TEXT_MAX=4000
 CF_SEP=$'\x1f'
@@ -69,6 +74,65 @@ CF_CURSOR=''
 LOCKED=
 # shellcheck source=bin/jg-compat.sh
 . "$SCRIPT_DIR/jg-compat.sh"
+
+# --- the quiet pass ------------------------------------------------------------
+# <state>/.comms-feed-pass lists every source the last complete pass read, and its
+# mtime is that pass's start. A sync whose sources are the same set and all older
+# than that start would add nothing, so it stops here: no library, no lock, no
+# scan. A source written in the same clock tick as the pass start is not older,
+# so it is never skipped.
+
+cf_board_path() {  # sets CF_BOARD: the board sign-off-axi reads
+  if [ -n "${SIGN_OFF_HOME:-}" ]; then
+    CF_BOARD="${SIGN_OFF_HOME}/.sign-off/decisions.json"
+    [ -f "$CF_BOARD" ] || CF_BOARD="${SIGN_OFF_HOME}/decisions.json"
+  else
+    CF_BOARD="$HOME/.sign-off/decisions.json"
+  fi
+}
+
+# Every path whose change can add a message to a pass over <state>... (this home's
+# first, then each lead home's): its status logs, inboxes and their handled/
+# folders, pending replies, ledger, the board and its answers, and this home's
+# task records, which name the lead homes; and whether the cursor exists, since a
+# removed cursor makes the next pass export everything again. Built into
+# CF_MANIFEST, no process.
+cf_manifest() {  # <board> <state>...
+  local board=$1 s f
+  shift
+  CF_MANIFEST="board $board"$'\n'
+  if [ -f "$CURSOR" ]; then CF_MANIFEST="${CF_MANIFEST}cursor 1"$'\n'; else CF_MANIFEST="${CF_MANIFEST}cursor 0"$'\n'; fi
+  for s in "$@"; do CF_MANIFEST="${CF_MANIFEST}state $s"$'\n'; done
+  for f in "$board" "${board%.json}.answers.jsonl" "$STATE"/*.meta; do
+    [ ! -e "$f" ] || CF_MANIFEST="$CF_MANIFEST$f"$'\n'
+  done
+  for s in "$@"; do
+    for f in "$s"/*.status "$s"/*.inbox "$s"/*.inbox/handled "$s/pending-replies" "$s/pending-replies"/* "$s/fleet-ledger.jsonl"; do
+      [ ! -e "$f" ] || CF_MANIFEST="$CF_MANIFEST$f"$'\n'
+    done
+  done
+}
+
+cf_quiet() {
+  local line stored='' first=1 states=()
+  [ -f "$PASS" ] && [ ! -L "$PASS" ] || return 1
+  while IFS= read -r line; do
+    stored="$stored$line"$'\n'
+    case "$line" in
+      "state "*) [ "$first" = 1 ] || states+=("${line#state }"); first=0 ;;
+    esac
+  done < "$PASS"
+  cf_board_path
+  cf_manifest "$CF_BOARD" "$STATE" ${states[@]+"${states[@]}"}
+  [ "$CF_MANIFEST" = "$stored" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in "board "*|"cursor "*|"state "*) continue ;; esac
+    [ "$line" -ot "$PASS" ] || return 1
+  done <<< "$CF_MANIFEST"
+}
+
+case "${1:-sync}" in sync) [ "$#" -gt 1 ] || ! cf_quiet || exit 0 ;; esac
+
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-classify-lib.sh
@@ -370,12 +434,8 @@ cf_scan_ledger() {  # <home> <state> <lead-id>
 
 cf_scan_board() {  # <lead-id>; the board is the one sign-off-axi reads
   local lead=$1 board answers sig cursig rows row key filed title filer ts text line
-  if [ -n "${SIGN_OFF_HOME:-}" ]; then
-    board="${SIGN_OFF_HOME}/.sign-off/decisions.json"
-    [ -f "$board" ] || board="${SIGN_OFF_HOME}/decisions.json"
-  else
-    board="$HOME/.sign-off/decisions.json"
-  fi
+  cf_board_path
+  board=$CF_BOARD
   [ -f "$board" ] && [ ! -L "$board" ] || return 0
   answers="${board%.json}.answers.jsonl"
   # Answers first: a question reads as handled only once its answer is recorded.
@@ -431,11 +491,13 @@ cf_scan_home() {  # <home> <state> <lead-id>
 }
 
 cf_sync() {
-  local meta h lead self
+  local meta h lead self children=()
   PENDING=''
   [ -d "$STATE" ] && [ ! -L "$STATE" ] || return 1
   jg_lock_try_acquire "$LOCK" || return 0
   LOCKED=1
+  # The pass starts here, before any source is read: cf_quiet compares against it.
+  : > "$PASS.start" || return 1
   ROWS=$(mktemp "${TMPDIR:-/tmp}/jg-comms-feed.XXXXXX") || return 1
   cf_load_cursor
   self=$(cd "$JG_HOME" && pwd -P)
@@ -447,12 +509,17 @@ cf_sync() {
     [ "$(cd "$h" && pwd -P)" != "$self" ] || continue
     lead=${meta##*/}
     cf_scan_home "$h" "$h/state" "${lead%.meta}"
+    children+=("$h/state")
   done < <(grep -lx 'kind=squad_lead' "$STATE"/*.meta 2>/dev/null)
   cf_scan_board "$(cf_lead_id "$JG_HOME")"
   if [ -s "$ROWS" ]; then
     sort -n -s -k1,1 "$ROWS" | cut -f2- >> "$FEED" || return 1
   fi
   [ -z "$PENDING" ] || cf_commit_cursor || return 1
+  # This pass is complete: record what it read, stamped with its start, for cf_quiet.
+  cf_manifest "$CF_BOARD" "$STATE" ${children[@]+"${children[@]}"}
+  { printf '%s' "$CF_MANIFEST" > "$PASS.tmp" && touch -r "$PASS.start" "$PASS.tmp" && mv -f -- "$PASS.tmp" "$PASS"; } 2>/dev/null \
+    || rm -f -- "$PASS" "$PASS.tmp"
   rm -f -- "$ROWS"
   ROWS=
   jg_lock_release "$LOCK"

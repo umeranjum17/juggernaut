@@ -127,17 +127,6 @@ SCAN_MARKER="$STATE/.inactive-outcome-reconcile"
 SCAN_LOCK="$STATE/.inactive-outcome-reconcile.lock"
 CREW_STATE_BIN="${JG_INACTIVE_CREW_STATE_BIN:-$SCRIPT_DIR/jg-crew-state.sh}"
 
-# shellcheck source=bin/jg-wake-lib.sh
-. "$SCRIPT_DIR/jg-wake-lib.sh"
-# shellcheck source=bin/jg-classify-lib.sh
-. "$SCRIPT_DIR/jg-classify-lib.sh"
-# shellcheck source=bin/jg-parent-channel-lib.sh
-. "$SCRIPT_DIR/jg-parent-channel-lib.sh"
-# shellcheck source=bin/jg-timeout-lib.sh
-. "$SCRIPT_DIR/jg-timeout-lib.sh"
-# shellcheck source=bin/jg-dod-lib.sh
-. "$SCRIPT_DIR/jg-dod-lib.sh"
-
 JG_INACTIVE_RECONCILE_SECS=${JG_INACTIVE_RECONCILE_SECS:-900}
 case "$JG_INACTIVE_RECONCILE_SECS" in
   ''|*[!0-9]*|0)
@@ -837,7 +826,38 @@ retire_gone_child_records() { # [<task-id>] [<teardown>]
   return 0
 }
 
+# A watcher poll in an idle main home stops here, in this one process, before the
+# libraries load and before the locked re-exec: scan() would find no squad_lead
+# marker (no ledger pass), no pending record (nothing to retire) and a marker
+# younger than the cadence (no scan due), so it would return without a change.
+# The marker test is jg_parent_channel_home_id's main-home answer; the pending
+# and cadence tests are retire_gone_child_records' and scan()'s own.
+scan_is_idle() {
+  local marker
+  marker=$(jg_compat_marker "$JG_HOME")
+  [ ! -e "$marker" ] && [ ! -L "$marker" ] || return 1
+  [ -d "$OUTCOME_DIR" ] && [ ! -L "$OUTCOME_DIR" ] || return 1
+  set -- "$OUTCOME_DIR"/*.pending
+  [ ! -e "${1:-}" ] || return 1
+  [ "$(scan_marker_age)" -lt "$JG_INACTIVE_RECONCILE_SECS" ]
+}
+
 mode=${1:-scan}
+if [ "$mode" = scan ] && [ "$#" -le 1 ] && scan_is_idle; then
+  exit 0
+fi
+
+# shellcheck source=bin/jg-wake-lib.sh
+. "$SCRIPT_DIR/jg-wake-lib.sh"
+# shellcheck source=bin/jg-classify-lib.sh
+. "$SCRIPT_DIR/jg-classify-lib.sh"
+# shellcheck source=bin/jg-parent-channel-lib.sh
+. "$SCRIPT_DIR/jg-parent-channel-lib.sh"
+# shellcheck source=bin/jg-timeout-lib.sh
+. "$SCRIPT_DIR/jg-timeout-lib.sh"
+# shellcheck source=bin/jg-dod-lib.sh
+. "$SCRIPT_DIR/jg-dod-lib.sh"
+
 case "$mode" in
   scan)
     startup=0
