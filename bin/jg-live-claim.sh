@@ -31,6 +31,15 @@
 # Anything else is downgraded to `merged-not-released: <claim>`, so a merged
 # change can never reach the captain as a fix he can already use.
 #
+# A claim that names a change the delivery machine knows (core/machines/changes.tsv, by its id or its switch name) is
+# decided by that machine instead (`bin/jg-machine.sh show delivery <id>`; core/machines/README.md owns its states):
+#   - in-use: the change runs in every home, its switch is on and its proof holds. The claim stands, and a claim with no
+#     `proof:` clause is extended with the proof that held (exit 3, so a caller that prints stdout prints the whole claim).
+#   - any other state: it is not live. The claim is replaced by `<state>: <claim>` (`in the homes, off (switch config/<file>):`
+#     for in-homes-off, `merged-not-released:` for unlanded and landed) and exit 3, unless the claim already says that
+#     state in its own words (`in the homes, off`, `in-homes-off`, `pinned behind`, `reverted`, `not released`).
+# Code that is in every home with its switch off is never `live`, and a change with no named proof is never `in-use`.
+#
 # Release record: `${JG_DATA_OVERRIDE:-$JG_HOME/data}/releases`, or the path in
 # JG_RELEASES_FILE.
 # One release per line, `#` starts a comment line, and the first field is the
@@ -126,6 +135,57 @@ waiting_prs() {  # -> `#N #M` of recorded open PRs no release carries
   printf '%s\n' "${out# }"
 }
 
+norm() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' ' ' | tr -s ' '; }
+
+# A change that is not in use is described in the report by its state; this is the claim that already says it.
+claim_says_state() {  # <claim> <state>
+  local text; text=" $(norm "$1") "
+  case $text in *" $(norm "$2") "*) return 0 ;; esac
+  case $2 in
+    in-homes-off) case $text in *' in the homes off '*) return 0 ;; esac ;;
+    unlanded|landed) case $text in *' not released '*) return 0 ;; esac ;;
+  esac
+  return 1
+}
+
+# The delivery machine decides every registered change the claim names; exits itself when it does.
+delivery_verdict() {  # <claim>
+  local base=${0%/*} observer machine ids id shown state sentence detail sw first_ok='' prefix
+  observer=${JG_DELIVERY_OBSERVER:-$base/../core/machines/observers/delivery.sh}
+  machine=${JG_MACHINE_BIN:-$base/jg-machine.sh}
+  [ -r "$observer" ] || return 0
+  ids=$(printf '%s\n' "$1" | bash "$observer" mentions 2>/dev/null) || return 0
+  [ -n "$ids" ] || return 0
+  for id in $ids; do
+    shown=$(bash "$machine" show delivery "$id" 2>/dev/null)
+    state=$(printf '%s\n' "$shown" | awk -F'\t' '$1 == "state" { print $2 }')
+    sentence=$(printf '%s\n' "$shown" | awk -F'\t' '$1 == "sentence" { print $2 }')
+    detail=$(bash "$observer" detail "$id" 2>/dev/null)
+    sw=$(printf '%s\n' "$detail" | awk -F'\t' '$1 == "switch" { print $2 }')
+    if [ "$state" = in-use ]; then
+      [ -n "$first_ok" ] || first_ok="$id: $(printf '%s\n' "$detail" | awk -F'\t' '$1 == "proof" { print $2 }')"
+      continue
+    fi
+    [ -n "$state" ] || state=unverified
+    claim_says_state "$1" "$state" && continue
+    case $state in
+      in-homes-off) prefix="in the homes, off (switch $sw)" ;;
+      unlanded|landed) prefix=merged-not-released ;;
+      *) prefix=$state ;;
+    esac
+    printf '%s: %s\n' "$prefix" "$1"
+    printf 'jg-live-claim: %s is %s, not live: %s' "$id" "$state" "${sentence:-the delivery machine could not read it.}" >&2
+    [ "$state" != in-homes-off ] || printf ' Turn on %s, or report it as in the homes, off.' "$sw" >&2
+    printf '\n' >&2
+    exit 3
+  done
+  [ -n "$first_ok" ] || exit 0
+  claim_names "$1" proof && { printf '%s\n' "$1"; exit 0; }
+  printf '%s; proof: %s\n' "$1" "${first_ok#*: }"
+  printf 'jg-live-claim: the claim says a change is live without its proof (proof: ...); added from the delivery machine.\n' >&2
+  exit 3
+}
+
 claim_names() {  # <claim> <word>
   printf '%s\n' "$1" | grep -Eqi "(^|[^[:alnum:]_])$2:"
 }
@@ -141,6 +201,7 @@ verb=${1%:}
 claim=$2
 
 claim_reports_a_fix "$verb" "$claim" || keep_as_written
+delivery_verdict "$claim"
 claim_states_the_truth "$claim" && keep_as_written
 
 releases=${JG_RELEASES_FILE:-}

@@ -3,7 +3,7 @@ state	new	initial	No landing was tried for this commit yet.	-
 state	running	normal	The landing is under way right now.	epoch>0,age<6h,pid(c63db7ed)
 state	wait	normal	The landing waits for away mode, an open decision, a red trunk or a held task to clear, and is tried again.	reason
 state	retry	normal	A landing step failed in a way a second try may fix, and it is tried again.	count,reason
-state	landed	terminal	The commit is on the local trunk. It is not live: going live needs the captain's word.	-
+state	landed	terminal	The commit is on the local trunk. It is not live yet: it goes live on the captain's word, or by itself in a batch when the project has a go-live waiver.	-
 state	final	terminal	The landing was refused for a reason that needs a change, so a new proved commit is needed.	reason
 edge	new	start	running	core/trunk-landing/trunk-landing.sh:check	-	the receipt is a PASS for this head and the head is not on the trunk	jg-machine-landing.test.sh
 edge	running	land	landed	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-trunk.sh land exits 0	jg-machine-landing.test.sh

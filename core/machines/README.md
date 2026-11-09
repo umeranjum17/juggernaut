@@ -51,6 +51,16 @@ A corpus file has one line per observation: a state name, or `from<TAB>event<TAB
 `check` reports each line the table lacks and exits 1.
 A line listed in `known-baseline.tsv` (`machine<TAB>corpus line`) is reported as `baseline` and does not fail.
 
+## Delivery: is a change live?
+
+The `delivery` machine answers for one change, never one task: `jg-machine.sh show delivery <id>`.
+Its states are `unlanded`, `landed` (on the trunk), `in-homes` (every home runs the commit), `in-homes-off` (every home has the code and its switch is off), `in-use` (switched on, with a proof that holds), `pinned-behind` and `reverted`.
+`core/machines/observers/delivery.sh` reads the states from the trunk, `data/trunk-live.tsv` and `config/`, and `delivery.sh` also documents the `changes.tsv` registry format.
+Every change that ships behind a switch gets a row in `core/machines/changes.tsv` in the same commit, which names the switch file in `config/` and the proof, and its commit carries the trailer line `Change: <id>`.
+A report may say `live` or `done` only for `in-use`, and `bin/jg-live-claim.sh` enforces that for every registered change a claim names, by id or by switch name.
+`in-homes-off` is reported as `in the homes, off`, with the switch file named.
+The switch is read in the home that asks, so the same change can be `in-use` in one home and `in-homes-off` in another.
+
 ## Sealed proof
 
 `core/machines/run-proof.sh` is the acceptance run: it runs the machine tests and checks every shipped table in a throwaway home.
@@ -58,4 +68,5 @@ A line listed in `known-baseline.tsv` (`machine<TAB>corpus line`) is reported as
 
 ## Test
 
+`tests/jg-machine-delivery.test.sh` walks a switched-off and a switched-on change through every delivery state and the live-claim verdict.
 `tests/jg-machine.test.sh` generates a fixture machine, refuses each lint defect, matches the golden output, and walks a record to its terminal state using only `next` output.

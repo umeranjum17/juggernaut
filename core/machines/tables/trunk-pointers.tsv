@@ -2,8 +2,8 @@ machine	trunk-pointers	state/trunk-{tip,green,released,rolled,word-live}-<projec
 state	released	initial	The trunk and the last release are the same commit.	-
 state	rolled	normal	The release pull request merged and a new trunk version was cut.	-
 state	landed	normal	A commit landed on the trunk that has not passed the full suite.	-
-state	green	normal	The trunk tip passed the full suite and is not live.	-
-state	word-given	normal	The captain said go live and the home has not moved yet.	-
+state	green	normal	The trunk tip passed the full suite and is not live yet: it goes live on the captain's word, or by itself in a batch when the project has a go-live waiver.	-
+state	word-given	normal	The captain said go live and the home has not moved yet. A project with a go-live waiver skips this state.	-
 state	live	normal	The home runs the trunk tip.	-
 state	pinned-behind	normal	A red check pinned the home back to the last good commit.	-
 state	hook-failed	normal	The live hook failed, so the home stayed where it was.	-
@@ -17,6 +17,7 @@ edge	green	land	landed	bin/jg-trunk.sh:cmd_land	-	the tip moves past green	jg-ma
 edge	green	word	word-given	bin/jg-trunk.sh:cmd_word	-	the captain says go live	jg-machine-landing.test.sh
 edge	green	ci-red	pinned-behind	bin/jg-trunk.sh:cmd_ci	-	CI is red at the tip	jg-machine-landing.test.sh
 edge	green	release	released	bin/jg-trunk.sh:cmd_release	-	the captain says release and the tip is green	jg-machine-landing.test.sh
+edge	green	autolive	live	bin/jg-trunk.sh:cmd_autolive	-	the project has a go-live waiver, and the quiet window or the cap passed	jg-machine-landing.test.sh
 edge	word-given	live	live	bin/jg-trunk.sh:cmd_live	-	the live hook moves the home to the green tip	jg-machine-landing.test.sh
 edge	word-given	hook-fail	hook-failed	bin/jg-trunk.sh:go_live	-	the live hook exits non-zero	jg-machine-landing.test.sh
 edge	word-given	land	landed	bin/jg-trunk.sh:cmd_land	-	the tip moves past green	jg-machine-landing.test.sh
