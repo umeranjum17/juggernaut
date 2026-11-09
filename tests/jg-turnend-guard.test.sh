@@ -1060,7 +1060,7 @@ test_tracked_claude_entries_inert_under_grok() {
       || fail "tracked entry for $target ran under a legacy GROK_AGENT environment"
   done < <(jq -r '.hooks[][].hooks[].command' "$ROOT/.claude/settings.json")
 
-  [ "$guarded" -eq 9 ] || fail "expected 9 grok-guarded tracked entries, saw $guarded"
+  [ "$guarded" -eq 10 ] || fail "expected 10 grok-guarded tracked entries, saw $guarded"
   [ "$unguarded" -eq 1 ] || fail "expected 1 documented unguarded tracked entry, saw $unguarded"
   pass "tracked .claude/settings.json entries: $guarded inert under grok, the documented subagent exception still armed, all live under Claude"
 }
@@ -1615,6 +1615,63 @@ test_autoarm_unsettled_wake_still_reprompts() {
   rm -f "$dir/state/.wake-ack-fleet-fp"
   expect_reprompt "$dir" "a missing fleet baseline"
   pass "jg-claude-stop-autoarm: queued wake, unacknowledged recovery, open decision, unread status, pending captain message and changed fleet each keep the re-prompt"
+}
+
+# --- mid-turn: a lead deep in one long turn gets a cycle without a turn end ------
+# The real checkout's hook, arm and watcher run against a squad lead fixture home
+# (JG_ROOT_OVERRIDE), fired the way the PostToolUse registration fires it: from
+# inside the session that holds the session lock, with no Stop at all.
+midturn_fire() {  # <dir>
+  local home
+  home=$(cd "$1" && pwd)
+  # shellcheck disable=SC2016 # the fake harness expands its own variables.
+  printf '{"session_id":"sess-midturn","hook_event_name":"PostToolUse"}\n' \
+    | JG_HOME="$home" JG_ROOT_OVERRIDE="$home" ROOT="$ROOT" \
+      JG_SIGNAL_GRACE=0 JG_HEARTBEAT=999999 JG_POLL=1 "$1/fake-claude" -c '
+        printf "%s\n" "$$" > "$JG_HOME/state/.lock"
+        "$ROOT/bin/jg-claude-stop-autoarm.sh" --mid-turn' 2>&1
+}
+
+midturn_cycle_pid() {  # <dir>: the live, identity-matched watcher with a fresh beacon
+  local home
+  home=$(cd "$1" && pwd)
+  JG_HOME="$home" bash -c '
+    . "$1/bin/jg-wake-lib.sh"
+    jg_watcher_healthy "$2/state" "$1/bin/jg-watch.sh" 300 "$2" && printf "%s\n" "$JG_WATCHER_HEALTHY_PID"
+  ' _ "$ROOT" "$home"
+}
+
+test_autoarm_midturn_rearms_lead_without_turn_end() {
+  local dir out status started elapsed first second
+  dir=$(make_squad_lead_dir "$TMP_ROOT/midturn-lead")
+  jg_test_track_watcher_state "$(cd "$dir" && pwd)/state"
+  ln -s /bin/bash "$dir/fake-claude"
+  printf 'kind=ship\n' > "$dir/state/task1.meta"
+  printf 'working [at=%s]: building\n' "$(date +%s)" > "$dir/state/task1.status"
+  [ -z "$(midturn_cycle_pid "$dir")" ] || fail "the fixture lead started with a live cycle"
+
+  started=$(date +%s)
+  out=$(midturn_fire "$dir"); status=$?
+  elapsed=$(( $(date +%s) - started ))
+  expect_code 0 "$status" "the mid-turn firing must never block or rewake the turn"
+  [ -z "$out" ] || fail "the mid-turn firing printed into the turn: $out"
+  first=$(midturn_cycle_pid "$dir")
+  [ -n "$first" ] || fail "a lead with work under way and no cycle got none from the mid-turn firing: $(tail -n 3 "$dir/state/.watch-triage.log" 2>/dev/null)"
+  [ "$elapsed" -le 60 ] || fail "the mid-turn cycle took ${elapsed}s, past the 60s bound"
+  assert_absent "$dir/state/.claude-autoarm-epoch" "the mid-turn firing took a Stop generation"
+  assert_absent "$dir/state/.claude-midturn-arm.lock" "the mid-turn firing left its single-flight lock behind"
+
+  out=$(midturn_fire "$dir"); status=$?
+  expect_code 0 "$status" "a mid-turn firing over a healthy cycle must exit quietly"
+  [ -z "$out" ] || fail "a mid-turn firing over a healthy cycle printed into the turn: $out"
+  second=$(midturn_cycle_pid "$dir")
+  [ "$second" = "$first" ] || fail "a lead with a healthy cycle (watcher $first) got another one ($second)"
+  # The arm ledger gains a row only when a cycle ends: none may have ended.
+  ! grep -q 'origin=started' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
+    || fail "a mid-turn cycle ended: $(cat "$dir/state/.watch-cycle-exits.log")"
+
+  JG_HOME="$(cd "$dir" && pwd)" JG_STATE_OVERRIDE="$(cd "$dir" && pwd)/state" "$ROOT/bin/jg-watch-arm.sh" --stop >/dev/null 2>&1
+  pass "jg-claude-stop-autoarm --mid-turn: a lead with work under way and no cycle gets one in ${elapsed}s without a turn end, and a healthy cycle gets no second one"
 }
 
 test_guard_still_blocks_settled_wake_without_a_cycle() {
@@ -2731,6 +2788,7 @@ test_hook_claude_mode_integrated_monotonic_fail_open
 test_autoarm_settled_wake_spends_no_turn
 test_autoarm_unsettled_wake_still_reprompts
 test_guard_still_blocks_settled_wake_without_a_cycle
+test_autoarm_midturn_rearms_lead_without_turn_end
 test_hook_claude_mode_frozen_epoch_reaches_bounded_fail_open
 test_hook_claude_mode_frozen_epoch_without_verified_failure_spends_budget_and_keeps_blocking
 test_hook_claude_mode_recovery_contention_is_not_ordinary_allow

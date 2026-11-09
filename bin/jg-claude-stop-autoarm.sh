@@ -77,6 +77,21 @@
 #     retried instead of being judged by the healthy-watcher predicate
 #     (docs/supervision-host.md). On a home that opted out nothing below
 #     changes.
+#   - Mid-turn: a Stop fires only when a turn ends, so on its own a session in
+#     a long turn - a lead running many lanes, a first turn before any Stop, a
+#     turn whose handling successor already closed on the next wake - has no
+#     cycle until that turn ends. The same script is therefore also registered
+#     as an async PostToolUse hook with --mid-turn, which fires on every tool
+#     call. After the same host, scope, identity, AFK, and need gates it
+#     defers to an open generation claim (a Stop-owned arm still parked or
+#     deciding) and to a live identity-matched watcher with a fresh beacon;
+#     otherwise, under the single-flight lock state/.claude-midturn-arm.lock,
+#     it starts one detached cycle exactly as the handling successor starts,
+#     with no predecessor. It never takes a generation, writes the epoch
+#     ledger, parks, or rewakes: it always exits 0, logs an unconfirmed launch
+#     to state/.watch-triage.log, and leaves the retry to the next tool call
+#     or the turn's Stop. That cycle's wakes are durable in the wake queue,
+#     and the next Stop's foreground arm attaches to it while it lives.
 #   - Translation: while supervision is still needed and AFK remains inactive,
 #     an actionable arm close (signal:/stale:/check:/heartbeat) prints one
 #     rewake banner to stderr and exits 2, which wakes Claude even while idle
@@ -113,9 +128,10 @@
 # lock contention, it exits 0 and leaves continuity to the synchronous guard and
 # the model.
 #
-# The Stop hook passes no arguments, so any argument means a manual run: -h or
-# --help prints usage and an unknown argument is refused, both before anything
-# is sourced, read, or armed. A park started from a model's tool call would be
+# The Stop hook passes no arguments and the PostToolUse hook passes only
+# --mid-turn, so any other argument means a manual run: -h or --help prints
+# usage and an unknown argument is refused, both before anything is sourced,
+# read, or armed. A park started from a model's tool call would be
 # owned by that short-lived process and leave supervision down once it exits.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
@@ -142,18 +158,24 @@ set -u
 
 usage() {
   cat <<'EOF'
-Usage: jg-claude-stop-autoarm.sh
+Usage: jg-claude-stop-autoarm.sh [--mid-turn]
 
 Claude Stop hook registered in .claude/settings.json; not for manual use.
 It reads the Stop payload on stdin and, in a primary home that needs
 supervision, arms the watcher or supervision host for this session.
 Exit 0 is silent; exit 2 carries a rewake banner on stderr.
+
+--mid-turn is the async PostToolUse registration: it starts one detached
+watcher cycle when none is live and no Stop-owned arm holds the home, and
+always exits 0.
 EOF
 }
 
+MID_TURN=0
 if [ "$#" -gt 0 ]; then
   case "$1" in
     -h|--help) usage; exit 0 ;;
+    --mid-turn) [ "$#" -eq 1 ] || { echo "error: unexpected argument: $2" >&2; usage >&2; exit 2; }; MID_TURN=1 ;;
     *) echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 fi
@@ -174,6 +196,18 @@ esac
 
 # shellcheck source=bin/jg-primary-scope-lib.sh
 . "$SCRIPT_DIR/jg-primary-scope-lib.sh"
+
+# Consume the hook payload once. The decisions below are state-based; the
+# payload is read so a slow writer can never wedge on a full pipe, and its host
+# is inspected before anything that could arm runs.
+PAYLOAD=$(cat 2>/dev/null || true)
+
+# --- scope: genuine primary checkout only -----------------------------------
+# The cheapest gate runs before the libraries below are sourced: the mid-turn
+# registration fires on every tool call of every Claude session in a checkout
+# of this repository, and a child crew/scout worktree stops here.
+jg_primary_scope_matches "$JG_ROOT" "$STATE" || exit 0
+
 # shellcheck source=bin/jg-supervision-lib.sh
 . "$SCRIPT_DIR/jg-supervision-lib.sh"
 # shellcheck source=bin/jg-wake-lib.sh
@@ -191,11 +225,6 @@ esac
 # poll cadence"). jg_poll_derived_grace (bin/jg-wake-lib.sh) is the single
 # owner of that max(300, poll+60) derivation.
 GRACE=${JG_GUARD_GRACE:-$(jg_poll_derived_grace)}
-
-# Consume the Stop payload once. The decisions below are state-based; the
-# payload is read so a slow writer can never wedge on a full pipe, and its host
-# is inspected before anything else runs.
-PAYLOAD=$(cat 2>/dev/null || true)
 
 # Cursor loads the tracked Claude settings too. Cursor has no asyncRewake, so if
 # a future Cursor build starts firing the Claude-shaped Stop entry, this arm
@@ -218,9 +247,6 @@ jg_hook_payload_is_foreign_host "$PAYLOAD" && exit 0
 if [ -n "$PAYLOAD" ] && command -v jq >/dev/null 2>&1; then
   printf '%s' "$PAYLOAD" | jq -e '(.transcript_path // "") | type == "string" and contains("/.pi/")' >/dev/null 2>&1 && exit 0
 fi
-
-# --- scope: genuine primary checkout only -----------------------------------
-jg_primary_scope_matches "$JG_ROOT" "$STATE" || exit 0
 
 # --- identity: only the lock-owning session's hooks may arm ------------------
 # A prior session may have died after leaving its numeric harness pid in .lock.
@@ -254,6 +280,86 @@ need_supervision || exit 0
 if [ "$RECOVER_SESSION_LOCK" -eq 1 ]; then
   "$SCRIPT_DIR/jg-lock.sh" >/dev/null 2>&1 || exit 0
   jg_session_lock_owned_by_self "$STATE" || exit 0
+fi
+
+# X mode cadence: source the generated config so an X instance polls at its
+# 30s cadence (jg-bootstrap.sh x_mode_setup contract).
+# shellcheck source=/dev/null
+[ -f "$CONFIG/x-mode.env" ] && . "$CONFIG/x-mode.env"
+
+# --- detached cycle start --------------------------------------------------------
+# Start one arm that outlives this hook: the handling successor below, started
+# before the rewake delivers the wake as the Pi, omp, and OpenCode adapters do
+# from their child-close handlers, and the mid-turn cycle. A successor receives
+# the closed arm's pid as JG_WATCH_PREDECESSOR_ARM_PID; a mid-turn cycle has no
+# predecessor and starts as a plain arm. The arm must outlive this hook's exit,
+# so it is detached three ways: nohup, stdio away from the hook's pipes, and its
+# own process group. Its one status line is awaited within the arm's own
+# confirmation budget plus slack, and an unconfirmed launch is retried boundedly
+# (JG_AUTOARM_SUCCESSOR_ATTEMPTS, default 2): a launch forked into session
+# teardown meets exactly the transient failures - a dying lock holder, a racing
+# beacon - most likely to clear on their own within one more budget, and one
+# attempt that lands there leaves the home dark until some later turn re-arms.
+# Sets DETACHED_ARM_FAILURE to what went wrong when every attempt stays
+# unconfirmed.
+DETACHED_ARM_FAILURE=
+start_detached_arm() {  # [predecessor-arm-pid]
+  local out pid deadline budget line monitor_was_on=0 attempt=0 attempts=${JG_AUTOARM_SUCCESSOR_ATTEMPTS:-2}
+  case "$attempts" in ''|*[!0-9]*) attempts=2 ;; esac
+  [ "$attempts" -ge 1 ] || attempts=1
+  if ! out=$(mktemp "$STATE/.claude-autoarm-successor.XXXXXX"); then
+    DETACHED_ARM_FAILURE='did not confirm a live watcher (its output file could not be created)'
+    return 1
+  fi
+  while [ "$attempt" -lt "$attempts" ]; do
+    attempt=$((attempt + 1))
+    : > "$out"
+    budget=$(JG_GUARD_GRACE="$GRACE" jg_watcher_confirmation_budget "$STATE" "$SCRIPT_DIR/jg-watch.sh" "$JG_HOME")
+    case $- in *m*) monitor_was_on=1 ;; esac
+    set -m 2>/dev/null || true
+    JG_WATCH_PREDECESSOR_ARM_PID=${1:-} JG_GUARD_GRACE="$GRACE" \
+      nohup "$SCRIPT_DIR/jg-watch-arm.sh" >"$out" 2>&1 </dev/null &
+    pid=$!
+    [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+    deadline=$(( $(date +%s) + budget + 2 ))
+    while :; do
+      if grep -Eq '^watcher: (started|attached) pid=[0-9]+' "$out" 2>/dev/null; then
+        rm -f "$out" 2>/dev/null || true
+        return 0
+      fi
+      grep -q '^watcher: FAILED' "$out" 2>/dev/null && break
+      [ "$(date +%s)" -ge "$deadline" ] && break
+      sleep 0.2
+    done
+  done
+  line=$(grep '^watcher: FAILED' "$out" 2>/dev/null | head -n 1 || true)
+  rm -f "$out" 2>/dev/null || true
+  [ -z "$line" ] || line=" ($line)"
+  DETACHED_ARM_FAILURE="pid=$pid did not confirm a live watcher$line"
+  return 1
+}
+
+# --- mid-turn cycle -------------------------------------------------------------
+# The PostToolUse registration (header "Mid-turn"). A live open claim is a
+# Stop-owned arm that still parks on or decides the cycle, and a healthy watcher
+# is the cycle itself: either one means this firing has nothing to start. The
+# single-flight lock keeps concurrent tool calls from starting arms that would
+# only attach to one another, and the second health check under it sees a cycle
+# a firing that held the lock just before started.
+if [ "$MID_TURN" -eq 1 ]; then
+  MIDTURN_LOCK="$STATE/.claude-midturn-arm.lock"
+  midturn_covered() {
+    jg_autoarm_claim_open "$STATE" "$GRACE" \
+      || jg_watcher_healthy "$STATE" "$SCRIPT_DIR/jg-watch.sh" "$GRACE" "$JG_HOME"
+  }
+  midturn_covered && exit 0
+  jg_lock_try_acquire "$MIDTURN_LOCK" || exit 0
+  trap 'jg_lock_release "$MIDTURN_LOCK"' EXIT
+  if ! midturn_covered && [ ! -e "$STATE/.afk" ] && ! start_detached_arm; then
+    printf '[%s] mid-turn arm %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$DETACHED_ARM_FAILURE" \
+      >> "$STATE/.watch-triage.log" 2>/dev/null || true
+  fi
+  exit 0
 fi
 
 # --- single-flight generation claim --------------------------------------------
@@ -366,11 +472,6 @@ trap 'handle_autoarm_signal HUP' HUP
 trap 'handle_autoarm_signal TERM' TERM
 trap 'handle_autoarm_signal INT' INT
 
-# X mode cadence: source the generated config so an X instance polls at its
-# 30s cadence (jg-bootstrap.sh x_mode_setup contract).
-# shellcheck source=/dev/null
-[ -f "$CONFIG/x-mode.env" ] && . "$CONFIG/x-mode.env"
-
 # --- foreground the real arm wrapper ------------------------------------------
 # The arm is a tracked child this hook waits on, never a fire-and-forget shell
 # & whose child would be reaped when the hook returned: this hook process tree
@@ -396,60 +497,8 @@ run_arm() {  # <output file, or empty for none>
   ARM_PID=
 }
 
-# --- handling successor --------------------------------------------------------
-# Start the next arm before the rewake delivers the wake, as the Pi, omp, and
-# OpenCode adapters do from their child-close handlers, so a watcher covers the
-# handling turn instead of the home waiting uncovered for the next Stop. The
-# successor receives the closed arm's pid as JG_WATCH_PREDECESSOR_ARM_PID; it
-# must outlive this hook's exit, so it is detached three ways: nohup, stdio
-# away from the hook's pipes, and its own process group. Its one status line
-# is awaited within the arm's own confirmation budget plus slack, and an
-# unconfirmed launch is retried boundedly (JG_AUTOARM_SUCCESSOR_ATTEMPTS,
-# default 2): a successor forked into session teardown meets exactly the
-# transient failures - a dying lock holder, a racing beacon - most likely to
-# clear on their own within one more budget, and one attempt that lands there
-# leaves the home dark until some later turn re-arms. Sets
-# SUCCESSOR_FAILURE to the banner line when every attempt stays unconfirmed;
-# the rewake still fires either way, so a confirmed successor changes nothing
-# about the wake delivery itself.
-SUCCESSOR_FAILURE=
-start_handling_successor() {  # <closed-arm-pid>
-  local out pid deadline budget line monitor_was_on=0 attempt=0 attempts=${JG_AUTOARM_SUCCESSOR_ATTEMPTS:-2}
-  case "$attempts" in ''|*[!0-9]*) attempts=2 ;; esac
-  [ "$attempts" -ge 1 ] || attempts=1
-  if ! out=$(mktemp "$STATE/.claude-autoarm-successor.XXXXXX"); then
-    SUCCESSOR_FAILURE='The handling successor did not confirm a live watcher (its output file could not be created); this handling turn runs uncovered until the next turn end re-arms.'
-    return 1
-  fi
-  while [ "$attempt" -lt "$attempts" ]; do
-    attempt=$((attempt + 1))
-    : > "$out"
-    budget=$(JG_GUARD_GRACE="$GRACE" jg_watcher_confirmation_budget "$STATE" "$SCRIPT_DIR/jg-watch.sh" "$JG_HOME")
-    case $- in *m*) monitor_was_on=1 ;; esac
-    set -m 2>/dev/null || true
-    JG_WATCH_PREDECESSOR_ARM_PID=$1 JG_GUARD_GRACE="$GRACE" \
-      nohup "$SCRIPT_DIR/jg-watch-arm.sh" >"$out" 2>&1 </dev/null &
-    pid=$!
-    [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
-    deadline=$(( $(date +%s) + budget + 2 ))
-    while :; do
-      if grep -Eq '^watcher: (started|attached) pid=[0-9]+' "$out" 2>/dev/null; then
-        rm -f "$out" 2>/dev/null || true
-        return 0
-      fi
-      grep -q '^watcher: FAILED' "$out" 2>/dev/null && break
-      [ "$(date +%s)" -ge "$deadline" ] && break
-      sleep 0.2
-    done
-  done
-  line=$(grep '^watcher: FAILED' "$out" 2>/dev/null | head -n 1 || true)
-  rm -f "$out" 2>/dev/null || true
-  [ -z "$line" ] || line=" ($line)"
-  SUCCESSOR_FAILURE="The handling successor pid=$pid did not confirm a live watcher$line; this handling turn runs uncovered until the next turn end re-arms."
-  return 1
-}
-
 OUT=
+SUCCESSOR_FAILURE=
 ACTIONABLE=0
 HEALTHY=0
 HOST_MODE=0
@@ -540,7 +589,7 @@ fi
 if [ "$ACTIONABLE" -eq 1 ] && [ "$HOST_MODE" -eq 0 ] && [ ! -e "$FAILURE_ALARM" ] \
   && jg_autoarm_still_owner "$STATE" "$MY_GEN" \
   && "$SCRIPT_DIR/jg-wake-settled.sh" check >/dev/null 2>&1 \
-  && start_handling_successor "$CLOSED_ARM_PID"; then
+  && start_detached_arm "$CLOSED_ARM_PID"; then
   ACTIONABLE=0
   HEALTHY=1
 fi
@@ -583,7 +632,8 @@ if [ "$ACTIONABLE" -eq 1 ]; then
   fi
   # The host owns its own successors and stops its cycle before handing back.
   if [ "$HOST_MODE" -eq 0 ]; then
-    start_handling_successor "$CLOSED_ARM_PID" || true
+    start_detached_arm "$CLOSED_ARM_PID" \
+      || SUCCESSOR_FAILURE="The handling successor $DETACHED_ARM_FAILURE; this handling turn runs uncovered until the next turn end re-arms."
   fi
   {
     printf 'juggernaut watcher wake - one supervision event needs a handling turn now.\n'

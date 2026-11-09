@@ -661,6 +661,32 @@ tests/jg-claude-stop-autoarm.test.sh
 tests/jg-turnend-guard.test.sh
 ```
 
+### Claude mid-turn cycle, 2026-11-09
+
+The mid-turn cycle ([`watcher-continuity.md`](../watcher-continuity.md#claude-mid-turn-cycle)) ran with Claude Code 2.1.321 on Haiku on 2026-11-09.
+The lab is a disposable clone that is its own Squad Lead home, with one lane under way and no watcher.
+The turn runs `true`, then a probe that waits up to 60 seconds for a healthy watcher and then watches it for 20 seconds.
+
+```sh
+claude --version
+JG_CLAUDE_LIVE_E2E=1 bin/jg-test-run.sh tests/jg-claude-midturn-arm-live-e2e.test.sh
+```
+
+Observed output with the PostToolUse registration:
+
+```text
+2.1.321 (Claude Code)
+ok - Claude 2.1.321 (Claude Code) live E2E: a Squad Lead with work under way got a live cycle mid-turn (healthy pid=667668 waited=1s held=20s epoch=absent) with no Stop and no model-issued arm command
+```
+
+The same guard run against the previous tracked settings, which had only the Stop registration, failed:
+
+```text
+not ok - Claude 2.1.321 (Claude Code): a lead with work under way had no live cycle mid-turn within 60s: none waited=60s held=0s epoch=absent; triage:
+```
+
+A headless `claude -p` session sends TERM to the detached arm when the session process exits, after the turn; the watcher it started keeps its lock, so the guard checks only the turn itself.
+
 ### Stalled-holder recovery
 
 On 2026-10-25, GNU Bash 5.3.15 on Linux exercised the real arm and watcher through `bash tests/jg-watcher-lock.test.sh` in a private test home.

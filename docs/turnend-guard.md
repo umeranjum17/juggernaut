@@ -157,7 +157,7 @@ The exception has these limits:
 ### Pull-warning verdict by supervision model
 
 `bin/jg-guard.sh`, the pull warning, instead uses the model-aware `jg_watcher_supervision_verdict` from `bin/jg-wake-lib.sh`.
-It needs a different verdict because it fires mid-turn, when the auto-arm model runs no watcher at all.
+It needs a different verdict because it fires mid-turn, when the auto-arm model may have no watcher live until the next tool call starts the [mid-turn cycle](watcher-continuity.md#claude-mid-turn-cycle).
 The verdict depends on the supervision model.
 
 #### Claude Stop auto-arm model

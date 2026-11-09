@@ -103,6 +103,8 @@ journeys:
     command: bash journeys/worker-no-ask-tool.sh
   watcher-exit-beacon:
     command: bash journeys/watcher-exit-beacon.sh
+  claude-midturn-cycle:
+    command: bash journeys/claude-midturn-cycle.sh
   stuck-live-captures:
     command: bash journeys/stuck-live-captures.sh
   model-gate-concurrent:

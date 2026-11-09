@@ -462,7 +462,7 @@ family_for_basename() {
     jg-session-start.test.sh|jg-tangle-guard.test.sh|jg-update.test.sh)
       printf '%s\n' session-bootstrap
       ;;
-    jg-claude-stop-autoarm-live-e2e.test.sh|\
+    jg-claude-stop-autoarm-live-e2e.test.sh|jg-claude-midturn-arm-live-e2e.test.sh|\
     jg-composer-matrix-live-e2e.test.sh|jg-control-pi-live-e2e.test.sh|jg-codex-continuity-live-e2e.test.sh|\
     jg-codex-hook-layer-live-e2e.test.sh|jg-grok-continuity-live-e2e.test.sh|\
     jg-cursor-primary-live-e2e.test.sh|jg-harness-adapter-instructions-live-e2e.test.sh|\
@@ -708,6 +708,7 @@ tests/jg-chat-answer-card.test.sh 1536
 tests/jg-ci-required.test.sh 465
 tests/jg-ci-scope.test.sh 1132
 tests/jg-claude-stop-autoarm-live-e2e.test.sh 138
+tests/jg-claude-midturn-arm-live-e2e.test.sh 140
 tests/jg-clause.test.sh 3826
 tests/jg-codex-continuity-live-e2e.test.sh 80
 tests/jg-codex-hook-layer-live-e2e.test.sh 87

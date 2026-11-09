@@ -188,6 +188,15 @@ The next Stop's foreground arm attaches to that live cycle.
 A successor that confirms no live watcher on any bounded attempt adds one line to the rewake banner and never withholds the wake.
 The next Stop then re-arms as before.
 
+### Claude mid-turn cycle
+
+A Stop fires only when a turn ends, so a long turn - a lead running many lanes, a first turn before any Stop, or a turn whose successor already closed on the next wake - would otherwise run with no cycle until it ends.
+The same hook script is also registered as an async PostToolUse hook with `--mid-turn`, so every tool call checks the home.
+When work is under way, no Stop-owned arm holds an open claim, and no live identity-matched watcher has a fresh beacon, it starts one detached cycle the way the handling successor starts, with no predecessor.
+It never takes a generation, writes the epoch ledger, parks, or rewakes, so a home with a healthy cycle gets no second one.
+The next Stop's foreground arm attaches to that cycle, and the Stop hook stays the backstop for a single tool call that runs longer than the gap.
+The header of `bin/jg-claude-stop-autoarm.sh` owns the exact gates.
+
 ### Durable queue and turn-end backstop
 
 The durable wake queue preserves actionable events between a watcher close and the next drain.
@@ -231,7 +240,7 @@ The rule file owns the threshold, never a constant in code: a repeated identical
 - Grok retains its tracked background-task notification protocol.
 
 No adapter starts a replacement with a fire-and-forget shell `&` from a model command.
-The Claude hook's detached handling successor is launched by the hook itself, which waits for the successor's status line before it exits.
+The Claude hook's detached handling successor and mid-turn cycle are launched by the hook itself, which waits for the arm's status line before it exits.
 
 The turn-end guard remains the final backstop rather than the normal continuity mechanism.
 In its `--claude` mode it cooperates with the auto-arm.
@@ -544,6 +553,9 @@ It also covers generation-claim single-flight, stuck-claim supersession, superse
 2. Receives session start through the tracked SessionStart hook.
 3. Completes two tokenless cycles.
 4. Checks the competing-live-owner negative control.
+
+`JG_CLAUDE_LIVE_E2E=1 tests/jg-claude-midturn-arm-live-e2e.test.sh` proves on Haiku that a Squad Lead with work under way and no watcher gets a live cycle during its first turn, before any Stop and with no model-issued arm, and that the cycle outlives its hook while the turn runs on.
+`tests/jg-turnend-guard.test.sh` pins the same `--mid-turn` path with a real watcher and no harness, including that a healthy cycle gets no second one.
 
 `tests/jg-turnend-guard.test.sh` covers the cooperative `--claude` guard, including:
 

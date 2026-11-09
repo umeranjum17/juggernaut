@@ -2164,7 +2164,8 @@ jg_autoarm_claim_open() {  # <state-dir> [grace]
 
 # True when a stale mid-turn beacon is explained by a healthy Claude Stop
 # auto-arm generation, so the pull guard must not cry supervision-off.
-# The watcher runs only between turns; turn-end re-arms.
+# Turn end re-arms, and a tool call re-arms mid-turn (jg-claude-stop-autoarm.sh
+# --mid-turn), so a gap lasts at most until the next tool call or Stop.
 #
 # Healthy means outcome=rewake with no exhausted-failure marker, bound to the
 # current session-lock pid and current watcher recovery generation. The rewake
