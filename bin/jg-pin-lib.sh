@@ -6,10 +6,14 @@
 # jg_pin_spec <tool>     print that row's exact spec. Nonzero when the tool has no row.
 # jg_pin_version <tool>  print the version the repo verifies for that tool.
 # jg_pin_npm <tool>      print the npm spec to install. Nonzero when the row is not npm-installable.
+# jg_pin_sha_cached <file> <cache file>
+#                        print the file's sha256, hashing it only when the file changed since the
+#                        hash the cache file records.
 #
 # Callers: bin/jg-bootstrap.sh (its install commands and every floor), bin/jg-backlog-lib.sh,
-# bin/jg-quota-axi-lib.sh, and the installer. Nothing here writes, and a missing table or row is a
-# refusal rather than a silently assumed version. JG_PIN_FILE_OVERRIDE points at another table, which
+# bin/jg-quota-axi-lib.sh, bin/jg-beads.sh, and the installer. Nothing here writes but
+# jg_pin_sha_cached, into the cache file its caller names, and a missing table or row is a refusal
+# rather than a silently assumed version. JG_PIN_FILE_OVERRIDE points at another table, which
 # is how a test proves that changing one row changes what the install paths install.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
@@ -77,6 +81,41 @@ jg_pin_sha_want() {
 
 jg_pin_sha_of() {
   { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1
+}
+
+# A file's identity for the hash cache: device, inode, size, and modify and change times to the
+# nanosecond. Replacing, rewriting or touching the file moves at least one of them, and the change
+# time cannot be set back.
+_jg_pin_stat() {
+  case ${OSTYPE:-} in
+    darwin*) /usr/bin/stat -f '%d %i %z %Fm %Fc' "$1" 2>/dev/null ;;
+    *) stat -c '%d %i %s %.9Y %.9Z' -- "$1" 2>/dev/null ;;
+  esac
+}
+
+# A pinned binary is hashed before each start, and bd is 150 MB, so the hash is kept in <cache file>
+# under the file's path and identity and read back while both match. A miss hashes the file and records
+# it only when the identity held across the hash and the last change is at least two seconds old, so a
+# write in the same timestamp tick as the hash cannot leave a stale record. A file stat cannot read is
+# hashed every time. The caller still compares the hash with the pin, so a pin change applies at once.
+jg_pin_sha_cached() {
+  local file=$1 cache=$2 key line sha changed now
+  key=$(_jg_pin_stat "$file") && key="$file $key" || key=
+  if [ -n "$key" ] && [ -r "$cache" ] && { IFS= read -r line && IFS= read -r sha; } < "$cache" \
+    && [ "$line" = "$key" ] && [ -n "$sha" ]; then
+    printf '%s\n' "$sha"
+    return 0
+  fi
+  sha=$(jg_pin_sha_of "$file")
+  printf '%s\n' "$sha"
+  [ -n "$key" ] && [ -n "$sha" ] && [ "$file $(_jg_pin_stat "$file")" = "$key" ] || return 0
+  changed=${key##* }
+  now=$(date +%s)
+  [ $((now - ${changed%%.*})) -ge 2 ] || return 0
+  { printf '%s\n%s\n' "$key" "$sha" > "$cache.$$" && mv -f -- "$cache.$$" "$cache"; } 2>/dev/null || {
+    rm -f -- "$cache.$$"
+    echo "jg-pin-lib: cannot write the hash cache $cache, so $file is hashed again on every start" >&2
+  }
 }
 
 # The pinned version when the tool on PATH hashes to its row, so the answer never starts the binary.

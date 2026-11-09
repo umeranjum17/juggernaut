@@ -118,6 +118,28 @@ for gone in BD_FOO DOLT_BAR GIT_DIR; do assert_no_grep "$gone=" "$LOG" "$gone mu
 "$WRAPPER" list --json || fail "a served verb must run"
 assert_grep "args=list --json" "$LOG" "arguments must reach bd unchanged"
 assert_grep "BD_DISABLE_METRICS=1" "$LOG" "metrics stay off on every call"
+# An unchanged bd is hashed once, and any change to it is hashed again before it starts.
+real_sha=$(command -v sha256sum || command -v shasum) || fail "the hash count needs sha256sum or shasum"
+mkdir -p "$T/count" "$T/cached"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %q\nexec %q "$@"\n' "$T/hash.log" "$real_sha" > "$T/count/${real_sha##*/}"
+chmod +x "$T/count/${real_sha##*/}"
+cp "$STUB" "$T/cached/bd"
+sed 's/exit 0$/exit 1/' "$STUB" > "$T/cached/same-size"
+[ "$(wc -c < "$T/cached/same-size")" = "$(wc -c < "$STUB")" ] || fail "the changed build must keep the size"
+cmp -s "$STUB" "$T/cached/same-size" && fail "the changed build must differ"
+touch -r "$T/cached/bd" "$T/cached/ref"
+hashes() { grep -c -- "$T/cached/bd" "$T/hash.log"; }
+counted() { PATH="$T/count:$PATH" JG_BEADS_BD="$T/cached/bd" "$@"; }
+sleep 2  # A binary changed in the last two seconds is never cached.
+for n in 1 2; do counted "$WRAPPER" list --json > /dev/null || fail "call $n on the pinned bd"; done
+assert_equals 1 "$(hashes)" "two calls on an unchanged bd must hash it once"
+cat "$T/cached/same-size" > "$T/cached/bd"
+touch -r "$T/cached/ref" "$T/cached/bd"
+refused "is not the pinned bd" PATH="$T/count:$PATH" JG_BEADS_BD="$T/cached/bd" "$WRAPPER" list
+assert_equals 2 "$(hashes)" "a rewrite that keeps the size, inode and modify time must hash again"
+cat "$STUB" > "$T/cached/bd"
+counted "$WRAPPER" list --json > /dev/null || fail "the pinned bd once restored"
+assert_equals 3 "$(hashes)" "the restored bd must hash again"
 # The stand-in dolt reads back no rule, and a store without it never passes.
 out=$("$WRAPPER" check 2>&1)
 expect_code 2 "$?" "a store with no hold rule"
