@@ -7,6 +7,10 @@ description: Verify Juggernaut core changes through their executable integration
 
 ## Feature map
 
+- Brief lint: run `done-done run brief-lint` (`bash journeys/brief-lint-real-briefs.sh`) with `JG_BRIEF_LINT_BRIEFS` naming real worker briefs to read.
+  The real lint runs over the shipped include file and each named brief; inspect the run-owned `real-briefs.txt`, which holds every finding line and exit code.
+  `bash tests/jg-brief-lint.test.sh` covers the wait-word conflict of a 9 Nov brief's lines 39, 185 and 190, its two missing skill names, the trunk PR-body conflict, the byte budget and the exit codes (screen: none).
+
 - Dormant per-home learning row access and recovery: run `done-done run learnings` (`bash journeys/learnings.sh`) with `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` set to the pinned builds and the run output captured under `$DONE_DONE_EVIDENCE_ROOT`.
   The real Beads wrapper and learning command over two isolated stores prove exact UTF8/long-body/preamble/same-title/tail bytes, expected-hash and competing edits, native full-store backup outside the store, isolated restore retaining issues/dependencies/holds/native memories, explicit corrupt/unavailable-store errors and an untouched independent home (screen: none).
 

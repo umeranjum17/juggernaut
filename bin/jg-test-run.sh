@@ -927,6 +927,7 @@ tests/jg-update-local-base.test.sh 4000
 tests/jg-voice.test.sh 6554
 tests/jg-watch-arm-handling-delivered.test.sh 959
 tests/jg-learnings.test.sh 43017
+tests/jg-brief-lint.test.sh 1000
 EOF
 }
 
@@ -1557,6 +1558,9 @@ families_for_changed_path() {
     bin/jg-bootstrap.sh)
       printf '%s\n' session-bootstrap
       printf '%s\n' "__script__:jg-brief.test.sh"
+      ;;
+    defaults/brief-lint-rules.tsv)
+      printf '%s\n' "__script__:jg-brief-lint.test.sh"
       ;;
     install.sh|defaults/*|toolchain.versions|bin/jg-pin-lib.sh)
       # The one entry command, the defaults it writes, and the pin table every
