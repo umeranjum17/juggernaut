@@ -218,24 +218,12 @@ fi
 # so this exempts them while guarding every real squad_lead home.
 jg_primary_scope_matches "$JG_ROOT" "$STATE" || exit 0
 
-# --- the Overwatch KPI suggestion -------------------------------------------
-# Every captain message may be tagged; bin/jg-overwatch-kpi.sh owns the ledger and
-# the kinds. An untagged one is a SOFT suggestion: one stderr line per message (the
-# seq in $STATE/.overwatch-kpi-flagged), never a block and never a block budget.
-KPI_PENDING=$("$SCRIPT_DIR/jg-overwatch-kpi.sh" pending 2>/dev/null) || KPI_PENDING=
-KPI_SEQ=${KPI_PENDING%%$'\t'*}
-if [ -n "$KPI_PENDING" ] && [ "$KPI_SEQ" != "$(cat "$STATE/.overwatch-kpi-flagged" 2>/dev/null)" ]; then
-  printf '%s\n' "$KPI_SEQ" > "$STATE/.overwatch-kpi-flagged" 2>/dev/null || true
-  printf '●  SOFT SUGGESTION: the captain message "%.80s" is untagged. Tag it when convenient: %s/jg-overwatch-kpi.sh tag <kind> [<ticket id or PR URL>]\n' \
-    "${KPI_PENDING#*$'\t'}" "$SCRIPT_DIR" >&2
-fi
-
 # --- the owner-correction capture rule --------------------------------------
 # The owner's standing rule (data/owner-rules.md): "I don't want these feedbacks
-# as one time fix". A captain message that told the fleet to work differently may
-# be worth an owner rule (bin/jg-owner-rules.sh add) or a ticket, but the captain
-# decides: the guard prints ONE soft suggestion to ask him, once per correction,
-# and never blocks. bin/jg-owner-correction.sh owns the record and the predicate.
+# as one time fix". The guard stays silent on the first correction of a kind; when
+# the same kind repeats inside the window it prints ONE soft line suggesting an
+# owner rule (bin/jg-owner-rules.sh add) or a ticket for the captain to decide,
+# once per correction, and never blocks. It asks for no per-message tagging. bin/jg-owner-correction.sh owns the record and the predicate.
 # A helper that is missing or cannot answer is never read as "nothing pending":
 # this home has not picked the shared check up and says so once.
 owner_correction_unavailable() {  # <why>
@@ -253,7 +241,7 @@ owner_correction_unavailable() {  # <why>
 
 owner_correction_suggest() {  # <seq> <kind> <text>
   printf '%s\n' "$1" > "$STATE/.owner-correction-flagged" 2>/dev/null || true
-  printf '●  SOFT SUGGESTION: his message (%s) "%.120s" may be worth a ticket or an owner rule. Ask him whether it is worth it; file nothing without his yes.\n' \
+  printf '●  SOFT SUGGESTION: he has given the same kind of correction (%s) again: "%.120s". It may be worth a ticket or an owner rule. Ask him whether it is worth it; file nothing without his yes.\n' \
     "$2" "$3" >&2
 }
 

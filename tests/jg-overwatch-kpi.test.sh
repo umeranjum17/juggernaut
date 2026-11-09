@@ -82,7 +82,7 @@ test_a_doorbell_is_not_a_captain_message() {
   pass "a doorbell is skipped while the captain message beside it is counted"
 }
 
-test_guard_refuses_an_untagged_message_once() {
+test_guard_stays_silent_on_an_untagged_message() {
   local home="$TMP_ROOT/guard" rc
   make_home "$home"
   stop "$home"; rc=$?
@@ -90,21 +90,19 @@ test_guard_refuses_an_untagged_message_once() {
   submit "$home" "status?"
   stop "$home"; rc=$?
   assert_equals 0 "$rc" "an untagged captain message blocked the turn"
-  grep -q 'SOFT SUGGESTION' "$home/guard.err" || fail "the soft line did not name itself: $(cat "$home/guard.err")"
-  grep -qF 'message "status?"' "$home/guard.err" || fail "the soft line did not quote the message"
+  [ ! -s "$home/guard.err" ] || fail "an untagged message printed a tagging demand: $(cat "$home/guard.err")"
   stop "$home"; rc=$?
-  assert_equals 0 "$rc" "the same message was charged twice, which can wedge a harness"
   submit "$home" "file a ticket to add CSV export"
   stop "$home"; rc=$?
   assert_equals 0 "$rc" "a second untagged message blocked the turn"
-  grep -q 'SOFT SUGGESTION' "$home/guard.err" || fail "a second untagged message got no soft line"
+  [ ! -s "$home/guard.err" ] || fail "a second untagged message printed: $(cat "$home/guard.err")"
   in_home "$home" "$KPI" tag new-work >/dev/null || fail "tagging new work failed"
   in_home "$home" "$KPI" pending >/dev/null && fail "a tagged message is still pending"
   submit "$home" "yes, merge it"
   in_home "$home" "$KPI" tag decision-answer >/dev/null || fail "tagging a decision answer failed"
   stop "$home"; rc=$?
   assert_equals 0 "$rc" "a tagged message still blocked the turn end"
-  pass "the guard suggests once per untagged captain message, never blocks, and clears once it is tagged"
+  pass "the guard asks for no tag: an untagged captain message neither blocks nor prints"
 }
 
 test_a_miss_needs_a_link_to_code_work() {
@@ -246,7 +244,7 @@ test_hook_records_only_typed_captain_messages
 test_record_by_inbox_id_is_idempotent_and_off_records_nothing
 test_tag_names_the_message_by_seq_or_inbox_id
 test_a_doorbell_is_not_a_captain_message
-test_guard_refuses_an_untagged_message_once
+test_guard_stays_silent_on_an_untagged_message
 test_a_miss_needs_a_link_to_code_work
 test_scorecard_counts_misses_and_excludes_the_old_ones
 test_landed_asks_the_forge_and_the_backlog

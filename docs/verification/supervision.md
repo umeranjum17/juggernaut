@@ -854,6 +854,6 @@ The channels this section previously recorded (macOS Notification Center, herdr,
 
 ## Owner-correction suggestion at the turn boundary
 
-`bin/jg-turnend-guard.sh` prints one soft `SOFT SUGGESTION` line on stderr after a recorded owner correction with neither a new `data/owner-rules.md` entry nor an enforcement ticket, and exits without blocking, as [`../turnend-guard.md`](../turnend-guard.md) "Owner-correction suggestion" specifies.
-`bash tests/jg-owner-correction.test.sh` asserts exit 0, exactly one soft line, and no block budget for a pending correction and for an untagged captain message.
-`tests/jg-overwatch-kpi.test.sh` asserts the same for the untagged message.
+`bin/jg-turnend-guard.sh` prints one soft `SOFT SUGGESTION` line on stderr after a repeated owner correction of the same kind with neither a new `data/owner-rules.md` entry nor an enforcement ticket, and exits without blocking, as [`../turnend-guard.md`](../turnend-guard.md) "Owner-correction suggestion" specifies.
+`bash tests/jg-owner-correction.test.sh` asserts that a first correction and an untagged captain message print nothing, and that a repeat gets exactly one soft line, exit 0 and no block budget.
+`tests/jg-overwatch-kpi.test.sh` asserts that an untagged message neither blocks nor prints.

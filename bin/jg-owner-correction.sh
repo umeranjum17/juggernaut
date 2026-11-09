@@ -6,7 +6,10 @@
 #
 # Usage: jg-owner-correction.sh pending
 #   Print "<seq>\t<epoch>\t<kind>\t<text>" and exit 0 when the recorded
-#   correction has no captured artefact yet; exit 1 when nothing is pending.
+#   correction has repeated and has no captured artefact yet; exit 1 when nothing
+#   is pending. A first correction of a kind is never pending: it repeats when
+#   JG_OWNER_CORRECTION_REPEATS (default 2) corrections of the same kind, this one
+#   included, fall within JG_OWNER_CORRECTION_WINDOW seconds (default 604800, 7 days).
 #   Exit 2 means the check could not run (no jq), never "nothing pending".
 #
 # The record is the newest captain message in data/overwatch-kpi.jsonl whose
@@ -19,6 +22,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JG_ROOT="${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
+REPEATS="${JG_OWNER_CORRECTION_REPEATS:-2}"
+WINDOW="${JG_OWNER_CORRECTION_WINDOW:-604800}"
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
@@ -49,16 +54,20 @@ captured() {  # <epoch> -> 0 when a rule or a ticket landed at or after it
 }
 
 # The recorded correction as "<seq>\t<epoch>\t<kind>\t<text>", empty when the
-# newest captain message is absent, untagged, or tagged something other than a
-# correction.
+# newest captain message is absent, untagged, tagged something other than a
+# correction, or the first correction of its kind inside the window.
 recorded_correction() {
   [ -f "$DATA/overwatch-kpi.jsonl" ] || return 1
-  jq -Rrs '[split("\n")[] | fromjson? | select(type == "object")] as $r
+  jq -Rrs --argjson win "$WINDOW" --argjson min "$REPEATS" \
+    '[split("\n")[] | fromjson? | select(type == "object")] as $r
+    | (reduce ($r[] | select(.tag | numbers)) as $g ({}; .[$g.tag | tostring] = $g)) as $tags
     | ([$r[] | select(.seq | numbers)] | last) as $m
-    | if $m == null then empty else ([$r[] | select(.tag == $m.seq)] | last) as $t
+    | if $m == null then empty else $tags[$m.seq | tostring] as $t
       | if $t == null then empty
         elif ($t.kind == "feedback" or $t.kind == "micromanagement") then
-          "\($m.seq)\t\($m.epoch // 0)\t\($t.kind)\t\($m.text | gsub("\\s+"; " "))"
+          ($m.epoch // 0) as $e
+          | ([$r[] | select(.seq | numbers) | select(($tags[.seq | tostring].kind // "") == $t.kind and (.epoch // 0) <= $e and (.epoch // 0) > $e - $win)] | length) as $n
+          | if $n >= $min then "\($m.seq)\t\($e)\t\($t.kind)\t\($m.text | gsub("\\s+"; " "))" else empty end
         else empty end end' "$DATA/overwatch-kpi.jsonl" 2>/dev/null
 }
 
@@ -67,6 +76,7 @@ case "${1:-}" in
   pending) [ "$#" -eq 1 ] || { usage >&2; exit 2; } ;;
   *) usage >&2; exit 2 ;;
 esac
+case "$REPEATS$WINDOW" in ''|*[!0-9]*) printf 'jg-owner-correction: JG_OWNER_CORRECTION_REPEATS and _WINDOW must be whole numbers\n' >&2; exit 2 ;; esac
 command -v jq >/dev/null 2>&1 || { printf 'jg-owner-correction: jq is required to read the captain-message record\n' >&2; exit 2; }
 
 record=$(recorded_correction) || record=

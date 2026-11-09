@@ -55,21 +55,21 @@ A live identity-matched daemon with a fresh beacon then satisfies that boundary 
 The guard remains a backstop.
 [`watcher-continuity.md`](watcher-continuity.md) owns normal continuity.
 
-## Overwatch KPI suggestion
+## Overwatch KPI tags
 
-The captain should come only for a major decision only he can take or to file new work, so a captain message may be tagged in the turn it arrives.
-At the same boundary, before the supervision predicate, the guard prints one soft `SOFT SUGGESTION` line on stderr while the newest captain message `bin/jg-overwatch-kpi.sh` recorded is untagged, naming its `tag` command.
-The line never blocks the turn, never spends a block budget, and never exits with status 2.
-A note the captain sends from the chat counts as a captain message too: the gateway records it, so a Telegram note is never missed and the tag lands on it rather than on an older message.
-It is printed once per message, recorded in `state/.overwatch-kpi-flagged`, and a primary whose harness has no prompt hook records nothing, so it prints nothing.
+The captain should come only for a major decision only he can take or to file new work, so a captain message may be tagged with `bin/jg-overwatch-kpi.sh tag`.
+The guard never asks for a tag: an untagged message prints nothing and never blocks.
+A note the captain sends from the chat counts as a captain message too: the gateway records it, so the tag lands on it rather than on an older message.
+A primary whose harness has no prompt hook records nothing.
 
 ## Owner-correction suggestion
 
 The owner's standing rule (`data/owner-rules.md`) is that a correction he gives in chat should not stay a one-time fix, but he decides what is worth a ticket: Overwatch and the leads file nothing from a captain remark without his yes.
-At the same boundary, after the KPI suggestion, the guard asks `bin/jg-owner-correction.sh` whether the recorded correction is captured, and prints one soft `SOFT SUGGESTION` line once per correction when it is not.
-The line says the correction may be worth a ticket or an owner rule and asks the lead to ask him whether it is worth it.
-It never blocks the turn and never spends a block budget.
-The correction is the newest captain message whose newest KPI tag kind is `feedback` or `micromanagement`.
+At the same boundary the guard asks `bin/jg-owner-correction.sh` whether a repeated correction is captured, and prints one soft `SOFT SUGGESTION` line once per correction when it is not.
+The first correction of a kind is silent.
+The kind repeats when `JG_OWNER_CORRECTION_REPEATS` corrections of the same kind (default 2, this one included) fall within `JG_OWNER_CORRECTION_WINDOW` seconds (default 604800, seven days); only then does the line say the correction may be worth a ticket or an owner rule and ask the lead to ask him whether it is worth it.
+It never blocks the turn, never spends a block budget, and asks for no per-message tag.
+A correction is a captain message whose newest KPI tag kind is `feedback` or `micromanagement`, and the one that can trigger the line is the newest captain message.
 That tag is the record this fleet already keeps for "he told us how to work", so the trigger is that record and never the guard's reading of his tone.
 
 A correction is captured when either artefact exists, and both are commands that already exist:
@@ -77,7 +77,7 @@ A correction is captured when either artefact exists, and both are commands that
 - A rule: `data/owner-rules.md` was written at or after the correction, which `bin/jg-owner-rules.sh add` does, and that same call files the rule's enforcement ticket so the work does not sit in the surface alone.
 - A ticket: the backlog holds a row created on or after the correction's UTC date, or `data/ticket-counters.tsv` was written at or after it, which `bin/jg-backlog.sh add` does.
 
-A captured correction prints nothing, and the charge (`state/.owner-correction-flagged`) keeps the suggestion to one line per correction; a home whose harness records no captain message records no correction, exactly as for the KPI suggestion.
+A captured correction prints nothing, and the charge (`state/.owner-correction-flagged`) keeps the suggestion to one line per correction; a home whose harness records no captain message records no correction, exactly as for the KPI tags.
 The check ships from this repository's own `bin/` with the guard, so a home that fast-forwards gets both, and a home whose guard runs without `bin/jg-owner-correction.sh` - or whose copy cannot answer - is never read as "nothing pending": the guard prints a `THIS HOME HAS NOT PICKED UP OWNER-CORRECTION CAPTURE` banner once (`state/.owner-correction-unavailable`) instead of pretending it ran.
 
 ## Migration progress rule
@@ -644,7 +644,7 @@ That warning uses `bin/jg-supervision-instructions.sh --repair-line`, so it alwa
 - Malformed input.
 - Exactly-one-path safety.
 
-`tests/jg-owner-correction.test.sh` covers the correction suggestion: an uncaptured correction and an untagged captain message each get one soft line and never block, an owner rule or an enforcement ticket silences it, new work is never read as a correction, and a home without the shared check says so once.
+`tests/jg-owner-correction.test.sh` covers the correction suggestion: a first correction and an untagged captain message print nothing, a repeat of the kind inside the window gets one soft line and never blocks, an owner rule or an enforcement ticket silences it, new work is never read as a correction, and a home without the shared check says so once.
 
 `tests/jg-progress-claim.test.sh` covers the progress rule: an unsupported live claim is blocked once with the part and its measurement, honest wording and live parts pass, a merged switch with a pending row is recorded as merged, and the digest carries the live count.
 
