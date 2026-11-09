@@ -521,13 +521,13 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
   printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$LANE_CAND" "$TRUNK" "$tip" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused $id"
 }
 
-# What every landing does after the trunk moved: the proofs that exist, the merged event, the ticket close and the post-merge hook.
+# What every landing does after the trunk moved: the proofs that exist, the merged event and the ticket close. The landing's Evidence card
+# is core/landing-card's, an observer of these records; the PR-flow post-merge hook (merge-card) does not run for a landing.
 landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's record)
   record_proofs "$1" "$2" "$3" || :
-  # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event, the ticket close and the post-merge hook.
+  # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event and the ticket close.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$1" local || true
   JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$1" --stage "done" --state "done" || true
-  if declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "$CONFIG" "$JG_HOME" "$1" "$META" "$3" - >&2; fi
 }
 
 land_candidate() {

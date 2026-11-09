@@ -418,6 +418,9 @@ jobs:
       - name: Lead-sweep test
         if: ${{ !cancelled() }}
         run: bash lead-sweep/tests/lead-sweep.test.sh
+      - name: Landing-card test
+        if: ${{ !cancelled() }}
+        run: bash landing-card/tests/landing-card.test.sh
       # Recorded Goal rows and a fixture home; the real-store case skips without the pinned bd and dolt.
       - name: Goal loop test
         if: ${{ !cancelled() }}
