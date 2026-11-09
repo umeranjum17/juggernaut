@@ -256,6 +256,14 @@ jobs:
       - name: Fleet pulse test
         if: ${{ !cancelled() }}
         run: bash fleet-pulse/tests/chat-tsv.test.sh
+      # Fixture homes, session logs and a guard installed into a throwaway HOME and XDG data dir: nothing real is touched.
+      - name: Fleet pulse Fable wake test
+        if: ${{ !cancelled() }}
+        run: bash fleet-pulse/tests/fleet-fable.test.sh
+      # Throwaway HOME, XDG data dir and Claude settings; no claude process starts.
+      - name: Claude model guard test
+        if: ${{ !cancelled() }}
+        run: bash claude-model-guard/tests/claude-model-guard.test.sh
       # Stub byokit-accounts and a throwaway config: nothing real is touched.
       - name: Fleet report test
         if: ${{ !cancelled() }}

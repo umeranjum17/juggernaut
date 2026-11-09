@@ -60,6 +60,7 @@ done
 plan=(
   kill-guard:plain
   read-guard:plain
+  claude-model-guard:plain
   delete-guard:home
   host-memory:plain
   pipeline-literal-delete:plain

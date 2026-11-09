@@ -916,6 +916,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/claude-model-guard/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/critical-stall/README.md",
       "audience": "operator-current"
     },

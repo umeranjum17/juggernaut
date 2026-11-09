@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# When state/fleet-pulse.check.sh still globs only main-home jg-retro-*/report.md, point its retro wake at
-# bin/fleet-retro-due.sh (newest report.md across known homes).
+# Point the old inline wakes in state/fleet-pulse.check.sh at this feature's scripts: a retro wake that still
+# globs only main-home jg-retro-*/report.md at bin/fleet-retro-due.sh (newest report.md across known homes), and a
+# Fable wake that still greps session logs itself at bin/fleet-fable.sh (the model guard's allow-tasks decides).
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -17,40 +18,55 @@ DRY=0
 home=$(cd "$1" && pwd -P)
 feature=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 check=$home/state/fleet-pulse.check.sh
-due=$feature/bin/fleet-retro-due.sh
+[ -f "$check" ] || exit 0
 
-if [ "$DRY" -eq 1 ]; then
-  if [ -f "$check" ] && grep -q 'jg-retro-\*/report\.md' "$check"; then
-    echo "would retarget retro wake in $check -> $due"
+# One line per old inline wake: <name> <the marker it still carries> <the script it calls instead>.
+retargets=(
+  "retro|jg-retro-\*/report\.md|$feature/bin/fleet-retro-due.sh"
+  "fable|fab=\$(find |$feature/bin/fleet-fable.sh"
+)
+for entry in "${retargets[@]}"; do
+  IFS='|' read -r name marker script <<<"$entry"
+  grep -q -- "$marker" "$check" || continue
+  if [ "$DRY" -eq 1 ]; then
+    echo "would retarget $name wake in $check -> $script"
+    continue
   fi
-  exit 0
-fi
-
-if [ -f "$check" ] && grep -q 'jg-retro-\*/report\.md' "$check"; then
-  python3 - "$check" "$due" "$home" <<'PY'
+  python3 - "$check" "$script" "$home" "$name" <<'PY'
 import pathlib, re, sys
-path, due, home = map(pathlib.Path, sys.argv[1:4])
-text = path.read_text()
-block = (
-    "# Fleet retro every 2-3 days (captain 5 Oct): wake Main once 60 h after the last retro report.\n"
-    f"if msg=$({due.as_posix()!r} {home.as_posix()!r}); then\n"
+path, script, home = map(pathlib.Path, sys.argv[1:4])
+name = sys.argv[4]
+call = (
+    f"if msg=$({script.as_posix()!r} {home.as_posix()!r}); then\n"
     '  echo "$msg"; exit 0\n'
     "fi\n"
 )
-pat = re.compile(
-    r"# Fleet retro every 2-3 days.*?\n"
-    r"last=\$\(ls -t .*?jg-retro-\*/report\.md.*?\n"
-    r"RM=.*\n"
-    r"if \[ -n \"\$last\" \].*?\n"
-    r"  touch \"\$RM\"; echo \"fleet-retro due:.*?\n"
-    r"fi\n",
-    re.S,
-)
-new, n = pat.subn(block, text, count=1)
+blocks = {
+    "retro": (
+        "# Fleet retro every 2-3 days (captain 5 Oct): wake Main once 60 h after the last retro report.\n",
+        r"# Fleet retro every 2-3 days.*?\n"
+        r"last=\$\(ls -t .*?jg-retro-\*/report\.md.*?\n"
+        r"RM=.*\n"
+        r"if \[ -n \"\$last\" \].*?\n"
+        r"  touch \"\$RM\"; echo \"fleet-retro due:.*?\n"
+        r"fi\n",
+    ),
+    "fable": (
+        "# Fable outside the model guard's allow-tasks (captain 10 Oct ban; 9 Nov Juggernaut research may run it).\n",
+        r"# Fable ban.*?\n"
+        r"fab=\$\(find .*?\n"
+        r"FM=.*\n"
+        r"if \[ -n \"\$fab\" \].*?\n"
+        r"  touch \"\$FM\"; echo \"fleet-fable:.*?\n"
+        r"fi\n",
+    ),
+}
+comment, pattern = blocks[name]
+new, n = re.compile(pattern, re.S).subn(comment + call, path.read_text(), count=1)
 if n != 1:
-    sys.stderr.write(f"install: could not retarget retro wake in {path}\n")
+    sys.stderr.write(f"install: could not retarget {name} wake in {path}\n")
     sys.exit(1)
 path.write_text(new)
-print(f"retargeted retro wake: {path} -> {due}")
+print(f"retargeted {name} wake: {path} -> {script}")
 PY
-fi
+done

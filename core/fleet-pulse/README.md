@@ -1,6 +1,8 @@
 # fleet-pulse
-- `wiring.sh [--dry-run] <home>` installs nothing into the home's tracked `bin/` (the refresh runs the extractor from this folder); when `state/fleet-pulse.check.sh` still globs only `data/jg-retro-*/report.md` under the main home, it retargets that wake to `bin/fleet-retro-due.sh`.
-- `bin/newest-retro-report.sh <main-home>` prints the newest `data/*retro*/report.md` across the main home, homes listed in `data/squad_leads.md`, and sibling `~/.treehouse/juggernaut-*/*/juggernaut` homes, by mtime (override the treehouse root with `JG_TREEHOUSE`).
+- `wiring.sh [--dry-run] <home>` installs nothing into the home's tracked `bin/` (the refresh runs the extractor from this folder); when `state/fleet-pulse.check.sh` still globs only `data/jg-retro-*/report.md` under the main home, it retargets that wake to `bin/fleet-retro-due.sh`, and when it still greps session logs for Fable itself, it retargets that wake to `bin/fleet-fable.sh`.
+- `bin/fleet-homes.sh <main-home>` prints every known home once: the main home, homes listed in `data/squad_leads.md`, and sibling `~/.treehouse/juggernaut-*/*/juggernaut` homes (override the treehouse root with `JG_TREEHOUSE`).
+- `bin/newest-retro-report.sh <main-home>` prints the newest `data/*retro*/report.md` across those homes, by mtime.
+- `bin/fleet-fable.sh <main-home>` wakes (at most every 15 min via `state/.fleet-fable.last`) when a Claude session log from the last 20 minutes ran Fable and the installed `core/claude-model-guard` would refuse it: a session in a task's worktree (`state/*.meta` in those homes) is skipped when the guard's `allowed <task-id>` passes, so its `allow-tasks` is the one list; a session no task owns is named by its folder, and a guard copy too old to answer is named instead of trusted. With no guard installed it stays silent.
 - `bin/fleet-retro-due.sh <main-home>` wakes once when that newest report is missing or at least 60 h old (at most every 12 h via `state/.fleet-retro.last`); the pulse check calls it so a retro that ran in another home stops the early ask.
 - Retro refreshes current redacted captain chat with `JG_HOME=<main home> <addons>/fleet-pulse/bin/chat-tsv-refresh.sh`, appending only new rows to private `<main home>/data/chat.tsv`.
 - Set `CHAT_TSV_TRANSCRIPTS` to override the Claude projects directory; the refresh refuses to run without `JG_HOME`, and the extractor refuses to write unless Git confirms `data/chat.tsv` is ignored.
@@ -8,6 +10,8 @@
 - Every drop and truncation reason is counted on stderr without message text; secrets/codes are redacted and text is capped at 4000 characters with `[truncated]`.
 - The output and sidecar are mode 600, the data directory is mode 700, and `unwiring.sh <home>` removes only a `bin/chat-tsv.py` copy left by an older wiring.
 ## Check
+- `bash tests/fleet-fable.test.sh` reproduces an old inline Fable wake firing for an allowed `fable-*` task, retargets it with `wiring.sh`, and shows the check then quiet for allowed tasks and still waking for an unlisted task, a taskless session and a stale guard, with the real guard in throwaway paths.
+- `JG_MAIN_HOME=<home> bash run-fable-proof.sh` (done-done journey `fleet-pulse-fable-allow`) runs that test and the guard's, then dry-runs `wiring.sh` on the live home and prints the live guard's allow-tasks, writing nothing there.
 - `bash tests/newest-retro.test.sh` covers newest-across-homes, older-main/newer-sibling not due, none or all-old due, wake-mark suppression, and non-`*retro*` dirs ignored, with disposable fixture homes.
 - `bash tests/chat-tsv.test.sh` covers wrapper filtering, mixed human text, audit counts, redaction, truncation, permissions, idempotency, and incremental refresh with disposable fixtures.
 - `bash tests/gate-audit.test.sh` covers pass/card ordering, later failure, card-only/missing rows, and number-only matching.
