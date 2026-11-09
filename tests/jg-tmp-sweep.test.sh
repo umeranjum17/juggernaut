@@ -127,8 +127,9 @@ old "$R/claude-1000/-slug-busy/sess-again/f" "$R/claude-1000/-slug-busy/sess-aga
 export JG_TMP_ROOT=$R JG_TMP_WARN_PCT=0
 JG_HOME=$H "$ROOT/bin/jg-sentinel.sh" tick >/dev/null 2>&1
 log=$H/state/.sentinel.log
-for _ in $(seq 40); do
-  grep -q 'tmp sweep' "$log" 2>/dev/null && break
+# The sweep runs in the background and takes about 20 s on a busy host: wait for its summary line.
+for _ in $(seq 240); do
+  grep -q 'tmp sweep --dry-run' "$log" 2>/dev/null && break
   sleep 0.5
 done
 assert_grep "WARNING: " "$log" "tick logs the inode warning"
@@ -138,7 +139,7 @@ assert_present "$R/tmp.again" "the first tick removes nothing"
 assert_present "$R/claude-1000/-slug-busy/sess-again" "the first tick keeps the stale session"
 rm -f "$H/state/.sentinel-tmp-sweep"
 JG_HOME=$H "$ROOT/bin/jg-sentinel.sh" tick >/dev/null 2>&1
-for _ in $(seq 40); do
+for _ in $(seq 240); do
   grep -q 'tmp sweep --apply' "$log" 2>/dev/null && break
   sleep 0.5
 done

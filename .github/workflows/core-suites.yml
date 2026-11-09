@@ -245,6 +245,10 @@ jobs:
       - name: Owner guard uninstall isolation test
         if: ${{ !cancelled() }}
         run: bash owner-guard/tests/uninstall-isolation.test.sh
+      # Throwaway HOME and XDG dirs, stub systemctl and herdr, a /tmp stand-in: nothing real is touched.
+      - name: Sentinel one-copy test
+        if: ${{ !cancelled() }}
+        run: bash sentinel/tests/jg-sentinel-one-copy.test.sh
       # Throwaway XDG_DATA_HOME: the wiring step and the check touch nothing real.
       - name: Task priority test
         if: ${{ !cancelled() }}

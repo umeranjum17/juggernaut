@@ -557,8 +557,10 @@ test_herdr_primary_without_restart_recovery_says_how_to_install_it() {
   notice=$(printf '%s\n' "$out" | grep '^SENTINEL:')
   command=${notice#*'(install: '}
   command=${command%')'}
-  mkdir -p "$case_dir/home/bin"
+  # bin/jg-sentinel.sh forwards to the one sentinel in core/, so a code root holds both.
+  mkdir -p "$case_dir/home/bin" "$case_dir/home/core/sentinel/bin"
   cp "$ROOT/bin/jg-sentinel.sh" "$case_dir/home/bin/jg-sentinel.sh"
+  cp "$ROOT/core/sentinel/bin/jg-sentinel.sh" "$case_dir/home/core/sentinel/bin/jg-sentinel.sh"
   cat > "$fakebin/systemctl" <<'SH'
 #!/usr/bin/env bash
 [ -z "${JG_FAKE_NO_USER_BUS:-}" ] || exit 1
@@ -586,8 +588,9 @@ SH
   fi
   special_home="$TMP_ROOT/"'sentinel % " \ home'
   escaped_home="$TMP_ROOT/"'sentinel %% \" \\ home'
-  mkdir -p "$special_home/bin" "$case_dir/code % root/bin"
+  mkdir -p "$special_home/bin" "$case_dir/code % root/bin" "$case_dir/code % root/core/sentinel/bin"
   cp "$ROOT/bin/jg-sentinel.sh" "$case_dir/code % root/bin/jg-sentinel.sh"
+  cp "$ROOT/core/sentinel/bin/jg-sentinel.sh" "$case_dir/code % root/core/sentinel/bin/jg-sentinel.sh"
   unit="$case_dir/escaped.service"
   JG_HOME="$special_home" PATH="$special_home/bin:$BASE_PATH" \
     "$case_dir/code % root/bin/jg-sentinel.sh" unit > "$unit" || fail "unit generation failed"
