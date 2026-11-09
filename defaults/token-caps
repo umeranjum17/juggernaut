@@ -1,37 +1,55 @@
-# Token caps for the session-start digest, read by bin/jg-session-start.sh.
+# Byte caps for the session-start digest, read by bin/jg-session-start.sh.
 #
 # One `<name> <positive integer>` per line. A home overrides a value in
-# config/token-caps (same format); a JG_SESSION_START_* variable overrides both
-# for one run. A missing, zero or malformed value falls back to the built-in
-# in the script, so a bad line can never switch a cap off.
+# config/token-caps (same format); a JG_SESSION_START_* or JG_DIGEST_* variable
+# overrides both for one run. A missing, zero or malformed value falls back to the
+# built-in in the script, so a bad line can never switch a cap off.
 #
-# Every cap cuts only what the digest PRINTS. Nothing is deleted from disk, and each cut prints
-# its remainder, the exact command that shows it, and (for files) a heading index.
-# No cap touches the wake queue, the lock, the network checks, the owner-rules
-# decisions, or captain-held rows; those carry an action and stay whole.
+# Every cap cuts only what the digest PRINTS. Nothing is deleted from disk, and each
+# cut ends in the section's total count and the one command (or sed range) that
+# prints all of it. A cut section lists its newest and most urgent items first, so
+# what a session needs to act on is never the part cut. No cap touches the lock, the
+# wake queue and its acknowledgement line, the supervision block or the network
+# checks: those carry an action and print whole.
 #
-# Measured on the firstmate-addons home on 2026-11-07 with the commands in the
-# pull request that added this file: the digest was 48,680 bytes, 69 % of it the
-# curated-memory section.
+# Measured on 2026-11-09 with bin/jg-session-start.sh on a copy of each home's start
+# inputs: the main home's digest was 299,922 bytes and a Squad Lead home's was 223,722
+# (the curated files 144 KB, the lane rows 105 KB, the backlog 68 KB). A fresh session
+# has to start under 20 percent of a 200K-token window; 40,000 bytes is about 10,000
+# tokens, 5 percent.
 
-# Per-file bytes printed for data/captain-shared.md and data/learnings.md.
-# Reason: config/startup-memory-budget (7500 estimated tokens at ceil(bytes/3)
-# for captain.md, captain-shared.md and learnings.md together) is about 22,500
-# bytes; 7500 bytes for each of the two long files keeps the printed total inside
-# it. The previous 10000 printed up to 30,000 bytes of the three.
-memory-file-cap 7500
+# The whole digest, in bytes. Every byte the digest prints is counted against it, and a
+# section prints only what is left of it when it runs.
+digest-cap 40000
 
-# Fallback for a capped file with no cap of its own.
-# Owner-rule bodies always print in full and do not use this cap.
-context-file-cap 10000
+# Bytes kept free for what prints last (the network checks and the next-step note), so
+# no bulky section can crowd them out.
+digest-reserve 2500
 
-# Dispatchable queued rows listed. Reason: the rest are disclosed by an exact
-# count and the command that lists them.
-queued-limit 20
+# The backlog listing: the four groups (in flight, held, blocked, ready) share it.
+backlog-cap 5000
 
-# Date-gated, parked and external held rows listed. Captain-owed holds stay whole.
-held-limit 10
+# The lane rows (one per worker lane, finished lanes last).
+lanes-cap 6000
 
-# Status lines kept per task. Reason: a status line is a wake event, not
+# Orphan status logs, public commitments.
+orphan-cap 600
+commitments-cap 2500
+
+# Heading index for the learnings file and for a long owner-rules file, each.
+index-cap 1500
+
+# Owner rules: printed whole up to this size, else as an index of every rule's title.
+owner-rules-cap 2500
+
+# Bytes of the opening lines printed for data/projects.md, data/squad_leads.md and
+# data/captain.md.
+context-file-cap 1500
+
+# Bytes of the opening lines printed for data/captain-shared.md and data/learnings.md
+# (the learnings file adds its heading index on top).
+memory-file-cap 1200
+
+# Status lines kept per lane row. Reason: a status line is a wake event, not
 # current state; bin/jg-crew-state.sh answers current state.
-status-tail 3
+status-tail 1

@@ -49,7 +49,7 @@
 #   5. read-once contract - the do-not-re-read contract covering every source
 #                       represented by the two digests below.
 #   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
-#                       every state/*.meta, a bounded state/*.status tail,
+#                       one row per state/*.meta with its last status line,
 #                       the away posture (state/.afk-contract and the legacy
 #                       state/.afk daemon flag), and a cheap per-task
 #                       endpoint-liveness read, each bounded and crash-
@@ -140,31 +140,29 @@
 # The context and fleet-state digests
 # below are always read-only, so they run unconditionally in both modes.
 #
-# BACKLOG DIGEST: the startup listing is a RECOVERY input, not a reporting
-# surface, so it carries what this turn can act on and nothing else.
-#   - `done` rows are never listed. Retained completion history belongs to the
-#     reporting surfaces (bin/jg-bearings-snapshot.sh, /debrief), and at startup it
-#     is pure weight - 10 done rows cost 3.3KB in an observed main-home digest.
-#   - Every in-flight, held, and blocked row is listed IN FULL, with its
-#     hold_kind/hold_reason and blocked_by. Those are the rows AGENTS.md
-#     sections 7 and 10 make actionable at startup, so they are never bounded
-#     away.
-#   - Only the plain queued (dispatchable-now) listing is bounded, by
-#     JG_SESSION_START_QUEUED_LIMIT, default 20. Anything it omits is disclosed
-#     with an exact remainder count and the command that shows the rest, so a
-#     deep queue costs a counter rather than kilobytes.
-#     (This replaces JG_SESSION_START_BACKLOG_LIMIT, which bounded the whole
-#     listing indiscriminately and so could drop a held or blocked row.)
-#   - Held rows the captain owes an answer on (hold_kind captain) stay whole.
-#     Date-gated, parked, and external holds are bounded by
-#     JG_SESSION_START_HELD_LIMIT (default 10) with a count and the
-#     command that lists them (a real home carried 132 of them, 42KB).
-# CURATED MEMORY: captain-shared.md and learnings.md use the memory-file cap
-# (defaults/token-caps owns the defaults), then a cut marker
-# with the line range, the exact sed command, and an index of the headings in
-# the unprinted part. Learnings instead index every heading once, without a
-# name or count cap, and give line ranges for the existing file-backed reader.
-# captain.md and every existing local owner-rule body print in full.
+# DIGEST SIZE: the whole digest is capped at JG_DIGEST_CAP bytes (defaults/token-caps
+# `digest-cap`, 40000), so a fresh session starts with most of its context free: a Squad
+# Lead home once started at 85 percent of its context on a 300 KB digest. bin/jg-digest-cap-lib.sh
+# owns the byte budget. The lock result, the wake queue and its WAKE_ACK_REQUIRED line,
+# the supervision block and the network checks are counted but never cut: they carry an
+# action. Every other section prints at most min(its own cap, what the digest has left),
+# newest and most urgent first, and a cut ends in a "[cut: K of N <items> shown; all of
+# them: <command>]" line (or the file's own "[cut at ..." line with the sed range), so
+# information moves behind a pointer and nothing is deleted. The last line reports the
+# bytes printed against the cap.
+# BACKLOG DIGEST: the startup listing is a RECOVERY input, not a reporting surface, so it
+# carries what this turn can act on and nothing else.
+#   - `done` rows are never listed (bin/jg-bearings-snapshot.sh and /debrief own history).
+#   - In-flight, held, blocked and ready rows share JG_SESSION_START_BACKLOG_CAP bytes
+#     (`backlog-cap`). Rows the captain owes an answer on come first among the held rows,
+#     then by priority, then newest; a group's cut ends in its total row count and the
+#     bin/jg-backlog.sh command that lists every row.
+# CURATED MEMORY: captain-shared.md and learnings.md print their opening lines up to the
+# memory-file cap and the other context files up to the context-file cap
+# (JG_SESSION_START_CONTEXT_FILE_CAP sets all of them for one run), then a cut line with the
+# line range, the byte count and the exact sed command. Learnings add an index of their
+# headings, newest first, and a long owner-rules file prints as an index of every rule's
+# title with the line range that holds the rule; a file within its cap prints whole.
 # The backlog groups come from the Beads store (`list` for the compact identity
 # fields plus blocked_by, hold_kind and hold_reason, never body; the groups are
 # the store's own filters `--state in_flight`, `--state held`,
@@ -173,11 +171,13 @@
 # appears under both. A failed read prints its reason.
 # Full bodies are targeted follow-up only: `bin/jg-backlog.sh show <id> --full`.
 #
-# STATUS TAILS: JG_SESSION_START_STATUS_TAIL (default 3) bounds how many lines each task's
-# tail prints, and bin/jg-line-cap-lib.sh bounds how long each of those lines
-# may be. Both bounds are safe because the section prints every task's full
-# status log path, and AGENTS.md section 8 treats a status line as a wake EVENT
-# rather than current state - bin/jg-crew-state.sh owns current state.
+# LANE ROWS: one row per work lane, most urgent first (dead endpoint, then waiting on a
+# decision, blocked or failed, then newest status), within JG_SESSION_START_LANES_CAP bytes.
+# JG_SESSION_START_STATUS_TAIL (default 1) sets how many status lines a row carries and
+# bin/jg-line-cap-lib.sh bounds each at 160 characters. Both bounds are safe because the
+# lane's full record stays in state/<id>.meta and state/<id>.status, and AGENTS.md section 8
+# treats a status line as a wake EVENT rather than current state - bin/jg-crew-state.sh owns
+# current state.
 #
 # RUNTIME BOUND: the digest is now executed through a native session-open
 # adapter (see bin/jg-sessionstart-run.sh), which blocks either hook-driven
@@ -397,6 +397,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/jg-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/jg-wake-lib.sh"
 # shellcheck source=bin/jg-line-cap-lib.sh
 . "$SCRIPT_DIR/jg-line-cap-lib.sh"
+# shellcheck source=bin/jg-digest-cap-lib.sh
+. "$SCRIPT_DIR/jg-digest-cap-lib.sh"
 
 
 # The digest size bounds are token caps: defaults/token-caps owns each value and
@@ -414,10 +416,15 @@ token_cap() {
   done
   printf '%s\n' "$builtin"
 }
-STATUS_TAIL=${JG_SESSION_START_STATUS_TAIL:-$(token_cap status-tail 3)}
-case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=3 ;; esac
-QUEUED_LIMIT=${JG_SESSION_START_QUEUED_LIMIT:-$(token_cap queued-limit 20)}
-case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
+# cap_value <name> <built-in> [override-var-value]: a positive integer cap, the run override first.
+cap_value() {
+  local name=$1 builtin=$2 over=${3:-} val
+  val=${over:-$(token_cap "$name" "$builtin")}
+  case "$val" in ''|*[!0-9]*|0) val=$builtin ;; esac
+  printf '%s\n' "$val"
+}
+STATUS_TAIL=${JG_SESSION_START_STATUS_TAIL:-$(token_cap status-tail 1)}
+case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=1 ;; esac
 LANES_TIMEOUT=${JG_SESSION_START_LANES_TIMEOUT:-30}
 case "$LANES_TIMEOUT" in ''|*[!0-9]*) LANES_TIMEOUT=30 ;; esac
 [ "$LANES_TIMEOUT" -gt 0 ] 2>/dev/null || LANES_TIMEOUT=30
@@ -427,26 +434,41 @@ case "$LANES_TIMEOUT" in ''|*[!0-9]*) LANES_TIMEOUT=30 ;; esac
 ENDPOINT_TIMEOUT=${JG_SESSION_START_ENDPOINT_TIMEOUT:-10}
 case "$ENDPOINT_TIMEOUT" in ''|*[!0-9]*) ENDPOINT_TIMEOUT=10 ;; esac
 [ "$ENDPOINT_TIMEOUT" -gt 0 ] 2>/dev/null || ENDPOINT_TIMEOUT=10
-# Token diet (measured on a real home: 227KB re-emit, of which 148 held rows
-# were 50KB and three curated memory files were 98KB). Both bounds below
-# disclose their remainder and the command that shows it; neither touches a
-# section that carries an action (wake queue, lock, network checks, captain-held
-# rows).
-HELD_LIMIT=${JG_SESSION_START_HELD_LIMIT:-$(token_cap held-limit 10)}
-case "$HELD_LIMIT" in ''|*[!0-9]*) HELD_LIMIT=10 ;; esac
-CONTEXT_FILE_CAP=${JG_SESSION_START_CONTEXT_FILE_CAP:-$(token_cap context-file-cap 10000)}
-case "$CONTEXT_FILE_CAP" in ''|*[!0-9]*|0) CONTEXT_FILE_CAP=10000 ;; esac
-# The two long captain-memory files get the smaller memory cap. The run
-# override sets both caps, as it always has; owner rules print in full.
-MEMORY_FILE_CAP=${JG_SESSION_START_CONTEXT_FILE_CAP:-$(token_cap memory-file-cap 7500)}
-case "$MEMORY_FILE_CAP" in ''|*[!0-9]*|0) MEMORY_FILE_CAP=$CONTEXT_FILE_CAP ;; esac
-BACKLOG_FIELDS=blocked_by,hold_kind,hold_reason
+# THE DIGEST BYTE CAP. A fresh session starts under a fifth of its context: the
+# whole digest prints at most DIGEST_CAP bytes (defaults/token-caps `digest-cap`,
+# 40000, about 10000 tokens), and bin/jg-digest-cap-lib.sh counts every byte against
+# it. The safety preamble (lock, wake queue, supervision block, network checks)
+# is never cut; every other section has a byte cap of its own and prints only what
+# is left of the whole when it runs. A cut section ends with its total count and the
+# one command that prints all of it, and it lists the newest and most urgent first.
+# The caps below cut only what the digest PRINTS: nothing is deleted from disk.
+DIGEST_CAP=$(cap_value digest-cap 40000 "${JG_DIGEST_CAP:-}")
+DIGEST_RESERVE=$(cap_value digest-reserve 2500 "${JG_DIGEST_RESERVE:-}")
+BACKLOG_CAP=$(cap_value backlog-cap 5000 "${JG_SESSION_START_BACKLOG_CAP:-}")
+LANES_CAP=$(cap_value lanes-cap 6000 "${JG_SESSION_START_LANES_CAP:-}")
+ORPHAN_CAP=$(cap_value orphan-cap 600 "${JG_SESSION_START_ORPHAN_CAP:-}")
+COMMITMENTS_CAP=$(cap_value commitments-cap 2500 "${JG_SESSION_START_COMMITMENTS_CAP:-}")
+INDEX_CAP=$(cap_value index-cap 1500 "${JG_SESSION_START_INDEX_CAP:-}")
+OWNER_RULES_CAP=$(cap_value owner-rules-cap 2500 "${JG_SESSION_START_OWNER_RULES_CAP:-}")
+# Per-file caps for the curated files. The run override sets all of them, as it
+# always has.
+CONTEXT_FILE_CAP=$(cap_value context-file-cap 1500 "${JG_SESSION_START_CONTEXT_FILE_CAP:-}")
+MEMORY_FILE_CAP=$(cap_value memory-file-cap 1200 "${JG_SESSION_START_CONTEXT_FILE_CAP:-}")
+BACKLOG_FIELDS=blocked_by,hold_kind,hold_reason,priority,created
+jg_digest_budget_init "$DIGEST_CAP" "$DIGEST_RESERVE"
+trap jg_digest_budget_close EXIT
 
 RULE='================'
 SUBRULE='----------------'
 
-section() { printf '\n%s\n%s\n%s\n' "$RULE" "$1" "$RULE"; }
-subsection() { printf '\n%s\n%s\n' "$1" "$SUBRULE"; }
+section() {
+  printf '\n%s\n%s\n%s\n' "$RULE" "$1" "$RULE"
+  jg_digest_account $((${#RULE} * 2 + $(jg_digest_bytes "$1") + 4))
+}
+subsection() {
+  printf '\n%s\n%s\n' "$1" "$SUBRULE"
+  jg_digest_account $((${#SUBRULE} + $(jg_digest_bytes "$1") + 3))
+}
 
 # print_file_or_absent <path> <label>: full contents under a labeled
 # subsection, or an explicit ABSENT marker. Absence is semantically
@@ -459,58 +481,86 @@ print_file_or_absent() {
   subsection "$label"
   if [ -f "$path" ]; then
     if [ -s "$path" ]; then
-      cat "$path"
+      cat "$path" | jg_digest_say
     else
-      printf '(present, empty)\n'
+      printf '(present, empty)\n' | jg_digest_say
     fi
   else
-    printf 'ABSENT\n'
+    printf 'ABSENT\n' | jg_digest_say
   fi
 }
 
-# Each heading names a stored learning or section. Ranges include its complete
-# body up to the next heading, including a final line without a newline.
-print_learning_index() {
-  local path=$1
-  printf "\nLearning index (all headings; full bodies: sed -n '<first>,<last>p' %q):\n" "$path"
-  awk '
-    /^#/ {
-      if (name != "") printf "  lines %d-%d: %s\n", first, NR - 1, name
+# print_heading_index <path> <heading-regex> <noun> <intro>: every heading of a
+# knowledge file once, newest (last in the file) first, each with the line range of
+# its complete body, until INDEX_CAP bytes are spent. A cut ends in the heading
+# count and the command that lists them all.
+print_heading_index() {
+  local path=$1 pattern=$2 noun=$3 intro=$4 budget
+  budget=$(jg_digest_avail "$INDEX_CAP")
+  printf '\n%s\n' "$intro" | jg_digest_say
+  awk -v pat="$pattern" '
+    $0 ~ pat {
+      if (name != "") rows[++n] = sprintf("  lines %d-%d: %s", first, NR - 1, substr(name, 1, 300))
       first = NR; name = $0
     }
-    END { if (name != "") printf "  lines %d-%d: %s\n", first, NR, name }
-  ' "$path"
+    END {
+      if (name != "") rows[++n] = sprintf("  lines %d-%d: %s", first, NR, substr(name, 1, 300))
+      for (i = n; i >= 1; i--) print rows[i]
+    }
+  ' "$path" | jg_digest_clip "$budget" "$noun" "grep -n '$pattern' $path"
 }
 
-# print_file_capped <path> <label> [cap] [all-learnings]: print_file_or_absent for the long curated
-# memory files. A file over CONTEXT_FILE_CAP bytes prints its first lines up to
-# the cap, then discloses the remainder (line range, byte count) with an index of
-# its headings so the session can read exactly the part it needs.
+# print_file_capped <path> <label> [cap]: print_file_or_absent for the long curated
+# files. A file over its cap (or over what the whole digest has left) prints its first
+# lines, then ONE cut line: the line range and byte count not printed, and the sed
+# command that prints them.
 print_file_capped() {
-  local path=$1 label=$2 cap=${3:-$CONTEXT_FILE_CAP} index=${4:-} size keep lines headings
+  local path=$1 label=$2 own=${3:-$CONTEXT_FILE_CAP} cap size keep lines left marker_reserve=330
+  cap=$(jg_digest_avail "$own")
   if [ ! -s "$path" ] || [ "$(wc -c < "$path")" -le "$cap" ]; then
     print_file_or_absent "$path" "$label"
-    if [ "$index" = all-learnings ] && [ -s "$path" ]; then print_learning_index "$path"; fi
     return 0
   fi
   size=$(wc -c < "$path")
   subsection "$label"
+  # The cut line is paid for out of what the whole digest has left, not out of the
+  # file's own cap, so a configured cap of N prints N bytes of the file.
+  left=$(jg_digest_avail 1000000000)
+  left=$((left > marker_reserve ? left - marker_reserve : 0))
+  cap=$(( cap < left ? cap : left ))
   keep=$(head -c "$cap" "$path" | wc -l)
   lines=$(wc -l < "$path")
-  head -n "$keep" "$path"
-  headings=
-  if [ "$index" != all-learnings ]; then
-    headings=$(tail -n +"$((keep + 1))" "$path" | grep -n '^#' | awk -F: -v off="$keep" '{ n = $1 + off; sub(/^[0-9]+:/, ""); printf "  line %d: %s\n", n, substr($0, 1, 100) }' | head -40)
+  [ "$keep" -eq 0 ] || head -n "$keep" "$path" | jg_digest_say
+  printf '[cut at %s bytes: lines %s-%s (%s bytes in all) are not printed; read them with sed -n %s,%sp %s]\n' \
+    "$cap" "$((keep + 1))" "$lines" "$size" "$((keep + 1))" "$lines" "$path" | jg_digest_say
+}
+
+# The learnings file: its opening lines, then an index of every heading.
+print_learnings() {
+  local path=$1 label=$2
+  print_file_capped "$path" "$label" "$MEMORY_FILE_CAP"
+  [ -s "$path" ] || return 0
+  print_heading_index "$path" '^#' headings \
+    "Learning index (newest first; full bodies: sed -n '<first>,<last>p' $path):"
+}
+
+# The owner rules: whole while they are short, else an index of every rule's title,
+# newest first, with the line range that holds the rule's words, scope and enforcement.
+print_owner_rules() {
+  local path=$1 label=$2 cap size
+  cap=$(jg_digest_avail "$OWNER_RULES_CAP")
+  if [ ! -s "$path" ] || [ "$(wc -c < "$path")" -le "$cap" ]; then
+    print_file_or_absent "$path" "$label"
+    return 0
   fi
-  printf '\n[cut at %s bytes: lines %s-%s (%s bytes in all) are not printed; read them with sed -n %s,%sp %s%s]\n' \
-    "$cap" "$((keep + 1))" "$lines" "$size" "$((keep + 1))" "$lines" "$path" \
-    "${headings:+. Headings in the unprinted part:}"
-  [ -z "$headings" ] || printf '%s\n' "$headings"
-  if [ "$index" = all-learnings ]; then print_learning_index "$path"; fi
+  size=$(wc -c < "$path")
+  subsection "$label"
+  print_heading_index "$path" '^## ' rules \
+    "$(grep -c '^## ' "$path") owner rules, $size bytes; every rule stays whole in the file (newest first; a rule's words, scope and enforcement: sed -n '<first>,<last>p' $path):"
 }
 
 print_backlog_pointer() {
-  printf 'Full task bodies remain available on demand: bin/jg-backlog.sh show <id> --full.\n'
+  printf 'Full task bodies remain available on demand: bin/jg-backlog.sh show <id> --full.\n' | jg_digest_say
 }
 
 # The store closes every listing with its own help block. This section composes
@@ -522,53 +572,38 @@ strip_help_block() {
   awk '/^help\[/ { exit } { print }'
 }
 
-# Bound the dispatchable-now listing without rewriting the tool's own rendering:
-# `ready` rows are the indented lines under its ready[N]{...} header,
-# and every other line it prints (its count, its public-followup line) passes
-# through untouched. Whatever is cut is disclosed exactly.
-print_ready_queued_bounded() {
-  local ready=$1
-  printf '%s\n' "$ready" | awk -v max="$QUEUED_LIMIT" '
-    /^help\[/ { exit }
-    /^ready\[/ { rows = 1; print; next }
-    rows && /^[[:space:]]/ {
-      total++
-      if (shown < max) { print; shown++ }
-      next
-    }
-    { rows = 0; print }
-    END {
-      if (total > 0) {
-        printf "(shown %d of %d ready queued item(s))\n", shown, total
-        if (total > shown) {
-          printf "(%d more queued - bin/jg-backlog.sh ready)\n", total - shown
-        }
-      }
-    }
-  '
-}
-
-# Held rows the captain owes an answer on (hold_kind captain) are actionable at
-# startup and stay whole. Date-gated, parked, and external holds are waiting on
-# time or someone else: the first HELD_LIMIT print, the rest become a count by
-# kind plus the command that lists them. A title that merely contains ",captain,"
-# is kept whole, which errs toward showing more.
-bound_held_rows() {
-  awk -v max="$HELD_LIMIT" '
-    /^  / && $0 !~ /,captain,/ {
-      n++
-      if (n > max) next
-    }
-    { print }
-    END {
-      if (n > max) {
-        printf "(%d more held row(s) not listed; the captain-held rows above are complete - bin/jg-backlog.sh list --state held shows every row)\n", n - max
-      }
-    }'
-}
-
 backlog_rows() {  # <list|ready> [flags...]
   jg_backlog_beads_read "$CONFIG" "$@"
+}
+
+# print_backlog_group <title> <listing> <budget> <command> <order>
+# One group of the compact listing. The store's own header lines (its count and
+# table header) print as written; its rows print most urgent first until <budget>
+# bytes are spent, and a cut ends in the group's total row count and <command>,
+# which lists every row. <order> is `held` (rows the captain owes an answer on
+# first, then priority, then newest), `urgent` (priority, then newest) or `store`
+# (the store's own order, which for `ready` is dispatch priority already).
+print_backlog_group() {
+  local title=$1 listing=$2 budget=$3 command=$4 order=$5 body headbytes line
+  printf '\n%s\n' "$title" | jg_digest_say
+  body=$(printf '%s\n' "$listing" | strip_help_block)
+  headbytes=$(printf '%s\n' "$body" | grep -v '^  ' | wc -c | tr -d '[:space:]')
+  printf '%s\n' "$body" | grep -v '^  ' | jg_digest_say
+  budget=$((budget > headbytes ? budget - headbytes : 0))
+  # A row is cut at ROW_CAP characters, and no more rows are read than the budget could print.
+  printf '%s\n' "$body" | grep '^  ' | if [ "$order" = store ]; then cat; else
+    awk -v order="$order" '{
+      n = split($0, f, ",")
+      pr = f[n - 1]; cr = f[n]
+      if (pr !~ /^[0-9]$/) pr = 9
+      if (cr !~ /^[0-9][0-9-]*$/) cr = "0000-00-00"
+      lead = (order == "held" && $0 ~ /,captain,/) ? 0 : 1
+      printf "%d\t%d\t%s\t%s\n", lead, pr, cr, $0
+    }' | sort -s -t "$(printf '\t')" -k1,1n -k2,2n -k3,3r | cut -f4-
+  fi | while IFS= read -r line; do
+    jg_cap_line_var "$line" 230
+    printf '%s\n' "$JG_LINE_CAP_LINE"
+  done | jg_digest_clip "$budget" rows "$command"
 }
 
 # The four reads of the compact listing share one store read: the first fills the snapshot file and the rest reuse it.
@@ -581,7 +616,7 @@ print_backlog_rows_compact() {
 }
 
 print_backlog_rows_compact_reads() {
-  local in_flight held blocked ready err
+  local in_flight held blocked ready err budget spent before weight_left=100 w group
   if ! in_flight=$(backlog_rows list --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$in_flight
   elif ! held=$(backlog_rows list --state held --fields "$BACKLOG_FIELDS" 2>&1); then
@@ -591,19 +626,26 @@ print_backlog_rows_compact_reads() {
   elif ! ready=$(backlog_rows ready 2>&1); then
     err=$ready
   else
-    printf 'compact backlog listing (%s; done rows omitted; every in-flight, captain-held, and blocked row shown in full; other held rows bounded to %s; ready queued bounded to %s; task bodies omitted)\n' \
-      beads "$HELD_LIMIT" "$QUEUED_LIMIT"
-    printf '\nin flight:\n'
-    printf '%s\n' "$in_flight" | strip_help_block
-    printf '\nheld (captain- or time-gated; an in-flight item that is also held appears in both groups):\n'
-    printf '%s\n' "$held" | strip_help_block | bound_held_rows
-    printf '\nblocked queued:\n'
-    printf '%s\n' "$blocked" | strip_help_block
-    printf '\nready queued (dispatchable now):\n'
-    print_ready_queued_bounded "$ready"
+    printf 'compact backlog listing (beads; done rows omitted; task bodies omitted; each group lists its most urgent, then newest rows within %s bytes and ends in its total and the command that lists them all)\n' \
+      "$BACKLOG_CAP" | jg_digest_say
+    budget=$(jg_digest_avail "$BACKLOG_CAP")
+    # Each group takes its share of what is left, so a short group leaves its bytes to the next.
+    for group in "35 in_flight" "30 held" "10 blocked" "25 ready"; do
+      w=${group%% *}
+      before=$(jg_digest_used)
+      case "${group#* }" in
+        in_flight) print_backlog_group "in flight:" "$in_flight" $((budget * w / weight_left)) 'bin/jg-backlog.sh list --state in_flight' urgent ;;
+        held) print_backlog_group "held (captain- or time-gated; an in-flight item that is also held appears in both groups; captain-owed first):" "$held" $((budget * w / weight_left)) 'bin/jg-backlog.sh list --state held (the rows the captain owes an answer on: juggernaut-axi holds --kind captain)' held ;;
+        blocked) print_backlog_group "blocked queued:" "$blocked" $((budget * w / weight_left)) 'bin/jg-backlog.sh list --state queued --blocked' urgent ;;
+        ready) print_backlog_group "ready queued (dispatchable now):" "$ready" $((budget * w / weight_left)) 'bin/jg-backlog.sh ready' store ;;
+      esac
+      spent=$(($(jg_digest_used) - before))
+      budget=$((budget > spent ? budget - spent : 0))
+      weight_left=$((weight_left - w))
+    done
     return 0
   fi
-  printf 'beads compact listing failed:\n%s\n' "$err"
+  printf 'beads compact listing failed:\n%s\n' "$err" | jg_digest_say
   return 0
 }
 
@@ -613,17 +655,17 @@ print_backlog_compact() {
   print_backlog_pointer
 }
 
-print_status_tail() {
-  local status=$1 line
-  printf 'status tail (last %s line(s), each capped at %s characters, wake-EVENT history, not current state; full log: %s):\n' \
-    "$STATUS_TAIL" "$JG_LINE_CAP_DEFAULT" "$status"
-  # A operator writes its own status lines, so their length is unbounded: one
-  # observed line ran 865 characters. Cap each one the way the wake digest's
-  # OPEN DECISIONS section does; the lede carries the state word and the key,
-  # and the full log path above reaches the rest.
+# lane_status_text <status-file>: the last STATUS_TAIL status lines on one line, each
+# capped (bin/jg-line-cap-lib.sh): a worker writes its own status lines, so their length
+# is unbounded (one observed line ran 865 characters). The lede carries the state word
+# and the key; the full log path reaches the rest.
+lane_status_text() {
+  local status=$1 line text=
   while IFS= read -r line || [ -n "$line" ]; do
-    jg_cap_line "$line"
+    jg_cap_line_var "$line" 160
+    text="${text:+$text || }$JG_LINE_CAP_LINE"
   done < <(tail -n "$STATUS_TAIL" "$status")
+  printf '%s\n' "$text"
 }
 
 # jg_session_start_endpoint_read <backend> <target> [expected-label]: ONE
@@ -703,16 +745,18 @@ print_agents_refresh_if_required() {  # <rebuilding-session-pid>
   local lock_pid=$1
   agents_refresh_required "$lock_pid" || return 0
   section "CURRENT AGENTS.md - INSTRUCTION REFRESH"
-  if [ -f "$JG_ROOT/AGENTS.md" ]; then
-    cat <<'EOF'
+  {
+    if [ -f "$JG_ROOT/AGENTS.md" ]; then
+      cat <<'EOF'
 The complete on-disk AGENTS.md below supersedes the instruction copy this session
 started with. Apply it as the current Juggernaut instruction contract.
 
 EOF
-    cat "$JG_ROOT/AGENTS.md"
-  else
-    printf 'The original AGENTS.md baseline no longer matches, but the current file is absent.\n'
-  fi
+      cat "$JG_ROOT/AGENTS.md"
+    else
+      printf 'The original AGENTS.md baseline no longer matches, but the current file is absent.\n'
+    fi
+  } | jg_digest_say
 }
 
 AGENTS_START_HASH=
@@ -736,7 +780,7 @@ stage lock
 subsection "LOCK"
 LOCK_OUT=$("$SCRIPT_DIR/jg-lock.sh" 2>&1)
 LOCK_RC=$?
-printf '%s\n' "$LOCK_OUT"
+printf '%s\n' "$LOCK_OUT" | jg_digest_say
 READ_ONLY=0
 if [ "$LOCK_RC" -ne 0 ]; then
   READ_ONLY=1
@@ -752,7 +796,7 @@ if [ "$LOCK_RC" -ne 0 ]; then
     printf '●  Operate read-only until this resolves - do not spawn, steer, merge, or\n'
     printf '●  otherwise mutate fleet state from this session.\n'
     printf '%s\n' "$BAR"
-  }
+  } | jg_digest_say
 fi
 REBUILDING_SESSION_PID=$(jg_harness_ancestry_pid 2>/dev/null || true)
 print_agents_refresh_if_required "$REBUILDING_SESSION_PID"
@@ -763,8 +807,10 @@ print_agents_refresh_if_required "$REBUILDING_SESSION_PID"
 # Purely local resolution - no network, no gh call.
 stage role
 subsection "HOME ROLE"
-JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/jg-role.sh" report 2>/dev/null \
-  || printf 'jg-role: unknown (bin/jg-role.sh report failed)\n'
+{
+  JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/jg-role.sh" report 2>/dev/null \
+    || printf 'jg-role: unknown (bin/jg-role.sh report failed)\n'
+} | jg_digest_say
 
 if [ "$READ_ONLY" -eq 0 ]; then
   if [ "$REEMIT" -eq 0 ]; then
@@ -828,9 +874,9 @@ else
   )
 fi
 if [ -n "$BOOT_OUT" ]; then
-  printf '%s\n' "$BOOT_OUT"
+  printf '%s\n' "$BOOT_OUT" | jg_digest_say
 else
-  printf '(silent - all good)\n'
+  printf '(silent - all good)\n' | jg_digest_say
 fi
 
 # --- 3. wake-drain ---------------------------------------------------------
@@ -852,9 +898,9 @@ subsection "WAKE QUEUE"
 if [ "$READ_ONLY" -eq 1 ]; then
   QLEN=0
   [ -s "$STATE/.wake-queue" ] && QLEN=$(grep -c . "$STATE/.wake-queue" 2>/dev/null || printf '0')
-  printf 'skipped (read-only session) - %s record(s) remain queued because this session lacks verified fleet-lock ownership.\n' "$QLEN"
+  printf 'skipped (read-only session) - %s record(s) remain queued because this session lacks verified fleet-lock ownership.\n' "$QLEN" | jg_digest_say
   GUARD_OUT=$(JG_GUARD_READ_ONLY=1 "$SCRIPT_DIR/jg-guard.sh" 2>&1)
-  [ -n "$GUARD_OUT" ] && printf '%s\n' "$GUARD_OUT"
+  [ -z "$GUARD_OUT" ] || printf '%s\n' "$GUARD_OUT" | jg_digest_say
 else
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-branch-outcome.sh" seed-tail >/dev/null 2>&1 || true
   # Pi supervision-branch recovery, locked path only: clear leases whose
@@ -867,14 +913,14 @@ else
     BRANCH_REPLAY_OUT=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
       "$SCRIPT_DIR/jg-branch-outcome.sh" startup-replay 2>&1) || BRANCH_REPLAY_OUT=
     if [ -n "$BRANCH_REPLAY_OUT" ]; then
-      printf '%s\n' "$BRANCH_REPLAY_OUT"
+      printf '%s\n' "$BRANCH_REPLAY_OUT" | jg_digest_say
     fi
   fi
   DRAIN_OUT=$("$SCRIPT_DIR/jg-wake-drain.sh" 2>&1)
   if [ -n "$DRAIN_OUT" ]; then
-    printf '%s\n' "$DRAIN_OUT"
+    printf '%s\n' "$DRAIN_OUT" | jg_digest_say
   else
-    printf '(no queued wakes)\n'
+    printf '(no queued wakes)\n' | jg_digest_say
   fi
 fi
 
@@ -898,7 +944,7 @@ if [ "$PRIMARY_HARNESS" = pi ] || [ "$PRIMARY_HARNESS" = pi-signed ]; then
   PI_TURNEND_VERSION=$(jg_pi_extension_version "$PI_TURNEND_EXT" || printf '')
   if ! jg_pi_extension_loaded "$PI_WATCH_MARKER" "$PI_WATCH_VERSION" "$PI_LOCK" active \
     || ! jg_pi_extension_loaded "$PI_TURNEND_MARKER" "$PI_TURNEND_VERSION" "$PI_LOCK"; then
-    printf 'PI_WATCH_EXTENSION: not loaded - approve Pi project trust once per clone, then restart %s so %s and %s auto-load for turn-end guard and background wake coverage; use -e %s -e %s only if project hooks are not trusted\n' "$PI_RESTART_COMMAND" "$PI_TURNEND_EXT" "$PI_EXT" "$PI_TURNEND_EXT" "$PI_EXT"
+    printf 'PI_WATCH_EXTENSION: not loaded - approve Pi project trust once per clone, then restart %s so %s and %s auto-load for turn-end guard and background wake coverage; use -e %s -e %s only if project hooks are not trusted\n' "$PI_RESTART_COMMAND" "$PI_TURNEND_EXT" "$PI_EXT" "$PI_TURNEND_EXT" "$PI_EXT" | jg_digest_say
   fi
 fi
 # omp (Oh My Pi) has no project-trust gate: it auto-discovers <cwd>/.omp/extensions
@@ -916,7 +962,7 @@ if [ "$PRIMARY_HARNESS" = omp ]; then
   OMP_TURNEND_VERSION=$(jg_pi_extension_version "$OMP_TURNEND_EXT" || printf '')
   if ! jg_pi_extension_loaded "$OMP_WATCH_MARKER" "$OMP_WATCH_VERSION" "$OMP_LOCK" \
     || ! jg_pi_extension_loaded "$OMP_TURNEND_MARKER" "$OMP_TURNEND_VERSION" "$OMP_LOCK"; then
-    printf 'OMP_WATCH_EXTENSION: not loaded - restart omp with this home as its working directory so %s and %s auto-load from .omp/extensions/ for turn-end guard and background wake coverage; pass -e %s -e %s only when omp must start from another directory, never together with auto-discovery (omp loads a file named both ways twice)\n' "$OMP_TURNEND_EXT" "$OMP_EXT" "$OMP_TURNEND_EXT" "$OMP_EXT"
+    printf 'OMP_WATCH_EXTENSION: not loaded - restart omp with this home as its working directory so %s and %s auto-load from .omp/extensions/ for turn-end guard and background wake coverage; pass -e %s -e %s only when omp must start from another directory, never together with auto-discovery (omp loads a file named both ways twice)\n' "$OMP_TURNEND_EXT" "$OMP_EXT" "$OMP_TURNEND_EXT" "$OMP_EXT" | jg_digest_say
   fi
 fi
 "$SCRIPT_DIR/jg-supervision-instructions.sh" \
@@ -924,7 +970,7 @@ fi
   --read-only "$READ_ONLY" \
   --afk "$AFK_PRESENT" \
   --afk-mode "$AFK_MODE" \
-  --x-mode "$X_MODE_PRESENT"
+  --x-mode "$X_MODE_PRESENT" | jg_digest_say
 
 # --- 5. read-once contract -------------------------------------------------
 # Ahead of the two digests it governs, not after them: a truncated tail is
@@ -934,12 +980,16 @@ fi
 # a stage that never ran, which the truncation banner names by stage.
 stage read-once
 section "READ-ONCE CONTRACT"
-cat <<'EOF'
-Everything below is printed in full for this session start: every state/*.meta
-(a finished lane is one juggernaut-axi row instead),
-a compact data/backlog.md listing, a bounded tail of every state/*.status,
-data/projects.md, data/squad_leads.md, data/captain.md, data/captain-shared.md,
-data/learnings.md, and data/owner-rules.md.
+cat <<EOF | jg_digest_say
+This digest holds at most $DIGEST_CAP bytes, so a fresh session starts with most of its
+context free. The lock, the wake queue, the supervision block and the network checks are
+never cut. Every other section is cut to a byte cap of its own, with the newest and most
+urgent items first, and each cut ends in a "[cut: ..." line (or an "(N more ..." line) that
+gives the section's total count and the one command that prints all of it. A cut moves
+information behind a pointer; nothing is deleted.
+Below: one row per work lane (state/<id>.meta and state/<id>.status hold its full record),
+a compact data/backlog.md listing, data/projects.md, data/squad_leads.md, data/captain.md,
+data/captain-shared.md, data/learnings.md, and data/owner-rules.md.
 Do NOT re-read any of them after reading this digest, and do NOT bulk-read
 data/backlog.md or state/*.status: re-reading everything defeats the entire
 point of this command.
@@ -947,12 +997,11 @@ point of this command.
 Go to a source directly only when:
   - this digest flagged it ABSENT (then rebuild or create it per AGENTS.md),
   - its contents looked unparseable or corrupt,
+  - a section ended in a "[cut: ..." or "(N more ..." line and this turn needs the rest (the line names
+    the command or line range that prints it),
   - an individual full status log is needed for older wake-event history, or a
-    status line was capped and its tail matters (each task's full log path is
-    printed with its tail),
+    status line was capped and its tail matters (the lane listing names the log),
   - a full task body is needed (bin/jg-backlog.sh show <id> --full),
-  - the backlog listing disclosed omitted queued items and this turn needs them,
-  - a held-row or curated-memory section printed a "not listed" or "[cut at" line and this turn needs the rest (the line names the command or line range),
   - the NETWORK CHECKS section reported its checks still IN PROGRESS and this
     turn needs their verdict (bin/jg-startup-network.sh report),
   - or a STARTUP TRUNCATED banner named the stage that would have printed it, in
@@ -967,8 +1016,12 @@ section "FLEET STATE"
 print_backlog_compact
 
 subsection "Work under way (state/*.meta)"
-# A lane the fleet snapshot already calls finished needs no meta dump, endpoint read or status tail:
-# `juggernaut-axi lanes` (the one agent surface) gives it one row, and a failed or slow call folds nothing.
+# One row per lane, most urgent first, within LANES_CAP bytes: a lane whose endpoint is dead or
+# unreadable, then one whose last status line is waiting on a decision or blocked or failed, then
+# the rest, newest status first; finished lanes (the fleet snapshot already calls them finished)
+# come last, one `juggernaut-axi lanes` row each. The full record of a lane stays in its
+# state/<id>.meta and state/<id>.status, and bin/jg-crew-state.sh owns its current state.
+LANE_ROWS=$(mktemp "${TMPDIR:-/tmp}/jg-lane-rows.XXXXXX" 2>/dev/null) || LANE_ROWS=
 FOLDED_LANES=" "
 lanes_out=$(jg_run_timed "$LANES_TIMEOUT" "$SCRIPT_DIR/juggernaut-axi" lanes --limit 100 2>/dev/null) || lanes_out=
 folded_rows=$(printf '%s\n' "$lanes_out" | awk -F, '
@@ -979,20 +1032,18 @@ if [ -n "$folded_rows" ]; then
   while IFS= read -r row; do
     row=${row#  }
     FOLDED_LANES="$FOLDED_LANES${row%%,*} "
+    printf '9\t0\tfinished: %s\n' "$row" >> "${LANE_ROWS:-/dev/null}"
   done <<< "$folded_rows"
-  printf 'finished lanes, one row each from juggernaut-axi (id,kind,state,reported,project,note); their meta, endpoint and status tail are not printed here - read state/<id>.meta or run: juggernaut-axi lanes --state done - when one is needed:\n%s\n' "$folded_rows"
 fi
 META_FOUND=0
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
   id=$(basename "$meta" .meta)
-  case "$FOLDED_LANES" in *" $id "*) META_FOUND=1; continue ;; esac
   META_FOUND=1
-  printf '\n--- %s ---\n' "$id"
-  cat "$meta"
-
+  case "$FOLDED_LANES" in *" $id "*) continue ;; esac
   window=$(jg_meta_get "$meta" window)
   target=$(jg_backend_target_of_meta "$meta")
+  rank=2
   if [ -n "$window" ]; then
     backend=$(jg_backend_of_meta "$meta")
     endpoint_rc=0
@@ -1001,73 +1052,91 @@ for meta in "$STATE"/*.meta; do
     # the bound firing and >=128 is a signal death. Every other nonzero status
     # is the probe's own verdict that the endpoint is gone.
     if [ "$endpoint_rc" -eq 0 ]; then
-      printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
+      endpoint="alive (backend=$backend window=$window)"
     elif [ "$endpoint_rc" -eq 124 ] || [ "$endpoint_rc" -ge 128 ]; then
-      printf 'endpoint: error (backend=%s window=%s - the endpoint read died or hit its %ss bound; the digest continued past it)\n' \
-        "$backend" "$window" "$ENDPOINT_TIMEOUT"
+      endpoint="error (backend=$backend window=$window - the endpoint read died or hit its ${ENDPOINT_TIMEOUT}s bound; the digest continued past it)"
+      rank=0
     else
-      printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
+      endpoint="dead (backend=$backend window=$window)"
+      rank=0
     fi
   else
-    printf 'endpoint: unknown (no window recorded)\n'
+    endpoint='unknown (no window recorded)'
   fi
-
   status="$STATE/$id.status"
+  stamp=0
   if [ -f "$status" ]; then
-    print_status_tail "$status"
+    text=$(lane_status_text "$status")
+    stamp=$(jg_path_mtime "$status" || printf 0)
+    case "${text%% *}" in needs-decision|blocked|failed) [ "$rank" -gt 1 ] && rank=1 ;; esac
   else
-    printf 'status tail: (no status file yet: %s)\n' "$status"
+    text='(no status file yet)'
   fi
+  printf '%s\t%s\t%s %s | endpoint: %s | %s\n' "$rank" "$stamp" "$id" "$(jg_meta_get "$meta" kind)" "$endpoint" "$text" >> "${LANE_ROWS:-/dev/null}"
 done
-[ "$META_FOUND" -eq 1 ] || printf '(none)\n'
+if [ "$META_FOUND" -eq 0 ]; then
+  printf '(none)\n' | jg_digest_say
+else
+  budget=$(jg_digest_avail "$LANES_CAP")
+  printf 'one row per lane, most urgent first (dead endpoint, then waiting on a decision or blocked, then newest status), each with its last status line capped at 160 characters; a lane'"'"'s full record: state/<id>.meta and state/<id>.status; its current state: bin/jg-crew-state.sh <id>\n' | jg_digest_say
+  sort -s -t "$(printf '\t')" -k1,1n -k2,2nr "$LANE_ROWS" | cut -f3- \
+    | jg_digest_clip $((budget > 260 ? budget - 260 : 0)) lanes 'juggernaut-axi lanes'
+fi
+[ -z "$LANE_ROWS" ] || rm -f -- "$LANE_ROWS"
 
 subsection "Orphan status logs (state/*.status without matching .meta)"
-ORPHAN_STATUS_FOUND=0
+ORPHAN_ROWS=$(mktemp "${TMPDIR:-/tmp}/jg-orphan-rows.XXXXXX" 2>/dev/null) || ORPHAN_ROWS=
 for status in "$STATE"/*.status; do
   [ -f "$status" ] || continue
   id=$(basename "$status" .status)
   [ -f "$STATE/$id.meta" ] && continue
-  ORPHAN_STATUS_FOUND=1
-  printf '\n--- %s ---\n' "$id"
-  print_status_tail "$status"
+  printf '%s\t%s\n' "$(jg_path_mtime "$status" || printf 0)" "$id | $(lane_status_text "$status")" >> "${ORPHAN_ROWS:-/dev/null}"
 done
-[ "$ORPHAN_STATUS_FOUND" -eq 1 ] || printf '(none)\n'
+if [ -s "${ORPHAN_ROWS:-/dev/null}" ]; then
+  sort -s -t "$(printf '\t')" -k1,1nr "$ORPHAN_ROWS" | cut -f2- \
+    | jg_digest_clip "$(jg_digest_avail "$ORPHAN_CAP")" 'orphan logs' "ls -t $STATE/*.status"
+else
+  printf '(none)\n' | jg_digest_say
+fi
+[ -z "$ORPHAN_ROWS" ] || rm -f -- "$ORPHAN_ROWS"
 
 subsection "Home drift (the code copies that run here)"
 # bin/jg-fleet-autosync.sh owns the count and the guard; this line only reports it.
-"$SCRIPT_DIR/jg-fleet-autosync.sh" digest 2>/dev/null || printf 'unavailable\n'
+{ "$SCRIPT_DIR/jg-fleet-autosync.sh" digest 2>/dev/null || printf 'unavailable\n'; } | jg_digest_say
 
 subsection "AFK"
 # The away posture is the record (bin/jg-afk-contract.sh); the legacy flag
 # still marks a running daemon on the harnesses that launch one.
 # A quiet record (bin/jg-afk-contract.sh mode) is a present captain: it holds
 # nothing for a return.
-if [ -f "$STATE/.afk-contract" ]; then
-  if [ "$("$SCRIPT_DIR/jg-afk-contract.sh" mode 2>/dev/null)" = quiet ]; then
-    printf 'present - quiet mode recorded at %s (the captain is present and nothing is held for a return: requested actions proceed under ordinary attended authority; only an explicit /radio-silence off exits it)' \
-      "$("$SCRIPT_DIR/jg-afk-contract.sh" field entered 2>/dev/null || printf unknown)"
-  else
-    printf 'present - away posture recorded at %s (hold-for-return only; bin/jg-afk-contract.sh readback for the mandate)' \
-      "$("$SCRIPT_DIR/jg-afk-contract.sh" field entered 2>/dev/null || printf unknown)"
-  fi
-  if [ -e "$STATE/.afk" ]; then
-    if [ "$AFK_MODE" = quiet ]; then
-      printf '; the quiet daemon owns the watcher.\n'
+{
+  if [ -f "$STATE/.afk-contract" ]; then
+    if [ "$("$SCRIPT_DIR/jg-afk-contract.sh" mode 2>/dev/null)" = quiet ]; then
+      printf 'present - quiet mode recorded at %s (the captain is present and nothing is held for a return: requested actions proceed under ordinary attended authority; only an explicit /radio-silence off exits it)' \
+        "$("$SCRIPT_DIR/jg-afk-contract.sh" field entered 2>/dev/null || printf unknown)"
     else
-      printf '; the away daemon owns the watcher.\n'
+      printf 'present - away posture recorded at %s (hold-for-return only; bin/jg-afk-contract.sh readback for the mandate)' \
+        "$("$SCRIPT_DIR/jg-afk-contract.sh" field entered 2>/dev/null || printf unknown)"
+    fi
+    if [ -e "$STATE/.afk" ]; then
+      if [ "$AFK_MODE" = quiet ]; then
+        printf '; the quiet daemon owns the watcher.\n'
+      else
+        printf '; the away daemon owns the watcher.\n'
+      fi
+    else
+      printf '; no daemon runs, the ordinary supervision session continues.\n'
+    fi
+  elif [ -e "$STATE/.afk" ]; then
+    if [ "$AFK_MODE" = quiet ]; then
+      printf 'present - quiet-mode supervision is active; the daemon owns the watcher, only an explicit /radio-silence off exits it (legacy flag with no posture record).\n'
+    else
+      printf 'present - away-mode supervision is active; the daemon owns the watcher (legacy flag with no posture record).\n'
     fi
   else
-    printf '; no daemon runs, the ordinary supervision session continues.\n'
+    printf 'absent\n'
   fi
-elif [ -e "$STATE/.afk" ]; then
-  if [ "$AFK_MODE" = quiet ]; then
-    printf 'present - quiet-mode supervision is active; the daemon owns the watcher, only an explicit /radio-silence off exits it (legacy flag with no posture record).\n'
-  else
-    printf 'present - away-mode supervision is active; the daemon owns the watcher (legacy flag with no posture record).\n'
-  fi
-else
-  printf 'absent\n'
-fi
+} | jg_digest_say
 
 # Public commitments made through the myjuggernaut relay. A promise to reply in a
 # public thread must survive compaction and restart, so it is surfaced from disk
@@ -1079,11 +1148,13 @@ if jg_pf_relay_active "$JG_HOME" \
   PUBLIC_FOLLOWUP=$("$SCRIPT_DIR/jg-public-followup.sh" pending 2>/dev/null) || PUBLIC_FOLLOWUP=
   if [ -n "$PUBLIC_FOLLOWUP" ]; then
     subsection "Public commitments"
-    printf '%s\n' "$PUBLIC_FOLLOWUP"
-    printf '\nEach line is a public loop this home still holds: a reply still owed, or an open loop with nothing owed.\n'
-    printf 'Reconcile terminal results with %s/bin/jg-public-followup.sh consume, then deliver a ready one with\n' "$JG_ROOT"
-    printf '%s/bin/jg-public-followup.sh deliver <id>. Hand a delivered loop on with rechain, or close it with\n' "$JG_ROOT"
-    printf '%s/bin/jg-public-followup.sh retire <id> --reason "...". Load relay-respond for the procedure.\n' "$JG_ROOT"
+    printf '%s\n' "$PUBLIC_FOLLOWUP" | jg_digest_clip "$(jg_digest_avail "$COMMITMENTS_CAP")" 'public loops' "$JG_ROOT/bin/jg-public-followup.sh pending"
+    {
+      printf '\nEach line is a public loop this home still holds: a reply still owed, or an open loop with nothing owed.\n'
+      printf 'Reconcile terminal results with %s/bin/jg-public-followup.sh consume, then deliver a ready one with\n' "$JG_ROOT"
+      printf '%s/bin/jg-public-followup.sh deliver <id>. Hand a delivered loop on with rechain, or close it with\n' "$JG_ROOT"
+      printf '%s/bin/jg-public-followup.sh retire <id> --reason "...". Load relay-respond for the procedure.\n' "$JG_ROOT"
+    } | jg_digest_say
   fi
 fi
 
@@ -1098,12 +1169,14 @@ fi
 stage network-checks
 section "NETWORK CHECKS"
 if [ "$READ_ONLY" -eq 1 ]; then
-  printf 'skipped (read-only session) - GitHub authentication, project clone refresh,\n'
-  printf 'squad_lead liveness and convergence, and pending handoff delivery were not run.\n'
-  printf 'They need the fleet lock, and this session must not spawn, steer, or merge, so it\n'
-  printf 'has no action they would gate. The session holding the lock runs them.\n'
+  {
+    printf 'skipped (read-only session) - GitHub authentication, project clone refresh,\n'
+    printf 'squad_lead liveness and convergence, and pending handoff delivery were not run.\n'
+    printf 'They need the fleet lock, and this session must not spawn, steer, or merge, so it\n'
+    printf 'has no action they would gate. The session holding the lock runs them.\n'
+  } | jg_digest_say
 else
-  "$SCRIPT_DIR/jg-startup-network.sh" harvest --pid $$ 2>&1 || true
+  { "$SCRIPT_DIR/jg-startup-network.sh" harvest --pid $$ 2>&1 || true; } | jg_digest_say
 fi
 
 # --- 8. context digest -----------------------------------------------------
@@ -1113,21 +1186,22 @@ fi
 # take (see this file's ORDERING note).
 stage context
 section "CONTEXT"
-print_file_or_absent "$DATA/projects.md" "data/projects.md"
-print_file_or_absent "$(jg_compat_pick "$DATA/squad_leads.md")" "data/squad_leads.md"
-print_file_or_absent "$DATA/captain.md" "data/captain.md"
+print_file_capped "$DATA/projects.md" "data/projects.md"
+print_file_capped "$(jg_compat_pick "$DATA/squad_leads.md")" "data/squad_leads.md"
+print_file_capped "$DATA/captain.md" "data/captain.md"
 print_file_capped "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in squad_lead homes)" "$MEMORY_FILE_CAP"
-print_file_capped "$DATA/learnings.md" "data/learnings.md" "$MEMORY_FILE_CAP" all-learnings
-print_file_or_absent "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
+print_learnings "$DATA/learnings.md" "data/learnings.md"
+print_owner_rules "$DATA/owner-rules.md" "data/owner-rules.md (the shared owner rules every session reads; bin/jg-owner-rules.sh writes it)"
 # The role's personality file adds tone only; the voice rules stay in captain-voice.md (bin/jg-voice.py).
 if voice_persona=$(JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE="$CONFIG" python3 "$SCRIPT_DIR/jg-voice.py" persona 2>/dev/null) && [ -n "$voice_persona" ]; then
   subsection "captain voice personality (config/captain-voice-<role>.md; tone only, the rules are in captain-voice.md)"
-  printf '%s\n' "$voice_persona"
+  printf '%s\n' "$voice_persona" | jg_digest_clip "$(jg_digest_avail 600)" lines 'bin/jg-voice.py persona'
 fi
 
 # --- 9. closing reminder -----------------------------------------------
 stage next-step
 section "NEXT STEP"
+{
 if [ "$READ_ONLY" -eq 1 ]; then
   cat <<'EOF'
 This session did not acquire the fleet lock. Stay read-only: do not arm,
@@ -1168,6 +1242,8 @@ cat <<'EOF'
 The digest above is complete for this session start. The READ-ONCE CONTRACT
 section near the top of it governs what may still be read from disk.
 EOF
+} | jg_digest_say
+printf 'DIGEST SIZE: %s of %s bytes (the digest cap; defaults/token-caps digest-cap)\n' "$(jg_digest_used)" "$DIGEST_CAP"
 
 if [ "$READ_ONLY" -eq 0 ] && [ "$REEMIT" -eq 0 ]; then
   COMPLETION_RECORDED=0

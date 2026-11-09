@@ -885,12 +885,33 @@ The section counts toward the startup memory budget like the rest of its file, s
 
 ## Digest print caps (defaults/token-caps, config/token-caps)
 
-`defaults/token-caps` holds the shipped byte and row caps for the session-start digest, each with its reason.
-A home overrides a value in `config/token-caps` (same `<name> <positive integer>` lines); a `JG_SESSION_START_*` variable overrides both for one run.
+The session-start digest has a fixed size: at most `digest-cap` bytes, 40000 by default (about 10,000 tokens, 5 percent of a 200K-token window).
+A Squad Lead home once started at 85 percent of its context on a 300 KB digest, so a fresh session must start with most of its context free.
+Every byte the digest prints counts against that cap, and the last line of the digest reports the total (`DIGEST SIZE: <bytes> of <cap> bytes`).
+`bin/jg-digest-cap-lib.sh` owns the arithmetic; `tests/jg-session-start.test.sh` fails when a fixture with 320 open decisions passes the cap.
+
+`defaults/token-caps` holds the shipped caps, each with its reason and the measurement behind it.
+A home overrides a value in `config/token-caps` (same `<name> <positive integer>` lines); a `JG_DIGEST_*` or `JG_SESSION_START_*` variable overrides both for one run.
 A missing, zero, or malformed value falls back to the built-in in `bin/jg-session-start.sh`, so a bad line never switches a cap off.
-The caps only cut what the digest prints.
-Each cut names the remainder and the command that shows it.
-No cap touches the wake queue, the lock, network checks, owner rules, or captain-held rows.
+
+Every cap cuts only what the digest prints; nothing is deleted from disk.
+A cut section lists its newest and most urgent items first and ends in its total count and the one command that prints all of it, such as `[cut: 9 of 28 rows shown; all of them: bin/jg-backlog.sh list --state in_flight]`.
+Files end in a `[cut at ...` line with the line range and the `sed` command that prints the rest.
+
+| Cap (`defaults/token-caps`) | Run override | Cuts |
+|---|---|---|
+| `digest-cap` | `JG_DIGEST_CAP` | the whole digest |
+| `digest-reserve` | `JG_DIGEST_RESERVE` | bytes kept free for the network checks and the next-step note |
+| `backlog-cap` | `JG_SESSION_START_BACKLOG_CAP` | the in-flight, held, blocked and ready listings together |
+| `lanes-cap` | `JG_SESSION_START_LANES_CAP` | the lane rows |
+| `orphan-cap`, `commitments-cap` | `JG_SESSION_START_ORPHAN_CAP`, `JG_SESSION_START_COMMITMENTS_CAP` | orphan status logs, public commitments |
+| `index-cap` | `JG_SESSION_START_INDEX_CAP` | the heading index of the learnings file and of a long owner-rules file |
+| `owner-rules-cap` | `JG_SESSION_START_OWNER_RULES_CAP` | owner rules print whole up to this size, else as an index of every rule |
+| `context-file-cap`, `memory-file-cap` | `JG_SESSION_START_CONTEXT_FILE_CAP` (both) | the opening lines of the curated files |
+| `status-tail` | `JG_SESSION_START_STATUS_TAIL` | status lines per lane row |
+
+No cap touches the lock result, the wake queue and its `WAKE_ACK_REQUIRED` line, the supervision block, or the network checks: those carry an action and print whole.
+The wake queue's own `OPEN DECISIONS` list is newest first, states its total, and ends in `bin/jg-wake-drain.sh --open-decisions`, which prints every open decision without acknowledging or changing anything.
 
 ## Supervisor context cap (config/supervisor-context-cap)
 
@@ -2908,8 +2929,9 @@ JG_BACKEND_HERDR_SUBMIT_POLLS=6  # herdr-only: agent-state samples spread across
 JG_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6  # herdr-only: minimum per-Enter confirmation budget before polling agent-state after an idle baseline
 JG_ZELLIJ_SESSION=juggernaut  # zellij-only: named session for normal backend ops and test isolation (docs/zellij-backend.md)
 CMUX_SOCKET_PASSWORD=   # cmux-only: socket password fallback when config/cmux-socket-password is absent (docs/cmux-backend.md)
-JG_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest; each line is capped by bin/jg-line-cap-lib.sh
-JG_SESSION_START_QUEUED_LIMIT=20   # plain queued backlog rows in the session-start digest; in-flight, held, and blocked rows are never bounded and done rows are never listed
+JG_DIGEST_CAP=40000   # bytes the whole session-start digest may print (defaults/token-caps `digest-cap`); every cut section ends in its total count and the command that prints all of it
+JG_SESSION_START_STATUS_TAIL=1   # state/*.status lines printed per lane row in the session-start digest; each line is capped at 160 characters by bin/jg-line-cap-lib.sh
+JG_SESSION_START_BACKLOG_CAP=5000   # bytes shared by the in-flight, held, blocked and ready backlog listings in the session-start digest; a cut group ends in its total and the bin/jg-backlog.sh command that lists every row
 JG_SESSION_START_ENDPOINT_TIMEOUT=10   # seconds bounding each per-task endpoint liveness read in the session-start digest (bin/jg-session-start.sh); nonpositive or invalid values fall back to 10; a read that hits the bound or dies becomes that task's own `endpoint: error` line and the digest continues
 JG_BACKLOG_ROW_TIMEOUT_SECS=10   # seconds bounding each backlog row read (bin/jg-backlog-transition-lib.sh); nonpositive or invalid values fall back to 10; the first bound hit latches the sweep so later reads return immediately, each still naming its own item
 JG_BOOTSTRAP_DETECT_ONLY=0   # internal/read-only session-start mode: skip bootstrap's mutating sweeps and print advisory TANGLE wording

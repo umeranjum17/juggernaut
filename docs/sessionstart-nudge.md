@@ -121,6 +121,14 @@ The requested session start remains idempotent.
 
 The `bin/jg-session-start.sh` header is the single owner of those mechanics.
 
+## Digest size
+
+The digest has a fixed byte cap, 40000 by default (`digest-cap` in `defaults/token-caps`), so a fresh session starts with most of its context free.
+The lock result, the wake queue with its `WAKE_ACK_REQUIRED` line, the supervision block and the network checks print whole.
+Every other section is cut to a cap of its own, newest and most urgent items first, and each cut ends in the total count and the one command that prints all of it.
+The last line of the digest reports the bytes printed against the cap.
+`docs/configuration.md` ("Digest print caps") lists every cap and its override.
+
 ## Runtime bound
 
 While the digest runs, the run tier blocks one of two things:
