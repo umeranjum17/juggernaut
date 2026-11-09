@@ -480,9 +480,28 @@ jg_extension_pair_owns_supervision() {  # <state> <extension-dir> <source:marker
 # a daemon that stops restarting its watcher still fails supervision once the
 # beacon passes grace.
 jg_afk_daemon_owns_supervision() {
-  local state=$1 lockdir pid recorded current
-  [ -e "$state/.afk" ] || return 1
-  lockdir="$state/.supervise-daemon.lock"
+  { [ -e "$1/.afk" ] || jg_lead_daemon_present "$1"; } && jg_daemon_lock_live "$1"
+}
+
+# A squad lead on a harness with no background shell cycle (Codex) runs the same
+# daemon always-on, with no away mode: no human types in a lead pane, so the
+# presence gate does not apply. The daemon writes state/.lead-daemon at startup
+# and removes it at shutdown (JG_LEAD_DAEMON=1, started by bin/jg-lead-daemon.sh);
+# the marker plus a live identity-matched daemon is ownership, exactly as above.
+jg_lead_daemon_present() {  # <state>
+  [ -f "$1/.lead-daemon" ]
+}
+
+# True for a squad lead home whose harness has no background shell cycle (Codex
+# runs foreground checkpoints only): the one case that runs the daemon always-on.
+jg_lead_daemon_home() {  # <home> <harness>
+  case "$2" in codex) ;; *) return 1 ;; esac
+  [ -f "$(jg_compat_marker "$1")" ]
+}
+
+# True when a live daemon process still holds this home's singleton lock.
+jg_daemon_lock_live() {  # <state>
+  local lockdir="$1/.supervise-daemon.lock" pid recorded current
   pid=$(cat "$lockdir/pid" 2>/dev/null) || return 1
   jg_pid_alive "$pid" || return 1
   recorded=$(cat "$lockdir/pid-identity" 2>/dev/null) || return 1
@@ -490,6 +509,21 @@ jg_afk_daemon_owns_supervision() {
   current=$(jg_pid_identity "$pid" 2>/dev/null) || return 1
   [ -n "$current" ] || return 1
   [ "$current" = "$recorded" ]
+}
+
+# True when the always-on lead daemon is live and holds this home's lock.
+jg_lead_daemon_owns_supervision() {  # <state>
+  jg_lead_daemon_present "$1" && jg_daemon_lock_live "$1"
+}
+
+# True when the always-on lead daemon owns supervision AND its watcher cycle is
+# fresh: the owner proof above never proves freshness, so a daemon that stopped
+# restarting its watcher still reads as down once the beacon passes the poll-
+# derived grace (the daemon starts a replacement only after handling a wake).
+jg_lead_daemon_supervising() {  # <state> [grace]
+  local state=$1 grace=${2:-${JG_GUARD_GRACE:-$(jg_poll_derived_grace)}}
+  jg_lead_daemon_owns_supervision "$state" \
+    && [ "$(jg_path_age "$state/.last-watcher-beat")" -lt "$grace" ]
 }
 
 # jg_afk_mode <state>
@@ -564,7 +598,8 @@ jg_watcher_supervision_verdict() {
     fi
     return 0
   fi
-  if jg_watcher_healthy "$state" "$watch" "$grace" "$home"; then
+  if jg_watcher_healthy "$state" "$watch" "$grace" "$home" \
+    || jg_lead_daemon_supervising "$state"; then
     # shellcheck disable=SC2034 # Read by callers after the function returns.
     JG_WATCHER_VERDICT_OK=true
   elif [ "$fresh" = true ]; then

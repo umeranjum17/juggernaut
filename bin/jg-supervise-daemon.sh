@@ -77,7 +77,11 @@
 #
 # Usage: jg-supervise-daemon.sh
 #          Long-lived background loop. Normally started by the /watchover skill, which
-#          sets state/.afk first. Env knobs:
+#          sets state/.afk first. A squad lead on a harness with no background
+#          shell cycle (Codex) runs it always-on instead, through
+#          bin/jg-lead-daemon.sh, with JG_LEAD_DAEMON=1: no presence gate (no
+#          human types in a lead pane), state/.lead-daemon while it lives.
+#          Env knobs:
 #          JG_SUPERVISOR_TARGET     supervisor pane target (override; otherwise
 #                                   auto-discovered per backend - $TMUX_PANE
 #                                   under tmux, "<session>:<pane-id>" from
@@ -268,9 +272,12 @@ _file_age() {  # seconds since mtime; very large if missing
 }
 
 # --- presence-gating helpers (PURE-ish: side-effect-free reads of state) -----
-# afk_active: 0 if the durable away-mode flag exists, 1 otherwise.
+# afk_active: 0 if the durable away-mode flag exists, or this daemon runs as a
+# squad lead's always-on daemon (JG_LEAD_DAEMON=1, marker state/.lead-daemon), 1
+# otherwise. No human types in a lead pane, so the presence gate does not apply
+# to a lead: its daemon injects only actionable events, whatever .afk says.
 afk_active() {  # <state>
-  [ -e "$1/$AFK_FLAG_NAME" ]
+  [ -e "$1/$AFK_FLAG_NAME" ] || [ -f "$1/.lead-daemon" ]
 }
 
 # afk_enter / afk_exit: write/clear the away-mode flag. Called by the /watchover
@@ -1547,6 +1554,13 @@ jg_super_main() {
     exit 1
   fi
   echo "$$" > "$PIDFILE"
+  # An always-on lead daemon (bin/jg-lead-daemon.sh) declares itself with a marker
+  # the turn-end guard and Main's lead-liveness check read (jg-wake-lib.sh); the
+  # marker lives exactly as long as this daemon does.
+  if [ "${JG_LEAD_DAEMON:-0}" = 1 ]; then
+    printf '%s\n' "$$" > "$STATE/.lead-daemon" \
+      || { echo "error: could not write $STATE/.lead-daemon" >&2; jg_lock_release "$LOCK" 2>/dev/null || true; rm -f "$PIDFILE"; exit 1; }
+  fi
   # The recorded identity is what proves this daemon still owns supervision after
   # its watcher child exits (jg_afk_daemon_owns_supervision, read by the turn-end
   # guard). Startup continues without it - a supervising daemon must not refuse to
@@ -1650,6 +1664,7 @@ jg_super_main() {
     fi
     jg_lock_release "$LOCK" 2>/dev/null || true
     rm -f "$PIDFILE" 2>/dev/null || true
+    [ "${JG_LEAD_DAEMON:-0}" != 1 ] || rm -f "$STATE/.lead-daemon" 2>/dev/null || true
     log "daemon shutting down"
     exit 0
   }

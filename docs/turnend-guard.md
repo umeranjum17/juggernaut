@@ -635,6 +635,7 @@ That warning uses `bin/jg-supervision-instructions.sh --repair-line`, so it alwa
 - Positive recovery reset.
 - Generation and legacy claim cases that must block or clear instead of allowing a blind stop.
 - Away-mode daemon ownership between watcher cycles and over a watcher lock left behind by an exited watcher, plus its dead, pid-reused, absent, stale-beacon, and away-mode-off negatives.
+- Lead-daemon ownership: a Codex squad lead supervised by the always-on daemon (`bin/jg-lead-daemon.sh`, marker `state/.lead-daemon`, no away flag) ends its turn idle on a live daemon with a fresh beacon, and blocks on a dead daemon, a stale beacon, or a marker with no live daemon; its repair line starts the daemon instead of a foreground checkpoint.
 - The away-mode beacon's poll-derived grace widening for a live daemon still mid-cycle and its bound against a dead daemon, a beacon older than that wider grace, and JG_POLL's inapplicability with away mode off.
 - Pi logical-run latching.
 - Missing-`jq` behavior.

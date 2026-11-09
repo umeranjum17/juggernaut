@@ -187,6 +187,16 @@ jg_supervision_status() {
     fi
   fi
 
+  # An always-on squad lead daemon (jg-wake-lib.sh) owns supervision between its
+  # one-shot watcher cycles, so no watcher process holds the lock and nothing is
+  # wrong: a live daemon with a fresh beacon is supervised.
+  if [ "$JG_SUP_WATCHER_FRESH" = false ] && declare -F jg_lead_daemon_supervising >/dev/null \
+    && jg_lead_daemon_supervising "$state"; then
+    # shellcheck disable=SC2034 # Read by callers (jg-guard.sh) after sourcing.
+    JG_SUP_BEACON_DESC="lead daemon (${JG_SUP_BEACON_DESC})"
+    JG_SUP_WATCHER_FRESH=true
+  fi
+
   # A cycle that ended on a wake leaves a fresh beacon, but its replacement
   # clears it at start and writes none until its scan finishes. The hand-off
   # stamp the ending cycle left (jg-watch.sh) keeps that gap healthy for

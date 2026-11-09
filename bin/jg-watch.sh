@@ -544,11 +544,12 @@ _event_cap_key=""
 _event_cap_ok=0
 _event_cap_fails=0
 
-# afk_present: 0 while the away-mode flag exists. When set, the daemon wraps this
+# afk_present: 0 while the away-mode flag exists, or while a live always-on lead
+# daemon (state/.lead-daemon, jg-wake-lib.sh) owns this home. When set, the daemon wraps this
 # watcher and owns triage, so the watcher must behave one-shot (enqueue + exit on
 # every wake) and let the daemon classify - never absorb here, or the daemon's
 # digest/injection layer would never see the wake.
-afk_present() { [ -e "$STATE/.afk" ]; }
+afk_present() { [ -e "$STATE/.afk" ] || jg_lead_daemon_owns_supervision "$STATE"; }
 
 # away_record_present: 0 while an away record exists (the captain is away, in
 # either supervision shape); quiet mode's record is a present captain, so it

@@ -121,8 +121,16 @@ if [ -z "$HARNESS" ]; then
   HARNESS=$("$SCRIPT_DIR/jg-harness.sh" 2>/dev/null || printf unknown)
 fi
 
+# shellcheck source=bin/jg-wake-lib.sh
+. "$SCRIPT_DIR/jg-wake-lib.sh"
+LEAD_DAEMON=0
+if jg_lead_daemon_home "$JG_ROOT" "$HARNESS"; then
+  LEAD_DAEMON=1
+fi
+
 case "$HARNESS" in
-  claude|codex|opencode|pi|grok|cursor|omp) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
+  codex) SNIPPET="$DOC_DIR/codex.md"; [ "$LEAD_DAEMON" -eq 0 ] || SNIPPET="$DOC_DIR/codex-lead.md" ;;
+  claude|opencode|pi|grok|cursor|omp) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
   pi-signed) SNIPPET="$DOC_DIR/pi.md" ;;
   *) HARNESS=unknown; SNIPPET="$DOC_DIR/unknown.md" ;;
 esac
@@ -139,6 +147,9 @@ case "$HARNESS" in
     fi
     ;;
 esac
+
+# A lead daemon home has no foreground checkpoints for the host to run in.
+[ "$LEAD_DAEMON" -eq 0 ] || { HOST_SNIPPET=; grok_arm='bin/jg-watch-arm.sh'; }
 
 checkpoint_seconds=${JG_CODEX_WATCH_CHECKPOINT:-180}
 pi_ext="$JG_ROOT/.pi/extensions/jg-primary-pi-watch.ts"
@@ -208,6 +219,10 @@ repair_line() {
       printf '%s%s\n' "$prefix" 'watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.'
       ;;
     codex)
+      if [ "$LEAD_DAEMON" -eq 1 ]; then
+        printf '%s%s\n' "$prefix" 'repair missing lead supervision by starting the always-on daemon: bin/jg-lead-daemon.sh start (idempotent; never a foreground checkpoint).'
+        return 0
+      fi
       printf '%s%s%s%s\n' "$prefix" 'repair missing watcher supervision with a foreground checkpoint: bin/jg-watch-checkpoint.sh --seconds ' "$checkpoint_seconds" '.'
       ;;
     pi|pi-signed)
@@ -237,7 +252,11 @@ ordinary_wake_line() {
       printf '%s\n' '- Ordinary wake: the Stop-owned auto-arm (bin/jg-claude-stop-autoarm.sh) already owns watcher continuity; drain and handle the wake, and do not arm another cycle yourself.'
       ;;
     codex)
-      printf '%s\n' '- Ordinary wake: take the next foreground bin/jg-watch-checkpoint.sh checkpoint as directed below.'
+      if [ "$LEAD_DAEMON" -eq 1 ]; then
+        printf '%s\n' '- Ordinary wake: the always-on lead daemon already handled it in bash; act only on an injected event, then end the turn idle. Never run a foreground checkpoint.'
+      else
+        printf '%s\n' '- Ordinary wake: take the next foreground bin/jg-watch-checkpoint.sh checkpoint as directed below.'
+      fi
       ;;
     pi|pi-signed)
       printf '%s\n' '- Ordinary wake: the Pi extension already owns watcher continuity; do not arm another cycle.'

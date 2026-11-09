@@ -2473,6 +2473,99 @@ test_hook_daemon_lock_is_ignored_without_away_mode() {
   pass "jg-turnend-guard: a daemon lock proves nothing while away mode is off"
 }
 
+# --- LEAD DAEMON: a Codex squad lead supervised by the always-on daemon ------
+#
+# A squad lead on a harness with no background shell cycle runs
+# bin/jg-supervise-daemon.sh always-on (JG_LEAD_DAEMON=1, bin/jg-lead-daemon.sh),
+# with no away flag. The daemon keeps state/.lead-daemon while it lives, and the
+# guard must let the turn end idle on a live daemon with a fresh beacon - never
+# the foreground-checkpoint loop - while a dead daemon, a stale beacon or a marker
+# left behind still blocks.
+
+# A live-daemon fixture holds a real process. Track each one and stop it on every
+# exit path, so a failed assertion or a kill never leaves it behind.
+LEAD_TEST_PIDS=()
+lead_test_reap() {
+  local p
+  for p in "${LEAD_TEST_PIDS[@]:-}"; do
+    [ -n "$p" ] || continue
+    kill "$p" 2>/dev/null || true
+    wait "$p" 2>/dev/null || true
+  done
+  LEAD_TEST_PIDS=()
+}
+trap 'lead_test_reap; jg_test_cleanup' EXIT
+trap 'lead_test_reap; jg_test_cleanup; exit 130' INT
+trap 'lead_test_reap; jg_test_cleanup; exit 143' TERM
+trap 'lead_test_reap; jg_test_cleanup; exit 129' HUP
+
+make_lead_home_between_cycles() {  # <dir-path>
+  local dir=$1
+  dir=$(make_squad_lead_dir "$dir")
+  : > "$dir/state/task1.meta"
+  printf '%s\n' 1 > "$dir/state/.lead-daemon"
+  touch "$dir/state/.last-watcher-beat"
+  printf '%s\n' "$dir"
+}
+
+test_hook_lead_daemon_allows_turn_end_without_away_mode() {
+  local dir pid out status
+  dir=$(make_lead_home_between_cycles "$TMP_ROOT/hook-lead-daemon-live")
+  sleep 60 &
+  pid=$!
+  LEAD_TEST_PIDS+=("$pid")
+  record_daemon_lock "$dir" "$pid" || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live lead daemon holder"
+  }
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 0 "$status" "a live lead daemon with a fresh beacon must let the turn end"
+  [ -z "$out" ] || fail "lead-daemon ownership still produced a block banner: $out"
+  rm -f "$dir/state/.lead-daemon"
+  out=$(run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "the same daemon without its lead marker proves nothing outside away mode"
+  pass "jg-turnend-guard: a live lead daemon satisfies supervision with no away flag"
+}
+
+test_hook_lead_daemon_blocks_dead_daemon_and_stale_beacon() {
+  local dir pid dead out status
+  dir=$(make_lead_home_between_cycles "$TMP_ROOT/hook-lead-daemon-dead")
+  dead=$(nonexistent_pid)
+  record_daemon_lock "$dir" "$dead" "dead daemon identity"
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 2 "$status" "a lead marker over a dead daemon must still block"
+  dir=$(make_lead_home_between_cycles "$TMP_ROOT/hook-lead-daemon-stale")
+  touch -t 202001010000 "$dir/state/.last-watcher-beat"
+  sleep 60 &
+  pid=$!
+  LEAD_TEST_PIDS+=("$pid")
+  record_daemon_lock "$dir" "$pid" || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live lead daemon holder"
+  }
+  out=$(run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "a live lead daemon that stopped restarting its watcher must block on a stale beacon"
+  pass "jg-turnend-guard: a lead daemon never substitutes for a live process or a fresh beacon"
+}
+
+test_lead_daemon_codex_repair_line_names_the_daemon() {
+  local dir out
+  dir=$(make_lead_home_between_cycles "$TMP_ROOT/hook-lead-daemon-repair")
+  out=$(JG_ROOT_OVERRIDE="$dir" JG_HOME="$dir" bash "$dir/bin/jg-supervision-instructions.sh" --harness codex --repair-line)
+  assert_contains "$out" "bin/jg-lead-daemon.sh start" "a Codex lead's repair line must start the daemon"
+  case "$out" in *"watch-checkpoint.sh --seconds"*) fail "a Codex lead's repair line must never send it to a foreground checkpoint" ;; esac
+  rm -f "$dir/.jg-squad-lead-home"
+  out=$(JG_ROOT_OVERRIDE="$dir" JG_HOME="$dir" bash "$dir/bin/jg-supervision-instructions.sh" --harness codex --repair-line)
+  assert_contains "$out" "foreground checkpoint" "a Codex home that is not a squad lead keeps the checkpoint cycle"
+  pass "jg-supervision-instructions: a Codex lead is told to run the daemon, not the checkpoint loop"
+}
+
 # --- AWAY MODE: beacon grace derives from the poll cadence -------------------
 #
 # The daemon starts a fresh one-shot watcher only after it finishes handling
@@ -2657,6 +2750,9 @@ test_hook_away_mode_blocks_on_dead_daemon
 test_hook_away_mode_blocks_on_pid_reused_daemon
 test_hook_away_mode_blocks_on_stale_beacon
 test_hook_daemon_lock_is_ignored_without_away_mode
+test_hook_lead_daemon_allows_turn_end_without_away_mode
+test_hook_lead_daemon_blocks_dead_daemon_and_stale_beacon
+test_lead_daemon_codex_repair_line_names_the_daemon
 test_hook_away_daemon_allows_beacon_within_poll_derived_grace
 test_hook_away_daemon_blocks_dead_daemon_despite_poll_derived_grace
 test_hook_away_daemon_blocks_beacon_older_than_poll_derived_grace
