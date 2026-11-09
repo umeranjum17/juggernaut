@@ -33,7 +33,8 @@
 # (jg_dod_trunk_proof_gaps in bin/jg-merge-gate-lib.sh, the same check the worker's done runs): a PASS completion receipt, approved
 # merge-card evidence citing files, and a sealed done-done run holding them, all at the lane's own head. A missing input refuses
 # before anything starts and is named; `proof <task-id>` prints them. The owner signature never refuses a landing: it is
-# recorded after it (data/trunk-landing-proofs.tsv), absent when missing.
+# recorded after it (data/trunk-landing-proofs.tsv), absent when missing. That row also keeps the gate's figures (gate=ran:<scripts>,
+# failed:<on the first run>,secs:<whole gate>; absent when no gate ran), which the landing's Evidence card (core/landing-card) prints.
 #
 # The changed-files gate charges a lane only for what it broke. When it fails, the lander first reruns the failing scripts once on
 # the lane, and a script that passes on the rerun is flaky and not charged. It then reruns exactly the failing test
@@ -332,6 +333,14 @@ report_tip_red() {  # <tip> <script>...
   for s in $fresh; do printf '%s\t%s\n' "$tree" "$s" >> "$ledger"; done
 }
 
+# GATE_FIGURES for the landing's proofs row (ran:<scripts>,failed:<first run>,secs:<whole gate>): the scripts the first run reported
+# (its JG_TEST_SUMMARY lines; "-" when the gate prints none) and the seconds since <start epoch>. Landed commits read it back in record_proofs.
+gate_figures() {  # <first-run log> <start epoch>
+  local ran failed
+  read -r ran failed <<< "$(sed -n 's/^JG_TEST_SUMMARY total=\([0-9][0-9]*\) failed=\([0-9][0-9]*\) .*/\1 \2/p' "$1" 2>/dev/null | awk '{ r += $1; f += $2; n++ } END { if (n) print r, f; else print "- -" }')"
+  GATE_FIGURES="ran:${ran:--},failed:${failed:--},secs:$(( $(date +%s) - $2 ))"
+}
+
 # The lander's full gate. A red candidate is judged against the trunk tip's own result for the same scripts:
 # a script that fails the same way on the tip is the tip's red, reported once and not charged to the lane;
 # a script that fails only on the candidate, passes on the tip, or fails differently blocks it.
@@ -339,11 +348,11 @@ report_tip_red() {  # <tip> <script>...
 # Returns 0 when the candidate is cleared, 2 when it is charged with a failure its base does not have, and 1 when it failed for a
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
-  local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky=''
-  GATE_KIND=full
+  local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0
+  t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
-  [ "$rc" -ne 0 ] || { rm -f -- "$envf"; return 0; }
+  [ "$rc" -ne 0 ] || { rm -f -- "$envf"; gate_figures "$log" "$t0"; return 0; }
   mine=$(gate_results "$log" | awk -F'\t' '$2 != "0"')
   unexplained=$(gate_unexplained "$log" "$mine")
   if [ -n "$unexplained" ] || [ ! -s "$envf" ]; then
@@ -366,7 +375,7 @@ full_gate() {  # <candidate> <command> <base>
   done <<< "$mine"
   mine=$(printf '%s' "$settled")
   [ -z "$flaky" ] || echo "note: passed on the rerun, so judged flaky and not charged:$flaky" >&2
-  if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND="full-rerun"; return 0; fi
+  if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND="full-rerun"; gate_figures "$log" "$t0"; return 0; fi
   # shellcheck disable=SC2046
   tipres=$(tip_results "$3" "$envf" $(printf '%s\n' "$mine" | cut -f1))
   rm -f -- "$envf"
@@ -385,7 +394,7 @@ full_gate() {  # <candidate> <command> <base>
     return 2
   fi
   echo "note: ${cand:0:12} fails only what the $TRUNK tip ${3:0:12} already fails the same way; set aside, not charged to this lane:$old" >&2
-  GATE_KIND="full-tip-red"
+  GATE_KIND="full-tip-red"; gate_figures "$log" "$t0"
 }
 
 # The paths where <candidate> cannot merge cleanly onto <tip>; prints nothing when it merges clean.
@@ -456,7 +465,7 @@ record_proofs() {  # <id> <lane head> <landed commit>
   if [ -f "$r" ] && command -v jq >/dev/null 2>&1; then receipt="$(jq -r '.verdict // "unreadable"' "$r" 2>/dev/null || echo unreadable)@$(jq -r '.head // ""' "$r" 2>/dev/null | cut -c1-12)"; fi
   [ ! -e "$d/proof-authorizations/$2.sig" ] || sig=present
   { [ -f "$d/merge-card.json" ] && grep -q "$2" "$d/merge-card.json"; } && card=present
-  row trunk-landing-proofs.tsv "$1" "$PN" "$3" "$(date +%s)" "receipt=$receipt" "signature=$sig" "merge-card=$card"
+  row trunk-landing-proofs.tsv "$1" "$PN" "$3" "$(date +%s)" "receipt=$receipt" "signature=$sig" "merge-card=$card" "gate=${GATE_FIGURES:-absent}"
 }
 
 # Tell the lane's ticket and Overwatch that its landed commit was reverted, with the reason. Best effort: the revert stands.
@@ -531,7 +540,7 @@ landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's rec
 }
 
 land_candidate() {
-  local id=${1-} tip cand gate GATE_KIND='' still=
+  local id=${1-} tip cand gate GATE_KIND='' GATE_FIGURES='' still=
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
   lane_meta "$id"
@@ -646,7 +655,7 @@ cmd_land_batch() {
   jg_lease_forbid_branch "trunk landing (jg-trunk)"
   for id in "${B_ID[@]}"; do lock "$STATE/.control-$id.lock"; done
   lock "$STATE/.trunk-$PN.lock"; tip_ok; B_TIP=$(rev "refs/heads/$TRUNK"); unlock "$STATE/.trunk-$PN.lock"
-  B_BASE0=$B_TIP; GATE_KIND=full; top=$B_TIP; todo=()
+  B_BASE0=$B_TIP; GATE_KIND=full; GATE_FIGURES=; top=$B_TIP; todo=()
   for ((i = 0; i < n; i++)); do
     META=${B_META[$i]}; id=${B_ID[$i]}; errf=$(mktemp)
     # shellcheck disable=SC2030 # the admission subshell starts with no locks and no work directory of its own

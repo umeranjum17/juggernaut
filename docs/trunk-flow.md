@@ -53,7 +53,7 @@ The lander takes one commit, so a home whose `main` carries the same changes und
 
 ## Records
 
-`state/trunk-tip-<project>`, `trunk-green-<project>`, `trunk-red-<project>`, `trunk-released-<project>`, `trunk-word-<live|release>-<project>`; `data/trunk-landings.tsv` (one row per lane; a stacked lane adds `batch-from=<sha>`), `trunk-landing-proofs.tsv` (the seal, merge-card and signature each landing had), `trunk/tip-results-<project>-<tree>.tsv` and `trunk/tip-red-reported-<project>.tsv` (the tip baseline and what was reported), `trunk-live.tsv`, `trunk-ci.tsv`, `trunk-words.tsv`, `trunk-releases.tsv`; the check's own state in `data/jg-trunk-landing/`.
+`state/trunk-tip-<project>`, `trunk-green-<project>`, `trunk-red-<project>`, `trunk-released-<project>`, `trunk-word-<live|release>-<project>`; `data/trunk-landings.tsv` (one row per lane; a stacked lane adds `batch-from=<sha>`), `trunk-landing-proofs.tsv` (the seal, merge-card and signature each landing had, and `gate=ran:<scripts>,failed:<on the first run>,secs:<whole gate>`, which the landing's Evidence card prints), `trunk/tip-results-<project>-<tree>.tsv` and `trunk/tip-red-reported-<project>.tsv` (the tip baseline and what was reported), `trunk-live.tsv`, `trunk-ci.tsv`, `trunk-words.tsv`, `trunk-releases.tsv`; the check's own state in `data/jg-trunk-landing/`.
 
 ## Tests
 

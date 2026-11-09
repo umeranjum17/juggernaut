@@ -6,8 +6,9 @@
 #        landing-card.sh summary <jg-home> <YYYY-MM-DD>   (one card for a UTC day's landings; a one-off backfill, never part of check)
 #
 # A landing card is a fact sheet of records the lander already wrote, not a judge: data/trunk-landings.tsv (lane, project,
-# commit, epoch, gate kind), data/trunk-landing-proofs.tsv (receipt, signature, merge-card) and, when it exists, the
-# done-done verdict in data/<lane>/merge-card.json. A missing piece is written as "not checked"; it never skips the card.
+# commit, epoch, gate kind), data/trunk-landing-proofs.tsv (receipt, signature, merge-card, the gate's figures: scripts run,
+# failed on the first run, seconds) and, when it exists, the done-done verdict in data/<lane>/merge-card.json. A missing piece
+# is written as "not checked" or "not recorded"; it never skips the card.
 # The title is the lane's name (a commit subject is too long for a phone row) and the about starts with the commit subject.
 # The card has the key `landing-<commit>` and is posted once: a commit whose key is already on the board, live or archived,
 # is left alone, so a second run posts nothing. The status pill is "In progress" because a landing is on the trunk, not yet
@@ -21,6 +22,10 @@
 # gets its card, with no lanes listed.
 # The summary card (key `landings-<day>`) counts one UTC day's landings by gate kind and how many are live now; a sign-off card
 # cannot change once posted, so it says "as of" its time and the per-landing and go-live cards carry the detail.
+# Backfill: the first run in a home writes data/landing-card-since (the epoch it ran). A landing or go-live from before it gets no
+# card of its own (that would be a flood of old rows); each UTC day that has such landings gets the one summary card instead
+# (key `landings-<day>`, counting only those landings), posted once like any card. Everything after the marker is carded one by one.
+# A marker file holding 0 turns the backfill off.
 # The board is the one merge cards use (jg_board_file). JG_LANDING_CARD_SIGNOFF names the sign-off-axi command (tests).
 set -u
 case ${1:-} in check|run|summary) MODE=$1 ;; *) MODE='' ;; esac
@@ -35,6 +40,16 @@ SIGNOFF=${JG_LANDING_CARD_SIGNOFF:-sign-off-axi}
 command -v jq >/dev/null 2>&1 || exit 0
 command -v "$SIGNOFF" >/dev/null 2>&1 || exit 0
 BOARD=$(jg_board_file "$FMH") || exit 0
+# The backfill marker (see the header): written once, by the first check or run, before any card is posted.
+SINCE_FILE=$DATA/landing-card-since
+since=0
+if [ "$MODE" != summary ]; then
+  since=$(cat "$SINCE_FILE" 2>/dev/null || true)
+  if ! [[ $since =~ ^[0-9]+$ ]]; then
+    since=$(date +%s)
+    if ! { printf '%s\n' "$since" > "$SINCE_FILE.tmp$$" && mv -f "$SINCE_FILE.tmp$$" "$SINCE_FILE"; }; then rm -f -- "$SINCE_FILE.tmp$$"; exit 0; fi
+  fi
+fi
 [ -s "$DATA/trunk-landings.tsv" ] || { [ "$MODE" = check ] || echo 'landing-card: posted 0, 0 already on the board'; exit 0; }
 
 # gate_words <kind>: what the gate kind means, in plain words.
@@ -49,12 +64,21 @@ gate_words() {
   esac
 }
 
+# figures_words <gate field>: the gate's recorded figures (ran:<n or ->,failed:<n or ->,secs:<n>), in plain words.
+figures_words() {
+  local v=$1 ran failed secs
+  [[ $v =~ ^ran:([0-9]+|-),failed:([0-9]+|-),secs:([0-9]+)$ ]] || { echo 'Gate figures: not recorded.'; return; }
+  ran=${BASH_REMATCH[1]}; failed=${BASH_REMATCH[2]}; secs=${BASH_REMATCH[3]}
+  if [ "$ran" = - ]; then echo "The gate took $secs s and reported no script count."; else echo "$ran test scripts ran, $failed failed on the first run, the gate took $secs s."; fi
+}
+
 # proof_field <proofs row> <name>: the value of one name=value column of trunk-landing-proofs.tsv, else absent.
 proof_field() { printf '%s\n' "$1" | tr '\t' '\n' | sed -n "s/^$2=//p" | head -n 1 | grep . || echo absent; }
 
-# card_json <lane> <project> <commit> <epoch> <gate kind>: the evidence card for one landing, on stdout.
+# card_json <lane> <project> <commit> <epoch> <gate kind> [<extra column>]: the evidence card for one landing, on stdout.
 card_json() {
-  local id=$1 proj=$2 commit=$3 at=$4 kind=$5 subject title proofs verdict='not checked' when
+  local id=$1 proj=$2 commit=$3 at=$4 kind=$5 extra=${6:-} subject title proofs verdict='not checked' when stack=''
+  case $extra in batch-from=*) stack=' (one gate for its whole stack)' ;; esac
   subject=$(git -C "$FMH/projects/$proj" log -1 --format=%s "$commit" 2>/dev/null) || subject=
   [ -n "$subject" ] || subject='The commit is not in the local copy'
   case $kind in reverts-*) title="Reverted: ${id#revert-}" ;; *) title="Landed: $id" ;; esac
@@ -62,8 +86,8 @@ card_json() {
   [ "$(proof_field "$proofs" merge-card)" != present ] || verdict=$(jq -r '.verdict // "not checked"' "$DATA/$id/merge-card.json" 2>/dev/null | cut -c1-80)
   when=$(date -u -d "@$at" '+%Y-%m-%d %H:%M UTC' 2>/dev/null) || when=$at
   jq -n --arg key "landing-$commit" --arg commit "$commit" --arg title "$title" \
-    --arg about "$(printf '%s. Landed on the %s trunk at %s, not live yet. %s Test receipt: %s. Owner signature: %s. Done-done verdict: %s.' \
-      "${subject:0:200}" "$proj" "$when" "$(gate_words "$kind")" "$(proof_field "$proofs" receipt)" "$(proof_field "$proofs" signature)" "$verdict")" '
+    --arg about "$(printf '%s. Landed on the %s trunk at %s, not live yet. %s %s%s Test receipt: %s. Owner signature: %s. Done-done verdict: %s.' \
+      "${subject:0:200}" "$proj" "$when" "$(gate_words "$kind")" "$(figures_words "$(proof_field "$proofs" gate)")" "$stack" "$(proof_field "$proofs" receipt)" "$(proof_field "$proofs" signature)" "$verdict")" '
     def clean(max): gsub("[\u0000-\u0009\u000b-\u001f\u007f-\u009f]"; " ") | if length > max then .[:max - 3] + "..." else . end;
     {contract: 1, kind: "evidence", schema: 1, key: $key, title: ($title | clean(160)), about: ($about | clean(500)), link: $commit, status: "In progress"}'
 }
@@ -91,19 +115,22 @@ live_json() {
     {contract: 1, kind: "evidence", schema: 1, key: $key, title: ($title | clean(160)), about: ($about | clean(500)), link: $commit, status: "In progress"}'
 }
 
-# summary_json <day>: the one card for a UTC day's landings, on stdout.
+# summary_json <day> [<until epoch>]: the one card for a UTC day's landings (only those before <until> when given), on stdout.
 summary_json() {
-  local day=$1 id proj commit at kind _ total=0 first='' last='' pass=0 red=0 rev=0 other=0 live=0 lsha
+  local day=$1 until=${2:-} id proj commit at kind _ total=0 first='' last='' pass=0 red=0 rev=0 other=0 live=0 lsha closing
   while IFS=$'\t' read -r id proj commit at kind _; do
     [ "$(date -u -d "@$at" +%F 2>/dev/null)" = "$day" ] || continue
+    [ -z "$until" ] || [ "$at" -lt "$until" ] || continue
     total=$((total + 1)); [ -n "$first" ] || first=$at; last=$at
     case $kind in full|full-rerun) pass=$((pass + 1)) ;; full-tip-red) red=$((red + 1)) ;; reverts-*) rev=$((rev + 1)) ;; *) other=$((other + 1)) ;; esac
-    lsha=$(awk -F'\t' -v p="$proj" '$1 == p && $4 ~ /^live/ { s = $2 } END { print s }' "$DATA/trunk-live.tsv")
+    lsha=$(awk -F'\t' -v p="$proj" '$1 == p && $4 ~ /^live/ { s = $2 } END { print s }' "$DATA/trunk-live.tsv" 2>/dev/null)
     [ -z "$lsha" ] || ! git -C "$FMH/projects/$proj" merge-base --is-ancestor "$commit" "$lsha" 2>/dev/null || live=$((live + 1))
   done < "$DATA/trunk-landings.tsv"
   [ "$total" -gt 0 ] || return 1
+  if [ -n "$until" ]; then closing='These landed before the cards were posted one by one; later landings each have their own card.'
+  else closing='Each landing and go-live has its own card.'; fi
   jq -n --arg day "$day" --argjson total "$total" --arg first "$(date -u -d "@$first" +%H:%M)" --arg last "$(date -u -d "@$last" +%H:%M)" \
-    --arg asof "$(date -u '+%H:%M UTC')" --arg about "$pass passed every required test, $red failed only where the trunk was already red, $rev are reverts, $other other. $live of $total are live in the homes; $((total - live)) are not live yet. Each landing and go-live has its own card." '
+    --arg asof "$(date -u '+%H:%M UTC')" --arg about "$pass passed every required test, $red failed only where the trunk was already red, $rev are reverts, $other other. $live of $total are live in the homes; $((total - live)) are not live yet. $closing" '
     {contract: 1, kind: "evidence", schema: 1, key: ("landings-" + $day), title: ("Landed on " + $day + ": " + ($total | tostring) + " lanes"),
      about: ($total | tostring) + " landings from " + $first + " to " + $last + " UTC, as of " + $asof + ". " + $about, status: "In progress"}'
 }
@@ -117,12 +144,13 @@ post_card() {
 
 # land_cards: one card per landing row; live_cards: one per go-live row. Both skip a key already on the board, live or archived.
 land_cards() {
-  local id proj commit at kind _
-  while IFS=$'\t' read -r id proj commit at kind _; do
+  local id proj commit at kind extra
+  while IFS=$'\t' read -r id proj commit at kind extra; do
     [ -n "$commit" ] || continue
     [[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo "landing-card: $id has no full commit in trunk-landings.tsv; no card"; continue; }
+    [ "$at" -ge "$since" ] 2>/dev/null || continue
     if printf '%s\n' "$have" | grep -qxF "landing-$commit"; then already=$((already + 1)); continue; fi
-    card_json "$id" "$proj" "$commit" "$at" "$kind" > "$work/card.json" || { echo "landing-card: could not build the card for $id"; return 1; }
+    card_json "$id" "$proj" "$commit" "$at" "$kind" "$extra" > "$work/card.json" || { echo "landing-card: could not build the card for $id"; return 1; }
     post_card "$id" "$work/card.json" || return 1
   done < "$DATA/trunk-landings.tsv"
 }
@@ -134,10 +162,23 @@ live_cards() {
     case $status in live*) ;; *) continue ;; esac
     [[ $commit =~ ^[0-9a-f]{40}$ ]] || continue
     prev=${last[$proj]:-}; last[$proj]=$commit
+    [ "$at" -ge "$since" ] 2>/dev/null || continue
     if printf '%s\n' "$have" | grep -qxF "live-$commit"; then already=$((already + 1)); continue; fi
     live_json "$proj" "$commit" "$at" "$status" "$prev" > "$work/card.json" || { echo "landing-card: could not build the go-live card for ${commit:0:12}"; return 1; }
     post_card "go-live ${commit:0:12}" "$work/card.json" || return 1
   done < <(awk -F'\t' '$1 !~ /:/' "$DATA/trunk-live.tsv")
+}
+
+# backfill_cards: one summary card for each UTC day that has landings from before the marker; none when the marker is 0.
+backfill_cards() {
+  local k day
+  [ "$since" -gt 0 ] || return 0
+  while read -r k; do
+    day=$(date -u -d "@$((k * 86400))" +%F)
+    if printf '%s\n' "$have" | grep -qxF "landings-$day"; then already=$((already + 1)); continue; fi
+    summary_json "$day" "$since" > "$work/card.json" || continue
+    post_card "summary $day" "$work/card.json" || return 1
+  done < <(awk -F'\t' -v s="$since" '$4 ~ /^[0-9]+$/ && $4 < s { d[int($4 / 86400)] = 1 } END { for (k in d) print k }' "$DATA/trunk-landings.tsv" | sort -n)
 }
 
 have=$("$SIGNOFF" list "$BOARD" --json --full 2>/dev/null | jq -r '.decisions[]?.key // empty') || { echo "landing-card: could not read the board $BOARD"; exit 0; }
@@ -150,6 +191,6 @@ if [ "$MODE" = summary ]; then
   post_card "$DAY" "$work/card.json" && echo "landing-card: posted the card landings-$DAY"
   exit 0
 fi
-land_cards && live_cards
+backfill_cards && land_cards && live_cards
 [ "$MODE" = check ] || echo "landing-card: posted $posted, $already already on the board"
 exit 0

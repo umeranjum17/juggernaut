@@ -662,6 +662,9 @@ test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
   out=$(trunk land good 2>&1) || fail "a lane that adds no red must land on a red tip: $out"
   assert_contains "$out" "not charged to this lane" "the landing must say it set the tip's red aside"
   assert_contains "$out" "gate=full-tip-red" "the landing must record that the gate was set against the tip"
+  assert_contains "$(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")" "$(printf 'good\tproj\t%s' "$(tip)")" "the landing's proofs row must be the last one"
+  [[ $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv") =~ gate=ran:[1-9][0-9]*,failed:[1-9][0-9]*,secs:[0-9]+$ ]] \
+    || fail "the proofs row must keep the gate's scripts run, failed on the first run and seconds: $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "a landing that set red aside must not move the green pin"
   [ "$(grep -c . "$W/backlog-calls")" = 1 ] && [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the same tip tree is not reported twice"
   pass 'the full gate blocks only what the lane broke: new, worse and broken-passing scripts block; the tip'"'"'s own red lands, reported once'
@@ -864,6 +867,7 @@ test_a_landing_rebases_the_lane_by_itself() {
   assert_contains "$rows" "receipt=PASS@" "the sealed receipt is recorded with the landing"
   assert_contains "$rows" "signature=absent" "a missing signature is recorded as absent and never blocks"
   assert_contains "$rows" "merge-card=present" "the merge-card is recorded"
+  assert_contains "$rows" "gate=ran:-,failed:-,secs:" "a gate that prints no script summary is recorded with its seconds only"
   # A change that really conflicts is still refused, with its paths, and is never rebased dirty.
   lane x1 left; lane x2 right
   trunk land x1 >/dev/null 2>&1 || fail "x1 must land"
