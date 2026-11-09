@@ -21,6 +21,10 @@
 #   gate-verify           the same invariants, then the whole suite: `verify` runs it on a landed commit after
 #                         the landing, and a script that fails there and passes on the commit's parent
 #                         reverts that one commit by itself
+#                         gate-lint, gate-full and gate-verify defaults are Juggernaut's own suite: they apply only to a repository
+#                         that carries it (bin/jg-test-run.sh at the commit). Any other project runs only a gate its home set for it
+#                         (gate-verify@<project>, else gate-full@<project> for verify), and with none there is no gate: nothing runs and
+#                         nothing goes red (jg_trunk_gate).
 #   gate-rerun            bin/jg-test-run.sh --jobs 1   the command that reruns the scripts a failed full gate
 #                                     named, on the trunk tip's tree, to tell the tip's own red from the lane's;
 #                                     the script paths are appended to it
@@ -40,13 +44,34 @@ _JG_TRUNK_GATE_VERIFY='test -z "$(git ls-files -- data state config projects .no
 # shellcheck disable=SC2016 # the command substitution runs in the gate's shell, not here
 _JG_TRUNK_GATE_FULL="${_JG_TRUNK_GATE_VERIFY% --all}"' --required-shards HEAD^ "${JG_TRUNK_GATE_OUTPUT:-$(mktemp -d)}"'
 
-jg_trunk_policy() {  # <key> [<project>]
+# The value a home set for a key (key@project first, then key), empty when it set none.
+_jg_trunk_policy_set() {  # <key> [<project>]
   local key=$1 proj=${2-} file val=
   file="${JG_CONFIG_OVERRIDE:-${JG_HOME:-.}/config}/trunk-policy"
   if [ -r "$file" ]; then
     [ -z "$proj" ] || val=$(sed -n "s/^$key@$proj=//p" "$file" | tail -1)
     [ -n "$val" ] || val=$(sed -n "s/^$key=//p" "$file" | tail -1)
   fi
+  printf '%s' "$val"
+}
+
+# The gate command to run for one project at one commit, or nothing (status 1) when that project has no such gate.
+# The built-in gate-lint, gate-full and gate-verify defaults are Juggernaut's own suite, so they apply only to a
+# repository that carries it (the commit has bin/jg-test-run.sh). Any other project runs the gate its home set for it:
+# its own key, and for gate-verify its own gate-full when it set no gate-verify. With none set there is no gate and
+# nothing can go red for it.   Usage: jg_trunk_gate <gate-lint|gate-full|gate-verify> <project> <project-dir> <commit>
+jg_trunk_gate() {
+  local key=$1 proj=$2 dir=$3 commit=$4 val
+  val=$(_jg_trunk_policy_set "$key" "$proj")
+  [ -n "$val" ] || { [ "$key" != gate-verify ] || val=$(_jg_trunk_policy_set gate-full "$proj"); }
+  if [ -z "$val" ] && git -C "$dir" cat-file -e "$commit:bin/jg-test-run.sh" 2>/dev/null; then val=$(jg_trunk_policy "$key" "$proj"); fi
+  [ -n "$val" ] || return 1
+  printf '%s\n' "$val"
+}
+
+jg_trunk_policy() {  # <key> [<project>]
+  local key=$1 proj=${2-} val
+  val=$(_jg_trunk_policy_set "$key" "$proj")
   if [ -z "$val" ]; then
     case $key in
       trunk-branch) val=trunk ;;

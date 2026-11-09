@@ -503,7 +503,7 @@ landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's rec
 }
 
 land_candidate() {
-  local id=${1-} tip cand GATE_KIND=''
+  local id=${1-} tip cand gate GATE_KIND=''
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
   lane_meta "$id"
@@ -515,8 +515,9 @@ land_candidate() {
   cand=$LANE_CAND
   if [ -n "$LANE_LANDED" ]; then echo "already landed $id at $cand; not live"; return 0; fi
   # One fast check: the lint over the changed files, then the changed files' tests judged against the tip's own result.
-  run_gate "$cand" "$(pol gate-lint)" lint
-  full_gate "$cand" "$(pol gate-full)" "$tip" || exit 1
+  # Only a repository that carries Juggernaut's own suite gets its default gates; any other project runs the gates its home set for it, if any.
+  if gate=$(jg_trunk_gate gate-lint "$PN" "$PROJ" "$cand"); then run_gate "$cand" "$gate" lint; else echo "land: $PN has no lint gate; none run" >&2; fi
+  if gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand"); then full_gate "$cand" "$gate" "$tip" || exit 1; else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >&2; fi
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$tip" || refuse "$TRUNK changed while landing $id"
   put "$STATE/trunk-tip-$PN" "$cand"
   # A landing never moves the green pin: only `verify` (the whole suite, after the landing) does.
@@ -551,10 +552,12 @@ chain_on() {  # <top> <idx>...
 # (HEAD^ in a gate command is the commit under the stack, so HEAD~<n> is). Returns 0 green; 1 red, with BG_WHY and LAST_RED set.
 batch_gate() {  # <top> <stack size>   (B_TIP is the trunk tip the stack sits on)
   local rc=0 errf lint full
-  lint=$(pol gate-lint); full=$(pol gate-full)
+  lint=$(jg_trunk_gate gate-lint "$PN" "$PROJ" "$1" || true); full=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$1" || true)
   errf=$(mktemp)
-  ( run_gate "$1" "${lint//HEAD^/HEAD~$2}" lint ) 2>"$errf" || rc=$?
-  [ "$rc" -ne 0 ] || full_gate "$1" "${full//HEAD^/HEAD~$2}" "$B_TIP" 2>>"$errf" || rc=$?
+  ( [ -z "$lint" ] || run_gate "$1" "${lint//HEAD^/HEAD~$2}" lint ) 2>"$errf" || rc=$?
+  if [ "$rc" -ne 0 ]; then :
+  elif [ -n "$full" ]; then full_gate "$1" "${full//HEAD^/HEAD~$2}" "$B_TIP" 2>>"$errf" || rc=$?
+  else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >>"$errf"; fi
   cat "$errf" >&2
   [ "$rc" -eq 0 ] || LAST_RED=$(grep -E '^(REFUSED|error):' "$errf" | tail -n 1 | sed 's/^[A-Za-z]*: //')
   rm -f -- "$errf"
@@ -740,21 +743,21 @@ revert_commit() {  # <sha> <reason>
 # can charge to one commit stops landings until a fixes-red commit lands.
 # The commit of a landed batch that caused the red its top commit shows: the lowest commit of <from>..<top> whose whole suite
 # already fails against <from> (halving, so a few whole-suite runs, and only on a red). Prints nothing when it cannot be found.
-batch_culprit() {  # <from> <top>
-  local from=$1 lo=1 hi mid rc c
+batch_culprit() {  # <from> <top> <verify gate>
+  local from=$1 gate=$3 lo=1 hi mid rc c
   local -a cs
   mapfile -t cs < <(git -C "$PROJ" rev-list --reverse "$from..$2")
   hi=${#cs[@]}; [ "$hi" -gt 1 ] || return 0
   while [ "$lo" -lt "$hi" ]; do
     mid=$(( (lo + hi) / 2 )); rc=0; c=${cs[mid-1]}
-    full_gate "$c" "$(pol gate-verify)" "$from" || rc=$?
+    full_gate "$c" "$gate" "$from" || rc=$?
     case $rc in 0) lo=$((mid + 1)) ;; 2) hi=$mid ;; *) return 0 ;; esac
   done
   printf '%s\n' "${cs[lo-1]}"
 }
 
 cmd_verify() {
-  local sha tip rc=0 parent green why from culprit=
+  local sha tip rc=0 parent green why from culprit='' gate
   open_project "${1-}"; lock "$STATE/.trunk-verify-$PN.lock"
   lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   sha=$tip; [ -z "${2-}" ] || sha=$(rev "$2") || die "'${2-}' does not resolve in $PROJ"
@@ -764,8 +767,11 @@ cmd_verify() {
   # The top of a batch is judged against the trunk before the batch (its row says where that was), so one run covers the whole stack.
   from=$(awk -F'\t' -v c="$sha" '$3 == c && $6 ~ /^batch-from=/ { f = substr($6, 12) } END { print f }' "$DATA/trunk-landings.tsv" 2>/dev/null || true)
   if [ -n "$from" ] && git -C "$PROJ" merge-base --is-ancestor "$from" "$sha"; then parent=$from; else from=; fi
-  if [ -n "$parent" ]; then full_gate "$sha" "$(pol gate-verify)" "$parent" || rc=$?
-  else run_gate "$sha" "$(pol gate-verify)" full || rc=$?; fi
+  if ! gate=$(jg_trunk_gate gate-verify "$PN" "$PROJ" "$sha"); then
+    # No gate for this project (not Juggernaut, and neither gate-verify@$PN nor gate-full@$PN set): nothing can fail, so nothing goes red.
+    echo "verify: no verify gate for $PN (no gate-verify@$PN or gate-full@$PN); nothing run, nothing marked red" >&2
+  elif [ -n "$parent" ]; then full_gate "$sha" "$gate" "$parent" || rc=$?
+  else run_gate "$sha" "$gate" full || rc=$?; fi
   case $rc in
     0)
       [ "${GATE_KIND:-full}" = full ] || { echo "verify: ${sha:0:12} passed only with a flaky or pre-existing red set aside; the green pin stays" >&2; return 0; }
@@ -777,7 +783,7 @@ cmd_verify() {
       echo "trunk green at ${sha:0:12}" ;;
     2)
       why="the whole suite fails on it where its parent ${parent:0:12} passes"
-      [ -z "$from" ] || culprit=$(batch_culprit "$from" "$sha")
+      [ -z "$from" ] || culprit=$(batch_culprit "$from" "$sha" "$gate")
       if [ -n "$culprit" ] && [ "$culprit" != "$sha" ]; then
         why="the whole suite fails on it where the trunk before its batch ${from:0:12} passes"
         if revert_commit "$culprit" "$why"; then exit 1; fi

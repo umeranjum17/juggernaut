@@ -748,6 +748,43 @@ test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes
 test_admission_is_shared_by_manual_and_automatic_requests
 
 test_legacy_mode_stays_interoperable
+# shellcheck disable=SC2016 # the policy lines are written out verbatim and expand when the gate runs them
+test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates() {
+  local out rc=0 sha lib="$ROOT/bin/jg-trunk-policy-lib.sh"
+  world foreign
+  rm -f "$HOME_D/config/trunk-policy"  # no override at all: the built-in defaults decide, and they are Juggernaut's own suite
+  # The fixture tracks a file under data/, which Juggernaut's own invariant would reject silently (an empty log, a red pin).
+  lane f1 one data/notes.txt
+  out=$(trunk land f1 2>&1) || fail "a project with no gates set must land with none run: $out"
+  assert_contains "$out" "no landing gate" "the landing must say it ran no gate"
+  assert_contains "$(cat "$HOME_D/data/trunk-landings.tsv")" "no-gate" "the landing must record that no gate ran"
+  sha=$(tip)
+  out=$(trunk verify "$PROJ" "$sha" 2>&1) || fail "verify with no gate must not fail: $out"
+  assert_contains "$out" "no verify gate for proj" "verify must say it had no gate"
+  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "no gate means nothing can go red"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$sha" ] || fail "verify with no gate must leave the trunk green so the home can go on"
+  # A red pin the old default wrote is cleared by running verify again, and landings resume.
+  printf '%s\n' "$sha" > "$HOME_D/state/trunk-red-proj"; rm -f "$HOME_D/state/trunk-green-proj"
+  trunk verify "$PROJ" "$sha" >/dev/null 2>&1 || fail "verify must clear a red pin the removed default wrote"
+  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "verify must clear that red pin"
+  # The project's own gate-full is its verify gate when it set no gate-verify; its own gate-verify wins over it; both fail for real.
+  printf 'gate-full@proj=test ! -e BAD\n' > "$HOME_D/config/trunk-policy"
+  out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$HOME_D/config' jg_trunk_gate gate-verify proj '$PROJ' trunk")
+  [ "$out" = 'test ! -e BAD' ] || fail "a project with only gate-full@proj must verify with it, got '$out'"
+  printf 'gate-full@proj=true\ngate-verify@proj=false\n' > "$HOME_D/config/trunk-policy"
+  out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$HOME_D/config' jg_trunk_gate gate-verify proj '$PROJ' trunk")
+  [ "$out" = false ] || fail "gate-verify@proj must win over gate-full@proj, got '$out'"
+  rc=0; trunk verify "$PROJ" "$sha" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a project's own failing gate-verify must still fail verify"
+  # A repository that carries Juggernaut's own suite keeps the built-in defaults.
+  mkdir -p "$W/self/bin"; : > "$W/self/bin/jg-test-run.sh"; git init -q "$W/self"; git -C "$W/self" add -A
+  git -C "$W/self" -c user.name=t -c user.email=t@example.invalid commit -q -m self
+  out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$W/none' jg_trunk_gate gate-verify self '$W/self' HEAD")
+  assert_contains "$out" "bin/jg-test-run.sh --all" "the Juggernaut repository must keep its built-in verify gate"
+  out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$W/none' jg_trunk_gate gate-verify proj '$PROJ' trunk") && fail "another project must have no built-in gate, got '$out'"
+  pass 'a project that is not Juggernaut runs only the gates its home set for it, and none clears its red pin'
+}
+
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_the_gates_are_policy_keys_with_fast_defaults() {
   local key
@@ -963,6 +1000,7 @@ test_the_watcher_runs_the_landing_check_on_its_fast_tick
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
 test_the_gates_are_policy_keys_with_fast_defaults
+test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates
 test_a_landing_rebases_the_lane_by_itself_and_no_seal_blocks_it
 test_three_lanes_land_in_order_a_red_one_is_refused_and_a_post_land_red_is_reverted
 test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected
