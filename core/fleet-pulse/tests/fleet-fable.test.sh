@@ -3,7 +3,8 @@
 # Journey: an old-style pulse check with the inline Fable block wakes for a fable-* task the guard
 # allows (the reported bug); wiring.sh retargets the block onto bin/fleet-fable.sh, and the same
 # check then stays quiet for that task and still wakes for a task the list does not name, for a
-# session no task owns, and once the guard copy is too old to answer. Disposable homes, session
+# session no task owns, and once the guard copy is too old to answer. The check stays registered
+# through each retarget, even one whose 2h report step then refuses. Disposable homes, session
 # logs, Claude config and guard install only.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -23,7 +24,11 @@ guard=$(bash "$root/claude-model-guard/wiring.sh" --where)
 printf '# Juggernaut research on Fable\nfable-*\n' >"${guard%/*}/allow-tasks"
 
 main=$d/main lead=$d/lead
-mkdir -p "$main/state" "$main/data" "$lead/state"
+mkdir -p "$main/bin" "$main/state" "$main/data" "$lead/state"
+# The home's register script is this checkout's; accepted is the gate the watcher applies to a state check.
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$root/../bin/jg-check-register.sh" >"$main/bin/jg-check-register.sh"
+chmod +x "$main/bin/jg-check-register.sh"
+accepted() { bash -c '. "$1/bin/jg-pr-lib.sh"; . "$1/bin/jg-check-lib.sh"; jg_custom_check_registered "$2" fleet-pulse' _ "$root/.." "$1/state"; }
 printf -- '- lead - research (home: %s; scope: x)\n' "$lead" >"$main/data/squad_leads.md"
 task() { # task <home> <id>: a task record whose worktree is $d/wt/<id>
   mkdir -p "$d/wt/$2"
@@ -53,6 +58,9 @@ if [ -n "\$fab" ] && { [ ! -f "\$FM" ] || [ \$((now - \$(stat -c %Y "\$FM"))) -g
 fi
 echo later
 EOF
+chmod 700 "$main/state/fleet-pulse.check.sh"
+cp "$main/state/fleet-pulse.check.sh" "$d/old-check.sh"
+JG_HOME=$main "$main/bin/jg-check-register.sh" fleet-pulse >/dev/null
 
 # 1) The bug: an allowed fable-* task wakes the old check.
 session "$d/wt/fable-research" wt-fable-research
@@ -66,6 +74,7 @@ if grep -q 'fleet-fable.sh' "$main/state/fleet-pulse.check.sh" && ! grep -qF 'fa
 else
   no wiring-retargets-fable-block
 fi
+if accepted "$main"; then ok watcher-accepts-retargeted-check; else no watcher-accepts-retargeted-check; fi
 before=$(sha256sum <"$main/state/fleet-pulse.check.sh")
 bash "$root/fleet-pulse/wiring.sh" "$main" >/dev/null
 if [ "$before" = "$(sha256sum <"$main/state/fleet-pulse.check.sh")" ]; then ok wiring-rerun-unchanged; else no wiring-rerun-unchanged; fi
@@ -103,6 +112,18 @@ session "$d/wt/fric-other" wt-fric-other
 mv "$guard" "$d/guard.off"
 got=$(pulse)
 if [ "$got" = later ]; then ok no-guard-quiet; else no "no-guard-quiet (got: $got)"; fi
+
+# 9) A run that retargets the Fable block and then refuses the 2h report (not every block in the known form)
+#    exits 1 and still leaves the check it edited registered.
+part=$d/part
+mkdir -p "$part/state"
+cp -r "$main/bin" "$part/"
+{ grep -v '^echo later$' "$d/old-check.sh"; echo "echo 'fleet-pulse 2h (landings = merged PRs; '"; } >"$part/state/fleet-pulse.check.sh"
+chmod 700 "$part/state/fleet-pulse.check.sh"
+JG_HOME=$part "$part/bin/jg-check-register.sh" fleet-pulse >/dev/null
+rc=0; bash "$root/fleet-pulse/wiring.sh" "$part" >/dev/null 2>&1 || rc=$?
+if [ "$rc" = 1 ] && grep -q 'fleet-fable.sh' "$part/state/fleet-pulse.check.sh"; then ok partial-run-edits-and-refuses; else no "partial-run-edits-and-refuses (rc=$rc)"; fi
+if accepted "$part"; then ok watcher-accepts-partly-retargeted-check; else no watcher-accepts-partly-retargeted-check; fi
 
 [ "$fail" -eq 0 ] || exit 1
 echo PASS fleet-fable

@@ -5,10 +5,13 @@
 # open unknown and counts closed, unkeyed and parent-owned asks. wiring.sh retargets it; run again, it reads
 # the trunk records (landed, live, rtl), counts only open keyed lead asks to Main, reads the open row from
 # core/fleet-flow, and a merged-PR home still counts its merged PRs. Direct cases pin trunk-pulse.sh's
-# pin-back, release and no-records rules. Throwaway HOME, XDG and TMPDIR; gh is a stub; nothing real is read.
+# pin-back, release and no-records rules. The check starts registered, as a live home's is, and the watcher's own
+# gate (bin/jg-check-lib.sh) accepts it after the retarget with no hand registration.
+# Throwaway HOME, XDG and TMPDIR; gh is a stub; nothing real is read.
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 feature=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+repo=$(cd "$feature/../.." && pwd -P)
 d=$(mktemp -d)
 trap 'rm -rf -- "$d"' EXIT
 export HOME=$d/user XDG_CACHE_HOME=$d/cache TMPDIR=$d/tmp
@@ -116,7 +119,15 @@ done < "$MAIN/config/homes.tsv"
 echo "fleet-pulse 2h (landings = merged PRs; open target 4, ! = over, UNDER = free slots with ready work; rule words 1):$line - answer lead asks over 2 h"
 EOF
 sed -i -e "s|__MAIN__|'$main'|" -e "s|__NOW__|$now|" "$main/state/fleet-pulse.check.sh"
-chmod +x "$main/state/fleet-pulse.check.sh"
+chmod 700 "$main/state/fleet-pulse.check.sh"
+# The home's register script is this checkout's; the check is registered before the wiring, as on a live home.
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$repo/bin/jg-check-register.sh" > "$main/bin/jg-check-register.sh"
+chmod +x "$main/bin/jg-check-register.sh"
+JG_HOME=$main "$main/bin/jg-check-register.sh" fleet-pulse >/dev/null
+accepted() {  # the gate the watcher applies before it runs a state check
+  bash -c '. "$1/bin/jg-pr-lib.sh"; . "$1/bin/jg-check-lib.sh"; jg_custom_check_registered "$2" fleet-pulse' _ "$repo" "$main/state"
+}
+pass_if registered-before-wiring accepted
 
 echo "== before: the old 2h report is blind to the trunk"
 before=$("$main/state/fleet-pulse.check.sh")
@@ -132,6 +143,7 @@ expect dry-run-names-blocks 'onto the trunk era: landed landed-line legend flow 
 pass_if dry-run-writes-nothing test "$copy" = "$(cat "$main/state/fleet-pulse.check.sh")"
 "$feature/wiring.sh" "$main"
 pass_if retargeted-check-parses bash -n "$main/state/fleet-pulse.check.sh"
+pass_if watcher-accepts-retargeted-check accepted
 again=$("$feature/wiring.sh" "$main")
 pass_if rerun-is-silent test -z "$again"
 

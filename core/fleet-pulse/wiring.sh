@@ -7,6 +7,8 @@
 # merged-PR count), asks>2h from bin/lead-asks.sh, and the open/working/dry row from
 # ../fleet-flow/bin/jg-flow-check.sh with JG_MAIN_HOME set to this home. A check that has the report but not
 # every block in the known form is left as it is, and the blocks it lacks are named (exit 1).
+# A run that changed the check's bytes re-registers it with the home's bin/jg-check-register.sh before it exits,
+# even when a later block then fails, so the watcher keeps accepting the check it runs.
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -24,6 +26,19 @@ home=$(cd "$1" && pwd -P)
 feature=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 check=$home/state/fleet-pulse.check.sh
 [ -f "$check" ] || exit 0
+register=$home/bin/jg-check-register.sh
+if [ "$DRY" -eq 0 ]; then
+  [ -x "$register" ] || { echo "fleet-pulse wiring: $home has no bin/jg-check-register.sh; $check left as it is" >&2; exit 1; }
+  before=$(sha256sum <"$check")
+  rebind() {  # the watcher runs a check only while its bytes match their registration
+    local rc=$?
+    if [ "$(sha256sum <"$check")" != "$before" ]; then
+      env -u JG_STATE_OVERRIDE JG_HOME="$home" "$register" fleet-pulse || rc=1
+    fi
+    exit "$rc"
+  }
+  trap rebind EXIT
+fi
 
 # One line per old inline wake: <name> <the marker it still carries> <the script it calls instead>.
 retargets=(
