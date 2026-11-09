@@ -28,6 +28,8 @@ trap 'stop_live; jg_test_cleanup' EXIT
 
 OLD=$(( $(date +%s) - 5 * 86400 ))
 old() { jg_touch_epoch "$OLD" -h "$@"; }
+HOURS3=$(( $(date +%s) - 3 * 3600 ))
+HOUR1=$(( $(date +%s) - 3600 ))
 
 # Stale and allowlisted: the sweep must remove these.
 mkdir -p "$R/tmp.old/sub" "$R/crewhouse-apply.old" "$R/claude-1000/-slug-gone" "$R/opencode" \
@@ -45,6 +47,12 @@ touch "$R/tmp.newinside/new" "$R/tmp.livefd/held" "$R/plan-old/f"
 ln -s "$OUTSIDE" "$R/tmp.oldlink"
 printf 'worktree=/fake/wt/lane-alpha\nkind=ship\n' >"$H/state/lane-alpha.meta"
 
+# Browser and render scratch is stale after 2 hours, the other names after a day; a live profile stays.
+mkdir -p "$R/com.google.Chrome.old" "$R/com.google.Chrome.fresh" "$R/first-draft-render-old" "$R/org.chromium.Chromium.live" \
+  "$R/tmp.threehours"
+touch "$R/com.google.Chrome.old/SingletonSocket" "$R/first-draft-render-old/f" "$R/org.chromium.Chromium.live/f" \
+  "$R/tmp.threehours/f" "$R/claude-1000/scratch-3h.log"
+
 # Age everything stale last, so creating children above cannot refresh a parent.
 for p in tmp.old/locked/hook tmp.old/locked tmp.old/sub/f tmp.old/link-out tmp.old/sub tmp.old tmp.oldfile tmp.oldlink crewhouse-apply.old \
   claude-accounts.old claude-1000/old.png claude-1000/-slug-gone claude-1000/-fake-wt-lane-alpha \
@@ -54,18 +62,24 @@ for p in tmp.old/locked/hook tmp.old/locked tmp.old/sub/f tmp.old/link-out tmp.o
   old "$R/$p"
 done
 old "$R/claude-1000/-slug-busy" "$R/claude-1000" "$R/opencode"
+jg_touch_epoch "$HOURS3" -h "$R/com.google.Chrome.old/SingletonSocket" "$R/com.google.Chrome.old" "$R/first-draft-render-old/f" \
+  "$R/first-draft-render-old" "$R/org.chromium.Chromium.live/f" "$R/org.chromium.Chromium.live" \
+  "$R/tmp.threehours/f" "$R/tmp.threehours" "$R/claude-1000/scratch-3h.log"
+jg_touch_epoch "$HOUR1" -h "$R/com.google.Chrome.fresh"
 # sess-new is made fresh after aging: a project with a recent session is still entered.
 touch "$R/claude-1000/-slug-busy/sess-new/f"
 
 ( cd "$R/tmp.livecwd" && exec sleep 600 ) & LIVE_PIDS="$LIVE_PIDS $!"
 ( exec 9<"$R/tmp.livefd/held"; exec sleep 600 ) & LIVE_PIDS="$LIVE_PIDS $!"
 ( cd "$R/claude-1000/-slug-busy/sess-live" && exec sleep 600 ) & LIVE_PIDS="$LIVE_PIDS $!"
+( cd "$R/org.chromium.Chromium.live" && exec sleep 600 ) & LIVE_PIDS="$LIVE_PIDS $!"
 sleep 1
 
-survivors="tmp.fresh tmp.newinside tmp.livecwd tmp.livefd tmp.oldlink plan-old claude-1000 opencode
+survivors="com.google.Chrome.fresh org.chromium.Chromium.live tmp.threehours tmp.fresh tmp.newinside tmp.livecwd tmp.livefd tmp.oldlink plan-old claude-1000 opencode
 claude-1000/-fake-wt-lane-alpha claude-1000/-slug-fresh
 claude-1000/-slug-busy claude-1000/-slug-busy/sess-live claude-1000/-slug-busy/sess-new claude-1000/-fake-wt-lane-alpha/sess-ended"
-removed="tmp.old tmp.oldfile crewhouse-apply.old claude-accounts.old claude-1000/old.png claude-1000/-slug-gone opencode/old.log claude-1000/-slug-busy/sess-ended"
+removed="tmp.old tmp.oldfile crewhouse-apply.old claude-accounts.old claude-1000/old.png claude-1000/-slug-gone opencode/old.log claude-1000/-slug-busy/sess-ended
+com.google.Chrome.old first-draft-render-old claude-1000/scratch-3h.log"
 
 # --- dry run: lists, removes nothing ---------------------------------------
 dry=$(JG_HOME=$H "$SWEEP" sweep --root "$R" 2>&1) || fail "dry run exited nonzero: $dry"
@@ -73,7 +87,7 @@ for p in $removed; do
   printf '%s\n' "$dry" | grep -Fx -- "would remove $R/$p" >/dev/null || fail "dry run lists stale $p"
   assert_present "$R/$p" "dry run must not remove $p"
 done
-assert_contains "$dry" "would remove 8 entries" "dry run counts exactly the eight stale entries"
+assert_contains "$dry" "would remove 11 entries" "dry run counts exactly the eleven stale entries"
 for p in $survivors; do
   ! printf '%s\n' "$dry" | grep -Fx -- "would remove $R/$p" >/dev/null || fail "dry run must not list $p"
 done
@@ -85,8 +99,11 @@ out=$(JG_HOME=$H "$SWEEP" sweep --apply --root "$R" 2>&1) || fail "sweep exited 
 for p in $removed; do assert_absent "$R/$p" "sweep removes stale $p"; done
 for p in $survivors; do assert_present "$R/$p" "sweep keeps $p"; done
 assert_present "$OUTSIDE/keep.txt" "sweep never follows a symlink out of the root"
-assert_contains "$out" "removed 8 entries" "sweep reports what it removed"
-assert_contains "$out" "live-process=4" "sweep reports the process-held entries and the live project and session"
+assert_contains "$out" "removed 11 entries" "sweep reports what it removed"
+assert_contains "$out" "live-process=5" "sweep reports the process-held entries and the live project and session"
+assert_contains "$out" "removed by prefix:" "sweep reports the removed count by prefix"
+assert_contains "$out" "com=1" "sweep counts the Chrome leftover by prefix"
+assert_contains "$out" "first=1" "sweep counts the render leftover by prefix"
 assert_contains "$out" "live-lane=1" "sweep reports the lane-owned entry"
 pass "sweep removes the stale entries and keeps live, lane-owned, symlinked and off-allowlist ones"
 
