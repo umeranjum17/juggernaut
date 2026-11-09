@@ -41,7 +41,10 @@ worktree or explicit home path for the process's working directory.
 A matching JG_TASK_ID must also qualify against that task's recorded worktree or
 explicit home; an ID alone never establishes ownership, and unmatched processes
 are named by command and PID rather than interrupted.
-Home identity comes from each --state-dir HOME DIR pair, never DIR's parent.
+Home identity comes from each --state-dir HOME DIR pair, never DIR's parent, and
+each local squad_lead record read there adds its recorded home and HOME/state in
+turn, so one pair covers the whole local tree below it. Records are read only
+when consumers are named: plain mode, or an ALERT under --record.
 Explicit homes aggregate lead processes even without ordinary task records; a
 local squad_lead's home remains owned by its parent-recorded squad_lead task.
 RSS includes shared pages per process, so these totals rank consumers rather than
@@ -63,6 +66,7 @@ DEFAULTS = {"wait_pressure": 20.0, "wait_available_gb": 12.0, "alert_pressure": 
 KEEP_ROWS = 8640
 CGROUP_ROOT = os.environ.get("JG_HOST_MEMORY_CGROUP_ROOT") or "/sys/fs/cgroup"
 GIB_KB = 1048576
+LEAD_KINDS = ("squad_lead", "secondmate")  # secondmate: a record written before the rename (bin/jg-compat.sh)
 
 
 def die(msg):
@@ -174,16 +178,41 @@ def read_meta(path):
     return meta
 
 
+def records(state_dirs):
+    """The local task records of the listed homes and of every local squad_lead home they record.
+
+    Walks each squad_lead record's home and that home's state directory in turn, so the
+    whole local tree below a listed home is read once, and only when consumers are named.
+    Returns ([(state dir, task ID, record)], {state dir: home}), paths resolved.
+    """
+    homes, metas, queue = {}, [], list(state_dirs)
+    while queue:
+        home, d = queue.pop(0)
+        d = os.path.realpath(d)
+        if d in homes:
+            continue
+        homes[d] = os.path.realpath(home)
+        if not os.path.isdir(d):
+            continue
+        for f in sorted(os.listdir(d)):
+            if not f.endswith(".meta"):
+                continue
+            m = read_meta(os.path.join(d, f))
+            if m.get("remote_host"):
+                continue
+            metas.append((d, f[:-5], m))
+            if m.get("kind") in LEAD_KINDS and m.get("home"):
+                queue.append((m["home"], os.path.join(m["home"], "state")))
+    return metas, homes
+
+
 def owners(state_dirs):
     """Home-qualified owners, indexed by recorded paths and task IDs."""
-    homes = {os.path.realpath(d): os.path.realpath(home) for home, d in state_dirs}
-    metas = [(d, f[:-5], read_meta(os.path.join(d, f)))
-             for _, d in state_dirs if os.path.isdir(d) for f in sorted(os.listdir(d)) if f.endswith(".meta")]
-    metas = [(d, tid, m) for d, tid, m in metas if not m.get("remote_host")]
-    lead_of = {os.path.realpath(m["home"]): tid for _, tid, m in metas if m.get("kind") == "squad_lead" and m.get("home")}
+    metas, homes = records(state_dirs)
+    lead_of = {os.path.realpath(m["home"]): tid for _, tid, m in metas if m.get("kind") in LEAD_KINDS and m.get("home")}
     paths, tasks = [], {}
     for d, tid, m in metas:
-        if m.get("kind") == "squad_lead":
+        if m.get("kind") in LEAD_KINDS:
             if m.get("home"):
                 owner = (os.path.realpath(d), tid, f"lead {tid}")
                 tasks.setdefault(tid, []).append(owner)

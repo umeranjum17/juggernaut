@@ -209,6 +209,9 @@ journeys:
     command: bash journeys/remote-squad-lead-lifecycle.sh
   unit-claim:
     command: bash journeys/unit-claim.sh
+  host-memory-sampler-cpu:
+    command: bash journeys/host-memory-sampler-cpu.sh
+    timeout: 10m
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

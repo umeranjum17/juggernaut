@@ -65,24 +65,14 @@ jg_memory_sampler_interrupt() {
 }
 
 jg_memory_sampler_tick() {
-  local out d meta home root child_state task reason action epoch stop=0 latch="$STATE/.host-memory-alerted" lead=0
+  local out root task reason action epoch stop=0 latch="$STATE/.host-memory-alerted" lead=0
+  # The guard walks the squad_lead homes below these itself, and only when it names consumers,
+  # so an ordinary tick reads no task record.
   local -a dirs=(--state-dir "$JG_HOME" "$STATE")
-  jg_local_juggernaut_state_dirs "$STATE" 2>/dev/null || JG_LOCAL_JUGGERNAUT_STATES=("$STATE")
   if root=$(jg_juggernaut_root_home "$JG_HOME") && [ ! "$root" -ef "$JG_HOME" ]; then
     dirs+=(--state-dir "$root" "$root/state")
     lead=1
   fi
-  for d in "${JG_LOCAL_JUGGERNAUT_STATES[@]}"; do
-    for meta in "$d"/*.meta; do
-      [ "$(jg_meta_get "$meta" kind)" = squad_lead ] || continue
-      home=$(jg_meta_get "$meta" home)
-      [ -n "$home" ] && [ ! "$home" -ef "$JG_HOME" ] || continue
-      for child_state in "${JG_LOCAL_JUGGERNAUT_STATES[@]}"; do
-        [ "$child_state" -ef "$home/state" ] || continue
-        dirs+=(--state-dir "$home" "$child_state")
-      done
-    done
-  done
   out=$("$SAMPLER_DIR/jg-jev-mem-guard.sh" --config "$CONFIG/host-memory" --record "$STATE/host-memory.tsv" --owned-top-task "$STATE" "${dirs[@]}" 2>&1) || {
     printf 'host memory guard failed: %s\n' "$out" >&2
     return 0
