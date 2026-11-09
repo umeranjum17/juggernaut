@@ -16,6 +16,17 @@
 # "supervision-host:" line other than the park boundary passes through as a
 # wake; the boundary alone is the ordinary quiet checkpoint. On a home that
 # does not run the host nothing below changes.
+#
+# CADENCE MARKER AND OWN BOUND. Every run writes state/.checkpoint-cadence
+# (cadence=<seconds>, phase=<running|wake|quiet|hard-bound>) at its start and
+# again as it ends, whatever the harness; bin/jg-supervision-lib.sh reads it so a
+# lead between two checkpoints is healthy for the cadence plus the guard grace,
+# and alarms once past it. A checkpoint also bounds itself: the child it runs
+# gets its signal at the bound, and KILL after a grace (JG_CHECKPOINT_KILL_GRACE,
+# default 10 seconds for the host; the watcher keeps its own cleanup bound), so a
+# child that ignores the signal cannot hold the checkpoint open. The host's outer
+# bound adds JG_CHECKPOINT_HOST_GRACE (default 120). A bound that fired is
+# recorded as phase=hard-bound and reported on stderr with exit 1.
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
 _jg_d=${BASH_SOURCE[0]%/*}
 [ "$_jg_d" != "${BASH_SOURCE[0]}" ] || _jg_d=.
@@ -94,7 +105,26 @@ ERR=$(mktemp "${TMPDIR:-/tmp}/jg-watch-checkpoint.err.XXXXXX") || {
   rm -f "$OUT"
   exit 1
 }
-trap 'rm -f "$OUT" "$ERR"' EXIT
+
+# write_marker <cadence> <phase>: the harness-agnostic liveness record a lead's
+# supervision status reads (bin/jg-supervision-lib.sh). A failed write never
+# fails the checkpoint: without it the lead reads as before.
+MARKER="$STATE/.checkpoint-cadence"
+MARKER_CADENCE=$SECONDS_ARG
+MARKER_PHASE=running
+write_marker() {  # <cadence> <phase>
+  local tmp="$MARKER.$$"
+  [ ! -L "$MARKER" ] || return 0
+  { printf 'cadence=%s\nphase=%s\n' "$1" "$2" > "$tmp" && mv -f "$tmp" "$MARKER"; } 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  return 0
+}
+finish() {
+  rm -f "$OUT" "$ERR"
+  write_marker "$MARKER_CADENCE" "$MARKER_PHASE"
+}
+trap finish EXIT
+mkdir -p "$STATE" 2>/dev/null || true
+write_marker "$MARKER_CADENCE" running
 
 run_with_perl_timeout() {  # <seconds> <signal> <kill-after-seconds> <command...>
   perl -e '
@@ -133,18 +163,8 @@ run_with_perl_timeout() {  # <seconds> <signal> <kill-after-seconds> <command...
 }
 
 run_bounded() {  # <seconds> <signal> <kill-after-seconds> <command...>
-  local seconds=$1 signal=$2 kill_after=$3 cleanup_lock_bound
+  local seconds=$1 signal=$2 kill_after=$3
   shift 3
-  if [ "$kill_after" -gt 0 ]; then
-    cleanup_lock_bound=${JG_WATCHER_CLEANUP_LOCK_BOUND:-2}
-    case "$cleanup_lock_bound" in
-      ''|*[!0-9]*) cleanup_lock_bound=2 ;;
-      *) cleanup_lock_bound=$((10#$cleanup_lock_bound)) ;;
-    esac
-    [ "$cleanup_lock_bound" -gt 0 ] || cleanup_lock_bound=2
-    [ "$cleanup_lock_bound" -gt "$kill_after" ] || cleanup_lock_bound=$kill_after
-    kill_after=$cleanup_lock_bound
-  fi
   if command -v timeout >/dev/null 2>&1; then
     if [ "$kill_after" -gt 0 ]; then
       timeout --signal="$signal" --kill-after="${kill_after}s" "$seconds" "$@"
@@ -166,6 +186,9 @@ positive_or() {  # <value> <default>
   case "$1" in ''|0*|*[!0-9]*) printf '%s\n' "$2" ;; *) printf '%s\n' "$1" ;; esac
 }
 
+# bound_hit <status>: 0 when a bounded child ended by the bound (124) or by the KILL after it (137).
+bound_hit() { [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; }
+
 # shellcheck source=bin/jg-supervision-engine-lib.sh
 . "$SCRIPT_DIR/jg-supervision-engine-lib.sh"
 if jg_supervision_host_enabled "$CONFIG" codex; then
@@ -178,40 +201,51 @@ if jg_supervision_host_enabled "$CONFIG" codex; then
   # The host's park boundary stays below the 28800-second registration.
   [ "$BOUND" -lt 27000 ] 2>/dev/null || BOUND=27000
   LIMIT=$(( BOUND + $(positive_or "${JG_SUPERVISION_HOST_TURN_TIMEOUT:-}" 1200) + $(positive_or "${JG_SUPERVISION_ENGINE_GRACE:-}" 30) ))
+  MARKER_CADENCE=$BOUND
+  write_marker "$MARKER_CADENCE" running
   set +e
   # The host ends its own park; the outer bound only catches a host that
-  # outlived every one of its own bounds.
+  # outlived every one of its own bounds, and KILL follows TERM so a host that
+  # ignores TERM cannot hold the checkpoint open.
   JG_SUPERVISION_HOST_PRIMARY=codex JG_SUPERVISION_HOST_PARK_SECONDS=$BOUND JG_SUPERVISION_HOST_PARK_LIMIT=$LIMIT \
-    run_bounded $((LIMIT + 120)) TERM 0 "$SCRIPT_DIR/jg-supervision-host.sh" park >"$OUT" 2>"$ERR"
+    run_bounded $((LIMIT + $(positive_or "${JG_CHECKPOINT_HOST_GRACE:-}" 120))) TERM \
+    "$(positive_or "${JG_CHECKPOINT_KILL_GRACE:-}" 10)" "$SCRIPT_DIR/jg-supervision-host.sh" park >"$OUT" 2>"$ERR"
   RC=$?
   set -e
   if grep -E '^(signal:|stale:|check:|heartbeat($|:)|supervision-host:)' "$OUT" 2>/dev/null \
     | grep -Ev '^supervision-host: cycle boundary' >/dev/null; then
+    MARKER_PHASE=wake
     grep -Ev '^watcher: (started|attached) ' "$OUT"
     [ ! -s "$ERR" ] || cat "$ERR" >&2
     exit 0
   fi
   if grep -E '^supervision-host: cycle boundary' "$OUT" >/dev/null 2>&1; then
+    MARKER_PHASE=quiet
     printf 'checkpoint: no actionable wake within %ss\n' "$BOUND"
     exit 124
   fi
   [ ! -s "$OUT" ] || cat "$OUT"
   [ ! -s "$ERR" ] || cat "$ERR" >&2
-  if [ "$RC" -eq 124 ]; then
-    echo "checkpoint: the supervision host outlived its own bound of ${BOUND}s" >&2
+  if bound_hit "$RC"; then
+    MARKER_PHASE=hard-bound
+    echo "checkpoint: the supervision host outlived its own bound of ${BOUND}s and was stopped" >&2
     exit 1
   fi
   [ "$RC" -ne 0 ] || RC=1
   exit "$RC"
 fi
 
+# The watcher's cleanup gets JG_WATCHER_CLEANUP_LOCK_BOUND (default 2) seconds after the INT, then KILL.
+CLEANUP_BOUND=$(positive_or "${JG_WATCHER_CLEANUP_LOCK_BOUND:-}" 2)
+[ "$CLEANUP_BOUND" -le 5 ] || CLEANUP_BOUND=5
 set +e
 # Interrupt the checkpoint's active check group so the watcher's native EXIT cleanup can release its lock; ordinary watcher shutdown still uses TERM.
-run_bounded "$SECONDS_ARG" INT 5 "$SCRIPT_DIR/jg-watch.sh" >"$OUT" 2>"$ERR"
+run_bounded "$SECONDS_ARG" INT "$CLEANUP_BOUND" "$SCRIPT_DIR/jg-watch.sh" >"$OUT" 2>"$ERR"
 RC=$?
 set -e
 
 if grep -E '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" >/dev/null 2>&1; then
+  MARKER_PHASE=wake
   cat "$OUT"
   [ ! -s "$ERR" ] || cat "$ERR" >&2
   exit 0
@@ -224,7 +258,16 @@ if grep -E '^watcher: already running' "$OUT" "$ERR" >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ "$RC" -eq 137 ]; then
+  MARKER_PHASE=hard-bound
+  [ ! -s "$OUT" ] || cat "$OUT"
+  [ ! -s "$ERR" ] || cat "$ERR" >&2
+  echo "checkpoint: the watcher did not stop at its bound of ${SECONDS_ARG}s and was killed" >&2
+  exit 1
+fi
+
 if [ "$RC" -eq 124 ]; then
+  MARKER_PHASE=quiet
   printf 'checkpoint: no actionable wake within %ss\n' "$SECONDS_ARG"
   exit 124
 fi
