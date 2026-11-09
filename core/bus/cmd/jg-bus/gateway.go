@@ -343,14 +343,11 @@ func (a *app) gateway(args []string) int {
 			}
 		}()
 	}
-	if !once {
-		a.beat(ad) // the service is up before its first poll returns
-	}
 	for {
-		err := a.pollOnce(ad, allow)
 		if !once {
-			a.recordPoll(ad, err, token)
+			a.beat(ad)
 		}
+		err := a.pollOnce(ad, allow)
 		if once && err == nil {
 			err = a.followReplies(ad)
 		}
