@@ -28,9 +28,9 @@
 # line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
 # A sweep prints one line per outcome, once: `landed ... cleaned up`, or `not landed: <reason>`. A refusal that only needs time
 # (away mode, a decision still open on linked work, a red trunk) is retried each sweep without repeating the line;
-# Other refusals (a conflict, a second commit, a failing check) are rechecked through jg-trunk admission, which caches an unchanged
-# failing context and bounds transient read retries; its per-attempt logs are retained. A lane fixes the refusal and reports a
-# new head. bin/jg-trunk.sh owns every refusal and names the conflicting paths.
+# Other refusals (a conflict, a second commit, a failing check) are final for the lane's head; core/trunk-landing/verdict.sh owns
+# that rule for both paths, including that a conflict holds only while the trunk tip it was judged on stands. Per-attempt logs are
+# retained. A lane fixes the refusal and reports a new head. bin/jg-trunk.sh owns every refusal and names the conflicting paths.
 # A refusal the worker fixes (an incomplete proof, a final refusal) also reaches that lane's worker by itself and never sits silent:
 # core/trunk-landing/refusal-reach.sh steers the worker with the refusal text, repeats the steer while the head is unchanged, and
 # raises one alert when nobody acted within ten minutes.
@@ -66,28 +66,14 @@ case $1 in
     fi
     ;;
 esac
+# shellcheck source=core/trunk-landing/verdict.sh
+. "$(dirname "${BASH_SOURCE[0]}")/verdict.sh"
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
 # The project a landed commit went into, from the landing's own row: teardown removes the lane's record (state/<id>.meta)
 # right after the landing, so the jobs that follow a landing must never read the project from it.
 landed_project() {  # <commit>
   local pn; pn=$(awk -F'\t' -v c="$1" '$3 == c { p = $2 } END { print p }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
   [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && printf '%s\n' "$FMH/projects/$pn"
-}
-# The state line of a refused landing, from the verdict bin/jg-trunk.sh prints for it (`refusal-class <id>: wait|retry|final`; no verdict
-# is final). A `retry` is tried again by `check` after a 2 minute backoff, up to RETRY_CAP tries in all; the last one is final, and `check`
-# reports every final once, so a lane the machine failed is never forgotten and never retried for ever.
-RETRY_CAP=3
-refusal_state() {  # <id> <head> <jg-trunk output> <reason>
-  local class n
-  class=$(printf '%s\n' "$3" | sed -n "s/^refusal-class $1: //p" | tail -n 1)
-  case $class in
-    wait) printf 'wait %s\n' "$4" ;;
-    retry)
-      n=$(( $(cat "$MEM/$1.$2.retries" 2>/dev/null || echo 0) + 1 ))
-      if [ "$n" -ge "$RETRY_CAP" ]; then printf 'final gave up after %s tries: %s\n' "$n" "$4"
-      else printf '%s\n' "$n" > "$MEM/$1.$2.retries"; printf 'retry %s %s\n' "$n" "$4"; fi ;;
-    *) printf 'final %s\n' "$4" ;;
-  esac
 }
 
 # The post-landing job: the whole suite at the landed commit (bin/jg-trunk.sh verify). A red one is reported; the live step is not
@@ -144,7 +130,9 @@ if [ "$1" = runbatch ]; then
     locked="$locked $arg"
   done
   for arg in "$@"; do printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
+  pn=$(basename "$(mval "$STATE/${1%%@*}.meta" project)")
   out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" land-batch "$@" 2>&1) || rc=$?
+  tip=$(verdict_tip "$pn")  # a lane the stack returned was judged on top of the stack's lanes that landed
   for arg in "$@"; do
     id=${arg%%@*}; head=${arg#*@}; proj=$(mval "$STATE/$id.meta" project)
     request_log=$(mktemp "$MEM/$id.$head.request-XXXXXX.log") || exit 1
@@ -164,7 +152,7 @@ if [ "$1" = runbatch ]; then
     why=$(printf '%s\n' "$out" | grep -E "^returned $id: " | tail -n 1 | sed "s/^returned $id: //")
     [ -n "$why" ] || why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error|IN_PROGRESS):' | tail -n 1)
     why=$(printf '%s' "${why:-landing failed; see $request_log}" | cut -c1-300)
-    printf '%s\n' "$(refusal_state "$id" "$head" "$out" "$why")" > "$MEM/$id.$head.state"
+    verdict_record "$id" "$head" "" "$tip" "$out" "$why"
   done
   # The whole suite runs once, at the top of the stack, and reverts the lane that caused a red by itself.
   if [ -n "$fresh_top" ]; then
@@ -186,6 +174,7 @@ if [ "$1" = run ]; then
   jg_lock_try_acquire "$run_lock" || exit 0
   trap 'jg_lock_release "$run_lock"' EXIT
   printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/$id.$head.state"
+  tip=$(verdict_tip "$(basename "$(mval "$STATE/$id.meta" project)")")
   out=$(JG_HOME="$FMH" JG_TRUNK_RUN_HELD_BY="$$" JG_TRUNK_EXPECT_HEAD="$head" "$FMH/bin/jg-trunk.sh" land "$id" 2>&1) || rc=$?
   request_log=$(mktemp "$MEM/$id.$head.request-XXXXXX.log") || exit 1
   printf '%s\n' "$out" > "$request_log"
@@ -212,13 +201,11 @@ if [ "$1" = run ]; then
     exit 0
   fi
   why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error|IN_PROGRESS):' | tail -n 1 | cut -c1-300)
-  [ "$rc" -ne 75 ] || { printf 'wait %s\n' "${why:-landing in progress; see $request_log}" > "$MEM/$id.$head.state"; exit 0; }
-  res=$(refusal_state "$id" "$head" "$out" "${why:-landing failed; see $request_log}")
-  printf '%s\n' "$res" > "$MEM/$id.$head.state"
   # The lander rebased the lane, so its branch may now be at another head: the same verdict stands for that head.
   br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
   now=$(git -C "$(mval "$STATE/$id.meta" project)" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
-  [ -z "$now" ] || [ "$now" = "$head" ] || { printf '%s\n' "$res" > "$MEM/$id.$now.state"; cp -f -- "$MEM/$id.$head.retries" "$MEM/$id.$now.retries" 2>/dev/null || :; }
+  verdict_record "$id" "$head" "$now" "$tip" "$out" "${why:-landing failed; see $request_log}"
+  [ "$rc" -ne 75 ] || exit 0  # another run holds this landing; its own end starts the next one
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
 fi
@@ -312,7 +299,11 @@ for meta in "$STATE"/*.meta; do
   fi
   case $line in
     running*) run_alive "$line" && continue ;;
-    final*) report "$id.$head" "$id not landed: ${line#final }" "${line#final }"; lane_refusal_reach "$id" "$head" "$proj" "$branch" "${line#final }"; continue ;;
+    final*)  # a verdict that no longer holds (a conflict judged on a tip that is gone) is judged again, with no report and no steer
+      if verdict_holds "$id" "$head" "$line" "$(basename "$proj")"; then
+        why=$(verdict_reason "${line#final }")
+        report "$id.$head" "$id not landed: ${line#final }" "$why"; lane_refusal_reach "$id" "$head" "$proj" "$branch" "$why"; continue
+      fi ;;
     retry*) [ -n "$(find "$st" -mmin +2 2>/dev/null)" ] || continue ;;  # the backoff: 2 minutes since the refusal was recorded
     wait*) [ -z "$QUIET" ] || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac

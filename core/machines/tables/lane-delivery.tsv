@@ -24,7 +24,7 @@ edge	ready	t2-proof	admitted	core/trunk-landing/trunk-landing.sh:check	-	bin/jg-
 edge	admitted	t3-start	landing	core/trunk-landing/trunk-landing.sh:check	-	no landing runs and the flush rule lets the lane go	jg-machine-lane-delivery.test.sh
 edge	landing	t4-land	landed	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-trunk.sh land or land-batch writes the lane's data/trunk-landings.tsv row	jg-machine-lane-delivery.test.sh
 edge	landing	t4-refuse	refused	core/trunk-landing/trunk-landing.sh:run	-	the lander refuses; the state file holds wait, retry or final with the reason	jg-machine-lane-delivery.test.sh
-edge	refused	t5-retry	landing	core/trunk-landing/trunk-landing.sh:check	-	a wait on each sweep, a retry after its 2 minute backoff	jg-machine-lane-delivery.test.sh
+edge	refused	t5-retry	landing	core/trunk-landing/trunk-landing.sh:check	-	a wait on each sweep, a retry after its 2 minute backoff, a final conflict once the trunk tip it was judged on is gone (core/trunk-landing/verdict.sh)	jg-machine-lane-delivery.test.sh
 edge	landed	t6-held	live-held	bin/jg-trunk.sh:cmd_autolive	-	the go-live step finds a reason to hold and writes a held: row	jg-machine-lane-delivery.test.sh
 edge	landed	t7-live	live	bin/jg-trunk.sh:go_live	-	every home moved to a commit that holds the change, and the project's live row is written	jg-machine-lane-delivery.test.sh
 edge	landed	t7-partial	live-partial	bin/jg-trunk.sh:go_live	-	some homes moved to a commit that holds the change	jg-machine-lane-delivery.test.sh
