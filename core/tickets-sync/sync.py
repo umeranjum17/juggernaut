@@ -27,7 +27,8 @@ import cleanup
 import legacy
 import reconcile
 import release
-from hierarchy import UPKEEP, INTERNAL, parents as request_parents, title as request_title
+import tidy
+from hierarchy import UPKEEP, INTERNAL, OWN, parents as request_parents, title as request_title
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves here
 for _jg_old, _jg_val in list(os.environ.items()):
     if _jg_old.startswith("FM_") and "JG_" + _jg_old[3:] not in os.environ:
@@ -129,6 +130,21 @@ def store_named(home):
     named = home / 'config/beads-dir'
     return named.is_file() and bool(named.read_text().strip())
 
+def tidy_report(items, homes, home, state, apply, run):
+    """Plan the fleet tidy over every home's open rows, write the full list beside the sync state, return the summary line."""
+    today = dt.date.fromisoformat(os.environ['JG_TIDY_TODAY']) if os.environ.get('JG_TIDY_TODAY') else dt.datetime.now(dt.timezone.utc).date()
+    decisions = tidy.plan(items, today)
+    count, opened = tidy.counts(decisions), len(decisions)
+    closed = count['done'] + count['duplicate'] + count['superseded']
+    applied, failed = tidy.apply(decisions, today, homes, home, run) if apply else (0, [])
+    listing = state / f'tidy-{today.isoformat()}.txt'
+    listing.write_text(f'{opened} open rows, {today.isoformat()}, {"applied" if apply else "plan only"}\n' + ''.join(f'{k}: {n}/{i} - {e}\n' for k, n, i, e in decisions if k != 'untouched') + ''.join(f'failed: {l} - {w}\n' for l, w in failed))
+    verb = 'closed' if apply else 'would close'
+    after = opened - (closed - len(failed) if apply else closed)
+    return (f"tickets-tidy: {opened} open before, {after} after; {verb} {count['done']} done, {count['duplicate']} duplicate, {count['superseded']} superseded; "
+            f"{'deferred' if apply else 'would defer'} {count['deferred']} idle; {count['captain-ask']} captain asks listed, none touched; {count['untouched']} left alone"
+            + (f'; {len(failed)} failed' if failed else '') + f'; full list {listing}')
+
 def sync():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--audit', action='store_true')
@@ -136,11 +152,14 @@ def sync():
     parser.add_argument('--cleanup', action='store_true', help='once a day, flag tickets that need a keep/remove call and back-fill captain quotes')
     parser.add_argument('--migrate-legacy', action='store_true', help='one-off: release the legacy fm- rows that hold with no reason; with --check, print the plan and write nothing')
     parser.add_argument('--reconcile', action='store_true', help='read every home without the watcher time budget')
+    parser.add_argument('--tidy', action='store_true', help="apply the captain's clean-up rules to every home's open tickets: print the plan and counts, change no row")
+    parser.add_argument('--apply', action='store_true', help='with --tidy, carry the plan out: close with evidence, defer idle unclear rows')
     parser.add_argument('--close', metavar='HOME/ITEM', help='record an authorized cancellation or supersession on the board only')
     parser.add_argument('--reason', choices=['superseded', 'cancelled'])
     options = parser.parse_args()
     if bool(options.close) != bool(options.reason): parser.error('--close and --reason are required together')
-    if options.cleanup: options.check = options.reconcile = True  # reads like --check, without the watcher budget
+    if options.apply and not options.tidy: parser.error('--apply needs --tidy')
+    if options.cleanup or options.tidy: options.check = options.reconcile = True  # reads like --check, without the watcher budget
     started = time.monotonic()
     budget = float(os.environ.get('JG_TICKETS_SYNC_BUDGET_SECS', '20'))
     home = Path(os.environ['JG_HOME']).resolve()
@@ -224,7 +243,7 @@ def sync():
             nonlocal changed, feed_ends
             seen.add(tid)
             if options.check:
-                if options.cleanup: return
+                if options.cleanup or options.tidy: return
                 # A row whose work another ticket already covers is left alone on purpose (the board keeps one open
                 # ticket per piece of work), so its missing state is not a disagreement to report.
                 if any(o != tid for o in tracked.get(work_key(desired), [])): return
@@ -299,12 +318,12 @@ def sync():
         # A fleet-wide row owns nothing in the registry, so it names the home that publishes it rather than going blank,
         # and it is no lane's work: no worker words on a grouping row.
         fleet_assignee = lane_assignee(home, ':upkeep', 'main', ran=True)
-        publish(upkeep_id, dict(title=UPKEEP, progress=0, project='', parent='', hold='no', asked='no', state='queued', assignee=fleet_assignee), ('progress',), 'fleet/:upkeep')
+        publish(upkeep_id, dict(title=UPKEEP, progress=0, project=OWN, parent='', hold='no', asked='no', state='queued', assignee=fleet_assignee), ('progress',), 'fleet/:upkeep')
         for tid, old in existing.items():
             if tid.startswith('jg-') and old['title'].startswith(('Needs a parent', 'Upkeep ·', 'Earlier task grouping')):
-                publish(tid, dict(title='Earlier task grouping', progress=0, project='', parent=upkeep_id, hold='no', asked='no', state='done', assignee=fleet_assignee), ('progress',), f'board/{tid}')
+                publish(tid, dict(title='Earlier task grouping', progress=0, project=OWN, parent=upkeep_id, hold='no', asked='no', state='done', assignee=fleet_assignee), ('progress',), f'board/{tid}')
             elif tid.startswith('jg-') and tid != upkeep_id and (old.get('project', '').lower() in INTERNAL or not old.get('asked') and not old.get('parent')):
-                publish(tid, dict(project='' if old.get('project', '').lower() in INTERNAL else old.get('project', ''), parent=old.get('parent') or ('' if old.get('asked') else upkeep_id)), where=f'board/{tid}')
+                publish(tid, dict(project=OWN if old.get('project', '').lower() in INTERNAL or not old.get('project') else old.get('project', ''), parent=old.get('parent') or ('' if old.get('asked') else upkeep_id)), where=f'board/{tid}')
         for name, source in ordered:
             # A home with no Beads store has no backlog to publish: the sync notes that once in its progress log (never a
             # wake) and every pass, check and clean-up skips it without a word.
@@ -376,7 +395,7 @@ def sync():
                 root_ask = item in asks
                 title = request_title(r, root_ask)
                 if len(title) > 100: title = title[:99].rstrip() + '…'  # a board row shows about 60 characters
-                project = r['_project']
+                project = r['_project'] or OWN  # hierarchy keeps the blank: an internal row never joins a project's ask
                 if project and project not in tried and not options.check:  # --check writes no board project
                     tried.add(project); reason = register_icon(board, project, registry)
                     if reason != skipped.get(project):
@@ -391,8 +410,10 @@ def sync():
                 if item not in parents:
                     desired['stage'] = stage
                     if event is not None: desired['last-event-at'] = event
-                if all(i['name'] != name or i['row']['id'] != item for i in items): items.append(dict(tid=tid, name=name, row=r, event=event, parked=name in parked, source=source))
+                if all(i['name'] != name or i['row']['id'] != item for i in items): items.append(dict(tid=tid, name=name, row=r, event=event, parked=name in parked, source=source, said=said, link=pr, merged=bool(prs.get(pr, {}).get('merged'))))
                 publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason, f'Stage: {said}\n\n{body.strip()}'.strip() if said != stage else body.strip())
+        if options.tidy:
+            print(tidy_report(items, homes, home, state, options.apply, run)); return
         if options.cleanup:
             carded = {d['ticket'] for d in json.loads(run(['sign-off-axi', 'list', str(board), '--json'])).get('decisions', []) if d.get('ticket')}
             def cards():

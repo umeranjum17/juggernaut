@@ -46,6 +46,8 @@ journeys:
     command: bash journeys/receipt-candidate-hook.sh
   tickets-stage-publish:
     command: bash core/tickets-sync/run-stage-proof.sh
+  tickets-truthful:
+    command: bash core/tickets-sync/run-board-proof.sh && bash core/tickets-sync/run-tidy-proof.sh
   tickets-writeback:
     command: bash journeys/tickets-writeback.sh
   ready-backlog-stall:

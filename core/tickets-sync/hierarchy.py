@@ -4,6 +4,8 @@ from task_rows import plain
 
 UPKEEP = 'Not from your asks (fleet upkeep)'
 INTERNAL = {'main', 'juggernaut-fork', 'herdr', 'herdr-runtime'}
+# Every ticket has a project: work of an internal home is Juggernaut's own, so it publishes under this one name.
+OWN = 'juggernaut'
 
 
 def field(row, key):
@@ -26,7 +28,9 @@ def title(row, request=False):
     if request:
         quote = re.search(r'(?:type:\s*captain-ask:|captain\b)[^"“\n]{0,80}["“]([^"”\n]{10,})["”]', row.get('body', ''), re.I)
         if quote: text = quote[1]
-    text = one_line(re.sub(r'https?://\S+', '', text))
+    # The store's own "... (truncated, N chars total ...)" tail and file paths are not words a reader needs.
+    text = re.sub(r'\s*\.\.\. \(truncated\b[^)]*\)', '', text)
+    text = one_line(re.sub(r'https?://\S+|\bdata/\S+', '', text))
     return re.sub(r'^(?:(?:/?\d+|Main\d+|P[0-3]|Parent|Epic)\b[\s:/-]*)+', '', text, flags=re.I).strip()
 
 
