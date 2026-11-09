@@ -188,7 +188,9 @@ def sync():
         parked_file = home / 'config/parked-homes'
         parked = {l.split('#')[0].strip() for l in parked_file.read_text().splitlines()} if parked_file.exists() else set()
         cutoff = (dt.date.today() - dt.timedelta(days=7)).isoformat()
-        cursor = state / 'cursor.json'
+        # Each budgeted walker owns its own cursor. The read-only check once shared the poll's, so every window the check
+        # walked was skipped by the poll that ran after it and its rows never reached the board ("ticket says no state").
+        cursor = state / ('check-cursor.json' if options.check else 'cursor.json')
         resume = json.loads(cursor.read_text()) if cursor.exists() and not options.reconcile else {}
         ordered = list(homes.items())
         if resume.get('home') in homes: ordered = ordered[list(homes).index(resume['home']):]
@@ -217,7 +219,9 @@ def sync():
             temp = path.with_suffix('.tmp'); temp.write_text(json.dumps(value)); temp.replace(path)
         no_store_file = state / 'no-store-homes.json'
         no_store = set(json.loads(no_store_file.read_text())) if no_store_file.exists() else set()
-        seen = set()
+        # The check names a ticket no home's work accounts for only after one walk has read every home, so the rows its
+        # earlier passes of that walk saw travel in its cursor.
+        seen = set(resume.get('seen', []))
         skipped_ids = set()
         def publish(tid, desired, derived=(), where='', reason='', description=''):
             # One bad record never stops the pass: name it and the home and item behind it once, then go on.
@@ -324,6 +328,7 @@ def sync():
                 publish(tid, dict(title='Earlier task grouping', progress=0, project=OWN, parent=upkeep_id, hold='no', asked='no', state='done', assignee=fleet_assignee), ('progress',), f'board/{tid}')
             elif tid.startswith('jg-') and tid != upkeep_id and (old.get('project', '').lower() in INTERNAL or not old.get('asked') and not old.get('parent')):
                 publish(tid, dict(project=OWN if old.get('project', '').lower() in INTERNAL or not old.get('project') else old.get('project', ''), parent=old.get('parent') or ('' if old.get('asked') else upkeep_id)), where=f'board/{tid}')
+        walked = False
         for name, source in ordered:
             # A home with no Beads store has no backlog to publish: the sync notes that once in its progress log (never a
             # wake) and every pass, check and clean-up skips it without a word.
@@ -364,10 +369,13 @@ def sync():
             required = set(resume.get('required', [])) if resume.get('home') == name else set()
             for item in ids:
                 r = tasks[item]
-                if not options.reconcile and time.monotonic() - started > budget:
-                    save(cursor, dict(home=name, task=item, required=list(required)))
+                # A pass always handles the row it resumed on: when the reads before the walk outlast the budget under
+                # load, a pass that stops first would save the same cursor again and the walk would never move.
+                if not options.reconcile and walked and time.monotonic() - started > budget:
+                    save(cursor, dict(home=name, task=item, required=list(required), **({'seen': sorted(seen)} if options.check else {})))
                     note(f'tickets-sync: backfill continuing on next watcher check; {changed} changed')
                     return
+                walked = True
                 tid = ticket_id(name, r['id'])
                 if r['state'] == 'done' and r.get('closed', '-') < cutoff and tid not in ledger and tid not in existing and item not in required: continue
                 body = r.get('body', '')
@@ -430,12 +438,13 @@ def sync():
             line = cleanup.daily(items, dt.datetime.now(dt.timezone.utc).date(), state, board, home, run, carded, cards)
             if line: print(line)
             return
+        # The walk has read every home: the next pass starts a new one.
+        save(cursor, {})
         if options.check:
             for tid, old in existing.items():
                 if tid.startswith('jg-') and tid not in seen and (old.get('state') or '') != 'done':
                     print(f"tickets-check: {str(old.get('title'))[:70]} ticket says {old.get('state') or 'no state'}, but no home's work accounts for it")
             return
-        save(cursor, {})
         if changed or skipped_ids: print(f'tickets-sync: {len(homes)} homes read; {changed} tickets changed')
 
 if __name__ == '__main__':

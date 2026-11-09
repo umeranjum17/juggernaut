@@ -32,7 +32,12 @@ To cut a release, call the same shim with `--release <name>` for each ticket the
 
 ## The checks
 
-`state/tickets-sync.check.sh` runs the poll; `state/tickets-stale.check.sh` runs `sync.py --check`. The second one reads every registered home and prints one line for each ticket whose state contradicts its own work — the board still says queued or in progress while the backlog item is closed and its PR merged, or the reverse — and for each `jg-` ticket left on the board that no home's work accounts for. It writes nothing, and silence means the board is true. A row whose work another ticket already covers is left alone on purpose, so it is not reported as a contradiction.
+`state/tickets-sync.check.sh` runs the poll; `state/tickets-stale.check.sh` runs `sync.py --check`. The second one reads every registered home and prints one line for each ticket whose state contradicts its own work — the board still says queued or in progress while the backlog item is closed and its PR merged, or the reverse — and for each `jg-` ticket left on the board that no home's work accounts for. It writes no ticket, and silence means the board is true.
+It walks the fleet inside the same 20-second budget as the poll, with its own cursor (`state/tickets-sync/check-cursor.json`), and names a ticket no home's work accounts for only once one walk has read every home.
+When the check walked the poll's cursor, the poll skipped every row the check had read, so those rows never reached the board and the check said `ticket says no state` for work in progress.
+Every pass of either walk handles at least the row it resumed on, so a pass whose reads outlast the budget under load still moves on.
+`tests/check-own-cursor.test.sh` proves it with the six rows that were in progress and missing on the fleet board.
+A row whose work another ticket already covers is left alone on purpose, so it is not reported as a contradiction.
 
 Both are registered as Juggernaut checks and both are classified `batch` in `defaults/wake-routing`: a report of settled or surplus board rows is bookkeeping, not a decision, so it arrives with the next wake of any kind or with the queue-resurface cadence and never costs a turn of its own. `docs/watcher-continuity.md` ("Wake urgency classes") owns the classes and a home's `config/wake-routing` override.
 

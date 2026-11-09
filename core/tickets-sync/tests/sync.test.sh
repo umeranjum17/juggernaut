@@ -80,6 +80,10 @@ grep -q continuing "$work/continue.out" && { echo 'FAIL: backfill continue must 
 grep -q continuing "$JG_HOME/state/tickets-sync/progress.log"
 test -s "$JG_HOME/state/tickets-sync/cursor.json"
 printf 'working [at=1700000050]: still building Umer release\n' >> "$JG_HOME/state/jg-long.status"
+# A pass always handles the row it resumed on, so the budget-0 pass handled one row; the row its cursor names is the first
+# the resumed pass reads, and a title drifted on the board there is news that pass puts right, whatever the row order.
+resumed=$(jq -r '.home + "/" + .task' "$JG_HOME/state/tickets-sync/cursor.json")
+sign-off-axi ticket "$work/board.json" --id "jg-$(printf '%s' "$resumed" | sha256sum | cut -c1-32)" --title 'Umer drifted title' >/dev/null
 "$JG_HOME/state/tickets-sync.check.sh" > "$work/resume.out"
 grep -q continuing "$work/resume.out" && { echo 'FAIL: resumed backfill continue must stay off stdout'; exit 1; }
 grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$work/resume.out"
