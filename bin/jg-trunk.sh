@@ -6,6 +6,8 @@
 #        jg-trunk.sh proof <task-id>                   print the proof inputs the task's head still lacks (receipt, merge-card evidence, sealed run); exit 1 when any
 #        jg-trunk.sh land <task-id>                    land the task's one proved commit on the trunk; never goes live
 #        jg-trunk.sh land-batch <id>[@<head>]...       land 2 to batch-max queued lanes as one stack: one gate over their changed files, one move; a red stack is halved to find and return only the lane that caused it
+#        jg-trunk.sh flush <project-dir>               Overwatch only: land every ready lane of the project now, in batches, whatever the threshold says
+#        jg-trunk.sh land-next <task-id>               Overwatch only: mark one ready lane so the landing check lands it at once, ahead of the queue
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the whole suite at a landed commit (default: the tip), one verify at a time and the newest wins: green moves the pin, a red it caused reverts it
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word (or a waiver); --home moves one lead only
@@ -55,6 +57,11 @@
 # and the trunk moves only if it is still there (else the lane is rebased onto the new tip and gated again). `verify` never waits for a
 # landing: it reads the tip as a ref and takes that lock only for its short pin write; it registers in a one-slot queue
 # (state/trunk-verify-want-<project>) where the newest commit wins, so a verify for an older commit gives up at once and the newest runs.
+# The queue's threshold: the landing check does not land ready lanes one by one. It holds them until flush-at-ready (default 3) are ready or the
+# oldest has waited flush-after-minutes (default 20), then lands all of them (batch-max at a time, the rest at once after). `flush` skips the wait
+# for one project: it records state/trunk-flush-<project>, which the check honours until the project has no ready lane left. `land-next` records
+# state/<task>.land-next: that lane goes first and lands at once, with the others only when the threshold is also met. A worker never records either.
+#
 # After the landing, `verify <project> <commit>` (started by the landing check) runs the whole suite (gate-verify) at that commit:
 # green moves the green pin; a script that fails there and passes on the commit's parent charges that one commit, which is
 # reverted by itself (a new commit on the tip, never a rewind) and the lane's ticket is told; a red that cannot be charged to one
@@ -990,6 +997,22 @@ cmd_waiver() {
   echo "go-live waiver recorded for $PN under $rule; delete its line in config/trunk-live-waiver to restore the word"
 }
 
+cmd_flush() {
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never flushes the queue"
+  open_project "${1-}"
+  put "$STATE/trunk-flush-$PN" "$(date +%s)"
+  echo "flush requested for $PN: the landing check lands every ready lane now, in batches of up to $(pol batch-max), on its next sweep"
+}
+
+cmd_land_next() {
+  local id=${1-}
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never marks a lane to land next"
+  [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [ -f "$STATE/$id.meta" ] || die "usage: jg-trunk.sh land-next <task-id> (a task with a record in state/)"
+  open_project "$(sed -n 's/^project=//p' "$STATE/$id.meta" | tail -n 1)"
+  put "$STATE/$id.land-next" "$(date +%s)"
+  echo "land-next recorded for $id: the landing check lands it at once, ahead of the queue"
+}
+
 cmd_word() {
   local kind=${1-} sha quote=${3-}
   case $kind in live|release) ;; *) die "usage: jg-trunk.sh word live|release <project-dir> \"<his words>\"" ;; esac
@@ -1180,6 +1203,8 @@ case "${1:-}" in
   init) shift; cmd_init "$@" ;;
   land) shift; cmd_land "$@" ;;
   land-batch) shift; cmd_land_batch "$@" ;;
+  flush) shift; cmd_flush "$@" ;;
+  land-next) shift; cmd_land_next "$@" ;;
   verify) shift; cmd_verify "$@" ;;
   proof) shift; cmd_proof "$@" ;;
   word) shift; cmd_word "$@" ;;

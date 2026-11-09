@@ -29,7 +29,7 @@ homes_provision() {
     git -C "$LAB/clone" worktree add -q --detach "$h" "$tip" || return 1
     mkdir -p "$h/state" "$h/data" "$h/config" "$h/projects"
     cp -a "$tpl" "$LAB/store-$i" && printf '%s\n' "$LAB/store-$i/.beads" > "$h/config/beads-dir" || return 1
-    printf 'gate-full=true\ngate-lint=true\ngate-verify=true\n' > "$h/config/trunk-policy"
+    printf 'gate-full=true\ngate-lint=true\ngate-verify=true\nflush-at-ready=1\n' > "$h/config/trunk-policy"
     # The live hook is the recording stand-in for the home mover (slice T2): it names the home and the commit it was asked to move to.
     # shellcheck disable=SC2016 # the hook body is written literally and expands when the hook runs
     printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" "$2" "$(date +%%s)" >> "%s/live-moves"\n' "$h/data" > "$h/config/live-hook.$FA_PROJECT"

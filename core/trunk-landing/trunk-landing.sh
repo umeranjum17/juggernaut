@@ -108,7 +108,7 @@ if [ "$1" = runbatch ]; then
       br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
       now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
       res=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && res='cleaned up' || res="cleanup refused, nothing was forced: $(printf '%s' "$res" | tail -n 1 | cut -c1-200)"
-      printf 'landed %s\n' "$res" > "$MEM/$id.$head.state"
+      printf 'landed %s\n' "$res" > "$MEM/$id.$head.state"; rm -f -- "$STATE/$id.land-next"
       [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$res" > "$MEM/$id.$now.state"
       jg_lock_acquire_wait "$MEM/.outbox.lock"
       printf 'trunk-landing: landed %s (local-trunk) on the local trunk in one stack with its queue (not live yet: the whole suite runs on it first, then live follows the captain'"'"'s word or the project'"'"'s waiver and its quiet window); %s\n' "$id" "$res" >> "$MEM/outbox"
@@ -156,7 +156,7 @@ if [ "$1" = run ]; then
     br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
     now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
     out=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && out='cleaned up' || out="cleanup refused, nothing was forced: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
-    printf 'landed %s\n' "$out" > "$MEM/$id.$head.state"
+    printf 'landed %s\n' "$out" > "$MEM/$id.$head.state"; rm -f -- "$STATE/$id.land-next"
     [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$out" > "$MEM/$id.$now.state"
     jg_lock_acquire_wait "$MEM/.outbox.lock"
     printf 'trunk-landing: landed %s (local-trunk) on the local trunk (not live yet: the whole suite runs on it first, then live follows the captain'"'"'s word or the project'"'"'s waiver and its quiet window); %s\n' "$id" "$out" >> "$MEM/outbox"
@@ -191,6 +191,8 @@ export JG_HOME=$FMH JG_CONFIG_OVERRIDE=$FMH/config
 # shellcheck source=bin/jg-trunk-policy-lib.sh disable=SC1091
 . "$FMH/bin/jg-trunk-policy-lib.sh"
 QUIET=; [ "$1" != next ] || QUIET=1
+# A policy number, or its default when the home's value is not a whole number.
+polnum() { local v; v=$(jg_trunk_policy "$1" "$2"); case $v in ''|*[!0-9]*) v=$3 ;; esac; printf '%s\n' "$v"; }
 if [ -z "$QUIET" ] && jg_lock_try_acquire "$MEM/.outbox.lock"; then
   if [ -s "$MEM/outbox" ]; then mv -f -- "$MEM/outbox" "$MEM/outbox.$$" && cat "$MEM/outbox.$$" && rm -f -- "$MEM/outbox.$$"; fi
   jg_lock_release "$MEM/.outbox.lock"
@@ -275,7 +277,13 @@ for meta in "$STATE"/*.meta; do
     final*) report "$id.$head" "$id not landed: ${line#final }" "${line#final }"; continue ;;
     wait*) [ -z "$QUIET" ] || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac
-  cands="$cands$at $id $head"$'\n'
+  # <epoch done> <task> <head> <project> <1, or 0 for a lane marked `land-next`>
+  cands="$cands$at $id $head $(basename "$proj") $([ -e "$STATE/$id.land-next" ] && echo 0 || echo 1)"$'\n'
+done
+# A flush request (`jg-trunk.sh flush`) ends once its project has no ready lane left.
+for f in "$STATE"/trunk-flush-*; do
+  [ -f "$f" ] || continue
+  printf '%s' "$cands" | awk -v p="${f##*/trunk-flush-}" '$4 == p { f = 1 } END { exit !f }' || rm -f -- "$f"
 done
 # Oldest done first. A landing already running holds the rest back; its end starts the next one (`next`).
 [ -n "$cands" ] || exit 0
@@ -284,20 +292,30 @@ if ! mkdir "$MEM/.start" 2>/dev/null; then
   rmdir "$MEM/.start" 2>/dev/null; mkdir "$MEM/.start" 2>/dev/null || exit 0
 fi
 if ! busy; then
-  # Two or more ready lanes land as one stack (up to batch-max, oldest done first); a single one keeps the single path.
-  batch=$(printf '%s' "$cands" | sort -n -k1,1 -k2,2 | head -n "$(jg_trunk_policy batch-max)" | awk '{ printf "%s%s@%s", (NR > 1 ? " " : ""), $2, $3 }')
-  read -r -a ready <<< "$batch"; id=; head=
-  # One project per stack: the oldest lane's project, and the lanes ready on it.
-  first=$(mval "$STATE/${ready[0]%%@*}.meta" project); stack=()
-  for arg in "${ready[@]}"; do [ "$(mval "$STATE/${arg%%@*}.meta" project)" != "$first" ] || stack+=("$arg"); done
-  ready=("${stack[@]}")
+  # The flush rule (bin/jg-trunk-policy-lib.sh): a project's ready lanes wait until flush-at-ready of them are ready, or the oldest has
+  # waited flush-after-minutes, or `jg-trunk.sh flush` was run; then they all land (up to batch-max, oldest done first; the rest follow
+  # at once). A lane marked `land-next` goes first and lands at once, with or without the others. One project per stack.
+  now=$(date +%s); ready=(); id=; head=
+  while read -r pn; do
+    [ -n "$pn" ] || continue
+    list=$(printf '%s' "$cands" | awk -v p="$pn" '$4 == p' | sort -k5,5n -k1,1n -k2,2)
+    oldest=$(printf '%s\n' "$list" | sort -n -k1,1 | head -n 1 | cut -d' ' -f1)
+    at_ready=$(polnum flush-at-ready "$pn" 3); after=$(polnum flush-after-minutes "$pn" 20)
+    if [ -e "$STATE/trunk-flush-$pn" ] || [ "$(printf '%s\n' "$list" | grep -c .)" -ge "$at_ready" ] || [ $(( now - ${oldest:-0} )) -ge $(( after * 60 )) ]; then :; else
+      list=$(printf '%s\n' "$list" | awk '$5 == 0')
+    fi
+    [ -n "$list" ] || continue
+    batch=$(printf '%s\n' "$list" | head -n "$(jg_trunk_policy batch-max "$pn")" | awk '{ printf "%s%s@%s", (NR > 1 ? " " : ""), $2, $3 }')
+    read -r -a ready <<< "$batch"; break
+  done < <(printf '%s' "$cands" | sort -n -k1,1 | awk '!seen[$4]++ { print $4 }')
+  [ "${#ready[@]}" -gt 0 ] || { rmdir "$MEM/.start" 2>/dev/null; exit 0; }
   if [ "${#ready[@]}" -ge 2 ]; then
     for arg in "${ready[@]}"; do printf 'running %s\n' "$(date +%s)" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
     launch_log=$(mktemp "$MEM/batch.launch-XXXXXX.log") || exit 1
     setsid nohup "$SELF" runbatch "$FMH" "${ready[@]}" >"$launch_log" 2>&1 < /dev/null &
     id=${ready[0]%%@*}; head=${ready[0]#*@}
   else
-  read -r _ id head <<< "$(printf '%s' "$cands" | sort -n -k1,1 -k2,2 | head -n 1)"
+  id=${ready[0]%%@*}; head=${ready[0]#*@}
   printf 'running %s\n' "$(date +%s)" > "$MEM/$id.$head.state"
   launch_log=$(mktemp "$MEM/$id.$head.launch-XXXXXX.log") || exit 1
   setsid nohup "$SELF" run "$FMH" "$id" "$head" >"$launch_log" 2>&1 < /dev/null &

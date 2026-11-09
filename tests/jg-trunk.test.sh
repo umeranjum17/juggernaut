@@ -37,6 +37,9 @@
 #    files judged against the tip, one trunk move, one trunk-landings.tsv row per lane); a lane that conflicts drops out and is told; a red
 #    stack is halved until only the guilty lane is returned and the green part lands; a red the whole suite finds after a batch landing is
 #    traced to its one commit and reverted; a single queued lane keeps the single path.
+# T15 The queue's threshold: the landing check holds ready lanes until flush-at-ready are ready or the oldest has waited
+#    flush-after-minutes, then lands them all as one stack; `flush <project>` lands every ready lane at once; a lane marked
+#    `land-next` lands at once, ahead of the queue, while the others keep waiting; a worker marks neither.
 # T6 A red CI pins the home back to the last green live commit and stops landings; a worker
 #    cannot record the captain's word.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
@@ -84,7 +87,7 @@ printf '%s\\n' "\$*" >> "$W/teardown-calls"
 SH
   : > "$HOME_D/config/fleet-ledger"
   chmod +x "$W/root/bin/jg-fleet-ledger.sh" "$W/root/bin/jg-teardown.sh" "$W/root/bin/jg-captain-hold.sh" "$W/fakebin/gh-axi" "$HOME_D/config/live-hook.proj"
-  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=! grep -q BAD work.txt\ngate-lint=! grep -q UGLY work.txt\n' > "$HOME_D/config/trunk-policy"
+  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=! grep -q BAD work.txt\ngate-lint=! grep -q UGLY work.txt\nflush-at-ready=1\n' > "$HOME_D/config/trunk-policy"
   printf -- '- proj [local-trunk] - fixture project in local-trunk mode (added 2026-11-07)\n' > "$HOME_D/data/projects.md"
   jg_git_init_commit "$PROJ"
   mkdir -p "$PROJ/bin"; printf '# proj\n' > "$PROJ/AGENTS.md"; : > "$PROJ/bin/.keep"; git -C "$PROJ" add AGENTS.md bin/.keep  # a Squad Lead home is only valid with both
@@ -1172,6 +1175,62 @@ test_a_verify_moves_the_pin_over_a_red_its_parent_already_had() {
   pass 'the green pin moves over failures the parent already had, and holds on a red the commit added'
 }
 
+# fresh <id> <minutes>: the lane's done report is this many minutes old.
+fresh() { printf 'done [at=%s]: ready in branch fm/%s (local-trunk)\n' "$(( $(date +%s) - $2 * 60 ))" "$1" >> "$HOME_D/state/$1.status"; }
+qsweep() { JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" 2>&1; }
+# settled <n>: the trunk holds <n> commits over <base> and the whole suite has moved the green pin to its tip.
+settled() {
+  local _
+  for _ in $(seq 1 150); do
+    [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = "$1" ] && [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && return 0
+    sleep 0.2
+  done
+  fail "the trunk must hold $1 landed lanes and a settled suite: $(git -C "$PROJ" log --format=%s "$base..trunk" | paste -sd, -)"
+}
+unlanded() { [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = "$1" ] || fail "$2: $(git -C "$PROJ" log --format=%s "$base..trunk" | paste -sd, -)"; }
+
+# shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
+test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it() {
+  local base out rc=0
+  batch_world flushq; base=$(tip)
+  printf 'flush-at-ready=3\nflush-after-minutes=20\n' >> "$HOME_D/config/trunk-policy"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  # Below the threshold and young: two ready lanes wait; nothing lands one by one.
+  lane q1 one f1.txt; lane q2 two f2.txt; fresh q1 5; fresh q2 4
+  qsweep >/dev/null; unlanded 0 "two young lanes are below flush-at-ready and wait"
+  # The third lane reaches the threshold: all three land in ONE stack behind ONE gate.
+  lane q3 three f3.txt; fresh q3 3
+  qsweep >/dev/null; settled 3
+  [ "$(runs)" = 1 ] || fail "the flushed lanes were judged by one gate, got $(runs) runs"
+  [ "$(awk -F'\t' '$6 ~ /^batch-from=/' "$HOME_D/data/trunk-landings.tsv" | wc -l | tr -d ' ')" = 3 ] || fail "the three landed as one stack"
+  # One lane that has waited past flush-after-minutes lands by itself.
+  base=$(tip); lane q4 four f4.txt; fresh q4 19
+  qsweep >/dev/null; unlanded 0 "a lane that has waited 19 of 20 minutes still waits"
+  fresh q4 21; qsweep >/dev/null; settled 1
+  # `flush` lands every ready lane now, whatever the threshold says, and the request ends once the queue is empty.
+  base=$(tip); lane q5 five f5.txt; lane q6 six f6.txt; fresh q5 2; fresh q6 1
+  qsweep >/dev/null; unlanded 0 "two young lanes wait"
+  out=$(JG_TASK_ID=q5 trunk flush "$PROJ" 2>&1) && fail "a worker never flushes the queue"; assert_contains "$out" "a worker never flushes" "the worker refusal says why"
+  out=$(trunk flush "$PROJ" 2>&1) || fail "Overwatch can flush the queue: $out"; assert_contains "$out" "flush requested for proj" "flush says what it did"
+  [ -e "$HOME_D/state/trunk-flush-proj" ] || fail "flush records its request"
+  : > "$W/gate-runs"; qsweep >/dev/null; settled 2
+  [ "$(runs)" = 1 ] || fail "flush lands the ready lanes as one stack, got $(runs) gate runs"
+  qsweep >/dev/null; [ ! -e "$HOME_D/state/trunk-flush-proj" ] || fail "the flush request ends when no ready lane is left"
+  # A lane marked land-next lands at once, ahead of the queue; the lanes below the threshold keep waiting.
+  base=$(tip); lane q7 seven f7.txt; lane q9 nine f9.txt; fresh q7 3; fresh q9 1
+  out=$(JG_TASK_ID=q9 trunk land-next q9 2>&1) && fail "a worker never marks a lane to land next"
+  out=$(trunk land-next nosuch 2>&1) && fail "land-next needs a real task"; assert_contains "$out" "usage: jg-trunk.sh land-next" "land-next names its usage"
+  trunk land-next q9 >/dev/null || fail "Overwatch can mark a lane to land next"
+  qsweep >/dev/null; settled 1
+  [ "$(git -C "$PROJ" log --format=%s "$base..trunk")" = "ticket q9" ] || fail "only the marked lane lands, the older lane waits"
+  [ ! -e "$HOME_D/state/q9.land-next" ] || fail "the mark ends when the lane lands"
+  # Marked while the threshold is met (q7 waits, q10 is marked, q11 arrives): the marked lane lands first, in the same stack as the rest.
+  lane q10 ten f10.txt; lane q11 eleven f11.txt; fresh q10 2; fresh q11 1; trunk land-next q10 >/dev/null
+  qsweep >/dev/null; settled 4
+  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | sed -n 2p)" = "ticket q10" ] || fail "the marked lane goes first: $(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)"
+  pass 'the queue lands at a threshold, flushes on a command, and a land-next lane jumps it'
+}
+
 test_a_good_lane_lands_but_goes_live_only_on_his_word
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_every_unsafe_landing_refuses
@@ -1203,4 +1262,5 @@ test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
 test_a_landing_does_not_hold_the_trunk_while_its_gate_runs
 test_a_stack_holds_no_trunk_lock_while_its_gate_runs_and_is_judged_again_on_a_moved_tip
+test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it
 printf 'jg-trunk: ok\n'

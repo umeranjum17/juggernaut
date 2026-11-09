@@ -32,6 +32,8 @@
 #                                     (empty: no note, the alert still goes out)
 #   release-after-hours   48          age of the oldest unreleased commit that makes a release due
 #   batch-max             5           the most queued lanes the merge queue stacks into one landing (2 or more queued lanes land as one stack)
+#   flush-at-ready        3           the landing check holds ready lanes until this many are ready (or flush-after-minutes passes), then lands them all as one batch; 1 lands every lane as soon as it is ready
+#   flush-after-minutes   20          ...or until the oldest ready lane has waited this long, whichever is first
 #   live-quiet-minutes    20          under a go-live waiver: the trunk goes live once no landing has happened for this long
 #   live-cap-minutes      60          under a go-live waiver: ...or once the oldest landing not yet live is this old, whichever is first
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
@@ -86,6 +88,8 @@ jg_trunk_policy() {  # <key> [<project>]
       gate-red-ticket) val=core-self-checks-red ;;
       release-after-hours) val=48 ;;
       batch-max) val=5 ;;
+      flush-at-ready) val=3 ;;
+      flush-after-minutes) val=20 ;;
       live-quiet-minutes) val=20 ;;
       live-cap-minutes) val=60 ;;
       *) return 1 ;;
