@@ -52,7 +52,13 @@ gate() { # prints the gate's output and rc=; every output is also kept in $work/
 main=$work/main; mkdir -p "$main/config"
 gate_inherit() { env -u JG_FLEET_BOARD PATH="$work/bin:$PATH" JG_HOME="$home" JG_MAIN_HOME="$main" "$home/config/merge-gate" lane - "$head" "$pr" 2>&1; printf 'rc=%s\n' "$?"; }
 run=$home/data/lane/.done-done/runs/r1.json
-seal() { printf '{"schema":1,"exit":0,"dirty":false,"commit":"%s","files":["a.png"],"run_id":"r1"}\n' "$1" > "$run"; }
+seal() { printf '{"schema":1,"exit":0,"dirty":false,"commit":"%s","files":["a.png"],"run_id":"%s"}\n' "$1" "${2:-r1}" > "$run"; }
+# The saved check approves the capture the sealed run holds at this head: merge-card's receipt cites only approved evidence.
+card() { # [home]: that home's own card cites its own capture
+  local h=${1:-$home}
+  printf '{"head":"%s","verdict":"pass","check":{"claim":"checks passed","evidence":["%s"]}}\n' "$head" "$h/data/lane/a.png" > "$h/data/lane/merge-card.json"
+}
+card
 
 "$addons/owner-rules/wiring.sh" "$home" >/dev/null
 JG_HOME=$home "$addons/owner-rules/bin/jg-owner-rules-gate.sh" init-key >/dev/null
@@ -81,7 +87,7 @@ is "refusal: forged signature" "$(gate | grep -F 'local proof signature is inval
 sign_receipt
 wrong_scope=$(PATH=$work/bin:$PATH XDG_DATA_HOME=$work/data JG_HOME=$home JG_FLEET_BOARD=$work/board.json "$home/config/merge-gate" lane - "$head" 'https://github.com/umeranjum17/juggernaut/pull/10' 2>&1)
 [[ $wrong_scope == *"local proof signature is invalid"* ]] && ok "refusal: signature cannot be replayed to another PR" || no "signature replayed across PRs: $wrong_scope"
-printf '{"schema":1,"exit":0,"dirty":false,"commit":"%s","files":["b.png"],"run_id":"r1"}\n' "$head" > "$run"
+seal "$head" r2
 is "refusal: changed receipt invalidates the signature" "$(gate | grep -F 'local proof signature is invalid' | head -1)" "owner-rules: local proof signature is invalid for $pr at $head; re-run the passed-proof recipe and sign the exact receipt"
 seal "$head"
 sign_receipt
@@ -170,7 +176,7 @@ skip_card=$(gate)
 [[ $skip_card == *"no valid local proof signature"* ]] && ok "screen: none canary still refuses missing local authorization" || no "screen: none canary skipped signature: $skip_card"
 rm -f "$home/config/owner-rules-canary"
 seal "$head"
-printf '{"verdict":"pass","check":{"claim":"checks passed","evidence":[]}}\n' > "$home/data/lane/merge-card.json"
+card
 sign_receipt
 jq -n '{schema:1,answers_only:false,items:[]}' > "$work/board.json"
 text_card=$(gate)
@@ -184,7 +190,7 @@ jq -e --arg k "$cardkey" '.items | any(.[]; .key==$k and .kind=="evidence" and .
 jq -e --arg k "$cardkey" '.items | any(.[]; .key==$k and (.media // []) == [])' "$work/board.json" >/dev/null && ok "screen: none: the card carries no capture" || no "screen: none: the card names a capture"
 # A lead home finds Main's public key from the parent binding it carries; nobody exports JG_MAIN_HOME by hand.
 # Main's home is $home here (it holds the key pair); the lead holds only the sealed run and the signature.
-lead=$work/lead; mkdir -p "$lead/data" "$lead/config"; cp -r "$home/data/lane" "$lead/data/lane"; cp "$home/data/checks-gate.log" "$lead/data/" 2>/dev/null
+lead=$work/lead; mkdir -p "$lead/data" "$lead/config"; cp -r "$home/data/lane" "$lead/data/lane"; cp "$home/data/checks-gate.log" "$lead/data/" 2>/dev/null; card "$lead"
 printf '#!/bin/sh\necho "prev gate ran: $*"\n' > "$lead/config/merge-gate"; chmod +x "$lead/config/merge-gate"
 "$addons/owner-rules/wiring.sh" "$lead" >/dev/null
 lead_gate() { env -u JG_MAIN_HOME PATH="$work/bin:$PATH" XDG_DATA_HOME="$work/data" JG_HOME="$lead" JG_FLEET_BOARD="$work/board.json" "$lead/config/merge-gate" lane - "$head" "$pr" 2>&1; printf 'rc=%s\n' "$?"; }

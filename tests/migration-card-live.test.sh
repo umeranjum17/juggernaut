@@ -206,7 +206,8 @@ if [ -n "${JG_BUS_BIN:-}" ] || command -v "${JG_BUS_GO:-go}" >/dev/null 2>&1; th
   [ -n "$APORT" ] || fail "the accounts bus did not start: $(cat "$T/acc.log")"
   printf 'set nats-url nats://127.0.0.1:%s\n' "$APORT" >"$ACC/config/captain-channel"
   ROWS=$T/acc-data/migration-card/live.tsv
-  JG_HOME=$ACC JG_DATA_OVERRIDE=$T/acc-data "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the accounts probe did not run"
+  # Run from a narrow pane, whose COLUMNS once cut the server's config path short in ps and hid its accounts.
+  COLUMNS=40 JG_HOME=$ACC JG_DATA_OVERRIDE=$T/acc-data "$ROOT/bin/jg-migration-live.sh" --quiet >/dev/null || fail "the accounts probe did not run"
   assert_contains "$(row 'NATS server')" "live|pid $ACC_PID, port $APORT, a real message went out and came back" \
     "a server that refuses the empty user is live to this home's login"
   assert_contains "$(row 'per-home accounts')" "live|the server loads 1 home accounts; this home logs in as home-" \

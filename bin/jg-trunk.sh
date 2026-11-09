@@ -605,15 +605,29 @@ chain_on() {  # <top> <idx>...
   done
 }
 
+# A gate command names the base of the change it judges as HEAD^ (the commit under a lane's one commit); a gate that judges a
+# wider change names its base instead.
+gate_from() {  # <gate command> <base>
+  printf '%s\n' "${1//HEAD^/$2}"
+}
+
+# The default-branch commit this trunk version was cut from (data/trunk-versions.tsv) when <sha> is on top of it. The release
+# pull request is this trunk against that commit, so CI maps the changed paths of every landing since it, not of one commit.
+release_base() {  # <sha>
+  local base
+  base=$(awk -F'\t' -v p="$PN" -v t="$TRUNK" '$1 == p && $3 == t { b = $4 } END { print b }' "$DATA/trunk-versions.tsv" 2>/dev/null || true)
+  [ -n "$base" ] && git -C "$PROJ" merge-base --is-ancestor "$base" "$1" 2>/dev/null && printf '%s\n' "$base"
+}
+
 # ONE gate over the stack: the lint, then the tests of the union of the changed files, both judged against the trunk tip
 # (HEAD^ in a gate command is the commit under the stack, so HEAD~<n> is). Returns 0 green; 1 red, with BG_WHY and LAST_RED set.
 batch_gate() {  # <top> <stack size>   (B_TIP is the trunk tip the stack sits on)
   local rc=0 errf lint full
   lint=$(jg_trunk_gate gate-lint "$PN" "$PROJ" "$1" || true); full=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$1" || true)
   errf=$(mktemp)
-  ( [ -z "$lint" ] || run_gate "$1" "${lint//HEAD^/HEAD~$2}" lint ) 2>"$errf" || rc=$?
+  ( [ -z "$lint" ] || run_gate "$1" "$(gate_from "$lint" "HEAD~$2")" lint ) 2>"$errf" || rc=$?
   if [ "$rc" -ne 0 ]; then :
-  elif [ -n "$full" ]; then full_gate "$1" "${full//HEAD^/HEAD~$2}" "$B_TIP" 2>>"$errf" || rc=$?
+  elif [ -n "$full" ]; then full_gate "$1" "$(gate_from "$full" "HEAD~$2")" "$B_TIP" 2>>"$errf" || rc=$?
   else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >>"$errf"; fi
   cat "$errf" >&2
   [ "$rc" -eq 0 ] || LAST_RED=$(grep -E '^(REFUSED|error):' "$errf" | tail -n 1 | sed 's/^[A-Za-z]*: //')
@@ -872,7 +886,7 @@ batch_culprit() {  # <from> <top> <verify gate>
 }
 
 cmd_verify() {
-  local sha tip rc=0 parent green why from culprit='' gate
+  local sha tip rc=0 parent green why from culprit='' gate base
   open_project "${1-}"
   # The tip is a ref read, which is atomic, so reading it never waits for a landing; the trunk lock is taken only for a short write.
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
@@ -888,7 +902,12 @@ cmd_verify() {
   if [ -n "$from" ] && git -C "$PROJ" merge-base --is-ancestor "$from" "$sha"; then parent=$from; else from=; fi
   if ! gate=$(jg_trunk_gate gate-verify "$PN" "$PROJ" "$sha"); then
     # No gate for this project (not Juggernaut, and neither gate-verify@$PN nor gate-full@$PN set): nothing can fail, so nothing goes red.
-    echo "verify: no verify gate for $PN (no gate-verify@$PN or gate-full@$PN); nothing run, nothing marked red" >&2
+    echo "verify: no verify gate for $PN (no gate-verify@$PN or gate-full@$PN); nothing run, nothing marked red" >&2; gate=
+  elif base=$(release_base "$sha"); then
+    # Verify judges what the release pull request carries: every change since this trunk's release base, the set CI maps for it.
+    gate=$(gate_from "$gate" "$base"); echo "verify: judging every change since the release base ${base:0:12}" >&2
+  else echo "verify: $TRUNK has no recorded release base under ${sha:0:12}; its gate runs as written" >&2; fi
+  if [ -z "$gate" ]; then :
   elif [ -n "$parent" ]; then full_gate "$sha" "$gate" "$parent" || rc=$?
   else run_gate "$sha" "$gate" full || rc=$?; fi
   case $rc in

@@ -2,7 +2,7 @@
 # The spawn side of the trunk flow (bin/jg-spawn.sh, bin/jg-trunk.sh): a project with a local trunk takes no
 # feature pull request, and a local-trunk lane starts on the trunk tip so its one commit can land there.
 # Real bin/jg-brief.sh and bin/jg-spawn.sh over a fixture project; only the terminal and the worktree tool are
-# stand-ins. tests/jg-trunk.test.sh owns landing, going live and the release.
+# stand-ins. tests/jg-trunk.test.sh and its parts own landing, going live and the release.
 #
 # T1 a direct-PR or no-mistakes ship on a project registered local-trunk is refused by name and leaves no task record.
 # T2 a local-trunk ship on that project spawns, and its isolated copy is on the trunk tip, not on the default branch.

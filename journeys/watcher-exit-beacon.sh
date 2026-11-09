@@ -15,7 +15,7 @@ mkdir -p "$lab/user" "$lab/config" "$lab/data" "$lab/cache" "$lab/tmp"
 export HOME="$lab/user" XDG_CONFIG_HOME="$lab/config" XDG_DATA_HOME="$lab/data" XDG_CACHE_HOME="$lab/cache" TMPDIR="$lab/tmp"
 {
   bash "$root/tests/jg-watch-beacon.test.sh" &&
-  bash "$root/tests/jg-trunk.test.sh" &&
+  bash "$root/tests/jg-trunk-live.test.sh" &&
   bash "$root/core/wait-timers/tests/jg-wait-timers.test.sh"
 } > "$out" 2>&1
 rc=$?

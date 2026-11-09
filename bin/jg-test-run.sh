@@ -759,6 +759,9 @@ tests/jg-merge-gate-lib.test.sh 578
 tests/jg-merge-gate-policy.test.sh 30967
 tests/jg-metrics-shadow-parity.test.sh 102
 tests/jg-machine-task.test.sh 1800
+tests/jg-machine-call.test.sh 55000
+tests/jg-machine-call-b.test.sh 38000
+tests/jg-machine-call-c.test.sh 53000
 tests/jg-muse-signals-live-e2e.test.sh 180
 tests/jg-omp-primary-live-e2e.test.sh 171
 tests/jg-on.test.sh 20997
@@ -824,7 +827,11 @@ tests/jg-test-run.test.sh 11831
 tests/jg-ticket-writeback.test.sh 83
 tests/jg-tmp-sweep.test.sh 5192
 tests/jg-tokens-retro.test.sh 597
-tests/jg-trunk.test.sh 13000
+tests/jg-trunk.test.sh 45000
+tests/jg-trunk-live.test.sh 44000
+tests/jg-trunk-gate.test.sh 35000
+tests/jg-trunk-queue.test.sh 31000
+tests/jg-trunk-verify.test.sh 15000
 tests/jg-trunk-spawn.test.sh 49000
 tests/jg-trunk-scope.test.sh 8000
 tests/jg-worker-rules.test.sh 3493
@@ -1742,6 +1749,12 @@ families_for_changed_path() {
         families_for_test_reference "fixtures/$fixture_ref" \
           || printf '%s\n' "__unmapped__:$path"
       fi
+      ;;
+    tests/jg-trunk-fixture.sh|tests/jg-machine-call-fixture.sh)
+      # Each is shared by the parts of one split suite, which are unclassified:
+      # the family-wide arm below would widen it to every unclassified script.
+      scripts_for_test_reference "$(basename "$path")" \
+        || printf '%s\n' "__unmapped__:$path"
       ;;
     tests/lib.sh|tests/*-helpers.sh|tests/fixtures.sh|tests/*-fixture.sh)
       # Shared top-level test files, selected by the suites that name them.

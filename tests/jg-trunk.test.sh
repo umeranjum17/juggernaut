@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Integration test for bin/jg-trunk.sh: the local trunk flow end to end against real git
-# repositories, a local bare origin, the real gate chain and a stub for the captain-hold reader.
+# Integration test for bin/jg-trunk.sh: the landing and release flow end to end against real git repositories,
+# a local bare origin, the real gate chain and a stub for the captain-hold reader (tests/jg-trunk-fixture.sh).
+# The check and going live are tests/jg-trunk-live.test.sh, the landing gate and the proof are tests/jg-trunk-gate.test.sh,
+# the merge queue is tests/jg-trunk-queue.test.sh, and verify and the trunk lock are tests/jg-trunk-verify.test.sh.
+# Through tests/jg-trunk-fixture.sh it runs bin/jg-trunk.sh, reads bin/jg-dod-lib.sh and stands in for bin/jg-captain-hold.sh,
+# bin/jg-backlog.sh, bin/jg-send.sh, bin/jg-teardown.sh, bin/jg-fleet-ledger.sh and bin/jg-home-health.sh.
 #
 # T1 A one-commit lane lands on the trunk by compare-and-swap and is logged, but landing never goes live: live
 #    refuses without the captain's recorded word, runs the hook at the green commit with it, and spends the word.
@@ -21,138 +25,118 @@
 # T10 Once the next trunk is cut, the old one is cleaned up unforced - remote branch, local branch, worktrees - only
 #    when its release is proved on main and every hotfix is carried into the new trunk; a copy holding
 #    unlanded work, or a hotfix not carried, keeps it, listed.
-# T7 The registered check core/trunk-landing lands a task whose last status line is its done, with no human step, and
-#    never goes live; it ignores a task that is not done, reports a refusal once (a conflict names its paths), retries a
-#    refusal that only needs time, cleans a landed task up unforced, and runs on the watcher's fast tick.
-# T11 The landing gate charges a lane only for what it broke: a script red on the trunk tip in the same way does not block
-#    (it is reported once per tip tree, and the green pin stays), while a script that fails only on the lane, passes on the
-#    tip, or fails differently on the lane blocks it, with the tip's rerun done in the environment the gate ended with.
-#    A failure gets one rerun on the lane before it is judged: one that passes on the rerun is flaky and not charged.
-# T12 A landing is one fast check: the lander rebases the lane's one commit onto the tip by itself (the lane follows it),
-#    and a lane lands only with its whole proof at its head (receipt, approved merge-card evidence, sealed done-done run); the owner signature never blocks it.
-# T13 The journey: four lanes ready at once, three land in order with no human or lead step, the red one is refused,
-#    and a commit that passes the landing check but breaks the whole suite is reverted by itself after the landing and
-#    the lane is told; a revert that cannot apply cleanly writes the red pin instead.
-# T14 The merge queue: 2 or more queued lanes land as ONE stack (auto-rebased in order, one gate over the union of their changed
-#    files judged against the tip, one trunk move, one trunk-landings.tsv row per lane); a lane that conflicts drops out and is told; a red
-#    stack is halved until only the guilty lane is returned and the green part lands; a red the whole suite finds after a batch landing is
-#    traced to its one commit and reverted; a single queued lane keeps the single path.
-# T15 The queue's threshold: the landing check holds ready lanes until flush-at-ready are ready or the oldest has waited
-#    flush-after-minutes, then lands them all as one stack; `flush <project>` lands every ready lane at once; a lane marked
-#    `land-next` lands at once, ahead of the queue, while the others keep waiting; a worker marks neither.
 # T16 A lander refusal the worker fixes reaches that lane's worker by itself: a steer carrying the refusal text, repeated while the
 #    head is unchanged and the worker has no unread steer, never for a head the lane no longer has or for a refusal that only needs
 #    time; a refusal nobody acted on for ten minutes raises one alert naming the lane; the done and the steer name what to run.
 # T6 A red CI pins the home back to the last green live commit and stops landings; a worker
 #    cannot record the captain's word.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
-set -u
-# The fixture lanes are judged in their own proof context: the account or done-done home of whoever runs this suite (a worker pane,
-# or a sealed run with an explicit DONE_DONE_HOME) must not reach the merge-card check, which refuses a context that differs.
-unset CLAUDE_CONFIG_DIR DONE_DONE_HOME
-
-# shellcheck source=tests/lib.sh
+# shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 
-TMP_ROOT=$(jg_test_tmproot jg-trunk)
+sends() { awk -F'\t' -v i="$1" '$1 == i { n++ } END { print n + 0 }' "$W/send-calls" 2>/dev/null || echo 0; }
 
-# A world: a copied bin (with a stub hold reader), a home, a project with a local bare origin
-# and an initialised trunk, a recording live hook and a fake gh-axi.
-world() {  # <name>: sets W HOME_D PROJ
-  W="$TMP_ROOT/$1"; HOME_D="$W/home"; PROJ="$HOME_D/projects/proj"
-  mkdir -p "$W/root" "$HOME_D/state" "$HOME_D/data" "$HOME_D/config" "$W/fakebin"
-  cp -r "$ROOT/bin" "$W/root/bin"
-  # The fixture homes are bare repositories (no beacon, overlay or supervision read); the health check has its own test.
-  # shellcheck disable=SC2016 # the stub expands its own argument
-  printf '#!/usr/bin/env bash\necho "ok $2"\n' > "$W/root/bin/jg-home-health.sh"
-  ln -s "$ROOT/core" "$W/root/core"; ln -s "$ROOT/policy" "$W/root/policy"
-  cat > "$W/root/bin/jg-captain-hold.sh" <<'SH'
-#!/usr/bin/env bash
-case "$1" in
-  open) exit 1 ;;
-  blocking) [ -f "$JG_STATE_OVERRIDE/linked-open" ] && { printf 'ticket-x\n'; exit 0; }; exit 1 ;;
-esac
-SH
-  cat > "$W/fakebin/gh-axi" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$W/gh-calls"
-if [ "\$2" = view ]; then
-  [ "\$3" = 9 ] && [ "\$4" = --repo ] && [ "\$5" = o/r ] || { echo 'error: gh-axi requires a PR number and --repo' >&2; exit 1; }
-  printf 'state: %s\n' "\$(cat "$W/pr-state" 2>/dev/null || echo open)"; exit 0; fi
-printf 'https://github.com/o/r/pull/9\n'
-SH
-  cat > "$HOME_D/config/live-hook.proj" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$2" >> "$W/live-moves"
-SH
-  cat > "$W/root/bin/jg-fleet-ledger.sh" <<SH
-#!/usr/bin/env bash
-printf '%s\\n' "\$*" >> "$W/ledger-calls"
-SH
-  cat > "$W/root/bin/jg-teardown.sh" <<SH
-#!/usr/bin/env bash
-printf '%s\\n' "\$*" >> "$W/teardown-calls"
-rm -f "$HOME_D/state/\$1.meta"  # the real teardown removes the task record the moment a landed lane is cleaned up
-SH
-  cat > "$W/root/bin/jg-send.sh" <<SH
-#!/usr/bin/env bash
-printf '%s\\t%s\\n' "\$1" "\$2" >> "$W/send-calls"
-SH
-  : > "$HOME_D/config/fleet-ledger"
-  chmod +x "$W/root/bin/jg-send.sh" "$W/root/bin/jg-fleet-ledger.sh" "$W/root/bin/jg-teardown.sh" "$W/root/bin/jg-captain-hold.sh" "$W/fakebin/gh-axi" "$HOME_D/config/live-hook.proj"
-  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=! grep -q BAD work.txt\ngate-lint=! grep -q UGLY work.txt\nflush-at-ready=1\n' > "$HOME_D/config/trunk-policy"
-  printf -- '- proj [local-trunk] - fixture project in local-trunk mode (added 2026-11-07)\n' > "$HOME_D/data/projects.md"
-  jg_git_init_commit "$PROJ"
-  mkdir -p "$PROJ/bin"; printf '# proj\n' > "$PROJ/AGENTS.md"; : > "$PROJ/bin/.keep"; git -C "$PROJ" add AGENTS.md bin/.keep  # a Squad Lead home is only valid with both
-  git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
-  jg_git_add_origin "$PROJ" "$W/origin.git"
-  git -C "$PROJ" branch release/c-4
-  trunk init "$PROJ" >/dev/null || fail "trunk init must work"
+test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection() {
+  local c before out rc=0 hook_kind owner_hash
+  for hook_kind in configured owner-guard; do
+  rc=0
+  world "hook-context-$hook_kind"
+  lane hook good; c=$(git -C "$PROJ" rev-parse fm/hook); before=$(tip)
+  mkdir -p "$W/repository-hooks"
+  if [ "$hook_kind" = owner-guard ]; then
+    sed -e 's/__NAME__/reference-transaction/g' -e "s|__CAT__|$(command -v cat)|g" \
+      -e "s|__MKTEMP__|$(command -v mktemp)|g" -e "s|__RM__|$(command -v rm)|g" \
+      "$ROOT/core/owner-guard/global-hook.sh" > "$W/repository-hooks/reference-transaction"
+    chmod 555 "$W/repository-hooks/reference-transaction"
+    owner_hash=$(git hash-object "$W/repository-hooks/reference-transaction")
+  fi
+  git -C "$PROJ" config core.hooksPath "$W/repository-hooks"
+  "$ROOT/bin/jg-git-strip-ai-trailers.sh" install "$W/launch-hooks" "$PROJ"
+  "$ROOT/bin/jg-git-strip-ai-trailers.sh" env-file "$W/launch-hooks" "$W/launch-env"
+  # A real child shell inherits exactly the env-file entry the spawn path emits.
+  (
+    # shellcheck source=/dev/null # The real launch helper emitted this environment file.
+    . "$W/launch-env"
+    trunk due "$PROJ" >/dev/null 2>&1 || true
+    [ "$(git -C "$PROJ" rev-parse --path-format=absolute --git-path hooks/reference-transaction)" = "$W/launch-hooks/reference-transaction" ] || fail "the launched environment lost its configured hook directory"
+    out=$(git -C "$PROJ" update-ref refs/heads/trunk "$c" "$before" 2>&1) || rc=$?
+    [ "$rc" -ne 0 ] || fail "the task overlay bypassed the repository trunk guard"
+    assert_contains "$out" 'moves only through' 'the actual configured hook must refuse the unauthorized movement'
+    [ "$(tip)" = "$before" ] || fail "a refused transaction moved the trunk"
+    trunk land hook >/dev/null 2>&1 || fail "the same configured hook must allow the guarded landing"
+  ) || fail "configured hook journey failed"
+  [ "$(tip)" = "$c" ] || fail "the authorized landing did not move the trunk"
+  if [ "$hook_kind" = owner-guard ]; then
+    [ "$(git hash-object "$W/repository-hooks/reference-transaction")" = "$owner_hash" ] || fail "the existing owner hook was changed"
+  fi
+  pass "the spawned Git environment preserves $hook_kind hooks and repository trunk protection"
+  done
 }
 
-trunk() { PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="${CODE_ROOT:-$W/root}" JG_STATE_OVERRIDE="$HOME_D/state" \
-  JG_DATA_OVERRIDE="$HOME_D/data" JG_CONFIG_OVERRIDE="$HOME_D/config" "$W/root/bin/jg-trunk.sh" "$@"; }
+test_a_repaired_hook_overlay_admits_exactly_one_fresh_attempt() {
+  local out n
+  world hook-repair
+  lane fix good
+  mkdir -p "$W/repository-hooks"
+  printf '#!/bin/sh\nexit 0\n' > "$W/repository-hooks/reference-transaction"; chmod 755 "$W/repository-hooks/reference-transaction"
+  git -C "$PROJ" config core.hooksPath "$W/repository-hooks"
+  out=$(trunk land fix 2>&1) && fail "an unrecognized effective hook must refuse the landing"
+  assert_contains "$out" 'is not the trunk guard' 'the hook refusal must name its cause'
+  n=$(find "$HOME_D/data/jg-trunk-landing" -name 'fix.*.attempt-*' | wc -l | tr -d ' ')
+  trunk land fix >/dev/null 2>&1 && fail "an unchanged hook refusal must stay refused"
+  trunk land fix >/dev/null 2>&1 && fail "a repeated unchanged check must stay refused"
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name 'fix.*.attempt-*' | wc -l | tr -d ' ')" = "$n" ] || fail "an unchanged hook must not admit another attempt"
+  # The overlay is repaired: the effective hook now chains the repository's own guard.
+  # shellcheck disable=SC2016 # the delegate hook body is written out verbatim
+  printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: delegate to the repository trunk guard\ncommon=$(git rev-parse --path-format=absolute --git-common-dir) || exit 1\nhook=$common/hooks/reference-transaction\n[ ! -x "$hook" ] || exec "$hook" "$@"\nexit 0\n' > "$W/repository-hooks/reference-transaction"
+  trunk land fix >/dev/null 2>&1 || fail "a repaired hook overlay must admit one fresh attempt that lands"
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name 'fix.*.attempt-*' | wc -l | tr -d ' ')" = $((n + 1)) ] || fail "a repaired hook must admit exactly one new attempt"
+  pass 'a changed effective hook overlay admits exactly one fresh attempt, and an unchanged refusal is not repeated'
+}
 
-commit_in() {  # <worktree> <file> <content> <message> [<note>]
-  mkdir -p "$(dirname "$1/$2")"; printf '%s\n' "$3" > "$1/$2"; git -C "$1" add "$2"
-  git -C "$1" -c user.name=t -c user.email=t@example.invalid commit -q -m "$4" ${5:+-m "$5"}
+test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes() {
+  local g="$TMP_ROOT/contained" t m h rc=0 out
+  jg_git_init_commit "$g"; commit_in "$g" a.txt one "base"; t=$(git -C "$g" rev-parse HEAD)
+  git -C "$g" checkout -q -b home; commit_in "$g" a.txt two "home change"; commit_in "$g" b.txt new "home file"; h=$(git -C "$g" rev-parse HEAD)
+  git -C "$g" checkout -q -b trunk2 "$t"; commit_in "$g" a.txt two "the trunk takes it as one squash"; commit_in "$g" b.txt new "squash part 2"
+  commit_in "$g" a.txt three "a later trunk commit supersedes it"; m=$(git -C "$g" rev-parse HEAD)
+  "$ROOT/bin/jg-home-contained.sh" "$h" "$m" "$g" || fail "a home whose changes are on the trunk (one later superseded) must be contained"
+  "$ROOT/bin/jg-home-contained.sh" "$t" "$m" "$g" || fail "an ancestor of the trunk is contained"
+  git -C "$g" checkout -q home; commit_in "$g" c.txt stray "stray commit"; h=$(git -C "$g" rev-parse HEAD)
+  out=$("$ROOT/bin/jg-home-contained.sh" "$h" "$m" "$g") || rc=$?
+  [ "$rc" = 1 ] || fail "a home with a change the trunk never took must exit 1, got $rc"
+  assert_contains "$out" 'uncontained: c.txt' "the uncontained path must be named"
+  case $out in *a.txt*|*b.txt*) fail "contained paths must not be listed: $out" ;; esac
+  rc=0; "$ROOT/bin/jg-home-contained.sh" "$h" nope "$g" 2>/dev/null || rc=$?
+  [ "$rc" = 2 ] || fail "an unknown commit must exit 2, got $rc"
+  pass 'jg-home-contained proves tree containment: same bytes, a superseding trunk commit, or the named uncontained paths'
 }
-# prove <id> [PASS|FAIL]: the complete proof for the lane's current head: the completion receipt, the merge-card's approved cited evidence
-# and a sealed clean done-done run holding that evidence. `prove_part` writes one input alone.
-prove() { prove_part "$1" receipt "${2:-PASS}"; prove_part "$1" card; prove_part "$1" seal; }
-prove_part() {  # <id> receipt [PASS|FAIL] | card | seal
-  local id=$1 h d="$HOME_D/data/$1"; h=$(git -C "$PROJ" rev-parse "fm/$id"); mkdir -p "$d/.done-done/runs"
-  case $2 in
-    receipt) printf '{"schema":1,"task":"%s","mode":"local-trunk","spawn_gen":"g-%s","head":"%s","pr":"","verdict":"%s","at":1,"evidence":"done-done run: ok"}\n' \
-      "$id" "$id" "$h" "${3:-PASS}" > "$HOME_D/state/$id.run-receipt.json" ;;
-    card) printf '{"head":"%s","verdict":"pass","check":{"claim":"a user can land","evidence":["%s/run.log"]}}\n' "$h" "$d" > "$d/merge-card.json" ;;
-    seal) printf 'ok\n' > "$d/run.log"
-      printf '{"schema":1,"run_id":"20261109T000000Z-%s-ab","commit":"%s","exit":0,"dirty":false,"started_at":"2026-11-09T00:00:00Z","files":["run.log"]}\n' "${h:0:8}" "$h" > "$d/.done-done/runs/run-$h.json" ;;
-  esac
-}
-# lane <id> <content> [<file>] [<note>]: a lane off the trunk tip with one commit and a PASS receipt.
-lane() {
-  local id=$1 wt="$W/lanes/$1"
-  git -C "$PROJ" worktree add -q -b "fm/$id" "$wt" trunk
-  commit_in "$wt" "${3:-work.txt}" "$2" "ticket $id" "${4-}"
-  jg_write_meta "$HOME_D/state/$id.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/$id" "worktree=$wt" "spawn_gen=g-$id"
-  prove "$id"; ready "$id"
-}
-# ready <id>: the worker's own report that the lane is done, the only signal the landing check waits for.
-READY_AT=1000
-ready() { READY_AT=$((READY_AT + 1)); printf 'done [at=%s]: ready in branch fm/%s (local-trunk)\n' "$READY_AT" "$1" >> "$HOME_D/state/$1.status"; }
-# relane <id> <content>: the lane is rebased onto the trunk tip with one new commit and proved again.
-relane() { git -C "$W/lanes/$1" reset -q --hard trunk; commit_in "$W/lanes/$1" work.txt "$2" "ticket $1"; prove "$1"; }
-# plain_git: git with no machine-wide hooks path, so the project's own reference-transaction hook is the one that runs.
-plain_git() { env GIT_CONFIG_COUNT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git "$@"; }
-tip() { git -C "$PROJ" rev-parse trunk; }
-refused() {  # <what> <id> <expect>: landing refuses, mentions <expect>, and leaves the trunk alone
-  local before out rc=0
-  before=$(tip); out=$(trunk land "$2" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "$1 must refuse, but it landed: $out"
-  assert_contains "$out" "$3" "$1 must say why"
-  [ "$(tip)" = "$before" ] || fail "$1 moved the trunk"
+
+test_admission_is_shared_by_manual_and_automatic_requests() {
+  local c out rc=0 first_log
+  world admission
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  lane once BAD; c=$(git -C "$PROJ" rev-parse fm/once)
+  printf 'gate-full=echo first >> "%s/calls"; while [ ! -e "%s/release" ]; do sleep 0.1; done; echo original; exit 1\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
+  JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
+  for _ in $(seq 1 100); do [ ! -s "$W/calls" ] || break; sleep 0.1; done
+  [ -s "$W/calls" ] || fail "automatic request did not enter its gate"
+  out=$(trunk land once 2>&1) || rc=$?
+  : > "$W/release" # release our own attempt even when the assertion below fails
+  [ "$rc" = 75 ] || fail "a concurrent manual request must report in progress (75): $out"
+  assert_contains "$out" IN_PROGRESS "a concurrent request must name its typed outcome"
+  sweep >/dev/null
+  first_log=$(find "$HOME_D/data/jg-trunk-landing" -name gate-full.log -print | head -n 1)
+  out=$(trunk land once 2>&1) && fail "an unchanged failed gate must stay refused"
+  [ "$(wc -l < "$W/calls" | tr -d ' ')" = 1 ] || fail "unchanged failure reran its gate"
+  printf 'gate-full=echo second >> "%s/calls"; echo changed; exit 1\n' "$W" >> "$HOME_D/config/trunk-policy"
+  trunk land once >/dev/null 2>&1 && fail "a changed failing context must refuse"
+  [ "$(wc -l < "$W/calls" | tr -d ' ')" = 2 ] || fail "changed context must get one attempt"
+  [ "$(cat "$first_log")" = original ] || fail "a later attempt overwrote the original gate log"
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name gate-full.log | wc -l | tr -d ' ')" = 2 ] || fail "every attempt must keep its gate log"
+  [ "$(tip)" != "$c" ] || fail "failed proof must never move the trunk"
+  pass 'automatic/manual requests share admission, unchanged failure stays cached, and changed attempts retain their logs'
 }
 
 test_legacy_mode_stays_interoperable() {
@@ -297,6 +281,26 @@ test_the_release_is_one_pr_from_the_trunk_on_his_word() {
   pass 'the release is one PR from the trunk itself, on his word, with no release branch'
 }
 
+test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
+  local c1 c2 out
+  world ci
+  lane c1 one; c1=$(git -C "$PROJ" rev-parse fm/c1); trunk land c1 >/dev/null 2>&1 || fail "c1 must land"
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "c1 must verify"
+  trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c1 must go live"
+  lane c2 two; c2=$(git -C "$PROJ" rev-parse fm/c2); trunk land c2 >/dev/null 2>&1 || fail "c2 must land"
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "c2 must verify"
+  trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c2 must go live"
+  [ "$(tail -1 "$W/live-moves")" = "$c2" ] || fail "fixture: the home must be at c2"
+  out=$(trunk ci "$PROJ" "$c2" red 2>&1) || fail "a red CI must record and pin back: $out"
+  [ "$(tail -1 "$W/live-moves")" = "$c1" ] || fail "a red CI must move the home back to the last green live commit"
+  [ "$(cat "$HOME_D/state/trunk-red-proj")" = "$c2" ] || fail "a red CI must write the red pin"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "the green pin must be the last green commit"
+  lane c3 three; refused 'a landing while CI is red' c3 "fixes-red: $c2"
+  trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "live after a pin-back must work with his word"
+  [ "$(tail -1 "$W/live-moves")" = "$c1" ] || fail "the home must stay pinned on the last green commit"
+  pass 'a red CI writes the pin-back, returns the home to the last green commit and stops landings'
+}
+
 test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut() {
   local out old
   world roll
@@ -357,960 +361,6 @@ test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried() {
   pass 'the old trunk is cleaned up unforced, only once its release is proved on main and every hotfix is carried'
 }
 
-test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
-  local c1 c2 out
-  world ci
-  lane c1 one; c1=$(git -C "$PROJ" rev-parse fm/c1); trunk land c1 >/dev/null 2>&1 || fail "c1 must land"
-  trunk verify "$PROJ" >/dev/null 2>&1 || fail "c1 must verify"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c1 must go live"
-  lane c2 two; c2=$(git -C "$PROJ" rev-parse fm/c2); trunk land c2 >/dev/null 2>&1 || fail "c2 must land"
-  trunk verify "$PROJ" >/dev/null 2>&1 || fail "c2 must verify"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "c2 must go live"
-  [ "$(tail -1 "$W/live-moves")" = "$c2" ] || fail "fixture: the home must be at c2"
-  out=$(trunk ci "$PROJ" "$c2" red 2>&1) || fail "a red CI must record and pin back: $out"
-  [ "$(tail -1 "$W/live-moves")" = "$c1" ] || fail "a red CI must move the home back to the last green live commit"
-  [ "$(cat "$HOME_D/state/trunk-red-proj")" = "$c2" ] || fail "a red CI must write the red pin"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "the green pin must be the last green commit"
-  lane c3 three; refused 'a landing while CI is red' c3 "fixes-red: $c2"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "live after a pin-back must work with his word"
-  [ "$(tail -1 "$W/live-moves")" = "$c1" ] || fail "the home must stay pinned on the last green commit"
-  pass 'a red CI writes the pin-back, returns the home to the last green commit and stops landings'
-}
-
-# A fleet: the code home (a clone of the project's origin, as Main's checkout is) and two registered Squad Lead homes
-# (worktrees of it), all on the last release, a go-live waiver, and the home's own bin so the landing check runs.
-fleet_world() {  # <name> [rig]: sets W HOME_D PROJ CODE_ROOT BASE; rig makes the post-landing suite the rig's t/*.test.sh
-  local id
-  world "$1"
-  [ "${2-}" != rig ] || { rig; printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"; }
-  rm "$HOME_D/config/live-hook.proj"
-  CODE_ROOT="$W/homecode"; git clone -q "$(git -C "$PROJ" remote get-url origin)" "$CODE_ROOT"
-  BASE=$(git -C "$CODE_ROOT" rev-parse HEAD)
-  for id in lead-a lead-b; do
-    git -C "$CODE_ROOT" worktree add -q --detach "$W/$id" "$BASE"; printf '%s\n' "$id" > "$W/$id/.jg-squad-lead-home"
-    printf -- '- %s - fixture (home: %s; scope: x; projects: proj; added 2026-11-09)\n' "$id" "$W/$id" >> "$HOME_D/data/squad_leads.md"
-  done
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  trunk waiver "$PROJ" --rule owner-rule-test >/dev/null || fail "the Overwatch path must write the waiver"
-}
-# Sweeps of the landing check, as a home runs them (its own bin, the code home a clone of the origin), until <pattern> shows
-# in what they print or the job that follows a landing has ended; prints what they printed.
-fleet_sweeps() {  # <pattern>
-  local acc='' n
-  for n in $(seq 1 200); do
-    acc="$acc$(JG_ROOT_OVERRIDE="$CODE_ROOT" JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")"$'\n'
-    printf '%s' "$acc" | grep -q -- "$1" && break; sleep 0.2
-  done
-  printf '%s' "$acc"
-}
-homes_at() {  # <sha>: Main's code home and both Squad Lead homes are at it
-  local h
-  for h in "$CODE_ROOT" "$W/lead-a" "$W/lead-b"; do [ "$(git -C "$h" rev-parse HEAD)" = "$1" ] || return 1; done
-}
-
-# age_landings <newest-minutes> <oldest-minutes>: the landings on record happened that long ago (the first the oldest, the last the newest).
-age_landings() {
-  local now t; now=$(date +%s); t=$(wc -l < "$HOME_D/data/trunk-landings.tsv")
-  awk -F'\t' -v OFS='\t' -v n="$now" -v new="$(( $1 * 60 ))" -v old="$(( $2 * 60 ))" -v t="$t" '{ $4 = n - (NR < t ? old : new); print }' "$HOME_D/data/trunk-landings.tsv" > "$HOME_D/data/trunk-landings.tsv.new" \
-    && mv "$HOME_D/data/trunk-landings.tsv.new" "$HOME_D/data/trunk-landings.tsv"
-}
-# age_live: every go-live on record happened two hours ago, so a landing after it is a new batch.
-age_live() {
-  awk -F'\t' -v OFS='\t' -v n="$(date +%s)" '{ $3 = n - 7200; print }' "$HOME_D/data/trunk-live.tsv" > "$HOME_D/data/trunk-live.tsv.new" && mv "$HOME_D/data/trunk-live.tsv.new" "$HOME_D/data/trunk-live.tsv"
-}
-await_green() {  # the post-landing suite has moved the green pin to the trunk tip
-  local n; for n in $(seq 1 200); do [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] && return 0; sleep 0.2; done; return 1
-}
-
-test_a_quiet_trunk_goes_live_on_every_home_by_itself() {
-  local out c h
-  fleet_world autolive; lane g1 good; c=$(git -C "$PROJ" rev-parse fm/g1)
-  homes_at "$BASE" || fail "fixture: every home starts on the release"
-  fleet_sweeps "landed g1" >/dev/null; await_green || fail "the post-landing suite must move the green pin"
-  # A landing never waits on a go-live, and a fresh landing is not live yet: the trunk is not quiet.
-  homes_at "$BASE" || fail "a fresh landing must not go live at once"
-  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "autolive: waiting: live in about" "a busy trunk waits for its quiet window"
-  # 25 quiet minutes later (default window 20) the check's own tick moves every home, with no word and no model turn.
-  age_landings 25 25
-  out=$(fleet_sweeps "proj: live at")
-  assert_contains "$out" "proj: live at ${c:0:12} on every home" "the outbox must say every home moved"
-  homes_at "$c" || fail "a quiet trunk must move Main and every Squad Lead home: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
-  [ ! -e "$HOME_D/state/trunk-word-live-proj" ] && [ ! -e "$HOME_D/data/trunk-words.tsv" ] || fail "the waiver records and spends no word"
-  for h in lead-a lead-b primary; do grep -q "^proj:$h	$c	[0-9]*	live" "$HOME_D/data/trunk-live.tsv" || fail "$h needs a live row: $(cat "$HOME_D/data/trunk-live.tsv")"; done
-  [ "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" = "autolive: already live at ${c:0:12}" ] || fail "a commit that is live is not moved twice"
-  # The knob moves the window: 3 quiet minutes is not enough under 5 and is under 2; a red CI then pins EVERY home back at once.
-  age_live; lane g2 two; fleet_sweeps "landed g2" >/dev/null; await_green || fail "g2 must verify"
-  age_landings 3 3; printf 'live-quiet-minutes=5\n' >> "$HOME_D/config/trunk-policy"
-  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting" "3 quiet minutes is not enough under a 5 minute window"
-  printf 'live-quiet-minutes=2\n' >> "$HOME_D/config/trunk-policy"
-  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "live at $(tip | cut -c1-12)" "the quiet window is a policy knob"
-  homes_at "$(tip)" || fail "the second batch must move every home"
-  trunk ci "$PROJ" "$(tip)" red >/dev/null 2>&1 || fail "a red CI must record and pin back"
-  homes_at "$c" || fail "a red CI must pin every home back to the last green live commit at once"
-  grep -q "^proj:lead-a	$c	[0-9]*	live,pinned-back-from:" "$HOME_D/data/trunk-live.tsv" || fail "the pin-back row names where the home came from"
-  pass 'a quiet trunk goes live on Main and every Squad Lead home by itself, the window is a knob, and a red CI pins every home back'
-}
-
-# A go-live pinned behind the tip (the green pin is under the trunk tip) moves every home exactly as one at the tip does, and its
-# `live` row is written only once every home is at the pin: a home left behind (dirty here) makes it a failed move naming the home.
-test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behind() {
-  local out c1 c2 h
-  fleet_world autolive-pinned; lane p1 one; fleet_sweeps "landed p1" >/dev/null; await_green || fail "p1 must verify"
-  c1=$(tip); lane p2 two; trunk land p2 >/dev/null 2>&1 || fail "p2 must land"; c2=$(tip)
-  [ "$c2" != "$c1" ] && [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "fixture: the pin must be one commit behind the tip"
-  age_landings 25 25; printf 'dirty\n' >> "$W/lead-a/work.txt"
-  out=$(trunk autolive "$PROJ" 2>&1); [ "$(printf '%s\n' "$out" | tail -n 1)" = "autolive: NOT live, the move failed: fleet: not every home is at ${c1:0:12}: lead-a" ] \
-    || fail "a home left behind must fail the pinned-behind move and be named: $out"
-  awk -F'\t' -v p=proj -v g="$c1" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit f }' "$HOME_D/data/trunk-live.tsv" || fail "no live row while a home is behind: $(cat "$HOME_D/data/trunk-live.tsv")"
-  grep -q "^proj	$c1	[0-9]*	hook-failed:fleet: not every home is at ${c1:0:12}: lead-a" "$HOME_D/data/trunk-live.tsv" || fail "the failed move leaves a hook-failed row naming the home"
-  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting: the last move failed" "a failed move is not retried on every tick"
-  rm -f "$W/lead-a/work.txt"; age_live
-  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "live at ${c1:0:12} on every home" "the retry after the quiet window moves every home"
-  homes_at "$c1" || fail "the pinned-behind move must reach Main and every Squad Lead home, not the tip: $(cat "$HOME_D/data/trunk-live.tsv")"
-  for h in lead-a lead-b primary; do grep -q "^proj:$h	$c1	[0-9]*	live" "$HOME_D/data/trunk-live.tsv" || fail "$h needs a live row at the pin"; done
-  grep -q "^proj	$c1	[0-9]*	live,pinned-behind-${c2:0:12},waiver=" "$HOME_D/data/trunk-live.tsv" || fail "the live row says pinned-behind the tip: $(grep "^proj	" "$HOME_D/data/trunk-live.tsv")"
-  pass 'a pinned-behind go-live moves every home, writes its live row only when all are there, and names a home left behind'
-}
-
-test_a_busy_trunk_goes_live_at_the_hourly_cap() {
-  local out c
-  fleet_world autolive-cap; lane b1 one; fleet_sweeps "landed b1" >/dev/null; await_green || fail "b1 must verify"
-  lane b2 two; fleet_sweeps "landed b2" >/dev/null; await_green || fail "b2 must verify"
-  c=$(tip)
-  # Landings keep coming (the newest one a minute ago) but the oldest not-yet-live one is 59 minutes old: still waiting.
-  age_landings 1 59
-  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting" "59 minutes of landings is under the 60 minute cap"
-  homes_at "$BASE" || fail "nothing may move before the cap"
-  age_landings 1 61
-  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "live at ${c:0:12} on every home" "the cap makes the trunk go live while landings continue"
-  homes_at "$c" || fail "the hourly cap must move every home: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
-  # Landings after that go live in the next batch, not at once: the cap counts from what is not live yet.
-  lane b3 three; fleet_sweeps "landed b3" >/dev/null; await_green || fail "b3 must verify"
-  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting" "a landing after a go-live starts a new batch"
-  pass 'a trunk that keeps landing still goes live once the oldest landing not yet live is an hour old, and the next landing starts a new batch'
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_red_or_unwaived_landing_never_goes_live() {
-  local out c
-  fleet_world autolive-red rig
-  # A head the landing check refuses never lands and no home moves.
-  lane r1 BAD
-  out=$(fleet_sweeps "r1 not landed")
-  assert_contains "$out" "r1 not landed" "a red head is refused by the landing gate"
-  homes_at "$BASE" || fail "a refused head must not move any home: $out"
-  # A head that passes the landing check and breaks the whole suite: landed, reverted, and no home ever moves to it.
-  lane r2 'echo "not ok - r2 breaks the suite" >&2; exit 1' t/r2.test.sh; c=$(git -C "$PROJ" rev-parse fm/r2)
-  out=$(fleet_sweeps "r2: the whole suite is red")
-  assert_contains "$out" "r2: the whole suite is red at" "the red post-landing suite is reported and nothing goes live"
-  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' || fail "a post-landing red is reverted by itself"
-  age_landings 30 30; trunk autolive "$PROJ" >/dev/null 2>&1
-  homes_at "$BASE" || fail "a red post-landing suite must not move any home, even after the quiet window: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
-  ! grep -q "	$c	" "$HOME_D/data/trunk-live.tsv" 2>/dev/null || fail "the red commit is never live: $(cat "$HOME_D/data/trunk-live.tsv")"
-  # A standing red pin holds the live step on a green pin, and says so once.
-  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-green-proj"; printf '%s\n' "$c" > "$HOME_D/state/trunk-red-proj"
-  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "held: the trunk is red at ${c:0:12}" "a red pin holds the live step"
-  trunk autolive "$PROJ" >/dev/null 2>&1
-  [ "$(grep -c "held:the trunk is red" "$HOME_D/data/trunk-live.tsv")" = 1 ] || fail "a hold is recorded once per reason: $(cat "$HOME_D/data/trunk-live.tsv")"
-  homes_at "$BASE" || fail "a red trunk must not move any home"
-  # With no waiver the word rule stands, and a worker never runs the live step.
-  rm -f "$HOME_D/state/trunk-red-proj" "$HOME_D/config/trunk-live-waiver"
-  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "needs the captain's word" "no waiver, no automatic live"
-  homes_at "$BASE" || fail "no waiver must not move any home"
-  out=$(JG_TASK_ID=x trunk autolive "$PROJ" 2>&1) && fail "a worker must never run the live step"
-  pass 'a red head, a red post-landing suite, a red pin and a missing waiver never move a home'
-}
-
-sweep() {  # one check sweep over the fixture home, then wait for the detached landings it started
-  local out
-  out=$(JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D") || fail "the check must not fail: $out"
-  for _ in $(seq 1 100); do grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state || break; sleep 0.2; done
-  printf '%s' "$out"
-}
-
-test_the_registered_check_lands_a_proved_task_without_a_human() {
-  local out c
-  world auto
-  # the check runs the home's own bin, so the fixture home needs the copied bin and a mode the check reads
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  lane a1 one; lane a2 two; rm "$HOME_D/state/a2.status"
-  sweep >/dev/null; out=$(sweep)
-  [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/a1)" ] || fail "the check must land the proved task by itself: $out"
-  assert_contains "$out" "landed a1" "the landing must be reported"
-  assert_contains "$out" "cleaned up" "a landed task must be cleaned up"
-  [ "$(cat "$W/teardown-calls")" = a1 ] || fail "cleanup must run unforced: jg-teardown.sh <id> and nothing else"
-  [ -z "$(sweep)" ] || fail "a reported landing must not repeat"
-  [ ! -e "$W/live-moves" ] || fail "the check must never go live"
-  git -C "$PROJ" merge-base --is-ancestor "$(git -C "$PROJ" rev-parse fm/a2)" trunk && fail "a task that is not done must not land"
-  git -C "$W/lanes/a2" reset -q --hard "$(git -C "$PROJ" rev-parse trunk~1)"; commit_in "$W/lanes/a2" work.txt clash "ticket a2"; prove a2; ready a2
-  sweep >/dev/null; out=$(sweep)
-  assert_contains "$out" "a2 not landed" "a refusal must be reported"
-  assert_contains "$out" "in: work.txt" "a conflict must name its paths"
-  [ -z "$(sweep)" ] || fail "a final refusal must be reported once"
-  lane a3 three; : > "$HOME_D/state/.afk"
-  sweep >/dev/null; assert_contains "$(sweep)" "a3 waits to land" "a time-only refusal must be reported"
-  [ -z "$(sweep)" ] || fail "a waiting refusal must not repeat"
-  rm "$HOME_D/state/.afk"; sweep >/dev/null; sweep >/dev/null
-  c=$(git -C "$PROJ" rev-parse fm/a3); [ "$(tip)" = "$c" ] || fail "a waiting task must land once the wait clears"
-  pass 'the registered check lands a proved task by itself, reports refusals once, and never goes live'
-}
-
-test_the_watcher_runs_the_landing_check_on_its_fast_tick() {
-  local c out rc=0 st
-  world outer-watch
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  printf 'off\n' > "$HOME_D/config/wake-bus"
-  lane ready one; c=$(git -C "$PROJ" rev-parse fm/ready)
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/tmux"; chmod +x "$W/fakebin/tmux"
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$W/fakebin/systemctl"; chmod +x "$W/fakebin/systemctl"
-  printf '#!/usr/bin/env bash\nsleep 0.2\nexec %s "$@"\n' "$(command -v setsid)" > "$W/fakebin/setsid"; chmod +x "$W/fakebin/setsid"
-  JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" bash -c \
-    '. "$1"; jg_wake_append check urgent "check: waiting-state urgent blocker"' _ "$ROOT/bin/jg-wake-lib.sh" \
-    || fail "could not queue the urgent wake"
-  JG_HOME="$HOME_D" "$ROOT/bin/jg-bus.sh" watcher oldest >/dev/null || fail "could not observe the queued wake"
-  sleep 2
-  out=$(env -u JG_TASK_ID PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" \
-    JG_STATE_OVERRIDE="$HOME_D/state" JG_CONFIG_OVERRIDE="$HOME_D/config" JG_POLL=1 JG_SIGNAL_GRACE=0 \
-    JG_WATCH_HANDLING_SUCCESSOR=1 JG_SQUAD_LEAD_WAKE_STALL_SECS=1 JG_FAST_CHECK_INTERVAL=0 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 \
-    timeout 60 "$HOME_D/bin/jg-watch.sh" 2>&1) || rc=$?
-  [ "$rc" = 0 ] || fail "outer watcher failed ($rc): $out"
-  assert_contains "$out" 'check: waiting-state urgent blocker' 'the urgent wake must still be delivered'
-  st="$HOME_D/data/jg-trunk-landing/ready.$c.state"
-  [ -e "$st" ] || fail "urgent queue exit skipped the eligible ready/PASS landing check: $out"
-  printf 'outer-check: ready/PASS dispatch exists before urgent wake exit; fixture=%s\n' "$W"
-  for _ in $(seq 1 600); do grep -Eq '^landed( |$)' "$st" && break; sleep 0.1; done
-  grep -Eq '^landed( |$)' "$st" || fail "detached landing did not finish: $(cat "$st" "$HOME_D/data/jg-trunk-landing/ready.$c.log")"
-  [ "$(tip)" = "$c" ] || fail "outer watcher dispatched but did not land the exact ready head"
-  [ ! -e "$W/live-moves" ] || fail "outer watcher must never release or go live"
-  pass 'real outer watcher dispatches and lands ready/PASS before an urgent queued wake exits; never goes live'
-}
-
-test_the_landing_check_cuts_the_next_trunk_once_the_release_merged() {
-  local out
-  world rolcheck
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  lane k1 one; trunk land k1 >/dev/null 2>&1 || fail "k1 must land"
-  trunk verify "$PROJ" >/dev/null 2>&1; trunk word release "$PROJ" "ship it" >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "release must open"
-  out=$(sweep); [ -z "$out" ] || fail "an open release must change nothing: $out"
-  printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$(tip):refs/heads/main"; rm -f "$HOME_D"/data/jg-trunk-landing/.rollover-*
-  out=$(sweep); assert_contains "$out" "release merged: the project is now on trunk-v2" "the check must cut the next trunk"
-  git -C "$PROJ" rev-parse --verify -q trunk-v2 >/dev/null || fail "trunk-v2 must exist"
-  pass 'the landing check cuts the next trunk once the release merged'
-}
-
-test_the_bundled_hook_moves_a_home_that_runs_the_project() {
-  local c out rc base
-  world home
-  rm "$HOME_D/config/live-hook.proj"
-  git clone -q "$(git -C "$PROJ" remote get-url origin)" "$W/homecode"
-  lane h1 hook; c=$(git -C "$PROJ" rev-parse fm/h1)
-  out=$(CODE_ROOT="$W/homecode" trunk land h1 2>&1) || fail "h1 must land: $out"
-  [ "$(git -C "$W/homecode" rev-parse HEAD)" != "$c" ] || fail "landing alone must not move the home checkout"
-  trunk verify "$PROJ" >/dev/null 2>&1 || fail "h1 must verify"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1
-  out=$(CODE_ROOT="$W/homecode" trunk live "$PROJ" 2>&1) || fail "live must move a home that runs the project: $out"
-  [ "$(git -C "$W/homecode" rev-parse HEAD)" = "$c" ] || fail "the home checkout must be fast-forwarded to the landed commit: $out"
-  grep -Eq "^proj	$c	[0-9]+	live$" "$HOME_D/data/trunk-live.tsv" || fail "the live record must say live"
-  base=$(cat "$HOME_D/state/trunk-released-proj")
-  out=$(CODE_ROOT="$W/homecode" trunk ci "$PROJ" "$c" red 2>&1) || fail "a red CI must pin the bundled home back: $out"
-  [ "$(git -C "$W/homecode" rev-parse HEAD)" = "$base" ] || fail "the home checkout must return to the last release when no earlier commit was live: $out"
-  rm -f "$HOME_D/state/trunk-red-proj"; printf '%s\n' "$c" > "$HOME_D/state/trunk-green-proj"
-  rm "$HOME_D/data/trunk-live.tsv"; printf 'dirty\n' >> "$W/homecode/README.md"
-  lane h2 hook2; CODE_ROOT="$W/homecode" trunk land h2 >/dev/null 2>&1 || fail "h2 must land"
-  trunk verify "$PROJ" >/dev/null 2>&1 || fail "h2 must verify"
-  trunk word live "$PROJ" "go" >/dev/null 2>&1
-  rc=0; out=$(CODE_ROOT="$W/homecode" trunk live "$PROJ" 2>&1) || rc=$?
-  [ "$rc" = 3 ] || fail "a live whose home did not move must exit 3, got $rc: $out"
-  [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/h2)" ] || fail "the commit must stay landed when only the live step failed"
-  assert_contains "$(cat "$HOME_D/data/trunk-live.tsv")" hook-failed "a home that did not move must be recorded as such"
-  pass 'the bundled hook fast-forwards the home and a dirty home is recorded as not moved'
-}
-
-# A stand-in for bin/jg-test-run.sh that keeps its marker contract: it runs t/*.test.sh (or the paths it is given) in the clone.
-rig() {
-  cat > "$W/rig.sh" <<'SH'
-#!/usr/bin/env bash
-[ "${1:-}" != --all ] || set -- t/*.test.sh
-total=0 failed=0
-for s in "$@"; do
-  echo "JG_TEST_BEGIN 2026-01-01T00:00:00Z $s family=x expected_gate_skip=none"
-  bash "$s" 2>&1; rc=$?
-  echo "JG_TEST_END 2026-01-01T00:00:00Z $s exit=$rc duration_ms=1 gate_skip=false"
-  total=$((total + 1)); [ "$rc" -eq 0 ] || failed=$((failed + 1))
-done
-echo "JG_TEST_SUMMARY total=$total failed=$failed skipped_gate=0 duration_ms=1"
-[ "$failed" -eq 0 ]
-SH
-  printf 'gate-full=export GATE_MARK=yes; bash %s/rig.sh --all\ngate-rerun=bash %s/rig.sh\ngate-red-ticket=ticket-red\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
-  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/backlog-calls"\n' "$W" > "$W/root/bin/jg-backlog.sh"; chmod +x "$W/root/bin/jg-backlog.sh"
-}
-# The tip carries a red that shows only in the gate's environment, and a script that passes.
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-seed_red_tip() {
-  git -C "$PROJ" worktree add -q -b seed "$W/seed" trunk
-  commit_in "$W/seed" t/a.test.sh '[ "${GATE_MARK:-}" = yes ] && { echo "not ok - tip case" >&2; exit 1; }; exit 0' "seed a"
-  commit_in "$W/seed" t/c.test.sh 'exit 0' "seed c"
-  # A red whose only line is a Go package result: its elapsed seconds differ on every run, so they are not part of how it fails.
-  commit_in "$W/seed" t/h.test.sh 'echo "FAIL	pkg	0.$((RANDOM % 900 + 100))s" >&2; exit 1' "seed h"
-  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed" rev-parse HEAD)"
-  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
-  local out tipc green
-  world base; rig; seed_red_tip; tipc=$(tip)
-  # A lane that adds a failing script of its own: blocked by name, and the tip's red is reported.
-  lane intro 'echo "not ok - lane case" >&2; exit 1' t/b.test.sh
-  refused 'a failure only the lane has' intro 't/b.test.sh'
-  assert_contains "$(trunk land intro 2>&1 || true)" "introduced or changed" "the refusal must say the lane caused it"
-  # A lane that makes the tip's red worse (an added failing case in the same script): blocked.
-  lane worse '[ "${GATE_MARK:-}" = yes ] && { echo "not ok - tip case" >&2; echo "not ok - new case" >&2; exit 1; }; exit 0' t/a.test.sh
-  refused 'a different red in the same script' worse 't/a.test.sh'
-  # A lane that breaks a script that passes on the tip: blocked.
-  lane breaks 'echo "not ok - broke c" >&2; exit 1' t/c.test.sh
-  refused 'a script that passes on the tip' breaks 't/c.test.sh'
-  # Reported once for the tip tree: one wake and one note, however many lanes met it; and the tip was rerun once.
-  [ "$(grep -c . "$W/backlog-calls")" = 1 ] || fail "the tip's red must be noted once: $(cat "$W/backlog-calls")"
-  [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the tip's red must raise one alert: $(cat "$HOME_D/state/.wake-queue" 2>&1)"
-  assert_contains "$(cat "$W/backlog-calls")" "update ticket-red --append-notes" "the note goes to the red ticket"
-  assert_contains "$(cat "$W/backlog-calls")" "t/a.test.sh" "the note names the red script"
-  [ "$(grep -c '^t/a.test.sh' "$HOME_D/data/trunk/"tip-results-proj-*.tsv)" = 1 ] || fail "the tip's result for a script is computed once"
-  assert_contains "$(cat "$HOME_D/data/trunk/tip-red-reported-proj.tsv")" "t/a.test.sh" "the report is recorded by script and tip tree"
-  [ "$(tip)" = "$tipc" ] || fail "no refused lane moves the trunk"
-  # A lane that touches only what is unrelated lands; the tip's red is set aside, not charged, and the green pin stays.
-  lane good 'exit 0' t/d.test.sh
-  green=$(cat "$HOME_D/state/trunk-green-proj")
-  out=$(trunk land good 2>&1) || fail "a lane that adds no red must land on a red tip: $out"
-  assert_contains "$out" "not charged to this lane" "the landing must say it set the tip's red aside"
-  assert_contains "$out" "gate=full-tip-red" "the landing must record that the gate was set against the tip"
-  assert_contains "$(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")" "$(printf 'good\tproj\t%s' "$(tip)")" "the landing's proofs row must be the last one"
-  [[ $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv") =~ gate=ran:[1-9][0-9]*,failed:[1-9][0-9]*,secs:[0-9]+$ ]] \
-    || fail "the proofs row must keep the gate's scripts run, failed on the first run and seconds: $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "a landing that set red aside must not move the green pin"
-  [ "$(grep -c . "$W/backlog-calls")" = 1 ] && [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the same tip tree is not reported twice"
-  pass 'the full gate blocks only what the lane broke: new, worse and broken-passing scripts block; the tip'"'"'s own red lands, reported once'
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_flaky_failure_gets_one_rerun_before_it_is_judged() {
-  local out green
-  world flaky; rig; seed_red_tip; green=$(cat "$HOME_D/state/trunk-green-proj")
-  # Fails the first time the gate runs it and passes the second: judged flaky, so the lane lands beside the tip's own red.
-  lane once "[ -e $W/seen ] || { : > $W/seen; echo 'not ok - flaky case' >&2; exit 1; }; exit 0" t/f.test.sh
-  out=$(trunk land once 2>&1) || fail "a failure that passes on its one rerun must not block: $out"
-  assert_contains "$out" "judged flaky" "the landing must say it set a flaky failure aside"
-  assert_contains "$out" "gate=full-tip-red" "the tip's own red is still set aside and recorded"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "a rerun landing must not move the green pin"
-  # The same script failing on both runs is the lane's own failure.
-  lane twice 'echo "not ok - solid case" >&2; exit 1' t/g.test.sh
-  refused 'a failure that repeats on the rerun' twice 't/g.test.sh'
-  pass 'a failure gets one rerun before it is judged: a flaky one is set aside, a repeated one blocks'
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_tip_red_that_prints_its_elapsed_seconds_is_the_same_red_on_every_run() {
-  local out
-  world elapsed; rig
-  git -C "$PROJ" worktree add -q -b seed "$W/seed" trunk
-  # A Go test prints its run time on the last line, so the tip's red reads differently on every run.
-  commit_in "$W/seed" t/h.test.sh '[ "${GATE_MARK:-}" = yes ] || exit 0; n=$(cat '"$W"'/runs 2>/dev/null || echo 0); echo $((n + 1)) > '"$W"'/runs; printf "FAIL\\tpkg/x\\t2%s.%s3s\\n" "$n" "$n" >&2; exit 1' "seed h"
-  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed" rev-parse HEAD)"
-  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
-  lane good 'exit 0' t/d.test.sh
-  out=$(trunk land good 2>&1) || fail "a lane must land beside a tip red that differs from its own run only by elapsed seconds: $out"
-  assert_contains "$out" "not charged to this lane" "the tip's red is set aside"
-  pass "a tip red that prints its elapsed seconds is the same red on every run, so no lane is charged for it"
-}
-
-test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection() {
-  local c before out rc=0 hook_kind owner_hash
-  for hook_kind in configured owner-guard; do
-  rc=0
-  world "hook-context-$hook_kind"
-  lane hook good; c=$(git -C "$PROJ" rev-parse fm/hook); before=$(tip)
-  mkdir -p "$W/repository-hooks"
-  if [ "$hook_kind" = owner-guard ]; then
-    sed -e 's/__NAME__/reference-transaction/g' -e "s|__CAT__|$(command -v cat)|g" \
-      -e "s|__MKTEMP__|$(command -v mktemp)|g" -e "s|__RM__|$(command -v rm)|g" \
-      "$ROOT/core/owner-guard/global-hook.sh" > "$W/repository-hooks/reference-transaction"
-    chmod 555 "$W/repository-hooks/reference-transaction"
-    owner_hash=$(git hash-object "$W/repository-hooks/reference-transaction")
-  fi
-  git -C "$PROJ" config core.hooksPath "$W/repository-hooks"
-  "$ROOT/bin/jg-git-strip-ai-trailers.sh" install "$W/launch-hooks" "$PROJ"
-  "$ROOT/bin/jg-git-strip-ai-trailers.sh" env-file "$W/launch-hooks" "$W/launch-env"
-  # A real child shell inherits exactly the env-file entry the spawn path emits.
-  (
-    # shellcheck source=/dev/null # The real launch helper emitted this environment file.
-    . "$W/launch-env"
-    trunk due "$PROJ" >/dev/null 2>&1 || true
-    [ "$(git -C "$PROJ" rev-parse --path-format=absolute --git-path hooks/reference-transaction)" = "$W/launch-hooks/reference-transaction" ] || fail "the launched environment lost its configured hook directory"
-    out=$(git -C "$PROJ" update-ref refs/heads/trunk "$c" "$before" 2>&1) || rc=$?
-    [ "$rc" -ne 0 ] || fail "the task overlay bypassed the repository trunk guard"
-    assert_contains "$out" 'moves only through' 'the actual configured hook must refuse the unauthorized movement'
-    [ "$(tip)" = "$before" ] || fail "a refused transaction moved the trunk"
-    trunk land hook >/dev/null 2>&1 || fail "the same configured hook must allow the guarded landing"
-  ) || fail "configured hook journey failed"
-  [ "$(tip)" = "$c" ] || fail "the authorized landing did not move the trunk"
-  if [ "$hook_kind" = owner-guard ]; then
-    [ "$(git hash-object "$W/repository-hooks/reference-transaction")" = "$owner_hash" ] || fail "the existing owner hook was changed"
-  fi
-  pass "the spawned Git environment preserves $hook_kind hooks and repository trunk protection"
-  done
-}
-
-test_admission_is_shared_by_manual_and_automatic_requests() {
-  local c out rc=0 first_log
-  world admission
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  lane once BAD; c=$(git -C "$PROJ" rev-parse fm/once)
-  printf 'gate-full=echo first >> "%s/calls"; while [ ! -e "%s/release" ]; do sleep 0.1; done; echo original; exit 1\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
-  JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
-  for _ in $(seq 1 100); do [ ! -s "$W/calls" ] || break; sleep 0.1; done
-  [ -s "$W/calls" ] || fail "automatic request did not enter its gate"
-  out=$(trunk land once 2>&1) || rc=$?
-  : > "$W/release" # release our own attempt even when the assertion below fails
-  [ "$rc" = 75 ] || fail "a concurrent manual request must report in progress (75): $out"
-  assert_contains "$out" IN_PROGRESS "a concurrent request must name its typed outcome"
-  sweep >/dev/null
-  first_log=$(find "$HOME_D/data/jg-trunk-landing" -name gate-full.log -print | head -n 1)
-  out=$(trunk land once 2>&1) && fail "an unchanged failed gate must stay refused"
-  [ "$(wc -l < "$W/calls" | tr -d ' ')" = 1 ] || fail "unchanged failure reran its gate"
-  printf 'gate-full=echo second >> "%s/calls"; echo changed; exit 1\n' "$W" >> "$HOME_D/config/trunk-policy"
-  trunk land once >/dev/null 2>&1 && fail "a changed failing context must refuse"
-  [ "$(wc -l < "$W/calls" | tr -d ' ')" = 2 ] || fail "changed context must get one attempt"
-  [ "$(cat "$first_log")" = original ] || fail "a later attempt overwrote the original gate log"
-  [ "$(find "$HOME_D/data/jg-trunk-landing" -name gate-full.log | wc -l | tr -d ' ')" = 2 ] || fail "every attempt must keep its gate log"
-  [ "$(tip)" != "$c" ] || fail "failed proof must never move the trunk"
-  pass 'automatic/manual requests share admission, unchanged failure stays cached, and changed attempts retain their logs'
-}
-
-test_a_repaired_hook_overlay_admits_exactly_one_fresh_attempt() {
-  local out n
-  world hook-repair
-  lane fix good
-  mkdir -p "$W/repository-hooks"
-  printf '#!/bin/sh\nexit 0\n' > "$W/repository-hooks/reference-transaction"; chmod 755 "$W/repository-hooks/reference-transaction"
-  git -C "$PROJ" config core.hooksPath "$W/repository-hooks"
-  out=$(trunk land fix 2>&1) && fail "an unrecognized effective hook must refuse the landing"
-  assert_contains "$out" 'is not the trunk guard' 'the hook refusal must name its cause'
-  n=$(find "$HOME_D/data/jg-trunk-landing" -name 'fix.*.attempt-*' | wc -l | tr -d ' ')
-  trunk land fix >/dev/null 2>&1 && fail "an unchanged hook refusal must stay refused"
-  trunk land fix >/dev/null 2>&1 && fail "a repeated unchanged check must stay refused"
-  [ "$(find "$HOME_D/data/jg-trunk-landing" -name 'fix.*.attempt-*' | wc -l | tr -d ' ')" = "$n" ] || fail "an unchanged hook must not admit another attempt"
-  # The overlay is repaired: the effective hook now chains the repository's own guard.
-  # shellcheck disable=SC2016 # the delegate hook body is written out verbatim
-  printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: delegate to the repository trunk guard\ncommon=$(git rev-parse --path-format=absolute --git-common-dir) || exit 1\nhook=$common/hooks/reference-transaction\n[ ! -x "$hook" ] || exec "$hook" "$@"\nexit 0\n' > "$W/repository-hooks/reference-transaction"
-  trunk land fix >/dev/null 2>&1 || fail "a repaired hook overlay must admit one fresh attempt that lands"
-  [ "$(find "$HOME_D/data/jg-trunk-landing" -name 'fix.*.attempt-*' | wc -l | tr -d ' ')" = $((n + 1)) ] || fail "a repaired hook must admit exactly one new attempt"
-  pass 'a changed effective hook overlay admits exactly one fresh attempt, and an unchanged refusal is not repeated'
-}
-
-test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes() {
-  local g="$TMP_ROOT/contained" t m h rc=0 out
-  jg_git_init_commit "$g"; commit_in "$g" a.txt one "base"; t=$(git -C "$g" rev-parse HEAD)
-  git -C "$g" checkout -q -b home; commit_in "$g" a.txt two "home change"; commit_in "$g" b.txt new "home file"; h=$(git -C "$g" rev-parse HEAD)
-  git -C "$g" checkout -q -b trunk2 "$t"; commit_in "$g" a.txt two "the trunk takes it as one squash"; commit_in "$g" b.txt new "squash part 2"
-  commit_in "$g" a.txt three "a later trunk commit supersedes it"; m=$(git -C "$g" rev-parse HEAD)
-  "$ROOT/bin/jg-home-contained.sh" "$h" "$m" "$g" || fail "a home whose changes are on the trunk (one later superseded) must be contained"
-  "$ROOT/bin/jg-home-contained.sh" "$t" "$m" "$g" || fail "an ancestor of the trunk is contained"
-  git -C "$g" checkout -q home; commit_in "$g" c.txt stray "stray commit"; h=$(git -C "$g" rev-parse HEAD)
-  out=$("$ROOT/bin/jg-home-contained.sh" "$h" "$m" "$g") || rc=$?
-  [ "$rc" = 1 ] || fail "a home with a change the trunk never took must exit 1, got $rc"
-  assert_contains "$out" 'uncontained: c.txt' "the uncontained path must be named"
-  case $out in *a.txt*|*b.txt*) fail "contained paths must not be listed: $out" ;; esac
-  rc=0; "$ROOT/bin/jg-home-contained.sh" "$h" nope "$g" 2>/dev/null || rc=$?
-  [ "$rc" = 2 ] || fail "an unknown commit must exit 2, got $rc"
-  pass 'jg-home-contained proves tree containment: same bytes, a superseding trunk commit, or the named uncontained paths'
-}
-
-if [ "${JG_TRUNK_OUTER_ONLY:-0}" = 1 ]; then
-  test_the_watcher_runs_the_landing_check_on_its_fast_tick
-  exit
-fi
-
-test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection
-test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes
-test_admission_is_shared_by_manual_and_automatic_requests
-test_a_repaired_hook_overlay_admits_exactly_one_fresh_attempt
-
-test_legacy_mode_stays_interoperable
-# shellcheck disable=SC2016 # the policy lines are written out verbatim and expand when the gate runs them
-test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates() {
-  local out rc=0 sha lib="$ROOT/bin/jg-trunk-policy-lib.sh"
-  world foreign
-  rm -f "$HOME_D/config/trunk-policy"  # no override at all: the built-in defaults decide, and they are Juggernaut's own suite
-  # The fixture tracks a file under data/, which Juggernaut's own invariant would reject silently (an empty log, a red pin).
-  lane f1 one data/notes.txt
-  out=$(trunk land f1 2>&1) || fail "a project with no gates set must land with none run: $out"
-  assert_contains "$out" "no landing gate" "the landing must say it ran no gate"
-  assert_contains "$(cat "$HOME_D/data/trunk-landings.tsv")" "no-gate" "the landing must record that no gate ran"
-  sha=$(tip)
-  out=$(trunk verify "$PROJ" "$sha" 2>&1) || fail "verify with no gate must not fail: $out"
-  assert_contains "$out" "no verify gate for proj" "verify must say it had no gate"
-  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "no gate means nothing can go red"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$sha" ] || fail "verify with no gate must leave the trunk green so the home can go on"
-  # A red pin the old default wrote is cleared by running verify again, and landings resume.
-  printf '%s\n' "$sha" > "$HOME_D/state/trunk-red-proj"; rm -f "$HOME_D/state/trunk-green-proj"
-  trunk verify "$PROJ" "$sha" >/dev/null 2>&1 || fail "verify must clear a red pin the removed default wrote"
-  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "verify must clear that red pin"
-  # The project's own gate-full is its verify gate when it set no gate-verify; its own gate-verify wins over it; both fail for real.
-  printf 'gate-full@proj=test ! -e BAD\n' > "$HOME_D/config/trunk-policy"
-  out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$HOME_D/config' jg_trunk_gate gate-verify proj '$PROJ' trunk")
-  [ "$out" = 'test ! -e BAD' ] || fail "a project with only gate-full@proj must verify with it, got '$out'"
-  printf 'gate-full@proj=true\ngate-verify@proj=false\n' > "$HOME_D/config/trunk-policy"
-  out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$HOME_D/config' jg_trunk_gate gate-verify proj '$PROJ' trunk")
-  [ "$out" = false ] || fail "gate-verify@proj must win over gate-full@proj, got '$out'"
-  rc=0; trunk verify "$PROJ" "$sha" >/dev/null 2>&1 || rc=$?
-  [ "$rc" -ne 0 ] || fail "a project's own failing gate-verify must still fail verify"
-  # A repository that carries Juggernaut's own suite keeps the built-in defaults.
-  mkdir -p "$W/self/bin"; : > "$W/self/bin/jg-test-run.sh"; git init -q "$W/self"; git -C "$W/self" add -A
-  git -C "$W/self" -c user.name=t -c user.email=t@example.invalid commit -q -m self
-  out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$W/none' jg_trunk_gate gate-verify self '$W/self' HEAD")
-  assert_contains "$out" "bin/jg-test-run.sh --all" "the Juggernaut repository must keep its built-in verify gate"
-  out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$W/none' jg_trunk_gate gate-verify proj '$PROJ' trunk") && fail "another project must have no built-in gate, got '$out'"
-  pass 'a project that is not Juggernaut runs only the gates its home set for it, and none clears its red pin'
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_the_gates_are_policy_keys_with_fast_defaults() {
-  local key
-  pol() { JG_CONFIG_OVERRIDE="$TMP_ROOT/no-config" bash -c ". '$ROOT/bin/jg-trunk-policy-lib.sh'; jg_trunk_policy $1"; }
-  assert_contains "$(pol gate-lint)" "--changed-base HEAD^" "the landing lint must cover the changed files only"
-  assert_contains "$(pol gate-full)" "--required-shards HEAD^" "the landing tests must be the changed files' tests, run as the parallel shards"
-  case $(pol gate-full) in *"--all"*) fail "the landing must not run the whole suite" ;; esac
-  assert_contains "$(pol gate-verify)" "bin/jg-test-run.sh --all" "verify must run the whole suite"
-  for key in gate-mode gate-smoke owner-rules; do pol "$key" >/dev/null 2>&1 && fail "the retired policy key $key must be gone"; done
-  pass 'the landing gates are policy keys: the lint and tests cover the changed files, the whole suite is verify'"'"'s'
-}
-
-test_a_landing_rebases_the_lane_by_itself() {
-  local out rows c1 c2 c3
-  world rebase
-  # The merge gate of this home refuses every merge for a missing signature: a landing no longer asks it.
-  printf '#!/usr/bin/env bash\necho "merge refused: no valid local proof signature" >&2\nexit 1\n' > "$HOME_D/config/merge-gate"; chmod +x "$HOME_D/config/merge-gate"
-  lane r1 one a.txt; lane r2 two b.txt; lane r3 three c.txt
-  c1=$(git -C "$PROJ" rev-parse fm/r1)
-  out=$(trunk land r1 2>&1) || fail "a lane with its whole proof must land: $out"
-  [ "$(tip)" = "$c1" ] || fail "r1 must be on the trunk as it is"
-  # r2 is based on the old tip: the lander rebases it (its proof is for the head it reported), the lane follows, its worktree stays clean.
-  c2=$(git -C "$PROJ" rev-parse fm/r2)
-  out=$(trunk land r2 2>&1) || fail "a lane on a moved tip must land by being rebased: $out"
-  [ "$(tip)" != "$c2" ] && [ "$(git -C "$PROJ" rev-parse "$(tip)^")" = "$c1" ] || fail "the rebased commit must sit directly on the previous tip"
-  [ "$(git -C "$PROJ" rev-parse fm/r2)" = "$(tip)" ] || fail "the lane must follow its rebased commit"
-  [ -z "$(git -C "$W/lanes/r2" status --porcelain)" ] && [ "$(git -C "$W/lanes/r2" rev-parse HEAD)" = "$(tip)" ] || fail "the lane's worktree must follow the rebase and stay clean"
-  [ "$(git -C "$PROJ" log -1 --format=%s "$(tip)")" = "ticket r2" ] || fail "the rebased commit must keep the lane's message"
-  # A lane whose worktree has unsaved work lands, and the work is left alone.
-  printf 'unsaved\n' > "$W/lanes/r3/scratch.txt"
-  out=$(trunk land r3 2>&1) || fail "a lane with unsaved work in its copy must land: $out"
-  c3=$(git -C "$PROJ" rev-parse fm/r3)
-  [ "$(tip)" != "$c3" ] && [ -f "$W/lanes/r3/scratch.txt" ] || fail "unsaved work in the lane must be left exactly as it was"
-  rows=$(cat "$HOME_D/data/trunk-landing-proofs.tsv")
-  assert_contains "$rows" "$(printf 'r1\tproj\t%s' "$c1")" "the landing must be recorded with its facts"
-  assert_contains "$rows" "receipt=PASS@" "the sealed receipt is recorded with the landing"
-  assert_contains "$rows" "signature=absent" "a missing signature is recorded as absent and never blocks"
-  assert_contains "$rows" "merge-card=present" "the merge-card is recorded"
-  assert_contains "$rows" "gate=ran:-,failed:-,secs:" "a gate that prints no script summary is recorded with its seconds only"
-  # A change that really conflicts is still refused, with its paths, and is never rebased dirty.
-  lane x1 left; lane x2 right
-  trunk land x1 >/dev/null 2>&1 || fail "x1 must land"
-  refused 'a conflicting lane' x2 'conflicts with trunk'
-  assert_contains "$(trunk land x2 2>&1)" 'in: work.txt' 'a conflict names its paths'
-  pass 'the lander rebases a lane by itself; only the owner signature stays outside the landing'
-}
-
-# done_gate <id>: the worker's own done, judged by the shared acceptance the status path runs. Prints the refusal.
-done_gate() {
-  ( # shellcheck disable=SC1091
-    . "$W/root/bin/jg-dod-lib.sh"
-    JG_HOME="$HOME_D" jg_dod_accept_ship_done ship local-trunk "$W/lanes/$1" "$PROJ" "done [at=1]: ready in branch fm/$1 (local-trunk)" \
-      "$HOME_D/state" "$1" "$HOME_D/state/$1.meta" 2>&1 )
-}
-
-# Every proof input is required at the lane's exact head, at the worker's done and again before a landing starts.
-test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input() {
-  local part out id=0 before head
-  world proofgate
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  lane ok one a.txt
-  out=$(done_gate ok) || fail "a done with complete matching-head proof must be accepted: $out"
-  trunk proof ok >/dev/null 2>&1 || fail "the landing pre-check must accept complete matching-head proof"
-  # (broken <part>, how it is broken, what the refusal must name)
-  for part in receipt-absent:'completion receipt' receipt-fail:'completion receipt' receipt-stale:'completion receipt' \
-              card-absent:'no approved merge-card evidence' card-stale:'no approved merge-card evidence' card-failed:'no approved merge-card evidence' \
-              card-uncited:'no approved merge-card evidence' seal-absent:'no sealed done-done run' seal-stale:'no sealed done-done run' seal-dirty:'no sealed done-done run'; do
-    id=$((id + 1)); lane "p$id" "v$id" "f$id.txt"
-    case ${part%%:*} in
-      receipt-absent) rm "$HOME_D/state/p$id.run-receipt.json" ;;
-      receipt-fail) prove_part "p$id" receipt FAIL ;;
-      receipt-stale) sed -i 's/"head":"[0-9a-f]*"/"head":"0000000000000000000000000000000000000000"/' "$HOME_D/state/p$id.run-receipt.json" ;;
-      card-absent) rm "$HOME_D/data/p$id/merge-card.json" ;;
-      card-stale) sed -i 's/"head":"[0-9a-f]*"/"head":"0000000000000000000000000000000000000000"/' "$HOME_D/data/p$id/merge-card.json" ;;
-      card-failed) sed -i 's/"verdict":"pass"/"verdict":"fail"/' "$HOME_D/data/p$id/merge-card.json" ;;
-      card-uncited) sed -i 's/"evidence":\[[^]]*\]/"evidence":[]/' "$HOME_D/data/p$id/merge-card.json" ;;
-      seal-absent) rm -f "$HOME_D/data/p$id/.done-done/runs/"*.json ;;
-      seal-stale) sed -i 's/"commit":"[0-9a-f]*"/"commit":"0000000000000000000000000000000000000000"/;s/20261109T000000Z-[0-9a-f]*/20261109T000000Z-00000000/' "$HOME_D/data/p$id/.done-done/runs/"*.json ;;
-      seal-dirty) sed -i 's/"dirty":false/"dirty":true/' "$HOME_D/data/p$id/.done-done/runs/"*.json ;;
-    esac
-    out=$(done_gate "p$id") && fail "the done must refuse with $part: $out"
-    assert_contains "$out" "${part#*:}" "the done refusal for $part must name the missing input"
-    before=$(tip); head=$(git -C "$PROJ" rev-parse "fm/p$id")
-    trunk proof "p$id" >/dev/null 2>&1 && fail "the landing pre-check must refuse with $part"
-    out=$(trunk land "p$id" 2>&1) && fail "the landing must refuse with $part: $out"
-    assert_contains "$out" "proof inputs are incomplete" "the landing refusal for $part must say the proof is incomplete"
-    assert_contains "$out" "${part#*:}" "the landing refusal for $part must name the missing input"
-    [ "$(tip)" = "$before" ] || fail "a landing with $part moved the trunk"
-    ! git -C "$PROJ" merge-base --is-ancestor "$head" "$(tip)" || fail "a landing with $part landed the lane"
-  done
-  # Everything missing is named at once, in one pass, not one input per round trip.
-  rm -f "$HOME_D/state/p1.run-receipt.json" "$HOME_D/data/p1/merge-card.json"
-  out=$(done_gate p1) && fail "a lane with no proof must not be done"
-  assert_contains "$out" "completion receipt" "all missing inputs are named together"; assert_contains "$out" "no approved merge-card evidence" "all missing inputs are named together"
-  # A done at a new head needs the whole proof again; proving the new head makes both paths accept.
-  commit_in "$W/lanes/ok" a.txt two "ticket ok again"
-  out=$(done_gate ok) && fail "a commit after the proof voids it: $out"
-  prove ok
-  out=$(done_gate ok) || fail "proof at the new head must be accepted: $out"
-  # The legacy local-only mode of a local-trunk project is held to the same proof; a PR mode is not subject to it.
-  sed -i 's/^mode=local-trunk$/mode=local-only/' "$HOME_D/state/p2.meta"
-  # shellcheck disable=SC1091
-  out=$( . "$W/root/bin/jg-dod-lib.sh"; JG_HOME="$HOME_D" jg_dod_accept_ship_done ship local-only "$W/lanes/p2" "$PROJ" "done [at=1]: ready in branch fm/p2" "$HOME_D/state" p2 "$HOME_D/state/p2.meta" 2>&1 ) && fail "a legacy local-only lane of a trunk project must be held to the proof: $out"
-  pass 'the worker done and the landing both refuse, before starting, on any missing proof input, and accept only complete matching-head proof'
-}
-
-# When merge-card refuses a sealed run for a reason it names, the proof gap says that reason. It never says no run exists when a run
-# does (the lane that cited a Designs capture was told "no sealed run" while its run was sealed and judged).
-test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run() {
-  local out card
-  world gapreason
-  lane r1 one
-  trunk proof r1 >/dev/null 2>&1 || fail "the fixture lane must have complete proof before it is broken"
-  card="$HOME_D/data/r1/merge-card.json"
-  jq --arg home "$HOME_D/dd" '. + {context: {home: $home, account: "", project: "", config_hash: "0000000000000000000000000000000000000000"}}' "$card" > "$card.tmp" && mv "$card.tmp" "$card"
-  out=$(trunk proof r1 2>&1) && fail "a refused sealed run must leave a proof gap: $out"
-  assert_contains "$out" "was refused: proof configuration changed since the passed check" "the gap must name the reason merge-card gave"
-  case $out in *"no sealed done-done run"*) fail "a refusal with a named reason must not be reported as a missing run: $out" ;; esac
-  out=$(trunk land r1 2>&1) && fail "the landing must refuse the same lane: $out"
-  assert_contains "$out" "was refused: proof configuration changed since the passed check" "the landing refusal must name the same reason"
-  pass 'a refused sealed run is reported with merge-card'"'"'s own reason, not as a missing run'
-}
-
-# The registered check starts no landing for an incomplete proof, says why once, and lands the same head once the proof is there.
-test_the_check_starts_no_landing_until_the_whole_proof_is_there() {
-  local out
-  world gatecheck
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  lane g1 one; rm "$HOME_D/data/g1/merge-card.json"
-  out=$(sweep); assert_contains "$out" "g1 waits to land" "an incomplete proof must be reported by the check"
-  assert_contains "$out" "no approved merge-card evidence" "the report names the missing input"
-  [ -z "$(find "$HOME_D/data/jg-trunk-landing" -name 'g1.*.state' 2>/dev/null)" ] || fail "no landing may start for an incomplete proof"
-  [ -z "$(sweep)" ] || fail "the wait must be reported once"
-  [ "$(tip)" != "$(git -C "$PROJ" rev-parse fm/g1)" ] || fail "nothing may land without the proof"
-  prove_part g1 card
-  sweep >/dev/null; out=$(sweep)
-  [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/g1)" ] || fail "the same head must land once its proof is complete: $out"
-  pass 'the landing check starts nothing until the whole proof is there, then lands the same head'
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_three_lanes_land_in_order_a_red_one_is_refused_and_a_post_land_red_is_reverted() {
-  local base rc out sha n
-  world journey; rig; base=$(tip)
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  # The landing gate is the fast check (work.txt); the whole suite runs after the landing (the rig runs t/*.test.sh).
-  printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
-  # Four lanes are ready at once, on the same old tip; the second one is red.
-  lane j1 'exit 0' t/j1.test.sh; lane j2 BAD; lane j3 'exit 0' t/j3.test.sh; lane j4 'exit 0' t/j4.test.sh
-  out=$(JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D") || fail "the check must not fail: $out"
-  for _ in $(seq 1 150); do [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" -ge 3 ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && break; sleep 0.2; done
-  n=$(git -C "$PROJ" rev-list --count "$base..trunk")
-  [ "$n" = 3 ] || fail "three lanes must land with no human step, got $n: $(git -C "$PROJ" log --format=%s "$base..trunk")"
-  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket j1,ticket j3,ticket j4" ] || fail "the lanes must land in the order they were done"
-  for sha in $(git -C "$PROJ" rev-list "$base..trunk"); do [ "$(git -C "$PROJ" rev-list --parents -n 1 "$sha" | wc -w)" = 2 ] || fail "every landed commit must be one commit on the previous tip"; done
-  [ "$(paste -sd, - < "$W/teardown-calls")" = "j1,j3,j4" ] || fail "each landed lane is cleaned up, unforced, in order, and the red one is kept: $(cat "$W/teardown-calls")"
-  assert_contains "$(grep -c . "$HOME_D/data/trunk-landings.tsv")" 3 "three landings are logged"
-  out=$(JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")
-  assert_contains "$out" "j2 not landed" "the red lane is refused and reported"
-  assert_contains "$out" "gate 'full' failed" "the red lane's refusal names the failed check"
-  [ -z "$(JG_HOME="$HOME_D" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")" ] || fail "the refusal is reported once"
-  [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = 3 ] || fail "the red lane must not have moved the trunk"
-  # Each landing was followed by the whole suite at that commit: the pin has caught up with the tip.
-  for _ in $(seq 1 150); do [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] && break; sleep 0.2; done
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the whole suite must run after the landings and move the green pin to the tip"
-  [ ! -e "$W/live-moves" ] || fail "nothing here may go live"
-  # A commit that passes the landing check and breaks the whole suite: landed, then reverted by itself.
-  lane j5 'echo "not ok - j5 breaks the suite" >&2; exit 1' t/j5.test.sh;
-  lane j6 'exit 0' t/j6.test.sh
-  JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
-  for _ in $(seq 1 300); do git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' && break; sleep 0.2; done
-  git -C "$PROJ" log --format=%B trunk | grep -q "^reverts: " || fail "a post-land red must be reverted by itself: $(cat "$HOME_D"/data/jg-trunk-landing/j5.*.verify.log 2>&1)"
-  for _ in $(seq 1 150); do git -C "$PROJ" log --format=%s trunk | grep -q "^ticket j6" && break; sleep 0.2; done
-  git -C "$PROJ" log --format=%s trunk | grep -q "^ticket j6" || fail "the lane after the red one must still land"
-  git -C "$PROJ" log --format='%H %s' trunk | grep -q "ticket j5" || fail "the bad commit must stay in the history: the trunk only moves forward"
-  git -C "$PROJ" cat-file -e "trunk:t/j5.test.sh" 2>/dev/null && fail "the bad commit's change must be undone on the tip"
-  assert_contains "$(git -C "$PROJ" log -1 --format=%B "$(git -C "$PROJ" log --format=%H --grep='^reverts: ' -n 1 trunk)")" "reverts: " "the revert names the commit it undoes"
-  for _ in $(seq 1 150); do [ -s "$W/backlog-calls" ] && break; sleep 0.2; done  # the revert tells the lane just after it lands
-  assert_contains "$(cat "$W/backlog-calls" 2>/dev/null)" "update j5 --append-notes" "the lane's ticket is told"
-  assert_contains "$(cat "$HOME_D/state/.wake-queue")" "went red after it landed and was reverted by itself" "Overwatch is told"
-  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "a reverted red must not stop landings"
-  # A revert that cannot apply cleanly writes the red pin instead, and landings stop except a fixes-red commit.
-  lane k1 'echo "not ok - k1 breaks the suite" >&2; exit 1' t/k1.test.sh; trunk land k1 >/dev/null 2>&1 || fail "k1 must land by hand"
-  lane k2 'exit 0' t/k1.test.sh; git -C "$W/lanes/k2" reset -q --hard trunk; commit_in "$W/lanes/k2" t/k1.test.sh 'echo "not ok - k1 breaks the suite" >&2; echo more; exit 1' "ticket k2"; prove k2
-  trunk land k2 >/dev/null 2>&1 || fail "k2 must land by hand"
-  rc=0; out=$(JG_HOME="$HOME_D" trunk verify "$PROJ" "$(git -C "$PROJ" log --format=%H --grep='ticket k1' -n 1 trunk)" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] && [ -e "$HOME_D/state/trunk-red-proj" ] || fail "a revert that does not apply must write the red pin: $out"
-  assert_contains "$out" "could not be reverted by itself" "the red must say it could not be undone"
-  pass 'three lanes land in order with no human step, the red lane is refused, and a post-land red is reverted'
-}
-
-# shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
-batch_world() {  # <name>: a world whose fast gate counts its runs and records the files it was asked to judge
-  world "$1"
-  printf 'gate-full=echo run >> "%s/gate-runs"; git diff --name-only HEAD^ >> "%s/gate-files"; ! git grep -q BAD\ngate-lint=! git grep -q UGLY\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
-}
-runs() { [ -f "$W/gate-runs" ] && grep -c . "$W/gate-runs" || echo 0; }
-
-test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
-  local base out rc=0 i
-  batch_world batch; base=$(tip)
-  # A clean stack: three lanes on the same old tip land in order, behind ONE gate over all their files, in ONE trunk move.
-  lane b1 one f1.txt; lane b2 two f2.txt; lane b3 three f3.txt
-  out=$(trunk land-batch b1 b2 b3 2>&1) || fail "a clean stack must land: $out"
-  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket b1,ticket b2,ticket b3" ] || fail "the stack lands in the order given"
-  [ "$(runs)" = 1 ] || fail "one gate must judge the whole stack, got $(runs) runs"
-  [ "$(sort -u "$W/gate-files" | paste -sd, -)" = "f1.txt,f2.txt,f3.txt" ] || fail "the gate judges the union of the changed files: $(cat "$W/gate-files")"
-  [ "$(grep -c '^landed b' <<<"$out")" = 3 ] || fail "every lane reports its landing: $out"
-  [ "$(awk -F'\t' -v b="$base" '$6 == "batch-from=" b' "$HOME_D/data/trunk-landings.tsv" | wc -l | tr -d ' ')" = 3 ] || fail "one landings row per lane: $(cat "$HOME_D/data/trunk-landings.tsv")"
-  [ "$(git -C "$PROJ" rev-parse fm/b3)" = "$(tip)" ] && [ -z "$(git -C "$W/lanes/b3" status --porcelain)" ] || fail "each lane follows its rebased commit"
-  [ "$(grep -c '^merged' "$W/ledger-calls")" = 3 ] || fail "each lane records the same merged event: $(cat "$W/ledger-calls")"
-  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$(tip)" ] || fail "the tip record follows the one move"
-  # A lane that conflicts drops out and is told, with its paths; the rest still land as one stack.
-  : > "$W/gate-runs"; base=$(tip)
-  lane c1 left; lane c2 right; lane c3 three f4.txt
-  out=$(trunk land-batch c1 c2 c3 2>&1) || fail "a stack with one conflicting lane must still land the others: $out"
-  assert_contains "$out" "returned c2: REFUSED: fm/c2 conflicts with trunk" "the conflicting lane is returned"
-  assert_contains "$out" "work.txt" "the conflict names its paths"
-  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket c1,ticket c3" ] || fail "the others land in order"
-  [ "$(runs)" = 1 ] || fail "the conflict costs no extra gate run, got $(runs)"
-  # A red stack is halved: the guilty lane alone is returned, the green part lands, and only the needed runs are spent.
-  : > "$W/gate-runs"; base=$(tip)
-  lane d1 one g1.txt; lane d2 two g2.txt; lane d3 BAD g3.txt; lane d4 four g4.txt
-  out=$(trunk land-batch d1 d2 d3 d4 2>&1) || fail "a red stack must still land its green part: $out"
-  assert_contains "$out" "returned d3: REFUSED: this lane is the red in its batch" "only the guilty lane is returned"
-  case $out in *"returned d1"*|*"returned d2"*|*"returned d4"*) fail "a green lane must not be returned: $out" ;; esac
-  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket d1,ticket d2,ticket d4" ] || fail "the green part lands in order"
-  [ "$(runs)" = 4 ] || fail "four lanes with one red take 4 gate runs (stack, first half, guilty, last lane), got $(runs)"
-  [ "$(git -C "$PROJ" rev-parse fm/d3)" = "$(git -C "$W/lanes/d3" rev-parse HEAD)" ] || fail "the returned lane is left exactly as it was"
-  ! git -C "$PROJ" cat-file -e trunk:g3.txt 2>/dev/null || fail "the red lane's change is not on the trunk"
-  # One queued lane keeps the single path, and the batch refuses what a single landing refuses.
-  rc=0; out=$(trunk land-batch lonely 2>&1) || rc=$?; [ "$rc" -ne 0 ] || fail "a batch of one is refused: $out"
-  assert_contains "$out" "2 or more" "a lone lane is told to use land"
-  for i in --force -f; do out=$(trunk land-batch d3 d4 "$i" 2>&1) && fail "a batch is never forced"; done
-  pass 'queued lanes land as one stack: one gate, one move, a conflict drops out, a red stack is halved to the guilty lane'
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_red_the_suite_finds_after_a_batch_is_traced_to_its_one_commit_and_reverted() {
-  local base out rc=0 top
-  world batchrev; rig; base=$(tip)
-  printf 'gate-full=true\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
-  lane e1 'exit 0' t/e1.test.sh; lane e2 'echo "not ok - e2 breaks the suite" >&2; exit 1' t/e2.test.sh; lane e3 'exit 0' t/e3.test.sh
-  trunk land-batch e1 e2 e3 >/dev/null 2>&1 || fail "the fast gate passes all three, so the stack lands"
-  top=$(tip)
-  out=$(trunk verify "$PROJ" "$top" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "the whole suite is red after this stack: $out"
-  git -C "$PROJ" log -1 --format=%s trunk | grep -q '^Revert "ticket e2"' || fail "the lane that broke the suite is reverted, not the top of the stack: $(git -C "$PROJ" log --format=%s "$base..trunk")"
-  git -C "$PROJ" cat-file -e trunk:t/e2.test.sh 2>/dev/null && fail "e2's change is undone on the tip"
-  git -C "$PROJ" cat-file -e trunk:t/e1.test.sh || fail "e1 stays on the trunk"
-  git -C "$PROJ" cat-file -e trunk:t/e3.test.sh || fail "e3 stays on the trunk"
-  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "a reverted red does not stop landings"
-  assert_contains "$out" "e2" "the revert names the lane"
-  pass 'a red the whole suite finds after a batch is traced to the one commit that caused it and reverted by itself'
-}
-
-# shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
-test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_path() {
-  local base out n
-  batch_world watcherbatch; base=$(tip)
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  lane w1 one f1.txt; lane w2 left; lane w3 right; lane w4 four f4.txt
-  JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
-  for _ in $(seq 1 150); do [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" -ge 3 ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && break; sleep 0.2; done
-  n=$(git -C "$PROJ" rev-list --count "$base..trunk")
-  [ "$n" = 3 ] || fail "three of four ready lanes land, got $n: $(git -C "$PROJ" log --format=%s "$base..trunk")"
-  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket w1,ticket w2,ticket w4" ] || fail "they land in the order they were done"
-  [ "$(runs)" = 1 ] || fail "the ready lanes were judged by one gate, got $(runs) runs"
-  [ "$(paste -sd, - < "$W/teardown-calls")" = "w1,w2,w4" ] || fail "each landed lane is cleaned up, unforced, in order: $(cat "$W/teardown-calls")"
-  out=$(JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")
-  assert_contains "$out" "w3 not landed" "the conflicting lane is reported"
-  assert_contains "$out" "work.txt" "its report names the conflicting path"
-  [ -z "$(JG_HOME="$HOME_D" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")" ] || fail "the refusal is reported once"
-  for _ in $(seq 1 150); do [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] && break; sleep 0.2; done
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the whole suite runs once on the stack's top and moves the green pin"
-  # A single ready lane keeps the single path: its own landing, no stack.
-  : > "$W/gate-runs"; lane w5 five f5.txt
-  JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
-  for _ in $(seq 1 150); do git -C "$PROJ" log --format=%s trunk | grep -q '^ticket w5' && break; sleep 0.2; done
-  git -C "$PROJ" log --format=%s trunk | grep -q '^ticket w5' || fail "a single ready lane lands"
-  ! grep -q 'batch-from' <(grep '^w5' "$HOME_D/data/trunk-landings.tsv") || fail "a single lane is not recorded as part of a stack"
-  for _ in $(seq 1 150); do [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] && break; sleep 0.2; done  # let its whole-suite run end before the fixture goes
-  pass 'the landing check stacks the ready lanes into one landing and a single lane keeps its own path'
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs() {
-  local c1 c2 c3 p1 p2 p3 n
-  world coalesce
-  lane q1 one; c1=$(tip_after_land q1); lane q2 two; c2=$(tip_after_land q2); lane q3 three; c3=$(tip_after_land q3)
-  # A whole-suite run that records which commit it ran at and stays open until the test releases it.
-  printf '#!/usr/bin/env bash\ngit rev-parse HEAD >> %s/verify-ran\nwhile [ ! -e %s/release ]; do sleep 0.1; done\n' "$W" "$W" > "$W/slow.sh"
-  printf 'gate-verify=bash %s/slow.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
-  trunk verify "$PROJ" "$c1" > "$W/v1.out" 2>&1 & p1=$!
-  for n in $(seq 1 100); do [ -s "$W/verify-ran" ] && break; sleep 0.1; done
-  [ -s "$W/verify-ran" ] || fail "the first verify must be running"
-  # Two more are queued behind it. The older one gives up at once; only the newest waits for the slot.
-  trunk verify "$PROJ" "$c2" > "$W/v2.out" 2>&1 & p2=$!
-  trunk verify "$PROJ" "$c3" > "$W/v3.out" 2>&1 & p3=$!
-  wait "$p2" || fail "a superseded verify must end quietly: $(cat "$W/v2.out")"
-  assert_contains "$(cat "$W/v2.out")" "superseded" "the older queued verify must say a newer one took its place"
-  : > "$W/release"
-  wait "$p1" || fail "the running verify must finish: $(cat "$W/v1.out")"
-  wait "$p3" || fail "the newest verify must run and pass: $(cat "$W/v3.out")"
-  [ "$(cat "$W/verify-ran")" = "$c1"$'\n'"$c3" ] || fail "the suite must run at the first and the newest commit only: $(cat "$W/verify-ran")"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c3" ] || fail "green at the newest commit moves the pin over the commit that never ran"
-  [ ! -e "$HOME_D/state/trunk-verify-want-proj" ] || fail "a verify that ended must leave nothing queued"
-  # A verify for a commit that is already under the pin does not run the suite again.
-  assert_contains "$(trunk verify "$PROJ" "$c2" 2>&1)" "already under the green pin" "a covered commit is not verified again"
-  [ "$(grep -c . "$W/verify-ran")" = 2 ] || fail "a covered commit must not run the suite"
-  pass 'queued verifies run one at a time and only the newest runs; its green moves the pin over the rest'
-}
-# tip_after_land <id>: lands the lane and prints the new trunk tip.
-tip_after_land() { trunk land "$1" >/dev/null 2>&1 || fail "$1 must land"; tip; }
-
-# A gate that records what it judged and stays open, until the test releases it, on a commit whose tree holds SLOW.
-slow_gate() {
-  printf '#!/usr/bin/%s bash\ngit log -1 --format=%%s >> %s/gate-seen\nif git grep -q SLOW; then while [ ! -e %s/release ]; do sleep 0.1; done; fi\n' env "$W" "$W" > "$W/slow-gate.sh"
-  printf 'gate-full=bash %s/slow-gate.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
-}
-seen() { local n; n=$(grep -c "^$1\$" "$W/gate-seen" 2>/dev/null || :); echo "${n:-0}"; }  # how often the gate judged the commit with this subject
-await_gate() {  # <subject>: until the gate is judging it
-  local n; for n in $(seq 1 150); do [ "$(seen "$1")" -ge 1 ] && return 0; sleep 0.1; done; fail "the gate must start on $1"
-}
-
-test_a_landing_does_not_hold_the_trunk_while_its_gate_runs() {
-  local c0 p1 out
-  world longland
-  lane l0 one; c0=$(tip_after_land l0); slow_gate
-  lane l1 SLOW slow.txt; lane l3 three other.txt
-  trunk land l1 > "$W/l1.out" 2>&1 & p1=$!
-  await_gate 'ticket l1'
-  # While the long landing is in its gate, a verify reads the tip, runs and moves the pin, and another lane lands.
-  out=$(timeout 60 env PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" JG_STATE_OVERRIDE="$HOME_D/state" JG_DATA_OVERRIDE="$HOME_D/data" JG_CONFIG_OVERRIDE="$HOME_D/config" "$W/root/bin/jg-trunk.sh" verify "$PROJ" "$c0" 2>&1) || fail "a verify must finish while a landing's gate runs: $out"
-  kill -0 "$p1" 2>/dev/null || fail "the long landing must still be gating when the verify ends: $(cat "$W/l1.out")"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c0" ] || fail "the verify must move the pin while the landing is gating"
-  out=$(trunk land l3 2>&1) || fail "another lane must land while a landing is gating: $out"
-  # The long landing's tip moved under it, so it is rebased onto the new tip and gated again; it lands once the gate is released.
-  : > "$W/release"; wait "$p1" || fail "the long landing must land after its tip moved: $(cat "$W/l1.out")"
-  assert_contains "$(cat "$W/l1.out")" "while l1 was gated" "the landing must say it gated again on the new tip"
-  [ "$(seen 'ticket l1')" = 2 ] || fail "the lane must be gated again on the new tip, got $(seen 'ticket l1') runs"
-  [ "$(git -C "$PROJ" log --reverse --format=%s "$c0..trunk" | paste -sd, -)" = "ticket l3,ticket l1" ] || fail "both lanes land, in the order they were ready to move the trunk"
-  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$(tip)" ] || fail "the tip record follows the trunk"
-  pass 'a landing holds no trunk lock while its gate runs: a verify finishes and moves the pin, another lane lands, and the first is re-gated on the new tip'
-}
-
-test_a_stack_holds_no_trunk_lock_while_its_gate_runs_and_is_judged_again_on_a_moved_tip() {
-  local base p1 out
-  world longstack; base=$(tip); slow_gate
-  lane s1 SLOW slow.txt; lane s2 two f2.txt; lane s3 three other.txt
-  trunk land-batch s1 s2 > "$W/b.out" 2>&1 & p1=$!
-  await_gate 'ticket s2'
-  out=$(trunk land s3 2>&1) || fail "a lane must land while a stack is gating: $out"
-  : > "$W/release"; wait "$p1" || fail "the stack must land after its tip moved: $(cat "$W/b.out")"
-  assert_contains "$(cat "$W/b.out")" "moved while the stack was gated" "the stack must say it judged again"
-  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket s3,ticket s1,ticket s2" ] || fail "the stack lands on top of the lane that moved the trunk"
-  [ "$(grep -c '^landed s' "$W/b.out")" = 2 ] || fail "both lanes of the stack land: $(cat "$W/b.out")"
-  pass 'a stack holds no trunk lock while its gate runs and is judged again when the trunk moved under it'
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_verify_moves_the_pin_over_a_red_its_parent_already_had() {
-  local out good
-  world parentred; rig; seed_red_tip
-  printf 'gate-verify=export GATE_MARK=yes; bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
-  lane good 'exit 0' t/d.test.sh
-  trunk land good >/dev/null 2>&1 || fail "a lane that adds no red must land on a red tip"
-  good=$(tip)
-  out=$(trunk verify "$PROJ" 2>&1) || fail "a verify whose only failure is its parent's own must pass: $out"
-  assert_contains "$out" "already had set aside" "the verify must say it set the parent's red aside"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$good" ] || fail "the pin must move when every failure is one the parent already had"
-  # A red the commit adds still holds the pin and is charged to the commit.
-  lane bad 'echo "not ok - new red" >&2; exit 1' t/e.test.sh
-  printf 'gate-full=true\n' >> "$HOME_D/config/trunk-policy"
-  trunk land bad >/dev/null 2>&1 || fail "the lane lands by hand past a fast gate"
-  trunk verify "$PROJ" >/dev/null 2>&1 && fail "a commit that adds a red must not pass verify"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$good" ] || fail "a red the commit added must not move the pin"
-  pass 'the green pin moves over failures the parent already had, and holds on a red the commit added'
-}
-
-# fresh <id> <minutes>: the lane's done report is this many minutes old.
-fresh() { printf 'done [at=%s]: ready in branch fm/%s (local-trunk)\n' "$(( $(date +%s) - $2 * 60 ))" "$1" >> "$HOME_D/state/$1.status"; }
-qsweep() { JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" 2>&1; }
-# settled <n>: the trunk holds <n> commits over <base> and the whole suite has moved the green pin to its tip.
-settled() {
-  local _
-  for _ in $(seq 1 150); do
-    [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = "$1" ] && [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] && ! grep -qs '^running' "$HOME_D"/data/jg-trunk-landing/*.state && return 0
-    sleep 0.2
-  done
-  fail "the trunk must hold $1 landed lanes and a settled suite: $(git -C "$PROJ" log --format=%s "$base..trunk" | paste -sd, -)"
-}
-unlanded() { [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = "$1" ] || fail "$2: $(git -C "$PROJ" log --format=%s "$base..trunk" | paste -sd, -)"; }
-
-# shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
-test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it() {
-  local base out rc=0
-  batch_world flushq; base=$(tip)
-  printf 'flush-at-ready=3\nflush-after-minutes=20\n' >> "$HOME_D/config/trunk-policy"
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  # Below the threshold and young: two ready lanes wait; nothing lands one by one.
-  lane q1 one f1.txt; lane q2 two f2.txt; fresh q1 5; fresh q2 4
-  qsweep >/dev/null; unlanded 0 "two young lanes are below flush-at-ready and wait"
-  # The third lane reaches the threshold: all three land in ONE stack behind ONE gate.
-  lane q3 three f3.txt; fresh q3 3
-  qsweep >/dev/null; settled 3
-  [ "$(runs)" = 1 ] || fail "the flushed lanes were judged by one gate, got $(runs) runs"
-  [ "$(awk -F'\t' '$6 ~ /^batch-from=/' "$HOME_D/data/trunk-landings.tsv" | wc -l | tr -d ' ')" = 3 ] || fail "the three landed as one stack"
-  # One lane that has waited past flush-after-minutes lands by itself.
-  base=$(tip); lane q4 four f4.txt; fresh q4 19
-  qsweep >/dev/null; unlanded 0 "a lane that has waited 19 of 20 minutes still waits"
-  fresh q4 21; qsweep >/dev/null; settled 1
-  # `flush` lands every ready lane now, whatever the threshold says, and the request ends once the queue is empty.
-  base=$(tip); lane q5 five f5.txt; lane q6 six f6.txt; fresh q5 2; fresh q6 1
-  qsweep >/dev/null; unlanded 0 "two young lanes wait"
-  out=$(JG_TASK_ID=q5 trunk flush "$PROJ" 2>&1) && fail "a worker never flushes the queue"; assert_contains "$out" "a worker never flushes" "the worker refusal says why"
-  out=$(trunk flush "$PROJ" 2>&1) || fail "Overwatch can flush the queue: $out"; assert_contains "$out" "flush requested for proj" "flush says what it did"
-  [ -e "$HOME_D/state/trunk-flush-proj" ] || fail "flush records its request"
-  : > "$W/gate-runs"; qsweep >/dev/null; settled 2
-  [ "$(runs)" = 1 ] || fail "flush lands the ready lanes as one stack, got $(runs) gate runs"
-  qsweep >/dev/null; [ ! -e "$HOME_D/state/trunk-flush-proj" ] || fail "the flush request ends when no ready lane is left"
-  # A lane marked land-next lands at once, ahead of the queue; the lanes below the threshold keep waiting.
-  base=$(tip); lane q7 seven f7.txt; lane q9 nine f9.txt; fresh q7 3; fresh q9 1
-  out=$(JG_TASK_ID=q9 trunk land-next q9 2>&1) && fail "a worker never marks a lane to land next"
-  out=$(trunk land-next nosuch 2>&1) && fail "land-next needs a real task"; assert_contains "$out" "usage: jg-trunk.sh land-next" "land-next names its usage"
-  trunk land-next q9 >/dev/null || fail "Overwatch can mark a lane to land next"
-  qsweep >/dev/null; settled 1
-  [ "$(git -C "$PROJ" log --format=%s "$base..trunk")" = "ticket q9" ] || fail "only the marked lane lands, the older lane waits"
-  [ ! -e "$HOME_D/state/q9.land-next" ] || fail "the mark ends when the lane lands"
-  # Marked while the threshold is met (q7 waits, q10 is marked, q11 arrives): the marked lane lands first, in the same stack as the rest.
-  lane q10 ten f10.txt; lane q11 eleven f11.txt; fresh q10 2; fresh q11 1; trunk land-next q10 >/dev/null
-  qsweep >/dev/null; settled 4
-  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | sed -n 2p)" = "ticket q10" ] || fail "the marked lane goes first: $(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)"
-  pass 'the queue lands at a threshold, flushes on a command, and a land-next lane jumps it'
-}
-
-sends() { awk -F'\t' -v i="$1" '$1 == i { n++ } END { print n + 0 }' "$W/send-calls" 2>/dev/null || echo 0; }
-
 # shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
 test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
   local out gone
@@ -1359,30 +409,12 @@ test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
   pass 'a refusal the worker fixes reaches it by steer, repeats until the head changes, alerts after ten silent minutes, and never steers a stale head or a wait'
 }
 
-# The journey that stalled on 9 Nov: a lane lands on a tip that carries only recorded reds, the check tears the lane down at once
-# (its record is gone), and the post-landing suite still runs, moves the pin over the old reds, and the quiet trunk goes live by itself.
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself() {
-  local out c
-  fleet_world oldreds; rig; seed_red_tip; cp "$W/root/bin/jg-backlog.sh" "$HOME_D/bin/jg-backlog.sh"
-  printf 'gate-verify=export GATE_MARK=yes; bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
-  lane good 'exit 0' t/d.test.sh
-  out=$(fleet_sweeps "landed good"); assert_contains "$out" "cleaned up" "the check must tear the landed lane down"
-  [ ! -e "$HOME_D/state/good.meta" ] || fail "fixture: the lane's record must be gone, as the real teardown leaves it"
-  await_green || fail "the post-landing suite must still run once the lane's record is gone, and move the pin over the tip's recorded reds: $(cat "$HOME_D"/data/jg-trunk-landing/good.*.post.log 2>&1)"
-  c=$(tip)
-  assert_contains "$(cat "$HOME_D"/data/jg-trunk-landing/good.*.verify.log 2>&1)" "already had set aside" "the verify must say it set the recorded reds aside"
-  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "recorded old reds must not pin the trunk red"
-  age_landings 25 25
-  out=$(fleet_sweeps "proj: live at")
-  assert_contains "$out" "proj: live at ${c:0:12} on every home" "the quiet trunk must go live by itself over the recorded reds"
-  homes_at "$c" || fail "every home must move to the landed commit: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
-  pass 'a landing on a tip with only recorded reds is verified after its lane is torn down, moves the pin and goes live with no hand step'
-}
-
+test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection
+test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes
+test_admission_is_shared_by_manual_and_automatic_requests
+test_a_repaired_hook_overlay_admits_exactly_one_fresh_attempt
+test_legacy_mode_stays_interoperable
 test_a_good_lane_lands_but_goes_live_only_on_his_word
-test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself
-test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_every_unsafe_landing_refuses
 test_a_seam_is_the_only_place_behaviour_changes
 test_a_landing_is_pinned_behind_until_verify_passes
@@ -1390,30 +422,5 @@ test_the_release_is_one_pr_from_the_trunk_on_his_word
 test_a_red_ci_pins_the_home_back_to_the_last_green_commit
 test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut
 test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried
-test_the_registered_check_lands_a_proved_task_without_a_human
-test_a_quiet_trunk_goes_live_on_every_home_by_itself
-test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behind
-test_a_busy_trunk_goes_live_at_the_hourly_cap
-test_a_red_or_unwaived_landing_never_goes_live
-test_the_landing_check_cuts_the_next_trunk_once_the_release_merged
-test_the_watcher_runs_the_landing_check_on_its_fast_tick
-test_the_full_gate_charges_a_lane_only_for_what_it_broke
-test_a_flaky_failure_gets_one_rerun_before_it_is_judged
-test_a_tip_red_that_prints_its_elapsed_seconds_is_the_same_red_on_every_run
-test_the_gates_are_policy_keys_with_fast_defaults
-test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates
-test_a_landing_rebases_the_lane_by_itself
-test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input
-test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run
-test_the_check_starts_no_landing_until_the_whole_proof_is_there
-test_three_lanes_land_in_order_a_red_one_is_refused_and_a_post_land_red_is_reverted
-test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected
-test_a_red_the_suite_finds_after_a_batch_is_traced_to_its_one_commit_and_reverted
-test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_path
-test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
-test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
-test_a_landing_does_not_hold_the_trunk_while_its_gate_runs
-test_a_stack_holds_no_trunk_lock_while_its_gate_runs_and_is_judged_again_on_a_moved_tip
-test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it
 test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent
 printf 'jg-trunk: ok\n'
