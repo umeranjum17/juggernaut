@@ -3515,10 +3515,40 @@ watcher_process_table() {
 }
 
 
-watcher_descendants() {
-  local root=$1 excluded=${2:-0} table
-  table=$(watcher_process_table) || return 1
-  printf '%s\n' "$table" | awk -v root="$root" -v excluded="$excluded" '
+# watcher_descendants_to <variable> <root> [excluded]: store every live
+# descendant pid of <root>, space separated, skipping <excluded> and its subtree.
+# Where the kernel publishes each process's child list
+# (/proc/<pid>/task/<tid>/children) the walk reads only this tree, so its cost
+# is the watcher's own few processes and it forks nothing. A host without those
+# lists walks the whole process table, which costs one read of every process on
+# the host - affordable for a one-off eviction, never as a once-a-second loop.
+watcher_descendants_to() {
+  local _wd_out=$1 _wd_root=$2 _wd_excluded=${3:-0} _wd_proc=${JG_PROC_ROOT_OVERRIDE:-/proc}
+  local _wd_found=' ' _wd_pid _wd_file _wd_child _wd_table
+  local -a _wd_queue _wd_kids
+  if [ -r "$_wd_proc/$$/task/$$/children" ]; then
+    _wd_queue=("$_wd_root")
+    while [ "${#_wd_queue[@]}" -gt 0 ]; do
+      _wd_pid=${_wd_queue[0]}
+      _wd_queue=("${_wd_queue[@]:1}")
+      for _wd_file in "$_wd_proc/$_wd_pid"/task/*/children; do
+        _wd_kids=()
+        read -r -a _wd_kids 2>/dev/null < "$_wd_file" || true
+        for _wd_child in ${_wd_kids[@]+"${_wd_kids[@]}"}; do
+          # A pid seen twice was reused mid-walk; never walk it again.
+          case "$_wd_found" in *" $_wd_child "*) continue ;; esac
+          [ "$_wd_child" != "$_wd_excluded" ] || continue
+          _wd_found+="$_wd_child "
+          _wd_queue+=("$_wd_child")
+        done
+      done
+    done
+    _wd_found=${_wd_found# }
+    printf -v "$_wd_out" '%s' "${_wd_found% }"
+    return 0
+  fi
+  _wd_table=$(watcher_process_table) || return 1
+  _wd_found=$(printf '%s\n' "$_wd_table" | awk -v root="$_wd_root" -v excluded="$_wd_excluded" '
     { parent[$1] = $2 }
     END {
       for (pid in parent) {
@@ -3529,29 +3559,55 @@ watcher_descendants() {
           if (p == root) { print pid; break }
         }
       }
-    }'
+    }') || return 1
+  printf -v "$_wd_out" '%s' "$_wd_found"
 }
 
+# watcher_record_children: the child ledger eviction and lock removal retire
+# from (jg_watcher_retire_child_identities). Once a second it records every
+# descendant's identity and keeps each earlier record whose process still
+# carries it, because a child reparented away from this tree is exactly what an
+# eviction must still find. It runs for this watcher's whole life on every home,
+# so a pass must stay near free: the walk reads only this tree, identities are
+# read without forking, and the ledger is rewritten only when it changed.
+# The full lock identity is proved once; each later pass rechecks that the lock
+# still names <root> and that <root> still has the start time it had then. The
+# holder writes the lock's home, path and identity once, and a new holder
+# rewrites its pid, so that recheck decides what the full match decides.
 watcher_record_children() {
-  local root=$1 identity=$2 ledger=$3 recorder child child_identity current descendants
+  local root=$1 identity=$2 ledger=$3 recorder root_start current lock_pid child child_identity
+  local descendants records written='' recorded
   trap - EXIT HUP INT TERM
   jg_current_pid recorder || return 1
-  while jg_watcher_lock_matches_pid "$STATE" "$WATCH_PATH" "$root" "$JG_HOME" \
-    && [ "$JG_WATCHER_MATCHED_IDENTITY" = "$identity" ]; do
-    descendants=$(watcher_descendants "$root" "$recorder") || return 1
-    {
-      for child in $descendants; do
-        child_identity=$(jg_watcher_child_identity "$child" 2>/dev/null) || continue
-        printf '%s\t%s\n' "$child" "$child_identity"
-      done
-      while IFS="$(printf '\t')" read -r child child_identity; do
-        jg_pid_alive "$child" || continue
-        current=$(jg_watcher_child_identity "$child" 2>/dev/null) || continue
-        [ "$current" = "$child_identity" ] || continue
-        printf '%s\t%s\n' "$child" "$child_identity"
-      done < "$ledger"
-    } | awk '!seen[$0]++' > "$ledger.next" || return 1
-    mv -f "$ledger.next" "$ledger" || return 1
+  jg_watcher_lock_matches_pid "$STATE" "$WATCH_PATH" "$root" "$JG_HOME" \
+    && [ "$JG_WATCHER_MATCHED_IDENTITY" = "$identity" ] || return 0
+  jg_watcher_child_identity_to root_start "$root" || return 0
+  while :; do
+    read -r lock_pid 2>/dev/null < "$WATCH_LOCK/pid" || return 0
+    [ "$lock_pid" = "$root" ] || return 0
+    jg_watcher_child_identity_to current "$root" || return 0
+    [ "$current" = "$root_start" ] || return 0
+    watcher_descendants_to descendants "$root" "$recorder" || return 1
+    records='' recorded=' '
+    for child in $descendants; do
+      jg_watcher_child_identity_to child_identity "$child" 2>/dev/null || continue
+      records+="$child"$'\t'"$child_identity"$'\n'
+      recorded+="$child "
+    done
+    while IFS=$'\t' read -r child child_identity; do
+      [ -n "$child" ] || continue
+      case "$recorded" in *" $child "*) continue ;; esac
+      jg_pid_alive "$child" || continue
+      jg_watcher_child_identity_to current "$child" 2>/dev/null || continue
+      [ "$current" = "$child_identity" ] || continue
+      records+="$child"$'\t'"$child_identity"$'\n'
+      recorded+="$child "
+    done <<< "$written"
+    if [ "$records" != "$written" ]; then
+      printf '%s' "$records" > "$ledger.next" || return 1
+      mv -f "$ledger.next" "$ledger" || return 1
+      written=$records
+    fi
     sleep 1
   done
 }
@@ -3579,7 +3635,7 @@ evict_stalled_holder_locked() {
   local pid=$1 i=0 identity descendants child child_identity recorded line
   jg_watcher_lock_matches_pid "$STATE" "$WATCH_PATH" "$pid" "$JG_HOME" || return 1
   identity=$JG_WATCHER_MATCHED_IDENTITY
-  descendants=$(watcher_descendants "$pid") || return 1
+  watcher_descendants_to descendants "$pid" || return 1
   recorded=$(awk '!seen[$0]++' "$WATCH_LOCK/children" 2>/dev/null || true)
   for child in $descendants; do
     child_identity=$(jg_watcher_child_identity "$child" 2>/dev/null) || continue

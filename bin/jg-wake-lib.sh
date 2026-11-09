@@ -127,17 +127,26 @@ jg_path_age() {
 }
 
 jg_watcher_child_identity() {
-  local pid=$1 proc_root=${JG_PROC_ROOT_OVERRIDE:-/proc} stat_line identity
-  local -a fields
-  if [ -r "$proc_root/$pid/stat" ]; then
-    read -r stat_line < "$proc_root/$pid/stat" 2>/dev/null || return 1
-    read -r -a fields <<< "${stat_line##*)}"
-    [ "${#fields[@]}" -ge 20 ] || return 1
-    printf 'starttime=%s\n' "${fields[19]}"
+  local identity
+  jg_watcher_child_identity_to identity "$1" || return 1
+  printf '%s\n' "$identity"
+}
+
+# jg_watcher_child_identity_to <variable> <pid>: the same identity, stored in
+# <variable>. On a /proc host it forks nothing, so the watcher's once-a-second
+# child recorder can read every identity it needs without a process per read.
+jg_watcher_child_identity_to() {
+  local _jg_ci_pid=$2 _jg_ci_root=${JG_PROC_ROOT_OVERRIDE:-/proc} _jg_ci_line _jg_ci_ps
+  local -a _jg_ci_fields
+  if [ -r "$_jg_ci_root/$_jg_ci_pid/stat" ]; then
+    read -r _jg_ci_line 2>/dev/null < "$_jg_ci_root/$_jg_ci_pid/stat" || return 1
+    read -r -a _jg_ci_fields <<< "${_jg_ci_line##*)}"
+    [ "${#_jg_ci_fields[@]}" -ge 20 ] || return 1
+    printf -v "$1" 'starttime=%s' "${_jg_ci_fields[19]}"
   else
-    identity=$(LC_ALL=C ps -p "$pid" -o lstart= 2>/dev/null) || return 1
-    [ -n "$identity" ] || return 1
-    printf '%s\n' "$identity"
+    _jg_ci_ps=$(LC_ALL=C ps -p "$_jg_ci_pid" -o lstart= 2>/dev/null) || return 1
+    [ -n "$_jg_ci_ps" ] || return 1
+    printf -v "$1" '%s' "$_jg_ci_ps"
   fi
 }
 

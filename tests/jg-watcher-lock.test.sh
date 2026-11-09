@@ -141,6 +141,61 @@ test_singleton_start() {
   pass "simultaneous watcher starts leave exactly one live process"
 }
 
+# Every watcher keeps a background child recorder alive for its whole life, so
+# an idle home pays for it every second. A busy host runs thousands of
+# processes, and a recorder whose pass reads all of them spends a fifth of a
+# core per home. Crowd the process table, then hold the real recorder of an idle
+# private watcher under 2% of one core.
+test_child_recorder_cost_ignores_host_process_count() (
+  local dir state fakebin pid='' crowd='' recorder='' child hz before after window=20 i crowded
+  local -a kids
+  if [ ! -r "/proc/$$/task/$$/children" ]; then
+    pass "child recorder cost: skipped, this host publishes no kernel child lists"
+    return 0
+  fi
+  # shellcheck disable=SC2016 # the trap reads the pids when it fires
+  trap '[ -z "$pid" ] || kill "$pid" 2>/dev/null; [ -z "$crowd" ] || kill -- "-$crowd" 2>/dev/null; wait 2>/dev/null || true' EXIT
+  dir=$(make_case recorder-cost)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  # shellcheck disable=SC2016 # the crowd's own shell expands its loop
+  setsid bash -c 'for _ in $(seq 500); do sleep 600 & done; wait' &
+  crowd=$!
+  PATH="$fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 \
+    "$WATCH" > "$dir/watch.out" 2>&1 &
+  pid=$!
+  for ((i=0; i<300; i++)); do
+    if [ -e "$state/.last-watcher-beat" ]; then
+      kids=()
+      read -r -a kids 2>/dev/null < "/proc/$pid/task/$pid/children" || true
+      for child in ${kids[@]+"${kids[@]}"}; do
+        tr '\0' ' ' < "/proc/$child/cmdline" 2>/dev/null | grep -q 'jg-watch\.sh' && recorder=$child
+      done
+      [ -z "$recorder" ] || break
+    fi
+    sleep 0.1
+  done
+  [ -n "$recorder" ] || fail "the private watcher never started its child recorder: $(cat "$dir/watch.out")"
+  kids=()
+  read -r -a kids 2>/dev/null < "/proc/$crowd/task/$crowd/children" || true
+  crowded=${#kids[@]}
+  [ "$crowded" -ge 450 ] || fail "the process table was not crowded (only $crowded extra processes)"
+  hz=$(getconf CLK_TCK)
+  recorder_ticks() {  # utime + stime + reaped children's utime + stime
+    local line
+    read -r line < "/proc/$recorder/stat" || return 1
+    # shellcheck disable=SC2086 # split the stat fields after the command name
+    set -- ${line##*)}
+    printf '%s\n' $(( ${12} + ${13} + ${14} + ${15} ))
+  }
+  before=$(recorder_ticks) || fail "child recorder exited before the measurement"
+  sleep "$window"
+  after=$(recorder_ticks) || fail "child recorder exited during the measurement"
+  [ $(( (after - before) * 100 )) -lt $(( 2 * hz * window )) ] \
+    || fail "child recorder used $(( (after - before) * 1000 / (hz * window) ))/1000 of a core over ${window}s beside $crowded extra processes"
+  pass "child recorder stays under 2% of a core with $crowded extra processes on the host"
+)
+
 test_stale_watch_lock_reclaimed() {
   local dir state fakebin out dead_pid pid live lock_pid i
   dir=$(make_case stale-lock)
@@ -1985,6 +2040,7 @@ test_first_scan_confirmation_budget signal
 test_first_scan_confirmation_budget check
 test_wait_deadline_reaps_a_stopped_child
 test_singleton_start
+test_child_recorder_cost_ignores_host_process_count
 test_pid_identity_is_locale_invariant
 test_pid_identity_is_terminal_width_invariant
 test_proc_pid_identity_ignores_wall_clock_and_detects_pid_reuse
