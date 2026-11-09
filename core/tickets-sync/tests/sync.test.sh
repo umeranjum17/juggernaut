@@ -310,6 +310,31 @@ feed_assignee "$legacy" | jq -e '.lead == "main" and .live == false and .model =
 sign-off-axi ticket "$work/board.json" --id "$legacy" --json | jq -e '.ticket.title == "Umer legacy row item" and .ticket.state == "queued" and .ticket.progress == 0 and ((.ticket.last_event_at // "") == "") and ((.ticket.stage // "") == "")'
 echo 'PASS: the row from before the re-keyed ids names the same owner, and only that field moves'
 
+# A legacy row the board still holds with no reason is one nothing moves any more: `--migrate-legacy` releases it
+# (never closed, so no false shipped count and no captain ask lost), keeps its title, progress and owner, and a second
+# run finds nothing left.
+owner='{"lead":"main","live":false,"model":"no worker yet"}'
+for row in "fm-legacyask $(jq -nc --argjson o "$owner" '{title:"Umer quoted ask",asked:true,state:"on hold",stage:"queued",progress:0,assignee:$o}')" \
+           "fm-legacyold $(jq -nc --argjson o "$owner" '{title:"Umer frozen row",asked:false,state:"on hold",stage:"merging",progress:90,assignee:$o}')"; do
+  jq -c --arg id "${row%% *}" '. + {id:$id,hold:true,at:"2026-11-04T10:15:53Z"}' <<<"${row#* }" >> "$work/board.tickets.jsonl"
+done
+held_without_reason() { sign-off-axi ticket "$work/board.json" --json | jq '[.tickets[] | select(.hold and ((.hold_reason // "") == ""))] | length'; }
+migrate_legacy() { JG_HOME="$JG_HOME" python3 "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" --migrate-legacy "$@"; }
+[ "$(held_without_reason)" = 2 ]
+before=$(wc -l < "$work/board.tickets.jsonl")
+migrate_legacy --check | grep -q '^tickets-sync: would release 2 legacy rows held with no reason$'
+[ "$(wc -l < "$work/board.tickets.jsonl")" = "$before" ]
+migrate_legacy | grep -q '^tickets-sync: released 2 legacy rows held with no reason$'
+[ "$(held_without_reason)" = 0 ]
+for id in fm-legacyask fm-legacyold; do
+  sign-off-axi ticket "$work/board.json" --id "$id" --json | jq -e '.ticket.hold == false and (.ticket.state // "") != "on hold"'
+  feed_assignee "$id" | jq -e '.lead == "main" and .model == "no worker yet"'
+done
+sign-off-axi ticket "$work/board.json" --id fm-legacyask --json | jq -e '.ticket.title == "Umer quoted ask" and .ticket.asked == true'
+sign-off-axi ticket "$work/board.json" --id fm-legacyold --json | jq -e '.ticket.title == "Umer frozen row" and .ticket.progress == 90 and .ticket.stage == "merging"'
+migrate_legacy | grep -q '^tickets-sync: released 0 legacy rows held with no reason$'
+echo 'PASS: legacy rows held with no reason are released, their titles and owners stay, and a second run finds none'
+
 # Every project image ships from the core icons directory: the installer copies them all, and
 # `sync.py` looks nowhere else, so a project whose image lives there registers on the board.
 (cd "$JG_HOME"; jg-backlog.sh add jg-draft 'Umer first draft practice' --repo first-draft --priority 2 >/dev/null)

@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from task_rows import toon_rows
 from lane import stage as lane_stage, assignee as lane_assignee
 import cleanup
+import legacy
 import reconcile
 import release
 from hierarchy import UPKEEP, INTERNAL, parents as request_parents, title as request_title
@@ -97,7 +98,8 @@ def feed_records(text):
     return records
 
 def write_assignee(path, tid, record, desired, ends_with_newline, reason='', assignee_only=False):
-    """Append the ticket's own record again, its fields as this pass sets them, carrying the assignee the board shows.
+    """Append the ticket's own record again, its fields as this pass sets them, carrying the assignee the board shows (the
+    record's own when `desired` names none).
     sign-off's writer takes no assignee field and its format lets another program append lines in the same shape, one
     JSON object and a newline per write, so the newest line is the whole record and every other field reads as before.
     assignee_only writes that one field onto a record this pass does not otherwise publish, so nothing else moves."""
@@ -115,7 +117,8 @@ def write_assignee(path, tid, record, desired, ends_with_newline, reason='', ass
     if not assignee_only:
         if desired.get('hold') == 'yes' and reason: line['hold_reason'] = reason
         else: line.pop('hold_reason', None)
-    line.update(id=tid, assignee=desired['assignee'], at=dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+    line.update(id=tid, at=dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+    if 'assignee' in desired: line['assignee'] = desired['assignee']
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(fd, 'w') as feed:
         feed.write(('' if ends_with_newline else '\n') + json.dumps(line) + '\n')
@@ -131,6 +134,7 @@ def sync():
     parser.add_argument('--audit', action='store_true')
     parser.add_argument('--check', action='store_true', help='print board tickets that disagree with their work; write nothing')
     parser.add_argument('--cleanup', action='store_true', help='once a day, flag tickets that need a keep/remove call and back-fill captain quotes')
+    parser.add_argument('--migrate-legacy', action='store_true', help='one-off: release the legacy fm- rows that hold with no reason; with --check, print the plan and write nothing')
     parser.add_argument('--reconcile', action='store_true', help='read every home without the watcher time budget')
     parser.add_argument('--close', metavar='HOME/ITEM', help='record an authorized cancellation or supersession on the board only')
     parser.add_argument('--reason', choices=['superseded', 'cancelled'])
@@ -278,6 +282,15 @@ def sync():
             if summary: updated['description'] = summary
             existing[tid] = updated
             ledger[tid] = digest; save(ledger_file, ledger)
+        if options.migrate_legacy:
+            # The feed is what the board is built from, so it names every held row (the board's own list hides a row that
+            # twins another open one), and one line per row is the poll's own way to write a whole record.
+            def unhold(record):
+                nonlocal feed_ends
+                write_assignee(feed_file, record['id'], record, legacy.released(record), feed_ends)
+                feed_ends = True
+            print(legacy.migrate(list(feed.values()), unhold, write=not options.check))
+            return
         if options.close:
             name, sep, item = options.close.partition('/')
             if name not in homes or not sep or not item: raise RuntimeError('--close requires a registered HOME/ITEM')
