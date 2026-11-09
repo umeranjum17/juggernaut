@@ -305,7 +305,7 @@ def sync():
             env['JG_HOME'] = str(source)
             reader = ['bash', str(home / 'bin/jg-backlog.sh')]
             # A Beads home answers every row, done ones and whole bodies included, from one provider read.
-            tasks = rows(reader + ['list'], env, extra=',parent,item')
+            tasks = rows(reader + ['list', '--all'], env, extra=',parent,item')
             # The rest of the pass keys a row by the item name its state files and parent lines use.
             by_id = {r['id']: r for r in tasks}
             for r in tasks:

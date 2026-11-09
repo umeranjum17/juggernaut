@@ -22,6 +22,7 @@ export HOME=$work/user XDG_DATA_HOME=$work/xdg SIGN_OFF_HOME=$work/signoff
 export JG_HOME=$work/main
 mkdir -p "$HOME" "$JG_HOME"/{data,config,state} "$work/parked/data"
 ln -s "$fork/bin" "$JG_HOME/bin"
+ln -s "$fork/core" "$JG_HOME/core"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
 # The local trunk has cut one release, trunk-v3; v1 is a PR-era version no trunk cut.
@@ -53,8 +54,11 @@ printf 'mode=local-trunk\nwindow=default:w9:p1\nendpoint_task_id=jg-long\nharnes
 printf 'working [at=1700000000]: building Umer release\n' > "$JG_HOME/state/jg-long.status"
 printf 'harness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount=found-claude\n' > "$JG_HOME/state/jg-gone.meta"
 printf 'paused [at=1700000010]: ran once and stopped\n' > "$JG_HOME/state/jg-gone.status"
-sign-off-axi ticket "$work/board.json" --id jg-legacy-fixture --title 'Needs a parent · alpha' --progress 17 --asked yes >/dev/null
-sign-off-axi ticket "$work/board.json" --id jg-history-fixture --title 'Umer historical maintenance' --project main --progress 100 --asked no >/dev/null
+# sign-off-axi refuses a new ticket without a description (a summary, then # Ask, # Why and # Done when), so every
+# fixture ticket written straight to the board carries this one.
+fixture_description=$'Fixture ticket.\n# Ask\n- Show the work on the board.\n# Why\n- The board follows the work.\n# Done when\n- The ticket reads done.'
+sign-off-axi ticket "$work/board.json" --id jg-legacy-fixture --title 'Needs a parent · alpha' --progress 17 --asked yes --description "$fixture_description" >/dev/null
+sign-off-axi ticket "$work/board.json" --id jg-history-fixture --title 'Umer historical maintenance' --project main --progress 100 --asked no --description "$fixture_description" >/dev/null
 source_before=$(cd "$JG_HOME" && jg-backlog.sh list; cd "$work/parked" && JG_HOME="$work/parked" jg-backlog.sh list)
 bash "$root/tickets-sync/wiring.sh" --dry-run
 test ! -d "$XDG_DATA_HOME/jg-tickets-sync"
@@ -293,7 +297,7 @@ echo 'PASS: the card reconcile archives a closed-source card, keeps an open-sour
 # same work, so that row names the same owner: only the assignee moves, and its own fields stay as they were.
 (cd "$JG_HOME"; jg-backlog.sh add jg-legacy 'Umer legacy row item' --repo alpha --priority 2 >/dev/null)
 legacy="fm-$(ticket_id main/jg-legacy | cut -c4-)"
-sign-off-axi ticket "$work/board.json" --id "$legacy" --title 'Umer legacy row item' --state queued >/dev/null
+sign-off-axi ticket "$work/board.json" --id "$legacy" --title 'Umer legacy row item' --state queued --description "$fixture_description" >/dev/null
 "$JG_HOME/state/tickets-sync.check.sh" >/dev/null
 feed_assignee "$legacy" | jq -e '.lead == "main" and .live == false and .model == "no worker yet"'
 sign-off-axi ticket "$work/board.json" --id "$legacy" --json | jq -e '.ticket.title == "Umer legacy row item" and .ticket.state == "queued" and .ticket.progress == 0 and ((.ticket.last_event_at // "") == "") and ((.ticket.stage // "") == "")'
