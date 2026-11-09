@@ -231,17 +231,25 @@ tip_ok() {
   [ "$want" = "$have" ] || refuse "$TRUNK is at ${have:0:12} but the lander last left it at ${want:0:12}; something else moved it, so nothing lands or releases until that is explained"
 }
 
+# The only variables a gate takes from whoever starts it. A gate gives one result from every caller (a worker session,
+# the lead, the watcher, a bare shell), so its clone and its command start from an empty environment plus these names:
+# a session's git hook settings, task id or account never reach the tests. JG_HOME is the home this script resolved.
+# A gate that needs another variable goes red on its first run, and the miss is added here by name.
+GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME'
+
 # Run a command at a commit's exact tree in a clean clone, logging to <log>; returns the command's exit status.
 # <envfile>, when given, receives the environment the command ended with (NUL separated), so a rerun can use the same one.
 gate_exec() {  # <commit> <command> <log> [<envfile>]
-  local rc=0 cmd=$2
+  local rc=0 cmd=$2 name
+  local -a clean=(env -i)
+  for name in $GATE_ENV; do [ -z "${!name+set}" ] || clean+=("$name=${!name}"); done
   mkdir -p "$DATA/trunk"
   WORK=$(mktemp -d)
-  git clone -q --shared --no-checkout "$PROJ" "$WORK/tree" || die "cannot clone $PROJ for the gate"
-  git -C "$WORK/tree" checkout -q --detach "$1" || die "cannot check out ${1:0:12} for the gate"
+  "${clean[@]}" git clone -q --shared --no-checkout "$PROJ" "$WORK/tree" || die "cannot clone $PROJ for the gate"
+  "${clean[@]}" git -C "$WORK/tree" checkout -q --detach "$1" || die "cannot check out ${1:0:12} for the gate"
   # shellcheck disable=SC2016 # the trap body expands in the gate's shell
   [ -z "${4:-}" ] || cmd="trap 'env -0 > \"\$JG_GATE_ENV_OUT\"' EXIT; $2"
-  (cd "$WORK/tree" && JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" env -u JG_TASK_ID bash -c "$cmd") > "$3" 2>&1 || rc=$?
+  (cd "$WORK/tree" && "${clean[@]}" JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" bash -c "$cmd") > "$3" 2>&1 || rc=$?
   rm -rf -- "$WORK"; WORK=
   return "$rc"
 }
