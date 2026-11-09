@@ -77,6 +77,7 @@
 #   live                        fast-forwarded, or already there
 #   live,re-pointed-from:<sha>  HEAD was not an ancestor but the tip holds its whole tree: reset --keep, never a merge
 #   skipped:dirty | skipped:unlanded:<paths> | skipped:<other reason>   not touched
+#   live,pinned-back-from:<sha> the base is BEHIND the home (a red CI) and the home holds only trunk commits: reset --keep to the base
 #   rolled-back:<reason>        the health check failed: the home is pinned back to its pre-move HEAD and the rollout stops
 # After a home moves, bin/jg-home-guard.sh install <home> and bin/jg-home-health.sh check <home> <sha> run when present.
 # Moving anything clears state/squad-lead-summary-cache (an observational cache). Main's move writes
@@ -288,12 +289,22 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
     git -C "$dir" fetch -q "$PROJECT" "refs/heads/$TRUNK_BRANCH" 2>/dev/null || true
   fi
   tmp=$(mktemp "${TMPDIR:-/tmp}/jg-live-move.XXXXXX") || return 0
-  ff_target "$dir" "$label" "$BASE" yes "$seed" "" "" yes > "$tmp"
+  # A pin-back (a red CI): BASE is behind this home and everything the home holds is on the trunk, so the home steps
+  # back by reset --keep (the home guard admits it with JG_TRUNK_PINBACK=1); a dirty home is skipped, never forced.
+  if [ "$pre" != "$BASE" ] && git -C "$dir" merge-base --is-ancestor "$BASE" "$pre" 2>/dev/null \
+    && git -C "$PROJECT" merge-base --is-ancestor "$pre" "refs/heads/$TRUNK_BRANCH" 2>/dev/null \
+    && [ -z "$(git -C "$dir" status --porcelain --untracked-files=no 2>/dev/null)" ] \
+    && JG_TRUNK_PINBACK=1 git -C "$dir" reset -q --keep "$BASE" 2>/dev/null; then
+    FF_STATUS=updated; FF_INSTR=""; echo "$label: pinned back ${pre:0:12}..${BASE:0:12}" > "$tmp"
+  else
+    ff_target "$dir" "$label" "$BASE" yes "$seed" "" "" yes > "$tmp"
+  fi
   out=$(cat "$tmp"); rm -f -- "$tmp"; printf '%s\n' "$out"
   case "$FF_STATUS" in
     updated|current)
       status=live
       case "$out" in *"reconciled redundant divergence"*) status="live,re-pointed-from:${pre:0:12}" ;; esac
+      case "$out" in *": pinned back "*) status="live,pinned-back-from:${pre:0:12}" ;; esac
       MOVE_RESULT=moved ;;
     *)
       case "$out" in

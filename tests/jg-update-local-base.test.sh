@@ -12,7 +12,8 @@
 # T5 `jg-trunk.sh live` runs the mover from an export of the tip, never from the home's own bin; the waiver
 #    record is written only by the Overwatch path, spends no word and marks the row; a project without a
 #    waiver still needs the captain's word.
-# T6 The landing check goes live once per tip for a project with a waiver, and never without one.
+# T6 The landing check runs the suite after a landing and, under a waiver, the batched live step on its own, and reports a go-live,
+#    a failed move, a new hold or a red suite; tests/jg-trunk.test.sh owns the quiet-window, hourly-cap, red and pin-back journeys.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -162,25 +163,35 @@ test_live_runs_the_exported_tool_and_the_waiver_spends_no_word() {
   pass 'T5 live runs the exported tool; the waiver spends no word and only its project skips the word'
 }
 
-test_the_landing_check_goes_live_once_per_tip_under_a_waiver() {
-  local fh="$TMP_ROOT/t6/fm" calls
+test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
+  local fh="$TMP_ROOT/t6/fm" out
   mkdir -p "$fh/state" "$fh/data" "$fh/config" "$fh/bin" "$fh/projects/proj"
   # shellcheck disable=SC2016 # the stub body expands when it runs
-  printf '#!/usr/bin/env bash\ncase "$1" in land) exit 0 ;; live) printf "live %%s\\n" "$2" >> "%s/calls"; exit 0 ;; esac\n' "$fh" > "$fh/bin/jg-trunk.sh"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$fh/bin/jg-teardown.sh"; chmod +x "$fh/bin/"*.sh
-  cp "$ROOT/bin/jg-wake-lib.sh" "$ROOT/bin/jg-path-lib.sh" "$fh/bin/"
-  printf 'project=%s/projects/proj\nmode=local-only\n' "$fh" > "$fh/state/t1.meta"; printf 'tipsha1\n' > "$fh/state/trunk-tip-proj"
-  bash "$ROOT/core/trunk-landing/trunk-landing.sh" run "$fh" t1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1
-  [ ! -e "$fh/calls" ] || fail "no waiver means the landing check never goes live"
-  printf 'proj owner-rule-686826b5 1 until=stable\n' > "$fh/config/trunk-live-waiver"
-  bash "$ROOT/core/trunk-landing/trunk-landing.sh" run "$fh" t1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1
-  bash "$ROOT/core/trunk-landing/trunk-landing.sh" run "$fh" t1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1
-  calls=$(cat "$fh/calls" 2>/dev/null)
-  [ "$calls" = "live $fh/projects/proj" ] || fail "a landing under a waiver goes live once per tip: '$calls'"
-  printf 'tipsha2\n' > "$fh/state/trunk-tip-proj"
-  bash "$ROOT/core/trunk-landing/trunk-landing.sh" run "$fh" t1 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb >/dev/null 2>&1
-  [ "$(wc -l < "$fh/calls" | tr -d ' ')" = 2 ] || fail "a new tip goes live again"
-  pass 'T6 the landing check goes live once per tip under a waiver, never without one'
+  printf '#!/usr/bin/env bash\necho "$1" >> "%s/calls"\ncase "$1" in verify) exit "$(cat "%s/verify-rc")" ;; autolive) printf "autolive: %%s\\n" "$(cat "%s/verdict")"; exit "$(cat "%s/rc")" ;; esac\n' "$fh" "$fh" "$fh" "$fh" > "$fh/bin/jg-trunk.sh"
+  chmod +x "$fh/bin/jg-trunk.sh"; cp "$ROOT/bin/jg-wake-lib.sh" "$ROOT/bin/jg-path-lib.sh" "$fh/bin/"
+  printf 'project=%s/projects/proj\nmode=local-trunk\n' "$fh" > "$fh/state/t1.meta"
+  local c=cccccccccccccccccccccccccccccccccccccccc ob="$fh/data/jg-trunk-landing/outbox"
+  post() { bash "$ROOT/core/trunk-landing/trunk-landing.sh" post "$fh" t1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$c" >/dev/null 2>&1; }
+  live() { bash "$ROOT/core/trunk-landing/trunk-landing.sh" live "$fh" proj >/dev/null 2>&1; }
+  # The post-landing job runs the suite and never the live step: a landing never waits on a go-live.
+  printf '0\n' > "$fh/verify-rc"; post
+  [ "$(cat "$fh/calls")" = verify ] || fail "the post-landing job must run the suite only: $(cat "$fh/calls")"
+  printf '1\n' > "$fh/verify-rc"; post
+  assert_contains "$(cat "$ob")" "t1: the whole suite is red at cccccccccccc" "a red suite is reported and nothing goes live"
+  # The live job reports a go-live and a failed move, a new hold once, and nothing for waiting, already live or no waiver.
+  : > "$fh/calls"; : > "$ob"; printf '0\n' > "$fh/rc"
+  printf 'live at abc on every home (0 skipped, see data/trunk-live.tsv)\n' > "$fh/verdict"; live
+  assert_contains "$(cat "$ob")" "proj: live at abc on every home" "a go-live is reported"
+  : > "$ob"; printf 'the move failed: hook\n' > "$fh/verdict"; printf '3\n' > "$fh/rc"; live
+  assert_contains "$(cat "$ob")" "proj: NOT live: the move failed: hook" "a failed move is reported"
+  : > "$ob"; printf '0\n' > "$fh/rc"
+  for out in 'waiting: live in about 9 min (quiet 20 min, cap 60 min)' 'already live at abc' "not live: it needs the captain's word (no go-live waiver for proj)"; do
+    printf '%s\n' "$out" > "$fh/verdict"; live
+  done
+  [ ! -s "$ob" ] || fail "waiting, already live and no waiver add no line: $(cat "$ob")"
+  printf 'NOT live, held: the trunk is red at abc; every home stays on the last green commit\n' > "$fh/verdict"; live; live
+  [ "$(grep -c "held: the trunk is red" "$ob")" = 1 ] || fail "a hold is reported once: $(cat "$ob")"
+  pass 'T6 the landing check runs the suite after a landing and the batched live step on its own, and reports their outcomes'
 }
 
 test_every_home_moves_or_is_skipped_with_one_row
@@ -189,5 +200,5 @@ test_home_moves_one_canary_only
 test_failed_health_pins_the_home_back_and_stops
 test_a_local_trunk_project_is_refused_without_base
 test_live_runs_the_exported_tool_and_the_waiver_spends_no_word
-test_the_landing_check_goes_live_once_per_tip_under_a_waiver
+test_the_landing_check_runs_the_batched_live_step_and_reports_it
 printf 'jg-update-local-base: ok\n'

@@ -3,6 +3,8 @@
 # Usage: trunk-landing.sh check <jg-home>
 #        trunk-landing.sh next <jg-home>                      (what a finished landing starts: the next ready lane, silently)
 #        trunk-landing.sh run <jg-home> <task-id> <head>      (what `check` starts in the background)
+#        trunk-landing.sh post <jg-home> <task-id> <head> <commit>   (what a landing starts: the post-landing suite)
+#        trunk-landing.sh live <jg-home> <project>                   (what a tick starts under a go-live waiver: the batched live step)
 #
 # For each state/<task>.meta in the home with mode=local-trunk (or legacy local-only) whose project is registered local-trunk and has a trunk
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
@@ -12,7 +14,11 @@
 # commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land one at a time, oldest done first, and a
 # finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step.
 # After a landing `bin/jg-trunk.sh verify` runs the whole suite at that commit apart from the next landing and reverts the
-# commit by itself if it caused a red. The check never goes live on its own authority: that stays the captain's word (jg-trunk.sh live), EXCEPT for a project with a line in config/trunk-live-waiver (jg-trunk.sh waiver): after its landing the check runs `live` once per trunk tip and reports the outcome.
+# commit by itself if it caused a red. The check never goes live on its own authority: that stays the captain's word
+# (jg-trunk.sh live), EXCEPT for a project with a line in config/trunk-live-waiver (jg-trunk.sh waiver). For it every tick
+# also starts `live` (a detached job, never blocking a landing), which runs `bin/jg-trunk.sh autolive` and reports a go-live,
+# a failed move or a hold in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
+# oldest landing not yet live is live-cap-minutes (60) old, whichever is first. A red suite never goes live.
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced: a refusal is reported and the worktree stays.
 # The watcher runs this check on its fast tick, so a worker's done starts the landing within seconds in every home; the outcome
 # line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
@@ -25,7 +31,9 @@ set -u
 case "${1:-}" in
   check|next) [ "$#" -eq 2 ] || { echo "usage: trunk-landing.sh check|next <jg-home>" >&2; exit 2; } ;;
   run) [ "$#" -eq 4 ] || { echo "usage: trunk-landing.sh run <jg-home> <task-id> <head>" >&2; exit 2; } ;;
-  *) echo "usage: trunk-landing.sh check|next <jg-home> | run <jg-home> <task-id> <head>" >&2; exit 2 ;;
+  live) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh live <jg-home> <project>" >&2; exit 2; } ;;
+  post) [ "$#" -eq 5 ] || { echo "usage: trunk-landing.sh post <jg-home> <task-id> <head> <commit>" >&2; exit 2; } ;;
+  *) echo "usage: trunk-landing.sh check|next <jg-home> | run <jg-home> <task-id> <head> | post <jg-home> <task-id> <head> <commit> | live <jg-home> <project>" >&2; exit 2 ;;
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -39,6 +47,41 @@ mkdir -p "$MEM" || exit 0
 # shellcheck source=bin/jg-wake-lib.sh
 . "$FMH/bin/jg-wake-lib.sh"
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
+
+# The post-landing job: the whole suite at the landed commit (bin/jg-trunk.sh verify). A red one is reported; the live step is not
+# its business, so a landing never waits on a go-live.
+if [ "$1" = post ]; then
+  id=$3; head=$4; cand=$5; proj=$(mval "$STATE/$id.meta" project); vrc=0
+  [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $head =~ ^[0-9a-f]{40,64}$ && $cand =~ ^[0-9a-f]{40,64}$ ]] && [ -d "$proj" ] || exit 2
+  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify "$proj" "$cand" >"$MEM/$id.$head.verify.log" 2>&1 || vrc=$?
+  [ "$vrc" -ne 0 ] || exit 0
+  jg_lock_acquire_wait "$MEM/.outbox.lock"
+  printf 'trunk-landing: %s: the whole suite is red at %s: nothing goes live and every home stays where it was (%s)\n' "$id" "${cand:0:12}" "$MEM/$id.$head.verify.log" >> "$MEM/outbox"
+  jg_lock_release "$MEM/.outbox.lock"
+  exit 0
+fi
+
+# The batched live step for one project (bin/jg-trunk.sh autolive decides; this reports what is worth a line: a go-live, a
+# failed move, or a new hold). One at a time per project: a tick that finds the last one still running does nothing.
+if [ "$1" = live ]; then
+  pn=$3; proj=$FMH/projects/$pn; lrc=0; live=
+  [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [ -d "$proj" ] || exit 2
+  jg_lock_try_acquire "$STATE/.trunk-autolive-$pn.lock" || exit 0
+  trap 'jg_lock_release "$STATE/.trunk-autolive-$pn.lock"' EXIT
+  live=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" autolive "$proj" 2>&1) || lrc=$?
+  live=$(printf '%s\n' "$live" | tail -n 1 | cut -c1-300); live=${live#autolive: }
+  case $live in
+    '') live="NOT live: the live step printed nothing (exit $lrc)" ;;
+    waiting:*|"already live"*|"not live: it needs"*) exit 0 ;;
+    "NOT live, held:"*) [ "$(cat "$MEM/.live-held-$pn" 2>/dev/null)" != "$live" ] || exit 0; printf '%s\n' "$live" > "$MEM/.live-held-$pn" ;;
+    live\ at*) rm -f "$MEM/.live-held-$pn" ;;
+    *) live="NOT live: $live" ;;
+  esac
+  jg_lock_acquire_wait "$MEM/.outbox.lock"
+  printf 'trunk-landing: %s: %s\n' "$pn" "$live" >> "$MEM/outbox"
+  jg_lock_release "$MEM/.outbox.lock"
+  exit 0
+fi
 
 if [ "$1" = run ]; then
   id=$3; head=$4; out=; rc=0; why=; res=; now=
@@ -57,22 +100,16 @@ if [ "$1" = run ]; then
     # The lander rebased the lane, so its branch is now at the landed commit: the same verdict stands for that head.
     br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
     now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
-    live="not live: that needs the captain's word"; pn=$(basename "$proj"); tipsha=$(cat "$STATE/trunk-tip-$pn" 2>/dev/null || true)
-    if [ -n "$tipsha" ] && awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-live-waiver" 2>/dev/null && [ ! -e "$MEM/.live-$pn-$tipsha" ]; then
-      : > "$MEM/.live-$pn-$tipsha"
-      live="live under the captain's waiver"
-      lout=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" live "$proj" 2>&1) || live="NOT live: $(printf '%s' "$lout" | tail -n 1 | cut -c1-200)"
-    fi
     out=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && out='cleaned up' || out="cleanup refused, nothing was forced: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"
     printf 'landed %s\n' "$out" > "$MEM/$id.$head.state"
     [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$out" > "$MEM/$id.$now.state"
     jg_lock_acquire_wait "$MEM/.outbox.lock"
-    printf 'trunk-landing: landed %s (local-trunk) on the local trunk (%s); %s\n' "$id" "$live" "$out" >> "$MEM/outbox"
+    printf 'trunk-landing: landed %s (local-trunk) on the local trunk (not live yet: the whole suite runs on it first, then live follows the captain'"'"'s word or the project'"'"'s waiver and its quiet window); %s\n' "$id" "$out" >> "$MEM/outbox"
     jg_lock_release "$MEM/.outbox.lock"
     # The whole suite runs at the landed commit apart from the landings, and reverts that one commit if it caused a red.
     cand=$(awk -F'\t' -v i="$id" '$1 == i { c = $3 } END { print c }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
     if [ -n "$fresh" ] && [ -n "$cand" ] && [ -d "$proj" ]; then
-      JG_HOME="$FMH" setsid nohup "$FMH/bin/jg-trunk.sh" verify "$proj" "$cand" >"$MEM/$id.$head.verify.log" 2>&1 < /dev/null &
+      setsid nohup "$SELF" post "$FMH" "$id" "$head" "$cand" >"$MEM/$id.$head.post.log" 2>&1 < /dev/null &
     fi
     "$SELF" next "$FMH" >/dev/null 2>&1 || :
     exit 0
@@ -118,6 +155,15 @@ for tip in "$STATE"/trunk-tip-*; do
   # An old trunk kept for unlanded work is looked at again; a changed listing is reported, an unchanged one is not.
   out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" retire "$proj" 2>/dev/null | sed 's/^/trunk-landing: /')
   if [ "$out" != "$(cat "$MEM/.retire-$pn" 2>/dev/null)" ]; then printf '%s\n' "$out" > "$MEM/.retire-$pn"; [ -z "$out" ] || printf '%s\n' "$out"; fi
+done
+# Under a go-live waiver every tick starts the batched live step (detached, so it never holds a landing back).
+for tip in "$STATE"/trunk-tip-*; do
+  [ -z "$QUIET" ] || break
+  [ -f "$tip" ] || continue
+  pn=${tip##*/trunk-tip-}
+  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-live-waiver" 2>/dev/null || continue
+  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  setsid nohup "$SELF" live "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
 done
 report() {
   local reason=${3%%; full log:*}

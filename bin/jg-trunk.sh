@@ -7,6 +7,7 @@
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the whole suite at a landed commit (default: the tip): green moves the pin, a red it caused reverts it
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word (or a waiver); --home moves one lead only
+#        jg-trunk.sh autolive <project-dir>            the batched live step: under a waiver, move every home to the green pin once the trunk is quiet or the hourly cap is due
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red pins the home back to the last green one
 #        jg-trunk.sh release <project-dir>             push the trunk and open the ONE release PR trunk -> default branch; refuses without his word
@@ -73,6 +74,13 @@
 # The waiver (config/trunk-live-waiver, one line per project: `<project> <owner-rule-id> <epoch> until=stable`, written
 # only by `waiver`) stands in for the word on every commit of that project: live then spends no word and its row says
 # waiver=<rule>. Deleting the project's line restores the need for his word; docs/trunk-flow.md owns the condition.
+#
+# autolive is the live step the landing check (core/trunk-landing) runs on every tick for a project with a go-live waiver, with
+# no model turn (none: nothing happens and the word rule stands). It never waits on or blocks a landing. It moves every home to
+# the green pin once no landing has happened for `live-quiet-minutes` (default 20) or the oldest landing that is not live yet
+# is `live-cap-minutes` (default 60) old, whichever comes first (bin/jg-trunk-policy-lib.sh). A red pin holds it: no home moves
+# and a `held:<reason>` row says why; a commit whose suite was red is never live (verify reverts it, or pins the trunk red). A
+# commit already live is not moved again. A red CI (`ci red`) pins EVERY home back to the last green commit at once.
 #
 # Exit 3 means the home did not move (the live hook failed); a landed commit stays landed.
 #
@@ -631,7 +639,7 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
     [ "$here" != "$there" ] || [ -z "${LIVE_FLEET:-}" ] || hook=fleet
   fi
   if [ "$hook" = fleet ]; then
-    if why=$(fleet_move "$sha" 2>&1); then status=live; else
+    if why=$(fleet_move "$sha" "$2" 2>&1); then status=live; else
       printf '%s\n' "$why"; row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:$(printf '%s' "$why" | tail -n 1 | cut -c1-200)"
       echo "error: the fleet move failed for ${sha:0:12}; see the rows in trunk-live.tsv" >&2; exit 3
     fi
@@ -654,9 +662,10 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
 }
 
 # Run the tip's own mover (an export of its bin/ and core/) over every home; its exit code and last line are the verdict.
-fleet_move() {  # <sha>
+# Only the tip's own copy is used: a pin-back or a pinned-behind move (sha != tip) runs this home's own mover.
+fleet_move() {  # <sha> <tip>
   local sha=$1 tool="$STATE/trunk-live-tool/$1" tmp mover="$SCRIPT_DIR/jg-update.sh" paths args
-  if git -C "$PROJ" cat-file -e "$sha:bin/jg-update.sh" 2>/dev/null; then
+  if [ "$sha" = "$2" ] && git -C "$PROJ" cat-file -e "$sha:bin/jg-update.sh" 2>/dev/null; then
     if [ ! -x "$tool/bin/jg-update.sh" ]; then
       mkdir -p "$STATE/trunk-live-tool"; tmp=$(mktemp -d "$STATE/trunk-live-tool/.export.XXXXXX") || die "cannot make the export directory"
       paths=$(git -C "$PROJ" ls-tree --name-only "$sha" bin core | paste -sd' ' -)
@@ -674,6 +683,41 @@ fleet_move() {  # <sha>
 }
 
 waiver_rule() { awk -v p="$PN" '$1 == p { r = $2 } END { print r }' "$CONFIG/trunk-live-waiver" 2>/dev/null || true; }
+
+# The batched live step, run on every tick of the landing check for a project with a go-live waiver. It moves every home to the
+# green pin once the trunk has been quiet (no landing for live-quiet-minutes) or the oldest landing that is not live yet is
+# live-cap-minutes old, whichever comes first, so landings never wait on a go-live and a busy trunk still goes live hourly.
+# Prints one `autolive: ...` line last; exit 0 for live, waiting or held, 3 when the move failed.
+cmd_autolive() {
+  local green tip why out rc now last quiet cap newest oldest wait_s
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never runs the live step"
+  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
+  LIVE_WAIVER=$(waiver_rule)
+  [ -n "$LIVE_WAIVER" ] || { echo "autolive: not live: it needs the captain's word (no go-live waiver for $PN)"; return 0; }
+  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  if [ -e "$STATE/trunk-red-$PN" ]; then why="the trunk is red at $(cut -c1-12 "$STATE/trunk-red-$PN")"
+  elif [ -z "$green" ]; then echo "autolive: waiting: no fully green trunk commit yet"; return 0
+  elif awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit !f }' "$DATA/trunk-live.tsv" 2>/dev/null; then
+    echo "autolive: already live at ${green:0:12}"; return 0
+  fi
+  if [ -n "${why:-}" ]; then
+    # one held row per reason, not one per tick
+    [ "$(awk -F'\t' -v p="$PN" '$1 == p { r = $4 } END { print r }' "$DATA/trunk-live.tsv" 2>/dev/null || true)" = "held:$why" ] \
+      || row trunk-live.tsv "$PN" "$green" "$(date +%s)" "held:$(printf '%s' "$why" | tr '\t' ' ')"
+    echo "autolive: NOT live, held: $why; every home stays on the last green commit"; return 0
+  fi
+  now=$(date +%s); quiet=$(( $(pol live-quiet-minutes) * 60 )); cap=$(( $(pol live-cap-minutes) * 60 ))
+  last=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ && $3 > m { m = $3 } END { print m + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0)
+  read -r newest oldest <<< "$(awk -F'\t' -v p="$PN" -v l="$last" '$2 == p && $4 >= l { if (!n || $4 > n) n = $4; if (!o || $4 < o) o = $4 } END { print n + 0, o + 0 }' "$DATA/trunk-landings.tsv" 2>/dev/null || echo "0 0")"
+  [ "${newest:-0}" -gt 0 ] || { echo "autolive: waiting: nothing has landed since the last go-live"; return 0; }
+  if [ $(( now - newest )) -lt "$quiet" ] && [ $(( now - oldest )) -lt "$cap" ]; then
+    wait_s=$(( quiet - (now - newest) )); [ $(( cap - (now - oldest) )) -ge "$wait_s" ] || wait_s=$(( cap - (now - oldest) ))
+    echo "autolive: waiting: live in about $(( (wait_s + 59) / 60 )) min (quiet $(( quiet / 60 )) min, cap $(( cap / 60 )) min)"; return 0
+  fi
+  LIVE_FLEET=1; out=$(go_live "$green" "$tip" 2>&1) && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then echo "autolive: NOT live, the move failed: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"; return "$rc"; fi
+  echo "autolive: live at ${green:0:12} on every home ($(awk -F'\t' -v s="$green" '$2 == s && $4 ~ /^skipped/ { n++ } END { print n + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0) skipped, see data/trunk-live.tsv)"
+}
 
 cmd_live() {
   local green tip
@@ -740,7 +784,7 @@ cmd_ci() {
       back=$(last_green_before "$sha")
       put "$STATE/trunk-red-$PN" "$sha"; put "$STATE/trunk-green-$PN" "$back"
       echo "ci RED at ${sha:0:12}; pinning the home back to ${back:0:12}; landings stop except a fixes-red commit" >&2
-      go_live "$back" "$tip" ;;
+      LIVE_FLEET=1; go_live "$back" "$tip" ;;
     *) die "usage: jg-trunk.sh ci <project-dir> <sha> green|red" ;;
   esac
 }
@@ -881,6 +925,7 @@ case "${1:-}" in
   verify) shift; cmd_verify "$@" ;;
   word) shift; cmd_word "$@" ;;
   live) shift; cmd_live "$@" ;;
+  autolive) shift; cmd_autolive "$@" ;;
   waiver) shift; cmd_waiver "$@" ;;
   ci) shift; cmd_ci "$@" ;;
   rollover) shift; cmd_rollover "$@" ;;
