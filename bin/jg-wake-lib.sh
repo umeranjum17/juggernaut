@@ -2522,6 +2522,24 @@ jg_wake_settle() {
   _jg_wake_settled_locked "$1" "$(printf '%s' "$2" | jg_wake_clean_field)" "$(printf '%s' "$3" | jg_wake_clean_field)"
 }
 
+# _jg_wake_ledger_record <kind> <key> <class>: one row per wake in data/wake-ledger.tsv
+# (epoch, home, kind, key, class; tab-separated, the key already cleaned), written whatever
+# the class, so an alert, a batched row and a recorded-only one are all countable after the
+# queue's acknowledgement has deleted them. The file keeps a week: a row older than that
+# moves it to wake-ledger.tsv.1, which replaces the week before. The ledger belongs to a home
+# that has a data directory and is never the reason one is made or a wake fails.
+_jg_wake_ledger_record() {
+  local data=${JG_DATA_OVERRIDE:-$JG_HOME/data} ledger now first=
+  [ -d "$data" ] || return 0
+  ledger=$data/wake-ledger.tsv
+  jg_epoch_seconds_to now
+  if [ -f "$ledger" ] && IFS= read -r first < "$ledger"; then
+    first=${first%%$'\t'*}
+    case "$first" in ''|*[!0-9]*) ;; *) [ $((now - first)) -lt 604800 ] || mv -f -- "$ledger" "$ledger.1" 2>/dev/null ;; esac
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$JG_HOME" "$1" "$2" "$3" >> "$ledger" 2>/dev/null || true
+}
+
 # jg_wake_append_locked <kind> <key> <payload>
 # Locked core of jg_wake_append: records one event under an already-held
 # JG_WAKE_QUEUE_LOCK. Callers that must commit another durable record atomically with
@@ -2551,6 +2569,7 @@ jg_wake_append_locked() {
   # Route, drop a repeated `now` to `batch` inside the re-alert window, and charge a settled event
   # against the hourly cap: one answer from the Go command, `now` where it cannot run.
   class=$(jg_wake_core classify "$kind" "$clean_key" "$clean_payload" 2>/dev/null) || class=now
+  _jg_wake_ledger_record "$kind" "$clean_key" "$class"
   if [ "$class" = silent ]; then
     _jg_wake_settled_locked "$kind" "$clean_key" "$clean_payload" || true
     JG_WAKE_LAST="silent:$clean_key"
