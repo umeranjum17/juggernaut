@@ -159,7 +159,8 @@ With a wedged backend the stage's ceiling is tasks times that per-read bound and
 
 The per-item backlog row reads inside bootstrap's reconcile and close-replay sweeps are the exception.
 Each of those reads is bounded by `JG_BACKLOG_ROW_TIMEOUT_SECS` (default 10s) through `bin/jg-backlog-transition-lib.sh`.
-The first bound hit latches the sweep.
+A read that hits its bound is retried twice with a larger bound (two times, then three times the base), so one slow read does not count as a wedge.
+The first read still timed out after the last attempt latches the sweep, so a wedged backend costs the sweep six times the base bound once.
 Later reads in that sweep then return immediately while still naming their own item.
 
 When timeout, gtimeout, and perl are unavailable, the shared timeout owner falls back to a pure-Bash process-group watchdog.

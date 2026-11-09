@@ -279,24 +279,37 @@ jg_backlog_serve() {
 # bound turns that into a loud partial reconcile: the caller reports the item it
 # could not read and moves to the next one.
 #
+# One slow read is not a wedge: on a slow host a single `show` can pass the base
+# bound while the backend is healthy, and refusing at once there refused the
+# cleanup of landed lanes and the captain holds that need this read. So a read
+# that hits its bound is retried, each attempt with a larger bound (the base
+# bound times the attempt number, three attempts), which
+# keeps the total bounded at the base bound times 1+2+3. Only a read that is
+# still timed out after the last attempt is a wedge: it returns 124 once, and
+# its first line names the attempts and their bounds.
+#
 # A per-item bound alone is not enough on a home carrying a large fleet, because
 # N wedged items still cost N bounds and the digest is truncated anyway. So the
-# first bound hit latches JG_BACKLOG_ROW_SHOW_WEDGED and every later read in the
+# first wedge latches JG_BACKLOG_ROW_SHOW_WEDGED and every later read in the
 # same sweep returns immediately, still naming its own item so nothing is
 # silently skipped. This function only READS that latch: it runs inside a
 # command substitution, and a write here would die with the subshell, so the
-# callers that capture its status set it. The latch is deliberately
-# process-wide because these scripts are short-lived and a backend that wedged
-# once will wedge again within the same run.
+# callers that capture its status set it. They see a 124 only after the last
+# attempt, so a read that a retry rescued never latches the sweep. The latch is
+# deliberately process-wide because these scripts are short-lived and a backend
+# that wedged through every attempt will wedge again within the same run.
 jg_backlog_row_show() {  # <resolved-data-dir> <id> [flag...]
   local data=$1 id=$2 out status addressing_status secs=${JG_BACKLOG_ROW_TIMEOUT_SECS:-10}
+  local attempt=1 attempts=3 bound bounds=
   shift 2
   # A non-positive bound is not a bound (jg-timeout-lib.sh), and a padded zero
   # such as 00 is still zero, so the digits test alone would let the very read
   # this bound exists to prevent back in. Compare arithmetically, tolerating a
-  # value too large for the shell to compare at all.
+  # value too large for the shell to compare at all. A value past a day is no
+  # bound either, and keeps the retried bounds below far from overflow.
   case "$secs" in ''|*[!0-9]*) secs=10 ;; esac
   [ "$secs" -gt 0 ] 2>/dev/null || secs=10
+  [ "$secs" -le 86400 ] 2>/dev/null || secs=10
   jg_backlog_addressing "$data"
   addressing_status=$?
   if [ "$addressing_status" -ne 0 ]; then
@@ -304,20 +317,28 @@ jg_backlog_row_show() {  # <resolved-data-dir> <id> [flag...]
     return "$addressing_status"
   fi
   if [ "$JG_BACKLOG_ROW_SHOW_WEDGED" = 1 ]; then
-    printf 'backlog show %s skipped: the backlog backend already exceeded its %ss read bound\n' "$id" "$secs"
+    printf 'backlog show %s skipped: the backlog backend already exceeded its read bound on every attempt\n' "$id"
     return 124
   fi
   jg_backlog_tool
-  # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
-  out=$(jg_run_timed "$secs" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec "$@"' \
-    _ "$JG_BACKLOG_AXI_ROOT" "${JG_BACKLOG_TOOL[@]}" show "$id" "$@" 2>&1)
-  status=$?
+  while :; do
+    bound=$((secs * attempt))
+    # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
+    out=$(jg_run_timed "$bound" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec "$@"' \
+      _ "$JG_BACKLOG_AXI_ROOT" "${JG_BACKLOG_TOOL[@]}" show "$id" "$@" 2>&1)
+    status=$?
+    [ "$status" -eq 124 ] || break
+    bounds=${bounds:+$bounds, }${bound}s
+    [ "$attempt" -lt "$attempts" ] || break
+    attempt=$((attempt + 1))
+  done
   # A backend that wrote a header or a progress line before wedging leaves that
   # fragment as the first output line, and every caller reads the first line as
   # the failure reason. Whatever a timed-out read managed to emit is incomplete
-  # by definition, so the bound speaks for it instead.
+  # by definition, so the bound speaks for it instead. The wording up to
+  # "backlog read bound" is matched by bin/jg-trunk.sh's landing retry.
   if [ "$status" -eq 124 ]; then
-    printf 'backlog show %s exceeded its %ss backlog read bound\n' "$id" "$secs"
+    printf 'backlog show %s exceeded its %ss backlog read bound after %s attempts (%s)\n' "$id" "$bound" "$attempt" "$bounds"
   else
     printf '%s\n' "$out"
   fi

@@ -779,7 +779,7 @@ cmd_land() {
   if [ "$rc" -eq 0 ]; then kind=landed; reason="landed $id at $cand; not live"
   elif grep -qE "^(REFUSED|error):.*(away mode|linked to a decision| is red|still held|the trunk kept moving|proof inputs are incomplete)" "$attempt/landing.log"; then kind="wait"
   elif ! grep -q "^REFUSED: gate '" "$attempt/landing.log" &&
-    grep -qE '^(jg-captain-hold: )?backlog show [A-Za-z0-9._-]+ exceeded its [0-9]+s backlog read bound$' "$attempt/landing.log"; then
+    grep -qE '^(jg-captain-hold: )?backlog show [A-Za-z0-9._-]+ exceeded its [0-9]+s backlog read bound( after [0-9]+ attempts \([0-9s, ]+\))?$' "$attempt/landing.log"; then
     count=$((count + 1)); [ "$count" -ge 3 ] || { kind=retry; rc=74; }
   fi
   printf '%s %s %s\n' "$kind" "$count" "$reason" > "$key.state"
