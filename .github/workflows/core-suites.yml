@@ -415,6 +415,9 @@ jobs:
       - name: Stall-action test
         if: ${{ !cancelled() }}
         run: bash stall-action/tests/stall-action.test.sh
+      - name: Lead-sweep test
+        if: ${{ !cancelled() }}
+        run: bash lead-sweep/tests/lead-sweep.test.sh
       # Recorded Goal rows and a fixture home; the real-store case skips without the pinned bd and dolt.
       - name: Goal loop test
         if: ${{ !cancelled() }}

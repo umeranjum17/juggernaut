@@ -960,6 +960,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "core/lead-sweep/README.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "core/lead-wake/DEPRECATED.md",
       "audience": "maintainer-architecture"
     },
