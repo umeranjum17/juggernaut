@@ -1,0 +1,3 @@
+# Test runner environment under a Squad Lead launch
+
+Test runner environment under a Squad Lead launch: run `done-done run -- bash -c 'JG_SUPERVISION_MODEL=autoarm bin/jg-test-run.sh --jobs 1 tests/jg-inbox.test.sh > "$DONE_DONE_EVIDENCE_ROOT/inbox-under-lead-launch.log" 2>&1'` with the pinned `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` set; `bin/jg-test-run.sh` clears the launch prefix (the home overrides, `JG_PUBLIC_FOLLOWUP_PRIMARY_HOME` and `JG_SUPERVISION_MODEL`) before a script starts, so the inbox readiness case for a home with no lock holder still reports `supervision-model-unknown-for-home`, and `test_runner_clears_the_lead_launch_parent_prefix` in `tests/jg-teardown.test.sh` fails when any of it reaches a script (screen: none).

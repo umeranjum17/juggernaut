@@ -2799,10 +2799,13 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   # with the whole home-override set (bin/jg-spawn.sh), so an unsanitized
   # runner runs a fixture against the live home - a fixture teardown then
   # compares that ambient live parent with its own durable parent record,
-  # finds them disagreeing, and refuses cleanup that had to succeed.
+  # finds them disagreeing, and refuses cleanup that had to succeed. The same
+  # launch names the live home's JG_SUPERVISION_MODEL, which a fixture home
+  # does not have: inherited, it makes the inbox readiness verdict judge a
+  # fixture by the live home's model instead of reporting it unknown.
   unset JG_HOME JG_STATE_OVERRIDE JG_DATA_OVERRIDE JG_ROOT_OVERRIDE \
     JG_PROJECTS_OVERRIDE JG_CONFIG_OVERRIDE JG_BACKEND \
-    JG_PUBLIC_FOLLOWUP_PRIMARY_HOME 2>/dev/null || true
+    JG_PUBLIC_FOLLOWUP_PRIMARY_HOME JG_SUPERVISION_MODEL 2>/dev/null || true
   # A script never records its fixture homes in a real machine's bus registry: the
   # owner home's state/bus/homes must stay byte for byte as Main left it, so each script
   # names a registry file of its own under this run's temp tree.

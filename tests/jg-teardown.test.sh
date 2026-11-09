@@ -2769,6 +2769,8 @@ test_squad_lead_pr_registration_publishes_ready_line() {
 # in place hands a fixture teardown a foreign "live" parent to compare against
 # that fixture's own durable binding, and the teardown then refuses a cleanup
 # that has to succeed - a false red that depends only on who started the run.
+# The launch's JG_SUPERVISION_MODEL names the live home's model, so a fixture that
+# inherits it is judged by a model its own home never had (tests/jg-inbox.test.sh).
 # This guards the clearance itself, in the runner that owns what a script inherits.
 test_runner_clears_the_lead_launch_parent_prefix() {
   local probe_dir probe out rc
@@ -2777,17 +2779,18 @@ test_runner_clears_the_lead_launch_parent_prefix() {
   probe="$probe_dir/probe.test.sh"
   cat > "$probe" <<'SH'
 #!/usr/bin/env bash
-printf 'seen=%s home=%s\n' "${JG_PUBLIC_FOLLOWUP_PRIMARY_HOME:-}" "${JG_HOME:-}"
+printf 'seen=%s home=%s model=%s\n' "${JG_PUBLIC_FOLLOWUP_PRIMARY_HOME:-}" "${JG_HOME:-}" "${JG_SUPERVISION_MODEL:-}"
 SH
   out="$probe_dir/runner.out"
   rc=0
   JG_HOME="$probe_dir/live-home" \
   JG_PUBLIC_FOLLOWUP_PRIMARY_HOME="$probe_dir/foreign-primary-home" \
   JG_STATE_OVERRIDE="$probe_dir/live-state" \
+  JG_SUPERVISION_MODEL=autoarm \
     "$ROOT/bin/jg-test-run.sh" "$probe" > "$out" 2>&1 || rc=$?
   expect_code 0 "$rc" "runner-env: the runner should still report a green probe: $(cat "$out")"
-  assert_grep "seen= home=" "$out" \
-    "runner-env: the lead-launch parent prefix reached the test script"
+  grep -qxF "seen= home= model=" "$out" \
+    || fail "runner-env: the lead-launch parent prefix reached the test script: $(cat "$out")"
   pass "the test runner clears a squad_lead launch's parent-home prefix"
 }
 
