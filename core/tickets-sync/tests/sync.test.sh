@@ -24,6 +24,8 @@ mkdir -p "$HOME" "$JG_HOME"/{data,config,state} "$work/parked/data"
 ln -s "$fork/bin" "$JG_HOME/bin"
 printf '{"schema":2,"items":[]}\n' > "$work/board.json"
 printf '%s\n' "$work/board.json" > "$JG_HOME/config/fleet-board"
+# The local trunk has cut one release, trunk-v3; v1 is a PR-era version no trunk cut.
+printf 'alpha\ttrunk-v3\t9e050a45\t2\t1700000000\thttps://github.com/example/alpha/pull/9\n' > "$JG_HOME/data/trunk-releases.tsv"
 printf '%s\n' "- parked - Umer project (home: $work/parked; scope: demo)" > "$JG_HOME/data/squad_leads.md"
 printf 'parked\n' > "$JG_HOME/config/parked-homes"
 # shellcheck source=core/lib/beads-test-env.sh disable=SC1091
@@ -42,7 +44,7 @@ core_beads_home "$fork" "$work/parked"
  jg-backlog.sh add jg-gone 'Umer queued item whose worker has gone' --repo alpha --priority 2 >/dev/null
  jg-backlog.sh add jg-inferred 'Umer telescope focus regression' --repo alpha --priority 1 >/dev/null
  jg-backlog.sh add jg-internal 'Umer internal maintenance' --repo herdr --priority 2 --body 'parent: upkeep' >/dev/null
- jg-backlog.sh add jg-child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nrelease: v1\nparent: jg-parent' >/dev/null)
+ jg-backlog.sh add jg-child '[captain-ask] P0 Umer settings' --repo alpha --priority 0 --body "$(printf 'Umer notes %.0s' {1..80})"$'\nrelease: trunk-v3\nparent: jg-parent' >/dev/null)
 (cd "$work/parked"; JG_HOME="$work/parked" jg-backlog.sh add jg-parent 'Umer paused project' --repo beta --priority 2 >/dev/null)
 (cd "$JG_HOME"; jg-backlog.sh add jg-recent 'Umer shipped feature' --repo alpha --priority 2 >/dev/null; jg-backlog.sh 'done' jg-recent >/dev/null)
 git init -q "$JG_HOME/projects/alpha"
@@ -79,7 +81,8 @@ ticket_id() { printf 'jg-%s\n' "$(printf '%s' "$1" | sha256sum | cut -c1-32)"; }
 child=$(ticket_id main/jg-child) parent=$(ticket_id main/jg-parent) parked=$(ticket_id parked/jg-parent)
 sign-off-axi ticket "$work/board.json" --json > "$work/first.json" || { cat "$work/first.json"; exit 1; }
 jq -e '.tickets | all(.[]; (.title | length) <= 160) and all(.[]; (.title | startswith("Needs a parent")) | not)'  "$work/first.json"
-jq -e --arg id "$child" --arg parent "$parent" '.tickets[] | select(.id == $id) | .parent == $parent and .priority == "P0" and .asked == false and .title == "Umer settings" and .release == "v1"' "$work/first.json"
+jq -e --arg id "$child" --arg parent "$parent" '.tickets[] | select(.id == $id) | .parent == $parent and .priority == "P0" and .asked == false and .title == "Umer settings" and .release == "trunk-v3"' "$work/first.json"
+jq -e --arg id "$(ticket_id main/jg-long)" '[.tickets[] | select(.id == $id and (.release // "") == "")] | length == 1' "$work/first.json"
 jq -e --arg id "$parked" '.tickets[] | select(.id == $id) | .hold == true' "$work/first.json"
 jq -e --arg id "$(ticket_id main/jg-held)" '[.tickets[] | select(.id == $id and .hold == true)] | length == 1' "$work/first.json"
 upkeep=$(ticket_id fleet/:upkeep)
@@ -136,6 +139,12 @@ sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json |
 printf 'done [at=1700000200]: ready to merge\n' >> "$JG_HOME/state/jg-long.status"
 "$JG_HOME/state/tickets-sync.check.sh"
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.stage == "merging" and (.ticket.description | startswith("Stage: ready-to-land")) and .ticket.last_event_at == 1700000200'
+# A PR-era version already on an open ticket is cleared by the next pass; a release the trunk cut stays.
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --release v0.3.0 >/dev/null
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.release == "v0.3.0"'
+"$JG_HOME/state/tickets-sync.check.sh"
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '(.ticket.release // "") == ""'
+sign-off-axi ticket "$work/board.json" --id "$child" --json | jq -e '.ticket.release == "trunk-v3"'
 # A timing word in the release field is no release: the board keeps none.
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --json | jq -e '(.ticket.release // "") == ""'
 printf 'cancelled [at=1700000300]: Umer cancelled this task\n' >> "$JG_HOME/state/jg-long.status"

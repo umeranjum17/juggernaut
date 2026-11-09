@@ -25,6 +25,7 @@ from task_rows import toon_rows
 from lane import stage as lane_stage, assignee as lane_assignee
 import cleanup
 import reconcile
+import release
 from hierarchy import UPKEEP, INTERNAL, parents as request_parents, title as request_title
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves here
 for _jg_old, _jg_val in list(os.environ.items()):
@@ -316,6 +317,7 @@ def sync():
                 closures[options.close] = options.reason
                 save(closures_file, closures)
             ids = list(tasks)
+            cut_names = release.cut(source / 'data')
             projects = {}
             for r in tasks.values():
                 repo = r.get('repo') if r.get('repo') not in ('-', 'none', '') else name
@@ -350,11 +352,9 @@ def sync():
                 if held and not hold_reason:
                     held = False
                     print(f'tickets-sync: {name}/{item} is held with no reason; publishing it unheld')
-                # A release names what ships. A body word about timing (or "none") is not a release: send none, so a board
-                # rule that refuses a when-word never fails a pass and no placeholder is stored on a ticket.
-                release_value = field('release')
-                if re.fullmatch(r'(?i)(later|soon|now|next|someday|eventually|asap|urgent|tbd|tba|backlog|never|none)', release_value.strip()):
-                    release_value = ''
+                # A release names what the local trunk cut. A PR-era version, a body word about timing or "none" is no release:
+                # send none, so the board keeps no milestone the trunk never cut and no placeholder is stored on a ticket.
+                release_value = release.name(field('release'), cut_names)
                 said, stage, done, pr, event = lane_stage(home, source, item, r, prs, run)
                 save(pr_file, prs)
                 done = done or f'{name}/{item}' in closures or existing.get(tid, {}).get('state') == 'done'

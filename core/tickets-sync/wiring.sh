@@ -24,7 +24,7 @@ if [ "${1:-}" = --dry-run ]; then echo "would install $dest and register tickets
 [ "$#" = 0 ] || { echo 'usage: wiring.sh [--dry-run]' >&2; exit 2; }
 mkdir -p "$dest/tickets-sync/icons" "$JG_HOME/state"
 install -m 755 "$src/tickets-sync/"{sync,ticket}.py "$dest/tickets-sync/"
-install -m 644 "$src/tickets-sync/"{lane,hierarchy,task_rows,cleanup,reconcile}.py "$dest/tickets-sync/"
+install -m 644 "$src/tickets-sync/"{lane,hierarchy,task_rows,cleanup,reconcile,release}.py "$dest/tickets-sync/"
 cp -f "$src"/tickets-sync/icons/* "$dest/tickets-sync/icons/"
 printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec python3 %q 2>&1\n' "$JG_HOME" "$dest/tickets-sync/sync.py" > "$JG_HOME/state/tickets-sync.check.sh"
 printf '#!/usr/bin/env bash\nexport JG_HOME=%q\nexec python3 %q --check 2>&1\n' "$JG_HOME" "$dest/tickets-sync/sync.py" > "$JG_HOME/state/tickets-stale.check.sh"
