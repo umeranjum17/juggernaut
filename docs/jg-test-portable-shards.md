@@ -54,6 +54,10 @@ The 2026-11-01 `tests/jg-release-readiness.test.sh` carries its provisional loca
 
 The 2026-11-06 `tests/jg-bus-health.test.sh` (5000 ms) and `tests/jg-bus-health-extra.test.sh` (4000 ms) carry provisional hints rounded up from local runs of 4.3 s and 3.5 s on the Linux workspace host, so the next CI refresh replaces them with Ubuntu measurements.
 
+The 2026-11-09 refresh gave hints to the 35 scripts that lanes had landed without one, which had left the trunk tip at 35 of 238 (14.7%) against the 15% bound, so the next lane that added one script was refused at 36 of 239.
+Nineteen take the slowest successful `duration_ms` of the serial artifacts of the release runs [42471652449](https://github.com/umeranjum17/juggernaut/actions/runs/42471652449) and [42428393068](https://github.com/umeranjum17/juggernaut/actions/runs/42428393068).
+Sixteen (the `tests/jg-machine*.test.sh` family, `tests/jg-goal.test.sh`, `tests/jg-home-guard.test.sh` and others) have never run in CI, so they carry provisional local hints, one run each on the Linux workspace host rounded up to 500 ms (1000 ms at least), until the next CI refresh replaces them.
+
 ## Parallel lanes
 
 The two parallel lanes use longest-processing-time assignment over those hints.

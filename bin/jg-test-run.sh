@@ -887,6 +887,41 @@ tests/jg-beads-native-n3.test.sh 44000
 tests/jg-beads-native-n8.test.sh 43000
 tests/jg-public-followup-b.test.sh 500000
 tests/jg-public-followup-c.test.sh 500000
+tests/board-link-send.test.sh 784
+tests/jg-afk-telegram.test.sh 912
+tests/jg-away-reach.test.sh 1097
+tests/jg-beads-native-hold.test.sh 19584
+tests/jg-beads-native-n4.test.sh 1500
+tests/jg-beads-native-n6.test.sh 22346
+tests/jg-beads-native-whole.test.sh 9455
+tests/jg-beads.test.sh 42005
+tests/jg-browser-sweep.test.sh 2500
+tests/jg-captain-say-chat.test.sh 96
+tests/jg-ci-rerun.test.sh 10104
+tests/jg-control-pi-live-e2e.test.sh 1500
+tests/jg-critical-path.test.sh 5305
+tests/jg-evidence.test.sh 1178
+tests/jg-goal.test.sh 1500
+tests/jg-held-card-no-fleet-freeze.test.sh 2000
+tests/jg-home-guard.test.sh 3000
+tests/jg-machine-enforce.test.sh 2500
+tests/jg-machine-inbox.test.sh 3500
+tests/jg-machine-index.test.sh 1500
+tests/jg-machine-landing.test.sh 3000
+tests/jg-machine-status.test.sh 4000
+tests/jg-machine.test.sh 2000
+tests/jg-merge-alert.test.sh 1726
+tests/jg-proof-gate.test.sh 502
+tests/jg-red-ci-ticket.test.sh 554
+tests/jg-rejected-state-check-once.test.sh 26500
+tests/jg-sentinel-inbox-ring.test.sh 19000
+tests/jg-sentinel-wake-deferred-alert.test.sh 19
+tests/jg-ticket-link-guard.test.sh 1152
+tests/jg-trunk-live-home.test.sh 2500
+tests/jg-unit-claim.test.sh 7478
+tests/jg-update-local-base.test.sh 4000
+tests/jg-voice.test.sh 6554
+tests/jg-watch-arm-handling-delivered.test.sh 959
 EOF
 }
 
