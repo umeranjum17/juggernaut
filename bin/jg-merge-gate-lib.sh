@@ -358,7 +358,7 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
 # admission both call it, so neither starts on a head whose proof is incomplete.
 # Usage: jg_dod_trunk_proof_gaps <home> <state> <id> <meta> <head>
 jg_dod_trunk_proof_gaps() {
-  local home=$1 state=$2 id=$3 meta=$4 head=$5 r="$2/$3.run-receipt.json" card="${JG_DATA_OVERRIDE:-$1/data}/$3/merge-card.json" gaps=0 mc
+  local home=$1 state=$2 id=$3 meta=$4 head=$5 r="$2/$3.run-receipt.json" card="${JG_DATA_OVERRIDE:-$1/data}/$3/merge-card.json" gaps=0 mc why
   mc=$_JG_GATE_LIB_DIR/../core/merge-card/merge-card
   command -v jq >/dev/null 2>&1 || { echo "the proof inputs for $id cannot be checked: jq is required"; return 1; }
   if ! { [ -f "$r" ] && jq -e --arg h "$head" --arg g "$(sed -n 's/^spawn_gen=//p' "$meta" 2>/dev/null | tail -n 1)" \
@@ -367,8 +367,13 @@ jg_dod_trunk_proof_gaps() {
   fi
   if ! { [ -f "$card" ] && jq -e --arg h "$head" 'select(.head == $h and .verdict == "pass") | (.check.evidence // []) | length > 0' "$card" >/dev/null 2>&1; }; then
     echo "no approved merge-card evidence citing files for head ${head:0:12} of $id (run: JG_HOME=$home $mc check $id <worktree> $head <PR url|->)"; gaps=1
-  elif ! JG_HOME=$home "$mc" receipt "$id" "$head" >/dev/null 2>&1; then
-    echo "no sealed done-done run at head ${head:0:12} of $id holding the cited evidence (run the verify suite sealed: done-done run -- <suite command>; commit nothing after)"; gaps=1
+  elif ! why=$(JG_HOME=$home "$mc" receipt "$id" "$head" 2>&1 >/dev/null); then
+    # merge-card names why it refused (a run that exists but cites other evidence, a changed proof context); say that,
+    # not that no run exists. It prints nothing when no run holds the cited evidence at the head.
+    why=${why%%$'\n'*}; why=${why#merge-card: }
+    if [ -n "$why" ]; then echo "the sealed done-done run at head ${head:0:12} of $id was refused: $why"
+    else echo "no sealed done-done run at head ${head:0:12} of $id holding the cited evidence (run the verify suite sealed: done-done run -- <suite command>; commit nothing after)"; fi
+    gaps=1
   fi
   [ "$gaps" = 0 ]
 }

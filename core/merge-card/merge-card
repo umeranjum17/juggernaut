@@ -612,7 +612,9 @@ dd_root_why() {
 # <head>", asked in the task's lane worktree when the task's record names one, else here, printed as the card's
 # receipt. Nothing when done-done is absent, refuses, or names no run the card can carry: the caller then scans
 # the sealed run records itself. done-done's verdict is the check; the run id and files come from the record it
-# passed, because `receipt --verify` reports how many files it passed rather than their names.
+# passed, because `receipt --verify` reports how many files it passed rather than their names. The files are the
+# receipt's own cited list (`.files`), the same list `check` reports as its evidence, so a capture that a written
+# requirement, an approved design or a redesign judged counts exactly like one a plain verdict judged.
 dd_receipt() {
   local dir out head file
   command -v done-done >/dev/null 2>&1 || return 0
@@ -626,7 +628,7 @@ dd_receipt() {
       ([.runs[]?.run_id] | last // empty) as $run
       | select($run != "")
       | {run_id: $run, commit: $head,
-         files: ([.judge.verdicts[]?.path | if startswith($root) then ltrimstr($root) elif startswith("<evidence root>/") then ltrimstr("<evidence root>/") else . end] | unique),
+         files: ([.files[]?.path | if startswith($root) then ltrimstr($root) elif startswith("<evidence root>/") then ltrimstr("<evidence root>/") else . end] | unique),
          outcome: $claim, repro: "see the merge note", proof: "done-done run \($run)", evidence: $ev}' "$file" 2>/dev/null
     return 0
   fi

@@ -911,6 +911,40 @@ if command -v done-done >/dev/null; then
   is "done-done receipt: receipt agrees" "$?" 0
   JG_HOME=$home "$here/../merge-card" receipt receipt-ddone "b18d2598a4852810412964192ec0713c5914b961"
   is "done-done receipt: another head still refuses" "$?" 1
+
+  # A Designs requirement counts like any other cited file: the receipt holds a capture that a written requirement judged
+  # (approved_requirements), not a plain verdict, and the saved check cited both. The receipt must cite the same evidence set.
+  git -C "$ddlane" -c user.email=e2e@example.invalid -c user.name=e2e commit -q --allow-empty -m 'the head with a Designs requirement'
+  dr_head=$(git -C "$ddlane" rev-parse HEAD)
+  dr_tree=$(git -C "$ddlane" rev-parse "$dr_head^{tree}")
+  printf 'the Designs frame the written requirement read\n' >"$ddlane/designs.log"
+  dr_sha=$(if command -v sha256sum >/dev/null; then sha256sum "$ddlane/designs.log" | awk '{print $1}'; else shasum -a 256 "$ddlane/designs.log" | awk '{print $1}'; fi)
+  jq -n --arg head "$dr_head" --arg tree "$dr_tree" --arg p "$ddlane/proof.log" --arg sha "$dd_sha" --arg d "$ddlane/designs.log" --arg dsha "$dr_sha" '
+    {schema:2, repo:"e2e", head:$head, tree:$tree, claim:"a design pick is listed under Designs",
+     result:"pass", at:"2026-10-31T00:00:00.000Z", files:[{path:$p, sha256:$sha}, {path:$d, sha256:$dsha}],
+     runs:[{run_id:"20261031T000000Z-designs0001-abcdef", commit:$head, journey:null, command:"bash drive.sh", tool:"0.6.24",
+            steps:{target:{version:"e2e 1"}, start:"a design pick", steps:["open Designs"], result:"the pick is listed"}}],
+     judge:{route:"claude-code", model:"claude-haiku-5-5", independence:"session-only",
+            comparison_basis:"judged against written requirements (no approved reference image)",
+            verdicts:[{path:$p, sha256:$sha, verdict:"pass"}],
+            approved_requirements:[{name:"design-pick-listing", requirement:"A design pick is listed under Designs.", path:$d, sha256:$dsha,
+                                    verdict:"pass", reason:"The Designs item lists one pick.", basis:"judged against written requirements (no approved reference image)"}]}}' \
+    >"$dd_ev/.done-done/receipts/$dr_head.json"
+  mkdir -p "$home/data/receipt-designs"
+  printf 'worktree=%s\n' "$ddlane" >"$home/state/receipt-designs.meta"
+  jq -n --arg head "$dr_head" --arg a "$ddlane/proof.log" --arg b "$ddlane/designs.log" \
+    '{head:$head, pr:"-", verdict:"pass", check:{result:"pass", claim:"a design pick is listed under Designs", evidence:[$a, $b]}}' >"$home/data/receipt-designs/merge-card.json"
+  JG_HOME=$home "$here/../merge-card" receipt receipt-designs "$dr_head" 2>"$work/receipt-designs.err"
+  is "Designs requirement: the receipt that cites the judged Designs capture is accepted" "$?" 0
+  JG_HOME=$home "$here/../merge-card" receipt-json receipt-designs "$dr_head" >"$work/receipt-designs.json" 2>/dev/null
+  is "Designs requirement: the receipt names the Designs capture beside the verdict capture" "$(jq -c .files "$work/receipt-designs.json")" "$(jq -cn --arg a "$ddlane/designs.log" --arg b "$ddlane/proof.log" '[$a, $b]')"
+  # A saved check that cites a file the official receipt does not hold is still refused, naming the reason.
+  mkdir -p "$home/data/receipt-designs-extra"
+  printf 'worktree=%s\n' "$ddlane" >"$home/state/receipt-designs-extra.meta"
+  jq --arg c "$ddlane/not-in-the-receipt.png" '.check.evidence += [$c]' "$home/data/receipt-designs/merge-card.json" >"$home/data/receipt-designs-extra/merge-card.json"
+  JG_HOME=$home "$here/../merge-card" receipt receipt-designs-extra "$dr_head" 2>"$work/receipt-designs-extra.err"
+  is "Designs requirement: a check citing a file the receipt lacks is refused" "$?" 1
+  is "Designs requirement: the refusal says the receipt cites different evidence" "$(grep -c 'official receipt cites different evidence' "$work/receipt-designs-extra.err")" 1
 else
   ok "done-done receipt: skipped, no done-done on PATH"
 fi

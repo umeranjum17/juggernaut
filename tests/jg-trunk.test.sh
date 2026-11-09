@@ -918,6 +918,23 @@ test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input() {
   pass 'the worker done and the landing both refuse, before starting, on any missing proof input, and accept only complete matching-head proof'
 }
 
+# When merge-card refuses a sealed run for a reason it names, the proof gap says that reason. It never says no run exists when a run
+# does (the lane that cited a Designs capture was told "no sealed run" while its run was sealed and judged).
+test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run() {
+  local out card
+  world gapreason
+  lane r1 one
+  trunk proof r1 >/dev/null 2>&1 || fail "the fixture lane must have complete proof before it is broken"
+  card="$HOME_D/data/r1/merge-card.json"
+  jq --arg home "$HOME_D/dd" '. + {context: {home: $home, account: "", project: "", config_hash: "0000000000000000000000000000000000000000"}}' "$card" > "$card.tmp" && mv "$card.tmp" "$card"
+  out=$(trunk proof r1 2>&1) && fail "a refused sealed run must leave a proof gap: $out"
+  assert_contains "$out" "was refused: proof configuration changed since the passed check" "the gap must name the reason merge-card gave"
+  case $out in *"no sealed done-done run"*) fail "a refusal with a named reason must not be reported as a missing run: $out" ;; esac
+  out=$(trunk land r1 2>&1) && fail "the landing must refuse the same lane: $out"
+  assert_contains "$out" "was refused: proof configuration changed since the passed check" "the landing refusal must name the same reason"
+  pass 'a refused sealed run is reported with merge-card'"'"'s own reason, not as a missing run'
+}
+
 # The registered check starts no landing for an incomplete proof, says why once, and lands the same head once the proof is there.
 test_the_check_starts_no_landing_until_the_whole_proof_is_there() {
   local out
@@ -1253,6 +1270,7 @@ test_the_gates_are_policy_keys_with_fast_defaults
 test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates
 test_a_landing_rebases_the_lane_by_itself
 test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input
+test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run
 test_the_check_starts_no_landing_until_the_whole_proof_is_there
 test_three_lanes_land_in_order_a_red_one_is_refused_and_a_post_land_red_is_reverted
 test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected
