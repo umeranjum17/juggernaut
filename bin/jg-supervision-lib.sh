@@ -160,7 +160,7 @@ jg_squad_lead_ready_work() {
 # grace-seconds defaults to $JG_GUARD_GRACE, then 300, matching jg-guard.sh.
 # Always returns 0; callers read the vars, or use jg_supervision_unhealthy below.
 jg_supervision_status() {
-  local state=$1 grace=${2:-${JG_GUARD_GRACE:-300}} meta source check id beat m age pid claimed ready
+  local state=$1 grace=${2:-${JG_GUARD_GRACE:-300}} meta source check id beat m age ready
   JG_SUP_IN_FLIGHT=0
   JG_SUP_READY_WORK=0
   JG_SUP_GOAL_NEXT=0
@@ -222,20 +222,11 @@ jg_supervision_status() {
   # same bound that evicts a stuck holder. Its own stale beacon is never newer
   # than its claim, so a slow cycle still reads as stale.
   if [ "$JG_SUP_WATCHER_FRESH" = false ] && [ "$JG_SUP_BEACON_DESC" != unknown ] \
-    && declare -F jg_watcher_lock_matches_pid >/dev/null; then
-    pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
-    claimed=$(jg_sup_stat_mtime "$state/.watch.lock/pid")
-    if [ -z "$m" ] || { [ -n "$claimed" ] && [ "$claimed" -gt "$m" ]; }; then
-      if jg_pid_alive "$pid" \
-        && jg_watcher_lock_matches_pid "$state" "$JG_WAKE_LIB_DIR/jg-watch.sh" "$pid" "${JG_HOME:-}"; then
-        age=$(( $(date +%s) - ${claimed:-0} ))
-        if [ "$age" -lt "$(jg_watcher_stall_bound)" ]; then
-          # shellcheck disable=SC2034 # Read by callers (jg-guard.sh) after sourcing.
-          JG_SUP_BEACON_DESC="starting (${age}s)"
-          JG_SUP_WATCHER_FRESH=true
-        fi
-      fi
-    fi
+    && declare -F jg_watcher_first_scan_age >/dev/null \
+    && age=$(jg_watcher_first_scan_age "$state" "$JG_WAKE_LIB_DIR/jg-watch.sh" "${JG_HOME:-}"); then
+    # shellcheck disable=SC2034 # Read by callers (jg-guard.sh) after sourcing.
+    JG_SUP_BEACON_DESC="starting (${age}s)"
+    JG_SUP_WATCHER_FRESH=true
   fi
 
   # An always-on squad lead daemon (jg-wake-lib.sh) owns supervision between its

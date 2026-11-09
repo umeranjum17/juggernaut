@@ -228,11 +228,42 @@ EOF
   pass "a timed-out contributions check releases without a control lock and the orphan rejection is delivered"
 )
 
+# The guard and the supervision read must agree on a live watcher still in its first scan: the
+# supervision read calls it "starting" (healthy), so the verdict the guard and the inbox act on
+# must not call the same home down. A disagreement printed "WATCHER DOWN ... last beat: starting".
+test_first_scan_holder_is_not_called_down() (
+  local dir state arm age
+  dir=$(make_home first-scan-verdict)
+  state=$dir/state
+  # shellcheck disable=SC2030,SC2031 # Exports stay inside this case subshell.
+  export JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_POLL=0.2 JG_SIGNAL_GRACE=0 \
+    JG_GUARD_GRACE=4 JG_CHECK_INTERVAL=0 JG_CHECK_TIMEOUT=20 JG_HEARTBEAT=0 JG_ARM_CONFIRM_TIMEOUT=60 \
+    JG_WATCHER_STALL_BOUND=60 JG_SUPERVISION_MODEL=persistent
+  register_slow_checks "$dir" 1 8 "$dir/check-runs.log"
+  touch -t "$(date -d "@$(( $(date +%s) - 600 ))" +%Y%m%d%H%M.%S 2>/dev/null || date -r "$(( $(date +%s) - 600 ))" +%Y%m%d%H%M.%S)" "$state/.last-watcher-beat"
+  "$WATCH_ARM" > "$dir/arm.out" 2>&1 &
+  arm=$!
+  wait_file "$dir/check-runs.log" 600 || fail "first scan never reached a check"
+  supervision_read "$dir" 4
+  case "$JG_SUP_BEACON_DESC" in starting*) ;; *) fail "setup: the supervision read is not in the starting state ($JG_SUP_BEACON_DESC)" ;; esac
+  jg_watcher_supervision_verdict "$state" "$ROOT/bin/jg-watch.sh" 4 "$dir" "$ROOT"
+  [ "$JG_WATCHER_VERDICT_OK" = true ] \
+    || fail "the verdict calls a live first-scan watcher down (${JG_WATCHER_VERDICT_REASON}) while supervision reads it as $JG_SUP_BEACON_DESC"
+  # The strict arm-side primitive is unchanged: a pid before any completed work is not healthy.
+  ! jg_watcher_healthy "$state" "$ROOT/bin/jg-watch.sh" 4 "$dir" \
+    || fail "the strict watcher check called a first scan with no completed unit healthy"
+  kill -TERM "$arm"
+  wait "$arm" 2>/dev/null || true
+  age=$(jg_path_age "$state/.last-watcher-beat")
+  pass "a live first-scan watcher reads as starting and the guard verdict agrees (beat age ${age}s)"
+)
+
 if [ "${JG_WATCH_BEACON_FIRST_SCAN_ONLY:-0}" = 1 ]; then
   test_stale_first_scan_progress_and_restart
   exit
 fi
 test_timeout_and_orphan_release_return
+test_first_scan_holder_is_not_called_down
 test_stale_first_scan_progress_and_restart
 test_live_sweep_is_supervised_and_a_killed_watcher_is_not
 test_actionable_exit_leaves_the_home_supervised

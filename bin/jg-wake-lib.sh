@@ -220,6 +220,29 @@ jg_watcher_progress_age() {
   fi
 }
 
+# jg_watcher_first_scan_age <state> <watch-path> [home]
+# A live, identity-matched holder that claimed the lock after the last beacon
+# (or with no beacon) is still in its first scan: the beacon on disk is its
+# predecessor's, and this holder renews it at its first progress point. Prints
+# the claim age and returns 0 while that age is under the stall bound, the same
+# bound that evicts a stuck holder; a holder past it, or one with a newer
+# beacon, returns 1. The supervision read (bin/jg-supervision-lib.sh) and the
+# guard verdict below both ask this, so they cannot call the same home
+# "starting" and "down". jg_watcher_healthy stays strict: the arm layer needs
+# completed work as proof, not a pid.
+jg_watcher_first_scan_age() {
+  local state=$1 watch_path=$2 home=${3:-$JG_HOME} beat claimed pid age
+  beat=$(jg_path_mtime "$state/.last-watcher-beat")
+  claimed=$(jg_path_mtime "$state/.watch.lock/pid")
+  [ -n "$claimed" ] || return 1
+  [ -z "$beat" ] || [ "$claimed" -gt "$beat" ] || return 1
+  pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  jg_pid_alive "$pid" && jg_watcher_lock_matches_pid "$state" "$watch_path" "$pid" "$home" || return 1
+  age=$(( $(date +%s) - claimed ))
+  [ "$age" -lt "$(jg_watcher_stall_bound)" ] || return 1
+  printf '%s\n' "$age"
+}
+
 # jg_poll_derived_grace [poll-seconds]
 # Default guard-grace derivation: max(300, poll + 60). A watcher touches its
 # liveness beacon once per poll cycle, so a fixed 300s grace stops correctly
@@ -600,6 +623,12 @@ jg_watcher_supervision_verdict() {
     ''|*[!0-9]*) ;;
     *) [ "$age" -lt "$grace" ] && fresh=true ;;
   esac
+  # A live holder still in its first scan is "starting" to the supervision read
+  # (jg_watcher_first_scan_age), so it is not a lapse here either.
+  if [ "$fresh" = false ] && jg_watcher_first_scan_age "$state" "$watch" "$home" >/dev/null; then
+    JG_WATCHER_VERDICT_OK=true
+    return 0
+  fi
   model=$(jg_supervision_model)
   if [ "$model" = autoarm ]; then
     if [ "$fresh" = true ] || jg_autoarm_midturn_healthy "$state" "$grace"; then
