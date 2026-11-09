@@ -15,7 +15,7 @@
 #        jg-trunk.sh autolive <project-dir>            the batched live step: under a waiver, move every home to the green pin once the trunk is quiet or the hourly cap is due
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red pins the home back to the last green one
-#        jg-trunk.sh release <project-dir>             push the trunk and open the ONE release PR trunk -> default branch; refuses without his word
+#        jg-trunk.sh release <project-dir>             push the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (trunk-v2, ...) from the default branch
 #        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
@@ -1301,6 +1301,26 @@ open_release_pr() {  # <default> <title> <body-file>
   esac
 }
 
+# The release PR's owning task record, state/release-<project>-<trunk>.meta: the guarded merge path (bin/jg-pr-check.sh,
+# bin/jg-pr-merge.sh) records, watches and merges a PR only under a task, and bin/jg-version-branch-lib.sh
+# jg_is_release_head admits this trunk as the head of the one PR allowed into the default branch. No worker owns the
+# release, so the record names no window, worktree or branch, and cleanup touches only the record; yolo=off keeps
+# merge-on-green from merging a release by itself, so its merge stays an explicit bin/jg-pr-merge.sh <id> <url>. A record
+# already there is kept, and the PR is recorded and armed through jg-pr-check.sh unless the record already names it.
+record_release_task() {  # <url>
+  local id=release-$PN-$TRUNK meta proj
+  jg_pr_task_id_valid "$id" || die "the release task id '$id' is not a valid task id; the release PR $1 is open but has no task record"
+  meta=$STATE/$id.meta
+  if [ ! -e "$meta" ]; then
+    proj=$(cd "$PROJ" && pwd -P)
+    (umask 077; printf 'kind=release\nproject=%s\nmode=local-trunk\nyolo=off\n' "$proj" > "$meta.tmp.$$") && mv -f "$meta.tmp.$$" "$meta"
+  fi
+  [ "$(jg_dod_meta_value "$meta" pr)" != "$1" ] || return 0
+  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-pr-check.sh" "$id" "$1" >&2 \
+    || die "the release PR $1 is open but its task $id was not recorded; fix the cause above, then run bin/jg-pr-check.sh $id $1"
+  echo "release task: $id owns the release PR"
+}
+
 cmd_release() {
   local tip base n default body url prev
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
@@ -1328,6 +1348,7 @@ cmd_release() {
   put "$STATE/trunk-released-$PN" "$tip"; spend_word release
   row trunk-releases.tsv "$PN" "$TRUNK" "$tip" "$n" "$(date +%s)" "$url"
   echo "released $n commits from $TRUNK: $url"
+  record_release_task "$url"
 }
 
 # The landing check's cheap pre-test: prints what proof the task's branch head still lacks, exit 1 when any, before a landing is started.

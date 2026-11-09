@@ -10,6 +10,11 @@
 # T3 The create call fails and one pull request from the trunk into the default branch is open: that one is the release.
 # T4 The create call answers in full (number, url, help): the row holds the one URL.
 # T5 Two open pull requests go from the trunk into the default branch: the release stops and prints both.
+# T6 The release PR has an owning task (report fable-why-no-landing, row fric-release-task-record): the release writes
+#    state/release-<project>-<trunk>.meta (kind=release, no worker, yolo=off) and records the PR through the real
+#    bin/jg-pr-check.sh, whose version-branch guard admits the trunk as the release head although the project still
+#    carries release/c-16; a pull request from any other head into main is still refused. Before the fix the release
+#    recorded no task ("task metadata is unavailable") and the guard refused the trunk head.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -20,8 +25,8 @@ LEDGER=; MARK=
 # A world whose project is named juggernaut, so the ledger holds the home's row byte for byte, and a gh-axi stand-in:
 # a pull request's state is the file state-<n> (closed when absent), the open list is the file open-prs, and the create
 # call fails unless create-ok exists, when it answers as gh-axi does.
-release_world() {
-  world rel
+release_world() {  # [<name>]
+  world "${1:-rel}"
   PROJ="$HOME_D/projects/juggernaut"; LEDGER="$HOME_D/data/trunk-releases.tsv"; MARK="$HOME_D/state/trunk-released-juggernaut"
   printf -- '- juggernaut [local-trunk] - fixture named like the real project (added 2026-11-10)\n' >> "$HOME_D/data/projects.md"
   jg_git_init_commit "$PROJ"; jg_git_add_origin "$PROJ" "$W/origin-j.git"
@@ -36,6 +41,21 @@ case "\$2" in
     printf 'created:\n  number: 815\n  url: "%s/815"\n  base: main\n  head: trunk\nhelp[2]:\n  Run \`gh-axi pr view 815 -R umeranjum17/juggernaut\` to see the full PR\n' "$U" ;;
 esac
 SH
+  # A gh stand-in for the PR check the release runs: not a draft, base main, head the file gh-head (the trunk when absent)
+  # at the trunk's commit, no open pull request on an older release branch, and every status write accepted.
+  cat > "$W/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$W/gh-real-calls"
+case "\$1 \$2 \$*" in
+  'pr view '*isDraft*) printf '{"isDraft":false}\n' ;;
+  'pr view '*headRefOid*) git -C "$PROJ" rev-parse trunk ;;
+  'pr view '*baseRefName*) printf 'main\t%s\n' "\$(cat "$W/gh-head" 2>/dev/null || echo trunk)" ;;
+  'pr list '*) ;;
+  'api '*) printf '{}\n' ;;
+esac
+exit 0
+SH
+  chmod +x "$W/fakebin/gh"
   { printf 'juggernaut\ttrunk\tb96c903b\t1\t1794110341\t%s/810\n' "$U"
     printf 'juggernaut\ttrunk-v3\t9e050a451a9cfb8511735d603a15c3f722853c07\t59\t1794219305\tcreated:\n'
     cat <<ROW
@@ -106,5 +126,28 @@ test_a_release_keeps_one_url_and_takes_the_open_release_pr_as_success() {
   pass 'T5 two open PRs from the trunk into main stop the release, both printed, nothing recorded'
 }
 
+test_the_release_pr_has_an_owning_task_the_guard_admits() {
+  local out meta rc=0
+  release_world rel-task; git -C "$PROJ" branch release/c-16; meta="$HOME_D/state/release-juggernaut-trunk.meta"
+  batch j1; echo open > "$W/state-813"
+  out=$(trunk release "$PROJ" 2>&1) || fail "T6: the release with its task record must succeed: $out"
+  assert_not_contains "$out" "targets the default branch" "T6: the guard must admit the trunk as the release head"
+  assert_contains "$out" "release task: release-juggernaut-trunk owns the release PR" "T6: the release must name its task"
+  [ -f "$meta" ] || fail "T6: the release must write its task record"
+  for row in kind=release "project=$(cd "$PROJ" && pwd -P)" mode=local-trunk yolo=off "pr=$U/813"; do
+    grep -qxF -- "$row" "$meta" || fail "T6: the task record must hold $row: $(cat "$meta")"
+  done
+  ! grep -qE '^(window|worktree|branch)=' "$meta" || fail "T6: no worker owns the release, so the record names no window, worktree or branch: $(cat "$meta")"
+  [ -e "$HOME_D/state/release-juggernaut-trunk.check.sh" ] || fail "T6: the release PR must be armed for the merge watch"
+  echo fm/feature-x > "$W/gh-head"
+  out=$(PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" JG_STATE_OVERRIDE="$HOME_D/state" \
+    JG_DATA_OVERRIDE="$HOME_D/data" JG_CONFIG_OVERRIDE="$HOME_D/config" "$W/root/bin/jg-pr-check.sh" release-juggernaut-trunk "$U/900" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "T6: a pull request from another head into main must still be refused: $out"
+  assert_contains "$out" "current version branch is release/c-16" "T6: the refusal must name the version branch"
+  grep -qxF "pr=$U/813" "$meta" || fail "T6: a refused pull request must leave the record as it was: $(cat "$meta")"
+  pass 'T6 the release records its own task, the guard admits the trunk head into main, and any other head is refused'
+}
+
 test_a_release_keeps_one_url_and_takes_the_open_release_pr_as_success
+test_the_release_pr_has_an_owning_task_the_guard_admits
 printf 'jg-trunk-release-open-pr: ok\n'

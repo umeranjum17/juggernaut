@@ -104,3 +104,16 @@ jg_trunk_branch() {
   local f="${2:-${JG_STATE_OVERRIDE:-${JG_HOME:-.}/state}}/trunk-branch-$1"
   if [ -s "$f" ]; then cat "$f"; else jg_trunk_policy trunk-branch "$1"; fi
 }
+
+# The trunk branch a project is on now, printed only when the project is registered local-trunk (data/projects.md)
+# and its trunk exists (state/trunk-tip-<project>, written by `jg-trunk.sh init`); exit 1 with nothing otherwise.
+# A lane starts on it (bin/jg-spawn.sh), and it is the one head the release pull request into the default branch has
+# (bin/jg-version-branch-lib.sh jg_is_release_head). Usage: jg_project_trunk_branch <project-dir> [<state-dir>]
+jg_project_trunk_branch() {
+  local pn state mode
+  [ -n "${1:-}" ] || return 1
+  pn=$(basename "$1"); state=${2:-${JG_STATE_OVERRIDE:-${JG_HOME:-.}/state}}
+  mode=$("$(cd "${BASH_SOURCE[0]%/*}" && pwd)/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1) || return 1
+  [ "$mode" = local-trunk ] && [ -e "$state/trunk-tip-$pn" ] || return 1
+  jg_trunk_branch "$pn" "$state"
+}

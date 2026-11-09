@@ -780,10 +780,7 @@ jg_backlog_directory_present "$STATE" "state directory" || {
 # Only a local-trunk project is touched here; no-mistakes, direct-PR and local-only projects go the way they always did. A
 # local-trunk project ships no feature pull request: a lane starts on the trunk tip and its one commit lands there.
 spawn_trunk_branch() {
-  local pn; pn=$(basename "$PROJ_ABS")
-  [ "$(JG_HOME="$JG_HOME" "$JG_ROOT/bin/jg-project-mode.sh" --raw "$pn" 2>/dev/null | cut -d' ' -f1)" = local-trunk ] || return 1
-  [ -e "$STATE/trunk-tip-$pn" ] || return 1
-  JG_CONFIG_OVERRIDE=$CONFIG jg_trunk_branch "$pn" "$STATE"
+  JG_HOME="$JG_HOME" JG_CONFIG_OVERRIDE=$CONFIG jg_project_trunk_branch "$PROJ_ABS" "$STATE"
 }
 # shellcheck source=bin/jg-role-lib.sh
 . "$SCRIPT_DIR/jg-role-lib.sh"

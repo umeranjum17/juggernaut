@@ -18,6 +18,14 @@
 # bin/jg-pr-merge.sh, bin/jg-release-readiness.sh and bin/jg-version-branch-sync.sh.
 # No side effects on source.
 
+# A local-trunk project's trunk branch (bin/jg-trunk-policy-lib.sh owns it) is the
+# head of that project's release pull request (jg_is_release_head below).
+_jg_vb_d=${BASH_SOURCE[0]%/*}
+[ "$_jg_vb_d" != "${BASH_SOURCE[0]}" ] || _jg_vb_d=.
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+. "$_jg_vb_d/jg-trunk-policy-lib.sh"
+unset _jg_vb_d
+
 # Print the project's current version branch, and exit 1 when it carries none.
 # <repo-dir> is a checkout of the project; its remote-tracking and local refs are
 # both read, so a clone that has not pruned an old cycle still resolves the
@@ -62,17 +70,23 @@ jg_release_in_flight_branch() {  # <config-dir> <repo-dir>
 }
 
 # Whether <head-ref> is a release pull request's head: the project's current
-# version branch, or the release in flight (config/frozen-release) even when a
-# newer release/c-<N> exists. The pull request guard (bin/jg-pr-check.sh) uses it
-# to admit the one pull request allowed to target the default branch, and
-# bin/jg-pr-merge.sh uses it to merge that pull request with a merge commit.
+# version branch, the release in flight (config/frozen-release) even when a
+# newer release/c-<N> exists, or, for a project registered local-trunk, its
+# current trunk branch (jg_project_trunk_branch), which `jg-trunk.sh release`
+# opens as the one release pull request into the default branch. Any other head,
+# an older trunk version included, is not one. The pull request guard
+# (bin/jg-pr-check.sh) uses it to admit the one pull request allowed to target
+# the default branch, and bin/jg-pr-merge.sh uses it to merge that pull request
+# with a merge commit.
 jg_is_release_head() {  # <config-dir> <repo-dir> <head-ref>
-  local config=${1:-} dir=${2:-} head=${3:-} version in_flight
+  local config=${1:-} dir=${2:-} head=${3:-} version in_flight trunk
   [ -n "$head" ] && [ -n "$dir" ] && [ -d "$dir" ] || return 1
   version=$(jg_current_version_branch "$dir" 2>/dev/null) || version=
   in_flight=$(jg_release_in_flight_branch "$config" "$dir" 2>/dev/null) || in_flight=
+  trunk=$(JG_CONFIG_OVERRIDE=$config jg_project_trunk_branch "$dir" 2>/dev/null) || trunk=
   { [ -n "$version" ] && [ "$head" = "$version" ]; } \
-    || { [ -n "$in_flight" ] && [ "$head" = "$in_flight" ]; }
+    || { [ -n "$in_flight" ] && [ "$head" = "$in_flight" ]; } \
+    || { [ -n "$trunk" ] && [ "$head" = "$trunk" ]; }
 }
 
 # A release branch the captain has frozen takes no new work.
