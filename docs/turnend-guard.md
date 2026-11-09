@@ -17,7 +17,7 @@ Do not infer this guard's scope, loop safety, or compatibility tradeoffs for tho
 | Question | Start here |
 | --- | --- |
 | What the guard enforces | [Current invariant](#current-invariant) |
-| A correction no rule or ticket captured | [Owner-correction capture rule](#owner-correction-capture-rule) |
+| A correction no rule or ticket captured | [Owner-correction suggestion](#owner-correction-suggestion) |
 | A message that calls a migration part live with no live row | [Migration progress rule](#migration-progress-rule) |
 | Which sessions are in scope and what counts as supervision need | [Primary scope](#primary-scope) and [supervision need](#supervision-need) |
 | How the turn-end check and the mid-turn pull warning judge watcher health | [Strict watcher check at the turn boundary](#strict-watcher-check-at-the-turn-boundary) and [pull-warning verdict by supervision model](#pull-warning-verdict-by-supervision-model) |
@@ -55,26 +55,29 @@ A live identity-matched daemon with a fresh beacon then satisfies that boundary 
 The guard remains a backstop.
 [`watcher-continuity.md`](watcher-continuity.md) owns normal continuity.
 
-## Overwatch KPI rule
+## Overwatch KPI suggestion
 
-The captain should come only for a major decision only he can take or to file new work, so every captain message is tagged in the turn it arrives.
-At the same boundary, before the supervision predicate, the guard blocks while the newest captain message `bin/jg-overwatch-kpi.sh` recorded is untagged, with one exit-2 banner naming its `tag` command.
+The captain should come only for a major decision only he can take or to file new work, so a captain message may be tagged in the turn it arrives.
+At the same boundary, before the supervision predicate, the guard prints one soft `SOFT SUGGESTION` line on stderr while the newest captain message `bin/jg-overwatch-kpi.sh` recorded is untagged, naming its `tag` command.
+The line never blocks the turn, never spends a block budget, and never exits with status 2.
 A note the captain sends from the chat counts as a captain message too: the gateway records it, so a Telegram note is never missed and the tag lands on it rather than on an older message.
-It is charged once per message, recorded in `state/.overwatch-kpi-flagged`, and a primary whose harness has no prompt hook records nothing, so it is never blocked.
+It is printed once per message, recorded in `state/.overwatch-kpi-flagged`, and a primary whose harness has no prompt hook records nothing, so it prints nothing.
 
-## Owner-correction capture rule
+## Owner-correction suggestion
 
-The owner's standing rule (`data/owner-rules.md`) is that a correction he gives in chat must not stay a one-time fix, so the turn that follows one must leave something the whole system reads.
-At the same boundary, after the KPI rule, the guard asks `bin/jg-owner-correction.sh` whether the recorded correction is captured, and blocks once per correction when it is not.
+The owner's standing rule (`data/owner-rules.md`) is that a correction he gives in chat should not stay a one-time fix, but he decides what is worth a ticket: Overwatch and the leads file nothing from a captain remark without his yes.
+At the same boundary, after the KPI suggestion, the guard asks `bin/jg-owner-correction.sh` whether the recorded correction is captured, and prints one soft `SOFT SUGGESTION` line once per correction when it is not.
+The line says the correction may be worth a ticket or an owner rule and asks the lead to ask him whether it is worth it.
+It never blocks the turn and never spends a block budget.
 The correction is the newest captain message whose newest KPI tag kind is `feedback` or `micromanagement`.
-That tag is the record this fleet already keeps for "he told us how to work", so the trigger is that record and never the guard's reading of his tone, and the KPI rule above has already required it.
+That tag is the record this fleet already keeps for "he told us how to work", so the trigger is that record and never the guard's reading of his tone.
 
-Either artefact captures it, and both are commands that already exist:
+A correction is captured when either artefact exists, and both are commands that already exist:
 
 - A rule: `data/owner-rules.md` was written at or after the correction, which `bin/jg-owner-rules.sh add` does, and that same call files the rule's enforcement ticket so the work does not sit in the surface alone.
 - A ticket: the backlog holds a row created on or after the correction's UTC date, or `data/ticket-counters.tsv` was written at or after it, which `bin/jg-backlog.sh add` does.
 
-A turn that writes either artefact ends normally, and the charge (`state/.owner-correction-flagged`) keeps every harness bounded to one block per correction; a home whose harness records no captain message records no correction, exactly as for the KPI rule.
+A captured correction prints nothing, and the charge (`state/.owner-correction-flagged`) keeps the suggestion to one line per correction; a home whose harness records no captain message records no correction, exactly as for the KPI suggestion.
 The check ships from this repository's own `bin/` with the guard, so a home that fast-forwards gets both, and a home whose guard runs without `bin/jg-owner-correction.sh` - or whose copy cannot answer - is never read as "nothing pending": the guard prints a `THIS HOME HAS NOT PICKED UP OWNER-CORRECTION CAPTURE` banner once (`state/.owner-correction-unavailable`) instead of pretending it ran.
 
 ## Migration progress rule
@@ -641,7 +644,7 @@ That warning uses `bin/jg-supervision-instructions.sh --repair-line`, so it alwa
 - Malformed input.
 - Exactly-one-path safety.
 
-`tests/jg-owner-correction.test.sh` covers the correction rule: an uncaptured correction is flagged once with both exact commands named, an owner rule ends the turn, an enforcement ticket ends the turn, new work is never read as a correction, and a home without the shared check says so once.
+`tests/jg-owner-correction.test.sh` covers the correction suggestion: an uncaptured correction and an untagged captain message each get one soft line and never block, an owner rule or an enforcement ticket silences it, new work is never read as a correction, and a home without the shared check says so once.
 
 `tests/jg-progress-claim.test.sh` covers the progress rule: an unsupported live claim is blocked once with the part and its measurement, honest wording and live parts pass, a merged switch with a pending row is recorded as merged, and the digest carries the live count.
 

@@ -147,7 +147,7 @@ Load `task-dispatch` at every intake: it owns project resolution, Squad Lead rou
 - A new idea, or scope discovered mid-task, becomes a board card first; adding it to the work in flight needs his approval.
 - Load `diagnostic-reasoning` before scoping a reported bug and before acting on a diagnostic report.
 - New or complex work starts from prior art: load `prior-art` before designing anything the project does not already contain, record the pick, its licence and the reasons in the task's prior-art section, and let `bin/jg-prior-art-gate.sh` refuse a brief without one; work that is neither new nor complex records `none needed` with the reason.
-- An owner correction is never a one-time fix: record it where section 9 requires, or the turn-end guard flags the turn ([`docs/turnend-guard.md`](docs/turnend-guard.md)).
+- An owner correction is never a one-time fix: once he says yes, record it where section 9 requires; the turn-end guard only suggests it, softly ([`docs/turnend-guard.md`](docs/turnend-guard.md)).
 
 Resolve every ship task's concrete delivery mode and `yolo` merge posture at intake.
 A current explicit captain instruction wins; otherwise the project's registry entry is the captain's standing posture, and dropping below its rigor needs a reason you can state.
@@ -300,6 +300,7 @@ Use the same evidence-first form for objections or clarifying challenges rather 
 
 - **Decide everything inside the standing authority you already have, and ask only for what only the captain can do.** A green in-scope merge the project's posture already authorizes, a lane restart, and a design-gate workaround on a worker that runs today are yours to call.
 - **A captain correction is never only harness memory.** Record it with `bin/jg-owner-rules.sh add --kind owner` when it states his own taste or authority, which files that rule's enforcement ticket itself, and as a Juggernaut ticket when it is an engineering default every user should get, so a fresh session, another harness, and every Squad Lead home follow it too.
+  Suggest it and ask him whether it is worth it; file no ticket or owner rule from a captain remark without his yes.
 - **A question you ask the captain is posted on the board**, with the chat line as its pointer, so the ask cannot be lost in a transcript.
 
 Reach the captain immediately for:

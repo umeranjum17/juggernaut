@@ -89,21 +89,22 @@ test_guard_refuses_an_untagged_message_once() {
   assert_equals 0 "$rc" "a home with no captain message was blocked"
   submit "$home" "status?"
   stop "$home"; rc=$?
-  assert_equals 2 "$rc" "an untagged captain message let the turn end"
-  grep -q 'CAPTAIN MESSAGE NOT TAGGED' "$home/guard.err" || fail "the block did not name the rule: $(cat "$home/guard.err")"
-  grep -q 'Message: status?' "$home/guard.err" || fail "the block did not quote the message"
+  assert_equals 0 "$rc" "an untagged captain message blocked the turn"
+  grep -q 'SOFT SUGGESTION' "$home/guard.err" || fail "the soft line did not name itself: $(cat "$home/guard.err")"
+  grep -qF 'message "status?"' "$home/guard.err" || fail "the soft line did not quote the message"
   stop "$home"; rc=$?
   assert_equals 0 "$rc" "the same message was charged twice, which can wedge a harness"
   submit "$home" "file a ticket to add CSV export"
   stop "$home"; rc=$?
-  assert_equals 2 "$rc" "a second untagged message was not flagged"
+  assert_equals 0 "$rc" "a second untagged message blocked the turn"
+  grep -q 'SOFT SUGGESTION' "$home/guard.err" || fail "a second untagged message got no soft line"
   in_home "$home" "$KPI" tag new-work >/dev/null || fail "tagging new work failed"
   in_home "$home" "$KPI" pending >/dev/null && fail "a tagged message is still pending"
   submit "$home" "yes, merge it"
   in_home "$home" "$KPI" tag decision-answer >/dev/null || fail "tagging a decision answer failed"
   stop "$home"; rc=$?
   assert_equals 0 "$rc" "a tagged message still blocked the turn end"
-  pass "the guard refuses once per untagged captain message and clears once it is tagged"
+  pass "the guard suggests once per untagged captain message, never blocks, and clears once it is tagged"
 }
 
 test_a_miss_needs_a_link_to_code_work() {

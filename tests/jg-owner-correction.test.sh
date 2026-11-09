@@ -57,18 +57,38 @@ test_a_correction_with_no_artefact_is_flagged() {
   assert_equals 0 "$rc" "a recorded correction with no artefact is not pending"
   assert_contains "$out" "feedback" "the pending line does not carry the recorded kind"
   stop "$home"; rc=$?
-  assert_equals 2 "$rc" "a turn that followed an owner correction with neither artefact ended"
-  for want in 'HE CORRECTED THE FLEET, AND NOTHING CAPTURED IT' 'jg-owner-rules.sh add --kind owner --words' \
-    'jg-backlog.sh add' 'one time fix'; do
-    grep -qF "$want" "$home/guard.err" || fail "the block did not name '$want': $(cat "$home/guard.err")"
+  assert_equals 0 "$rc" "a pending owner correction blocked the turn instead of suggesting"
+  for want in 'SOFT SUGGESTION' 'worth a ticket or an owner rule' 'Ask him whether it is worth it' 'one time fix'; do
+    grep -qF "$want" "$home/guard.err" || fail "the soft line did not say '$want': $(cat "$home/guard.err")"
   done
+  grep -q 'HE CORRECTED THE FLEET' "$home/guard.err" && fail "the old ticket demand is still printed"
+  [ "$(wc -l < "$home/guard.err")" -le 2 ] || fail "the suggestion is more than one soft line: $(cat "$home/guard.err")"
+  [ ! -e "$home/state/.turnend-claude-blocks" ] || fail "the soft suggestion spent a block budget"
   stop "$home"; rc=$?
-  assert_equals 0 "$rc" "the same correction was charged twice, which can wedge a harness"
+  assert_equals 0 "$rc" "the same correction was suggested twice"
+  [ ! -s "$home/guard.err" ] || fail "the suggestion repeated: $(cat "$home/guard.err")"
   submit "$home" "file a ticket to add CSV export"
   kpi "$home" tag new-work >/dev/null || fail "tagging new work failed"
   stop "$home"; rc=$?
   assert_equals 0 "$rc" "new work was refused for a missing correction capture"
-  pass "the guard refuses a turn that follows an owner correction with no rule and no ticket, once, and never for new work"
+  [ ! -s "$home/guard.err" ] || fail "new work printed a suggestion: $(cat "$home/guard.err")"
+  pass "an uncaptured owner correction gets one soft suggestion, never a block, and new work gets none"
+}
+
+test_a_pending_correction_and_an_untagged_message_never_block() {
+  local home="$TMP_ROOT/soft" rc
+  make_home "$home"
+  submit "$home" "$CORRECTION"
+  kpi "$home" tag feedback https://github.com/acme/juggernaut/pull/41 >/dev/null || fail "tagging failed"
+  submit "$home" "status?"
+  pending "$home" >/dev/null && fail "setup: an untagged newest message still reads as a correction"
+  stop "$home"; rc=$?
+  assert_equals 0 "$rc" "an untagged captain message blocked the turn"
+  grep -qF 'SOFT SUGGESTION' "$home/guard.err" || fail "no soft line for the untagged message: $(cat "$home/guard.err")"
+  grep -q 'CAPTAIN MESSAGE NOT TAGGED' "$home/guard.err" && fail "the old tag demand is still printed"
+  [ "$(wc -l < "$home/guard.err")" -le 2 ] || fail "more than one soft line: $(cat "$home/guard.err")"
+  [ ! -e "$home/state/.turnend-claude-blocks" ] || fail "the soft suggestion spent a block budget"
+  pass "an untagged captain message gets one soft suggestion and the turn ends"
 }
 
 test_an_owner_rule_captures_the_correction() {
@@ -116,6 +136,7 @@ test_a_home_without_the_shared_check_says_so() {
 }
 
 test_a_correction_with_no_artefact_is_flagged
+test_a_pending_correction_and_an_untagged_message_never_block
 test_an_owner_rule_captures_the_correction
 test_an_enforcement_ticket_captures_the_correction
 test_a_home_without_the_shared_check_says_so
