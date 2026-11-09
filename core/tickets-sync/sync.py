@@ -120,6 +120,11 @@ def write_assignee(path, tid, record, desired, ends_with_newline, reason='', ass
         feed.write(('' if ends_with_newline else '\n') + json.dumps(line) + '\n')
     return line
 
+def store_named(home):
+    # The rule is bin/jg-backlog-lib.sh's jg_backlog_beads_store: a home has a store when config/beads-dir names one, and a blank file names none.
+    named = home / 'config/beads-dir'
+    return named.is_file() and bool(named.read_text().strip())
+
 def sync():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--audit', action='store_true')
@@ -186,6 +191,8 @@ def sync():
         tried = set()
         def save(path, value):
             temp = path.with_suffix('.tmp'); temp.write_text(json.dumps(value)); temp.replace(path)
+        no_store_file = state / 'no-store-homes.json'
+        no_store = set(json.loads(no_store_file.read_text())) if no_store_file.exists() else set()
         seen = set()
         skipped_ids = set()
         def publish(tid, desired, derived=(), where='', reason='', description=''):
@@ -285,8 +292,14 @@ def sync():
             elif tid.startswith('jg-') and tid != upkeep_id and (old.get('project', '').lower() in INTERNAL or not old.get('asked') and not old.get('parent')):
                 publish(tid, dict(project='' if old.get('project', '').lower() in INTERNAL else old.get('project', ''), parent=old.get('parent') or ('' if old.get('asked') else upkeep_id)), where=f'board/{tid}')
         for name, source in ordered:
-            # A home with no Beads store has no backlog to publish: skip it quietly.
-            if not (source / 'config/beads-dir').is_file(): continue
+            # A home with no Beads store has no backlog to publish: the sync notes that once in its progress log (never a
+            # wake) and every pass, check and clean-up skips it without a word.
+            if not store_named(source):
+                if not options.check and name not in no_store:
+                    no_store.add(name); save(no_store_file, sorted(no_store))
+                    note(f'{name}: no Beads store named in {source}/config/beads-dir, skipped')
+                continue
+            if name in no_store and not options.check: no_store.discard(name); save(no_store_file, sorted(no_store))
             env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_ROOT_OVERRIDE')}
             env['JG_HOME'] = str(source)
             reader = ['bash', str(home / 'bin/jg-backlog.sh')]
