@@ -1120,7 +1120,12 @@ cmd_ci() {
 }
 
 # The release PR of the last release, and whether it has merged. The trunk stays untouched until it has.
-last_release_url() { awk -F'\t' -v p="$PN" '$1 == p { u = $6 } END { print u }' "$DATA/trunk-releases.tsv" 2>/dev/null || true; }
+# A row holds one URL; a row written before that holds the create call's whole answer over several lines, and the URL is read out of it.
+last_release_url() {
+  awk -F'\t' -v p="$PN" 'NF >= 6 { mine = ($1 == p); if (mine) r = $6; next } mine { r = r "\n" $0 } END { print r }' \
+    "$DATA/trunk-releases.tsv" 2>/dev/null | pr_urls | head -1
+}
+pr_urls() { { grep -Eo 'https?://[^"[:space:],]+/pull/[0-9]+' || true; } | awk '!seen[$0]++'; }  # stdin: each PR URL once, in order
 pr_state() {  # <url>: open|merged|closed|unknown
   local st
   jg_pr_url_parse "$1" && [ "$JG_PR_PROVIDER" = github ] || { printf 'unknown\n'; return; }
@@ -1213,6 +1218,24 @@ cmd_rollover() {
   rollover_if_merged || refuse "no merged release to roll over from; $TRUNK stays as it is until its release PR lands"
 }
 
+# Sets REL_URL to the release PR of the trunk into <default>: the one URL the create call answers. When the create call
+# fails or names no one URL, the release is the one open PR whose head is the trunk and whose base is <default>; with
+# none the release stops as before, and with more than one it stops and names them all rather than pick one.
+open_release_pr() {  # <default> <title> <body-file>
+  local out urls
+  if out=$(cd "$PROJ" && gh-axi pr create --base "$1" --head "$TRUNK" --title "$2" --body-file "$3"); then
+    urls=$(pr_urls <<<"$out")
+    [ "$(grep -c . <<<"$urls")" != 1 ] || { REL_URL=$urls; return 0; }
+  fi
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  urls=$( (cd "$PROJ" && gh-axi pr list --state open --head "$TRUNK" --base "$1" --fields url) | pr_urls)
+  case $(grep -c . <<<"$urls") in
+    1) REL_URL=$urls ;;
+    0) die "$TRUNK is pushed but the release PR was not opened; run release again" ;;
+    *) die "$TRUNK is pushed and more than one open PR goes from $TRUNK into $1, so none is taken as the release: $(paste -sd' ' <<<"$urls")" ;;
+  esac
+}
+
 cmd_release() {
   local tip base n default body url prev
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
@@ -1235,7 +1258,7 @@ cmd_release() {
     body=$(mktemp); WORK=$body
     { echo "Release batch from the local $TRUNK: $n commits, one per ticket."; echo
       git -C "$PROJ" log --reverse --format='- %h %s' "$base..$tip"; } > "$body"
-    url=$(cd "$PROJ" && gh-axi pr create --base "$default" --head "$TRUNK" --title "Release: $n tickets from the local $TRUNK" --body-file "$body") || die "$TRUNK is pushed but the release PR was not opened; run release again"
+    open_release_pr "$default" "Release: $n tickets from the local $TRUNK" "$body"; url=$REL_URL
   fi
   put "$STATE/trunk-released-$PN" "$tip"; spend_word release
   row trunk-releases.tsv "$PN" "$TRUNK" "$tip" "$n" "$(date +%s)" "$url"
