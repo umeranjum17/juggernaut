@@ -667,6 +667,21 @@ test_a_flaky_failure_gets_one_rerun_before_it_is_judged() {
   pass 'a failure gets one rerun before it is judged: a flaky one is set aside, a repeated one blocks'
 }
 
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_tip_red_that_prints_its_elapsed_seconds_is_the_same_red_on_every_run() {
+  local out
+  world elapsed; rig
+  git -C "$PROJ" worktree add -q -b seed "$W/seed" trunk
+  # A Go test prints its run time on the last line, so the tip's red reads differently on every run.
+  commit_in "$W/seed" t/h.test.sh '[ "${GATE_MARK:-}" = yes ] || exit 0; n=$(cat '"$W"'/runs 2>/dev/null || echo 0); echo $((n + 1)) > '"$W"'/runs; printf "FAIL\\tpkg/x\\t2%s.%s3s\\n" "$n" "$n" >&2; exit 1' "seed h"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed" rev-parse HEAD)"
+  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
+  lane good 'exit 0' t/d.test.sh
+  out=$(trunk land good 2>&1) || fail "a lane must land beside a tip red that differs from its own run only by elapsed seconds: $out"
+  assert_contains "$out" "not charged to this lane" "the tip's red is set aside"
+  pass "a tip red that prints its elapsed seconds is the same red on every run, so no lane is charged for it"
+}
+
 test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection() {
   local c before out rc=0 hook_kind owner_hash
   for hook_kind in configured owner-guard; do
@@ -1174,6 +1189,7 @@ test_the_landing_check_cuts_the_next_trunk_once_the_release_merged
 test_the_watcher_runs_the_landing_check_on_its_fast_tick
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
+test_a_tip_red_that_prints_its_elapsed_seconds_is_the_same_red_on_every_run
 test_the_gates_are_policy_keys_with_fast_defaults
 test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates
 test_a_landing_rebases_the_lane_by_itself
