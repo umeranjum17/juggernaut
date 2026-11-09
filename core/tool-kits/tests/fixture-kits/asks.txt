@@ -1,0 +1,9 @@
+# <kit or none> | <ask>: the cross-kit rules, run against these two fixture kits
+alpha | draw a chart of the sales
+beta | draw a map of the office
+none | plot a graph of the sales
+beta | draw a chart with the beta tool
+alpha | plot a graph with the alpha tool
+none | draw a chart with the alpha tool and the beta tool
+none | build me something and draw a chart
+none | why is the login slow

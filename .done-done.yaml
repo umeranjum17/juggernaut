@@ -214,6 +214,11 @@ journeys:
   host-memory-sampler-cpu:
     command: bash journeys/host-memory-sampler-cpu.sh
     timeout: 10m
+  tool-kit:
+    command: bash journeys/tool-kit.sh
+  tool-kit-spend:
+    command: bash journeys/tool-kit-spend.sh --approved
+    spends: "the model quota or money of each tool kit's spending journey"
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

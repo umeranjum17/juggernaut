@@ -1,0 +1,1 @@
+{ "name": "alpha", "says": "Fixture kit: charts", "names": ["alpha tool"], "words": ["draw a chart", "plot a graph"], "tool": { "bin": "alpha-tool" }, "card": "evidence" }

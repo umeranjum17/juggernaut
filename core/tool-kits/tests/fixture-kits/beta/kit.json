@@ -1,0 +1,1 @@
+{ "name": "beta", "says": "Fixture kit: maps", "names": ["beta tool"], "words": ["draw a map", "plot a graph"], "tool": { "bin": "beta-tool" }, "card": "evidence" }
