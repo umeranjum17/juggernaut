@@ -162,7 +162,9 @@ It makes one `getMe` call and never sends a message.
   - A late tap on an answered card answers the tap with "Already answered." and a withdrawn or unknown card with "This card is closed." Neither publishes anything. A tap from anyone but the owner, or on another message, is dropped.
   - A button holds `c:<12 hex>:<n>` (under 20 bytes). The hash names the card in `state/captain-chat/cards.jsonl`, which maps each card to its chat and message id, so edits survive a gateway restart. The last line of a card wins.
   - An edit that fails is tried again every 2 seconds until it works. An edit Telegram can never take (400, 403) is logged and dropped. The bot token is never stored or logged.
-- `pending` names why: the service is not running (its heartbeat in `state/captain-chat/telegram.alive` is over two minutes old), `getMe` failed, or legs are missing.
+- `pending` names why: the service is not running (its heartbeat in `state/captain-chat/telegram.alive` is over two minutes old), the service is running but its last 3 or more polls failed, `getMe` failed, or legs are missing.
+  The heartbeat moves only after a poll that succeeded, an idle one included.
+  `state/captain-chat/telegram.poll` holds the last good poll, the failed polls in a row, the last attempt and the last failure's reason, tab separated.
   A missing-legs detail reads `in: text image - out: text - missing in file, out image file`.
 - `live` needs all six legs inside the last 7 days: `6 of 6 legs, last <date>, <n> notes, <n> replies`.
   A merge alone never shows it live.
