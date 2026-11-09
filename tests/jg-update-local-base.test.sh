@@ -262,8 +262,9 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   # shellcheck disable=SC2016 # the stub body expands when it runs
   printf '#!/usr/bin/env bash\necho "$1" >> "%s/calls"\ncase "$1" in verify) exit "$(cat "%s/verify-rc")" ;; autolive) printf "autolive: %%s\\n" "$(cat "%s/verdict")"; exit "$(cat "%s/rc")" ;; esac\n' "$fh" "$fh" "$fh" "$fh" > "$fh/bin/jg-trunk.sh"
   chmod +x "$fh/bin/jg-trunk.sh"; cp "$ROOT/bin/jg-wake-lib.sh" "$ROOT/bin/jg-path-lib.sh" "$fh/bin/"
-  printf 'project=%s/projects/proj\nmode=local-trunk\n' "$fh" > "$fh/state/t1.meta"
   local c=cccccccccccccccccccccccccccccccccccccccc ob="$fh/data/jg-trunk-landing/outbox"
+  # The landing's own row names its project: the check tears the lane down (its record is gone) before the post-landing job runs.
+  printf 't1\tproj\t%s\t1\tfull\n' "$c" > "$fh/data/trunk-landings.tsv"
   post() { bash "$ROOT/core/trunk-landing/trunk-landing.sh" post "$fh" t1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$c" >/dev/null 2>&1; }
   live() { bash "$ROOT/core/trunk-landing/trunk-landing.sh" live "$fh" proj >/dev/null 2>&1; }
   # The post-landing job runs the suite and never the live step: a landing never waits on a go-live.

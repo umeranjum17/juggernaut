@@ -57,12 +57,18 @@ mkdir -p "$MEM" || exit 0
 # shellcheck source=core/trunk-landing/refusal-reach.sh
 . "$(dirname "${BASH_SOURCE[0]}")/refusal-reach.sh"
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
+# The project a landed commit went into, from the landing's own row: teardown removes the lane's record (state/<id>.meta)
+# right after the landing, so the jobs that follow a landing must never read the project from it.
+landed_project() {  # <commit>
+  local pn; pn=$(awk -F'\t' -v c="$1" '$3 == c { p = $2 } END { print p }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
+  [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && printf '%s\n' "$FMH/projects/$pn"
+}
 
 # The post-landing job: the whole suite at the landed commit (bin/jg-trunk.sh verify). A red one is reported; the live step is not
 # its business, so a landing never waits on a go-live.
 if [ "$1" = post ]; then
-  id=$3; head=$4; cand=$5; proj=$(mval "$STATE/$id.meta" project); vrc=0
-  [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $head =~ ^[0-9a-f]{40,64}$ && $cand =~ ^[0-9a-f]{40,64}$ ]] && [ -d "$proj" ] || exit 2
+  id=$3; head=$4; cand=$5; proj=; vrc=0
+  [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $head =~ ^[0-9a-f]{40,64}$ && $cand =~ ^[0-9a-f]{40,64}$ ]] && proj=$(landed_project "$cand") && [ -d "$proj" ] || exit 2
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify "$proj" "$cand" >"$MEM/$id.$head.verify.log" 2>&1 || vrc=$?
   [ "$vrc" -ne 0 ] || exit 0
   jg_lock_acquire_wait "$MEM/.outbox.lock"
@@ -138,8 +144,8 @@ if [ "$1" = runbatch ]; then
   done
   # The whole suite runs once, at the top of the stack, and reverts the lane that caused a red by itself.
   if [ -n "$fresh_top" ]; then
-    proj=$(mval "$STATE/$fresh_top.meta" project)
     cand=$(awk -F'\t' -v i="$fresh_top" '$1 == i { c = $3 } END { print c }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
+    proj=$(landed_project "$cand" || :)
     for arg in "$@"; do [ "${arg%%@*}" != "$fresh_top" ] || head=${arg#*@}; done
     if [ -n "$cand" ] && [ -d "$proj" ]; then
       setsid nohup "$SELF" post "$FMH" "$fresh_top" "$head" "$cand" >"$MEM/$fresh_top.$head.post.log" 2>&1 < /dev/null &

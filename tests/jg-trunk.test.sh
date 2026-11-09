@@ -93,6 +93,7 @@ SH
   cat > "$W/root/bin/jg-teardown.sh" <<SH
 #!/usr/bin/env bash
 printf '%s\\n' "\$*" >> "$W/teardown-calls"
+rm -f "$HOME_D/state/\$1.meta"  # the real teardown removes the task record the moment a landed lane is cleaned up
 SH
   cat > "$W/root/bin/jg-send.sh" <<SH
 #!/usr/bin/env bash
@@ -1358,7 +1359,29 @@ test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
   pass 'a refusal the worker fixes reaches it by steer, repeats until the head changes, alerts after ten silent minutes, and never steers a stale head or a wait'
 }
 
+# The journey that stalled on 9 Nov: a lane lands on a tip that carries only recorded reds, the check tears the lane down at once
+# (its record is gone), and the post-landing suite still runs, moves the pin over the old reds, and the quiet trunk goes live by itself.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself() {
+  local out c
+  fleet_world oldreds; rig; seed_red_tip; cp "$W/root/bin/jg-backlog.sh" "$HOME_D/bin/jg-backlog.sh"
+  printf 'gate-verify=export GATE_MARK=yes; bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
+  lane good 'exit 0' t/d.test.sh
+  out=$(fleet_sweeps "landed good"); assert_contains "$out" "cleaned up" "the check must tear the landed lane down"
+  [ ! -e "$HOME_D/state/good.meta" ] || fail "fixture: the lane's record must be gone, as the real teardown leaves it"
+  await_green || fail "the post-landing suite must still run once the lane's record is gone, and move the pin over the tip's recorded reds: $(cat "$HOME_D"/data/jg-trunk-landing/good.*.post.log 2>&1)"
+  c=$(tip)
+  assert_contains "$(cat "$HOME_D"/data/jg-trunk-landing/good.*.verify.log 2>&1)" "already had set aside" "the verify must say it set the recorded reds aside"
+  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "recorded old reds must not pin the trunk red"
+  age_landings 25 25
+  out=$(fleet_sweeps "proj: live at")
+  assert_contains "$out" "proj: live at ${c:0:12} on every home" "the quiet trunk must go live by itself over the recorded reds"
+  homes_at "$c" || fail "every home must move to the landed commit: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
+  pass 'a landing on a tip with only recorded reds is verified after its lane is torn down, moves the pin and goes live with no hand step'
+}
+
 test_a_good_lane_lands_but_goes_live_only_on_his_word
+test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_every_unsafe_landing_refuses
 test_a_seam_is_the_only_place_behaviour_changes
