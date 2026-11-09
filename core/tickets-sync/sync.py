@@ -22,7 +22,7 @@ import xml.etree.ElementTree as xml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from task_rows import toon_rows
-from lane import progress as lane_progress, assignee as lane_assignee
+from lane import stage as lane_stage, assignee as lane_assignee
 import cleanup
 import reconcile
 from hierarchy import UPKEEP, INTERNAL, parents as request_parents, title as request_title
@@ -232,7 +232,12 @@ def sync():
                 elif key in ('hold', 'asked'): value = value == 'yes'
                 return key in derived or stored == value
             # Board wins over ledger: a prior digest can drift after a partial write.
-            matched = all(settled(k, v) for k, v in desired.items())
+            # Until the board takes the machines' own stage words, a word it cannot show is the description's first line
+            # ("Stage: <word>"), so a new word with the same board stage rewrites the description, and so does going back to
+            # a word the board shows.
+            def exact(text): return text.partition('\n')[0] if text.startswith('Stage: ') else ''
+            restage = bool(old) and exact(description) != exact(old.get('description') or '')
+            matched = all(settled(k, v) for k, v in desired.items()) and not restage
             if not matched and any(o != tid for o in tracked.get(work_key(desired), [])):
                 ledger[tid] = digest; save(ledger_file, ledger)
                 # Another ticket already covers this work, so no field of it is published: it still names its owner.
@@ -249,7 +254,7 @@ def sync():
             # The board refuses a new ticket without a description and wants its "# Ask", "# Why" and "# Done when"
             # headings each at the start of a line, so the task body goes whole, line breaks kept. Only a new row sends it,
             # so words written on the board afterwards stay.
-            summary = '' if old else description or desired.get('title') or tid
+            summary = '' if old and not restage else description or desired.get('title') or tid
             if summary: args += ['--description', summary]
             run(args); changed += 1
             if 'assignee' in desired:
@@ -262,6 +267,7 @@ def sync():
                 elif key == 'last-event-at': updated['last_event_at'] = int(value)
                 elif key in ('hold', 'asked'): updated[key] = value == 'yes'
                 else: updated[key] = value
+            if summary: updated['description'] = summary
             existing[tid] = updated
             ledger[tid] = digest; save(ledger_file, ledger)
         if options.close:
@@ -336,10 +342,10 @@ def sync():
                 release_value = field('release')
                 if re.fullmatch(r'(?i)(later|soon|now|next|someday|eventually|asap|urgent|tbd|tba|backlog|never|none)', release_value.strip()):
                     release_value = ''
-                progress, done, pr, stage, event = lane_progress(source, item, r, prs, run)
+                said, stage, done, pr, event = lane_stage(home, source, item, r, prs, run)
                 save(pr_file, prs)
                 done = done or f'{name}/{item}' in closures or existing.get(tid, {}).get('state') == 'done'
-                if done: progress, stage = 100, 'done'
+                if done: said = stage = 'done'
                 parent = ancestry[item]
                 root_ask = item in asks
                 title = request_title(r, root_ask)
@@ -355,12 +361,12 @@ def sync():
                 if parent in tasks and ticket_id(name, parent) not in ledger:
                     required.add(parent); ids.append(parent)
                 parent_id = ticket_id(name, parent) if parent in tasks else '' if root_ask else upkeep_id
-                desired = dict(title=title, progress=0 if item in parents else progress, state='' if item in parents else 'done' if done else 'on hold' if held else 'queued' if progress == 0 else 'in progress', pr=pr, release=release_value[:40], parent=parent_id, priority=f"P{r['priority']}" if str(r.get('priority')) in ('0', '1', '2', '3') else '', project=project, hold='yes' if held and not done else 'no', asked='yes' if root_ask else 'no', assignee=lane_assignee(source, item, name, ran=done or progress > 0 or stage != 'queued'))
+                desired = dict(title=title, progress=100 if done and item not in parents else 0, state='' if item in parents else 'done' if done else 'on hold' if held else 'queued' if said == 'queued' else 'in progress', pr=pr, release=release_value[:40], parent=parent_id, priority=f"P{r['priority']}" if str(r.get('priority')) in ('0', '1', '2', '3') else '', project=project, hold='yes' if held and not done else 'no', asked='yes' if root_ask else 'no', assignee=lane_assignee(source, item, name, ran=done or said != 'queued'))
                 if item not in parents:
                     desired['stage'] = stage
                     if event is not None: desired['last-event-at'] = event
                 if all(i['name'] != name or i['row']['id'] != item for i in items): items.append(dict(tid=tid, name=name, row=r, event=event, parked=name in parked, source=source))
-                publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason, body.strip())
+                publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason, f'Stage: {said}\n\n{body.strip()}'.strip() if said != stage else body.strip())
         if options.cleanup:
             carded = {d['ticket'] for d in json.loads(run(['sign-off-axi', 'list', str(board), '--json'])).get('decisions', []) if d.get('ticket')}
             def cards():

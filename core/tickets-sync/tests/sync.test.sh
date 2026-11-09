@@ -47,7 +47,7 @@ core_beads_home "$fork" "$work/parked"
 (cd "$JG_HOME"; jg-backlog.sh add jg-recent 'Umer shipped feature' --repo alpha --priority 2 >/dev/null; jg-backlog.sh 'done' jg-recent >/dev/null)
 git init -q "$JG_HOME/projects/alpha"
 git -C "$JG_HOME/projects/alpha" remote add origin https://github.com/example/alpha-app.git
-printf 'window=default:w9:p1\nendpoint_task_id=jg-long\nharness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount=found-claude\n' > "$JG_HOME/state/jg-long.meta"
+printf 'mode=local-trunk\nwindow=default:w9:p1\nendpoint_task_id=jg-long\nharness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount=found-claude\n' > "$JG_HOME/state/jg-long.meta"
 printf 'working [at=1700000000]: building Umer release\n' > "$JG_HOME/state/jg-long.status"
 printf 'harness=pi\nmodel=ollama-cloud/deepseek-v4.1-flash\neffort=high\naccount=found-claude\n' > "$JG_HOME/state/jg-gone.meta"
 printf 'paused [at=1700000010]: ran once and stopped\n' > "$JG_HOME/state/jg-gone.status"
@@ -129,13 +129,13 @@ sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | .name | a
 sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | .name] == ["ownvoice"] and .projects[0].icon.sha256 == "'"$(sha256sum "$root/tickets-sync/icons/ownvoice.png" | cut -d" " -f1)"'"'
 cmp "$root/tickets-sync/icons/ownvoice.png" "$work/icons/ownvoice.png"
 test ! -e "$work/icons/takeone.png"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 30 and .ticket.state == "in progress" and .ticket.stage == "building" and .ticket.last_event_at == 1700000050'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.state == "in progress" and .ticket.stage == "building" and .ticket.last_event_at == 1700000050'
 printf 'working [key=nm-umer-ci] [at=1700000100]: checking CI\n' >> "$JG_HOME/state/jg-long.status"
 "$JG_HOME/state/tickets-sync.check.sh"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 65 and .ticket.stage == "review" and .ticket.last_event_at == 1700000100'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.stage == "building" and .ticket.last_event_at == 1700000100'
 printf 'done [at=1700000200]: ready to merge\n' >> "$JG_HOME/state/jg-long.status"
 "$JG_HOME/state/tickets-sync.check.sh"
-sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 90 and .ticket.stage == "merging" and .ticket.last_event_at == 1700000200'
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.stage == "merging" and (.ticket.description | startswith("Stage: ready-to-land")) and .ticket.last_event_at == 1700000200'
 # A timing word in the release field is no release: the board keeps none.
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-voice)" --json | jq -e '(.ticket.release // "") == ""'
 printf 'cancelled [at=1700000300]: Umer cancelled this task\n' >> "$JG_HOME/state/jg-long.status"
