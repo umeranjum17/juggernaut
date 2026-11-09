@@ -242,10 +242,10 @@ run_gate() {  # <commit> <command> <label>
 
 # Every script the test runner finished in a gate log, as: script TAB exit status TAB failure signature.
 # The signature of a pass is "-". Of a failure it is the script's own "not ok" lines (else its last three lines),
-# sorted, with temp paths and long numbers masked so a pid or a mktemp name cannot make one red look like two.
+# sorted, with temp paths, long numbers and elapsed seconds masked so a pid, a mktemp name or a run time cannot make one red look like two.
 gate_results() {  # <log>
   awk '
-    function norm(s) { gsub(/\/(tmp|var\/folders)\/[^ \t:]*/, "PATH", s); gsub(/[0-9][0-9][0-9][0-9]+/, "N", s); return s }
+    function norm(s) { gsub(/\/(tmp|var\/folders)\/[^ \t:]*/, "PATH", s); gsub(/[0-9][0-9][0-9][0-9]+/, "N", s); gsub(/[0-9]+\.[0-9]+s/, "Ns", s); return s }
     /^JG_TEST_BEGIN / { cur = $3; nf = 0; nt = 0; split("", f); split("", t); next }
     /^JG_TEST_END / {
       ex = $0; sub(/.* exit=/, "", ex); sub(/ .*/, "", ex); sig = "-"

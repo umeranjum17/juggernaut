@@ -148,6 +148,7 @@ if [ "$1" = run ]; then
   printf '%s\n' "$out" > "$request_log"
   printf '%s\n' "$out" > "$MEM/$id.$head.log"
   if [ "$rc" -eq 0 ]; then
+    JG_HOME="$FMH" "$FMH/bin/jg-machine-shadow.sh" landing "$id.$head" landed || true  # shadow report of the move (jg-machine-shadow.sh)
     proj=$(mval "$STATE/$id.meta" project)
     fresh=; printf '%s\n' "$out" | grep -q '^landed ' && fresh=1
     # The lander rebased the lane, so its branch is now at the landed commit: the same verdict stands for that head.

@@ -604,6 +604,8 @@ seed_red_tip() {
   git -C "$PROJ" worktree add -q -b seed "$W/seed" trunk
   commit_in "$W/seed" t/a.test.sh '[ "${GATE_MARK:-}" = yes ] && { echo "not ok - tip case" >&2; exit 1; }; exit 0' "seed a"
   commit_in "$W/seed" t/c.test.sh 'exit 0' "seed c"
+  # A red whose only line is a Go package result: its elapsed seconds differ on every run, so they are not part of how it fails.
+  commit_in "$W/seed" t/h.test.sh 'echo "FAIL	pkg	0.$((RANDOM % 900 + 100))s" >&2; exit 1' "seed h"
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed" rev-parse HEAD)"
   git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
 }
