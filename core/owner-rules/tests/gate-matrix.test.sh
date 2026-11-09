@@ -59,15 +59,15 @@ setup_and_run() { # <case line>: build the home, run the gate, print "rc=<n>" th
   printf '#!/bin/sh\nexit 0\n' > "$XDG_DATA_HOME/jg-merge-on-green/checks-lint.sh"; chmod +x "$XDG_DATA_HOME/jg-merge-on-green/checks-lint.sh"
   [ "${d[none]}" = 0 ] || printf 'screen: none\noutcome: checks passed\nevidence: sealed receipt\n' > "$work/body"
   local url=$pr; [ "${d[pr]}" = url ] || url=-
-  seal() { printf '{"schema":1,"exit":0,"dirty":%s,"commit":"%s","files":["%s"],"run_id":"%s"}\n' "$3" "$1" "$2" "${4:-r1}" > "$home/data/lane/.done-done/runs/r1.json"; }
-  printf '{"head":"%s","verdict":"pass","check":{"claim":"checks passed","evidence":["%s"]}}\n' "$head" "$home/data/lane/a.png" > "$home/data/lane/merge-card.json"
+  seal() { printf '{"schema":1,"exit":0,"dirty":%s,"commit":"%s","files":["%s"],"run_id":"r1"}\n' "$3" "$1" "$2" > "$home/data/lane/.done-done/runs/r1.json"; }
+  printf '{"verdict":"pass","check":{"claim":"checks passed","evidence":[]}}\n' > "$home/data/lane/merge-card.json"
   seal "$head" a.png false
   JG_HOME=$home "$GATE" init-key >/dev/null
   JG_HOME=$home "$GATE" sign lane "$head" "$url" >/dev/null 2>&1
   case ${d[sig]} in
     none) rm -f "$home/data/lane/proof-authorizations/$head.sig" ;;
     bad) printf 'forged\n' > "$home/data/lane/proof-authorizations/$head.sig" ;;
-    stale) seal "$head" a.png false r2 ;;
+    stale) seal "$head" b.png false ;;
   esac
   case ${d[run]} in
     ok) [ "${d[sig]}" = stale ] || seal "$head" a.png false ;;

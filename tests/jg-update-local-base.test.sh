@@ -15,7 +15,7 @@
 #    record is written only by the Overwatch path, spends no word and marks the row; a project without a
 #    waiver still needs the captain's word.
 # T6 The landing check runs the suite after a landing and, under a waiver, the batched live step on its own, and reports a go-live,
-#    a failed move, a new hold or a red suite; tests/jg-trunk-check.test.sh owns the quiet-window, hourly-cap, red and pin-back journeys.
+#    a failed move, a new hold or a red suite; tests/jg-trunk.test.sh owns the quiet-window, hourly-cap, red and pin-back journeys.
 set -u
 
 # shellcheck source=tests/lib.sh

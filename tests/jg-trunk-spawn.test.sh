@@ -11,8 +11,6 @@ set -u
 
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
-# shellcheck source=tests/jg-trunk-proof-fixture.sh
-. "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-proof-fixture.sh"
 
 jg_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(jg_test_tmproot jg-trunk-spawn)
@@ -87,10 +85,6 @@ printf 'gate-lint=test -s work.txt\ngate-full=test "$(cat work.txt)" = Umer\nflu
 printf 'real task journey; commit and receipt; no live or release requested\n' > "$HOME_DIR/data/$id/evidence.txt"
 JG_HOME="$HOME_DIR" "$ROOT/core/receipts/bin/jg-run-receipt.sh" "$id" PASS "$HOME_DIR/data/$id/evidence.txt" "$wt" >/dev/null || fail "real receipt publisher"
 [ "$(jq -r .mode "$HOME_DIR/state/$id.run-receipt.json")" = local-trunk ] || fail "receipt mode changed"
-# The landing starts on the worker's own done and the lane's whole proof at that head.
-jg_test_trunk_proof "$HOME_DIR/data/$id" "$head" card
-jg_test_trunk_proof "$HOME_DIR/data/$id" "$head" seal
-printf 'done [at=1]: ready in branch %s (local-trunk)\n' "$branch" >> "$HOME_DIR/state/$id.status"
 [ -z "$(git -C "$PROJ" for-each-ref --format='%(refname)' refs/remotes/origin/release/)" ] || fail "fixture must have no remote release ref"
 JG_HOME="$HOME_DIR" PATH="$FAKEBIN:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_DIR" >/dev/null
 for _ in $(seq 1 150); do

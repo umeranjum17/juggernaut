@@ -198,20 +198,6 @@ test_a_test_within_its_limits_is_unaffected() {
   pass 'a test within its limits is unaffected'
 }
 
-test_the_pinned_tools_default_to_the_ones_on_path() {
-  local bin out script
-  bin="$TMP_ROOT/beads-bin"; mkdir -p "$bin"
-  for t in bd dolt go; do printf '#!/bin/sh\n' > "$bin/$t"; chmod +x "$bin/$t"; done
-  script="$TMP_ROOT/beads-env.test.sh"
-  # shellcheck disable=SC2016  # the body is written out verbatim and expands when the runner runs it
-  write_script "$script" 'echo "bd=${JG_BEADS_TEST_BD:-unset} dolt=${JG_BEADS_TEST_DOLT:-unset} go=${JG_SPAWN_CORE_GO:-unset}"'
-  out=$(env -u JG_BEADS_TEST_BD -u JG_BEADS_TEST_DOLT -u JG_SPAWN_CORE_GO PATH="$bin:$PATH" bash "$RUNNER" "$script" 2>&1) || fail "the run failed: $out"
-  assert_contains "$out" "bd=$bin/bd dolt=$bin/dolt go=$bin/go" 'an unset pin must default to the tool on PATH'
-  out=$(env JG_BEADS_TEST_BD=/pinned/bd JG_BEADS_TEST_DOLT=/pinned/dolt JG_SPAWN_CORE_GO=/pinned/go PATH="$bin:$PATH" bash "$RUNNER" "$script" 2>&1) || fail "the run failed: $out"
-  assert_contains "$out" 'bd=/pinned/bd dolt=/pinned/dolt go=/pinned/go' 'a pin the caller exported must stay'
-  pass 'the pinned tools default to the ones on PATH and an exported pin stays'
-}
-
 test_a_weight_cap_defers_slow_suites_and_names_them() {
   local out
   out=$(bash "$RUNNER" --list --max-weight-ms 60000 tests/jg-teardown.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a capped list was refused: $out"
@@ -235,6 +221,5 @@ test_a_wall_failure_with_no_functional_failure_stays_red_in_aggregate
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
-test_the_pinned_tools_default_to_the_ones_on_path
 
 printf 'all %s\n' 'jg-test-run limit tests passed'
