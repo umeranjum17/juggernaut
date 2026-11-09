@@ -41,6 +41,7 @@ core_beads_home "$fork" "$work/parked"
  jg-backlog.sh add jg-held 'Umer paused item' --repo alpha --priority 1 --body 'parent: missing' >/dev/null
  jg-backlog.sh hold jg-held --reason 'Umer parked this item' --kind parked >/dev/null
  jg-backlog.sh add jg-voice 'Umer voice practice' --repo ownvoice --priority 2 --body 'release: soon' >/dev/null
+ jg-backlog.sh add jg-ids 'Plain row Main42 (corr=0123abcd) gc-x1' --repo alpha --priority 2 --body 'parent: upkeep' >/dev/null
  jg-backlog.sh add jg-take 'Umer takes' --repo takeone --priority 2 >/dev/null
  jg-backlog.sh add jg-self 'Umer juggernaut maintenance' --repo juggernaut --priority 2 --body 'parent: upkeep' >/dev/null
  jg-backlog.sh add jg-gone 'Umer queued item whose worker has gone' --repo alpha --priority 2 >/dev/null
@@ -85,9 +86,12 @@ echo 'PASS: backfill continue is quiet; finished pass wakes once with a summary'
 ticket_id() { printf 'jg-%s\n' "$(printf '%s' "$1" | sha256sum | cut -c1-32)"; }
 child=$(ticket_id main/jg-child) parent=$(ticket_id main/jg-parent) parked=$(ticket_id parked/jg-parent)
 sign-off-axi ticket "$work/board.json" --json > "$work/first.json" || { cat "$work/first.json"; exit 1; }
-jq -e '.tickets | all(.[]; (.title | length) <= 160) and all(.[]; (.title | startswith("Needs a parent")) | not)'  "$work/first.json"
+jq -e '.tickets | all(.[]; (.title | length) <= 100) and all(.[]; (.title | startswith("Needs a parent")) | not)'  "$work/first.json"
 jq -e --arg id "$child" --arg parent "$parent" '.tickets[] | select(.id == $id) | .parent == $parent and .priority == "P0" and .asked == false and .title == "Umer settings" and .release == "trunk-v3"' "$work/first.json"
 jq -e --arg id "$(ticket_id main/jg-long)" '[.tickets[] | select(.id == $id and (.release // "") == "")] | length == 1' "$work/first.json"
+# A board row is one plain line: no Main ref, corr id or ticket id, and no more than 100 characters.
+jq -e --arg id "$(ticket_id main/jg-ids)" '.tickets[] | select(.id == $id) | .title == "Plain row"' "$work/first.json"
+jq -e --arg id "$(ticket_id main/jg-long)" '.tickets[] | select(.id == $id) | .title | (length == 100 and endswith("…"))' "$work/first.json"
 jq -e --arg id "$parked" '.tickets[] | select(.id == $id) | .hold == true' "$work/first.json"
 jq -e --arg id "$(ticket_id main/jg-held)" '[.tickets[] | select(.id == $id and .hold == true)] | length == 1' "$work/first.json"
 upkeep=$(ticket_id fleet/:upkeep)

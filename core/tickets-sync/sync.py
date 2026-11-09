@@ -362,7 +362,7 @@ def sync():
                 parent = ancestry[item]
                 root_ask = item in asks
                 title = request_title(r, root_ask)
-                if len(title) > 160: title = title[:159].rstrip() + '…'
+                if len(title) > 100: title = title[:99].rstrip() + '…'  # a board row shows about 60 characters
                 project = r['_project']
                 if project and project not in tried and not options.check:  # --check writes no board project
                     tried.add(project); reason = register_icon(board, project, registry)
