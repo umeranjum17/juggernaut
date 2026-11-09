@@ -110,8 +110,19 @@ fi
 # The real scanner over a real systemd-run scope, where a user manager runs one: the
 # scope's main exits at once and leaves a launcher holding a browser, as the memory
 # gate's jobs do. The table must name that main pid as the browser's job, and the
-# sweep must stop the browser once it is old (only the age is supplied).
-if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --scope --quiet --collect -- true >/dev/null 2>&1; then
+# sweep must stop the browser once it is old (only the age is supplied). The scanner reads
+# the job from the scope's name, run-p<main>-i<n>.scope, the name a current systemd gives a
+# transient scope; an older systemd (a CI runner's) names it run-r<random>.scope, which says
+# nothing about its main, so there this case has nothing to read and is skipped by name.
+scope_probe=''
+if command -v systemd-run >/dev/null 2>&1; then
+  scope_probe=$(systemd-run --user --scope --quiet --collect -- cat /proc/self/cgroup 2>/dev/null | sed -n 's|^0::.*/||p')
+fi
+if [ -z "$scope_probe" ]; then
+  printf 'SKIP real scope: no systemd user manager to start a transient scope\n'
+elif [[ $scope_probe != run-p[0-9]*-i[0-9]*.scope ]]; then
+  printf 'SKIP real scope: this systemd names a transient scope %s, without its main pid (not run-p<pid>-i<n>.scope)\n' "$scope_probe"
+else
   # launcher.sh <profile> <browser-pid-file> <launcher-pid-file>: holds a browser, outlives main.
   cat >"$home/launcher.sh" <<'LAUNCHER'
 #!/usr/bin/env bash
@@ -146,8 +157,6 @@ MAIN
     "the real scope's browser is stopped as job-ended"
   pass "a real systemd-run scope whose job ended has its browser stopped while the launcher lives"
   kill "$slauncher" 2>/dev/null || true
-else
-  printf 'SKIP real scope: no systemd user manager to start a transient scope\n'
 fi
 
 # Nothing eligible, then the off switch through the public entry point.
