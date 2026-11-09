@@ -40,6 +40,9 @@
 # T15 The queue's threshold: the landing check holds ready lanes until flush-at-ready are ready or the oldest has waited
 #    flush-after-minutes, then lands them all as one stack; `flush <project>` lands every ready lane at once; a lane marked
 #    `land-next` lands at once, ahead of the queue, while the others keep waiting; a worker marks neither.
+# T16 A lander refusal the worker fixes reaches that lane's worker by itself: a steer carrying the refusal text, repeated while the
+#    head is unchanged and the worker has no unread steer, never for a head the lane no longer has or for a refusal that only needs
+#    time; a refusal nobody acted on for ten minutes raises one alert naming the lane; the done and the steer name what to run.
 # T6 A red CI pins the home back to the last green live commit and stops landings; a worker
 #    cannot record the captain's word.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
@@ -85,8 +88,12 @@ SH
 #!/usr/bin/env bash
 printf '%s\\n' "\$*" >> "$W/teardown-calls"
 SH
+  cat > "$W/root/bin/jg-send.sh" <<SH
+#!/usr/bin/env bash
+printf '%s\\t%s\\n' "\$1" "\$2" >> "$W/send-calls"
+SH
   : > "$HOME_D/config/fleet-ledger"
-  chmod +x "$W/root/bin/jg-fleet-ledger.sh" "$W/root/bin/jg-teardown.sh" "$W/root/bin/jg-captain-hold.sh" "$W/fakebin/gh-axi" "$HOME_D/config/live-hook.proj"
+  chmod +x "$W/root/bin/jg-send.sh" "$W/root/bin/jg-fleet-ledger.sh" "$W/root/bin/jg-teardown.sh" "$W/root/bin/jg-captain-hold.sh" "$W/fakebin/gh-axi" "$HOME_D/config/live-hook.proj"
   printf 'gate-full=! grep -q BAD work.txt\ngate-verify=! grep -q BAD work.txt\ngate-lint=! grep -q UGLY work.txt\nflush-at-ready=1\n' > "$HOME_D/config/trunk-policy"
   printf -- '- proj [local-trunk] - fixture project in local-trunk mode (added 2026-11-07)\n' > "$HOME_D/data/projects.md"
   jg_git_init_commit "$PROJ"
@@ -1248,6 +1255,56 @@ test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it() 
   pass 'the queue lands at a threshold, flushes on a command, and a land-next lane jumps it'
 }
 
+sends() { awk -F'\t' -v i="$1" '$1 == i { n++ } END { print n + 0 }' "$W/send-calls" 2>/dev/null || echo 0; }
+
+# shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
+test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
+  local out gone
+  world reach
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  # An incomplete proof: the worker is steered with the refusal text, and the done itself names what to run.
+  lane r1 one; rm "$HOME_D/data/r1/merge-card.json"
+  out=$(done_gate r1) && fail "a done with no merge-card evidence must be refused: $out"
+  assert_contains "$out" "merge-card check r1" "the done names the command to run"
+  printf '# the done is refused and names what to run: %s\n' "$out"
+  sweep >/dev/null
+  [ "$(sends r1)" = 1 ] || fail "the refused lane's worker must be steered once, got $(sends r1)"
+  assert_contains "$(grep '^r1	' "$W/send-calls")" "proof inputs are incomplete" "the steer carries the refusal text"
+  assert_contains "$(grep '^r1	' "$W/send-calls")" "merge-card check r1" "the steer names what to run"
+  printf '# the lane worker is steered: %s\n' "$(grep '^r1	' "$W/send-calls" | head -n 1)"
+  sweep >/dev/null; [ "$(sends r1)" = 1 ] || fail "the same refusal must not steer again before it is due"
+  # Re-rung while the head is unchanged, unless the worker still has an unread steer (the inbox's own ladder rings that one).
+  rf=$(ls "$HOME_D"/data/jg-trunk-landing/r1.*.refusal); sed -i "s/^\([0-9]*\) \([0-9]*\) [0-9]* /\1 \2 $(( $(date +%s) - 700 )) /" "$rf"
+  mkdir -p "$HOME_D/state/r1.inbox"; : > "$HOME_D/state/r1.inbox/001.msg"
+  sweep >/dev/null; [ "$(sends r1)" = 1 ] || fail "a worker with an unread steer is not steered again"
+  rm "$HOME_D/state/r1.inbox/001.msg"
+  sweep >/dev/null; [ "$(sends r1)" = 2 ] || fail "an unchanged head is steered again when the last steer is due: $(sends r1)"
+  # Nobody acted for ten minutes: one alert names the lane and the refusal.
+  out=$(sweep); [[ $out != *ALERT* ]] || fail "no alert before ten minutes: $out"
+  sed -i "s/^[0-9]* /$(( $(date +%s) - 700 )) /" "$rf"
+  out=$(sweep); assert_contains "$out" "ALERT: r1 has sat refused for over 10 minutes" "the alert names the lane"
+  assert_contains "$out" "no approved merge-card evidence" "the alert names the refusal"
+  printf '# after ten silent minutes: %s\n' "$out"
+  out=$(sweep); [[ $out != *ALERT* ]] || fail "the alert is raised once: $out"
+  # A final refusal (a red gate) steers the worker the same way.
+  lane r2 BAD; sweep >/dev/null; sweep >/dev/null
+  assert_contains "$(grep '^r2	' "$W/send-calls" 2>/dev/null)" "gate 'full' failed" "a final refusal reaches its worker"
+  # The lane changes its head: the old refusal is history and the new head is judged on its own.
+  gone=$(git -C "$PROJ" rev-parse fm/r1); relane r1 two; ready r1
+  sweep >/dev/null; sweep >/dev/null
+  [ "$(sends r1)" = 2 ] || fail "a lane with a new head is not steered about its old head: $(grep '^r1	' "$W/send-calls" | cut -c1-80)"
+  [ "$(git -C "$PROJ" rev-parse fm/r1)" != "$gone" ] || fail "the lane moved to a new head"
+  [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/r1)" ] || fail "the new, proved head lands"
+  # A refusal recorded for a head the lane no longer has steers nobody.
+  lane r3 three; printf 'final REFUSED: an old refusal\n' > "$HOME_D/data/jg-trunk-landing/r3.0000000000000000000000000000000000000000.state"
+  sweep >/dev/null; sweep >/dev/null
+  [ "$(sends r3)" = 0 ] || fail "a stale-head refusal must steer nobody: $(grep "^r3	" "$W/send-calls" | cut -c1-300)"
+  # A refusal that only needs time is not the worker's to fix.
+  lane r4 four; : > "$HOME_D/state/.afk"; sweep >/dev/null; sweep >/dev/null; rm "$HOME_D/state/.afk"
+  [ "$(sends r4)" = 0 ] || fail "a wait for time (away mode) must not steer the worker"
+  pass 'a refusal the worker fixes reaches it by steer, repeats until the head changes, alerts after ten silent minutes, and never steers a stale head or a wait'
+}
+
 test_a_good_lane_lands_but_goes_live_only_on_his_word
 test_the_bundled_hook_moves_a_home_that_runs_the_project
 test_every_unsafe_landing_refuses
@@ -1281,4 +1338,5 @@ test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
 test_a_landing_does_not_hold_the_trunk_while_its_gate_runs
 test_a_stack_holds_no_trunk_lock_while_its_gate_runs_and_is_judged_again_on_a_moved_tip
 test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it
+test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent
 printf 'jg-trunk: ok\n'

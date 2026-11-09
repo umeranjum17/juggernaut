@@ -31,6 +31,9 @@
 # Other refusals (a conflict, a second commit, a failing check) are rechecked through jg-trunk admission, which caches an unchanged
 # failing context and bounds transient read retries; its per-attempt logs are retained. A lane fixes the refusal and reports a
 # new head. bin/jg-trunk.sh owns every refusal and names the conflicting paths.
+# A refusal the worker fixes (an incomplete proof, a final refusal) also reaches that lane's worker by itself and never sits silent:
+# core/trunk-landing/refusal-reach.sh steers the worker with the refusal text, repeats the steer while the head is unchanged, and
+# raises one alert when nobody acted within ten minutes.
 set -u
 case "${1:-}" in
   check|next) [ "$#" -eq 2 ] || { echo "usage: trunk-landing.sh check|next <jg-home>" >&2; exit 2; } ;;
@@ -51,6 +54,8 @@ umask 077
 mkdir -p "$MEM" || exit 0
 # shellcheck source=bin/jg-wake-lib.sh
 . "$FMH/bin/jg-wake-lib.sh"
+# shellcheck source=core/trunk-landing/refusal-reach.sh
+. "$(dirname "${BASH_SOURCE[0]}")/refusal-reach.sh"
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
 
 # The post-landing job: the whole suite at the landed commit (bin/jg-trunk.sh verify). A red one is reported; the live step is not
@@ -268,13 +273,14 @@ for meta in "$STATE"/*.meta; do
   # A landing starts only on a head whose whole proof is there: receipt, approved merge-card evidence and a sealed done-done run.
   if gaps=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" proof "$id" 2>&1); then :; else
     [ -z "$QUIET" ] || continue
-    gaps=$(printf '%s' "$gaps" | tr '\n' ';' | cut -c1-300)
-    report "$id.$head" "$id waits to land: its proof is incomplete: $gaps" "proof inputs are incomplete: $gaps"
+    gaps=$(printf '%s' "$gaps" | tr '\n' ';')
+    report "$id.$head" "$id waits to land: its proof is incomplete: ${gaps:0:300}" "proof inputs are incomplete: ${gaps:0:300}"
+    lane_refusal_reach "$id" "$head" "$proj" "$branch" "proof inputs are incomplete: $gaps"
     continue
   fi
   case $line in
     running*) run_alive "$line" && continue ;;
-    final*) report "$id.$head" "$id not landed: ${line#final }" "${line#final }"; continue ;;
+    final*) report "$id.$head" "$id not landed: ${line#final }" "${line#final }"; lane_refusal_reach "$id" "$head" "$proj" "$branch" "${line#final }"; continue ;;
     wait*) [ -z "$QUIET" ] || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac
   # <epoch done> <task> <head> <project> <1, or 0 for a lane marked `land-next`>
