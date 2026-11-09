@@ -7,8 +7,11 @@
 #    a dirty lead and a lead holding an uncontained commit are SKIPPED with the reason and not touched, Main
 #    moves last with a restart-pending marker, and a pool worktree on a lane branch is not touched. The move then fails, its
 #    last line naming every home not at the base, so a go-live records no `live` row while a home is behind.
-# T1c Each home that moves runs its own tip's host wiring afterwards (so an installed copy follows the trunk); a skipped
-#    home is not wired, and a wiring failure is reported and never blocks the move or the rollout.
+# T1c Each home that stands on the moved commit runs its own host wiring for the add-ons whose files changed since it last
+#    wired, with the real bin/jg-host-wiring.sh and the real tickets-sync wiring: the installed copy equals core/ after a
+#    move that changed it, a move that changed no add-on file runs no wiring, a skipped home is not wired, a wiring failure
+#    is named in the home's row and never blocks the move, and a home rolled back by its health check while already on the
+#    moved commit (the drift Main hit) is still wired to the code it holds.
 # T1d A go-live run from a lead home reads Main's registry: every lead, the lead itself and Main move, one row each (the
 #    fleet's real shape, where the lead's own registry is empty).
 # T7 A move that leaves a home behind names it; bin/jg-trunk-live-lag.sh reports a home not at the last go-live after 10 minutes.
@@ -108,21 +111,111 @@ test_cache_is_cleared_after_a_move() {
   pass 'T1b the lead summary cache is cleared after a move'
 }
 
-test_a_moved_home_runs_its_own_host_wiring_and_a_failure_never_blocks() {
-  local out rc=0 h
+# A trunk tip that carries the real host wiring entry point and the real tickets-sync add-on; every other step of the plan
+# is a stub that logs "<step> <home>" and installs nothing. bin/jg-check-register.sh is a stub, since registering a check
+# needs a watcher home. Sets TIP.
+wiring_tip() {
+  local name
+  git -C "$W/proj" checkout -q trunk
+  mkdir -p "$W/proj/bin" "$W/proj/core/tickets-sync/icons"
+  cp "$ROOT/bin/jg-host-wiring.sh" "$W/proj/bin/"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$W/proj/bin/jg-check-register.sh"; chmod +x "$W/proj/bin/jg-check-register.sh"
+  cp "$ROOT"/core/tickets-sync/*.py "$ROOT/core/tickets-sync/wiring.sh" "$W/proj/core/tickets-sync/"
+  cp "$ROOT"/core/tickets-sync/icons/* "$W/proj/core/tickets-sync/icons/"
+  while IFS=$'\t' read -r name _; do
+    [ "$name" != tickets-sync ] || continue
+    mkdir -p "$W/proj/core/$name"
+    # shellcheck disable=SC2016 # the stub expands its own variables when it runs
+    printf '#!/usr/bin/env bash\n[ "${1:-}" != --dry-run ] || exit 0\nprintf "%%s %%s\\n" %s "$JG_HOME" >> "$JG_TEST_WIRING_LOG"\n' "$name" > "$W/proj/core/$name/wiring.sh"
+  done < <("$ROOT/bin/jg-host-wiring.sh" --list)
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\nprintf "owner-guard-scan %%s\\n" "$JG_HOME" >> "$JG_TEST_WIRING_LOG"\n' > "$W/proj/core/owner-guard/install-scan.sh"
+  git -C "$W/proj" add bin core; git -C "$W/proj" commit -q -m "tip with the host wiring"
+  git -C "$W/proj" checkout -q main; TIP=$(git -C "$W/proj" rev-parse trunk)
+}
+trunk_commit() {  # <file> <line> <message>: append a line to a trunk file; sets TIP
+  git -C "$W/proj" checkout -q trunk; printf '%s\n' "$2" >> "$W/proj/$1"
+  git -C "$W/proj" commit -q -am "$3"; git -C "$W/proj" checkout -q main; TIP=$(git -C "$W/proj" rev-parse trunk)
+}
+wire_move() {  # <mover> [<extra args>]: move every home to TIP with the wiring on, in a throwaway user home
+  local mover=$1; shift
+  env -u JG_HOST_WIRING_SKIP JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 JG_TEST_WIRING_LOG="$W/wiring.log" \
+    HOME="$W/user" XDG_DATA_HOME="$W/user/.local/share" XDG_CONFIG_HOME="$W/user/.config" \
+    "$mover" --base "$TIP" --project "$W/proj" --branch trunk "$@" 2>&1
+}
+installed_equals_core() {  # <home dir>: every installed tickets-sync file equals that home's core/ copy
+  local f
+  for f in "$1"/core/tickets-sync/*.py; do
+    cmp -s "$f" "$W/user/.local/share/jg-tickets-sync/tickets-sync/${f##*/}" || return 1
+  done
+}
+last_row_of() { row_of "$1" | tail -n 1; }
+two_skipped() {  # <output> <rc>: the move's only verdict is the two leads the fixture always skips
+  [ "$2" -eq 1 ] && [ "$(printf '%s\n' "$1" | tail -n 1)" = "fleet: not every home is at ${TIP:0:12}: lead-dirty lead-unlanded" ]
+}
+
+test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure() {
+  local out rc=0 ok lines
   mover_world t1c
-  mkdir -p "$W/proj/bin"; git -C "$W/proj" checkout -q trunk
-  # shellcheck disable=SC2016 # the stub's own $1 is expanded when the stub runs
-  printf '#!/usr/bin/env bash\necho wired > "$1/.wired-marker"\n[ "$(basename "$1")" != lead-repoint ] || { echo "wiring step failed" >&2; exit 1; }\n' > "$W/proj/bin/jg-host-wiring.sh"
-  chmod +x "$W/proj/bin/jg-host-wiring.sh"; git -C "$W/proj" add bin; git -C "$W/proj" commit -q -m "tip with wiring"
-  git -C "$W/proj" checkout -q main; C2=$(git -C "$W/proj" rev-parse trunk)
-  out=$(env -u JG_HOST_WIRING_SKIP JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk 2>&1) || rc=$?
-  [ "$rc" -eq 1 ] || fail "a wiring failure must not change the verdict (only the two skipped homes fail the move): $out"
-  for h in lead-ff lead-repoint main; do [ -f "$W/$h/.wired-marker" ] || fail "$h moved, so its own host wiring must run: $out"; done
-  for h in lead-dirty lead-unlanded; do [ ! -e "$W/$h/.wired-marker" ] || fail "$h was skipped, so it must not be wired"; done
-  assert_contains "$out" "host wiring not whole after the move" "a failed wiring step is reported"
-  [ "$(row_of lead-repoint | cut -f4)" = "live,re-pointed-from:${X:0:12}" ] || fail "a wiring failure leaves the move row untouched: $(row_of lead-repoint)"
-  pass 'T1c a moved home runs its own host wiring; a skipped home does not; a wiring failure never blocks'
+  ok=$(passing_health_mover)
+  wiring_tip
+  : > "$W/wiring.log"
+
+  # First move: no home has a wiring record, so every step runs in each home that moved, and the copy equals core/.
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  two_skipped "$out" "$rc" || fail "the first move must leave only the two skipped leads behind: rc=$rc $out"
+  grep -q " $W/lead-ff\$" "$W/wiring.log" || fail "a lead with no wiring record must wire every step: $out"
+  grep -q " $W/main\$" "$W/wiring.log" || fail "Main with no wiring record must wire every step: $out"
+  ! grep -q "lead-dirty\|lead-unlanded" "$W/wiring.log" || fail "a skipped home must not be wired"
+  installed_equals_core "$W/lead-ff" || fail "the installed tickets-sync copy must equal core/ after the first move: $out"
+  [ "$(awk -F'\t' '$1 == "tickets-sync" { print $2 }' "$W/lead-ff/state/host-wiring.tsv")" = "$TIP" ] || fail "the home must record the commit tickets-sync wired from"
+
+  # An add-on file changes in the move: only that add-on is wired again, and its installed copy follows core/.
+  : > "$W/wiring.log"
+  trunk_commit core/tickets-sync/sync.py '# the landed no-store fix' "tickets-sync change"
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  two_skipped "$out" "$rc" || fail "the tickets-sync move must leave only the two skipped leads behind: rc=$rc $out"
+  installed_equals_core "$W/lead-ff" || fail "the installed copy must equal the lead's core/ after a move that changed it: $out"
+  installed_equals_core "$W/main" || fail "the installed copy must equal Main's core/ after a move that changed it: $out"
+  grep -q 'the landed no-store fix' "$W/user/.local/share/jg-tickets-sync/tickets-sync/sync.py" || fail "the installed sync.py must carry the change"
+  [ ! -s "$W/wiring.log" ] || fail "a move that changed only tickets-sync must run no other step: $(cat "$W/wiring.log")"
+  assert_contains "$out" "jg-host-wiring: 1 steps wired" "only the changed add-on is wired"
+
+  # A move that changes no add-on file runs no wiring.
+  trunk_commit a.txt more "not an add-on"
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  two_skipped "$out" "$rc" || fail "a move with no add-on change must leave only the two skipped leads behind: rc=$rc $out"
+  [ ! -s "$W/wiring.log" ] || fail "a move that changed no add-on file must run no wiring: $(cat "$W/wiring.log")"
+  assert_contains "$out" "jg-host-wiring: 0 steps wired" "no step runs when no add-on changed"
+  [ "$(last_row_of lead-ff | cut -f4)" = live ] || fail "a move with nothing to wire keeps a plain live row: $(last_row_of lead-ff)"
+
+  # A wiring failure is named in the move row, never blocks the move, and the failed step is retried on the next move.
+  trunk_commit core/fleet-flow/wiring.sh 'echo "fleet-flow: refused: no install dir" >&2; exit 1' "break one wiring"
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  two_skipped "$out" "$rc" || fail "a wiring failure must not add a home to the move's verdict: rc=$rc $out"
+  [ "$(head_of lead-ff)" = "$TIP" ] || fail "a wiring failure must not undo the move"
+  [ "$(last_row_of lead-ff | cut -f4)" = "live,wiring-failed:fleet-flow" ] || fail "the row must name the failed step: $(last_row_of lead-ff)"
+  [ "$(last_row_of primary | cut -f4)" = "live,wiring-failed:fleet-flow" ] || fail "Main's row must name the failed step: $(last_row_of primary)"
+  trunk_commit a.txt again "not an add-on either"
+  rc=0; out=$(wire_move "$ok") || rc=$?
+  two_skipped "$out" "$rc" || fail "the next move must leave only the two skipped leads behind: rc=$rc $out"
+  [ "$(last_row_of lead-ff | cut -f4)" = "live,wiring-failed:fleet-flow" ] || fail "a failed step has no record, so the next move retries it: $(last_row_of lead-ff)"
+
+  # The drift Main hit: the home already holds an add-on change it never wired (its code moved without the wiring), and
+  # its health check fails, so the move rolls it back to the commit it already stands on. It is still wired.
+  trunk_commit core/tickets-sync/ticket.py '# a second landed fix' "tickets-sync change, unwired"
+  rc=0; out=$(env JG_HOST_WIRING_SKIP=1 JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 HOME="$W/user" \
+    XDG_DATA_HOME="$W/user/.local/share" "$ok" --base "$TIP" --project "$W/proj" --branch trunk 2>&1) || rc=$?
+  two_skipped "$out" "$rc" || fail "the unwired move must leave only the two skipped leads behind: rc=$rc $out"
+  installed_equals_core "$W/lead-ff" && fail "the fixture must start with a copy that lags core/"
+  mkdir -p "$W/bin-bad"; cp -r "$ROOT/bin/." "$W/bin-bad/"
+  printf '#!/usr/bin/env bash\necho "missing-guard: no home guard hook" >&2\nexit 1\n' > "$W/bin-bad/jg-home-health.sh"; chmod +x "$W/bin-bad/jg-home-health.sh"
+  out=$(wire_move "$W/bin-bad/jg-update.sh") || true
+  lines=$(last_row_of lead-ff | cut -f4)
+  case $lines in rolled-back:*) ;; *) fail "the failed health check must roll the home back: $lines" ;; esac
+  [ "$(head_of lead-ff)" = "$TIP" ] || fail "the home must stay on the commit it already held"
+  installed_equals_core "$W/lead-ff" || fail "a home rolled back onto the moved commit must still be wired to the code it holds: $out"
+  pass 'T1c a move wires only the add-ons it changed, the copy equals core/, a failure is named in the row, a rolled-back home on the moved commit is wired'
 }
 
 test_home_moves_one_canary_only() {
@@ -299,7 +392,7 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
 
 test_every_home_moves_or_is_skipped_with_one_row
 test_cache_is_cleared_after_a_move
-test_a_moved_home_runs_its_own_host_wiring_and_a_failure_never_blocks
+test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure
 test_a_go_live_run_from_a_lead_home_moves_every_home
 test_a_home_left_behind_is_named_and_the_lag_check_reports_it
 test_home_moves_one_canary_only

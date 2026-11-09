@@ -82,8 +82,12 @@
 #   skipped:dirty | skipped:unlanded:<paths> | skipped:<other reason>   not touched
 #   live,pinned-back-from:<sha> the base is BEHIND the home (a red CI) and the home holds only trunk commits: reset --keep to the base
 #   rolled-back:<reason>        the health check failed: the home is pinned back to its pre-move HEAD and the rollout stops
-# After a home moves, bin/jg-home-guard.sh install <home> and bin/jg-home-health.sh check <home> <sha> run when present,
-# then the home's own bin/jg-host-wiring.sh (reported, never blocking), so installed host copies follow the trunk.
+#   <status>,wiring-failed:<steps>   the home stands on <sha> but these host wiring steps failed (the move itself stands)
+# After a home moves, bin/jg-home-guard.sh install <home> and bin/jg-home-health.sh check <home> <sha> run when present.
+# Then every home that stands on <sha> (moved, or rolled back to a pre-move HEAD that already was <sha>) runs its own
+# bin/jg-host-wiring.sh --changed: only the steps whose sources changed since that home last wired, so its installed host
+# copies equal its core/ and a move that changed no wired source runs no wiring. A failed step never blocks the move or
+# the rollout; it is named in the home's row.
 # Moving anything clears state/squad-lead-summary-cache (an observational cache). Main's move writes
 # state/trunk-live-restart-pending for the next locked session start. --home moves that one lead only (the canary).
 # Without --base a local-trunk project is refused: its code comes from its trunk, not from origin.
@@ -288,14 +292,21 @@ jg_ff_after_squad_lead_settled() {  # <id> <home> <window> <status> <instr>
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 FLEET_RC=0 FLEET_VERDICT=""
 
-# The moved home's own wiring (its tip's bin/jg-host-wiring.sh) rewrites every installed host copy from the code the home
-# now holds, so an installed sync.py equals the repo after a live move. Run after the move and its health check; a
-# failure is reported and never blocks the move or the rollout. JG_HOST_WIRING_SKIP=1 turns it off for a fixture.
+# The home's own wiring (bin/jg-host-wiring.sh --changed from the code the home now holds) re-runs every step whose
+# sources changed since that home last wired, so an installed sync.py equals the home's core/ after a live move and a
+# move that changed no wired source runs nothing. Run after the move and its health check; a failure never blocks the
+# move or the rollout and sets WIRE_FAILED to the failed steps for the row. JG_HOST_WIRING_SKIP=1 turns it off for a fixture.
 wire_home() {  # <dir> <label>
-  local dir=$1 label=$2
+  local dir=$1 label=$2 out rc=0
+  WIRE_FAILED=
   [ "${JG_HOST_WIRING_SKIP:-0}" != 1 ] && [ -x "$dir/bin/jg-host-wiring.sh" ] || return 0
-  env JG_HOME="$dir" JG_ROOT_OVERRIDE="$dir" "$dir/bin/jg-host-wiring.sh" "$dir" >&2 \
-    || echo "$label: host wiring not whole after the move (see the jg-host-wiring lines above)" >&2
+  out=$(env -u JG_STATE_OVERRIDE -u JG_DATA_OVERRIDE -u JG_CONFIG_OVERRIDE JG_HOME="$dir" JG_ROOT_OVERRIDE="$dir" \
+    "$dir/bin/jg-host-wiring.sh" --changed "$dir" 2>&1) || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  [ "$rc" -ne 0 ] || return 0
+  WIRE_FAILED=$(printf '%s\n' "$out" | sed -n 's/.*, failed: *//p' | tail -n 1 | tr -s ' ' ',')
+  WIRE_FAILED=${WIRE_FAILED:-exit-$rc}
+  echo "$label: host wiring not whole after the move: $WIRE_FAILED failed (see the jg-host-wiring lines above)" >&2
 }
 
 # Move one home to $BASE and write its row. Sets MOVE_RESULT=moved|skipped|stopped.
@@ -344,7 +355,10 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
       status="rolled-back:$(first_line "$(printf '%s\n' "$out" | tail -n 1)")"; MOVE_RESULT=stopped
       echo "$label: health check failed, pinned back to ${pre:0:12}: $status"
     fi
-    [ "$MOVE_RESULT" != moved ] || wire_home "$dir" "$label"
+  fi
+  if [ "$MOVE_RESULT" != skipped ] && [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" = "$(git -C "$dir" rev-parse --verify -q "$BASE^{commit}" 2>/dev/null)" ]; then
+    wire_home "$dir" "$label"
+    [ -z "$WIRE_FAILED" ] || status="$status,wiring-failed:$WIRE_FAILED"
   fi
   mkdir -p "$DATA"
   printf '%s:%s\t%s\t%s\t%s\t%s\n' "$(basename "$PROJECT")" "$key" "$BASE" "$(date +%s)" "$status" "$pre" >> "$DATA/trunk-live.tsv"
