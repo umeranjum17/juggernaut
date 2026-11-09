@@ -10,7 +10,7 @@ if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
 T=$(jg_test_tmproot jg-beads-followup) CLI="$ROOT/bin/jg-backlog.sh" jail=()
 unset BEADS_DB BEADS_DOLT_SHARED_SERVER
 export TZ=UTC JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
+command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 mkdir -p "$T/bd/data" "$T/bd/state" "$T/bd/config" "$T/bd/s"
 printf '%s\n' "$T/bd/s/.beads" > "$T/bd/config/beads-dir"
 BEADS_DIR=$T/bd/s/.beads "${jail[@]}" "$ROOT/bin/jg-beads.sh" init --prefix jg >/dev/null 2>&1 || fail "a store"

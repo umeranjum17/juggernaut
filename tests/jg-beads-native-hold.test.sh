@@ -45,8 +45,13 @@ else
   trap_bd "$fb"
   jg_fake_exit0 "$fb" tmux treehouse no-mistakes gh gh-axi
   printf '%s\n' "$T/store/.beads" > "$home/config/beads-dir"
+  # The hold script reads statuses through the Go classifier, built on first use per checkout path into the
+  # user's cache; the jail's root is read-only, so a fresh checkout cannot build it there. Build it here, outside.
+  JG_CLASSIFY_BIN="$T/classify/jg-classify" "$ROOT/bin/jg-classify.sh" is-paused 'paused: warm' >/dev/null 2>&1 || :
+  [ -x "$T/classify/jg-classify" ] || fail "the classifier did not build"
+  export JG_CLASSIFY_BIN="$T/classify/jg-classify"
   export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT TMPDIR=$T  # The jail's /tmp is gone with each call.
-  command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
+  command -v bwrap >/dev/null && jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
   store() { BEADS_DIR="$T/store/.beads" "${jail[@]}" "$WRAPPER" "$@"; }
   store init --prefix jg >/dev/null 2>&1 || fail "real init"
   out=$(captain "$home" hold jg-call --title "[captain-ask] Pick the route" --reason "the owner picks" --repo sample --priority 1) \

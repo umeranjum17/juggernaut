@@ -88,7 +88,7 @@ unset JG_PIN_FILE_OVERRIDE
 mkdir -p "$T/real" "$T/user/.beads/eventsData" "$T/user/.dolt/eventsData"
 printf 'queued\n' | tee "$T/user/.beads/eventsData/keep" > "$T/user/.dolt/eventsData/keep"
 export HOME=$T/user BEADS_DIR=$T/real/.beads JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
-jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
+jail=(bwrap --ro-bind / / --tmpfs /tmp --bind "$T" "$T" --ro-bind "$ROOT" "$ROOT" --dev /dev --proc /proc --unshare-net --unshare-pid --die-with-parent)
 bd_() { timeout 30 "${jail[@]}" "$WRAPPER" "$@" </dev/null 2>&1; }
 bd_ init --prefix jg >/dev/null || fail "real init"
 
