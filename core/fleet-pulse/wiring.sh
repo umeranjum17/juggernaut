@@ -2,6 +2,11 @@
 # Point the old inline wakes in state/fleet-pulse.check.sh at this feature's scripts: a retro wake that still
 # globs only main-home jg-retro-*/report.md at bin/fleet-retro-due.sh (newest report.md across known homes), and a
 # Fable wake that still greps session logs itself at bin/fleet-fable.sh (the model guard's allow-tasks decides).
+# When its 2h report still counts landings as merged PRs only, retarget the report onto the trunk era, all
+# blocks or none: landed, live and rtl from bin/trunk-pulse.sh (a home with no trunk records keeps its
+# merged-PR count), asks>2h from bin/lead-asks.sh, and the open/working/dry row from
+# ../fleet-flow/bin/jg-flow-check.sh with JG_MAIN_HOME set to this home. A check that has the report but not
+# every block in the known form is left as it is, and the blocks it lacks are named (exit 1).
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves
 # here, so an unmigrated shell, unit, pane or record keeps this script working.
 for _jg_old in $(compgen -v FM_ 2>/dev/null || true); do
@@ -70,3 +75,55 @@ path.write_text(new)
 print(f"retargeted {name} wake: {path} -> {script}")
 PY
 done
+
+python3 - "$check" "$feature" "$home" "$DRY" <<'PY'
+import pathlib, re, sys
+path, feature, home, dry = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4] == "1"
+text = path.read_text()
+if "fleet-pulse 2h" not in text:
+    sys.exit(0)
+def q(p):
+    return "'" + p.replace("'", "'\\''") + "'"
+trunk, asks = q(f"{feature}/bin/trunk-pulse.sh"), q(f"{feature}/bin/lead-asks.sh")
+flow = q(str(pathlib.Path(feature).parent / "fleet-flow" / "bin" / "jg-flow-check.sh"))
+landed_block = (
+    "  # Trunk-era landings (core/fleet-pulse/bin/trunk-pulse.sh): a home with trunk records lands on its trunk\n"
+    "  # and goes live there, so its landed count comes from those records; a merged-PR home keeps the count above.\n"
+    f'  tr=""; if t=$({trunk} "$hp" "$((now - 7200))" "$now"); then\n'
+    "    IFS=$'\\t' read -r m tl tw <<<\"$t\"; tr=\"/live$tl/rtl$tw\"; [ \"$tw\" = - ] || tr=\"${tr}m\"\n"
+    "  fi\n"
+)
+# name, marker of the retargeted form, pattern of the old form, replacement
+blocks = [
+    ("landed", "trunk-pulse.sh", re.compile(r"(?m)^(?=  w=0 p=0 b=0\n)"), landed_block),
+    ("landed-line", "$name:landed$m$tr/open", re.compile(re.escape("$name:landed$m/open")), "$name:landed$m$tr/open"),
+    ("legend", "landed = trunk landings", re.compile(re.escape("fleet-pulse 2h (landings = merged PRs; ")),
+     "fleet-pulse 2h (landed = trunk landings, else merged PRs; live = trunk live moves; rtl = minutes the oldest "
+     "landed commit waits to go live; asks>2h = open keyed lead asks to Main; "),
+    ("flow", "jg-flow-check.sh", re.compile(
+        r"IFS=\$'\\t' read -r _ o fw rd dw ow ms ct dy <<<\"\$\(timeout 25 \S*fm-flow-check\.sh \"\$hp\" --summary 2>/dev/null\)\""),
+     f"IFS=$'\\t' read -r _ o fw rd dw ow ms ct dy _ <<<\"$(JG_MAIN_HOME={q(home)} timeout 25 {flow} \"$hp\" --summary 2>/dev/null)\""),
+    ("asks", "lead-asks.sh", re.compile(r"lk=\$\(python3 - (\"[^\"\n]*\") \"\$now\" <<'PY'\n.*?\nPY\n\)\n", re.S),
+     lambda m: f'lk=$({asks} {m.group(1)} "$now")\n'),
+]
+todo, missing = [], []
+for name, marker, pat, repl in blocks:
+    if marker in text:
+        continue
+    if len(pat.findall(text)) != 1:
+        missing.append(name)
+        continue
+    todo.append(name)
+    text = pat.sub(repl if callable(repl) else repl.replace("\\", "\\\\"), text, count=1)
+if missing:
+    sys.stderr.write(f"fleet-pulse wiring: {path} has the 2h report but not these blocks in the known form: "
+                     f"{' '.join(missing)}; left as it is\n")
+    sys.exit(1)
+if not todo:
+    sys.exit(0)
+if dry:
+    print(f"would retarget the 2h report in {path} onto the trunk era: {' '.join(todo)}")
+    sys.exit(0)
+path.write_text(text)
+print(f"retargeted the 2h report in {path} onto the trunk era: {' '.join(todo)}")
+PY

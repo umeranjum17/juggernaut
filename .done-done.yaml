@@ -131,6 +131,8 @@ journeys:
     command: bash core/fleet-pulse/run-proof.sh
   fleet-pulse-fable-allow:
     command: bash core/fleet-pulse/run-fable-proof.sh
+  fleet-pulse-trunk-landed:
+    command: bash core/fleet-pulse/run-trunk-proof.sh
   retro-metrics:
     command: bash core/fleet-stats/tests/retro-metrics.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
 
