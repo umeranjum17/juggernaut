@@ -886,6 +886,15 @@ jg_dod_pr_checks_clear() {  # <worktree> <pr-url>
   return 1
 }
 
+# 0 when a lane of this mode is a local-trunk lane: mode local-trunk, or the legacy local-only of a project registered local-trunk.
+jg_dod_trunk_lane() {  # <mode> <project-dir>
+  case "$1" in
+    local-trunk) return 0 ;;
+    local-only) [ "$(JG_HOME="${JG_HOME:-}" "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/jg-project-mode.sh" --raw "$(basename "${2:-/}")" 2>/dev/null | cut -d' ' -f1)" = local-trunk ] ;;
+    *) return 1 ;;
+  esac
+}
+
 # 0 when <line> is not a ship done: to gate, when it names the task's recorded
 # PR whose head the forge holds, when it names a Gerrit change whose current
 # patch set carries the worker copy's HEAD tree, when its named head - the
@@ -951,6 +960,11 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     jg_design_done_gate "$state" "$id" "$meta" "$design_head" || return 1
   fi
   if declare -F jg_receipts_accept_done >/dev/null; then jg_receipts_accept_done "$wt" "$mode" "$line" "$state" "$id" "$meta" "$forge_head" || return 1; fi
+  # A local-trunk lane's done needs the whole proof at its head, up front: the receipt, approved merge-card evidence and a
+  # sealed done-done run (jg_dod_trunk_proof_gaps). The landing asks the same question, so a done that passes here lands.
+  if [ -n "$state" ] && [ -n "$id" ] && [ -f "$meta" ] && [ -n "$design_head" ] && jg_dod_trunk_lane "$mode" "$project"; then
+    jg_dod_trunk_proof_gaps "${JG_HOME:-$(dirname "$state")}" "$state" "$id" "$meta" "$design_head" || return 1
+  fi
   [ -z "$run_out" ] || jg_dod_nm_custody_released "$run_out" || return 1
   if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; } && [ -n "$run_out" ]; then
     jg_dod_nm_custody_returned "$wt" "$run_out" || return 1

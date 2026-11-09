@@ -3,6 +3,7 @@
 # live at once, and the accumulated trunk goes out in one batch release.
 #
 # Usage: jg-trunk.sh init <project-dir> [<base-ref>]   create the trunk (default: the newest release/c-N, else HEAD)
+#        jg-trunk.sh proof <task-id>                   print the proof inputs the task's head still lacks (receipt, merge-card evidence, sealed run); exit 1 when any
 #        jg-trunk.sh land <task-id>                    land the task's one proved commit on the trunk; never goes live
 #        jg-trunk.sh land-batch <id>[@<head>]...       land 2 to batch-max queued lanes as one stack: one gate over their changed files, one move; a red stack is halved to find and return only the lane that caused it
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the whole suite at a landed commit (default: the tip), one verify at a time and the newest wins: green moves the pin, a red it caused reverts it
@@ -26,8 +27,11 @@
 # trunk tip by itself (a clean three-way merge; the lane branch follows it), runs the lint over the changed files (gate-lint),
 # runs the changed files' tests (gate-full) judged against the trunk tip's own result, and lands. Only a conflict in the lane's
 # own change stops it, and the refusal names the paths. The captain hold, the design, demo and nav gates, the ticket reference,
-# the linked-decision block, a red trunk and owner-guard still apply. The done-done seal, the merge-card and the owner signature
-# never refuse a landing: what exists is recorded after it (data/trunk-landing-proofs.tsv), what is missing is recorded as absent.
+# the linked-decision block, a red trunk and owner-guard still apply. A landing starts only on a head whose whole proof is there
+# (jg_dod_trunk_proof_gaps in bin/jg-merge-gate-lib.sh, the same check the worker's done runs): a PASS completion receipt, approved
+# merge-card evidence citing files, and a sealed done-done run holding them, all at the lane's own head. A missing input refuses
+# before anything starts and is named; `proof <task-id>` prints them. The owner signature never refuses a landing: it is
+# recorded after it (data/trunk-landing-proofs.tsv), absent when missing.
 #
 # The changed-files gate charges a lane only for what it broke. When it fails, the lander first reruns the failing scripts once on
 # the lane, and a script that passes on the rerun is flaky and not charged. It then reruns exactly the failing test
@@ -438,8 +442,8 @@ lane_follow() {  # <branch> <old> <new> <worktree>
   fi
 }
 
-# The done-done seal, the merge-card and the owner signature no longer gate a landing. What is there is recorded after it,
-# as a fact about the landed commit; a missing one is recorded as absent and never refuses or redoes anything.
+# What the proof gate already required is recorded after the landing as a fact about the landed commit; the owner signature
+# is the one input that never gates it, and is recorded as absent when missing.
 record_proofs() {  # <id> <lane head> <landed commit>
   local r="$STATE/$1.run-receipt.json" d="$DATA/$1" receipt=absent sig=absent card=absent
   if [ -f "$r" ] && command -v jq >/dev/null 2>&1; then receipt="$(jq -r '.verdict // "unreadable"' "$r" 2>/dev/null || echo unreadable)@$(jq -r '.head // ""' "$r" 2>/dev/null | cut -c1-12)"; fi
@@ -468,13 +472,15 @@ lane_meta() {  # <task-id>
 # linked decisions, the design/demo/nav gates and owner-guard. Refuses (exits) on any failure. Sets LANE_BRANCH, LANE_HEAD, LANE_CAND
 # (the commit to land) and LANE_LANDED (1 when the lane is already on <tip>). <follow> 1 moves the lane branch to its rebased commit now.
 lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
-  local id=$1 tip=$2 base n red hit rc=0 linked fresh
+  local id=$1 tip=$2 base n red hit rc=0 linked fresh gaps
   LANE_BRANCH=$(jg_dod_meta_value "$META" branch); LANE_BRANCH=${LANE_BRANCH:-fm/$id}
   git check-ref-format --branch "$LANE_BRANCH" >/dev/null 2>&1 || die "task $id has an invalid ship branch '$LANE_BRANCH'"
   LANE_HEAD=$(rev "refs/heads/$LANE_BRANCH") || die "branch $LANE_BRANCH does not exist in $PROJ"
   [ "$3" = - ] || [ "$LANE_HEAD" = "$3" ] || refuse "branch changed during admission; request and prove its new head"
   LANE_CAND=$LANE_HEAD; LANE_LANDED=
   if git -C "$PROJ" merge-base --is-ancestor "$LANE_CAND" "$tip"; then LANE_LANDED=1; return 0; fi
+  # The whole proof at the lane's own head, before anything starts (single landing and stack alike): a PASS receipt alone is not enough.
+  gaps=$(jg_dod_trunk_proof_gaps "$JG_HOME" "$STATE" "$id" "$META" "$LANE_HEAD") || refuse "the proof inputs are incomplete for $id, so no landing starts: $(printf '%s' "$gaps" | tr '\n' ';'); the lane completes its proof at this head and reports ready again"
   # The lander rebases the lane's one commit onto the latest tip by itself. Only a conflict stops it, and the lane resolves that.
   if ! git -C "$PROJ" merge-base --is-ancestor "$tip" "$LANE_CAND"; then
     base=$(git -C "$PROJ" merge-base "$tip" "$LANE_CAND" 2>/dev/null) || refuse "$LANE_BRANCH shares no history with $TRUNK (${tip:0:12}); start the lane on the trunk tip"
@@ -755,7 +761,7 @@ cmd_land() {
   [ "$rc" -eq 0 ] || printf '%s\n' "$reason"
   kind=final
   if [ "$rc" -eq 0 ]; then kind=landed; reason="landed $id at $cand; not live"
-  elif grep -qE "^(REFUSED|error):.*(away mode|linked to a decision| is red|still held|the trunk kept moving)" "$attempt/landing.log"; then kind="wait"
+  elif grep -qE "^(REFUSED|error):.*(away mode|linked to a decision| is red|still held|the trunk kept moving|proof inputs are incomplete)" "$attempt/landing.log"; then kind="wait"
   elif ! grep -q "^REFUSED: gate '" "$attempt/landing.log" &&
     grep -qE '^(jg-captain-hold: )?backlog show [A-Za-z0-9._-]+ exceeded its [0-9]+s backlog read bound$' "$attempt/landing.log"; then
     count=$((count + 1)); [ "$count" -ge 3 ] || { kind=retry; rc=74; }
@@ -1153,6 +1159,16 @@ cmd_release() {
   echo "released $n commits from $TRUNK: $url"
 }
 
+# The landing check's cheap pre-test: prints what proof the task's branch head still lacks, exit 1 when any, before a landing is started.
+cmd_proof() {
+  local id=${1:-} meta branch head gaps
+  jg_pr_task_id_valid "$id" || die "invalid task id"
+  meta=$STATE/$id.meta; [ -f "$meta" ] || die "no meta for task $id at $meta"
+  branch=$(jg_dod_meta_value "$meta" branch); branch=${branch:-fm/$id}
+  head=$(git -C "$(jg_dod_meta_value "$meta" project)" rev-parse --verify "refs/heads/$branch^{commit}") || die "branch $branch does not exist"
+  gaps=$(jg_dod_trunk_proof_gaps "$JG_HOME" "$STATE" "$id" "$meta" "$head") || { printf '%s\n' "$gaps"; return 1; }
+}
+
 cmd_due() {
   local first
   open_project "${1-}"; tip_ok
@@ -1165,6 +1181,7 @@ case "${1:-}" in
   land) shift; cmd_land "$@" ;;
   land-batch) shift; cmd_land_batch "$@" ;;
   verify) shift; cmd_verify "$@" ;;
+  proof) shift; cmd_proof "$@" ;;
   word) shift; cmd_word "$@" ;;
   live) shift; cmd_live "$@" ;;
   autolive) shift; cmd_autolive "$@" ;;

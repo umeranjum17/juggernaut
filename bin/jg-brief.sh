@@ -748,7 +748,7 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
 fi
 
 # The local-trunk landing rule, in one place for the lane brief and the squad lead charter (local-trunk projects only).
-TRUNK_REBASE_RULE="Juggernaut's landing check rebases your commit onto the latest tip of the local trunk by itself, lints the changed files, runs the changed files' tests against the tip's own result and lands it; you never rebase for it, and the done-done seal, the merge-card and the owner signature are recorded after the landing and never block it.
+TRUNK_REBASE_RULE="Juggernaut's landing check rebases your commit onto the latest tip of the local trunk by itself, lints the changed files, runs the changed files' tests against the tip's own result and lands it; you never rebase for it. Your done and the landing both need the whole proof at your exact head: a PASS completion receipt, approved merge-card evidence that cites files, and a sealed done-done run holding them; a PASS receipt alone is refused, and nothing may be committed after the seal. The owner signature is recorded after the landing and never blocks it.
 If the landing check reports that your change conflicts with the trunk, YOU resolve every conflict in your own change, then report ready again; never hand a conflict to anyone else, and never force a landing: no force flag, no hand-moved trunk ref, no landing past a conflict exists, and a landing that is refused is fixed in the lane and reported ready again."
 jg_brief_local_trunk() {  # <project>: true when the project is registered local-trunk
   [ "$(JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$1" 2>/dev/null | cut -d' ' -f1)" = local-trunk ]

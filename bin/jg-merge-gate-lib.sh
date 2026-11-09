@@ -351,11 +351,34 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
   return 1
 }
 
+# The proof a local-trunk lane needs at its exact head, checked once and whole: its completion receipt (PASS, this head, this
+# incarnation), approved merge-card evidence that cites files (core/merge-card's saved pass for this head), and a sealed clean
+# done-done run at this head holding those files (`merge-card receipt`). A PASS receipt alone is not enough. Prints one line per
+# missing input and returns 1 when any is missing; 0 and no output when all are there. The worker's done and the landing's
+# admission both call it, so neither starts on a head whose proof is incomplete.
+# Usage: jg_dod_trunk_proof_gaps <home> <state> <id> <meta> <head>
+jg_dod_trunk_proof_gaps() {
+  local home=$1 state=$2 id=$3 meta=$4 head=$5 r="$2/$3.run-receipt.json" card="${JG_DATA_OVERRIDE:-$1/data}/$3/merge-card.json" gaps=0 mc
+  mc=$_JG_GATE_LIB_DIR/../core/merge-card/merge-card
+  command -v jq >/dev/null 2>&1 || { echo "the proof inputs for $id cannot be checked: jq is required"; return 1; }
+  if ! { [ -f "$r" ] && jq -e --arg h "$head" --arg g "$(sed -n 's/^spawn_gen=//p' "$meta" 2>/dev/null | tail -n 1)" \
+    '.verdict == "PASS" and .head == $h and (($g == "") or (.spawn_gen == $g))' "$r" >/dev/null 2>&1; }; then
+    echo "no completion receipt with verdict PASS for head ${head:0:12} of $id (publish it with core/receipts/bin/jg-run-receipt.sh at this head)"; gaps=1
+  fi
+  if ! { [ -f "$card" ] && jq -e --arg h "$head" 'select(.head == $h and .verdict == "pass") | (.check.evidence // []) | length > 0' "$card" >/dev/null 2>&1; }; then
+    echo "no approved merge-card evidence citing files for head ${head:0:12} of $id (run: JG_HOME=$home $mc check $id <worktree> $head <PR url|->)"; gaps=1
+  elif ! JG_HOME=$home "$mc" receipt "$id" "$head" >/dev/null 2>&1; then
+    echo "no sealed done-done run at head ${head:0:12} of $id holding the cited evidence (run the verify suite sealed: done-done run -- <suite command>; commit nothing after)"; gaps=1
+  fi
+  [ "$gaps" = 0 ]
+}
+
 # The gates a local landing passes, in one place so bin/jg-merge-local.sh and bin/jg-trunk.sh
 # cannot drift: the captain hold, then receipt, design, demo, nav, config/merge-gate and the proof card.
 # Prints the refusal and returns 1; returns 0 when every gate passes.
-# A local-trunk landing (bin/jg-trunk.sh) passes the hold and the design, demo and nav gates only; its done-done seal,
-# merge-card and owner signature never refuse it (they are recorded after the landing), so it passes `trunk` as <kind>.
+# A local-trunk landing (bin/jg-trunk.sh) passes the hold and the design, demo and nav gates here and has its proof checked
+# up front by jg_dod_trunk_proof_gaps (receipt, merge-card evidence, sealed run); its owner signature never refuses it, so it
+# passes `trunk` as <kind>.
 # Usage: jg_dod_local_landing_gates <bin-dir> <config-dir> <home> <state> <id> <meta> <project> <base> <candidate> [trunk]
 jg_dod_local_landing_gates() {
   local bin=$1 config=$2 home=$3 state=$4 id=$5 meta=$6 proj=$7 base=$8 candidate=$9 kind=${10:-} hold_status=0
