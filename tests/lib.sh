@@ -121,7 +121,11 @@ fi
 jg_test_beads_home() {  # <home> [<prefix>=jg]
   local home=$1 prefix=${2:-jg} tpl store
   if [ -z "${JG_BEADS_TEST_BD:-}" ] || [ -z "${JG_BEADS_TEST_DOLT:-}" ]; then
-    printf 'skip: no Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n'
+    # A case home is built inside `d=$(setup ...)`, where `exit` ends only that subshell and stdout becomes the
+    # case dir: the skip text would name a directory the suite then creates. The note goes to stderr and the
+    # suite itself is told to skip (the USR1 trap below).
+    printf 'skip: no Beads store: JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT are unset\n' >&2
+    kill -s USR1 "$$" 2>/dev/null
     exit 0
   fi
   export JG_BEADS_BD=$JG_BEADS_TEST_BD JG_BEADS_DOLT=$JG_BEADS_TEST_DOLT
@@ -508,6 +512,7 @@ trap 'jg_test_cleanup; exit 130' INT
 trap 'jg_test_cleanup; exit 143' TERM
 trap 'jg_test_cleanup; exit 129' HUP
 trap 'jg_test_cleanup; exit 131' QUIT
+trap 'exit 0' USR1  # the suite skips: jg_test_beads_home has no Beads build to give it
 
 # jg_test_reap_orphans: best-effort sweep for fixture roots left behind by a
 # prior run that was killed hard enough to skip the traps above (e.g. a
