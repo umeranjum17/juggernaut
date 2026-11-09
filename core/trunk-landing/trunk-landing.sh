@@ -21,7 +21,7 @@
 # commit by itself if it caused a red. The check never goes live on its own authority: that stays the captain's word
 # (jg-trunk.sh live), EXCEPT for a project with a line in config/trunk-live-waiver (jg-trunk.sh waiver). For it every tick
 # also starts `live` (a detached job, never blocking a landing), which runs `bin/jg-trunk.sh autolive` and reports a go-live,
-# a failed move or a hold in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
+# a failed move, a hold or a home still behind the last go-live after 10 minutes (bin/jg-trunk-live-lag.sh) in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
 # oldest landing not yet live is live-cap-minutes (60) old, whichever is first. A red suite never goes live.
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced: a refusal is reported and the worktree stays.
 # The watcher runs this check on its fast tick, so a worker's done starts the landing within seconds in every home; the outcome
@@ -74,10 +74,17 @@ fi
 # The batched live step for one project (bin/jg-trunk.sh autolive decides; this reports what is worth a line: a go-live, a
 # failed move, or a new hold). One at a time per project: a tick that finds the last one still running does nothing.
 if [ "$1" = live ]; then
-  pn=$3; proj=$FMH/projects/$pn; lrc=0; live=
+  pn=$3; proj=$FMH/projects/$pn; lrc=0; live=; lag=
   [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [ -d "$proj" ] || exit 2
   jg_lock_try_acquire "$STATE/.trunk-autolive-$pn.lock" || exit 0
   trap 'jg_lock_release "$STATE/.trunk-autolive-$pn.lock"' EXIT
+  # A home that stays behind the last go-live for over 10 minutes is reported once per set of homes (the line holds no age).
+  lag=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk-live-lag.sh" "$proj" 2>/dev/null | tail -n 1) || :
+  if [ -z "$lag" ]; then rm -f "$MEM/.live-lag-$pn"
+  elif [ "$(cat "$MEM/.live-lag-$pn" 2>/dev/null)" != "$lag" ]; then
+    printf '%s\n' "$lag" > "$MEM/.live-lag-$pn"
+    jg_lock_acquire_wait "$MEM/.outbox.lock"; printf 'trunk-landing: %s: %s\n' "$pn" "$lag" >> "$MEM/outbox"; jg_lock_release "$MEM/.outbox.lock"
+  fi
   live=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" autolive "$proj" 2>&1) || lrc=$?
   live=$(printf '%s\n' "$live" | tail -n 1 | cut -c1-300); live=${live#autolive: }
   case $live in

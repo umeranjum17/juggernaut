@@ -107,7 +107,8 @@
 # and a `held:<reason>` row says why; a commit whose suite was red is never live (verify reverts it, or pins the trunk red). A
 # commit already live is not moved again. A red CI (`ci red`) pins EVERY home back to the last green commit at once.
 #
-# Exit 3 means the home did not move (the live hook failed); a landed commit stays landed.
+# Exit 3 means the home did not move (the live hook failed); a landed commit stays landed. A fleet move writes the project's `live` row only
+# when EVERY home is at the commit; otherwise the row is `hook-failed:fleet: not every home is at <sha>: <the homes>`.
 #
 # Every open captain call is a key in bin/jg-trunk-policy-lib.sh with its safe default; nothing
 # here changes with the answer. Records: data/trunk-landings.tsv (task, project, commit, epoch,
@@ -920,8 +921,9 @@ go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-bac
   fi
   if [ "$hook" = fleet ]; then
     if why=$(fleet_move "$sha" "$2" 2>&1); then status=live; else
-      printf '%s\n' "$why"; row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:$(printf '%s' "$why" | tail -n 1 | cut -c1-200)"
-      echo "error: the fleet move failed for ${sha:0:12}; see the rows in trunk-live.tsv" >&2; exit 3
+      row trunk-live.tsv "$PN" "$sha" "$(date +%s)" "hook-failed:$(printf '%s' "$why" | tail -n 1 | cut -c1-200)"
+      echo "error: the fleet move failed for ${sha:0:12}; see the rows in trunk-live.tsv" >&2
+      printf '%s\n' "$why"; exit 3  # the move's own last line (the homes left behind) stays last: autolive reports it
     fi
     printf '%s\n' "$why"
     [ -z "${LIVE_HOME:-}" ] || status=canary
@@ -969,7 +971,7 @@ waiver_rule() { awk -v p="$PN" '$1 == p { r = $2 } END { print r }' "$CONFIG/tru
 # live-cap-minutes old, whichever comes first, so landings never wait on a go-live and a busy trunk still goes live hourly.
 # Prints one `autolive: ...` line last; exit 0 for live, waiting or held, 3 when the move failed.
 cmd_autolive() {
-  local green tip why out rc now last quiet cap newest oldest wait_s
+  local green tip why out rc now last quiet cap newest oldest wait_s failed_at
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never runs the live step"
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   LIVE_WAIVER=$(waiver_rule)
@@ -987,6 +989,11 @@ cmd_autolive() {
     echo "autolive: NOT live, held: $why; every home stays on the last green commit"; return 0
   fi
   now=$(date +%s); quiet=$(( $(pol live-quiet-minutes) * 60 )); cap=$(( $(pol live-cap-minutes) * 60 ))
+  # A move that failed (some home did not reach the pin) is tried again after the quiet window, not on every tick: each try writes a row per home.
+  failed_at=$(awk -F'\t' -v p="$PN" -v g="$green" '$1 == p && $2 == g && $4 ~ /^hook-failed/ { t = $3 } END { print t + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0)
+  if [ "$failed_at" -gt 0 ] && [ $(( now - failed_at )) -lt "$quiet" ]; then
+    echo "autolive: waiting: the last move failed; the next try is in about $(( (quiet - (now - failed_at) + 59) / 60 )) min"; return 0
+  fi
   last=$(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ && $3 > m { m = $3 } END { print m + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0)
   read -r newest oldest <<< "$(awk -F'\t' -v p="$PN" -v l="$last" '$2 == p && $4 >= l { if (!n || $4 > n) n = $4; if (!o || $4 < o) o = $4 } END { print n + 0, o + 0 }' "$DATA/trunk-landings.tsv" 2>/dev/null || echo "0 0")"
   [ "${newest:-0}" -gt 0 ] || { echo "autolive: waiting: nothing has landed since the last go-live"; return 0; }

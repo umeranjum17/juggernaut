@@ -450,6 +450,27 @@ test_a_quiet_trunk_goes_live_on_every_home_by_itself() {
   pass 'a quiet trunk goes live on Main and every Squad Lead home by itself, the window is a knob, and a red CI pins every home back'
 }
 
+# A go-live pinned behind the tip (the green pin is under the trunk tip) moves every home exactly as one at the tip does, and its
+# `live` row is written only once every home is at the pin: a home left behind (dirty here) makes it a failed move naming the home.
+test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behind() {
+  local out c1 c2 h
+  fleet_world autolive-pinned; lane p1 one; fleet_sweeps "landed p1" >/dev/null; await_green || fail "p1 must verify"
+  c1=$(tip); lane p2 two; trunk land p2 >/dev/null 2>&1 || fail "p2 must land"; c2=$(tip)
+  [ "$c2" != "$c1" ] && [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "fixture: the pin must be one commit behind the tip"
+  age_landings 25 25; printf 'dirty\n' >> "$W/lead-a/work.txt"
+  out=$(trunk autolive "$PROJ" 2>&1); [ "$(printf '%s\n' "$out" | tail -n 1)" = "autolive: NOT live, the move failed: fleet: not every home is at ${c1:0:12}: lead-a" ] \
+    || fail "a home left behind must fail the pinned-behind move and be named: $out"
+  awk -F'\t' -v p=proj -v g="$c1" '$1 == p && $2 == g && $4 ~ /^live/ { f = 1 } END { exit f }' "$HOME_D/data/trunk-live.tsv" || fail "no live row while a home is behind: $(cat "$HOME_D/data/trunk-live.tsv")"
+  grep -q "^proj	$c1	[0-9]*	hook-failed:fleet: not every home is at ${c1:0:12}: lead-a" "$HOME_D/data/trunk-live.tsv" || fail "the failed move leaves a hook-failed row naming the home"
+  assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting: the last move failed" "a failed move is not retried on every tick"
+  rm -f "$W/lead-a/work.txt"; age_live
+  out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "live at ${c1:0:12} on every home" "the retry after the quiet window moves every home"
+  homes_at "$c1" || fail "the pinned-behind move must reach Main and every Squad Lead home, not the tip: $(cat "$HOME_D/data/trunk-live.tsv")"
+  for h in lead-a lead-b primary; do grep -q "^proj:$h	$c1	[0-9]*	live" "$HOME_D/data/trunk-live.tsv" || fail "$h needs a live row at the pin"; done
+  grep -q "^proj	$c1	[0-9]*	live,pinned-behind-${c2:0:12},waiver=" "$HOME_D/data/trunk-live.tsv" || fail "the live row says pinned-behind the tip: $(grep "^proj	" "$HOME_D/data/trunk-live.tsv")"
+  pass 'a pinned-behind go-live moves every home, writes its live row only when all are there, and names a home left behind'
+}
+
 test_a_busy_trunk_goes_live_at_the_hourly_cap() {
   local out c
   fleet_world autolive-cap; lane b1 one; fleet_sweeps "landed b1" >/dev/null; await_green || fail "b1 must verify"
@@ -1348,6 +1369,7 @@ test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut
 test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried
 test_the_registered_check_lands_a_proved_task_without_a_human
 test_a_quiet_trunk_goes_live_on_every_home_by_itself
+test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behind
 test_a_busy_trunk_goes_live_at_the_hourly_cap
 test_a_red_or_unwaived_landing_never_goes_live
 test_the_landing_check_cuts_the_next_trunk_once_the_release_merged

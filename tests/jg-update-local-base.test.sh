@@ -5,9 +5,13 @@
 # T1 One move, one row per home: a clean detached lead behind the tip fast-forwards, a clean lead whose HEAD is
 #    not an ancestor but whose content the tip holds is re-pointed by `reset --keep` (row says re-pointed-from),
 #    a dirty lead and a lead holding an uncontained commit are SKIPPED with the reason and not touched, Main
-#    moves last with a restart-pending marker, and a pool worktree on a lane branch is not touched.
+#    moves last with a restart-pending marker, and a pool worktree on a lane branch is not touched. The move then fails, its
+#    last line naming every home not at the base, so a go-live records no `live` row while a home is behind.
 # T1c Each home that moves runs its own tip's host wiring afterwards (so an installed copy follows the trunk); a skipped
 #    home is not wired, and a wiring failure is reported and never blocks the move or the rollout.
+# T1d A go-live run from a lead home reads Main's registry: every lead, the lead itself and Main move, one row each (the
+#    fleet's real shape, where the lead's own registry is empty).
+# T7 A move that leaves a home behind names it; bin/jg-trunk-live-lag.sh reports a home not at the last go-live after 10 minutes.
 # T2 --home moves exactly one lead (the canary) and leaves Main alone.
 # T3 A failed health check pins that home back to its recorded pre-move HEAD and stops the rollout.
 # T4 A local-trunk project is refused without --base ("update this project from its trunk").
@@ -15,7 +19,7 @@
 #    record is written only by the Overwatch path, spends no word and marks the row; a project without a
 #    waiver still needs the captain's word.
 # T6 The landing check runs the suite after a landing and, under a waiver, the batched live step on its own, and reports a go-live,
-#    a failed move, a new hold or a red suite; tests/jg-trunk.test.sh owns the quiet-window, hourly-cap, red and pin-back journeys.
+#    a failed move, a new hold, a home left behind the last go-live or a red suite; tests/jg-trunk.test.sh owns the quiet-window, hourly-cap, red and pin-back journeys.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -73,9 +77,11 @@ head_of() { git -C "$W/$1" rev-parse HEAD; }
 row_of() { awk -F'\t' -v k="proj:$1" '$1 == k' "$W/home/data/trunk-live.tsv"; }
 
 test_every_home_moves_or_is_skipped_with_one_row() {
-  local out rows
+  local out rows rc=0
   mover_world t1
-  out=$(run_mover) || fail "the move must succeed when only leads are skipped: $out"
+  out=$(run_mover) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a move that leaves a home behind must fail: $out"
+  [ "$(printf '%s\n' "$out" | tail -n 1)" = "fleet: not every home is at ${C2:0:12}: lead-dirty lead-unlanded" ] || fail "the last line must name the homes left behind: $out"
   [ "$(head_of lead-ff)" = "$C2" ] || fail "a clean lead behind the tip must fast-forward: $out"
   [ "$(head_of lead-repoint)" = "$C2" ] || fail "a clean lead whose content the tip holds must be re-pointed: $out"
   [ "$(head_of lead-dirty)" = "$C0" ] || fail "a dirty lead must not move"
@@ -97,7 +103,7 @@ test_every_home_moves_or_is_skipped_with_one_row() {
 test_cache_is_cleared_after_a_move() {
   mover_world t1b
   mkdir -p "$W/home/state/squad-lead-summary-cache"; : > "$W/home/state/squad-lead-summary-cache/old.json"
-  run_mover >/dev/null || fail "the move must succeed"
+  run_mover >/dev/null || :  # two leads are skipped, so the move exits 1; the homes that did move still clear the cache
   [ ! -e "$W/home/state/squad-lead-summary-cache/old.json" ] || fail "a move must clear the lead summary cache"
   pass 'T1b the lead summary cache is cleared after a move'
 }
@@ -111,7 +117,7 @@ test_a_moved_home_runs_its_own_host_wiring_and_a_failure_never_blocks() {
   chmod +x "$W/proj/bin/jg-host-wiring.sh"; git -C "$W/proj" add bin; git -C "$W/proj" commit -q -m "tip with wiring"
   git -C "$W/proj" checkout -q main; C2=$(git -C "$W/proj" rev-parse trunk)
   out=$(env -u JG_HOST_WIRING_SKIP JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk 2>&1) || rc=$?
-  [ "$rc" -eq 0 ] || fail "a wiring failure must not fail the move: $out"
+  [ "$rc" -eq 1 ] || fail "a wiring failure must not change the verdict (only the two skipped homes fail the move): $out"
   for h in lead-ff lead-repoint main; do [ -f "$W/$h/.wired-marker" ] || fail "$h moved, so its own host wiring must run: $out"; done
   for h in lead-dirty lead-unlanded; do [ ! -e "$W/$h/.wired-marker" ] || fail "$h was skipped, so it must not be wired"; done
   assert_contains "$out" "host wiring not whole after the move" "a failed wiring step is reported"
@@ -151,6 +157,62 @@ test_a_local_trunk_project_is_refused_without_base() {
   [ "$rc" -ne 0 ] || fail "a local-trunk project must refuse jg-update without --base: $out"
   assert_contains "$out" "update this project from its trunk" "the refusal says where the code comes from"
   pass 'T4 jg-update without --base refuses a local-trunk project'
+}
+
+# A lead home that owns the trunk: Main (a clone that is also its home, holding the registry) and three leads, one of them the
+# home that runs the move. This is the real fleet's shape: the runner's own registry is empty, Main's names everyone.
+lead_world() {  # <name>: sets W MAIN SELF C0 C2
+  W="$TMP_ROOT/$1"; MAIN="$W/main"; SELF="$W/lead-self"; mkdir -p "$W"
+  git init -q -b main "$W/proj"; commit_file "$W/proj" AGENTS.md v1 c0; commit_file "$W/proj" bin/tool.sh a c0b
+  git clone -q "$W/proj" "$MAIN"
+  git -C "$W/proj" checkout -q -b trunk; commit_file "$W/proj" a.txt alpha c1; commit_file "$W/proj" b.txt beta c2; git -C "$W/proj" checkout -q main
+  C0=$(git -C "$MAIN" rev-parse HEAD); C2=$(git -C "$W/proj" rev-parse trunk)
+  printf 'state/\ndata/\nconfig/\n.jg-squad-lead-home\n.jg-squad-lead-parent\n' >> "$MAIN/.git/info/exclude"; mkdir -p "$MAIN/state" "$MAIN/data" "$MAIN/config"
+  local id
+  for id in lead-a lead-b lead-self; do
+    git -C "$MAIN" worktree add -q --detach "$W/$id" "$C0"; printf '%s\n' "$id" > "$W/$id/.jg-squad-lead-home"
+    printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$MAIN" > "$W/$id/.jg-squad-lead-parent"
+    mkdir -p "$W/$id/state" "$W/$id/data" "$W/$id/config"
+    printf -- '- %s - fixture (home: %s; scope: x; projects: proj; added 2026-11-09)\n' "$id" "$W/$id" >> "$MAIN/data/squad_leads.md"
+  done
+}
+run_from_self() {  # <script> <args>: as the lead home that owns the trunk runs it
+  local script=$1; shift
+  JG_HOME="$SELF" JG_ROOT_OVERRIDE="$SELF" JG_STACK_SKIP=1 JG_HOST_WIRING_SKIP=1 "$script" "$@" 2>&1
+}
+
+test_a_go_live_run_from_a_lead_home_moves_every_home() {
+  local out rc=0 id
+  lead_world t1d
+  out=$(run_from_self "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a move from a lead home must succeed when every home can move: $out"
+  for id in lead-a lead-b lead-self main; do [ "$(git -C "$W/$id" rev-parse HEAD)" = "$C2" ] || fail "$id must be at the base, not left behind: $out"; done
+  [ "$(cut -d$'\t' -f1 "$SELF/data/trunk-live.tsv" | paste -sd' ' -)" = "proj:lead-a proj:lead-b proj:lead-self proj:primary" ] \
+    || fail "one row per home, Main last: $(cat "$SELF/data/trunk-live.tsv")"
+  assert_contains "$(cat "$MAIN/state/trunk-live-restart-pending" 2>/dev/null)" "$C2" "Main, not the lead, gets the restart-pending marker"
+  [ ! -e "$SELF/state/trunk-live-restart-pending" ] || fail "the lead home's own state is not Main's"
+  pass 'T1d a move run from a lead home reads Main'"'"'s registry and moves every lead, itself and Main, one row each'
+}
+
+test_a_home_left_behind_is_named_and_the_lag_check_reports_it() {
+  local out rc=0 lag="$ROOT/bin/jg-trunk-live-lag.sh" now
+  lead_world t7; now=$(date +%s)
+  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-live.tsv"
+  out=$(run_from_self "$lag" "$W/proj") || rc=$?
+  [ "$rc" -eq 1 ] && [ "$out" = "lag: homes not at the last go-live ${C2:0:12}: lead-a lead-b lead-self primary" ] || fail "every home is behind a 20 minute old go-live: rc=$rc $out"
+  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 60))" > "$SELF/data/trunk-live.tsv"
+  out=$(run_from_self "$lag" "$W/proj") || fail "a go-live under 10 minutes old is not a lag: $out"
+  [ -z "$out" ] || fail "no lag line inside the 10 minutes: $out"
+  printf 'proj\t%s\t%s\tlive\n' "$C2" "$((now - 1200))" > "$SELF/data/trunk-live.tsv"; rc=0
+  printf 'edit\n' >> "$W/lead-b/AGENTS.md"
+  out=$(run_from_self "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a dirty home must fail the move: $out"
+  [ "$(printf '%s\n' "$out" | tail -n 1)" = "fleet: not every home is at ${C2:0:12}: lead-b" ] || fail "the failed move names the home left behind: $out"
+  out=$(run_from_self "$lag" "$W/proj") && fail "a home left behind must be a lag: $out"
+  [ "$out" = "lag: homes not at the last go-live ${C2:0:12}: lead-b" ] || fail "only the home left behind is named: $out"
+  git -C "$W/lead-b" checkout -q -- AGENTS.md; run_from_self "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk >/dev/null || fail "the move must finish once the home is clean"
+  out=$(run_from_self "$lag" "$W/proj") || fail "no lag once every home is at the commit: $out"
+  pass 'T7 a home left behind is named on the failed move, and the lag check reports it after 10 minutes and clears when it catches up'
 }
 
 # --- the trunk side ---------------------------------------------------------
@@ -222,12 +284,23 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   [ ! -s "$ob" ] || fail "waiting, already live and no waiver add no line: $(cat "$ob")"
   printf 'NOT live, held: the trunk is red at abc; every home stays on the last green commit\n' > "$fh/verdict"; live; live
   [ "$(grep -c "held: the trunk is red" "$ob")" = 1 ] || fail "a hold is reported once: $(cat "$ob")"
+  # A home behind the last go-live (the lag script's one line) is reported once per set of homes, and again after it clears and returns.
+  printf '#!/usr/bin/env bash\ncat "%s/lag" 2>/dev/null\n' "$fh" > "$fh/bin/jg-trunk-live-lag.sh"; chmod +x "$fh/bin/jg-trunk-live-lag.sh"
+  : > "$ob"; printf 'waiting: live in about 9 min\n' > "$fh/verdict"
+  printf 'lag: homes not at the last go-live abc: lead-b\n' > "$fh/lag"; live; live
+  [ "$(grep -c "proj: lag: homes not at the last go-live abc: lead-b" "$ob")" = 1 ] || fail "a lagging home is reported once: $(cat "$ob")"
+  printf 'lag: homes not at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
+  [ "$(grep -c "proj: lag: " "$ob")" = 2 ] || fail "a new set of lagging homes is reported: $(cat "$ob")"
+  rm "$fh/lag"; live; printf 'lag: homes not at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
+  [ "$(grep -c "proj: lag: " "$ob")" = 3 ] || fail "a lag that clears and returns is reported again: $(cat "$ob")"
   pass 'T6 the landing check runs the suite after a landing and the batched live step on its own, and reports their outcomes'
 }
 
 test_every_home_moves_or_is_skipped_with_one_row
 test_cache_is_cleared_after_a_move
 test_a_moved_home_runs_its_own_host_wiring_and_a_failure_never_blocks
+test_a_go_live_run_from_a_lead_home_moves_every_home
+test_a_home_left_behind_is_named_and_the_lag_check_reports_it
 test_home_moves_one_canary_only
 test_failed_health_pins_the_home_back_and_stops
 test_a_local_trunk_project_is_refused_without_base

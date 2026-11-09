@@ -72,7 +72,10 @@
 # `jg-trunk.sh live` exports the trunk tip's own bin/ and runs this script from that copy:
 #   jg-update.sh --base <sha> --project <project-dir> --branch <trunk-branch> [--home <lead-home>]
 # One home at a time, registered Squad Lead homes first and Main's clone LAST (pool worktrees and lane branches are not
-# homes and are never touched). Each home gets exactly one row in data/trunk-live.tsv:
+# homes and are never touched). The homes are Main's registry plus Main, whichever home runs this: a lead home follows its
+# parent record up to Main (bin/jg-fleet-homes-lib.sh), so a go-live run from a lead moves every home, itself included.
+# The last line printed names every home that is not at the base (`fleet: not every home is at <sha>: <ids>`) and the exit is
+# 1; a go-live records its `live` row only on exit 0. Each home gets exactly one row in data/trunk-live.tsv:
 #   <project>:<home-id> <sha> <epoch> <status> <pre-move HEAD>      (Main's home id is "primary")
 #   live                        fast-forwarded, or already there
 #   live,re-pointed-from:<sha>  HEAD was not an ancestor but the tip holds its whole tree: reset --keep, never a merge
@@ -118,6 +121,10 @@ SQUAD_LEADS_MD="$(jg_compat_pick "$JG_HOME/data/squad_leads.md")"
 . "$SCRIPT_DIR/jg-ff-lib.sh"
 # shellcheck source=bin/jg-squad-lead-restart-lib.sh
 . "$SCRIPT_DIR/jg-squad-lead-restart-lib.sh"
+# shellcheck source=bin/jg-squad-lead-parent-lib.sh
+. "$SCRIPT_DIR/jg-squad-lead-parent-lib.sh"
+# shellcheck source=bin/jg-fleet-homes-lib.sh
+. "$SCRIPT_DIR/jg-fleet-homes-lib.sh"
 
 "$SCRIPT_DIR/jg-guard.sh" || true
 
@@ -279,7 +286,7 @@ jg_ff_after_squad_lead_settled() {  # <id> <home> <window> <status> <instr>
 
 # --- fleet live move (--base): see the header ---------------------------------
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
-FLEET_RC=0
+FLEET_RC=0 FLEET_VERDICT=""
 
 # The moved home's own wiring (its tip's bin/jg-host-wiring.sh) rewrites every installed host copy from the code the home
 # now holds, so an installed sync.py equals the repo after a live move. Run after the move and its health check; a
@@ -343,44 +350,46 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
   printf '%s:%s\t%s\t%s\t%s\t%s\n' "$(basename "$PROJECT")" "$key" "$BASE" "$(date +%s)" "$status" "$pre" >> "$DATA/trunk-live.tsv"
 }
 
+# Every home the registry of Main names, then Main (bin/jg-fleet-homes-lib.sh lists them, from whichever home runs this).
+# The verdict names every home that is not at $BASE and is the last line printed: the caller records a live row only on none.
 fleet_live_move() {
-  local line id home moved=0 found=0 abs_only=""
+  local kind id dir moved=0 found=0 abs_only="" behind="" main_home main_state
+  main_home=$(jg_fleet_root_home "$JG_HOME"); main_state=$STATE
+  [ "$main_home" = "$(resolve_path "$JG_HOME")" ] || main_state=$main_home/state
   [ -z "$ONLY_HOME" ] || abs_only=$(resolve_path "$ONLY_HOME")
-  if [ -f "$SQUAD_LEADS_MD" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in "- "*) ;; *) continue ;; esac
-      squad_lead_registry_parse_line "$line" || continue
-      id=$SQUAD_LEAD_REGISTRY_ID; home=$SQUAD_LEAD_REGISTRY_HOME
-      [ "$SQUAD_LEAD_REGISTRY_REMOTE" -eq 0 ] || continue
-      [ -z "$abs_only" ] || [ "$(resolve_path "$home")" = "$abs_only" ] || continue
-      [ "$(resolve_path "$home")" != "$(resolve_path "$JG_ROOT")" ] || continue
+  while IFS=$'\t' read -r kind id dir; do
+    if [ -n "$abs_only" ]; then
+      [ "$kind" != primary ] && [ "$(resolve_path "$dir")" = "$abs_only" ] || continue
       found=1
-      if ! validate_squad_lead_home "$id" "$home"; then
-        echo "squad_lead $id: skipped: unsafe home: $VALIDATION_ERROR"
-        printf '%s:%s\t%s\t%s\tskipped:unsafe-home\t\n' "$(basename "$PROJECT")" "$id" "$BASE" "$(date +%s)" >> "$DATA/trunk-live.tsv"
-        continue
-      fi
-      move_home "$id" "$VALIDATED_HOME" "squad_lead $id" yes
-      [ "$MOVE_RESULT" != moved ] || { moved=1; claim_settled_squad_lead "$id"; }
-      [ "$MOVE_RESULT" != stopped ] || { FLEET_RC=1; return 0; }
-    done < "$SQUAD_LEADS_MD"
-  fi
-  if [ -n "$abs_only" ]; then
-    [ "$found" -eq 1 ] || { echo "error: no registered lead home at $ONLY_HOME" >&2; FLEET_RC=1; }
-  else
-    # Main last: its move leaves a marker for the next locked session start.
-    move_home primary "$JG_ROOT" juggernaut no
-    case "$MOVE_RESULT" in
-      moved)
-        moved=1
-        [ -z "$FF_INSTR" ] || reread_juggernaut=yes
-        printf 'sha=%s\nat=%s\n' "$BASE" "$(date +%s)" > "$STATE/trunk-live-restart-pending" ;;
-      *) FLEET_RC=1 ;;
+    fi
+    case "$kind" in
+      lead)
+        if ! validate_squad_lead_home "$id" "$dir"; then
+          echo "squad_lead $id: skipped: unsafe home: $VALIDATION_ERROR"
+          printf '%s:%s\t%s\t%s\tskipped:unsafe-home\t\n' "$(basename "$PROJECT")" "$id" "$BASE" "$(date +%s)" >> "$DATA/trunk-live.tsv"
+          behind="$behind $id"; continue
+        fi
+        move_home "$id" "$VALIDATED_HOME" "squad_lead $id" yes ;;
+      self) move_home "$id" "$dir" "squad_lead $id" yes ;;
+      primary)
+        # Main last: its move leaves a marker for the next locked session start.
+        move_home primary "$dir" juggernaut no
+        if [ "$MOVE_RESULT" = moved ]; then
+          [ -z "$FF_INSTR" ] || reread_juggernaut=yes
+          printf 'sha=%s\nat=%s\n' "$BASE" "$(date +%s)" > "$main_state/trunk-live-restart-pending"
+        fi ;;
     esac
+    [ "$MOVE_RESULT" != moved ] || { moved=1; [ "$kind" = primary ] || claim_settled_squad_lead "$id"; }
+    [ "$MOVE_RESULT" = moved ] || behind="$behind $id"
+    [ "$MOVE_RESULT" != stopped ] || { behind="$behind (rollout stopped there)"; break; }
+  done < <(jg_fleet_homes "$JG_HOME" "$JG_ROOT")
+  if [ -n "$abs_only" ] && [ "$found" -eq 0 ]; then
+    echo "error: no registered lead home at $ONLY_HOME" >&2; behind="$behind $ONLY_HOME"
   fi
-  if [ "$moved" -eq 1 ] && [ -d "$STATE/squad-lead-summary-cache" ] && [ ! -L "$STATE/squad-lead-summary-cache" ]; then
-    find "$STATE/squad-lead-summary-cache" -maxdepth 1 -type f -name '*.json' -delete
+  if [ "$moved" -eq 1 ] && [ -d "$main_state/squad-lead-summary-cache" ] && [ ! -L "$main_state/squad-lead-summary-cache" ]; then
+    find "$main_state/squad-lead-summary-cache" -maxdepth 1 -type f -name '*.json' -delete
   fi
+  [ -z "$behind" ] || FLEET_VERDICT="fleet: not every home is at ${BASE:0:12}:$behind"
 }
 
 if [ -n "$BASE" ]; then fleet_live_move; fi
@@ -460,4 +469,5 @@ fi
 echo "reread-juggernaut: $reread_juggernaut"
 echo "restart-squad-leads:${FF_RESTART_WINDOWS:- none}"
 echo "nudge-squad-leads:${FF_STEER_WINDOWS:- none}"
+[ -z "$FLEET_VERDICT" ] || { echo "$FLEET_VERDICT"; FLEET_RC=1; }
 exit "$FLEET_RC"
