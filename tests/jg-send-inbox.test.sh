@@ -217,13 +217,15 @@ test_resend_enqueues_new_sequence() {
   pass "jg-send inbox: a re-send is a new durable record, never a retyped payload"
 }
 
-# Contract: one bell per unread batch. While an earlier unhandled record has
-# been rung, later sends only record; the bell already names the whole inbox.
-# The record stays durable and the re-ring ladder (oldest unhandled) is untouched.
+# Contract: one bell per unread batch while the worker is busy. While an earlier
+# unhandled record has been rung and the worker's turn is still running, later
+# sends only record; the bell already names the whole inbox. The record stays
+# durable and the re-ring ladder (oldest unhandled) is untouched.
 test_one_bell_for_a_batch_of_waiting_steers() {
   local dir err rung typed n
   dir=$(setup_case onebell)
   err="$dir/send.err"
+  "$ROOT/bin/jg-busy-event.sh" arm "$dir/home/state" t1 >/dev/null || fail "could not arm a busy turn"
   : >"$dir/all.log"
   for n in one two three; do
     run_send "$dir" "$err" -- t1 "steer $n" || fail "send $n failed"
@@ -246,6 +248,34 @@ test_one_bell_for_a_batch_of_waiting_steers() {
   rung=$(grep -cF 'Juggernaut instruction waiting' "$dir/send.log" || true)
   [ "$rung" = 1 ] || fail "a send after the batch was acknowledged must ring, got $rung"
   pass "jg-send inbox: any number of waiting steers earns one doorbell, and an acknowledged batch re-arms it"
+}
+
+# Contract: a rung bell stands only while the worker is busy. A worker whose
+# turn ended with the bell's record still unhandled swallowed that bell (the
+# pane sits at an empty prompt), so the next send rings again; a worker that
+# nothing proves busy is not silenced either.
+test_idle_worker_with_a_rung_record_is_rung_again() {
+  local dir err gen
+  dir=$(setup_case idlebell)
+  err="$dir/send.err"
+  gen=$("$ROOT/bin/jg-busy-event.sh" arm "$dir/home/state" t1) || fail "could not arm a busy turn"
+  run_send "$dir" "$err" -- t1 "steer one" || fail "send one failed"
+  grep -qF 'Juggernaut instruction waiting' "$dir/send.log" || fail "the first steer must ring"
+  "$ROOT/bin/jg-busy-event.sh" apply "$dir/home/state" t1 idle --gen "$gen" \
+    --source claude-hook --event stop || fail "could not end the turn"
+  run_send "$dir" "$err" -- t1 "steer two" || fail "send two failed"
+  [ -f "$dir/home/state/t1.inbox/001.msg" ] && [ -f "$dir/home/state/t1.inbox/002.msg" ] \
+    || fail "both steers must stay durably recorded and unhandled"
+  grep -qF 'Juggernaut instruction waiting' "$dir/send.log" \
+    || fail "an idle worker with an unhandled rung record must be rung again: $(cat "$err")"
+  case "$(cat "$err")" in
+  *"already rung"*) fail "an idle worker's send must not report the bell as already rung" ;;
+  esac
+  "$ROOT/bin/jg-busy-event.sh" retire "$dir/home/state" t1 --gen "$gen" || fail "could not retire the busy record"
+  run_send "$dir" "$err" -- t1 "steer three" || fail "send three failed"
+  grep -qF 'Juggernaut instruction waiting' "$dir/send.log" \
+    || fail "a worker nothing proves busy must be rung again: $(cat "$err")"
+  pass "jg-send inbox: a rung bell stands only while the worker is busy; an idle worker is rung again"
 }
 
 # A bell that never landed (rc!=0) is not a rung record, so the next send tries again.
@@ -556,6 +586,7 @@ test_deep_home_doorbell_stays_short
 test_multiline_steer_is_legal
 test_resend_enqueues_new_sequence
 test_one_bell_for_a_batch_of_waiting_steers
+test_idle_worker_with_a_rung_record_is_rung_again
 test_failed_bell_does_not_silence_later_sends
 test_pending_composer_skips_ring_advisorily
 test_failed_ring_is_still_sent

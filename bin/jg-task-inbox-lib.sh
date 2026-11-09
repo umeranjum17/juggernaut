@@ -121,6 +121,8 @@ _JG_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_JG_TASK_INBOX_LIB_DIR/jg-wake-lib.sh"
 # shellcheck source=/dev/null
 . "$_JG_TASK_INBOX_LIB_DIR/jg-backend.sh"
+# shellcheck source=/dev/null
+. "$_JG_TASK_INBOX_LIB_DIR/jg-busy-lib.sh"
 
 JG_TASK_INBOX_SCHEMA='jg-task-inbox.v1'
 JG_TASK_INBOX_GRACE_DEFAULT=90
@@ -428,14 +430,18 @@ jg_task_inbox_doorbell_line() {  # <record-path>
 }
 
 # Whether an earlier unhandled record in the inbox already has a standing bell:
-# a ring that landed (a `rung` word in the delivery record) and no
-# acknowledgement yet. The doorbell names the whole inbox, so a worker that heard
-# it reads every waiting record; ringing again for each later record only repeats
-# the line into its composer. Only a ring that returned 0 writes `rung`, so a
-# skipped or failed ring never silences a later send. The re-ring ladder does not
-# call this: it re-rings the oldest unhandled record on its own schedule.
-jg_task_inbox_bell_standing() {  # <state-dir> <task-id> <this-record-path>
-  local dir this f n rung
+# a ring that landed (a `rung` word in the delivery record), no acknowledgement
+# yet, and the worker provably busy (bin/jg-busy-lib.sh, the same verdict the
+# watcher defers on). The doorbell names the whole inbox, so a busy worker that
+# heard it reads every waiting record when its turn ends; ringing again for each
+# later record only repeats the line into its composer. A worker that is idle or
+# not provably busy with a rung record still unhandled swallowed that bell (its
+# pane sits at an empty prompt), so the bell does not stand and the send rings.
+# Only a ring that returned 0 writes `rung`, so a skipped or failed ring never
+# silences a later send. The re-ring ladder does not call this: it re-rings the
+# oldest unhandled record on its own schedule.
+jg_task_inbox_bell_standing() {  # <state-dir> <task-id> <this-record-path> <task-meta>
+  local dir this f n rung verdict earlier=0
   dir=$(jg_task_inbox_dir "$1" "$2")
   this=${3##*/}
   [ -s "$dir/.delivery.jsonl" ] && command -v jq >/dev/null 2>&1 || return 1
@@ -445,9 +451,11 @@ jg_task_inbox_bell_standing() {  # <state-dir> <task-id> <this-record-path>
     [ -e "$f" ] || continue
     [ "${f##*/}" != "$this" ] || continue
     n=$(jg_task_inbox_seq_of "${f##*/}") || continue
-    printf '%s\n' "$rung" | grep -qx "$n" && return 0
+    printf '%s\n' "$rung" | grep -qx "$n" && { earlier=1; break; }
   done
-  return 1
+  [ "$earlier" = 1 ] || return 1
+  verdict=$(jg_busy_classify_meta "$4" "$2" "$1")
+  [ "${verdict%% *}" = busy ]
 }
 
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
