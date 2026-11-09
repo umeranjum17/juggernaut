@@ -3,7 +3,7 @@ import re
 from task_rows import plain
 
 UPKEEP = 'Not from your asks (fleet upkeep)'
-INTERNAL = {'main', 'juggernaut', 'juggernaut-fork', 'herdr', 'herdr-runtime'}
+INTERNAL = {'main', 'juggernaut-fork', 'herdr', 'herdr-runtime'}
 
 
 def field(row, key):

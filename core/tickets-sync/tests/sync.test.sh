@@ -42,6 +42,7 @@ core_beads_home "$fork" "$work/parked"
  jg-backlog.sh hold jg-held --reason 'Umer parked this item' --kind parked >/dev/null
  jg-backlog.sh add jg-voice 'Umer voice practice' --repo ownvoice --priority 2 --body 'release: soon' >/dev/null
  jg-backlog.sh add jg-take 'Umer takes' --repo takeone --priority 2 >/dev/null
+ jg-backlog.sh add jg-self 'Umer juggernaut maintenance' --repo juggernaut --priority 2 --body 'parent: upkeep' >/dev/null
  jg-backlog.sh add jg-gone 'Umer queued item whose worker has gone' --repo alpha --priority 2 >/dev/null
  jg-backlog.sh add jg-inferred 'Umer telescope focus regression' --repo alpha --priority 1 >/dev/null
  jg-backlog.sh add jg-internal 'Umer internal maintenance' --repo herdr --priority 2 --body 'parent: upkeep' >/dev/null
@@ -96,6 +97,8 @@ jq -e --arg upkeep "$upkeep" '.tickets[] | select(.id == "jg-history-fixture") |
 jq -e --arg inferred "$(ticket_id main/jg-inferred)" --arg parent "$parent" '.tickets[] | select(.id == $inferred) | .parent == $parent' "$work/first.json"
 # herdr is an internal home: no ticket project label and no icon wake line.
 jq -e --arg internal "$(ticket_id main/jg-internal)" '.tickets[] | select(.id == $internal) | (.project // "") == ""' "$work/first.json"
+# Juggernaut is a real project, so its tickets are not left under No project.
+jq -e --arg self "$(ticket_id main/jg-self)" '.tickets[] | select(.id == $self) | .project == "juggernaut"' "$work/first.json"
 # The feed record carries the assignee the board shows, and it is never blank: the owning lead with the live
 # worker's harness, model, effort and account, the last values a queued item's gone worker left, a plain
 # "no worker yet" for work no worker has run, and the home that publishes a fleet-wide row as its owner.
@@ -133,7 +136,7 @@ PY
 jq -e --arg internal "$(ticket_id main/jg-internal)" '.tickets[] | select(.id == $internal) | (.project // "") == ""' <(sign-off-axi ticket "$work/board.json" --json)
 grep -qiE 'herdr( |$)' "$work/first.out" && { echo 'FAIL: herdr must not appear on check stdout'; exit 1; }
 sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | .name | ascii_downcase] | (index("herdr") == null) and (index("herdr-runtime") == null)'
-sign-off-axi project "$work/board.json" --json | jq -e '[.projects[] | .name] == ["ownvoice"] and .projects[0].icon.sha256 == "'"$(sha256sum "$root/tickets-sync/icons/ownvoice.png" | cut -d" " -f1)"'"'
+sign-off-axi project "$work/board.json" --json | jq -e '([.projects[] | .name] | sort) == ["juggernaut", "ownvoice"] and (.projects[] | select(.name == "ownvoice") | .icon.sha256) == "'"$(sha256sum "$root/tickets-sync/icons/ownvoice.png" | cut -d" " -f1)"'"'
 cmp "$root/tickets-sync/icons/ownvoice.png" "$work/icons/ownvoice.png"
 test ! -e "$work/icons/takeone.png"
 sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-long)" --json | jq -e '.ticket.progress == 0 and .ticket.state == "in progress" and .ticket.stage == "building" and .ticket.last_event_at == 1700000050'
