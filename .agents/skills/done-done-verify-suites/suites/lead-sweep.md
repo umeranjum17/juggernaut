@@ -1,0 +1,3 @@
+# Lead sweep
+
+Lead sweep: run `done-done run -- bash core/lead-sweep/tests/lead-sweep.test.sh` (it writes `lead-sweep.log` into `$DONE_DONE_EVIDENCE_ROOT`); a fixture home with real git clones, a recording teardown and a forge stub proves a done lane whose head is on the trunk (or whose pull request is merged) is torn down once with no `--force`, a landed lane with unlanded work is refused and reported once and not again on the next beat, a Recon with a report and a passing gate is closed, and a working lane, an unlanded lane, a lead and a lane a landing is running for are never touched (screen: none).

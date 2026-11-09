@@ -1,0 +1,3 @@
+# Checks block writer
+
+Checks block writer: run `done-done run -- bash tests/jg-checks-write.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; the real `bin/jg-checks-write.sh` finds a fixture sealed run through `merge-card capture-json`, writes `data/<task>/checks.md` with the worker's outcome, the run's own recipe and id and its files, and the real `checks-lint.sh` passes it (the feature lint, and done-done's own lint when installed), while a file edited after the seal is left out, and no evidence file, a run at another commit or a record outside the task folder exit 1 naming the cause (screen: none).

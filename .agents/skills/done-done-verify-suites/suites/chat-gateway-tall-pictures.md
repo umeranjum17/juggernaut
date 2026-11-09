@@ -1,0 +1,3 @@
+# Chat gateway tall pictures
+
+Chat gateway tall pictures: run `done-done run -- bash -c 'cd core/bus && go test -count=1 ./cmd/jg-bus -run TestGatewayOutboundMedia -v'` (log into `$DONE_DONE_EVIDENCE_ROOT`); a fake Telegram Bot API proves a 780x6872 picture goes as one album of three slices (780x2340, 780x2340, 780x2192) in order, each at most 3:1, the same pixels, the caption on the first only, that a last slice under a third of the width is joined to the one before it, and that a picture exactly 3:1 stays one picture with the file's own bytes; before the fix it went whole and a phone could not read it.

@@ -1,0 +1,3 @@
+# Wake queue and task inboxes on the bus
+
+Wake queue and task inboxes on the bus: run `bash tests/jg-wake-queue-live.test.sh` (two homes on one server, a stream an earlier build made for one home, an acknowledgement flushed from the outbox) and `done-done run wake-bus-live` (`journeys/wake-bus-live.sh`: the probe in two throwaway homes). Live: `JG_HOME=<home> bin/jg-wake-bus-probe.sh` against this machine's server prints the processes, `JG_WAKE`/`JG_INBOX` counts before and after one real wake and one real steer, and exits 1 if a stream did not rise, the outbox grew or the old `.wake-queue.seq` was written; `bin/jg-migration-live.sh wake` names events a home still owes the bus.

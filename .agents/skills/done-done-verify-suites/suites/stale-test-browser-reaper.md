@@ -1,0 +1,3 @@
+# Stale test-browser reaper
+
+Stale test-browser reaper: run `done-done run -- bash tests/jg-browser-reaper.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; the real `bin/jg-reaper-lib.sh` sweep over real stub processes proves an old browser in a fleet profile root is stopped when its parent is gone or when the heavy job whose systemd-run scope holds it has ended though its launcher lives, while a running job, a browser whose environment names a task with a record, a profile outside every fleet root, a young browser and a browser's own child are left alone; where a systemd user manager runs it also starts a real transient scope whose main exits and proves the scanner names that job and the browser is stopped (screen: none).

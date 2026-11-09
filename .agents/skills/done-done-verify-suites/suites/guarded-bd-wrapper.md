@@ -1,0 +1,3 @@
+# Guarded bd wrapper
+
+Guarded bd wrapper: run `done-done run -- bash tests/jg-beads.test.sh` with `JG_BEADS_TEST_BD` and `JG_BEADS_TEST_DOLT` naming the pinned builds; the real `bin/jg-beads.sh` proves every refusal comes before a binary starts, that an unchanged bd is hashed once over two calls while a same-size rewrite with its modify time set back is hashed again and refused, then drives an embedded store with no network (the jail binds the exact candidate root read-only so a gate clone under `/tmp` remains executable, and init refusals retain stderr): a blocked or held row with no reason is refused on every write route, ephemeral rows included, a good write lands, and `check` reports a rule gone or weakened.

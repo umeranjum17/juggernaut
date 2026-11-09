@@ -1,0 +1,3 @@
+# Merge-ready batch
+
+Merge-ready batch: run `done-done run -- bash core/merge-on-green/tests/merge-ready-batch.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; the real `merge-ready-batch.sh` runs on a fixture home with a fake clock and a `jg-pr-state.sh` stub, and the log shows nothing before the ten-minute window ends, then ONE line carrying every outcome (one that arrived mid-window included) with its authority verdict (mergeable, needs the captain's word, NOT mergeable for a red check or a receipt for another head), no repeat, a mergeable outcome that turns red named, and the batch running from `merge-on-green.sh check`. Wakes per merged PR before and after: `bash data/<task>/measure.sh 6` (screen: none).

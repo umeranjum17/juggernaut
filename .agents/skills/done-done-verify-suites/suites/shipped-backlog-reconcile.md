@@ -1,0 +1,3 @@
+# Shipped-backlog reconcile
+
+Shipped-backlog reconcile: run `done-done run -- bash core/merge-on-green/tests/backlog-shipped-reconcile.test.sh` (log in `$DONE_DONE_EVIDENCE_ROOT`); a fixture home with a real markdown backlog and the real `bin/jg-backlog.sh` proves an In flight row closes when its PR was recorded merged or a release lists it and its worker is gone, and stays when the worker is live, the evidence is missing or names another PR, the row is held or queued, the record is a squad_lead, a close is pending or the record has no `pr=`, with a silent rerun and the check running from `merge-on-green.sh check`.

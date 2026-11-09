@@ -1,0 +1,3 @@
+# Chat gateway decision-card buttons
+
+Chat gateway decision-card buttons: run `done-done run -- bash -c 'cd core/bus && go test -count=1 ./cmd/jg-bus -run "TestGatewayCardButtons|TestPublishCardOptions" -v'` (log into `$DONE_DONE_EVIDENCE_ROOT`); a fake Telegram Bot API proves a card with options is sent once with buttons under 64 bytes, a tap from the owner publishes one reply and edits the message with no buttons, a late or forged tap publishes nothing, a board answer, a text reply, a changed card and a withdrawn card each edit the same message, and a failed edit is retried after a restart with the token in no file.

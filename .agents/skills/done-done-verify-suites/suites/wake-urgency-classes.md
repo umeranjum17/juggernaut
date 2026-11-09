@@ -1,0 +1,3 @@
+# Wake urgency classes
+
+Wake urgency classes: run `bash tests/jg-wake-route.test.sh` and `done-done run token-cuts-live` (`bash journeys/token-cuts-live.sh`); the test pins the class of every recorded and fixture wake over disposable homes, and the journey feeds one hour of events through the real `jg_wake_append` and must wake a model only for a decision, a blocker, a failure, a done line and a new PR report, while a routine status line, a heartbeat gap that is only open waits, a gap with ready work, a repeated PR outcome and a re-arm after Main's own restart pass cost no turn (screen: none).

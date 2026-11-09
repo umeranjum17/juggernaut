@@ -1,0 +1,3 @@
+# Main's turn summary in the chat
+
+Main's turn summary in the chat: run `done-done run -- bash tests/jg-captain-say-chat.test.sh` (needs go, python3, nats-server, nats and daprd, and skips without them); the real `bin/jg-captain-say.sh`, `bin/jg-bus.sh publish`, a Dapr sidecar on the shipped `pubsub.yaml`, a NATS JetStream `CAPTAIN` stream and the `captain-gateway` consumer deliver a summary, and one read from stdin, to a fake Bot API as the owner's message, the stream holds the CloudEvent envelope, and a raw status line, a secret, an internal id and jargon are refused and published nowhere; a pre-fix binary (`JG_BUS_BIN`) sends nothing.

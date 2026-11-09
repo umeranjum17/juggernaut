@@ -1,0 +1,3 @@
+# Stuck-worker escalation chain and fleet heartbeat
+
+Stuck-worker escalation chain and fleet heartbeat: run `bash tests/jg-escalation-chain.test.sh` and `bash tests/jg-fleet-heartbeat.test.sh`; the real watcher and drain cycles over a copied tree prove the rungs, the stalled ready backlog, a paused home that arms and escalates no backlog, a paused wait named as paused rather than counted as a gap, and that a report or lane list parked under a pause record's name (the old `data/paused-for-juggernaut.md` included) never pauses the home while the heartbeat names the refused file and its first line, whereas a genuine pause declaration in `data/.jg-pause-order.md` or the old name still silences it (screen: none).

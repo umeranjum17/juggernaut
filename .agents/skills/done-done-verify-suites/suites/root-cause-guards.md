@@ -1,0 +1,3 @@
+# Root-cause guards
+
+Root-cause guards: run `done-done run -- bash -c 'for t in tests/jg-unit-claim.test.sh tests/jg-control.test.sh tests/jg-spawn-dispatch-profile.test.sh core/sentinel/tests/jg-sentinel-install.test.sh core/owner-rules/tests/owner-rules-gate.test.sh; do bash "$t" || exit 1; done'`; the real merge gate finds Main's public key from a lead home's parent binding (or names the exact `JG_MAIN_HOME` fix), a Squad Lead home is refused every machine-service install with a plain reason, `jg-control exit|relaunch --clear-composer` clears composer text without typing onto it, and `jg-spawn.sh` refuses a Claude model on pi (screen: none).

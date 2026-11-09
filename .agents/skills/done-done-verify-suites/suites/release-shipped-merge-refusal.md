@@ -1,0 +1,3 @@
+# Release shipped merge refusal
+
+Release shipped merge refusal: run `done-done run release-shipped-merge-refusal` (it invokes `bash journeys/release-shipped-merge-refusal.sh`); the real `bin/jg-pr-merge.sh` over a fixture project and a recording forge proves a merge into a release branch whose own release pull request merged is refused before the merge runs, naming the open release branch and the exact `gh pr edit <n> --base <branch>` command, while a merge into an older release branch that never shipped is allowed, a merge into the open release branch still merges with a squash, and the release pull request into the default branch merges with a merge commit, so the default branch stays an ancestor of the next release branch.

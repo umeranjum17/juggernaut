@@ -1,0 +1,3 @@
+# Relaunch onto the next pool account
+
+[Relaunch onto the next pool account](../features/account-next-relaunch.md): run `bash account-pool/tests/account-pool.test.sh`; its fake jg-control and jg-spawn carry the `argv`, `control-validate`, `relaunch-pre`, `relaunch-commit`, `spawn-args`, `spawn-validate` and `spawn-pick` hook lines, and `relaunch --account next` must rest the recorded account once and launch on the next one with only `env -u` credential names and its folder, while every refusal touches nothing. Then, in a guarded `/tmp` lab, move a Haiku worker with `relaunch --account next` off a low account, then read its live launch: the new `pa_` account's folder and no API key or token, so no move can spend extra credits.

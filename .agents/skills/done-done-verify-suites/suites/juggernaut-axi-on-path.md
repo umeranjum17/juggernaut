@@ -1,0 +1,3 @@
+# juggernaut-axi on PATH
+
+juggernaut-axi on PATH: run `done-done run -- bash tests/jg-axi-link.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; on a clean throwaway HOME the migration row reads absent, the real `bin/jg-bootstrap.sh` links `juggernaut-axi` into `~/.local/bin`, `command -v` finds it, the row reads live, a second run is byte-identical and silent, two homes keep one launcher and each answers for its own `JG_HOME` or directory, a deleted home hands the launcher over, a foreign file at that path is never replaced (`AXI_LINK:` names it), and `install.sh --dry-run` plans the link. Live and read-only: `command -v juggernaut-axi` and `bin/jg-migration-live.sh axi` on the real home (screen: none).

@@ -1,0 +1,3 @@
+# Pinned Herdr install retry
+
+Pinned Herdr install retry: run `bash tests/jg-install-herdr-retry.test.sh` (or `done-done run -- bash tests/jg-install-herdr-retry.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`); a stubbed `curl` over a fixture copy of `bin/jg-install-herdr.sh` proves a download that fails once then succeeds still installs with the SHA-256 pin and protocol floor checked, a wrong hash fails on the first attempt with no retry, a below-floor protocol still fails after a retried download, and a persistent failure stops after 3 attempts with an error naming the URL and the last curl status (screen: none).

@@ -1716,6 +1716,11 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
       ;;
+    .agents/skills/done-done-verify-suites/SKILL.md|.agents/skills/done-done-verify-suites/suites/*)
+      # One suite per file is the layout its own test checks; a suite file is
+      # documentation no other suite reads, so it selects that test alone.
+      printf '%s\n' "__script__:jg-verify-suites-layout.test.sh"
+      ;;
     .agents/skills/*/SKILL.md|.agents/skills/done-done-verify-suites/features/*.md)
       # The verify skill's feature map is documentation the skill indexes, so it
       # selects the same contract family as the skill itself.

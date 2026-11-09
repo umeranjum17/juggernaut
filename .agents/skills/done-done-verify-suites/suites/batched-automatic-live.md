@@ -1,0 +1,3 @@
+# Batched automatic live (projects with a go-live waiver)
+
+Batched automatic live (projects with a go-live waiver): the same `done-done run trunk-landing` journey runs `tests/jg-trunk-live.test.sh`, which lands lanes through the real check with two registered Squad Lead homes and Main's code home and sees a fresh landing wait, every home move once the trunk has been quiet 20 minutes (and under a changed `live-quiet-minutes`), every home move at the 60 minute cap while landings continue, a red head and a landed-then-reverted red suite move none, a red pin and a missing waiver hold the step, and a red CI pin every home back; `bash tests/jg-update-local-base.test.sh` proves the check reports the live step (screen: none).

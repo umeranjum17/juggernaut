@@ -1,0 +1,3 @@
+# Slow backlog row reads
+
+Slow backlog row reads: run `done-done run -- bash tests/jg-backlog-row-show.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; the real `jg_backlog_row_show` and `jg_backlog_row_probe` over a stand-in bd whose first `show` calls hang prove a read slow once or twice succeeds on a retry with a larger bound and leaves the sweep unlatched, a backend slow on every attempt refuses once with status 124 inside the 1+2+3 second total, naming its attempts in a line `bin/jg-trunk.sh` still matches, and only then latches the sweep, and no timed-out attempt is left running (screen: none).

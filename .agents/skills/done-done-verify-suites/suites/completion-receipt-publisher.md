@@ -1,0 +1,3 @@
+# Completion-receipt publisher
+
+Completion-receipt publisher: run `done-done run -- bash core/receipts/tests/run-receipt-publisher.test.sh` with the log written into `$DONE_DONE_EVIDENCE_ROOT`; it drives the real publisher over a fixture home and a real candidate copy and proves the pull request it records comes from the caller's exported `JG_RECEIPT_PR`, from a one-shot command prefix, from the task record's `pr=`, or from the recorded branch's open pull request read through the forge, that a prefix value set but naming nothing is refused by name with no receipt published, and that a local-only task still publishes with no pull request (screen: none).
