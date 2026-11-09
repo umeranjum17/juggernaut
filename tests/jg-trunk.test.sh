@@ -60,6 +60,9 @@ world() {  # <name>: sets W HOME_D PROJ
   W="$TMP_ROOT/$1"; HOME_D="$W/home"; PROJ="$HOME_D/projects/proj"
   mkdir -p "$W/root" "$HOME_D/state" "$HOME_D/data" "$HOME_D/config" "$W/fakebin"
   cp -r "$ROOT/bin" "$W/root/bin"
+  # The fixture homes are bare repositories (no beacon, overlay or supervision read); the health check has its own test.
+  # shellcheck disable=SC2016 # the stub expands its own argument
+  printf '#!/usr/bin/env bash\necho "ok $2"\n' > "$W/root/bin/jg-home-health.sh"
   ln -s "$ROOT/core" "$W/root/core"; ln -s "$ROOT/policy" "$W/root/policy"
   cat > "$W/root/bin/jg-captain-hold.sh" <<'SH'
 #!/usr/bin/env bash

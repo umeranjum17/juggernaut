@@ -53,9 +53,21 @@ mover_world() {  # <name>: sets W C0 C2 X
   commit_file "$W/lead-unlanded" secret.txt mine "only here"
   git -C "$W/main" worktree add -q -b fix/lane "$W/pool" "$C0"
 }
+# The fixture homes are bare worktrees (no beacon, overlay or supervision read), so the mover runs from a copy of bin/ whose
+# health check passes; bin/jg-home-health.sh has its own test (tests/jg-home-health.test.sh).
+stub_health() {  # <bin dir>
+  # shellcheck disable=SC2016 # the stub expands its own argument
+  printf '#!/usr/bin/env bash\necho "ok $2"\n' > "$1/jg-home-health.sh"; chmod +x "$1/jg-home-health.sh"
+}
+passing_health_mover() {
+  mkdir -p "$W/bin-ok"; cp -r "$ROOT/bin/." "$W/bin-ok/"; stub_health "$W/bin-ok"
+  printf '%s\n' "$W/bin-ok/jg-update.sh"
+}
 run_mover() {  # <extra args>
+  local mover=${MOVER:-}
+  [ -n "$mover" ] || mover=$(passing_health_mover)
   JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 JG_HOST_WIRING_SKIP=1 \
-    "${MOVER:-$UPDATE}" --base "$C2" --project "$W/proj" --branch trunk "$@" 2>&1
+    "$mover" --base "$C2" --project "$W/proj" --branch trunk "$@" 2>&1
 }
 head_of() { git -C "$W/$1" rev-parse HEAD; }
 row_of() { awk -F'\t' -v k="proj:$1" '$1 == k' "$W/home/data/trunk-live.tsv"; }
@@ -98,7 +110,7 @@ test_a_moved_home_runs_its_own_host_wiring_and_a_failure_never_blocks() {
   printf '#!/usr/bin/env bash\necho wired > "$1/.wired-marker"\n[ "$(basename "$1")" != lead-repoint ] || { echo "wiring step failed" >&2; exit 1; }\n' > "$W/proj/bin/jg-host-wiring.sh"
   chmod +x "$W/proj/bin/jg-host-wiring.sh"; git -C "$W/proj" add bin; git -C "$W/proj" commit -q -m "tip with wiring"
   git -C "$W/proj" checkout -q main; C2=$(git -C "$W/proj" rev-parse trunk)
-  out=$(env -u JG_HOST_WIRING_SKIP JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 "$UPDATE" --base "$C2" --project "$W/proj" --branch trunk 2>&1) || rc=$?
+  out=$(env -u JG_HOST_WIRING_SKIP JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 "$(passing_health_mover)" --base "$C2" --project "$W/proj" --branch trunk 2>&1) || rc=$?
   [ "$rc" -eq 0 ] || fail "a wiring failure must not fail the move: $out"
   for h in lead-ff lead-repoint main; do [ -f "$W/$h/.wired-marker" ] || fail "$h moved, so its own host wiring must run: $out"; done
   for h in lead-dirty lead-unlanded; do [ ! -e "$W/$h/.wired-marker" ] || fail "$h was skipped, so it must not be wired"; done
@@ -152,7 +164,7 @@ trunk_world() {  # <name>: sets TW TH PROJ PROJ2 MAINCODE; a trunk whose tip car
   for p in "$PROJ" "$PROJ2"; do jg_git_init_commit "$p"; jg_git_add_origin "$p" "$p.origin.git"; done
   git clone -q "$(git -C "$PROJ" remote get-url origin)" "$TW/maincode"
   for p in "$PROJ" "$PROJ2"; do ttrunk init "$p" >/dev/null || fail "trunk init must work"; done
-  mkdir -p "$PROJ/bin"; cp -r "$ROOT/bin/." "$PROJ/bin/"; git -C "$PROJ" add bin; git -C "$PROJ" commit -q -m "tip with tools"
+  mkdir -p "$PROJ/bin"; cp -r "$ROOT/bin/." "$PROJ/bin/"; stub_health "$PROJ/bin"; git -C "$PROJ" add bin; git -C "$PROJ" commit -q -m "tip with tools"
   local tip; tip=$(git -C "$PROJ" rev-parse HEAD)
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$tip" "$(git -C "$PROJ" rev-parse trunk)"
   printf '%s\n' "$tip" > "$TH/state/trunk-tip-proj"; printf '%s\n' "$tip" > "$TH/state/trunk-green-proj"
