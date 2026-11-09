@@ -4,6 +4,7 @@
 #
 # Usage: jg-trunk.sh init <project-dir> [<base-ref>]   create the trunk (default: the newest release/c-N, else HEAD)
 #        jg-trunk.sh land <task-id>                    land the task's one proved commit on the trunk; never goes live
+#        jg-trunk.sh land-batch <id>[@<head>]...       land 2 to batch-max queued lanes as one stack: one gate over their changed files, one move; a red stack is halved to find and return only the lane that caused it
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the whole suite at a landed commit (default: the tip): green moves the pin, a red it caused reverts it
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word (or a waiver); --home moves one lead only
@@ -37,6 +38,14 @@
 # the lane, and so does any failure no test script accounts for. The tip's result is kept by tree
 # (data/trunk/tip-results-<project>-<tree>.tsv), so it is computed once. A landing that set a red or a flaky failure
 # aside is recorded as full-tip-red or full-rerun.
+#
+# The merge queue: when 2 or more lanes are queued, the landing check calls `land-batch` for up to batch-max (5) of them, oldest done first.
+# Each lane is admitted onto the top of the stack (rebased by the lander; a lane that conflicts drops out and is returned with its paths,
+# as a single landing would refuse it). ONE gate (lint, then the tests of the union of the changed files, judged against the tip) runs on
+# the stack's top and, on green, the trunk fast-forwards over the whole stack in one move. On red the stack is halved (the first half is
+# judged alone and lands if green, the rest is judged on the new tip) until the guilty lane stands alone; only it is returned. A single
+# queued lane keeps the path above. Every landed lane keeps its own data/trunk-landings.tsv row (with batch-from=<tip before the batch>).
+# The prior art is bors-ng's batch and bisect and Kubernetes Tide's batch merge (both Apache-2.0): ideas only, nothing copied.
 #
 # After the landing, `verify <project> <commit>` (started by the landing check) runs the whole suite (gate-verify) at that commit:
 # green moves the green pin; a script that fails there and passes on the commit's parent charges that one commit, which is
@@ -331,7 +340,7 @@ full_gate() {  # <candidate> <command> <base>
   done <<< "$mine"
   mine=$(printf '%s' "$settled")
   [ -z "$flaky" ] || echo "note: passed on the rerun, so judged flaky and not charged:$flaky" >&2
-  if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND=full-rerun; return 0; fi
+  if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND="full-rerun"; return 0; fi
   # shellcheck disable=SC2046
   tipres=$(tip_results "$3" "$envf" $(printf '%s\n' "$mine" | cut -f1))
   rm -f -- "$envf"
@@ -350,7 +359,7 @@ full_gate() {  # <candidate> <command> <base>
     return 2
   fi
   echo "note: ${cand:0:12} fails only what the $TRUNK tip ${3:0:12} already fails the same way; set aside, not charged to this lane:$old" >&2
-  GATE_KIND=full-tip-red
+  GATE_KIND="full-tip-red"
 }
 
 # The paths where <candidate> cannot merge cleanly onto <tip>; prints nothing when it merges clean.
@@ -431,45 +440,47 @@ tell_lane() {  # <id> <note>
   [ ! -f "$STATE/$1.meta" ] || JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-send.sh" "$1" "$2" >/dev/null 2>&1 || :
 }
 
-land_candidate() {
-  local id=${1-} META branch cand tip base n red hit rc=0 linked cmd head GATE_KIND='' fresh
-  case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
-  [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
-  jg_pr_task_id_valid "$id" || die "invalid task id"
-  META="$STATE/$id.meta"; [ -f "$META" ] || die "no meta for task $id at $META"
+# The lane's record and its project, with the registered-mode check. Sets META (and PROJ, PN, TRUNK through open_project).
+lane_meta() {  # <task-id>
+  jg_pr_task_id_valid "$1" || die "invalid task id"
+  META="$STATE/$1.meta"; [ -f "$META" ] || die "no meta for task $1 at $META"
   open_project "$(jg_dod_meta_value "$META" project)"
-  case $(jg_dod_meta_value "$META" mode) in local-trunk|local-only|trunk) ;; *) die "task $id is not a local-trunk task (legacy local-only/trunk also accepted); merge PR tasks with bin/jg-pr-merge.sh" ;; esac
-  if [ "$(pol away-landing)" = held ] && [ -e "$STATE/.afk" ]; then refuse "away mode: trunk landings stay held until the captain returns (away-landing=held)"; fi
-  jg_lease_forbid_branch "trunk landing (jg-trunk)"
-  lock "$STATE/.control-$id.lock"; lock "$STATE/.trunk-$PN.lock"
-  tip_ok; tip=$(rev "refs/heads/$TRUNK")
-  branch=$(jg_dod_meta_value "$META" branch); branch=${branch:-fm/$id}
-  git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "task $id has an invalid ship branch '$branch'"
-  head=$(rev "refs/heads/$branch") || die "branch $branch does not exist in $PROJ"
-  [ "$head" = "$LAND_HEAD" ] || refuse "branch changed during admission; request and prove its new head"
-  cand=$head
-  if git -C "$PROJ" merge-base --is-ancestor "$cand" "$tip"; then echo "already landed $id at $cand; not live"; return 0; fi
+  case $(jg_dod_meta_value "$META" mode) in local-trunk|local-only|trunk) ;; *) die "task $1 is not a local-trunk task (legacy local-only/trunk also accepted); merge PR tasks with bin/jg-pr-merge.sh" ;; esac
+}
+
+# One lane's admission onto <tip>: the trunk tip for a single landing, the top of the stack for a batch. The lander rebases the
+# lane's one commit onto <tip> by itself and only a conflict stops it; then the ticket reference, a red trunk, protected paths,
+# linked decisions, the design/demo/nav gates and owner-guard. Refuses (exits) on any failure. Sets LANE_BRANCH, LANE_HEAD, LANE_CAND
+# (the commit to land) and LANE_LANDED (1 when the lane is already on <tip>). <follow> 1 moves the lane branch to its rebased commit now.
+lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
+  local id=$1 tip=$2 base n red hit rc=0 linked fresh
+  LANE_BRANCH=$(jg_dod_meta_value "$META" branch); LANE_BRANCH=${LANE_BRANCH:-fm/$id}
+  git check-ref-format --branch "$LANE_BRANCH" >/dev/null 2>&1 || die "task $id has an invalid ship branch '$LANE_BRANCH'"
+  LANE_HEAD=$(rev "refs/heads/$LANE_BRANCH") || die "branch $LANE_BRANCH does not exist in $PROJ"
+  [ "$3" = - ] || [ "$LANE_HEAD" = "$3" ] || refuse "branch changed during admission; request and prove its new head"
+  LANE_CAND=$LANE_HEAD; LANE_LANDED=
+  if git -C "$PROJ" merge-base --is-ancestor "$LANE_CAND" "$tip"; then LANE_LANDED=1; return 0; fi
   # The lander rebases the lane's one commit onto the latest tip by itself. Only a conflict stops it, and the lane resolves that.
-  if ! git -C "$PROJ" merge-base --is-ancestor "$tip" "$cand"; then
-    base=$(git -C "$PROJ" merge-base "$tip" "$cand" 2>/dev/null) || refuse "$branch shares no history with $TRUNK (${tip:0:12}); start the lane on the trunk tip"
-    n=$(git -C "$PROJ" rev-list --count "$base..$cand")
-    [ "$n" = 1 ] || refuse "one commit per ticket: $branch has $n commits over $TRUNK; squash it to one"
-    fresh=$(rebase_commit "$tip" "$cand") || {
-      hit=$(conflict_paths "$tip" "$cand")
-      refuse "$branch conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; a lane rebases and fixes it, then reports ready again; it is never landed dirty"
+  if ! git -C "$PROJ" merge-base --is-ancestor "$tip" "$LANE_CAND"; then
+    base=$(git -C "$PROJ" merge-base "$tip" "$LANE_CAND" 2>/dev/null) || refuse "$LANE_BRANCH shares no history with $TRUNK (${tip:0:12}); start the lane on the trunk tip"
+    n=$(git -C "$PROJ" rev-list --count "$base..$LANE_CAND")
+    [ "$n" = 1 ] || refuse "one commit per ticket: $LANE_BRANCH has $n commits over $TRUNK; squash it to one"
+    fresh=$(rebase_commit "$tip" "$LANE_CAND") || {
+      hit=$(conflict_paths "$tip" "$LANE_CAND")
+      refuse "$LANE_BRANCH conflicts with $TRUNK (${tip:0:12}) in: ${hit:-an unreadable merge}; a lane rebases and fixes it, then reports ready again; it is never landed dirty"
     }
-    lane_follow "$branch" "$cand" "$fresh" "$(jg_dod_meta_value "$META" worktree)"
-    cand=$fresh
+    [ "$4" != 1 ] || lane_follow "$LANE_BRANCH" "$LANE_CAND" "$fresh" "$(jg_dod_meta_value "$META" worktree)"
+    LANE_CAND=$fresh
   fi
-  n=$(git -C "$PROJ" rev-list --count "$tip..$cand")
-  [ "$n" = 1 ] && [ "$(git -C "$PROJ" rev-list --parents -n 1 "$cand" | wc -w)" = 2 ] || refuse "one commit per ticket: $branch has $n commits over $TRUNK; squash it to one"
-  git -C "$PROJ" log -1 --format=%B "$cand" | grep -Eq "(^|[^[:alnum:]-])($id|[A-Z]{2,4}-[0-9]+)([^[:alnum:]-]|$)" \
+  n=$(git -C "$PROJ" rev-list --count "$tip..$LANE_CAND")
+  [ "$n" = 1 ] && [ "$(git -C "$PROJ" rev-list --parents -n 1 "$LANE_CAND" | wc -w)" = 2 ] || refuse "one commit per ticket: $LANE_BRANCH has $n commits over $TRUNK; squash it to one"
+  git -C "$PROJ" log -1 --format=%B "$LANE_CAND" | grep -Eq "(^|[^[:alnum:]-])($id|[A-Z]{2,4}-[0-9]+)([^[:alnum:]-]|$)" \
     || refuse "the commit must carry its ticket reference (the task id $id or its ticket key) in its message"
   if [ -e "$STATE/trunk-red-$PN" ]; then
     red=$(cat "$STATE/trunk-red-$PN")
-    git -C "$PROJ" log -1 --format=%B "$cand" | grep -qx "fixes-red: $red" || refuse "$TRUNK is red at ${red:0:12}; only a commit with the line 'fixes-red: $red' may land"
+    git -C "$PROJ" log -1 --format=%B "$LANE_CAND" | grep -qx "fixes-red: $red" || refuse "$TRUNK is red at ${red:0:12}; only a commit with the line 'fixes-red: $red' may land"
   fi
-  if hit=$(touches_protected "$tip" "$cand") && [ "$(pol protected-landing)" = refuse ]; then
+  if hit=$(touches_protected "$tip" "$LANE_CAND") && [ "$(pol protected-landing)" = refuse ]; then
     refuse "$hit is a protected path; landing requires approval of protected-landing=gate (current protected-landing=refuse)"
   fi
   linked=$(JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id") || rc=$?
@@ -478,8 +489,31 @@ land_candidate() {
     1) ;;
     *) refuse "could not read the decisions linked to task $id" ;;
   esac
-  jg_dod_local_landing_gates "$SCRIPT_DIR" "$CONFIG" "$JG_HOME" "$STATE" "$id" "$META" "$PROJ" "$TRUNK" "$cand" trunk || exit 1
-  printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$cand" "$TRUNK" "$tip" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused $id"
+  jg_dod_local_landing_gates "$SCRIPT_DIR" "$CONFIG" "$JG_HOME" "$STATE" "$id" "$META" "$PROJ" "$tip" "$LANE_CAND" trunk || exit 1
+  printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$LANE_CAND" "$TRUNK" "$tip" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused $id"
+}
+
+# What every landing does after the trunk moved: the proofs that exist, the merged event, the ticket close and the post-merge hook.
+landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's record)
+  record_proofs "$1" "$2" "$3" || :
+  # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event, the ticket close and the post-merge hook.
+  [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$1" local || true
+  JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$1" --stage "done" --state "done" || true
+  if declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "$CONFIG" "$JG_HOME" "$1" "$META" "$3" - >&2; fi
+}
+
+land_candidate() {
+  local id=${1-} tip cand GATE_KIND=''
+  case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
+  [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
+  lane_meta "$id"
+  if [ "$(pol away-landing)" = held ] && [ -e "$STATE/.afk" ]; then refuse "away mode: trunk landings stay held until the captain returns (away-landing=held)"; fi
+  jg_lease_forbid_branch "trunk landing (jg-trunk)"
+  lock "$STATE/.control-$id.lock"; lock "$STATE/.trunk-$PN.lock"
+  tip_ok; tip=$(rev "refs/heads/$TRUNK")
+  lane_admit "$id" "$tip" "$LAND_HEAD" 1
+  cand=$LANE_CAND
+  if [ -n "$LANE_LANDED" ]; then echo "already landed $id at $cand; not live"; return 0; fi
   # One fast check: the lint over the changed files, then the changed files' tests judged against the tip's own result.
   run_gate "$cand" "$(pol gate-lint)" lint
   full_gate "$cand" "$(pol gate-full)" "$tip" || exit 1
@@ -487,12 +521,117 @@ land_candidate() {
   put "$STATE/trunk-tip-$PN" "$cand"
   # A landing never moves the green pin: only `verify` (the whole suite, after the landing) does.
   row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND"
-  record_proofs "$id" "$head" "$cand" || :
-  # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event, the ticket close and the post-merge hook.
-  [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$id" local || true
-  JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$id" --stage "done" --state "done" || true
-  if declare -F jg_merge_post_hook >/dev/null; then jg_merge_post_hook "$CONFIG" "$JG_HOME" "$id" "$META" "$cand" - >&2; fi
+  landed_effects "$id" "$LANE_HEAD" "$cand"
   echo "landed $id on $TRUNK (${tip:0:12} -> ${cand:0:12}, gate=$GATE_KIND) in $PROJ; not live: it goes live only on the captain's word"
+}
+
+# --- The merge queue: two or more queued lanes land as one stack (docs/trunk-flow.md "Batch landing") ---
+# B_* are the lanes of one batch, by position: id, original lane commit (C0), its commit as it now sits in the stack (CUR), lane head, branch, record, why it was returned.
+B_ID=(); B_C0=(); B_CUR=(); B_HEAD=(); B_BRANCH=(); B_META=(); B_WHY=(); B_TIP=; B_BASE0=; CHAIN=(); CHAIN_CHANGED=; LANDED=(); LAST_RED=
+
+# The lanes <idx>... stacked on <top>, in order: a commit already on its place stays, any other is rebased by the lander onto it.
+# A lane that no longer merges clean drops out (B_WHY). Sets CHAIN (the lanes that stack) and CHAIN_CHANGED (1 when any commit was rebuilt or dropped).
+chain_on() {  # <top> <idx>...
+  local top=$1 i fresh hit; shift
+  CHAIN=(); CHAIN_CHANGED=
+  for i in "$@"; do
+    if [ "$(rev "${B_CUR[$i]}^")" != "$top" ]; then
+      CHAIN_CHANGED=1
+      if fresh=$(rebase_commit "$top" "${B_C0[$i]}"); then B_CUR[i]=$fresh; else
+        hit=$(conflict_paths "$top" "${B_C0[$i]}")
+        B_WHY[i]="REFUSED: ${B_BRANCH[$i]} conflicts with $TRUNK (${top:0:12}) in: ${hit:-an unreadable merge}; a lane rebases and fixes it, then reports ready again; it is never landed dirty"
+        continue
+      fi
+    fi
+    top=${B_CUR[$i]}; CHAIN+=("$i")
+  done
+}
+
+# ONE gate over the stack: the lint, then the tests of the union of the changed files, both judged against the trunk tip
+# (HEAD^ in a gate command is the commit under the stack, so HEAD~<n> is). Returns 0 green; 1 red, with BG_WHY and LAST_RED set.
+batch_gate() {  # <top> <stack size>   (B_TIP is the trunk tip the stack sits on)
+  local rc=0 errf lint full
+  lint=$(pol gate-lint); full=$(pol gate-full)
+  errf=$(mktemp)
+  ( run_gate "$1" "${lint//HEAD^/HEAD~$2}" lint ) 2>"$errf" || rc=$?
+  [ "$rc" -ne 0 ] || full_gate "$1" "${full//HEAD^/HEAD~$2}" "$B_TIP" 2>>"$errf" || rc=$?
+  cat "$errf" >&2
+  [ "$rc" -eq 0 ] || LAST_RED=$(grep -E '^(REFUSED|error):' "$errf" | tail -n 1 | sed 's/^[A-Za-z]*: //')
+  rm -f -- "$errf"
+  [ "$rc" -eq 0 ]
+}
+
+# The lanes in CHAIN land in one move: the trunk fast-forwards over the whole stack. One trunk-landings.tsv row per lane.
+land_group() {
+  local top=${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]} i
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land a batch of ${#CHAIN[@]}" "refs/heads/$TRUNK" "$top" "$B_TIP" || refuse "$TRUNK changed while landing the batch"
+  put "$STATE/trunk-tip-$PN" "$top"
+  for i in "${CHAIN[@]}"; do
+    META=${B_META[$i]}
+    lane_follow "${B_BRANCH[$i]}" "${B_HEAD[$i]}" "${B_CUR[$i]}" "$(jg_dod_meta_value "$META" worktree)"
+    row trunk-landings.tsv "${B_ID[$i]}" "$PN" "${B_CUR[$i]}" "$(date +%s)" "$GATE_KIND" "batch-from=$B_BASE0"
+    landed_effects "${B_ID[$i]}" "${B_HEAD[$i]}" "${B_CUR[$i]}"
+    LANDED+=("$i")
+    echo "landed ${B_ID[$i]} on $TRUNK (${B_TIP:0:12} -> ${top:0:12}, gate=$GATE_KIND, one stack of ${#CHAIN[@]}) in $PROJ; not live: it goes live only on the captain's word"
+  done
+  B_TIP=$top
+}
+
+# Land 2 to batch-max queued lanes as one stack: `land-batch <id>[@<head>]...` in landing order. Each lane is admitted onto the top of the
+# stack (auto-rebased; a lane that conflicts drops out and is returned, as a single landing would refuse it). One gate runs over the union
+# of the stack's changed files and, on green, the trunk fast-forwards over the whole stack in one move. On red the stack is halved: the first
+# half is judged alone, lands if green, and the rest is judged on the new tip, until the lane that caused the red stands alone; only it is
+# returned. Prints `landed <id> ...` or `returned <id>: <reason>` for every lane. Exit 0 once every lane has an outcome.
+cmd_land_batch() {
+  local a id i n max proj0='' errf g flag top half res
+  local -a exp todo stack members first rest
+  case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
+  n=$#; [ "$n" -ge 2 ] || refuse "a batch stacks 2 or more queued lanes; one lane lands with: jg-trunk.sh land <task>"
+  i=0
+  for a in "$@"; do
+    id=${a%%@*}; exp[i]=-; [ "$a" = "$id" ] || exp[i]=${a#*@}
+    lane_meta "$id"
+    [ -z "$proj0" ] || [ "$PROJ" = "$proj0" ] || refuse "a batch lands lanes of one project; $id belongs to $PROJ, not $proj0"
+    for g in "${B_ID[@]}"; do [ "$g" != "$id" ] || refuse "task $id is in the batch twice"; done
+    proj0=$PROJ; B_ID[i]=$id; B_META[i]=$META; i=$((i + 1))
+  done
+  max=$(pol batch-max); [ "$n" -le "$max" ] || refuse "a batch stacks at most $max lanes (batch-max); the rest land next"
+  if [ "$(pol away-landing)" = held ] && [ -e "$STATE/.afk" ]; then refuse "away mode: trunk landings stay held until the captain returns (away-landing=held)"; fi
+  jg_lease_forbid_branch "trunk landing (jg-trunk)"
+  for id in "${B_ID[@]}"; do lock "$STATE/.control-$id.lock"; done
+  lock "$STATE/.trunk-$PN.lock"; tip_ok
+  B_TIP=$(rev "refs/heads/$TRUNK"); B_BASE0=$B_TIP; GATE_KIND=full; top=$B_TIP; todo=()
+  for ((i = 0; i < n; i++)); do
+    META=${B_META[$i]}; id=${B_ID[$i]}; errf=$(mktemp)
+    # shellcheck disable=SC2030 # the admission subshell starts with no locks and no work directory of its own
+    if ( LOCKS=''; WORK=''; lane_admit "$id" "$top" "${exp[$i]}" 0 && printf '%s\t%s\t%s\t%s\n' "$LANE_HEAD" "$LANE_CAND" "$LANE_BRANCH" "$LANE_LANDED" > "$errf.res" ) 2>"$errf"; then
+      IFS=$'\t' read -r "B_HEAD[i]" "B_CUR[i]" "B_BRANCH[i]" res < "$errf.res"
+      if [ -n "$res" ]; then B_WHY[i]="already landed $id at ${B_CUR[$i]}; not live"; else B_C0[i]=${B_HEAD[$i]}; top=${B_CUR[$i]}; todo+=("$i"); fi
+    else
+      B_WHY[i]=$(grep -E '^(REFUSED|error):' "$errf" | tail -n 1); B_WHY[i]=${B_WHY[$i]:-"REFUSED: admission failed for $id"}
+    fi
+    cat "$errf" >&2; rm -f -- "$errf" "$errf.res"
+  done
+  # Judge the stack; a red one is halved until the guilty lane stands alone. A group stacked above a landed first half is already
+  # known red when its commits are unchanged, so it is halved without a second run.
+  stack=("0:${todo[*]}")
+  while [ "${#stack[@]}" -gt 0 ]; do
+    g=${stack[${#stack[@]}-1]}; unset 'stack[${#stack[@]}-1]'; flag=${g%%:*}; read -r -a members <<< "${g#*:}"
+    [ "${#members[@]}" -gt 0 ] || continue
+    chain_on "$B_TIP" "${members[@]}"
+    [ "${#CHAIN[@]}" -gt 0 ] || continue
+    top=${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}
+    if [ "$flag" = 1 ] && [ -z "$CHAIN_CHANGED" ]; then :; elif batch_gate "$top" "${#CHAIN[@]}"; then land_group; continue; fi
+    if [ "${#CHAIN[@]}" -eq 1 ]; then
+      B_WHY[CHAIN[0]]="REFUSED: this lane is the red in its batch: $LAST_RED"; continue
+    fi
+    half=$(( ${#CHAIN[@]} / 2 )); first=("${CHAIN[@]:0:half}"); rest=("${CHAIN[@]:half}")
+    stack+=("1:${rest[*]}" "0:${first[*]}")
+  done
+  for ((i = 0; i < n; i++)); do
+    [ -n "${B_WHY[$i]:-}" ] || continue
+    case ${B_WHY[$i]} in "already landed"*) echo "${B_WHY[$i]}" ;; *) echo "returned ${B_ID[$i]}: ${B_WHY[$i]}" ;; esac
+  done
 }
 
 # Manual and automatic callers share admission before either can wait on the project lock.
@@ -536,6 +675,7 @@ cmd_land() {
     if ! jg_lock_try_acquire "$run_lock"; then
       echo "IN_PROGRESS: $id at $cand already has an active landing or cleanup"; return 75
     fi
+    # shellcheck disable=SC2031 # LOCKS is the top-level list; the subshells keep their own copy
     LOCKS="$run_lock $LOCKS"
   fi
   if ! jg_lock_try_acquire "$STATE/.landing-$id-$cand.lock"; then
@@ -598,14 +738,32 @@ revert_commit() {  # <sha> <reason>
 # The whole suite at a landed commit, after the landing (the landing check starts it for each landing). Green moves the pin;
 # a script that fails there and passes on the commit's parent charges that one commit, which is reverted; a red nobody
 # can charge to one commit stops landings until a fixes-red commit lands.
+# The commit of a landed batch that caused the red its top commit shows: the lowest commit of <from>..<top> whose whole suite
+# already fails against <from> (halving, so a few whole-suite runs, and only on a red). Prints nothing when it cannot be found.
+batch_culprit() {  # <from> <top>
+  local from=$1 lo=1 hi mid rc c
+  local -a cs
+  mapfile -t cs < <(git -C "$PROJ" rev-list --reverse "$from..$2")
+  hi=${#cs[@]}; [ "$hi" -gt 1 ] || return 0
+  while [ "$lo" -lt "$hi" ]; do
+    mid=$(( (lo + hi) / 2 )); rc=0; c=${cs[mid-1]}
+    full_gate "$c" "$(pol gate-verify)" "$from" || rc=$?
+    case $rc in 0) lo=$((mid + 1)) ;; 2) hi=$mid ;; *) return 0 ;; esac
+  done
+  printf '%s\n' "${cs[lo-1]}"
+}
+
 cmd_verify() {
-  local sha tip rc=0 parent green why
+  local sha tip rc=0 parent green why from culprit=
   open_project "${1-}"; lock "$STATE/.trunk-verify-$PN.lock"
   lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
   sha=$tip; [ -z "${2-}" ] || sha=$(rev "$2") || die "'${2-}' does not resolve in $PROJ"
   git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
   unlock "$STATE/.trunk-$PN.lock"
   parent=$(rev "$sha^" || true)
+  # The top of a batch is judged against the trunk before the batch (its row says where that was), so one run covers the whole stack.
+  from=$(awk -F'\t' -v c="$sha" '$3 == c && $6 ~ /^batch-from=/ { f = substr($6, 12) } END { print f }' "$DATA/trunk-landings.tsv" 2>/dev/null || true)
+  if [ -n "$from" ] && git -C "$PROJ" merge-base --is-ancestor "$from" "$sha"; then parent=$from; else from=; fi
   if [ -n "$parent" ]; then full_gate "$sha" "$(pol gate-verify)" "$parent" || rc=$?
   else run_gate "$sha" "$(pol gate-verify)" full || rc=$?; fi
   case $rc in
@@ -619,7 +777,11 @@ cmd_verify() {
       echo "trunk green at ${sha:0:12}" ;;
     2)
       why="the whole suite fails on it where its parent ${parent:0:12} passes"
-      if revert_commit "$sha" "$why"; then exit 1; fi
+      [ -z "$from" ] || culprit=$(batch_culprit "$from" "$sha")
+      if [ -n "$culprit" ] && [ "$culprit" != "$sha" ]; then
+        why="the whole suite fails on it where the trunk before its batch ${from:0:12} passes"
+        if revert_commit "$culprit" "$why"; then exit 1; fi
+      elif revert_commit "$sha" "$why"; then exit 1; fi
       lock "$STATE/.trunk-$PN.lock"; put "$STATE/trunk-red-$PN" "$sha"; unlock "$STATE/.trunk-$PN.lock"
       jg_wake_append check "trunk-red-$PN-${sha:0:12}" "$TRUNK is red at ${sha:0:12}: $why, and it could not be reverted by itself; landings stop except a fixes-red commit" >/dev/null 2>&1 || :
       echo "trunk is RED at ${sha:0:12}; it could not be reverted by itself; landings stop except a fixes-red commit" >&2; exit 1 ;;
@@ -922,6 +1084,7 @@ cmd_due() {
 case "${1:-}" in
   init) shift; cmd_init "$@" ;;
   land) shift; cmd_land "$@" ;;
+  land-batch) shift; cmd_land_batch "$@" ;;
   verify) shift; cmd_verify "$@" ;;
   word) shift; cmd_word "$@" ;;
   live) shift; cmd_live "$@" ;;

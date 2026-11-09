@@ -3,6 +3,7 @@
 # Usage: trunk-landing.sh check <jg-home>
 #        trunk-landing.sh next <jg-home>                      (what a finished landing starts: the next ready lane, silently)
 #        trunk-landing.sh run <jg-home> <task-id> <head>      (what `check` starts in the background)
+#        trunk-landing.sh runbatch <jg-home> <task-id>@<head>...     (what `check` starts when 2 or more lanes are queued: one stack)
 #        trunk-landing.sh post <jg-home> <task-id> <head> <commit>   (what a landing starts: the post-landing suite)
 #        trunk-landing.sh live <jg-home> <project>                   (what a tick starts under a go-live waiver: the batched live step)
 #
@@ -13,7 +14,9 @@
 # merge-card or signature is waited for (the landing records them after it, when they exist). The lander rebases the lane's
 # commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land one at a time, oldest done first, and a
 # finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step.
-# After a landing `bin/jg-trunk.sh verify` runs the whole suite at that commit apart from the next landing and reverts the
+# When 2 or more lanes are ready, the check stacks up to batch-max (5) of them, oldest done first, into one `bin/jg-trunk.sh land-batch`:
+# one gate over the stack, one trunk move, and only a lane that conflicts or causes a red is returned (reported once, like any refusal).
+# A single ready lane keeps the path above. After a landing `bin/jg-trunk.sh verify` runs the whole suite at that commit apart from the next landing and reverts the
 # commit by itself if it caused a red. The check never goes live on its own authority: that stays the captain's word
 # (jg-trunk.sh live), EXCEPT for a project with a line in config/trunk-live-waiver (jg-trunk.sh waiver). For it every tick
 # also starts `live` (a detached job, never blocking a landing), which runs `bin/jg-trunk.sh autolive` and reports a go-live,
@@ -30,10 +33,11 @@
 set -u
 case "${1:-}" in
   check|next) [ "$#" -eq 2 ] || { echo "usage: trunk-landing.sh check|next <jg-home>" >&2; exit 2; } ;;
+  runbatch) [ "$#" -ge 4 ] || { echo "usage: trunk-landing.sh runbatch <jg-home> <task-id>@<head> <task-id>@<head>..." >&2; exit 2; } ;;
   run) [ "$#" -eq 4 ] || { echo "usage: trunk-landing.sh run <jg-home> <task-id> <head>" >&2; exit 2; } ;;
   live) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh live <jg-home> <project>" >&2; exit 2; } ;;
   post) [ "$#" -eq 5 ] || { echo "usage: trunk-landing.sh post <jg-home> <task-id> <head> <commit>" >&2; exit 2; } ;;
-  *) echo "usage: trunk-landing.sh check|next <jg-home> | run <jg-home> <task-id> <head> | post <jg-home> <task-id> <head> <commit> | live <jg-home> <project>" >&2; exit 2 ;;
+  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | run <jg-home> <task-id> <head> | post <jg-home> <task-id> <head> <commit> | live <jg-home> <project>" >&2; exit 2 ;;
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -80,6 +84,55 @@ if [ "$1" = live ]; then
   jg_lock_acquire_wait "$MEM/.outbox.lock"
   printf 'trunk-landing: %s: %s\n' "$pn" "$live" >> "$MEM/outbox"
   jg_lock_release "$MEM/.outbox.lock"
+  exit 0
+fi
+
+# A stack of lanes: one `land-batch` run, then each lane's outcome is read from its own line, the same as a single landing's.
+if [ "$1" = runbatch ]; then
+  shift 2; arg=; locked=; out=; rc=0; ids=; fresh_top=
+  for arg in "$@"; do [[ ${arg%%@*} =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && ${arg#*@} =~ ^[0-9a-f]{40,64}$ ]] || exit 2; done
+  trap 'for arg in $locked; do jg_lock_release "$STATE/.trunk-run-${arg%%@*}-${arg#*@}.lock"; done' EXIT
+  for arg in "$@"; do
+    jg_lock_try_acquire "$STATE/.trunk-run-${arg%%@*}-${arg#*@}.lock" || { for arg in "$@"; do rm -f -- "$MEM/${arg%%@*}.${arg#*@}.state"; done; exit 0; }
+    locked="$locked $arg"
+  done
+  for arg in "$@"; do printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
+  out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" land-batch "$@" 2>&1) || rc=$?
+  for arg in "$@"; do
+    id=${arg%%@*}; head=${arg#*@}; proj=$(mval "$STATE/$id.meta" project)
+    request_log=$(mktemp "$MEM/$id.$head.request-XXXXXX.log") || exit 1
+    printf '%s\n' "$out" > "$request_log"; printf '%s\n' "$out" > "$MEM/$id.$head.log"
+    if printf '%s\n' "$out" | grep -q "^landed $id " || printf '%s\n' "$out" | grep -q "^already landed $id "; then
+      printf '%s\n' "$out" | grep -q "^landed $id " && { ids="$ids $id"; fresh_top=$id; }
+      br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
+      now=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
+      res=$(JG_HOME="$FMH" "$FMH/bin/jg-teardown.sh" "$id" 2>&1) && res='cleaned up' || res="cleanup refused, nothing was forced: $(printf '%s' "$res" | tail -n 1 | cut -c1-200)"
+      printf 'landed %s\n' "$res" > "$MEM/$id.$head.state"
+      [ -z "$now" ] || [ "$now" = "$head" ] || printf 'landed %s\n' "$res" > "$MEM/$id.$now.state"
+      jg_lock_acquire_wait "$MEM/.outbox.lock"
+      printf 'trunk-landing: landed %s (local-trunk) on the local trunk in one stack with its queue (not live yet: the whole suite runs on it first, then live follows the captain'"'"'s word or the project'"'"'s waiver and its quiet window); %s\n' "$id" "$res" >> "$MEM/outbox"
+      jg_lock_release "$MEM/.outbox.lock"
+      continue
+    fi
+    why=$(printf '%s\n' "$out" | grep -E "^returned $id: " | tail -n 1 | sed "s/^returned $id: //")
+    [ -n "$why" ] || why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error|IN_PROGRESS):' | tail -n 1)
+    why=$(printf '%s' "${why:-landing failed; see $request_log}" | cut -c1-300)
+    case $why in
+      *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*|*'changed while landing'*) res="wait $why" ;;
+      *) res="final $why" ;;
+    esac
+    printf '%s\n' "$res" > "$MEM/$id.$head.state"
+  done
+  # The whole suite runs once, at the top of the stack, and reverts the lane that caused a red by itself.
+  if [ -n "$fresh_top" ]; then
+    proj=$(mval "$STATE/$fresh_top.meta" project)
+    cand=$(awk -F'\t' -v i="$fresh_top" '$1 == i { c = $3 } END { print c }' "$DATA_DIR/trunk-landings.tsv" 2>/dev/null)
+    for arg in "$@"; do [ "${arg%%@*}" != "$fresh_top" ] || head=${arg#*@}; done
+    if [ -n "$cand" ] && [ -d "$proj" ]; then
+      setsid nohup "$SELF" post "$FMH" "$fresh_top" "$head" "$cand" >"$MEM/$fresh_top.$head.post.log" 2>&1 < /dev/null &
+    fi
+  fi
+  "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
 fi
 
@@ -223,10 +276,24 @@ if ! mkdir "$MEM/.start" 2>/dev/null; then
   rmdir "$MEM/.start" 2>/dev/null; mkdir "$MEM/.start" 2>/dev/null || exit 0
 fi
 if ! busy; then
+  # Two or more ready lanes land as one stack (up to batch-max, oldest done first); a single one keeps the single path.
+  batch=$(printf '%s' "$cands" | sort -n -k1,1 -k2,2 | head -n "$(jg_trunk_policy batch-max)" | awk '{ printf "%s%s@%s", (NR > 1 ? " " : ""), $2, $3 }')
+  read -r -a ready <<< "$batch"; id=; head=
+  # One project per stack: the oldest lane's project, and the lanes ready on it.
+  first=$(mval "$STATE/${ready[0]%%@*}.meta" project); stack=()
+  for arg in "${ready[@]}"; do [ "$(mval "$STATE/${arg%%@*}.meta" project)" != "$first" ] || stack+=("$arg"); done
+  ready=("${stack[@]}")
+  if [ "${#ready[@]}" -ge 2 ]; then
+    for arg in "${ready[@]}"; do printf 'running %s\n' "$(date +%s)" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
+    launch_log=$(mktemp "$MEM/batch.launch-XXXXXX.log") || exit 1
+    setsid nohup "$SELF" runbatch "$FMH" "${ready[@]}" >"$launch_log" 2>&1 < /dev/null &
+    id=${ready[0]%%@*}; head=${ready[0]#*@}
+  else
   read -r _ id head <<< "$(printf '%s' "$cands" | sort -n -k1,1 -k2,2 | head -n 1)"
   printf 'running %s\n' "$(date +%s)" > "$MEM/$id.$head.state"
   launch_log=$(mktemp "$MEM/$id.$head.launch-XXXXXX.log") || exit 1
   setsid nohup "$SELF" run "$FMH" "$id" "$head" >"$launch_log" 2>&1 < /dev/null &
+  fi
   launch_pid=$!
   # The outer watcher stops a completed check's process group. Do not return until the child has detached and
   # published ownership of this attempt.
