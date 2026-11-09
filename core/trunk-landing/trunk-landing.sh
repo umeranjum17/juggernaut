@@ -118,7 +118,7 @@ if [ "$1" = runbatch ]; then
     [ -n "$why" ] || why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error|IN_PROGRESS):' | tail -n 1)
     why=$(printf '%s' "${why:-landing failed; see $request_log}" | cut -c1-300)
     case $why in
-      *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*|*'changed while landing'*) res="wait $why" ;;
+      *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*|*'changed while landing'*|*'kept moving'*) res="wait $why" ;;
       *) res="final $why" ;;
     esac
     printf '%s\n' "$res" > "$MEM/$id.$head.state"
@@ -172,7 +172,7 @@ if [ "$1" = run ]; then
     74|75) printf 'wait %s\n' "${why:-landing in progress or transient read failure; see $request_log}" > "$MEM/$id.$head.state"; exit 0 ;;
   esac
   case $why in
-    *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*|*'changed while landing'*) res="wait $why" ;;
+    *'away mode'*|*'linked to a decision'*|*' is red'*|*'still held'*|*'changed while landing'*|*'kept moving'*) res="wait $why" ;;
     *) res="final ${why:-landing failed; see $request_log}" ;;
   esac
   printf '%s\n' "$res" > "$MEM/$id.$head.state"
