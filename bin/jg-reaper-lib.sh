@@ -28,7 +28,11 @@
 # a sweep that stopped something posts one check row on the wake queue, the fleet's
 # event surface. The load alarm posts one check row per episode in which every sample
 # for ten minutes stayed above config/reaper-load-factor (default 2) times the core
-# count, naming the top process groups by count and age.
+# count, naming the top process groups by count and age. Machine load is one host
+# fact, so the alarm has one owner, the main home: a lead home (it carries the
+# squad-lead marker, bin/jg-primary-scope-lib.sh) neither samples nor raises it, so
+# no lead spends a model turn on a fact Main already holds. The sweep's own stop
+# event still wakes whichever home stopped the browser.
 #
 # Config: reaper-off (present = do nothing), reaper-browser-age-hours, reaper-roots
 # (one root per line, replacing the defaults), reaper-load-factor. Default roots:
@@ -44,6 +48,12 @@
 JG_REAPER_STATE=${STATE:-${JG_STATE_OVERRIDE:-${JG_HOME:-}/state}}
 JG_REAPER_CONFIG=${JG_CONFIG_OVERRIDE:-${CONFIG:-${JG_HOME:-}/config}}
 JG_REAPER_CACHE=${XDG_CACHE_HOME:-$HOME/.cache}
+JG_REAPER_HOME=${JG_HOME:-}
+_jg_reaper_dir=${BASH_SOURCE[0]%/*}
+[ "$_jg_reaper_dir" != "${BASH_SOURCE[0]}" ] || _jg_reaper_dir=.
+# shellcheck source=bin/jg-primary-scope-lib.sh
+. "$_jg_reaper_dir/jg-primary-scope-lib.sh"
+unset _jg_reaper_dir
 
 jg_reaper_cfg() { cat "$JG_REAPER_CONFIG/$1" 2>/dev/null || true; } # <name>
 
@@ -197,8 +207,9 @@ jg_reaper_load_groups() { # print the top process groups by count, with oldest a
     sort -k1,1nr | head -5 | awk -F '\t' '{ printf "%s%s %d (oldest %dh)", (NR > 1 ? ", " : ""), $2, $1, int($3 / 3600) }'
 }
 
-jg_reaper_load_alarm() { # one wake per episode of load above factor times cores
+jg_reaper_load_alarm() { # main home only: one wake per episode of load above factor times cores
   local now load cores threshold state first src=/proc/loadavg
+  ! jg_root_is_squad_lead_home "$JG_REAPER_HOME" || return 0
   now=$(date +%s)
   [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_REAPER_LOADAVG:-}" ] && src=$JG_REAPER_LOADAVG
   load=$(awk 'NF { print $1; exit }' "$src" 2>/dev/null) || load=''

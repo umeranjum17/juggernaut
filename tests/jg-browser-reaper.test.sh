@@ -198,4 +198,24 @@ JG_REAPER_LOADAVG=$home/load-low jg_reaper_load_alarm
 assert_absent "$state/.browser-reaper-load" "a load back under the limit ends the episode"
 pass "the load alarm raises one wake per ten-minute episode"
 
+# Machine load is one host fact, so its one owner is the main home: a lead home under
+# the same load gets no wake, while its own stale-browser stop still wakes it. Run
+# through the watcher's tick in a separate process, as a lead's own watcher would.
+lead=$home/lead
+mkdir -p "$lead/state" "$lead/config"
+printf 'growthmap\n' >"$lead/.jg-squad-lead-home"
+printf '%s\n' "$roots" >"$lead/config/reaper-roots"
+printf '%s\n' "$(($(date +%s) - 700))" >"$lead/state/.browser-reaper-load"
+sleep 60 >/dev/null 2>&1 & lead_stale=$! pids+=("$lead_stale")
+row "$lead_stale" 90000 "$dead" >"$home/lead-ps.tsv"
+JG_HOME=$lead JG_STATE_OVERRIDE=$lead/state JG_CONFIG_OVERRIDE=$lead/config STATE='' CONFIG='' \
+  JG_WAKE_QUEUE='' JG_REAPER_PS=$home/lead-ps.tsv JG_REAPER_LOADAVG=$home/load-high \
+  bash -c '. "$1/bin/jg-wake-lib.sh"; . "$1/bin/jg-reaper-lib.sh"; jg_reaper_tick' _ "$ROOT"
+sleep 0.2
+assert_no_grep "machine load" "$lead/state/.wake-queue" "a lead home gets no wake for the host load"
+assert_absent "$lead/state/.browser-reaper-load.raised" "a lead home raises no load episode"
+alive "$lead_stale" && fail "the lead's own sweep must still stop its stale browser"
+assert_grep "browser reaper stopped 1 stale test browsers" "$lead/state/.wake-queue" "a lead's own stop still wakes the lead"
+pass "the host load wakes the main home only; a lead's own alert still wakes the lead"
+
 printf 'PASS jg-browser-reaper\n'
