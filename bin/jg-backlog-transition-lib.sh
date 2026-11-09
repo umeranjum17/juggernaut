@@ -847,7 +847,6 @@ jg_backlog_dispatch_rollback() {
 jg_backlog_close_transition() {
   local meta=$1 marker=$2 data=$3 id=$4 state=$5
   shift 5
-  "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" task "$id" "done" || true  # shadow report of the move (jg-machine-shadow.sh)
   [ -z "$meta" ] || jg_backlog_record_remove "$meta" "task record" "$state" || return 1
   if ! jg_backlog_done "$data" "$id" "$@"; then
     # A backlog that never held this row has nothing left to close, which is
