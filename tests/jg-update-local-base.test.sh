@@ -6,6 +6,8 @@
 #    not an ancestor but whose content the tip holds is re-pointed by `reset --keep` (row says re-pointed-from),
 #    a dirty lead and a lead holding an uncontained commit are SKIPPED with the reason and not touched, Main
 #    moves last with a restart-pending marker, and a pool worktree on a lane branch is not touched.
+# T1c Each home that moves runs its own tip's host wiring afterwards (so an installed copy follows the trunk); a skipped
+#    home is not wired, and a wiring failure is reported and never blocks the move or the rollout.
 # T2 --home moves exactly one lead (the canary) and leaves Main alone.
 # T3 A failed health check pins that home back to its recorded pre-move HEAD and stops the rollout.
 # T4 A local-trunk project is refused without --base ("update this project from its trunk").
@@ -86,6 +88,23 @@ test_cache_is_cleared_after_a_move() {
   run_mover >/dev/null || fail "the move must succeed"
   [ ! -e "$W/home/state/squad-lead-summary-cache/old.json" ] || fail "a move must clear the lead summary cache"
   pass 'T1b the lead summary cache is cleared after a move'
+}
+
+test_a_moved_home_runs_its_own_host_wiring_and_a_failure_never_blocks() {
+  local out rc=0 h
+  mover_world t1c
+  mkdir -p "$W/proj/bin"; git -C "$W/proj" checkout -q trunk
+  # shellcheck disable=SC2016 # the stub's own $1 is expanded when the stub runs
+  printf '#!/usr/bin/env bash\necho wired > "$1/.wired-marker"\n[ "$(basename "$1")" != lead-repoint ] || { echo "wiring step failed" >&2; exit 1; }\n' > "$W/proj/bin/jg-host-wiring.sh"
+  chmod +x "$W/proj/bin/jg-host-wiring.sh"; git -C "$W/proj" add bin; git -C "$W/proj" commit -q -m "tip with wiring"
+  git -C "$W/proj" checkout -q main; C2=$(git -C "$W/proj" rev-parse trunk)
+  out=$(env -u JG_HOST_WIRING_SKIP JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 "$UPDATE" --base "$C2" --project "$W/proj" --branch trunk 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a wiring failure must not fail the move: $out"
+  for h in lead-ff lead-repoint main; do [ -f "$W/$h/.wired-marker" ] || fail "$h moved, so its own host wiring must run: $out"; done
+  for h in lead-dirty lead-unlanded; do [ ! -e "$W/$h/.wired-marker" ] || fail "$h was skipped, so it must not be wired"; done
+  assert_contains "$out" "host wiring not whole after the move" "a failed wiring step is reported"
+  [ "$(row_of lead-repoint | cut -f4)" = "live,re-pointed-from:${X:0:12}" ] || fail "a wiring failure leaves the move row untouched: $(row_of lead-repoint)"
+  pass 'T1c a moved home runs its own host wiring; a skipped home does not; a wiring failure never blocks'
 }
 
 test_home_moves_one_canary_only() {
@@ -196,6 +215,7 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
 
 test_every_home_moves_or_is_skipped_with_one_row
 test_cache_is_cleared_after_a_move
+test_a_moved_home_runs_its_own_host_wiring_and_a_failure_never_blocks
 test_home_moves_one_canary_only
 test_failed_health_pins_the_home_back_and_stops
 test_a_local_trunk_project_is_refused_without_base

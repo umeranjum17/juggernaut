@@ -79,7 +79,8 @@
 #   skipped:dirty | skipped:unlanded:<paths> | skipped:<other reason>   not touched
 #   live,pinned-back-from:<sha> the base is BEHIND the home (a red CI) and the home holds only trunk commits: reset --keep to the base
 #   rolled-back:<reason>        the health check failed: the home is pinned back to its pre-move HEAD and the rollout stops
-# After a home moves, bin/jg-home-guard.sh install <home> and bin/jg-home-health.sh check <home> <sha> run when present.
+# After a home moves, bin/jg-home-guard.sh install <home> and bin/jg-home-health.sh check <home> <sha> run when present,
+# then the home's own bin/jg-host-wiring.sh (reported, never blocking), so installed host copies follow the trunk.
 # Moving anything clears state/squad-lead-summary-cache (an observational cache). Main's move writes
 # state/trunk-live-restart-pending for the next locked session start. --home moves that one lead only (the canary).
 # Without --base a local-trunk project is refused: its code comes from its trunk, not from origin.
@@ -182,7 +183,7 @@ ensure_bus_service() {  # <home>
   fi
 }
 
-# (--base mode moves code only: the services and host wiring below stay with a release.)
+# (--base mode moves code only: the services below stay with a release; host wiring runs per moved home in move_home.)
 if [ -z "$BASE" ]; then
 # The services come with the release: run the updated checkout's own install command so a
 # release never lands on a machine without them. A failure is reported, never fatal to the update.
@@ -280,6 +281,16 @@ jg_ff_after_squad_lead_settled() {  # <id> <home> <window> <status> <instr>
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 FLEET_RC=0
 
+# The moved home's own wiring (its tip's bin/jg-host-wiring.sh) rewrites every installed host copy from the code the home
+# now holds, so an installed sync.py equals the repo after a live move. Run after the move and its health check; a
+# failure is reported and never blocks the move or the rollout. JG_HOST_WIRING_SKIP=1 turns it off for a fixture.
+wire_home() {  # <dir> <label>
+  local dir=$1 label=$2
+  [ "${JG_HOST_WIRING_SKIP:-0}" != 1 ] && [ -x "$dir/bin/jg-host-wiring.sh" ] || return 0
+  env JG_HOME="$dir" JG_ROOT_OVERRIDE="$dir" "$dir/bin/jg-host-wiring.sh" "$dir" >&2 \
+    || echo "$label: host wiring not whole after the move (see the jg-host-wiring lines above)" >&2
+}
+
 # Move one home to $BASE and write its row. Sets MOVE_RESULT=moved|skipped|stopped.
 move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
   local key=$1 dir=$2 label=$3 seed=$4 pre out mb paths status tmp
@@ -326,6 +337,7 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
       status="rolled-back:$(first_line "$(printf '%s\n' "$out" | tail -n 1)")"; MOVE_RESULT=stopped
       echo "$label: health check failed, pinned back to ${pre:0:12}: $status"
     fi
+    [ "$MOVE_RESULT" != moved ] || wire_home "$dir" "$label"
   fi
   mkdir -p "$DATA"
   printf '%s:%s\t%s\t%s\t%s\t%s\n' "$(basename "$PROJECT")" "$key" "$BASE" "$(date +%s)" "$status" "$pre" >> "$DATA/trunk-live.tsv"
