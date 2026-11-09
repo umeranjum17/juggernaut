@@ -214,6 +214,18 @@ fi
 unset _jg_d
 set -eu
 
+# Suites that need a pinned tool take it from a variable and skip or fail without it: the Beads suites read bd and dolt
+# from JG_BEADS_TEST_BD and JG_BEADS_TEST_DOLT, and the Go-backed cores read go from their JG_*_GO variables. CI exports
+# them after it installs the tools, and a home's gate had to export them by hand; a run that did not had a verdict that
+# differed from CI's. Default each to the tool on PATH. bin/jg-beads.sh still refuses any version but the pin, and an
+# export the caller made stays.
+for _jg_pair in JG_BEADS_TEST_BD:bd JG_BEADS_TEST_DOLT:dolt JG_BUS_GO:go JG_CLASSIFY_GO:go JG_GUARD_HOST_GO:go \
+  JG_HERDR_GO:go JG_SPAWN_CORE_GO:go JG_TEARDOWN_CORE_GO:go JG_WAKE_CORE_GO:go JG_WATCH_CORE_GO:go; do
+  _jg_var=${_jg_pair%%:*}
+  if [ -z "${!_jg_var:-}" ] && _jg_path=$(command -v "${_jg_pair#*:}"); then export "$_jg_var=$_jg_path"; fi
+done
+unset _jg_pair _jg_var _jg_path
+
 now_ms() {
   if command -v python3 >/dev/null 2>&1; then
     python3 -c 'import time; print(int(time.time() * 1000))'
@@ -824,7 +836,9 @@ tests/jg-test-run.test.sh 11831
 tests/jg-ticket-writeback.test.sh 83
 tests/jg-tmp-sweep.test.sh 5192
 tests/jg-tokens-retro.test.sh 597
-tests/jg-trunk.test.sh 13000
+tests/jg-trunk.test.sh 26000
+tests/jg-trunk-check.test.sh 56000
+tests/jg-trunk-queue.test.sh 58000
 tests/jg-trunk-spawn.test.sh 49000
 tests/jg-trunk-scope.test.sh 8000
 tests/jg-worker-rules.test.sh 3493

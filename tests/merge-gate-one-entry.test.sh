@@ -82,6 +82,8 @@ hook_line() { [ "$RC" -eq 0 ] || printf 'merge refused by config/merge-gate (exi
 seal() { # <head> <card|no-card>
   printf '{"schema":1,"exit":0,"dirty":false,"commit":"%s","files":["a.png"],"run_id":"r1"}\n' "$1" \
     >"$home/data/lane/.done-done/runs/r1.json"
+  printf '{"head":"%s","verdict":"pass","check":{"claim":"checks passed","evidence":["%s"]}}\n' "$1" "$home/data/lane/a.png" \
+    >"$home/data/lane/merge-card.json"
   printf 't\t%s\t%s\tpass\tok\n' "$pr" "$1" >"$home/data/checks-gate.log"
   printf '{"schema":1,"answers_only":false,"items":[]}\n' >"$home/board.json"
   if [ "$2" = card ]; then

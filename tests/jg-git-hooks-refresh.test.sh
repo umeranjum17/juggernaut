@@ -52,6 +52,15 @@ grep -q 'jg-git-strip-ai-trailers.sh" refresh "\$STATE"' "$ROOT/bin/jg-bootstrap
   fail "bin/jg-bootstrap.sh does not refresh the launch hook overlays"
 pass "bootstrap refreshes the overlays at session start"
 
+# A pane that carries the overlay still creates repositories: git writes HEAD through the
+# reference-transaction hook before the new repository can be resolved, and the wrapper must not refuse that.
+out=$(cd "$d" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=$hooks \
+  git init -q --bare created.git 2>&1 && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=$hooks \
+  git clone -q created.git cloned 2>&1) || fail "a repository could not be created under the overlay: $out"
+assert_not_contains "$out" "refusing to skip" "the overlay refused a repository that was still being created"
+[ -d "$d/cloned/.git" ] || fail "the clone made under the overlay has no repository"
+pass "a repository is created under the overlay"
+
 # The files this journey owns stay ShellCheck-clean, so CI's lint cannot refuse the landing.
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x "$ROOT/bin/jg-git-strip-ai-trailers.sh" "${BASH_SOURCE[0]}" || fail "shellcheck reports findings"
