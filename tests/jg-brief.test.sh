@@ -1989,3 +1989,25 @@ test_ship_brief_points_at_explicit_state_machine_fix() {
   pass "jg-brief.sh: ship brief points fix lanes at the explicit state machine fix type"
 }
 test_ship_brief_points_at_explicit_state_machine_fix
+
+# The lander rebases a lane's one commit itself, so no text of a generated local-trunk brief may tell the worker to
+# rebase onto the trunk tip or to report done again because the trunk moved.
+test_local_trunk_brief_never_tells_worker_to_rebase() {
+  local home id brief
+  home="$TMP_ROOT/trunk-no-rebase-home"
+  mkdir -p "$home/config" "$home/data" && : > "$home/config/delivery-risk-loose"
+  printf -- '- some-proj [local-trunk] - fixture (added 2026-11-09)\n' > "$home/data/projects.md"
+  id="brief-trunk-no-rebase"
+  JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" some-proj --mode local-trunk >/dev/null 2>&1 \
+    || fail "a local-trunk ship brief should scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_grep "# Local trunk lane" "$brief" "the local-trunk lane section is missing"
+  assert_grep "mode=local-trunk" "$brief" "the local-trunk delivery contract is missing"
+  assert_grep "a done lane waits as it is" "$brief" "the brief lost the wait-as-it-is rule"
+  assert_grep "conflict the landing check names" "$brief" "the brief lost the conflict-refusal path"
+  if grep -qiE "rebase (your|the|one)[^.]*(on|onto) (the )?(latest|current) (local )?trunk" "$brief"; then
+    fail "the local-trunk brief still tells the worker to rebase onto the latest trunk tip"
+  fi
+  pass "jg-brief.sh: a local-trunk brief carries no instruction to rebase onto the latest trunk tip"
+}
+test_local_trunk_brief_never_tells_worker_to_rebase

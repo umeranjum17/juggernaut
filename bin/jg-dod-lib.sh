@@ -542,7 +542,8 @@ Delivery contract: mode=local-trunk
 Ship branch: $branch
 This task ships **local-trunk**: one commit on the latest local trunk, no feature PR, no push, no release.
 The commit message must carry this task id or its ticket key.
-Rebase your one commit on the latest trunk tip, resolve every conflict and run sealed done-done verification at that exact clean head.
+Run sealed done-done verification at your one commit's exact clean head. The landing check rebases it onto the trunk tip itself: a done lane waits as it is, and you never rebase it or report done again because the trunk moved.
+Act only on a conflict the landing check names for your lane, or a red your own change caused: fix it in the lane, then report ready again.
 Publish the completion receipt, then append \`done [at=<epoch>]: ready in branch $branch (local-trunk)\` and stop.
 Juggernaut's existing trunk landing check lands that exact head and cleans up unforced.
 Going live and releasing still require the captain's recorded word.
