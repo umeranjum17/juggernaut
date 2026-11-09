@@ -753,7 +753,7 @@ test_the_gates_are_policy_keys_with_fast_defaults() {
   local key
   pol() { JG_CONFIG_OVERRIDE="$TMP_ROOT/no-config" bash -c ". '$ROOT/bin/jg-trunk-policy-lib.sh'; jg_trunk_policy $1"; }
   assert_contains "$(pol gate-lint)" "--changed-base HEAD^" "the landing lint must cover the changed files only"
-  assert_contains "$(pol gate-full)" "--changed --base HEAD^" "the landing tests must be the changed files' tests"
+  assert_contains "$(pol gate-full)" "--required-shards HEAD^" "the landing tests must be the changed files' tests, run as the parallel shards"
   case $(pol gate-full) in *"--all"*) fail "the landing must not run the whole suite" ;; esac
   assert_contains "$(pol gate-verify)" "bin/jg-test-run.sh --all" "verify must run the whole suite"
   for key in gate-mode gate-smoke owner-rules; do pol "$key" >/dev/null 2>&1 && fail "the retired policy key $key must be gone"; done

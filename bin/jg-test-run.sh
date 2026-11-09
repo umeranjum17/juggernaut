@@ -13,7 +13,7 @@
 #   jg-test-run.sh --proven-isolated
 #   jg-test-run.sh tests/<name>.test.sh [more scripts...]
 #
-# Local trunk required set (eight sequential shards, each with the CI bound):
+# Local trunk required set (eight shards run side by side, each with the CI bound):
 #   jg-test-run.sh --required-shards <base-ref> <output-dir>
 # Writes one timing JSON per shard and required.json via --aggregate-json; any shard failure refuses.
 # Inspection (no execution):
@@ -2027,14 +2027,46 @@ if [ "${1:-}" = --required-shards ]; then
   [ "$#" -eq 3 ] || die "--required-shards needs <base-ref> <output-dir>"
   required_base=$2 required_dir=$3 required_rc=0
   mkdir -p "$required_dir" || die "cannot create required-set output directory"
-  required_json=()
+  # The eight shards are disjoint, so they run side by side: each one in its own temp and tmux directory
+  # (a short path under /tmp, because a tmux socket path is length-limited), its output kept in its own file and
+  # printed in shard order afterwards so the log reads exactly as the sequential run's did. JG_REQUIRED_SHARD_PARALLEL
+  # caps how many run at once (default: every shard, at most one per cpu); 1 gives the old one-after-another run.
+  required_cpus=$(nproc 2>/dev/null || echo 1)
+  required_par=${JG_REQUIRED_SHARD_PARALLEL:-8}
+  case $required_par in ''|*[!0-9]*|0) required_par=1 ;; esac
+  [ "$required_par" -le "$required_cpus" ] || required_par=$required_cpus
+  required_scratch=$(mktemp -d "${TMPDIR:-/tmp}/jg-shards.XXXXXX") || die "cannot create the shard scratch directory"
+  required_pids=()
+  # shellcheck disable=SC2317,SC2329  # runs from the trap
+  required_stop() { local p; for p in "${required_pids[@]}"; do kill "$p" 2>/dev/null || :; done; rm -rf -- "$required_scratch"; }
+  trap 'required_stop; exit 130' INT TERM
+  required_json=() required_running=0
   for required_shard in 1 2 3 4 5 6 7 8; do
     required_file=$required_dir/shard-$required_shard.json
     required_json+=("$required_file")
-    bash "$ROOT/bin/jg-test-run.sh" --changed --base "$required_base" --exclude-family real-herdr-gated \
-      --max-weight-ms 60000 --shard "${required_shard}of8" --gate --max-wall-ms 600000 \
-      --json "$required_file" || required_rc=1
+    mkdir -p "$required_scratch/$required_shard"
+    (
+      shard_rc=0
+      TMPDIR="$required_scratch/$required_shard" TMUX_TMPDIR="$required_scratch/$required_shard" \
+        bash "$ROOT/bin/jg-test-run.sh" --changed --base "$required_base" --exclude-family real-herdr-gated \
+        --max-weight-ms 60000 --shard "${required_shard}of8" --gate --max-wall-ms 600000 \
+        --json "$required_file" || shard_rc=$?
+      echo "$shard_rc" > "$required_scratch/$required_shard.rc"
+    ) > "$required_scratch/$required_shard.out" 2>&1 &
+    required_pids+=($!)
+    required_running=$((required_running + 1))
+    if [ "$required_running" -ge "$required_par" ]; then
+      wait -n || :
+      required_running=$((required_running - 1))
+    fi
   done
+  for required_shard in 1 2 3 4 5 6 7 8; do
+    wait "${required_pids[$((required_shard - 1))]}" 2>/dev/null || :
+    cat "$required_scratch/$required_shard.out"
+    [ "$(cat "$required_scratch/$required_shard.rc" 2>/dev/null)" = 0 ] || required_rc=1
+  done
+  trap - INT TERM
+  rm -rf -- "$required_scratch"
   bash "$ROOT/bin/jg-test-run.sh" --aggregate-json "$required_dir/required.json" "${required_json[@]}" || required_rc=1
   exit "$required_rc"
 fi
