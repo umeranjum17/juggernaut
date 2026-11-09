@@ -3285,6 +3285,43 @@ jg_backend_herdr_pin_agent_name() {  # <session> <pane-id> <task-id>
   return 0
 }
 
+# jg_backend_herdr_moved_agent: where task <id>'s agent runs now that its
+# recorded pane <recorded-pane> is gone. A muxr account move carries the
+# conversation into a NEW pane of the same tab and closes the old one, so the
+# pane id changes while two things do not: the agent's name (pinned above from
+# the task id, and re-applied to the moved agent once the old pane is closed)
+# and its working folder. Both must match, in the record's own session; a
+# name alone or a folder alone is never identity.
+#
+# Prints "<pane>\t<tab>\t<workspace>" and returns 0 for exactly one agent that
+# carries the name derived from <id>, works in <worktree> or a folder below it
+# (its own cwd or its foreground cwd), and sits in a pane other than
+# <recorded-pane>. Returns 1 when there is no such agent (the worker is gone)
+# and 2 when the answer is ambiguous or unreadable (more than one, or the
+# listing failed): neither is evidence of a move. A read; it never renames or
+# closes anything.
+jg_backend_herdr_moved_agent() {  # <session> <id> <worktree> <recorded-pane>
+  local session=${1:-} id=${2:-} worktree=${3:-} recorded=${4:-} name out found count
+  [ -n "$session" ] && [ -n "$id" ] && [ -n "$worktree" ] && [ -n "$recorded" ] || return 2
+  worktree=${worktree%/}
+  name=$(jg_backend_herdr_agent_name_for "$id") || return 2
+  out=$(jg_backend_herdr_cli "$session" agent list 2>/dev/null) || return 2
+  found=$(printf '%s' "$out" | jq -r --arg name "$name" --arg wt "$worktree" --arg recorded "$recorded" '
+    def inside($p): type == "string" and ($p != "") and (. == $p or startswith($p + "/"));
+    [ .result.agents[]?
+      | select(.name == $name and .pane_id != $recorded
+          and ((.foreground_cwd | inside($wt)) or (.cwd | inside($wt)))
+          and (.tab_id | type) == "string" and (.workspace_id | type) == "string")
+      | [.pane_id, .tab_id, .workspace_id] | @tsv ] | .[]' 2>/dev/null) || return 2
+  [ -n "$found" ] || {
+    printf '%s' "$out" | jq -e '.result.agents | type == "array"' >/dev/null 2>&1 && return 1
+    return 2
+  }
+  count=$(printf '%s\n' "$found" | grep -c .)
+  [ "$count" -eq 1 ] || return 2
+  printf '%s' "$found"
+}
+
 # jg_backend_herdr_composer_identity: the native agent identity/state probe
 # backing the shared classifier's separated (pi) shape - the genuine herdr
 # primitive no other backend has natively.

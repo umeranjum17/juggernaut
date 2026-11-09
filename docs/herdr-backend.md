@@ -175,6 +175,18 @@ A task id or Squad Lead id that itself contains an old word is an identity chose
 The per-home workspace is reused while it has task tabs.
 Closing its last tab can remove the workspace, and the next spawn recreates it.
 
+### Following a muxr account move
+
+`muxr accounts move <agent> <account>` (or the same move from a phone) carries a worker's conversation onto another Claude account in a new pane of the same tab and then closes the old pane, so the pane id in the task record goes stale while the worker keeps running.
+`bin/jg-crew-state.sh` repairs the record through `bin/jg-endpoint-follow-lib.sh`, which is the one owner of that repair; nobody edits `window=` by hand after a move.
+The follow is the only place that finds a worker by its name, and it is deliberately narrow.
+It runs only when Herdr says the recorded pane is gone, and it needs all of: exactly one agent in the recorded session with the name derived from the task id, working in the task's worktree or a folder below it, in a different pane, positively live by the same classifier every reader uses, and not already recorded by another task.
+Then, under the record lock and in one atomic publish, `window=`, `herdr_workspace_id=`, `herdr_tab_id=` and `herdr_pane_id=` take the new pane's values, and `account=` takes the account muxr reports (`muxr pane account`) only when the record already holds a pool account id; `ordinary`, an absolute path (the home's pin, which only the captain changes) and an absent line are kept.
+Every other line, the local copy and the branch are untouched.
+A worker with no such agent still reads gone, a missing or failing muxr only skips the account line, and a read of a snapshot copy of the record never repairs the live one.
+muxr names the new agent with a suffix until it closes the old pane and then restores the task name, so a read in that short window reads gone and the next read follows.
+`tests/jg-endpoint-follow.test.sh` pins each rule against a fake Herdr world and a fake muxr.
+
 ## Presentation spaces
 
 Each new operator or Recon is placed in a disposable one-task workspace by default, on Herdr 0.8.0 and newer.
