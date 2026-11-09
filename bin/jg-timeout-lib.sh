@@ -87,10 +87,26 @@ jg_timeout_mechanism() {
   fi
 }
 
+# The runners below keep their status files in a subshell whose own EXIT and
+# TERM/INT/HUP traps remove them, so a bounded caller that is signalled mid-wait
+# (the watcher's per-check kill) leaves nothing in the temp directory, and the
+# caller's own traps are never touched by this sourced library.
 jg_run_bash_timeout() {
-  local seconds=$1 command_status deadline_status child_pid watchdog_pid command_rc recorded_rc monitor_was_on=0
+  local seconds=$1
   shift
-  command_status=$(mktemp "${TMPDIR:-/tmp}/jg-bash-timeout-command.XXXXXX" 2>/dev/null) || return 124
+  # The traps come before the file exists, so a signal can never land between the two.
+  (
+    command_status=
+    trap '[ -z "$command_status" ] || rm -f -- "$command_status" "$command_status.deadline"' EXIT
+    trap 'exit 143' HUP INT TERM
+    command_status=$(mktemp "${TMPDIR:-/tmp}/jg-bash-timeout-command.XXXXXX" 2>/dev/null) || exit 124
+    jg_run_bash_timeout_body "$command_status" "$seconds" "$@"
+  )
+}
+
+jg_run_bash_timeout_body() {
+  local command_status=$1 seconds=$2 deadline_status child_pid watchdog_pid command_rc recorded_rc monitor_was_on=0
+  shift 2
   deadline_status="${command_status}.deadline"
   case $- in *m*) monitor_was_on=1 ;; esac
   set -m
@@ -128,14 +144,22 @@ jg_run_bash_timeout() {
     recorded_rc=$(cat "$command_status" 2>/dev/null || true)
     case "$recorded_rc" in ''|*[!0-9]*) ;; *) command_rc=$recorded_rc ;; esac
   fi
-  rm -f "$command_status" "$deadline_status" 2>/dev/null || true
   return "$command_rc"
 }
 
 jg_run_external_timeout() {
-  local runner=$1 seconds=$2 status_file runner_pid runner_rc command_rc
-  shift 2
-  status_file=$(mktemp "${TMPDIR:-/tmp}/jg-timeout-status.XXXXXX" 2>/dev/null) || return 124
+  (
+    status_file=
+    trap '[ -z "$status_file" ] || rm -f -- "$status_file"' EXIT
+    trap 'exit 143' HUP INT TERM
+    status_file=$(mktemp "${TMPDIR:-/tmp}/jg-timeout-status.XXXXXX" 2>/dev/null) || exit 124
+    jg_run_external_timeout_body "$status_file" "$@"
+  )
+}
+
+jg_run_external_timeout_body() {
+  local status_file=$1 runner=$2 seconds=$3 runner_pid runner_rc command_rc
+  shift 3
   # Run timeout asynchronously so its pid - also the process-group id created
   # by GNU/BSD timeout without --foreground - remains available for cleanup.
   # A shell wrapper can exit promptly on TERM while one of its descendants
@@ -157,7 +181,6 @@ jg_run_external_timeout() {
     runner_rc=$?
   fi
   command_rc=$(cat "$status_file" 2>/dev/null || true)
-  rm -f "$status_file" 2>/dev/null || true
   case "$command_rc" in
     ''|*[!0-9]*) ;;
     *)

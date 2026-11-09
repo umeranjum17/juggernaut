@@ -1537,6 +1537,8 @@ snapshot_cleanup() {
   cleanup_json_files
 }
 trap snapshot_cleanup EXIT
+# A watcher kill is a TERM; without this the EXIT trap never runs and the transport directories stay in the temp directory.
+trap 'exit 143' HUP INT TERM
 
 bounded_parent_activities_json() {  # <status-file>
   local f=$1 out rc reason script

@@ -292,7 +292,8 @@ JG_TEST_TMPDIR=$(jg_test_tmpdir) || return 1
 # owner's list before this file named a list of its own. JG_BUS_HOMES is that list, so
 # every suite's registrations land in this run's temp tree. A case that proves the
 # refusal unsets it deliberately.
-export JG_BUS_HOMES="${JG_BUS_HOMES:-$JG_TEST_TMPDIR/jg-bus-homes.$$}"
+[ -n "${JG_BUS_HOMES:-}" ] || JG_TEST_BUS_HOMES_OWN="$JG_TEST_TMPDIR/jg-bus-homes.$$"
+export JG_BUS_HOMES="${JG_BUS_HOMES:-$JG_TEST_BUS_HOMES_OWN}"
 
 JG_TEST_CLEANUP_DIRS=()
 JG_TEST_CLEANUP_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-cleanup.$$.XXXXXX") || return 1
@@ -423,6 +424,7 @@ jg_test_cleanup() {
     done < "$JG_TEST_CLEANUP_REGISTRY"
     rm -f "$JG_TEST_CLEANUP_REGISTRY"
   fi
+  [ -z "${JG_TEST_BUS_HOMES_OWN:-}" ] || rm -f -- "$JG_TEST_BUS_HOMES_OWN"
 }
 
 # --- throwaway key-value bus ------------------------------------------------

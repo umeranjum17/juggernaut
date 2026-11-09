@@ -566,6 +566,7 @@ cmd_ingest() {
   case "$blank" in ''|*[!0-9]*) die "result has no payload boundary" ;; esac
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/jg-remote-reply-ingest.XXXXXX") || die "cannot create ingest staging directory"
   trap 'rm -rf -- "$tmp"' EXIT
+  trap 'exit 143' HUP INT TERM
   payload="$tmp/payload"
   tail -n "+$((blank + 1))" "$result" > "$payload"
   actual_bytes=$(LC_ALL=C wc -c < "$payload" | tr -d ' ')
@@ -697,7 +698,7 @@ EOF
     write_cursor "$id" "$to" "$to_hash" || { jg_lock_release "$lock"; die "cannot commit remote reply cursor"; }
   fi
   jg_lock_release "$lock"
-  trap - EXIT
+  trap - EXIT HUP INT TERM
   rm -rf -- "$tmp"
   printf 'ingested: %s appended=%s offset=%s\n' "$id" "$appended" "$to"
 }
