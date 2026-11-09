@@ -1010,6 +1010,7 @@ install_cmd() {
 manual_install_url() {
   case "$1" in
     herdr) echo "https://herdr.dev" ;;
+    hc) echo "https://releases.herdr.dev/core/install.sh" ;;
     cursor-agent) echo "https://cursor.com/cli" ;;
     *) return 1 ;;
   esac

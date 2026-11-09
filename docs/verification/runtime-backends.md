@@ -2170,6 +2170,45 @@ tests/jg-backend-zellij-smoke.test.sh
 
 The real lifecycle smoke proved spawn, metadata, nested-subshell worktree discovery, send, capture, unlanded-work refusal, approved local landing, exact tab cleanup, and session cleanup without retaining task-specific ids or branch names here.
 
+## Herdr Core (hc)
+
+The core primitives were verified on 2026-11-09 against Herdr Core 0.1.18 on Linux x86_64, from the release archive whose SHA-256 matched the release manifest.
+
+```sh
+hc --version
+tests/jg-backend-hc-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+hc 0.1.18
+ok - lab helper refuses default, foreign and unprovisioned sessions and a public state directory
+ok - lab core listens only inside its private root, refuses core and machine commands, and isolates HOME
+ok - hc is known but not spawn-capable, and the tool check enforces the tested version floor
+ok - with no core listening, reads prove nothing, send hc no command, and start no core
+ok - create_task starts a labelled terminal, and a bare shell reads dead
+ok - send_text_submit delivers once and reports 'unknown'
+ok - capture reads bounded history, visible capture reads the screen only
+ok - a non-agent program reads ambiguous, C-c stops it although the core was started with SIGINT ignored, and Escape, Enter and C-u are delivered
+ok - a real Claude Code (2.1.319 (Claude Code)) reads alive
+ok - a finished terminal reads dead and present, and kill removes it
+ok - kill ends and removes the terminal; a gone terminal reads absent and missing
+ok - hc endpoint records are validated by task binding, session and terminal
+ok - teardown removes the lab and leaves the fleet Herdr Core as it was (absent)
+```
+
+Herdr Core facts the adapter relies on, observed in that run:
+
+- `hc read` without `--lines` returns the screen only, and with `--lines N` returns history plus screen.
+- `hc get` on a removed terminal fails with a `not_found` error and exit code 3.
+- `hc kill` returns after the terminal reads `finished`, and `hc rm` then removes it.
+- Any client call except `--version` starts a core for its session, so the adapter probes the socket first.
+- A private `XDG_RUNTIME_DIR` puts the lab socket at `<root>/run/herdr-core/<session>.sock`.
+- A core started by a process that ignores SIGINT runs its programs with SIGINT ignored: with the lab's signal reset removed, the journey's C-c step fails with `agent state of <target> stayed 'ambiguous', expected 'dead'`, and with it the step passes.
+
+The submit verdict is `unknown` because the hc screen read carries no styling or cursor, so the composer classifier cannot prove an empty composer.
+
 ## Orca
 
 Real readiness was verified against `/usr/local/bin/orca` with `/Applications/Orca.app` bundle version 1.4.116.

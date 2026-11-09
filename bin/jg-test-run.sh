@@ -497,7 +497,7 @@ family_for_basename() {
     jg-omp-primary-live-e2e.test.sh|jg-pr-state-live-e2e.test.sh|\
     jg-sessionstart-hook-live-e2e.test.sh|jg-supervision-host-live-e2e.test.sh|\
     jg-quota-array-dispatch-live-e2e.test.sh|jg-send-inbox-doorbell-live-e2e.test.sh|\
-    jg-prompt-gate-live-e2e.test.sh)
+    jg-prompt-gate-live-e2e.test.sh|jg-backend-hc-live-e2e.test.sh)
       printf '%s\n' live-harness-optin
       ;;
     jg-backend-tmux-smoke.test.sh|jg-control.test.sh|jg-send-inbox.test.sh|\
@@ -1534,7 +1534,17 @@ families_for_changed_path() {
     bin/backends/orca*|bin/backends/tmux.sh)
       printf '%s\n' backend-dispatch
       ;;
-    bin/jg-backend.sh|bin/jg-backend-hometag-lib.sh)
+    bin/backends/hc*|bin/jg-hc-lab.sh)
+      # The Herdr Core adapter and its lab helper are proven by the one hc
+      # journey, which drives both against a real core.
+      printf '%s\n' __script__:jg-backend-hc-live-e2e.test.sh
+      ;;
+    bin/jg-backend.sh)
+      printf '%s\n' backend-dispatch
+      printf '%s\n' real-herdr-gated
+      printf '%s\n' __script__:jg-backend-hc-live-e2e.test.sh
+      ;;
+    bin/jg-backend-hometag-lib.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' real-herdr-gated
       ;;

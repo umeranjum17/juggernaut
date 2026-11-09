@@ -225,6 +225,8 @@ journeys:
   tool-kit-spend:
     command: bash journeys/tool-kit-spend.sh --approved
     spends: "the model quota or money of each tool kit's spending journey"
+  hc-backend:
+    command: bash journeys/hc-backend.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

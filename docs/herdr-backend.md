@@ -847,6 +847,7 @@ An environment-only session selection can silently reach a different running ser
 The ambient stop command has no explicit target.
 
 `bin/jg-herdr-lab.sh` is the sole supported lifecycle helper for isolated verification.
+It stays on the Herdr TUI path until the change that retires this backend moves it fully to `HC_SESSION` ([`hc-backend.md`](hc-backend.md#isolated-lab)).
 The helper:
 
 - Provisions only non-default names beginning with `jg-lab-`.

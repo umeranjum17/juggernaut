@@ -94,6 +94,10 @@
       "target": "docs/verification/runtime-backends.md"
     },
     {
+      "source": "docs/hc-backend.md",
+      "target": "docs/verification/runtime-backends.md"
+    },
+    {
       "source": "docs/codex-app-backend.md",
       "target": "docs/verification/runtime-backends.md"
     },
@@ -501,6 +505,10 @@
     },
     {
       "path": "docs/fleet-ledger.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/hc-backend.md",
       "audience": "operator-current"
     },
     {
