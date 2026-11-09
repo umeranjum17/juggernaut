@@ -14,7 +14,7 @@
 # The store path is never derived, because a store inside a home's git clone is refused.
 jg_backlog_beads_store() {  # <config_dir>: prints the BEADS_DIR, or refuses.
   local store
-  store=$(tr -d '[:space:]' < "$1/beads-dir" 2>/dev/null) || store=
+  store=$(tr -d '[:space:]' 2>/dev/null < "$1/beads-dir") || store=
   if [ -z "$store" ]; then
     printf 'jg-backlog: the beads backlog needs its store: put an absolute BEADS_DIR in %s/beads-dir\n' "$1" >&2
     return 2

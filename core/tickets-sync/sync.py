@@ -279,6 +279,8 @@ def sync():
             elif tid.startswith('jg-') and tid != upkeep_id and (old.get('project', '').lower() in INTERNAL or not old.get('asked') and not old.get('parent')):
                 publish(tid, dict(project='' if old.get('project', '').lower() in INTERNAL else old.get('project', ''), parent=old.get('parent') or ('' if old.get('asked') else upkeep_id)), where=f'board/{tid}')
         for name, source in ordered:
+            # A home with no Beads store has no backlog to publish: skip it quietly.
+            if not (source / 'config/beads-dir').is_file(): continue
             env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_ROOT_OVERRIDE')}
             env['JG_HOME'] = str(source)
             reader = ['bash', str(home / 'bin/jg-backlog.sh')]
