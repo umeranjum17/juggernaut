@@ -18,7 +18,8 @@
 #    force, refused without the captain's word, and a second release while it is open opens no
 #    second PR; an empty batch, a red trunk and an unverified tip refuse.
 # T8 Only the lander moves the trunk: a hand write to it is refused by the hook the trunk installs;
-#    land records the same merged event as the local merge.
+#    land records the same merged event as the local merge. A home guard (bin/jg-home-guard.sh) installed in the same
+#    repository chains the trunk guard: both still refuse, reruns and a landing change neither hook, uninstall restores it.
 # T9 The trunk is safe until its release PR lands: no write rewinds, forces or deletes it, even the lander's
 #    own; once the release merged, the next trunk version (trunk-v2) is cut from the default branch, recorded,
 #    and landed on, with the old trunk untouched; while it is open, nothing rolls over.
@@ -147,6 +148,37 @@ test_legacy_mode_stays_interoperable() {
   trunk land old >/dev/null 2>&1 || fail "legacy local-only records must still land"
   grep -qx mode=local-only "$HOME_D/state/old.meta" || fail "legacy records must not be rewritten"
   pass 'a legacy local-only record lands without a mode rewrite'
+}
+
+# The live move's real failure: a home that is also the local-trunk project holds the trunk guard in the hook file, so the
+# home guard install refused it and the home was rolled back. The home guard now chains the trunk guard: both refuse what they
+# refused alone, a rerun of either installer and a landing change neither file, and uninstall gives the trunk guard its file back.
+test_the_home_guard_chains_the_trunk_guard() {
+  local hook trunk_hook out before both lone c
+  world home-guard-chain
+  hook=$(git -C "$PROJ" rev-parse --path-format=absolute --git-common-dir)/hooks/reference-transaction
+  grep -q '^# managed by bin/jg-trunk.sh:' "$hook" || fail "trunk init must have installed the trunk guard"
+  trunk_hook=$(cat "$hook")
+  out=$("$W/root/bin/jg-home-guard.sh" install "$PROJ" 2>&1) || fail "the home guard must install beside the trunk guard: $out"
+  assert_contains "$out" "it runs the trunk guard first" "the install must say it chained the trunk guard"
+  [ "$(cat "$hook.chained")" = "$trunk_hook" ] || fail "the trunk guard must be kept, byte for byte, in the chained slot"
+  "$W/root/bin/jg-home-guard.sh" check "$PROJ" >/dev/null || fail "the home guard must be present"
+  both=$(cat "$hook" "$hook.chained" | git hash-object --stdin)
+  "$W/root/bin/jg-home-guard.sh" install "$PROJ" >/dev/null || fail "a second install must pass"
+  [ "$(cat "$hook" "$hook.chained" | git hash-object --stdin)" = "$both" ] || fail "a second install must change neither hook"
+  git -C "$PROJ" checkout -q -b scratch main; commit_in "$PROJ" scratch.txt x "off the trunk"; lone=$(git -C "$PROJ" rev-parse HEAD); git -C "$PROJ" checkout -q main
+  before=$(tip); out=$(plain_git -C "$PROJ" update-ref refs/heads/trunk "$lone" 2>&1) && fail "a hand move of the trunk must stay refused"
+  assert_contains "$out" "moves only through bin/jg-trunk.sh land" "the trunk guard must still judge the trunk"
+  [ "$(tip)" = "$before" ] || fail "a refused trunk move must leave the trunk where it was"
+  out=$(plain_git -C "$PROJ" update-ref refs/heads/main "$lone" 2>&1) && fail "a hand move of main must be refused by the home guard"
+  assert_contains "$out" "not on the trunk" "the home guard must judge main"
+  lane chain good; c=$(git -C "$PROJ" rev-parse fm/chain)
+  out=$(trunk land chain 2>&1) || fail "a landing must pass through both guards: $out"
+  [ "$(tip)" = "$c" ] || fail "the landing must move the trunk"
+  [ "$(cat "$hook" "$hook.chained" | git hash-object --stdin)" = "$both" ] || fail "the landing's own guard check must change neither hook"
+  "$W/root/bin/jg-home-guard.sh" uninstall "$PROJ" >/dev/null || fail "uninstall must pass"
+  [ "$(cat "$hook")" = "$trunk_hook" ] && [ ! -e "$hook.chained" ] || fail "uninstall must give the trunk guard its hook file back"
+  pass 'the home guard chains the trunk guard: both still refuse, reruns and a landing change nothing, uninstall restores it'
 }
 
 test_a_good_lane_lands_but_goes_live_only_on_his_word() {
@@ -414,6 +446,7 @@ test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes
 test_admission_is_shared_by_manual_and_automatic_requests
 test_a_repaired_hook_overlay_admits_exactly_one_fresh_attempt
 test_legacy_mode_stays_interoperable
+test_the_home_guard_chains_the_trunk_guard
 test_a_good_lane_lands_but_goes_live_only_on_his_word
 test_every_unsafe_landing_refuses
 test_a_seam_is_the_only_place_behaviour_changes

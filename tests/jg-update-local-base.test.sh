@@ -11,12 +11,15 @@
 #    wired, with the real bin/jg-host-wiring.sh and the real tickets-sync wiring: the installed copy equals core/ after a
 #    move that changed it, a move that changed no add-on file runs no wiring, a skipped home is not wired, a wiring failure
 #    is named in the home's row and never blocks the move, and a home rolled back by its health check while already on the
-#    moved commit (the drift Main hit) is still wired to the code it holds.
+#    moved commit (the drift Main hit) is still wired to the code it holds; a pipeline config naming the pre-rename wrapper is
+#    migrated by the real pipeline-quota-failover step and every home ends live.
 # T1d A go-live run from a lead home reads Main's registry: every lead, the lead itself and Main move, one row each (the
 #    fleet's real shape, where the lead's own registry is empty).
 # T7 A move that leaves a home behind names it; bin/jg-trunk-live-lag.sh reports a home not at the last go-live after 10 minutes.
 # T2 --home moves exactly one lead (the canary) and leaves Main alone.
 # T3 A failed health check pins that home back to its recorded pre-move HEAD and stops the rollout.
+# T3b A home whose shared reference-transaction hook is the trunk guard moves and stays live (the guard chains it); any other
+#    hook there refuses the guard install, and the rolled-back row names that refusal.
 # T4 A local-trunk project is refused without --base ("update this project from its trunk").
 # T5 `jg-trunk.sh live` runs the mover from an export of the tip, never from the home's own bin; the waiver
 #    record is written only by the Overwatch path, spends no word and marks the row; a project without a
@@ -215,7 +218,25 @@ test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure() {
   case $lines in rolled-back:*) ;; *) fail "the failed health check must roll the home back: $lines" ;; esac
   [ "$(head_of lead-ff)" = "$TIP" ] || fail "the home must stay on the commit it already held"
   installed_equals_core "$W/lead-ff" || fail "a home rolled back onto the moved commit must still be wired to the code it holds: $out"
-  pass 'T1c a move wires only the add-ons it changed, the copy equals core/, a failure is named in the row, a rolled-back home on the moved commit is wired'
+
+  # The failure every move hit after the rename: the pipeline config names the wrapper the pre-rename installer wrote. The
+  # real pipeline-quota-failover step moves the key to the current wrapper on the first home, finds it current on the rest,
+  # and every home ends live with no failed step.
+  git -C "$W/proj" checkout -q trunk
+  cp "$ROOT/core/pipeline-quota-failover/wiring.sh" "$ROOT/core/pipeline-quota-failover/pi-quota-failover" "$W/proj/core/pipeline-quota-failover/"
+  # The step broken above is mended, so the row can only name this one.
+  sed '$d' "$W/proj/core/fleet-flow/wiring.sh" > "$W/fleet-flow.sh" && mv -f "$W/fleet-flow.sh" "$W/proj/core/fleet-flow/wiring.sh"
+  git -C "$W/proj" add core; git -C "$W/proj" commit -q -m "the real pipeline-quota-failover step"; git -C "$W/proj" checkout -q main
+  TIP=$(git -C "$W/proj" rev-parse trunk)
+  printf 'agent_path_override:\n  pi: %s\n' "$W/user/.local/share/fm-pipeline-quota-failover/pi-quota-failover" > "$W/user/pipeline.yaml"
+  rc=0; out=$(NM_CONFIG="$W/user/pipeline.yaml" wire_move "$ok") || rc=$?
+  two_skipped "$out" "$rc" || fail "the legacy-config move must leave only the two skipped leads behind: rc=$rc $out"
+  [ "$(last_row_of lead-ff | cut -f4)" = live ] && [ "$(last_row_of primary | cut -f4)" = live ] \
+    || fail "a pre-rename pipeline wrapper must not fail the move: $(last_row_of lead-ff) / $(last_row_of primary)"
+  [ "$(sed -n 's/^  pi: //p' "$W/user/pipeline.yaml")" = "$W/user/.local/share/jg-pipeline-quota-failover/pi-quota-failover" ] \
+    || fail "the move must leave the key on the current wrapper: $(cat "$W/user/pipeline.yaml")"
+  assert_contains "$out" "moved key agent_path_override.pi from the pre-rename" "the first home migrates the key"
+  pass 'T1c a move wires only the add-ons it changed, the copy equals core/, a failure is named in the row, a rolled-back home on the moved commit is wired, a pre-rename pipeline wrapper is migrated'
 }
 
 test_home_moves_one_canary_only() {
@@ -240,6 +261,37 @@ test_failed_health_pins_the_home_back_and_stops() {
   [ "$(row_of lead-ff | cut -f4)" = "rolled-back:overlay stale" ] || fail "the row says rolled-back:<reason>: $(row_of lead-ff)"
   [ "$(head_of lead-repoint)" != "$C2" ] && [ "$(git -C "$W/main" rev-parse main)" = "$C0" ] || fail "the rollout must stop at the first failed health check"
   pass 'T3 a failed health check pins that home back and stops the rollout'
+}
+
+test_a_refused_guard_install_is_named_in_the_row() {
+  local out rc=0 kind
+  # The homes share one repository whose reference-transaction hook another owner already holds. The trunk guard (the fleet's
+  # shape, where Main's home is also the local-trunk project) is chained and the move stands; any other hook refuses the install,
+  # and the row says why.
+  for kind in trunk other; do
+    rc=0
+    mover_world "t3b-$kind"
+    case $kind in
+      trunk) printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: only the lander moves the trunk, and only forward\nexit 0\n' ;;
+      other) printf '#!/bin/sh\nexit 0\n' ;;
+    esac > "$W/main/.git/hooks/reference-transaction"
+    chmod +x "$W/main/.git/hooks/reference-transaction"
+    mkdir -p "$W/bin"; cp -r "$ROOT/bin/." "$W/bin/"
+    # shellcheck disable=SC2016 # the stub makes the health check's own guard read, and expands its variables when it runs
+    printf '#!/usr/bin/env bash\nout=$("$(dirname "$0")/jg-home-guard.sh" check "$2" 2>&1) || { echo "missing-guard: $out"; exit 1; }\necho "ok $2"\n' > "$W/bin/jg-home-health.sh"
+    chmod +x "$W/bin/jg-home-health.sh"
+    out=$(MOVER="$W/bin/jg-update.sh" run_mover) || rc=$?
+    if [ "$kind" = trunk ]; then
+      [ "$(row_of lead-ff | cut -f4)" = live ] && [ "$(row_of primary | cut -f4)" = live ] \
+        || fail "a home whose hook is the trunk guard must move and stay live: $(row_of lead-ff) / $(row_of primary)"
+      [ -x "$W/main/.git/hooks/reference-transaction.chained" ] || fail "the trunk guard must be kept in the chained slot"
+      continue
+    fi
+    [ "$rc" -ne 0 ] || fail "a home with no guard must fail the move: $out"
+    [ "$(row_of lead-ff | cut -f4)" = "rolled-back:missing-guard: the guard install refused: $W/main/.git/hooks/reference-transaction is not the home guard; move it aside so the home can be guarded" ] \
+      || fail "the row must name why the guard is missing, not only that it is: $(row_of lead-ff)"
+  done
+  pass 'T3b a home holding the trunk guard moves with both hooks; any other hook refuses the guard install, named in the rolled-back row'
 }
 
 test_a_local_trunk_project_is_refused_without_base() {
@@ -397,6 +449,7 @@ test_a_go_live_run_from_a_lead_home_moves_every_home
 test_a_home_left_behind_is_named_and_the_lag_check_reports_it
 test_home_moves_one_canary_only
 test_failed_health_pins_the_home_back_and_stops
+test_a_refused_guard_install_is_named_in_the_row
 test_a_local_trunk_project_is_refused_without_base
 test_live_runs_the_exported_tool_and_the_waiver_spends_no_word
 test_the_landing_check_runs_the_batched_live_step_and_reports_it

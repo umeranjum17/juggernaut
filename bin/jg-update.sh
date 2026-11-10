@@ -82,6 +82,7 @@
 #   skipped:dirty | skipped:unlanded:<paths> | skipped:<other reason>   not touched
 #   live,pinned-back-from:<sha> the base is BEHIND the home (a red CI) and the home holds only trunk commits: reset --keep to the base
 #   rolled-back:<reason>        the health check failed: the home is pinned back to its pre-move HEAD and the rollout stops
+#                               (a missing-guard reason carries the refusal of the guard install that ran first)
 #   <status>,wiring-failed:<steps>   the home stands on <sha> but these host wiring steps failed (the move itself stands)
 # After a home moves, bin/jg-home-guard.sh install <home> and bin/jg-home-health.sh check <home> <sha> run when present.
 # Then every home that stands on <sha> (moved, or rolled back to a pre-move HEAD that already was <sha>) runs its own
@@ -311,7 +312,7 @@ wire_home() {  # <dir> <label>
 
 # Move one home to $BASE and write its row. Sets MOVE_RESULT=moved|skipped|stopped.
 move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
-  local key=$1 dir=$2 label=$3 seed=$4 pre out mb paths status tmp
+  local key=$1 dir=$2 label=$3 seed=$4 pre out mb paths status tmp guard_why
   MOVE_RESULT=skipped
   pre=$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)
   if ! git -C "$dir" cat-file -e "$BASE^{commit}" 2>/dev/null; then
@@ -349,10 +350,17 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
   if [ "$MOVE_RESULT" = moved ]; then
     [ "$FF_STATUS" != updated ] || [ ! -x "$dir/bin/jg-procevent-when.sh" ] \
       || JG_HOME="$dir" JG_ROOT_OVERRIDE="$dir" "$dir/bin/jg-procevent-when.sh" rebind-all || true
-    [ ! -x "$SCRIPT_DIR/jg-home-guard.sh" ] || "$SCRIPT_DIR/jg-home-guard.sh" install "$dir" || true
+    # A refused guard install is what a missing-guard health failure means, so its own reason goes in the row.
+    guard_why=""
+    if [ -x "$SCRIPT_DIR/jg-home-guard.sh" ]; then
+      out=$("$SCRIPT_DIR/jg-home-guard.sh" install "$dir" 2>&1) || guard_why=$(first_line "$(printf '%s\n' "$out" | tail -n 1)")
+      [ -z "$out" ] || printf '%s\n' "$out"
+    fi
     if [ -x "$SCRIPT_DIR/jg-home-health.sh" ] && ! out=$("$SCRIPT_DIR/jg-home-health.sh" check "$dir" "$BASE" 2>&1); then
       JG_TRUNK_PINBACK=1 git -C "$dir" reset -q --keep "$pre" || true
-      status="rolled-back:$(first_line "$(printf '%s\n' "$out" | tail -n 1)")"; MOVE_RESULT=stopped
+      out=$(first_line "$(printf '%s\n' "$out" | tail -n 1)")
+      case $out in missing-guard:*) [ -z "$guard_why" ] || out="missing-guard: the guard install refused: ${guard_why#jg-home-guard: }" ;; esac
+      status="rolled-back:$out"; MOVE_RESULT=stopped
       echo "$label: health check failed, pinned back to ${pre:0:12}: $status"
     fi
   fi

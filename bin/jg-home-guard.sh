@@ -9,6 +9,10 @@
 # bin/ that a later update replaces and a missing helper can never lock a home. It records the trunk tip in
 # <git-common-dir>/jg-home-guard/trunk-tip (--tip, else JG_TRUNK_TIP, else the home's HEAD, which is the trunk commit the
 # live move just made). bin/jg-update.sh --base calls `install` after it moves a home and `check` in the health step.
+# A home that is also a local-trunk project already holds the trunk guard of bin/jg-trunk.sh in that hook file: `install`
+# keeps it as <git-common-dir>/hooks/reference-transaction.chained, the hook runs it first with the same input (its refusal
+# is the refusal), bin/jg-trunk.sh writes its guard there while the home guard holds the hook file, and `uninstall` puts it
+# back. Any other hook already there is refused untouched. A rerun leaves both files byte-identical.
 #
 # What the hook guards (state `prepared`): the ref refs/heads/main in the home's repository, and HEAD when the move is a
 # detached one in the home's own checkout (a lane worktree, a linked pool worktree and a branch other than main are not the
@@ -32,6 +36,7 @@
 # reports it exactly like `git worktree add`.
 set -u
 MARK='managed by bin/jg-home-guard.sh'
+CHAINED=reference-transaction.chained
 SELF="${BASH_SOURCE[0]}"
 
 die() { echo "jg-home-guard: $*" >&2; exit 1; }
@@ -110,8 +115,12 @@ record_live() {  # <old> <new>: a committed live move records the HEAD it left a
 }
 
 hook() {
-  local state=$1 old new ref why top=""
+  local state=$1 old new ref why top="" input
   COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+  # The trunk guard this hook took the place of judges the same transaction first; its refusal is the refusal.
+  input=$(cat; printf x); input=${input%x}
+  # (a chained hook that does not read its input closes the pipe early, which is not an error)
+  if [ -x "$COMMON/hooks/$CHAINED" ]; then printf '%s' "$input" 2>/dev/null | "$COMMON/hooks/$CHAINED" "$@" || exit $?; fi
   DIR="$COMMON/jg-home-guard"; TIP=$(cat "$DIR/trunk-tip" 2>/dev/null || true)
   case $state in
     prepared) ;;
@@ -129,7 +138,7 @@ hook() {
       echo "refused: $ref does not move to $(short "$new"): $why; a home's main moves only along the local trunk (bin/jg-trunk.sh live) [transaction: $(short "$old") -> $(short "$new")]" >&2
       exit 1
     fi
-  done
+  done < <(printf '%s' "$input")
   exit 0
 }
 
@@ -144,17 +153,26 @@ cmd_install() {
     case $1 in --tip) tip=${2-}; shift 2 || die "--tip needs a commit" ;; --pre) pre=${2-}; shift 2 || die "--pre needs a commit" ;; *) die "unknown option $1" ;; esac
   done
   common=$(common_of "$home"); hook="$common/hooks/reference-transaction"; dir="$common/jg-home-guard"
-  if [ -e "$hook" ] && ! grep -q "$MARK" "$hook"; then die "$hook is not the home guard; move it aside so the home can be guarded"; fi
   [ -n "$tip" ] || tip=$(git -C "$home" rev-parse HEAD 2>/dev/null) || die "$home has no HEAD to record as the trunk tip"
   tip=$(git -C "$home" rev-parse -q --verify "$tip^{commit}") || die "trunk tip $tip is not a commit in $home"
   mkdir -p "$common/hooks" "$dir"
+  if [ -e "$hook" ] && ! grep -q "$MARK" "$hook"; then
+    # The trunk guard (bin/jg-trunk.sh) of a home that is also a local-trunk project keeps working: it moves to the
+    # chained slot this hook runs first, and bin/jg-trunk.sh writes it there from then on. Any other hook stays where it is.
+    grep -q '^# managed by bin/jg-trunk.sh:' "$hook" || die "$hook is not the home guard; move it aside so the home can be guarded"
+    if [ -e "$common/hooks/$CHAINED" ] && ! grep -q '^# managed by bin/jg-trunk.sh:' "$common/hooks/$CHAINED"; then
+      die "$common/hooks/$CHAINED is not the trunk guard; move it aside so the home can be guarded"
+    fi
+    tmp=$(mktemp "$common/hooks/.rt.XXXXXX") || die "cannot write into $common/hooks"
+    if ! cp -p -- "$hook" "$tmp" || ! mv -f -- "$tmp" "$common/hooks/$CHAINED"; then rm -f -- "$tmp"; die "cannot keep the trunk guard at $common/hooks/$CHAINED"; fi
+  fi
   tmp=$(mktemp "$common/hooks/.rt.XXXXXX") || die "cannot write into $common/hooks"
   sed "2i # $MARK: a home's main and detached HEAD move only along the local trunk" "$SELF" > "$tmp" || die "cannot write $hook"
   chmod 755 "$tmp" || die "cannot write $hook"
   mv -f -- "$tmp" "$hook" || die "cannot write $hook"
   printf '%s\n' "$tip" > "$dir/trunk-tip.new" && mv -f -- "$dir/trunk-tip.new" "$dir/trunk-tip"
   if [ -n "$pre" ]; then pre=$(git -C "$home" rev-parse -q --verify "$pre^{commit}") || die "pre-move $pre is not a commit in $home"; printf '%s %s\n' "$pre" "$(git -C "$home" rev-parse HEAD)" > "$dir/pre-move"; fi
-  echo "home guard installed in $home (trunk tip $(short "$tip"))"
+  echo "home guard installed in $home (trunk tip $(short "$tip"))$([ ! -x "$common/hooks/$CHAINED" ] || printf '; it runs the trunk guard first')"
 }
 
 cmd_check() {
@@ -171,6 +189,8 @@ cmd_uninstall() {
   [ -n "$home" ] || die "usage: jg-home-guard.sh uninstall <home>"
   common=$(common_of "$home"); hook="$common/hooks/reference-transaction"
   if [ -e "$hook" ]; then grep -q "$MARK" "$hook" || die "$hook is not the home guard; leaving it"; rm -f -- "$hook"; fi
+  # A trunk guard the hook ran first goes back to being the repository's hook.
+  if [ -e "$common/hooks/$CHAINED" ]; then mv -f -- "$common/hooks/$CHAINED" "$hook" || die "cannot put the trunk guard back at $hook"; fi
   rm -f -- "$common/jg-home-guard/trunk-tip" "$common/jg-home-guard/pre-move"; rmdir "$common/jg-home-guard" 2>/dev/null || true
   echo "home guard removed from $home"
 }
