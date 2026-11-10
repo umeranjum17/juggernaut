@@ -21,7 +21,7 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `status-verb` | `state/<id>.status prefix` | `core/classify/cmd/jg-classify/classify.go` | 14 | 13 | `bin/jg-machine.sh next status-verb <id>` |
 | `task-inbox` | `state/<task>.inbox/NNN.msg with .delivery.jsonl and the ladder markers (id: <task>:<NNN>)` | `bin/jg-task-inbox-lib.sh` | 12 | 40 | `bin/jg-machine.sh next task-inbox <id>` |
 | `task` | `a task's backlog row, status log and delivery` | `core/machines/observers/task.sh` | 14 | 24 | `bin/jg-machine.sh next task <id>` |
-| `trunk-pointers` | `state/trunk-{tip,green,released,rolled,word-live}-<project> and data/trunk-live.tsv` | `bin/jg-trunk.sh` | 8 | 19 | `bin/jg-machine.sh next trunk-pointers <id>` |
+| `trunk-pointers` | `state/trunk-{tip,green,released,rolled,word-live}-<project> and data/trunk-live.tsv` | `bin/jg-trunk.sh` | 8 | 20 | `bin/jg-machine.sh next trunk-pointers <id>` |
 | `wait` | `a task's latest status line (state/<id>.status)` | `core/wait-timers/README.md` | 4 | 10 | `bin/jg-machine.sh next wait <id>` |
 <!-- machines:end -->
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Integration test for bin/jg-trunk.sh: the post-landing verify and the trunk lock (tests/jg-trunk-fixture.sh).
+# Integration test for bin/jg-trunk.sh: verify (the whole suite, run by hand) and the trunk lock (tests/jg-trunk-fixture.sh).
 # Through tests/jg-trunk-fixture.sh it runs bin/jg-trunk.sh, reads bin/jg-dod-lib.sh and stands in for bin/jg-captain-hold.sh,
 # bin/jg-backlog.sh, bin/jg-send.sh, bin/jg-teardown.sh, bin/jg-fleet-ledger.sh and bin/jg-home-health.sh.
 #
 # Queued verifies run one at a time and only the newest runs, and its green moves the pin over the rest; a verify whose
-#    only failures its parent already had moves the pin, and one holding a red the commit added does not. A verify whose only
-#    failures pass on their one rerun moves the pin too, and each flaky test is recorded and filed once as its own fix row.
-#    A gate shard over its wall-clock budget with no failed test is a warning and a machine-load row, never a red.
+#    only failures its parent already had leaves the pin where the landing put it, and one holding a red the commit added
+#    takes the pin back below that commit. A verify whose only failures pass on their one rerun moves the pin too, and each
+#    flaky test is recorded and filed once as its own fix row. A gate shard over its wall-clock budget with no failed test
+#    is a warning and a machine-load row, never a red.
 # A red with no failed test (the stall of 10 Nov) warns and runs once more, pins and reverts nothing, and a ready lane lands on it
 #    through the real check with no hand step and no marker file. A trunk with no green for 15 minutes raises one alarm, not two.
 # No landing or stack holds the trunk lock while its gate runs: a verify finishes and moves the pin, another lane lands,
@@ -37,6 +38,7 @@ test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs() {
   local c1 c2 c3 p1 p2 p3 n
   world coalesce
   lane q1 one; c1=$(tip_after_land q1); lane q2 two; c2=$(tip_after_land q2); lane q3 three; c3=$(tip_after_land q3)
+  printf '%s\n' "$c1" > "$HOME_D/state/trunk-green-proj"  # a pin under the tip, as a red found after a landing leaves it
   # A whole-suite run that records which commit it ran at and stays open until the test releases it.
   printf '#!/usr/bin/env bash\ngit rev-parse HEAD >> %s/verify-ran\nwhile [ ! -e %s/release ]; do sleep 0.1; done\n' "$W" "$W" > "$W/slow.sh"
   printf 'gate-verify=bash %s/slow.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
@@ -54,9 +56,6 @@ test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs() {
   [ "$(cat "$W/verify-ran")" = "$c1"$'\n'"$c3" ] || fail "the suite must run at the first and the newest commit only: $(cat "$W/verify-ran")"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c3" ] || fail "green at the newest commit moves the pin over the commit that never ran"
   [ ! -e "$HOME_D/state/trunk-verify-want-proj" ] || fail "a verify that ended must leave nothing queued"
-  # A verify for a commit that is already under the pin does not run the suite again.
-  assert_contains "$(trunk verify "$PROJ" "$c2" 2>&1)" "already under the green pin" "a covered commit is not verified again"
-  [ "$(grep -c . "$W/verify-ran")" = 2 ] || fail "a covered commit must not run the suite"
   pass 'queued verifies run one at a time and only the newest runs; its green moves the pin over the rest'
 }
 
@@ -76,8 +75,8 @@ test_a_verify_moves_the_pin_over_a_red_its_parent_already_had() {
   printf 'gate-full=true\n' >> "$HOME_D/config/trunk-policy"
   trunk land bad >/dev/null 2>&1 || fail "the lane lands by hand past a fast gate"
   trunk verify "$PROJ" >/dev/null 2>&1 && fail "a commit that adds a red must not pass verify"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$good" ] || fail "a red the commit added must not move the pin"
-  pass 'the green pin moves over failures the parent already had, and holds on a red the commit added'
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$good" ] || fail "a red the commit added must take the pin back below it"
+  pass 'the green pin stands over failures the parent already had, and goes back below a red the commit added'
 }
 
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
@@ -90,7 +89,7 @@ test_a_verify_whose_only_failures_pass_on_rerun_moves_the_pin_and_files_one_row_
   trunk land fr >/dev/null 2>&1 || fail "fr must land"
   lane fs "[ -e $W/seen-s ] || { : > $W/seen-s; echo 'not ok - flaky s' >&2; exit 1; }; exit 0" t/s.test.sh
   trunk land fs >/dev/null 2>&1 || fail "fs must land"
-  top=$(tip)
+  top=$(tip); printf '%s\n' "$first" > "$HOME_D/state/trunk-green-proj"  # a pin under the tip, as a red found after a landing leaves it
   out=$(trunk verify "$PROJ" 2>&1) || fail "a verify whose only failures pass on their rerun must pass: $out"
   assert_contains "$out" "judged flaky" "the verify must say it set the flaky failures aside"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$top" ] || fail "a pass on the rerun must move the green pin from $first to $top, got $(cat "$HOME_D/state/trunk-green-proj")"
@@ -112,6 +111,7 @@ test_a_landing_does_not_hold_the_trunk_while_its_gate_runs() {
   local c0 p1 out
   world longland
   lane l0 one; c0=$(tip_after_land l0); slow_gate
+  printf '%s\n' "$(git -C "$PROJ" rev-parse "$c0^")" > "$HOME_D/state/trunk-green-proj"  # a pin under the tip, for the verify to move
   lane l1 SLOW slow.txt; lane l3 three other.txt
   trunk land l1 > "$W/l1.out" 2>&1 & p1=$!
   await_gate 'ticket l1'
@@ -197,15 +197,15 @@ test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_r
 
 # The stall of 10 Nov: trunk-v3's tip verify ended with failed=0, every shard over its wall-clock budget and exit 1. The old verify
 # wrote a red pin, every landing but a fixes-red commit was refused for about 5 hours while 17 lanes waited, and Main cleared the pin
-# by hand. Now that run warns and runs once more, pins nothing and reverts nothing, live stays on the last green commit, and a ready
-# lane lands through the real landing check with no hand step and no marker file.
+# by hand. Now that run warns and runs once more, moves the pin nowhere and reverts nothing, and a ready lane lands through the real
+# landing check with no hand step, no marker file and no whole-suite run after it.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
-  local out green top ob k
+  local out top k
   world nostall; rig
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  green=$(cat "$HOME_D/state/trunk-green-proj"); ob="$HOME_D/data/jg-trunk-landing/outbox"
   lane s1 'exit 0' t/s1.test.sh; trunk land s1 >/dev/null 2>&1 || fail "s1 must land"; top=$(tip)
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$top" ] || fail "the landing moves the green pin to s1"
   {
     printf '#!/usr/bin/env bash\necho run >> %s/verify-runs\nbash %s/rig.sh --all || exit\n' "$W" "$W"
     for k in 1 2 3 4 5 6 7 8; do
@@ -217,25 +217,25 @@ test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it() {
   out=$(trunk verify "$PROJ" 2>&1) && fail "a whole suite that ended with exit 1 is not green: $out"
   assert_contains "$out" "no failed test charged to a commit; it is not pinned or reverted, and it runs once more" "the verify must warn and run once more"
   [ "$(grep -c . "$W/verify-runs")" = 2 ] || fail "the suite runs once more, and only once: $(grep -c . "$W/verify-runs") runs"
-  assert_contains "$out" "nothing is pinned or reverted: landings go on, and live stays on the last green commit ${green:0:12}" "the verify must say nothing is pinned"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "the pin stays on the last green commit"
+  assert_contains "$out" "nothing is reverted and the green pin stays at ${top:0:12}: landings go on" "the verify must say nothing moves"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$top" ] || fail "a red with no failed test leaves the pin where the landing put it"
   [ "$(tip)" = "$top" ] || fail "a red with no failed test moves nothing on the trunk"
   if git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: '; then fail "a red with no failed test reverts nothing"; fi
   # A ready lane lands through the real check, with no hand step: no flush, no land-next, no marker to clear.
   lane s2 'exit 0' t/s2.test.sh
   out=$(sweep)
-  for _ in $(seq 1 300); do grep -qs 's2: the whole suite did not pass' "$ob" && break; sleep 0.2; done
+  for _ in $(seq 1 150); do git -C "$PROJ" log -1 --format=%s trunk | grep -qx 'ticket s2' && break; sleep 0.2; done
   git -C "$PROJ" log -1 --format=%s trunk | grep -qx 'ticket s2' || fail "the ready lane must land on a trunk whose suite ended red with no failed test: $out $(cat "$HOME_D"/data/jg-trunk-landing/s2.*.log 2>&1)"
   [ "$(find "$HOME_D/state" -name 'trunk-red*' -o -name '*cleared*' -o -name '*.land-next' -o -name 'trunk-flush-*' | grep -c .)" = 0 ] \
     || fail "no marker file is written or needed: $(ls "$HOME_D/state")"
-  assert_contains "$(cat "$ob")" "s2: the whole suite did not pass at" "the post-landing verify reports the suite that did not pass"
-  assert_contains "$(cat "$ob")" "live stays on the last green commit ${green:0:12}" "the report says live stays on the last green commit"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "the green pin, and with it live, never follows a red tip"
-  pass 'a red with no failed test warns, runs once more, pins and reverts nothing, and a ready lane lands on it with no hand step'
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "s2's own gate moves the green pin to it"
+  sleep 2; [ "$(grep -c . "$W/verify-runs")" = 2 ] || fail "no whole suite runs after the landing: $(grep -c . "$W/verify-runs") runs"
+  pass 'a red with no failed test warns, runs once more, moves and reverts nothing, and a ready lane lands on it with no hand step'
 }
 
 # A trunk with no green commit for no-green-alarm-minutes (15) raises one alarm to Overwatch through the landing check, and a stall
-# that goes on is not raised again; once the green pin moves, a new stall raises a new one.
+# that goes on is not raised again; once the green pin moves, a new stall raises a new one. Every landing moves the pin, so a stall
+# is a pin a red took back below the landings (written here by hand, as a hand-run verify or a red CI leaves it).
 test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   local out green q
   world nogreen
@@ -243,8 +243,10 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   q="$HOME_D/state/.wake-queue"; green=$(cat "$HOME_D/state/trunk-green-proj")
   assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "is green at ${green:0:12}" "a trunk at its green pin raises nothing"
   lane a1 one; trunk land a1 >/dev/null 2>&1 || fail "a1 must land"
+  assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "is green at $(tip | cut -c1-12)" "a landing moves the pin, so it is no stall"
+  printf '%s\n' "$green" > "$HOME_D/state/trunk-green-proj"  # a red found after a1 landed took the pin back
   assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "for 0 of 15 minutes" "a fresh landing is not a stall"
-  # The landing is 16 minutes old and no verify moved the pin.
+  # The landing is 16 minutes old and the pin is still below it.
   awk -F'\t' -v OFS='\t' -v t=$(( $(date +%s) - 960 )) '{ $4 = t; print }' "$HOME_D/data/trunk-landings.tsv" > "$W/rows" && mv "$W/rows" "$HOME_D/data/trunk-landings.tsv"
   sweep >/dev/null; rm -f "$HOME_D"/data/jg-trunk-landing/.green-alarm-*; sweep >/dev/null
   [ "$(grep -c 'has had no green commit for 16 minutes' "$q")" = 1 ] || fail "the stall must raise one alarm through the landing check, not two: $(cat "$q" 2>&1)"
@@ -255,6 +257,7 @@ test_no_green_for_15_minutes_raises_one_alarm_not_two() {
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "the trunk must verify green"
   green=$(tip); assert_contains "$(trunk green-alarm "$PROJ" 2>&1)" "is green at ${green:0:12}" "a green tip raises nothing"
   lane a2 two; trunk land a2 >/dev/null 2>&1 || fail "a2 must land"
+  printf '%s\n' "$green" > "$HOME_D/state/trunk-green-proj"  # a red found after a2 landed took the pin back
   awk -F'\t' -v OFS='\t' -v t=$(( $(date +%s) - 1200 )) '{ $4 = t; print }' "$HOME_D/data/trunk-landings.tsv" > "$W/rows" && mv "$W/rows" "$HOME_D/data/trunk-landings.tsv"
   out=$(trunk green-alarm "$PROJ" 2>&1); assert_contains "$out" "raised:" "a new stall above a moved pin is raised"
   [ "$(grep -c 'has had no green commit' "$q")" = 2 ] || fail "each stall is raised once: $(cat "$q")"

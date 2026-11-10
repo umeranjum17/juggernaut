@@ -93,7 +93,7 @@ jm show trunk-pointers nope; expect_code 1 "$RC" "a project with no trunk"
 assert_contains "$OUT" "no state" "show names the missing state"
 pass "trunk-pointers names each pointer state from the pointer files"
 
-{ tab released land landed; tab landed verify green; tab green word word-given; tab word-given live live
+{ tab released land green; tab green verify-red landed; tab landed verify green; tab green word word-given; tab word-given live live
   tab live release released; tab released rollover rolled; tab green ci-red pinned-behind; tab word-given hook-fail hook-failed
   tab hook-failed live live; tab pinned-behind ci-green green; } > "$T/ptr.corpus"
 jm check trunk-pointers --corpus "$T/ptr.corpus"; expect_code 0 "$RC" "the trunk lifecycle replays clean"

@@ -30,8 +30,8 @@
 # T5 `jg-trunk.sh live` runs the mover from an export of the tip, never from the home's own bin; the waiver
 #    record is written only by the Overwatch path, spends no word and marks the row; a project without a
 #    waiver still needs the captain's word.
-# T6 The landing check runs the suite after a landing and, under a waiver, the batched live step on its own, and reports a go-live,
-#    a failed move, a new hold, a home left behind the last go-live or a red suite; tests/jg-trunk-live.test.sh owns the quiet-window, hourly-cap, red and pin-back journeys.
+# T6 The landing check runs no suite after a landing and, under a waiver, runs the batched live step on its own, and reports a go-live,
+#    a failed move, a new hold or a home left behind the last go-live; tests/jg-trunk-live.test.sh owns the quiet-window, hourly-cap, red and pin-back journeys.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -498,20 +498,15 @@ test_live_runs_the_exported_tool_and_the_waiver_spends_no_word() {
 
 test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   local fh="$TMP_ROOT/t6/fm" out
-  mkdir -p "$fh/state" "$fh/data" "$fh/config" "$fh/bin" "$fh/projects/proj"
+  mkdir -p "$fh/state" "$fh/data/jg-trunk-landing" "$fh/config" "$fh/bin" "$fh/projects/proj"
   # shellcheck disable=SC2016 # the stub body expands when it runs
-  printf '#!/usr/bin/env bash\necho "$1" >> "%s/calls"\ncase "$1" in verify) exit "$(cat "%s/verify-rc")" ;; autolive) printf "autolive: %%s\\n" "$(cat "%s/verdict")"; exit "$(cat "%s/rc")" ;; esac\n' "$fh" "$fh" "$fh" "$fh" > "$fh/bin/jg-trunk.sh"
+  printf '#!/usr/bin/env bash\necho "$1" >> "%s/calls"\ncase "$1" in autolive) printf "autolive: %%s\\n" "$(cat "%s/verdict")"; exit "$(cat "%s/rc")" ;; esac\n' "$fh" "$fh" "$fh" > "$fh/bin/jg-trunk.sh"
   chmod +x "$fh/bin/jg-trunk.sh"; cp "$ROOT/bin/jg-wake-lib.sh" "$ROOT/bin/jg-path-lib.sh" "$fh/bin/"
-  local c=cccccccccccccccccccccccccccccccccccccccc ob="$fh/data/jg-trunk-landing/outbox"
-  # The landing's own row names its project: the check tears the lane down (its record is gone) before the post-landing job runs.
-  printf 't1\tproj\t%s\t1\tfull\n' "$c" > "$fh/data/trunk-landings.tsv"
-  post() { bash "$ROOT/core/trunk-landing/trunk-landing.sh" post "$fh" t1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$c" >/dev/null 2>&1; }
+  local rc=0 ob="$fh/data/jg-trunk-landing/outbox"
   live() { bash "$ROOT/core/trunk-landing/trunk-landing.sh" live "$fh" proj >/dev/null 2>&1; }
-  # The post-landing job runs the suite and never the live step: a landing never waits on a go-live.
-  printf '0\n' > "$fh/verify-rc"; post
-  [ "$(cat "$fh/calls")" = verify ] || fail "the post-landing job must run the suite only: $(cat "$fh/calls")"
-  printf '1\n' > "$fh/verify-rc"; post
-  assert_contains "$(cat "$ob")" "t1: the whole suite did not pass at cccccccccccc" "a suite that did not pass is reported and nothing goes live"
+  # No job follows a landing to run the whole suite on this machine: it runs once, on the release pull request in GitHub CI.
+  bash "$ROOT/core/trunk-landing/trunk-landing.sh" post "$fh" t1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 2 ] && [ ! -e "$fh/calls" ] || fail "the landing check must have no post-landing suite job (exit $rc, calls: $(cat "$fh/calls" 2>/dev/null))"
   # The live job reports a go-live and a failed move, a new hold once, and nothing for waiting, already live or no waiver.
   : > "$fh/calls"; : > "$ob"; printf '0\n' > "$fh/rc"
   printf 'live at abc on every home (0 skipped, see data/trunk-live.tsv)\n' > "$fh/verdict"; live
@@ -532,7 +527,7 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   [ "$(grep -c "proj: lag: " "$ob")" = 2 ] || fail "a new set of lagging homes is reported: $(cat "$ob")"
   rm "$fh/lag"; live; printf 'lag: homes not at the last go-live abc: lead-b lead-c\n' > "$fh/lag"; live
   [ "$(grep -c "proj: lag: " "$ob")" = 3 ] || fail "a lag that clears and returns is reported again: $(cat "$ob")"
-  pass 'T6 the landing check runs the suite after a landing and the batched live step on its own, and reports their outcomes'
+  pass 'T6 the landing check runs no suite after a landing, runs the batched live step on its own, and reports its outcomes'
 }
 
 test_every_home_moves_or_is_skipped_with_one_row

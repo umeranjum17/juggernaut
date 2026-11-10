@@ -70,6 +70,8 @@ lab() {  # <name>
   lane_on trunk c2 two w2.txt; land c2; C2=$(tip)
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "c2 must verify"
   lane_on trunk c3 three w3.txt; land c3; C3=$(tip)
+  # Each landing moves the green pin to its head, so the pin goes back to c2 by hand: c3 stands for a commit past the last green.
+  printf '%s\n' "$C2" > "$HOME_D/state/trunk-green-proj"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$C2" ] || fail "fixture: the green pin must stand on the second commit above the release"
   OLD=$(tip)
   # The merged release is a merge commit of the released head into main, as the forge makes it.

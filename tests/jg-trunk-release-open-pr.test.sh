@@ -77,7 +77,6 @@ ROW
 
 batch() {  # <id>: one landed, fully green commit on the trunk and the captain's word to release it
   lane "$1" "$1"; trunk land "$1" >/dev/null 2>&1 || fail "$1 must land"
-  trunk verify "$PROJ" >/dev/null 2>&1 || fail "$1 must verify"
   trunk word release "$PROJ" "ship $1" >/dev/null 2>&1 || fail "the captain's word must record"
 }
 open_prs() {  # <n>...: the open pull requests from the trunk into main, as gh-axi lists them

@@ -18,7 +18,7 @@ cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "this machine's real jg-sentinel unit as it is, a remote squad-lead fixture under a temp root whose simulated host has its own account (stub systemctl and systemd-run), and a local-trunk fixture home",
- "steps": ["update the remote squad lead's code root on its host, which runs the release's stack and host wiring for the throw-away root", "install the sentinel for a throw-away home into an account's own unit dir, then dry-run it against this account's real unit dir", "land a lane whose post-landing suite hangs, then let the suite clean up"],
- "result": "the update fast-forwards the remote home and installs no unit, no sentinel copy and changes no systemd state; both installs are refused with the reason and write nothing; the hung post-landing job and its process group are gone after cleanup; the real unit's mtime and bytes are unchanged"}
+ "steps": ["update the remote squad lead's code root on its host, which runs the release's stack and host wiring for the throw-away root", "install the sentinel for a throw-away home into an account's own unit dir, then dry-run it against this account's real unit dir", "start the landing of a lane whose gate hangs, then let the suite clean up"],
+ "result": "the update fast-forwards the remote home and installs no unit, no sentinel copy and changes no systemd state; both installs are refused with the reason and write nothing; the hung landing job and its process group are gone after cleanup; the real unit's mtime and bytes are unchanged"}
 JSON
 exit "$rc"

@@ -44,5 +44,5 @@ edge	merged	t12-rollover	rolled	bin/jg-trunk.sh:cmd_rollover	-	the landing check
 edge	landed	t13-refused	cleanup-refused	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-teardown.sh refuses the lane's cleanup after the landing	jg-machine-lane-delivery.test.sh
 edge	cleanup-refused	t13-cleaned	landed	core/lead-sweep/lead-sweep.sh:main	-	the sweep's unforced cleanup removes the lane record	jg-machine-lane-delivery.test.sh
 edge	live	x1-ci-red	home-behind	bin/jg-trunk.sh:cmd_ci	-	CI is red at a live commit, so the green pin and every home move back to the last green commit	jg-machine-lane-delivery.test.sh
-edge	landed	s18-revert	reverted	bin/jg-trunk.sh:revert_commit	-	the post-landing whole suite charges the change with a red and reverts it	jg-machine-lane-delivery.test.sh
+edge	landed	s18-revert	reverted	bin/jg-trunk.sh:revert_commit	-	a hand-run whole suite charges the change with a red and reverts it	jg-machine-lane-delivery.test.sh
 observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/lane-delivery.sh" "$1"

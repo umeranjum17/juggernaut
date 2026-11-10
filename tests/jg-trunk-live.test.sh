@@ -8,7 +8,8 @@
 #    never goes live; it ignores a task that is not done, reports a refusal once (a conflict names its paths), retries a
 #    refusal that only needs time, cleans a landed task up unforced, and runs on the watcher's fast tick.
 # The batched live step moves every home once the trunk has been quiet (the window is a knob) or at the hourly cap while
-#    landings continue; a red head and a red post-landing suite never move a home off the green pin, a missing waiver moves none; the bundled hook
+#    landings continue; a landed commit is green at once and nothing runs the whole suite after it; a red head, a red a
+#    hand-run verify finds and a missing waiver move none; the bundled hook
 #    fast-forwards a home that runs the project and records a dirty home as not moved.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 # shellcheck source=tests/jg-trunk-fixture.sh
@@ -17,7 +18,7 @@
 
 # A fleet: the code home (a clone of the project's origin, as Main's checkout is) and two registered Squad Lead homes
 # (worktrees of it), all on the last release, a go-live waiver, and the home's own bin so the landing check runs.
-fleet_world() {  # <name> [rig]: sets W HOME_D PROJ CODE_ROOT BASE; rig makes the post-landing suite the rig's t/*.test.sh
+fleet_world() {  # <name> [rig]: sets W HOME_D PROJ CODE_ROOT BASE; rig makes the whole suite (verify, run by hand) the rig's t/*.test.sh
   local id
   world "$1"
   [ "${2-}" != rig ] || { rig; printf 'gate-full=! grep -q BAD work.txt\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"; }
@@ -64,7 +65,7 @@ age_live() {
   awk -F'\t' -v OFS='\t' -v n="$(date +%s)" '{ $3 = n - 7200; print }' "$HOME_D/data/trunk-live.tsv" > "$HOME_D/data/trunk-live.tsv.new" && mv "$HOME_D/data/trunk-live.tsv.new" "$HOME_D/data/trunk-live.tsv"
 }
 
-await_green() {  # the post-landing suite has moved the green pin to the trunk tip
+await_green() {  # the landing has moved the green pin to the trunk tip
   for _ in $(seq 1 200); do [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] && return 0; sleep 0.2; done; return 1
 }
 
@@ -76,7 +77,6 @@ test_the_bundled_hook_moves_a_home_that_runs_the_project() {
   lane h1 hook; c=$(git -C "$PROJ" rev-parse fm/h1)
   out=$(CODE_ROOT="$W/homecode" trunk land h1 2>&1) || fail "h1 must land: $out"
   [ "$(git -C "$W/homecode" rev-parse HEAD)" != "$c" ] || fail "landing alone must not move the home checkout"
-  trunk verify "$PROJ" >/dev/null 2>&1 || fail "h1 must verify"
   trunk word live "$PROJ" "go" >/dev/null 2>&1
   out=$(CODE_ROOT="$W/homecode" trunk live "$PROJ" 2>&1) || fail "live must move a home that runs the project: $out"
   [ "$(git -C "$W/homecode" rev-parse HEAD)" = "$c" ] || fail "the home checkout must be fast-forwarded to the landed commit: $out"
@@ -87,7 +87,6 @@ test_the_bundled_hook_moves_a_home_that_runs_the_project() {
   printf '%s\n' "$c" > "$HOME_D/state/trunk-green-proj"
   rm "$HOME_D/data/trunk-live.tsv"; printf 'dirty\n' >> "$W/homecode/README.md"
   lane h2 hook2; CODE_ROOT="$W/homecode" trunk land h2 >/dev/null 2>&1 || fail "h2 must land"
-  trunk verify "$PROJ" >/dev/null 2>&1 || fail "h2 must verify"
   trunk word live "$PROJ" "go" >/dev/null 2>&1
   rc=0; out=$(CODE_ROOT="$W/homecode" trunk live "$PROJ" 2>&1) || rc=$?
   [ "$rc" = 3 ] || fail "a live whose home did not move must exit 3, got $rc: $out"
@@ -127,7 +126,7 @@ test_a_quiet_trunk_goes_live_on_every_home_by_itself() {
   local out c h
   fleet_world autolive; lane g1 good; c=$(git -C "$PROJ" rev-parse fm/g1)
   homes_at "$BASE" || fail "fixture: every home starts on the release"
-  fleet_sweeps "landed g1" >/dev/null; await_green || fail "the post-landing suite must move the green pin"
+  fleet_sweeps "landed g1" >/dev/null; await_green || fail "the landing must move the green pin"
   # A landing never waits on a go-live, and a fresh landing is not live yet: the trunk is not quiet.
   homes_at "$BASE" || fail "a fresh landing must not go live at once"
   out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "autolive: waiting: live in about" "a busy trunk waits for its quiet window"
@@ -140,7 +139,7 @@ test_a_quiet_trunk_goes_live_on_every_home_by_itself() {
   for h in lead-a lead-b primary; do grep -q "^proj:$h	$c	[0-9]*	live" "$HOME_D/data/trunk-live.tsv" || fail "$h needs a live row: $(cat "$HOME_D/data/trunk-live.tsv")"; done
   [ "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" = "autolive: already live at ${c:0:12}" ] || fail "a commit that is live is not moved twice"
   # The knob moves the window: 3 quiet minutes is not enough under 5 and is under 2; a red CI then pins EVERY home back at once.
-  age_live; lane g2 two; fleet_sweeps "landed g2" >/dev/null; await_green || fail "g2 must verify"
+  age_live; lane g2 two; fleet_sweeps "landed g2" >/dev/null; await_green || fail "g2's landing must move the green pin"
   age_landings 3 3; printf 'live-quiet-minutes=5\n' >> "$HOME_D/config/trunk-policy"
   assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting" "3 quiet minutes is not enough under a 5 minute window"
   printf 'live-quiet-minutes=2\n' >> "$HOME_D/config/trunk-policy"
@@ -156,8 +155,9 @@ test_a_quiet_trunk_goes_live_on_every_home_by_itself() {
 # `live` row is written only once every home is at the pin: a home left behind (dirty here) makes it a failed move naming the home.
 test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behind() {
   local out c1 c2 h
-  fleet_world autolive-pinned; lane p1 one; fleet_sweeps "landed p1" >/dev/null; await_green || fail "p1 must verify"
+  fleet_world autolive-pinned; lane p1 one; fleet_sweeps "landed p1" >/dev/null; await_green || fail "p1's landing must move the green pin"
   c1=$(tip); lane p2 two; trunk land p2 >/dev/null 2>&1 || fail "p2 must land"; c2=$(tip)
+  printf '%s\n' "$c1" > "$HOME_D/state/trunk-green-proj"  # as a red found after p2 landed leaves it: the pin one commit under the tip
   [ "$c2" != "$c1" ] && [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "fixture: the pin must be one commit behind the tip"
   age_landings 25 25; printf 'dirty\n' >> "$W/lead-a/work.txt"
   out=$(trunk autolive "$PROJ" 2>&1); [ "$(printf '%s\n' "$out" | tail -n 1)" = "autolive: NOT live, the move failed: fleet: not every home is at ${c1:0:12}: lead-a" ] \
@@ -175,8 +175,8 @@ test_a_pinned_behind_go_live_moves_every_home_and_fails_naming_a_home_left_behin
 
 test_a_busy_trunk_goes_live_at_the_hourly_cap() {
   local out c
-  fleet_world autolive-cap; lane b1 one; fleet_sweeps "landed b1" >/dev/null; await_green || fail "b1 must verify"
-  lane b2 two; fleet_sweeps "landed b2" >/dev/null; await_green || fail "b2 must verify"
+  fleet_world autolive-cap; lane b1 one; fleet_sweeps "landed b1" >/dev/null; await_green || fail "b1's landing must move the green pin"
+  lane b2 two; fleet_sweeps "landed b2" >/dev/null; await_green || fail "b2's landing must move the green pin"
   c=$(tip)
   # Landings keep coming (the newest one a minute ago) but the oldest not-yet-live one is 59 minutes old: still waiting.
   age_landings 1 59
@@ -186,36 +186,36 @@ test_a_busy_trunk_goes_live_at_the_hourly_cap() {
   out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "live at ${c:0:12} on every home" "the cap makes the trunk go live while landings continue"
   homes_at "$c" || fail "the hourly cap must move every home: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
   # Landings after that go live in the next batch, not at once: the cap counts from what is not live yet.
-  lane b3 three; fleet_sweeps "landed b3" >/dev/null; await_green || fail "b3 must verify"
+  lane b3 three; fleet_sweeps "landed b3" >/dev/null; await_green || fail "b3's landing must move the green pin"
   assert_contains "$(trunk autolive "$PROJ" 2>&1 | tail -n 1)" "waiting" "a landing after a go-live starts a new batch"
   pass 'a trunk that keeps landing still goes live once the oldest landing not yet live is an hour old, and the next landing starts a new batch'
 }
 
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_a_red_or_unwaived_landing_never_goes_live() {
-  local out c home
+  local out c
   fleet_world autolive-red rig
   # A head the landing check refuses never lands and no home moves.
   lane r1 BAD
   out=$(fleet_sweeps "r1 not landed")
   assert_contains "$out" "r1 not landed" "a red head is refused by the landing gate"
   homes_at "$BASE" || fail "a refused head must not move any home: $out"
-  # A head that passes the landing check and breaks the whole suite: landed, reverted, and no home ever moves to it.
+  # A head that passes the landing check and breaks the whole suite lands green (nothing runs the whole suite after a landing);
+  # once a hand-run verify finds the red, it is reverted, takes the green pin back, and no home ever moves to it.
   lane r2 'echo "not ok - r2 breaks the suite" >&2; exit 1' t/r2.test.sh; c=$(git -C "$PROJ" rev-parse fm/r2)
-  out=$(fleet_sweeps "r2: the whole suite did not pass")
-  assert_contains "$out" "r2: the whole suite did not pass at" "the red post-landing suite is reported and nothing goes live"
-  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' || fail "a post-landing red is reverted by itself"
-  # The job that follows the landing also verifies the reverted tip; the live step runs once it has ended.
-  home=$(cd "$HOME_D" && pwd -P); for _ in $(seq 1 300); do pgrep -f "trunk-landing.sh post $home " >/dev/null || break; sleep 0.2; done
+  out=$(fleet_sweeps "landed r2"); assert_contains "$out" "landed r2" "a head that passes the landing check lands"
+  case $out in *"whole suite is red"*) fail "no whole suite may run after a landing: $out" ;; esac
+  trunk verify "$PROJ" "$(tip)" >/dev/null 2>&1 && fail "a hand-run verify must find the red"
+  git -C "$PROJ" log --format=%B trunk | grep -q '^reverts: ' || fail "a red verify finds is reverted by itself"
   age_landings 30 30; trunk autolive "$PROJ" >/dev/null 2>&1
-  homes_at "$(cat "$HOME_D/state/trunk-green-proj")" || fail "after the quiet window every home is on the green pin, never on the red tip: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
+  homes_at "$BASE" || fail "a red verify found must not move any home, even after the quiet window: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
   ! grep -q "	$c	" "$HOME_D/data/trunk-live.tsv" 2>/dev/null || fail "the red commit is never live: $(cat "$HOME_D/data/trunk-live.tsv")"
   # With no waiver the word rule stands, and a worker never runs the live step.
   rm -f "$HOME_D/config/trunk-live-waiver"
   out=$(trunk autolive "$PROJ" 2>&1 | tail -n 1); assert_contains "$out" "needs the captain's word" "no waiver, no automatic live"
   homes_at "$BASE" || fail "no waiver must not move any home"
   out=$(JG_TASK_ID=x trunk autolive "$PROJ" 2>&1) && fail "a worker must never run the live step"
-  pass 'a red head and a red post-landing suite never move a home off the green pin, and a missing waiver moves none'
+  pass 'a red head, a red a hand-run verify finds and a missing waiver never move a home'
 }
 
 test_the_landing_check_cuts_the_next_trunk_once_the_release_merged() {
@@ -223,7 +223,7 @@ test_the_landing_check_cuts_the_next_trunk_once_the_release_merged() {
   world rolcheck
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
   lane k1 one; trunk land k1 >/dev/null 2>&1 || fail "k1 must land"
-  trunk verify "$PROJ" >/dev/null 2>&1; trunk word release "$PROJ" "ship it" >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "release must open"
+  trunk word release "$PROJ" "ship it" >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "release must open"
   out=$(sweep); [ -z "$out" ] || fail "an open release must change nothing: $out"
   printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$(tip):refs/heads/main"; rm -f "$HOME_D"/data/jg-trunk-landing/.rollover-*
   out=$(sweep); assert_contains "$out" "release merged: the project is now on trunk-v2" "the check must cut the next trunk"
@@ -266,24 +266,25 @@ if [ "${JG_TRUNK_OUTER_ONLY:-0}" = 1 ]; then
   exit
 fi
 
-# The journey that stalled on 9 Nov: a lane lands on a tip that carries only recorded reds, the check tears the lane down at once
-# (its record is gone), and the post-landing suite still runs, moves the pin over the old reds, and the quiet trunk goes live by itself.
+# The journey that stalled on 9 Nov: a lane lands on a tip that carries only recorded reds and the check tears the lane down at once
+# (its record is gone). The landing's own gate sets the recorded reds aside and moves the pin, no whole suite runs after it, and the
+# quiet trunk goes live by itself.
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself() {
   local out c
   fleet_world oldreds; rig; seed_red_tip; cp "$W/root/bin/jg-backlog.sh" "$HOME_D/bin/jg-backlog.sh"
-  printf 'gate-verify=export GATE_MARK=yes; bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
+  printf 'gate-verify=echo run >> %s/suite-runs; export GATE_MARK=yes; bash %s/rig.sh --all\n' "$W" "$W" >> "$HOME_D/config/trunk-policy"
   lane good 'exit 0' t/d.test.sh
   out=$(fleet_sweeps "landed good"); assert_contains "$out" "cleaned up" "the check must tear the landed lane down"
   [ ! -e "$HOME_D/state/good.meta" ] || fail "fixture: the lane's record must be gone, as the real teardown leaves it"
-  await_green || fail "the post-landing suite must still run once the lane's record is gone, and move the pin over the tip's recorded reds: $(cat "$HOME_D"/data/jg-trunk-landing/good.*.post.log 2>&1)"
+  await_green || fail "the landing must move the pin over the tip's recorded reds: $(cat "$HOME_D"/data/jg-trunk-landing/good.*.log 2>&1)"
   c=$(tip)
-  assert_contains "$(cat "$HOME_D"/data/jg-trunk-landing/good.*.verify.log 2>&1)" "already had set aside" "the verify must say it set the recorded reds aside"
+  [ ! -e "$W/suite-runs" ] || fail "no whole suite may run after a landing"
   age_landings 25 25
   out=$(fleet_sweeps "proj: live at")
   assert_contains "$out" "proj: live at ${c:0:12} on every home" "the quiet trunk must go live by itself over the recorded reds"
   homes_at "$c" || fail "every home must move to the landed commit: $(cat "$HOME_D/data/trunk-live.tsv" 2>/dev/null)"
-  pass 'a landing on a tip with only recorded reds is verified after its lane is torn down, moves the pin and goes live with no hand step'
+  pass 'a landing on a tip with only recorded reds moves the pin after its lane is torn down and goes live with no hand step'
 }
 
 test_a_landing_on_a_tip_with_only_recorded_reds_moves_the_pin_and_goes_live_by_itself

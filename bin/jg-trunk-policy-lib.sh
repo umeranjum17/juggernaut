@@ -18,9 +18,9 @@
 #                         paths, no committed binaries, regression coverage), then only the test scripts
 #                         the changed files map to, in eight shards run side by side (HEAD^ is the trunk tip:
 #                         the lander rebases the lane first)
-#   gate-verify           the same invariants, then the whole suite: `verify` runs it on a landed commit after
-#                         the landing, and a script that fails there and passes on the commit's parent
-#                         reverts that one commit by itself
+#   gate-verify           the same invariants, then the whole suite: `verify` runs it on a landed commit on
+#                         demand (never per landing: the whole suite runs on the release PR in GitHub CI), and
+#                         a script that fails there and passes on the commit's parent reverts that one commit
 #                         gate-lint, gate-full and gate-verify defaults are Juggernaut's own suite: they apply only to a repository
 #                         that carries it (bin/jg-test-run.sh at the commit). Any other project runs only a gate its home set for it
 #                         (gate-verify@<project>, else gate-full@<project> for verify), and with none there is no gate: nothing runs and

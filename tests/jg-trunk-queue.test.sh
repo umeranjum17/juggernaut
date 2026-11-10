@@ -5,8 +5,8 @@
 #
 # T14 The merge queue: 2 or more queued lanes land as ONE stack (auto-rebased in order, one gate over the union of their changed
 #    files judged against the tip, one trunk move, one trunk-landings.tsv row per lane); a lane that conflicts drops out and is told; a red
-#    stack is halved until only the guilty lane is returned and the green part lands; a red the whole suite finds after a batch landing is
-#    traced to its one commit and reverted; a single queued lane keeps the single path.
+#    stack is halved until only the guilty lane is returned and the green part lands; the stack's landing moves the green pin to its top; a
+#    red a hand-run verify finds after a batch landing is traced to its one commit, reverted, and takes the pin back; a single queued lane keeps the single path.
 # T15 The queue's threshold: the landing check holds ready lanes until flush-at-ready are ready or the oldest has waited
 #    flush-after-minutes, then lands them all as one stack; `flush <project>` lands every ready lane at once; a lane marked
 #    `land-next` lands at once, ahead of the queue, while the others keep waiting; a worker marks neither.
@@ -28,7 +28,7 @@ fresh() { printf 'done [at=%s]: ready in branch fm/%s (local-trunk)\n' "$(( $(da
 
 qsweep() { JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" 2>&1; }
 
-# settled <n>: the trunk holds <n> commits over <base> and the whole suite has moved the green pin to its tip.
+# settled <n>: the trunk holds <n> commits over <base> and the landing has moved the green pin to its tip.
 settled() {
   local _
   for _ in $(seq 1 150); do
@@ -93,15 +93,16 @@ test_a_red_the_suite_finds_after_a_batch_is_traced_to_its_one_commit_and_reverte
   printf 'gate-full=true\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
   lane e1 'exit 0' t/e1.test.sh; lane e2 'echo "not ok - e2 breaks the suite" >&2; exit 1' t/e2.test.sh; lane e3 'exit 0' t/e3.test.sh
   trunk land-batch e1 e2 e3 >/dev/null 2>&1 || fail "the fast gate passes all three, so the stack lands"
-  top=$(tip)
+  top=$(tip); [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$top" ] || fail "the stack's landing moves the green pin to its top"
   out=$(trunk verify "$PROJ" "$top" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "the whole suite is red after this stack: $out"
   git -C "$PROJ" log -1 --format=%s trunk | grep -q '^Revert "ticket e2"' || fail "the lane that broke the suite is reverted, not the top of the stack: $(git -C "$PROJ" log --format=%s "$base..trunk")"
   git -C "$PROJ" cat-file -e trunk:t/e2.test.sh 2>/dev/null && fail "e2's change is undone on the tip"
   git -C "$PROJ" cat-file -e trunk:t/e1.test.sh || fail "e1 stays on the trunk"
   git -C "$PROJ" cat-file -e trunk:t/e3.test.sh || fail "e3 stays on the trunk"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" log --format=%H --grep='^ticket e1$' -n 1 trunk)" ] || fail "the guilty commit takes the green pin back below it"
   assert_contains "$out" "e2" "the revert names the lane"
-  pass 'a red the whole suite finds after a batch is traced to the one commit that caused it and reverted by itself'
+  pass 'a red a hand-run whole suite finds after a batch is traced to the one commit that caused it and reverted by itself'
 }
 
 # shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
@@ -121,15 +122,15 @@ test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_pat
   assert_contains "$out" "w3 not landed" "the conflicting lane is reported"
   assert_contains "$out" "work.txt" "its report names the conflicting path"
   [ -z "$(JG_HOME="$HOME_D" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D")" ] || fail "the refusal is reported once"
-  for _ in $(seq 1 150); do [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] && break; sleep 0.2; done
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the whole suite runs once on the stack's top and moves the green pin"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the stack's landing moves the green pin to its top"
   # A single ready lane keeps the single path: its own landing, no stack.
   : > "$W/gate-runs"; lane w5 five f5.txt
   JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
   for _ in $(seq 1 150); do git -C "$PROJ" log --format=%s trunk | grep -q '^ticket w5' && break; sleep 0.2; done
   git -C "$PROJ" log --format=%s trunk | grep -q '^ticket w5' || fail "a single ready lane lands"
   ! grep -q 'batch-from' <(grep '^w5' "$HOME_D/data/trunk-landings.tsv") || fail "a single lane is not recorded as part of a stack"
-  for _ in $(seq 1 150); do [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] && break; sleep 0.2; done  # let its whole-suite run end before the fixture goes
+  for _ in $(seq 1 150); do [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] && break; sleep 0.2; done
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "a single lane's landing moves the green pin"
   pass 'the landing check stacks the ready lanes into one landing and a single lane keeps its own path'
 }
 
@@ -175,30 +176,30 @@ test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it() 
   pass 'the queue lands at a threshold, flushes on a command, and a land-next lane jumps it'
 }
 
-# A landing starts its post-landing suite with setsid, so the job leads its own process group and outlives the check
-# that started it. Two of them kept polling a lock in their deleted fixture homes for 3 hours: a suite's cleanup must stop
+# The landing check starts each landing with setsid, so the job leads its own process group and outlives the check that
+# started it. Two such jobs kept polling a lock in their deleted fixture homes for 3 hours: a suite's cleanup must stop
 # every job a check started (tests/lib.sh jg_test_reap_detached), even one still running when its fixture goes.
 test_a_job_the_landing_check_starts_never_outlives_its_fixture() {
-  local base post='' pid _
+  local base job='' pid _
   world reap; base=$(tip)
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  sed -i.bak 's/^gate-verify=.*/gate-verify=sleep 300/' "$HOME_D/config/trunk-policy"  # the post-landing suite hangs
+  sed -i.bak 's/^gate-full=.*/gate-full=sleep 300/' "$HOME_D/config/trunk-policy"  # the landing's own gate hangs
   lane r1 one f1.txt
   JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
   for _ in $(seq 1 150); do
     for pid in $(jg_test_detached_alive); do
-      ps -o args= -p "$pid" 2>/dev/null | grep -q 'trunk-landing.sh post ' && post=$pid
+      ps -o args= -p "$pid" 2>/dev/null | grep -q 'trunk-landing.sh run ' && job=$pid
     done
-    [ -z "$post" ] || break
+    [ -z "$job" ] || break
     sleep 0.2
   done
-  [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = 1 ] || fail "the ready lane lands"
-  [ -n "$post" ] || fail "the landing started a post-landing job that registered itself: $(cat "$JG_TEST_DETACHED_REGISTRY")"
-  [ "$(ps -o pgid= -p "$post" | tr -d ' ')" = "$post" ] || fail "the post-landing job leads its own process group"
+  [ -n "$job" ] || fail "the landing check started a landing job that registered itself: $(cat "$JG_TEST_DETACHED_REGISTRY")"
+  [ "$(ps -o pgid= -p "$job" | tr -d ' ')" = "$job" ] || fail "the landing job leads its own process group"
   jg_test_reap_detached
   [ -z "$(jg_test_detached_alive)" ] || fail "a job the landing check started outlived the cleanup: $(jg_test_detached_alive)"
-  ! kill -0 "$post" 2>/dev/null || fail "the hung post-landing job $post is still running"
-  ! pgrep -g "$post" >/dev/null 2>&1 || fail "a child in the post-landing job's group is still running: $(pgrep -g "$post" -a)"
+  ! kill -0 "$job" 2>/dev/null || fail "the hung landing job $job is still running"
+  ! pgrep -g "$job" >/dev/null 2>&1 || fail "a child in the landing job's group is still running: $(pgrep -g "$job" -a)"
+  [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = 0 ] || fail "a landing whose gate never finished moves nothing"
   pass 'a job the landing check starts is stopped with its process group when the suite cleans up'
 }
 
