@@ -1453,12 +1453,30 @@ release_commit() {
   printf '%s\n' "$green"
 }
 
+# A release that is already pushed (the last release row names the commit now released) whose record is missing: write the
+# record and arm the check from the row's URL, with no push. A record of another kind under the id is refused, naming it;
+# a record of kind release is kept (record_release_task only arms it when it does not name the PR yet). Returns 1 with no
+# output when the last release row is not for this commit, so the caller says "nothing to release" as before.
+adopt_pushed_release() {  # <commit>
+  local url meta=$STATE/release-$PN-$TRUNK.meta kind
+  [ "$(awk -F'\t' -v p="$PN" -v t="$TRUNK" 'NF >= 6 && $1 == p { c = ($2 == t ? $3 : "") } END { print c }' "$DATA/trunk-releases.tsv" 2>/dev/null)" = "$1" ] || return 1
+  url=$(last_release_url); [ -n "$url" ] || return 1
+  if [ -e "$meta" ]; then
+    kind=$(jg_dod_meta_value "$meta" kind)
+    [ "$kind" = release ] || refuse "the record ${meta##*/} is kind=${kind:-unset}, not kind=release, so the pushed release $url has no record; end that record first"
+    [ "$(jg_dod_meta_value "$meta" pr)" != "$url" ] || return 1
+  fi
+  record_release_task "$url" >&2
+  echo "release already pushed: $url; its record release-$PN-$TRUNK is written and armed, nothing pushed"
+}
+
 cmd_release() {
   local rel base n default body url prev
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
   rollover_if_merged || true
   rel=$(release_commit)
   base=$(cat "$STATE/trunk-released-$PN"); n=$(git -C "$PROJ" rev-list --count "$base..$rel")
+  [ "$n" -gt 0 ] || ! adopt_pushed_release "$rel" || return 0
   [ "$n" -gt 0 ] || refuse "nothing to release: $TRUNK has no commits since the last release"
   need_word release "$rel"
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}

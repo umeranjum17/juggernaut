@@ -15,6 +15,10 @@
 #    bin/jg-pr-check.sh, whose version-branch guard admits the trunk as the release head although the project still
 #    carries release/c-16; a pull request from any other head into main is still refused. Before the fix the release
 #    recorded no task ("task metadata is unavailable") and the guard refused the trunk head.
+# T7 A release already pushed whose record is missing (the record was cleaned up, report fable-goal-triage S3c): the
+#    release writes the record (kind=release, its pull-request line, no receipt line), arms the check, pushes nothing,
+#    prints one line and exits 0; a record of another kind under the id is refused with one line naming it; a record
+#    already kind=release is left as it is and nothing is pushed.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -148,6 +152,37 @@ test_the_release_pr_has_an_owning_task_the_guard_admits() {
   pass 'T6 the release records its own task, the guard admits the trunk head into main, and any other head is refused'
 }
 
+test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push() {
+  local out meta rows sum
+  release_world rel-pushed; meta="$HOME_D/state/release-juggernaut-trunk.meta"
+  batch j1; echo open > "$W/state-813"
+  trunk release "$PROJ" >/dev/null 2>&1 || fail "T7: the first release must succeed"
+  rm -f "$meta" "$HOME_D/state/release-juggernaut-trunk.check.sh"; rows=$(wc -l < "$LEDGER")
+  git -C "$PROJ" config remote.origin.pushurl "$W/no-such-remote.git"  # any push now fails, so a success pushed nothing
+  out=$(trunk release "$PROJ" 2>/dev/null) || fail "T7a: a pushed release with no record must write it and exit 0"
+  [ "$(wc -l <<<"$out")" = 1 ] || fail "T7a: the release must say so in one line: $out"
+  assert_contains "$out" "already pushed" "T7a: the line must say the release was already pushed"
+  for row in kind=release "project=$(cd "$PROJ" && pwd -P)" mode=local-trunk yolo=off "pr=$U/813"; do
+    grep -qxF -- "$row" "$meta" || fail "T7a: the record must hold $row: $(cat "$meta")"
+  done
+  ! grep -q '^receipt_required' "$meta" || fail "T7a: a release record asks for no receipt: $(cat "$meta")"
+  [ -e "$HOME_D/state/release-juggernaut-trunk.check.sh" ] || fail "T7a: the release PR must be armed"
+  [ "$(wc -l < "$LEDGER")" = "$rows" ] || fail "T7a: no new release row"
+  pass 'T7a a pushed release with its record missing gets the record and the armed check, with no push and one line'
+
+  sum=$(cksum < "$meta"); out=$(trunk release "$PROJ" 2>&1) && fail "T7c: a release record that exists leaves nothing to release: $out"
+  [ "$(cksum < "$meta")" = "$sum" ] && [ "$(wc -l < "$LEDGER")" = "$rows" ] || fail "T7c: the record and the ledger must stay as they were"
+  assert_not_contains "$out" "push of" "T7c: no push is tried"
+  pass 'T7c a record already kind=release stays as it is and nothing is pushed'
+
+  printf 'kind=ship\nproject=x\nreceipt_required=1\n' > "$meta"; sum=$(cksum < "$meta")
+  out=$(trunk release "$PROJ" 2>&1) && fail "T7b: a record of another kind must refuse: $out"
+  assert_contains "$out" "kind=ship" "T7b: the refusal must name the kind"
+  [ "$(wc -l <<<"$out")" = 1 ] && [ "$(cksum < "$meta")" = "$sum" ] || fail "T7b: one line and the record untouched: $out"
+  pass 'T7b a record of another kind under the id is refused in one line naming it'
+}
+
 test_a_release_keeps_one_url_and_takes_the_open_release_pr_as_success
+test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push
 test_the_release_pr_has_an_owning_task_the_guard_admits
 printf 'jg-trunk-release-open-pr: ok\n'
