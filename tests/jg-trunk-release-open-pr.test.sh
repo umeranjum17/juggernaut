@@ -194,11 +194,17 @@ id=release-proj-trunk
 # Use an independent clone for the lane, not a worktree of the shared repository.
 git clone -q "$PROJ" "$W/lane" || fail 'clone lane'
 git -C "$W/lane" checkout -q -b fm/proof origin/trunk || fail 'create lane branch'
-commit_in "$W/lane" work.txt proof 'ticket proof'
-git -C "$PROJ" fetch -q "$W/lane" fm/proof:refs/heads/fm/proof || fail 'import lane'
+# Land an older commit, then remove its proof row to model the pre-proof era.
+commit_in "$W/lane" legacy.txt legacy 'proof legacy landing'
+git -C "$PROJ" fetch -q "$W/lane" fm/proof:refs/heads/fm/proof || fail 'import legacy lane'
 jg_write_meta "$HOME_D/state/proof.meta" "project=$PROJ" 'mode=local-trunk' 'branch=fm/proof' "worktree=$W/lane" 'spawn_gen=g-proof'
 prove proof; ready proof
-trunk land proof >/dev/null 2>&1 || fail 'fixture lane must land'
+trunk land proof || fail 'legacy fixture lane must land'
+legacy=$(tip)
+: > "$HOME_D/data/trunk-landing-proofs.tsv"
+lane first first; trunk land first >/dev/null 2>&1 || fail 'first proof lane must land'
+lane later later; trunk land later >/dev/null 2>&1 || fail 'later fixture lane must land'
+later=$(tip)
 trunk word release "$PROJ" 'release fixture' >/dev/null || fail 'record release word'
 cat > "$W/fakebin/gh-axi" <<SH
 #!/usr/bin/env bash
@@ -266,14 +272,17 @@ export JG_TEST_CHANGE_PIN="$W/change-pin" JG_TEST_JUDGE_ACCOUNT="$W/judge-accoun
 chmod +x "$W/fakebin/done-done"
 # The first proof refuses a missing landing row after publishing; retry needs no new word or push.
 proofs="$HOME_D/data/trunk-landing-proofs.tsv"
-cp "$proofs" "$W/saved-proofs"; : > "$proofs"
+cp "$proofs" "$W/saved-proofs"
+awk -F '\t' -v h="$later" '$3 != h' "$W/saved-proofs" > "$proofs"
 out=$(trunk release "$PROJ" 2>&1) && fail 'a missing landing proof row must refuse'
-assert_contains "$out" 'no landing proof row' 'the failure must identify the missing proof'
+assert_contains "$out" "no landing proof row for $later" 'the failure must identify the missing proof'
+pass 'release refuses the later commit when its landing proof row is missing'
 [ ! -e "$HOME_D/state/trunk-word-release-proj" ] || fail 'publication must spend the release word'
 rows=$(wc -l < "$HOME_D/data/trunk-releases.tsv")
 cp "$W/saved-proofs" "$proofs"
 # An old trunk with an uncarried hotfix must also refuse, and be retryable.
 cp "$HOME_D/data/trunk-versions.tsv" "$W/saved-versions"
+git -C "$W/lane" fetch -q "$PROJ" trunk || fail "fetch trunk for old hotfix"
 git -C "$W/lane" checkout -q -b old-hotfix "$(tip)^" || fail 'create old trunk fixture'
 commit_in "$W/lane" hotfix.txt old 'old trunk hotfix'
 git -C "$PROJ" fetch -q "$W/lane" old-hotfix:refs/heads/trunk-old || fail 'import old trunk fixture'
@@ -287,6 +296,8 @@ assert_contains "$out" 'green pin changed' 'the refusal must identify the change
 rm "$W/change-pin"
 git -C "$PROJ" config remote.origin.pushurl "$W/no-such-remote.git"
 out=$(trunk release "$PROJ" 2>&1) || fail "proof retry failed: $out"
+assert_contains "$(cat "$DONE_DONE_HOME/evidence/"*/run.log)" "Legacy landing: $legacy" 'the old trunk commit must be proven'
+pass 'release retry accepts the earlier trunk landing after the missing proof is restored'
 [ "$(wc -l < "$HOME_D/data/trunk-releases.tsv")" = "$rows" ] || fail 'retry must not publish a second release'
 head=$(tip)
 # Drive the merge's real proof gate before inspecting the missing receipt.
