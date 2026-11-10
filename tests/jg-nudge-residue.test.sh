@@ -96,3 +96,11 @@ pass "a box that already holds his text is never touched"
 verdict=$(jg_backend_send_nudge orca "nowhere" "$LINE" 2 0.2 0.2)
 [ "$verdict" = not-withdrawable ] || fail "a backend with no clear key answered '$verdict'"
 pass "a backend that cannot take the line back is not typed into"
+
+# An existing non-Codex pane still submits its own pending doorbell as before.
+start_box submit "$WORK/log5" "$LINE"
+rc=0; jg_task_inbox_ring tmux "$TARGET" "$RECORD" || rc=$?
+[ "$rc" = 0 ] || fail "the non-Codex pending doorbell returned $rc"
+[ "$(wc -l < "$WORK/log5")" = 1 ] || fail "the non-Codex pending doorbell was not submitted once"
+[ "$(head -1 "$WORK/log5")" = "$LINE" ] || fail "the non-Codex pending doorbell changed"
+pass "a non-Codex pane still submits its own pending doorbell"

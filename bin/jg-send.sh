@@ -1253,10 +1253,18 @@ else
   # block: remote text rides the inbox leg above, and remote --key exits
   # earlier.
   send_rc=0
-  if verdict=$(jg_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
-    :
+  if [ "$TARGET_BACKEND" = tmux ] && [ "$TARGET_HARNESS" = codex ]; then
+    if verdict=$(jg_task_inbox_direct_submit "$STATE" "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL" 1); then
+      :
+    else
+      send_rc=$?
+    fi
   else
-    send_rc=$?
+    if verdict=$(jg_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
+      :
+    else
+      send_rc=$?
+    fi
   fi
   if [ "$send_rc" -ne 0 ]; then
     jg_send_known_undelivered_cleanup ||

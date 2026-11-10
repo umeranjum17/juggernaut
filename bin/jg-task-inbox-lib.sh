@@ -114,6 +114,7 @@
 #   JG_TASK_INBOX_RING_MAX     default 3; delivery attempts before escalation
 #   JG_TASK_INBOX_BUSY_MAX     default 2; consecutive busy-deferred due polls before
 #                              the one stuck-busy report (delivery stays owed)
+#   JG_TASK_INBOX_HELD_SECS   default 30; minimum age before one Codex retry
 
 _JG_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Both dependencies are canonical lint roots in their own right. Keep them as
@@ -268,6 +269,91 @@ jg_task_inbox_lock_acquire() {  # <lock-path>
     [ "$(date +%s)" -lt "$deadline" ] || return 1
     sleep 0.1
   done
+}
+
+# The per-pane submit lock serializes direct sends with doorbells. A held row
+# is recorded only after a send into a proven empty composer left our exact
+# text visible. Claim the row before retrying Enter so a crash cannot retry it.
+# State transitions under that lock: absent + proven paste -> held; held +
+# changed content -> absent; held + due idle matching content -> attempted;
+# attempted + matching content -> attempted; any row + empty composer -> absent.
+# Only this library owns those transitions; the tmux paste hook asks it to record.
+jg_task_inbox_held_record() {  # <dir> <backend> <target> <text> <label>
+  local dir=$1 backend=$2 target=$3 text=$4 label=$5 pane held tmp
+  [ "$backend" = tmux ] || return 0
+  pane=$(tmux display-message -p -t "$target" '#{socket_path}:#{pane_id}' 2>/dev/null) || return 1
+  held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) || return 1
+  held=$(jg_composer_extract_selected_content styled=0 "$held") || return 1
+  [ -n "$text" ] && [ "$held" = "$text" ] || return 0
+  tmp=$(mktemp -d "$dir/.held-wake.XXXXXX") || return 1
+  printf '%s' "$text" > "$tmp/text" && printf '%s' "$pane" > "$tmp/pane" && date +%s > "$tmp/at" || return 1
+  mv "$tmp" "$dir/.held-wake" || return 1
+}
+
+jg_task_inbox_held_retry() {  # <dir> <backend> <target> <label>
+  local dir=$1 backend=$2 target=$3 label=$4 row=$1/.held-wake at now bound pane held text state dialog
+  [ -d "$row" ] && [ "$backend" = tmux ] || return 1
+  pane=$(tmux display-message -p -t "$target" '#{socket_path}:#{pane_id}' 2>/dev/null) || return 1
+  [ "$pane" = "$(cat "$row/pane" 2>/dev/null)" ] || return 1
+  jg_backend_source "$backend" || return 1
+  text=$(cat "$row/text" 2>/dev/null) || return 1
+  held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) || return 1
+  held=$(jg_composer_extract_selected_content styled=0 "$held") || return 1
+  if [ -z "$text" ] || [ "$held" != "$text" ]; then
+    jg_task_inbox_held_clear "$dir"
+    return 1
+  fi
+  [ ! -e "$row/attempted" ] || return 1
+  at=$(cat "$row/at" 2>/dev/null) || return 1
+  bound=${JG_TASK_INBOX_HELD_SECS:-30}
+  case "$at:$bound" in *[!0-9:]*|:*|*:) return 1 ;; esac
+  now=$(date +%s) || return 1
+  [ "$((now - at))" -ge "$bound" ] || return 1
+  [ "$(jg_pane_busy_state "$target" 2>/dev/null)" = idle ] || return 1
+  jg_composer_dialog_sink_prepare || return 1
+  state=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || state=unknown
+  dialog=$(jg_composer_blocking_dialog_noted 2>/dev/null) || dialog=
+  jg_composer_dialog_sink_release
+  [ "$state" = pending ] && [ -z "$dialog" ] || return 1
+  : > "$row/attempted" || return 1
+  jg_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+jg_task_inbox_held_clear() { # <dir>
+  rm -f "$1/.held-wake/text" "$1/.held-wake/pane" "$1/.held-wake/at" "$1/.held-wake/attempted"
+  rmdir "$1/.held-wake" 2>/dev/null || true
+}
+
+jg_task_inbox_submit_dir() { # <state> <backend> <target> <inbox-dir>
+  local state=$1 backend=$2 target=$3 inbox=$4 pane
+  if [ "$backend" = tmux ]; then
+    pane=$(tmux display-message -p -t "$target" '#{pane_id}' 2>/dev/null) || return 1
+    case "$pane" in ''|*[!a-zA-Z0-9_%.-]*) return 1 ;; esac
+    printf '%s/.submit-tmux-%s' "$state" "$pane"
+  else
+    printf '%s/.submit-%s' "$state" "${inbox##*/}"
+  fi
+}
+
+jg_task_inbox_direct_submit() { # <state> <backend> <target> <text> <retries> <sleep> <settle> <label> <strict>
+  local dir backend=$2 target=$3 text=$4 label=$8 before verdict rc=0
+  dir=$(jg_task_inbox_submit_dir "$1" "$backend" "$target" '') || return 1
+  mkdir -p "$dir" || return 1
+  jg_task_inbox_lock_acquire "$dir/.submit.lock" || return 1
+  before=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || before=unknown
+  if [ "${9:-0}" = 1 ] && [ "$before" != empty ]; then
+    jg_lock_release "$dir/.submit.lock"
+    echo 'error: the composer is not confirmed empty; direct text was not typed' >&2
+    return 1
+  fi
+  [ "$before" != empty ] || jg_task_inbox_held_clear "$dir"
+  verdict=$(JG_TASK_INBOX_SUBMIT_DIR="$dir" JG_TASK_INBOX_SUBMIT_LABEL="$label" \
+    jg_backend_send_text_submit "$backend" "$target" "$text" "$5" "$6" "$7" "$label") || rc=$?
+  [ "$verdict" != empty ] || jg_task_inbox_held_clear "$dir"
+  jg_lock_release "$dir/.submit.lock"
+  printf '%s' "$verdict"
+  return "$rc"
 }
 
 # Write one record into the next sequence slot: temp-write, then atomic
@@ -475,18 +561,31 @@ jg_task_inbox_bell_standing() {  # <state-dir> <task-id> <this-record-path> <tas
 # CONSTANT line the worker recovers semantically, while skipping on ambiguous
 # verdicts would starve a harness whose idle screen the classifier cannot
 # positively identify (that classifier is advisory here by design).
-# A pending composer holding exactly our own doorbell line is a previous ring
-# whose Enter never landed, so on an agent not reported busy it is submitted
-# rather than skipped; skipping it would block every later ring. On both paths
-# a lost first Enter gets one confirmed retry. No doorbell is ever left in a
-# composer: an unsubmitted line is withdrawn (jg_backend_send_nudge), so a
-# human's next keystroke cannot join it.
+# For Codex, a pending composer is left alone unless a recorded held wake proves
+# what was typed into the same pane, and its bounded retry has not been attempted.
+# Other harnesses retain the previous exact-doorbell retry behavior.
+# The nudge path normally withdraws a line that did not submit.
 # On return 2, JG_TASK_INBOX_RING_REASON holds the backend's refusal
 # diagnostics on one line, for callers to log; it is empty otherwise.
 jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
-  local rc=0 dir=${3%/*}
-  _jg_task_inbox_ring_attempt "$@" || rc=$?
+  local rc=0 dir=${3%/*} submit_dir harness
   [ "${dir##*/}" != handled ] || dir=${dir%/*}
+  harness=$(jg_meta_get "${dir%.inbox}.meta" harness 2>/dev/null) || harness=
+  if [ "$1" = tmux ] && [ "$harness" = codex ]; then
+    submit_dir=$(jg_task_inbox_submit_dir "${dir%/*}" "$1" "$2" "$dir") || return 2
+    mkdir -p "$submit_dir" || return 2
+    jg_task_inbox_lock_acquire "$submit_dir/.submit.lock" || return 2
+    if jg_task_inbox_held_retry "$submit_dir" "$1" "$2" "${4:-}"; then
+      rc=1
+    else
+      JG_TASK_INBOX_SUBMIT_DIR="$submit_dir" JG_TASK_INBOX_SUBMIT_LABEL="${4:-}" \
+        _jg_task_inbox_ring_attempt "$1" "$2" "$3" "${4:-}" "$submit_dir" || rc=$?
+      [ "$(jg_backend_composer_state "$1" "$2" "${4:-}" 2>/dev/null)" != empty ] || jg_task_inbox_held_clear "$submit_dir"
+    fi
+    jg_lock_release "$submit_dir/.submit.lock"
+  else
+    _jg_task_inbox_ring_attempt "$@" || rc=$?
+  fi
   if [ "$rc" -eq 0 ]; then
     jg_task_delivery_note "$dir" "${3##*/}" rung || true
   else
@@ -495,8 +594,8 @@ jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   return "$rc"
 }
 
-_jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> [expected-label]
-  local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict errf
+_jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> <expected-label> <submit-dir>
+  local backend=$1 target=$2 rec=$3 label=${4:-} submit_dir=${5:-} line cstate verdict errf
   JG_TASK_INBOX_RING_REASON=
   case "$(jg_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
     dead|missing) return 3 ;;
@@ -508,6 +607,7 @@ _jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> [expected-la
   cstate=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
   case "$cstate" in
     pending)
+      [ -z "$submit_dir" ] || return 1
       jg_task_inbox_composer_holds "$backend" "$target" "$line" "$label" \
         && [ "$(jg_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] \
         || return 1
@@ -516,7 +616,6 @@ _jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> [expected-la
       jg_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
       jg_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
       sleep 0.3
-      # Enter did not take twice: our own stuck line must not stay for a human.
       case "$(jg_backend_withdraw_typed "$backend" "$target" "$line" "$label")" in
         withdrawn) JG_TASK_INBOX_RING_REASON="the stuck doorbell was withdrawn from the composer"; return 2 ;;
         stuck) JG_TASK_INBOX_RING_REASON="the doorbell is still in the composer and could not be cleared"; return 2 ;;
@@ -524,6 +623,7 @@ _jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> [expected-la
       return 0
       ;;
   esac
+  [ "$cstate" != empty ] || [ -z "$submit_dir" ] || jg_task_inbox_held_clear "$submit_dir"
   # Accepted residual race: terminal input and Enter are separate delivery
   # steps, so an agent exiting after the liveness check could leave a bare
   # shell only a suffix; the `: ` prefix protects complete lines only. Do not
@@ -547,13 +647,16 @@ _jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> [expected-la
     withdrawn) JG_TASK_INBOX_RING_REASON="the unsubmitted doorbell was withdrawn from the composer"; return 2 ;;
     holds-text) return 1 ;;
     not-withdrawable) JG_TASK_INBOX_RING_REASON="the $backend backend has no clear-line key, so the doorbell was not typed"; return 2 ;;
-    stuck) JG_TASK_INBOX_RING_REASON="the doorbell is still in the composer and could not be cleared"; return 2 ;;
+    stuck)
+      if [ -n "$submit_dir" ] && [ "$cstate" = empty ] && [ ! -e "$submit_dir/.held-wake" ]; then
+        jg_task_inbox_held_record "$submit_dir" "$backend" "$target" "$line" "$label" || true
+      fi
+      JG_TASK_INBOX_RING_REASON="the doorbell is still in the composer and could not be cleared"; return 2 ;;
   esac
   JG_TASK_INBOX_RING_REASON=
   return 0
 }
 
-# Whether the composer's content, ignoring line wrapping, is exactly <line>.
 jg_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
   local cap held
   jg_backend_source "$1" || return 1
