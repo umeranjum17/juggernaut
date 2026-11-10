@@ -155,7 +155,7 @@ test_card_posted_without_a_route_finds_its_lead_and_the_answer_skips_main() {
     | grep -q -- "--route <lead>.*--route main" || fail "an unownable card was not refused with the flag to pass"
   out=$(run_key "$d" "$CARD" post --route main --title "Q6 for the owner?" --ask-ref jg-m1 --must design-pick --raised-by jg-m1 \
     --outcome yes="It is." --outcome no="It is not.")
-  [ -n "$out" ] && [ ! -e "$d/home/state/board-routes/$out" ] || fail "a Main-owned card was not posted, or got a lead route: $out"
+  [ -n "$out" ] && [ "$(cat "$d/home/state/board-routes/$out")" = owner=main ] || fail "a Main-owned card was not posted, or its route is not owner=main: $out"
   answer "$d" "$(run_key "$d" "$CARD" keys | head -1)" yes
   out=$(run "$d" "$BA" check)
   rec=$d/home/state/muxr.inbox/001.msg

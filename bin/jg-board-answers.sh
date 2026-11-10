@@ -105,10 +105,39 @@ say() { printf '%s\n' "${1:0:400}"; }
 cmd_route() {
   local key=${1-} lead=${2-} dk=${3-}
   { key_ok "$key" && key_ok "$lead"; } || die "route needs a card key and a lead task id" 2
+  if [ "$lead" = main ]; then
+    # A card Main owns: recorded as owned, so the prefix rule never hands its answer to a task.
+    mkdir -p "$ROUTES" || die "cannot create $ROUTES"
+    printf 'owner=main\n' > "$ROUTES/$key" || die "cannot record the route for $key"
+    return 0
+  fi
   [ -z "$dk" ] || key_ok "$dk" || die "invalid decision key '$dk'" 2
   [ -f "$STATE/$lead.meta" ] || die "refused: '$lead' is not a task recorded in this home"
   mkdir -p "$ROUTES" || die "cannot create $ROUTES"
   printf 'lead=%s\ndecision=%s\n' "$lead" "${dk:-$key}" > "$ROUTES/$key" || die "cannot record the route for $key"
+}
+
+# <out-var> <card-key>: the task of this home that owns a card nobody routed. A card is
+# keyed by the task it asks for, plus a suffix (`fable-why-no-landing-wave1` asks for
+# `fable-why-no-landing`), so the owner is the task whose id is the longest `-`-bounded
+# prefix of the key. No such task leaves the out-var empty: the answer stays with Main.
+owner_of() {
+  local _ow_meta _ow_id _ow_best=''
+  for _ow_meta in "$STATE"/*.meta; do
+    [ -f "$_ow_meta" ] || continue
+    _ow_id=${_ow_meta##*/}; _ow_id=${_ow_id%.meta}
+    case "$2" in "$_ow_id"|"$_ow_id"-*) [ "${#_ow_id}" -gt "${#_ow_best}" ] && _ow_best=$_ow_id ;; esac
+  done
+  printf -v "$1" '%s' "$_ow_best"
+}
+
+# Record the owner of an unrouted card from its name, unless Main owns it. 0 = routed.
+adopt_owner() {  # <card-key>
+  local _ad_main _ad_owner
+  rget _ad_main "$1" owner
+  [ -z "$_ad_main" ] || return 1
+  owner_of _ad_owner "$1"
+  [ -n "$_ad_owner" ] && cmd_route "$1" "$_ad_owner"
 }
 
 deliver() {  # <key> <lead> <decision> <text> <delivery-id>; 0 = recorded in the lead's inbox
@@ -177,6 +206,9 @@ cmd_check() {
       printf '%s\t%s\n' "$key" "$at" >> "$SEEN"
       seen+="$key"$'\t'"$at"$'\n'
       [ "$first" = 1 ] && continue
+      adopt_owner "$key" && rget lead "$key" lead
+    fi
+    if [ -z "$lead" ]; then
       link=$(JG_HOME="$JG_HOME" jg_board_link answered "$key" 2>/dev/null)
       text="$(say "$answer${label:+ ($label)}${note:+ - $note} | board answer on $key at $at, not routed to a lead${link:+ | $link}")"
       # A real wake in this pass, one per answer (the key carries the answer time); the line

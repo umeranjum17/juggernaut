@@ -288,16 +288,15 @@ cmd_post() {
   fi
 
   if [ "$ROUTE" = main ]; then
-    # An explicit Main-owned card: its answer wakes Main, so no lead is recorded.
-    ROUTE=''
+    # An explicit Main-owned card: its answer wakes Main. The route is still written (as
+    # `owner=main`), so no card is left without one and its name never hands it to a task.
     [ -z "$DECISION_KEY" ] || die "refused: --decision-key closes a lead's decision, so it cannot go with --route main"
   elif [ -z "$ROUTE" ]; then
     resolve_owner_lead \
       || die "refused: no single lead owns this card; pass --route <lead> (a task id in this home), or --route main for a card Main owns"
   fi
-  [ -z "$DECISION_KEY" ] || [ -n "$ROUTE" ] || die "refused: --decision-key only closes a lead's decision, so it needs --route <lead>"
   # Check the lead first: a refused route must not leave an unrouted card behind.
-  [ -z "$ROUTE" ] || [ -f "${JG_STATE_OVERRIDE:-${JG_HOME:-/nonexistent}/state}/$ROUTE.meta" ] \
+  [ "$ROUTE" = main ] || [ -f "${JG_STATE_OVERRIDE:-${JG_HOME:-/nonexistent}/state}/$ROUTE.meta" ] \
     || die "refused: --route '$ROUTE' is not a task recorded in this home (is JG_HOME set?)"
   # The two-layer check (bin/jg-captain-card-lib.sh): shadow-first, so a card that
   # still falls short of the card layer is named and logged, then posted.
@@ -325,7 +324,7 @@ cmd_post() {
     [ -n "$key" ] || key=$(printf '%s\n' "$after" | sed '/^$/d' | head -1)
     [ -n "$key" ] || die "sign-off-axi accepted the card but the board shows no open card; run sign-off-axi status and report this"
   fi
-  [ -z "$ROUTE" ] || "$SCRIPT_DIR/jg-board-answers.sh" route "$key" "$ROUTE" "$DECISION_KEY" >&2 \
+  "$SCRIPT_DIR/jg-board-answers.sh" route "$key" "$ROUTE" "$DECISION_KEY" >&2 \
     || die "the card $key is posted but its route to $ROUTE was not recorded; run jg-board-answers.sh route $key $ROUTE"
   { [ "$MUST" != design-pick ] || [ -n "$(flag_value --filer)" ]; } || "$SCRIPT_DIR/jg-captain-hold.sh" design-card "$key" --raised-by "$RAISED" --title "$title" >&2 \
     || die "the card $key is posted but its design row was not filed; run jg-captain-hold.sh design-card $key --raised-by $RAISED --title ..."
@@ -383,7 +382,7 @@ cmd_answer() {
   # Main heard this answer first: an unrouted card needs no wake saying so.
   state=${JG_STATE_OVERRIDE:-${JG_HOME:-}/state}
   seen=$state/.board-answers-seen
-  if [ -n "${JG_HOME:-${JG_STATE_OVERRIDE:-}}" ] && [ -f "$seen" ] && [ ! -f "$state/board-routes/$key" ]; then
+  if [ -n "${JG_HOME:-${JG_STATE_OVERRIDE:-}}" ] && [ -f "$seen" ] && ! grep -qs '^lead=' "$state/board-routes/$key"; then
     printf '%s\t%s\n' "$key" "$at" >> "$seen"
   fi
   "$SCRIPT_DIR/jg-bus.sh" publish card-close "$key" "answered" --answer "$words" >/dev/null 2>&1 || true
