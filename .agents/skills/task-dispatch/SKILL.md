@@ -43,7 +43,8 @@ Pick the depth of every Recon at intake and pass it to the scaffold as `--depth 
 - **quick** only for one fact.
 - **standard** for everything else; it is the default.
 
-A deep Recon needs one separate critic worker after the researcher's draft, never a fan-out: when the researcher reports its draft ready, spawn one critic Recon on a fresh isolated copy with that draft, install the critic's output as the researcher's `data/<id>/critic.md`, and steer that same critic for each further round.
+A deep Recon needs one separate critic worker after the researcher's draft, never a fan-out: when the researcher reports its draft ready, spawn one critic Recon with the task id `<id>-critic` on a fresh isolated copy with that draft, install the critic's output as the researcher's `data/<id>/critic.md`, and steer that same critic for each further round.
+That id is how the wait ladder forwards each later draft to the critic by itself (`core/wait-timers/README.md` "Known next steps").
 `.agents/skills/deep-recon/SKILL.md` owns the stages, budgets and critic rubric, and `bin/jg-recon-gate.sh` refuses `done` for a standard or deep Recon that does not meet them.
 
 ## Delivery mode, branch, and consent flags

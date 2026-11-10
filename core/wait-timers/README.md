@@ -37,6 +37,8 @@ the feature is absent.
   (`core/bus/workflows/escalation-wait-timers.json`, delivered by
   `bin/jg-escalation-workflows.sh`). A blocked or needs-decision wake names its
   decision as `key=<key>` after the verb; paused waits carry none.
+- `bin/jg-wait-actions-lib.sh` — the owner table and the steps the ladder takes
+  itself (see "Known next steps"), sourced by the timer library.
 - `tests/jg-wait-timers.test.sh` — the watcher/drain journey that proves the
   timers (owner alert, escalation, deduplication, resolution, re-arm).
 - `tests/jg-wait-timers-tmux-e2e.test.sh` — the live-terminal end-to-end
@@ -131,6 +133,8 @@ An unresolved wait wakes its owner again at the recheck cadence (next section).
 | still open | `JG_WAIT_ESCALATE_SECS` | a lead home reports `waiting-timer-overdue` to Main; Main steers the lead at once, interrupting it first when it is busy mid-turn, naming the worker and its wait |
 | still open | `JG_WAIT_CARD_SECS` | the main home posts a guarded board card, and dismisses it when the wait ends; a wait that is not a credential or login ask is recorded for Main to decide instead, because the board takes only a must ask (`bin/jg-ask-gate-lib.sh`) |
 
+- A stuck state with a row in the owner table gets its owner's steps from the
+  ladder before any of the model rungs above (see "Known next steps").
 - A lead's own supervision not running is a Main wait from lead liveness, so a
   dead hop never goes silent; a dead lead rides its relaunch.
 - A new supervisor session re-presents every open wait on its first tick, so a
@@ -139,6 +143,29 @@ An unresolved wait wakes its owner again at the recheck cadence (next section).
   `state/<lead>.status`, never the lead's child records.
 - The board card is raised from the main home only, even when Main has not
   read its wakes, so it still fires with Main absent.
+
+## Known next steps
+
+A stuck state names its owner, and the ladder itself takes that owner's automatic steps, in the watcher, with no model turn.
+`JG_WAIT_OWNER_TABLE` in `bin/jg-wait-actions-lib.sh` is the one table (state, owner, steps in order, next owner), and its header owns the exact matching.
+The first step is due at the owner alert and replaces the owner wake, and each later one is due where the Main rung would be.
+A step stamps the episode's owner time, so the next rung times from the step.
+When a row's steps are spent, its next owner, `lead`, gets the ordinary owner wake in its home (Main in the main home), and the Main rung follows as for any wait, naming the steps already taken.
+A step that fails, or a stuck state with no row, climbs the ladder as before.
+
+| state | owner | steps, in order | next owner |
+|---|---|---|---|
+| `critic`: a deep Recon's open `needs-decision` that names its draft ready for its critic, with the critic recorded in the same home as `<task>-critic` | the critic | forward: steer the critic to the draft and close the decision with `bin/jg-send.sh --resolve-key`; a critic that started or reported after the draft was declared already has it, so the decision is closed without a second send | lead |
+| `silent`: the `silent` source on a worker whose own record declares no wait and holds no open decision | the worker | ring: one steer asking it to report where it is; relaunch: stuck-operator recovery's `bin/jg-control.sh <task> relaunch --note`, run detached with its outcome in `state/.waiting-timers/.acted/<task>.relaunch.log` | lead |
+
+- A worker that declared `blocked:`, `needs-decision:` or a pause is waiting on someone, so the silent steps never touch it.
+- The steps live in `state/.waiting-timers/.acted/<task>` (state, time of the last step, steps taken, time of the first step), which outlives the episode on purpose: a ring changes the pane, so a silent wait clears and later re-arms, and the record tells the next episode the ring is spent.
+- A status line written after the last step is progress and ends the record, as does the task's removal.
+
+## Escalation minutes
+
+Every episode whose first rung fired adds one row to the metrics ledger `data/metrics/escalations.tsv` when it clears: the clear time, task, key, first-fire time (the ladder's first step, else the owner wake), minutes from first fire to clear, the highest rung reached (`owner`, `main` or `card`), the ladder's own steps (or `-`), and why it ended.
+A lead's `waiting-timer-cleared` report to Main carries the same minutes as `after <n> min`.
 
 ## Re-raise until the wait is handled
 

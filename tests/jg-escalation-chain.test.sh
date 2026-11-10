@@ -14,11 +14,16 @@ FORK="$TMP_ROOT/fork"
 mkdir -p "$FORK"
 # toolchain.versions pins the bd and dolt that the copied backlog scripts run.
 cp -a "$ROOT/bin" "$ROOT/core" "$ROOT/toolchain.versions" "$FORK/"
-# The steer and interrupt endpoints record their calls in the calling home.
+# The steer and interrupt endpoints record their calls in the calling home. A home
+# holding a real-steer file also delivers each steer through the real jg-send (kept
+# as jg-send-real.sh), so its inbox records and decision closes are the real ones.
+cp "$FORK/bin/jg-send.sh" "$FORK/bin/jg-send-real.sh"
 for f in jg-send.sh jg-control.sh; do
   # shellcheck disable=SC2016 # the recorder expands its own arguments when run
   printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" %s "$*" >> "$JG_HOME/sent"\n' "${f%.sh}" > "$FORK/bin/$f"
 done
+# shellcheck disable=SC2016 # the recorder expands its own arguments when run
+printf '[ ! -e "$JG_HOME/real-steer" ] || exec "$(dirname "$0")/jg-send-real.sh" "$@"\n' >> "$FORK/bin/jg-send.sh"
 
 # A home with a recorded terminal (fake:<n> panes listed in $JG_FAKE_PANES,
 # each showing $h/panes/<n>, an agent in the foreground) and a recording board.
@@ -95,7 +100,7 @@ cycle() {  # <home> [absent]
     JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" \
     JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS="${LIVENESS:-99999999}" JG_BUSY_TURN_MAX_SECS=999999 JG_STALE_ESCALATE_SECS=999999 \
-    JG_SQUAD_LEAD_WAKE_STALL_SECS=999999 JG_WAIT_ALERT_SECS=2 JG_WAIT_ESCALATE_SECS=4 JG_WAIT_CARD_SECS="${CARD_SECS:-6}" \
+    JG_SQUAD_LEAD_WAKE_STALL_SECS=999999 JG_WAIT_ALERT_SECS="${ALERT_SECS:-2}" JG_WAIT_ESCALATE_SECS="${ESCALATE_SECS:-4}" JG_WAIT_CARD_SECS="${CARD_SECS:-6}" \
     JG_READY_STALL_POLL_SECS=0 JG_GREEN_PR_POLL_SECS=0 \
     JG_PROMPT_REALERT_SECS=900 JG_FAKE_PANES="${PANES:-}" "$FORK/bin/jg-watch.sh" > "$h/out" 2> "$h/err" &
   pid=$!
@@ -1277,6 +1282,127 @@ test_memory_refused_launch_reraises_when_admission_clears() {
   pass "a memory-refused launch rings once while its record stands, and stops when it clears"
 }
 
+# Known next steps (core/wait-timers/README.md): the ladder takes them itself, so
+# no rung wakes the owner or Main while a step is left. Each case runs the real
+# jg-send (real-steer), so the inbox records and the decision close are real.
+
+# A worker that has gone quiet mid-task: it says it is working and its pane and
+# status have not changed for 20 minutes, so the watcher raises its silent source.
+silence_worker() {  # <home> <task> <pane>
+  local m=$1 n mark="$1/tmp/silent-mark"
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\nharness=claude\n' "$3" > "$m/state/$2.meta"
+  printf 'working [at=1]: running the suite\n' > "$m/state/$2.status"
+  prime_status_seen "$m/state" "$m/state/$2.status"
+  for n in 1 2 3 4 5 6 7 8; do
+    touch "$mark"
+    cycle "$m"
+    [ -s "$m/state/.silent-seen-fake_$3" ] && [ ! "$m/state/.silent-seen-fake_$3" -nt "$mark" ] && break
+  done
+  touch -d '-20 minutes' "$m/state/.silent-seen-fake_$3" "$m/state/$2.status"
+  prime_status_seen "$m/state" "$m/state/$2.status"
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/$2"
+  grep -q '^silent: no status line or pane change' "$m/state/.wait-sources/$2.silent" 2>/dev/null \
+    || fail "$2 silent 20 minutes armed no silent wait: $(ls -a "$m/state/.wait-sources" 2>&1; cat "$m/err")"
+}
+
+# The row the metrics ledger holds for <task>, or nothing.
+ledger_row() {  # <home> <task>
+  awk -F '\t' -v t="$2" '$2 == t' "$1/data/metrics/escalations.tsv" 2>/dev/null
+}
+
+test_a_silent_worker_is_rung_and_clears_with_no_model_turn() {
+  # Wide gaps between rungs, so arming takes no step and one test cycle takes one.
+  local m row CYCLE_POLLS=100 PANES=1 ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  m=$(home silent-ring)
+  : > "$m/real-steer"
+  silence_worker "$m" sr 1
+  backdate "$m" sr 31
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/.acted/sr"
+  grep -qx 'silent	[0-9]*	ring	[0-9]*' "$m/state/.waiting-timers/.acted/sr" \
+    || fail "the silent worker was not rung by the ladder: $(cat "$m/state/.waiting-timers/.acted/sr" 2>&1; cat "$m/err")"
+  grep -l 'no status line and shown no new output' "$m/state/sr.inbox/"*.msg >/dev/null 2>&1 \
+    || fail "the ring did not reach the worker's inbox: $(ls -la "$m/state/sr.inbox" 2>&1; cat "$m/sent" 2>&1)"
+  # The worker reads the steer and reports where it is.
+  printf 'working [at=%s]: back; the suite had hung on a lock\n' "$(date +%s)" >> "$m/state/sr.status"
+  cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/sr"
+  [ ! -e "$m/state/.waiting-timers/sr" ] || fail "the answered ring left the wait open: $(cat "$m/state/.waiting-timers/sr")"
+  ! grep -q 'waiting-state sr' "$m/events" || fail "a rung wait still woke a model: $(cat "$m/events")"
+  ! grep -q '^jg-control ' "$m/sent" 2>/dev/null || fail "an answered ring was relaunched: $(cat "$m/sent")"
+  row=$(ledger_row "$m" sr)
+  printf '%s\n' "$row" | grep -qE '^[0-9]+	sr	waiting-timer-[^	]+	[0-9]+	[0-9]+\.[0-9]	owner	ring	changed state$' \
+    || fail "the ledger has no row with the cleared minutes: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
+  printf 'silent ring: cleared in %s min, no model turn\n' "$(printf '%s' "$row" | cut -f5)"
+  pass "a silent worker is rung by the ladder, clears when it reports, and the ledger holds the minutes, with no owner or Main wake"
+}
+
+test_an_unanswered_ring_is_relaunched_then_reaches_main() {
+  local m row CYCLE_POLLS=100 PANES=1 ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  m=$(home silent-relaunch)
+  : > "$m/real-steer"
+  silence_worker "$m" sq 1
+  backdate "$m" sq 31
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/.acted/sq"
+  # No answer: the next rung is stuck-operator recovery's relaunch, not a wake.
+  backdate "$m" sq 61
+  cycle_for "$m" 120 grep -q '^jg-control sq relaunch --note ' "$m/sent"
+  grep -q '^jg-control sq relaunch --note The watcher relaunched you' "$m/sent" \
+    || fail "an unanswered ring was not relaunched: $(cat "$m/sent" 2>&1; cat "$m/state/.waiting-timers/.acted/sq" 2>&1)"
+  grep -q 'relaunch exit=0' "$m/state/.waiting-timers/.acted/sq.relaunch.log" || fail "the relaunch outcome was not logged"
+  ! grep -q 'waiting-state sq' "$m/events" || fail "a wait with a step left woke a model: $(cat "$m/events")"
+  # Both steps spent and still silent: the table's next owner, the lead (Main
+  # in this home), gets the owner wake; only then does the Main rung follow.
+  backdate "$m" sq 61
+  cycle_for "$m" 120 grep -q 'waiting-state sq (silent, .*level=owner' "$m/events"
+  grep -q 'check: waiting-state sq (silent, .*level=owner' "$m/events" \
+    || fail "the lead was not handed the wait after the steps were spent: $(cat "$m/events"; cat "$m/state/.waiting-timers/.acted/sq")"
+  ! grep -q 'waiting-state sq (silent, .*level=main' "$m/events" || fail "Main was woken before the lead: $(cat "$m/events")"
+  backdate "$m" sq 61
+  cycle_for "$m" 120 grep -q 'waiting-state sq (silent, .*level=main' "$m/events"
+  grep -q 'check: waiting-state sq (silent, .*level=main; the ladder already took: ring, relaunch, lead; Main must unblock it now)' "$m/events" \
+    || fail "Main was not told after the lead: $(cat "$m/events")"
+  printf 'working [at=%s]: resumed after the relaunch\n' "$(date +%s)" >> "$m/state/sq.status"
+  cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/sq"
+  row=$(ledger_row "$m" sq)
+  printf '%s\n' "$row" | grep -qE '	main	ring, relaunch, lead	changed state$' \
+    || fail "the ledger row does not name the rung and the steps: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
+  pass "an unanswered ring is relaunched by the ladder, then the lead owns it, Main hears only after that, and the ledger names the steps"
+}
+
+test_a_ready_recon_draft_is_forwarded_to_its_critic() {
+  local m w row draft=/drafts/rc/report.md CYCLE_POLLS=100 PANES='1 2 3 4'
+  m=$(home critic-forward)
+  : > "$m/real-steer"
+  # rc's critic was started before this draft; rd's after it, so rd's critic already has its draft.
+  printf 'kind=scout\nbackend=tmux\nwindow=fake:1\nharness=claude\n' > "$m/state/rc.meta"
+  printf 'kind=scout\nbackend=tmux\nwindow=fake:2\nharness=claude\nspawn_gen=s1000.1.1\n' > "$m/state/rc-critic.meta"
+  printf 'kind=scout\nbackend=tmux\nwindow=fake:3\nharness=claude\n' > "$m/state/rd.meta"
+  printf 'kind=scout\nbackend=tmux\nwindow=fake:4\nharness=claude\nspawn_gen=s%s.1.1\n' "$(($(date +%s) + 60))" > "$m/state/rd-critic.meta"
+  printf 'needs-decision [at=%s]: draft 2 ready for critic round 2 - %s\n' "$(date +%s)" "$draft" > "$m/state/rc.status"
+  printf 'needs-decision [at=%s]: draft ready for the separate critic - /drafts/rd/report.md\n' "$(date +%s)" > "$m/state/rd.status"
+  for w in rc rd; do prime_status_seen "$m/state" "$m/state/$w.status"; done
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/rc" -a -e "$m/state/.waiting-timers/rd"
+  backdate "$m" rc 3
+  backdate "$m" rd 3
+  cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/rc" -a ! -e "$m/state/.waiting-timers/rd"
+  grep -l "Recon rc declared its draft ready for your next round: draft 2 ready for critic round 2 - $draft" "$m/state/rc-critic.inbox/"*.msg >/dev/null 2>&1 \
+    || fail "the draft did not reach its critic: $(cat "$m/state/rc-critic.inbox/"*.msg 2>&1; cat "$m/err")"
+  grep -q '^resolved \[key=default\].*forwarded to the critic rc-critic' "$m/state/rc.status" \
+    || fail "the forward did not close the draft decision: $(cat "$m/state/rc.status")"
+  [ ! -d "$m/state/rd-critic.inbox" ] || ! ls "$m/state/rd-critic.inbox/"*.msg >/dev/null 2>&1 \
+    || fail "a critic that already had the draft was sent it again: $(cat "$m/state/rd-critic.inbox/"*.msg)"
+  grep -q '^resolved \[key=default\].*rd-critic already has this draft' "$m/state/rd.status" \
+    || fail "a draft its critic already had was left open: $(cat "$m/state/rd.status")"
+  ! grep -qE 'waiting-state r[cd] ' "$m/events" || fail "a forwarded draft woke a model: $(cat "$m/events")"
+  row=$(ledger_row "$m" rc)
+  printf '%s\n' "$row" | grep -qE '	owner	forward	changed state$' \
+    || fail "the ledger has no row for the forwarded draft: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
+  printf 'critic forward: cleared in %s min, no model turn\n' "$(printf '%s' "$row" | cut -f5)"
+  pass "a ready Recon draft is forwarded to its critic and its decision closed by the ladder, a critic that has it is not sent it twice, and the ledger holds the minutes"
+}
+
+test_a_silent_worker_is_rung_and_clears_with_no_model_turn
+test_an_unanswered_ring_is_relaunched_then_reaches_main
+test_a_ready_recon_draft_is_forwarded_to_its_critic
 test_a_stale_wake_names_its_task_and_reason
 test_a_finished_landed_worker_is_cleaned_up_without_a_wake
 test_a_finished_unlanded_worker_is_kept_and_wakes_with_its_reason
