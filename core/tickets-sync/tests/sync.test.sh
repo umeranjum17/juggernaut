@@ -71,8 +71,9 @@ env -u JG_HOME "$JG_HOME/state/tickets-sync.check.sh" | tee "$work/first.out"
 # Missing/broken icons are recorded quietly; check stdout would wake Main.
 jq -e '.["alpha-app"] == "no local image" and .takeone == "not a readable png image"' "$JG_HOME/state/tickets-sync/icons-skipped.json"
 grep -q 'icon skipped' "$work/first.out" && { echo 'FAIL: icon skip must not print to check stdout'; exit 1; }
-# Finished backfill wakes once with a summary; mid-pass continue does not.
-grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$work/first.out"
+# A finished backfill is a routine result: one log row, no stdout; mid-pass continue is quiet too.
+grep -q 'homes read' "$work/first.out" && { echo 'FAIL: the routine count line must not print to check stdout'; exit 1; }
+grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$JG_HOME/state/tickets-sync/progress.log"
 grep -q continuing "$work/first.out" && { echo 'FAIL: backfill continue must not print to check stdout'; exit 1; }
 rm -f "$JG_HOME/state/tickets-sync/cursor.json" "$JG_HOME/state/tickets-sync/progress.log"
 JG_TICKETS_SYNC_BUDGET_SECS=0 JG_HOME="$JG_HOME" python3 "$XDG_DATA_HOME/jg-tickets-sync/tickets-sync/sync.py" > "$work/continue.out"
@@ -86,8 +87,9 @@ resumed=$(jq -r '.home + "/" + .task' "$JG_HOME/state/tickets-sync/cursor.json")
 sign-off-axi ticket "$work/board.json" --id "jg-$(printf '%s' "$resumed" | sha256sum | cut -c1-32)" --title 'Umer drifted title' >/dev/null
 "$JG_HOME/state/tickets-sync.check.sh" > "$work/resume.out"
 grep -q continuing "$work/resume.out" && { echo 'FAIL: resumed backfill continue must stay off stdout'; exit 1; }
-grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$work/resume.out"
-echo 'PASS: backfill continue is quiet; finished pass wakes once with a summary'
+grep -q 'homes read' "$work/resume.out" && { echo 'FAIL: the routine count line must not print to check stdout'; exit 1; }
+grep -qE '^tickets-sync: [0-9]+ homes read; [0-9]+ tickets changed$' "$JG_HOME/state/tickets-sync/progress.log"
+echo 'PASS: backfill continue is quiet; a finished pass logs its summary and wakes no one'
 ticket_id() { printf 'jg-%s\n' "$(printf '%s' "$1" | sha256sum | cut -c1-32)"; }
 child=$(ticket_id main/jg-child) parent=$(ticket_id main/jg-parent) parked=$(ticket_id parked/jg-parent)
 sign-off-axi ticket "$work/board.json" --json > "$work/first.json" || { cat "$work/first.json"; exit 1; }
@@ -189,6 +191,22 @@ test "$before" = "$(sha256sum "$work/board.tickets.jsonl")"
 grep -q 'tickets changed' "$work/steady.out" && { echo "FAIL: settled board republished rows: $(cat "$work/steady.out")"; exit 1; }
 sign-off-axi ticket "$work/board.json" --id "$parent" --json | jq -e '.ticket.progress == 100'
 echo 'PASS: completed sync stays idempotent; epic progress rolls up from its child'
+
+# One ticket changed is a routine result: no output, one more log row. A record the board refuses is a finding with an
+# act for this home (fix that record), so it still prints, and the pass's count line goes with it.
+rows_before=$(grep -c 'homes read' "$JG_HOME/state/tickets-sync/progress.log")
+sign-off-axi ticket "$work/board.json" --id "$(ticket_id main/jg-upkeep)" --title 'Umer drifted again' >/dev/null
+"$JG_HOME/state/tickets-sync.check.sh" > "$work/routine.out"
+test ! -s "$work/routine.out" || { echo "FAIL: a routine one-ticket pass printed: $(cat "$work/routine.out")"; exit 1; }
+test "$(grep -c 'homes read; 1 tickets changed' "$JG_HOME/state/tickets-sync/progress.log")" -ge 1
+test "$(grep -c 'homes read' "$JG_HOME/state/tickets-sync/progress.log")" = "$((rows_before + 1))"
+(cd "$JG_HOME"; jg-backlog.sh add jg-refused 'Umer refused item' --repo alpha --priority 2 >/dev/null)
+printf 'pr=not-a-url\n' > "$JG_HOME/state/jg-refused.meta"
+"$JG_HOME/state/tickets-sync.check.sh" > "$work/finding.out"
+grep -qE "^tickets-sync: skipped $(ticket_id main/jg-refused): main/jg-refused: " "$work/finding.out"
+rm "$JG_HOME/state/jg-refused.meta"
+"$JG_HOME/state/tickets-sync.check.sh" >/dev/null
+echo 'PASS: a routine pass is silent with one log row; a finding with an act still prints'
 
 if command -v gh-axi >/dev/null && [ -n "${JG_TEST_MERGED_PR:-}" ]; then
   (cd "$JG_HOME"; jg-backlog.sh add jg-merged 'Umer shipped PR' --repo alpha --priority 1 --body "pr: $JG_TEST_MERGED_PR" >/dev/null; jg-backlog.sh start jg-merged >/dev/null)

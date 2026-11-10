@@ -455,7 +455,12 @@ def sync():
                 if tid.startswith('jg-') and tid not in seen and (old.get('state') or '') != 'done':
                     print(f"tickets-check: {str(old.get('title'))[:70]} ticket says {old.get('state') or 'no state'}, but no home's work accounts for it")
             return
-        if changed or skipped_ids: print(f'tickets-sync: {len(homes)} homes read; {changed} tickets changed')
+        if changed or skipped_ids:
+            # A count is a routine result: it goes to the log. A skipped record is a finding with an act for this home
+            # (fix that record), so the skip line printed above and the count with it wake the check's reader.
+            summary = f'tickets-sync: {len(homes)} homes read; {changed} tickets changed'
+            if skipped_ids: print(summary)
+            else: note(summary)
 
 if __name__ == '__main__':
     try: sync()
