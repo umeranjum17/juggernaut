@@ -33,6 +33,10 @@
 # bin/jg-crew-state.sh still judges it. The home is JG_HOME, else the status
 # file's parent directory, as in jg_dod_accept_ship_done.
 #
+# The hold record check (--append on a .status file). A blocked: or needs-decision: line that names the captain or Main
+# as its cause must carry the id of a hold on record (bin/jg-captain-hold.sh open); without one it is refused with
+# "no such hold is on record" and nothing is written.
+#
 # This file is the one core owner of both refusals. bin/jg-squad-lead-report.sh
 # runs it before a parent-channel append, and the status line bin/jg-brief.sh
 # generates pipes through it, so no captain-facing status or report note can
@@ -71,6 +75,24 @@ done_proof_gate() {  # <status-file> <text>
   return 1
 }
 
+# 0 when no line of <text> stops for the captain or Main without a hold on record. A blocked: or needs-decision: line
+# whose note names the captain or Main as its cause must carry the id of a hold bin/jg-captain-hold.sh open finds;
+# otherwise 1 with one refusal on stderr, so a lane never stops for a decision that does not exist.
+hold_record_gate() {  # <text>
+  local line verb note tok
+  while IFS= read -r line; do
+    verb=$(status_line_verb "$line")
+    { [ "$verb" = blocked ] || [ "$verb" = needs-decision ]; } || continue
+    note=$(status_line_note "$line")
+    printf '%s\n' "$note" | grep -Eq '(^|[^[:alnum:]_])([Cc]aptain|Main)([^[:alnum:]_]|$)' || continue
+    for tok in $(printf '%s\n' "$note" | grep -Eo '[A-Za-z0-9][A-Za-z0-9._]*-[A-Za-z0-9._-]*[A-Za-z0-9]'); do
+      "$(dirname -- "${BASH_SOURCE[0]}")/jg-captain-hold.sh" open "$tok" >/dev/null 2>&1 && continue 2
+    done
+    echo 'hold refused: no such hold is on record; name the id of the captain hold this line waits on (bin/jg-captain-hold.sh hold), or write the real cause' >&2
+    return 1
+  done <<< "$1"
+}
+
 APPEND=''
 if [ "${1-}" = --append ]; then
   [ "$#" -ge 2 ] || { echo 'error: --append needs a file' >&2; exit 2; }
@@ -97,6 +119,7 @@ if [ -n "$APPEND" ]; then
     *.status)
       # shellcheck source=bin/jg-dod-lib.sh
       . "$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/jg-dod-lib.sh"
+      hold_record_gate "$text" || exit 1
       done_proof_gate "$APPEND" "$text" || exit 1
       ;;
   esac
