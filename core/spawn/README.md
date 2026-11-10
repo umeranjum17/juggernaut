@@ -18,7 +18,7 @@ what is missing, so a missing core is never read as an answer.
 `bin/jg-spawn.sh` is about 6,100 lines and ports one slice at a time, each switched live only after
 a parity replay of the shell it deletes against the Go that replaces it.
 
-1. Done. Launch flags (`model-flag`, `effort-flag`, `rigor-rank`) and the brief/spawn delivery
+1. Done. Launch flags (`model-flag`, `effort-flag`) and the brief/spawn delivery
    agreement (`delivery-agree`, `delivery-notices`).
 2. Done. Argument parsing and the refusals that need only the arguments (`intake`): the flag
    grammar, empty and missing values, the effort vocabulary, the squad_lead-only traceparent,

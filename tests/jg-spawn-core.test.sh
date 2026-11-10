@@ -32,7 +32,6 @@ check "opencode puts the effort in the config JSON for a provider that exposes i
 check "opencode omits an effort its provider lacks, and an unresolved model" "$("$core" effort-flag opencode xhigh 'anthropic/x')$("$core" effort-flag opencode high default)" ""
 check "an unknown effort word adds nothing" "$("$core" effort-flag claude bogus x)" ""
 check "pi ultra without a model it can validate stops the spawn" "$(rc "$core" effort-flag --harness-script "$ROOT/bin/jg-harness.sh" pi ultra gpt-5)" 1
-check "rigor ranks no-mistakes over direct-PR over local-only" "$("$core" rigor-rank no-mistakes)$("$core" rigor-rank direct-PR)$("$core" rigor-rank local-only)$("$core" rigor-rank other)" 3210
 
 brief=$lab/brief.md
 printf 'intro\nDelivery contract: mode=direct-PR forge=github upstream-consent=github.com/o/r\nShip branch: fm/t1\n' > "$brief"
@@ -52,6 +51,9 @@ check "a missing brief stops the spawn" "$(rc agree --brief "$lab/none.md")" 1
 notices() { "$core" delivery-notices --id t1 --mode local-only --branch fm/t1 --project proj "$@" 2>&1; }
 check "dropping below the standing posture is announced" "$(notices --standing-mode no-mistakes --standing-branch fm/ | head_is "notice: t1 ships mode=local-only while the standing posture for proj is no-mistakes")" "notice: t1 ships mode=local-only while the standing posture for proj is no-mistakes"
 check "a conditional policy raises no notice" "$(notices --standing-mode no-mistakes-prod-only --standing-branch fm/)" ""
+# less: 1 when <mode> under standing <standing> is announced as less rigor, else 0.
+less() { notices --standing-branch fm/ --mode "$1" --standing-mode "$2" | grep -c 'less rigor'; }
+check "rigor ranks no-mistakes over direct-PR over local-only and local-trunk over any other word" "$(less direct-PR no-mistakes)$(less local-only direct-PR)$(less local-trunk local-only)$(less other local-only)$(less no-mistakes direct-PR)" 11010
 check "a registered prefix the branch lacks is announced" "$(notices --standing-mode '' --standing-branch x/ | head_is "notice: t1 ships branch=fm/t1 while proj registers the ship-bra")" "notice: t1 ships branch=fm/t1 while proj registers the ship-bra"
 
 # The argument grammar: the dispatcher prints the parsed variables for the spawn to eval, or the

@@ -24,9 +24,7 @@
 #           on stderr and exits 2, never 0 or 1, so a caller can tell a broken reader from an
 #           empty queue.
 #
-# Usage: jg-wake-core.sh [flags] dedupe|keys|queued|count|grant-valid|route|classify|realert|
-# routing-file - see
-# core/wake/cmd/jg-wake-core/main.go.
+# Usage: jg-wake-core.sh [flags] <command> [args] - see core/wake/cmd/jg-wake-core/main.go.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"

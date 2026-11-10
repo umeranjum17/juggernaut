@@ -35,7 +35,7 @@
 //	    re-alert window and a `silent` event past the hourly cap both become `batch`. Counting a
 //	    settled event against the cap writes state/.wake-silenced. key and payload are already
 //	    cleaned of tabs and newlines.
-//	jg-wake-core [flags] realert <kind> <key> <payload>
+//	jg-wake-core [flags] realert|realert-record <kind> <key> <payload>
 //	    record a delivered `now` event in state/.wake-realert for the re-alert window.
 //	The route-stdin, classify-stdin, realert-stdin and realert-record-stdin variants
 //	omit the payload argument and read its full bytes from stdin.
@@ -50,15 +50,18 @@
 //	jg-wake-core [flags] fleet-unchanged <file>
 //	    exit 0 when the fleet looks the way the fingerprint in that file says, and 1 when it does
 //	    not or the file holds none, so an unrecorded baseline never reads as an unchanged fleet.
-//	jg-wake-core [flags] routing-file
-//	    print the rule file in force, nothing when there is none.
+//	jg-wake-core [flags] routing-files
+//	    print the rule files in force, in priority order, one per line.
+//	jg-wake-core [flags] rule-set <name> <default>
+//	    print the first `set <name> <digits>` the rule files give, else <default>.
 //
 // Flags give a call the home and the queue the shell library resolved. The queue read model takes
 // --queue (state/.wake-queue), --actor (main or branch) and --grant (the branch grant's row
 // snapshot). The router takes --state, --home, --root (the checkout holding defaults/), --queue,
 // --routing (JG_WAKE_ROUTING), --config (JG_CONFIG_OVERRIDE) and --now (epoch seconds, for a
 // replay). Nothing here reads the environment. A missing queue file answers "no rows", which is
-// what the file behaviour did.
+// what the file behaviour did. The usage line names every command, and tests/jg-go-entries.test.sh
+// holds each name to a caller.
 package main
 
 import (
@@ -96,7 +99,9 @@ func run(args []string, out, errw io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		fmt.Fprintln(errw, "usage: jg-wake-core [--queue FILE] [--actor main|branch] [--grant FILE] dedupe <rows-file> | keys <kind> | queued <seq>... | count | grant-valid <rows-file> | route|classify|realert <kind> <key> <payload> | routing-file")
+		fmt.Fprintln(errw, "usage: jg-wake-core [flags] dedupe <rows-file> | keys <kind> | queued <seq>... | count | "+
+			"grant-valid <rows-file> | route|classify|realert|realert-record[-stdin] <kind> <key> [<payload>] | routing-files | "+
+			"rule-set <name> <default> | digest [mark] | fleet-fp-record [file] | fleet-unchanged <file>")
 		return 2
 	}
 	cmd, rest := rest[0], rest[1:]
@@ -129,13 +134,6 @@ func run(args []string, out, errw io.Writer) int {
 	case "routing-files":
 		return none(rest, errw, "routing-files", func() int {
 			for _, f := range e.routingFiles() {
-				fmt.Fprintln(out, f)
-			}
-			return 0
-		})
-	case "routing-file":
-		return none(rest, errw, "routing-file", func() int {
-			if f := e.routingFile(); f != "" {
 				fmt.Fprintln(out, f)
 			}
 			return 0

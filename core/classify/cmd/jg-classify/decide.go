@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -454,14 +452,6 @@ func decideCommand(cmd string, a []string, out *os.File) (code int, handled bool
 		return put(statusKind(arg(0), arg(1))), true
 	case "fold-line": // fold-line <open-set> <line> <kind>
 		return put(foldLine(arg(0), arg(1), arg(2))), true
-	case "line-facts":
-		return lineFacts(os.Stdin, out), true
-	case "fold-stream": // fold-stream <open-set> <kind>, the lines to fold on stdin
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return 2, true
-		}
-		return put(foldData(arg(0), arg(1), data)), true
 	case "drop":
 		return put(strings.Join(setDrop(arg(0), arg(1)), "\n")), true
 	case "open-set-has":
@@ -496,32 +486,4 @@ func foldData(open, kind string, data []byte) string {
 		open = foldLine(open, l, kind)
 	}
 	return open
-}
-
-// lineFacts answers every line reader for each line on stdin, one unit-separator row each, so a
-// recorded corpus can be replayed against another reader without a process per line.
-func lineFacts(in, out *os.File) int {
-	data, err := io.ReadAll(in)
-	if err != nil {
-		return 2
-	}
-	w := bufio.NewWriterSize(out, 1<<20)
-	defer w.Flush()
-	yn := func(b bool) string {
-		if b {
-			return "Y"
-		}
-		return "N"
-	}
-	for _, l := range splitLines(data) {
-		key, kok := decisionKey(l, "default")
-		phase, pok := decisionKey(l, keylessPhase)
-		epoch, eok := atEpoch(l)
-		slug, sok := keyAtNoteHead(l)
-		note := lineNote(l)
-		fmt.Fprintf(w, "%s\x1f%s\x1f%s%s\x1f%s%s\x1f%s%s\x1f%s\x1f%s\x1f%s%s\x1f%s\x1f%s\n", lineVerb(l), note,
-			yn(kok), key, yn(pok), phase, yn(eok), epoch, untimed(l), yn(keyBeforeColon(l)), yn(sok), slug,
-			yn(transitionAllowed(key, note)), yn(pendingReplyEscalation(key, note)))
-	}
-	return 0
 }
