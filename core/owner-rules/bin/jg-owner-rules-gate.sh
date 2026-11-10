@@ -79,8 +79,8 @@ proof_payload() {
   printf 'juggernaut-owner-proof-v1\ntask=%s\nhead=%s\npr=%s\nreceipt-sha256=%s\n' "$id" "$head" "$pr" "$hash"
 }
 if [ "$mode" = sign ]; then
-  [ -f "$private" ] && [ ! -L "$private" ] || { echo "owner-rules: local private key is missing; configure $private with the matching public key at $pub" >&2; exit 1; }
-  chmod go-rwx "$private" || { echo "owner-rules: cannot secure local private key permissions" >&2; exit 1; }
+  [ -f "$private" ] && [ ! -L "$private" ] || { echo "ENV: owner-rules: local private key is missing; configure $private with the matching public key at $pub" >&2; exit 1; }
+  chmod go-rwx "$private" || { echo "ENV: owner-rules: cannot secure local private key permissions" >&2; exit 1; }
   receipt=$(proof_receipt) || { echo "owner-rules: no sealed clean receipt to sign for $head" >&2; exit 1; }
   [ -n "$receipt" ] || { echo "owner-rules: no sealed clean receipt to sign for $head" >&2; exit 1; }
   mkdir -p "$proof_dir" || { echo "owner-rules: cannot create local proof record" >&2; exit 1; }
@@ -88,7 +88,7 @@ if [ "$mode" = sign ]; then
   proof_payload "$receipt" > "$tmp/payload" || { rm -rf -- "$tmp"; exit 1; }
   out=$(mktemp "$proof_dir/.signature.XXXXXX") || { rm -rf -- "$tmp"; exit 1; }
   if ! openssl pkeyutl -sign -rawin -inkey "$private" -in "$tmp/payload" -out "$out" 2>/dev/null; then
-    rm -f -- "$out"; rm -rf -- "$tmp"; echo "owner-rules: local signing failed" >&2; exit 1
+    rm -f -- "$out"; rm -rf -- "$tmp"; echo "ENV: owner-rules: local signing failed" >&2; exit 1
   fi
   chmod 600 "$out" && mv -f -- "$out" "$signature" || { rm -f -- "$out"; rm -rf -- "$tmp"; exit 1; }
   rm -rf -- "$tmp"

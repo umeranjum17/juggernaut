@@ -329,6 +329,7 @@ run_gate() {  # <commit> <command> <label>
 classify_refusal() {  # <output file> [<gate log>...]
   local last
   last=$(grep -E '^(REFUSED|error):' "$1" | tail -n 1)
+  if grep -q '^ENV:' "$@" 2>/dev/null; then echo env-wait; return; fi
   case $last in
     *'away mode'*|*'something else moved it'*|*'linked to a decision'*|*'still held'*|*'changed while landing'*|*'kept moving'*|*'proof inputs are incomplete'*) echo wait; return ;;
     "REFUSED: gate "*|"REFUSED: could not read the decisions"*|"REFUSED: this lane is the red"*|"error: cannot check out"*) ;;
@@ -914,6 +915,9 @@ hook_fact() {  # <project-dir>
   local effective common f
   effective=$(git -C "$1" rev-parse --path-format=absolute --git-path hooks/reference-transaction 2>/dev/null || true)
   common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)/hooks/reference-transaction
+  if [ -n "$effective" ] && [ -d "$(dirname "$effective")" ]; then
+    find "$(dirname "$effective")" -maxdepth 1 ! -name reference-transaction -printf '%f %m %y\n' | LC_ALL=C sort
+  fi
   printf 'hook-fact %s dir-writable=%s\n' "$effective" "$([ -n "$effective" ] && [ -w "$(dirname "$effective")" ] && echo yes || echo no)"
   for f in "$effective" "$common"; do
     printf '%s ' "$f"
@@ -927,7 +931,7 @@ hook_fact() {  # <project-dir>
 # also prints `refusal-class <id>: wait|retry|final`, which the landing check acts on; the count and the backoff are its own.
 # Context changes admit a new attempt; every attempt keeps its own output and gate logs.
 cmd_land() {
-  local id=${1:-} meta proj branch cand mem context key previous count=0 kind reason attempt rc=0 proof_home account run_lock held_by
+  local id=${1:-} meta proj branch cand mem context key previous count=0 kind reason attempt rc=0 proof_home account run_lock held_by key_home hops
   if [ "$#" -ne 1 ] || ! jg_pr_task_id_valid "$id"; then refuse "land takes only the task id; a landing is never forced"; fi
   meta=$STATE/$id.meta; [ -f "$meta" ] || die "no meta for task $id at $meta"
   proj=$(jg_dod_meta_value "$meta" project)
@@ -942,12 +946,25 @@ cmd_land() {
     proof_home=${DONE_DONE_HOME:-$(jq -r '.home // empty' <<<"$previous")}; proof_home=${proof_home:-$HOME/.done-done}
     account=${CLAUDE_CONFIG_DIR:-$(jq -r '.account // empty' <<<"$previous")}
   fi
+  key_home=${JG_MAIN_HOME:-$JG_HOME}; hops=0
+  if [ -z "${JG_MAIN_HOME:-}" ]; then
+    # shellcheck source=bin/jg-squad-lead-parent-lib.sh
+    . "$SCRIPT_DIR/jg-squad-lead-parent-lib.sh"
+    while [ -e "$key_home/.jg-squad-lead-parent" ] && [ "$hops" -lt 8 ]; do
+      jg_squad_lead_parent_record_parse "$key_home/.jg-squad-lead-parent" || break
+      [ -n "$JG_SQUAD_LEAD_PARENT_HOME" ] || break
+      key_home=$JG_SQUAD_LEAD_PARENT_HOME; hops=$((hops + 1))
+    done
+  fi
   mem=$DATA/jg-trunk-landing; mkdir -p "$mem"
   # No runtime status, clocks or attempt output belong to the declared context.
   context=$({
     printf '%s\n' "$proj" "$cand" "$proof_home" "$account" "$PATH" \
       "${JG_BEADS_TEST_BD:-}" "${JG_BEADS_TEST_DOLT:-}" "${GOCACHE:-}" "${GOMODCACHE:-}"
     hook_fact "$proj"
+    for key in git openssl jq; do command -v "$key" 2>/dev/null || true; "$key" --version 2>/dev/null | head -n 1 || true; done
+    key=$key_home/config/owner-rules-proof.pub
+    printf '%s ' "$key"; [ ! -f "$key" ] || git hash-object "$key"; [ ! -r "$key" ] || echo readable
     cat "$meta"
     jq -Sc 'del(.at)' "$STATE/$id.run-receipt.json" 2>/dev/null || true
     for key in "$STATE/trunk-tip-$(basename "$proj")" \
@@ -972,10 +989,23 @@ cmd_land() {
     echo "IN_PROGRESS: $id at $cand already has an active landing attempt"; return 75
   fi
   LOCKS="$STATE/.landing-$id-$cand.lock $LOCKS"
+  # Superseded context keys are history, not a second active admission decision.
+  for previous in "$mem/$id.$cand".*.state; do
+    [ -f "$previous" ] && [ "$previous" != "$key.state" ] || continue
+    case $(cat "$previous" 2>/dev/null) in final*|env-wait*)
+      mkdir -p "$mem/retired" && mv -n -- "$previous" "$mem/retired/" ;;
+    esac
+  done
   previous=$(cat "$key.state" 2>/dev/null || true)
   read -r kind count reason <<<"${previous:-new 0}"
   case $kind in
-    final) printf '%s\n' "$reason"; printf 'refusal-class %s: final\n' "$id"; return 1 ;;
+    env-wait|final-env)
+      if [ "$kind" = env-wait ]; then
+        count=$((count + 1)); [ "$count" -lt 3 ] || kind=final-env
+        printf '%s %s %s\n' "$kind" "$count" "$reason" > "$key.state"
+      fi
+      printf '%s\n' "$reason"; printf 'refusal-class %s: env-wait\n' "$id"; return 1 ;;
+    final) printf '%s\n' "$reason"; printf 'refusal-class %s: %s\n' "$id" "$kind"; return 1 ;;
   esac
   attempt=$(mktemp -d "$mem/$id.$cand.attempt-XXXXXX") || die "cannot retain landing attempt"
   LAND_ATTEMPT=$attempt/gate LAND_HEAD=$cand

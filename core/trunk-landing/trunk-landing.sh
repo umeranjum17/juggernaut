@@ -132,7 +132,11 @@ if [ "$1" = runbatch ]; then
     why=$(printf '%s\n' "$out" | grep -E "^returned $id: " | tail -n 1 | sed "s/^returned $id: //")
     [ -n "$why" ] || why=$(printf '%s\n' "$out" | grep -E '^(REFUSED|error|IN_PROGRESS):' | tail -n 1)
     why=$(printf '%s' "${why:-landing failed; see $request_log}" | cut -c1-300)
-    verdict_record "$id" "$head" "" "$tip" "$out" "$why"
+    if printf '%s\n' "$out" | grep -q "^refusal-class $id: env-wait$"; then
+      printf 'env-wait %s\n' "$why" > "$MEM/$id.$head.state"
+    else
+      verdict_record "$id" "$head" "" "$tip" "$out" "$why"
+    fi
   done
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
@@ -169,7 +173,11 @@ if [ "$1" = run ]; then
   # The lander rebased the lane, so its branch may now be at another head: the same verdict stands for that head.
   br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
   now=$(git -C "$(mval "$STATE/$id.meta" project)" rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null) || now=
-  verdict_record "$id" "$head" "$now" "$tip" "$out" "${why:-landing failed; see $request_log}"
+  if printf '%s\n' "$out" | grep -q "^refusal-class $id: env-wait$"; then
+    printf 'env-wait %s\n' "${why:-environment unavailable; see $request_log}" > "$MEM/$id.$head.state"
+  else
+    verdict_record "$id" "$head" "$now" "$tip" "$out" "${why:-landing failed; see $request_log}"
+  fi
   [ "$rc" -ne 75 ] || exit 0  # another run holds this landing; its own end starts the next one
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
   exit 0
@@ -188,6 +196,16 @@ if [ -z "$QUIET" ] && jg_lock_try_acquire "$MEM/.outbox.lock"; then
 fi
 # Only a project registered local-trunk is ever touched; no-mistakes, direct-PR and local-only projects keep their own rules.
 local_trunk() { [ "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$(basename "$1")" 2>/dev/null | cut -d' ' -f1)" = local-trunk ] && echo yes || echo no; }
+# Initialize only registered projects without a recorded trunk; init itself refuses an existing branch.
+for proj in "$FMH"/projects/*; do
+  [ -d "$proj" ] && [ "$(local_trunk "$proj")" = yes ] || continue
+  pn=$(basename "$proj"); [ ! -e "$STATE/trunk-tip-$pn" ] || continue
+  jg_lock_try_acquire "$STATE/.trunk-init-$pn.lock" || continue
+  if [ ! -e "$STATE/trunk-tip-$pn" ]; then
+    init_out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" init "$proj" 2>&1) || { [ -n "$QUIET" ] || printf 'trunk-landing: %s\n' "$init_out"; }
+  fi
+  jg_lock_release "$STATE/.trunk-init-$pn.lock"
+done
 # Once a project's release PR has merged, cut its next trunk version (bin/jg-trunk.sh rollover) and clean the old trunk
 # up unforced (retire); looked at every 5 minutes.
 for tip in "$STATE"/trunk-tip-*; do
@@ -262,8 +280,22 @@ for meta in "$STATE"/*.meta; do
   [ "$(local_trunk "$proj")" = yes ] || continue
   branch=$(mval "$meta" branch); branch=${branch:-fm/$id}
   head=$(git -C "$proj" rev-parse --verify --quiet "refs/heads/$branch^{commit}") || continue
+  # Old heads cannot be admitted again; retain their final records outside the active set.
+  for stale in "$MEM/$id".*.state; do
+    [ -f "$stale" ] || continue
+    rest=${stale#"$MEM/$id."}; oldhead=${rest%%.*}
+    [[ $oldhead =~ ^[0-9a-f]{40,64}$ ]] || continue
+    [ "$oldhead" != "$head" ] || continue
+    case $(cat "$stale" 2>/dev/null) in final*) mkdir -p "$MEM/retired" && mv -n -- "$stale" "$MEM/retired/" ;; esac
+  done
   st=$MEM/$id.$head.state; line=$(cat "$st" 2>/dev/null || true)
-  case $line in landed*) continue ;; esac
+  case $line in
+    landed*) continue ;;
+    final*) if ! verdict_holds "$id" "$head" "$line" "$(basename "$proj")"; then
+      mkdir -p "$MEM/retired" && mv -n -- "$st" "$MEM/retired/"
+      line=
+    fi ;;
+  esac
   at=$(ready_at "$id") || continue
   # A landing starts only on a head whose whole proof is there: receipt, approved merge-card evidence and a sealed done-done run.
   if gaps=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" proof "$id" 2>&1); then :; else
@@ -279,12 +311,14 @@ for meta in "$STATE"/*.meta; do
       if verdict_holds "$id" "$head" "$line" "$(basename "$proj")"; then
         why=$(verdict_reason "${line#final }")
         report "$id.$head" "$id not landed: ${line#final }" "$why"; lane_refusal_reach "$id" "$head" "$proj" "$branch" "$why"; continue
-      fi ;;
+      fi
+      mkdir -p "$MEM/retired" && mv -n -- "$st" "$MEM/retired/" ;;
+    env-wait*) verdict_due "$st" || continue ;;
     retry*) verdict_due "$st" || continue ;;
     wait*) [ -z "$QUIET" ] || verdict_due "$st" || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac
   # <epoch done> <task> <head> <project> <1, or 0 for a lane marked `land-next`> <1, or 0 for a lane once returned for a conflict>
-  cands="$cands$at $id $head $(basename "$proj") $([ -e "$STATE/$id.land-next" ] && echo 0 || echo 1) $(verdict_returned "$id" && echo 0 || echo 1)"$'\n'
+  cands="$cands$at $id $head $(basename "$proj") $([ -e "$STATE/$id.land-next" ] && echo 0 || echo 1) $( { verdict_returned "$id" || grep -Eq "^final.*$VERDICT_CONFLICT_RE" "$MEM/retired/$id".*.state 2>/dev/null; } && echo 0 || echo 1)"$'\n'
 done
 # A flush request (`jg-trunk.sh flush`) ends once its project has no ready lane left.
 for f in "$STATE"/trunk-flush-*; do
@@ -315,6 +349,15 @@ if ! busy; then
     read -r -a ready <<< "$batch"; break
   done < <(printf '%s' "$cands" | sort -n -k1,1 | awk '!seen[$4]++ { print $4 }')
   [ "${#ready[@]}" -gt 0 ] || { rmdir "$MEM/.start" 2>/dev/null; exit 0; }
+  # A batch has no per-lane admission key; recheck environment waits singly so an unchanged fact never reruns its gate.
+  normal=(); env_first=
+  for arg in "${ready[@]}"; do
+    case $(cat "$MEM/${arg%%@*}.${arg#*@}.state" 2>/dev/null) in
+      env-wait*) [ -n "$env_first" ] || env_first=$arg ;;
+      *) normal+=("$arg") ;;
+    esac
+  done
+  if [ "${#normal[@]}" -gt 0 ]; then ready=("${normal[@]}"); else ready=("$env_first"); fi
   if [ "${#ready[@]}" -ge 2 ]; then
     for arg in "${ready[@]}"; do printf 'running %s\n' "$(date +%s)" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
     launch_log=$(mktemp "$MEM/batch.launch-XXXXXX.log") || exit 1

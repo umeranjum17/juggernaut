@@ -557,6 +557,61 @@ test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent() {
   pass 'a refusal the worker fixes reaches it by steer, repeats until the head changes, alerts after ten silent minutes, and never steers a stale head or a wait'
 }
 
+test_l3_environment_wait_is_not_retried_in_batches() {
+  local h n
+  world l3-batch
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  lane b1 good b1.txt; lane b2 good b2.txt
+  printf 'gate-full=echo attempt >> "%s/calls"; echo ENV: missing-fixture; exit 1\n' "$W" >> "$HOME_D/config/trunk-policy"
+  sweep >/dev/null; sleep 1
+  h=$(git -C "$PROJ" rev-parse fm/b1)
+  [ -f "$W/calls" ] || fail "batch gate must run"
+  sweep >/dev/null; sleep 1; sweep >/dev/null; sleep 1
+  n=$(wc -l < "$W/calls")
+  sweep >/dev/null; sleep 1; sweep >/dev/null; sleep 1
+  [ "$(wc -l < "$W/calls")" -eq "$n" ] || fail "unchanged environment must not rerun a batch gate"
+  pass 'an unchanged batch environment refusal does not rerun the gate'
+}
+
+test_l3_environment_facts_retirement_and_self_init() {
+  local n h old new out other
+  world l3-facts
+  lane facts good
+  mkdir -p "$W/hooks"; git -C "$PROJ" config core.hooksPath "$W/hooks"
+  printf 'gate-full=test -f "%s/hooks/ready" || { echo ENV: fixture-unavailable; exit 1; }\n' "$W" >> "$HOME_D/config/trunk-policy"
+  out=$(trunk land facts 2>&1) && fail "missing environment fact must refuse"
+  assert_contains "$out" "refusal-class facts: env-wait" "environment refusal must be typed"
+  n=$(find "$HOME_D/data/jg-trunk-landing" -name 'facts.*.attempt-*' | wc -l)
+  for _ in 1 2 3; do trunk land facts >/dev/null 2>&1 && fail "unchanged environment must remain refused"; done
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name 'facts.*.attempt-*' | wc -l)" = "$n" ] || fail "unchanged context retried"
+  : > "$W/hooks/ready"
+  trunk land facts >/dev/null 2>&1 || fail "changed hook directory must admit a new attempt"
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name 'facts.*.attempt-*' | wc -l)" -eq $((n + 1)) ] || fail "changed facts must admit exactly one attempt"
+  [ -n "$(find "$HOME_D/data/jg-trunk-landing/retired" -name 'facts.*.state' -print -quit)" ] || fail "the old admission key must retire"
+
+  world l3-retire
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  mkdir -p "$HOME_D/data/jg-trunk-landing"
+  lane stale good; old=$(git -C "$PROJ" rev-parse fm/stale)
+  printf 'final REFUSED: trunk moved\n' > "$HOME_D/data/jg-trunk-landing/stale.$old.state"
+  relane stale better; new=$(git -C "$PROJ" rev-parse fm/stale)
+  [ "$old" != "$new" ] || fail "fixture must change head"
+  sweep >/dev/null
+  [ ! -e "$HOME_D/data/jg-trunk-landing/stale.$old.state" ] || fail "superseded final must leave active records"
+  [ -f "$HOME_D/data/jg-trunk-landing/retired/stale.$old.state" ] || fail "superseded final must be retained in retired"
+
+  world l3-init
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  other="$HOME_D/projects/other"; jg_git_init_commit "$other"
+  printf '%s\n' '- other [local-trunk] - fixture' >> "$HOME_D/data/projects.md"
+  out=$(sweep)
+  [ -s "$HOME_D/state/trunk-tip-other" ] || fail "registered project must self-init: $out"
+  [ "$(cat "$HOME_D/state/trunk-tip-other")" = "$(git -C "$other" rev-parse HEAD)" ] || fail "self-init must use project HEAD"
+  pass 'changed hook facts admit once, superseded final retires, and registered projects self-init'
+}
+
+test_l3_environment_wait_is_not_retried_in_batches
+test_l3_environment_facts_retirement_and_self_init
 test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection
 test_a_home_with_other_shas_is_contained_only_when_the_trunk_took_its_changes
 test_admission_is_shared_by_manual_and_automatic_requests
