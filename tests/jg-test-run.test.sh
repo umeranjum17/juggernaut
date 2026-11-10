@@ -337,6 +337,41 @@ i=0; while [ ! -e '$d/release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i +
   pass 'a run past the machine limit waits for a slot and starts when it frees; runs inside an admitted run never wait'
 }
 
+# A run of the trunk itself (the lander's gate, the verify) names JG_TRUNK_GATE_OUTPUT and takes the first slot that
+# frees, ahead of lane runs that asked for a slot before it.
+test_a_trunk_run_takes_the_first_free_slot_ahead_of_lane_runs() {
+  local d=$TMP_ROOT/trunkfirst name pid_a pid_b pid_c pid_t rc=0
+  mkdir -p "$d"
+  printf 'machine_runs_max=2\n' >"$d/limits"
+  for name in a b c t; do
+    write_script "$d/$name.test.sh" "touch '$d/$name-started'
+i=0; while [ ! -e '$d/$name-release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i + 1)); done"
+  done
+  run_in_slots() {  # <name> [<env assignment>...]: start <name>.test.sh as its own run
+    local n=$1; shift
+    env -u JG_TEST_RUN_SLOT -u JG_TRUNK_GATE_OUTPUT "$@" JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
+      bash "$RUNNER" "$d/$n.test.sh" >"$d/$n.out" 2>&1 &
+  }
+  run_in_slots a; pid_a=$!
+  await_file 60 "$d/a-started" 'the first lane run did not start'
+  run_in_slots b; pid_b=$!
+  await_file 60 "$d/b-started" 'the second lane run did not start'
+  run_in_slots c; pid_c=$!
+  await_file 30 "$d/c.out" 'the third lane run did not say it waits for a slot' 'waiting for a test-run slot'
+  run_in_slots t JG_TRUNK_GATE_OUTPUT="$d/t.proof"; pid_t=$!
+  await_file 30 "$d/t.out" 'the trunk run did not say it waits for a slot' 'waiting for a test-run slot'
+  # A failed wait below still frees every run: each script stops at its release file, or after 120 s.
+  touch "$d/a-release"
+  await_file 30 "$d/t-started" 'the trunk run did not take the first slot that freed'
+  [ ! -e "$d/c-started" ] || fail "the lane run that asked first took the slot ahead of the trunk run: $(cat "$d/c.out")"
+  touch "$d/t-release"
+  await_file 30 "$d/c-started" 'the lane run did not start once the trunk run freed its slot'
+  touch "$d/b-release" "$d/c-release"
+  for pid in "$pid_a" "$pid_b" "$pid_c" "$pid_t"; do wait "$pid" || rc=$?; done
+  assert_equals 0 "$rc" "every run must pass: $(cat "$d"/*.out)"
+  pass 'a trunk run takes the first slot that frees, ahead of lane runs that asked before it'
+}
+
 # A test that moves HOME still builds Go from the caller's own build cache.
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
   local d=$TMP_ROOT/gocache want out
@@ -350,6 +385,7 @@ test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
 }
 
 test_a_run_past_the_machine_limit_waits_for_a_slot
+test_a_trunk_run_takes_the_first_free_slot_ahead_of_lane_runs
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache
 test_required_shards_keep_the_union_and_a_failed_shard
 test_a_shard_that_stops_before_its_result_still_writes_a_failed_result

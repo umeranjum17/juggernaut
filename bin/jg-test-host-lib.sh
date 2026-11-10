@@ -19,6 +19,9 @@
 #   frees its slot within a second, and no test inherits the lock. A run started inside an admitted run (a shard, a
 #   test of the runner) inherits JG_TEST_RUN_SLOT and takes no slot. One whose environment was cleared is recognised
 #   while it waits: a slot held by one of its own ancestors admits it, so it never waits on the run that started it.
+#   A run of the trunk itself (the lander's gate or the verify; bin/jg-trunk.sh gives both JG_TRUNK_GATE_OUTPUT) marks
+#   itself as waiting, and a lane run takes no slot while such a mark of a live runner stands, so the trunk run gets
+#   the first slot that frees.
 #   Time spent waiting is left in JG_TEST_HOST_WAITED_MS. Without python3 or a writable slot directory the run starts
 #   without a slot and says so. jg_test_host_release frees the slot at once.
 
@@ -52,8 +55,17 @@ jg_test_host_warm_go_cache() {  # <repository root>
 # shellcheck disable=SC2016 # Python source, not shell
 _JG_TEST_HOST_KEEPER_PY='
 import fcntl, os, signal, subprocess, sys, time
-d, n, owner = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+d, n, owner, trunk = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == "trunk"
+mark = os.path.join(d, "trunk-waiting-%d" % owner)
+def unmark():
+    try:
+        os.unlink(mark)
+    except OSError:
+        pass
+def leave(*_):
+    unmark()
+    os._exit(0)
+signal.signal(signal.SIGTERM, leave)
 os.closerange(3, 1024)
 def alive(pid):
     try:
@@ -70,10 +82,19 @@ def lineage(pid):
         out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
         pid = int(out) if out.isdigit() else 0
     return seen
+def trunk_waiting():
+    for f in os.listdir(d):
+        if f.startswith("trunk-waiting-") and f[14:].isdigit() and int(f[14:]) != owner and alive(int(f[14:])):
+            return True
+    return False
 told = False
+if trunk:
+    open(mark, "w").close()
 while alive(owner):
     holders = []
     for k in range(1, n + 1):
+        if not trunk and trunk_waiting():
+            break
         name = "slot-%d" % k
         fd = os.open(os.path.join(d, name), os.O_RDWR | os.O_CREAT, 0o600)
         try:
@@ -84,6 +105,7 @@ while alive(owner):
             continue
         os.ftruncate(fd, 0)
         os.write(fd, b"%d\n" % owner)
+        unmark()
         print("slot " + name, flush=True)
         null = os.open(os.devnull, os.O_WRONLY)
         os.dup2(null, 1)
@@ -101,6 +123,7 @@ while alive(owner):
                          % (n, ", ".join(pid or "unknown" for _, pid in holders)))
         told = True
     time.sleep(2)
+unmark()
 '
 
 jg_test_host_admit() {  # <max>
@@ -114,7 +137,7 @@ jg_test_host_admit() {  # <max>
     return 0
   fi
   begin=$(now_ms)
-  python3 -c "$_JG_TEST_HOST_KEEPER_PY" "$dir" "$max" "$$" >"$fifo" &
+  python3 -c "$_JG_TEST_HOST_KEEPER_PY" "$dir" "$max" "$$" "${JG_TRUNK_GATE_OUTPUT:+trunk}" >"$fifo" &
   JG_TEST_HOST_KEEPER=$!
   IFS= read -r line <"$fifo" || line=
   rm -f -- "$fifo"
