@@ -183,9 +183,8 @@ The card reads "Merge the green ... PR?" and the steer tells the lead to merge w
 
 A lead that ignores its ready-work wake (`bin/jg-watch.sh` `ready_work_waits_idle`) is the same ladder with the lead as the stuck party.
 `jg_wait_timers_backlog` runs from a lead home's tick at most every `JG_READY_STALL_POLL_SECS` (default 60), and the watcher's `ready_backlog_stall_state` owns the condition.
-The condition holds while a ready, unheld item could start now and either the home has a free lane or no worker is provably working.
+The condition holds while a ready item with no open captain card could start now and the home has a free lane.
 A free lane is fewer open lanes than `config/lane-target`, or than 4 without a usable one.
-A home at its floor still counts as stalled when no worker is provably working (the ready-work wake's "no worker working" case), so lanes that only wait on a merge or a cleanup never hide an idle lead.
 An item whose project's declared capacity is already held cannot start now, so it does not count (`bin/jg-project-capacity-lib.sh`).
 
 | rung | when | who acts |
@@ -199,9 +198,9 @@ A home with a pause record (`bin/jg-pause-lib.sh`, the one owner of that read) a
 An episode reported before the pause is closed with `waiting-timer-cleared` and the record dropped, so the clock starts again and the backlog rings again once the pause lifts.
 
 - A start is a lane id that was not open before; it ends the episode and re-arms the clock.
-- The condition clearing (no startable ready item, a worker provably working at the floor, or a free lane gone) ends the episode, and a reported one is closed with `waiting-timer-cleared`.
+- The condition clearing (no startable ready item, a free lane gone) ends the episode, and a reported one is closed with `waiting-timer-cleared`.
 - An unreadable backlog leaves the episode untouched for that poll.
-- While ready work waits but the condition does not hold, `state/.waiting-timers/.ready-backlog-why` holds one tab-separated line: when that reason began, the reason (`lanes-working` or `project-capacity`), and the open/target lane counts. It is the on-disk answer to why a waiting backlog raised no escalation, and it is removed when the condition holds or no ready work waits.
+- While ready work waits but the condition does not hold, `state/.waiting-timers/.ready-backlog-why` holds one tab-separated line: when that reason began, the reason (`lanes-full` or `project-capacity`), and the open/target lane counts. It is the on-disk answer to why a waiting backlog raised no escalation, and it is removed when the condition holds or no ready work waits.
 - Episode record: `state/.waiting-timers/.ready-backlog`, one tab-separated line holding first-observed time, open lane ids (comma-joined, `-` for none), report key (`waiting-timer-<home>-<lead>-g<generation>-ready-backlog`), first report time (0 before it), and last fire time.
 
 ## Provenance: byte-identical to the fork at the move

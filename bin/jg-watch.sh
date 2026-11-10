@@ -2958,7 +2958,7 @@ open_lane_count() {
   check=${XDG_DATA_HOME:-$HOME/.local/share}/jg-fleet-flow/jg-flow-check.sh
   if [ -f "$check" ] && [ -x "$check" ] \
     && counted=$(jg_run_timed "${JG_FLOW_CHECK_TIMEOUT_SECS:-10}" "$check" "$JG_HOME" --summary 2>/dev/null); then
-    counted=$(printf '%s\n' "$counted" | awk -F '\t' 'NF == 9 && NR == 1 { print $8 }')
+    counted=$(printf '%s\n' "$counted" | awk -F '\t' 'NF >= 9 && NR == 1 { print $8 }')
     case "$counted" in
       ''|*[!0-9]*) ;;
       *) printf '%s\n' "$counted"; return 0 ;;
@@ -3087,25 +3087,13 @@ admission_retry_waits_memory() {
 }
 
 # The stalled-backlog condition the wait-timers chain escalates
-# (core/wait-timers/README.md "Stalled ready backlog"): this squad_lead home
-# has a ready item that could start now, and either a free lane or no worker
-# provably working. A free lane is fewer open lanes than config/lane-target, or
-# than 4 without a usable one. A home at its floor is still stalled when no
-# worker is provably working (the ready-work wake's "no worker working" case),
-# because lanes that only wait on a merge or a cleanup must not hide an idle
-# lead. An item could start now unless its project's declared capacity is
-# already held (bin/jg-project-capacity-lib.sh). Sets READY_STALL_IDS (startable
-# ids, P0 first), READY_STALL_OPEN, READY_STALL_TARGET, READY_STALL_MODE
-# (free-lanes or no-worker), and READY_STALL_LANES (the open lane ids,
-# comma-joined, so the chain can see a start). When ready work exists but the
-# condition does not hold, READY_STALL_WHY names the reason (lanes-working or
-# project-capacity). The wait-timers core check reads the mode and the reason, so
-# they are outputs of this function and not local scratch. Returns 0 when the
-# condition holds, 1 when it does not, and 2 when the backlog cannot be read, so
-# an unknown poll never clears or fires an episode.
+# (core/wait-timers/README.md "Stalled ready backlog"): a startable item and a
+# free lane. Open captain cards and project capacity exclude items. The result
+# is unknown when the backlog or board cannot be read. READY_STALL_LANES tracks
+# lane starts; READY_STALL_WHY records why a nonempty ready set cannot start.
 # shellcheck disable=SC2034,SC2100 # READY_STALL_MODE and READY_STALL_WHY are read by core/wait-timers, outside the linted set.
 ready_backlog_stall_state() {
-  local rows rc id repo proj cfg seen='|' full='|' meta kind
+  local rows rc id repo proj cfg seen='|' full='|' meta kind cards board data_dir
   READY_STALL_IDS='' READY_STALL_OPEN='' READY_STALL_TARGET='' READY_STALL_LANES='' READY_STALL_MODE='' READY_STALL_WHY=''
   [ -f "$(jg_compat_marker "$JG_HOME")" ] && [ ! -L "$(jg_compat_marker "$JG_HOME")" ] || return 1
   rows=$(jg_ready_work_rows "$JG_HOME"); rc=$?
@@ -3115,16 +3103,33 @@ ready_backlog_stall_state() {
   READY_STALL_OPEN=$(open_lane_count) || return 2
   READY_STALL_MODE=free-lanes
   if [ "$READY_STALL_OPEN" -ge "$READY_STALL_TARGET" ]; then
-    READY_STALL_MODE=no-worker
-    for meta in "$STATE"/*.meta; do
-      [ -f "$meta" ] || continue
-      id=${meta##*/}
-      if crew_is_provably_working "${id%.meta}"; then READY_STALL_WHY=lanes-working; return 1; fi
-    done
+    READY_STALL_WHY=lanes-full
+    return 1
   fi
+  # Read the same open board used by the question-card command. An unreadable
+  # board leaves the episode unchanged rather than treating a held item as free.
+  # shellcheck source=bin/jg-question-lib.sh
+  . "$SCRIPT_DIR/jg-question-lib.sh"
+  cards=''
+  if jg_question_signoff_available; then
+    board=$(jg_question_board)
+    if [ -n "$board" ]; then
+      cards=$(sign-off-axi list "$board" --json) || return 2
+    elif [ -z "${SIGN_OFF_HOME:-}" ]; then
+      cards=$(sign-off-axi list --json) || return 2
+    fi
+    if [ -n "$cards" ]; then
+      cards=$(printf '%s\n' "$cards" | jq -er 'if (.decisions | type) == "array" then [.decisions[] | (.ticket // empty), (.raised_by // empty), (."raised-by" // empty)] | join("\n") else error("invalid board") end' 2>/dev/null) || return 2
+    fi
+  fi
+  data_dir=${JG_DATA_OVERRIDE:-$JG_HOME/data}
   cfg=$(jg_project_capacity_config_dir "$JG_HOME" "$CONFIG" 2>/dev/null) || cfg=
   while read -r id repo; do
     [ -n "$id" ] || continue
+    printf '%s\n' "$cards" | grep -Fxq -- "$id" && continue
+    rc=0
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$data_dir" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id" >/dev/null 2>&1 || rc=$?
+    case "$rc" in 0) continue ;; 1) ;; *) return 2 ;; esac
     proj="$JG_HOME/projects/$repo"
     if [ -n "$cfg" ] && [ "$repo" != - ] && [ -d "$proj" ]; then
       case "$seen" in

@@ -365,7 +365,7 @@ EOF
 }
 
 # A lead home's stalled ready backlog (README "Stalled ready backlog"): ready
-# work that could start, a free lane or no worker provably working, and nothing
+# work that could start, a free lane, and nothing
 # started for JG_READY_STALL_SECS. The watcher's ready_backlog_stall_state owns
 # the condition; this owns the rungs.
 # One episode at state/.waiting-timers/.ready-backlog: since, open lane ids

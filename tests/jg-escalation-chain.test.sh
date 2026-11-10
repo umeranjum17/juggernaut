@@ -96,7 +96,7 @@ cycle() {  # <home> [absent]
   [ "${2:-}" != absent ] || successor=1
   mark="$h/tmp/cycle-mark"
   touch "$mark"
-  env -u JG_TASK_ID JG_WATCH_HANDLING_SUCCESSOR="$successor" HOME="$h/home" TMPDIR="$h/tmp" PATH="$h/fakebin:$PATH" \
+  env -u JG_TASK_ID JG_WATCH_HANDLING_SUCCESSOR="$successor" HOME="$h/home" XDG_DATA_HOME="$h/home/.local/share" TMPDIR="$h/tmp" PATH="$h/fakebin:$PATH" \
     JG_HOME="$h" JG_STATE_OVERRIDE="$h/state" JG_CONFIG_OVERRIDE="$h/config" \
     JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 JG_HOME_SUMMARY_INTERVAL=999999 \
     JG_SQUAD_LEAD_LIVENESS_SECS="${LIVENESS:-99999999}" JG_BUSY_TURN_MAX_SECS=999999 JG_STALE_ESCALATE_SECS=999999 \
@@ -580,6 +580,7 @@ test_stalled_backlog_wakes_the_lead_and_main_and_refires() {
   backlog "$l" add jg-alpha "first item" --priority 1
   f="$m/state/lead1.status"
   cycle "$l"
+  cycle "$l"
   [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "ready work on a free lane armed no episode: $(cat "$l/err")"
   ! grep -q 'waiting-timer-backlog-overdue' "$f" || fail "Main was told before the lead had 10 minutes"
   backdate_backlog "$l" 500
@@ -623,6 +624,47 @@ test_stalled_backlog_wakes_the_lead_and_main_and_refires() {
   grep -q '^- Ask: Start the stalled' "$m/data/overwatch-decisions.md" 2>/dev/null \
     || fail "the recorded backlog wait disappeared when the item was held"
   pass "a ready item on a free lane with nothing started for 10 minutes wakes the lead and Main, re-fires every interval, reaches the board, and clears when held"
+}
+
+test_stalled_backlog_skips_open_card_and_full_lanes() {
+  local m l
+  m=$(home card-main)
+  l=$(lead_home card-lead "$m")
+  printf '1\n' > "$l/config/lane-target"
+  backlog "$l" add jg-alpha "first item"
+  # The list endpoint returns only open cards, as sign-off-axi does.
+  cat > "$l/fakebin/sign-off-axi" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != list ] || printf '%s\n' '{"decisions":[{"key":"plan","ticket":"jg-alpha"}]}'
+SH
+  chmod +x "$l/fakebin/sign-off-axi"
+  cycle "$l"
+  cycle "$l"
+  [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a ticket with an open card armed a stall"
+  cat > "$l/fakebin/sign-off-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' '{"decisions":[]}'
+SH
+  chmod +x "$l/fakebin/sign-off-axi"
+  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$l/state/w1.meta"
+  : > "$l/state/w1.status"
+  prime_status_seen "$l/state" "$l/state/w1.status"
+  PANES=1 cycle "$l"
+  [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a full home armed a stall"
+  rm -f "$l/state/w1.meta" "$l/state/w1.status"
+  mkdir -p "$l/home/.local/share/jg-fleet-flow"
+  cat > "$l/home/.local/share/jg-fleet-flow/jg-flow-check.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'lead\t1\t0\t1\t0\t0\t0\t1\t0\t0\t0\n'
+SH
+  chmod +x "$l/home/.local/share/jg-fleet-flow/jg-flow-check.sh"
+  cycle "$l"
+  cycle "$l"
+  [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "the eleven-field lane summary was not counted"
+  rm -f "$l/home/.local/share/jg-fleet-flow/jg-flow-check.sh"
+  cycle "$l"
+  [ -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a free lane and unheld ticket armed no stall"
+  pass "only a free lane and an unheld ticket arm the ready backlog timer"
 }
 
 test_stalled_backlog_quiet_when_work_starts_in_time() {
@@ -677,7 +719,7 @@ test_stalled_backlog_quiet_without_a_free_lane_or_a_ready_item() {
   JG_CREW_STATE_BIN="$crew" PANES=1 cycle "$l"
   JG_CREW_STATE_BIN="$crew" PANES=1 cycle "$l"
   [ ! -e "$l/state/.waiting-timers/.ready-backlog" ] || fail "a home at its floor with a worker working armed a stall"
-  grep -q "$(printf '\tlanes-working\t1/1')" "$l/state/.waiting-timers/.ready-backlog-why" \
+  grep -q "$(printf '\tlanes-full\t1/1')" "$l/state/.waiting-timers/.ready-backlog-why" \
     || fail "the quiet backlog left no reason: $(cat "$l/state/.waiting-timers/.ready-backlog-why" 2>&1)"
   rm -f "$l/state/w1.meta" "$l/state/w1.status"
   backlog "$l" hold jg-alpha --reason "waits on the vendor"
@@ -687,50 +729,6 @@ test_stalled_backlog_quiet_without_a_free_lane_or_a_ready_item() {
   pass "a worker provably working at the floor, or only a held item, never arms the stalled-backlog chain, and the quiet reason is recorded"
 }
 
-test_stalled_backlog_at_the_floor_with_no_worker_working_reaches_main_and_the_board() {
-  local m l f relay first nudged card
-  m=$(home floor-main)
-  l=$(lead_home floor-lead "$m")
-  lead_meta "$m" lead1 1 "$l"
-  # The lead home is at its floor of 1, but its one lane only waits (an idle pane).
-  printf '1\n' > "$l/config/lane-target"
-  printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$l/state/w1.meta"
-  : > "$l/state/w1.status"
-  prime_status_seen "$l/state" "$l/state/w1.status"
-  backlog "$l" add jg-alpha "first item" --priority 1
-  backlog "$l" add jg-beta "second item"
-  f="$m/state/lead1.status"
-  PANES=1 cycle "$l"
-  grep -q '^check: ready work waiting with no worker working: jg-alpha jg-beta' "$l/events" || fail "the lead got no first-sight wake: $(cat "$l/events")"
-  [ -f "$l/state/.waiting-timers/.ready-backlog" ] || fail "ready work with no worker working armed no episode: $(cat "$l/err")"
-  backdate_backlog "$l" 700
-  PANES=1 cycle "$l"
-  grep -q '^blocked \[key=waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog\] \[at=[0-9]*\]: waiting-timer-backlog-overdue: lead1 (ready work jg-alpha jg-beta, no worker working 1/1 open, nothing started for [0-9]*s' "$f" \
-    || fail "an idle lead at its floor did not reach Main: $(cat "$f" 2>&1) $(cat "$l/err")"
-  grep -q '^check: ready backlog stalled: jg-alpha jg-beta waits with no worker working (1/1 open)' "$l/events" || fail "the lead was not woken again: $(cat "$l/events")"
-  PANES=1 CARD_SECS=3600 cycle "$m"
-  PANES=1 CARD_SECS=3600 cycle "$m"
-  grep -q '^jg-send lead1 --fire-and-forget [0-9a-f]\{16\} You have ready backlog work that can start now' "$m/sent" || fail "Main did not steer the lead: $(cat "$m/sent" 2>&1)"
-  relay=$(ls "$m/state/.waiting-relay/"*)
-  IFS=$'\t' read -r first nudged card < "$relay"
-  printf '%s\t%s\t%s\n' "$((first - 4000))" "$nudged" "$card" > "$relay"
-  PANES=1 CARD_SECS=3600 cycle "$m"
-  ! grep -q -- '--key waiting-timer-[0-9a-f]*-lead1-g[0-9]*-ready-backlog-card' "$m/cards" 2>/dev/null \
-    || fail "the idle lead's backlog went to the captain's board: $(cat "$m/cards" 2>&1)"
-  grep -q '^- Ask: Start the stalled' "$m/data/overwatch-decisions.md" 2>/dev/null \
-    || fail "the idle lead's backlog was not recorded for Main to decide"
-  # A lane that starts work ends it: the report closes and the card goes.
-  printf 'kind=ship\nbackend=tmux\nwindow=fake:2\n' > "$l/state/w2.meta"
-  : > "$l/state/w2.status"
-  prime_status_seen "$l/state" "$l/state/w2.status"
-  PANES='1 2' cycle "$l"
-  grep -q '^resolved \[key=waiting-timer-.*-ready-backlog\].*waiting-timer-cleared: lead1 ready backlog: the lead started work' "$f" || fail "a start left Main's report open: $(cat "$f")"
-  PANES=1 CARD_SECS=3600 cycle "$m"
-  PANES=1 CARD_SECS=3600 cycle "$m"
-  grep -q '^- Ask: Start the stalled' "$m/data/overwatch-decisions.md" 2>/dev/null \
-    || fail "the recorded backlog wait disappeared when the lead started work"
-  pass "an idle lead at its lane floor with no worker working is woken again, reported to Main, steered, recorded for Main, and cleared when it starts work"
-}
 
 test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts() {
   local m l f before
@@ -1534,9 +1532,9 @@ test_worker_dead_prompt_and_question_differ
 test_two_hops_stuck_at_once
 test_main_absent_board_card_still_fires
 test_stalled_backlog_wakes_the_lead_and_main_and_refires
+test_stalled_backlog_skips_open_card_and_full_lanes
 test_stalled_backlog_quiet_when_work_starts_in_time
 test_stalled_backlog_quiet_without_a_free_lane_or_a_ready_item
-test_stalled_backlog_at_the_floor_with_no_worker_working_reaches_main_and_the_board
 test_stalled_backlog_quiet_when_project_is_at_capacity
 test_a_paused_home_silences_its_stalled_backlog_and_rings_when_it_lifts
 test_ship_ready_line_goes_through_the_pr_check
