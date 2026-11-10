@@ -21,6 +21,7 @@
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
+JG_TRUNK_FIXTURE_CACHE=1
 
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
 test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
@@ -193,17 +194,18 @@ test_a_landing_rebases_the_lane_by_itself() {
 
 # Every proof input is required at the lane's exact head, at the worker's done and again before a landing starts.
 test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input() {
-  local part out id=0 before head
+  local part out id=1 before head
   world proofgate
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
   lane ok one a.txt
   out=$(done_gate ok) || fail "a done with complete matching-head proof must be accepted: $out"
   trunk proof ok >/dev/null 2>&1 || fail "the landing pre-check must accept complete matching-head proof"
+  lane p1 v1 f1.txt
   # (broken <part>, how it is broken, what the refusal must name)
   for part in receipt-absent:'completion receipt' receipt-fail:'completion receipt' receipt-stale:'completion receipt' \
               card-absent:'no approved merge-card evidence' card-stale:'no approved merge-card evidence' card-failed:'no approved merge-card evidence' \
               card-uncited:'no approved merge-card evidence' seal-absent:'no sealed done-done run' seal-stale:'no sealed done-done run' seal-dirty:'no sealed done-done run'; do
-    id=$((id + 1)); lane "p$id" "v$id" "f$id.txt"
+    prove "p$id"
     case ${part%%:*} in
       receipt-absent) rm "$HOME_D/state/p$id.run-receipt.json" ;;
       receipt-fail) prove_part "p$id" receipt FAIL ;;
@@ -236,6 +238,7 @@ test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input() {
   prove ok
   out=$(done_gate ok) || fail "proof at the new head must be accepted: $out"
   # The legacy local-only mode of a local-trunk project is held to the same proof; a PR mode is not subject to it.
+  lane p2 v2 f2.txt; prove_part p2 receipt FAIL
   sed -i 's/^mode=local-trunk$/mode=local-only/' "$HOME_D/state/p2.meta"
   out=$(done_gate p2 local-only "done [at=1]: ready in branch fm/p2") && fail "a legacy local-only lane of a trunk project must be held to the proof: $out"
   pass 'the worker done and the landing both refuse, before starting, on any missing proof input, and accept only complete matching-head proof'
@@ -362,11 +365,17 @@ test_a_green_pin_left_behind_moves_to_the_next_landing_and_the_landing_check_doe
 gate-verify=echo run >> %s/suite-runs; bash %s/rig.sh $(git diff --name-only HEAD^ -- t)
 ' "$W" "$W" "$W" >> "$HOME_D/config/trunk-policy"
   [ "$(awk -F'\t' '$1 == "proj" { b = $4 } END { print b }' "$HOME_D/data/trunk-versions.tsv")" = "$base" ] || fail "the trunk version records its release base"
-  for i in 1 2 3 4 5 6 7 8 9; do  # each lands and is cleaned up, as the landing check does
-    lane "s$i" 'exit 0' "t/s$i.test.sh"; trunk land "s$i" >/dev/null 2>&1 || fail "s$i must land"; rm -f -- "$HOME_D/state/s$i.meta"
-  done
+  lane s1 'exit 0' t/s1.test.sh; trunk land s1 >/dev/null 2>&1 || fail "s1 must land"
+  rm -f -- "$HOME_D/state/s1.meta"
   first=$(grep -P '^s1\t' "$HOME_D/data/trunk-landing-proofs.tsv" | tail -n 1)
   [[ $first =~ gate=ran:1, ]] || fail "the first landing after the release base runs its one changed script: $first"
+  # Build the eight intervening real landings in two stacks; only the first and next landing's gate counts are compared here.
+  for i in 2 3 4 5; do lane "s$i" 'exit 0' "t/s$i.test.sh"; done
+  trunk land-batch s2 s3 s4 s5 >/dev/null 2>&1 || fail "s2 through s5 must land"
+  for i in 2 3 4 5; do rm -f -- "$HOME_D/state/s$i.meta"; done
+  for i in 6 7 8 9; do lane "s$i" 'exit 0' "t/s$i.test.sh"; done
+  trunk land-batch s6 s7 s8 s9 >/dev/null 2>&1 || fail "s6 through s9 must land"
+  for i in 6 7 8 9; do rm -f -- "$HOME_D/state/s$i.meta"; done
   # As on 10 Nov: the pin is still at the release base, 6 hours old, with 9 landings above it.
   old=$(( $(date +%s) - 6 * 3600 ))
   printf '%s\n' "$base" > "$HOME_D/state/trunk-green-proj"; touch -d "@$old" "$HOME_D/state/trunk-green-proj"

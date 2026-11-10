@@ -21,6 +21,14 @@ TMP_ROOT=$(jg_test_tmproot jg-trunk)
 # and an initialised trunk, a recording live hook and a fake gh-axi.
 world() {  # <name>: sets W HOME_D PROJ
   W="$TMP_ROOT/$1"; HOME_D="$W/home"; PROJ="$HOME_D/projects/proj"
+  if [ "${JG_TRUNK_FIXTURE_CACHE:-0}" = 1 ] && [ -d "$TMP_ROOT/.world-template" ]; then
+    cp -a "$TMP_ROOT/.world-template" "$W"
+    # Only these fixture-owned files embed the original world's path.
+    sed -i "s|$TMP_ROOT/.world-source|$W|g" "$W/fakebin/gh-axi" "$HOME_D/config/live-hook.proj" \
+      "$W/origin.git/config" "$PROJ/.git/config" "$W/root/bin/jg-send.sh" \
+      "$W/root/bin/jg-teardown.sh" "$W/root/bin/jg-fleet-ledger.sh"
+    return
+  fi
   mkdir -p "$W/root" "$HOME_D/state" "$HOME_D/data" "$HOME_D/config" "$W/fakebin"
   cp -r "$ROOT/bin" "$W/root/bin"
   # The fixture homes are bare repositories (no beacon, overlay or supervision read); the health check has its own test.
@@ -69,6 +77,14 @@ SH
   jg_git_add_origin "$PROJ" "$W/origin.git"
   git -C "$PROJ" branch release/c-4
   trunk init "$PROJ" >/dev/null || fail "trunk init must work"
+  if [ "${JG_TRUNK_FIXTURE_CACHE:-0}" = 1 ]; then
+    cp -a "$W" "$TMP_ROOT/.world-template"
+    # Normalize the paths once, so every later world is independent of the first one.
+    sed -i "s|$W|$TMP_ROOT/.world-source|g" "$TMP_ROOT/.world-template/fakebin/gh-axi" \
+      "$TMP_ROOT/.world-template/home/config/live-hook.proj" "$TMP_ROOT/.world-template/origin.git/config" \
+      "$TMP_ROOT/.world-template/home/projects/proj/.git/config" "$TMP_ROOT/.world-template/root/bin/jg-send.sh" \
+      "$TMP_ROOT/.world-template/root/bin/jg-teardown.sh" "$TMP_ROOT/.world-template/root/bin/jg-fleet-ledger.sh"
+  fi
 }
 
 trunk() { PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="${CODE_ROOT:-$W/root}" JG_STATE_OVERRIDE="$HOME_D/state" \
