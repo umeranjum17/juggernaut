@@ -33,7 +33,7 @@
 # (away mode, a decision still open on linked work) is retried each sweep without repeating the line, and by the start a
 # finished landing chains (`next`) after its backoff, so a steady queue of new lanes never starves it (core/trunk-landing/verdict.sh).
 # Other refusals (a conflict, a second commit, a failing check) are final for the lane's head; core/trunk-landing/verdict.sh owns
-# that rule for both paths, including that a conflict holds only while the trunk tip it was judged on stands. Per-attempt logs are
+# that rule for both paths, including that a conflict holds only while the trunk tip it was judged on stands and that a refusal caused by the environment (a hook the lander may not replace) is asked of the lander again after ten minutes. Per-attempt logs are
 # retained. A lane fixes the refusal and reports a new head. bin/jg-trunk.sh owns every refusal and names the conflicting paths.
 # A refusal the worker fixes (an incomplete proof, a final refusal) also reaches that lane's worker by itself and never sits silent:
 # core/trunk-landing/refusal-reach.sh steers the worker with the refusal text, repeats the steer while the head is unchanged, and

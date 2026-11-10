@@ -12,6 +12,9 @@
 # V4 A conflict verdict written before the tip was stored (9 Nov: gc-a1 held one for a tip that was gone) is judged again.
 # V5 A red gate the lane's own change caused stays final for its head when the tip moves: no new gate run, and the worker is still steered.
 # V6 A moved-trunk final stored by a home on old code holds only while its tip record stands, then the head is tried again.
+# V7 A refusal whose cause is the environment (a hook the lander may not replace, a changed proof configuration) is not a judgement on the
+#    commit: the check asks the lander again after the bound (FINAL_ENV_SECS), and the repaired cause lands the lane, while an unrepaired
+#    cause stays refused with no new gate run, and a red the commit caused is still not tried again.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -153,6 +156,50 @@ test_a_moved_trunk_verdict_holds_only_while_its_tip_record_stands() {
   pass 'a moved-trunk final holds while its tip record stands and the head is tried again, and lands, once the record changes'
 }
 
+# A hook the lander may not replace refuses the landing (error: ... is not the trunk guard). That is the environment's fault, not the
+# commit's: once the hook is repaired the lander's admission context changes (c5d11fe34), but the check kept its own `final` for the head
+# and never asked the lander again (byokit, 10 Nov). The refusal expires after FINAL_ENV_SECS; the lander's own cache answers an unchanged
+# cause at once, and a repaired one lands.
+test_an_environment_refusal_is_asked_again_and_lands_once_repaired() {
+  local h n
+  home_world envfix
+  mkdir -p "$W/repository-hooks"
+  printf '#!/bin/sh\nexit 0\n' > "$W/repository-hooks/reference-transaction"; chmod 755 "$W/repository-hooks/reference-transaction"
+  git -C "$PROJ" config core.hooksPath "$W/repository-hooks"
+  lane e one; h=$(git -C "$PROJ" rev-parse fm/e)
+  sweep >/dev/null; settle
+  case $(state_of e "$h") in final*'not the trunk guard'*) ;; *) fail "e must be refused for the hook: $(state_of e "$h")" ;; esac
+  n=$(attempts e "$h")
+  sweep >/dev/null; settle
+  [ "$(attempts e "$h")" = "$n" ] || fail "a refusal inside the bound is not asked again: $(attempts e "$h") attempts"
+  # shellcheck disable=SC2016 # the delegate hook body is written out verbatim
+  printf '#!/bin/sh\n# managed by bin/jg-trunk.sh: delegate to the repository trunk guard\ncommon=$(git rev-parse --path-format=absolute --git-common-dir) || exit 1\nhook=$common/hooks/reference-transaction\n[ ! -x "$hook" ] || exec "$hook" "$@"\nexit 0\n' > "$W/repository-hooks/reference-transaction"
+  sweep >/dev/null; settle
+  on_trunk work.txt one && fail "a repaired cause inside the bound waits for the bound"
+  touch -d '11 minutes ago' "$HOME_D/data/jg-trunk-landing/e.$h.state"
+  sweep >/dev/null; settle
+  on_trunk work.txt one || fail "the lane must land once the hook is repaired and the bound has passed: $(state_of e "$h")"
+  pass 'an environment refusal is asked again after its bound and the lane lands once the hook is repaired'
+}
+
+# An environment refusal whose cause is not repaired stays refused: the bound asks the lander, whose admission cache answers at once, so no
+# attempt runs, no gate runs, and the worker is not steered about a new verdict.
+test_an_unrepaired_environment_refusal_runs_no_new_attempt() {
+  local h n
+  home_world envsame
+  mkdir -p "$W/repository-hooks"
+  printf '#!/bin/sh\nexit 0\n' > "$W/repository-hooks/reference-transaction"; chmod 755 "$W/repository-hooks/reference-transaction"
+  git -C "$PROJ" config core.hooksPath "$W/repository-hooks"
+  lane u one; h=$(git -C "$PROJ" rev-parse fm/u)
+  sweep >/dev/null; settle
+  n=$(find "$HOME_D/data/jg-trunk-landing" -name "u.$h.*.attempt-*" | wc -l)
+  touch -d '11 minutes ago' "$HOME_D/data/jg-trunk-landing/u.$h.state"
+  sweep >/dev/null; settle
+  [ "$(find "$HOME_D/data/jg-trunk-landing" -name "u.$h.*.attempt-*" | wc -l)" = "$n" ] || fail "an unrepaired cause must not run another attempt"
+  case $(state_of u "$h") in final*'not the trunk guard'*) ;; *) fail "u stays refused for the hook: $(state_of u "$h")" ;; esac
+  pass 'an environment refusal asked again after its bound is answered by the lander cache and runs no new attempt'
+}
+
 
 test_a_stack_whose_decisions_read_fails_once_is_tried_again_and_lands
 test_a_conflict_verdict_holds_only_while_its_tip_stands
@@ -160,4 +207,6 @@ test_a_conflict_whose_cause_left_the_trunk_lands_and_its_worker_is_not_steered
 test_a_conflict_verdict_stored_with_no_tip_is_judged_again
 test_a_red_gate_the_lane_caused_stays_final_for_its_head
 test_a_moved_trunk_verdict_holds_only_while_its_tip_record_stands
+test_an_environment_refusal_is_asked_again_and_lands_once_repaired
+test_an_unrepaired_environment_refusal_runs_no_new_attempt
 printf 'jg-trunk-verdict: ok\n'
