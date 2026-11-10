@@ -4,6 +4,8 @@
 #
 # T1 A healthy home (fresh beacon, current overlay, guard present, session start in time, HEAD at the base) passes.
 # T2 Each failure names its reason: stale-beacon, stale-overlay, missing-guard, slow-session-start, not-at-base.
+# T2b A home read BEFORE a move (check --all) and checked after it (check --before): a fault it already had is carried and
+#    is not a failure, a new fault fails, and the move's own faults (missing-guard, not-at-base) are never carried.
 # T3 The pin-back restores the recorded pre-move HEAD, even when that HEAD is not on the trunk (the first rollback after
 #    the convergence), through the guard, and writes rolled-back:<reason> in trunk-live.tsv.
 # T4 The pin-back refuses a dirty tree, a HEAD that is not the recorded post-move HEAD, and a home with no record.
@@ -90,6 +92,34 @@ test_each_failure_names_its_reason() {
   pass 'stale beacon, stale overlay, missing guard, slow session start and wrong base each fail with the named reason'
 }
 
+test_a_fault_the_home_had_before_the_move_is_carried_and_a_new_one_fails() {
+  local out rc=0 before hooks
+  world carried
+  hooks="$H/state/probe.git-hooks"; chmod u+w "$hooks"; rm -f "$hooks/pre-commit"; chmod 500 "$hooks"
+  touch -d '3 hours ago' "$H/state/.last-watcher-beat"
+  before="$W/before.txt"
+  out=$(health check "$H" --all --session-max 20 2>&1) || rc=$?
+  printf '%s\n' "$out" > "$before"
+  [ "$rc" -ne 0 ] && [ "$(grep -c . "$before")" = 2 ] || fail "--all must print every failed fact (the overlay and the beacon): $out"
+  out=$(health check "$H" "$T" --before "$before" --session-max 20 2>&1) || fail "faults the home had before must not fail the move: $out"
+  assert_contains "$out" "carried stale-overlay:" "the overlay fault is carried"
+  assert_contains "$out" "carried stale-beacon:" "the beacon fault is carried"
+  assert_equals "ok $H" "$(printf '%s\n' "$out" | tail -n 1)" "a home with only carried faults ends ok"
+  printf 'stale-beacon: the watcher beacon was old\n' > "$before"
+  rc=0; out=$(health check "$H" "$T" --before "$before" --session-max 20 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a fault absent from the earlier read must fail: $out"
+  assert_contains "$(printf '%s\n' "$out" | tail -n 1)" "stale-overlay" "the new fault is the last line"
+  env "${clean_env[@]}" "$GUARD" uninstall "$H" >/dev/null
+  printf 'missing-guard: none\nnot-at-base: none\n' > "$before"
+  rc=0; out=$(health check "$H" "$T" --before "$before" --session-max 20 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a missing guard is never carried: $out"
+  assert_contains "$(printf '%s\n' "$out" | tail -n 1)" "missing-guard:" "the missing guard is named"
+  rc=0; out=$(health check "$H" "$PRE" --before "$before" --session-max 20 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a wrong base is never carried: $out"
+  assert_contains "$out" "not-at-base:" "the wrong base is named"
+  pass 'a fault the home had before the move is carried, a new fault fails, and the move'"'"'s own faults are never carried'
+}
+
 test_the_pinback_restores_the_recorded_pre_move_head() {
   local out row
   world pinback
@@ -159,6 +189,7 @@ test_a_home_failing_on_both_commits_is_blocked_once() {
 
 test_a_healthy_home_passes
 test_each_failure_names_its_reason
+test_a_fault_the_home_had_before_the_move_is_carried_and_a_new_one_fails
 test_the_pinback_restores_the_recorded_pre_move_head
 test_the_pinback_refuses_what_it_may_not_do
 test_a_home_failing_on_both_commits_is_blocked_once

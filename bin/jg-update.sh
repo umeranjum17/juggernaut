@@ -81,10 +81,13 @@
 #   live,re-pointed-from:<sha>  HEAD was not an ancestor but the tip holds its whole tree: reset --keep, never a merge
 #   skipped:dirty | skipped:unlanded:<paths> | skipped:<other reason>   not touched
 #   live,pinned-back-from:<sha> the base is BEHIND the home (a red CI) and the home holds only trunk commits: reset --keep to the base
-#   rolled-back:<reason>        the health check failed: the home is pinned back to its pre-move HEAD and the rollout stops
-#                               (a missing-guard reason carries the refusal of the guard install that ran first)
+#   <status>,pre-existing:<fact> the health check found a fault the home already had before the move (read first, after the
+#                               home's launch overlays were refreshed): the home stays on <sha> and the fault is reported
+#   rolled-back:<reason>        the health check found a NEW fault: that home is pinned back to its pre-move HEAD and the rollout
+#                               goes on to the next home (a missing-guard reason carries the refusal of the guard install that ran first)
 #   <status>,wiring-failed:<steps>   the home stands on <sha> but these host wiring steps failed (the move itself stands)
-# After a home moves, bin/jg-home-guard.sh install <home> and bin/jg-home-health.sh check <home> <sha> run when present.
+# After a home moves, bin/jg-home-guard.sh install <home> and bin/jg-home-health.sh check <home> <sha> --before <the home's
+# health read before the move> run when present.
 # Then every home that stands on <sha> (moved, or rolled back to a pre-move HEAD that already was <sha>) runs its own
 # bin/jg-host-wiring.sh --changed: only the steps whose sources changed since that home last wired, so its installed host
 # copies equal its core/ and a move that changed no wired source runs no wiring. A failed step never blocks the move or
@@ -310,11 +313,25 @@ wire_home() {  # <dir> <label>
   echo "$label: host wiring not whole after the move: $WIRE_FAILED failed (see the jg-host-wiring lines above)" >&2
 }
 
+# The home's health BEFORE the move, in the file named by $HEALTH_BEFORE: the launch overlays are brought to the tip's hook set
+# first (the refresh a session start makes, which the home may not have had yet), then every fact is read, so the check after
+# the move blames the move only for a fault the home did not already have (bin/jg-home-health.sh check --before).
+read_health_before() {  # <dir>
+  HEALTH_BEFORE=
+  [ -x "$SCRIPT_DIR/jg-home-health.sh" ] || return 0
+  [ ! -x "$SCRIPT_DIR/jg-git-strip-ai-trailers.sh" ] || "$SCRIPT_DIR/jg-git-strip-ai-trailers.sh" refresh "$1/state" >/dev/null 2>&1 || true
+  HEALTH_BEFORE=$(mktemp "${TMPDIR:-/tmp}/jg-live-health.XXXXXX") || { HEALTH_BEFORE=; return 0; }
+  "$SCRIPT_DIR/jg-home-health.sh" check "$1" --all > "$HEALTH_BEFORE" 2>&1 || true
+}
+
 # Move one home to $BASE and write its row. Sets MOVE_RESULT=moved|skipped|stopped.
+# A home that fails its health check on the new commit with a fault it did not have before is pinned back (stopped); one that
+# carries a fault from before stays on the new commit and says so in its row (live,pre-existing:<reason>).
 move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
-  local key=$1 dir=$2 label=$3 seed=$4 pre out mb paths status tmp guard_why
+  local key=$1 dir=$2 label=$3 seed=$4 pre out mb paths status tmp guard_why carried reason
   MOVE_RESULT=skipped
   pre=$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)
+  read_health_before "$dir"
   if ! git -C "$dir" cat-file -e "$BASE^{commit}" 2>/dev/null; then
     git -C "$dir" fetch -q "$PROJECT" "refs/heads/$TRUNK_BRANCH" 2>/dev/null || true
   fi
@@ -356,14 +373,24 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
       out=$("$SCRIPT_DIR/jg-home-guard.sh" install "$dir" 2>&1) || guard_why=$(first_line "$(printf '%s\n' "$out" | tail -n 1)")
       [ -z "$out" ] || printf '%s\n' "$out"
     fi
-    if [ -x "$SCRIPT_DIR/jg-home-health.sh" ] && ! out=$("$SCRIPT_DIR/jg-home-health.sh" check "$dir" "$BASE" 2>&1); then
-      JG_TRUNK_PINBACK=1 git -C "$dir" reset -q --keep "$pre" || true
-      out=$(first_line "$(printf '%s\n' "$out" | tail -n 1)")
-      case $out in missing-guard:*) [ -z "$guard_why" ] || out="missing-guard: the guard install refused: ${guard_why#jg-home-guard: }" ;; esac
-      status="rolled-back:$out"; MOVE_RESULT=stopped
-      echo "$label: health check failed, pinned back to ${pre:0:12}: $status"
+    if [ -x "$SCRIPT_DIR/jg-home-health.sh" ]; then
+      if out=$("$SCRIPT_DIR/jg-home-health.sh" check "$dir" "$BASE" ${HEALTH_BEFORE:+--before "$HEALTH_BEFORE"} 2>&1); then
+        carried=$(printf '%s\n' "$out" | sed -n 's/^carried //p')
+        while IFS= read -r reason; do
+          [ -n "$reason" ] || continue
+          echo "$label: health fault kept from before the move: $reason"
+          status="$status,pre-existing:${reason%%:*}"
+        done <<< "$carried"
+      else
+        JG_TRUNK_PINBACK=1 git -C "$dir" reset -q --keep "$pre" || true
+        out=$(first_line "$(printf '%s\n' "$out" | tail -n 1)")
+        case $out in missing-guard:*) [ -z "$guard_why" ] || out="missing-guard: the guard install refused: ${guard_why#jg-home-guard: }" ;; esac
+        status="rolled-back:$out"; MOVE_RESULT=stopped
+        echo "$label: health check failed, pinned back to ${pre:0:12}: $status"
+      fi
     fi
   fi
+  [ -z "${HEALTH_BEFORE:-}" ] || rm -f -- "$HEALTH_BEFORE"
   if [ "$MOVE_RESULT" != skipped ] && [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" = "$(git -C "$dir" rev-parse --verify -q "$BASE^{commit}" 2>/dev/null)" ]; then
     wire_home "$dir" "$label"
     [ -z "$WIRE_FAILED" ] || status="$status,wiring-failed:$WIRE_FAILED"
@@ -403,7 +430,6 @@ fleet_live_move() {
     esac
     [ "$MOVE_RESULT" != moved ] || { moved=1; [ "$kind" = primary ] || claim_settled_squad_lead "$id"; }
     [ "$MOVE_RESULT" = moved ] || behind="$behind $id"
-    [ "$MOVE_RESULT" != stopped ] || { behind="$behind (rollout stopped there)"; break; }
   done < <(jg_fleet_homes "$JG_HOME" "$JG_ROOT")
   if [ -n "$abs_only" ] && [ "$found" -eq 0 ]; then
     echo "error: no registered lead home at $ONLY_HOME" >&2; behind="$behind $ONLY_HOME"

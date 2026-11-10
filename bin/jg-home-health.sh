@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The health check of one home after a live move, and the pin-back that undoes a bad move on the one home it broke.
-# Usage: jg-home-health.sh check <home> [<sha>] [--grace <s>] [--session-max <s>] [--wait <s>]
+# Usage: jg-home-health.sh check <home> [<sha>] [--all | --before <file>] [--grace <s>] [--session-max <s>] [--wait <s>]
 #        jg-home-health.sh pinback <home> --project <name> --key <home-id> --reason <reason>
 #        jg-home-health.sh verify <home> <sha> --project <name> --key <home-id> [check options]
 #
@@ -16,6 +16,13 @@
 #            slow-session-start   the home's own bin/jg-supervision-instructions.sh, the read a session start makes
 #                                 before it can act, takes longer than --session-max (default 30 s) or fails.
 #                                 A real session start is not run: it takes the home's lock, which a live lead holds.
+#          --all     checks every fact and prints every failed one (one `<reason>: <detail>` line each, exit 1); it is how a
+#                    caller reads a home BEFORE a move.
+#          --before <file>   <file> holds an earlier `check --all` of the same home. A stale-overlay, stale-beacon or
+#                    slow-session-start fault the home already had there is CARRIED: it prints `carried <reason>: <detail>`
+#                    and is not a failure, so a home that was unhealthy before a move is not blamed for the move. not-at-base
+#                    and missing-guard are the move's own work and are never carried. Only a new fault fails (exit 1, the
+#                    first new fault is the last line); with none the output ends `ok <home>` (exit 0).
 # pinback  Return the home to the HEAD recorded before its last live move and write the row
 #          `<project>:<key> <post-move sha> <epoch> rolled-back:<reason> <pre-move HEAD>` in data/trunk-live.tsv.
 #          It moves only when ALL hold: a record of the move exists (the home guard's own pre-move record, else a
@@ -63,43 +70,79 @@ overlay_gap() {  # <home>: prints the first hook the installer's set has and a l
   printf '%s' "$gap"
 }
 
+# One function per fact: it prints `<reason>: <detail>` and returns 1 when the fact fails. They read the HH_* settings cmd_check sets.
+fact_at_base() {
+  local head
+  head=$(git_home "$HH_HOME" rev-parse HEAD 2>/dev/null) || { echo "not-at-base: $HH_HOME has no HEAD"; return 1; }
+  if [ -n "$HH_SHA" ] && [ "$head" != "$(git_home "$HH_HOME" rev-parse -q --verify "$HH_SHA^{commit}" 2>/dev/null || echo "$HH_SHA")" ]; then
+    echo "not-at-base: HEAD is $(short "$head"), not $(short "$HH_SHA")"; return 1
+  fi
+}
+fact_guard() {
+  local out
+  out=$("$SCRIPT_DIR/jg-home-guard.sh" check "$HH_HOME" 2>&1) || { echo "missing-guard: $out"; return 1; }
+}
+fact_overlay() {
+  local gap
+  gap=$(overlay_gap "$HH_HOME")
+  [ -z "$gap" ] || { echo "stale-overlay: $gap is missing from the launch overlay"; return 1; }
+}
+fact_beacon() {
+  local age start=$SECONDS
+  # shellcheck source=bin/jg-wake-lib.sh
+  . "$SCRIPT_DIR/jg-wake-lib.sh"
+  [ -n "$HH_GRACE" ] || HH_GRACE=$(jg_poll_derived_grace)
+  while :; do
+    age=$(jg_watcher_progress_age "$HH_HOME/state")
+    [ "$age" -le "$HH_GRACE" ] && return 0
+    [ $((SECONDS - start)) -lt "$HH_WAIT" ] || { echo "stale-beacon: the watcher beacon is $age s old (grace $HH_GRACE s)"; return 1; }
+    sleep 1
+  done
+}
+fact_session() {
+  local start took
+  [ -f "$HH_HOME/bin/jg-supervision-instructions.sh" ] || { echo "slow-session-start: the home has no bin/jg-supervision-instructions.sh to read"; return 1; }
+  start=$SECONDS
+  JG_HOME="$HH_HOME" JG_ROOT_OVERRIDE="$HH_HOME" bash "$HH_HOME/bin/jg-supervision-instructions.sh" >/dev/null 2>&1 \
+    || { echo "slow-session-start: the supervision read failed"; return 1; }
+  took=$((SECONDS - start))
+  [ "$took" -le "$HH_SESSION_MAX" ] || { echo "slow-session-start: the supervision read took $took s (bound $HH_SESSION_MAX s)"; return 1; }
+}
+FACTS="at_base guard overlay beacon session"
+# Facts a home may have had before the move; the others (not-at-base, missing-guard) are the move's own work.
+CARRIED_REASONS=" stale-overlay stale-beacon slow-session-start "
+
+carried_before() {  # <reason>: the --before file lists that reason
+  case $CARRIED_REASONS in *" $1 "*) ;; *) return 1 ;; esac
+  [ -n "$HH_BEFORE" ] && grep -q "^$1:" "$HH_BEFORE" 2>/dev/null
+}
+
 cmd_check() {
-  local home=${1-} sha="" grace="" session_max=30 wait_s=0 head out age gap start took
-  [ -n "$home" ] || usage; shift
-  case "${1-}" in ''|--*) ;; *) sha=$1; shift ;; esac
+  local all=0 fact line reason failed=0
+  HH_HOME=${1-}; HH_SHA=""; HH_GRACE=""; HH_SESSION_MAX=30; HH_WAIT=0; HH_BEFORE=""
+  [ -n "$HH_HOME" ] || usage; shift
+  case "${1-}" in ''|--*) ;; *) HH_SHA=$1; shift ;; esac
   while [ $# -gt 0 ]; do
     case $1 in
-      --grace) grace=${2-}; shift 2 || die "--grace needs seconds" ;;
-      --session-max) session_max=${2-}; shift 2 || die "--session-max needs seconds" ;;
-      --wait) wait_s=${2-}; shift 2 || die "--wait needs seconds" ;;
+      --all) all=1; shift ;;
+      --before) HH_BEFORE=${2-}; shift 2 || die "--before needs a file" ;;
+      --grace) HH_GRACE=${2-}; shift 2 || die "--grace needs seconds" ;;
+      --session-max) HH_SESSION_MAX=${2-}; shift 2 || die "--session-max needs seconds" ;;
+      --wait) HH_WAIT=${2-}; shift 2 || die "--wait needs seconds" ;;
       *) die "unknown option $1" ;;
     esac
   done
-  [ -d "$home" ] || die "$home is not a directory"
-  head=$(git_home "$home" rev-parse HEAD 2>/dev/null) || { echo "not-at-base: $home has no HEAD"; return 1; }
-  if [ -n "$sha" ] && [ "$head" != "$(git_home "$home" rev-parse -q --verify "$sha^{commit}" 2>/dev/null || echo "$sha")" ]; then
-    echo "not-at-base: HEAD is $(short "$head"), not $(short "$sha")"; return 1
-  fi
-  if ! out=$("$SCRIPT_DIR/jg-home-guard.sh" check "$home" 2>&1); then echo "missing-guard: $out"; return 1; fi
-  gap=$(overlay_gap "$home")
-  [ -z "$gap" ] || { echo "stale-overlay: $gap is missing from the launch overlay"; return 1; }
-  # shellcheck source=bin/jg-wake-lib.sh
-  . "$SCRIPT_DIR/jg-wake-lib.sh"
-  [ -n "$grace" ] || grace=$(jg_poll_derived_grace)
-  start=$SECONDS
-  while :; do
-    age=$(jg_watcher_progress_age "$home/state")
-    [ "$age" -le "$grace" ] && break
-    [ $((SECONDS - start)) -lt "$wait_s" ] || { echo "stale-beacon: the watcher beacon is $age s old (grace $grace s)"; return 1; }
-    sleep 1
+  [ -d "$HH_HOME" ] || die "$HH_HOME is not a directory"
+  [ -z "$HH_BEFORE" ] || [ -r "$HH_BEFORE" ] || die "$HH_BEFORE is not readable"
+  for fact in $FACTS; do
+    line=$("fact_$fact") && continue
+    reason=${line%%:*}
+    if carried_before "$reason"; then echo "carried $line"; continue; fi
+    echo "$line"; failed=1
+    [ "$all" = 1 ] || return 1
   done
-  [ -f "$home/bin/jg-supervision-instructions.sh" ] || { echo "slow-session-start: the home has no bin/jg-supervision-instructions.sh to read"; return 1; }
-  start=$SECONDS
-  JG_HOME="$home" JG_ROOT_OVERRIDE="$home" bash "$home/bin/jg-supervision-instructions.sh" >/dev/null 2>&1 \
-    || { echo "slow-session-start: the supervision read failed"; return 1; }
-  took=$((SECONDS - start))
-  [ "$took" -le "$session_max" ] || { echo "slow-session-start: the supervision read took $took s (bound $session_max s)"; return 1; }
-  echo "ok $home"
+  [ "$failed" = 0 ] || return 1
+  echo "ok $HH_HOME"
 }
 
 # --- pin-back ------------------------------------------------------------------------------------------------------

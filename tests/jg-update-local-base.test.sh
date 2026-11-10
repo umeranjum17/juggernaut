@@ -17,7 +17,13 @@
 #    fleet's real shape, where the lead's own registry is empty).
 # T7 A move that leaves a home behind names it; bin/jg-trunk-live-lag.sh reports a home not at the last go-live after 10 minutes.
 # T2 --home moves exactly one lead (the canary) and leaves Main alone.
-# T3 A failed health check pins that home back to its recorded pre-move HEAD and stops the rollout.
+# T3 A health check that fails on the new commit pins that home back to its recorded pre-move HEAD and the rollout goes on.
+# T9 Replay of 08:43:10Z (the fleet moves with no hand): a home whose launch overlay lacks a hook of the installer's set is
+#    refreshed and goes live (it was rolled back as stale-overlay and the rollout stopped); a home with a stale watcher beacon
+#    before and after the move stays live and reports `pre-existing:stale-beacon`; every home runs its host wiring
+#    (state/lead-sweep.check.sh) and the project verdict is clean. A second run: a home whose supervision read fails on the
+#    new commit only is rolled back and the rollout goes on past it, a dirty home is skipped, the other homes are live and
+#    the next run takes the two that were left once they are clean.
 # T3b A home whose shared reference-transaction hook is the trunk guard moves and stays live (the guard chains it); any other
 #    hook there refuses the guard install, and the rolled-back row names that refusal.
 # T4 A local-trunk project is refused without --base ("update this project from its trunk").
@@ -250,17 +256,21 @@ test_home_moves_one_canary_only() {
   pass 'T2 --home moves exactly one lead'
 }
 
-test_failed_health_pins_the_home_back_and_stops() {
+test_failed_health_pins_the_home_back_and_the_rollout_goes_on() {
   local out rc=0
   mover_world t3
   mkdir -p "$W/bin"; cp -r "$ROOT/bin/." "$W/bin/"
-  printf '#!/usr/bin/env bash\necho "overlay stale" >&2\nexit 1\n' > "$W/bin/jg-home-health.sh"; chmod +x "$W/bin/jg-home-health.sh"
+  # The health check fails on the new commit only: the pre-move read (no commit named) is healthy.
+  # shellcheck disable=SC2016 # the stub expands its own arguments
+  printf '#!/usr/bin/env bash\n[ -n "${3:-}" ] || { echo "ok $2"; exit 0; }\necho "overlay stale" >&2\nexit 1\n' > "$W/bin/jg-home-health.sh"; chmod +x "$W/bin/jg-home-health.sh"
   out=$(MOVER="$W/bin/jg-update.sh" run_mover) || rc=$?
   [ "$rc" -ne 0 ] || fail "a failed health check must fail the move: $out"
   [ "$(head_of lead-ff)" = "$C0" ] || fail "the failed home must be pinned back to its pre-move HEAD"
   [ "$(row_of lead-ff | cut -f4)" = "rolled-back:overlay stale" ] || fail "the row says rolled-back:<reason>: $(row_of lead-ff)"
-  [ "$(head_of lead-repoint)" != "$C2" ] && [ "$(git -C "$W/main" rev-parse main)" = "$C0" ] || fail "the rollout must stop at the first failed health check"
-  pass 'T3 a failed health check pins that home back and stops the rollout'
+  [ "$(row_of lead-repoint | cut -f4)" = "rolled-back:overlay stale" ] && [ "$(row_of primary | cut -f4)" = "rolled-back:overlay stale" ] \
+    || fail "the rollout must go on to the homes after the failed one, each judged on its own: $(row_of lead-repoint) / $(row_of primary)"
+  assert_contains "$(printf '%s\n' "$out" | tail -n 1)" "lead-ff lead-repoint lead-dirty lead-unlanded primary" "the verdict must name every home left behind, rolled back or skipped"
+  pass 'T3 a health check that fails on the new commit pins that home back and the rollout goes on'
 }
 
 test_a_refused_guard_install_is_named_in_the_row() {
@@ -360,6 +370,91 @@ test_a_home_left_behind_is_named_and_the_lag_check_reports_it() {
   pass 'T7 a home left behind is named on the failed move, and the lag check reports it after 10 minutes and clears when it catches up'
 }
 
+# --- a bad home does not stop the fleet --------------------------------------
+# fleet_tip <dir>: a tip tree with the real wiring entry point and the real lead-sweep add-on, every other step a no-op stub, and a
+# supervision read that fails in a home holding state/fail-on-the-new-commit (the old commit's read never looks at it).
+fleet_tip() {
+  local d=$1 name
+  mkdir -p "$d/bin" "$d/core/owner-guard"
+  cp "$ROOT/bin/jg-host-wiring.sh" "$ROOT/bin/jg-lab-home-lib.sh" "$d/bin/"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$d/bin/jg-check-register.sh"; chmod +x "$d/bin/jg-check-register.sh"
+  # shellcheck disable=SC2016 # the read expands its own variables when it runs
+  printf '#!/usr/bin/env bash\n[ ! -e "$JG_HOME/state/fail-on-the-new-commit" ]\n' > "$d/bin/jg-supervision-instructions.sh"
+  while IFS=$'\t' read -r name _; do
+    if [ "$name" = lead-sweep ]; then cp -r "$ROOT/core/lead-sweep" "$d/core/"; continue; fi
+    mkdir -p "$d/core/$name"; printf '#!/usr/bin/env bash\nexit 0\n' > "$d/core/$name/wiring.sh"
+  done < <("$ROOT/bin/jg-host-wiring.sh" --list)
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$d/core/owner-guard/install-scan.sh"
+}
+# fleet_world <name> <leads>: sets W TIP C0. Main and the leads stand on an old commit whose supervision read always passes,
+# each with a fresh watcher beacon; the trunk tip carries the wiring.
+fleet_world() {
+  local id i
+  W="$TMP_ROOT/$1"; mkdir -p "$W/home/state" "$W/home/data" "$W/home/config"
+  git init -q -b main "$W/proj"
+  commit_file "$W/proj" AGENTS.md v1 c0; mkdir -p "$W/proj/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$W/proj/bin/jg-supervision-instructions.sh"; chmod +x "$W/proj/bin/jg-supervision-instructions.sh"
+  git -C "$W/proj" add bin; git -C "$W/proj" commit -q -m "old supervision read"
+  git clone -q "$W/proj" "$W/main"
+  git -C "$W/proj" checkout -q -b trunk; fleet_tip "$W/proj"; git -C "$W/proj" add bin core; git -C "$W/proj" commit -q -m "tip with the wiring"
+  git -C "$W/proj" checkout -q main
+  C0=$(git -C "$W/main" rev-parse HEAD); TIP=$(git -C "$W/proj" rev-parse trunk)
+  mkdir -p "$W/main/state"; touch "$W/main/state/.last-watcher-beat"
+  for ((i = 1; i <= $2; i++)); do
+    id=lead-$i
+    git -C "$W/main" worktree add -q --detach "$W/$id" "$C0"; printf '%s\n' "$id" > "$W/$id/.jg-squad-lead-home"
+    printf -- '- %s - fixture (home: %s; scope: x; projects: proj; added 2026-11-10)\n' "$id" "$W/$id" >> "$W/home/data/squad_leads.md"
+    mkdir -p "$W/$id/state"; touch "$W/$id/state/.last-watcher-beat"
+  done
+}
+# fleet_move: the move to TIP with the real health check and the real wiring, in a throwaway user home.
+fleet_move() {
+  env -u JG_HOST_WIRING_SKIP JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 \
+    HOME="$W/user" XDG_DATA_HOME="$W/user/.local/share" XDG_CONFIG_HOME="$W/user/.config" \
+    "$ROOT/bin/jg-update.sh" --base "$TIP" --project "$W/proj" --branch trunk 2>&1
+}
+
+test_the_fleet_moves_past_a_home_with_an_old_fault() {
+  local out rc=0 id
+  fleet_world t9 3
+  # lead-1: a launch overlay written by an older installer (no reference-transaction hook) and no task record for it.
+  "$ROOT/bin/jg-git-strip-ai-trailers.sh" install "$W/lead-1/state/old.git-hooks" "$W/lead-1" >/dev/null || fail "overlay install"
+  chmod u+w "$W/lead-1/state/old.git-hooks"; rm -f "$W/lead-1/state/old.git-hooks/reference-transaction"; chmod 500 "$W/lead-1/state/old.git-hooks"
+  # lead-2: its watcher beat is 438 s old before the move and still is after it (the lead home of 09:37:55Z).
+  touch -d '438 seconds ago' "$W/lead-2/state/.last-watcher-beat"
+  out=$(fleet_move) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a fleet with an old overlay and an old beacon fault must move whole (rc=$rc): $out"
+  for id in "$W/lead-1" "$W/lead-2" "$W/lead-3" "$W/main"; do
+    [ "$(git -C "$id" rev-parse HEAD)" = "$TIP" ] || fail "$id must stand on the tip: $out"
+    [ -f "$id/state/lead-sweep.check.sh" ] || fail "$id must be wired (state/lead-sweep.check.sh): $out"
+  done
+  [ "$(row_of lead-1 | cut -f4)" = live ] || fail "the home with the old overlay is refreshed and live: $(row_of lead-1)"
+  [ -x "$W/lead-1/state/old.git-hooks/reference-transaction" ] || fail "the launch overlay must gain the hook it lacked"
+  [ "$(row_of lead-2 | cut -f4)" = "live,pre-existing:stale-beacon" ] || fail "an old beacon fault is kept and named: $(row_of lead-2)"
+  assert_contains "$out" "health fault kept from before the move: stale-beacon" "the kept fault must be reported in one line"
+  [ "$(row_of lead-3 | cut -f4)" = live ] && [ "$(row_of primary | cut -f4)" = live ] || fail "the healthy homes are live: $(row_of lead-3) / $(row_of primary)"
+  case $(printf '%s\n' "$out" | tail -n 1) in fleet:*) fail "the project verdict must be clean: $out" ;; esac
+
+  # A second fleet: a read that fails on the new commit only (lead-2), a dirty home (lead-3).
+  fleet_world t9b 3
+  touch "$W/lead-2/state/fail-on-the-new-commit"
+  printf 'edit\n' >> "$W/lead-3/AGENTS.md"
+  rc=0; out=$(fleet_move) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a fleet with a home left behind must report it: $out"
+  [ "$(git -C "$W/lead-1" rev-parse HEAD)" = "$TIP" ] && [ "$(row_of lead-1 | cut -f4)" = live ] || fail "lead-1 is live: $(row_of lead-1)"
+  [ "$(git -C "$W/main" rev-parse HEAD)" = "$TIP" ] && [ "$(row_of primary | cut -f4)" = live ] || fail "Main, after both, is live: $(row_of primary)"
+  [ "$(git -C "$W/lead-2" rev-parse HEAD)" = "$C0" ] || fail "a fault the old commit did not have pins that home back: $(row_of lead-2)"
+  case $(row_of lead-2 | cut -f4) in rolled-back:slow-session-start*) ;; *) fail "the row names the new fault: $(row_of lead-2)" ;; esac
+  [ "$(row_of lead-3 | cut -f4)" = skipped:dirty ] && [ "$(git -C "$W/lead-3" rev-parse HEAD)" = "$C0" ] || fail "the dirty home is skipped untouched: $(row_of lead-3)"
+  [ "$(printf '%s\n' "$out" | tail -n 1)" = "fleet: not every home is at ${TIP:0:12}: lead-2 lead-3" ] || fail "the verdict names the two homes left: $out"
+  # The next run: both are clean and the whole fleet is on the tip (the two homes are tried again, nothing was forced).
+  rm -f "$W/lead-2/state/fail-on-the-new-commit"; git -C "$W/lead-3" checkout -q -- AGENTS.md
+  rc=0; out=$(fleet_move) || rc=$?
+  [ "$rc" -eq 0 ] || fail "the next run must take the homes left behind (rc=$rc): $out"
+  [ "$(git -C "$W/lead-2" rev-parse HEAD)" = "$TIP" ] && [ "$(git -C "$W/lead-3" rev-parse HEAD)" = "$TIP" ] || fail "both homes stand on the tip after the next run"
+  pass 'T9 an old overlay is refreshed, an old beacon fault is kept and named, a new fault rolls back only that home, the rollout goes on and the next run takes the rest'
+}
+
 # --- the trunk side ---------------------------------------------------------
 trunk_world() {  # <name>: sets TW TH PROJ PROJ2 MAINCODE; a trunk whose tip carries the real bin/
   TW="$TMP_ROOT/$1"; TH="$TW/home"; PROJ="$TH/projects/proj"; PROJ2="$TH/projects/other"
@@ -446,7 +541,8 @@ test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure
 test_a_go_live_run_from_a_lead_home_moves_every_home
 test_a_home_left_behind_is_named_and_the_lag_check_reports_it
 test_home_moves_one_canary_only
-test_failed_health_pins_the_home_back_and_stops
+test_failed_health_pins_the_home_back_and_the_rollout_goes_on
+test_the_fleet_moves_past_a_home_with_an_old_fault
 test_a_refused_guard_install_is_named_in_the_row
 test_a_local_trunk_project_is_refused_without_base
 test_live_runs_the_exported_tool_and_the_waiver_spends_no_word
