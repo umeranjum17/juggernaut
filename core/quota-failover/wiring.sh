@@ -23,8 +23,8 @@ FMH=$(cd "$1" && pwd -P)
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 DEST=${XDG_DATA_HOME:-$HOME/.local/share}/jg-quota-failover
 ID=quota-failover-watch
-# The sibling feature libs the watcher sources by its own path, copied beside it in the same layout.
-LIBS="parked-homes/bin/jg-parked-homes-lib.sh account-pool/bin/jg-account-pool-lib.sh account-pool/bin/jg-pool-claude-env.sh"
+# The libs the watcher sources by its own path (its own and sibling features'), copied beside it in the same layout.
+LIBS="quota-failover/jg-probe-folder-lib.sh parked-homes/bin/jg-parked-homes-lib.sh account-pool/bin/jg-account-pool-lib.sh account-pool/bin/jg-pool-claude-env.sh"
 
 # homes: "<name><TAB><dir>" for <jg-home> and, with --all, each active local squad_lead home it lists.
 homes() {

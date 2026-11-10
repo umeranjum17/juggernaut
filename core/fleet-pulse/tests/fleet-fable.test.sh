@@ -3,7 +3,8 @@
 # Journey: an old-style pulse check with the inline Fable block wakes for a fable-* task the guard
 # allows (the reported bug); wiring.sh retargets the block onto bin/fleet-fable.sh, and the same
 # check then stays quiet for that task and still wakes for a task the list does not name, for a
-# session no task owns, and once the guard copy is too old to answer. The check stays registered
+# session no task owns, and once the guard copy is too old to answer. A quota-failover one-line test
+# is judged by the task its folder names, and a route-level test (no task) is still named. The check stays registered
 # through each retarget, even one whose 2h report step then refuses. Disposable homes, session
 # logs, Claude config and guard install only.
 set -euo pipefail
@@ -100,21 +101,35 @@ got=$(pulse)
 case $got in *" in: main-home -"*) ok taskless-session-wakes ;; *) no "taskless-session-wakes (got: $got)" ;; esac
 rm -rf -- "$JG_CLAUDE_PROJECTS/main-home"
 
-# 7) A guard copy too old to answer the query wakes once instead of deciding.
+# 7) quota-failover's one-line tests (the 10 Nov alarm: two PONG probes in mktemp folders for allowed fable-* tasks).
+#    A test for a task runs in a folder naming it, so the guard decides on that task; a route-level test names none.
+session /tmp/jg-probe-fable-recon-type-design.abc123 -tmp-jg-probe-fable-recon-type-design-abc123
+got=$(pulse)
+if [ "$got" = later ]; then ok allowed-task-probe-quiet; else no "allowed-task-probe-quiet (got: $got)"; fi
+session /tmp/jg-probe-fric-probe-lane.abc123 -tmp-jg-probe-fric-probe-lane-abc123
+got=$(pulse)
+case $got in *" in: fric-probe-lane -"*) ok unlisted-task-probe-wakes ;; *) no "unlisted-task-probe-wakes (got: $got)" ;; esac
+rm -rf -- "$JG_CLAUDE_PROJECTS/-tmp-jg-probe-fric-probe-lane-abc123"
+session /tmp/tmp.cyL4npllY3 -tmp-tmp-cyL4npllY3
+got=$(pulse)
+case $got in *" in: -tmp-tmp-cyL4npllY3 -"*) ok route-probe-wakes ;; *) no "route-probe-wakes (got: $got)" ;; esac
+rm -rf -- "$JG_CLAUDE_PROJECTS/-tmp-tmp-cyL4npllY3"
+
+# 8) A guard copy too old to answer the query wakes once instead of deciding.
 cp "$guard" "$d/guard.new"
 printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' >"$guard"
 got=$(pulse)
 case $got in *"cannot answer allowed <task-id>"*) ok stale-guard-wakes ;; *) no "stale-guard-wakes (got: $got)" ;; esac
 cp "$d/guard.new" "$guard"
 
-# 8) No guard installed: this host has no Fable ban, so nothing wakes.
+# 9) No guard installed: this host has no Fable ban, so nothing wakes.
 session "$d/wt/fric-other" wt-fric-other
 mv "$guard" "$d/guard.off"
 got=$(pulse)
 if [ "$got" = later ]; then ok no-guard-quiet; else no "no-guard-quiet (got: $got)"; fi
 
-# 9) A run that retargets the Fable block and then refuses the 2h report (not every block in the known form)
-#    exits 1 and still leaves the check it edited registered.
+# 10) A run that retargets the Fable block and then refuses the 2h report (not every block in the known form)
+#     exits 1 and still leaves the check it edited registered.
 part=$d/part
 mkdir -p "$part/state"
 cp -r "$main/bin" "$part/"

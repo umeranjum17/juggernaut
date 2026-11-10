@@ -22,7 +22,8 @@ while IFS=$'\t' read -r name home; do
   echo "uninstalled: $name: quota-failover-watch from $home"
 done < <("$SRC/wiring.sh" ${ALL:+--all} --list "$1")
 [ -z "$ALL" ] || {
-  rm -f -- "$DEST/quota-failover/quota-failover" "$DEST/quota-failover/check.sh" "$DEST/parked-homes/bin/jg-parked-homes-lib.sh" \
+  rm -f -- "$DEST/quota-failover/quota-failover" "$DEST/quota-failover/check.sh" "$DEST/quota-failover/jg-probe-folder-lib.sh" \
+    "$DEST/parked-homes/bin/jg-parked-homes-lib.sh" \
     "$DEST/account-pool/bin/jg-account-pool-lib.sh" "$DEST/account-pool/bin/jg-pool-claude-env.sh"
   rmdir -- "$DEST/quota-failover" "$DEST/parked-homes/bin" "$DEST/parked-homes" "$DEST/account-pool/bin" "$DEST/account-pool" "$DEST" \
     2>/dev/null || true

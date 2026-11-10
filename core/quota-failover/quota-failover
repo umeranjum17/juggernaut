@@ -96,6 +96,10 @@ _JG_POOL_ENV=$_JG_POOL_DIR/jg-pool-claude-env.sh
 SCRIPT_DIR=$BIN
 # shellcheck source=/dev/null # sibling feature path, resolved at runtime
 . "$_JG_POOL_DIR/jg-account-pool-lib.sh" || die "cannot load $_JG_POOL_DIR/jg-account-pool-lib.sh"
+# The one-line test's folder names the task it is for (the fleet pulse's Fable check reads it back).
+_JG_PROBE_FOLDER_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/jg-probe-folder-lib.sh"
+# shellcheck source=/dev/null # sibling path, resolved at runtime
+. "$_JG_PROBE_FOLDER_LIB" || die "cannot load $_JG_PROBE_FOLDER_LIB"
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$LOG"; }
 last() { sed -n "s|^[^ ]* $1: ||p" "$LOG" 2>/dev/null | tail -n 1; } # <id>
@@ -154,13 +158,14 @@ exhausted() { # <provider> <harness> <model>
     | length > 0' <<<"$QUOTA" >/dev/null
 }
 
-probe() { # <harness> <model> [account folder]: the one-line prompt through the harness CLI,
+probe() { # <harness> <model> [account folder] [task id]: the one-line prompt through the harness CLI,
   # on that account's profile folder when the caller names one, with the login
-  # variables a pool launch sheds also shed here so the answer is the account's own
+  # variables a pool launch sheds also shed here so the answer is the account's own,
+  # in a folder that names the task the test is for (a route-level test names none)
   local -a on_account=()
   local dir rc prompt='Reply with the single word PONG.'
   [ -z "${3:-}" ] || on_account=(env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CONFIG_DIR="$3")
-  dir=$(mktemp -d) || return 1
+  dir=$(jg_probe_folder "${4:-}") || return 1
   ( cd "$dir" || exit 1
   if [ -z "${3:-}" ] && [[ $1 = claude* ]] && [ -f "$JG_HOME/config/account-pool" ]; then
     # shellcheck source=/dev/null # sibling feature path, resolved at runtime
@@ -195,7 +200,7 @@ account_out() {
   t=$(stat -c %Y "$STATE/$id.account-probe-at" 2>/dev/null) || t=0
   [ $((now - t)) -ge "$PROBE_SECS" ] || return 1
   printf '%s\n' "$now" >"$STATE/$id.account-probe-at"
-  out=$(probe claude "$2" "$3") || true
+  out=$(probe claude "$2" "$3" "$id") || true
   grep -oiE "$LIMIT_RE|$HTTP_ERR_RE" <<<"$out" | head -n 1 | sed 's/^ *//; s/ *$//'
 }
 
@@ -205,7 +210,7 @@ pinned_out() { # <id> <harness> <model> [account folder]: the pinned route's lim
   t=$(stat -c %Y "$STATE/$id.probe-at" 2>/dev/null) || t=0
   [ $((now - t)) -ge "$PROBE_SECS" ] || return 1
   printf '%s\n' "$now" >"$STATE/$id.probe-at"
-  out=$(probe "$2" "$3" "${4:-}") || true
+  out=$(probe "$2" "$3" "${4:-}" "$id") || true
   grep -oiE "$LIMIT_RE|$HTTP_ERR_RE" <<<"$out" | head -n 1 | sed 's/^ *//; s/ *$//'
 }
 

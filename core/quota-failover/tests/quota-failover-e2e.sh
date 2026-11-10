@@ -6,7 +6,8 @@
 # whose screen shows a limit on a second dead route. One pass must move both
 # to the live candidate, pass the dead routes over, and drop them from
 # crew-dispatch.json; a second pass with the routes answering again must
-# restore them and move nothing. Passes 3 to 7 add workers on pool
+# restore them and move nothing; a task's pinned test runs in a folder that
+# names the task and a route test in one that names none. Passes 3 to 7 add workers on pool
 # accounts: a Claude worker stopped on an account moves to the next account
 # without a human, a Claude worker with no next account takes the route move,
 # and OpenCode Go and Codex workers only rest; with
@@ -80,6 +81,7 @@ rm -f "$JG_HOME/state/$id.screen"
 date +%s >"$JG_HOME/state/$id.status"
 #--- bin/opencode
 #!/usr/bin/env bash
+printf '%s %s\n' "${PWD##*/}" "$*" >>"$JG_HOME/state/probe-folder.log"
 # Every model answers PONG except the two dead routes, which answer the
 # 429, "Upstream request failed: Rate limit exceeded".
 case $* in
@@ -96,6 +98,7 @@ exit 1
 # The one-line test records the profile folder it ran on, so a pass can prove a
 # pool task's limit was read on its own account and not on the ambient login.
 printf '%s\n' "${CLAUDE_CONFIG_DIR:-ambient}" >>"$JG_HOME/state/claude-probe.log"
+printf '%s %s\n' "${PWD##*/}" "$*" >>"$JG_HOME/state/probe-folder.log"
 case ${CLAUDE_LIMIT_ACCOUNT:-} in
   '') ;;
   *) case "${CLAUDE_CONFIG_DIR:-}" in *"/profiles/$CLAUDE_LIMIT_ACCOUNT") echo "You've hit your usage limit for your plan; try again in 3h"; exit 1 ;; esac ;;
@@ -148,6 +151,15 @@ printf 'endpoint_task_id=w1\nharness=opencode\nmodel=openai-codex/gpt-5.6-luna\n
 printf '%s\n' "You've hit your usage limit for your plan; try again in 3h" >"$home/state/w1.screen"
 
 log=$home/state/quota-failover.log ctl=$home/state/jg-control.log
+# The fleet pulse's Fable check reads a one-line test's folder back to its task through this same lib.
+# shellcheck source=/dev/null # this feature's lib, beside the script under test
+. "$here/../jg-probe-folder-lib.sh" || exit 1
+tested() { # <model>: the tasks the one-line tests of <model> ran for ("route" for a test that names none)
+  local folder rest
+  while read -r folder rest; do
+    case " $rest " in *" $1 "*) jg_probe_folder_task "$folder" || echo route ;; esac
+  done <"$home/state/probe-folder.log" | sort -u | paste -sd, -
+}
 dead=$home/state/quota-failover-dead.json disp=$home/config/crew-dispatch.json
 run() { # one watcher pass, with the knobs the fixture needs
   env -u CLAUDE_CONFIG_DIR PATH="$stub:$PATH" JG_HOME="$home" QUOTA_FAILOVER_PROBE_SECS=0 \
@@ -164,6 +176,8 @@ has "pass1: the dead 429 route was passed over, not chosen for a move" "$log" \
   'passed over opencode-go/step-5-preview-free is out of dispatch'
 count "pass1: two relaunches onto the live candidate" "$ctl" \
   ' relaunch --harness opencode --model opencode-go/mimo-v2.6-flash ' 2
+is "pass1: the lead's pinned test ran in a folder that names the lead" "$(tested opencode-go/step-5-preview-free)" lead1
+is "pass1: the live candidate's route test names no task" "$(tested opencode-go/mimo-v2.6-flash)" route
 is "pass1: only the probe-confirmed dead route leaves dispatch" \
   "$(grep -Eo 'step-5-preview-free|gpt-5.6-luna' "$disp" 2>/dev/null | sort -u | paste -sd, -)" "gpt-5.6-luna"
 
@@ -279,6 +293,10 @@ CLAUDE_LIMIT_ACCOUNT=c9 run
 has "pass8: the account's own limit moves the worker to the next account" "$ctl" '^h1 relaunch --account next'
 count "pass8: it is read on that account's profile folder" "$home/state/claude-probe.log" \
   "^$home/state/profiles/c9$" 1
+case ",$(tested claude-opus-4-8)," in
+  *,h1,*) ok "pass8: the account's own test ran in a folder that names the worker" ;;
+  *) no "pass8: the account's own test ran in a folder that names the worker: got [$(tested claude-opus-4-8)]" ;;
+esac
 is "pass8: an account limit leaves the claude route in dispatch" \
   "$(jq -r '[.[].model | select(startswith("claude"))] | join(",")' "$dead")" ""
 
