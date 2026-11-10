@@ -35,7 +35,7 @@
 # (jg_dod_trunk_proof_gaps in bin/jg-merge-gate-lib.sh, the same check the worker's done runs): a PASS completion receipt, approved
 # merge-card evidence citing files, and a sealed done-done run holding them, all at the lane's own head. A missing input refuses
 # before anything starts and is named; `proof <task-id>` prints them. The owner signature never refuses a landing: it is
-# recorded after it (data/trunk-landing-proofs.tsv), absent when missing. That row also keeps the gate's figures (gate=ran:<scripts>,
+# recorded after it (data/trunk-landing-proofs.tsv), absent when missing. That row names the account the proof was saved under and the lander's own (proof-account, lander-account; the lander clears CLAUDE_CONFIG_DIR before it reads a proof) and also keeps the gate's figures (gate=ran:<scripts>,
 # failed:<on the first run>,secs:<whole gate>; absent when no gate ran), which the landing's Evidence card (core/landing-card) prints.
 #
 # The changed-files gate charges a lane only for what it broke. When it fails, the lander first reruns the failing scripts once on
@@ -133,6 +133,9 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$JG_ROOT}}"
 STATE="${JG_STATE_OVERRIDE:-$JG_HOME/state}"
 DATA="${JG_DATA_OVERRIDE:-$JG_HOME/data}"
 CONFIG="${JG_CONFIG_OVERRIDE:-$JG_HOME/config}"
+# The lander proves nothing, so the account it runs under never reaches a proof: merge-card's compare of the caller's account with
+# the account a proof was saved under belongs to the worker's own done. The landing row names the lander's account (record_proofs).
+LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 # shellcheck source=bin/jg-pr-lib.sh
 . "$SCRIPT_DIR/jg-pr-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
@@ -542,11 +545,14 @@ lane_follow() {  # <branch> <old> <new> <worktree>
 # What the proof gate already required is recorded after the landing as a fact about the landed commit; the owner signature
 # is the one input that never gates it, and is recorded as absent when missing.
 record_proofs() {  # <id> <lane head> <landed commit>
-  local r="$STATE/$1.run-receipt.json" d="$DATA/$1" receipt=absent sig=absent card=absent
+  local r="$STATE/$1.run-receipt.json" d="$DATA/$1" receipt=absent sig=absent card=absent proof_account=
   if [ -f "$r" ] && command -v jq >/dev/null 2>&1; then receipt="$(jq -r '.verdict // "unreadable"' "$r" 2>/dev/null || echo unreadable)@$(jq -r '.head // ""' "$r" 2>/dev/null | cut -c1-12)"; fi
   [ ! -e "$d/proof-authorizations/$2.sig" ] || sig=present
   { [ -f "$d/merge-card.json" ] && grep -q "$2" "$d/merge-card.json"; } && card=present
-  row trunk-landing-proofs.tsv "$1" "$PN" "$3" "$(date +%s)" "receipt=$receipt" "signature=$sig" "merge-card=$card" "gate=${GATE_FIGURES:-absent}"
+  [ "$card" = present ] && command -v jq >/dev/null 2>&1 &&
+    proof_account=$(jq -r --arg h "$2" 'select(.head == $h) | .context.account // empty' "$d/merge-card.json" 2>/dev/null | tail -n 1)
+  row trunk-landing-proofs.tsv "$1" "$PN" "$3" "$(date +%s)" "receipt=$receipt" "signature=$sig" "merge-card=$card" \
+    "proof-account=${proof_account:-none}" "lander-account=${LANDER_ACCOUNT:-none}" "gate=${GATE_FIGURES:-absent}"
 }
 
 # Tell the lane's ticket and Overwatch that its landed commit was reverted, with the reason. Best effort: the revert stands.
