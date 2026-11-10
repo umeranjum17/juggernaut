@@ -873,6 +873,12 @@ else
       "$SCRIPT_DIR/jg-bootstrap.sh" 2>&1
   )
 fi
+if [ "$READ_ONLY" -eq 1 ] || [ "$REEMIT" -eq 1 ]; then
+  required_out=$(bash "$SCRIPT_DIR/jg-required-checks.sh" "$JG_HOME" --detect-only 2>&1)
+else
+  required_out=$(bash "$SCRIPT_DIR/jg-required-checks.sh" "$JG_HOME" 2>&1)
+fi
+[ -z "$required_out" ] || BOOT_OUT="${BOOT_OUT}${BOOT_OUT:+$'\n'}$required_out"
 if [ -n "$BOOT_OUT" ]; then
   printf '%s\n' "$BOOT_OUT" | jg_digest_say
 else

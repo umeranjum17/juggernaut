@@ -1613,6 +1613,9 @@ families_for_changed_path() {
     bin/jg-stow-cascade.sh)
       printf '%s\n' squad_lead
       ;;
+    bin/jg-required-checks.sh|bin/jg-delivery-tick.sh)
+      printf '%s\n' "__script__:jg-stops.test.sh"
+      ;;
     bin/jg-session-start.sh|bin/jg-fleet-sync.sh|\
     bin/jg-sessionstart-nudge.sh|bin/jg-startup-network.sh|bin/jg-tangle*|bin/jg-update.sh|\
     bin/jg-gate-refuse*|bin/jg-lock*)

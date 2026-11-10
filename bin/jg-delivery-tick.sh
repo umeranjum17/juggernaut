@@ -46,6 +46,12 @@ trap 'jg_lock_release "$LOCK"' EXIT
 # shellcheck disable=SC2329 # Named by JG_LADDER_WAKE below; the ladder calls it.
 tick_ladder_wake() { case ${JG_WAKE_LAST:-} in now:*) printf '%s\n' "$1" ;; esac; }
 JG_LADDER_WAKE=tick_ladder_wake jg_task_inbox_walk "$H/state" || echo "jg-delivery-tick: a steering-inbox step could not write its record in $H" >&2
+# A missing required check is reported in the same queue as other supervision findings.
+required_out=$(bash "$SCRIPT_DIR/jg-required-checks.sh" "$H" 2>&1) || true
+if [ -n "$required_out" ]; then
+  printf '%s\n' "$required_out"
+  jg_wake_append check required-checks "$required_out" || echo "jg-delivery-tick: could not report required checks" >&2
+fi
 # The stop loop runs after the landing check, including homes without a trunk.
 # shellcheck disable=SC2329 # The EXIT trap calls this after the landing check.
 tick_stops() (
