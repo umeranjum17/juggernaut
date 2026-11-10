@@ -24,8 +24,10 @@
 #              keeps running. Postcondition: delivery succeeded, the endpoint
 #              still exists, and the agent is still alive where the backend can
 #              classify that. Cancellation is confirmed only from an adapter-
-#              owned acknowledgement and otherwise reported unconfirmed. Busy
-#              state is never rewritten as proof of the action. Devin
+#              owned acknowledgement and otherwise reported unconfirmed. A Claude
+#              task's busy record is set to idle only when the pane shows its
+#              own end-of-turn mark, else unknown. Each interrupt adds one row
+#              to data/control-actions.tsv. Devin
 #              cancellation invalidates it to unknown because its native hooks
 #              emit no cancellation close; this is not a success claim.
 #              An adapter whose repeated interrupt key does something else on
@@ -621,6 +623,40 @@ verify_interrupt_running() {
     proof='agent-alive'
   fi
   printf '%s' "$proof"
+}
+
+# record_claude_interrupt_flag: Claude runs no hook for an interrupt, so the
+# busy record would stay busy and defer the steer doorbell for up to an hour.
+# `idle` needs the pane's own end-of-turn mark (Claude prints "Interrupted ·
+# What should Claude do instead?"); without it the record is `unknown`, which
+# is not busy and never lets a doorbell into a running turn. Skipped when the
+# task has no armed busy record, as jg-send's Escape path does.
+record_claude_interrupt_flag() {
+  local state=unknown elapsed=0
+  [ "$HARNESS" = claude ] && [ -f "$STATE/$ID.busy-gen" ] || return 0
+  while :; do
+    if rendered_matches 'Interrupted · What should Claude do instead\?'; then
+      state=idle
+      break
+    fi
+    awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+  done
+  "$SCRIPT_DIR/jg-busy-event.sh" apply "$STATE" "$ID" "$state" \
+    --current-gen --source jg-interrupt --event interrupt >/dev/null \
+    || die "interrupt key reached task $ID, but its busy record could not be set to $state"
+}
+
+# record_control_action <action> <result>: one row per lifecycle action in
+# data/control-actions.tsv: epoch, task, action, caller, result. The caller is
+# JG_CONTROL_CALLER when a script sets it, else the invoking process's name.
+record_control_action() {  # <action> <result>
+  local caller=${JG_CONTROL_CALLER:-}
+  [ -n "$caller" ] || caller=$(ps -o comm= -p "$PPID" 2>/dev/null | tr -d '[:space:]')
+  mkdir -p "$DATA" || die "interrupt delivered to task $ID, but $DATA could not be created for its action row"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$ID" "$1" "${caller:-unknown}" "$2" \
+    >>"$DATA/control-actions.tsv" || die "interrupt delivered to task $ID, but its action row could not be written"
 }
 
 do_interrupt() {
@@ -1403,6 +1439,8 @@ case "$VERB" in
       *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle key into an unattributed endpoint" ;;
     esac
     proof=$(do_interrupt)
+    record_claude_interrupt_flag
+    record_control_action interrupt "delivered $proof"
     echo "interrupt-delivered $ID harness=$HARNESS backend=$BACKEND verified=$proof"
     ;;
   exit)
