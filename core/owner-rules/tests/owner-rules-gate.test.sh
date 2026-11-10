@@ -61,6 +61,19 @@ card() { # [home]: that home's own card cites its own capture
 card
 
 "$addons/owner-rules/wiring.sh" "$home" >/dev/null
+# Rebuild through the installed merge gate after the task's Go work directory is cleaned.
+mkdir -p "$work/task/gotmp"
+rmdir "$work/task/gotmp"
+recovery=$(GOTMPDIR="$work/task/gotmp" JG_GUARD_HOST_BIN="$work/recovery/guard" gate)
+case $recovery in *"no passed-proof receipt"*) ok "missing Go work directory is recreated through the merge gate" ;; *) no "missing Go work directory: $recovery" ;; esac
+[ -d "$work/task/gotmp" ] && [ "$(stat -c %a "$work/task/gotmp")" = 700 ] && [ -O "$work/task/gotmp" ] && ok "Go work directory is private and owned" || no "Go work directory is not private and owned"
+ln -s "$work/task/gotmp" "$work/task/link"
+unsafe=$(GOTMPDIR="$work/task/link" JG_GUARD_HOST_BIN="$work/unsafe/guard" gate)
+case $unsafe in *"cannot evaluate"*"Go work directory"*) ok "symlink Go work directory is refused" ;; *) no "symlink Go work directory accepted: $unsafe" ;; esac
+if [ ! -O / ]; then
+  unsafe=$(GOTMPDIR=/ JG_GUARD_HOST_BIN="$work/foreign/guard" gate)
+  case $unsafe in *"cannot evaluate"*"Go work directory"*) ok "foreign Go work directory is refused" ;; *) no "foreign Go work directory accepted: $unsafe" ;; esac
+fi
 JG_HOME=$home "$addons/owner-rules/bin/jg-owner-rules-gate.sh" init-key >/dev/null
 cp "$home/config/owner-rules-proof.pub" "$main/config/owner-rules-proof.pub"
 sign_receipt() { JG_HOME=$home "$addons/owner-rules/bin/jg-owner-rules-gate.sh" sign lane "$head" "$pr" >/dev/null; }
