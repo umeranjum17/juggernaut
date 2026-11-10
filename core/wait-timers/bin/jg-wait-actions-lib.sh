@@ -11,6 +11,9 @@
 #   owner   who clears it first
 #   steps   the automatic steps, in order (jg_wait_action_take)
 #   next    the owner after the steps
+#   timer   seconds to first step (non-lane stops)
+#   repeat  seconds between raises (non-lane stops)
+#   clear-by detector or rule that removes the stop
 #
 #   critic: a deep Recon's open needs-decision naming its draft ready for its
 #     critic, with that critic recorded in this home as <task>-critic. forward

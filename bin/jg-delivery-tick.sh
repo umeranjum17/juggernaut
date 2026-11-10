@@ -11,7 +11,7 @@
 # It first walks the steering inboxes (jg_task_inbox_walk): each task with an unread record gets one
 # step of the re-ring ladder, which the watcher's window loop runs too, so a steer reaches its worker
 # or its lead whatever either cycle does. A home with no local trunk (no state/trunk-tip-*) has no
-# landing to run, and the pass ends after that walk.
+# landing to run. The stop loop runs after the landing check even when there is no trunk.
 #
 # One runner: the pass holds the home's state/.delivery-tick.lock, and a caller that finds it held does
 # nothing, so the two callers never run one home's pass at the same time. The landing check's own start
@@ -30,7 +30,7 @@ H=$(cd "$1" && pwd -P)
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 
 # The home's own records, never the caller's: the sentinel runs this for other homes than its own.
-export JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_CONFIG_OVERRIDE=$H/config
+export JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_CONFIG_OVERRIDE=$H/config JG_DATA_OVERRIDE=$H/data
 unset STATE JG_WAKE_QUEUE JG_WAKE_QUEUE_LOCK
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
@@ -46,6 +46,13 @@ trap 'jg_lock_release "$LOCK"' EXIT
 # shellcheck disable=SC2329 # Named by JG_LADDER_WAKE below; the ladder calls it.
 tick_ladder_wake() { case ${JG_WAKE_LAST:-} in now:*) printf '%s\n' "$1" ;; esac; }
 JG_LADDER_WAKE=tick_ladder_wake jg_task_inbox_walk "$H/state" || echo "jg-delivery-tick: a steering-inbox step could not write its record in $H" >&2
+# The stop loop runs after the landing check, including homes without a trunk.
+# shellcheck disable=SC2329 # The EXIT trap calls this after the landing check.
+tick_stops() (
+  # shellcheck source=core/wait-timers/bin/jg-stops-lib.sh
+  . "$SCRIPT_DIR/../core/wait-timers/bin/jg-stops-lib.sh" && jg_stops_tick
+)
+trap 'tick_stops || echo "jg-delivery-tick: stop processing failed in $H" >&2; jg_lock_release "$LOCK"' EXIT
 compgen -G "$H/state/trunk-tip-*" >/dev/null || exit 0
 
 OUT=$H/state/.jg-check-output-trunk-landing

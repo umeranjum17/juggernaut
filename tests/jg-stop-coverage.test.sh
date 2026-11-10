@@ -121,9 +121,10 @@ if True:
         table.write_text(table.read_text().replace('unlisted-source\tworker\t-\tlead\n', 'unlisted-source\tworker\t-\tlead\t30\t60\tcleared\n'))
         if (r := run_gate()).returncode != 0: raise SystemExit('FAIL complete row: ' + r.stdout)
         alarm = fixture/'core/wait-timers/alarms.tsv'
-        alarm.write_text('new-key\tstop:missing-state\n')
+        existing_alarms = alarm.read_text() if alarm.exists() else ''
+        alarm.write_text(existing_alarms + 'new-key\tstop:missing-state\n')
         if (r := run_gate()).returncode != 1 or 'missing-state' not in r.stdout: raise SystemExit('FAIL alarm state')
-        alarm.write_text('new-key\tevent\n')
+        alarm.write_text(existing_alarms + 'new-key\tevent\n')
         f = fixture/'bin/coverage-fixture.sh'; f.write_text('jg_wake_append check new-key reason\n')
         if (r := run_gate()).returncode != 0: raise SystemExit('FAIL listed alarm: ' + r.stdout)
     print('PASS stop coverage and unlisted-site journeys')
