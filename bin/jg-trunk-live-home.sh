@@ -35,7 +35,7 @@ if [ "$(git -C "$JG_ROOT" rev-parse HEAD)" != "$TARGET" ] && git -C "$JG_ROOT" m
 fi
 # ff_target sets FF_STATUS in this shell, so its lines go through a file, not a substitution.
 ff_log=$(mktemp); trap 'rm -f -- "$ff_log"' EXIT
-ff_target "$JG_ROOT" juggernaut "$TARGET" yes no > "$ff_log"
+JG_TRUNK_LIVE=1 JG_TRUNK_TIP="$TARGET" ff_target "$JG_ROOT" juggernaut "$TARGET" yes no > "$ff_log"
 cat "$ff_log"
 [ "$FF_STATUS" != skipped ] || fail_with "$(sed -n 's/^[^:]*: skipped: //p' "$ff_log" | head -n 1)"
 echo "juggernaut: at $(git -C "$JG_ROOT" rev-parse HEAD)"

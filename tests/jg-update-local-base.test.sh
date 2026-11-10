@@ -530,6 +530,19 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   pass 'T6 the landing check runs no suite after a landing, runs the batched live step on its own, and reports its outcomes'
 }
 
+test_guarded_primary_moves_with_tip() {
+  local out rc=0
+  mover_world guarded-primary
+  "$ROOT/bin/jg-home-guard.sh" install "$W/main" --tip "$C0" >/dev/null || fail "install home guard"
+  out=$(run_mover) || rc=$?
+  [ "$rc" -ne 0 ] || fail "fixture has two skipped leads"
+  [ "$(head_of main)" = "$C2" ] || fail "guarded primary must move: $out"
+  [ "$(cat "$W/main/.git/jg-home-guard/trunk-tip")" = "$C2" ] || fail "guard tip must move"
+  [ -z "$(git -C "$W/main" status --porcelain)" ] || fail "guarded primary must be clean"
+  pass 'fleet live advances guarded primary and guard tip together'
+}
+
+test_guarded_primary_moves_with_tip
 test_every_home_moves_or_is_skipped_with_one_row
 test_cache_is_cleared_after_a_move
 test_a_move_rewires_only_the_add_ons_it_changed_and_names_a_failure

@@ -107,12 +107,14 @@ test_a_failed_ref_update_leaves_the_home_clean_at_the_old_commit() {
   world refail
   land_on_trunk three
   old=$(git -C "$HOMEC" rev-parse HEAD)
-  hook="$HOMEC/.git/hooks/reference-transaction"
+  "$W/root/bin/jg-home-guard.sh" install "$HOMEC" --tip "$old" >/dev/null || fail "install guard"
+  hook="$HOMEC/.git/hooks/reference-transaction.chained"
   git -C "$HOMEC" fetch -q "$PROJ" refs/heads/trunk-v3 || fail "fixture: the home must hold the commit before the hook blocks ref updates"
   # shellcheck disable=SC2016 # the hook body is written verbatim
   printf '#!/bin/sh\n# git updates the tree and index before it prepares the branch ref, so failing there is the half-done move\nif [ "$1" = prepared ] && grep -q " refs/heads/"; then exit 1; fi\nexit 0\n' > "$hook"; chmod +x "$hook"
   live_fails "fast-forward failed"
   [ "$(git -C "$HOMEC" rev-parse HEAD)" = "$old" ] || fail "HEAD must stay at the old commit"
+  [ "$(cat "$HOMEC/.git/jg-home-guard/trunk-tip")" = "$old" ] || fail "guard tip must stay at the old commit"
   [ -z "$(git -C "$HOMEC" status --porcelain)" ] || fail "index and tree must be back at the old commit: $(git -C "$HOMEC" status --porcelain)"
   rm -f "$hook"
   trunk word live "$PROJ" "go" >/dev/null 2>&1
@@ -122,6 +124,20 @@ test_a_failed_ref_update_leaves_the_home_clean_at_the_old_commit() {
   pass 'a failed ref update rolls index and tree back to the old commit, and the next run moves the home'
 }
 
+test_guarded_home_moves_with_its_recorded_tip() {
+  local old out
+  world guarded
+  old=$(git -C "$HOMEC" rev-parse HEAD)
+  "$W/root/bin/jg-home-guard.sh" install "$HOMEC" --tip "$old" >/dev/null || fail "install guard"
+  land_on_trunk guarded
+  out=$(trunk live "$PROJ" 2>&1) || fail "guarded home must go live: $out"
+  [ "$(git -C "$HOMEC" rev-parse HEAD)" = "$C" ] || fail "guarded HEAD must advance"
+  [ "$(cat "$HOMEC/.git/jg-home-guard/trunk-tip")" = "$C" ] || fail "guard tip must advance"
+  [ -z "$(git -C "$HOMEC" status --porcelain)" ] || fail "guarded home must stay clean"
+  pass 'live advances a guarded home and its recorded tip together'
+}
+
+test_guarded_home_moves_with_its_recorded_tip
 test_a_home_that_cannot_move_says_why
 test_a_failed_ref_update_leaves_the_home_clean_at_the_old_commit
 test_a_clean_home_fetches_from_the_trunk_branch_and_goes_live

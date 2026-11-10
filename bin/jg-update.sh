@@ -344,7 +344,7 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
     && JG_TRUNK_PINBACK=1 git -C "$dir" reset -q --keep "$BASE" 2>/dev/null; then
     FF_STATUS=updated; FF_INSTR=""; echo "$label: pinned back ${pre:0:12}..${BASE:0:12}" > "$tmp"
   else
-    ff_target "$dir" "$label" "$BASE" yes "$seed" "" "" yes > "$tmp"
+    JG_TRUNK_LIVE=1 JG_TRUNK_TIP="$BASE" ff_target "$dir" "$label" "$BASE" yes "$seed" "" "" yes > "$tmp"
   fi
   out=$(cat "$tmp"); rm -f -- "$tmp"; printf '%s\n' "$out"
   case "$FF_STATUS" in
