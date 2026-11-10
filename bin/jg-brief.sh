@@ -17,11 +17,6 @@
 # Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only|local-trunk> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab] [--medium <mobile|web|desktop|cli|backend>]
 #        jg-brief.sh <task-id> <repo-name> --scout [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
-#        jg-brief.sh --task-files <brief-file>
-#   --task-files prints, sorted and once each, the repo-relative paths (a name with a
-#   slash) that the brief's `# Task` section names, and writes nothing. It is how
-#   bin/jg-spawn.sh reads which files a lane works on, so two lanes on one shared
-#   file do not start at once; the scaffold boilerplate outside `# Task` is not read.
 #   --medium names the project's medium at intake, so the brief can carry this
 #   home's stack advice from config/preferred-stack.json. It is a recommendation,
 #   never a gate, and is optional.
@@ -247,13 +242,6 @@ usage() {
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
-  --task-files)
-    [ -f "${2:-}" ] || { echo "error: --task-files needs a readable brief file" >&2; exit 1; }
-    # The `# Task` section only, up to the next top-level heading; a trailing :line or :a-b is not part of the path.
-    awk '/^# /{ in_task = ($0 == "# Task") } in_task' "$2" |
-      grep -oE '[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)+' | sort -u
-    exit 0
-    ;;
 esac
 
 # shellcheck source=bin/jg-marker-lib.sh

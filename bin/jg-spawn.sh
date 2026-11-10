@@ -235,11 +235,6 @@
 #   deferred the same way: one `deferred:` line naming the load, exit 75, no
 #   record. bin/jg-reaper-lib.sh owns the limit, the window and the history; a
 #   relaunch and a --squad-lead spawn are never deferred for load.
-#   Same file: a fresh ship whose brief's `# Task` section names a project file
-#   that a running ship of the same project also names (bin/jg-brief.sh
-#   --task-files reads it) is deferred the same way, with a `deferred:` line
-#   naming the file and the running lane, and starts once that lane's record is
-#   gone. A scout neither holds nor waits.
 #   With no harness arg, a operator/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, operator/scout
 #   spawns require an explicit harness so juggernaut cannot silently skip dispatch
@@ -2727,40 +2722,6 @@ fi
   echo "error: task $ID has no brief at inaccessible data path $BRIEF" >&2
   exit 1
 }
-# Same-file admission. Two lanes that change one shared file collide at landing,
-# so a fresh ship whose brief names (bin/jg-brief.sh --task-files) a project file
-# that a running ship's brief also names is deferred like a full project: one
-# `deferred:` line, exit 75, no record, the backlog item stays queued. A lane
-# holds its files from its record until cleanup removes it, which is after it
-# lands, so the deferred task starts when the first lane is gone. A scout writes
-# a report, not project files, so it neither holds nor waits.
-if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" = ship ]; then
-  SPAWN_TASK_FILES=$("$SCRIPT_DIR/jg-brief.sh" --task-files "$BRIEF" |
-    grep -Fxf <(git -C "$PROJ_ABS" ls-files 2>/dev/null) || true)
-  if [ -n "$SPAWN_TASK_FILES" ]; then
-    SPAWN_FILE_LOCK=$(jg_treehouse_project_lock_path "$PROJ_ABS" 2>/dev/null) || SPAWN_FILE_LOCK=
-    if jg_local_juggernaut_state_dirs "$STATE" && [ -n "$SPAWN_FILE_LOCK" ]; then
-      for SPAWN_OTHER_STATE in "${JG_LOCAL_JUGGERNAUT_STATES[@]}"; do
-        for SPAWN_OTHER_META in "$SPAWN_OTHER_STATE"/*.meta; do
-          [ -f "$SPAWN_OTHER_META" ] || continue
-          SPAWN_OTHER_ID=$(basename "$SPAWN_OTHER_META" .meta)
-          [ "$SPAWN_OTHER_STATE/$SPAWN_OTHER_ID" != "$STATE/$ID" ] || continue
-          [ "$(jg_meta_get "$SPAWN_OTHER_META" kind)" = ship ] || continue
-          SPAWN_OTHER_PROJECT=$(jg_meta_get "$SPAWN_OTHER_META" project)
-          [ -n "$SPAWN_OTHER_PROJECT" ] &&
-            [ "$(jg_treehouse_project_lock_path "$SPAWN_OTHER_PROJECT" 2>/dev/null)" = "$SPAWN_FILE_LOCK" ] || continue
-          SPAWN_OTHER_BRIEF=$(dirname "$SPAWN_OTHER_STATE")/data/$SPAWN_OTHER_ID/brief.md
-          [ "$SPAWN_OTHER_STATE" != "$STATE" ] || SPAWN_OTHER_BRIEF=$DATA/$SPAWN_OTHER_ID/brief.md
-          [ -f "$SPAWN_OTHER_BRIEF" ] || continue
-          SPAWN_SHARED=$("$SCRIPT_DIR/jg-brief.sh" --task-files "$SPAWN_OTHER_BRIEF" | grep -Fxf <(printf '%s\n' "$SPAWN_TASK_FILES") | head -n 1 || true)
-          [ -n "$SPAWN_SHARED" ] || continue
-          echo "deferred: $SPAWN_SHARED is named by running lane $SPAWN_OTHER_ID, which has not landed; task $ID was not launched and its backlog item stays queued - dispatch it again once that lane lands and is cleaned up" >&2
-          exit "$SPAWN_DEFER_EXIT"
-        done
-      done
-    fi
-  fi
-fi
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if jg_brief_task_placeholders_present "$BRIEF"; then
     echo "error: $BRIEF still contains {TASK} or {JUGGERNAUT_SPEC}; fill ## Captain's intent and ## Juggernaut spec before spawn" >&2
