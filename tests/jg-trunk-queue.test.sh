@@ -42,18 +42,29 @@ unlanded() { [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = "$1" ] || f
 
 test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   local base out rc=0 i
-  batch_world batch; base=$(tip)
+  batch_world batch; rig; base=$(tip)
+  printf 'gate-full=echo run >> "%s/gate-runs"; git diff --name-only HEAD^ >> "%s/gate-files"; ! git grep -q BAD\ngate-verify=bash %s/rig.sh --all\n' "$W" "$W" "$W" >> "$HOME_D/config/trunk-policy"
   # A clean stack: three lanes on the same old tip land in order, behind ONE gate over all their files, in ONE trunk move.
-  lane b1 one f1.txt; lane b2 two f2.txt; lane b3 three f3.txt
+  lane b1 'exit 0' t/b1.test.sh; lane b2 'echo "not ok - b2 breaks the suite" >&2; exit 1' t/b2.test.sh; lane b3 'exit 0' t/b3.test.sh
   out=$(trunk land-batch b1 b2 b3 2>&1) || fail "a clean stack must land: $out"
   [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket b1,ticket b2,ticket b3" ] || fail "the stack lands in the order given"
   [ "$(runs)" = 1 ] || fail "one gate must judge the whole stack, got $(runs) runs"
-  [ "$(sort -u "$W/gate-files" | paste -sd, -)" = "f1.txt,f2.txt,f3.txt" ] || fail "the gate judges the union of the changed files: $(cat "$W/gate-files")"
+  [ "$(sort -u "$W/gate-files" | paste -sd, -)" = "t/b1.test.sh,t/b2.test.sh,t/b3.test.sh" ] || fail "the gate judges the union of the changed files: $(cat "$W/gate-files")"
   [ "$(grep -c '^landed b' <<<"$out")" = 3 ] || fail "every lane reports its landing: $out"
   [ "$(awk -F'\t' -v b="$base" '$6 == "batch-from=" b' "$HOME_D/data/trunk-landings.tsv" | wc -l | tr -d ' ')" = 3 ] || fail "one landings row per lane: $(cat "$HOME_D/data/trunk-landings.tsv")"
   [ "$(git -C "$PROJ" rev-parse fm/b3)" = "$(tip)" ] && [ -z "$(git -C "$W/lanes/b3" status --porcelain)" ] || fail "each lane follows its rebased commit"
   [ "$(grep -c '^merged' "$W/ledger-calls")" = 3 ] || fail "each lane records the same merged event: $(cat "$W/ledger-calls")"
   [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$(tip)" ] || fail "the tip record follows the one move"
+  # The same stack also proves that a later whole-suite failure reverts only its guilty commit.
+  local top; top=$(tip); rc=0
+  out=$(trunk verify "$PROJ" "$top" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the whole suite is red after this stack: $out"
+  git -C "$PROJ" log -1 --format=%s trunk | grep -q '^Revert "ticket b2"' || fail "the guilty lane is reverted"
+  ! git -C "$PROJ" cat-file -e trunk:t/b2.test.sh 2>/dev/null || fail "the red lane is undone"
+  git -C "$PROJ" cat-file -e trunk:t/b1.test.sh || fail "the first green lane stays on trunk"
+  git -C "$PROJ" cat-file -e trunk:t/b3.test.sh || fail "the last green lane stays on trunk"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" log --format=%H --grep='^ticket b1$' -n 1 trunk)" ] || fail "the guilty commit takes the green pin back below it"
+  assert_contains "$out" "b2" "the revert names the lane"
   # A lane that conflicts drops out and is told, with its paths; the rest still land as one stack.
   : > "$W/gate-runs"; base=$(tip)
   lane c1 left; lane c2 right; lane c3 three f4.txt
@@ -76,33 +87,14 @@ test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected() {
   ! git -C "$PROJ" cat-file -e trunk:g3.txt 2>/dev/null || fail "the red lane's change is not on the trunk"
   # The same red on a full temp directory is the machine's: the returned lane is classed retry, not final.
   printf 'gate-full=echo "cat: write error: Disk quota exceeded"; ! git grep -q BAD\n' >> "$HOME_D/config/trunk-policy"
-  lane q1 one h1.txt; lane q2 BAD h2.txt
-  out=$(trunk land-batch q1 q2 2>&1) || fail "a red stack must still land its green part: $out"
-  assert_contains "$out" "refusal-class q2: retry" "a red the machine caused is classed retry"
+  lane q1 one h1.txt
+  out=$(trunk land-batch q1 d3 2>&1) || fail "a red stack must still land its green part: $out"
+  assert_contains "$out" "refusal-class d3: retry" "a red the machine caused is classed retry"
   # One queued lane keeps the single path, and the batch refuses what a single landing refuses.
   rc=0; out=$(trunk land-batch lonely 2>&1) || rc=$?; [ "$rc" -ne 0 ] || fail "a batch of one is refused: $out"
   assert_contains "$out" "2 or more" "a lone lane is told to use land"
   for i in --force -f; do out=$(trunk land-batch d3 d4 "$i" 2>&1) && fail "a batch is never forced"; done
   pass 'queued lanes land as one stack: one gate, one move, a conflict drops out, a red stack is halved to the guilty lane'
-}
-
-# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
-test_a_red_the_suite_finds_after_a_batch_is_traced_to_its_one_commit_and_reverted() {
-  local base out rc=0 top
-  world batchrev; rig; base=$(tip)
-  printf 'gate-full=true\ngate-verify=bash %s/rig.sh --all\n' "$W" >> "$HOME_D/config/trunk-policy"
-  lane e1 'exit 0' t/e1.test.sh; lane e2 'echo "not ok - e2 breaks the suite" >&2; exit 1' t/e2.test.sh; lane e3 'exit 0' t/e3.test.sh
-  trunk land-batch e1 e2 e3 >/dev/null 2>&1 || fail "the fast gate passes all three, so the stack lands"
-  top=$(tip); [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$top" ] || fail "the stack's landing moves the green pin to its top"
-  out=$(trunk verify "$PROJ" "$top" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "the whole suite is red after this stack: $out"
-  git -C "$PROJ" log -1 --format=%s trunk | grep -q '^Revert "ticket e2"' || fail "the lane that broke the suite is reverted, not the top of the stack: $(git -C "$PROJ" log --format=%s "$base..trunk")"
-  git -C "$PROJ" cat-file -e trunk:t/e2.test.sh 2>/dev/null && fail "e2's change is undone on the tip"
-  git -C "$PROJ" cat-file -e trunk:t/e1.test.sh || fail "e1 stays on the trunk"
-  git -C "$PROJ" cat-file -e trunk:t/e3.test.sh || fail "e3 stays on the trunk"
-  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(git -C "$PROJ" log --format=%H --grep='^ticket e1$' -n 1 trunk)" ] || fail "the guilty commit takes the green pin back below it"
-  assert_contains "$out" "e2" "the revert names the lane"
-  pass 'a red a hand-run whole suite finds after a batch is traced to the one commit that caused it and reverted by itself'
 }
 
 # shellcheck disable=SC2016 # the gate bodies are written out verbatim and expand when the gate runs them
@@ -169,11 +161,13 @@ test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it() 
   qsweep >/dev/null; settled 1
   [ "$(git -C "$PROJ" log --format=%s "$base..trunk")" = "ticket q9" ] || fail "only the marked lane lands, the older lane waits"
   [ ! -e "$HOME_D/state/q9.land-next" ] || fail "the mark ends when the lane lands"
-  # Marked while the threshold is met (q7 waits, q10 is marked, q11 arrives): the marked lane lands first, in the same stack as the rest.
-  lane q10 ten f10.txt; lane q11 eleven f11.txt; fresh q10 2; fresh q11 1; trunk land-next q10 >/dev/null
+  # The marked lane leads the stack; a returned lane reporting last goes ahead of the other waiting lane.
+  lane q10 ten f10.txt; lane q11 eleven f11.txt; fresh q10 2; fresh q11 1; fresh q7 0; trunk land-next q10 >/dev/null
+  printf 'final fm/q7 conflicts with trunk (abc1234) in: f7.txt\n' > "$HOME_D/data/jg-trunk-landing/q7.0000000000000000000000000000000000000001.state"
   qsweep >/dev/null; settled 4
   [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | sed -n 2p)" = "ticket q10" ] || fail "the marked lane goes first: $(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)"
-  pass 'the queue lands at a threshold, flushes on a command, and a land-next lane jumps it'
+  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket q9,ticket q10,ticket q7,ticket q11" ] || fail "the returned lane goes ahead of the earlier ready lane"
+  pass 'the queue flushes and prioritizes marked and returned lanes'
 }
 
 # The landing check starts each landing with setsid, so the job leads its own process group and outlives the check that
@@ -203,25 +197,8 @@ test_a_job_the_landing_check_starts_never_outlives_its_fixture() {
   pass 'a job the landing check starts is stopped with its process group when the suite cleans up'
 }
 
-# A lane returned for a conflict that reports ready again lands before the lanes that were ready earlier (C-82).
-test_a_lane_returned_for_a_conflict_lands_first_when_it_reports_again() {
-  local base
-  batch_world retq; base=$(tip)
-  printf 'flush-at-ready=3\nflush-after-minutes=20\n' >> "$HOME_D/config/trunk-policy"
-  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  lane ra one f1.txt; lane rb two f2.txt; lane rc three f3.txt
-  fresh rb 6; fresh rc 5; fresh ra 1  # ra reports last, so it sorts last by done time
-  mkdir -p "$HOME_D/data/jg-trunk-landing"
-  printf 'final fm/ra conflicts with trunk (abc1234) in: f1.txt\n' > "$HOME_D/data/jg-trunk-landing/ra.0000000000000000000000000000000000000001.state"
-  qsweep >/dev/null; settled 3
-  [ "$(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)" = "ticket ra,ticket rb,ticket rc" ] || fail "the lane returned for a conflict lands first: $(git -C "$PROJ" log --reverse --format=%s "$base..trunk" | paste -sd, -)"
-  pass 'a lane returned for a conflict lands first when it reports again'
-}
-
 test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected
 test_a_job_the_landing_check_starts_never_outlives_its_fixture
-test_a_red_the_suite_finds_after_a_batch_is_traced_to_its_one_commit_and_reverted
 test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_path
 test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it
-test_a_lane_returned_for_a_conflict_lands_first_when_it_reports_again
 printf 'jg-trunk-queue: ok\n'
