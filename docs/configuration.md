@@ -1234,8 +1234,10 @@ It does not apply to a Squad Lead's own agent, which neither reads nor refuses o
 ### Built-in: workers cannot ask the human
 
 A worker never asks the human directly; its question belongs to its lead.
-So every ship and Recon launch hides the runtime's own ask tool, with or without this file: Claude gets `--disallowedTools=AskUserQuestion`, OpenCode gets `"question":"deny"` in its permission config, and `pi` and `pi-signed` get `ask_user_question` in `--exclude-tools` ahead of any listed names.
-A Squad Lead's agent keeps its tools, and the other runtimes have no ask tool to hide here.
+So every ship and Recon launch hides the runtime's own ask tool, with or without this file: Claude gets `AskUserQuestion` in its `--disallowedTools` list, OpenCode gets `"question":"deny"` in its permission config, and `pi` and `pi-signed` get `ask_user_question` in `--exclude-tools` ahead of any listed names.
+The same Claude list also removes the fan-out, schedule, message, worktree, publish and notify tools a worker may not use, and every Claude launch, Squad Lead included, adds `--strict-mcp-config`, so no MCP server loads and the account's connectors (mail, file sharing, calendar, documents) never reach a fleet session.
+A Claude Squad Lead is launched without the delegation tools `bin/jg-subagent-pretool-check.sh` refuses and without `Artifact`; `bin/jg-spawn-core.sh launch-template claude <kind>` prints each kind's list.
+Otherwise a Squad Lead's agent keeps its tools, and the other runtimes have no ask tool to hide here.
 A dialog that still opens on any runtime is caught by the stuck-worker detector in `bin/jg-stuck-gate-lib.sh`.
 
 ### Runtime support
