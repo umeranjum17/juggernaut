@@ -1790,6 +1790,7 @@ detect_local_config() {
   fi
   crew_dispatch_validate
   detect_beads_health
+  detect_account_state
   detect_home_summary_publication
   detect_sentinel_service
   detect_unit_homes
@@ -1806,6 +1807,20 @@ detect_beads_health() {
   else
     echo "BEADS_UNHEALTHY: $health"
   fi
+}
+
+# A state of the worker account that only its owner can clear, found at start
+# rather than by a worker mid-task. Incident 11: a compaction cap in the account
+# settings capped every worker. The file is the owner's, so this only reads it
+# and names file and line; no script edits it.
+detect_account_state() {
+  local dir=${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude} f hit
+  [ -n "$dir" ] || return 0
+  for f in "$dir/settings.json" "$dir/settings.local.json"; do
+    [ -f "$f" ] && [ -r "$f" ] || continue
+    hit=$(LC_ALL=C grep -n -m1 '"CLAUDE_CODE_AUTO_COMPACT_WINDOW"' "$f" 2>/dev/null) || continue
+    echo "ACCOUNT_STATE: $f:${hit%%:*}: a compaction cap in the account settings caps every worker's context; only the account owner clears it"
+  done
 }
 
 detect_sentinel_service() {

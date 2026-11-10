@@ -438,6 +438,27 @@ test_bootstrap_arms_the_fleet_heartbeat_on_a_primary_home() {
   pass "bootstrap arms the fleet heartbeat on a primary home unless it opts out"
 }
 
+test_account_compaction_cap_is_reported_with_file_and_line() {
+  local case_dir fakebin acct out before after
+  case_dir="$TMP_ROOT/account-cap"
+  acct="$case_dir/account"
+  mkdir -p "$case_dir/home/config" "$acct"
+  printf '{\n  "env": {\n    "KEEP": "1",\n    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "183000"\n  }\n}\n' > "$acct/settings.json"
+  before=$(cksum < "$acct/settings.json")
+  fakebin=$(make_fake_toolchain "$case_dir")
+  out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
+    CLAUDE_CONFIG_DIR="$acct" JG_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/jg-bootstrap.sh")
+  assert_contains "$out" "ACCOUNT_STATE: $acct/settings.json:4:" "a compaction cap in the account settings was not reported with file and line: $out"
+  [ "$(printf '%s\n' "$out" | grep -c '^ACCOUNT_STATE:')" -eq 1 ] || fail "the account cap was not reported as exactly one line: $out"
+  after=$(cksum < "$acct/settings.json")
+  [ "$before" = "$after" ] || fail "bootstrap edited the account's settings file"
+  printf '{"env":{"KEEP":"1"}}\n' > "$acct/settings.json"
+  out=$(PATH="$fakebin:$BASE_PATH" JG_HOME="$case_dir/home" JG_ROOT_OVERRIDE="$case_dir/home" \
+    CLAUDE_CONFIG_DIR="$acct" JG_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/jg-bootstrap.sh")
+  assert_not_contains "$out" "ACCOUNT_STATE" "an account without a cap was reported: $out"
+  pass "bootstrap reports a compaction cap in the account settings with file and line and leaves the file alone"
+}
+
 test_orca_backend_gates_orca_tool_only_when_selected() {
   local case_dir fakebin out missing_orca
   missing_orca="MISSING: orca (install: brew install orca  # or the platform's package manager)"
@@ -1292,3 +1313,4 @@ test_network_phases_record_per_step_elapsed_times
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
 test_crew_dispatch_validation
 test_bootstrap_arms_the_fleet_heartbeat_on_a_primary_home
+test_account_compaction_cap_is_reported_with_file_and_line
