@@ -272,6 +272,22 @@ tip_ok() {
   }
 }
 
+# Reconcile only a proven fast-forward while the caller holds the trunk lock.
+# Rewinds and divergent moves retain the ordinary alarm and manual recovery path.
+tip_adopt_forward() {
+  local want have released epoch keep
+  want=$(cat "$STATE/trunk-tip-$PN" 2>/dev/null) || return 0
+  have=$(rev "refs/heads/$TRUNK") || return 0
+  [ "$want" != "$have" ] || return 0
+  git -C "$PROJ" merge-base --is-ancestor "$want" "$have" 2>/dev/null || return 0
+  released=$(cat "$STATE/trunk-released-$PN" 2>/dev/null || true)
+  [ -z "$released" ] || git -C "$PROJ" merge-base --is-ancestor "$released" "$have" 2>/dev/null || return 0
+  epoch=$(date +%s); keep="refs/jg/trunk-adopted/$TRUNK/$epoch-${want:0:12}"
+  git -C "$PROJ" update-ref "$keep" "$want" || die "cannot write the keep ref $keep"
+  row trunk-adoptions.tsv "$PN" "$want" "$have" "$epoch" forward 0 - 'automatic fast-forward during landing'
+  put "$STATE/trunk-tip-$PN" "$have"
+}
+
 # The only variables a gate takes from whoever starts it. A gate gives one result from every caller (a worker session,
 # the lead, the watcher, a bare shell), so its clone and its command start from an empty environment plus these names:
 # a session's git hook settings, task id or account never reach the tests. JG_HOME is the home this script resolved.
@@ -735,7 +751,7 @@ land_candidate() {
   # and gated on the tip it read, and the trunk moves only if it is still there. If a landing or a revert moved it meanwhile, the
   # lane is rebased onto the new tip (a conflict refuses, with its paths) and gated again.
   for _ in 1 2 3; do
-    lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK"); unlock "$STATE/.trunk-$PN.lock"
+    lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok; tip=$(rev "refs/heads/$TRUNK"); unlock "$STATE/.trunk-$PN.lock"
     lane_admit "$id" "$tip" "$LAND_HEAD" 0
     cand=$LANE_CAND
     if [ -n "$LANE_LANDED" ]; then echo "already landed $id at $cand; not live"; return 0; fi
@@ -744,7 +760,7 @@ land_candidate() {
     if gate=$(jg_trunk_gate gate-lint "$PN" "$PROJ" "$cand"); then run_gate "$cand" "$gate" lint; else echo "land: $PN has no lint gate; none run" >&2; fi
     if gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand") && sealed_run_covers "$id" "$cand"; then GATE_KIND=sealed-run; echo "land: ${cand:0:12} has the tree of $id's passing sealed run; the tests ran there, so only the lint ran here" >&2
     elif gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand"); then full_gate "$cand" "$gate" "$tip" || exit 1; else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >&2; fi
-    lock "$STATE/.trunk-$PN.lock"; tip_ok
+    lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok
     if [ "$(rev "refs/heads/$TRUNK")" = "$tip" ]; then still=1; break; fi
     unlock "$STATE/.trunk-$PN.lock"; echo "note: $TRUNK moved to $(rev "refs/heads/$TRUNK" | cut -c1-12) while $id was gated at ${tip:0:12}; rebasing it onto the new tip and gating it again" >&2
   done
@@ -814,7 +830,7 @@ batch_gate() {  # <top> <stack size>   (B_TIP is the trunk tip the stack sits on
 land_group() {
   local top=${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]} i
   # The trunk lock is held only to move the trunk. Returns 1, moving nothing, when the trunk is no longer where the stack was gated.
-  lock "$STATE/.trunk-$PN.lock"; tip_ok
+  lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok
   [ "$(rev "refs/heads/$TRUNK")" = "$B_TIP" ] || { unlock "$STATE/.trunk-$PN.lock"; return 1; }
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land a batch of ${#CHAIN[@]}" "refs/heads/$TRUNK" "$top" "$B_TIP" || refuse "$TRUNK changed while landing the batch"
   put "$STATE/trunk-tip-$PN" "$top"; pin_landed "$top"
@@ -852,7 +868,7 @@ cmd_land_batch() {
   if [ "$(pol away-landing)" = held ] && [ -e "$STATE/.afk" ]; then refuse "away mode: trunk landings stay held until the captain returns (away-landing=held)"; fi
   jg_lease_forbid_branch "trunk landing (jg-trunk)"
   for id in "${B_ID[@]}"; do lock "$STATE/.control-$id.lock"; done
-  lock "$STATE/.trunk-$PN.lock"; tip_ok; B_TIP=$(rev "refs/heads/$TRUNK"); unlock "$STATE/.trunk-$PN.lock"
+  lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok; B_TIP=$(rev "refs/heads/$TRUNK"); unlock "$STATE/.trunk-$PN.lock"
   B_BASE0=$B_TIP; GATE_KIND=full; GATE_FIGURES=; top=$B_TIP; todo=()
   for ((i = 0; i < n; i++)); do
     META=${B_META[$i]}; id=${B_ID[$i]}; errf=$(mktemp)
@@ -1642,6 +1658,11 @@ cmd_release() {
   record_release_task "$url"
 }
 
+# Reconcile an idle trunk from the landing check, under the same lock as a landing.
+cmd_reconcile() {
+  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok
+}
+
 # The landing check's cheap pre-test: prints what proof the task's branch head still lacks, exit 1 when any, before a landing is started.
 cmd_proof() {
   local id=${1:-} meta branch head gaps
@@ -1671,6 +1692,7 @@ case "${1:-}" in
   proof) shift; cmd_proof "$@" ;;
   word) shift; cmd_word "$@" ;;
   adopt-tip) shift; cmd_adopt_tip "$@" ;;
+  reconcile) shift; cmd_reconcile "$@" ;;
   live) shift; cmd_live "$@" ;;
   autolive) shift; cmd_autolive "$@" ;;
   waiver) shift; cmd_waiver "$@" ;;

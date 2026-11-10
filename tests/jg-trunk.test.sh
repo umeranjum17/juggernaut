@@ -91,6 +91,41 @@ test_adopt_tip_ends_a_moved_trunk_with_a_record_and_loses_no_landed_commit() {
   pass 'adopt-tip refuses landed commits left off the trunk, adopts with the carrying lane, keeps the old record, writes one row, and the lane lands'
 }
 
+# A landing sees a forward move from another home and records it without a model turn.
+test_landing_adopts_forward_and_refuses_rewind() {
+  local old new out
+  world auto-adopt
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  old=$(tip)
+  lane first one first.txt; trunk land first >/dev/null 2>&1 || fail "first lane must land"
+  new=$(tip)
+  printf '%s\n' "$old" > "$HOME_D/state/trunk-tip-proj"
+  sweep >/dev/null
+  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$new" ] || fail "idle forward trunk must be adopted by the landing check"
+  grep -q "^proj	$old	$new	[0-9]*	forward	0	-	" "$HOME_D/data/trunk-adoptions.tsv" || fail "adoption row must name both tips and the reason"
+  lane next two next.txt; sweep >/dev/null
+  [ "$(tip)" = "$(git -C "$PROJ" rev-parse fm/next)" ] || fail "a lane must land after adoption"
+  old=$(tip)
+  git -C "$PROJ" -c core.hooksPath=/dev/null update-ref refs/heads/trunk "$new" "$old"
+  rm -f "$HOME_D/data/jg-trunk-landing/.green-alarm-proj"
+  sweep >/dev/null
+  grep -q "trunk-moved-proj-${old:0:12}-${new:0:12}" "$HOME_D/state/.wake-queue" || fail "idle rewind must alarm"
+  lane rewind three rewind.txt
+  sweep >/dev/null
+  out=$(cat "$HOME_D"/data/jg-trunk-landing/rewind.*.state)
+  assert_contains "$out" 'something else moved it' 'rewind must alarm'
+  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$old" ] || fail "rewind must not change the record"
+  world auto-release
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  old=$(tip); lane released one release.txt; trunk land released >/dev/null 2>&1 || fail "released lane must land"
+  new=$(tip); printf '%s\n' "$old" > "$HOME_D/state/trunk-tip-proj"
+  printf '%s\n' "$new" > "$HOME_D/state/trunk-released-proj"
+  sweep >/dev/null
+  [ "$(cat "$HOME_D/state/trunk-tip-proj")" = "$new" ] || fail "released forward tip must be adopted"
+  grep -q "^proj	$old	$new	[0-9]*	forward	0	-	" "$HOME_D/data/trunk-adoptions.tsv" || fail "released adoption must be recorded"
+  pass 'landing adopts forward and released tips and refuses a rewind'
+}
+
 test_adopt_tip_takes_a_forward_move_and_refuses_an_unexplained_one_a_worker_and_any_flag() {
   local out stray
   world adopt-b
@@ -323,7 +358,7 @@ test_every_unsafe_landing_refuses() {
   JG_TRUNK_WRITER=1 plain_git -C "$PROJ" branch -f trunk "$(git -C "$PROJ" rev-parse trunk~1)" 2>/dev/null && fail "even the lander's own writer must not rewind the trunk"
   JG_TRUNK_WRITER=1 plain_git -C "$PROJ" branch -D trunk 2>/dev/null && fail "a trunk must never be deleted"
   [ "$(tip)" = "$old" ] || fail "a refused write must leave the trunk where it was"
-  printf '%s\n' "$(git -C "$PROJ" rev-parse trunk~1)" > "$HOME_D/state/trunk-tip-proj"
+  printf '%s\n' "$(git -C "$PROJ" rev-parse fm/t2)" > "$HOME_D/state/trunk-tip-proj"
   refused 'a trunk whose record does not match' t2 'something else moved it'
   printf '%s\n' "$old" > "$HOME_D/state/trunk-tip-proj"
   pass 'every unsafe landing refuses and leaves the trunk where it was'
@@ -630,4 +665,5 @@ test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried
 test_a_refusal_reaches_the_lanes_worker_and_never_sits_silent
 test_adopt_tip_ends_a_moved_trunk_with_a_record_and_loses_no_landed_commit
 test_adopt_tip_takes_a_forward_move_and_refuses_an_unexplained_one_a_worker_and_any_flag
+test_landing_adopts_forward_and_refuses_rewind
 printf 'jg-trunk: ok\n'

@@ -107,7 +107,7 @@ if [ "$1" = runbatch ]; then
   for arg in "$@"; do [[ ${arg%%@*} =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && ${arg#*@} =~ ^[0-9a-f]{40,64}$ ]] || exit 2; done
   trap 'for arg in $locked; do jg_lock_release "$STATE/.trunk-run-${arg%%@*}-${arg#*@}.lock"; done' EXIT
   for arg in "$@"; do
-    jg_lock_try_acquire "$STATE/.trunk-run-${arg%%@*}-${arg#*@}.lock" || { for arg in "$@"; do rm -f -- "$MEM/${arg%%@*}.${arg#*@}.state"; done; exit 0; }
+    jg_lock_try_acquire "$STATE/.trunk-run-${arg%%@*}-${arg#*@}.lock" || { for cleanup_arg in "$@"; do rm -f -- "$MEM/${cleanup_arg%%@*}.${cleanup_arg#*@}.state"; done; exit 0; }
     locked="$locked $arg"
   done
   for arg in "$@"; do printf 'running %s %s\n' "$(date +%s)" "$$" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
@@ -229,6 +229,7 @@ for tip in "$STATE"/trunk-tip-*; do
   [ -d "$proj" ] && [ "$(local_trunk "$proj")" = yes ] || continue
   [ ! -e "$MEM/.green-alarm-$pn" ] || [ -n "$(find "$MEM/.green-alarm-$pn" -mmin +0 2>/dev/null)" ] || continue
   : > "$MEM/.green-alarm-$pn"
+  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" reconcile "$proj" >/dev/null 2>&1 || :
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" green-alarm "$proj" >/dev/null 2>&1 || :
 done
 # Under a go-live waiver every tick starts the batched live step (detached, so it never holds a landing back).
