@@ -1033,11 +1033,13 @@ test_a_slow_scan_reports_the_wake_it_found() {
   done
   printf '%s\n' "$TRUST" > "$m/panes/3"
   slow_panes "$m" 2.5
+  # A healthy predecessor lets the next scan publish liveness mid-scan.
+  touch "$m/state/.last-watcher-beat"
   PANES='1 2 3' cycle "$m"
   [ -e "$m/progress-before-completion" ] || fail "the slow scan never published progress before completion"
   grep -q '^stale: fake:3 (permission prompt' "$m/events" \
     || fail "a wake found on the last pane of a slow scan was lost: $(cat "$m/events")"
-  pass "a cycle waits for the scan that finds its wake, however slow the runner is"
+  pass "slow scan after a healthy watcher handoff delivered the wake from last pane 3: $(grep -m1 '^stale: fake:3 (permission prompt' "$m/events")"
 }
 
 test_question_and_quota_ride_the_chain_whatever_the_terminal_says() {
