@@ -1785,6 +1785,10 @@ families_for_changed_path() {
       # documentation no other suite reads, so it selects that test alone.
       printf '%s\n' "__script__:jg-verify-suites-layout.test.sh"
       ;;
+    .agents/skills/task-dispatch/SKILL.md)
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' "__script__:jg-agents-md-floor.test.sh"
+      ;;
     .agents/skills/*/SKILL.md|.agents/skills/done-done-verify-suites/features/*.md)
       # The verify skill's feature map is documentation the skill indexes, so it
       # selects the same contract family as the skill itself.

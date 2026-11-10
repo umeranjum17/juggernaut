@@ -467,6 +467,24 @@ test_a_changed_fleet_homes_library_selects_the_move_test() {
   pass 'a changed fleet-homes library selects the fleet move test'
 }
 
+test_a_changed_dispatch_skill_runs_the_floor_test() {
+  local d=$TMP_ROOT/select-dispatch out
+  select_fixture "$d"
+  cp "$ROOT/bin/jg-timeout-lib.sh" "$d/bin/"
+  cp "$ROOT/tests/git-config-helpers.sh" "$d/tests/"
+  mkdir -p "$d/.agents/skills/task-dispatch"
+  printf 'original\n' >"$d/.agents/skills/task-dispatch/SKILL.md"
+  printf 'echo floor failure; exit 1\n' >"$d/tests/jg-agents-md-floor.test.sh"
+  git -C "$d" add .agents tests
+  git -C "$d" -c user.email=t@t -c user.name=t commit -qm dispatch
+  printf 'changed\n' >>"$d/.agents/skills/task-dispatch/SKILL.md"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "dispatch selection refused: $out"
+  assert_contains "$out" 'tests/jg-agents-md-floor.test.sh' 'a dispatch change must select the floor test'
+  out=$(cd "$d" && bash bin/jg-test-run.sh --changed --base HEAD 2>&1) && fail "a failing floor test passed the gate: $out"
+  assert_contains "$out" 'floor failure' 'the selected floor failure must be reported'
+  pass 'a dispatch skill change runs the floor test and rejects its failure'
+}
+
 test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
 test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time
@@ -482,5 +500,6 @@ test_a_deleted_journey_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it
 test_a_changed_fleet_homes_library_selects_the_move_test
+test_a_changed_dispatch_skill_runs_the_floor_test
 
 printf 'all %s\n' 'jg-test-run limit tests passed'
