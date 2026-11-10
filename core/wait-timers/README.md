@@ -1,31 +1,8 @@
 # wait-timers
 
-The waiting-state timers — owner-alert and escalation timers for lanes that
-declared a wait — moved **verbatim** out of the supervising fork into this
-feature repository. Nothing watches from here yet: the live watcher keeps
-sourcing the fork's `bin/jg-wait-timers-lib.sh`, and the fork-side hook that
-will source this directory instead lands in a later PR. Until that swap this
-directory is dormant, and every moved byte below is identical to the fork copy
-the live watcher runs today.
-
-Step A of the fork exit: the library runs from this directory. Its sibling
-libraries (`jg-parent-channel-lib.sh`, `jg-timeout-lib.sh`) are read from the
-fork's `bin/` (`$SCRIPT_DIR`, else `$JG_PUSH_TRANSITION_LIB_DIR`, else
-`$JG_HOME/bin`). The library body is otherwise identical to the fork copy.
-
-## Step-B hook lines (fork)
-
-- `bin/jg-watch.sh` and `bin/jg-push-transition-lib.sh`: replace the sourcing of
-  the fork's `jg-wait-timers-lib.sh` with
-  `[ ! -r "${JG_ADDONS_DIR:-$JG_HOME/projects/juggernaut-addons}/wait-timers/bin/jg-wait-timers-lib.sh" ] || . "${JG_ADDONS_DIR:-$JG_HOME/projects/juggernaut-addons}/wait-timers/bin/jg-wait-timers-lib.sh"`.
-- Tick: `if declare -F jg_wait_timers_tick >/dev/null; then jg_wait_timers_tick || { echo "watcher: waiting-state timer check failed" >&2; exit 1; }; fi`.
-- Push: `if [ -n "$task" ] && declare -F jg_wait_timer_push_delivered >/dev/null; then jg_wait_timer_push_delivered "$task" "$window" || exit 1; fi`.
-
-`tests/wait-timers-hook-e2e.sh` (set `JG_TEST_FORK` to a Juggernaut checkout)
-uses the fork's post-step-B hook lines unchanged, copies this feature's moved
-`tests/jg-wait-timers.test.sh` journey into a private fork copy, and runs it with
-this library installed; it also checks that the optional hooks are no-ops when
-the feature is absent.
+The live watcher sources this timer library and calls it on each poll.
+The escalation workflow delivers the first owner wake.
+A placeholder-date pause is rechecked every 30 minutes; a real future deadline is honoured.
 
 ## Layout
 

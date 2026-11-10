@@ -58,6 +58,8 @@ _JG_WAIT_TIMER_DIR="${SCRIPT_DIR:-${JG_PUSH_TRANSITION_LIB_DIR:-$JG_HOME/bin}}"
 # The known next steps the ladder takes itself live beside this file.
 # shellcheck source=core/wait-timers/bin/jg-wait-actions-lib.sh
 . "${BASH_SOURCE[0]%/*}/jg-wait-actions-lib.sh"
+# shellcheck source=core/wait-timers/bin/jg-wait-policy-lib.sh
+. "${BASH_SOURCE[0]%/*}/jg-wait-policy-lib.sh"
 
 jg_wait_timer_save() {  # <record> <signature> <since> <owner> <parent> <key> <misses> [card] [last]
   local file=$1 temp="${1%/*}/.${1##*/}.tmp.$$"
@@ -538,7 +540,7 @@ jg_wait_timers_tick() {
   silence=$(printf '%s\n' "$numbers" | awk -F '\t' '$1 == "silence" { print $2 }')
   local meta task backend window session native sessions='|' blocked='|' unknown='|' rows actor=Main lead=''
   local dir="$STATE/.waiting-timers" now record declaration verb signature old since owner parent key misses age reason until bound lapse rc
-  local pause_key dkey src source card last wsrc fresh session_id fired every level pending='' hop hopstart ceiling fp forced deadline acts
+  local wait_state pause_key dkey src source card last wsrc fresh session_id fired every level pending='' hop hopstart ceiling fp forced deadline acts
   for native in "$alert" "$paused_alert" "$escalate" "$card_secs" "$interval"; do
     case "$native" in ''|*[!0-9]*|0* ) echo "waiting timers: thresholds must be positive decimal seconds" >&2; return 1 ;; esac
     [ "${#native}" -le 9 ] || { echo "waiting timers: threshold exceeds nine digits" >&2; return 1; }
@@ -665,7 +667,11 @@ EOF
       [ -n "$declaration" ] || declaration=$(status_declared_wait_line "$STATE/$task.status")
       status_is_paused "$declaration" || case "$declaration" in blocked*|needs-decision*) ;; *) declaration='' ;; esac
     fi
-    if status_is_paused "$declaration" && until=$(status_paused_until "$declaration") && [ "$now" -lt "$until" ]; then
+    wait_state=''
+    if status_is_paused "$declaration"; then
+      wait_state=$(jg_wait_machine_state "$_JG_WAIT_TIMER_DIR" "$task") || return 1
+    fi
+    if [ "$wait_state" != paused-no-date ] && status_is_paused "$declaration" && until=$(status_paused_until "$declaration") && [ "$now" -lt "$until" ]; then
       declaration=''
     fi
     # A captain hold waits on the captain, so a held lane never arms an episode.
@@ -746,6 +752,7 @@ EOF
     # rides the owner stamp the definition wrote.
     every=$interval
     if status_is_paused "$declaration"; then every=$paused_alert; fi
+    [ "$wait_state" != paused-no-date ] || every=$JG_WAIT_PLACEHOLDER_SECS
     # A stuck state with a row in the owner table (jg-wait-actions-lib.sh) gets
     # its owner's steps from the ladder, each in the place of the rung due now.
     # A step stamps the owner time, so the next rung times from it; the row's
@@ -805,6 +812,7 @@ EOF
     # Reading or acknowledging a wake is not an unblock. An unresolved blocker
     # must ring at every due recheck until its source clears, even unchanged.
     status_is_paused "$declaration" || forced=1
+    [ "$wait_state" != paused-no-date ] || forced=1
     last=$now
     jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
     # Expected pauses keep the change gate; unresolved waits always re-fire.

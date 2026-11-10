@@ -57,6 +57,8 @@ ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 JG_HOME=${JG_HOME:-${JG_ROOT_OVERRIDE:-$ROOT}}
 STATE=${JG_STATE_OVERRIDE:-$JG_HOME/state}
 CONFIG=${JG_CONFIG_OVERRIDE:-$JG_HOME/config}
+# shellcheck source=core/wait-timers/bin/jg-wait-policy-lib.sh
+. "$ROOT/core/wait-timers/bin/jg-wait-policy-lib.sh"
 
 die() { printf 'jg-escalation-workflows: %s\n' "$*" >&2; exit 2; }
 say() { printf '%s\n' "$*" >&2; }
@@ -134,7 +136,7 @@ ladder_rung_secs() {  # <wait|pause> <rung>
 # ---------------------------------------------------------------------------
 wf_facts() {  # <task>
   local task=$1 meta="$STATE/$1.meta" window decl='' wsrc='' dkey='' rows
-  local until name rule record old verb native fresh
+  local until name rule record old verb native fresh wait_state
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
   window=$(jg_backend_target_of_meta "$meta")
   fresh=$(( ${POLL:-15} * 3 + 30 ))
@@ -171,7 +173,11 @@ EOF
       esac
     fi
   fi
-  if status_is_paused "$decl" && until=$(status_paused_until "$decl") && [ "$WF_NOW" -lt "$until" ]; then
+  wait_state=''
+  if status_is_paused "$decl"; then
+    wait_state=$(jg_wait_machine_state "$SCRIPT_DIR" "$task") || return 1
+  fi
+  if [ "$wait_state" != paused-no-date ] && status_is_paused "$decl" && until=$(status_paused_until "$decl") && [ "$WF_NOW" -lt "$until" ]; then
     decl=''
   fi
   if [ -n "$decl" ] && declare -F task_captain_call_open >/dev/null && task_captain_call_open "$task"; then
@@ -299,7 +305,7 @@ opt_envelope() {  # <task> <verb> <since>
 
 cmd_tick() {
   local dir="$STATE/.waiting-timers" now record task sig since owner key
-  local wait_secs pause_secs class _src window decl verb source rungsecs reason
+  local wait_secs pause_secs class _src window decl verb source rungsecs reason wait_state
   local _sig _owner _parent misses _card _last rows name rule plan kind a b c owner_wait='' owner_pause=''
   [ -d "$dir" ] || return 0
   if opt_available; then
@@ -359,6 +365,10 @@ EOF
       source=$(printf '%s' "$decl" | tr '\t\n' '  ' | cut -c1-160)
       rungsecs=$wait_secs
       [ "$class" != pause ] || rungsecs=$pause_secs
+      if [ "$class" = pause ]; then
+        wait_state=$(jg_wait_machine_state "$SCRIPT_DIR" "$task") || return 1
+        [ "$wait_state" != paused-no-date ] || rungsecs=$JG_WAIT_PLACEHOLDER_SECS
+      fi
     else
       # A lane the runtime reported blocked has no recorded declaration this fact
       # layer can read (the definition names that source `herdr-blocked`); its
