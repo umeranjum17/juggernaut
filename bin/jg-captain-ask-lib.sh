@@ -74,11 +74,19 @@ guard_captain_ask_hold() {  # <id>
 }
 
 # Build approval. A ship may be built for a [captain-ask] ticket, or a ticket marked
-# `born-from: recon|plan`, only when its body carries `approved-by-captain: <ref> sig=<hmac>`.
-# Only captain_ask_approval_line writes one: bin/jg-captain-hold.sh answer (the captain's
-# recorded answer) and bin/jg-inbox.sh approve (his own note) call it. The sig is an HMAC over
-# the ticket id and ref under state/captain-approval.key (mode 0600, made on first write), so
-# a hand-written line, or one copied from another ticket, never verifies.
+# `born-from: recon|plan`, only on one record of the captain's yes; no second record is written
+# to confirm it (decision D1). captain_ask_build_basis names the record a ticket rests on:
+#   1. `approved-by-captain: <ref> sig=<hmac>` in its body. Only captain_ask_approval_line writes
+#      one: bin/jg-captain-hold.sh answer (his recorded board answer) and bin/jg-inbox.sh approve
+#      (his own note) call it. The sig is an HMAC over the ticket id and ref under
+#      state/captain-approval.key (mode 0600, made on first write), so a hand-written line, or one
+#      copied from another ticket, never verifies.
+#   2. `owner-words: note:<id> "<his words>"` in its body: an order that carries the owner's own
+#      words. Note <id> must be a captain chat note (`[chat ...]`, his channel record) in this
+#      home's inbox, or in its parent's for a Squad Lead home, and its text must hold those words
+#      verbatim as whole words.
+# A `born-from:` ticket with neither rests on its `parent:` ticket's record 1 or 2: a slice of a
+# report starts on the report's recorded build answer.
 captain_ask_approval_sig() {  # <ticket> <ref> <key-file>; prints the hex HMAC
   printf '%s\n%s' "$1" "$2" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(cat "$3")" -r | cut -d' ' -f1
 }
@@ -99,19 +107,83 @@ captain_ask_build_gated() {  # <show-output>; 0 when a ship build needs the capt
   printf '%s\n' "$1" | grep -Eq 'born-from: *(recon|plan)([^A-Za-z]|$)'
 }
 
-captain_ask_build_approved() {  # <ticket> <show-output>; 0 when a line in the body verifies
+captain_ask_approved_ref() {  # <ticket> <show-output>; prints the ref of the first line that verifies
   local key="${STATE:?}/captain-approval.key" ref sig
   [ -s "$key" ] || return 1
   while read -r ref sig; do
-    [ -n "$ref" ] && [ "$sig" = "$(captain_ask_approval_sig "$1" "$ref" "$key")" ] && return 0
+    [ -n "$ref" ] && [ "$sig" = "$(captain_ask_approval_sig "$1" "$ref" "$key")" ] && { printf '%s\n' "$ref"; return 0; }
   done < <(printf '%s\n' "$2" | grep -Eo 'approved-by-captain: [A-Za-z0-9._:-]+ sig=[0-9a-f]{64}' | sed -E 's/^approved-by-captain: ([^ ]+) sig=/\1 /')
   return 1
 }
 
-guard_captain_ask_build() {  # <ticket> <show-output>; refuses an unapproved build
-  captain_ask_build_gated "$2" || return 0
-  captain_ask_build_approved "$1" "$2" && return 0
-  fail "$1 is a [captain-ask] or Recon/plan-born ticket with no approved-by-captain line, so no worker may be told to build it. The captain's recorded answer (bin/jg-captain-hold.sh answer) or his own note (bin/jg-inbox.sh approve <note-id> $1) writes that line; a report, a recommendation or an option pick does not"
+captain_ask_build_approved() {  # <ticket> <show-output>; 0 when a line in the body verifies
+  captain_ask_approved_ref "$1" "$2" >/dev/null
+}
+
+captain_ask_body() {  # <show-output>; prints the decoded body
+  local value
+  value=$(printf '%s\n' "$1" | sed -n 's/^  body: //p' | head -1)
+  case "$value" in \"*\") printf '%s' "$value" | jq -r . ;; *) printf '%s\n' "$value" ;; esac
+}
+
+captain_ask_chat_text() {  # <note-id>; prints the words of that captain chat note, its [chat ...] tag dropped
+  local dir file inboxes=("${STATE:?}/inbox")
+  case "$1" in ''|*[!A-Za-z0-9._-]*|*..*) return 1 ;; esac
+  if declare -F jg_squad_lead_parent_record_parse >/dev/null \
+    && jg_squad_lead_parent_record_parse "$(jg_compat_parent_marker "${JG_HOME:-}")" && [ -n "$JG_SQUAD_LEAD_PARENT_HOME" ]; then
+    inboxes+=("$JG_SQUAD_LEAD_PARENT_HOME/state/inbox")
+  fi
+  for dir in "${inboxes[@]}"; do
+    for file in "$dir/$1.note" "$dir/handled/$1.note"; do
+      [ -f "$file" ] || continue
+      # A note is its header, a `--` line, then the body jg-inbox.sh note wrote; a body
+      # that does not open with the [chat ...] tag is not his channel record and prints nothing.
+      awk 'found == 2 { print; next }
+        found == 1 { if (sub(/^\[chat [^]]*\][[:space:]]*/, "")) { found = 2; print; next } exit }
+        /^--$/ { found = 1 }' "$file"
+      return 0
+    done
+  done
+  return 1
+}
+
+captain_ask_build_basis() {  # <ticket> <show-output>; prints the record a build of it rests on
+  local ref note words text
+  if ref=$(captain_ask_approved_ref "$1" "$2"); then
+    printf 'the captain'\''s recorded approval %s\n' "$ref"
+    return 0
+  fi
+  while IFS=$'\t' read -r note words; do
+    text=$(captain_ask_chat_text "$note" | tr -s '[:space:]' ' ') && [ -n "$text" ] || continue
+    words=$(printf '%s' "$words" | tr -s '[:space:]' ' ')
+    if printf '%s\n' "$text" | grep -qFw -- "$words"; then
+      printf 'the owner'\''s words in chat note %s\n' "$note"
+      return 0
+    fi
+  done < <(captain_ask_body "$2" | sed -nE 's/^[[:space:]]*owner-words:[[:space:]]*note:([A-Za-z0-9._-]+)[[:space:]]+"(.*[^[:space:]].*)"[[:space:]]*$/\1\t\2/p')
+  return 1
+}
+
+# Reads its rows with bin/jg-backlog-transition-lib.sh's jg_backlog_row_show over $DATA, which
+# bin/jg-spawn.sh and bin/jg-send.sh source; any row it cannot read is refused, never passed.
+guard_captain_ask_build() {  # <ticket>; refuses an unapproved build, else names its record on stderr
+  local show parent='' basis
+  show=$(jg_backlog_row_show "$(jg_backlog_data_absolute "${DATA:?}")" "$1" --full) \
+    || fail "cannot read $1 to check whether a build of it needs the captain's approval: $show"
+  captain_ask_build_gated "$show" || return 0
+  if basis=$(captain_ask_build_basis "$1" "$show"); then
+    printf 'approval: %s starts on %s\n' "$1" "$basis" >&2
+    return 0
+  fi
+  if printf '%s\n' "$show" | grep -Eq 'born-from: *(recon|plan)([^A-Za-z]|$)'; then
+    parent=$(captain_ask_body "$show" | sed -nE 's/^[[:space:]]*parent:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*$/\1/p' | head -1)
+  fi
+  if [ -n "$parent" ] && [ "$parent" != "$1" ] \
+    && basis=$(captain_ask_build_basis "$parent" "$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$parent" --full)"); then
+    printf 'approval: %s starts on %s on its parent %s\n' "$1" "$basis" "$parent" >&2
+    return 0
+  fi
+  fail "$1 is a [captain-ask] or Recon/plan-born ticket with no record of the captain's yes, so no worker may be told to build it. Any one record is enough: his recorded answer (bin/jg-captain-hold.sh answer) or his note (bin/jg-inbox.sh approve <note-id> $1) writes an approved-by-captain line; an order carries his words as owner-words: note:<chat-note-id> \"<his words>\"; a Recon/plan-born slice rests on its parent: ticket's record. A report, a recommendation or an option pick is not one"
 }
 
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.
@@ -134,4 +206,7 @@ else
     jg_compat_kind() { printf "%s\n" "${1-}"; }
     jg_compat_meta_is_squad_lead() { grep -q "^kind=squad_lead\$" "${1-}" 2>/dev/null; }'
 fi
+# A Squad Lead home reads the owner's chat notes in its parent home too (captain_ask_chat_text).
+# shellcheck source=bin/jg-squad-lead-parent-lib.sh
+[ ! -r "$_jg_d/jg-squad-lead-parent-lib.sh" ] || . "$_jg_d/jg-squad-lead-parent-lib.sh"
 unset _jg_d

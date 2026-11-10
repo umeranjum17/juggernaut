@@ -3180,13 +3180,13 @@ if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
   if jg_backlog_row_probe "$DATA" "$ID"; then
     BACKLOG_ROW_STATE=$JG_BACKLOG_ROW_STATE
-    # A fresh ship for a [captain-ask] or Recon/plan-born ticket needs the captain's signed
-    # approval (bin/jg-captain-ask-lib.sh); a Recon, a lead and a relaunch are not builds.
+    # A fresh ship for a [captain-ask] or Recon/plan-born ticket needs a record of the captain's
+    # yes (bin/jg-captain-ask-lib.sh); a Recon, a lead and a relaunch are not builds.
     if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ]; then
       fail() { echo "error: spawn refused: $*" >&2; exit 1; }
       # shellcheck source=bin/jg-captain-ask-lib.sh
       . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-      guard_captain_ask_build "$ID" "$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$ID" --full)"
+      guard_captain_ask_build "$ID"
       # A decision open on this ticket or on linked work blocks the start.
       SPAWN_LINKED_STATUS=0
       SPAWN_LINKED_CALLS=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \

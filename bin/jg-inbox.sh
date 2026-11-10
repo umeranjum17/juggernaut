@@ -48,7 +48,7 @@
 # backlog state.
 # `announce` repairs the wake for an already-saved note without creating another.
 # `approve` writes the signed `approved-by-captain: note:<id>` line into the body of a ticket,
-# which bin/jg-spawn.sh and bin/jg-send.sh require before a ship is built for a [captain-ask]
+# one record bin/jg-spawn.sh and bin/jg-send.sh accept before a ship is built for a [captain-ask]
 # or Recon/plan-born ticket (bin/jg-captain-ask-lib.sh). It takes only a chat note, the
 # captain's own words, and refuses any other note.
 # A note already acknowledged (in handled/) gets no wake from `announce` or a

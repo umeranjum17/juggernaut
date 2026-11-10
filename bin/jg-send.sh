@@ -877,7 +877,7 @@ else
     exit 1
   fi
   # An order that names a [captain-ask] or Recon/plan-born ticket is a build order unless it
-  # says kind=recon; it needs the captain's signed approval (bin/jg-captain-ask-lib.sh).
+  # says kind=recon; it needs a record of the captain's yes (bin/jg-captain-ask-lib.sh).
   if [ -n "$order_route_tag" ] && ! [[ "$MESSAGE" =~ (^|[[:space:]])kind=(recon|scout)([[:space:]]|$) ]] &&
     [[ "$MESSAGE" =~ (^|[[:space:]])ticket=([A-Za-z0-9._-]+)([[:space:]]|$) ]]; then
     order_ticket=${BASH_REMATCH[2]}
@@ -890,7 +890,7 @@ else
       fail() { echo "error: [$order_route_tag] steer not sent: $*" >&2; exit 1; }
       # shellcheck source=bin/jg-captain-ask-lib.sh
       . "$SCRIPT_DIR/jg-captain-ask-lib.sh"
-      guard_captain_ask_build "$order_ticket" "$(jg_backlog_row_show "$(jg_backlog_data_absolute "$DATA")" "$order_ticket" --full)"
+      guard_captain_ask_build "$order_ticket"
     fi
   fi
   if [ "$TARGET_BACKEND" = remote ]; then

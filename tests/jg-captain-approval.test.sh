@@ -3,6 +3,7 @@
 # Real bin/jg-spawn.sh, bin/jg-send.sh, bin/jg-captain-hold.sh and bin/jg-inbox.sh over a fixture home with a
 # Beads backlog; only the terminal, the worktree tool and the model are stand-ins, so a spawn that passes
 # the gate is the one that launches and writes its task record.
+# The gate they share is bin/jg-captain-ask-lib.sh; this test is its proof.
 #
 # T1 a ship spawn for a [captain-ask] ticket, or one born from a Recon, is refused and leaves no task record.
 # T2 a plain ticket spawns.
@@ -12,6 +13,12 @@
 #    steer passes after the answer.
 # T6 bin/jg-inbox.sh approve writes the line from a captain chat note, and refuses any other note.
 # T7 a Recon spawn for a gated ticket stays allowed.
+# Decision D1: one record of the owner's yes starts the build, and the start names that record.
+# T8 an order whose ticket carries the owner's words from his chat note spawns with no approval line;
+#    words not in the note, a part of a word, the note's [chat] tag and a note that is not his chat refuse.
+# T9 an [order] steer in a Squad Lead home rests on the owner's chat note in its parent home, and only there.
+# T10 a plan-born slice of a report starts on the report's recorded answer; an unanswered report, or a
+#    [captain-ask] ticket that only names an answered parent, stays refused.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -176,3 +183,59 @@ out=$(spawn "$gated" scout); rc=$?
 expect_code 0 "$rc" "T7 a Recon spawn must stay allowed: $out"
 assert_grep 'kind=scout' "$HOME_DIR/state/$gated.meta" "T7 the Recon left no scout task record"
 pass "T7 a Recon spawn for a gated ticket is allowed"
+
+# T8: case 1 of D1, an order carrying the owner's words from his channel record.
+order_out=$(inbox note $'[chat telegram 42:7]\nBuild the retry policy now, with no second approval.')
+order_note=$(printf '%s\n' "$order_out" | grep -oE '[0-9]{6,}-[A-Za-z0-9]+' | head -1)
+[ -n "$order_note" ] || fail "T8 could not capture the owner's chat note: $order_out"
+order_ticket() {  # <quote> [note]; a [captain-ask] order ticket quoting the note; sets TID
+  ticket "[captain-ask] retry policy order" "$(printf '[order] from the owner.\nowner-words: note:%s "%s"' "${2:-$order_note}" "$1")"
+  scaffold "$TID" --mode direct-PR || fail "T8 could not scaffold $TID"
+}
+for bad in "Build the cache now" "uild the retry" "telegram 42" "no second approval.|$plain_id"; do
+  order_ticket "${bad%%|*}" "$(case $bad in *'|'*) printf '%s' "${bad##*|}" ;; esac)"
+  out=$(spawn "$TID" ship); rc=$?
+  expect_code 1 "$rc" "T8 an order quoting '$bad' should be refused: $out"
+  refused_clean "$TID"
+done
+order_ticket "Build the retry policy now"; order=$TID
+out=$(spawn "$order" ship); rc=$?
+expect_code 0 "$rc" "T8 an order with the owner's words should spawn: $out"
+assert_contains "$out" "approval: $order starts on the owner's words in chat note $order_note" "T8 the start does not name the note"
+assert_grep 'kind=ship' "$HOME_DIR/state/$order.meta" "T8 the order left no ship task record"
+case "$(body_of "$order")" in *'approved-by-captain:'*) fail "T8 the order wrote a second approval record" ;; esac
+pass "T8 an order with the owner's own chat words starts on that note alone; other words and notes are refused"
+
+# T9: the same order relayed to a Squad Lead home, whose owner's chat notes live in its parent home.
+jg_test_backlog "$S" add jg-sg2 "[captain-ask] relayed order" --priority 0 --kind ship --repo demo \
+  --body "$(printf '[order] relayed from the owner.\nowner-words: note:%s "with no second approval"' "$order_note")" >/dev/null 2>&1 \
+  || fail "T9 could not file the relayed order"
+out=$(send "[order] ticket=jg-sg2 build the relayed order"); rc=$?
+expect_code 1 "$rc" "T9 a lead home with no parent must not find the note: $out"
+printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$HOME_DIR" > "$S/.jg-squad-lead-parent"
+out=$(send "[order] ticket=jg-sg2 build the relayed order"); rc=$?
+expect_code 0 "$rc" "T9 the relayed order should pass on the parent's chat note: $out"
+assert_contains "$out" "approval: jg-sg2 starts on the owner's words in chat note $order_note" "T9 the steer does not name the note"
+pass "T9 a Squad Lead home reads the owner's chat note in its parent home"
+
+# T10: case 2 of D1, a slice of a report whose build answer is recorded.
+ticket "[captain-ask] plan v2: build it?"; report=$TID
+captain "$HOME_DIR" hold "$report" --reason "build the plan?" >/dev/null 2>&1 || fail "T10 hold failed"
+captain "$HOME_DIR" answer "$report" --decision-file "$W/decision.txt" --release >/dev/null 2>&1 || fail "T10 answer failed"
+ticket "[captain-ask] plan v3: build it?"; unanswered=$TID
+ticket "[feature] slice of an unanswered report" "$(printf 'born-from: plan\nparent: %s' "$unanswered")"; orphan=$TID
+ticket "[captain-ask] an ask that names a parent" "$(printf 'parent: %s' "$report")"; ask=$TID
+for t in "$orphan" "$ask"; do
+  scaffold "$t" --mode direct-PR || fail "T10 could not scaffold $t"
+  out=$(spawn "$t" ship); rc=$?
+  expect_code 1 "$rc" "T10 $t should be refused: $out"
+  refused_clean "$t"
+done
+ticket "[feature] slice S1 of the plan" "$(printf 'Slice S1 of the plan.\nborn-from: plan\nparent: %s' "$report")"; slice=$TID
+scaffold "$slice" --mode direct-PR || fail "T10 could not scaffold the slice"
+out=$(spawn "$slice" ship); rc=$?
+expect_code 0 "$rc" "T10 a slice of an answered report should spawn: $out"
+assert_contains "$out" "approval: $slice starts on the captain's recorded approval answer:" "T10 the start does not name the answer"
+assert_contains "$out" "on its parent $report" "T10 the start does not name the report"
+assert_grep 'kind=ship' "$HOME_DIR/state/$slice.meta" "T10 the slice left no ship task record"
+pass "T10 a plan slice starts on its report's recorded answer; an unanswered report or a mere parent line does not"
