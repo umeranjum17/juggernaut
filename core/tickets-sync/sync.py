@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from task_rows import toon_rows
 from lane import stage as lane_stage, assignee as lane_assignee
 import cleanup
+import identity
 import legacy
 import reconcile
 import release
@@ -37,7 +38,10 @@ for _jg_old, _jg_val in list(os.environ.items()):
 def run(args, env=None, cwd=None, missing=False):
     r = sp.run(args, env=env, cwd=cwd, text=True, capture_output=True, timeout=60)
     if r.returncode and not (missing and '\ncode: NOT_FOUND\n' in '\n' + r.stdout + r.stderr + '\n'):
-        raise RuntimeError(f'{args[0]}: {r.stderr.strip() or r.stdout.strip()}')
+        # An axi tool prints its refusal on stdout and only warnings on stderr (sign-off names every answer whose card
+        # left the board), so the refusal is the cause; a tool with no refusal line has it on stderr.
+        refusal = re.search(r'^error: .*$', r.stdout, re.M)
+        raise RuntimeError(f'{args[0]}: {refusal[0] if refusal else r.stderr.strip() or r.stdout.strip()}')
     return '{}' if r.returncode else r.stdout
 
 # What one ticket's publish can fail with; a bad record is skipped, never fatal to the pass.
@@ -81,9 +85,6 @@ def register_icon(board, project, registry):
     except RuntimeError as error: return str(error)[:120]
     registry[project.lower()] = digest
     return None
-
-def ticket_id(home, item):
-    return "jg-" + hashlib.sha256(f"{home}/{item}".encode()).hexdigest()[:32]
 
 def feed_path(board):
     # sign-off keeps its ticket feed beside the board: decisions.json -> decisions.tickets.jsonl.
@@ -163,6 +164,9 @@ def sync():
     started = time.monotonic()
     budget = float(os.environ.get('JG_TICKETS_SYNC_BUDGET_SECS', '20'))
     home = Path(os.environ['JG_HOME']).resolve()
+    # The parent's poll reads this lead home with every other registered one; a second writer here published its rows
+    # as main/<item> twins and judged the whole shared board from one home.
+    if identity.is_lead(home): return
     board = Path((home / 'config/fleet-board').read_text().strip())
     if not board.is_absolute(): board = home / board
     if options.audit: print(run(['sign-off-axi', 'ticket', str(board), '--json'])); return
@@ -222,6 +226,10 @@ def sync():
         # The check names a ticket no home's work accounts for only after one walk has read every home, so the rows its
         # earlier passes of that walk saw travel in its cursor.
         seen = set(resume.get('seen', []))
+        # One row publishes a ticket per walk. A store can hold two rows of one piece of work (a row filed again under a
+        # new name, a home whose store took a copy of main's rows at the Beads cut), and both would write its ticket in
+        # turn; the first row of the walk, main first and then registry order, owns it, so its cursor carries the claims.
+        claims = dict(resume.get('claims', {}))
         skipped_ids = set()
         def publish(tid, desired, derived=(), where='', reason='', description=''):
             # One bad record never stops the pass: name it and the home and item behind it once, then go on.
@@ -318,7 +326,7 @@ def sync():
             name, sep, item = options.close.partition('/')
             if name not in homes or not sep or not item: raise RuntimeError('--close requires a registered HOME/ITEM')
 
-        upkeep_id = ticket_id('fleet', ':upkeep')
+        upkeep_id = identity.ticket_id('fleet', ':upkeep')
         # A fleet-wide row owns nothing in the registry, so it names the home that publishes it rather than going blank,
         # and it is no lane's work: no worker words on a grouping row.
         fleet_assignee = lane_assignee(home, ':upkeep', 'main', ran=True)
@@ -348,7 +356,8 @@ def sync():
             for r in tasks:
                 parent = r['parent'] if r['parent'] == 'upkeep' else by_id[r['parent']]['item'] if r['parent'] in by_id else ''
                 if parent: r['body'] += f"\nparent: {parent}"
-            tasks = {r['item']: dict(r, id=r['item']) for r in tasks}
+            tasks = {r['item']: dict(r, id=r['item'], store_id=r['id']) for r in tasks}
+            def ticket(item): return identity.ticket_id(name, item, tasks[item]['store_id'])
             if options.close and name == options.close.partition('/')[0]:
                 if options.close.partition('/')[2] not in tasks: raise RuntimeError('--close item not found: ' + options.close)
                 closures[options.close] = options.reason
@@ -372,11 +381,11 @@ def sync():
                 # A pass always handles the row it resumed on: when the reads before the walk outlast the budget under
                 # load, a pass that stops first would save the same cursor again and the walk would never move.
                 if not options.reconcile and walked and time.monotonic() - started > budget:
-                    save(cursor, dict(home=name, task=item, required=list(required), **({'seen': sorted(seen)} if options.check else {})))
+                    save(cursor, dict(home=name, task=item, required=list(required), claims=claims, **({'seen': sorted(seen)} if options.check else {})))
                     note(f'tickets-sync: backfill continuing on next watcher check; {changed} changed')
                     return
                 walked = True
-                tid = ticket_id(name, r['id'])
+                tid = ticket(item)
                 if r['state'] == 'done' and r.get('closed', '-') < cutoff and tid not in ledger and tid not in existing and item not in required: continue
                 body = r.get('body', '')
                 def field(key):
@@ -411,14 +420,15 @@ def sync():
                         save(skip_file, skipped)
                         # Skips stay in icons-skipped.json only: check stdout is a Main wake.
                         if reason is None: print(f'tickets-sync: {project} icon registered')
-                if parent in tasks and ticket_id(name, parent) not in ledger:
+                if parent in tasks and ticket(parent) not in ledger:
                     required.add(parent); ids.append(parent)
-                parent_id = ticket_id(name, parent) if parent in tasks else '' if root_ask else upkeep_id
+                parent_id = ticket(parent) if parent in tasks else '' if root_ask else upkeep_id
                 desired = dict(title=title, progress=100 if done and item not in parents else 0, state='' if item in parents else 'done' if done else 'on hold' if held else 'queued' if said == 'queued' else 'in progress', pr=pr, release=release_value[:40], parent=parent_id, priority=f"P{r['priority']}" if str(r.get('priority')) in ('0', '1', '2', '3') else '', project=project, hold='yes' if held and not done else 'no', asked='yes' if root_ask else 'no', assignee=lane_assignee(source, item, name, ran=done or said != 'queued'))
                 if item not in parents:
                     desired['stage'] = stage
                     if event is not None: desired['last-event-at'] = event
                 if all(i['name'] != name or i['row']['id'] != item for i in items): items.append(dict(tid=tid, name=name, row=r, event=event, parked=name in parked, source=source, said=said, link=pr, merged=bool(prs.get(pr, {}).get('merged'))))
+                if claims.setdefault(tid, f'{name}/{item}') != f'{name}/{item}': continue
                 publish(tid, desired, ('progress',) if item in parents else (), f'{name}/{item}', hold_reason, f'Stage: {said}\n\n{body.strip()}'.strip() if said != stage else body.strip())
         if options.tidy:
             print(tidy_report(items, homes, home, state, options.apply, run)); return

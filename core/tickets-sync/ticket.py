@@ -4,8 +4,9 @@
 Usage: ticket.py <task> [--stage WORD] [--state WORD] [--pr URL] [--release TEXT] [--hold-reason TEXT]
 
 JG_HOME names the home whose config/fleet-board owns this task, and the task is
-its backlog item id, published as the ticket for main/<task> (the sync's own
-home name, bin/jg-watch.sh's check environment included).
+its backlog item id, published as the ticket identity.py names for it in this
+home: main/<task> in main, <lead>/<task> in a lead home, and the ticket itself
+for a migrated row whose id is one (bin/jg-watch.sh's check environment included).
 
 Nothing is written when this home has no fleet board, when the board file is
 missing, or when the sync has not published that ticket yet: the poll owns
@@ -24,12 +25,13 @@ A hold travels with the state: sign-off refuses a ticket held for no reason, so
 releases a hold the row still carries, as the poll's completion rule does.
 """
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import subprocess as sp
 import sys
 import os
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import identity
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves here
 for _jg_old, _jg_val in list(os.environ.items()):
     if _jg_old.startswith("FM_") and "JG_" + _jg_old[3:] not in os.environ:
@@ -66,7 +68,7 @@ def main(argv):
         board = home / board
     if not board.is_file():
         return 0
-    ticket_id = 'jg-' + hashlib.sha256(f'main/{options.task}'.encode()).hexdigest()[:32]
+    ticket_id = identity.ticket_id(identity.home_name(home), options.task)
     try:
         read = sp.run(['sign-off-axi', 'ticket', str(board), '--id', ticket_id, '--json'],
                       text=True, capture_output=True, timeout=60)

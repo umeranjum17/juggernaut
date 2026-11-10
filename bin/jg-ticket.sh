@@ -9,10 +9,11 @@
 #
 # Usage: jg-ticket.sh <task-id> [--stage WORD] [--state WORD] [--pr URL] [--release TEXT] [--hold-reason TEXT]
 #        jg-ticket.sh id <task-id> [home]
-#   id         Print the ticket id this home's sync publishes for a task, so a
-#              card can name its ticket (--ticket) and the board shows it there.
-#              home names the registered home that owns the task (default main);
-#              a lead's ticket hashes <home>/<task>, as core/tickets-sync/sync.py does.
+#   id         Print the ticket id the sync publishes for a task, so a card can
+#              name its ticket (--ticket) and the board shows it there. home names
+#              the registered home that owns the task (default: this home, main
+#              or the lead its .jg-squad-lead-home names); core/tickets-sync/identity.py
+#              owns the rule.
 #   --stage    queued | building | review | merging | done
 #   --state    queued | "in progress" | "on hold" | done   (done also sets 100%)
 #   --pr       the delivered PR's full URL; "" clears the linked PRs
@@ -68,19 +69,16 @@ shift
 case "$TASK" in
   *[!A-Za-z0-9._-]*|'') echo "jg-ticket: invalid task id: $TASK" >&2; exit 2 ;;
 esac
-# The sync publishes main/<task> as `jg-<sha256 32>` (core/tickets-sync/ticket.py
-# owns that rule); id prints it without touching the board.
+# id prints the ticket the sync publishes for a task without touching the board.
 if [ "$TASK" = id ] && [ "$#" -ge 1 ] && [ "$#" -le 2 ]; then
   TASK=${1:-}
-  TICKET_HOME=${2:-main}
   case "$TASK" in
     ''|*[!A-Za-z0-9._-]*) echo "jg-ticket: invalid task id: $TASK" >&2; exit 2 ;;
   esac
-  case "$TICKET_HOME" in
-    ''|*[!A-Za-z0-9._-]*) echo "jg-ticket: invalid home name: $TICKET_HOME" >&2; exit 2 ;;
+  case "${2-x}" in
+    ''|*[!A-Za-z0-9._-]*) echo "jg-ticket: invalid home name: ${2-}" >&2; exit 2 ;;
   esac
-  printf 'jg-%s\n' "$(printf '%s/%s' "$TICKET_HOME" "$TASK" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-32)"
-  exit 0
+  JG_HOME=$JG_HOME exec python3 "$JG_ROOT/core/tickets-sync/identity.py" "$@"
 fi
 [ "$#" -eq 0 ] || case "$1" in
   --stage|--state|--pr|--release|--hold-reason) ;;
