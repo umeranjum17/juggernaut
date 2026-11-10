@@ -327,15 +327,15 @@ for meta in "$STATE"/*.meta; do
     retry*) verdict_due "$st" || continue ;;
     wait*) [ -z "$QUIET" ] || verdict_due "$st" || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac
-  # <epoch done> <task> <head> <project> <1, or 0 for a lane marked `land-next`>
-  cands="$cands$at $id $head $(basename "$proj") $([ -e "$STATE/$id.land-next" ] && echo 0 || echo 1)"$'\n'
+  # <epoch done> <task> <head> <project> <1, or 0 for a lane marked `land-next`> <1, or 0 for a lane once returned for a conflict>
+  cands="$cands$at $id $head $(basename "$proj") $([ -e "$STATE/$id.land-next" ] && echo 0 || echo 1) $(verdict_returned "$id" && echo 0 || echo 1)"$'\n'
 done
 # A flush request (`jg-trunk.sh flush`) ends once its project has no ready lane left.
 for f in "$STATE"/trunk-flush-*; do
   [ -f "$f" ] || continue
   printf '%s' "$cands" | awk -v p="${f##*/trunk-flush-}" '$4 == p { f = 1 } END { exit !f }' || rm -f -- "$f"
 done
-# Oldest done first. A landing already running holds the rest back; its end starts the next one (`next`).
+# Oldest done first, a lane once returned for a conflict ahead of the rest. A landing already running holds the rest back; its end starts the next one (`next`).
 [ -n "$cands" ] || exit 0
 if ! mkdir "$MEM/.start" 2>/dev/null; then
   [ -n "$(find "$MEM/.start" -mmin +1 2>/dev/null)" ] || exit 0
@@ -348,7 +348,7 @@ if ! busy; then
   now=$(date +%s); ready=(); id=; head=
   while read -r pn; do
     [ -n "$pn" ] || continue
-    list=$(printf '%s' "$cands" | awk -v p="$pn" '$4 == p' | sort -k5,5n -k1,1n -k2,2)
+    list=$(printf '%s' "$cands" | awk -v p="$pn" '$4 == p' | sort -k5,5n -k6,6n -k1,1n -k2,2)
     oldest=$(printf '%s\n' "$list" | sort -n -k1,1 | head -n 1 | cut -d' ' -f1)
     at_ready=$(polnum flush-at-ready "$pn" 3); after=$(polnum flush-after-minutes "$pn" 20)
     if [ -e "$STATE/trunk-flush-$pn" ] || [ "$(printf '%s\n' "$list" | grep -c .)" -ge "$at_ready" ] || [ $(( now - ${oldest:-0} )) -ge $(( after * 60 )) ]; then :; else

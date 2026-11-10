@@ -71,6 +71,16 @@ verdict_holds() {  # <id> <head> <state line> <project-name>
   [ -n "$tip" ] && [ "$tip" = "$(verdict_tip "$4")" ]
 }
 
+# Whether <id> was once refused for a conflict (any head): it comes back after fixing it, and lands before lanes ready earlier.
+verdict_returned() {  # <id>
+  local f
+  for f in "$MEM/$1".*.state; do
+    [ -f "$f" ] || continue
+    [[ $(cat "$f") =~ ^final.*$VERDICT_CONFLICT_RE ]] && return 0
+  done
+  return 1
+}
+
 # The reason a report and a steer are keyed on: the stored reason, less a conflict's judged commit and attempt log (rule 4).
 verdict_reason() {  # <reason>
   local r=$1
