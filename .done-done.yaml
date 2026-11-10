@@ -230,6 +230,8 @@ journeys:
     spends: "the model quota or money of each tool kit's spending journey"
   hc-backend:
     command: bash journeys/hc-backend.sh
+  landing-refusing-shims:
+    command: bash journeys/landing-refusing-shims.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
