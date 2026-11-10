@@ -5,6 +5,8 @@
 # T1 A home that cannot move is recorded as hook-failed:<reason> in data/trunk-live.tsv and the reason is
 #    printed on the live line, for a diverged, a dirty, a wrong-branch and a detached-ahead home; a clean
 #    home that lacks the commit fetches it from the trunk branch and records "live".
+# T2 A move whose ref update fails after the tree and index were already updated leaves the home clean at
+#    the old commit (not "dirty working tree" on the next run), and the next run moves it.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -99,6 +101,27 @@ test_a_clean_home_fetches_from_the_trunk_branch_and_goes_live() {
   pass 'a clean home fetches the commit from the project trunk branch and records live'
 }
 
+test_a_failed_ref_update_leaves_the_home_clean_at_the_old_commit() {
+  local old out hook
+  world refail
+  land_on_trunk three
+  old=$(git -C "$HOMEC" rev-parse HEAD)
+  hook="$HOMEC/.git/hooks/reference-transaction"
+  git -C "$HOMEC" fetch -q "$PROJ" refs/heads/trunk-v3 || fail "fixture: the home must hold the commit before the hook blocks ref updates"
+  # shellcheck disable=SC2016 # the hook body is written verbatim
+  printf '#!/bin/sh\n# git updates the tree and index before it prepares the branch ref, so failing there is the half-done move\nif [ "$1" = prepared ] && grep -q " refs/heads/"; then exit 1; fi\nexit 0\n' > "$hook"; chmod +x "$hook"
+  live_fails "fast-forward failed"
+  [ "$(git -C "$HOMEC" rev-parse HEAD)" = "$old" ] || fail "HEAD must stay at the old commit"
+  [ -z "$(git -C "$HOMEC" status --porcelain)" ] || fail "index and tree must be back at the old commit: $(git -C "$HOMEC" status --porcelain)"
+  rm -f "$hook"
+  trunk word live "$PROJ" "go" >/dev/null 2>&1
+  out=$(trunk live "$PROJ" 2>&1) || fail "the next run must move the home: $out"
+  [ "$(git -C "$HOMEC" rev-parse HEAD)" = "$C" ] || fail "the next run must reach the landed commit: $out"
+  [ -z "$(git -C "$HOMEC" status --porcelain)" ] || fail "the moved home must be clean"
+  pass 'a failed ref update rolls index and tree back to the old commit, and the next run moves the home'
+}
+
 test_a_home_that_cannot_move_says_why
+test_a_failed_ref_update_leaves_the_home_clean_at_the_old_commit
 test_a_clean_home_fetches_from_the_trunk_branch_and_goes_live
 printf 'jg-trunk-live-home: ok\n'
