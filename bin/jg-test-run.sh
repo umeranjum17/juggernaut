@@ -782,7 +782,10 @@ tests/jg-design-gate-first-draft.test.sh 1650
 tests/jg-design-gate.test.sh 812
 tests/jg-devin-signals-live-e2e.test.sh 174
 tests/jg-doorbell-missing-record.test.sh 4529
-tests/jg-escalation-chain.test.sh 1073412
+tests/jg-escalation-chain.test.sh 245000
+tests/jg-escalation-chain-backlog.test.sh 410000
+tests/jg-escalation-chain-signals.test.sh 450000
+tests/jg-escalation-chain-actions.test.sh 305000
 tests/jg-escalation-workflows.test.sh 3200
 tests/jg-fast-evals.test.sh 1136
 tests/jg-fleet-heartbeat.test.sh 3664
@@ -1521,6 +1524,10 @@ families_for_unmapped_bin() {
 families_for_changed_path() {
   local path=$1 fixture_ref
   case "$path" in
+    tests/captures/stuck-live/*)
+      # These captured terminal states are read by the signals cases.
+      printf '%s\n' __script__:jg-escalation-chain-signals.test.sh
+      ;;
     tests/jg-supervision-host.test.sh)
       # The late half sources the same fixture and test definitions.
       printf '%s\n' __script__:jg-supervision-host.test.sh
