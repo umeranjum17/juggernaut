@@ -20,6 +20,7 @@
 # T8 Only the lander moves the trunk: a hand write to it is refused by the hook the trunk installs;
 #    land records the same merged event as the local merge. A home guard (bin/jg-home-guard.sh) installed in the same
 #    repository chains the trunk guard: both still refuse, reruns and a landing change neither hook, uninstall restores it.
+# T5b A release (and the word for it) carries the last green commit while the tip is ahead of it; with no green recorded it refuses.
 # T9 The trunk is safe until its release PR lands: no write rewinds, forces or deletes it, even the lander's
 #    own; once the release merged, the next trunk version (trunk-v2) is cut from the default branch, recorded,
 #    and landed on, with the old trunk untouched; while it is open, nothing rolls over.
@@ -291,7 +292,8 @@ test_the_release_is_one_pr_from_the_trunk_on_his_word() {
   trunk land r1 >/dev/null 2>&1 || fail "r1 must land"
   relane r2 two
   trunk land r2 >/dev/null 2>&1 || fail "r2 must land"
-  out=$(trunk release "$PROJ" 2>&1) && fail "a release must refuse until the trunk is fully green"
+  out=$(trunk release "$PROJ" 2>&1) && fail "a release must refuse until a landed commit has passed the full suite"
+  assert_contains "$out" 'nothing to release' 'with no landed commit green, nothing is ready to release'
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must pass"
   out=$(trunk release "$PROJ" 2>&1) && fail "a release must refuse without the captain's word"
   assert_contains "$out" 'no recorded word from the captain to release' 'a release without his word must say so'
@@ -311,6 +313,38 @@ test_the_release_is_one_pr_from_the_trunk_on_his_word() {
   [ "$(git --git-dir="$W/origin.git" rev-parse refs/heads/trunk)" = "$(tip)" ] || fail "the open PR must carry the new commits"
   printf 'x\n' > "$HOME_D/state/trunk-red-proj"; out=$(trunk release "$PROJ" 2>&1) && fail "a red trunk must not release"
   pass 'the release is one PR from the trunk itself, on his word, with no release branch'
+}
+
+# T5b A release carries the last green commit, not the tip: landings keep moving the tip past the pin, and a release tied to
+# the tip could never go out (fric-release-last-green). The word binds to the same commit.
+test_a_release_carries_the_last_green_commit_while_the_tip_is_ahead() {
+  local out green tipc
+  world rel-green
+  lane g1 one; lane g2 two
+  trunk land g1 >/dev/null 2>&1 || fail "g1 must land"
+  green=$(tip); trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must pass at g1"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "fixture: the green pin must be g1"
+  relane g2 two; trunk land g2 >/dev/null 2>&1 || fail "g2 must land"
+  tipc=$(tip); [ "$tipc" != "$green" ] || fail "fixture: the tip must be ahead of the green pin"
+  trunk word release "$PROJ" "ship the green one" >/dev/null 2>&1 || fail "the word must record while the tip is ahead of green"
+  [ "$(cut -f1 "$HOME_D/state/trunk-word-release-proj")" = "$green" ] || fail "the release word must name the green commit, not the tip"
+  out=$(trunk release "$PROJ" 2>&1) || fail "a tip ahead of the green pin must release the green commit: $out"
+  [ "$(git --git-dir="$W/origin.git" rev-parse refs/heads/trunk)" = "$green" ] || fail "origin trunk must hold the last green commit, not the tip"
+  [ "$(tip)" = "$tipc" ] || fail "a release must leave the local trunk where it is"
+  [ "$(cat "$HOME_D/state/trunk-released-proj")" = "$green" ] || fail "the released mark must be the green commit"
+  assert_contains "$out" 'released 1 commits' 'the release must count only the commits up to the green one'
+  out=$(trunk release "$PROJ" 2>&1) && fail "a second release with no newer green commit must refuse"
+  assert_contains "$out" 'nothing to release' 'the commit after the pin waits for its own green'
+  trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must pass at g2"
+  trunk word release "$PROJ" "ship the next one" >/dev/null 2>&1 || fail "the word must record at the new green"
+  trunk release "$PROJ" >/dev/null 2>&1 || fail "the next green commit must release"
+  [ "$(git --git-dir="$W/origin.git" rev-parse refs/heads/trunk)" = "$tipc" ] || fail "a tip that is green must be pushed as before"
+  rm -f "$HOME_D/state/trunk-green-proj"
+  out=$(trunk word release "$PROJ" "no green yet" 2>&1) && fail "a word must refuse while no green commit is recorded"
+  assert_contains "$out" 'has passed the full suite yet' 'no recorded green must say so'
+  out=$(trunk release "$PROJ" 2>&1) && fail "a release must refuse while no green commit is recorded"
+  assert_contains "$out" 'has passed the full suite yet' 'a release with no green commit must say so'
+  pass 'a release carries the last green commit while the tip is ahead, a green tip is pushed as before, and no recorded green refuses'
 }
 
 test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
@@ -452,6 +486,7 @@ test_every_unsafe_landing_refuses
 test_a_seam_is_the_only_place_behaviour_changes
 test_a_landing_is_pinned_behind_until_verify_passes
 test_the_release_is_one_pr_from_the_trunk_on_his_word
+test_a_release_carries_the_last_green_commit_while_the_tip_is_ahead
 test_a_red_ci_pins_the_home_back_to_the_last_green_commit
 test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut
 test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried

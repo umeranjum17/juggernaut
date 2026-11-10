@@ -10,12 +10,12 @@
 #        jg-trunk.sh flush <project-dir>               Overwatch only: land every ready lane of the project now, in batches, whatever the threshold says
 #        jg-trunk.sh land-next <task-id>               Overwatch only: mark one ready lane so the landing check lands it at once, ahead of the queue
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the whole suite at a landed commit (default: the tip), one verify at a time and the newest wins: green moves the pin, a red it caused reverts it
-#        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out
+#        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out (both: the last green commit, never the tip)
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word (or a waiver); --home moves one lead only
 #        jg-trunk.sh autolive <project-dir>            the batched live step: under a waiver, move every home to the green pin once the trunk is quiet or the hourly cap is due
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red pins the home back to the last green one
-#        jg-trunk.sh release <project-dir>             push the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
+#        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (trunk-v2, ...) from the default branch
 #        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
@@ -1149,7 +1149,7 @@ cmd_word() {
   [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never records the captain's word"
   [ -n "$quote" ] || refuse "the captain's own words are required"
   open_project "${2-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
-  if [ "$kind" = live ]; then sha=$(cat "$STATE/trunk-green-$PN"); else sha=$(rev "refs/heads/$TRUNK"); fi
+  if [ "$kind" = live ]; then sha=$(cat "$STATE/trunk-green-$PN"); else sha=$(release_commit); fi
   put "$STATE/trunk-word-$kind-$PN" "$(printf '%s\t%s\t%s' "$sha" "$(date +%s)" "$quote")"
   row trunk-words.tsv "$PN" "$kind" "$sha" "$(date +%s)" "$quote"
   echo "word recorded: $kind ${sha:0:12} in $PN"
@@ -1326,19 +1326,29 @@ record_release_task() {  # <url>
   echo "release task: $id owns the release PR"
 }
 
+# The commit a release carries and the captain's release word names: the last one that passed the whole suite
+# (state/trunk-green-<project>), never the tip. Landings keep moving the tip past the pin, so a release tied to the tip
+# could not go out while work lands; the commits after the pin stay on the trunk for the next release.
+release_commit() {
+  local green
+  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  [ -n "$green" ] || refuse "no commit of $TRUNK has passed the full suite yet; run verify first"
+  git -C "$PROJ" merge-base --is-ancestor "$green" "refs/heads/$TRUNK" || refuse "the green commit ${green:0:12} is not on $TRUNK"
+  printf '%s\n' "$green"
+}
+
 cmd_release() {
-  local tip base n default body url prev
+  local rel base n default body url prev
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
   rollover_if_merged || true
   [ ! -e "$STATE/trunk-red-$PN" ] || refuse "$TRUNK is red; fix it before a release"
-  tip=$(rev "refs/heads/$TRUNK")
-  [ "$(cat "$STATE/trunk-green-$PN")" = "$tip" ] || refuse "$TRUNK tip ${tip:0:12} has not passed the full suite; run verify first"
-  base=$(cat "$STATE/trunk-released-$PN"); n=$(git -C "$PROJ" rev-list --count "$base..$tip")
+  rel=$(release_commit)
+  base=$(cat "$STATE/trunk-released-$PN"); n=$(git -C "$PROJ" rev-list --count "$base..$rel")
   [ "$n" -gt 0 ] || refuse "nothing to release: $TRUNK has no commits since the last release"
-  need_word release "$tip"
+  need_word release "$rel"
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
-  printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$tip" "$TRUNK" "$base" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused the batch"
-  git -C "$PROJ" push -q origin "$tip:refs/heads/$TRUNK" || die "push of $TRUNK failed (never forced)"
+  printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$rel" "$TRUNK" "$base" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused the batch"
+  git -C "$PROJ" push -q origin "$rel:refs/heads/$TRUNK" || die "push of $TRUNK failed (never forced)"
   # The release PR is the trunk itself going into the default branch: no release branch, one PR.
   # While the last release PR is still open, the push above already carried the new commits into it.
   prev=$(last_release_url)
@@ -1347,11 +1357,11 @@ cmd_release() {
   else
     body=$(mktemp); WORK=$body
     { echo "Release batch from the local $TRUNK: $n commits, one per ticket."; echo
-      git -C "$PROJ" log --reverse --format='- %h %s' "$base..$tip"; } > "$body"
+      git -C "$PROJ" log --reverse --format='- %h %s' "$base..$rel"; } > "$body"
     open_release_pr "$default" "Release: $n tickets from the local $TRUNK" "$body"; url=$REL_URL
   fi
-  put "$STATE/trunk-released-$PN" "$tip"; spend_word release
-  row trunk-releases.tsv "$PN" "$TRUNK" "$tip" "$n" "$(date +%s)" "$url"
+  put "$STATE/trunk-released-$PN" "$rel"; spend_word release
+  row trunk-releases.tsv "$PN" "$TRUNK" "$rel" "$n" "$(date +%s)" "$url"
   echo "released $n commits from $TRUNK: $url"
   record_release_task "$url"
 }
