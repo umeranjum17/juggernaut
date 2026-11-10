@@ -7,7 +7,8 @@
 # the self-describing doorbell line, and the watcher's re-ring ladder policy.
 # bin/jg-send.sh writes and rings locally, the host-local remote steer leg
 # (bin/jg-remote-squad-lead-control.sh cmd_send) writes idempotently and rings
-# on the remote host, bin/jg-watch.sh polls and re-rings, and the brief
+# on the remote host, bin/jg-watch.sh and bin/jg-delivery-tick.sh both poll and
+# re-ring through the one ladder below (jg_task_inbox_ladder), and the brief
 # scaffold (bin/jg-brief.sh) tells the worker how to read and acknowledge;
 # none of them restates the format.
 #
@@ -55,8 +56,9 @@
 # inbox. rung: the doorbell was typed (a ring that returned 0). read: the worker moved the
 # record to handled/ - the folder name is old, the move proves only a read. handled: the
 # worker ran `bin/jg-delivery.sh handled` with an evidence pointer (a status line, commit,
-# reply, task change or PR). failed: the worker refused it with a reason. Only stored and
-# rung are written here; the rest is the worker's claim and is shown as one.
+# reply, task change or PR). failed: the worker refused it with a reason. Only stored,
+# rung and ring-failed (a ring that did not land; the pointer is its exit code) are written
+# here; the rest is the worker's claim and is shown as one.
 #
 # Sequence numbers are never reused within a task: allocation scans both the
 # inbox root and handled/, so a message is processed at most once per worker
@@ -485,7 +487,11 @@ jg_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   local rc=0 dir=${3%/*}
   _jg_task_inbox_ring_attempt "$@" || rc=$?
   [ "${dir##*/}" != handled ] || dir=${dir%/*}
-  [ "$rc" -ne 0 ] || jg_task_delivery_note "$dir" "${3##*/}" rung || true
+  if [ "$rc" -eq 0 ]; then
+    jg_task_delivery_note "$dir" "${3##*/}" rung || true
+  else
+    jg_task_delivery_note "$dir" "${3##*/}" ring-failed "$rc" || true
+  fi
   return "$rc"
 }
 
@@ -705,6 +711,228 @@ jg_task_inbox_record_escalated() {  # <state-dir> <task-id> <record-path>
     [ -d "$dir" ] || return 0
     return 1
   fi
+}
+
+# ---------------------------------------------------------------------------
+# The steering-inbox ladder: ONE walk of one task's unread inbox. Two callers
+# run it - the watcher's window loop (bin/jg-watch.sh) and the delivery tick
+# (bin/jg-delivery-tick.sh, via jg_task_inbox_walk) - so a steer reaches its
+# worker or its lead whatever either cycle does. It owns the order: the due
+# action, the endpoint check, the busy deferral, the ring, and the stale row for
+# a dead endpoint, a held composer, a stuck-busy pane or a spent budget.
+#
+# One ring at a time: the step holds <task>.inbox/.ladder.lock, and a caller
+# that finds it held does nothing, so a watcher and a tick that meet on one
+# inbox type one doorbell. The ring-state spacing then keeps the next attempt
+# a grace away.
+#
+# A caller may name three hooks (function names, in these variables) for the
+# parts that depend on where it runs; each has a default for a caller with no
+# pane reader of its own:
+#   JG_LADDER_BUSY <window> <task> <backend>   0 when the pane is a turn still running
+#   JG_LADDER_LOG  <line>                      one line of the ladder's own log
+#   JG_LADDER_WAKE <reason>                    after a stale row is queued (the
+#                                              watcher ends its cycle on it)
+# Returns 0, or 1 when a stale row or marker could not be written (the caller
+# stops, as the watcher always did).
+# ---------------------------------------------------------------------------
+_jg_ladder_busy() {  # <window> <task> <backend>
+  local w=$1 task=$2 backend=$3 tail40
+  tail40=$(jg_backend_capture "$backend" "$w" 40 "jg-$task" 2>/dev/null || true)
+  [ "$(jg_busy_classify_meta "$_JG_LADDER_STATE/$task.meta" "$task" "$_JG_LADDER_STATE" "$tail40" | cut -d' ' -f1)" = busy ]
+}
+_jg_ladder_log() { :; }
+_jg_ladder_wake() { :; }
+
+# True when this task's ladder must stay still: a parked home gets no doorbell
+# (core/parked-homes), and a retry ring waits while the worker has a decision of
+# its own open. The two readers load on the first use that needs them.
+_jg_ladder_skip() {  # <state-dir> <task> [retry]
+  # shellcheck source=/dev/null
+  declare -F jg_parked_skip_meta >/dev/null || . "$_JG_TASK_INBOX_LIB_DIR/jg-parked-homes-lib.sh"
+  jg_parked_skip_meta "$1/$2.meta" "$2" wake-doorbell && return 0
+  if [ "${3:-}" = retry ]; then
+    # shellcheck source=/dev/null
+    declare -F status_own_open_decisions >/dev/null || . "$_JG_TASK_INBOX_LIB_DIR/jg-classify-lib.sh"
+    [ -z "$(status_own_open_decisions "$1/$2.status")" ] || return 0
+  fi
+  return 1
+}
+
+_jg_ladder_defer_report() {  # <state> <task> <window> <record> <kind> <sentence>
+  local state=$1 task=$2 w=$3 rec=$4 reason
+  if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
+    jg_task_inbox_due_action "$state" "$task" >/dev/null || true
+    return 0
+  fi
+  reason="stale: $w (unread juggernaut instruction: $rec stays unhandled - $6; no doorbell was typed, and it lands as soon as that clears, so no interrupt is needed unless the worker is wedged)"
+  jg_wake_append stale "$w" "$reason" || return 1
+  if ! jg_task_inbox_record_deferral_reported "$state" "$task" "$rec" "$5"; then
+    echo "error: stale wake was queued for $task but its deferral report marker could not be written" >&2
+    return 1
+  fi
+  _JG_LADDER_WAKE_REASON=$reason
+}
+
+_jg_ladder_escalate_unavailable() {  # <state> <task> <window> <record>
+  local state=$1 task=$2 w=$3 rec=$4 reason
+  reason="stale: $w (unread juggernaut instruction: $rec is unhandled and the worker's agent has exited or its endpoint is missing, so the doorbell was not typed; recover the worker)"
+  if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
+    jg_task_inbox_due_action "$state" "$task" >/dev/null || true
+    return 0
+  fi
+  jg_wake_append stale "$w" "$reason" || return 1
+  if ! jg_task_inbox_record_escalated "$state" "$task" "$rec"; then
+    echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
+    return 1
+  fi
+  _JG_LADDER_WAKE_REASON=$reason
+}
+
+jg_task_inbox_ladder() {  # <state-dir> <task> <window> <backend> <label>
+  local state=$1 task=$2 dir lock rc=0
+  dir=$(jg_task_inbox_dir "$state" "$task")
+  [ -d "$dir" ] || return 0
+  lock=$dir/.ladder.lock
+  jg_lock_try_acquire "$lock" || return 0
+  _JG_LADDER_STATE=$state
+  _JG_LADDER_WAKE_REASON=
+  _jg_ladder_step "$@" || rc=$?
+  jg_lock_release "$lock"
+  # The wake hook may end the caller's cycle, so it runs once the lock is free.
+  [ -z "$_JG_LADDER_WAKE_REASON" ] || "${JG_LADDER_WAKE:-_jg_ladder_wake}" "$_JG_LADDER_WAKE_REASON"
+  return "$rc"
+}
+
+_jg_ladder_step() {  # <state-dir> <task> <window> <backend> <label>
+  local state=$1 task=$2 w=$3 backend=$4 label=$5 action verb rec count reason='' ring_rc agent_state decision
+  local log=${JG_LADDER_LOG:-_jg_ladder_log} busy=${JG_LADDER_BUSY:-_jg_ladder_busy}
+  _jg_ladder_skip "$state" "$task" && return 0
+  action=$(jg_task_inbox_due_action "$state" "$task") || return 0
+  verb=${action%% *}
+  [ "$verb" != quiet ] || return 0
+  if [ "$verb" = retry ] && _jg_ladder_skip "$state" "$task" retry; then
+    return 0
+  fi
+  rec=${action#* }
+  count=
+  case "$verb" in
+    escalate)
+      count=${rec##* }
+      rec=${rec% *}
+      ;;
+  esac
+  agent_state=$(jg_backend_agent_state "$backend" "$w" 2>/dev/null || true)
+  case "$agent_state" in
+    dead|missing)
+      if [ "$verb" = retry ]; then
+        jg_task_inbox_clear_retry "$state" "$task" "$rec" || true
+      else
+        _jg_ladder_escalate_unavailable "$state" "$task" "$w" "$rec" || return 1
+      fi
+      return 0
+      ;;
+  esac
+  if "$busy" "$w" "$task" "$backend"; then
+    [ "$verb" != retry ] || return 0
+    # The turn really is still running, so nothing may be typed at it. The
+    # deferral only defers: it reports the unread instruction once and keeps the
+    # message owed, so the ordinary ladder below rings the doorbell on the first
+    # non-busy poll once the turn ends - no interrupt, no relaunch.
+    decision=$(jg_task_inbox_defer "$state" "$task" "$rec")
+    case "$decision" in
+      quiet) return 0 ;;
+      escalate)
+        reason="stale: $w (steering-inbox busy bookkeeping unwritable: ${rec%/*}/.busy-state cannot be written while $rec stays unhandled; inspect the inbox directory)"
+        verb=escalate
+        ;;
+      *)
+        _jg_ladder_defer_report "$state" "$task" "$w" "$rec" busy \
+          "stuck-busy after ${decision#report } consecutive busy-deferred due doorbells, with the pane reading busy for a turn still running" || return 1
+        return 0
+        ;;
+    esac
+  elif [ "$verb" != retry ] && ! jg_task_inbox_clear_busy "$state" "$task"; then
+    reason="stale: $w (steering-inbox busy bookkeeping unwritable: ${rec%/*}/.busy-state cannot be reset after a non-busy check; inspect the inbox directory)"
+    verb=escalate
+  fi
+  case "$verb" in
+    ring)
+      ring_rc=0
+      jg_task_inbox_ring "$backend" "$w" "$rec" "$label" || ring_rc=$?
+      if [ "$ring_rc" -eq 3 ]; then
+        _jg_ladder_escalate_unavailable "$state" "$task" "$w" "$rec" || return 1
+        return 0
+      fi
+      if [ "$ring_rc" -eq 1 ]; then
+        # The composer provably holds other text, so the Enter was withheld on
+        # purpose. That is a deferral, not a spent attempt: the record stays
+        # owed and the one-keypress fix is reported at once instead of the
+        # delivery budget being spent toward a silent give-up.
+        if jg_task_inbox_deferral_reported "$state" "$task" "$rec" held; then
+          "$log" "steer-inbox delivery held: $task ${rec##*/} (already reported)"
+          return 0
+        fi
+        "$log" "steer-inbox delivery held: $task ${rec##*/}${JG_TASK_INBOX_RING_REASON:+ reason=$JG_TASK_INBOX_RING_REASON}"
+        _jg_ladder_defer_report "$state" "$task" "$w" "$rec" held \
+          "the worker's composer holds other pending text, so submitting the doorbell could submit that text - submit it with 'jg-send.sh $task --key Enter' or clear the composer" || return 1
+        return 0
+      fi
+      if ! jg_task_inbox_record_ring "$state" "$task" "$rec"; then
+        if [ ! -f "$rec" ]; then
+          jg_task_inbox_due_action "$state" "$task" >/dev/null || true
+          return 0
+        fi
+        if [ -d "${rec%/*}" ]; then
+          reason="stale: $w (steering-inbox ladder bookkeeping unwritable: ${rec%/*}/.ring-state cannot be written while $rec stays unhandled; the doorbell cannot advance toward escalation - inspect the inbox directory)"
+          jg_wake_append stale "$w" "$reason" || return 1
+          _JG_LADDER_WAKE_REASON=$reason
+        fi
+      fi
+      "$log" "steer-inbox delivery attempt: $task ${rec##*/} result=$ring_rc${JG_TASK_INBOX_RING_REASON:+ reason=$JG_TASK_INBOX_RING_REASON}"
+      ;;
+    retry)
+      ring_rc=0
+      jg_task_inbox_ring "$backend" "$w" "$rec" "$label" || ring_rc=$?
+      if ! jg_task_inbox_clear_retry "$state" "$task" "$rec" && [ -f "$rec" ]; then
+        reason="stale: $w (steering-inbox retry mark unremovable: ${rec%/*}/.retry-ring cannot be removed, so $rec would ring on every poll - inspect the inbox directory)"
+        jg_wake_append stale "$w" "$reason" || return 1
+        _JG_LADDER_WAKE_REASON=$reason
+      fi
+      "$log" "steer-inbox retry ring: $task ${rec##*/} result=$ring_rc${JG_TASK_INBOX_RING_REASON:+ reason=$JG_TASK_INBOX_RING_REASON}"
+      ;;
+    escalate)
+      reason=${reason:-"stale: $w (unread juggernaut instruction: $rec still unhandled after $count doorbell delivery attempts with an idle pane; inspect the worker)"}
+      if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
+        jg_task_inbox_due_action "$state" "$task" >/dev/null || true
+        return 0
+      fi
+      jg_wake_append stale "$w" "$reason" || return 1
+      if ! jg_task_inbox_record_escalated "$state" "$task" "$rec"; then
+        echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
+        return 1
+      fi
+      _JG_LADDER_WAKE_REASON=$reason
+      ;;
+  esac
+}
+
+# The tick's walk: every task with a recorded endpoint and an unread record in
+# its inbox gets one ladder step, in one pass, with no watcher and no model.
+# A task with no inbox record costs one glob.
+jg_task_inbox_walk() {  # <state-dir>
+  local state=$1 d task meta target rc=0
+  for d in "$state"/*.inbox; do
+    [ -d "$d" ] || continue
+    compgen -G "$d/*.msg" >/dev/null || continue
+    task=${d##*/}; task=${task%.inbox}
+    meta=$state/$task.meta
+    [ -f "$meta" ] || continue
+    target=$(jg_backend_target_of_meta "$meta")
+    [ -n "$target" ] || continue
+    jg_task_inbox_ladder "$state" "$task" "$target" "$(jg_backend_of_meta "$meta")" "jg-$task" || rc=1
+  done
+  return "$rc"
 }
 
 # jg-compat (shim, slice S1; deleted by S10): old names still resolve.

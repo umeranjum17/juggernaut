@@ -7,8 +7,11 @@
 # pass: the host sentinel (core/sentinel/bin/jg-sentinel.sh), every minute for its own home and each
 # local, unparked lead home, so a worker's done lands while no watcher runs; and the home's watcher
 # (bin/jg-watch.sh) on its fast tick, so a live home acts within seconds. The pass is the trunk landing
-# check (core/trunk-landing/trunk-landing.sh check), which also starts the go-live and the rollover. A
-# home with no local trunk (no state/trunk-tip-*) has nothing to deliver, and the pass ends at once.
+# check (core/trunk-landing/trunk-landing.sh check), which also starts the go-live and the rollover.
+# It first walks the steering inboxes (jg_task_inbox_walk): each task with an unread record gets one
+# step of the re-ring ladder, which the watcher's window loop runs too, so a steer reaches its worker
+# or its lead whatever either cycle does. A home with no local trunk (no state/trunk-tip-*) has no
+# landing to run, and the pass ends after that walk.
 #
 # One runner: the pass holds the home's state/.delivery-tick.lock, and a caller that finds it held does
 # nothing, so the two callers never run one home's pass at the same time. The landing check's own start
@@ -25,17 +28,25 @@ set -u
 [ "$#" -eq 1 ] && [ -d "${1:-}/state" ] || { echo "usage: jg-delivery-tick.sh <jg-home>  (a home with a state directory)" >&2; exit 2; }
 H=$(cd "$1" && pwd -P)
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
-compgen -G "$H/state/trunk-tip-*" >/dev/null || exit 0
 
 # The home's own records, never the caller's: the sentinel runs this for other homes than its own.
 export JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_CONFIG_OVERRIDE=$H/config
 unset STATE JG_WAKE_QUEUE JG_WAKE_QUEUE_LOCK
 # shellcheck source=bin/jg-wake-lib.sh
 . "$SCRIPT_DIR/jg-wake-lib.sh"
+# shellcheck source=bin/jg-task-inbox-lib.sh
+. "$SCRIPT_DIR/jg-task-inbox-lib.sh"
 
 LOCK=$H/state/.delivery-tick.lock
 jg_lock_try_acquire "$LOCK" || exit 0
 trap 'jg_lock_release "$LOCK"' EXIT
+
+# A stale row the ladder queues as due now is printed, as the landing row below is, so a live watcher
+# rings its model at once; otherwise the row waits for the home's next supervision drain.
+# shellcheck disable=SC2329 # Named by JG_LADDER_WAKE below; the ladder calls it.
+tick_ladder_wake() { case ${JG_WAKE_LAST:-} in now:*) printf '%s\n' "$1" ;; esac; }
+JG_LADDER_WAKE=tick_ladder_wake jg_task_inbox_walk "$H/state" || echo "jg-delivery-tick: a steering-inbox step could not write its record in $H" >&2
+compgen -G "$H/state/trunk-tip-*" >/dev/null || exit 0
 
 OUT=$H/state/.jg-check-output-trunk-landing
 tmp=$(mktemp "$OUT.XXXXXX") || { echo "jg-delivery-tick: cannot write in $H/state" >&2; exit 1; }

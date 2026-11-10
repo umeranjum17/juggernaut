@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2015 # pass/fail reporting lines: "check && pass || fail" is the intended shape here
+# shellcheck disable=SC2016 # the bash -c bodies are single-quoted on purpose
 # The delivery record of a steer (bin/jg-delivery.sh, bin/jg-task-inbox-lib.sh): five words, each with
 # its own proof. A real steer written through the inbox library is "stored"; a ring that returned 0 is
 # "rung"; moving the file to handled/ is only "read"; "handled" exists only after the worker's command
@@ -17,6 +18,78 @@ DIR=$(jg_test_tmproot jg-delivery-record)
 SERVER=${JG_NATS_SERVER:-$(command -v nats-server 2>/dev/null || true)}
 JG_NATS_BIN=${JG_NATS_BIN:-$(command -v nats 2>/dev/null || true)}
 command -v jq >/dev/null 2>&1 || { echo "skip: jq is needed"; exit 0; }
+trap jg_test_cleanup EXIT
+
+# --- The steer ladder runs in the tick (jg-delivery-tick.sh), whatever the watcher's cycle does. ---
+# A home of 30 windows, no local trunk, no watcher. Window 28 holds the inbox of a lane that never
+# read its 8 steers (the oldest hours old); window 27's keystroke fails; window 29's endpoint is gone.
+# One pass of the tick must give 28 its ring, record 27's failed ring with its code, and raise the
+# ladder's escalation for 29. A watcher's call of the same ladder beside the tick rings once, not twice.
+LH=$DIR/ladder-home
+LS=$LH/state
+FB=$DIR/ladder-fakebin
+mkdir -p "$LS" "$LH/config" "$FB"
+cat > "$FB/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-}" in
+  send-keys)
+    shift; target=; literal=0
+    while [ $# -gt 0 ]; do
+      case "$1" in -t) target=$2; shift 2 ;; -l) literal=1; shift ;; *) break ;; esac
+    done
+    [ "$target" != "${FAKE_TMUX_FAIL_TARGET:-}" ] || exit 1
+    if [ "$literal" = 1 ]; then
+      [ -z "${FAKE_TMUX_SLOW:-}" ] || /bin/sleep "$FAKE_TMUX_SLOW"
+      printf '%s\t%s\n' "$target" "${1:-}" >> "$FAKE_TMUX_LOG"
+    fi
+    exit 0 ;;
+  display-message)
+    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; *pane_current_command*) printf 'claude\n'; exit 0 ;; esac; done
+    exit 0 ;;
+  capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
+  list-windows) cat "$FAKE_TMUX_WINDOWS"; exit 0 ;;
+esac
+exit 0
+SH
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FB/sleep"
+chmod +x "$FB/tmux" "$FB/sleep"
+FAKE_LOG=$DIR/ladder-typed.log; : > "$FAKE_LOG"
+FAKE_WINDOWS=$DIR/ladder-windows; : > "$FAKE_WINDOWS"
+for n in $(seq -w 1 30); do
+  printf 'window=sess:jg-t%s\nkind=ship\nharness=claude\n' "$n" > "$LS/t$n.meta"
+  [ "$n" = 29 ] || printf 'jg-t%s\n' "$n" >> "$FAKE_WINDOWS"
+done
+lwrite() { bash -c '. "$1/bin/jg-task-inbox-lib.sh"; jg_task_inbox_write "$2" "$3" "$4"' _ "$ROOT" "$LS" "$1" "$2" >/dev/null; }
+for i in 1 2 3 4 5 6 7 8; do lwrite t28 "steer $i"; done
+lwrite t27 "steer for a window whose keystroke fails"
+lwrite t29 "steer for a window that is gone"
+touch -d '5 hours ago' "$LS"/t28.inbox/*.msg "$LS"/t27.inbox/*.msg "$LS"/t29.inbox/*.msg
+ltick() { env PATH="$FB:$PATH" FAKE_TMUX_LOG="$FAKE_LOG" FAKE_TMUX_WINDOWS="$FAKE_WINDOWS" "$@" "$ROOT/bin/jg-delivery-tick.sh" "$LH" >/dev/null 2>&1; }
+ltick FAKE_TMUX_FAIL_TARGET=sess:jg-t27 || true
+[ "$(grep -c '^sess:jg-t28' "$FAKE_LOG")" = 1 ] && pass "the tick gave window 28's unread inbox one ring in one pass" || fail "window 28 got $(grep -c '^sess:jg-t28' "$FAKE_LOG") rings from the tick: $(cat "$FAKE_LOG")"
+jq -e 'select(.word == "ring-failed" and (.pointer | test("^[0-9]+$")))' "$LS/t27.inbox/.delivery.jsonl" >/dev/null 2>&1 \
+  && pass "a failed ring is recorded as ring-failed with its code: $(jq -c 'select(.word == "ring-failed")' "$LS/t27.inbox/.delivery.jsonl" | head -1)" \
+  || fail "no ring-failed word with a code for window 27: $(cat "$LS/t27.inbox/.delivery.jsonl" 2>/dev/null)"
+if grep -rq 'unread juggernaut instruction.*jg-t29\|jg-t29.*unread juggernaut instruction\|sess:jg-t29.*unhandled' "$LS" 2>/dev/null; then
+  pass "a dead endpoint got the ladder's escalation, not a ring"
+else
+  fail "no escalation was raised for window 29 (gone)"
+fi
+! grep -q '^sess:jg-t29' "$FAKE_LOG" && pass "nothing was typed at the dead endpoint" || fail "the tick typed at the dead endpoint"
+ltick FAKE_TMUX_FAIL_TARGET=sess:jg-t27 || true
+[ "$(grep -c '^sess:jg-t28' "$FAKE_LOG")" = 1 ] && pass "a second pass inside the grace rings nothing again" || fail "the second pass rang window 28 again"
+
+# The watcher's own call of the same ladder runs beside the tick: window 26 gets one ring, not two.
+lwrite t26 "steer rung by two callers"
+touch -d '5 hours ago' "$LS"/t26.inbox/*.msg
+: > "$FAKE_LOG"
+( env PATH="$FB:$PATH" FAKE_TMUX_LOG="$FAKE_LOG" FAKE_TMUX_WINDOWS="$FAKE_WINDOWS" FAKE_TMUX_SLOW=1 \
+    bash -c '. "$1/bin/jg-task-inbox-lib.sh"; jg_task_inbox_ladder "$2" t26 sess:jg-t26 tmux jg-t26' _ "$ROOT" "$LS" >/dev/null 2>&1 ) &
+sleep 0.3
+ltick FAKE_TMUX_SLOW=1 || true
+wait
+[ "$(grep -c '^sess:jg-t26' "$FAKE_LOG")" = 1 ] && pass "a watcher and the tick together ring window 26 once" || fail "window 26 got $(grep -c '^sess:jg-t26' "$FAKE_LOG") rings with both callers: $(cat "$FAKE_LOG")"
 [ -n "$SERVER" ] && [ -n "$JG_NATS_BIN" ] || { echo "skip: nats-server and the nats client are needed"; exit 0; }
 export JG_NATS_BIN
 trap jg_test_cleanup EXIT
