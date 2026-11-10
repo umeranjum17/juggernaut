@@ -2149,6 +2149,33 @@ if [ "${1:-}" = --required-shards ]; then
   required_stop() { local p; for p in "${required_pids[@]+"${required_pids[@]}"}"; do kill "$p" 2>/dev/null || :; done; rm -rf -- "$required_scratch"; }
   trap 'required_stop; exit 130' INT TERM
 
+  # A shard that stops before it writes its result (it died at selection, was killed, or ran out of time) still leaves a
+  # failed one that names the shard and the cause, so the aggregate reads a verdict and never a missing file; a shard past
+  # its budget that could not say so itself is named in the log in its place. Trunk tip 52dd4fd44: eight shards died at
+  # selection on an unmapped bin/ file and the log said only "aggregate input not found".
+  required_missing_result() {  # <k> <scratch path of the shard, without extension>
+    local k=$1 base=$2 rc ms cause load cpus
+    rc=$(cat "$base.rc" 2>/dev/null) || rc=
+    ms=$(cat "$base.ms" 2>/dev/null) || ms=0
+    cause=$(grep -v '^[[:space:]]*$' "$base.out" 2>/dev/null | tail -n 1)
+    log "shard ${k}of8 stopped with ${rc:+exit }${rc:-no exit status} before it wrote its result (${ms}ms): ${cause:-no output}"
+    python3 - "$required_dir/shard-$k.json" "${k}of8" "${rc:-1}" "$ms" "$cause" <<'PY' || log "shard ${k}of8: cannot write its failed result"
+import json, sys
+out, shard, rc, ms, cause = sys.argv[1:]
+doc = {"run_id": "shard-" + shard, "selection": "shard=" + shard, "scripts": [], "error": cause,
+       "summary": {"total": 0, "failed": 0, "skipped_gate": 0, "duration_ms": int(ms), "exit": int(rc) or 1}}
+with open(out, "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+    if [ "$ms" -gt "$required_wall_ms" ] && ! grep -q '^JG_TEST_OVERRUN ' "$base.out" 2>/dev/null; then
+      load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null) || load=
+      cpus=$(nproc 2>/dev/null) || cpus=
+      printf 'JG_TEST_OVERRUN budget_ms=%s duration_ms=%s load=%s cpus=%s selection=shard=%sof8\n' \
+        "$required_wall_ms" "$ms" "${load:-unknown}" "${cpus:-unknown}" "$k"
+    fi
+  }
+
   # Run the shards <k>... side by side, each writing shard-<k>.json, and print their output in shard order.
   # Sets REQUIRED_RED to the shards that failed.
   required_run() {  # <k>...
@@ -2158,11 +2185,12 @@ if [ "${1:-}" = --required-shards ]; then
       work=$required_scratch/$k
       mkdir -p "$work"
       (
-        shard_rc=0
+        shard_rc=0 shard_start=$(now_ms)
         TMPDIR="$work" TMUX_TMPDIR="$work" \
           bash "$ROOT/bin/jg-test-run.sh" --changed --base "$required_base" --exclude-family real-herdr-gated \
           --max-weight-ms 60000 --shard "${k}of8" --gate --wall-warn-ms "$required_wall_ms" \
           --json "$required_dir/shard-$k.json" || shard_rc=$?
+        echo $(($(now_ms) - shard_start)) > "$work.ms"
         echo "$shard_rc" > "$work.rc"
       ) > "$work.out" 2>&1 &
       required_pids+=($!)
@@ -2177,6 +2205,7 @@ if [ "${1:-}" = --required-shards ]; then
       i=$((i + 1))
       cat "$required_scratch/$k.out"
       [ "$(cat "$required_scratch/$k.rc" 2>/dev/null)" = 0 ] || REQUIRED_RED+=("$k")
+      [ -s "$required_dir/shard-$k.json" ] || required_missing_result "$k" "$required_scratch/$k"
     done
   }
 

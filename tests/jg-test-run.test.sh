@@ -72,6 +72,29 @@ test_required_shards_keep_the_union_and_a_failed_shard() {
   pass 'the eight required shards keep the selected union and retain a failed shard in the aggregate'
 }
 
+# trunk tip 52dd4fd44 went red as "aggregate input not found: shard-1.json", on all eight shards at once: the commit range held
+# bin/jg-digest-cap-lib.sh, which no test names, so each shard stopped at selection ("no changed-test mapping") before it
+# wrote its result, and the aggregate then reported the missing file in place of the real cause. A shard that stops for any
+# reason writes a failed result that names the shard and the cause, so the aggregate reads a verdict and not a missing file.
+test_a_shard_that_stops_before_its_result_still_writes_a_failed_result() {
+  local fixture=$TMP_ROOT/orphan res=$TMP_ROOT/orphan-results out rc=0
+  required_fixture "$fixture" 'exit 0'
+  printf '#!/usr/bin/env bash\n:\n' >"$fixture/bin/jg-orphan-lib.sh"
+  git -C "$fixture" add bin/jg-orphan-lib.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -q --amend --no-edit
+  out=$(JG_REQUIRED_SHARD_WALL_MS=1 bash "$fixture/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "shards that stopped before their result must refuse with exit 1: rc=$rc $out"
+  assert_not_contains "$out" 'aggregate input not found' 'a missing shard result must never reach the aggregate'
+  assert_contains "$out" 'no changed-test mapping for source path: bin/jg-orphan-lib.sh' 'the real cause stays in the log'
+  [ "$(printf '%s\n' "$out" | grep -c '^jg-test-run: shard [1-8]of8 stopped with exit 2 before it wrote its result')" = 8 ] ||
+    fail "each shard must be named with its exit status: $out"
+  [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_OVERRUN budget_ms=1 duration_ms=[0-9]* load=[^ ]* cpus=[0-9]* selection=shard=[1-8]of8$')" = 8 ] ||
+    fail "each shard past its budget must be named in the log, even without a result: $out"
+  jq -e '.summary.lanes == 8 and .summary.failed_lanes == 8 and ([.lanes[].selection] | map(test("^shard=[1-8]of8$")) | all)' \
+    "$res/required.json" >/dev/null || fail "the aggregate must hold one failed verdict per shard: $out"
+  pass 'a shard that stops before its result writes a failed result naming the shard, and an overrun is still named'
+}
+
 # A shard over its wall-clock budget was slowed by the machine, not failed by a test, so it is a warning and never a red,
 # and the budget never cuts it short: trunk-v3 went red at 20eb94ae6054 with all eight shards at 601 to 651 s of 600 s,
 # failed=0, and the budget had stopped each shard before about half its scripts ran. A failed test stays a red.
@@ -329,6 +352,7 @@ test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
 test_a_run_past_the_machine_limit_waits_for_a_slot
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache
 test_required_shards_keep_the_union_and_a_failed_shard
+test_a_shard_that_stops_before_its_result_still_writes_a_failed_result
 test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script
 # select_fixture <dir>: a throwaway repo holding a copy of the runner, the shared
 # file bin/jg-trunk.sh, a library that sources it, a script that only calls that
