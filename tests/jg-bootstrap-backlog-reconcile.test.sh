@@ -37,13 +37,22 @@ printf 'bd 1.3.4\ndolt 2.6.0\nbd-sha256-%s-%s %s\ndolt-sha256-%s-%s %s\n' "$os" 
   "$os" "$arch" "$(sha_of "$JG_BEADS_TEST_DOLT")" > "$T/pins"
 
 N=30
+# Seed all rows in one real Beads import; per-row backlog writes make the fixture dominate the sweep.
+python3 - "$N" > "$T/rows.jsonl" <<'PYROWS'
+import json, sys
+for i in range(1, int(sys.argv[1]) + 1):
+    row = {"id": f"jg-rec-{i}", "title": f"Fixture record {i}", "description": f"Fixture jg-rec-{i}",
+           "issue_type": "task", "metadata": {"kind": "ship"}, "labels": ["project:demo"],
+           "status": "open" if i <= 10 else "in_progress"}
+    if i > 10:
+        row["assignee"] = "juggernaut"
+    print(json.dumps(row))
+PYROWS
+BEADS_DIR=$(cat "$HOME_DIR/config/beads-dir") "$ROOT/bin/jg-beads.sh" import "$T/rows.jsonl" >/dev/null 2>&1 \
+  || fail "could not import fixture records"
 for i in $(seq 1 "$N"); do
   id=jg-rec-$i
-  jg_test_backlog "$HOME_DIR" add "$id" "Fixture record $i" --kind ship --repo demo --body "Fixture $id" >/dev/null 2>&1 \
-    || fail "could not file $id"
   jg_write_meta "$HOME_DIR/state/$id.meta" "window=juggernaut:jg-$id" "harness=codex" "kind=ship" "spawn_gen=fixture-$id"
-  # Ten rows stay queued (the heal case); the rest are already In flight.
-  [ "$i" -le 10 ] || jg_test_backlog "$HOME_DIR" start "$id" >/dev/null 2>&1 || fail "could not start $id"
 done
 # A record with no backlog row at all is silent: no row is not an unreadable row.
 jg_write_meta "$HOME_DIR/state/jg-rec-orphan.meta" "window=juggernaut:jg-jg-rec-orphan" "harness=codex" "kind=ship" "spawn_gen=fixture-orphan"
