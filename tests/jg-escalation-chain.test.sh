@@ -391,16 +391,16 @@ test_lead_idle_is_steered_without_interrupt() {
   pass "an idle lead with a stuck worker is steered at once, naming the worker and its wait, and again every interval"
 }
 
-test_busy_lead_is_interrupted_first() {
+test_busy_lead_is_steered_without_interrupt() {
   local m
   m=$(home lead-busy)
   lead_meta "$m" lead1 1 "$m/lead-home"
   "$FORK/bin/jg-busy-event.sh" arm "$m/state" lead1 >/dev/null
   overdue_report "$m" lead1 w1 0
   PANES=1 cycle "$m"
-  [ "$(sed -n 1p "$m/sent")" = "jg-control lead1 interrupt" ] || fail "a busy lead was not interrupted first: $(cat "$m/sent" 2>&1)"
-  sed -n 2p "$m/sent" | grep -q '^jg-send lead1 --fire-and-forget .*Your worker w1' || fail "the interrupted lead was not told about its worker"
-  pass "a lead busy mid-turn is interrupted, then told its worker is blocked"
+  ! grep -q '^jg-control' "$m/sent" || fail "a busy lead was interrupted: $(cat "$m/sent" 2>&1)"
+  sed -n 1p "$m/sent" | grep -q '^jg-send lead1 --fire-and-forget .*Your worker w1' || fail "the busy lead was not told about its worker"
+  pass "a lead busy mid-turn is told its worker is blocked, and is not interrupted"
 }
 
 test_lead_stuck_on_a_prompt_reaches_the_board() {
@@ -1513,7 +1513,7 @@ test_a_declared_quota_pause_is_a_wait
 test_a_slow_scan_reports_the_wake_it_found
 test_question_and_quota_ride_the_chain_whatever_the_terminal_says
 test_silent_worker_climbs_whatever_it_declared
-test_busy_lead_is_interrupted_first
+test_busy_lead_is_steered_without_interrupt
 test_lead_stuck_on_a_prompt_reaches_the_board
 test_dead_lead_still_reaches_the_board_and_relaunch_represents
 test_lead_supervision_not_running_is_a_main_wait

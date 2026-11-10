@@ -95,4 +95,37 @@ for _round in 1 2 3; do cycle; sleep 2; done
 ! grep -E 'waiting-state|stopped|possible wedge' "$world/events" || { echo 'held item alarmed'; exit 1; }
 [ ! -e "$world/state/.waiting-timers/jg-held-lane" ] || exit 1
 ! grep -q 'waiting-timer-overdue' "$world/parent/state/lead.status" || exit 1
-echo 'PASS: real tmux watcher honours pause deadline, owner-only pause and active captain hold'
+# Main's relay of an overdue worker report to its lead: a lead in a turn is never
+# interrupted, and its steer waits in its inbox; an idle
+# lead gets the steer and the doorbell at once. The lead pane records every key.
+rm -f "$world/.jg-squad-lead-home" "$world/.jg-squad-lead-parent"
+# A pane whose foreground process is an agent named claude; it records every byte typed at it.
+cp "$(command -v bash)" "$world/fakebin/claude"
+# shellcheck disable=SC2016 # the pane script expands its own variables
+printf 'stty raw -echo\nwhile IFS= read -rsn1 c; do printf "%%s" "${c:-<Enter>}" >> "$1"; done\n' > "$world/agent.sh"
+lead_pane() {  # <lead> <busy|idle>
+  rm -f "$world/keys-$1"
+  tmux new-window -d -t juggernaut -n "jg-$1" "$world/fakebin/claude $world/agent.sh $world/keys-$1"
+  printf 'kind=squad_lead\nmode=squad_lead\nbackend=tmux\nwindow=juggernaut:jg-%s\nharness=claude\nhome=%s\nworktree=%s\nproject=lead\n' "$1" "$world/lead-home-$1" "$world" > "$world/state/$1.meta"
+  bash "$ROOT/bin/jg-busy-event.sh" arm "$world/state" "$1" --state "$2" --source claude-hook --event stop >/dev/null
+  since=$(($(date +%s) - 5))
+  printf 'blocked [key=waiting-timer-0000aaaa-w1-g%s-q]: waiting-timer-overdue: w1 (needs-decision key=q, observed 5s, since=%s); owning lead has not cleared the wait; Main must unblock or steer the lead; source=[needs-decision [key=q]: pick a database]\n' "$since" "$since" > "$world/state/$1.status"
+}
+steered() { grep -l 'Your worker w1 has been stuck' "$world/state/$1.inbox"/*.msg 2>/dev/null | head -n 1; }
+lead_pane busy-lead busy
+cycle
+cycle
+[ -n "$(steered busy-lead)" ] || { echo 'busy lead was not steered'; exit 1; }
+sleep 1
+# jg-send's own first bell is a line queued in the composer; an interrupt is an Escape key.
+! grep -q "$(printf '\033')" "$world/keys-busy-lead" 2>/dev/null || { echo 'busy lead was interrupted'; cat -v "$world/keys-busy-lead"; exit 1; }
+lead_pane idle-lead idle
+cycle
+cycle
+sleep 1
+[ -n "$(steered idle-lead)" ] || { echo 'idle lead was not steered'; exit 1; }
+grep -q 'inbox' "$world/keys-idle-lead" || { echo 'idle lead was not rung at once'; exit 1; }
+! grep -q "$(printf '\033')" "$world/keys-idle-lead" || { echo 'idle lead was interrupted'; exit 1; }
+printf 'lead in a turn: steer in its inbox (%s), keys typed at its pane: %s\n' "$(basename "$(steered busy-lead)")" "$(cat -v "$world/keys-busy-lead")"
+printf 'idle lead: steer in its inbox (%s), keys typed at its pane: %s\n' "$(basename "$(steered idle-lead)")" "$(cat -v "$world/keys-idle-lead")"
+echo 'PASS: real tmux watcher honours pause deadline, owner-only pause and active captain hold, and relays to a busy lead without an interrupt'

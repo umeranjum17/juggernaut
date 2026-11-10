@@ -265,7 +265,7 @@ jg_wait_timer_end() {  # <record> <task> <parent> <key> <card> <why>
 # Main's side of a lead's overdue report: a waiting-timer-overdue line the lead
 # appended to this home's state/<lead>.status (its parent channel), never the
 # lead's own child records. On first sight and every <interval> the lead is
-# nudged (interrupted first when busy mid-turn) naming the blocked worker and
+# nudged (a busy lead reads the steer when its turn ends) naming the blocked worker and
 # its wait; at <card-secs> since the worker's wait began the board card is
 # posted, and kept, until the lead resolves the report. One record per open
 # report under state/.waiting-relay/: first-seen, nudged, card times.

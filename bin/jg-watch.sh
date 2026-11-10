@@ -2524,16 +2524,11 @@ steer_task() {  # <task> <seed> <text>
   fi
 }
 
-# lead_nudge: tell a squad_lead about a wait it owns. A lead busy mid-turn is
-# interrupted first (bin/jg-control.sh), so the steer is read now rather than
-# after the turn; an idle lead only gets the steer, which rings its doorbell;
-# a dead or unreadable one gets the durable steer alone.
+# lead_nudge: tell a squad_lead about a wait it owns. The steer lands in the
+# lead's durable inbox and rings its doorbell once the turn has ended: a lead
+# busy mid-turn is never interrupted (the steer ladder's rule, no interrupt),
+# and a dead or unreadable one gets the durable steer alone.
 lead_nudge() {  # <task> <window> <seed> <text>
-  squad_lead_busy_class "$2"
-  if [ "$SQUAD_LEAD_BUSY_CLASS" = busy ]; then
-    JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-control.sh" "$1" interrupt >/dev/null 2>&1 \
-      || triage_log "interrupt of squad_lead $1 failed"
-  fi
   steer_task "$1" "$3" "$4"
 }
 
