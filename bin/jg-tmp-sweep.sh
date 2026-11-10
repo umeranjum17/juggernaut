@@ -11,11 +11,17 @@
 #       Print the space and inode use of the filesystem holding DIR; exit 1 when
 #       either reaches N percent (default JG_TMP_WARN_PCT, else 80), 0 below
 #       both, 2 when a use cannot be read.
+#   jg-tmp-sweep.sh top [--root DIR] [-n N]
+#       Print one line naming the N (default 5) largest entries of DIR with the
+#       lane of each: "<name> <MB>MB lane=<task id or none>; ...".
 #   jg-tmp-sweep.sh sweep [--dry-run | --apply] [--root DIR] [--min-age-days N]
 #       List (default, --dry-run) or remove (--apply) stale entries; see below.
 #
 # What a sweep may remove, all directly under DIR (default /tmp, JG_TMP_ROOT):
 #   - an entry named tmp.*, crewhouse-*, or claude-accounts.* (file or directory);
+#   - the fleet's own mktemp names: jg-test-run.* and tickets-sync* (short age, as
+#     below), and jg-<task id> lane scratch of a home with a state folder, kept
+#     while a state/<id>.meta of that home names its task;
 #   - a browser or render leftover named com.google.Chrome.*, org.chromium.Chromium.*,
 #     puppeteer_dev_chrome_profile-* or first-draft-*;
 #   - an entry directly inside a container named claude-<digits> (per-home agent
@@ -50,22 +56,23 @@ WARN_PCT=${JG_TMP_WARN_PCT:-80}
 MIN_AGE_DAYS=${JG_TMP_SWEEP_MIN_AGE_DAYS:-1}
 SHORT_AGE_MIN=${JG_TMP_SWEEP_SHORT_AGE_MIN:-120}
 
-usage() { sed -n '2,48p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 die() { echo "jg-tmp-sweep: $*" >&2; exit "${2:-2}"; }
 
 MODE=${1:-}
 case "$MODE" in
-  check|sweep) shift ;;
+  check|sweep|top) shift ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
-APPLY=0
+APPLY=0; TOP_N=5
 while [ $# -gt 0 ]; do
   case "$1" in
     --root) [ $# -ge 2 ] || die "--root needs a value"; ROOT=$2; shift 2 ;;
     --warn-pct) [ $# -ge 2 ] || die "--warn-pct needs a value"; WARN_PCT=$2; shift 2 ;;
     --min-age-days) [ $# -ge 2 ] || die "--min-age-days needs a value"; MIN_AGE_DAYS=$2; shift 2 ;;
     --short-age-min) [ $# -ge 2 ] || die "--short-age-min needs a value"; SHORT_AGE_MIN=$2; shift 2 ;;
+    -n) [ $# -ge 2 ] || die "-n needs a value"; TOP_N=$2; shift 2 ;;
     --apply) APPLY=1; shift ;;
     --dry-run) APPLY=0; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -75,6 +82,7 @@ done
 case "$WARN_PCT" in ''|*[!0-9]*) die "warn percent must be a number" ;; esac
 case "$MIN_AGE_DAYS" in ''|*[!0-9]*) die "min age days must be a number" ;; esac
 case "$SHORT_AGE_MIN" in ''|*[!0-9]*) die "short age minutes must be a number" ;; esac
+case "$TOP_N" in ''|*[!0-9]*) die "-n must be a number" ;; esac
 case "$ROOT" in /*) ;; *) die "root must be an absolute path" ;; esac
 case "$ROOT" in *[*?[]*|*$'\n'*|*//*|*/./*|*/../*|*/.|*/..) die "root has a glob, newline or dot component" ;; esac
 [ "$ROOT" = / ] || ROOT=${ROOT%/}
@@ -145,11 +153,13 @@ fi
 
 # Top-level names the sweep may remove: the long-lived class, then the short-lived class.
 short_lived_name() {
-  case "$1" in com.google.Chrome.*|org.chromium.Chromium.*|puppeteer_dev_chrome_profile-*|first-draft-*) return 0 ;; esac
+  case "$1" in com.google.Chrome.*|org.chromium.Chromium.*|puppeteer_dev_chrome_profile-*|first-draft-*|jg-test-run.*|tickets-sync*) return 0 ;; esac
   return 1
 }
 allowlisted_name() {
   case "$1" in tmp.*|crewhouse-*|claude-accounts.*) return 0 ;; esac
+  # jg-<id> lane scratch: only where this home's lane records can say which ids are live.
+  case "$1" in jg-*) [ -n "${JG_HOME:-}" ] && [ -d "$JG_HOME/state" ] && return 0 ;; esac
   short_lived_name "$1"
 }
 
@@ -175,6 +185,20 @@ EOF
     echo recent; return
   fi
 }
+
+if [ "$MODE" = top ]; then
+  du -sxk -- "$ROOT"/* "$ROOT"/.[!.]* 2>/dev/null | sort -rn | head -n "$TOP_N" | while IFS=$'\t' read -r kb path; do
+    name=${path##*/}; lane=none
+    while IFS= read -r token; do
+      [ -n "$token" ] || continue
+      case "$name$path" in *"$token"*) lane=$token; break ;; esac
+    done <<EOT
+$LANE_TOKENS
+EOT
+    printf '%s %sMB lane=%s\n' "$name" $(( kb / 1024 )) "$lane"
+  done | paste -sd';' - | sed 's/;/; /g'
+  exit 0
+fi
 
 REMOVED=0; FAILED=0; KEPT_LIST=; OTHER=0
 note_keep() { KEPT_LIST="$KEPT_LIST

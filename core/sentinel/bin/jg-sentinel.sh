@@ -78,8 +78,12 @@
 # inode use reaches JG_TMP_WARN_PCT (80), repeated at most once per
 # JG_SENTINEL_TMP_REWARN_SECS, and a sweep of stale fleet scratch once per
 # JG_SENTINEL_TMP_SWEEP_SECS (86400; 0 turns the sweep off), whose summary goes
-# to the log. It runs even while no Herdr server is up, and a failure never
-# changes the tick's own result.
+# to the log. At JG_TMP_PRESSURE_PCT (70) it does not wait for the day: it logs one
+# "tmp pressure" line naming the 5 largest folders with their lanes and sweeps in
+# the same tick, again at most each JG_SENTINEL_TMP_PRESSURE_SECS (900) while the
+# use stays over; the sweep rules are the daily sweep's, and a lane's folder stays
+# (JG_SENTINEL_TMP_SWEEP_SECS=0 turns it off too). It runs even while no Herdr
+# server is up, and a failure never changes the tick's own result.
 #
 # reconcile, for each local direct report in state/*.meta on the watched Herdr
 # session (bin/jg-session-start.sh also runs it detached at every locked
@@ -167,6 +171,8 @@ INBOX_GRACE=${JG_SENTINEL_INBOX_GRACE:-60}
 INBOX_REWAKE=${JG_SENTINEL_INBOX_REWAKE_SECS:-300}
 TMP_REWARN=${JG_SENTINEL_TMP_REWARN_SECS:-21600}
 TMP_SWEEP=${JG_SENTINEL_TMP_SWEEP_SECS:-86400}
+TMP_PRESSURE_PCT=${JG_TMP_PRESSURE_PCT:-70}
+TMP_PRESSURE_EVERY=${JG_SENTINEL_TMP_PRESSURE_SECS:-900}
 DELIVERY_TIMEOUT=${JG_SENTINEL_DELIVERY_TIMEOUT:-120}
 LOG="$STATE/.sentinel.log"
 DRY_RUN=${JG_SENTINEL_DRY_RUN:-0}
@@ -578,7 +584,7 @@ relaunch_model_mismatches() {
 
 # /tmp pressure guard: warn at the threshold, sweep stale scratch once a day; never fails the tick.
 tmp_hygiene() {
-  local out now last_try last_ok rc=0
+  local out now last_try last_ok mode pressure='' rc=0
   now=$(date +%s)
   out=$("$BIN/jg-tmp-sweep.sh" check 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then
@@ -596,14 +602,24 @@ tmp_hygiene() {
   fi
   [ "$TMP_SWEEP" -gt 0 ] 2>/dev/null || return 0
   last_ok=$(cat "$STATE/.sentinel-tmp-sweep" 2>/dev/null)
-  [ $(( now - ${last_ok:-0} )) -ge "$TMP_SWEEP" ] || return 0
+  mode=--apply; rc=0
+  "$BIN/jg-tmp-sweep.sh" check --warn-pct "$TMP_PRESSURE_PCT" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -ne 1 ]; then
+    [ $(( now - ${last_ok:-0} )) -ge "$TMP_SWEEP" ] || return 0
+  else
+    # Over the pressure line: sweep now, at most once per TMP_PRESSURE_EVERY.
+    [ "$(cat "$STATE/.sentinel-tmp-pressure" 2>/dev/null || echo 0)" -le $(( now - TMP_PRESSURE_EVERY )) ] || return 0
+    printf '%s\n' "$now" >"$STATE/.sentinel-tmp-pressure"
+    pressure=1
+  fi
   printf '%s\n' "$now" >"$STATE/.sentinel-tmp-sweep"
   # In the background: a sweep of a crowded /tmp takes about a minute and must not delay recovery.
   (
     rc=0
     # The first sweep on a home only reports; the marker records that its report was logged.
-    mode=--apply
-    if [ ! -e "$STATE/.sentinel-tmp-sweep-reported" ]; then mode=--dry-run; : >"$STATE/.sentinel-tmp-sweep-reported"; fi
+    if [ -n "${pressure:-}" ]; then
+      say "tmp pressure: $("$BIN/jg-tmp-sweep.sh" check --warn-pct "$TMP_PRESSURE_PCT" 2>&1 | head -n 1); largest: $("$BIN/jg-tmp-sweep.sh" top -n 5 2>&1)"
+    elif [ ! -e "$STATE/.sentinel-tmp-sweep-reported" ]; then mode=--dry-run; : >"$STATE/.sentinel-tmp-sweep-reported"; fi
     out=$("$BIN/jg-tmp-sweep.sh" sweep "$mode" 2>&1) || rc=$?
     printf '%s\n' "$out" | grep -E '^(remove|would remove|FAILED) ' | while IFS= read -r line; do say "tmp sweep: $line"; done
     say "tmp sweep $mode (exit $rc): $(printf '%s' "$out" | grep -E '^(removed|would remove [0-9]|space use|inode use|FAILED|jg-tmp-sweep)' | tr '\n' ';')"

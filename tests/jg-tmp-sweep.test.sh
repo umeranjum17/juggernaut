@@ -124,7 +124,7 @@ pass "check thresholds and unsafe roots"
 mkdir -p "$R/tmp.again" "$R/claude-1000/-slug-busy/sess-again"
 touch "$R/claude-1000/-slug-busy/sess-again/f"
 old "$R/claude-1000/-slug-busy/sess-again/f" "$R/claude-1000/-slug-busy/sess-again" "$R/tmp.again"
-export JG_TMP_ROOT=$R JG_TMP_WARN_PCT=0
+export JG_TMP_ROOT=$R JG_TMP_WARN_PCT=0 JG_TMP_PRESSURE_PCT=101
 JG_HOME=$H "$ROOT/bin/jg-sentinel.sh" tick >/dev/null 2>&1
 log=$H/state/.sentinel.log
 # The sweep runs in the background and takes about 20 s on a busy host: wait for its summary line.
@@ -156,3 +156,33 @@ sleep 1
 assert_equals "$before" "$(grep -c 'tmp sweep' "$log")" "a second tick inside the day does not sweep again"
 assert_equals 1 "$(grep -c 'WARNING: ' "$log")" "a second tick inside the re-warn window does not warn again"
 pass "sentinel tick warns once and sweeps once a day"
+
+# --- pressure: at 70% one line with the 5 largest folders, and the sweep runs in the same tick
+# A stub df reports the root at 75% (the fixture cannot fill a real disk), and the sentinel's
+# daily-sweep marker is fresh, so only the pressure path can sweep.
+unset JG_TMP_WARN_PCT
+P=$T/pressure; PR=$P/tmp; PH=$P/home; PBIN=$P/bin
+mkdir -p "$PR" "$PH/state" "$PBIN"
+printf '%s\n' '#!/bin/sh' 'echo "Filesystem 1K-blocks Used Available Use% Mounted"' 'echo "fake 1000 750 250 75% /"' >"$PBIN/df"
+chmod +x "$PBIN/df"
+printf 'worktree=/fake/wt/lane-live\nkind=ship\n' >"$PH/state/lane-live.meta"
+big() { mkdir -p "$PR/$1"; head -c "$2" /dev/zero >"$PR/$1/blob"; }
+big jg-test-run.old 400000; big tickets-sync.old 300000; big jg-ghost 200000
+big jg-lane-live 900000; big plan-keep 100000; big tiny-keep 1000
+for p in jg-test-run.old tickets-sync.old; do jg_touch_epoch "$HOURS3" -h "$PR/$p/blob" "$PR/$p"; done
+for p in jg-ghost jg-lane-live; do jg_touch_epoch "$OLD" -h "$PR/$p/blob" "$PR/$p"; done
+date +%s >"$PH/state/.sentinel-tmp-sweep"
+plog=$PH/state/.sentinel.log
+PATH=$PBIN:$PATH JG_TMP_ROOT=$PR JG_TMP_PRESSURE_PCT=70 JG_HOME=$PH "$ROOT/bin/jg-sentinel.sh" tick >/dev/null 2>&1
+for _ in $(seq 240); do
+  grep -q 'tmp sweep --apply' "$plog" 2>/dev/null && break
+  sleep 0.5
+done
+assert_equals 1 "$(grep -c 'tmp pressure' "$plog")" "one pressure line"
+line=$(grep 'tmp pressure' "$plog")
+assert_contains "$line" "jg-lane-live" "the pressure line names the largest folder"
+assert_contains "$line" "lane=lane-live" "the pressure line names the lane of a folder"
+assert_not_contains "$line" "tiny-keep" "the pressure line lists only the 5 largest"
+for p in jg-test-run.old tickets-sync.old jg-ghost; do assert_absent "$PR/$p" "pressure sweep removes $p"; done
+for p in jg-lane-live plan-keep tiny-keep; do assert_present "$PR/$p" "pressure sweep keeps $p"; done
+pass "pressure at 75% logs the 5 largest folders with lanes and sweeps in the same tick"
