@@ -997,6 +997,27 @@ jg_backend_withdraw_typed() {  # <backend> <target> <text> [expected-label]
   printf 'stuck'
 }
 
+# jg_backend_resubmit_typed: submit <text> again (Enter only, never retyped) if,
+# and only if, the composer holds exactly that text, ignoring whitespace,
+# wrapping, and trailing control residue. Echoes `foreign` (other content: a
+# human's, never keyed), `empty` (submitted), or the last composer verdict.
+jg_backend_resubmit_typed() {  # <backend> <target> <text> <retries> <enter-sleep> [expected-label]
+  local backend=$1 target=$2 want=${3//[[:space:]]/} retries=$4 sleep_s=$5 label=${6:-} held state=foreign i=0
+  held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) \
+    && held=$(jg_composer_extract_selected_content styled=0 "$held") || held=
+  held=${held//[[:space:]]/}
+  [ -n "$want" ] && [ "${held#"$want"}" != "$held" ] && [ -z "$(printf '%s' "${held#"$want"}" | tr -d '[:cntrl:]')" ] \
+    || { printf 'foreign'; return 0; }
+  while [ "$i" -lt "$retries" ]; do
+    jg_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || true
+    sleep "$sleep_s"
+    state=$(jg_backend_composer_state "$backend" "$target" "$label" 2>/dev/null)
+    [ "$state" = pending ] || break
+    i=$((i + 1))
+  done
+  printf '%s' "$state"
+}
+
 # jg_backend_kill: remove the task's session endpoint. An already-gone target
 # is NOT an error and returns 0 silently, so ordinary cleanup of an
 # already-exited session stays quiet. A nonzero return means the close could

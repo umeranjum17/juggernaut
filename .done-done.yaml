@@ -240,6 +240,8 @@ journeys:
     command: bash journeys/wait-refusal-retry.sh
   board-answer-route:
     command: bash journeys/board-answer-route.sh
+  afk-daemon-resend:
+    command: bash journeys/afk-daemon-resend.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

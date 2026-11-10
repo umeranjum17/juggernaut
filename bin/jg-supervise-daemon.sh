@@ -1193,7 +1193,7 @@ window_for_task() {  # <task-key> [state]
 #     line, or a previous injection's unsent text), defer entirely - injecting
 #     would merge with the human's text.
 inject_msg() {  # <message> [state]
-  local msg=$1 state target backend retries sleep_s verdict composer encoded bytes errf err='' body
+  local msg=$1 state target backend retries sleep_s verdict composer encoded bytes errf err='' body unsent resent
   state="${2:-$(_state_root)}"
   # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
   # daemon self-handles and stays quiet; juggernaut drives the normal always-on
@@ -1235,6 +1235,20 @@ inject_msg() {  # <message> [state]
   #      on anything that is not affirmatively 'empty'. A deferred escalation
   #      stays buffered for the next cycle or the catch-up flush.
   composer=$(jg_backend_composer_state "$backend" "$target" 2>/dev/null)
+  #      The one exception is the daemon's own earlier text, left typed by a
+  #      swallowed Enter: it is submitted once more (Enter only) and the new
+  #      text, if it differs, follows into the now-empty composer.
+  unsent="$state/.subsuper-inject-unsent"
+  if [ "$composer" = pending ] && [ -s "$unsent" ]; then
+    resent=$(cat "$unsent")
+    verdict=$(jg_backend_resubmit_typed "$backend" "$target" "$resent" "${JG_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}" "${JG_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}")
+    if [ "$verdict" = empty ]; then
+      rm -f "$unsent"
+      log "inject resent the daemon's own unsent text"
+      [ "$resent" != "$msg" ] || return 0
+      composer=$verdict
+    fi
+  fi
   if [ "$composer" != empty ]; then
     INJECT_LAST_FAILURE="deferred: supervisor composer not confirmed-empty (state=${composer:-unknown}: pending input, dead-shell prompt, or unreadable pane)"
     log "inject $INJECT_LAST_FAILURE"
@@ -1273,8 +1287,11 @@ inject_msg() {  # <message> [state]
     rm -f "$errf"
   fi
   if [ "$verdict" = empty ]; then
+    rm -f "$unsent"
     return 0  # Backend confirmed the submit.
   fi
+  # Typed but unconfirmed: remember our own text so the next try can submit it.
+  case "$verdict" in send-failed|holds-text|not-withdrawable|withdrawn|record-missing|dead|missing) ;; *) printf '%s' "$msg" > "$unsent" ;; esac
   err=$(_collapse_newlines "$err")
   _utf8_prefix "$err" 512 err
   if [ "$verdict" = send-failed ]; then
