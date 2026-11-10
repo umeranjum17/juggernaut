@@ -14,7 +14,9 @@ checkout runs are one file. It calls the host tool's scripts and libraries from
 none of them. Each tick also guards `/tmp` use through `bin/jg-tmp-sweep.sh`,
 rings the primary at once for a queued captain note when no watcher is live
 (`ring`, which `bin/jg-inbox.sh` runs), and sends the captain one alert when a
-wake stays deferred. After a Herdr restart it also restores a recorded Claude model when a direct
+wake stays deferred. Each tick then runs the delivery pass (`bin/jg-delivery-tick.sh`)
+for its home and each local, unparked lead home, so a finished lane lands, and the
+go-live and rollover start, with no model awake and no watcher running. After a Herdr restart it also restores a recorded Claude model when a direct
 report resumed without its `--model` argument, then checks each registered,
 local, unparked lead home with that home's own sentinel state and relaunch tools.
 

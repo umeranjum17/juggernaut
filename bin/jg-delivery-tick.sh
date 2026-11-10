@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# jg-delivery-tick.sh - one delivery pass for one home, with no model awake.
+#
+# Usage: jg-delivery-tick.sh <jg-home>
+#
+# A step whose next move is known runs from a tick, never from a model's cycle. Two callers run this
+# pass: the host sentinel (core/sentinel/bin/jg-sentinel.sh), every minute for its own home and each
+# local, unparked lead home, so a worker's done lands while no watcher runs; and the home's watcher
+# (bin/jg-watch.sh) on its fast tick, so a live home acts within seconds. The pass is the trunk landing
+# check (core/trunk-landing/trunk-landing.sh check), which also starts the go-live and the rollover. A
+# home with no local trunk (no state/trunk-tip-*) has nothing to deliver, and the pass ends at once.
+#
+# One runner: the pass holds the home's state/.delivery-tick.lock, and a caller that finds it held does
+# nothing, so the two callers never run one home's pass at the same time. The landing check's own start
+# lock and per-landing run locks still keep one landing per lane.
+#
+# One owner of the result: the check's lines belong to the home, whoever ran the pass. They are kept in
+# state/.jg-check-output-trunk-landing and raised as one `check trunk-landing` row in the home's wake
+# queue, which defaults/wake-routing classes. When that row is due now, its reason is printed, so a live
+# watcher rings its model at once; the sentinel leaves the row to the home's next supervision drain.
+#
+# Exit: 0 after a pass, or when another runner holds it; 1 when the row could not be queued (its reason
+# is still printed); 2 for usage.
+set -u
+[ "$#" -eq 1 ] && [ -d "${1:-}/state" ] || { echo "usage: jg-delivery-tick.sh <jg-home>  (a home with a state directory)" >&2; exit 2; }
+H=$(cd "$1" && pwd -P)
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+compgen -G "$H/state/trunk-tip-*" >/dev/null || exit 0
+
+# The home's own records, never the caller's: the sentinel runs this for other homes than its own.
+export JG_HOME=$H JG_STATE_OVERRIDE=$H/state JG_CONFIG_OVERRIDE=$H/config
+unset STATE JG_WAKE_QUEUE JG_WAKE_QUEUE_LOCK
+# shellcheck source=bin/jg-wake-lib.sh
+. "$SCRIPT_DIR/jg-wake-lib.sh"
+
+LOCK=$H/state/.delivery-tick.lock
+jg_lock_try_acquire "$LOCK" || exit 0
+trap 'jg_lock_release "$LOCK"' EXIT
+
+OUT=$H/state/.jg-check-output-trunk-landing
+tmp=$(mktemp "$OUT.XXXXXX") || { echo "jg-delivery-tick: cannot write in $H/state" >&2; exit 1; }
+# The check reports by its lines, not by its exit.
+bash "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" check "$H" > "$tmp" 2>/dev/null
+[ -s "$tmp" ] || { rm -f -- "$tmp"; exit 0; }
+mv -f -- "$tmp" "$OUT" || { rm -f -- "$tmp"; echo "jg-delivery-tick: cannot keep the landing check's output in $OUT" >&2; exit 1; }
+
+prefix='check: trunk-landing: '; suffix=' [full output: state/.jg-check-output-trunk-landing]'
+reason="$prefix$(head -c $((4096 - ${#prefix} - ${#suffix})) "$OUT" | tr '\t\r\n' '   ')$suffix"
+JG_WAKE_LAST=
+if ! jg_wake_append check trunk-landing "$reason"; then
+  echo "jg-delivery-tick: could not queue the trunk-landing row in $H" >&2
+  printf '%s\n' "$reason"
+  exit 1
+fi
+case $JG_WAKE_LAST in now:*) printf '%s\n' "$reason" ;; esac
+exit 0

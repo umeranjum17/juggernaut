@@ -2,9 +2,12 @@
 # Behavior tests for the landing and trunk-pointers machine tables (core/machines/tables).
 # Every record is generated here by a seed function in the shape its writer prints; no fleet record is copied.
 # The tables are report-only: `show` and `check` print findings and nothing in the landing chain calls them.
+# The last journey drives the landing machine's start edge from the host tick (core/sentinel/bin/jg-sentinel.sh, through
+# bin/jg-delivery-tick.sh) in a tests/jg-trunk-fixture.sh world: real git, the real lander, a stub Herdr with no server.
 set -u
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/jg-trunk-fixture.sh
+# shellcheck disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
 
 JM="$ROOT/bin/jg-machine.sh"
 T=$(jg_test_tmproot jg-machine-landing)
@@ -97,3 +100,62 @@ jm check trunk-pointers --corpus "$T/ptr.corpus"; expect_code 0 "$RC" "the trunk
 tab landed release released > "$T/ptr-bad.corpus"
 jm check trunk-pointers --corpus "$T/ptr-bad.corpus"; expect_code 1 "$RC" "a release of an unverified tip"
 pass "check replays the trunk lifecycle and refuses a release of a tip that is not green"
+
+# A ready lane whose home has no model and no watcher left (09:03Z to 09:20Z on 10 Nov: nothing landed for 16.5 minutes)
+# lands on the host sentinel's next tick. The sentinel serves Main's home and each local lead home, which is where a trunk lives.
+# A watcher alive beside the tick changes nothing: one landing run, not two.
+tick_world() {  # <name>: a fixture home that is its own checkout, a stub Herdr with no server, and the wake queue on files
+  world "$1"
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  printf 'off\n' > "$HOME_D/config/wake-bus"
+  # shellcheck disable=SC2016 # the stub expands its own arguments
+  printf '#!/usr/bin/env bash\ncase " $* " in *" status "*) echo %s ;; *) exit 1 ;; esac\n' "'{\"server\":{\"running\":false}}'" > "$W/fakebin/herdr"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$W/fakebin/tmux"; printf '#!/usr/bin/env bash\nexit 1\n' > "$W/fakebin/systemctl"
+  chmod +x "$W/fakebin/herdr" "$W/fakebin/tmux" "$W/fakebin/systemctl"; mkdir -p "$W/tmproot"
+}
+sentinel_tick() {  # <home>: one tick of the host sentinel for that home, as its unit runs it
+  env PATH="$W/fakebin:$PATH" JG_HOME="$1" JG_BIN="${TICK_BIN:-}" JG_SENTINEL_HERDR_SESSION=jg-lab-machine-landing \
+    JG_TMP_ROOT="$W/tmproot" JG_SENTINEL_TMP_SWEEP_SECS=0 JG_SENTINEL_CAPTAIN_SAY=true bash "$ROOT/core/sentinel/bin/jg-sentinel.sh" tick
+}
+landed_in_time() {  # <id> <head>
+  local _; for _ in $(seq 1 300); do grep -Eqs '^landed( |$)' "$HOME_D/data/jg-trunk-landing/$1.$2.state" && return 0; sleep 0.1; done
+  fail "$1 did not land: $(cat "$HOME_D/data/jg-trunk-landing/$1.$2".* 2>/dev/null | tail -n 5)"
+}
+runs_of() { find "$HOME_D/data/jg-trunk-landing" -name "$1.$2.request-*.log" | wc -l | tr -d ' '; }
+rows_of() { awk -F'\t' -v i="$1" '$1 == i' "$HOME_D/data/trunk-landings.tsv" 2>/dev/null | wc -l | tr -d ' '; }
+
+tick_world tick-lead; base=$(tip)
+lane solo one; c=$(git -C "$PROJ" rev-parse fm/solo)
+MAIN_D="$W/main"; mkdir -p "$MAIN_D/state" "$MAIN_D/data" "$MAIN_D/config"
+printf -- '- trunk-lead - the lead that owns the trunk (home: %s; scope: x; projects: proj; added 2026-11-10)\n' "$HOME_D" > "$MAIN_D/data/squad_leads.md"
+OUT=$(TICK_BIN="$ROOT/bin" sentinel_tick "$MAIN_D" 2>&1) || fail "Main's tick must pass: $OUT"
+landed_in_time solo "$c"
+assert_equals 1 "$(rows_of solo)" "one landing row for the lane"
+assert_equals 1 "$(git -C "$PROJ" rev-list --count "$base..trunk")" "the trunk holds the lane's one commit"
+assert_equals 1 "$(runs_of solo "$c")" "one landing run"
+OUT=$(TICK_BIN="$ROOT/bin" sentinel_tick "$MAIN_D" 2>&1) || fail "the next tick must pass: $OUT"
+assert_contains "$(cat "$HOME_D/state/.wake-queue" 2>/dev/null)" "check: trunk-landing: trunk-landing: landed solo" "the outcome waits in the lead home's own queue"
+assert_contains "$(cat "$MAIN_D/state/.sentinel.log")" "delivery: $HOME_D: check: trunk-landing: trunk-landing: landed solo" "the tick logs the outcome it queued"
+[ ! -e "$MAIN_D/state/.wake-queue" ] || ! grep -q trunk-landing "$MAIN_D/state/.wake-queue" || fail "the outcome must not go to Main's queue"
+printf '%s\n' trunk-lead > "$MAIN_D/config/parked-homes"; lane later two f2.txt
+OUT=$(TICK_BIN="$ROOT/bin" sentinel_tick "$MAIN_D" 2>&1) || fail "a tick with a parked lead must pass: $OUT"
+sleep 1; [ ! -e "$HOME_D/data/jg-trunk-landing/later.$(git -C "$PROJ" rev-parse fm/later).state" ] || fail "a parked lead home gets no landing"
+pass "one sentinel tick lands a ready lane in a local lead home with no model or watcher, and queues its outcome there"
+
+# The watcher alive too: the real watcher's fast tick and the sentinel's tick race for the same ready lane.
+tick_world tick-watcher; base=$(tip)
+lane pair one; c=$(git -C "$PROJ" rev-parse fm/pair)
+JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$HOME_D/state" bash -c \
+  '. "$1"; jg_wake_append check urgent "check: waiting-state urgent blocker"' _ "$ROOT/bin/jg-wake-lib.sh" || fail "could not queue the urgent wake"
+JG_HOME="$HOME_D" "$ROOT/bin/jg-bus.sh" watcher oldest >/dev/null 2>&1 || fail "could not observe the queued wake"
+( env -u JG_TASK_ID PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_ROOT_OVERRIDE="$W/root" \
+    JG_STATE_OVERRIDE="$HOME_D/state" JG_CONFIG_OVERRIDE="$HOME_D/config" JG_POLL=1 JG_SIGNAL_GRACE=0 \
+    JG_WATCH_HANDLING_SUCCESSOR=1 JG_SQUAD_LEAD_WAKE_STALL_SECS=1 JG_FAST_CHECK_INTERVAL=0 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999 \
+    timeout 60 "$HOME_D/bin/jg-watch.sh" > "$W/watch.out" 2>&1 ) & watcher=$!
+for _ in 1 2 3; do sentinel_tick "$HOME_D" >> "$W/tick.out" 2>&1 || fail "the tick must pass: $(cat "$W/tick.out")"; done
+wait "$watcher" || fail "the watcher failed: $(cat "$W/watch.out")"
+landed_in_time pair "$c"
+assert_equals 1 "$(runs_of pair "$c")" "one landing run, not two"
+assert_equals 1 "$(rows_of pair)" "one landing row"
+assert_equals 1 "$(git -C "$PROJ" rev-list --count "$base..trunk")" "the trunk moved once"
+pass "a watcher alive beside the sentinel tick gives one landing run, not two"

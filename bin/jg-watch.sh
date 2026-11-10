@@ -4106,15 +4106,18 @@ run_fast_checks() {
       wake "$reason"
     fi
   fi
-  # A worker's done starts its landing here, in every home: core/trunk-landing lands a task whose done-done receipt
-  # is a PASS for its exact head into the local trunk and cleans it up, with no lead or human step.
-  if [ -f "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ] && [ ! -L "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" ]; then
-    JG_CHECK_OUTPUT_KEY=trunk-landing
-    if ! run_check_capture "$SCRIPT_DIR/../core/trunk-landing/trunk-landing.sh" check "$JG_HOME"; then
-      check_capture_skip trunk-landing
-    elif check_result_reason trunk-landing; then
-      reason=$JG_CHECK_REASON
-      jg_wake_append check trunk-landing "$reason" || exit 1
+  # A worker's done starts its landing here within seconds, and from the host sentinel within a minute when no watcher
+  # runs: bin/jg-delivery-tick.sh is the one pass both run (core/trunk-landing lands a task whose done-done receipt is a
+  # PASS for its exact head into the local trunk and cleans it up, with no lead or human step). The pass queues its own
+  # result row; a reason it prints is a row due now, so this cycle rings the model with it.
+  if [ -f "$SCRIPT_DIR/jg-delivery-tick.sh" ] && [ ! -L "$SCRIPT_DIR/jg-delivery-tick.sh" ]; then
+    JG_CHECK_OUTPUT_KEY=delivery-tick
+    if ! run_check_capture "$SCRIPT_DIR/jg-delivery-tick.sh" "$JG_HOME"; then
+      check_capture_skip delivery-tick
+    elif [ -s "$JG_CHECK_OUTPUT" ]; then
+      reason=$(head -n 1 "$JG_CHECK_OUTPUT")
+      # shellcheck disable=SC2034 # Read by wake(): the pass queued this row as due now.
+      JG_WAKE_CYCLE_URGENT=1
       wake "$reason"
     fi
   fi

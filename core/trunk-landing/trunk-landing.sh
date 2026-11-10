@@ -24,7 +24,8 @@
 # a failed move, a hold or a home still behind the last go-live after 10 minutes (bin/jg-trunk-live-lag.sh) in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
 # oldest landing not yet live is live-cap-minutes (60) old, whichever is first. A red suite never goes live.
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced: a refusal is reported and the worktree stays.
-# The watcher runs this check on its fast tick, so a worker's done starts the landing within seconds in every home; the outcome
+# bin/jg-delivery-tick.sh runs this check, from the watcher's fast tick and from the host sentinel's minute tick, so a worker's done
+# starts the landing within seconds in a supervised home and within a minute when no model or watcher runs; the outcome
 # line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
 # A sweep prints one line per outcome, once: `landed ... cleaned up`, or `not landed: <reason>`. A refusal that only needs time
 # (away mode, a decision still open on linked work, a red trunk) is retried each sweep without repeating the line, and by the start a

@@ -56,6 +56,14 @@
 #      turn, and that turn's end re-arms supervision through the primary's own
 #      re-arm owner (docs/watcher-continuity.md).
 #
+# After those steps, whatever they decided and whether or not a Herdr server runs, each tick
+# runs the delivery pass (bin/jg-delivery-tick.sh) for this home and for each registered, local,
+# unparked lead home, each with that home's own checkout's entry and bounded by
+# JG_SENTINEL_DELIVERY_TIMEOUT: a worker's done lands, and the go-live and rollover start, with
+# no model awake and no watcher running. A live watcher runs the same pass on its fast tick; the
+# pass's lock lets only one of them run it at a time, and its result row goes to that home's wake
+# queue whoever ran it. A failed pass is logged and makes the tick exit 1.
+#
 # A captain note is the exception to the grace: while a note's wake row waits in
 # the queue and no watcher is live (beacon older than JG_SENTINEL_INBOX_GRACE,
 # default 60 s), the primary is rung at once, with no need for lanes in flight
@@ -114,7 +122,7 @@
 #
 # Knobs: JG_SENTINEL_HERDR_SESSION (HERDR_SESSION, else default), JG_SENTINEL_INTERVAL (60),
 # JG_SENTINEL_REWAKE_SECS (1800), JG_GUARD_GRACE (300), JG_SENTINEL_TMP_REWARN_SECS (21600),
-# JG_SENTINEL_TMP_SWEEP_SECS (86400).
+# JG_SENTINEL_TMP_SWEEP_SECS (86400), JG_SENTINEL_DELIVERY_TIMEOUT (120).
 # JG_SENTINEL_DRY_RUN=1 with reconcile decides as usual and prints each line to
 # stdout, but runs no jg-control action, takes no lock, and writes nothing to the
 # home; it is refused for tick and loop.
@@ -159,6 +167,7 @@ INBOX_GRACE=${JG_SENTINEL_INBOX_GRACE:-60}
 INBOX_REWAKE=${JG_SENTINEL_INBOX_REWAKE_SECS:-300}
 TMP_REWARN=${JG_SENTINEL_TMP_REWARN_SECS:-21600}
 TMP_SWEEP=${JG_SENTINEL_TMP_SWEEP_SECS:-86400}
+DELIVERY_TIMEOUT=${JG_SENTINEL_DELIVERY_TIMEOUT:-120}
 LOG="$STATE/.sentinel.log"
 DRY_RUN=${JG_SENTINEL_DRY_RUN:-0}
 case "$DRY_RUN" in 0|1) ;; *) echo "jg-sentinel: JG_SENTINEL_DRY_RUN must be 0 or 1" >&2; exit 2 ;; esac
@@ -493,16 +502,29 @@ reconcile_episode() {  # <episode>
   return "$rc"
 }
 
+# Each registered local lead home in data/squad_leads.md, one "<lead> <home>" line each; a remote
+# lead and a line with no home are left out.
+lead_homes() {
+  local line lead home
+  while IFS= read -r line; do
+    case "$line" in *'(host:'*) continue ;; esac
+    lead=$(printf '%s\n' "$line" | sed -n 's/^[[:space:]]*-[[:space:]]*\([^[:space:]]*\).*/\1/p')
+    home=$(printf '%s\n' "$line" | sed -n 's/.*(home: \([^;)]*\).*/\1/p')
+    [ -n "$lead" ] && [ -n "$home" ] || continue
+    printf '%s %s\n' "$lead" "$home"
+  done < <(grep -E '^[[:space:]]*-[[:space:]]' "$JG_HOME/data/squad_leads.md" 2>/dev/null || true)
+}
+
+lead_parked() {  # <lead>
+  [ -f "$JG_HOME/config/parked-homes" ] && grep -Eq "^[[:space:]]*$1([[:space:]]|$|#)" "$JG_HOME/config/parked-homes"
+}
+
 # Restore Claude's recorded model after Herdr's bare --resume restart.
 # The pane process-info API is read-only; all relaunches use their guarded owner.
 relaunch_lead_model_mismatches() {
-  local line lead home remote rc=0
-  while IFS= read -r line; do
-    lead=$(printf '%s\n' "$line" | sed -n 's/^[[:space:]]*-[[:space:]]*\([^[:space:]]*\).*/\1/p')
-    remote=$(printf '%s\n' "$line" | grep -q '(host:' && echo yes || echo no)
-    home=$(printf '%s\n' "$line" | sed -n 's/.*(home: \([^;)]*\).*/\1/p')
-    [ "$remote" = no ] && [ -n "$home" ] || continue
-    if [ -f "$JG_HOME/config/parked-homes" ] && grep -Eq "^[[:space:]]*$lead([[:space:]]|$|#)" "$JG_HOME/config/parked-homes"; then
+  local lead home rc=0
+  while read -r lead home; do
+    if lead_parked "$lead"; then
       say "$lead: parked lead home skipped"
       continue
     fi
@@ -512,7 +534,7 @@ relaunch_lead_model_mismatches() {
       say "$lead: lead model reconciliation failed"
       rc=1
     fi
-  done < <(grep -E '^[[:space:]]*-[[:space:]]' "$JG_HOME/data/squad_leads.md" 2>/dev/null || true)
+  done < <(lead_homes)
   return "$rc"
 }
 
@@ -655,6 +677,39 @@ tick() {
   return "$rc"
 }
 
+# One home's delivery pass, bounded by DELIVERY_TIMEOUT; a failure is logged.
+deliver_home() {  # <home> <entry>
+  local out rc=0 bound=()
+  [ -x "$2" ] || return 0
+  if command -v timeout >/dev/null 2>&1; then bound=(timeout "$DELIVERY_TIMEOUT"); fi
+  out=$(env -u JG_BIN -u JG_STATE_OVERRIDE -u JG_CONFIG_OVERRIDE -u JG_DATA_OVERRIDE JG_HOME="$1" \
+    ${bound[@]+"${bound[@]}"} "$2" "$1" </dev/null 2>&1) || rc=$?
+  [ -z "$out" ] || say "delivery: $1: $(printf '%s' "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"
+  [ "$rc" -eq 0 ] || { say "delivery: $1: FAILED (exit $rc)"; return 1; }
+}
+
+# The delivery pass of this home and of each local, unparked lead home, which needs no Herdr
+# server and no model (bin/jg-delivery-tick.sh owns the pass, its lock and its result row). Each
+# lead home runs its own checkout's entry; a checkout without one is left to its watcher.
+deliver() {
+  local lead home rc=0
+  deliver_home "$JG_HOME" "$BIN/jg-delivery-tick.sh" || rc=1
+  while read -r lead home; do
+    lead_parked "$lead" && continue
+    [ -d "$home/state" ] && [ "$(cd "$home" && pwd -P)" != "$JG_HOME" ] || continue
+    deliver_home "$home" "$home/bin/jg-delivery-tick.sh" || rc=1
+  done < <(lead_homes)
+  return "$rc"
+}
+
+# One sentinel pass: recovery first, then delivery, which runs whatever recovery found.
+pass() {
+  local rc=0
+  tick || rc=$?
+  deliver || rc=1
+  return "$rc"
+}
+
 locked() {
   local lock="$STATE/.sentinel.lock" rc=0
   if [ "$DRY_RUN" = 1 ]; then "$@"; return $?; fi
@@ -668,14 +723,14 @@ locked() {
 }
 
 case "$CMD" in
-  tick) locked tick ;;
+  tick) locked pass ;;
   ring) locked ring_for_inbox ;;
   reconcile) locked reconcile_episode "${JG_SENTINEL_EPISODE:-$(herdr_identity)}" ;;
   model-reconcile) locked relaunch_model_mismatches ;;
   lead-model-reconcile) locked relaunch_lead_model_mismatches ;;
   loop)
     while :; do
-      locked tick || true
+      locked pass || true
       sleep "$INTERVAL"
     done
     ;;
