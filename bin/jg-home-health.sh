@@ -149,10 +149,10 @@ cmd_check() {
 
 # Sets REC_PRE and REC_POST from the home guard's own record, else the last live row of trunk-live.tsv for <project>:<key>.
 recorded_move() {  # <home> <project> <key>
-  local home=$1 common rec
+  local home=$1 gitdir rec
   REC_PRE=""; REC_POST=""
-  common=$(git_home "$home" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-  if rec=$(cat "$common/jg-home-guard/pre-move" 2>/dev/null) && [ -n "$rec" ]; then
+  gitdir=$(git_home "$home" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+  if rec=$(cat "$gitdir/jg-home-guard/pre-move" 2>/dev/null) && [ -n "$rec" ]; then
     REC_PRE=${rec%% *}; REC_POST=${rec##* }; return 0
   fi
   [ -r "$DATA/trunk-live.tsv" ] || return 1

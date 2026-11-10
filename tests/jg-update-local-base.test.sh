@@ -544,6 +544,24 @@ test_guarded_primary_moves_with_tip() {
   pass 'fleet live advances guarded primary and guard tip together'
 }
 
+test_guarded_linked_home_moves_twice() {
+  local out next
+  mover_world linked-guard
+  "$ROOT/bin/jg-home-guard.sh" install "$W/lead-ff" --tip "$C0" >/dev/null || fail "install linked guard"
+  out=$(run_mover --home "$W/lead-ff") || fail "first linked live move: $out"
+  [ "$(head_of lead-ff)" = "$C2" ] || fail "first linked move must reach the tip"
+  git -C "$W/proj" checkout -q trunk
+  commit_file "$W/proj" c.txt gamma c3
+  next=$(git -C "$W/proj" rev-parse HEAD)
+  git -C "$W/proj" checkout -q main
+  C2=$next
+  out=$(run_mover --home "$W/lead-ff") || fail "second linked live move: $out"
+  [ "$(head_of lead-ff)" = "$next" ] || fail "second linked move must reach the tip"
+  pass 'fleet live advances a guarded linked home twice'
+}
+
+test_guarded_linked_home_moves_twice
+
 test_guarded_primary_moves_with_tip
 test_every_home_moves_or_is_skipped_with_one_row
 test_cache_is_cleared_after_a_move

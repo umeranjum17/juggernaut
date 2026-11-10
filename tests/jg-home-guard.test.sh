@@ -186,3 +186,25 @@ test_a_hand_move_of_main_is_refused
 test_moves_along_the_trunk_pass
 test_the_live_path_admits_a_newer_tip_and_a_contained_repoint
 test_the_pinback_admits_only_the_recorded_pre_move_head
+
+test_linked_homes_are_guarded_independently() {
+  local h1 h2 lone out
+  world linked
+  g -C "$H" checkout -q -b scratch main
+  commit "$H" bad.txt bad bad
+  lone=$(g -C "$H" rev-parse HEAD)
+  g -C "$H" checkout -q main
+  h1="$W/home1"; h2="$W/home2"
+  g -C "$H" worktree add -q --detach "$h1" "$T1"
+  g -C "$H" worktree add -q --detach "$h2" "$T1"
+  guard install "$h1" --tip "$T1" >/dev/null || fail 'install first linked home'
+  guard install "$h2" --tip "$T2" >/dev/null || fail 'install second linked home'
+  out=$(g -C "$h1" checkout -q --detach "$T2" 2>&1) && fail 'first home must reject newer tip'
+  assert_contains "$out" 'not on the trunk' 'linked home refusal'
+  g -C "$h2" checkout -q --detach "$T2" || fail 'second home must accept its own tip'
+  out=$(g -C "$h2" checkout -q --detach "$lone" 2>&1) && fail 'linked home must reject non-trunk commit'
+  guard uninstall "$h1" >/dev/null || fail 'uninstall first home'
+  out=$(g -C "$h2" checkout -q --detach "$lone" 2>&1) && fail 'second home must remain protected'
+  pass 'linked homes retain independent tips and uninstall does not remove another guard'
+}
+test_linked_homes_are_guarded_independently

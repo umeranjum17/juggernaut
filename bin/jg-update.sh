@@ -374,7 +374,7 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
       [ -z "$out" ] || printf '%s\n' "$out"
     fi
     if [ -x "$SCRIPT_DIR/jg-home-health.sh" ]; then
-      if out=$("$SCRIPT_DIR/jg-home-health.sh" check "$dir" "$BASE" ${HEALTH_BEFORE:+--before "$HEALTH_BEFORE"} 2>&1); then
+      if [ -z "$guard_why" ] && out=$("$SCRIPT_DIR/jg-home-health.sh" check "$dir" "$BASE" ${HEALTH_BEFORE:+--before "$HEALTH_BEFORE"} 2>&1); then
         carried=$(printf '%s\n' "$out" | sed -n 's/^carried //p')
         while IFS= read -r reason; do
           [ -n "$reason" ] || continue
@@ -383,6 +383,7 @@ move_home() {  # <home-id> <dir> <label> <ignore-seed-marker>
         done <<< "$carried"
       else
         JG_TRUNK_PINBACK=1 git -C "$dir" reset -q --keep "$pre" || true
+        if [ -n "$guard_why" ]; then out="missing-guard: the guard install refused: ${guard_why#jg-home-guard: }"; fi
         out=$(first_line "$(printf '%s\n' "$out" | tail -n 1)")
         case $out in missing-guard:*) [ -z "$guard_why" ] || out="missing-guard: the guard install refused: ${guard_why#jg-home-guard: }" ;; esac
         status="rolled-back:$out"; MOVE_RESULT=stopped

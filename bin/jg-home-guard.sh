@@ -7,7 +7,7 @@
 #
 # `install` copies this very script to <git-common-dir>/hooks/reference-transaction, so the guard has no path to a
 # bin/ that a later update replaces and a missing helper can never lock a home. It records the trunk tip in
-# <git-common-dir>/jg-home-guard/trunk-tip (--tip, else JG_TRUNK_TIP, else the home's HEAD, which is the trunk commit the
+# <git-dir>/jg-home-guard/trunk-tip (--tip, else JG_TRUNK_TIP, else the home's HEAD, which is the trunk commit the
 # live move just made). bin/jg-update.sh --base calls `install` after it moves a home and `check` in the health step.
 # A home that is also a local-trunk project already holds the trunk guard of bin/jg-trunk.sh in that hook file: `install`
 # keeps it as <git-common-dir>/hooks/reference-transaction.chained, the hook runs it first with the same input (its refusal
@@ -46,12 +46,6 @@ commit_of() { git rev-parse -q --verify "$1^{commit}" 2>/dev/null; }
 on_trunk() { git merge-base --is-ancestor "$1" "$2" 2>/dev/null; }
 
 # --- hook mode ---------------------------------------------------------------------------------------------------
-
-in_home_root() {  # the move happens in the home's own checkout, not in a linked pool worktree
-  local common top
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && top=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
-  [ "$(cd -P "$common/.." 2>/dev/null && pwd -P)" = "$(cd -P "$top" 2>/dev/null && pwd -P)" ] && [ "$(basename "$common")" = .git ]
-}
 
 pinback_ok() {  # <old> <new>
   local old=$1 new=$2 data
@@ -115,13 +109,15 @@ record_live() {  # <old> <new>: a committed live move records the HEAD it left a
 }
 
 hook() {
-  local state=$1 old new ref why top="" input
+  local state=$1 old new ref why input gitdir
   COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
   # The trunk guard this hook took the place of judges the same transaction first; its refusal is the refusal.
   input=$(cat; printf x); input=${input%x}
   # (a chained hook that does not read its input closes the pipe early, which is not an error)
   if [ -x "$COMMON/hooks/$CHAINED" ]; then printf '%s' "$input" 2>/dev/null | "$COMMON/hooks/$CHAINED" "$@" || exit $?; fi
-  DIR="$COMMON/jg-home-guard"; TIP=$(cat "$DIR/trunk-tip" 2>/dev/null || true)
+  gitdir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) || exit 0
+  DIR="$gitdir/jg-home-guard"; TIP=$(cat "$DIR/trunk-tip" 2>/dev/null || true)
+  [ -f "$DIR/trunk-tip" ] || exit 0
   case $state in
     prepared) ;;
     committed) [ "${JG_TRUNK_LIVE:-}" = 1 ] || exit 0 ;;
@@ -130,7 +126,7 @@ hook() {
   while read -r old new ref; do
     case $ref in
       refs/heads/main) ;;
-      HEAD) case $new in ref:*) continue ;; esac; [ -n "$top" ] || { in_home_root && top=yes || top=no; }; [ "$top" = yes ] || continue ;;
+      HEAD) case $new in ref:*) continue ;; esac ;;
       *) continue ;;
     esac
     if [ "$state" = committed ]; then case $new in ref:*) ;; *) record_live "$old" "$new" ;; esac; continue; fi
@@ -144,6 +140,7 @@ hook() {
 
 # --- installer ---------------------------------------------------------------------------------------------------
 
+gitdir_of() { git -C "$1" rev-parse --path-format=absolute --git-dir 2>/dev/null || die "$1 is not a git repository"; }
 common_of() { git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || die "$1 is not a git repository"; }
 
 cmd_install() {
@@ -152,7 +149,7 @@ cmd_install() {
   while [ $# -gt 0 ]; do
     case $1 in --tip) tip=${2-}; shift 2 || die "--tip needs a commit" ;; --pre) pre=${2-}; shift 2 || die "--pre needs a commit" ;; *) die "unknown option $1" ;; esac
   done
-  common=$(common_of "$home"); hook="$common/hooks/reference-transaction"; dir="$common/jg-home-guard"
+  common=$(common_of "$home"); hook="$common/hooks/reference-transaction"; dir="$(gitdir_of "$home")/jg-home-guard"
   [ -n "$tip" ] || tip=$(git -C "$home" rev-parse HEAD 2>/dev/null) || die "$home has no HEAD to record as the trunk tip"
   tip=$(git -C "$home" rev-parse -q --verify "$tip^{commit}") || die "trunk tip $tip is not a commit in $home"
   mkdir -p "$common/hooks" "$dir"
@@ -180,18 +177,23 @@ cmd_check() {
   [ -n "$home" ] || die "usage: jg-home-guard.sh check <home>"
   common=$(common_of "$home"); hook="$common/hooks/reference-transaction"
   if [ ! -x "$hook" ] || ! grep -q "$MARK" "$hook" 2>/dev/null; then echo "missing: no home guard hook in $common/hooks"; exit 1; fi
-  tip=$(cat "$common/jg-home-guard/trunk-tip" 2>/dev/null) && [ -n "$tip" ] || { echo "missing: the home guard has no recorded trunk tip"; exit 1; }
+  tip=$(cat "$(gitdir_of "$home")/jg-home-guard/trunk-tip" 2>/dev/null) && [ -n "$tip" ] || { echo "missing: the home guard has no recorded trunk tip"; exit 1; }
   echo "present (trunk tip $(short "$tip"))"
 }
 
 cmd_uninstall() {
-  local home=${1-} common hook
+  local home=${1-} common hook dir other
   [ -n "$home" ] || die "usage: jg-home-guard.sh uninstall <home>"
   common=$(common_of "$home"); hook="$common/hooks/reference-transaction"
+  dir="$(gitdir_of "$home")/jg-home-guard"
+  if [ -e "$hook" ]; then grep -q "$MARK" "$hook" || die "$hook is not the home guard; leaving it"; fi
+  rm -f -- "$dir/trunk-tip" "$dir/pre-move"; rmdir "$dir" 2>/dev/null || true
+  for other in "$common/jg-home-guard/trunk-tip" "$common"/worktrees/*/jg-home-guard/trunk-tip; do
+    [ ! -f "$other" ] || { echo "home guard removed from $home"; return; }
+  done
   if [ -e "$hook" ]; then grep -q "$MARK" "$hook" || die "$hook is not the home guard; leaving it"; rm -f -- "$hook"; fi
   # A trunk guard the hook ran first goes back to being the repository's hook.
   if [ -e "$common/hooks/$CHAINED" ]; then mv -f -- "$common/hooks/$CHAINED" "$hook" || die "cannot put the trunk guard back at $hook"; fi
-  rm -f -- "$common/jg-home-guard/trunk-tip" "$common/jg-home-guard/pre-move"; rmdir "$common/jg-home-guard" 2>/dev/null || true
   echo "home guard removed from $home"
 }
 
