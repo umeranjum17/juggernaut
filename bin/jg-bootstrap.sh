@@ -1422,7 +1422,7 @@ crew_dispatch_validate() {
 # snapshot's classifier and bin/jg-squad-lead-reconcile.sh's nudge stay as
 # backstops for what this cannot see. Never reads or writes another home.
 backlog_record_reconcile() {
-  local marker meta control_lock meta_lock id row label has_record=0 gate_status
+  local marker meta control_lock meta_lock id row label has_record=0 gate_status snapshot=0
   # A fresh home with no state directory has no physical task records to pair.
   # Keep bootstrap diagnostics working without creating state just for a no-op.
   [ -e "$STATE" ] || [ -L "$STATE" ] || return 0
@@ -1498,6 +1498,12 @@ backlog_record_reconcile() {
     break
   done
   [ "$has_record" = 1 ] || return 0
+  # One list read answers every record's row; only a list that fails as a whole falls back to a read per record.
+  if jg_backlog_row_snapshot "$DATA"; then
+    snapshot=1
+  else
+    echo "BOOTSTRAP_INFO: the backlog list read failed ($JG_BACKLOG_ROW_ERROR); reading the rows one by one"
+  fi
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || [ -L "$meta" ] || continue
     if ! jg_backlog_record_present "$meta" "task record" "$STATE"; then
@@ -1519,7 +1525,8 @@ backlog_record_reconcile() {
     if [ "$(jg_meta_get "$meta" kind)" != squad_lead ] \
        && [ "$(jg_meta_get "$meta" cleanup_recovery)" != orca ]; then
       row=
-      if jg_backlog_row_probe "$DATA" "$id"; then
+      if { [ "$snapshot" = 1 ] && jg_backlog_row_snapshot_probe "$id"; } \
+         || { [ "$snapshot" = 0 ] && jg_backlog_row_probe "$DATA" "$id"; }; then
         row=$JG_BACKLOG_ROW_STATE
       elif [ "$JG_BACKLOG_ROW_RESULT" != not_found ]; then
         echo "BACKLOG_RECONCILE: $id: worker record exists but its backlog item could not be read: $JG_BACKLOG_ROW_ERROR"

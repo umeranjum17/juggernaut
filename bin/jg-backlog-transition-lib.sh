@@ -410,6 +410,50 @@ jg_backlog_row_probe() {  # <data-dir> <id>
   return 0
 }
 
+# A sweep that pairs many task records with their rows reads the backlog once, not once per record (a home with 87
+# records paid 87 reads of 2.6 to 4.7 s). jg_backlog_row_snapshot fills JG_BACKLOG_ROW_SNAPSHOT with one
+# "<id> <state> <held> <blocked>" line per row, closed rows included, and jg_backlog_row_snapshot_probe answers
+# jg_backlog_row_probe's question from it: the same JG_BACKLOG_ROW_RESULT and JG_BACKLOG_ROW_STATE, found or not_found.
+# A list read that fails as a whole returns 1 with JG_BACKLOG_ROW_ERROR, and the caller falls back to jg_backlog_row_probe.
+# Only the last two fields and the first two are read, so a quoted title holding commas cannot shift them.
+JG_BACKLOG_ROW_SNAPSHOT=
+jg_backlog_row_snapshot() {  # <data-dir>
+  local data out status
+  JG_BACKLOG_ROW_SNAPSHOT=
+  JG_BACKLOG_ROW_ERROR=
+  if ! data=$(jg_backlog_data_absolute "$1"); then
+    JG_BACKLOG_ROW_ERROR="data directory cannot be resolved: $1"
+    return 1
+  fi
+  if ! jg_backlog_source_present "$data" "$1"; then
+    JG_BACKLOG_ROW_ERROR=$JG_BACKLOG_TRANSITION_ERROR
+    return 1
+  fi
+  out=$(JG_BACKLOG_TIMEOUT=${JG_BACKLOG_TIMEOUT:-60} jg_backlog_row_list "$data" --all --fields held,blocked)
+  status=$?
+  if [ "$status" -ne 0 ] || ! printf '%s\n' "$out" | grep -q '^\(count: \|tasks: 0 \)'; then
+    JG_BACKLOG_ROW_ERROR=$(printf '%s\n' "$out" | sed -n '1p')
+    [ -n "$JG_BACKLOG_ROW_ERROR" ] || JG_BACKLOG_ROW_ERROR="backlog list failed with status $status"
+    return 1
+  fi
+  JG_BACKLOG_ROW_SNAPSHOT=$(printf '%s\n' "$out" | awk -F, '/^  [A-Za-z0-9._-]+,/ {
+    id = $1; sub(/^ +/, "", id); print id " " $2 " " $(NF - 1) " " $NF }')
+}
+
+jg_backlog_row_snapshot_probe() {  # <id>
+  local state
+  state=$(printf '%s\n' "$JG_BACKLOG_ROW_SNAPSHOT" | awk -v id="$1" '$1 == id { print $2 " " $3 " " $4; exit }')
+  JG_BACKLOG_ROW_ERROR=
+  JG_BACKLOG_ROW_HOLD_KIND=
+  if [ -z "$state" ]; then
+    JG_BACKLOG_ROW_RESULT=not_found
+    JG_BACKLOG_ROW_STATE=
+    return 1
+  fi
+  JG_BACKLOG_ROW_RESULT=found
+  JG_BACKLOG_ROW_STATE=$state
+}
+
 # Write the ticket the moment a backlog row moves, so the board the captain reads
 # follows the work itself instead of waiting for the next tickets-sync poll.
 # bin/jg-ticket.sh owns the write: it takes this home's board, writes only fields
