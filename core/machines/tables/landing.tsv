@@ -10,7 +10,7 @@ edge	running	land	landed	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-trunk.
 edge	running	refuse-wait	wait	core/trunk-landing/trunk-landing.sh:run	-	the refusal only needs time	jg-machine-landing.test.sh
 edge	running	refuse-final	final	core/trunk-landing/trunk-landing.sh:run	-	any other refusal, or the third refusal that is classed retry	jg-machine-landing.test.sh
 edge	running	retry	retry	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-trunk.sh classify_refusal says retry (the machine failed, not the lane), fewer than 3 times	jg-machine-landing.test.sh
-edge	wait	restart	running	core/trunk-landing/trunk-landing.sh:check	-	each sweep	jg-machine-landing.test.sh
+edge	wait	restart	running	core/trunk-landing/trunk-landing.sh:check	-	each sweep, and the start a finished landing chains (next) once 2 minutes have passed	jg-machine-landing.test.sh
 edge	retry	restart	running	core/trunk-landing/trunk-landing.sh:check	-	each sweep once 2 minutes have passed	jg-machine-landing.test.sh
 edge	final	retip	running	core/trunk-landing/trunk-landing.sh:check	-	the refusal is a conflict and the trunk tip it was judged on is gone, or was not stored (core/trunk-landing/verdict.sh)	jg-trunk-verdict.test.sh
 observer	[ -n "${JG_HOME:-}" ] || { echo no-jg-home; exit 0; }; f=$JG_HOME/data/jg-trunk-landing/$1.state; [ -f "$f" ] || { echo new; exit 0; }; read -r w a b < "$f"; [ "$w" = running ] || { echo "$w"; exit 0; }; case $a in ''|*[!0-9]*) echo running-no-epoch; exit 0;; esac; a=$((10#$a)); [ "$a" -gt 0 ] || { echo running-no-epoch; exit 0; }; [ $(( $(date +%s) - a )) -le 21600 ] || { echo running-expired; exit 0; }; case $b in *[!0-9]*) echo running-bad-pid;; *) echo running;; esac

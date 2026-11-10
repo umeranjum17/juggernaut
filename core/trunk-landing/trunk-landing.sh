@@ -27,7 +27,8 @@
 # The watcher runs this check on its fast tick, so a worker's done starts the landing within seconds in every home; the outcome
 # line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
 # A sweep prints one line per outcome, once: `landed ... cleaned up`, or `not landed: <reason>`. A refusal that only needs time
-# (away mode, a decision still open on linked work, a red trunk) is retried each sweep without repeating the line;
+# (away mode, a decision still open on linked work, a red trunk) is retried each sweep without repeating the line, and by the start a
+# finished landing chains (`next`) after its backoff, so a steady queue of new lanes never starves it (core/trunk-landing/verdict.sh).
 # Other refusals (a conflict, a second commit, a failing check) are final for the lane's head; core/trunk-landing/verdict.sh owns
 # that rule for both paths, including that a conflict holds only while the trunk tip it was judged on stands. Per-attempt logs are
 # retained. A lane fixes the refusal and reports a new head. bin/jg-trunk.sh owns every refusal and names the conflicting paths.
@@ -304,8 +305,8 @@ for meta in "$STATE"/*.meta; do
         why=$(verdict_reason "${line#final }")
         report "$id.$head" "$id not landed: ${line#final }" "$why"; lane_refusal_reach "$id" "$head" "$proj" "$branch" "$why"; continue
       fi ;;
-    retry*) [ -n "$(find "$st" -mmin +2 2>/dev/null)" ] || continue ;;  # the backoff: 2 minutes since the refusal was recorded
-    wait*) [ -z "$QUIET" ] || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
+    retry*) verdict_due "$st" || continue ;;
+    wait*) [ -z "$QUIET" ] || verdict_due "$st" || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac
   # <epoch done> <task> <head> <project> <1, or 0 for a lane marked `land-next`>
   cands="$cands$at $id $head $(basename "$proj") $([ -e "$STATE/$id.land-next" ] && echo 0 || echo 1)"$'\n'

@@ -232,6 +232,8 @@ journeys:
     command: bash journeys/hc-backend.sh
   landing-refusing-shims:
     command: bash journeys/landing-refusing-shims.sh
+  wait-refusal-retry:
+    command: bash journeys/wait-refusal-retry.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

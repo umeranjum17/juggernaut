@@ -5,7 +5,10 @@
 #   1. The state line of a refusal comes from the `refusal-class <id>: wait|retry|final` line bin/jg-trunk.sh prints (its
 #      classify_refusal owns the phrase lists). A landing another run already holds (`IN_PROGRESS:`, no class) waits. Anything else
 #      is final. A retry counts its tries in <task>.<head>.retries; the RETRY_CAP-th try is final, so a lane the machine failed is
-#      never retried for ever and never forgotten. The check tries a retry again after its 2 minute backoff.
+#      never retried for ever and never forgotten. A retry is tried again after its 2 minute backoff (verdict_due). A wait is tried
+#      again by every check sweep, and by the start a finished landing chains (`next`) after the same backoff: a sweep starts nothing
+#      while a landing runs, so under a steady queue only `next` reaches a wait lane, and the backoff keeps a lane its own landing
+#      just refused from restarting itself in a loop. The lander's admission re-judges whether the wait's reason still holds.
 #   2. Every verdict is stored with the trunk tip it was judged on, in <task>.<head>.tip beside <task>.<head>.state, the way
 #      `jg-trunk.sh land` keys its own admission record by the tip. For one lane it is the tip read before the landing started; for a
 #      stack it is the tip after the stack's own landings, because a returned lane was judged on top of the stack's lanes that landed.
@@ -24,6 +27,11 @@ VERDICT_CONFLICT_RE=' conflicts with [^ ]+ \(([0-9a-f]+)\) in: '
 # The trunk tip the lander will judge the next landing of <project-name> on.
 verdict_tip() {  # <project-name>
   cat "$STATE/trunk-tip-$1" 2>/dev/null || :
+}
+
+# Whether a stored wait or retry verdict is due to be tried again: 2 minutes since it was recorded (rule 1).
+verdict_due() {  # <state file>
+  [ -n "$(find "$1" -mmin +2 2>/dev/null)" ]
 }
 
 # The state line for a refusal: `wait <reason>`, `retry <n> <reason>` or `final <reason>`.
