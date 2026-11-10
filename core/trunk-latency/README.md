@@ -3,7 +3,8 @@
 Every local-trunk landing gets one row with its measured minutes from the lane's done line to the landing.
 A landing over the five-minute target raises one alert that names the stage that held it.
 
-`latency.sh check <jg-home>` is the watcher check.
+`latency.sh check <jg-home>` is the watcher check, and `bin/jg-trunk.sh` runs it at the end of every landing, so a landing writes its row at once.
+The check stays as the backstop that fills rows still missing.
 It reads only records that already exist, and it writes `data/trunk-latency.tsv`.
 
 ## The row
@@ -13,6 +14,7 @@ The check writes one row for each row of `data/trunk-landings.tsv` that has no r
 | Field | What it holds | Where it is read |
 |---|---|---|
 | `task`, `commit`, `landed` | the landing row | `data/trunk-landings.tsv` |
+| `ready` (recorded) | the lane's last done epoch, written as `done=<epoch>` on the landing's proofs row while the status file still exists; it is read before the message log | `data/trunk-landing-proofs.tsv` |
 | `head` | the lane head that landed | the receipt of the landing's proof row, in full from the landing records |
 | `first_done`, `ready` | the first and the last `done [at=<epoch>]` line of the lane, after its previous landing and at or before this one | `state/chat.jsonl`, and `state/<task>.status` while it exists |
 | `gate_start` | the start of the worker's first sealed done-done run at the head | `data/<task>/.done-done/runs/*.json` |

@@ -5,7 +5,8 @@
 #
 # It reads only records that the landing check and the lane already write:
 #   data/trunk-landings.tsv         one row per landing: task, project, commit, landed epoch, gate, [batch-from=<commit>]
-#   data/trunk-landing-proofs.tsv   the lane head (receipt=<verdict>@<head>) and the gate seconds (gate=ran:N,failed:F,secs:S)
+#   data/trunk-landing-proofs.tsv   the lane head (receipt=<verdict>@<head>), the gate seconds (gate=ran:N,failed:F,secs:S) and the
+#                                   lane's done epoch (done=<epoch>), which the landing records while the status file exists
 #   data/jg-trunk-landing/          the landing start: <task>.<head>.launch-*.log for a lane landed alone, batch.launch-*.log
 #                                   for a stack (the landing check starts one landing at a time, so the last start before the
 #                                   landing row is the one that landed it)
@@ -69,6 +70,9 @@ while IFS=$'\t' read -r task _ commit landed _ extra; do
   prev=$(awk -F'\t' -v t="$task" -v l="$landed" '$1 == t && $4 < l && $4 > p { p = $4 } END { print p + 0 }' "$LANDINGS")
   read -r first ready < <(awk -v t="$task" -v p="$prev" -v l="$landed" '$1 == t && $2 > p && $2 <= l { if (!f || $2 < f) f = $2; if ($2 > r) r = $2 }
                                                                       END { print (f ? f " " r : "") }' <<< "$dones")
+  # The done epoch the landing recorded (done=<epoch> on its proofs row, written while the status file existed) is read first.
+  rec=$(sed -n 's/.*\tdone=\([0-9][0-9]*\)\(\t.*\)\{0,1\}$/\1/p' <<< "$proof")
+  [ -z "$rec" ] || { ready=$rec; [ -n "${first:-}" ] && [ "$first" -le "$rec" ] || first=$rec; }
   start=
   if [ -n "${ready:-}" ]; then
     case $extra in batch-from=*) glob="$MEM/batch.launch-*.log" ;; *) glob="$MEM/$task.${head:-*}.launch-*.log" ;; esac

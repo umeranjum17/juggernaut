@@ -588,14 +588,16 @@ lane_follow() {  # <branch> <old> <new> <worktree>
 # What the proof gate already required is recorded after the landing as a fact about the landed commit; the owner signature
 # is the one input that never gates it, and is recorded as absent when missing.
 record_proofs() {  # <id> <lane head> <landed commit>
-  local r="$STATE/$1.run-receipt.json" d="$DATA/$1" receipt=absent sig=absent card=absent proof_account=
+  local r="$STATE/$1.run-receipt.json" d="$DATA/$1" receipt=absent sig=absent card=absent proof_account='' done_at
+  # The lane's last done epoch, read while its status file still exists: cleanup removes the file, and core/trunk-latency needs the number.
+  done_at=$(sed -n 's/^done.*\[at=\([0-9][0-9]*\)\].*/\1/p' "$STATE/$1.status" 2>/dev/null | tail -n 1)
   if [ -f "$r" ] && command -v jq >/dev/null 2>&1; then receipt="$(jq -r '.verdict // "unreadable"' "$r" 2>/dev/null || echo unreadable)@$(jq -r '.head // ""' "$r" 2>/dev/null | cut -c1-12)"; fi
   [ ! -e "$d/proof-authorizations/$2.sig" ] || sig=present
   { [ -f "$d/merge-card.json" ] && grep -q "$2" "$d/merge-card.json"; } && card=present
   [ "$card" = present ] && command -v jq >/dev/null 2>&1 &&
     proof_account=$(jq -r --arg h "$2" 'select(.head == $h) | .context.account // empty' "$d/merge-card.json" 2>/dev/null | tail -n 1)
   row trunk-landing-proofs.tsv "$1" "$PN" "$3" "$(date +%s)" "receipt=$receipt" "signature=$sig" "merge-card=$card" \
-    "proof-account=${proof_account:-none}" "lander-account=${LANDER_ACCOUNT:-none}" "gate=${GATE_FIGURES:-absent}"
+    "proof-account=${proof_account:-none}" "lander-account=${LANDER_ACCOUNT:-none}" "gate=${GATE_FIGURES:-absent}" "done=${done_at:-absent}"
 }
 
 # Tell the lane's ticket and Overwatch that its landed commit was reverted, with the reason. Best effort: the revert stands.
@@ -660,6 +662,9 @@ lane_admit() {  # <id> <tip> <expected head or -> <follow 0|1>
 # is core/landing-card's, an observer of these records; the PR-flow post-merge hook (merge-card) does not run for a landing.
 landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's record)
   record_proofs "$1" "$2" "$3" || :
+  # The latency row is written by this landing, not by a watcher; the check stays as the backstop for rows still missing. An over-limit alert becomes a check wake.
+  local late; late=$(bash "$JG_ROOT/core/trunk-latency/latency.sh" check "$JG_HOME" 2>/dev/null) || :
+  [ -z "$late" ] || jg_wake_append check "trunk-latency-$1" "$late" >/dev/null 2>&1 || :
   # The same merge alert as bin/jg-merge-local.sh: the opt-in fleet ledger's merged event and the ticket close.
   [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-fleet-ledger.sh" merged "$1" local || true
   JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$1" --stage "done" --state "done" || true

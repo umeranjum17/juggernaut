@@ -48,7 +48,7 @@ test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
   assert_contains "$out" "not charged to this lane" "the landing must say it set the tip's red aside"
   assert_contains "$out" "gate=full-tip-red" "the landing must record that the gate was set against the tip"
   assert_contains "$(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")" "$(printf 'good\tproj\t%s' "$(tip)")" "the landing's proofs row must be the last one"
-  [[ $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv") =~ gate=ran:[1-9][0-9]*,failed:[1-9][0-9]*,secs:[0-9]+$ ]] \
+  [[ $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv") =~ gate=ran:[1-9][0-9]*,failed:[1-9][0-9]*,secs:[0-9]+[[:space:]]done=[0-9]+$ ]] \
     || fail "the proofs row must keep the gate's scripts run, failed on the first run and seconds: $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "a landing that set red aside must not move the green pin"
   [ "$(grep -c . "$W/backlog-calls")" = 1 ] && [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the same tip tree is not reported twice"
@@ -346,7 +346,24 @@ test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again() {
   pass 'a lane whose sealed run is for the tree the lander tests lands on the lint alone; a moved trunk runs the tests'
 }
 
+# A landing writes its latency row at once, from the done epoch it recorded while the lane's status file still existed.
+test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded() {
+  local out done_at
+  world latency
+  lane lat1 one a.txt
+  done_at=$(sed -n 's/^done \[at=\([0-9]*\)\].*/\1/p' "$HOME_D/state/lat1.status" | tail -n 1)
+  out=$(trunk land lat1 2>&1) || fail "the lane must land: $out"
+  rm -f "$HOME_D/state/lat1.status"   # cleanup removes the status file; no chat line exists in this home
+  assert_contains "$(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")" "done=$done_at" "the landing must record the lane's done epoch"
+  [ -s "$HOME_D/data/trunk-latency.tsv" ] || fail "the landing must write data/trunk-latency.tsv itself, with no watcher: $out"
+  [ "$(awk -F'\t' '$1 == "lat1" { print $5 }' "$HOME_D/data/trunk-latency.tsv")" = "$done_at" ] \
+    || fail "the latency row must carry the recorded done epoch $done_at: $(cat "$HOME_D/data/trunk-latency.tsv")"
+  [ -n "$(awk -F'\t' '$1 == "lat1" { print $9 }' "$HOME_D/data/trunk-latency.tsv")" ] || fail "the latency row must hold its minutes"
+  pass 'a landing records the lane done epoch and writes its latency row at once, with the status file gone'
+}
+
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
+test_every_landing_writes_its_latency_row_from_the_done_epoch_it_recorded
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
 test_a_lane_is_charged_only_for_a_script_the_parent_passes_three_times_of_three
 test_a_tip_red_that_prints_its_elapsed_seconds_is_the_same_red_on_every_run
