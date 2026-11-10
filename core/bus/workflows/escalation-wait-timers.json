@@ -29,6 +29,11 @@
         "fresh": true
       },
       {
+        "name": "account",
+        "facts": "wait-source",
+        "fresh": true
+      },
+      {
         "name": "quota",
         "facts": "wait-source",
         "fresh": true

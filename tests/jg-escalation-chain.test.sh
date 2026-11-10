@@ -982,6 +982,7 @@ codex|question|Question 1/1\n  1. Yes\n  2. No\nPress enter to confirm or esc to
 gemini|question|Choose an option\n  1. Continue\nEnter to submit · Esc to cancel
 kimi|question|Select one\n  a) first\nPress Enter to select, Esc to skip
 cursor|question|Which file?\n  1. a.ts\nenter to select · esc to cancel
+claude-account|account|● Working\nClaude Code can't use your Claude subscription\n> 
 claude-quota|quota|⎿ You've hit your limit · resets 3pm\n> 
 codex-quota|quota|■ You've hit your usage limit. Upgrade or try again at 9:41 PM.\n> 
 pi-quota|quota|Error: 429 Too Many Requests - rate limit exceeded\n> 
@@ -1400,9 +1401,106 @@ test_a_ready_recon_draft_is_forwarded_to_its_critic() {
   pass "a ready Recon draft is forwarded to its critic and its decision closed by the ladder, a critic that has it is not sent it twice, and the ledger holds the minutes"
 }
 
+# Account outage (core/wait-timers/README.md "Known next steps"): the pinned Claude
+# account dies, and the watcher moves the lanes to the owner's next recorded
+# account, or only raises its one card when he recorded none.
+
+# A home pinned to account a, whose Claude CLI answers PONG on any account but a.
+# w1 and w2 are working on a, wd is finished on a, wo works on b (another account).
+account_outage_home() {  # <name> -> home path
+  local m
+  m=$(home "$1")
+  mkdir -p "$m/acct/a" "$m/acct/b" "$m/acct/c"
+  printf '%s\n' "$m/acct/a" > "$m/config/claude-account"
+  cat > "$m/fakebin/claude" <<'SH'
+#!/usr/bin/env bash
+case "${CLAUDE_CONFIG_DIR:-}" in
+  */a|*/c) echo "Claude Code can't use your Claude subscription: payment past due"; exit 1 ;;
+esac
+echo PONG
+SH
+  chmod +x "$m/fakebin/claude"
+  local n=0 w
+  for w in w1:working w2:working wd:done wo:working; do
+    n=$((n + 1))
+    printf 'kind=ship\nbackend=tmux\nwindow=fake:%s\nharness=claude\naccount=%s\n' "$n" "$m/acct/$([ "${w%%:*}" = wo ] && echo b || echo a)" > "$m/state/${w%%:*}.meta"
+    printf '%s [at=1]: on it\n' "${w#*:}" > "$m/state/${w%%:*}.status"
+    prime_status_seen "$m/state" "$m/state/${w%%:*}.status"
+  done
+  printf 'Claude Code can'"'"'t use your Claude subscription\n> \n' > "$m/panes/1"
+  cp "$m/panes/1" "$m/panes/2"
+  cp "$m/panes/1" "$m/panes/3"
+  printf '%s\n' "$m"
+}
+
+test_a_dead_account_moves_the_lanes_to_the_recorded_fallback_with_no_model_turn() {
+  local m row CYCLE_POLLS=100 PANES='1 2 3 4' ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  m=$(account_outage_home account-down)
+  printf '%s\n%s\n' "$m/acct/a" "$m/acct/b" > "$m/config/claude-account-fallbacks"
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/w1" -a -e "$m/state/.waiting-timers/w2"
+  [ -f "$m/state/.wait-sources/w1.account" ] || fail "a subscription error in the pane raised no account wait: $(ls -a "$m/state/.wait-sources" 2>&1)"
+  backdate "$m" w1 31
+  backdate "$m" w2 31
+  cycle_for "$m" 120 grep -q 'relaunch.*w2' "$m/state/.account-outage/relaunch.log"
+  [ "$(cat "$m/config/claude-account")" = "$m/acct/b" ] \
+    || fail "the pin did not move to the recorded fallback: $(cat "$m/config/claude-account"; cat "$m/err")"
+  cycle_for "$m" 20 test "$(grep -c '^jg-control .* relaunch ' "$m/sent" 2>/dev/null || echo 0)" -ge 2
+  [ "$(grep -cE '^jg-control w[12] relaunch --note ' "$m/sent")" = 2 ] \
+    || fail "a lane on the dead account was not relaunched: $(cat "$m/sent" 2>&1; cat "$m/state/.account-outage/relaunch.log" 2>&1)"
+  ! grep -qE '^jg-control (wd|wo) ' "$m/sent" || fail "a finished lane or a lane on another account was relaunched: $(cat "$m/sent")"
+  [ "$(grep -c '^raise ' "$m/cards")" = 1 ] || fail "the outage did not raise exactly one card: $(cat "$m/cards" 2>&1)"
+  grep -q 'Renew the Claude account?' "$m/cards" || fail "the card does not ask the owner to renew: $(cat "$m/cards")"
+  ! grep -q 'waiting-state' "$m/events" 2>/dev/null || fail "the recovery woke a model: $(cat "$m/events")"
+  # The relaunched lanes show a quiet pane: the waits clear and the ledger holds the minutes.
+  printf 'working on it\n> \n' > "$m/panes/1"
+  cp "$m/panes/1" "$m/panes/2"
+  printf 'working [at=%s]: back on the new account\n' "$(date +%s)" | tee -a "$m/state/w1.status" >> "$m/state/w2.status"
+  cycle_for "$m" 120 test ! -e "$m/state/.waiting-timers/w1" -a ! -e "$m/state/.waiting-timers/w2"
+  row=$(ledger_row "$m" w1)
+  printf '%s\n' "$row" | grep -qE '	[0-9]+\.[0-9]	(owner|card)	recover	' \
+    || fail "the ledger has no row with the outage minutes: $(cat "$m/data/metrics/escalations.tsv" 2>&1)"
+  printf 'account outage: cleared in %s min, no model turn\n' "$(printf '%s' "$row" | cut -f5)"
+  pass "a dead account moves its lanes to the next recorded fallback, relaunches only them, raises one card and records the minutes, with no model turn"
+}
+
+test_an_empty_fallback_list_raises_one_card_and_changes_nothing() {
+  local m listed CYCLE_POLLS=100 PANES='1 2 3 4' ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  for listed in empty none; do
+    m=$(account_outage_home "account-down-$listed")
+    [ "$listed" = none ] || : > "$m/config/claude-account-fallbacks"
+    cycle_for "$m" 120 test -e "$m/state/.waiting-timers/w1" -a -e "$m/state/.waiting-timers/w2"
+    backdate "$m" w1 31
+    backdate "$m" w2 31
+    cycle_for "$m" 120 test -s "$m/cards"
+    cycle "$m"
+    [ "$(cat "$m/config/claude-account")" = "$m/acct/a" ] || fail "($listed) the pin moved with no recorded fallback: $(cat "$m/config/claude-account")"
+    ! grep -q '^jg-control ' "$m/sent" 2>/dev/null || fail "($listed) a pane was relaunched with no recorded fallback: $(cat "$m/sent")"
+    [ "$(grep -c '^raise ' "$m/cards")" = 1 ] || fail "($listed) the outage did not raise exactly one card: $(cat "$m/cards" 2>&1)"
+  done
+  pass "with no recorded fallback the outage raises one card, moves no pin and relaunches nothing"
+}
+
+test_a_working_account_is_not_treated_as_down() {
+  local m CYCLE_POLLS=100 PANES='1 2 3 4' ALERT_SECS=30 ESCALATE_SECS=90 CARD_SECS=600
+  m=$(account_outage_home account-up)
+  printf '%s\n%s\n' "$m/acct/a" "$m/acct/b" > "$m/config/claude-account-fallbacks"
+  printf '%s\n' "$m/acct/b" > "$m/config/claude-account"
+  sed -i "s|acct/a|acct/b|" "$m/state/w1.meta" "$m/state/w2.meta"
+  cycle_for "$m" 120 test -e "$m/state/.waiting-timers/w1"
+  backdate "$m" w1 31
+  cycle "$m"; cycle "$m"
+  [ "$(cat "$m/config/claude-account")" = "$m/acct/b" ] || fail "an account that answers its probe was switched away: $(cat "$m/config/claude-account")"
+  ! grep -q '^jg-control ' "$m/sent" 2>/dev/null || fail "a lane on a working account was relaunched: $(cat "$m/sent")"
+  [ ! -s "$m/cards" ] || fail "a working account raised an outage card: $(cat "$m/cards")"
+  pass "an account that answers its probe is not treated as down"
+}
+
 test_a_silent_worker_is_rung_and_clears_with_no_model_turn
 test_an_unanswered_ring_is_relaunched_then_reaches_main
 test_a_ready_recon_draft_is_forwarded_to_its_critic
+test_a_dead_account_moves_the_lanes_to_the_recorded_fallback_with_no_model_turn
+test_an_empty_fallback_list_raises_one_card_and_changes_nothing
+test_a_working_account_is_not_treated_as_down
 test_a_stale_wake_names_its_task_and_reason
 test_a_finished_landed_worker_is_cleaned_up_without_a_wake
 test_a_finished_unlanded_worker_is_kept_and_wakes_with_its_reason

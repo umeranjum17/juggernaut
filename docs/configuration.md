@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [Claude 1M context window](#claude-1m-context-window-configclaude-1m-accounts), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [account outage fallbacks](#account-outage-fallbacks-configclaude-account-fallbacks), [Claude 1M context window](#claude-1m-context-window-configclaude-1m-accounts), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
 | Backlog, preferences, and memory | [Backlog](#backlog-configbeads-dir), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
@@ -1315,6 +1315,34 @@ A remote Squad Lead is launched on its host from its own home's configuration, s
 
 [`bin/jg-worker-account-lib.sh`](../bin/jg-worker-account-lib.sh) owns parsing, the sign-in check, and the full list of credentials a Claude launch unsets; [runtime backend verification](verification/runtime-backends.md#worker-account-pin-sign-in-check) records the check against the real runners.
 The worker account pool (`config/account-pool` and `relaunch --account`) is owned by `core/account-pool`.
+
+## Account outage fallbacks (config/claude-account-fallbacks)
+
+When a Claude account stops working (subscription past due, sign-in failed, usage or rate limit), the watcher clears the outage with no model turn, but only onto an account you recorded.
+The file is local and gitignored, and it is opt-in: with no file, or an empty one, the watcher changes no pin and relaunches nothing.
+
+`config/claude-account-fallbacks` lists accounts in your order, one per line, in the format of [`config/claude-account`](#worker-account-pin-configclaude-account-configpi-account): `ordinary` or the absolute path of an existing Claude config directory.
+Blank lines and `#` comments are skipped.
+A malformed line ends the list there, so a typo never lets a later line be picked out of order.
+Example, for a home pinned to the first account:
+
+```
+# renewed first, then the second login
+/home/me/.claude-first
+/home/me/.claude-second
+```
+
+The row needs the pin: a home with no `config/claude-account` has no pinned account to move.
+When a Claude worker's pane shows the account error (or a usage or rate limit), the watcher:
+
+1. probes the pinned account once with a one-line Claude test (`JG_ACCOUNT_PROBE_MODEL`, default `claude-haiku-5-5`; the answer is reused for `JG_ACCOUNT_PROBE_SECS`, default 300); an account that answers is not down, and the wait climbs the ladder as before;
+2. takes the next entry after the pin that answers its own probe (the whole list, when the pin is not in it); the account pool is never used;
+3. writes that entry to `config/claude-account` and relaunches every live Claude worker recorded on the dead account with `bin/jg-control.sh relaunch`, one after another;
+4. raises one board card: renew the account or not.
+
+With no entry that answers, only the card is raised. The pin and every pane stay as they are, and the wait goes on to its owner.
+The cleared outage adds its minutes to `data/metrics/escalations.tsv`.
+[`core/wait-timers/README.md`](../core/wait-timers/README.md) "Known next steps" owns the row.
 
 ## Claude 1M context window (config/claude-1m-accounts)
 

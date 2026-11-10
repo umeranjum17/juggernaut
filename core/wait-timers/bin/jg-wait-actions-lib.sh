@@ -19,8 +19,17 @@
 #   silent: the silent wait source, on a worker whose own record declares no
 #     wait and holds no open decision. ring is one steer asking for its state;
 #     relaunch is stuck-operator recovery's bin/jg-control.sh relaunch, detached.
+#   account-down: a Claude worker whose account stopped working: the account
+#     source (a subscription the runtime cannot use, a failed sign-in) or the quota
+#     source (a usage or rate limit), in a home that pins config/claude-account.
+#     recover is one step (jg-account-outage-lib.sh): probe the pin once; if it is
+#     down, switch to the next account the owner recorded in
+#     config/claude-account-fallbacks, relaunch every worker on the dead account,
+#     and raise one card. With no recorded fallback it raises the card and
+#     changes nothing. An account that answers is not down: the wait climbs as before.
 JG_WAIT_OWNER_TABLE='critic	critic	forward	lead
-silent	worker	ring,relaunch	lead'
+silent	worker	ring,relaunch	lead
+account-down	watcher	recover	lead'
 #
 # Sidecar state/.waiting-timers/.acted/<task>: state, time of the last step, the
 # steps taken (comma-joined), and the time of the first step. It outlives the episode on purpose: a ring
@@ -29,6 +38,11 @@ silent	worker	ring,relaunch	lead'
 # last step is progress and ends the record, as does the task's removal.
 # Sourced by jg-wait-timers-lib.sh inside the watcher, which supplies STATE,
 # JG_HOME, age_of, jg_meta_get and the status classifier.
+
+# shellcheck source=bin/jg-worker-account-lib.sh
+. "${_JG_WAIT_TIMER_DIR:?}/jg-worker-account-lib.sh"
+# shellcheck source=core/wait-timers/bin/jg-account-outage-lib.sh
+. "${BASH_SOURCE[0]%/*}/jg-account-outage-lib.sh"
 
 # Load the sidecar into WAIT_ACT_STATE, WAIT_ACT_AT, WAIT_ACT_STEPS and
 # WAIT_ACT_FIRST, first
@@ -80,6 +94,7 @@ jg_wait_action_silent_ok() {  # <task>
 jg_wait_action_state() {  # <task> <wait source> <verb> <decision key> <declaration>
   case "$2" in
     silent) jg_wait_action_silent_ok "$1" && echo silent ;;
+    account | quota) jg_account_outage_ok "$1" && echo account-down ;;
     '') [ "$3" = needs-decision ] && [ -n "$4" ] && jg_wait_action_critic_of "$1" "$5" >/dev/null && echo critic ;;
     *) return 1 ;;
   esac
@@ -118,6 +133,12 @@ jg_wait_action_spent() {  # <task> <since> [first]
   case "$first" in ''|*[!0-9]*) first=$at ;; esac
   [ "$at" -ge "$2" ] || return 0
   if [ "${3:-}" = first ]; then printf '%s' "$first"; else printf '%s' "${steps//,/, }"; fi
+}
+
+# Whether the ladder's own steps in this episode already raised the wait's card.
+jg_wait_action_raised_card() {  # <task> <since>
+  case ",$(jg_wait_action_spent "$1" "$2")," in *recover*) return 0 ;; esac
+  return 1
 }
 
 _jg_wait_action_send() {  # <jg-send arguments...>
@@ -179,6 +200,7 @@ jg_wait_action_take() {  # <task> <state> <step> <now> <decision key> <declarati
     forward) _jg_wait_action_forward "$1" "$5" "$6" "$4" || return 1 ;;
     ring) _jg_wait_action_ring "$1" "$7" || return 1 ;;
     relaunch) _jg_wait_action_relaunch "$1" || return 1 ;;
+    recover) _jg_wait_action_account "$1" "$4" || return 1 ;;
     lead) ;;
     *) return 1 ;;
   esac

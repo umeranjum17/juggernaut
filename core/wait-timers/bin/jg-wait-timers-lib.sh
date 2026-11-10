@@ -643,7 +643,7 @@ EOF
     # Wait sources the watcher records: an unanswered permission prompt (kept
     # only while the prompt gate still sees it, so a dead pane's prompt lapses)
     # and a Squad Lead whose own supervision is not running.
-    for src in prompt question quota errors silent supervision greenpr; do
+    for src in prompt question account quota errors silent supervision greenpr; do
       [ -z "$declaration" ] || break
       record="$STATE/.wait-sources/$task.$src"
       [ -f "$record" ] && [ ! -L "$record" ] || continue
@@ -790,7 +790,9 @@ EOF
       fi
     fi
     # Only the main home posts a card: what Main cannot settle reaches the captain.
-    if [ -z "$lead" ] && ! status_is_paused "$declaration" && [ "$parent" -gt 0 ] && [ "$card" -eq 0 ] && [ "$age" -ge "$card_secs" ]; then
+    # An account outage already raised its own card (renew the account or not).
+    if [ -z "$lead" ] && ! status_is_paused "$declaration" && [ "$parent" -gt 0 ] && [ "$card" -eq 0 ] && [ "$age" -ge "$card_secs" ] \
+      && ! jg_wait_action_raised_card "$task" "$since"; then
       jg_wait_timer_card "$task" "$key-card" "$verb" "$source" || true
       card=$now
       jg_wait_timer_save "$record" "$signature" "$since" "$owner" "$parent" "$key" "$misses" "$card" "$last" || return 1
