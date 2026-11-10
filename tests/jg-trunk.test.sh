@@ -475,14 +475,16 @@ test_the_old_trunk_is_cleaned_up_unforced_and_only_when_its_work_is_carried() {
   lane o1 one; trunk land o1 >/dev/null 2>&1 || fail "o1 must land"
   trunk verify "$PROJ" >/dev/null 2>&1; trunk word release "$PROJ" "ship it" >/dev/null 2>&1; trunk release "$PROJ" >/dev/null 2>&1 || fail "release must open"
   old=$(tip); wt="$W/oldwt"
-  lane hx hotfix hot.txt; hot=$(git -C "$PROJ" rev-parse fm/hx); trunk land hx >/dev/null 2>&1 || fail "the hotfix must land on the old trunk while its release is open"
   git -C "$PROJ" worktree add -q "$wt" trunk; printf 'scratch\n' > "$wt/unsaved.txt"
   printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$old:refs/heads/main"
   out=$(trunk rollover "$PROJ" 2>&1) || fail "the merged release must roll over: $out"
+  assert_contains "$out" "kept worktree $wt: it holds uncommitted work" "a worktree with unlanded work must keep the old trunk"
+  # A commit that reaches the old trunk after the cut was not in the rollover's replay (tests/jg-trunk-rollover.test.sh owns that).
+  JG_TRUNK_WRITER=1 commit_in "$wt" hot.txt hotfix "ticket hx"; hot=$(git -C "$wt" rev-parse HEAD)
+  out=$(trunk retire "$PROJ" 2>&1) || fail "retire must not fail: $out"
   assert_contains "$out" "kept trunk: hotfix not carried into trunk-v2: " "a hotfix not carried must keep the old trunk and be listed"
   assert_contains "$out" "ticket hx" "the uncarried hotfix must be named"
   git -C "$PROJ" rev-parse --verify -q refs/heads/trunk >/dev/null || fail "an old trunk with an uncarried hotfix must not be deleted"
-  git --git-dir="$W/origin.git" rev-parse --verify -q refs/heads/trunk >/dev/null || fail "its remote branch must not be deleted either"
   [ -d "$wt" ] || fail "a worktree on it must not be removed"
   git -C "$PROJ" worktree add -q -b fm/hx2 "$W/lanes/hx2" trunk-v2; git -C "$W/lanes/hx2" cherry-pick -n "$hot" >/dev/null 2>&1 || fail "the hotfix must cherry-pick"
   git -C "$W/lanes/hx2" -c user.name=t -c user.email=t@example.invalid commit -q -m "ticket hx2: carry hotfix hx"

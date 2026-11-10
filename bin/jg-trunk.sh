@@ -106,7 +106,9 @@
 # all three, even from this script), and a pin-back moves the home only to a green commit, never the trunk.
 # When the release PR has merged, `rollover` (also run by `release`, and by the landing check) cuts the NEXT trunk
 # version from the default branch, moves the project onto it and records it (state/trunk-branch-<project>,
-# state/trunk-version-<project>, data/trunk-versions.tsv). The old trunk is left exactly as it was.
+# state/trunk-version-<project>, data/trunk-versions.tsv). The commits landed on the old trunk after its release are replayed onto the
+# new one first, each with the tree of its original (else one line, nothing changed); the green pin follows its replayed commit.
+# The old trunk is left exactly as it was.
 # Pin-back: state/trunk-green-<project> is the last commit that passed the whole suite. `live`
 # moves the home only to that commit, so a landing is not live until `verify` passes, and a red tip is never live.
 # `release` ships only the green pin, never the tip. A red `ci` moves the green pin, and every home, back to the
@@ -1360,10 +1362,37 @@ pr_state() {  # <url>: open|merged|closed|unknown
   printf '%s\n' "${st:-unknown}"
 }
 
+# The landed commits the release did not ship, replayed onto <base> (the default branch once the release merged): every
+# commit of this trunk above the commit its release shipped that <base> does not already hold by patch, oldest first, each
+# made by rebase_commit and proved to have the tree of its original. It writes objects only and moves no ref; any doubt
+# stops with one line, so a rollover either carries every landed commit or changes nothing. Sets CARRY_TIP (the commit the
+# next trunk starts at: the last replayed commit, or <base> when nothing is above the release) and CARRY_MAP (one line
+# "<old commit> <its commit on the next trunk>" for every commit above the release, a commit <base> already holds mapping
+# to the commit before it), which the green pin follows.
+carry_over() {  # <base>
+  local tip rel mark c new
+  tip=$(rev "refs/heads/$TRUNK") || refuse "the trunk branch $TRUNK is missing in $PROJ; no next trunk is cut"
+  rel=$(awk -F'\t' -v p="$PN" -v b="$TRUNK" '$1 == p && $2 == b { t = $3 } END { print t }' "$DATA/trunk-releases.tsv" 2>/dev/null || true)
+  [ -n "$rel" ] || refuse "no release of $TRUNK is recorded, so no one knows which of its commits are on the default branch; no next trunk is cut"
+  git -C "$PROJ" merge-base --is-ancestor "$rel" "$tip" 2>/dev/null || refuse "the release ${rel:0:12} is not on $TRUNK (${tip:0:12}); no next trunk is cut"
+  [ -z "$(git -C "$PROJ" rev-list --merges -n 1 "$rel..$tip")" ] || refuse "$TRUNK holds a merge commit above its release ${rel:0:12}, which cannot be replayed; no next trunk is cut"
+  CARRY_TIP=$1; CARRY_MAP=
+  while read -r mark c; do
+    if [ "$mark" = + ]; then
+      new=$(rebase_commit "$CARRY_TIP" "$c") && [ -n "$new" ] || refuse "cannot replay ${c:0:12} onto ${1:0:12}: it does not merge cleanly; $TRUNK is kept and no next trunk is cut"
+      [ "$(git -C "$PROJ" rev-parse "$new^{tree}")" = "$(git -C "$PROJ" rev-parse "$c^{tree}")" ] \
+        || refuse "the replay of ${c:0:12} has another tree than the original (the default branch holds more than the release did); $TRUNK is kept and no next trunk is cut"
+      CARRY_TIP=$new
+    fi
+    CARRY_MAP+="$c $CARRY_TIP"$'\n'
+  done < <(git -C "$PROJ" cherry "$1" "$tip" "$rel")
+}
+
 # Once the release PR has merged, the NEXT trunk version is cut from the default branch and the project moves onto
-# it: <trunk>-v2, -v3, ... The old trunk is left exactly as it was. Returns 1, changing nothing, while the PR is not merged.
+# it: <trunk>-v2, -v3, ... Every commit that landed on the old trunk after the release is replayed onto it first (carry_over),
+# and the green pin follows its commit. The old trunk is left exactly as it was. Returns 1, changing nothing, while the PR is not merged.
 rollover_if_merged() {
-  local url ver new base default
+  local url ver new base default green
   url=$(last_release_url); [ -n "$url" ] || return 1
   [ "$(cat "$STATE/trunk-rolled-$PN" 2>/dev/null)" != "$url" ] || return 1
   [ "$(pr_state "$url")" = merged ] || return 1
@@ -1372,11 +1401,14 @@ rollover_if_merged() {
   base=$(rev "refs/remotes/origin/$default") || die "origin/$default is not a commit"
   ver=$(( $(cat "$STATE/trunk-version-$PN" 2>/dev/null || echo 1) + 1 )); new="$(pol trunk-branch)-v$ver"
   rev "refs/heads/$new" >/dev/null && die "$new already exists in $PROJ; the next trunk is never overwritten"
-  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: version $ver after $url" "refs/heads/$new" "$base" ""
-  put "$STATE/trunk-tip-$PN" "$base"; put "$STATE/trunk-green-$PN" "$base"; put "$STATE/trunk-released-$PN" "$base"
+  carry_over "$base"
+  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true); green=$(awk -v g="$green" '$1 == g { print $2 }' <<<"$CARRY_MAP")
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: version $ver after $url" "refs/heads/$new" "$CARRY_TIP" ""
+  put "$STATE/trunk-tip-$PN" "$CARRY_TIP"; put "$STATE/trunk-green-$PN" "${green:-$base}"; put "$STATE/trunk-released-$PN" "$base"
   put "$STATE/trunk-branch-$PN" "$new"; put "$STATE/trunk-version-$PN" "$ver"; put "$STATE/trunk-rolled-$PN" "$url"
   row trunk-versions.tsv "$PN" "$ver" "$new" "$base" "$(date +%s)"
   echo "release merged: the project is now on $new (version $ver) cut from $default at ${base:0:12}"
+  [ "$CARRY_TIP" = "$base" ] || echo "carried: $(git -C "$PROJ" rev-list --count "$base..$CARRY_TIP") landed commit(s) of $TRUNK above the release replayed onto $new with equal trees; the green pin is $(cut -c1-12 <<<"${green:-$base}")"
   local old=$TRUNK; TRUNK=$new
   echo "$old is cleaned up only when its work is proved on $default and carried into $new"
   retire_old
