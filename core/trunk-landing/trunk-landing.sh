@@ -136,6 +136,11 @@ if [ "$1" = runbatch ]; then
       printf 'env-wait %s\n' "$why" > "$MEM/$id.$head.state"
     else
       verdict_record "$id" "$head" "" "$tip" "$out" "$why"
+      line=$(cat "$MEM/$id.$head.state")
+      if [[ $line == final* ]]; then
+        br=$(mval "$STATE/$id.meta" branch); br=${br:-fm/$id}
+        lane_refusal_reach "$id" "$head" "$proj" "$br" "$(verdict_reason "${line#final }")" final
+      fi
     fi
   done
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
@@ -177,6 +182,11 @@ if [ "$1" = run ]; then
     printf 'env-wait %s\n' "${why:-environment unavailable; see $request_log}" > "$MEM/$id.$head.state"
   else
     verdict_record "$id" "$head" "$now" "$tip" "$out" "${why:-landing failed; see $request_log}"
+    line=$(cat "$MEM/$id.$head.state")
+    if [[ $line == final* ]]; then
+      proj=$(mval "$STATE/$id.meta" project)
+      lane_refusal_reach "$id" "${now:-$head}" "$proj" "$br" "$(verdict_reason "${line#final }")" final
+    fi
   fi
   [ "$rc" -ne 75 ] || exit 0  # another run holds this landing; its own end starts the next one
   "$SELF" next "$FMH" >/dev/null 2>&1 || :
@@ -313,7 +323,7 @@ for meta in "$STATE"/*.meta; do
     final*)  # a verdict that no longer holds (a conflict judged on a tip that is gone) is judged again, with no report and no steer
       if verdict_holds "$id" "$head" "$line" "$(basename "$proj")"; then
         why=$(verdict_reason "${line#final }")
-        report "$id.$head" "$id not landed: ${line#final }" "$why"; lane_refusal_reach "$id" "$head" "$proj" "$branch" "$why"; continue
+        report "$id.$head" "$id not landed: ${line#final }" "$why"; lane_refusal_reach "$id" "$head" "$proj" "$branch" "$why" final; continue
       fi
       mkdir -p "$MEM/retired" && mv -n -- "$st" "$MEM/retired/" ;;
     env-wait*) verdict_due "$st" || continue ;;

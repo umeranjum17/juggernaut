@@ -697,6 +697,9 @@ make_path_without_lsof() {  # <case-dir>
   for cmd in awk python3 jq bash basename cat chmod cp cut date dirname env find git go grep head hostname id ln \
     mkdir mktemp mv perl ps readlink realpath rm sed sh sha1sum sha256sum shasum sleep sort stat tail timeout tr uname wc xargs; do
     resolved=$(command -v "$cmd" 2>/dev/null) || continue
+    if [ "$cmd" = python3 ]; then
+      resolved=$("$resolved" -c 'import sys; print(sys.executable)') || return 1
+    fi
     case "$resolved" in /*) ln -sf "$resolved" "$path_dir/$cmd" ;; esac
   done
   printf '%s\n' "$path_dir"

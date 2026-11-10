@@ -167,6 +167,8 @@ LANDER_ACCOUNT="${CLAUDE_CONFIG_DIR:-}"; unset CLAUDE_CONFIG_DIR
 . "$SCRIPT_DIR/jg-version-branch-lib.sh"
 # shellcheck source=bin/jg-trunk-policy-lib.sh
 . "$SCRIPT_DIR/jg-trunk-policy-lib.sh"
+# shellcheck source=core/trunk-landing/refusal-reach.sh
+. "$SCRIPT_DIR/../core/trunk-landing/refusal-reach.sh"
 export JG_HOME JG_CONFIG_OVERRIDE="$CONFIG"
 
 usage() { sed -n '2,/^set -eu$/p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e '$d'; }
@@ -623,10 +625,18 @@ record_proofs() {  # <id> <lane head> <landed commit>
 }
 
 # Tell the lane's ticket and Overwatch that its landed commit was reverted, with the reason. Best effort: the revert stands.
-tell_lane() {  # <id> <note>
+tell_lane() {  # <id> <note> [<head>]
+  local FMH=$JG_HOME DATA_DIR=$DATA REFUSAL_BIN=$SCRIPT_DIR MEM=$DATA/jg-trunk-landing QUIET='' branch project
+  mkdir -p "$MEM"
+  if [ -n "${3:-}" ]; then
+    branch=$(jg_dod_meta_value "$STATE/$1.meta" branch); branch=${branch:-fm/$1}
+    project=$(jg_dod_meta_value "$STATE/$1.meta" project)
+    lane_refusal_reach "$1" "$3" "$project" "$branch" "$2" final
+    return
+  fi
   jg_wake_append check "trunk-reverted-$PN-$(printf '%s' "$2" | cksum | cut -d' ' -f1)" "$2" >/dev/null 2>&1 || echo "warning: could not raise the revert alert" >&2
-  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" update "$1" --append-notes "$2" >/dev/null 2>&1 || echo "warning: could not add the revert note to $1" >&2
-  [ ! -f "$STATE/$1.meta" ] || JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-send.sh" "$1" "$2" >/dev/null 2>&1 || :
+  refusal_deliver note "$1" "$2" || echo "warning: could not add the revert note to $1" >&2
+  refusal_deliver steer "$1" "$2" || echo "warning: could not steer $1" >&2
 }
 
 # The lane's record and its project, with the registered-mode check. Sets META (and PROJ, PN, TRUNK through open_project).
@@ -852,7 +862,7 @@ land_group() {
 # half is judged alone, lands if green, and the rest is judged on the new tip, until the lane that caused the red stands alone; only it is
 # returned. Prints `landed <id> ...` or `returned <id>: <reason>` for every lane. Exit 0 once every lane has an outcome.
 cmd_land_batch() {
-  local a id i n max proj0='' errf g flag top half res moved rounds=0 l
+  local a id i n max proj0='' errf g flag top half res moved rounds=0 l branch head
   local -a exp todo stack members first rest remaining
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   n=$#; [ "$n" -ge 2 ] || refuse "a batch stacks 2 or more queued lanes; one lane lands with: jg-trunk.sh land <task>"
@@ -919,7 +929,14 @@ cmd_land_batch() {
   done
   for ((i = 0; i < n; i++)); do
     [ -n "${B_WHY[$i]:-}" ] || continue
-    case ${B_WHY[$i]} in "already landed"*) echo "${B_WHY[$i]}" ;; *) echo "returned ${B_ID[$i]}: ${B_WHY[$i]}"; echo "refusal-class ${B_ID[$i]}: ${B_CLASS[$i]:-final}" ;; esac
+    case ${B_WHY[$i]} in "already landed"*) echo "${B_WHY[$i]}" ;; *)
+      echo "returned ${B_ID[$i]}: ${B_WHY[$i]}"; echo "refusal-class ${B_ID[$i]}: ${B_CLASS[$i]:-final}"
+      if [ "${B_CLASS[$i]:-final}" = final ]; then
+        META=${B_META[$i]}; branch=$(jg_dod_meta_value "$META" branch); branch=${branch:-fm/${B_ID[$i]}}
+        head=$(rev "refs/heads/$branch") || head=
+        [ -z "$head" ] || tell_lane "${B_ID[$i]}" "${B_WHY[$i]}" "$head"
+      fi ;;
+    esac
   done
 }
 
@@ -1021,7 +1038,7 @@ cmd_land() {
         printf '%s %s %s\n' "$kind" "$count" "$reason" > "$key.state"
       fi
       printf '%s\n' "$reason"; printf 'refusal-class %s: env-wait\n' "$id"; return 1 ;;
-    final) printf '%s\n' "$reason"; printf 'refusal-class %s: %s\n' "$id" "$kind"; return 1 ;;
+    final) printf '%s\n' "$reason"; printf 'refusal-class %s: %s\n' "$id" "$kind"; tell_lane "$id" "$reason" "$cand"; return 1 ;;
   esac
   attempt=$(mktemp -d "$mem/$id.$cand.attempt-XXXXXX") || die "cannot retain landing attempt"
   LAND_ATTEMPT=$attempt/gate LAND_HEAD=$cand
@@ -1039,6 +1056,7 @@ cmd_land() {
   else
     kind=$(classify_refusal "$attempt/landing.log" "$attempt"/gate-*.log)
     printf '%s\n' "$reason"; printf 'refusal-class %s: %s\n' "$id" "$kind"
+    [ "$kind" != final ] || tell_lane "$id" "$reason" "$cand"
     [ "$kind" != retry ] || { count=$((count + 1)); rc=74; }
   fi
   printf '%s %s %s\n' "$kind" "$count" "$reason" > "$key.state"

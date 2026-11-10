@@ -38,7 +38,7 @@ test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
   lane breaks 'echo "not ok - broke c" >&2; exit 1' t/c.test.sh
   refused 'a script that passes on the tip' breaks 't/c.test.sh'
   # Reported once for the tip tree: one wake and one note, however many lanes met it; and the tip was rerun once.
-  [ "$(grep -c . "$W/backlog-calls")" = 1 ] || fail "the tip's red must be noted once: $(cat "$W/backlog-calls")"
+  [ "$(grep -c '^update ticket-red ' "$W/backlog-calls")" = 1 ] || fail "the tip's red must be noted once: $(cat "$W/backlog-calls")"
   [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the tip's red must raise one alert: $(cat "$HOME_D/state/.wake-queue" 2>&1)"
   assert_contains "$(cat "$W/backlog-calls")" "update ticket-red --append-notes" "the note goes to the red ticket"
   assert_contains "$(cat "$W/backlog-calls")" "t/a.test.sh" "the note names the red script"
@@ -54,7 +54,7 @@ test_the_full_gate_charges_a_lane_only_for_what_it_broke() {
   [[ $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv") =~ gate=ran:[1-9][0-9]*,failed:[1-9][0-9]*,secs:[0-9]+[[:space:]]done=[0-9]+$ ]] \
     || fail "the proofs row must keep the gate's scripts run, failed on the first run and seconds: $(tail -n 1 "$HOME_D/data/trunk-landing-proofs.tsv")"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "a landing that set only the tip's own red aside moves the green pin"
-  [ "$(grep -c . "$W/backlog-calls")" = 1 ] && [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the same tip tree is not reported twice"
+  [ "$(grep -c '^update ticket-red ' "$W/backlog-calls")" = 1 ] && [ "$(grep -c 'trunk-tip-red-proj-' "$HOME_D/state/.wake-queue")" = 1 ] || fail "the same tip tree is not reported twice"
   pass 'the full gate blocks only what the lane broke: new, worse and broken-passing scripts block; the tip'"'"'s own red lands, reported once'
 }
 
@@ -332,7 +332,7 @@ test_a_red_verify_finds_by_hand_is_reverted_and_takes_the_green_pin_back() {
   git -C "$PROJ" cat-file -e "trunk:t/j5.test.sh" 2>/dev/null && fail "the bad commit's change must be undone on the tip"
   git -C "$PROJ" log --format='%H %s' trunk | grep -q "ticket j5" || fail "the bad commit must stay in the history: the trunk only moves forward"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$before" ] || fail "the red commit must take the green pin back below it, so no home goes live on it"
-  assert_contains "$(cat "$W/backlog-calls" 2>/dev/null)" "update j5 --append-notes" "the lane's ticket is told"
+  assert_contains "$(cat "$W/backlog-calls" 2>/dev/null)" "update j5 --body-file" "the lane's ticket is told"
   assert_contains "$(cat "$HOME_D/state/.wake-queue")" "went red after it landed and was reverted by itself" "Overwatch is told"
   # A revert that cannot apply cleanly raises one alert and takes the green pin back below the red commit, and the next lane lands.
   lane k1 'echo "not ok - k1 breaks the suite" >&2; exit 1' t/k1.test.sh; trunk land k1 >/dev/null 2>&1 || fail "k1 must land by hand"

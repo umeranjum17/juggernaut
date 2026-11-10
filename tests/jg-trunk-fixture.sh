@@ -26,13 +26,16 @@ world() {  # <name>: sets W HOME_D PROJ
     # Only these fixture-owned files embed the original world's path.
     sed -i "s|$TMP_ROOT/.world-source|$W|g" "$W/fakebin/gh-axi" "$HOME_D/config/live-hook.proj" \
       "$W/origin.git/config" "$PROJ/.git/config" "$W/root/bin/jg-send.sh" \
-      "$W/root/bin/jg-teardown.sh" "$W/root/bin/jg-fleet-ledger.sh"
+      "$W/root/bin/jg-teardown.sh" "$W/root/bin/jg-fleet-ledger.sh" "$W/root/bin/jg-backlog.sh"
     return
   fi
   mkdir -p "$W/root" "$HOME_D/state" "$HOME_D/data" "$HOME_D/config" "$W/fakebin"
   cp -r "$ROOT/bin" "$W/root/bin"
   # Legacy trunk journeys isolate release proof; its own journey restores the real helper.
   printf '#!/usr/bin/env bash\nexit 0\n' > "$W/root/bin/jg-trunk-release-proof.sh"
+  # Other landing journeys use a stand-in backlog; the ticket-delivery journey installs the real one.
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/backlog-calls"\n' "$W" > "$W/root/bin/jg-backlog.sh"
+  chmod +x "$W/root/bin/jg-backlog.sh"
   # The fixture homes are bare repositories (no beacon, overlay or supervision read); the health check has its own test.
   # shellcheck disable=SC2016 # the stub expands its own argument
   printf '#!/usr/bin/env bash\necho "ok $2"\n' > "$W/root/bin/jg-home-health.sh"
