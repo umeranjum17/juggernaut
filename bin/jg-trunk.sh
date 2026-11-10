@@ -41,7 +41,8 @@
 #
 # The changed-files gate charges a lane only for what it broke. When it fails, the lander first reruns the failing scripts once on
 # the lane, and a script that passes on the rerun is flaky and not charged: each such script is recorded
-# (data/trunk/flaky-<project>.tsv) and filed once as its own [blocker] fix row, never a landing stop. It then reruns exactly the failing test
+# (data/trunk/flaky-<project>.tsv) and filed once as its own [blocker] fix row, never a landing stop. A script that fails on the lane
+# and passed the tip's first run is run twice more on the tip; one that fails in either run fails by itself there and is flaky too. It then reruns exactly the failing test
 # scripts on the trunk tip's own tree in a clean clone, in the environment the gate ended with (policy gate-rerun),
 # and compares each one's exit status and failing test names. A script that fails the same way on the tip is the tip's
 # red: it does not block the lane, and it is reported once per script and tip tree (one wake, one note on the
@@ -394,6 +395,19 @@ tip_results() {  # <tip> <envfile> <script>...
   for s in "$@"; do awk -F'\t' -v s="$s" '$1 == s' "$cache" | head -n 1; done
 }
 
+# Which of <scripts> fail by themselves on <base>: each is run twice more there (its first run is the tip's result), and one that
+# fails in either run is flaky. A lane is charged for a script only when its base passes it three times of three.
+flaky_on_base() {  # <base> <envfile> <script>...
+  local base=$1 envf=$2 quoted='' s n log
+  shift 2
+  for s in "$@"; do quoted="$quoted $(printf '%q' "$s")"; done
+  for n in 1 2; do
+    log="$DATA/trunk/gate-$PN-${base:0:12}-parent-$n-$(date +%s).log"
+    rerun_scripts "$base" "$envf" "$log" "$quoted"
+    gate_results "$log" | awk -F'\t' '$2 != "0" { print $1 }'
+  done | sort -u
+}
+
 # One alert and one note per pre-existing red script and tip tree, however many lanes meet it.
 report_tip_red() {  # <tip> <script>...
   local tip=$1 tree ledger fresh='' s ticket note
@@ -447,7 +461,7 @@ gate_figures() {  # <first-run log> <start epoch>
 # Returns 0 when the candidate is cleared, 2 when it is charged with a failure its base does not have, and 1 when it failed for a
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
-  local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0
+  local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent=''
   t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
@@ -478,13 +492,23 @@ full_gate() {  # <candidate> <command> <base>
   if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND="full-rerun"; gate_figures "$log" "$t0"; return 0; fi
   # shellcheck disable=SC2046
   tipres=$(tip_results "$3" "$envf" $(printf '%s\n' "$mine" | cut -f1))
+  while IFS= read -r line; do
+    s=${line%%$'\t'*}
+    [ "$(printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { print $2; exit }')" = 0 ] && passing="$passing $s"
+  done <<< "$mine"
+  # shellcheck disable=SC2086
+  [ -z "$passing" ] || byself=$(flaky_on_base "$3" "$envf" $passing)
   rm -f -- "$envf"
   while IFS= read -r line; do
     s=${line%%$'\t'*}; ex=$(printf '%s' "$line" | cut -f2); sig=$(printf '%s' "$line" | cut -f3-)
     tex=$(printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { print $2; exit }')
     tsig=$(printf '%s\n' "$tipres" | awk -F'\t' -v s="$s" '$1 == s { sub(/^[^\t]*\t[^\t]*\t/, ""); print; exit }')
-    if [ -n "$sig" ] && [ "$tex" = "$ex" ] && [ "$tsig" = "$sig" ]; then old="$old $s"; else bad="$bad $s"; fi
+    if [ -n "$sig" ] && [ "$tex" = "$ex" ] && [ "$tsig" = "$sig" ]; then old="$old $s"
+    elif printf '%s\n' "$byself" | grep -qxF -- "$s"; then byparent="$byparent $s"
+    else bad="$bad $s"; fi
   done <<< "$mine"
+  # shellcheck disable=SC2086
+  [ -z "$byparent" ] || { echo "note: $byparent fails by itself on the parent ${3:0:12}, so no lane is charged for it (each recorded and filed as its own fix row)" >&2; record_flaky "$cand" $byparent; }
   # The tip's own red is a fact about the tip, so it is reported even when this lane is also refused.
   # shellcheck disable=SC2086
   [ -z "$old" ] || report_tip_red "$3" $old
@@ -493,6 +517,7 @@ full_gate() {  # <candidate> <command> <base>
     echo "REFUSED: gate 'full' failed (exit $rc) at ${cand:0:12}; this lane introduced or changed the failure of:$bad; full log: $log" >&2
     return 2
   fi
+  if [ -z "$old" ]; then GATE_KIND="full-rerun"; gate_figures "$log" "$t0"; return 0; fi
   echo "note: ${cand:0:12} fails only what the $TRUNK tip ${3:0:12} already fails the same way; set aside, not charged to this lane:$old" >&2
   GATE_KIND="full-tip-red"; gate_figures "$log" "$t0"
 }

@@ -7,7 +7,8 @@
 #    (it is reported once per tip tree, and the green pin stays), while a script that fails only on the lane, passes on the
 #    tip, or fails differently on the lane blocks it, with the tip's rerun done in the environment the gate ended with.
 #    A failure gets one rerun on the lane before it is judged: one that passes on the rerun is flaky and not charged, and is
-#    recorded and filed once as its own fix row.
+#    recorded and filed once as its own fix row. A lane is charged for a script only when its parent passes it 3 of 3: one that
+#    fails by itself on the parent is flaky, lands, and is filed once.
 # T12 A landing is one fast check: the lander rebases the lane's one commit onto the tip by itself (the lane follows it),
 #    and a lane lands only with its whole proof at its head (receipt, approved merge-card evidence, sealed done-done run); the owner signature never blocks it.
 # T13 The journey: four lanes ready at once, three land in order with no human or lead step, the red one is refused,
@@ -70,6 +71,28 @@ test_a_flaky_failure_gets_one_rerun_before_it_is_judged() {
   lane twice 'echo "not ok - solid case" >&2; exit 1' t/g.test.sh
   refused 'a failure that repeats on the rerun' twice 't/g.test.sh'
   pass 'a failure gets one rerun before it is judged: a flaky one is set aside and filed as its own row, a repeated one blocks'
+}
+
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_lane_is_charged_only_for_a_script_the_parent_passes_three_times_of_three() {
+  local out
+  world rate; rig
+  git -C "$PROJ" worktree add -q -b seed "$W/seed" trunk
+  # The script fails with the lane's marker file; with no marker it fails on its 2nd and 5th run, by a counter outside the clone.
+  commit_in "$W/seed" t/k.test.sh '[ -e t/mark ] && { echo "not ok - lane case" >&2; exit 1; }; n=$(cat '"$W"'/k-runs 2>/dev/null || echo 0); echo $((n + 1)) > '"$W"'/k-runs; case $((n + 1)) in 2|5) echo "not ok - flaky case" >&2; exit 1 ;; esac; exit 0' "seed k"
+  commit_in "$W/seed" t/m.test.sh '[ -e t/mark2 ] && { echo "not ok - lane case" >&2; exit 1; }; exit 0' "seed m"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$(git -C "$W/seed" rev-parse HEAD)"
+  git -C "$PROJ" rev-parse trunk > "$HOME_D/state/trunk-tip-proj"
+  # The parent fails 2 of 6 runs: the script fails by itself, so the lane lands and the script is filed once as flaky.
+  lane rated on t/mark
+  out=$(trunk land rated 2>&1) || fail "a script that fails by itself on the parent must not be charged to the lane: $out"
+  assert_contains "$out" "fails by itself on the parent" "the landing must say it set a flaky parent script aside"
+  assert_contains "$(cat "$HOME_D/data/trunk/flaky-proj.tsv")" "t/k.test.sh" "the flaky script is recorded"
+  [ "$(grep -c '^add flaky-proj-' "$W/backlog-calls")" = 1 ] || fail "one flaky row is filed: $(cat "$W/backlog-calls")"
+  # The parent passes 3 of 3: the same failure on the lane is the lane's own and is charged.
+  lane charged on t/mark2
+  refused 'a script the parent passes three times of three' charged 't/m.test.sh'
+  pass 'a lane is charged only for a script its parent passes 3 of 3: one that fails by itself there lands with one flaky row'
 }
 
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
@@ -306,6 +329,7 @@ test_three_lanes_land_in_order_a_red_one_is_refused_and_a_post_land_red_is_rever
 
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
+test_a_lane_is_charged_only_for_a_script_the_parent_passes_three_times_of_three
 test_a_tip_red_that_prints_its_elapsed_seconds_is_the_same_red_on_every_run
 test_the_gates_are_policy_keys_with_fast_defaults
 test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates
