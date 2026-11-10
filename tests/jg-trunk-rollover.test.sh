@@ -94,8 +94,7 @@ live_row() { awk -F'\t' '$1 == "proj:lead" { r = $4 } END { print r }' "$HOME_D/
 test_version_two_release_rolls_over_and_names_its_commit() {
   local out sha
   world version2
-  sha=$(git -C "$ROOT" rev-parse "b96c903b^{commit}")
-  git -C "$PROJ" fetch -q "$ROOT" "$sha" || fail "fixture must fetch the recorded release"
+  sha=$(tip)
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk-v2 "$sha"
   git -C "$PROJ" push -q origin "$sha:refs/heads/merged"
   git -C "$PROJ" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/merged
