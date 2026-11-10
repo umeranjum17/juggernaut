@@ -183,7 +183,6 @@ test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push() {
 }
 
 test_release_proof_at_its_head() {
-REAL_DONE_DONE=$(command -v done-done)
 world release-proof
 cp "$ROOT/bin/jg-trunk-release-proof.sh" "$W/root/bin/jg-trunk-release-proof.sh"
 export DONE_DONE_HOME="$W/done-done"
@@ -226,21 +225,44 @@ case "\$*" in
 esac
 SH
 chmod +x "$W/fakebin/gh"
-# The judge boundary is deterministic; run, record discovery and merge-card are real.
-cat > "$W/fakebin/done-done" <<SH
+# The run and judge boundaries are deterministic; the capture command and proof gates are real.
+cat > "$W/fakebin/done-done" <<'SH'
 #!/usr/bin/env bash
-if [ "\${1:-}" = run ] && [ -e "$W/change-pin" ]; then
-  original=\$(cat "$HOME_D/state/trunk-green-proj")
-  git -C "$PROJ" rev-parse trunk^ > "$HOME_D/state/trunk-green-proj"
-  "$REAL_DONE_DONE" "\$@"; rc=\$?
-  printf '%s\n' "\$original" > "$HOME_D/state/trunk-green-proj"
-  exit "\$rc"
-elif [ "\${1:-}" = check ] && [ "\${2:-}" != --help ]; then
-  printf '%s\n' "\${CLAUDE_CONFIG_DIR:-}" > "$W/judge-account"
-  name=\$(sed -n 's/^evidence: //p' "$W/pr-body" | tail -n 1)
-  jq -n --arg file "$HOME_D/data/$id/\$name" --arg claim 'release proof' '{result:"pass",claim:\$claim,evidence:[\$file]}'
-else exec "$REAL_DONE_DONE" "\$@"; fi
+set -eu
+if [ "${1:-}" = run ]; then
+  shift
+  [ "${1:-}" != --json ] || shift
+  [ "${1:-}" = -- ] && shift
+  head=$(git rev-parse HEAD)
+  run="20261110T000000Z-${head:0:8}-ab"
+  root="$DONE_DONE_HOME/evidence"
+  mkdir -p "$root/$run" "$root/.done-done/runs"
+  if [ -e "$JG_TEST_CHANGE_PIN" ]; then
+    original=$(cat "$JG_STATE_OVERRIDE/trunk-green-proj")
+    git -C "$JG_RELEASE_PROJECT" rev-parse trunk^ > "$JG_STATE_OVERRIDE/trunk-green-proj"
+  fi
+  rc=0
+  DONE_DONE_EVIDENCE_ROOT="$root/$run" "$@" || rc=$?
+  if [ -n "${original:-}" ]; then printf '%s\n' "$original" > "$JG_STATE_OVERRIDE/trunk-green-proj"; fi
+  [ "$rc" -eq 0 ] || exit "$rc"
+  record="$root/.done-done/runs/$run.json"
+  hash=$(sha256sum "$root/$run/run.log" | cut -d' ' -f1)
+  bytes=$(wc -c < "$root/$run/run.log")
+  tree=$(git rev-parse HEAD^{tree})
+  jq -n --arg id "$run" --arg head "$head" --arg tree "$tree" --arg hash "$hash" --argjson bytes "$bytes" \
+    --slurpfile steps "$root/$run/steps.json" \
+    '{schema:1,run_id:$id,journey:null,command:"bash release-proof capture",commit:$head,tree:$tree,dirty:false,started_at:"2026-11-10T00:00:00Z",ended_at:"2026-11-10T00:00:01Z",exit:0,files:[{path:($id + "/run.log"),sha256:$hash,bytes:$bytes}],tool:"0.6.26",steps:$steps[0]}' > "$record"
+  jq -n --arg id "$run" --arg head "$head" --arg record "$record" '{run_id:$id,commit:$head,dirty:false,record:$record}'
+elif [ "${1:-}" = check ] && [ "${2:-}" != --help ]; then
+  printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" > "$JG_TEST_JUDGE_ACCOUNT"
+  name=$(sed -n 's/^evidence: //p' "$JG_TEST_PR_BODY" | tail -n 1)
+  jq -n --arg file "$JG_DATA_OVERRIDE/release-proj-trunk/$name" --arg claim 'release proof' '{result:"pass",claim:$claim,evidence:[$file]}'
+else
+  printf 'unexpected done-done command: %s\n' "$*" >&2
+  exit 1
+fi
 SH
+export JG_TEST_CHANGE_PIN="$W/change-pin" JG_TEST_JUDGE_ACCOUNT="$W/judge-account" JG_TEST_PR_BODY="$W/pr-body"
 chmod +x "$W/fakebin/done-done"
 # The first proof refuses a missing landing row after publishing; retry needs no new word or push.
 proofs="$HOME_D/data/trunk-landing-proofs.tsv"
