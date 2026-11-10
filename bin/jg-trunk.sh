@@ -30,7 +30,7 @@
 #
 # A landing is ONE fast check and needs no worker turn and no Overwatch turn. `land` rebases the lane's one commit onto the
 # trunk tip by itself (a clean three-way merge; the lane branch follows it), runs the lint over the changed files (gate-lint),
-# runs the changed files' tests (gate-full) judged against the trunk tip's own result, and lands. Only a conflict in the lane's
+# runs the changed files' tests (gate-full) judged against the trunk tip's own result (skipped when the lane's passing sealed done-done run is for the very tree it would test: gate=sealed-run), and lands. Only a conflict in the lane's
 # own change stops it, and the refusal names the paths. The captain hold, the design, demo and nav gates, the ticket reference,
 # the linked-decision block and owner-guard still apply; a red trunk never stops a landing. A landing starts only on a head whose whole proof is there
 # (jg_dod_trunk_proof_gaps in bin/jg-merge-gate-lib.sh, the same check the worker's done runs): a PASS completion receipt, approved
@@ -663,6 +663,20 @@ landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's rec
   JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$1" --stage "done" --state "done" || true
 }
 
+# True when a sealed done-done run of the lane passed, clean, at a commit whose tree is the tree <candidate> would be tested at: the
+# tree hash decides, so a trunk that moved under the lane (a rebased tree) or a run that failed or was dirty never counts.
+sealed_run_covers() {  # <id> <candidate>
+  local want c f; [ "${JG_TRUNK_SEALED_REUSE:-1}" != 0 ] || return 1  # 0 always runs the tests (the suites that test the gate itself)
+  want=$(git -C "$PROJ" rev-parse --verify --quiet "$2^{tree}") || return 1
+  for f in "$DATA/$1/.done-done/runs/"*.json; do
+    [ -f "$f" ] || continue
+    c=$(jq -r 'select(.exit == 0 and .dirty == false) | .commit // empty' "$f" 2>/dev/null) || continue
+    [ -n "$c" ] || continue
+    [ "$(git -C "$PROJ" rev-parse --verify --quiet "$c^{tree}")" = "$want" ] && return 0
+  done
+  return 1
+}
+
 land_candidate() {
   local id=${1-} tip cand gate GATE_KIND='' GATE_FIGURES='' still=
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
@@ -682,7 +696,8 @@ land_candidate() {
     # One fast check: the lint over the changed files, then the changed files' tests judged against the tip's own result.
     # Only a repository that carries Juggernaut's own suite gets its default gates; any other project runs the gates its home set for it, if any.
     if gate=$(jg_trunk_gate gate-lint "$PN" "$PROJ" "$cand"); then run_gate "$cand" "$gate" lint; else echo "land: $PN has no lint gate; none run" >&2; fi
-    if gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand"); then full_gate "$cand" "$gate" "$tip" || exit 1; else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >&2; fi
+    if gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand") && sealed_run_covers "$id" "$cand"; then GATE_KIND=sealed-run; echo "land: ${cand:0:12} has the tree of $id's passing sealed run; the tests ran there, so only the lint ran here" >&2
+    elif gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand"); then full_gate "$cand" "$gate" "$tip" || exit 1; else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >&2; fi
     lock "$STATE/.trunk-$PN.lock"; tip_ok
     if [ "$(rev "refs/heads/$TRUNK")" = "$tip" ]; then still=1; break; fi
     unlock "$STATE/.trunk-$PN.lock"; echo "note: $TRUNK moved to $(rev "refs/heads/$TRUNK" | cut -c1-12) while $id was gated at ${tip:0:12}; rebasing it onto the new tip and gating it again" >&2

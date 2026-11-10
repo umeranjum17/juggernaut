@@ -327,6 +327,25 @@ test_three_lanes_land_in_order_a_red_one_is_refused_and_a_post_land_red_is_rever
   pass 'three lanes land in order with no human step, the red lane is refused, and a post-land red is reverted'
 }
 
+# shellcheck disable=SC2016 # the policy line is written out verbatim and expands when the gate runs it
+test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again() {
+  local out
+  world once; local JG_TRUNK_SEALED_REUSE=1
+  # The tests leave a mark each time the gate runs them; the lint still runs on every landing.
+  printf 'gate-full=echo ran >> %s/gate-runs; ! grep -q BAD work.txt\ngate-lint=echo linted >> %s/lint-runs; ! grep -q UGLY work.txt\n' "$W" "$W" > "$HOME_D/config/trunk-policy"
+  lane s1 one a.txt; lane s2 two b.txt
+  # The trunk has not moved since s1 was proved and sealed: its sealed run is for the tree the lander would test.
+  out=$(trunk land s1 2>&1) || fail "a lane proved at the tip's tree must land: $out"
+  [ ! -e "$W/gate-runs" ] || fail "the tests must not run again for a tree the sealed run already passed"
+  [ "$(grep -c . "$W/lint-runs")" = 1 ] || fail "the lint must still run for the landing"
+  assert_contains "$out" "gate=sealed-run" "the landing must say the sealed run stood for the tests"
+  # The trunk moved under s2: the lander rebases it onto a tree its run never saw, so the tests run.
+  out=$(trunk land s2 2>&1) || fail "a lane on a moved trunk must land: $out"
+  [ "$(grep -c . "$W/gate-runs")" = 1 ] || fail "the tests must run when the trunk moved under the lane"
+  assert_contains "$out" "gate=full" "a moved trunk is gated with the tests"
+  pass 'a lane whose sealed run is for the tree the lander tests lands on the lint alone; a moved trunk runs the tests'
+}
+
 test_the_full_gate_charges_a_lane_only_for_what_it_broke
 test_a_flaky_failure_gets_one_rerun_before_it_is_judged
 test_a_lane_is_charged_only_for_a_script_the_parent_passes_three_times_of_three
@@ -338,4 +357,5 @@ test_done_and_landing_both_refuse_before_starting_on_any_missing_proof_input
 test_a_proof_gap_names_the_reason_merge_card_refused_not_a_missing_run
 test_the_check_starts_no_landing_until_the_whole_proof_is_there
 test_three_lanes_land_in_order_a_red_one_is_refused_and_a_post_land_red_is_reverted
+test_a_lane_proved_at_the_tree_the_lander_would_test_is_not_tested_again
 printf 'jg-trunk-gate: ok\n'

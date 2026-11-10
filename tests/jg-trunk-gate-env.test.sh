@@ -13,6 +13,7 @@
 set -u
 # The fixture lane is judged in its own proof context, not the account or done-done home of whoever runs this suite.
 unset CLAUDE_CONFIG_DIR DONE_DONE_HOME
+export JG_TRUNK_SEALED_REUSE=0   # this suite tests the gate's own environment, so the gate must run (see tests/jg-trunk-fixture.sh)
 
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
