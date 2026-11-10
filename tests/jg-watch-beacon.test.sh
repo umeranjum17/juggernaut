@@ -267,3 +267,6 @@ test_first_scan_holder_is_not_called_down
 test_stale_first_scan_progress_and_restart
 test_live_sweep_is_supervised_and_a_killed_watcher_is_not
 test_actionable_exit_leaves_the_home_supervised
+
+# journeys/supervision-gap-records.sh captures this same integration journey.
+bash "$ROOT/journeys/supervision-gap-integration.sh" || fail "supervision gap journey failed"

@@ -2723,6 +2723,7 @@ run_check_capture() {
   local pgid key output tmp
   jg_check_output_cleanup
   key=${JG_CHECK_OUTPUT_KEY:-check}
+  printf '%s\t%s\tcheck:%s\n' "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "$key" > "$STATE/.watch-progress" 2>/dev/null || true
   output="$STATE/.jg-check-output-$key"
   tmp=$(mktemp "$output.XXXXXX") || return 1
   JG_CHECK_OUTPUT_TMP=$tmp
@@ -3471,6 +3472,7 @@ watcher_descendants_to() {
 watcher_child() {
   local now rc=0
   jg_epoch_seconds_to now
+  printf '%s\t%s\t%s\n' "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "${1##*/}" > "$STATE/.watch-progress" 2>/dev/null || true
   printf '%s %s\n' "$((now + WATCHER_CHILD_CAP))" "$WATCHER_PID" > "$WATCHER_CHILD_MARK" 2>/dev/null || true
   "$@" || rc=$?
   : > "$WATCHER_CHILD_MARK" 2>/dev/null || true
@@ -3900,6 +3902,7 @@ resurface_after_downtime() {
 # A completed bounded unit proves progress even in a recovering first scan.
 # A PID alone, or a first check that hangs, never reaches this function.
 watcher_beat() {
+  printf '%s\t%s\t%s\n' "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "${1:-scan}" > "$STATE/.watch-progress" 2>/dev/null || true
   touch "$STATE/.last-watcher-beat" 2>/dev/null || true
 }
 
@@ -4141,7 +4144,7 @@ EOF
       # This bounded unit of the sweep is done, so the scan has made progress:
       # publish liveness here (watcher_beat's header owns why). A check that
       # hangs or a cycle that dies never reaches this point, so it still ages.
-      watcher_beat
+      watcher_beat due-check
     done
     # shellcheck disable=SC2086 # rejected_checks is a space-separated path list.
     unalerted_checks=$(rejected_checks_unalerted $rejected_checks)
@@ -4419,7 +4422,7 @@ EOF
         # The ready-PR record pass is one bounded unit of this scan; publish
         # liveness after it so a batch of them cannot outrun the grace
         # (watcher_beat's header owns why).
-        watcher_beat
+        watcher_beat ready-record
         file_reason="$reason"
         case " $JG_SIGNAL_NEEDS_DECISION_FILES " in *" $f "*) file_reason="needs-decision:$signal_files" ;; esac
         jg_wake_append signal "$(basename "$f")" "$file_reason" || exit 1
@@ -4540,7 +4543,7 @@ EOF
   while IFS= read -r w; do
     # Everything before this window is done: a bounded unit of the scan, and
     # the loop has early exits, so the top is the one point every window hits.
-    watcher_beat
+    watcher_beat pane-scan
     kind=$(window_kind "$w")
     task=$(window_to_task "$w" "$STATE")
     # Steering-inbox loss detection runs before the squad_lead stale

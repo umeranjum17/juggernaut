@@ -216,11 +216,16 @@ cycle_signal_name() {
 }
 
 cycle_log_append() {
-  local exit_code=$1 signal=$2 reason=$3 successor=$4 detail=${5:-} ended_at beacon_age lock_after size tmp raw i
+  local exit_code=$1 signal=$2 reason=$3 successor=$4 detail=${5:-} ended_at beacon_age lock_after size tmp raw i observation=''
   [ "$cycle_active" -eq 1 ] || return 0
   ended_at=$(date +%s)
   beacon_age=$(jg_path_age "$BEAT")
   lock_after=$(lock_snapshot)
+  case "$beacon_age" in ''|*[!0-9]*) ;; *)
+    if [ "$beacon_age" -ge "$GRACE" ] && [ -x "$SCRIPT_DIR/jg-supervision-gap.sh" ]; then
+      observation=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-supervision-gap.sh" observe) || observation=class=unknown-current
+    fi ;;
+  esac
 
   i=0
   while ! jg_lock_try_acquire "$CYCLE_LOG_LOCK"; do
@@ -228,7 +233,7 @@ cycle_log_append() {
     sleep 0.02
     i=$((i + 1))
   done
-  printf 'arm_pid=%s\twatcher_pid=%s\torigin=%s\tstarted_at=%s\tended_at=%s\texit_code=%s\tsignal=%s\treason=%s\tbeacon_age=%s\tlock_before=%s\tlock_after=%s\tsuccessor=%s%s\n' \
+  printf 'arm_pid=%s\twatcher_pid=%s\torigin=%s\tstarted_at=%s\tended_at=%s\texit_code=%s\tsignal=%s\treason=%s\tbeacon_age=%s\tlock_before=%s\tlock_after=%s\tsuccessor=%s%s%s\n' \
     "$ARM_PID" \
     "$(cycle_clean_field "$cycle_watcher_pid")" \
     "$(cycle_clean_field "$cycle_origin")" \
@@ -241,7 +246,8 @@ cycle_log_append() {
     "$(cycle_clean_field "$cycle_lock_before")" \
     "$(cycle_clean_field "$lock_after")" \
     "$(cycle_clean_field "$successor")" \
-    "${detail:+$'\t'detail=$(cycle_clean_field "$detail")}" >> "$CYCLE_LOG" 2>/dev/null || true
+    "${detail:+$'\t'detail=$(cycle_clean_field "$detail")}" \
+    "${observation:+$'\t'$observation}" >> "$CYCLE_LOG" 2>/dev/null || true
 
   size=$(wc -c < "$CYCLE_LOG" 2>/dev/null | tr -d '[:space:]')
   case "$size" in
@@ -335,13 +341,14 @@ report_attached() {
 # Adapter-owned continuations normally win immediately, but the bound avoids a
 # false failure when process-close delivery and lock publication cross briefly.
 wait_for_healthy_successor() {
-  local deadline
+  local deadline followed=${1:-none}
+  arm_observation waiting "$followed"
   # date(1) exposes whole seconds. Add one rounding second so a timeout of one
   # second cannot collapse to a few milliseconds when called near a boundary.
   deadline=$(( $(date +%s) + $(jg_watcher_confirmation_budget "$STATE" "$WATCH" "$JG_HOME") + 1 ))
   while :; do
-    healthy_watcher && return 0
-    [ "$(date +%s)" -ge "$deadline" ] && return 1
+    if healthy_watcher; then arm_observation running none; return 0; fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then arm_observation running none; return 1; fi
     sleep 0.2
   done
 }
@@ -429,7 +436,7 @@ attach_and_wait() {
       echo "watcher: FAILED - attached watcher pid=$attached_pid stalled (beacon ${age}s at or past hard bound ${STALL_BOUND}s)"
       return 1
     fi
-    if wait_for_healthy_successor; then
+    if wait_for_healthy_successor "$attached_pid"; then
       cycle_log_append unknown unknown attached-cycle-ended "attached:$HEALTHY_PID"
       attached_pid=$HEALTHY_PID
       cycle_begin "$attached_pid" attached "$HEALTHY_IDENTITY"
@@ -514,6 +521,25 @@ case "${1:-}" in
     ;;
   *) echo "usage: $(basename "$0") [--restart | --stop | --take-over ARM_PID | --handling-delivered GENERATION --watcher-pid PID]" >&2; exit 2 ;;
 esac
+
+# Per-arm observations permit the sentinel to distinguish an idle arm from no arm.
+ARM_OBSERVATION=
+arm_observation() {
+  [ -n "$ARM_OBSERVATION" ] || return 0
+  local followed_identity=none
+  [ "$2" = none ] || followed_identity=$(jg_pid_identity "$2" 2>/dev/null || printf none)
+  printf '%s\t%s\t%s\t%s\t%s\n' "$ARM_PID" "$ARM_IDENTITY" "$1" "$2" "$followed_identity" > "$ARM_OBSERVATION.tmp" \
+    && mv -f -- "$ARM_OBSERVATION.tmp" "$ARM_OBSERVATION"
+}
+if [ "$mode" != stop ] && [ "$mode" != handling-delivered ]; then
+  if mkdir -p "$STATE/.watch-arms" && ARM_IDENTITY=$(jg_pid_identity "$ARM_PID"); then
+    ARM_OBSERVATION="$STATE/.watch-arms/$ARM_PID"
+    arm_observation running none || echo 'watcher: could not record arm observation' >&2
+    trap 'rm -f -- "$ARM_OBSERVATION" "$ARM_OBSERVATION.tmp"' EXIT
+  else
+    echo 'watcher: could not identify arm for gap observation' >&2
+  fi
+fi
 
 if [ "$mode" = handling-delivered ]; then
   # An episode the drain already acknowledged under this generation has nothing
@@ -714,7 +740,7 @@ stood_down_successor() {
     healthy_watcher
     return
   fi
-  wait_for_healthy_successor
+  wait_for_healthy_successor "${holder:-none}"
 }
 
 owned_child_finished() {

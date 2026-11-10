@@ -645,8 +645,18 @@ ring_for_inbox() {
 }
 
 tick() {
-  local id prev beat woken_beat age last body rc=0
+  local id prev beat woken_beat age last body gap_class gap_progress=unknown rc=0
   tmp_hygiene || true
+  if jg_supervision_unhealthy "$STATE" "$GRACE"; then
+    if gap_class=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$BIN/jg-supervision-gap.sh" detect); then
+      gap_progress=$(awk -F '\t' '{for (i=1;i<=NF;i++) if ($i ~ /^progress=/) {sub(/^progress=/,"",$i); print $i}}' "$STATE/.supervision-gap")
+    else
+      say "supervision gap: record failed"; gap_class=unknown-current
+    fi
+  else
+    JG_STATE_OVERRIDE="$STATE" "$BIN/jg-supervision-gap.sh" clear || say "supervision gap: clear failed"
+    gap_class=none
+  fi
   id=$(herdr_identity)
   [ -n "$id" ] || return 0
   prev=$(cat "$STATE/.sentinel-herdr-identity" 2>/dev/null)
@@ -680,7 +690,7 @@ tick() {
   read -r last woken_beat <"$STATE/.sentinel-wake-last" 2>/dev/null || true
   age=$(( $(date +%s) - ${last:-0} ))
   [ "${woken_beat:-}" != "${beat:-none}" ] || [ "$age" -ge "$REWAKE" ] || return "$rc"
-  body="Supervision is needed but the watcher beacon is $JG_SUP_BEACON_DESC old and no turn is running, so nothing is watching the fleet. Run bin/jg-session-start.sh if this session was resumed, reconcile, then end the turn so supervision re-arms."
+  body="Supervision is needed but the watcher beacon is $JG_SUP_BEACON_DESC old and no turn is running. Gap $gap_class, last progress ${gap_progress:-unknown}, is in state/.supervision-gap. Run bin/jg-session-start.sh if this session was resumed, reconcile, then end the turn so supervision re-arms."
   # defaults/wake-routing decides whether this doorbell costs a turn: it settles while a
   # live watcher holds the lock, and it is recorded and counted like any settled wake.
   if [ "$(jg_wake_route_class check sentinel-beacon-old "$body")" != now ]; then
