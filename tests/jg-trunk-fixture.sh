@@ -31,6 +31,8 @@ world() {  # <name>: sets W HOME_D PROJ
   fi
   mkdir -p "$W/root" "$HOME_D/state" "$HOME_D/data" "$HOME_D/config" "$W/fakebin"
   cp -r "$ROOT/bin" "$W/root/bin"
+  # Legacy trunk journeys isolate release proof; its own journey restores the real helper.
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$W/root/bin/jg-trunk-release-proof.sh"
   # The fixture homes are bare repositories (no beacon, overlay or supervision read); the health check has its own test.
   # shellcheck disable=SC2016 # the stub expands its own argument
   printf '#!/usr/bin/env bash\necho "ok $2"\n' > "$W/root/bin/jg-home-health.sh"

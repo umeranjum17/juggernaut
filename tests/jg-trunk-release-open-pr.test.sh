@@ -169,10 +169,11 @@ test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push() {
   [ "$(wc -l < "$LEDGER")" = "$rows" ] || fail "T7a: no new release row"
   pass 'T7a a pushed release with its record missing gets the record and the armed check, with no push and one line'
 
-  sum=$(cksum < "$meta"); out=$(trunk release "$PROJ" 2>&1) && fail "T7c: a release record that exists leaves nothing to release: $out"
+  sum=$(cksum < "$meta"); out=$(trunk release "$PROJ" 2>&1) || fail "T7c: the existing release must resume proof: $out"
   [ "$(cksum < "$meta")" = "$sum" ] && [ "$(wc -l < "$LEDGER")" = "$rows" ] || fail "T7c: the record and the ledger must stay as they were"
+  assert_contains "$out" "resuming its proof" "T7c: the retry must say why it ran"
   assert_not_contains "$out" "push of" "T7c: no push is tried"
-  pass 'T7c a record already kind=release stays as it is and nothing is pushed'
+  pass 'T7c an existing release resumes proof without another push'
 
   printf 'kind=ship\nproject=x\nreceipt_required=1\n' > "$meta"; sum=$(cksum < "$meta")
   out=$(trunk release "$PROJ" 2>&1) && fail "T7b: a record of another kind must refuse: $out"
@@ -181,7 +182,105 @@ test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push() {
   pass 'T7b a record of another kind under the id is refused in one line naming it'
 }
 
+test_release_proof_at_its_head() {
+REAL_DONE_DONE=$(command -v done-done)
+world release-proof
+cp "$ROOT/bin/jg-trunk-release-proof.sh" "$W/root/bin/jg-trunk-release-proof.sh"
+export DONE_DONE_HOME="$W/done-done"
+mkdir -p "$DONE_DONE_HOME" "$W/account"
+printf '%s\n' "$W/account" > "$HOME_D/config/claude-account"
+export JG_PROOF_BOARD="$W/board.json"
+url=https://github.com/o/r/pull/9
+id=release-proj-trunk
+# Use an independent clone for the lane, not a worktree of the shared repository.
+git clone -q "$PROJ" "$W/lane" || fail 'clone lane'
+git -C "$W/lane" checkout -q -b fm/proof origin/trunk || fail 'create lane branch'
+commit_in "$W/lane" work.txt proof 'ticket proof'
+git -C "$PROJ" fetch -q "$W/lane" fm/proof:refs/heads/fm/proof || fail 'import lane'
+jg_write_meta "$HOME_D/state/proof.meta" "project=$PROJ" 'mode=local-trunk' 'branch=fm/proof' "worktree=$W/lane" 'spawn_gen=g-proof'
+prove proof; ready proof
+trunk land proof >/dev/null 2>&1 || fail 'fixture lane must land'
+trunk word release "$PROJ" 'release fixture' >/dev/null || fail 'record release word'
+cat > "$W/fakebin/gh-axi" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *"api PATCH"*) for arg in "\$@"; do case "\$arg" in body=*) printf '%s' "\${arg#body=}" > "$W/pr-body" ;; esac; done ;;
+  *".head.sha"*) git -C "$PROJ" rev-parse trunk ;;
+  *".body"*) cat "$W/pr-body" 2>/dev/null || true ;;
+  *"pr view"*) echo 'state: open' ;;
+  *) echo '$url' ;;
+esac
+SH
+chmod +x "$W/fakebin/gh-axi"
+cat > "$W/fakebin/gh" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *author,body,title,files,headRefOid*) jq -n --rawfile body "$W/pr-body" --arg head "\$(git -C "$PROJ" rev-parse trunk)" '{body:\$body,title:"Fixture release",headRefOid:\$head,headRefName:"trunk",files:[],author:{login:"fixture"}}' ;;
+  *isDraft*) echo '{"isDraft":false}' ;;
+  *headRefOid*) git -C "$PROJ" rev-parse trunk ;;
+  *baseRefName*) printf 'main\ttrunk\n' ;;
+  *'pr create'*) echo '$url' ;;
+  *'--jq .body'*) cat "$W/pr-body" 2>/dev/null || printf '## Checks\nscreen: none\n' ;;
+  *'pr view'*) echo '{"body":"","headRefName":"trunk"}' ;;
+  *) echo '{}' ;;
+esac
+SH
+chmod +x "$W/fakebin/gh"
+# The judge boundary is deterministic; run, record discovery and merge-card are real.
+cat > "$W/fakebin/done-done" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = run ] && [ -e "$W/change-pin" ]; then
+  original=\$(cat "$HOME_D/state/trunk-green-proj")
+  git -C "$PROJ" rev-parse trunk^ > "$HOME_D/state/trunk-green-proj"
+  "$REAL_DONE_DONE" "\$@"; rc=\$?
+  printf '%s\n' "\$original" > "$HOME_D/state/trunk-green-proj"
+  exit "\$rc"
+elif [ "\${1:-}" = check ] && [ "\${2:-}" != --help ]; then
+  printf '%s\n' "\${CLAUDE_CONFIG_DIR:-}" > "$W/judge-account"
+  name=\$(sed -n 's/^evidence: //p' "$W/pr-body" | tail -n 1)
+  jq -n --arg file "$HOME_D/data/$id/\$name" --arg claim 'release proof' '{result:"pass",claim:\$claim,evidence:[\$file]}'
+else exec "$REAL_DONE_DONE" "\$@"; fi
+SH
+chmod +x "$W/fakebin/done-done"
+# The first proof refuses a missing landing row after publishing; retry needs no new word or push.
+proofs="$HOME_D/data/trunk-landing-proofs.tsv"
+cp "$proofs" "$W/saved-proofs"; : > "$proofs"
+out=$(trunk release "$PROJ" 2>&1) && fail 'a missing landing proof row must refuse'
+assert_contains "$out" 'no landing proof row' 'the failure must identify the missing proof'
+[ ! -e "$HOME_D/state/trunk-word-release-proj" ] || fail 'publication must spend the release word'
+rows=$(wc -l < "$HOME_D/data/trunk-releases.tsv")
+cp "$W/saved-proofs" "$proofs"
+# An old trunk with an uncarried hotfix must also refuse, and be retryable.
+cp "$HOME_D/data/trunk-versions.tsv" "$W/saved-versions"
+git -C "$W/lane" checkout -q -b old-hotfix "$(tip)^" || fail 'create old trunk fixture'
+commit_in "$W/lane" hotfix.txt old 'old trunk hotfix'
+git -C "$PROJ" fetch -q "$W/lane" old-hotfix:refs/heads/trunk-old || fail 'import old trunk fixture'
+printf 'proj\t0\ttrunk-old\t%s\n' "$(git -C "$W/lane" rev-parse HEAD^)" >> "$HOME_D/data/trunk-versions.tsv"
+out=$(trunk release "$PROJ" 2>&1) && fail 'an uncarried old trunk hotfix must refuse'
+assert_contains "$out" 'hotfix on trunk-old is not carried' 'the refusal must identify the old trunk'
+cp "$W/saved-versions" "$HOME_D/data/trunk-versions.tsv"
+: > "$W/change-pin"
+out=$(trunk release "$PROJ" 2>&1) && fail 'a changed green pin must refuse'
+assert_contains "$out" 'green pin changed' 'the refusal must identify the changed pin'
+rm "$W/change-pin"
+git -C "$PROJ" config remote.origin.pushurl "$W/no-such-remote.git"
+out=$(trunk release "$PROJ" 2>&1) || fail "proof retry failed: $out"
+[ "$(wc -l < "$HOME_D/data/trunk-releases.tsv")" = "$rows" ] || fail 'retry must not publish a second release'
+head=$(tip)
+# Drive the merge's real proof gate before inspecting the missing receipt.
+gate_out=$(PATH="$W/fakebin:$PATH" JG_HOME="$HOME_D" JG_PROOF_BOARD="$W/board.json" \
+  bash -c '. "$1/bin/jg-merge-gate-lib.sh"; jg_dod_proof_gate "$2" "$3" "$4" "$5"' _ \
+  "$W/root" "$HOME_D" "$id" "$head" "$url" 2>&1) || gate_rc=$?
+[ "${gate_rc:-0}" -eq 0 ] || fail "release merge proof refused: $gate_out"
+[ -f "$HOME_D/state/$id.run-receipt.json" ] || fail "release head $head has no completion receipt"
+[ "$(jq -r .head "$HOME_D/state/$id.run-receipt.json")" = "$head" ] || fail 'receipt must bind the release head'
+[ -f "$HOME_D/data/$id/merge-card.json" ] || fail 'release has no approved merge-card evidence'
+[ "$(cat "$W/judge-account")" = "$W/account" ] || fail 'judge did not use the home account pin'
+pass 'release produces proof at its own head'
+}
+
 test_a_release_keeps_one_url_and_takes_the_open_release_pr_as_success
 test_a_pushed_release_without_its_record_gets_the_record_and_no_second_push
 test_the_release_pr_has_an_owning_task_the_guard_admits
+test_release_proof_at_its_head
 printf 'jg-trunk-release-open-pr: ok\n'

@@ -1623,10 +1623,10 @@ adopt_pushed_release() {  # <commit>
   if [ -e "$meta" ]; then
     kind=$(jg_dod_meta_value "$meta" kind)
     [ "$kind" = release ] || refuse "the record ${meta##*/} is kind=${kind:-unset}, not kind=release, so the pushed release $url has no record; end that record first"
-    [ "$(jg_dod_meta_value "$meta" pr)" != "$url" ] || return 1
   fi
   record_release_task "$url" >&2
-  echo "release already pushed: $url; its record release-$PN-$TRUNK is written and armed, nothing pushed"
+  REL_URL=$url
+  echo "release already pushed: $url; resuming its proof, nothing pushed"
 }
 
 cmd_release() {
@@ -1635,8 +1635,19 @@ cmd_release() {
   rollover_if_merged || true
   rel=$(release_commit)
   base=$(cat "$STATE/trunk-released-$PN"); n=$(git -C "$PROJ" rev-list --count "$base..$rel")
-  [ "$n" -gt 0 ] || ! adopt_pushed_release "$rel" || return 0
-  [ "$n" -gt 0 ] || refuse "nothing to release: $TRUNK has no commits since the last release"
+  if [ "$n" -eq 0 ]; then
+    if [ "$(cat "$STATE/trunk-release-pending-$PN" 2>/dev/null || true)" = "$rel" ]; then
+      [ "$(cut -f1 "$STATE/trunk-word-release-$PN" 2>/dev/null || true)" != "$rel" ] || spend_word release
+      rm -f -- "$STATE/trunk-release-pending-$PN"
+    fi
+    adopt_pushed_release "$rel" || refuse "nothing to release: $TRUNK has no commits since the last release"
+    url=$REL_URL
+    [ "$(pr_state "$url")" = open ] || refuse "the release PR $url is not open"
+    base=$(release_base "$rel") || refuse "cannot find the release base for ${rel:0:12}"
+    unlock "$STATE/.trunk-$PN.lock"
+    "$SCRIPT_DIR/jg-trunk-release-proof.sh" "$PROJ" "$TRUNK" "$base" "$rel" "$url"
+    return
+  fi
   need_word release "$rel"
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
   printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$rel" "$TRUNK" "$base" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused the batch"
@@ -1652,10 +1663,17 @@ cmd_release() {
       git -C "$PROJ" log --reverse --format='- %h %s' "$base..$rel"; } > "$body"
     open_release_pr "$default" "Release: $n tickets from the local $TRUNK" "$body"; url=$REL_URL
   fi
+  put "$STATE/trunk-release-pending-$PN" "$rel"
+  if ! awk -F '\t' -v p="$PN" -v t="$TRUNK" -v h="$rel" -v u="$url" '$1 == p && $2 == t && $3 == h && $6 == u { found=1 } END { exit !found }' "$DATA/trunk-releases.tsv" 2>/dev/null; then
+    row trunk-releases.tsv "$PN" "$TRUNK" "$rel" "$n" "$(date +%s)" "$url"
+  fi
   put "$STATE/trunk-released-$PN" "$rel"; spend_word release
-  row trunk-releases.tsv "$PN" "$TRUNK" "$rel" "$n" "$(date +%s)" "$url"
+  rm -f -- "$STATE/trunk-release-pending-$PN"
   echo "released $n commits from $TRUNK: $url"
   record_release_task "$url"
+  base=$(release_base "$rel") || refuse "cannot find the release base for ${rel:0:12}"
+  unlock "$STATE/.trunk-$PN.lock"
+  "$SCRIPT_DIR/jg-trunk-release-proof.sh" "$PROJ" "$TRUNK" "$base" "$rel" "$url"
 }
 
 # Reconcile an idle trunk from the landing check, under the same lock as a landing.

@@ -16,7 +16,7 @@
 #    let the same commits land, with no code change; the gate commands are policy keys with fast defaults.
 # T5 The release is ONE PR from the trunk itself into the default branch: no release branch, no
 #    force, refused without the captain's word, and a second release while it is open opens no
-#    second PR; an empty batch refuses.
+#    second PR; an empty batch refuses and a published batch can retry its proof.
 # T8 Only the lander moves the trunk: a hand write to it is refused by the hook the trunk installs;
 #    land records the same merged event as the local merge. A home guard (bin/jg-home-guard.sh) installed in the same
 #    repository chains the trunk guard: both still refuse, reruns and a landing change neither hook, uninstall restores it.
@@ -418,7 +418,9 @@ test_the_release_is_one_pr_from_the_trunk_on_his_word() {
   git --git-dir="$W/origin.git" for-each-ref --format='%(refname)' 'refs/heads/release/c-5*' | grep -q . && fail "no release branch may be created"
   [ "$(grep -c 'pr create' "$W/gh-calls")" = 1 ] || fail "exactly one release PR must be opened"
   assert_contains "$(cat "$W/gh-calls")" '--head trunk' 'the PR must be raised from the trunk itself'
-  out=$(trunk release "$PROJ" 2>&1) && fail "a second release with nothing new must refuse"
+  out=$(trunk release "$PROJ" 2>&1) || fail "a published release must allow its proof to be retried: $out"
+  assert_contains "$out" 'resuming its proof' 'a retry must name its proof stage'
+  [ "$(grep -c 'pr create' "$W/gh-calls")" = 1 ] || fail "a proof retry must not open another PR"
   lane r3 three; trunk land r3 >/dev/null 2>&1 || fail "r3 must land"
   trunk word release "$PROJ" "ship it again" >/dev/null 2>&1
   out=$(trunk release "$PROJ" 2>&1) || fail "a later batch must release: $out"
@@ -445,8 +447,9 @@ test_a_release_carries_the_last_green_commit_while_the_tip_is_ahead() {
   [ "$(tip)" = "$tipc" ] || fail "a release must leave the local trunk where it is"
   [ "$(cat "$HOME_D/state/trunk-released-proj")" = "$green" ] || fail "the released mark must be the green commit"
   assert_contains "$out" 'released 1 commits' 'the release must count only the commits up to the green one'
-  out=$(trunk release "$PROJ" 2>&1) && fail "a second release with no newer green commit must refuse"
-  assert_contains "$out" 'nothing to release' 'the commit after the pin waits for its own green'
+  out=$(trunk release "$PROJ" 2>&1) || fail "the already-published green commit must allow proof retry: $out"
+  assert_contains "$out" 'resuming its proof' 'the published green commit retries its proof'
+  [ "$(git --git-dir="$W/origin.git" rev-parse refs/heads/trunk)" = "$green" ] || fail "the commit after the pin must wait for its own green"
   trunk verify "$PROJ" >/dev/null 2>&1 || fail "verify must pass at g2"
   trunk word release "$PROJ" "ship the next one" >/dev/null 2>&1 || fail "the word must record at the new green"
   trunk release "$PROJ" >/dev/null 2>&1 || fail "the next green commit must release"
