@@ -879,6 +879,7 @@ tests/jg-trunk-retry.test.sh 20000
 tests/jg-trunk-verify.test.sh 15000
 tests/jg-trunk-spawn.test.sh 49000
 tests/jg-spawn-load-admission.test.sh 45000
+tests/jg-spawn-same-file.test.sh 45000
 tests/jg-trunk-scope.test.sh 8000
 tests/jg-worker-rules.test.sh 3493
 tests/jg-turnend-guard.test.sh 97000
