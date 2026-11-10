@@ -32,7 +32,8 @@
 #     changes nothing. An account that answers is not down: the wait climbs as before.
 JG_WAIT_OWNER_TABLE='critic	critic	forward	lead
 silent	worker	ring,relaunch	lead
-account-down	watcher	recover	lead'
+account-down	watcher	recover	lead
+pool-full	script	sweep,notify	lead	0	600	task started'
 #
 # Sidecar state/.waiting-timers/.acted/<task>: state, time of the last step, the
 # steps taken (comma-joined), and the time of the first step. It outlives the episode on purpose: a ring

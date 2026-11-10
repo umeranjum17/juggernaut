@@ -4010,10 +4010,32 @@ elif [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca 
     exit 1
   }
   python3 "$SCRIPT_DIR/jg-treehouse-protect.py" "$PROJ_ABS" "${JG_LOCAL_JUGGERNAUT_STATES[@]}" || exit 1
-  allocated=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID") || {
-    echo "error: treehouse could not lease a worktree for task $ID; copies held by tasks not yet torn down are not available until their teardown" >&2
+  lease_error=$(mktemp "$STATE/.treehouse-lease.XXXXXX") || exit 1
+  if ! allocated=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID" 2>"$lease_error"); then
+    if grep -Eq 'all [0-9]+ worktrees are in use or dirty \(max_trees = [0-9]+\)' "$lease_error"; then
+      holders=$(cd "$PROJ_ABS" && treehouse status 2>&1) || holders="pool status unavailable: $holders"
+      holders=$(printf '%s' "$holders" | tr '\n\r\t' '   ')
+      pool_key=${SPAWN_TREEHOUSE_PROJECT_LOCK##*.treehouse-project-}; pool_key=${pool_key%.lock}
+      pool_dir="$STATE/.pool-waiters/$pool_key"
+      mkdir -p "$STATE/.stops" "$pool_dir" || exit 1
+      printf '%s\n' "$SPAWN_TREEHOUSE_PROJECT_LOCK" > "$pool_dir/.project-lock" || exit 1
+      printf '%s\n' "$PROJ_ABS" > "$pool_dir/.project" || exit 1
+      : > "$pool_dir/$ID" || exit 1
+      pool_tasks=$(printf '%s\n' "$pool_dir"/* | sed 's#.*/##' | tr '\n' ' ')
+      pool_tmp=$(mktemp "$STATE/.stops/.pool-$pool_key.XXXXXX") || exit 1
+      if ! { printf '%s\n' "tasks=$pool_tasks project=$PROJ_ABS; holders: $holders" > "$pool_tmp" &&
+        mv -f -- "$pool_tmp" "$STATE/.stops/pool-$pool_key.pool-full"; }; then exit 1; fi
+      rm -f -- "$lease_error"
+      [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] || rovo_endpoint_cleanup
+      echo "deferred: pool for $PROJ_ABS is full; holders: $holders; task $ID stays queued" >&2
+      exit 75
+    fi
+    cat "$lease_error" >&2
+    rm -f -- "$lease_error"
+    echo "error: treehouse could not lease a worktree for task $ID" >&2
     exit 1
-  }
+  fi
+  rm -f -- "$lease_error"
   [ -n "$allocated" ] || { echo "error: treehouse lease returned no worktree for task $ID" >&2; exit 1; }
   # The lease belongs to this task even if the pool returned another clone.
   # Record it before inspecting Git so every refusal preserves it for recovery.
@@ -5525,6 +5547,14 @@ if [ -n "$SPAWN_DEFERRED_SIGNAL" ]; then
 fi
 jg_lock_release "$SPAWN_META_LOCK"
 SPAWN_META_LOCK_HELD=0
+# Mark this waiter started; the tick clears its pool stop under the project lock.
+if [ "$RELAUNCH" -eq 0 ] && [ -n "$SPAWN_TREEHOUSE_PROJECT_LOCK" ]; then
+  pool_key=${SPAWN_TREEHOUSE_PROJECT_LOCK##*.treehouse-project-}; pool_key=${pool_key%.lock}
+  pool_dir="$STATE/.pool-waiters/$pool_key"
+  if [ -f "$pool_dir/$ID" ] && ! : > "$pool_dir/.started-$ID"; then
+    echo "warning: cannot record that task $ID started; its pool stop needs attention" >&2
+  fi
+fi
 
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"

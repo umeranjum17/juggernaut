@@ -1,0 +1,6 @@
+machine	host	state/.stops/pool-<project>.pool-full	bin/jg-spawn.sh
+state	ok	initial	The project has no full pool stop.	-
+state	pool-full	normal	The project pool has deferred starts.	-
+edge	ok	defer	pool-full	bin/jg-spawn.sh:spawn	-	the pool lease reports full	jg-pool-full.test.sh
+edge	pool-full	start	ok	bin/jg-spawn.sh:spawn	-	the deferred task starts	jg-pool-full.test.sh
+observer	s=${JG_STATE_OVERRIDE:-${JG_HOME:?}/state}; [ ! -f "$s/.stops/pool-$1.pool-full" ] && echo ok || echo pool-full
