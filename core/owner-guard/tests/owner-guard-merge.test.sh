@@ -96,6 +96,25 @@ check "clean PR passes" "$rc" 0
 has "clean PR says scanned" "$out" "merge scan clean"
 check "clean scan leaves no scratch repo or error" "$(ls -d "$d"/tmp.*/r.git 2>/dev/null; printf '%s' "$out" | grep -c 'unbound')" 0
 check "previous gate ran with the same args" "$(cat "$d/gate.log")" "prev-gate t1 $d/work $head $URL"
+# A caller's hook configuration must not run in the temporary scan repository.
+mkdir -p "$d/failing-hooks"
+printf '#!/bin/sh\necho hook-ran >>"%s"\nexit 1\n' "$d/hook-ran" >"$d/failing-hooks/reference-transaction"
+chmod +x "$d/failing-hooks/reference-transaction"
+export JG_HOME="$FM" SCAN_WORK="$d/work" SCAN_HEAD="$head" SCAN_URL="$URL"
+for route in global parameters count command; do
+  : >"$d/hook-ran"
+  # The command alias expands its variables in the child shell.
+  # shellcheck disable=SC2016
+  case "$route" in
+    global) git config --global core.hooksPath "$d/failing-hooks"; out=$(gate t1 "$d/work" "$head" "$URL") && rc=0 || rc=$?; git config --global --unset core.hooksPath ;;
+    parameters) out=$(GIT_CONFIG_PARAMETERS="'core.hooksPath=$d/failing-hooks'" gate t1 "$d/work" "$head" "$URL") && rc=0 || rc=$? ;;
+    count) out=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$d/failing-hooks" gate t1 "$d/work" "$head" "$URL") && rc=0 || rc=$? ;;
+    command) out=$(git -c core.hooksPath="$d/failing-hooks" -c alias.scan='!"$JG_HOME/config/merge-gate" t1 "$SCAN_WORK" "$SCAN_HEAD" "$SCAN_URL"' scan 2>&1) && rc=0 || rc=$? ;;
+  esac
+  [ "$rc" -eq 0 ] || printf "route %s: %s\n" "$route" "$out"
+  check "$route hook does not block scan" "$rc" 0
+  check "$route hook did not run" "$(cat "$d/hook-ran")" ""
+done
 echo 3 >"$d/prev-rc"
 out=$(gate t1 "$d/work" "$head" "$URL") && rc=0 || rc=$?
 check "previous gate refusal still refuses" "$rc" 3
