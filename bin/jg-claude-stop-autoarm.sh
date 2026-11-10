@@ -287,6 +287,17 @@ fi
 # shellcheck source=/dev/null
 [ -f "$CONFIG/x-mode.env" ] && . "$CONFIG/x-mode.env"
 
+# What an arm that did not confirm a live watcher leaves behind: what the
+# watcher itself said, who holds its lock and how old its last beat is.
+autoarm_cause() {  # [arm-output-file]
+  local line holder
+  line=$(grep '^watcher: FAILED' "${1:-/dev/null}" 2>/dev/null | head -n 1 || true)
+  [ -n "$line" ] || line=$(tail -n 1 "${1:-/dev/null}" 2>/dev/null || true)
+  holder=$(cat "$STATE/.watch.lock/pid" 2>/dev/null || true)
+  printf '%s; lock holder pid=%s; beat age %ss' "${line:-no output from the arm}" "${holder:-none}" \
+    "$(jg_path_age "$STATE/.last-watcher-beat")"
+}
+
 # --- detached cycle start --------------------------------------------------------
 # Start one arm that outlives this hook: the handling successor below, started
 # before the rewake delivers the wake as the Pi, omp, and OpenCode adapters do
@@ -332,9 +343,8 @@ start_detached_arm() {  # [predecessor-arm-pid]
       sleep 0.2
     done
   done
-  line=$(grep '^watcher: FAILED' "$out" 2>/dev/null | head -n 1 || true)
+  line=" ($(autoarm_cause "$out"))"
   rm -f "$out" 2>/dev/null || true
-  [ -z "$line" ] || line=" ($line)"
   DETACHED_ARM_FAILURE="pid=$pid did not confirm a live watcher$line"
   return 1
 }
@@ -677,6 +687,9 @@ if [ "$ACTIONABLE" -eq 1 ]; then
   [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
   exit 0
 fi
+
+printf '[%s] arm after %s attempts did not confirm a live watcher (%s)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$attempt" \
+  "$(autoarm_cause "$OUT")" >> "$STATE/.watch-triage.log" 2>/dev/null || true
 
 # Notify only once for this continuous failure episode; every later invocation
 # still exits 2 so Claude must continue into another Stop-owned retry without
