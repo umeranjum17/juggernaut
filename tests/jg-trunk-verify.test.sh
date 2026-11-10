@@ -6,6 +6,7 @@
 # Queued verifies run one at a time and only the newest runs, and its green moves the pin over the rest; a verify whose
 #    only failures its parent already had moves the pin, and one holding a red the commit added does not. A verify whose only
 #    failures pass on their one rerun moves the pin too, and each flaky test is recorded and filed once as its own fix row.
+#    A gate shard over its wall-clock budget with no failed test is a warning and a machine-load row, never a red.
 # No landing or stack holds the trunk lock while its gate runs: a verify finishes and moves the pin, another lane lands,
 #    and a lane or stack whose tip moved under its gate is judged again on the moved tip.
 # Verify judges every change since the trunk's release base (data/trunk-versions.tsv), the set CI maps for the release
@@ -159,8 +160,45 @@ test_verify_judges_every_change_since_the_release_base() {
   pass 'verify judges every change since the release base, the set CI maps for the release pull request'
 }
 
+# The whole-suite gate of trunk-v3 at 20eb94ae6054: eight shards at 601 to 651 s of their 600 s budget, at host load 60, and no test
+# failed (total=81 failed=0). The old runner ended that run with exit 1 and the verify pinned the trunk red. Its shards now run every
+# script and print one JG_TEST_OVERRUN line each, and the verify moves the pin, warns, and keeps one machine-load row per shard.
+# A failed test past the budget still holds the pin.
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_records_the_load() {
+  local out top bad k=0 ms
+  world overrun; rig
+  lane o1 'exit 0' t/o.test.sh; trunk land o1 >/dev/null 2>&1 || fail "o1 must land"; top=$(tip)
+  {
+    printf '#!/usr/bin/env bash\nbash %s/rig.sh --all; rc=$?\n' "$W"
+    for ms in 606547 601220 609490 601802 603834 608064 650849 650651; do
+      k=$((k + 1))
+      printf 'echo "jg-test-run: warning: ran %sms, over its 600000ms wall-clock budget, at host load 60.12 on 32 cpus" >&2\n' "$ms"
+      printf 'echo "JG_TEST_OVERRUN budget_ms=600000 duration_ms=%s load=60.12 cpus=32 selection=changed:base=b96c903b0486;shard=%sof8;exclude-family=real-herdr-gated;jobs=4"\n' "$ms" "$k"
+    done
+    printf 'echo "JG_TEST_AGGREGATE lanes=8 total=81 failed=0 skipped_gate=1 critical_path_duration_ms=650849"\nexit "$rc"\n'
+  } > "$W/overrun-gate.sh"
+  printf 'gate-verify=bash %s/overrun-gate.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  out=$(trunk verify "$PROJ" 2>&1) || fail "a verify over its budget with no failed test must pass: $out"
+  assert_contains "$out" "trunk green at ${top:0:12}" "the verify must report the trunk green"
+  assert_contains "$out" "8 gate shard(s) ran past the wall-clock budget, a warning and never a red" "the overrun must be one warning line"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$top" ] || fail "the pin must move to $top"
+  [ "$(grep -c . "$HOME_D/data/trunk/load-proj.tsv")" = 8 ] || fail "each shard over budget is one load row: $(cat "$HOME_D/data/trunk/load-proj.tsv")"
+  [ "$(head -n 1 "$HOME_D/data/trunk/load-proj.tsv" | cut -f2-)" = "$top"$'\t1of8\t606547\t600000\t60.12\t32' ] ||
+    fail "a load row names the commit, shard, time, budget, host load and cpus: $(head -n 1 "$HOME_D/data/trunk/load-proj.tsv")"
+  # A failed test over the budget is still a red: the pin holds, and the overrun is still recorded.
+  lane o2 'echo "not ok - Umer fixture failure" >&2; exit 1' t/p.test.sh
+  printf 'gate-full=true\n' >> "$HOME_D/config/trunk-policy"
+  trunk land o2 >/dev/null 2>&1 || fail "o2 lands past a fast gate"; bad=$(tip)
+  trunk verify "$PROJ" "$bad" >/dev/null 2>&1 && fail "a failed test over the budget must not pass verify"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$top" ] || fail "a failed test over the budget must not move the pin"
+  [ "$(grep -c "$bad" "$HOME_D/data/trunk/load-proj.tsv")" -ge 8 ] || fail "the red run's overruns are recorded too"
+  pass 'a verify whose shards ran over the wall-clock budget with no failed test moves the pin, warns once and records the load; a failed test stays red'
+}
+
 test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
+test_a_verify_over_the_wall_clock_budget_with_no_failed_test_moves_the_pin_and_records_the_load
 test_a_verify_whose_only_failures_pass_on_rerun_moves_the_pin_and_files_one_row_per_flaky_test
 test_a_landing_does_not_hold_the_trunk_while_its_gate_runs
 test_a_stack_holds_no_trunk_lock_while_its_gate_runs_and_is_judged_again_on_a_moved_tip

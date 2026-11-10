@@ -13,11 +13,10 @@
 #   jg-test-run.sh --proven-isolated
 #   jg-test-run.sh tests/<name>.test.sh [more scripts...]
 #
-# Local trunk required set (eight shards run side by side, each with the CI bound):
+# Local trunk required set (eight shards run side by side, each warned at the CI bound):
 #   jg-test-run.sh --required-shards <base-ref> <output-dir>
-# Writes one timing JSON per shard and required.json via --aggregate-json. A shard that passed every script but
-# ran over its wall-clock budget runs once more (a machine retry); any other shard failure, or a second run over
-# the budget, refuses.
+# Writes one timing JSON per shard and required.json via --aggregate-json. Every shard runs every script it selected;
+# a failed script refuses, and a shard over its wall-clock budget is a JG_TEST_OVERRUN warning, never a red.
 # Inspection (no execution):
 #   jg-test-run.sh --list --all
 #   jg-test-run.sh --list --family <name>
@@ -114,6 +113,12 @@
 #                   script already running; those are bounded by the per-script
 #                   bound above. Pathological output sinks that block
 #                   finalization are explicitly out of scope.
+#   --wall-warn-ms N
+#                   the wall clock as a warning, never a red: every selected
+#                   script runs, and a run past N milliseconds prints one
+#                   JG_TEST_OVERRUN line with the host load, and still passes
+#                   when no script failed. It takes the place of the gate's
+#                   whole-run budget and cannot be given with --max-wall-ms.
 #   -h, --help      print this header
 #
 # Per-script machine-parseable markers (stdout):
@@ -125,6 +130,8 @@
 #   JG_TEST_SUMMARY_FAMILY family=<name> count=<n> duration_ms=<n> failed=<n>
 #   JG_TEST_SLOWEST rank=<k> script=<path> duration_ms=<n>
 #   JG_TEST_BUDGET max_wall_ms=<n> duration_ms=<n>   (only with --max-wall-ms)
+#   JG_TEST_OVERRUN budget_ms=<n> duration_ms=<n> load=<1-min load> cpus=<n> selection=<selection>
+#                                                    (only with --wall-warn-ms, and only past it)
 #
 # Placement refusal:
 #   A task worker is assigned an isolated worktree, and that placement is
@@ -253,6 +260,7 @@ JOBS=1
 JOBS_EXPLICIT=0
 JOBS_MAX=8
 MAX_WALL_MS=
+WARN_WALL_MS=
 PER_SCRIPT_TIMEOUT_SECS=0
 # Per-test speed limits and the gate's whole-run budget, read from
 # defaults/test-speed-limits and overridden by JG_HOME/config/test-speed-limits.
@@ -380,6 +388,18 @@ die() {
 
 log() {
   printf 'jg-test-run: %s\n' "$*" >&2
+}
+
+# --wall-warn-ms: a run past the wall clock was slowed by the machine, not failed by a test, so it is one warning
+# with the host load beside it (the record a gate keeps of machine load) and never changes the exit status.
+wall_overrun_warn() {  # <duration-ms>
+  local load cpus
+  [ -n "$WARN_WALL_MS" ] && [ "$1" -gt "$WARN_WALL_MS" ] || return 0
+  load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null) || load=
+  cpus=$(nproc 2>/dev/null) || cpus=
+  log "warning: ran ${1}ms, over its ${WARN_WALL_MS}ms wall-clock budget, at host load ${load:-unknown} on ${cpus:-unknown} cpus: every selected script ran, so a red comes only from a failed script"
+  printf 'JG_TEST_OVERRUN budget_ms=%s duration_ms=%s load=%s cpus=%s selection=%s\n' \
+    "$WARN_WALL_MS" "$1" "${load:-unknown}" "${cpus:-unknown}" "$SELECTION_DESC"
 }
 
 now_iso() {
@@ -2067,7 +2087,11 @@ if [ "${1:-}" = --required-shards ]; then
   required_par=${JG_REQUIRED_SHARD_PARALLEL:-8}
   case $required_par in ''|*[!0-9]*|0) required_par=1 ;; esac
   [ "$required_par" -le "$required_cpus" ] || required_par=$required_cpus
-  # Each shard's wall-clock budget is JG_REQUIRED_SHARD_WALL_MS (default 600000 ms, the CI bound).
+  # Each shard's wall clock is a warning at JG_REQUIRED_SHARD_WALL_MS (default 600000 ms, the CI bound), never a red:
+  # a shard runs every script it selected, and only a failed script, or a timing file it could not write, fails it.
+  # A shard past the bound was slowed by the machine (trunk-v3 at 20eb94ae6054: all eight shards ran 601 to 651 s at
+  # host load 60 with no failed test, and the budget had cut each one short, so about half their scripts never ran).
+  # Its JG_TEST_OVERRUN line names the time and the host load; the trunk gate records it in its machine-load ledger.
   required_wall_ms=${JG_REQUIRED_SHARD_WALL_MS:-600000}
   case $required_wall_ms in ''|*[!0-9]*|0) die "JG_REQUIRED_SHARD_WALL_MS must be a positive number of milliseconds" ;; esac
   required_scratch=$(mktemp -d "${TMPDIR:-/tmp}/jg-shards.XXXXXX") || die "cannot create the shard scratch directory"
@@ -2076,19 +2100,19 @@ if [ "${1:-}" = --required-shards ]; then
   required_stop() { local p; for p in "${required_pids[@]+"${required_pids[@]}"}"; do kill "$p" 2>/dev/null || :; done; rm -rf -- "$required_scratch"; }
   trap 'required_stop; exit 130' INT TERM
 
-  # Run try <try> of the shards <k>... side by side, each writing shard-<k>.json, and print their output in shard order.
+  # Run the shards <k>... side by side, each writing shard-<k>.json, and print their output in shard order.
   # Sets REQUIRED_RED to the shards that failed.
-  required_run() {  # <try> <k>...
-    local try=$1 k i=0 running=0 work
-    shift; required_pids=(); REQUIRED_RED=()
+  required_run() {  # <k>...
+    local k i=0 running=0 work
+    required_pids=(); REQUIRED_RED=()
     for k in "$@"; do
-      work=$required_scratch/$try.$k
+      work=$required_scratch/$k
       mkdir -p "$work"
       (
         shard_rc=0
         TMPDIR="$work" TMUX_TMPDIR="$work" \
           bash "$ROOT/bin/jg-test-run.sh" --changed --base "$required_base" --exclude-family real-herdr-gated \
-          --max-weight-ms 60000 --shard "${k}of8" --gate --max-wall-ms "$required_wall_ms" \
+          --max-weight-ms 60000 --shard "${k}of8" --gate --wall-warn-ms "$required_wall_ms" \
           --json "$required_dir/shard-$k.json" || shard_rc=$?
         echo "$shard_rc" > "$work.rc"
       ) > "$work.out" 2>&1 &
@@ -2102,47 +2126,13 @@ if [ "${1:-}" = --required-shards ]; then
     for k in "$@"; do
       wait "${required_pids[i]}" 2>/dev/null || :
       i=$((i + 1))
-      cat "$required_scratch/$try.$k.out"
-      [ "$(cat "$required_scratch/$try.$k.rc" 2>/dev/null)" = 0 ] || REQUIRED_RED+=("$k")
+      cat "$required_scratch/$k.out"
+      [ "$(cat "$required_scratch/$k.rc" 2>/dev/null)" = 0 ] || REQUIRED_RED+=("$k")
     done
   }
 
-  # The one red that runs again. The runner fails a shard for a failed script, for its wall-clock budget, or for a timing
-  # file it could not write, and only the budget leaves a written timing file with a failing exit and no script failed.
-  # Such a shard passed every script it ran and was slowed by the machine, not failed by a test: it is classed retry and
-  # runs once more, and its second result is the one that counts. A failed script, a missing timing file or a second run
-  # over the budget is final, a red. Prints the run's milliseconds when the shard is classed retry.
-  required_over_budget() {  # <shard json>
-    python3 - "$1" "$required_wall_ms" 2>/dev/null <<'PY'
-import json, sys
-s = json.load(open(sys.argv[1], encoding="utf-8")).get("summary") or {}
-if s.get("exit") and s.get("failed") == 0 and int(s.get("duration_ms") or 0) >= int(sys.argv[2]):
-    print(s["duration_ms"])
-else:
-    sys.exit(1)
-PY
-  }
-
-  required_run 1 1 2 3 4 5 6 7 8
-  required_retry=()
-  for required_k in "${REQUIRED_RED[@]+"${REQUIRED_RED[@]}"}"; do
-    if required_ms=$(required_over_budget "$required_dir/shard-$required_k.json"); then
-      log "shard ${required_k}of8 passed every script but ran ${required_ms}ms, over its ${required_wall_ms}ms wall-clock budget, at host load $(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo unknown) on $required_cpus cpus: classed retry, so it runs once more (first try kept as retried-shard-$required_k.json)"
-      mv -f -- "$required_dir/shard-$required_k.json" "$required_dir/retried-shard-$required_k.json"
-      required_retry+=("$required_k")
-    else
-      required_rc=1
-    fi
-  done
-  if [ "${#required_retry[@]}" -gt 0 ]; then
-    required_run 2 "${required_retry[@]}"
-    for required_k in "${REQUIRED_RED[@]+"${REQUIRED_RED[@]}"}"; do
-      required_rc=1
-      if required_ms=$(required_over_budget "$required_dir/shard-$required_k.json"); then
-        log "shard ${required_k}of8 ran over its ${required_wall_ms}ms wall-clock budget again (${required_ms}ms): final, a red"
-      fi
-    done
-  fi
+  required_run 1 2 3 4 5 6 7 8
+  [ "${#REQUIRED_RED[@]}" -eq 0 ] || required_rc=1
   trap - INT TERM
   rm -rf -- "$required_scratch"
   bash "$ROOT/bin/jg-test-run.sh" --aggregate-json "$required_dir/required.json" "$required_dir"/shard-{1..8}.json || required_rc=1
@@ -2228,6 +2218,15 @@ while [ "$#" -gt 0 ]; do
       ;;
     --max-wall-ms=*)
       MAX_WALL_MS=${1#--max-wall-ms=}
+      shift
+      ;;
+    --wall-warn-ms)
+      [ "$#" -gt 1 ] || die "--wall-warn-ms requires a positive integer"
+      WARN_WALL_MS=$2
+      shift 2
+      ;;
+    --wall-warn-ms=*)
+      WARN_WALL_MS=${1#--wall-warn-ms=}
       shift
       ;;
     --per-script-timeout-secs)
@@ -2410,14 +2409,22 @@ if [ -n "$MAX_WALL_MS" ]; then
   esac
   [ "$MAX_WALL_MS" -gt 0 ] || die "--max-wall-ms requires a positive integer"
 fi
+if [ -n "$WARN_WALL_MS" ]; then
+  case "$WARN_WALL_MS" in
+    ''|*[!0-9]*) die "--wall-warn-ms requires a positive integer" ;;
+  esac
+  [ "$WARN_WALL_MS" -gt 0 ] || die "--wall-warn-ms requires a positive integer"
+  [ -z "$MAX_WALL_MS" ] || die "--wall-warn-ms and --max-wall-ms cannot be given together"
+fi
 
 case "$PER_SCRIPT_TIMEOUT_SECS" in
   ''|*[!0-9]*) die "--per-script-timeout-secs requires a whole number of seconds (0 disables)" ;;
 esac
 
-# --gate owns the whole-run budget unless the caller named one, so the gate's
-# 10-minute bound lives in one config file rather than at every call site.
-if [ "$GATE_MODE" -eq 1 ] && [ -z "$MAX_WALL_MS" ] && [ "$TEST_SPEED_GATE_SECONDS" -gt 0 ]; then
+# --gate owns the whole-run budget unless the caller named one or asked for the
+# wall clock as a warning, so the gate's 10-minute bound lives in one config
+# file rather than at every call site.
+if [ "$GATE_MODE" -eq 1 ] && [ -z "$MAX_WALL_MS" ] && [ -z "$WARN_WALL_MS" ] && [ "$TEST_SPEED_GATE_SECONDS" -gt 0 ]; then
   MAX_WALL_MS=$((TEST_SPEED_GATE_SECONDS * 1000))
 fi
 
@@ -2520,6 +2527,7 @@ if [ "${#SCRIPTS[@]}" -eq 0 ]; then
       empty_rc=1
     fi
   fi
+  wall_overrun_warn "$empty_duration"
   if [ -n "$JSON_PATH" ]; then
     empty_rec=$(mktemp)
     empty_fam=$(mktemp)
@@ -3063,5 +3071,6 @@ if [ -n "$MAX_WALL_MS" ]; then
     AGG_RC=1
   fi
 fi
+wall_overrun_warn "$RUN_DURATION"
 
 exit "$AGG_RC"

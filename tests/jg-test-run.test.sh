@@ -40,11 +40,12 @@ print_limits() {
   TEST_SPEED_LIMITS_FILE=$1 bash "$RUNNER" --show-limits 2>/dev/null
 }
 
-# required_fixture <dir> <shell-body>: a repository whose last commit adds one test script,
+# required_fixture <dir> <shell-body> [<count>]: a repository whose last commit adds one test script,
 # tests/required-feature.test.sh, that prints its ok line and then runs <shell-body>, so
-# --required-shards HEAD^ selects exactly that script.
+# --required-shards HEAD^ selects exactly that script; with <count>, it adds that many such scripts
+# (required-feature-2.test.sh and on), and nine put two in the first shard.
 required_fixture() {
-  local fixture=$1
+  local fixture=$1 i
   mkdir -p "$fixture/tests"
   cp -R "$ROOT/bin" "$fixture/bin"
   cp -R "$ROOT/defaults" "$fixture/defaults"
@@ -53,6 +54,8 @@ required_fixture() {
   git -C "$fixture" add bin defaults tests/git-config-helpers.sh
   git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'fixture scaffolding'
   write_script "$fixture/tests/required-feature.test.sh" "$2"
+  i=2
+  while [ "$i" -le "${3:-1}" ]; do write_script "$fixture/tests/required-feature-$i.test.sh" "$2"; i=$((i + 1)); done
   git -C "$fixture" add tests
   git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'fixture feature'
 }
@@ -67,41 +70,32 @@ test_required_shards_keep_the_union_and_a_failed_shard() {
   pass 'the eight required shards keep the selected union and retain a failed shard in the aggregate'
 }
 
-# A shard that passes every script but runs past its wall-clock budget was slowed by the machine, not failed
-# by a test (trunk-v3 at 9f5bbb3af0d1: four shards ran 606 to 611 s against 600 s at host load 35, none
-# failed a test, and the trunk went red). It runs once more and its second run counts. A second run over the
-# budget, or a failed test, stays a red, and a failed test is never run again.
-test_a_required_shard_over_its_budget_runs_once_more() {
-  local res out rc marker=$TMP_ROOT/slow-once.ran
-  required_fixture "$TMP_ROOT/slow-once" "[ -e '$marker' ] || { touch '$marker'; sleep 3; }"
-  res=$TMP_ROOT/slow-once-results rc=0
-  out=$(JG_REQUIRED_SHARD_WALL_MS=2000 bash "$TMP_ROOT/slow-once/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
-  [ "$rc" = 0 ] || fail "a shard that passed and only ran over its budget once must be run again and pass: $out"
-  assert_contains "$out" 'passed every script but ran' 'the first run over the budget must be named'
-  assert_contains "$out" 'classed retry, so it runs once more' 'the over-budget shard must be classed a machine retry'
-  jq -e '.summary.exit != 0 and .summary.failed == 0' "$res"/retried-shard-*.json >/dev/null ||
-    fail "the first, over-budget run must be kept beside the result that counts: $(ls "$res")"
-  jq -e '.summary.failed_lanes == 0 and .summary.total == 1 and .summary.failed == 0' "$res/required.json" >/dev/null ||
-    fail "the aggregate must count the second, passing run: $out"
-
-  required_fixture "$TMP_ROOT/slow-twice" 'sleep 3'
-  res=$TMP_ROOT/slow-twice-results rc=0
-  out=$(JG_REQUIRED_SHARD_WALL_MS=2000 bash "$TMP_ROOT/slow-twice/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
-  [ "$rc" = 1 ] || fail "a shard over its budget twice must stay red: $out"
-  assert_contains "$out" 'wall-clock budget again' 'the second run over the budget must be named'
-  assert_contains "$out" 'final, a red' 'the second run over the budget must be final'
-  jq -e '.summary.failed_lanes == 1 and .summary.failed == 0' "$res/required.json" >/dev/null ||
-    fail "the aggregate must keep the second over-budget run red: $out"
+# A shard over its wall-clock budget was slowed by the machine, not failed by a test, so it is a warning and never a red,
+# and the budget never cuts it short: trunk-v3 went red at 20eb94ae6054 with all eight shards at 601 to 651 s of 600 s,
+# failed=0, and the budget had stopped each shard before about half its scripts ran. A failed test stays a red.
+test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script() {
+  local res out rc
+  required_fixture "$TMP_ROOT/slow" 'sleep 3' 9
+  res=$TMP_ROOT/slow-results rc=0
+  out=$(JG_REQUIRED_SHARD_WALL_MS=2000 bash "$TMP_ROOT/slow/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "shards that pass every script and only run over their budget must pass: $out"
+  [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_BEGIN ')" = 9 ] || fail "every selected script must run once, the budget never cutting a shard short: $out"
+  assert_not_contains "$out" 'was not run' 'no script may be left unrun for the budget'
+  [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_OVERRUN budget_ms=2000 duration_ms=[0-9]* load=[^ ]* cpus=[0-9]* selection=.*shard=[1-8]of8')" = 8 ] ||
+    fail "each shard over its budget must print one overrun warning with the host load: $out"
+  assert_contains "$out" 'over its 2000ms wall-clock budget, at host load' 'the overrun must be named with the host load'
+  jq -e '.summary.failed_lanes == 0 and .summary.total == 9 and .summary.failed == 0' "$res/required.json" >/dev/null ||
+    fail "the aggregate must count every script and no failed shard: $out"
 
   required_fixture "$TMP_ROOT/slow-red" 'echo "Umer fixture failure"; sleep 3; exit 1'
   res=$TMP_ROOT/slow-red-results rc=0
   out=$(JG_REQUIRED_SHARD_WALL_MS=2000 bash "$TMP_ROOT/slow-red/bin/jg-test-run.sh" --required-shards HEAD^ "$res" 2>&1) || rc=$?
-  [ "$rc" = 1 ] || fail "a shard with a failed test must stay red: $out"
-  assert_not_contains "$out" 'classed retry' 'a shard with a failed test must not be run again, even over its budget'
+  [ "$rc" = 1 ] || fail "a shard with a failed test must stay red, over its budget or not: $out"
+  assert_contains "$out" 'JG_TEST_OVERRUN budget_ms=2000' 'the failed shard over its budget still records its overrun'
   [ "$(printf '%s\n' "$out" | grep -c '^JG_TEST_BEGIN ')" = 1 ] || fail "the failed test must run exactly once: $out"
   jq -e '.summary.failed_lanes == 1 and .summary.failed == 1' "$res/required.json" >/dev/null ||
     fail "the aggregate must keep the failed test: $out"
-  pass 'a required shard over its budget with no failed test runs once more; a second overrun or a failed test stays red'
+  pass 'a required shard over its budget runs every script and is a warning with the host load; a failed test stays red'
 }
 
 test_shards_split_a_selection_without_losing_or_repeating_a_script() {
@@ -255,7 +249,7 @@ test_a_weight_cap_defers_slow_suites_and_names_them() {
 }
 
 test_required_shards_keep_the_union_and_a_failed_shard
-test_a_required_shard_over_its_budget_runs_once_more
+test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script
 test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
 test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time

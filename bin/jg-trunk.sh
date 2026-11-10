@@ -46,7 +46,9 @@
 # gate-red-ticket ticket). A script that fails only on the candidate, passes on the tip, or fails differently blocks
 # the lane, and so does any failure no test script accounts for. The tip's result is kept by tree
 # (data/trunk/tip-results-<project>-<tree>.tsv), so it is computed once. A landing that set a red or a flaky failure
-# aside is recorded as full-tip-red or full-rerun.
+# aside is recorded as full-tip-red or full-rerun. A gate shard that ran past its wall-clock budget is never a red: it runs
+# every script, and each JG_TEST_OVERRUN line it printed becomes one row of the machine-load ledger
+# (data/trunk/load-<project>.tsv: epoch, commit, shard, milliseconds, budget, host load, cpus) and one warning line.
 #
 # The merge queue: when 2 or more lanes are queued, the landing check calls `land-batch` for up to batch-max (5) of them, oldest done first.
 # Each lane is admitted onto the top of the stack (rebased by the lander; a lane that conflicts drops out and is returned with its paths,
@@ -253,7 +255,26 @@ gate_exec() {  # <commit> <command> <log> [<envfile>]
   [ -z "${4:-}" ] || cmd="trap 'env -0 > \"\$JG_GATE_ENV_OUT\"' EXIT; $2"
   (cd "$WORK/tree" && "${clean[@]}" JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" bash -c "$cmd") > "$3" 2>&1 || rc=$?
   rm -rf -- "$WORK"; WORK=
+  record_overruns "$1" "$3"
   return "$rc"
+}
+
+# A gate shard past its wall-clock budget was slowed by the machine, so it is a warning and a row of the machine-load ledger
+# (data/trunk/load-<project>.tsv: epoch, commit, shard, milliseconds, budget, host load, cpus), one per JG_TEST_OVERRUN line in <log>;
+# whether the gate is red is left to its failed scripts alone.
+record_overruns() {  # <commit> <log>
+  local rows
+  rows=$(awk -v t="$(date +%s)" -v c="$1" '
+    /^JG_TEST_OVERRUN / {
+      delete f; for (i = 2; i <= NF; i++) { k = $i; sub(/=.*/, "", k); v = $i; sub(/^[^=]*=/, "", v); f[k] = v }
+      sh = ";" f["selection"]; if (match(sh, /;shard=[^;]*/)) sh = substr(sh, RSTART + 7, RLENGTH - 7); else sh = "-"
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", t, c, sh, f["duration_ms"], f["budget_ms"], f["load"], f["cpus"]
+    }' "$2" 2>/dev/null) || rows=
+  [ -n "$rows" ] || return 0
+  mkdir -p "$DATA/trunk"; printf '%s\n' "$rows" >> "$DATA/trunk/load-$PN.tsv"
+  printf '%s\n' "$rows" | awk -F'\t' -v c="${1:0:12}" -v p="$PN" '
+    { s = s (s == "" ? "" : ", ") $3 " " $4 "ms of " $5 "ms at host load " $6 " on " $7 " cpus" }
+    END { print "warning: at " c " " NR " gate shard(s) ran past the wall-clock budget, a warning and never a red (data/trunk/load-" p ".tsv): " s }' >&2
 }
 
 # Run a gate command at a commit's exact tree in a clean clone; the log is kept under data/.
