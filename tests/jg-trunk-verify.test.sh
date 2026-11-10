@@ -4,7 +4,8 @@
 # bin/jg-backlog.sh, bin/jg-send.sh, bin/jg-teardown.sh, bin/jg-fleet-ledger.sh and bin/jg-home-health.sh.
 #
 # Queued verifies run one at a time and only the newest runs, and its green moves the pin over the rest; a verify whose
-#    only failures its parent already had moves the pin, and one holding a red the commit added does not.
+#    only failures its parent already had moves the pin, and one holding a red the commit added does not. A verify whose only
+#    failures pass on their one rerun moves the pin too, and each flaky test is recorded and filed once as its own fix row.
 # No landing or stack holds the trunk lock while its gate runs: a verify finishes and moves the pin, another lane lands,
 #    and a lane or stack whose tip moved under its gate is judged again on the moved tip.
 # Verify judges every change since the trunk's release base (data/trunk-versions.tsv), the set CI maps for the release
@@ -76,6 +77,37 @@ test_a_verify_moves_the_pin_over_a_red_its_parent_already_had() {
   pass 'the green pin moves over failures the parent already had, and holds on a red the commit added'
 }
 
+# shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them
+test_a_verify_whose_only_failures_pass_on_rerun_moves_the_pin_and_files_one_row_per_flaky_test() {
+  local out first top
+  world flakyverify; rig; first=$(tip)
+  printf 'gate-verify=bash %s/rig.sh --all\ngate-full=true\n' "$W" >> "$HOME_D/config/trunk-policy"
+  # Two scripts that each fail the first time the suite runs them and pass on the rerun, as jg-tmp-reaper and jg-bus-gateway did.
+  lane fr "[ -e $W/seen-r ] || { : > $W/seen-r; echo 'not ok - flaky r' >&2; exit 1; }; exit 0" t/r.test.sh
+  trunk land fr >/dev/null 2>&1 || fail "fr must land"
+  lane fs "[ -e $W/seen-s ] || { : > $W/seen-s; echo 'not ok - flaky s' >&2; exit 1; }; exit 0" t/s.test.sh
+  trunk land fs >/dev/null 2>&1 || fail "fs must land"
+  top=$(tip)
+  # The trunk was pinned red below them, as trunk-v3 was at 9f5bbb3af0d1.
+  printf '%s\n' "$first" > "$HOME_D/state/trunk-red-proj"
+  out=$(trunk verify "$PROJ" 2>&1) || fail "a verify whose only failures pass on their rerun must pass: $out"
+  assert_contains "$out" "judged flaky" "the verify must say it set the flaky failures aside"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$top" ] || fail "a pass on the rerun must move the green pin to $top, got $(cat "$HOME_D/state/trunk-green-proj")"
+  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "a green verify above the red pin must clear it"
+  [ "$(grep -c '^add ' "$W/backlog-calls")" = 2 ] || fail "each flaky test must be filed as its own row: $(cat "$W/backlog-calls")"
+  assert_contains "$(grep '^add flaky-proj-r ' "$W/backlog-calls")" "t/r.test.sh" "t/r.test.sh gets its own fix row"
+  assert_contains "$(grep '^add flaky-proj-s ' "$W/backlog-calls")" "t/s.test.sh" "t/s.test.sh gets its own fix row"
+  [ "$(grep -c "$top" "$HOME_D/data/trunk/flaky-proj.tsv")" = 2 ] || fail "each flaky test is recorded: $(cat "$HOME_D/data/trunk/flaky-proj.tsv")"
+  # They flake again at a later commit: recorded again, filed once.
+  lane ft 'exit 0' t/t.test.sh; trunk land ft >/dev/null 2>&1 || fail "ft must land"
+  rm -f -- "$W/seen-r" "$W/seen-s"
+  out=$(trunk verify "$PROJ" 2>&1) || fail "the second flaky verify must pass: $out"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$(tip)" ] || fail "the second pass on the rerun must move the pin too"
+  [ "$(grep -c '^add ' "$W/backlog-calls")" = 2 ] || fail "a flaky test already filed is not filed again: $(cat "$W/backlog-calls")"
+  [ "$(grep -c . "$HOME_D/data/trunk/flaky-proj.tsv")" = 4 ] || fail "every flaky run is recorded: $(cat "$HOME_D/data/trunk/flaky-proj.tsv")"
+  pass 'a verify whose only failures pass on their rerun moves the green pin, clears a red pin below it, and files one row per flaky test'
+}
+
 test_a_landing_does_not_hold_the_trunk_while_its_gate_runs() {
   local c0 p1 out
   world longland
@@ -129,6 +161,7 @@ test_verify_judges_every_change_since_the_release_base() {
 
 test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs
 test_a_verify_moves_the_pin_over_a_red_its_parent_already_had
+test_a_verify_whose_only_failures_pass_on_rerun_moves_the_pin_and_files_one_row_per_flaky_test
 test_a_landing_does_not_hold_the_trunk_while_its_gate_runs
 test_a_stack_holds_no_trunk_lock_while_its_gate_runs_and_is_judged_again_on_a_moved_tip
 test_verify_judges_every_change_since_the_release_base

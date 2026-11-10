@@ -6,7 +6,8 @@
 # T11 The landing gate charges a lane only for what it broke: a script red on the trunk tip in the same way does not block
 #    (it is reported once per tip tree, and the green pin stays), while a script that fails only on the lane, passes on the
 #    tip, or fails differently on the lane blocks it, with the tip's rerun done in the environment the gate ended with.
-#    A failure gets one rerun on the lane before it is judged: one that passes on the rerun is flaky and not charged.
+#    A failure gets one rerun on the lane before it is judged: one that passes on the rerun is flaky and not charged, and is
+#    recorded and filed once as its own fix row.
 # T12 A landing is one fast check: the lander rebases the lane's one commit onto the tip by itself (the lane follows it),
 #    and a lane lands only with its whole proof at its head (receipt, approved merge-card evidence, sealed done-done run); the owner signature never blocks it.
 # T13 The journey: four lanes ready at once, three land in order with no human or lead step, the red one is refused,
@@ -63,10 +64,12 @@ test_a_flaky_failure_gets_one_rerun_before_it_is_judged() {
   assert_contains "$out" "judged flaky" "the landing must say it set a flaky failure aside"
   assert_contains "$out" "gate=full-tip-red" "the tip's own red is still set aside and recorded"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$green" ] || fail "a rerun landing must not move the green pin"
+  assert_contains "$(grep '^add flaky-proj-f ' "$W/backlog-calls")" "[blocker] flaky test t/f.test.sh" "the flaky test is filed as its own fix row"
+  assert_contains "$(cat "$HOME_D/data/trunk/flaky-proj.tsv")" "t/f.test.sh" "the flaky test is recorded"
   # The same script failing on both runs is the lane's own failure.
   lane twice 'echo "not ok - solid case" >&2; exit 1' t/g.test.sh
   refused 'a failure that repeats on the rerun' twice 't/g.test.sh'
-  pass 'a failure gets one rerun before it is judged: a flaky one is set aside, a repeated one blocks'
+  pass 'a failure gets one rerun before it is judged: a flaky one is set aside and filed as its own row, a repeated one blocks'
 }
 
 # shellcheck disable=SC2016 # the script bodies are written out verbatim and expand when the gate runs them

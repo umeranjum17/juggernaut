@@ -38,7 +38,8 @@
 # failed:<on the first run>,secs:<whole gate>; absent when no gate ran), which the landing's Evidence card (core/landing-card) prints.
 #
 # The changed-files gate charges a lane only for what it broke. When it fails, the lander first reruns the failing scripts once on
-# the lane, and a script that passes on the rerun is flaky and not charged. It then reruns exactly the failing test
+# the lane, and a script that passes on the rerun is flaky and not charged: each such script is recorded
+# (data/trunk/flaky-<project>.tsv) and filed once as its own [blocker] fix row, never a landing stop. It then reruns exactly the failing test
 # scripts on the trunk tip's own tree in a clean clone, in the environment the gate ended with (policy gate-rerun),
 # and compares each one's exit status and failing test names. A script that fails the same way on the tip is the tip's
 # red: it does not block the lane, and it is reported once per script and tip tree (one wake, one note on the
@@ -361,6 +362,26 @@ report_tip_red() {  # <tip> <script>...
   for s in $fresh; do printf '%s\t%s\n' "$tree" "$s" >> "$ledger"; done
 }
 
+# A script that failed and passed on its rerun is flaky: never a stop, but every occurrence is recorded and each script gets its own
+# fix row, filed once (data/trunk/flaky-<project>.tsv: epoch, commit, script, the row it was filed as; "-" until a filing works).
+record_flaky() {  # <commit> <script>...
+  local sha=$1 ledger s id filed
+  shift
+  ledger="$DATA/trunk/flaky-$PN.tsv"; mkdir -p "$DATA/trunk"; touch "$ledger"
+  for s in "$@"; do
+    id=$(basename "$s"); id=${id%.sh}; id=${id%.test}
+    id="flaky-$PN-$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-')"
+    filed=$(awk -F'\t' -v s="$s" '$3 == s && $4 != "-" { f = $4 } END { print f }' "$ledger")
+    if [ -z "$filed" ] && JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" add "$id" \
+      "[blocker] flaky test $s on $PN" --kind ship --priority 2 \
+      --body "$s failed and then passed on its one rerun at ${sha:0:12}; the gate set it aside.
+Why: a flaky test hides real reds and costs every gate a rerun.
+Done when: $s passes every run, or its flaky case is removed." >/dev/null 2>&1; then filed=$id
+    elif [ -z "$filed" ]; then echo "warning: could not file the flaky-test row $id" >&2; fi
+    printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$sha" "$s" "${filed:--}" >> "$ledger"
+  done
+}
+
 # GATE_FIGURES for the landing's proofs row (ran:<scripts>,failed:<first run>,secs:<whole gate>): the scripts the first run reported
 # (its JG_TEST_SUMMARY lines; "-" when the gate prints none) and the seconds since <start epoch>. Landed commits read it back in record_proofs.
 gate_figures() {  # <first-run log> <start epoch>
@@ -402,7 +423,8 @@ full_gate() {  # <candidate> <command> <base>
     else flaky="$flaky $s"; fi
   done <<< "$mine"
   mine=$(printf '%s' "$settled")
-  [ -z "$flaky" ] || echo "note: passed on the rerun, so judged flaky and not charged:$flaky" >&2
+  # shellcheck disable=SC2086
+  [ -z "$flaky" ] || { echo "note: passed on the rerun, so judged flaky and not charged (each recorded and filed as its own fix row):$flaky" >&2; record_flaky "$cand" $flaky; }
   if [ -z "$mine" ]; then rm -f -- "$envf"; GATE_KIND="full-rerun"; gate_figures "$log" "$t0"; return 0; fi
   # shellcheck disable=SC2046
   tipres=$(tip_results "$3" "$envf" $(printf '%s\n' "$mine" | cut -f1))
@@ -930,15 +952,19 @@ cmd_verify() {
   else run_gate "$sha" "$gate" full || rc=$?; fi
   case $rc in
     0)
-      # A flaky pass keeps the pin. A failure the commit's own parent has in the same way is a red the commit did not add (the gate
-      # reported it once as the tip's red), so the pin moves: the green pin is the last commit that added no failure.
-      [ "${GATE_KIND:-full}" != full-rerun ] || { echo "verify: ${sha:0:12} passed only with a flaky failure set aside; the green pin stays" >&2; return 0; }
+      # A pass on the rerun moves the pin (the gate filed each flaky script as its own fix row), and so does a failure the commit's own
+      # parent has in the same way, a red the commit did not add (the gate reported it once as the tip's red): the green pin is the last
+      # commit that added no failure.
       lock "$STATE/.trunk-$PN.lock"; tip_ok
       green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
       if [ -z "$green" ] || git -C "$PROJ" merge-base --is-ancestor "$green" "$sha"; then put "$STATE/trunk-green-$PN" "$sha"; fi
       if [ -e "$STATE/trunk-red-$PN" ] && git -C "$PROJ" merge-base --is-ancestor "$(cat "$STATE/trunk-red-$PN")" "$sha"; then rm -f -- "$STATE/trunk-red-$PN"; fi
       unlock "$STATE/.trunk-$PN.lock"
-      echo "trunk green at ${sha:0:12}$([ "${GATE_KIND:-}" != full-tip-red ] || echo ", with the failures its parent already had set aside")" ;;
+      case ${GATE_KIND:-} in
+        full-tip-red) echo "trunk green at ${sha:0:12}, with the failures its parent already had set aside" ;;
+        full-rerun) echo "trunk green at ${sha:0:12}, with the scripts that passed on their rerun set aside and filed as flaky" ;;
+        *) echo "trunk green at ${sha:0:12}" ;;
+      esac ;;
     2)
       why="the whole suite fails on it where its parent ${parent:0:12} passes"
       [ -z "$from" ] || culprit=$(batch_culprit "$from" "$sha" "$gate")
