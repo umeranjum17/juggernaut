@@ -97,6 +97,7 @@ test_a_clean_home_fetches_from_the_trunk_branch_and_goes_live() {
   git -C "$HOMEC" cat-file -e "$C^{commit}" 2>/dev/null && fail "fixture: the home must not yet hold the landed commit"
   out=$(trunk live "$PROJ" 2>&1) || fail "a clean home must go live: $out"
   [ "$(git -C "$HOMEC" rev-parse HEAD)" = "$C" ] || fail "the home must be fast-forwarded to the landed commit: $out"
+  assert_contains "$out" "$C" "live must name the exact commit"
   grep -Eq "^proj	$C	[0-9]+	live$" "$HOME_D/data/trunk-live.tsv" || fail "the record must say live"
   pass 'a clean home fetches the commit from the project trunk branch and records live'
 }

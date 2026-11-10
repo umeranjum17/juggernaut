@@ -30,6 +30,7 @@ if [ "$(git -C "$JG_ROOT" rev-parse HEAD)" != "$TARGET" ] && git -C "$JG_ROOT" m
   [ -z "$(git -C "$JG_ROOT" status --porcelain)" ] || fail_with "pin-back skipped: the home has uncommitted changes"
   fetch_trunk
   git -C "$JG_ROOT" reset -q --hard "$TARGET"
+  echo "juggernaut: moved to $TARGET"
   exit
 fi
 # ff_target sets FF_STATUS in this shell, so its lines go through a file, not a substitution.
@@ -37,3 +38,4 @@ ff_log=$(mktemp); trap 'rm -f -- "$ff_log"' EXIT
 ff_target "$JG_ROOT" juggernaut "$TARGET" yes no > "$ff_log"
 cat "$ff_log"
 [ "$FF_STATUS" != skipped ] || fail_with "$(sed -n 's/^[^:]*: skipped: //p' "$ff_log" | head -n 1)"
+echo "juggernaut: at $(git -C "$JG_ROOT" rev-parse HEAD)"

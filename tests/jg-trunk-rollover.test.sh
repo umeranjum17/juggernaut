@@ -91,6 +91,26 @@ move_homes() {  # <sha> <branch>
 }
 live_row() { awk -F'\t' '$1 == "proj:lead" { r = $4 } END { print r }' "$HOME_D/data/trunk-live.tsv" 2>/dev/null; }
 
+test_version_two_release_rolls_over_and_names_its_commit() {
+  local out sha
+  world version2
+  sha=$(git -C "$ROOT" rev-parse "b96c903b^{commit}")
+  git -C "$PROJ" fetch -q "$ROOT" "$sha" || fail "fixture must fetch the recorded release"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk-v2 "$sha"
+  git -C "$PROJ" push -q origin "$sha:refs/heads/merged"
+  git -C "$PROJ" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/merged
+  printf '%s\n' "$sha" > "$HOME_D/state/trunk-tip-proj"
+  printf '%s\n' "$sha" > "$HOME_D/state/trunk-green-proj"
+  printf '%s\n' trunk-v2 > "$HOME_D/state/trunk-branch-proj"
+  printf '%s\n' 2 > "$HOME_D/state/trunk-version-proj"
+  printf 'proj\ttrunk-v2\t%s\t1\t1\thttps://github.com/o/r/pull/9\n' "$sha" > "$HOME_D/data/trunk-releases.tsv"
+  printf '%s\n' merged > "$W/pr-state"
+  out=$(trunk rollover "$PROJ" 2>&1) || fail "version 2 must roll over: $out"
+  [ "$(git -C "$PROJ" rev-parse refs/heads/trunk-v3)" = "$sha" ] || fail "version 3 must hold the release"
+  assert_contains "$out" "$sha" "rollover must name the exact commit"
+  pass 'version 2 release rolls to version 3 and names its commit'
+}
+
 test_a_rollover_replays_every_landed_commit_and_the_green_pin_follows() {
   local out new g n
   lab roll
@@ -155,6 +175,7 @@ test_a_replay_that_cannot_be_proved_equal_stops_and_changes_nothing() {
   pass 'T3 a replay that cannot be proved equal stops with one line and changes no ref, record or row'
 }
 
+test_version_two_release_rolls_over_and_names_its_commit
 test_a_rollover_replays_every_landed_commit_and_the_green_pin_follows
 test_a_second_release_opens_a_new_pull_request_under_a_new_record
 test_a_replay_that_cannot_be_proved_equal_stops_and_changes_nothing

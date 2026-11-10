@@ -453,7 +453,8 @@ test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut()
   trunk release "$PROJ" >/dev/null 2>&1 || fail "the release must open"
   old=$(tip)
   out=$(trunk rollover "$PROJ" 2>&1) && fail "an open release must not roll the trunk over"
-  assert_contains "$out" "no merged release" "an open release must say why nothing moved"
+  assert_contains "$out" "rollover skipped" "an open release must say what was skipped"
+  assert_contains "$out" "not merged" "an open release must say why nothing moved"
   plain_git -C "$PROJ" show-ref --verify --quiet refs/heads/trunk-v2 && fail "no next trunk may exist while the release is open"
   printf 'merged\n' > "$W/pr-state"; git -C "$PROJ" push -q origin "$old:refs/heads/main"
   out=$(trunk rollover "$PROJ" 2>&1) || fail "a merged release must cut the next trunk: $out"
@@ -464,6 +465,7 @@ test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut()
   [ "$(cat "$HOME_D/state/trunk-branch-proj")" = trunk-v2 ] && [ "$(cat "$HOME_D/state/trunk-version-proj")" = 2 ] || fail "the trunk record must name version 2"
   assert_contains "$(cat "$HOME_D/data/trunk-versions.tsv")" "$(printf 'proj\t2\ttrunk-v2\t%s' "$old")" "the version must be recorded"
   out=$(trunk rollover "$PROJ" 2>&1) && fail "one release rolls over once"
+  assert_contains "$out" "already rolled over" "a repeated rollover must say why it was skipped"
   git -C "$PROJ" worktree add -q -b fm/n1 "$W/lanes/n1" trunk-v2; commit_in "$W/lanes/n1" work.txt next "ticket n1"
   jg_write_meta "$HOME_D/state/n1.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/n1" "worktree=$W/lanes/n1" "spawn_gen=g-n1"; prove n1
   out=$(trunk land n1 2>&1) || fail "a lane must land on the next trunk: $out"

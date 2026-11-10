@@ -1434,9 +1434,9 @@ carry_over() {  # <base>
 # and the green pin follows its commit. The old trunk is left exactly as it was. Returns 1, changing nothing, while the PR is not merged.
 rollover_if_merged() {
   local url ver new base default green
-  url=$(last_release_url); [ -n "$url" ] || return 1
-  [ "$(cat "$STATE/trunk-rolled-$PN" 2>/dev/null)" != "$url" ] || return 1
-  [ "$(pr_state "$url")" = merged ] || return 1
+  url=$(last_release_url); [ -n "$url" ] || { ROLLOVER_SKIP="no release is recorded"; return 1; }
+  [ "$(cat "$STATE/trunk-rolled-$PN" 2>/dev/null)" != "$url" ] || { ROLLOVER_SKIP="release $url was already rolled over"; return 1; }
+  [ "$(pr_state "$url")" = merged ] || { ROLLOVER_SKIP="release $url is not merged"; return 1; }
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
   git -C "$PROJ" fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" || die "cannot fetch origin/$default to cut the next trunk"
   base=$(rev "refs/remotes/origin/$default") || die "origin/$default is not a commit"
@@ -1448,7 +1448,7 @@ rollover_if_merged() {
   put "$STATE/trunk-tip-$PN" "$CARRY_TIP"; put "$STATE/trunk-green-$PN" "${green:-$base}"; put "$STATE/trunk-released-$PN" "$base"
   put "$STATE/trunk-branch-$PN" "$new"; put "$STATE/trunk-version-$PN" "$ver"; put "$STATE/trunk-rolled-$PN" "$url"
   row trunk-versions.tsv "$PN" "$ver" "$new" "$base" "$(date +%s)"
-  echo "release merged: the project is now on $new (version $ver) cut from $default at ${base:0:12}"
+  echo "release merged: the project is now on $new (version $ver) at $CARRY_TIP, cut from $default at $base"
   [ "$CARRY_TIP" = "$base" ] || echo "carried: $(git -C "$PROJ" rev-list --count "$base..$CARRY_TIP") landed commit(s) of $TRUNK above the release replayed onto $new with equal trees; the green pin is $(cut -c1-12 <<<"${green:-$base}")"
   local old=$TRUNK; TRUNK=$new
   echo "$old is cleaned up only when its work is proved on $default and carried into $new"
@@ -1514,7 +1514,7 @@ cmd_retire() {
 
 cmd_rollover() {
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
-  rollover_if_merged || refuse "no merged release to roll over from; $TRUNK stays as it is until its release PR lands"
+  rollover_if_merged || refuse "rollover skipped: ${ROLLOVER_SKIP:-no merged release}; $TRUNK stays as it is"
 }
 
 # Sets REL_URL to the release PR of the trunk into <default>: the one URL the create call answers. When the create call
