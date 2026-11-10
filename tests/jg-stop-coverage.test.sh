@@ -48,11 +48,9 @@ def check(path, old_sites, old_rows, old_sources):
     waived = {l.split('\t')[0] for l in waiver.read_text().splitlines() if '\t' in l and l.split('\t',1)[1].strip()} if waiver.exists() else set()
     # Initial waivers record why existing sources have no same-named owner row.
     initial_waivers = {
-        'herdr-blocked': 'runtime backstop awaits N19', 'prompt': 'prompt actions await N19',
-        'question': 'owner judgement awaits N19', 'account': 'handled by account-down',
-        'quota': 'handled by account-down', 'errors': 'error action awaits N19',
-        'supervision': 'supervision states await B1', 'greenpr': 'merge action awaits N19',
-        'decision': 'owner judgement has no automatic answer', 'pause': 'recheck awaits N19',
+        'account': 'handled by account-down', 'quota': 'handled by account-down',
+        'supervision': 'supervision states await B1',
+        'decision': 'owner judgement has no automatic answer',
     }
     for name in sources(path) - set(now_rows) - waived - set(initial_waivers):
         failures.append('source without row or waiver: ' + name)
@@ -86,6 +84,12 @@ old_rows, old_sources = snapshot['rows'], set(snapshot['sources'])
 if True:
     if mode == '--check':
         failures = check(root, baseline, old_rows, old_sources)
+        waiver = root/'core/wait-timers/source-waivers.tsv'
+        if waiver.exists():
+            for line in waiver.read_text().splitlines():
+                if '\t' in line and not line.startswith('#'):
+                    name, reason = line.split('\t', 1)
+                    if name in sources(root): print('waiver: ' + name + ': ' + reason)
         print('\n'.join(failures) if failures else 'PASS stop coverage')
         sys.exit(bool(failures))
     failures = check(root, baseline, old_rows, old_sources)
@@ -97,6 +101,15 @@ if True:
         def run_gate():
             env = dict(os.environ, JG_STOP_COVERAGE_ROOT=str(fixture))
             return subprocess.run(['bash', str(root/'tests/jg-stop-coverage.test.sh'), '--check'], env=env, text=True, capture_output=True)
+        waivers = fixture/'core/wait-timers/source-waivers.tsv'
+        original = waivers.read_text()
+        for name in ('prompt', 'question', 'errors', 'greenpr', 'pause', 'herdr-blocked'):
+            r = run_gate()
+            if r.returncode or 'waiver: ' + name + ':' not in r.stdout: raise SystemExit('FAIL visible waiver ' + name)
+            waivers.write_text('\n'.join(l for l in original.splitlines() if not l.startswith(name + '\t')) + '\n')
+            r = run_gate()
+            if r.returncode != 1 or 'source without row or waiver: ' + name not in r.stdout: raise SystemExit('FAIL missing waiver ' + name)
+            waivers.write_text(original)
         for i, raiser in enumerate(('append', 'append_locked', 'settle')):
             f = fixture/'bin'/('coverage-fixture-' + str(i) + '.sh')
             f.write_text('jg_wake_' + raiser + ' check unlisted-' + str(i) + ' reason\n')
