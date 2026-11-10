@@ -18,6 +18,8 @@ SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}
 DEST=$DATA/jg-repo-guard
 GUARD=$DEST/repo-guard
+SOURCE=$DEST/repo-guard.source
+RUNNER=$DEST/run-guard
 ALLOW=$DEST/allowed-repos
 HOOK=$DATA/jg-git-identity/hooks.d/pre-push/repo-guard
 TOOLS='gh-axi gh'
@@ -35,7 +37,7 @@ if [ "$UN" = 1 ]; then
       if [ "$real" = "$(movedfile "$tool")" ]; then mv -f -- "$real" "$target"; else ln -s -- "$real" "$target"; fi
     fi
   done
-  for f in "$GUARD" "$HOOK" "$(realfile gh-axi)" "$(realfile gh)"; do echo "remove: $f"; [ "$DRY" = 1 ] || rm -f -- "$f"; done
+  for f in "$GUARD" "$SOURCE" "$RUNNER" "$HOOK" "$(realfile gh-axi)" "$(realfile gh)"; do echo "remove: $f"; [ "$DRY" = 1 ] || rm -f -- "$f"; done
   [ "$DRY" = 1 ] || rmdir "$DATA/jg-git-identity/hooks.d/pre-push" 2>/dev/null || true
   [ "$DRY" = 0 ] || echo 'dry run: nothing written'
   echo "kept: $ALLOW (an extended allow-list is never dropped)"
@@ -43,6 +45,27 @@ if [ "$UN" = 1 ]; then
 fi
 
 [ "$DRY" = 1 ] || mkdir -p "$DEST" "$DATA/jg-git-identity/hooks.d/pre-push"
+if [ "$DRY" = 0 ]; then
+# The guard itself is the Go guard host, built here so the installed copy needs no toolchain
+# later. A build failure refuses loudly: a guard that cannot run must never be installed.
+GO=${JG_GUARD_HOST_GO:-go}
+command -v "$GO" >/dev/null 2>&1 || { echo "repo-guard: refused: no Go toolchain on PATH (set JG_GUARD_HOST_GO, or install go); nothing installed. This refusal is final." >&2; exit 1; }
+GUARD_TMP=$GUARD.tmp.$$
+trap 'rm -f -- "$GUARD_TMP"' EXIT
+( cd "$SRC/../guard-host" && "$GO" build -o "$GUARD_TMP" ./cmd/jg-guard-host ) || { echo "repo-guard: refused: the guard host did not build; nothing installed" >&2; exit 1; }
+chmod 755 "$GUARD_TMP"
+# Publish a complete reference first; both renames stay on the destination filesystem.
+SOURCE_TMP=$SOURCE.tmp.$$
+RUNNER_TMP=$RUNNER.tmp.$$
+trap 'rm -f -- "$GUARD_TMP" "$SOURCE_TMP" "$RUNNER_TMP"' EXIT
+cp -- "$GUARD_TMP" "$SOURCE_TMP"
+chmod 755 "$SOURCE_TMP"
+mv -f -- "$SOURCE_TMP" "$SOURCE"
+cp -- "$SRC/run-guard" "$RUNNER_TMP"
+chmod 755 "$RUNNER_TMP"
+mv -f -- "$RUNNER_TMP" "$RUNNER"
+mv -f -- "$GUARD_TMP" "$GUARD"
+fi
 for tool in $TOOLS; do
   target=$(command -v "$tool" || true)
   [ -n "$target" ] || { echo "note: no $tool on PATH; it stays unguarded until one is installed and this runs again"; continue; }
@@ -52,7 +75,8 @@ for tool in $TOOLS; do
     elif [ "${target#"$HOME/.local/bin/"}" != "$target" ]; then echo "would move the real $tool aside to: $(movedfile "$tool")"
     else echo "would leave the package-managed $target alone; symlink $HOME/.local/bin/$tool to it and rerun"; continue; fi
     echo "would write: $target (the shim that runs repo-guard $tool)"
-  elif ! ours "$target"; then
+  else
+    if ! ours "$target"; then
     # A symlink into a package is dropped, never followed: writing through it would overwrite the package's own file, and copying it out would break its own imports.
     # A plain file is only moved aside inside the user's own bin dir, so a mise- or npm-managed binary is never touched.
     if [ -L "$target" ]; then
@@ -65,24 +89,19 @@ for tool in $TOOLS; do
       echo "note: $target is package-managed; left unguarded (symlink $HOME/.local/bin/$tool to it and rerun)"
       continue
     fi
-    printf '#!/usr/bin/env bash\nexec %q %s "$@"\n' "$GUARD" "$tool" >"$target"
-    chmod 755 "$target"
     echo "guarded: $target (real: $(cat "$(realfile "$tool")"))"
+    fi
+    shim_tmp=$target.tmp.$$
+    printf '#!/usr/bin/env bash\n# %s\nexec %q %s "$@"\n' "$GUARD" "$RUNNER" "$tool" >"$shim_tmp"
+    chmod 755 "$shim_tmp"
+    mv -f -- "$shim_tmp" "$target"
   fi
 done
 if [ "$DRY" = 1 ]; then
   echo "would write: $GUARD, $ALLOW, $HOOK"; echo 'dry run: nothing written'
   exit 0
 fi
-# The guard itself is the Go guard host, built here so the installed copy needs no toolchain
-# later. A build failure refuses loudly: a guard that cannot run must never be installed.
-GO=${JG_GUARD_HOST_GO:-go}
-command -v "$GO" >/dev/null 2>&1 || { echo "repo-guard: refused: no Go toolchain on PATH (set JG_GUARD_HOST_GO, or install go); nothing installed. This refusal is final." >&2; exit 1; }
-GUARD_TMP=$GUARD.tmp.$$
-trap 'rm -f -- "$GUARD_TMP"' EXIT
-( cd "$SRC/../guard-host" && "$GO" build -o "$GUARD_TMP" ./cmd/jg-guard-host ) || { echo "repo-guard: refused: the guard host did not build; nothing installed" >&2; exit 1; }
-install -m 755 "$GUARD_TMP" "$GUARD"
 [ -f "$ALLOW" ] || install -m 644 "$SRC/allowed-repos" "$ALLOW"
-printf '#!/usr/bin/env bash\nexec %q pre-push "$@"\n' "$GUARD" >"$HOOK"
+printf '#!/usr/bin/env bash\nexec %q pre-push "$@"\n' "$RUNNER" >"$HOOK"
 chmod 755 "$HOOK"
 echo "installed: $GUARD; pre-push extension at $HOOK"; echo "allow-list: $ALLOW"

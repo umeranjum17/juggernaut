@@ -38,6 +38,39 @@ has "install guards gh" "$("$SRC/wiring.sh")" "guarded: $HOME/.local/bin/gh "
 "$GISRC/wiring.sh" --email you@example.com --name You "$d/fm" >/dev/null
 lacks "the package's own gh-axi file is not overwritten" "$(cat "$d/npm/gh-axi.js")" "repo-guard"
 
+# Kill the installer while its reference copy is partial. The old executable must survive.
+mkdir -p "$d/interrupt-bin"
+# shellcheck disable=SC2016 # The fixture script expands these variables when invoked.
+printf '%s\n' '#!/usr/bin/env bash' 'case "$2" in *.source.tmp.*) dd if="$1" of="$2" bs=1024 count=128 status=none; kill -KILL "$PPID"; exit 1;; esac' 'exec /usr/bin/cp "$@"' >"$d/interrupt-bin/cp"
+chmod +x "$d/interrupt-bin/cp"
+old_hash=$(sha256sum "$XDG_DATA_HOME/jg-repo-guard/repo-guard" | cut -d' ' -f1)
+(PATH="$d/interrupt-bin:$PATH" "$SRC/wiring.sh" >/dev/null 2>&1) 2>/dev/null || true
+check "interrupted install preserves the complete executable" "$(sha256sum "$XDG_DATA_HOME/jg-repo-guard/repo-guard" | cut -d' ' -f1)/$([ -x "$XDG_DATA_HOME/jg-repo-guard/repo-guard" ] && echo executable)" "$old_hash/executable"
+run gh --version
+check "gh still works after interrupted install" "$RC" 0
+
+# Each corrupt state must be repaired on the next real call, with one alert.
+for damage in mode truncated changed absent; do
+  cp "$XDG_DATA_HOME/jg-repo-guard/repo-guard" "$d/damaged"
+  case "$damage" in
+    mode) chmod 644 "$d/damaged" ;;
+    truncated) truncate -s 131072 "$d/damaged" ;;
+    changed) printf X | dd of="$d/damaged" bs=1 seek=100 conv=notrunc status=none ;;
+    absent) rm "$d/damaged" ;;
+  esac
+  if [ "$damage" = absent ]; then rm "$XDG_DATA_HOME/jg-repo-guard/repo-guard"; else mv "$d/damaged" "$XDG_DATA_HOME/jg-repo-guard/repo-guard"; fi
+  run gh --version
+  check "$damage guard is repaired" "$RC" 0
+  check "$damage emits one alert" "$(printf '%s\n' "$OUT" | grep -c 'repo-guard: broken guard detected; reinstalling')" 1
+  check "$damage restores the reference" "$(cmp -s "$XDG_DATA_HOME/jg-repo-guard/repo-guard.source" "$XDG_DATA_HOME/jg-repo-guard/repo-guard" && echo equal)" equal
+done
+
+mv "$XDG_DATA_HOME/jg-repo-guard/repo-guard.source" "$d/reference"
+run gh --version
+check "missing reference refuses the call" "$RC" 1
+has "missing reference names recovery" "$OUT" "reference unavailable"
+mv "$d/reference" "$XDG_DATA_HOME/jg-repo-guard/repo-guard.source"
+
 # A write with no --repo in a fork clone resolves this clone's origin, never the parent
 # remote, and reaches the stub with that repository made explicit. Both directions: the parent
 # repository is refused by name, our own repository passes.

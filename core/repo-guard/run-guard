@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Installed binary state owner: the installer publishes the reference and guard; this runner repairs.
+# State       Event             Next state
+# absent/bad or changed source  call, source OK   whole (atomic replacement)
+# whole       call, source same whole (execute)
+# any         source missing    refused (never execute an unverified guard)
+# A partial guard at its published path is forbidden.
+set -euo pipefail
+dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+guard=$dir/repo-guard
+source=$dir/repo-guard.source
+if [ ! -x "$guard" ] || ! cmp -s -- "$source" "$guard"; then
+  echo 'repo-guard: broken guard detected; reinstalling' >&2
+  [ -x "$source" ] || { echo 'repo-guard: reference unavailable; run wiring.sh' >&2; exit 1; }
+  tmp=$(mktemp "$dir/repo-guard.repair.XXXXXXXX")
+  trap 'rm -f -- "$tmp"' EXIT
+  cp -- "$source" "$tmp"
+  chmod 755 "$tmp"
+  mv -f -- "$tmp" "$guard"
+fi
+exec "$guard" "$@"
