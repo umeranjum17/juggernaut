@@ -1729,6 +1729,12 @@ families_for_changed_path() {
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
       ;;
+    bin/jg-fleet-homes-lib.sh)
+      # The registry reader that bin/jg-update.sh (the fleet move) and bin/jg-trunk-live-lag.sh source. No test names it,
+      # and neither caller is a library the named-script rule follows, so the one test that drives the move and the lag
+      # report against real homes (T1d reads the registry from a lead home) owns it, as the one script that runs its code.
+      printf '%s\n' "__script__:jg-update-local-base.test.sh"
+      ;;
     bin/jg-task-inbox-lib.sh)
       # The steering-inbox record/doorbell/ladder owner: jg-send's data plane
       # (backend-dispatch), the watcher's re-ring check (watcher-wake-lock),

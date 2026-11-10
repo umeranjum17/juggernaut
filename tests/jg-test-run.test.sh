@@ -449,6 +449,24 @@ test_a_changed_core_script_selects_the_scripts_that_name_it() {
   pass 'a changed core script selects the scripts that name it'
 }
 
+test_a_changed_fleet_homes_library_selects_the_move_test() {
+  local d=$TMP_ROOT/select-homes out
+  select_fixture "$d"
+  # The library is sourced by bin/jg-update.sh and bin/jg-trunk-live-lag.sh, which no test of it names; the one test
+  # that drives both callers against real homes owns it, and no other script is selected.
+  printf '#!/bin/sh\n' >"$d/bin/jg-fleet-homes-lib.sh"
+  printf 'echo ok jg-update.sh\n' >"$d/tests/jg-update-local-base.test.sh"
+  git -C "$d" -c user.email=t@t -c user.name=t add -A
+  git -C "$d" -c user.email=t@t -c user.name=t commit -qm homes
+  printf '# change\n' >>"$d/bin/jg-fleet-homes-lib.sh"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "a changed fleet-homes library was refused: $out"
+  assert_contains "$out" 'tests/jg-update-local-base.test.sh' 'the test that moves every home must be selected'
+  case $out in
+    *jg-names-*) fail "a script that does not exercise the library was selected: $out" ;;
+  esac
+  pass 'a changed fleet-homes library selects the fleet move test'
+}
+
 test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
 test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time
@@ -463,5 +481,6 @@ test_a_weight_cap_defers_slow_suites_and_names_them
 test_a_deleted_journey_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it
+test_a_changed_fleet_homes_library_selects_the_move_test
 
 printf 'all %s\n' 'jg-test-run limit tests passed'
