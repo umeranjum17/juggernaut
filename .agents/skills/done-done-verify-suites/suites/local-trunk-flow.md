@@ -5,3 +5,5 @@ Local trunk flow (projects registered local-trunk only; direct-PR, no-mistakes a
 A guarded home live move: run `bash tests/jg-trunk-live-home.test.sh` and `bash tests/jg-update-local-base.test.sh`; the single-home and fleet callers advance the recorded guard tip with HEAD, and a refused ref move leaves the guarded home clean at its old tip (screen: none).
 
 The same trunk-landing journey checks that a final refusal and an exhausted retry reach the lane's inbox once, add a ticket note, and put the task in rework.
+
+A legacy trunk with no version row: `bash tests/jg-trunk-release-open-pr.test.sh` drives the release retry, reconstructs the merge base from the default branch, and checks the recorded row (screen: none).

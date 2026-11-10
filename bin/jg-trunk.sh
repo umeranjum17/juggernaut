@@ -814,11 +814,25 @@ gate_from() {  # <gate command> <base>
 
 # The default-branch commit this trunk version was cut from (data/trunk-versions.tsv) when <sha> is on top of it. The release
 # pull request is this trunk against that commit, so CI maps the changed paths of every landing since it, not of one commit.
-release_base() {  # <sha>
-  local base
+release_base() (  # <sha>
+  local base default ref ver found
   base=$(awk -F'\t' -v p="$PN" -v t="$TRUNK" '$1 == p && $3 == t { b = $4 } END { print b }' "$DATA/trunk-versions.tsv" 2>/dev/null || true)
+  found=$(awk -F'\t' -v p="$PN" -v t="$TRUNK" '$1 == p && $3 == t { print 1; exit }' "$DATA/trunk-versions.tsv" 2>/dev/null || true)
+  if [ -z "$found" ]; then
+    exec 9>"$STATE/.trunk-versions-$PN.lock"
+    flock -x 9 || return 1
+    base=$(awk -F'\t' -v p="$PN" -v t="$TRUNK" '$1 == p && $3 == t { b = $4; found = 1 } END { if (found) print b; else exit 1 }' "$DATA/trunk-versions.tsv" 2>/dev/null) || {
+    default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
+    ref="refs/remotes/origin/$default"
+    rev "$ref" >/dev/null || ref="refs/heads/$default"
+    base=$(git -C "$PROJ" merge-base "$TRUNK" "$ref") || return 1
+    git -C "$PROJ" merge-base --is-ancestor "$base" "$1" || return 1
+    ver=$(cat "$STATE/trunk-version-$PN" 2>/dev/null || echo 1)
+    row trunk-versions.tsv "$PN" "$ver" "$TRUNK" "$base" "$(date +%s)"
+    }
+  fi
   [ -n "$base" ] && git -C "$PROJ" merge-base --is-ancestor "$base" "$1" 2>/dev/null && printf '%s\n' "$base"
-}
+)
 
 # ONE gate over the stack: the lint, then the tests of the union of the changed files, both judged against the trunk tip
 # (HEAD^ in a gate command is the commit under the stack, so HEAD~<n> is). Returns 0 green; 1 red, with BG_WHY and LAST_RED set.

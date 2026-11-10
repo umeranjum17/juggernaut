@@ -294,8 +294,14 @@ cp "$W/saved-versions" "$HOME_D/data/trunk-versions.tsv"
 out=$(trunk release "$PROJ" 2>&1) && fail 'a changed green pin must refuse'
 assert_contains "$out" 'green pin changed' 'the refusal must identify the changed pin'
 rm "$W/change-pin"
+# A legacy trunk can predate the version ledger. Its release retry must reconstruct and persist the base.
+awk -F "\t" '$1 != "proj" || $3 != "trunk"' "$HOME_D/data/trunk-versions.tsv" > "$W/versions-without-trunk"
+cp "$W/versions-without-trunk" "$HOME_D/data/trunk-versions.tsv"
+expected_base=$(git -C "$PROJ" merge-base trunk main)
 git -C "$PROJ" config remote.origin.pushurl "$W/no-such-remote.git"
 out=$(trunk release "$PROJ" 2>&1) || fail "proof retry failed: $out"
+[ "$(awk -F '\t' '$1 == "proj" && $3 == "trunk" { print $4 }' "$HOME_D/data/trunk-versions.tsv")" = "$expected_base" ] || fail 'the missing trunk version must record its merge base'
+pass 'a release retry reconstructs and records the missing trunk release base from the default branch'
 assert_contains "$(cat "$DONE_DONE_HOME/evidence/"*/run.log)" "Legacy landing: $legacy" 'the old trunk commit must be proven'
 pass 'release retry accepts the earlier trunk landing after the missing proof is restored'
 [ "$(wc -l < "$HOME_D/data/trunk-releases.tsv")" = "$rows" ] || fail 'retry must not publish a second release'
