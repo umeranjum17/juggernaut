@@ -20,6 +20,8 @@ journeys:
     command: bash journeys/wake-watcher.sh
   wake-batching:
     command: bash journeys/wake-batching.sh
+  required-shard-retry:
+    command: bash journeys/required-shard-retry.sh
   ports-adapter-refusal:
     command: bash journeys/ports-adapter-refusal.sh
   rejected-state-check-once:

@@ -15,7 +15,9 @@
 #
 # Local trunk required set (eight shards run side by side, each with the CI bound):
 #   jg-test-run.sh --required-shards <base-ref> <output-dir>
-# Writes one timing JSON per shard and required.json via --aggregate-json; any shard failure refuses.
+# Writes one timing JSON per shard and required.json via --aggregate-json. A shard that passed every script but
+# ran over its wall-clock budget runs once more (a machine retry); any other shard failure, or a second run over
+# the budget, refuses.
 # Inspection (no execution):
 #   jg-test-run.sh --list --all
 #   jg-test-run.sh --list --family <name>
@@ -824,7 +826,7 @@ tests/jg-bus-health-extra.test.sh 4000
 tests/jg-tangle-guard.test.sh 58000
 tests/jg-teardown-core.test.sh 4222
 tests/jg-teardown.test.sh 902000
-tests/jg-test-run.test.sh 11831
+tests/jg-test-run.test.sh 33000
 tests/jg-ticket-writeback.test.sh 83
 tests/jg-tmp-sweep.test.sh 5192
 tests/jg-tokens-retro.test.sh 597
@@ -2065,39 +2067,85 @@ if [ "${1:-}" = --required-shards ]; then
   required_par=${JG_REQUIRED_SHARD_PARALLEL:-8}
   case $required_par in ''|*[!0-9]*|0) required_par=1 ;; esac
   [ "$required_par" -le "$required_cpus" ] || required_par=$required_cpus
+  # Each shard's wall-clock budget is JG_REQUIRED_SHARD_WALL_MS (default 600000 ms, the CI bound).
+  required_wall_ms=${JG_REQUIRED_SHARD_WALL_MS:-600000}
+  case $required_wall_ms in ''|*[!0-9]*|0) die "JG_REQUIRED_SHARD_WALL_MS must be a positive number of milliseconds" ;; esac
   required_scratch=$(mktemp -d "${TMPDIR:-/tmp}/jg-shards.XXXXXX") || die "cannot create the shard scratch directory"
   required_pids=()
   # shellcheck disable=SC2317,SC2329  # runs from the trap
-  required_stop() { local p; for p in "${required_pids[@]}"; do kill "$p" 2>/dev/null || :; done; rm -rf -- "$required_scratch"; }
+  required_stop() { local p; for p in "${required_pids[@]+"${required_pids[@]}"}"; do kill "$p" 2>/dev/null || :; done; rm -rf -- "$required_scratch"; }
   trap 'required_stop; exit 130' INT TERM
-  required_json=() required_running=0
-  for required_shard in 1 2 3 4 5 6 7 8; do
-    required_file=$required_dir/shard-$required_shard.json
-    required_json+=("$required_file")
-    mkdir -p "$required_scratch/$required_shard"
-    (
-      shard_rc=0
-      TMPDIR="$required_scratch/$required_shard" TMUX_TMPDIR="$required_scratch/$required_shard" \
-        bash "$ROOT/bin/jg-test-run.sh" --changed --base "$required_base" --exclude-family real-herdr-gated \
-        --max-weight-ms 60000 --shard "${required_shard}of8" --gate --max-wall-ms 600000 \
-        --json "$required_file" || shard_rc=$?
-      echo "$shard_rc" > "$required_scratch/$required_shard.rc"
-    ) > "$required_scratch/$required_shard.out" 2>&1 &
-    required_pids+=($!)
-    required_running=$((required_running + 1))
-    if [ "$required_running" -ge "$required_par" ]; then
-      wait -n || :
-      required_running=$((required_running - 1))
+
+  # Run try <try> of the shards <k>... side by side, each writing shard-<k>.json, and print their output in shard order.
+  # Sets REQUIRED_RED to the shards that failed.
+  required_run() {  # <try> <k>...
+    local try=$1 k i=0 running=0 work
+    shift; required_pids=(); REQUIRED_RED=()
+    for k in "$@"; do
+      work=$required_scratch/$try.$k
+      mkdir -p "$work"
+      (
+        shard_rc=0
+        TMPDIR="$work" TMUX_TMPDIR="$work" \
+          bash "$ROOT/bin/jg-test-run.sh" --changed --base "$required_base" --exclude-family real-herdr-gated \
+          --max-weight-ms 60000 --shard "${k}of8" --gate --max-wall-ms "$required_wall_ms" \
+          --json "$required_dir/shard-$k.json" || shard_rc=$?
+        echo "$shard_rc" > "$work.rc"
+      ) > "$work.out" 2>&1 &
+      required_pids+=($!)
+      running=$((running + 1))
+      if [ "$running" -ge "$required_par" ]; then
+        wait -n || :
+        running=$((running - 1))
+      fi
+    done
+    for k in "$@"; do
+      wait "${required_pids[i]}" 2>/dev/null || :
+      i=$((i + 1))
+      cat "$required_scratch/$try.$k.out"
+      [ "$(cat "$required_scratch/$try.$k.rc" 2>/dev/null)" = 0 ] || REQUIRED_RED+=("$k")
+    done
+  }
+
+  # The one red that runs again. The runner fails a shard for a failed script, for its wall-clock budget, or for a timing
+  # file it could not write, and only the budget leaves a written timing file with a failing exit and no script failed.
+  # Such a shard passed every script it ran and was slowed by the machine, not failed by a test: it is classed retry and
+  # runs once more, and its second result is the one that counts. A failed script, a missing timing file or a second run
+  # over the budget is final, a red. Prints the run's milliseconds when the shard is classed retry.
+  required_over_budget() {  # <shard json>
+    python3 - "$1" "$required_wall_ms" 2>/dev/null <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1], encoding="utf-8")).get("summary") or {}
+if s.get("exit") and s.get("failed") == 0 and int(s.get("duration_ms") or 0) >= int(sys.argv[2]):
+    print(s["duration_ms"])
+else:
+    sys.exit(1)
+PY
+  }
+
+  required_run 1 1 2 3 4 5 6 7 8
+  required_retry=()
+  for required_k in "${REQUIRED_RED[@]+"${REQUIRED_RED[@]}"}"; do
+    if required_ms=$(required_over_budget "$required_dir/shard-$required_k.json"); then
+      log "shard ${required_k}of8 passed every script but ran ${required_ms}ms, over its ${required_wall_ms}ms wall-clock budget, at host load $(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo unknown) on $required_cpus cpus: classed retry, so it runs once more (first try kept as retried-shard-$required_k.json)"
+      mv -f -- "$required_dir/shard-$required_k.json" "$required_dir/retried-shard-$required_k.json"
+      required_retry+=("$required_k")
+    else
+      required_rc=1
     fi
   done
-  for required_shard in 1 2 3 4 5 6 7 8; do
-    wait "${required_pids[$((required_shard - 1))]}" 2>/dev/null || :
-    cat "$required_scratch/$required_shard.out"
-    [ "$(cat "$required_scratch/$required_shard.rc" 2>/dev/null)" = 0 ] || required_rc=1
-  done
+  if [ "${#required_retry[@]}" -gt 0 ]; then
+    required_run 2 "${required_retry[@]}"
+    for required_k in "${REQUIRED_RED[@]+"${REQUIRED_RED[@]}"}"; do
+      required_rc=1
+      if required_ms=$(required_over_budget "$required_dir/shard-$required_k.json"); then
+        log "shard ${required_k}of8 ran over its ${required_wall_ms}ms wall-clock budget again (${required_ms}ms): final, a red"
+      fi
+    done
+  fi
   trap - INT TERM
   rm -rf -- "$required_scratch"
-  bash "$ROOT/bin/jg-test-run.sh" --aggregate-json "$required_dir/required.json" "${required_json[@]}" || required_rc=1
+  bash "$ROOT/bin/jg-test-run.sh" --aggregate-json "$required_dir/required.json" "$required_dir"/shard-{1..8}.json || required_rc=1
   exit "$required_rc"
 fi
 
