@@ -49,6 +49,21 @@ charter() {  # <id> <project>: a squad lead charter naming the project
   cat "$H/data/$1/brief.md"
 }
 
+# The real check must ignore an unborn repository, but preserve initialization refusals once it has commits.
+world empty local-trunk
+cp -r "$ROOT/bin" "$H/bin"; ln -s "$ROOT/core" "$H/core"; ln -s "$ROOT/policy" "$H/policy"
+rm "$H/state/trunk-tip-proj"
+git -C "$P" update-ref -d refs/heads/trunk
+git -C "$P" update-ref -d refs/heads/main
+out=$(bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$H" 2>&1) || fail "empty check failed: $out"
+[ -z "$out" ] || fail "empty project must be quiet: $out"
+[ ! -s "$H/state/.wake-queue" ] || fail "empty project must not wake"
+git -C "$P" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m first
+printf "#!/bin/sh\nexit 0\n" > "$P/.git/hooks/reference-transaction"
+out=$(bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$H" 2>&1) || fail "nonempty check failed: $out"
+assert_contains "$out" 'not the trunk guard' 'a committed project with an unmanaged hook must still refuse'
+pass "empty project is quiet and a committed project retains its refusal"
+
 for mode in direct-PR no-mistakes local-only; do
   world "stray-$mode" "$mode"
   tip=$(git -C "$P" rev-parse trunk); lane s1 local-only

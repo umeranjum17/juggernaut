@@ -200,6 +200,8 @@ local_trunk() { [ "$(JG_HOME="$FMH" "$FMH/bin/jg-project-mode.sh" --raw "$(basen
 for proj in "$FMH"/projects/*; do
   [ -d "$proj" ] && [ "$(local_trunk "$proj")" = yes ] || continue
   pn=$(basename "$proj"); [ ! -e "$STATE/trunk-tip-$pn" ] || continue
+  # An unborn repository has nothing to initialize; invalid repositories still reach init and report their error.
+  if git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 && commits=$(git -C "$proj" rev-list --all --max-count=1 2>/dev/null) && [ -z "$commits" ]; then continue; fi
   jg_lock_try_acquire "$STATE/.trunk-init-$pn.lock" || continue
   if [ ! -e "$STATE/trunk-tip-$pn" ]; then
     init_out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" init "$proj" 2>&1) || { [ -n "$QUIET" ] || printf 'trunk-landing: %s\n' "$init_out"; }
