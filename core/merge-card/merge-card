@@ -92,10 +92,29 @@ recording=0 discovering=0
 
 die() { echo "merge-card: $*" >&2; exit 1; }
 
+# abs_path <path> [<base>]: <path> made absolute against <base> (default: the physical working directory), with `.`, `..`
+# and repeated slashes folded by name as os.path.abspath does: symlinks stay, and the path need not exist. Plain bash, so
+# the receipt the landing asks for never starts an interpreter: on a host where python3 is a mise shim, a caller whose
+# mise settings point elsewhere made every shim refuse, and that refusal was the landing's (fric-lander-mise-immune).
+abs_path() {
+  local p=$1 part out=''
+  local -a parts=()
+  case $p in /*) ;; *) p=${2:-$(pwd -P)}/$p ;; esac
+  IFS=/ read -rd '' -a parts < <(printf '%s' "$p") || :
+  for part in "${parts[@]}"; do
+    case $part in
+      ''|.) ;;
+      ..) out=${out%/*} ;;
+      *) out=$out/$part ;;
+    esac
+  done
+  printf '%s\n' "${out:-/}"
+}
+
 # Resolve explicit folders before any call changes directory into the task.
 for context_var in DONE_DONE_HOME CLAUDE_CONFIG_DIR; do
   if [ -n "${!context_var:-}" ]; then
-    context_path=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "${!context_var}") || die "cannot resolve $context_var"
+    context_path=$(abs_path "${!context_var}") || die "cannot resolve $context_var"
     export "$context_var=$context_path"
   fi
 done
@@ -565,10 +584,8 @@ dd_root() {
     jq -r '.checks[]? | select(.check == "evidence_root") | .detail | capture("^writable: (?<p>.+)$").p' 2>/dev/null)
   [ -n "$root" ] || return 0
   base=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || base=$(cd "$dir" && pwd -P) || return 1
-  python3 - "$base" "$root" <<'ROOT'
-import os, sys
-print(os.path.normpath(os.path.join(sys.argv[1], os.path.expanduser(sys.argv[2]))))
-ROOT
+  case $root in \~|\~/*) root=$HOME${root#\~} ;; esac
+  abs_path "$root" "$base"
 }
 
 current_context() {  # <task> <directory> <explicit-account>

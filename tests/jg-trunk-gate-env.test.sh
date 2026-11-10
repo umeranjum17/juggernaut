@@ -7,6 +7,9 @@
 # T1 A real landing started from an environment whose git hook setting refuses every ref transaction outside the
 #    project lands green: the gate's clone, its first run and its rerun all start from the gate's own environment,
 #    so the gate makes a new git repository and prints no git setting count.
+# T2 The landing's proof check passes a whole proof from a caller whose python3 and node refuse, the way a mise shim does when the
+#    caller's mise settings point elsewhere (ten lanes were refused on 10 Nov 2026 with "mise ERROR error parsing config file"):
+#    with an explicit done-done home, and with the sealed run in the evidence root done-done names relative to the lane.
 set -u
 # The fixture lane is judged in its own proof context, not the account or done-done home of whoever runs this suite.
 unset CLAUDE_CONFIG_DIR DONE_DONE_HOME
@@ -73,3 +76,36 @@ seen=$(grep -rh '^git settings:' "$HOME_D/data" | sort | uniq -c | awk '{ $1 = $
 [ "$seen" = "2 git settings: none" ] || fail "T1 the first run and the rerun must each print no git setting count, got: $seen"
 if grep -rq 'refused by the session hook' "$HOME_D/data"; then fail "T1 the session's hook must not reach the gate"; fi
 pass "T1 a gate started with a refusing hook setting is green: the clone, the run and the rerun take only the gate's environment"
+
+# A caller whose interpreters refuse: python3 and node exit 1 with the mise refusal; done-done is a shell stand-in that names
+# its evidence root relative to the lane, as `done-done doctor --json` does, and has no receipt of its own.
+mkdir -p "$W/refusing"
+for tool in python3 node; do
+  printf '#!/bin/sh\necho "mise ERROR error parsing config file: ~/.config/mise/config.toml" >&2\nexit 1\n' > "$W/refusing/$tool"
+done
+cat > "$W/refusing/done-done" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = doctor ] || exit 1
+printf '{"checks":[{"check":"evidence_root","detail":"writable: ../dd-root/../dd-root"}]}\n'
+SH
+chmod +x "$W/refusing/"*
+proved_lane() {  # <id> <evidence-folder>: a lane off the trunk with its whole proof, the sealed run kept in <evidence-folder>
+  local id=$1 ev=$2 h
+  git -C "$PROJ" worktree add -q -b "fm/$id" "$W/$id" trunk
+  printf '%s\n' "$id" > "$W/$id/$id.txt"; git -C "$W/$id" add "$id.txt"; git -C "$W/$id" -c user.name=t -c user.email=t@example.invalid commit -q -m "ticket $id"
+  h=$(git -C "$W/$id" rev-parse HEAD); mkdir -p "$HOME_D/data/$id" "$ev/.done-done/runs"
+  jg_write_meta "$HOME_D/state/$id.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/$id" "worktree=$W/$id" "spawn_gen=g-$id"
+  printf '{"schema":1,"task":"%s","mode":"local-trunk","spawn_gen":"g-%s","head":"%s","pr":"","verdict":"PASS","at":1,"evidence":"done-done run: ok"}\n' "$id" "$id" "$h" > "$HOME_D/state/$id.run-receipt.json"
+  printf '{"head":"%s","verdict":"pass","check":{"claim":"a user can land","evidence":["%s/run.log"]}}\n' "$h" "$ev" > "$HOME_D/data/$id/merge-card.json"
+  printf 'ok\n' > "$ev/run.log"
+  printf '{"schema":1,"run_id":"20261110T000000Z-%s-ab","commit":"%s","exit":0,"dirty":false,"started_at":"2026-11-10T00:00:00Z","files":["run.log"]}\n' "${h:0:8}" "$h" > "$ev/.done-done/runs/run-$h.json"
+}
+proved_lane dhome "$HOME_D/data/dhome"
+out=$(PATH="$W/refusing:$PATH" DONE_DONE_HOME="$W/dd-home/./x/.." trunk proof dhome 2>&1) \
+  || fail "T2 a whole proof with an explicit done-done home must pass from a caller whose python3 and node refuse: $out"
+[ -z "$out" ] || fail "T2 a whole proof must leave no gap, got: $out"
+proved_lane droot "$W/dd-root"
+out=$(PATH="$W/refusing:$PATH" trunk proof droot 2>&1) \
+  || fail "T2 a sealed run in done-done's evidence root must be found from a caller whose python3 and node refuse: $out"
+[ -z "$out" ] || fail "T2 a whole proof must leave no gap, got: $out"
+pass "T2 the proof check needs no python3 or node: a caller whose mise shims refuse gets the same answer as any other"
