@@ -330,6 +330,65 @@ test_a_run_past_the_machine_limit_waits_for_a_slot
 test_a_script_that_moves_home_keeps_the_callers_go_build_cache
 test_required_shards_keep_the_union_and_a_failed_shard
 test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script
+# select_fixture <dir>: a throwaway repo holding a copy of the runner, the shared
+# file bin/jg-trunk.sh, a library that sources it, a script that only calls that
+# library's caller, two core scripts, and five test scripts. The runner takes its
+# root from its own location, so the copy selects against this repo alone.
+select_fixture() {
+  local d=$1
+  mkdir -p "$d/bin" "$d/tests" "$d/core/trunk-landing" "$d/core/merge-on-green"
+  cp "$RUNNER" "$ROOT/bin/jg-test-host-lib.sh" "$d/bin/"
+  printf '#!/bin/sh\n' >"$d/bin/jg-trunk.sh"
+  # shellcheck disable=SC2016
+  printf '. "$(dirname "$0")/jg-trunk.sh"\n' >"$d/bin/jg-trunk-policy-lib.sh"
+  printf '#!/bin/sh\njg-trunk-policy-lib.sh\n' >"$d/bin/jg-other.sh"
+  printf '#!/bin/sh\n' >"$d/core/trunk-landing/trunk-landing.sh"
+  printf '#!/bin/sh\n' >"$d/core/merge-on-green/merge-on-green.sh"
+  printf 'echo ok jg-trunk.sh\n' >"$d/tests/jg-names-file.test.sh"
+  printf 'echo ok jg-trunk-policy-lib.sh\n' >"$d/tests/jg-names-library.test.sh"
+  printf 'echo ok trunk-landing.sh\n' >"$d/tests/jg-names-landing.test.sh"
+  printf 'echo ok merge-on-green.sh\n' >"$d/tests/jg-names-merge.test.sh"
+  printf 'echo ok jg-other.sh\n' >"$d/tests/jg-names-far-caller.test.sh"
+  git -C "$d" init -q
+  git -C "$d" -c user.email=t@t -c user.name=t add -A
+  git -C "$d" -c user.email=t@t -c user.name=t commit -qm base
+}
+
+test_a_changed_shared_file_selects_the_scripts_that_name_it() {
+  local d=$TMP_ROOT/select-shared out
+  select_fixture "$d"
+  printf '# change\n' >>"$d/bin/jg-trunk.sh"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "a changed shared file was refused: $out"
+  assert_contains "$out" 'tests/jg-names-file.test.sh' 'a script that names the file must be selected'
+  assert_contains "$out" 'tests/jg-names-library.test.sh' 'a script that names a library sourcing the file must be selected'
+  case $out in
+    *jg-names-far-caller*|*jg-names-landing*|*jg-names-merge*) fail "a script that does not name the file or its library was selected: $out" ;;
+  esac
+  # The same planted failure is still found, in either kind of selected script.
+  printf 'echo not ok jg-trunk.sh; exit 1\n' >"$d/tests/jg-names-file.test.sh"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --changed --base HEAD 2>&1) && fail "a failure in a script that names the file passed: $out"
+  printf 'echo ok jg-trunk.sh\n' >"$d/tests/jg-names-file.test.sh"
+  printf 'echo not ok jg-trunk-policy-lib.sh; exit 1\n' >"$d/tests/jg-names-library.test.sh"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --changed --base HEAD 2>&1) && fail "a failure in a script that names the library passed: $out"
+  pass 'a changed shared file selects the scripts that name it and its libraries'
+}
+
+test_a_changed_core_script_selects_the_scripts_that_name_it() {
+  local d=$TMP_ROOT/select-core out
+  select_fixture "$d"
+  printf '# change\n' >>"$d/core/trunk-landing/trunk-landing.sh"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "a changed core script was refused: $out"
+  assert_contains "$out" 'tests/jg-names-landing.test.sh' 'a script that names the landing check must be selected'
+  case $out in
+    *jg-names-merge*|*jg-names-file*) fail "a script that does not name the landing check was selected: $out" ;;
+  esac
+  git -C "$d" -c user.email=t@t -c user.name=t commit -qam change
+  printf '# change\n' >>"$d/core/merge-on-green/merge-on-green.sh"
+  out=$(cd "$d" && bash bin/jg-test-run.sh --list --changed --base HEAD 2>&1) || fail "a changed core script was refused: $out"
+  assert_contains "$out" 'tests/jg-names-merge.test.sh' 'a script that names the merge check must be selected'
+  pass 'a changed core script selects the scripts that name it'
+}
+
 test_shards_split_a_selection_without_losing_or_repeating_a_script
 test_the_e2e_limit_is_60_seconds_in_config
 test_an_e2e_test_over_its_limit_warns_naming_itself_and_its_time
@@ -342,5 +401,7 @@ test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
 test_a_deleted_journey_does_not_refuse_the_changed_selection
+test_a_changed_shared_file_selects_the_scripts_that_name_it
+test_a_changed_core_script_selects_the_scripts_that_name_it
 
 printf 'all %s\n' 'jg-test-run limit tests passed'

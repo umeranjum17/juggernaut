@@ -1475,12 +1475,12 @@ bin_consumers_of() {
 }
 
 # An unmapped bin/ path has no curated family of its own. Its blast radius is
-# the tests that name it, plus the curated families of the bin/ scripts that
-# consume it. Direct test references resolve per script (above) while consumer
-# scripts resolve back through the curated map, so genuine family-level
-# coupling a maintainer recorded is preserved while an incidental single-script
-# reference no longer selects that script's whole family.
-BIN_FALLBACK_DEPTH=0
+# the tests that name it, and the tests that name a library that names it - a
+# library is how a script is sourced into the others, so a test of the library
+# runs the changed code. Both resolve per script, never to a whole family: the
+# scripts that call a caller of the file are not evidence about the file, and
+# widening to them selected 97 to 100 scripts for the 18 that name a shared file.
+# A family a maintainer recorded for a file is still given by its case row below.
 families_for_unmapped_bin() {
   local path=$1 needle consumer out found=0
   needle=$(basename "$path")
@@ -1488,18 +1488,17 @@ families_for_unmapped_bin() {
     printf '%s\n' "$out"
     found=1
   fi
-  if [ "$BIN_FALLBACK_DEPTH" -lt 2 ]; then
-    BIN_FALLBACK_DEPTH=$((BIN_FALLBACK_DEPTH + 1))
-    while IFS= read -r consumer; do
-      [ -n "$consumer" ] || continue
-      out=$(families_for_changed_path "$consumer" | grep -v '^__unmapped__:' || true)
-      if [ -n "$out" ]; then
-        printf '%s\n' "$out"
-        found=1
-      fi
-    done < <(bin_consumers_of "$needle")
-    BIN_FALLBACK_DEPTH=$((BIN_FALLBACK_DEPTH - 1))
-  fi
+  while IFS= read -r consumer; do
+    [ -n "$consumer" ] || continue
+    case "$consumer" in
+      *-lib.sh) ;;
+      *) continue ;;
+    esac
+    if out=$(scripts_for_test_reference "$(basename "$consumer")"); then
+      printf '%s\n' "$out"
+      found=1
+    fi
+  done < <(bin_consumers_of "$needle")
   [ "$found" -eq 1 ]
 }
 
@@ -1860,10 +1859,17 @@ families_for_changed_path() {
         scripts_for_test_reference "$path" || families_for_test_reference "$path" || true
       fi
       ;;
+    core/*.sh)
+      # A core script has no curated row. The tests that name it run, per script,
+      # so a lane's own proof covers the file it changed; a script no test names
+      # selects nothing here. The core feature's own suites still run in
+      # core-suites.yml on the push after the merge, and a red post-merge run
+      # files a fix-forward item (bin/jg-post-merge-ci.sh).
+      scripts_for_test_reference "$(basename "$path")" || true
+      ;;
     core/*)
-      # A core feature's own suites run in core-suites.yml on the push after the
-      # merge; the fast set does not wait for them. A red post-merge run files a
-      # fix-forward item (bin/jg-post-merge-ci.sh).
+      # Other core files (docs, data, Go sources) are run by core-suites.yml on
+      # the push after the merge; the fast set does not wait for them.
       ;;
     *)
       if [ -e "$path" ]; then
