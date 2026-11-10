@@ -73,7 +73,7 @@ jg_ci_scope_bus_path() {
     docs/bus-service.md) return 0 ;;
     # The helpers and the five suites the Bus service lane runs.
     tests/lib.sh|tests/git-config-helpers.sh) return 0 ;;
-    tests/jg-bus-service.test.sh|tests/jg-bus-machine-service.test.sh|tests/jg-stack.test.sh|tests/jg-stack-owner.test.sh|tests/jg-bus.test.sh|tests/jg-dapr-workflow.test.sh) return 0 ;;
+    tests/jg-bus-service.test.sh|tests/jg-bus-machine-service.test.sh|tests/jg-stack.test.sh|tests/jg-stack-owner.test.sh|tests/jg-bus.test.sh) return 0 ;;
   esac
   return 1
 }

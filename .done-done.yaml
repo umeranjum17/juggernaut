@@ -38,8 +38,6 @@ journeys:
     command: bash journeys/migration-card.sh
   axi-on-path:
     command: bash journeys/axi-on-path.sh
-  dapr-workflow:
-    command: bash journeys/dapr-workflow.sh
   relaunch-model-refusal:
     command: bash tests/jg-control.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   pre-push-hook:

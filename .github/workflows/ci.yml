@@ -339,9 +339,7 @@ jobs:
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@v5
         with:
-          # The newest module here is the one owner of the version this repo builds with:
-          # the Dapr workflow worker's dependencies need more than the bus command does.
-          go-version-file: core/escalation-workflow/go.mod
+          go-version-file: core/guard-host/go.mod
           cache: false
       # The Go build cache is seeded by the push that follows a merge (the save
       # step below) and only read on a pull request, so a pull request starts from
@@ -390,11 +388,6 @@ jobs:
         run: |
           set -eu
           bin/jg-ci-area-reads.sh --check bus -- tests/jg-bus.test.sh
-      - name: Prove the wait ladder runs as a Dapr workflow on real timers
-        run: |
-          set -eu
-          ( cd core/escalation-workflow && go vet ./... )
-          tests/jg-dapr-workflow.test.sh
 
   # The changed-file tests: the suite scripts this change's paths map to, on the
   # pull request, and nothing else. They are the second half of the fast required

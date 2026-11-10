@@ -66,11 +66,6 @@ provenance table now records history, not the current bytes.
   This library reads `JG_WAIT_ALERT_SECS` and `JG_PAUSE_RESURFACE_SECS` from
   that definition (`bin/jg-escalation-workflows.sh timers`) rather than
   defaulting them, so each number has one owner.
-- The same ladder also exists as a Dapr workflow, off until a home runs it.
-  `bin/jg-dapr-workflow.sh` (its header owns the commands) starts the scheduler, the sidecar and the worker built from `core/escalation-workflow`.
-  One instance is one wait episode: durable timers per rung of the definition's wait ladder (owner, escalate to Main, board card, re-alert), and the owner's `cleared` event ends it.
-  The workflow reads the same timer numbers and environment overrides from the definition, and delivers each rung with `bin/jg-escalation-workflows.sh deliver`.
-  `tests/jg-dapr-workflow.test.sh` proves a real timer fires.
 - Environment: `JG_WAIT_ESCALATE_SECS` (default 300) for Main's rung,
   `JG_WAIT_CARD_SECS` (default 600, above the escalation threshold) for the
   board card, and `JG_PROMPT_REALERT_SECS` (default 600) for how often a

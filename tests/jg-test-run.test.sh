@@ -237,6 +237,27 @@ test_a_test_within_its_limits_is_unaffected() {
   pass 'a test within its limits is unaffected'
 }
 
+# A branch that retires a journey with its test (go-shell GS6 deleted the Dapr worker's journey and
+# test) must still select its changed tests: the deleted journey has no owner left, so it selects
+# nothing, while a deleted journey another test still names selects that test.
+test_a_deleted_journey_does_not_refuse_the_changed_selection() {
+  local fixture=$TMP_ROOT/retire out rc=0
+  required_fixture "$fixture" 'true'
+  mkdir -p "$fixture/journeys"
+  printf 'bash tests/retired.test.sh\n' >"$fixture/journeys/retired.sh"
+  printf 'bash tests/kept.test.sh\n' >"$fixture/journeys/named.sh"
+  write_script "$fixture/tests/retired.test.sh" '# owns journeys/retired.sh'
+  write_script "$fixture/tests/kept.test.sh" '# still names journeys/named.sh'
+  git -C "$fixture" add journeys tests
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'fixture journeys'
+  git -C "$fixture" rm -q journeys/retired.sh journeys/named.sh tests/retired.test.sh
+  git -C "$fixture" -c user.name=t -c user.email=t@example.invalid commit -qm 'retire the journeys'
+  out=$(bash "$fixture/bin/jg-test-run.sh" --list --changed --base HEAD^ 2>&1) || rc=$?
+  assert_equals 0 "$rc" "a deleted journey must not refuse the changed selection: $out"
+  assert_equals 'tests/kept.test.sh' "$out" 'a deleted journey a test still names must select that test, and nothing else'
+  pass 'a deleted journey selects only a test that still names it and never refuses the changed selection'
+}
+
 test_a_weight_cap_defers_slow_suites_and_names_them() {
   local out
   out=$(bash "$RUNNER" --list --max-weight-ms 60000 tests/jg-teardown.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a capped list was refused: $out"
@@ -261,5 +282,6 @@ test_a_wall_failure_with_no_functional_failure_stays_red_in_aggregate
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
+test_a_deleted_journey_does_not_refuse_the_changed_selection
 
 printf 'all %s\n' 'jg-test-run limit tests passed'

@@ -740,7 +740,6 @@ tests/jg-compat-old-records.test.sh 1001
 tests/jg-composer-matrix-live-e2e.test.sh 175
 tests/jg-control.test.sh 94076
 tests/jg-cursor-primary-live-e2e.test.sh 138
-tests/jg-dapr-workflow.test.sh 139
 tests/jg-deprecated-paths-check.test.sh 3000
 tests/jg-ports-check.test.sh 3000
 tests/jg-decisions-reconcile.test.sh 55000
@@ -1817,11 +1816,16 @@ families_for_changed_path() {
       # reference is per-script evidence, so select that script, not its family.
       # A journey with no test but a `.done-done.yaml` entry is owned by its
       # sealed done-done run, which is the proof; an unregistered one stays
-      # unmapped.
-      scripts_for_test_reference "$path" \
-        || families_for_test_reference "$path" \
-        || { grep -qF "command: bash $path" "$ROOT/.done-done.yaml" 2>/dev/null; } \
-        || printf '%s\n' "__unmapped__:$path"
+      # unmapped. A deleted journey selects only a test that still names it,
+      # the rule the retired-path case below applies.
+      if [ -e "$path" ]; then
+        scripts_for_test_reference "$path" \
+          || families_for_test_reference "$path" \
+          || { grep -qF "command: bash $path" "$ROOT/.done-done.yaml" 2>/dev/null; } \
+          || printf '%s\n' "__unmapped__:$path"
+      else
+        scripts_for_test_reference "$path" || families_for_test_reference "$path" || true
+      fi
       ;;
     core/*)
       # A core feature's own suites run in core-suites.yml on the push after the
