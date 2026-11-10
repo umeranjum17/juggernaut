@@ -252,6 +252,11 @@ The beacon's age therefore bounds the gap between progress points, never the len
 A due-check sweep, or a run of ready-PR records, can legitimately outlast a fixed grace on a healthy cycle, and publishing only at the end of the scan made exactly that cycle read as a dead watcher: the false "the watcher beacon is Ns old and no turn is running" alarm.
 A cycle that is killed, wedged, or hung in one unbounded step reaches no further progress point, so its beacon still ages past the grace and both the stale alarm and the turn-end guard still fire.
 
+A child process the pass waits on can outlast the grace on a healthy cycle too: under load the comms-feed sync once ran past 250 seconds, and every re-arm then refused the live watcher as stale.
+`watcher_child` wraps each inline child of the pass, and the watcher's once-a-second child-recorder sidecar keeps the beacon fresh while that child runs, for at most `JG_WATCHER_CHILD_CAP` seconds from its start (default: the stall bound less the grace).
+The extension never beats free of the pass: past the cap the beacon ages again, so a wedged child is refused as stale one stall bound after it started and is evicted with its watcher one cap later.
+Side jobs whose result the pass never reads (the home-summary publication, reconcile requests, and the comms-feed sync) run detached instead and never hold the pass.
+
 A fixed 300-second grace default stops correctly bounding staleness once a home's `JG_POLL` reaches or exceeds it.
 A perfectly healthy watcher mid-wait would then read stale at the edge of every full poll cycle by definition.
 That is exactly what a long-poll home (`JG_POLL=300`) hit against the Claude Stop-hook auto-arm (`bin/jg-claude-stop-autoarm.sh`).

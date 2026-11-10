@@ -308,6 +308,124 @@ test_live_stalled_watch_lock_is_replaced_past_hard_bound() {
   pass "live watcher lock with a beacon past the hard bound is replaced, under it is still refused"
 }
 
+# A slow fleet comms-feed sync must never starve the watcher's beacon. Main's
+# watcher once sat 15 minutes with no beat while its `jg-comms-feed.sh sync`
+# child ran past 250 seconds under load, and every re-arm then refused with
+# "lock held by live pid ... but heartbeat is stale". Here the real exporter
+# has one ledger row to export into a feed that is a FIFO with no reader, so
+# its sync stays in progress until this case opens the FIFO.
+test_slow_comms_feed_sync_keeps_beacon_fresh() (
+  local dir state fakebin feed pid='' drain='' i age status
+  dir=$(make_case slow-comms-feed)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  feed="$dir/comms-feed.fifo"
+  # shellcheck disable=SC2016 # the trap reads the pids when it fires
+  trap '[ -z "$pid" ] || kill "$pid" 2>/dev/null; [ -z "$drain" ] || kill "$drain" 2>/dev/null
+    timeout 2 cat "$feed" >/dev/null 2>&1 || true; wait 2>/dev/null || true' EXIT
+  mkfifo "$feed" || fail "could not make the feed FIFO"
+  printf '%s\n' '{"event":"task.dispatched","ts":1,"task":"slow-feed","kind":"ship","project":"demo"}' \
+    > "$state/fleet-ledger.jsonl"
+  export PATH="$fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$state" JG_COMMS_FEED="$feed"
+  export SIGN_OFF_HOME="$dir/sign-off" JG_WATCHER_STALE_GRACE=3 JG_WATCHER_STALL_BOUND=9999999999
+  export JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999
+  "$WATCH" > "$dir/watch.out" 2> "$dir/watch.err" &
+  pid=$!
+  for ((i=0; i<300; i++)); do
+    [ ! -d "$state/.comms-feed.lock" ] || break
+    sleep 0.1
+  done
+  [ -d "$state/.comms-feed.lock" ] || fail "the comms-feed sync never started: $(cat "$dir/watch.err")"
+  # Hold the sync open for twice the grace.
+  sleep 6
+  [ -d "$state/.comms-feed.lock" ] || fail "the comms-feed sync finished early; the case proves nothing"
+  is_live_non_zombie "$pid" || fail "watcher exited during the slow sync: $(cat "$dir/watch.out" "$dir/watch.err")"
+  status=0
+  "$WATCH" > "$dir/rearm.out" 2> "$dir/rearm.err" || status=$?
+  [ "$status" -eq 0 ] || fail "re-arm during a slow comms-feed sync failed ($status): $(cat "$dir/rearm.err")"
+  grep -Fx "watcher: already running pid $pid" "$dir/rearm.out" >/dev/null \
+    || fail "re-arm did not attach to the live watcher: $(cat "$dir/rearm.out" "$dir/rearm.err")"
+  age=$(bash -c '. "$1"; jg_watcher_progress_age "$2"' _ "$LIB" "$state")
+  [ "$age" -lt 3 ] || fail "watcher beacon is ${age}s old while the comms-feed sync runs (grace 3s)"
+  # The slow sync still delivers once its reader appears.
+  timeout 10 cat "$feed" > "$dir/feed.out" &
+  drain=$!
+  wait "$drain" || fail "the feed reader timed out"
+  drain=
+  grep -F '"text":"dispatched ship demo"' "$dir/feed.out" >/dev/null \
+    || fail "the slow sync did not export its row: $(cat "$dir/feed.out")"
+  pass "a slow comms-feed sync keeps the watcher beacon fresh and a re-arm attaches"
+)
+
+# A slow child the pass must wait on keeps the beacon fresh, but only up to the
+# child cap: a wedged child must still age the beacon so the stale refusal and
+# then the stall-bound eviction fire. The child is the real fleet-ledger capture,
+# which appends to a ledger that is a FIFO with no reader, so it stays in
+# progress until this case opens the FIFO (the comms-feed exporter skips a
+# ledger that is not a regular file). Grace 3s, cap 8s, stall bound 12s.
+test_slow_inline_child_keeps_beacon_until_cap() (
+  local dir state fakebin ledger pid='' arm='' i age status t0 lock_pid
+  dir=$(make_case slow-inline-child)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  ledger="$state/fleet-ledger.jsonl"
+  # shellcheck disable=SC2016 # the trap reads the pids when it fires
+  trap 'for p in "$pid" "$arm"; do [ -z "$p" ] || kill "$p" 2>/dev/null; done
+    timeout 2 cat "$ledger" >/dev/null 2>&1 || true; wait 2>/dev/null || true' EXIT
+  mkdir -p "$dir/config"
+  : > "$dir/config/fleet-ledger"
+  mkfifo "$ledger" || fail "could not make the ledger FIFO"
+  printf '%s\n' 'working [at=1]: a status line for the ledger capture' > "$state/slow-ledger.status"
+  export PATH="$fakebin:$PATH" JG_HOME="$dir" JG_STATE_OVERRIDE="$state" SIGN_OFF_HOME="$dir/sign-off"
+  export JG_WATCHER_STALE_GRACE=3 JG_WATCHER_CHILD_CAP=8 JG_WATCHER_STALL_BOUND=12
+  export JG_POLL=1 JG_SIGNAL_GRACE=1 JG_CHECK_INTERVAL=999999 JG_HEARTBEAT=999999
+  "$WATCH" > "$dir/watch.out" 2> "$dir/watch.err" &
+  pid=$!
+  for ((i=0; i<300; i++)); do
+    [ ! -d "$state/.fleet-ledger.lock" ] || break
+    sleep 0.1
+  done
+  [ -d "$state/.fleet-ledger.lock" ] || fail "the ledger capture never started: $(cat "$dir/watch.err")"
+  t0=$SECONDS
+  # Inside the cap: a live, working watcher.
+  sleep 5
+  status=0
+  "$WATCH" > "$dir/rearm.out" 2> "$dir/rearm.err" || status=$?
+  [ "$status" -eq 0 ] || fail "re-arm inside the child cap failed ($status): $(cat "$dir/rearm.err")"
+  grep -Fx "watcher: already running pid $pid" "$dir/rearm.out" >/dev/null \
+    || fail "re-arm inside the child cap did not attach: $(cat "$dir/rearm.out" "$dir/rearm.err")"
+  age=$(bash -c '. "$1"; jg_watcher_progress_age "$2"' _ "$LIB" "$state")
+  [ "$age" -lt 3 ] || fail "beacon is ${age}s old inside the child cap (grace 3s)"
+  # Past the cap the child is wedged: the beacon ages and a re-arm refuses.
+  sleep $((t0 + 13 - SECONDS))
+  [ -d "$state/.fleet-ledger.lock" ] || fail "the ledger capture finished early; the case proves nothing"
+  status=0
+  "$WATCH" > "$dir/rearm.out" 2> "$dir/rearm.err" || status=$?
+  if [ "$status" -eq 0 ] || ! grep -F 'heartbeat is stale' "$dir/rearm.err" >/dev/null; then
+    fail "a child wedged past the cap kept the beacon fresh: $(cat "$dir/rearm.out" "$dir/rearm.err")"
+  fi
+  # Past the cap plus the stall bound the wedged watcher is replaced.
+  sleep $((t0 + 22 - SECONDS))
+  "$WATCH" > "$dir/evict.out" 2> "$dir/evict.err" &
+  arm=$!
+  for ((i=0; i<150; i++)); do
+    lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+    [ "$lock_pid" != "$arm" ] || break
+    sleep 0.1
+  done
+  [ "$lock_pid" = "$arm" ] || fail "a watcher wedged in a child was not replaced: $(cat "$dir/evict.out" "$dir/evict.err")"
+  # The replacement takes the lock before it prints the eviction line.
+  for ((i=0; i<50; i++)); do
+    ! grep -E "^watcher: replaced stalled pid $pid " "$dir/evict.out" >/dev/null || break
+    sleep 0.1
+  done
+  grep -E "^watcher: replaced stalled pid $pid " "$dir/evict.out" >/dev/null \
+    || fail "the replacement did not report the eviction: $(cat "$dir/evict.out")"
+  is_live_non_zombie "$pid" && fail "the wedged watcher survived its eviction"
+  pid=
+  pass "a slow inline child keeps the beacon fresh up to its cap, then a wedged one ages it and is evicted"
+)
+
 # Drive the real watcher and arm in a private home, including a stopped holder
 # blocked on a TERM-resistant check child. Never signal a discovered real home.
 test_rearm_proves_resumed_supervision() (
@@ -2049,6 +2167,8 @@ test_stale_watch_lock_reclaimed
 test_stale_watch_reclaim_publishes_before_clear
 test_live_stale_watch_lock_is_actionable
 test_live_stalled_watch_lock_is_replaced_past_hard_bound
+test_slow_comms_feed_sync_keeps_beacon_fresh
+test_slow_inline_child_keeps_beacon_until_cap
 test_guard_warnings
 test_lock_single_winner_under_concurrency
 test_lock_steals_dead_pid_lock

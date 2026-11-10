@@ -225,9 +225,10 @@
 # starts in its place, printing "watcher: replaced stalled pid <N> (...)". A
 # holder that survives the five-second TERM grace is re-verified as the same
 # stalled lock holder before KILL; an unproved or surviving holder keeps the
-# refusal and the nonzero exit. The replacement safeguards, including recorded
-# child retirement and missing-beacon handling, are owned by
-# docs/turnend-guard.md "Guard grace and the poll cadence".
+# refusal and the nonzero exit. A child the pass waits on keeps the beacon fresh
+# for at most JG_WATCHER_CHILD_CAP seconds (watcher_child). The replacement
+# safeguards, including recorded child retirement and missing-beacon handling,
+# are owned by docs/turnend-guard.md "Guard grace and the poll cadence".
 # Once per poll the watcher also checks that its home (when it existed at
 # start), its state directory, and its own bin directory still exist; when one
 # is gone it logs "watcher: exiting - <what> no longer exists: <path>" to stderr
@@ -420,6 +421,12 @@ WATCHER_STALE_GRACE=${JG_WATCHER_STALE_GRACE:-${JG_GUARD_GRACE:-$(jg_poll_derive
 # jg_watcher_stall_bound (bin/jg-wake-lib.sh) owns the derivation, shared with
 # the arm that follows this watcher.
 WATCHER_STALL_BOUND=$(jg_watcher_stall_bound "$POLL")
+# How long one child the pass waits on keeps the beacon fresh (watcher_child owns
+# why): by default the stall bound less the grace, so a wedged child is refused as
+# stale one stall bound after it started and evicted one cap after that.
+WATCHER_CHILD_CAP=${JG_WATCHER_CHILD_CAP:-$((WATCHER_STALL_BOUND - WATCHER_STALE_GRACE))}
+case "$WATCHER_CHILD_CAP" in ''|*[!0-9]*|0) WATCHER_CHILD_CAP=$WATCHER_STALE_GRACE ;; esac
+WATCHER_CHILD_MARK="$STATE/.watcher-child"
 HEARTBEAT=${JG_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${JG_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${JG_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps and ask-default decide ticks
@@ -3591,6 +3598,40 @@ watcher_descendants_to() {
   printf -v "$_wd_out" '%s' "$_wd_found"
 }
 
+# watcher_child <command...>: run one child process the pass waits on, in the
+# foreground and exactly as a bare call (same environment, output and exit
+# status), while the child-recorder sidecar keeps the beacon fresh
+# (watcher_child_beat). Between two progress points the pass is only as live as
+# its slowest child: under load the comms-feed sync once ran past 250 seconds, and
+# the unmoving beacon made every re-arm refuse a live, working watcher as stale.
+# The extension is capped at WATCHER_CHILD_CAP from the child's start, so the
+# beacon never beats free of the pass: past the cap it ages again, and a wedged
+# child still reaches the stale refusal and then the stall-bound eviction, which
+# retires it with this watcher (evict_stalled_holder). The mark names this
+# watcher, so a successor's sidecar never beats on a mark a dead one left.
+watcher_child() {
+  local now rc=0
+  jg_epoch_seconds_to now
+  printf '%s %s\n' "$((now + WATCHER_CHILD_CAP))" "$WATCHER_PID" > "$WATCHER_CHILD_MARK" 2>/dev/null || true
+  "$@" || rc=$?
+  : > "$WATCHER_CHILD_MARK" 2>/dev/null || true
+  return "$rc"
+}
+
+# watcher_child_beat <watcher-pid>: one sidecar pass of the extension above.
+# Touches the beacon only while that watcher's own mark is inside its cap. It is
+# defined here, ahead of the sidecar's fork, which is why it touches the beacon
+# itself rather than through watcher_beat (defined after that fork).
+watcher_child_beat() {
+  local until owner now
+  read -r until owner 2>/dev/null < "$WATCHER_CHILD_MARK" || return 0
+  [ "$owner" = "$1" ] || return 0
+  case "$until" in ''|*[!0-9]*) return 0 ;; esac
+  jg_epoch_seconds_to now
+  [ "$now" -lt "$until" ] || return 0
+  touch "$STATE/.last-watcher-beat" 2>/dev/null || true
+}
+
 # watcher_record_children: the child ledger eviction and lock removal retire
 # from (jg_watcher_retire_child_identities). Once a second it records every
 # descendant's identity and keeps each earlier record whose process still
@@ -3602,6 +3643,9 @@ watcher_descendants_to() {
 # still names <root> and that <root> still has the start time it had then. The
 # holder writes the lock's home, path and identity once, and a new holder
 # rewrites its pid, so that recheck decides what the full match decides.
+# Each pass also carries the capped beacon extension for a child the pass is
+# waiting on (watcher_child), so that extension costs no process of its own and
+# ends with the watcher that owns it.
 watcher_record_children() {
   local root=$1 identity=$2 ledger=$3 recorder root_start current lock_pid child child_identity
   local descendants records written='' recorded
@@ -3636,6 +3680,7 @@ watcher_record_children() {
       mv -f "$ledger.next" "$ledger" || return 1
       written=$records
     fi
+    watcher_child_beat "$root"
     sleep 1
   done
 }
@@ -3807,6 +3852,27 @@ reconcile_requests_detached() {
   RECONCILE_REQUEST_PID=$!
 }
 
+# Keep the fleet comms feed current, on for every install with no flag to set.
+# The export is detached for the reason home_summary_refresh_detached gives: a
+# pass that has new rows scans every lead home, and under load it has run past
+# 250 seconds - inline, that stopped the beacon until the guard refused every
+# re-arm as a stale watcher. Nothing in the poll reads the feed. The exporter
+# owns its own cursor and lock, so a pass still running from an earlier cycle,
+# or from a watcher that already exited, makes a new start return at once.
+COMMS_FEED_PID=
+comms_feed_sync_detached() {
+  [ -f "$SCRIPT_DIR/jg-comms-feed.sh" ] && [ ! -L "$SCRIPT_DIR/jg-comms-feed.sh" ] || return 0
+  if [ -n "$COMMS_FEED_PID" ]; then
+    if kill -0 "$COMMS_FEED_PID" 2>/dev/null; then
+      return 0
+    fi
+    wait "$COMMS_FEED_PID" 2>/dev/null || true
+    COMMS_FEED_PID=
+  fi
+  "$SCRIPT_DIR/jg-comms-feed.sh" sync </dev/null >/dev/null 2>&1 &
+  COMMS_FEED_PID=$!
+}
+
 PR_POLL_CONTROL_LOCK=
 PR_POLL_PUBLISH_LOCK=
 
@@ -3879,6 +3945,8 @@ JG_WATCH_DELIVERY_IDENTITY=$(jg_pid_identity "$WATCHER_PID" 2>/dev/null || true)
 printf '%s\n' "$JG_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/null || true
 WATCH_OWNER_DIR=$(jg_lock_link_owner "$WATCH_LOCK") || exit 1
 : > "$WATCH_OWNER_DIR/children" || exit 1
+# A predecessor killed inside a child leaves its mark; this holder starts in none.
+: > "$WATCHER_CHILD_MARK" 2>/dev/null || true
 watcher_record_children "$WATCHER_PID" "$JG_WATCH_DELIVERY_IDENTITY" "$WATCH_OWNER_DIR/children" </dev/null >/dev/null 2>&1 &
 WATCH_CHILD_RECORDER_PID=$!
 if declare -F jg_memory_sampler_ensure >/dev/null; then jg_memory_sampler_ensure || triage_log "host memory sampler failed to start"; fi
@@ -4293,21 +4361,21 @@ while :; do
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
-  [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/jg-fleet-ledger.sh" capture || true
+  [ ! -e "$CONFIG/fleet-ledger" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE JG_CONFIG_OVERRIDE=$CONFIG watcher_child "$SCRIPT_DIR/jg-fleet-ledger.sh" capture || true
   # The wake queue and the task inboxes run on the bus (docs/bus-live.md). A
   # worker's acknowledgement of an inbox record is a `mv` into handled/, so this
   # poll carries that move to the bus as the record's acknowledgement; a bus the
   # poll cannot reach is silent and can never fail or delay a wake.
-  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>"$STATE/.inbox-settle.err" \
+  JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-wake-bus.sh" inbox-settle >/dev/null 2>"$STATE/.inbox-settle.err" \
     || echo "watcher: inbox settle failed: $(tr '\n' ' ' < "$STATE/.inbox-settle.err" | cut -c1-200)" >&2
   # Migration step 5e shadow: the same task leases and busy events, mirrored to
   # the key-value bus beside the files (docs/state-shadow.md). Off costs one file
   # test, and a mirror that cannot reach its bus can never fail or delay a wake.
-  [ ! -e "$CONFIG/state-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-state-bus.sh" sync >/dev/null 2>&1 || true
+  [ ! -e "$CONFIG/state-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-state-bus.sh" sync >/dev/null 2>&1 || true
   # Migration step 5g shadow: the host and fleet numbers on Prometheus plus
   # node_exporter, beside the shell collection (docs/metrics-shadow.md). Off costs
   # one file test, and a shadow that cannot start can never fail or delay a wake.
-  [ ! -e "$CONFIG/metrics-shadow" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-metrics-shadow.sh" sync >/dev/null 2>&1 || true
+  [ ! -e "$CONFIG/metrics-shadow" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-metrics-shadow.sh" sync >/dev/null 2>&1 || true
 
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
     home_summary_refresh_detached
@@ -4329,12 +4397,12 @@ while :; do
   # bus as durable workflow events beside the records (docs/reply-shadow.md). Off
   # costs one file test, and a mirror that cannot reach its bus can never fail or
   # delay a reply, a repost or an escalation.
-  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
+  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-reply-bus.sh" sync >/dev/null 2>&1 || true
   # The same wait, decided by the workflow definition instead of by hand
   # (bin/jg-reply-engine.sh): it folds the event log, records what it would do and
   # acts on nothing. Off costs one file test, and an engine that cannot fold can
   # never fail or delay a reply, a repost or an escalation.
-  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-reply-engine.sh" tick >/dev/null 2>&1 || true
+  [ ! -e "$CONFIG/reply-bus" ] || JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE watcher_child "$SCRIPT_DIR/jg-reply-engine.sh" tick >/dev/null 2>&1 || true
 
   # Endpoint liveness runs before queue observation: a positively dead or
   # missing squad_lead endpoint is relaunched here on a bounded cadence, which
@@ -4361,13 +4429,13 @@ while :; do
   # so it stays ahead of signals: a constant signal stream must not stop a dead
   # source from being restarted.
   if [ -d "$STATE/procevent" ]; then
-    JG_HOME="$JG_HOME" "$SCRIPT_DIR/jg-procevent.sh" reconcile >/dev/null 2>&1 || true
+    JG_HOME="$JG_HOME" watcher_child "$SCRIPT_DIR/jg-procevent.sh" reconcile >/dev/null 2>&1 || true
   fi
 
   # Merge alerts the board refused while it was down are posted once it is back
   # (bin/jg-merge-alert.sh drain); a no-op with nothing queued, and it never wakes.
   if [ -d "$STATE/merge-alerts/pending" ]; then
-    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-merge-alert.sh" drain >/dev/null 2>&1 || true
+    JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" watcher_child "$SCRIPT_DIR/jg-merge-alert.sh" drain >/dev/null 2>&1 || true
   fi
 
   # The decision must read the wake queue as it stood at cycle start, because
@@ -4432,7 +4500,7 @@ EOF
         [ -n "$sf" ] || continue
         case "$f" in *.status) ;; *) continue ;; esac
         reportable_signal_path "$f" || continue
-        JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-chat.sh" note '#fleet' \
+        JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" watcher_child "$SCRIPT_DIR/jg-chat.sh" note '#fleet' \
           "$(basename "$f" .status)" - status - \
           "$(awk 'NF { line = $0 } END { print line }' "$f" 2>/dev/null)" \
           >/dev/null 2>&1 || true
@@ -4553,13 +4621,8 @@ EOF
     fi
   fi
 
-  # Keep the fleet comms feed current, on for every install with no flag to set.
-  # The exporter owns its own cursor and lock and returns at once when nothing
-  # moved, so a cycle pays one cheap process here; its failure is absorbed so a
-  # feed problem can never stall supervision.
-  if [ -f "$SCRIPT_DIR/jg-comms-feed.sh" ] && [ ! -L "$SCRIPT_DIR/jg-comms-feed.sh" ]; then
-    "$SCRIPT_DIR/jg-comms-feed.sh" sync >/dev/null 2>&1 || true
-  fi
+  # Never waited on: a slow feed export cannot hold the beacon (see the helper).
+  comms_feed_sync_detached
 
   run_due_checks
   if [ -n "$signal_wake" ]; then
@@ -4580,7 +4643,7 @@ EOF
   # queued, so this cycle ends on it exactly as the ladder's own owner fire did;
   # a tick that cannot read its definition reports it and leaves the poll running.
   if escalation_reason=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_CONFIG_OVERRIDE="$CONFIG" POLL="$POLL" \
-    "$SCRIPT_DIR/jg-escalation-workflows.sh" tick); then
+    watcher_child "$SCRIPT_DIR/jg-escalation-workflows.sh" tick); then
     # The tick queued this row in its own process, so a batch key this cycle
     # appended earlier can never suppress the delivery of it.
     if [ -n "$escalation_reason" ]; then
@@ -4599,7 +4662,7 @@ EOF
   # was created, so quiet cycles never wake juggernaut or consume model tokens.
   inactive_out=
   if inactive_out=$(JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" \
-    "$SCRIPT_DIR/jg-inactive-reconcile.sh" scan 2>/dev/null); then
+    watcher_child "$SCRIPT_DIR/jg-inactive-reconcile.sh" scan 2>/dev/null); then
     if [ -n "$inactive_out" ]; then
       wake "check: inactive-outcome"
     fi
