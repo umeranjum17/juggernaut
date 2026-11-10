@@ -12,6 +12,7 @@
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the whole suite at a landed commit (default: the tip), one verify at a time and the newest wins: green moves the pin, a red it caused reverts it
 #        jg-trunk.sh green-alarm <project-dir>         raise one alarm to Overwatch once the trunk has had no green commit for no-green-alarm-minutes (15)
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out (both: the last green commit, never the tip)
+#        jg-trunk.sh adopt-tip <project-dir> --reason <text> [--carried-by <task-id>]   Overwatch only: record the trunk's present tip as the lander's own after something else moved it; only if the record is its ancestor or the tip is on origin/<default>
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word (or a waiver); --home moves one lead only
 #        jg-trunk.sh autolive <project-dir>            the batched live step: under a waiver, move every home to the green pin once the trunk is quiet or the hourly cap is due
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
@@ -86,6 +87,16 @@
 # that moved the ref is refused rather than overwritten. The trunk tip is recorded in
 # state/trunk-tip-<project>; a tip that differs from that record was moved by someone other than
 # this script (a lane can `git branch -f`), and every subcommand refuses until it is explained.
+# `adopt-tip` is that explanation, run by Overwatch (a worker is refused), under the trunk lock, without tip_ok. Equal record and tip:
+# "nothing to adopt", nothing written. Two relations are allowed: `forward` (the record is an ancestor of the tip) and `on-default`
+# (the tip is contained in origin/<default>, after a fetch of that one ref; a failed fetch refuses); any other is refused. The landed
+# commits the tip lacks (git rev-list, less those git cherry marks carried) are listed and refused unless --carried-by <task-id> names
+# a lane that is one commit on the tip whose tree equals `git merge-tree --write-tree <record> <tip>`. It writes, in order: the keep
+# ref refs/jg/trunk-adopted/<trunk>/<epoch> at the old record; state/trunk-tip-<project>; the green pin (moved to the tip only for
+# on-default when the old pin is not its ancestor); a red pin whose commit is not on the tip is removed; one row in
+# data/trunk-adoptions.tsv (project, old record, new tip, epoch, relation, lost count, carried-by, reason[, red-removed=<sha>]).
+# The released commit must be an ancestor of the tip. It takes no force or skip flag and never moves the trunk ref (the hook holds).
+# A refusal for a moved trunk is class `wait`, and tip_ok raises one wake keyed by record and branch with the exact adopt-tip line.
 # Only the lander moves the trunk. A worker never lands. A git reference-transaction hook that every
 # subcommand installs in the project refuses any other write to the trunk branch, so `git branch -f trunk`
 # or `git update-ref` by hand is stopped where it happens; the record check above stays as the second lock.
@@ -245,7 +256,12 @@ tip_ok() {
   local want have
   want=$(cat "$STATE/trunk-tip-$PN" 2>/dev/null) || refuse "no trunk for $PN; run: jg-trunk.sh init $PROJ"
   have=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
-  [ "$want" = "$have" ] || refuse "$TRUNK is at ${have:0:12} but the lander last left it at ${want:0:12}; something else moved it, so nothing lands or releases until that is explained"
+  [ "$want" = "$have" ] || {
+    adopt_facts "$want" "$have"
+    [ ! -e "$STATE/trunk-moved-wake-$PN-${want:0:12}-${have:0:12}" ] && : > "$STATE/trunk-moved-wake-$PN-${want:0:12}-${have:0:12}" && \
+    jg_wake_append check "trunk-moved-$PN-${want:0:12}-${have:0:12}" "$TRUNK in $PN is at ${have:0:12} but the lander left it at ${want:0:12} (relation to the record: $ADOPT_REL, unverified until adopt-tip fetches origin; $ADOPT_LOST_N landed commit(s) off the tip). If the move is known, run: $SCRIPT_DIR/jg-trunk.sh adopt-tip $PROJ --reason \"<what moved it>\"$([ "$ADOPT_LOST_N" -eq 0 ] || printf ' --carried-by <task-id>')" >/dev/null 2>&1 || :
+    refuse "$TRUNK is at ${have:0:12} but the lander last left it at ${want:0:12}; something else moved it, so nothing lands or releases until that is explained"
+  }
 }
 
 # The only variables a gate takes from whoever starts it. A gate gives one result from every caller (a worker session,
@@ -306,7 +322,7 @@ classify_refusal() {  # <output file> [<gate log>...]
   local last
   last=$(grep -E '^(REFUSED|error):' "$1" | tail -n 1)
   case $last in
-    *'away mode'*|*'linked to a decision'*|*'still held'*|*'changed while landing'*|*'kept moving'*|*'proof inputs are incomplete'*) echo wait; return ;;
+    *'away mode'*|*'something else moved it'*|*'linked to a decision'*|*'still held'*|*'changed while landing'*|*'kept moving'*|*'proof inputs are incomplete'*) echo wait; return ;;
     "REFUSED: gate "*|"REFUSED: could not read the decisions"*|"REFUSED: this lane is the red"*|"error: cannot check out"*) ;;
     *) echo final; return ;;
   esac
@@ -1189,6 +1205,75 @@ cmd_word() {
   echo "word recorded: $kind ${sha:0:12} in $PN"
 }
 
+# How the branch tip <have> relates to the record <want>: `forward` (the record is an ancestor), `on-default` (the tip is contained in
+# origin/<default>), else `none`. Sets ADOPT_REL, ADOPT_LOST (landed commits the tip lacks: git cherry marks the carried ones) and
+# ADOPT_LOST_N. `fetch` as the third argument first fetches that one default ref and refuses when the fetch fails.
+adopt_facts() {  # <record> <tip> [fetch]
+  local default
+  default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
+  if [ "${3-}" = fetch ]; then
+    git -C "$PROJ" fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" 2>/dev/null || refuse "cannot fetch origin/$default, so the tip cannot be compared with it"
+  fi
+  ADOPT_REL=none
+  if git -C "$PROJ" merge-base --is-ancestor "$1" "$2" 2>/dev/null; then ADOPT_REL=forward
+  elif git -C "$PROJ" rev-parse --verify --quiet "refs/remotes/origin/$default^{commit}" >/dev/null \
+       && git -C "$PROJ" merge-base --is-ancestor "$2" "refs/remotes/origin/$default"; then ADOPT_REL=on-default; fi
+  ADOPT_LOST=$(git -C "$PROJ" rev-list --right-only --cherry-mark "$2...$1" 2>/dev/null | sed -n 's/^+//p' \
+    | while IFS= read -r c; do git -C "$PROJ" log -1 --format='%h %s' "$c"; done)
+  ADOPT_LOST_N=$(printf '%s' "$ADOPT_LOST" | grep -c . || true)
+}
+
+# The one command that ends a trunk the lander did not leave (tip_ok); Overwatch only.
+cmd_adopt_tip() {
+  local dir=${1-} reason='' carried='' want have epoch keep lane meta branch head red released green
+  [ -n "$dir" ] || die "usage: jg-trunk.sh adopt-tip <project-dir> --reason <text> [--carried-by <task-id>]"
+  shift
+  while [ "$#" -gt 0 ]; do
+    case $1 in
+      --reason) [ "$#" -ge 2 ] || die "--reason takes a text"; reason=$2; shift 2 ;;
+      --carried-by) [ "$#" -ge 2 ] || die "--carried-by takes a task id"; carried=$2; shift 2 ;;
+      *) die "adopt-tip takes only --reason and --carried-by; no force or skip flag exists" ;;
+    esac
+  done
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never adopts a trunk tip"
+  [ -n "$(printf '%s' "$reason" | tr -d '[:space:]')" ] || refuse "a reason is required: say what moved the trunk"
+  open_project "$dir"; lock "$STATE/.trunk-$PN.lock"
+  want=$(cat "$STATE/trunk-tip-$PN" 2>/dev/null) || refuse "no trunk for $PN; run: jg-trunk.sh init $PROJ"
+  have=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
+  [ "$want" != "$have" ] || { echo "$TRUNK in $PN is at ${have:0:12}, where the lander left it; nothing to adopt"; return 0; }
+  adopt_facts "$want" "$have" fetch
+  [ "$ADOPT_REL" != none ] || refuse "$TRUNK is at ${have:0:12}, which does not hold the recorded tip ${want:0:12} and is not on origin's default branch; the move is not explained, so it is not adopted"
+  if [ -n "$carried" ]; then
+    jg_pr_task_id_valid "$carried" || die "invalid task id for --carried-by"
+    meta=$STATE/$carried.meta; [ -f "$meta" ] || refuse "--carried-by $carried has no task record at $meta"
+    branch=$(jg_dod_meta_value "$meta" branch); branch=${branch:-fm/$carried}
+    head=$(rev "refs/heads/$branch") || refuse "--carried-by $carried: branch $branch does not exist in $PROJ"
+    [ "$(git -C "$PROJ" rev-list --count "$have..$head")" = 1 ] && [ "$(git -C "$PROJ" rev-parse "$head^")" = "$have" ] \
+      || refuse "--carried-by $carried: $branch must be exactly one commit on $TRUNK at ${have:0:12}"
+    lane=$(git -C "$PROJ" merge-tree --write-tree "$want" "$have" 2>/dev/null) || refuse "--carried-by $carried: the recorded tip ${want:0:12} and $TRUNK do not merge cleanly, so no lane can carry the difference"
+    [ "$(git -C "$PROJ" rev-parse "$head^{tree}")" = "$lane" ] || refuse "--carried-by $carried: the tree of $branch is not the merge of the recorded tip ${want:0:12} and $TRUNK, so it does not carry the lost commits"
+  fi
+  if [ "$ADOPT_LOST_N" -gt 0 ] && [ -z "$carried" ]; then
+    refuse "adopting ${have:0:12} would leave $ADOPT_LOST_N landed commit(s) off $TRUNK; carry them in a lane and adopt with --carried-by <task-id>:
+$ADOPT_LOST"
+  fi
+  released=$(cat "$STATE/trunk-released-$PN" 2>/dev/null || true)
+  [ -z "$released" ] || git -C "$PROJ" merge-base --is-ancestor "$released" "$have" 2>/dev/null \
+    || refuse "the released commit ${released:0:12} is not an ancestor of $TRUNK at ${have:0:12}; a trunk that lost its release is not adopted"
+  epoch=$(date +%s); keep="refs/jg/trunk-adopted/$TRUNK/$epoch"
+  git -C "$PROJ" update-ref "$keep" "$want" || die "cannot write the keep ref $keep"
+  put "$STATE/trunk-tip-$PN" "$have"
+  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  if [ "$ADOPT_REL" = on-default ] && { [ -z "$green" ] || ! git -C "$PROJ" merge-base --is-ancestor "$green" "$have" 2>/dev/null; }; then put "$STATE/trunk-green-$PN" "$have"; fi
+  red=''
+  if [ -f "$STATE/trunk-red-$PN" ]; then
+    red=$(cat "$STATE/trunk-red-$PN"); git -C "$PROJ" merge-base --is-ancestor "$red" "$have" 2>/dev/null || { rm -f -- "$STATE/trunk-red-$PN"; red="red-removed=$red"; }
+    case $red in red-removed=*) ;; *) red='' ;; esac
+  fi
+  row trunk-adoptions.tsv "$PN" "$want" "$have" "$epoch" "$ADOPT_REL" "$ADOPT_LOST_N" "${carried:--}" "$(printf '%s' "$reason" | tr '\t\n' '  ')" ${red:+"$red"}
+  echo "adopted: $TRUNK in $PN is at ${have:0:12} (was recorded at ${want:0:12}; relation $ADOPT_REL, $ADOPT_LOST_N lost; the old record is kept at $keep)"
+}
+
 # The newest earlier commit that went live and was not red; the last release when none did.
 last_green_before() {  # <red sha>
   local c
@@ -1424,6 +1509,7 @@ case "${1:-}" in
   green-alarm) shift; cmd_green_alarm "$@" ;;
   proof) shift; cmd_proof "$@" ;;
   word) shift; cmd_word "$@" ;;
+  adopt-tip) shift; cmd_adopt_tip "$@" ;;
   live) shift; cmd_live "$@" ;;
   autolive) shift; cmd_autolive "$@" ;;
   waiver) shift; cmd_waiver "$@" ;;

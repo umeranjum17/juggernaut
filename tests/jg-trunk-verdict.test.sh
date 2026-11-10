@@ -11,6 +11,7 @@
 #    steered for the verdict once its tip is gone.
 # V4 A conflict verdict written before the tip was stored (9 Nov: gc-a1 held one for a tip that was gone) is judged again.
 # V5 A red gate the lane's own change caused stays final for its head when the tip moves: no new gate run, and the worker is still steered.
+# V6 A moved-trunk final stored by a home on old code holds only while its tip record stands, then the head is tried again.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -134,9 +135,29 @@ test_a_red_gate_the_lane_caused_stays_final_for_its_head() {
   pass 'a red gate the lane caused stays final for its head on a new tip, and its worker is still steered'
 }
 
+# A home on the old code stored the moved-trunk refusal as final for the head (byokit, 8 Nov). It holds only while the tip record it was
+# judged on stands: once adopt-tip (or any hand repair) changes the record, the head is tried again and lands.
+test_a_moved_trunk_verdict_holds_only_while_its_tip_record_stands() {
+  local m
+  home_world moved
+  lane m one; m=$(git -C "$PROJ" rev-parse fm/m); mkdir -p "$HOME_D/data/jg-trunk-landing"
+  printf 'final REFUSED: trunk is at 62f4a6457ec2 but the lander last left it at 78c3eba012a0; something else moved it, so nothing lands or releases until that is explained\n' \
+    > "$HOME_D/data/jg-trunk-landing/m.$m.state"
+  cat "$HOME_D/state/trunk-tip-proj" > "$HOME_D/data/jg-trunk-landing/m.$m.tip"
+  sweep >/dev/null; settle; sweep >/dev/null; settle
+  [ "$(attempts m "$m")" = 0 ] || fail "a moved-trunk verdict on an unchanged record must not be tried again: $(attempts m "$m") attempts"
+  on_trunk work.txt one && fail "the lane must wait while the record stands"
+  hand_tip adopted other.txt x
+  sweep >/dev/null; settle
+  on_trunk work.txt one || fail "the lane must land once the record changed: $(state_of m "$m")"
+  pass 'a moved-trunk final holds while its tip record stands and the head is tried again, and lands, once the record changes'
+}
+
+
 test_a_stack_whose_decisions_read_fails_once_is_tried_again_and_lands
 test_a_conflict_verdict_holds_only_while_its_tip_stands
 test_a_conflict_whose_cause_left_the_trunk_lands_and_its_worker_is_not_steered
 test_a_conflict_verdict_stored_with_no_tip_is_judged_again
 test_a_red_gate_the_lane_caused_stays_final_for_its_head
+test_a_moved_trunk_verdict_holds_only_while_its_tip_record_stands
 printf 'jg-trunk-verdict: ok\n'

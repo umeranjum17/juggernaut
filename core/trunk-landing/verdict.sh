@@ -12,7 +12,7 @@
 #   2. Every verdict is stored with the trunk tip it was judged on, in <task>.<head>.tip beside <task>.<head>.state, the way
 #      `jg-trunk.sh land` keys its own admission record by the tip. For one lane it is the tip read before the landing started; for a
 #      stack it is the tip after the stack's own landings, because a returned lane was judged on top of the stack's lanes that landed.
-#   3. A final conflict holds only while that tip stands: once the trunk moved, the lane is judged again (a conflict attempt stops
+#   3. A final conflict, or a final for a trunk something else moved (a home on older code stored it final), holds only while that tip stands: once the trunk moved, the lane is judged again (a conflict attempt stops
 #      at the rebase, before any gate). A conflict with no stored tip (a record from before this rule) is judged again once.
 #      Every other final (a red gate the lane caused, a second commit) holds for its head on any tip.
 #   4. A worker is steered, and the lead told, only for a verdict that still holds; both key on verdict_reason, which leaves out of a
@@ -66,7 +66,7 @@ verdict_record() {  # <id> <head> <head the branch is at now, or empty> <tip> <j
 verdict_holds() {  # <id> <head> <state line> <project-name>
   local tip
   case $3 in final*) ;; *) return 0 ;; esac
-  [[ $3 =~ $VERDICT_CONFLICT_RE ]] || return 0
+  [[ $3 =~ $VERDICT_CONFLICT_RE || $3 == *'something else moved it'* ]] || return 0
   tip=$(cat "$MEM/$1.$2.tip" 2>/dev/null) || return 1
   [ -n "$tip" ] && [ "$tip" = "$(verdict_tip "$4")" ]
 }
