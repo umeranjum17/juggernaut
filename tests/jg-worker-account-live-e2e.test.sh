@@ -25,6 +25,8 @@ jg_live_gate default-on JG_WORKER_ACCOUNT_LIVE_E2E jq perl
 # shellcheck source=bin/jg-worker-account-lib.sh
 . "$ROOT/bin/jg-worker-account-lib.sh"
 
+for r in pi pi-signed; do real=$(mise which "$r" 2>/dev/null) && PATH="${real%/*}:$PATH"; done
+
 TMP_ROOT=$(jg_test_tmproot jg-worker-account-live)
 # A throwaway HOME keeps the operator's own logins, Anthropic profiles, and Pi
 # settings out of every answer.

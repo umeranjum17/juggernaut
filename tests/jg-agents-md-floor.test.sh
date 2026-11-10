@@ -93,7 +93,7 @@ done <<'LEDGER'
 7|.agents/skills/task-dispatch/SKILL.md|On a `no-mistakes-prod-only` project, classify the task's surface: internal-only
 7|.agents/skills/task-dispatch/SKILL.md|Record the resulting mode, `yolo` merge posture, and the
 7|.agents/skills/task-dispatch/SKILL.md|Treat file or subsystem overlap as a risk signal
-7|.agents/skills/task-dispatch/SKILL.md|A project's declared machine capacity (`config/project-capacity`) still bounds that
+7|.agents/skills/task-dispatch/SKILL.md|A project's declared machine capacity (`config/project-capacity`) and the machine's load
 7|.agents/skills/task-dispatch/SKILL.md|Serialize only for a true semantic dependency, shared mutable
 7|.agents/skills/task-dispatch/SKILL.md|Write the task-specific brief under the brief rules below
 7|.agents/skills/task-dispatch/SKILL.md|When the configured the backlog backlog gate applies, the spawn
