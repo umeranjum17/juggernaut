@@ -1366,6 +1366,10 @@ do_relaunch() {
     else
       die "the replacement agent for $ID was launched, but task $ID's republished record no longer passes endpoint validation (the refusal above names the row), so this transaction cannot say which endpoint to confirm it on; reconcile $META before any further control action"
     fi
+    # The launch owner records the model the worker runs, which can differ from the one asked for
+    # (a Claude account listed in config/claude-1m-accounts runs its [1m] id), so report that one.
+    TARGET_MODEL=$(jg_meta_get "$META" model)
+    [ -n "$TARGET_MODEL" ] || TARGET_MODEL=default
   else
     [ "$(jg_meta_get "$META" control_relaunch_tx)" != "$RELAUNCH_TX" ] \
       || RELAUNCH_META_PUBLISHED=1

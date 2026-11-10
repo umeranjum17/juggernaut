@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Juggernaut's code, private files, or project location | [JG_HOME](#jg_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--jg_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [Claude 1M context window](#claude-1m-context-window-configclaude-1m-accounts), [model allow-lists](#model-allow-lists-configmodel-allow-listjson), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), [provider credential strip](#provider-credentials-stripped-from-every-launch), and [launch environment hook](#launch-environment-hook-configlaunch-env-hook) |
 | Backlog, preferences, and memory | [Backlog](#backlog-configbeads-dir), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [startup memory budget](#startup-memory-budget-configstartup-memory-budget), [host memory guard](#host-memory-guard-confighost-memory), and [supervisor context cap](#supervisor-context-cap-configsupervisor-context-cap) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent Squad Leads | [Squad Lead routes](#squad-lead-routes-datasquad_leadsmd) |
@@ -1315,6 +1315,22 @@ A remote Squad Lead is launched on its host from its own home's configuration, s
 
 [`bin/jg-worker-account-lib.sh`](../bin/jg-worker-account-lib.sh) owns parsing, the sign-in check, and the full list of credentials a Claude launch unsets; [runtime backend verification](verification/runtime-backends.md#worker-account-pin-sign-in-check) records the check against the real runners.
 The worker account pool (`config/account-pool` and `relaunch --account`) is owned by `core/account-pool`.
+
+## Claude 1M context window (config/claude-1m-accounts)
+
+Some Claude accounts can run a model with its 1M-token context window, and a launch asks for it with the model's `[1m]` id, for example `claude-opus-5-5[1m]`.
+A home lists those accounts in `config/claude-1m-accounts`, one per line, so its Claude workers get the 1M window without every dispatch naming the `[1m]` id.
+
+Each line names an account exactly as the task record writes it as `account=`: `ordinary` or the absolute path from `config/claude-account`, or an account id from the account pool.
+Blank lines and lines that start with `#` are ignored.
+
+When a Claude worker launches on a listed account with `claude-opus-5-5`, `claude-fable-5-2`, or `claude-sonnet-5-5`, the spawn launches it as that model's `[1m]` id, prints one notice line, and records the `[1m]` id as the task's `model=`.
+A relaunch reads that recorded id back, so the worker keeps the 1M window.
+A model id that already ends in `[1m]`, another model, another runner, a raw launch command, an account that is not listed, and a launch with no pin and no pool pick stay unchanged.
+The model allow-list and the account checks judge the model the dispatch chose, before the `[1m]` id is applied.
+
+The file is local and gitignored, is read on every spawn and relaunch, and is not inherited into Squad Lead homes, because it describes this home's accounts as the pin does.
+An absent file changes nothing; a file that is present but is not a readable regular file refuses the launch and names the file.
 
 ## Lane floor (config/lane-target)
 

@@ -124,7 +124,9 @@
 #   (bin/jg-model-allowlist.sh owns that rule). A spawn or relaunch whose model is empty or
 #   `default` is refused for every harness and kind, naming the owner rule "No worker lane on
 #   Luna", unless the home declares a worker-default entry for that harness in
-#   config/tool-models.json; the resolved model is what the task record keeps. They are only threaded into harnesses whose
+#   config/tool-models.json; the resolved model is what the task record keeps. A Claude
+#   launch on an account listed in config/claude-1m-accounts runs and records the model's
+#   1M-window [1m] id (claude_1m_model below). They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed. Ultra is the explicit
 #   exception: bin/jg-harness.sh validate-native-effort owns its model scope;
@@ -2281,6 +2283,47 @@ if [ -n "$WORKER_ACCOUNT" ] && [ "$HARNESS" = claude ]; then
   fi
 fi
 jg_account_hook spawn-pick "$HARNESS" "$CONFIG" "$WORKER_ACCOUNT" "${POOL_ACCOUNT_WANT:-}" || exit 1
+
+# Claude 1M context window (config/claude-1m-accounts; docs/configuration.md owns the contract): a
+# Claude launch on a listed account runs a model that offers the 1M window as its [1m] id. The account
+# is the value the task record writes as account=, the pin's declared value or the pool pick's id, so an
+# unpinned, unpooled launch never changes. It runs after the allow-list and the account checks, which
+# judge the model the caller chose, and before the task record and the launch line, so both carry the
+# id the worker runs; a relaunch reads that id back, and an id already ending in [1m] matches no entry.
+JG_CLAUDE_1M_MODELS="claude-opus-5-5 claude-fable-5-2 claude-sonnet-5-5"
+claude_1m_model() { # <harness> <account> <model>: prints the model the launch runs; 1 on an unreadable list
+  local harness=$1 account=$2 model=$3 file=$CONFIG/claude-1m-accounts line
+  case " $JG_CLAUDE_1M_MODELS " in
+  *" $model "*) ;;
+  *) printf '%s\n' "$model"; return 0 ;;
+  esac
+  if [ "$harness" != claude ] || [ -z "$account" ] || { [ ! -e "$file" ] && [ ! -L "$file" ]; }; then
+    printf '%s\n' "$model"
+    return 0
+  fi
+  if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+    echo "error: config/claude-1m-accounts must be a readable regular file naming one Claude account per line: $file" >&2
+    return 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#"${line%%[![:space:]]*}"}
+    line=${line%"${line##*[![:space:]]}"}
+    case "$line" in '' | '#'*) continue ;; esac
+    if [ "$line" = "$account" ]; then
+      printf '%s[1m]\n' "$model"
+      return 0
+    fi
+  done <"$file"
+  printf '%s\n' "$model"
+}
+if [ "$RAW_LAUNCH" = 0 ]; then
+  CLAUDE_1M_ACCOUNT=${WORKER_ACCOUNT_DECLARED:-${POOL_ACCOUNT_ID:-}}
+  CLAUDE_1M_MODEL=$(claude_1m_model "$HARNESS" "$CLAUDE_1M_ACCOUNT" "$MODEL") || exit 1
+  if [ "$CLAUDE_1M_MODEL" != "$MODEL" ]; then
+    echo "notice: config/claude-1m-accounts lists account $CLAUDE_1M_ACCOUNT, so $MODEL launches with the 1M context window as $CLAUDE_1M_MODEL" >&2
+    MODEL=$CLAUDE_1M_MODEL
+  fi
+fi
 
 squad_lead_registry_value() {
   squad_lead_registry_field "$DATA/squad_leads.md" "$1" "$2"
