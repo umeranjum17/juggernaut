@@ -229,6 +229,12 @@
 #   A batch reports such a pair as `batch: DEFERRED` and exits 75 when nothing
 #   else failed. A relaunch and a --squad-lead spawn are never counted against
 #   capacity.
+#   Host load: a fresh ship or scout spawn on a machine whose load has stayed
+#   above config/reaper-load-factor (default 2) times the cores for
+#   config/reaper-load-minutes (default 10), read from the root home, is
+#   deferred the same way: one `deferred:` line naming the load, exit 75, no
+#   record. bin/jg-reaper-lib.sh owns the limit, the window and the history; a
+#   relaunch and a --squad-lead spawn are never deferred for load.
 #   With no harness arg, a operator/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, operator/scout
 #   spawns require an explicit harness so juggernaut cannot silently skip dispatch
@@ -794,6 +800,12 @@ spawn_trunk_branch() {
 . "$SCRIPT_DIR/jg-timeout-lib.sh"
 # shellcheck source=bin/jg-project-capacity-lib.sh
 . "$SCRIPT_DIR/jg-project-capacity-lib.sh"
+# shellcheck source=bin/jg-reaper-lib.sh
+. "$SCRIPT_DIR/jg-reaper-lib.sh"
+# A fresh lane deferred for project capacity or host load: the sysexits
+# "temporary failure" code, so a caller tells a deferral, which leaves the task
+# exactly as queued as it was, from an ordinary failure.
+SPAWN_DEFER_EXIT=75
 # shellcheck source=bin/jg-worker-account-lib.sh
 . "$SCRIPT_DIR/jg-worker-account-lib.sh"
 # shellcheck source=bin/jg-model-allowlist.sh
@@ -1494,9 +1506,9 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
     [ "$KIND" != scout ] || pair_args+=(--scout)
     pair_rc=0
     JG_SPAWN_NO_GUARD=1 "$JG_ROOT/bin/jg-spawn.sh" "${pair_args[@]}" || pair_rc=$?
-    if [ "$pair_rc" -eq "$JG_PROJECT_CAPACITY_DEFER_EXIT" ]; then
-      echo "batch: DEFERRED ${pair%%=*} (${pair#*=}) - its project is at capacity, so it stays queued" >&2
-      [ "$rc" -ne 0 ] || rc=$JG_PROJECT_CAPACITY_DEFER_EXIT
+    if [ "$pair_rc" -eq "$SPAWN_DEFER_EXIT" ]; then
+      echo "batch: DEFERRED ${pair%%=*} (${pair#*=}) - not launched now (its deferred: line says why), so it stays queued" >&2
+      [ "$rc" -ne 0 ] || rc=$SPAWN_DEFER_EXIT
     elif [ "$pair_rc" -ne 0 ]; then
       echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2
       rc=1
@@ -2642,6 +2654,24 @@ else
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
+# Host load admission (bin/jg-reaper-lib.sh owns the limit, the window and the
+# load history, which the root home's watcher samples for the whole machine). A
+# fresh lane on a machine whose load has stayed over its limit for the window is
+# deferred here, before any brief render, endpoint, worktree, record, or backlog
+# move exists, so the task stays exactly as queued as it was and every running
+# lane is untouched. A relaunch replaces a lane that already runs, and a
+# squad_lead is not a lane.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
+  if ! SPAWN_LOAD_STATE=$(jg_juggernaut_root_dir "$JG_HOME" "$STATE" state) ||
+    ! SPAWN_LOAD_CONFIG=$(jg_juggernaut_root_dir "$JG_HOME" "$CONFIG" config); then
+    echo "error: could not resolve the root Juggernaut home that samples this machine's load" >&2
+    exit 1
+  fi
+  if jg_reaper_load_over "$SPAWN_LOAD_STATE" "$SPAWN_LOAD_CONFIG"; then
+    echo "deferred: $JG_REAPER_LOAD_WHY ($SPAWN_LOAD_CONFIG/reaper-load-factor, reaper-load-minutes); task $ID was not launched and its backlog item stays queued - dispatch it again once the load is back under the limit" >&2
+    exit "$SPAWN_DEFER_EXIT"
+  fi
+fi
 # Project capacity admission (bin/jg-project-capacity-lib.sh owns the
 # declaration, what holds a place, and why this is race-safe). A fresh worker
 # for a project whose declared capacity is already held is deferred here, before
@@ -2685,7 +2715,7 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
   fi
   if [ "$JG_PROJECT_CAPACITY_OCCUPANTS" -ge "$SPAWN_PROJECT_CAPACITY" ]; then
     echo "deferred: project $(basename "$PROJ_ABS") admits $SPAWN_PROJECT_CAPACITY worker(s) at once on this machine ($JG_PROJECT_CAPACITY_FILE) and $JG_PROJECT_CAPACITY_OCCUPANTS already hold a place ($JG_PROJECT_CAPACITY_OCCUPANT_IDS); task $ID was not launched and its backlog item stays queued - dispatch it again once one of them records its ready PR or is cleaned up" >&2
-    exit "$JG_PROJECT_CAPACITY_DEFER_EXIT"
+    exit "$SPAWN_DEFER_EXIT"
   fi
 fi
 [ -f "$BRIEF" ] || {

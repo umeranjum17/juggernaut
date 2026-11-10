@@ -48,6 +48,8 @@ journeys:
     command: bash journeys/spawn-dispatch-profile.sh
   claude-1m-context:
     command: bash journeys/claude-1m-context.sh
+  spawn-load-admission:
+    command: bash journeys/spawn-load-admission.sh
   tool-models:
     command: bash journeys/tool-models.sh
   receipt-candidate-hook:

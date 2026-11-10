@@ -1594,6 +1594,19 @@ A malformed or unreadable file refuses every fresh ship or Recon spawn until it 
 Juggernaut cannot see which part of a worker's life uses the resource, so the number bounds whole workers from launch to handoff, and the tightest resource every worker needs should decide it.
 [`bin/jg-project-capacity-lib.sh`](../bin/jg-project-capacity-lib.sh) owns the file format, what holds a place, and why concurrent spawns cannot both take the last one.
 
+## Host load admission (config/reaper-load-factor, config/reaper-load-minutes)
+
+New lanes wait while the machine is overloaded.
+The main home's watcher samples the host load on its check cadence and keeps one record of how long every sample has stayed above the limit.
+The limit is `config/reaper-load-factor` times the core count (default 2, so 64 on 32 cores), and the window is `config/reaper-load-minutes` (default 10); each file holds one positive integer.
+Both files live in the machine's root Juggernaut home, so every local Squad Lead home reads the same limit and the same record.
+While that record is a whole window old and the current one-minute load is still above the limit, a fresh ship or Recon spawn launches nothing, creates no record, leaves the backlog item queued, prints one `deferred:` line naming the load, and exits 75.
+Lanes already running are untouched: a relaunch and a Squad Lead launch are never deferred for load.
+The spawn proceeds as soon as the current load is back under the limit, even before the next sample clears the record.
+A home with no sampler (`config/reaper-off`, or no `/proc`) has no record, so nothing is deferred.
+The same limit and window raise the machine load alarm.
+[`bin/jg-reaper-lib.sh`](../bin/jg-reaper-lib.sh) owns the limit, the window and the record.
+
 ## Preferences and owner-rule clauses (config/preferences/)
 
 A preference is one small JSON block; an owner rule's machine form is a clause. Both follow `defaults/preferences/schema.json`, and nothing here needs new code per rule.

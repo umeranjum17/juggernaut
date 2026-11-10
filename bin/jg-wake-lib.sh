@@ -1756,6 +1756,21 @@ jg_juggernaut_root_home() {
   printf '%s\n' "$home"
 }
 
+# One directory of the local root home, for a fact the root owns for the whole
+# machine (project capacity, the host load history): <own-dir>, the home's own
+# directory, when <home> is the root, so an override of it applies; otherwise the
+# root home's <name>/ directory.
+jg_juggernaut_root_dir() {  # <home> <own-dir> <name>
+  local root home_real
+  root=$(jg_juggernaut_root_home "$1") || return 1
+  home_real=$(CDPATH='' cd -- "$1" 2>/dev/null && pwd -P) || return 1
+  if [ "$root" = "$home_real" ]; then
+    printf '%s\n' "$2"
+  else
+    printf '%s/%s\n' "$root" "$3"
+  fi
+}
+
 # Every Juggernaut state directory on THIS machine whose task records can share a
 # machine-local resource with <first-state>: <first-state> itself, then the local
 # root home and each local squad_lead home registered below it, walked through

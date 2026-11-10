@@ -27,17 +27,23 @@
 # Every stop logs time, pid, age, profile and reason to state/browser-reaper.log, and
 # a sweep that stopped something posts one check row on the wake queue, the fleet's
 # event surface. The load alarm posts one check row per episode in which every sample
-# for ten minutes stayed above config/reaper-load-factor (default 2) times the core
-# count, naming the top process groups by count and age. Machine load is one host
-# fact, so the alarm has one owner, the main home: a lead home (it carries the
-# squad-lead marker, bin/jg-primary-scope-lib.sh) neither samples nor raises it, so
-# no lead spends a model turn on a fact Main already holds. The sweep's own stop
-# event still wakes whichever home stopped the browser.
+# for config/reaper-load-minutes (default 10) stayed above config/reaper-load-factor
+# (default 2) times the core count, naming the top process groups by count and age.
+# Machine load is one host fact, so the alarm has one owner, the main home: a lead
+# home (it carries the squad-lead marker, bin/jg-primary-scope-lib.sh) neither
+# samples nor raises it, so no lead spends a model turn on a fact Main already
+# holds. The sweep's own stop event still wakes whichever home stopped the browser.
+#
+# The load history is the alarm's episode record, state/.browser-reaper-load: the
+# epoch of the first sample above the limit, removed by any sample at or under it.
+# jg_reaper_load_over is its one reader: bin/jg-spawn.sh defers a new lane while the
+# record is a whole window old and the current sample is still above the limit, so a
+# load back under the limit admits at once, before the next sample clears the record.
 #
 # Config: reaper-off (present = do nothing), reaper-browser-age-hours, reaper-roots
-# (one root per line, replacing the defaults), reaper-load-factor. Default roots:
-# /tmp, /var/tmp, the jg-scratch and fm-scratch folders under the cache home, and
-# every recorded state/*.scratch directory. A host without /proc (macOS) does
+# (one root per line, replacing the defaults), reaper-load-factor, reaper-load-minutes.
+# Default roots: /tmp, /var/tmp, the jg-scratch and fm-scratch folders under the
+# cache home, and every recorded state/*.scratch directory. A host without /proc (macOS) does
 # nothing; ponytail: a ps(1) fallback is the upgrade if that is ever wanted.
 # Fixture seams, only with JG_TEST_SEAM=1: JG_REAPER_PS (pid, age, ppid, comm,
 # profile, job rows; the scope and environment checks still read the real pid's
@@ -207,29 +213,62 @@ jg_reaper_load_groups() { # print the top process groups by count, with oldest a
     sort -k1,1nr | head -5 | awk -F '\t' '{ printf "%s%s %d (oldest %dh)", (NR > 1 ? ", " : ""), $2, $1, int($3 / 3600) }'
 }
 
+jg_reaper_load_now() { # print the one-minute host load, or nothing when unreadable
+  local src=/proc/loadavg
+  [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_REAPER_LOADAVG:-}" ] && src=$JG_REAPER_LOADAVG
+  awk 'NF { print $1; exit }' "$src" 2>/dev/null || true
+}
+
+jg_reaper_load_settings() { # <config-dir>: set JG_REAPER_LOAD_CORES, _LIMIT and _WINDOW (seconds)
+  local factor minutes
+  JG_REAPER_LOAD_CORES=$(nproc 2>/dev/null || echo 1)
+  case $JG_REAPER_LOAD_CORES in '' | *[!0-9]* | 0) JG_REAPER_LOAD_CORES=1 ;; esac
+  factor=$(cat "$1/reaper-load-factor" 2>/dev/null) || factor=''
+  case $factor in '' | *[!0-9]* | 0) factor=2 ;; esac
+  minutes=$(cat "$1/reaper-load-minutes" 2>/dev/null) || minutes=''
+  case $minutes in '' | *[!0-9]* | 0) minutes=10 ;; esac
+  JG_REAPER_LOAD_LIMIT=$((JG_REAPER_LOAD_CORES * factor))
+  JG_REAPER_LOAD_WINDOW=$((minutes * 60))
+}
+
+jg_reaper_load_above() { # <load> <limit>: 0 when the load is a number above the limit
+  case $1 in '' | *[!0-9.]*) return 1 ;; esac
+  awk -v l="$1" -v t="$2" 'BEGIN { exit !(l > t) }'
+}
+
+jg_reaper_load_over() { # <state-dir> <config-dir>: 0 while the load history says the host is over its limit
+  local first load now
+  JG_REAPER_LOAD_WHY=''
+  [ ! -e "$2/reaper-off" ] || return 1
+  first=$(cat "$1/.browser-reaper-load" 2>/dev/null) || return 1
+  case $first in '' | *[!0-9]*) return 1 ;; esac
+  jg_reaper_load_settings "$2"
+  now=$(date +%s)
+  [ $((now - first)) -ge "$JG_REAPER_LOAD_WINDOW" ] || return 1
+  load=$(jg_reaper_load_now)
+  jg_reaper_load_above "$load" "$JG_REAPER_LOAD_LIMIT" || return 1
+  # shellcheck disable=SC2034 # read by bin/jg-spawn.sh after sourcing.
+  JG_REAPER_LOAD_WHY="machine load $load above $JG_REAPER_LOAD_LIMIT over $JG_REAPER_LOAD_CORES cores for $(((now - first) / 60)) min"
+}
+
 jg_reaper_load_alarm() { # main home only: one wake per episode of load above factor times cores
-  local now load cores threshold state first src=/proc/loadavg
+  local now load state first
   ! jg_root_is_squad_lead_home "$JG_REAPER_HOME" || return 0
   now=$(date +%s)
-  [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_REAPER_LOADAVG:-}" ] && src=$JG_REAPER_LOADAVG
-  load=$(awk 'NF { print $1; exit }' "$src" 2>/dev/null) || load=''
+  load=$(jg_reaper_load_now)
   case $load in '' | *[!0-9.]*) return 0 ;; esac
-  cores=$(nproc 2>/dev/null || echo 1)
-  case $cores in '' | *[!0-9]* | 0) cores=1 ;; esac
-  threshold=$(jg_reaper_cfg reaper-load-factor)
-  case $threshold in '' | *[!0-9]* | 0) threshold=2 ;; esac
-  threshold=$((cores * threshold))
+  jg_reaper_load_settings "$JG_REAPER_CONFIG"
   state=$JG_REAPER_STATE/.browser-reaper-load
-  if ! awk -v l="$load" -v t="$threshold" 'BEGIN { exit !(l > t) }'; then
+  if ! jg_reaper_load_above "$load" "$JG_REAPER_LOAD_LIMIT"; then
     rm -f "$state" "$state.raised" 2>/dev/null || true
     return 0
   fi
   first=$(cat "$state" 2>/dev/null) || first=''
   case $first in '' | *[!0-9]*) first=$now; printf '%s\n' "$first" >"$state" 2>/dev/null || true ;; esac
-  [ $((now - first)) -ge 600 ] && [ ! -e "$state.raised" ] || return 0
+  [ $((now - first)) -ge "$JG_REAPER_LOAD_WINDOW" ] && [ ! -e "$state.raised" ] || return 0
   : >"$state.raised" 2>/dev/null || true
   jg_reaper_wake browser-reaper-load \
-    "check: machine load $load above $threshold over $cores cores for $(( (now - first) / 60 )) min: top process groups: $(jg_reaper_load_groups)"
+    "check: machine load $load above $JG_REAPER_LOAD_LIMIT over $JG_REAPER_LOAD_CORES cores for $(( (now - first) / 60 )) min: top process groups: $(jg_reaper_load_groups)"
 }
 
 jg_reaper_tick() { # once per watcher check cadence: the sweep, then the alarm
