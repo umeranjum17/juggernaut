@@ -18,17 +18,19 @@
 # When 2 or more lanes are ready, the check stacks up to batch-max (5) of them, oldest done first, into one `bin/jg-trunk.sh land-batch`:
 # one gate over the stack, one trunk move, and only a lane that conflicts or causes a red is returned (reported once, like any refusal).
 # A single ready lane keeps the path above. After a landing `bin/jg-trunk.sh verify` runs the whole suite at that commit apart from the next landing and reverts the
-# commit by itself if it caused a red. The check never goes live on its own authority: that stays the captain's word
+# commit by itself if it caused a red, then verifies the reverted tip so the green pin can follow it. A red never stops a landing; once the
+# trunk has had no green commit for no-green-alarm-minutes (15), `bin/jg-trunk.sh green-alarm`, run every minute, raises one alarm to Overwatch.
+# The check never goes live on its own authority: that stays the captain's word
 # (jg-trunk.sh live), EXCEPT for a project with a line in config/trunk-live-waiver (jg-trunk.sh waiver). For it every tick
 # also starts `live` (a detached job, never blocking a landing), which runs `bin/jg-trunk.sh autolive` and reports a go-live,
 # a failed move, a hold or a home still behind the last go-live after 10 minutes (bin/jg-trunk-live-lag.sh) in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
-# oldest landing not yet live is live-cap-minutes (60) old, whichever is first. A red suite never goes live.
+# oldest landing not yet live is live-cap-minutes (60) old, whichever is first. Only the green pin goes live, so a red suite never does.
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced: a refusal is reported and the worktree stays.
 # bin/jg-delivery-tick.sh runs this check, from the watcher's fast tick and from the host sentinel's minute tick, so a worker's done
 # starts the landing within seconds in a supervised home and within a minute when no model or watcher runs; the outcome
 # line of a landing already cleaned up (its record is gone) comes from data/jg-trunk-landing/outbox.
 # A sweep prints one line per outcome, once: `landed ... cleaned up`, or `not landed: <reason>`. A refusal that only needs time
-# (away mode, a decision still open on linked work, a red trunk) is retried each sweep without repeating the line, and by the start a
+# (away mode, a decision still open on linked work) is retried each sweep without repeating the line, and by the start a
 # finished landing chains (`next`) after its backoff, so a steady queue of new lanes never starves it (core/trunk-landing/verdict.sh).
 # Other refusals (a conflict, a second commit, a failing check) are final for the lane's head; core/trunk-landing/verdict.sh owns
 # that rule for both paths, including that a conflict holds only while the trunk tip it was judged on stands. Per-attempt logs are
@@ -78,18 +80,24 @@ landed_project() {  # <commit>
   [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && printf '%s\n' "$FMH/projects/$pn"
 }
 
-# The post-landing job: the whole suite at the landed commit (bin/jg-trunk.sh verify). A red one is reported; the live step is not
-# its business, so a landing never waits on a go-live.
+# The post-landing job: the whole suite at the landed commit (bin/jg-trunk.sh verify). A commit it reverted leaves a tip no suite has
+# judged, so that tip is verified at once and the green pin, and live, can follow it. A suite that did not pass is reported with the
+# verify's own last line; the live step is not its business, so a landing never waits on a go-live.
 if [ "$1" = post ]; then
-  id=$3; head=$4; cand=$5; proj=; vrc=0
+  id=$3; head=$4; cand=$5; proj=; vrc=0; vlog=$MEM/$3.$4.verify.log
   [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $head =~ ^[0-9a-f]{40,64}$ && $cand =~ ^[0-9a-f]{40,64}$ ]] && proj=$(landed_project "$cand") && [ -d "$proj" ] || exit 2
-  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify "$proj" "$cand" >"$MEM/$id.$head.verify.log" 2>&1 || vrc=$?
+  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify "$proj" "$cand" >"$vlog" 2>&1 || vrc=$?
   [ "$vrc" -ne 0 ] || exit 0
   # A home removed while its suite ran has no outbox to report to; waiting on its lock would never end.
   [ -d "$MEM" ] || exit 0
+  why=$(grep -E '^(reverted |verify: )' "$vlog" | tail -n 1 | cut -c1-300)
   jg_lock_acquire_wait "$MEM/.outbox.lock"
-  printf 'trunk-landing: %s: the whole suite is red at %s: nothing goes live and every home stays where it was (%s)\n' "$id" "${cand:0:12}" "$MEM/$id.$head.verify.log" >> "$MEM/outbox"
+  printf 'trunk-landing: %s: the whole suite did not pass at %s: %s (%s)\n' "$id" "${cand:0:12}" "${why:-it is not live, and every home stays on the last green commit}" "$vlog" >> "$MEM/outbox"
   jg_lock_release "$MEM/.outbox.lock"
+  if grep -q '^reverted ' "$vlog"; then
+    printf '\n--- the reverted tip ---\n' >> "$vlog"
+    JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify "$proj" >>"$vlog" 2>&1 || :
+  fi
   exit 0
 fi
 
@@ -112,8 +120,7 @@ if [ "$1" = live ]; then
   case $live in
     '') live="NOT live: the live step printed nothing (exit $lrc)" ;;
     waiting:*|"already live"*|"not live: it needs"*) exit 0 ;;
-    "NOT live, held:"*) [ "$(cat "$MEM/.live-held-$pn" 2>/dev/null)" != "$live" ] || exit 0; printf '%s\n' "$live" > "$MEM/.live-held-$pn" ;;
-    live\ at*) rm -f "$MEM/.live-held-$pn" ;;
+    live\ at*) ;;
     *) live="NOT live: $live" ;;
   esac
   jg_lock_acquire_wait "$MEM/.outbox.lock"
@@ -238,6 +245,17 @@ for tip in "$STATE"/trunk-tip-*; do
   # An old trunk kept for unlanded work is looked at again; a changed listing is reported, an unchanged one is not.
   out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" retire "$proj" 2>/dev/null | sed 's/^/trunk-landing: /')
   if [ "$out" != "$(cat "$MEM/.retire-$pn" 2>/dev/null)" ]; then printf '%s\n' "$out" > "$MEM/.retire-$pn"; [ -z "$out" ] || printf '%s\n' "$out"; fi
+done
+# A trunk with no green commit for no-green-alarm-minutes raises one alarm to Overwatch (bin/jg-trunk.sh green-alarm owns the rule and
+# raises it once per green pin); looked at every minute.
+for tip in "$STATE"/trunk-tip-*; do
+  [ -z "$QUIET" ] || break
+  [ -f "$tip" ] || continue
+  pn=${tip##*/trunk-tip-}; proj=$FMH/projects/$pn
+  [ -d "$proj" ] && [ "$(local_trunk "$proj")" = yes ] || continue
+  [ ! -e "$MEM/.green-alarm-$pn" ] || [ -n "$(find "$MEM/.green-alarm-$pn" -mmin +0 2>/dev/null)" ] || continue
+  : > "$MEM/.green-alarm-$pn"
+  JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" green-alarm "$proj" >/dev/null 2>&1 || :
 done
 # Under a go-live waiver every tick starts the batched live step (detached, so it never holds a landing back).
 for tip in "$STATE"/trunk-tip-*; do

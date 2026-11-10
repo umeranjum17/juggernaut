@@ -34,7 +34,7 @@ pass "both tables pass the engine lint"
 # landed <output>, and the jg-trunk.sh shape <kind> <count> <reason> in a three-part file name).
 seed_land "t1.$H" "running $NOW";                        seed_land "t2.$H" "running $NOW 4242"
 seed_land "t3.$H" "landed";                              seed_land "t4.$H" "landed cleaned up"
-seed_land "t5.$H" "wait REFUSED: trunk is red";          seed_land "t6.$H.$X" "wait 0 REFUSED: away mode"
+seed_land "t5.$H" "wait REFUSED: linked to a decision";         seed_land "t6.$H.$X" "wait 0 REFUSED: away mode"
 seed_land "t7.$H.$X" "retry 1 REFUSED: read bound";      seed_land "t8.$H" "final REFUSED: conflict in a.txt"
 seed_land "t9.$H.$X" "final 2 REFUSED: gate failed; full log: /x"
 : > "$T/shapes.corpus"

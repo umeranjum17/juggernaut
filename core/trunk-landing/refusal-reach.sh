@@ -9,7 +9,7 @@
 #      re-ring ladder owns an unread one). It is keyed by the head, so a head the lane no longer has is never steered, and a new head
 #      starts a new record.
 #   2. A refusal nobody acted on for ALERT_SECS (the head is unchanged) raises ONE alert line that names the lane and the refusal.
-#   3. A refusal that only needs time (away mode, a red trunk, a held decision) is not the worker's to fix and never comes here.
+#   3. A refusal that only needs time (away mode, a held decision) is not the worker's to fix and never comes here.
 # State: <MEM>/<task>.<head>.refusal, one line `<first seen epoch> <reason checksum> <last steer epoch> <alerted 0|1>`.
 # Needs from the caller: STATE, MEM, FMH, QUIET (set for a silent sweep), and the task's project and branch.
 

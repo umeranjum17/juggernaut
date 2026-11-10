@@ -416,7 +416,7 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
   printf '0\n' > "$fh/verify-rc"; post
   [ "$(cat "$fh/calls")" = verify ] || fail "the post-landing job must run the suite only: $(cat "$fh/calls")"
   printf '1\n' > "$fh/verify-rc"; post
-  assert_contains "$(cat "$ob")" "t1: the whole suite is red at cccccccccccc" "a red suite is reported and nothing goes live"
+  assert_contains "$(cat "$ob")" "t1: the whole suite did not pass at cccccccccccc" "a suite that did not pass is reported and nothing goes live"
   # The live job reports a go-live and a failed move, a new hold once, and nothing for waiting, already live or no waiver.
   : > "$fh/calls"; : > "$ob"; printf '0\n' > "$fh/rc"
   printf 'live at abc on every home (0 skipped, see data/trunk-live.tsv)\n' > "$fh/verdict"; live
@@ -428,8 +428,6 @@ test_the_landing_check_runs_the_batched_live_step_and_reports_it() {
     printf '%s\n' "$out" > "$fh/verdict"; live
   done
   [ ! -s "$ob" ] || fail "waiting, already live and no waiver add no line: $(cat "$ob")"
-  printf 'NOT live, held: the trunk is red at abc; every home stays on the last green commit\n' > "$fh/verdict"; live; live
-  [ "$(grep -c "held: the trunk is red" "$ob")" = 1 ] || fail "a hold is reported once: $(cat "$ob")"
   # A home behind the last go-live (the lag script's one line) is reported once per set of homes, and again after it clears and returns.
   printf '#!/usr/bin/env bash\ncat "%s/lag" 2>/dev/null\n' "$fh" > "$fh/bin/jg-trunk-live-lag.sh"; chmod +x "$fh/bin/jg-trunk-live-lag.sh"
   : > "$ob"; printf 'waiting: live in about 9 min\n' > "$fh/verdict"

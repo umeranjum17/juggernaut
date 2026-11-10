@@ -25,11 +25,7 @@
 #                       a check still running (release-ci-running), every check passed (release-green), none or a
 #                       cancelled one (release-open). A read that fails prints release-unread, which is no state.
 #     live              the last live row of P in data/trunk-live.tsv (its project row is written only when every home moved) holds C
-#     red-fix-landed    state/trunk-red-P stands, a trunk commit after it carries `fixes-red: <red sha>`, and that lane's
-#                       verify log says it passed only with a flaky failure set aside
-#     red               state/trunk-red-P stands
 #     live-partial      the last live row of some home P:<home> holds C
-#     live-held         the last row of P is held:<reason>
 #     home-behind       a move row of P or a home of P was written at a commit that holds C
 #     landed            anything else
 set -u
@@ -92,23 +88,12 @@ release_state() {
 
 # After the landing, on the trunk side: sets WORD and FROM for commit C of project P.
 trunk_state() {
-  local red fix fid key sha st last moved=
+  local key sha st last moved=
   last=$(live_rows | awk -F'\t' '$3 ~ /^live/ { s = $2 } END { print s }')
   if [ -n "$last" ] && holds "$C" "$last"; then WORD=live; FROM=delivery:in-homes; EVIDENCE="data/trunk-live.tsv: $P live at ${last:0:12}"; return 0; fi
-  if red=$(cat "$STATE/trunk-red-$P" 2>/dev/null) && [ -n "$red" ]; then
-    WORD=red; FROM=none; EVIDENCE="state/trunk-red-$P: ${red:0:12}"
-    fix=$(git -C "$REPO" log --format=%H -n 1 --grep="^fixes-red: ${red:0:12}" "$red..$(cat "$STATE/trunk-tip-$P" 2>/dev/null || echo HEAD)" 2>/dev/null)
-    fid=$(awk -F'\t' -v c="$fix" '$3 == c && c != "" { i = $1 } END { print i }' "$DATA/trunk-landings.tsv" 2>/dev/null)
-    if [ -n "$fid" ] && grep -l 'passed only with a flaky failure set aside' "$MEM/$fid".*.verify.log >/dev/null 2>&1; then
-      WORD="red-fix-landed"; EVIDENCE="$EVIDENCE; fixes-red ${fix:0:12} ($fid) passed only with a flaky failure set aside"
-    fi
-    return 0
-  fi
   while IFS=$'\t' read -r key sha; do
     [ -n "$sha" ] && holds "$C" "$sha" && { WORD=live-partial; FROM=delivery:landed; EVIDENCE="data/trunk-live.tsv: $key live at ${sha:0:12}"; return 0; }
   done < <(live_rows homes | awk -F'\t' '$3 ~ /^live/ { s[$1] = $2 } END { for (k in s) print k "\t" s[k] }')
-  st=$(live_rows | tail -n 1 | cut -f3)
-  case $st in held:*) WORD=live-held; FROM=none; EVIDENCE="data/trunk-live.tsv: $P $st"; return 0 ;; esac
   while IFS=$'\t' read -r key sha st; do
     case $st in held:*) continue ;; esac
     [ -n "$sha" ] && holds "$C" "$sha" && moved="$key ${st:0:80}"

@@ -36,6 +36,7 @@
 #   flush-after-minutes   20          ...or until the oldest ready lane has waited this long, whichever is first
 #   live-quiet-minutes    20          under a go-live waiver: the trunk goes live once no landing has happened for this long
 #   live-cap-minutes      60          under a go-live waiver: ...or once the oldest landing not yet live is this old, whichever is first
+#   no-green-alarm-minutes 15         the trunk with no green commit this long (since the oldest commit above the green pin landed) raises one alarm to Overwatch
 _JG_TRUNK_PROTECTED='bin/jg-merge-* bin/jg-pr-merge.sh bin/jg-trunk* bin/jg-dod-lib.sh bin/jg-captain-hold.sh bin/jg-test-run.sh bin/jg-lint.sh bin/jg-ci-* bin/jg-update.sh bin/jg-ff-lib.sh bin/jg-stack.sh core/merge-on-green/* core/merge-card/* core/owner-guard/* core/owner-rules/* core/receipts/* core/teardown/* core/delete-guard/* core/kill-guard/* policy/gate/* .github/workflows/*'
 
 # shellcheck disable=SC2016 # the command substitution runs in the gate's shell, not here
@@ -92,6 +93,7 @@ jg_trunk_policy() {  # <key> [<project>]
       flush-after-minutes) val=20 ;;
       live-quiet-minutes) val=20 ;;
       live-cap-minutes) val=60 ;;
+      no-green-alarm-minutes) val=15 ;;
       *) return 1 ;;
     esac
   fi

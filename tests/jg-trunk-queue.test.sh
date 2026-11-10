@@ -100,7 +100,6 @@ test_a_red_the_suite_finds_after_a_batch_is_traced_to_its_one_commit_and_reverte
   git -C "$PROJ" cat-file -e trunk:t/e2.test.sh 2>/dev/null && fail "e2's change is undone on the tip"
   git -C "$PROJ" cat-file -e trunk:t/e1.test.sh || fail "e1 stays on the trunk"
   git -C "$PROJ" cat-file -e trunk:t/e3.test.sh || fail "e3 stays on the trunk"
-  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "a reverted red does not stop landings"
   assert_contains "$out" "e2" "the revert names the lane"
   pass 'a red the whole suite finds after a batch is traced to the one commit that caused it and reverted by itself'
 }

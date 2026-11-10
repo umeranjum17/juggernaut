@@ -1,4 +1,4 @@
-machine	lane-delivery	a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-live.tsv, state/trunk-red-<project>, data/trunk-releases.tsv and its release pull request	core/machines/observers/lane-delivery.sh
+machine	lane-delivery	a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-live.tsv, data/trunk-releases.tsv and its release pull request	core/machines/observers/lane-delivery.sh
 state	coding	initial	The worker is still on it: its last status line is not done.	-
 state	ready	normal	The worker said done, and the proof for that commit is not complete yet, so the landing check does not start it.	-
 state	admitted	normal	The proof is complete and the change waits for the landing check to start it.	-
@@ -6,7 +6,6 @@ state	landing	normal	The landing is under way right now.	-
 state	refused	normal	The landing was refused: it waits, is tried again, or needs a new commit, as the reason says.	reason
 state	landed	normal	The change is on the trunk. No home was moved to it yet.	commit
 state	home-behind	normal	A go-live for the change was tried, and no home runs it yet: the move failed or was rolled back.	commit
-state	live-held	normal	The go-live is held for a reason that is written down, so no home moves.	reason
 state	live-partial	normal	Some homes run the change and others do not.	commit
 state	live	normal	Every home runs the change.	commit
 state	cleanup-refused	normal	The change landed, and the lane's cleanup was refused, so its record and work copy still stand.	reason
@@ -17,19 +16,15 @@ state	release-green	normal	The change is in the release pull request, every chec
 state	merged	normal	The release pull request that holds the change merged, and the next trunk is not cut yet.	pr
 state	rolled	terminal	The change is on the main branch and a new trunk was cut after it.	pr
 state	reverted	terminal	The change was reverted on the trunk and does not run.	commit
-state	red	normal	The trunk is red, so no home moves to the change until a whole-suite run clears it.	red
-state	red-fix-landed	normal	The trunk is red, a fix for it landed, and its run passed only with a flaky failure set aside, so the red stays.	red
 edge	coding	t1-done	ready	bin/jg-lavish-guard.sh:append	-	the worker appends a done line for its head	jg-machine-lane-delivery.test.sh
 edge	ready	t2-proof	admitted	core/trunk-landing/trunk-landing.sh:check	-	bin/jg-trunk.sh proof finds the receipt, the merge-card evidence and the sealed run at the head	jg-machine-lane-delivery.test.sh
 edge	admitted	t3-start	landing	core/trunk-landing/trunk-landing.sh:check	-	no landing runs and the flush rule lets the lane go	jg-machine-lane-delivery.test.sh
 edge	landing	t4-land	landed	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-trunk.sh land or land-batch writes the lane's data/trunk-landings.tsv row	jg-machine-lane-delivery.test.sh
 edge	landing	t4-refuse	refused	core/trunk-landing/trunk-landing.sh:run	-	the lander refuses; the state file holds wait, retry or final with the reason	jg-machine-lane-delivery.test.sh
 edge	refused	t5-retry	landing	core/trunk-landing/trunk-landing.sh:check	-	a wait on each sweep and on the start a finished landing chains after its 2 minute backoff, a retry after that backoff, a final conflict once the trunk tip it was judged on is gone (core/trunk-landing/verdict.sh)	jg-machine-lane-delivery.test.sh
-edge	landed	t6-held	live-held	bin/jg-trunk.sh:cmd_autolive	-	the go-live step finds a reason to hold and writes a held: row	jg-machine-lane-delivery.test.sh
 edge	landed	t7-live	live	bin/jg-trunk.sh:go_live	-	every home moved to a commit that holds the change, and the project's live row is written	jg-machine-lane-delivery.test.sh
 edge	landed	t7-partial	live-partial	bin/jg-trunk.sh:go_live	-	some homes moved to a commit that holds the change	jg-machine-lane-delivery.test.sh
 edge	landed	t7-behind	home-behind	bin/jg-trunk.sh:go_live	-	the move to a commit that holds the change failed or was rolled back in every home	jg-machine-lane-delivery.test.sh
-edge	live-held	t7-live	live	bin/jg-trunk.sh:go_live	-	the reason of the hold is gone and every home moved	jg-machine-lane-delivery.test.sh
 edge	home-behind	t7-partial	live-partial	bin/jg-trunk.sh:go_live	-	a later move reached some homes	jg-machine-lane-delivery.test.sh
 edge	home-behind	t7-live	live	bin/jg-trunk.sh:go_live	-	a later move reached every home	jg-machine-lane-delivery.test.sh
 edge	live-partial	t7-live	live	bin/jg-trunk.sh:go_live	-	the homes left behind moved	jg-machine-lane-delivery.test.sh
@@ -48,11 +43,6 @@ edge	release-green	t11-merge	merged	bin/jg-pr-merge.sh:main	-	the guarded merge,
 edge	merged	t12-rollover	rolled	bin/jg-trunk.sh:cmd_rollover	-	the landing check cuts the next trunk from the main branch	jg-machine-lane-delivery.test.sh
 edge	landed	t13-refused	cleanup-refused	core/trunk-landing/trunk-landing.sh:run	-	bin/jg-teardown.sh refuses the lane's cleanup after the landing	jg-machine-lane-delivery.test.sh
 edge	cleanup-refused	t13-cleaned	landed	core/lead-sweep/lead-sweep.sh:main	-	the sweep's unforced cleanup removes the lane record	jg-machine-lane-delivery.test.sh
-edge	red	t14-clear	landed	bin/jg-trunk.sh:cmd_verify	-	a whole-suite run passes on a commit past the red one and removes the red pin	jg-machine-lane-delivery.test.sh
-edge	landed	x1-red	red	bin/jg-trunk.sh:cmd_verify	-	a whole-suite run is red and could not be charged to one commit, or a CI red pins the trunk	jg-machine-lane-delivery.test.sh
-edge	home-behind	x1-red	red	bin/jg-trunk.sh:cmd_verify	-	a whole-suite run is red and could not be charged to one commit	jg-machine-lane-delivery.test.sh
-edge	live-partial	x1-red	red	bin/jg-trunk.sh:cmd_verify	-	a whole-suite run is red and could not be charged to one commit	jg-machine-lane-delivery.test.sh
-edge	live	x1-red	red	bin/jg-trunk.sh:cmd_ci	-	CI is red at a live commit and every home is pinned back	jg-machine-lane-delivery.test.sh
-edge	red	x2-fix	red-fix-landed	bin/jg-trunk.sh:cmd_verify	-	a fixes-red commit landed and its run passed only with a flaky failure set aside, which leaves the pin; no move leaves this state (row 0)	jg-machine-lane-delivery.test.sh
+edge	live	x1-ci-red	home-behind	bin/jg-trunk.sh:cmd_ci	-	CI is red at a live commit, so the green pin and every home move back to the last green commit	jg-machine-lane-delivery.test.sh
 edge	landed	s18-revert	reverted	bin/jg-trunk.sh:revert_commit	-	the post-landing whole suite charges the change with a red and reverts it	jg-machine-lane-delivery.test.sh
 observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/lane-delivery.sh" "$1"

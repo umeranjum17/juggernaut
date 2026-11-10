@@ -10,9 +10,9 @@
 # T18 The landing check tries a retry refusal again after a 2 minute backoff and lands it when it passes; a refusal the machine causes
 #    on every try is tried 3 times, then final with one report, so no lane is forgotten and none is retried for ever.
 # T19 A wait refusal is never left stale: while every check sweep finds another landing running, the start that landing's end chains
-#    (`next`) restarts a land-next lane refused for a red trunk once the red is gone, and it lands with no hand step (10 Nov: three lanes sat
-#    hours on a red cleared long before, while newer lanes landed past them); a lane whose red still holds is judged again, stays waiting,
-#    and is not restarted in a loop.
+#    (`next`) restarts a land-next lane refused in away mode once away mode ends, and it lands with no hand step (10 Nov: three lanes sat
+#    hours on a wait cleared long before, while newer lanes landed past them); a lane whose wait still holds is judged again, stays
+#    waiting, and is not restarted in a loop. A red trunk is never a wait (fric-no-red-trunk-stop), so away mode stands in for it.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -87,13 +87,13 @@ test_a_wait_whose_reason_cleared_lands_while_the_check_finds_the_trunk_busy() {
   local m w1 w2 n1 busy other
   world wait-cleared; m=$HOME_D/data/jg-trunk-landing
   cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
-  # w1, marked land-next, is refused on a red trunk and waits.
-  tip > "$HOME_D/state/trunk-red-proj"
+  # w1, marked land-next, is refused in away mode and waits.
+  : > "$HOME_D/state/.afk"
   lane w1 one; w1=$(git -C "$PROJ" rev-parse fm/w1); : > "$HOME_D/state/w1.land-next"
   sweep >/dev/null; settle
-  grep -q '^wait REFUSED: trunk is red at ' "$m/w1.$w1.state" || fail "the red trunk must hold w1 in wait: $(cat "$m/w1.$w1.state")"
-  # The red clears hours later, while another lane's landing runs whenever the check sweeps, and a new lane n1 reports done.
-  rm -f "$HOME_D/state/trunk-red-proj"; touch -d '3 hours ago' "$m/w1.$w1.state"
+  grep -q '^wait REFUSED: away mode' "$m/w1.$w1.state" || fail "away mode must hold w1 in wait: $(cat "$m/w1.$w1.state")"
+  # Away mode ends hours later, while another lane's landing runs whenever the check sweeps, and a new lane n1 reports done.
+  rm -f "$HOME_D/state/.afk"; touch -d '3 hours ago' "$m/w1.$w1.state"
   sleep 300 & busy=$!; other=$(printf 'c%.0s' $(seq 40))
   printf 'running %s %s\n' "$(date +%s)" "$busy" > "$m/x1.$other.state"
   lane n1 two work2.txt; n1=$(git -C "$PROJ" rev-parse fm/n1)
@@ -102,25 +102,23 @@ test_a_wait_whose_reason_cleared_lands_while_the_check_finds_the_trunk_busy() {
   # That landing ends and starts the next one at once, as every landing does.
   kill "$busy"; wait "$busy" 2>/dev/null; printf 'landed cleaned up\n' > "$m/x1.$other.state"
   chained_start; settle
-  grep -q '^landed' "$m/w1.$w1.state" || fail "w1 must land once its red is gone, with no hand step: $(cat "$m/w1.$w1.state")"
+  grep -q '^landed' "$m/w1.$w1.state" || fail "w1 must land once away mode ends, with no hand step: $(cat "$m/w1.$w1.state")"
   grep -q '^landed' "$m/n1.$n1.state" || fail "n1 must land with it: $(cat "$m/n1.$n1.state")"
   git -C "$PROJ" log --format=%s trunk | grep -qx 'ticket w1' || fail "the trunk must hold w1"
-  # w2 is refused on a red that still holds: judged again after the backoff, it stays waiting, and a second start at once tries nothing.
-  # The red is pinned once the post-landing suite has moved the green pin to the tip, so its green verdict cannot clear it.
-  for _ in $(seq 1 300); do [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" != "$(tip)" ] || break; sleep 0.2; done
-  [ "$(cat "$HOME_D/state/trunk-green-proj" 2>/dev/null)" = "$(tip)" ] || fail "the post-landing suite must move the green pin to the tip"
-  tip > "$HOME_D/state/trunk-red-proj"
+  # w2 is refused in away mode that still holds: judged again after the backoff, it stays waiting, and a second start at once tries nothing.
+  : > "$HOME_D/state/.afk"
   lane w2 three work3.txt; w2=$(git -C "$PROJ" rev-parse fm/w2)
   sweep >/dev/null; settle
-  grep -q '^wait REFUSED: trunk is red at ' "$m/w2.$w2.state" || fail "the red trunk must hold w2 in wait: $(cat "$m/w2.$w2.state")"
+  grep -q '^wait REFUSED: away mode' "$m/w2.$w2.state" || fail "away mode must hold w2 in wait: $(cat "$m/w2.$w2.state")"
   touch -d '3 hours ago' "$m/w2.$w2.state"
   chained_start; settle
   [ "$(attempts w2 "$w2")" = 2 ] || fail "the chained start must judge w2 again: $(attempts w2 "$w2") tries"
-  grep -q '^wait REFUSED: trunk is red at ' "$m/w2.$w2.state" || fail "w2 must stay waiting while its red holds: $(cat "$m/w2.$w2.state")"
+  grep -q '^wait REFUSED: away mode' "$m/w2.$w2.state" || fail "w2 must stay waiting while away mode holds: $(cat "$m/w2.$w2.state")"
   chained_start; settle
   [ "$(attempts w2 "$w2")" = 2 ] || fail "a lane just refused must not restart itself in a loop: $(attempts w2 "$w2") tries"
-  ! git -C "$PROJ" log --format=%s trunk | grep -qx 'ticket w2' || fail "w2 must not land on a red trunk"
-  pass 'a wait whose red cleared lands on the start a finished landing chains, and a wait whose red holds stays waiting with no loop'
+  ! git -C "$PROJ" log --format=%s trunk | grep -qx 'ticket w2' || fail "w2 must not land in away mode"
+  rm -f "$HOME_D/state/.afk"
+  pass 'a wait whose reason cleared lands on the start a finished landing chains, and a wait whose reason holds stays waiting with no loop'
 }
 
 test_a_refusal_is_classed_wait_retry_or_final_from_its_output

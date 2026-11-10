@@ -12,7 +12,7 @@
 #    and a lane lands only with its whole proof at its head (receipt, approved merge-card evidence, sealed done-done run); the owner signature never blocks it.
 # T13 The journey: four lanes ready at once, three land in order with no human or lead step, the red one is refused,
 #    and a commit that passes the landing check but breaks the whole suite is reverted by itself after the landing and
-#    the lane is told; a revert that cannot apply cleanly writes the red pin instead.
+#    the lane is told; a revert that cannot apply cleanly raises one alert, pins nothing, and the next lane still lands.
 # The done-done journey journeys/trunk-landing.sh runs this file and seals its output.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
@@ -104,7 +104,7 @@ test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates() {
   local out rc=0 sha lib="$ROOT/bin/jg-trunk-policy-lib.sh"
   world foreign
   rm -f "$HOME_D/config/trunk-policy"  # no override at all: the built-in defaults decide, and they are Juggernaut's own suite
-  # The fixture tracks a file under data/, which Juggernaut's own invariant would reject silently (an empty log, a red pin).
+  # The fixture tracks a file under data/, which Juggernaut's own invariant would reject silently (an empty log, a verify that never passes).
   lane f1 one data/notes.txt
   out=$(trunk land f1 2>&1) || fail "a project with no gates set must land with none run: $out"
   assert_contains "$out" "no landing gate" "the landing must say it ran no gate"
@@ -112,12 +112,7 @@ test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates() {
   sha=$(tip)
   out=$(trunk verify "$PROJ" "$sha" 2>&1) || fail "verify with no gate must not fail: $out"
   assert_contains "$out" "no verify gate for proj" "verify must say it had no gate"
-  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "no gate means nothing can go red"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$sha" ] || fail "verify with no gate must leave the trunk green so the home can go on"
-  # A red pin the old default wrote is cleared by running verify again, and landings resume.
-  printf '%s\n' "$sha" > "$HOME_D/state/trunk-red-proj"; rm -f "$HOME_D/state/trunk-green-proj"
-  trunk verify "$PROJ" "$sha" >/dev/null 2>&1 || fail "verify must clear a red pin the removed default wrote"
-  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "verify must clear that red pin"
   # The project's own gate-full is its verify gate when it set no gate-verify; its own gate-verify wins over it; both fail for real.
   printf 'gate-full@proj=test ! -e BAD\n' > "$HOME_D/config/trunk-policy"
   out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$HOME_D/config' jg_trunk_gate gate-verify proj '$PROJ' trunk")
@@ -133,7 +128,7 @@ test_a_project_that_is_not_juggernaut_never_runs_juggernauts_gates() {
   out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$W/none' jg_trunk_gate gate-verify self '$W/self' HEAD")
   assert_contains "$out" "bin/jg-test-run.sh --all" "the Juggernaut repository must keep its built-in verify gate"
   out=$(bash -c ". '$lib'; JG_CONFIG_OVERRIDE='$W/none' jg_trunk_gate gate-verify proj '$PROJ' trunk") && fail "another project must have no built-in gate, got '$out'"
-  pass 'a project that is not Juggernaut runs only the gates its home set for it, and none clears its red pin'
+  pass 'a project that is not Juggernaut runs only the gates its home set for it'
 }
 
 test_a_landing_rebases_the_lane_by_itself() {
@@ -295,14 +290,17 @@ test_three_lanes_land_in_order_a_red_one_is_refused_and_a_post_land_red_is_rever
   for _ in $(seq 1 150); do [ -s "$W/backlog-calls" ] && break; sleep 0.2; done  # the revert tells the lane just after it lands
   assert_contains "$(cat "$W/backlog-calls" 2>/dev/null)" "update j5 --append-notes" "the lane's ticket is told"
   assert_contains "$(cat "$HOME_D/state/.wake-queue")" "went red after it landed and was reverted by itself" "Overwatch is told"
-  [ ! -e "$HOME_D/state/trunk-red-proj" ] || fail "a reverted red must not stop landings"
-  # A revert that cannot apply cleanly writes the red pin instead, and landings stop except a fixes-red commit.
+  # A revert that cannot apply cleanly raises one alert and pins nothing: the green pin stays on the last green commit, and the next lane lands.
   lane k1 'echo "not ok - k1 breaks the suite" >&2; exit 1' t/k1.test.sh; trunk land k1 >/dev/null 2>&1 || fail "k1 must land by hand"
   lane k2 'exit 0' t/k1.test.sh; git -C "$W/lanes/k2" reset -q --hard trunk; commit_in "$W/lanes/k2" t/k1.test.sh 'echo "not ok - k1 breaks the suite" >&2; echo more; exit 1' "ticket k2"; prove k2
   trunk land k2 >/dev/null 2>&1 || fail "k2 must land by hand"
+  sha=$(cat "$HOME_D/state/trunk-green-proj")
   rc=0; out=$(JG_HOME="$HOME_D" trunk verify "$PROJ" "$(git -C "$PROJ" log --format=%H --grep='ticket k1' -n 1 trunk)" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] && [ -e "$HOME_D/state/trunk-red-proj" ] || fail "a revert that does not apply must write the red pin: $out"
-  assert_contains "$out" "could not be reverted by itself" "the red must say it could not be undone"
+  [ "$rc" -ne 0 ] || fail "a red that cannot be reverted is not green: $out"
+  assert_contains "$out" "could not be reverted by itself; landings go on, and live stays on the last green commit ${sha:0:12}" "the red must say it could not be undone and that landings go on"
+  assert_contains "$(cat "$HOME_D/state/.wake-queue")" "could not be reverted by itself" "Overwatch is told once"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$sha" ] || fail "an unreverted red leaves the green pin on the last green commit"
+  lane k3 'exit 0' t/k3.test.sh; out=$(trunk land k3 2>&1) || fail "a red that could not be reverted never stops the next landing: $out"
   pass 'three lanes land in order with no human step, the red lane is refused, and a post-land red is reverted'
 }
 

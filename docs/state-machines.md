@@ -16,7 +16,7 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `captain-call` | `task held for the captain` | `bin/jg-captain-hold.sh` | 4 | 7 | `bin/jg-machine.sh next captain-call <id>` |
 | `delivery` | `a change in core/machines/changes.tsv, its trunk commit, data/trunk-live.tsv and its config/ switch` | `core/machines/observers/delivery.sh` | 7 | 22 | `bin/jg-machine.sh next delivery <id>` |
 | `landing` | `data/jg-trunk-landing/<task>.<head>[.<ctx>].state` | `core/trunk-landing/trunk-landing.sh` | 6 | 8 | `bin/jg-machine.sh next landing <id>` |
-| `lane-delivery` | `a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-live.tsv, state/trunk-red-<project>, data/trunk-releases.tsv and its release pull request` | `core/machines/observers/lane-delivery.sh` | 20 | 36 | `bin/jg-machine.sh next lane-delivery <id>` |
+| `lane-delivery` | `a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-live.tsv, data/trunk-releases.tsv and its release pull request` | `core/machines/observers/lane-delivery.sh` | 17 | 29 | `bin/jg-machine.sh next lane-delivery <id>` |
 | `markers` | `state/.<kind>-<pane key> files` | `bin/jg-watch.sh` | 3 | 2 | `bin/jg-machine.sh next markers <id>` |
 | `status-verb` | `state/<id>.status prefix` | `core/classify/cmd/jg-classify/classify.go` | 14 | 13 | `bin/jg-machine.sh next status-verb <id>` |
 | `task-inbox` | `state/<task>.inbox/NNN.msg with .delivery.jsonl and the ladder markers (id: <task>:<NNN>)` | `bin/jg-task-inbox-lib.sh` | 12 | 40 | `bin/jg-machine.sh next task-inbox <id>` |

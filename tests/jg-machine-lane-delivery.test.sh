@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Behavior test for the lane-delivery machine (core/machines/tables/lane-delivery.tsv): one command says where a lane's
 # change stands between the worker's done line and the main branch. Every record is made here in the shape its writer
-# prints (status lines, lane meta, landing state files, data/trunk-*.tsv rows, the red pin, a stub gh for the release
-# pull request); no fleet record is copied. The six shapes of section 6.5 of the plan are built from these records:
+# prints (status lines, lane meta, landing state files, data/trunk-*.tsv rows, a stub gh for the release
+# pull request); no fleet record is copied. The shapes of section 6.5 of the plan are built from these records:
 #   fric-s2-wait-or-final: done, then a `final` landing refusal (9 Nov)                     -> refused
 #   a landing row with an empty verify log (lead-sweeps-landed-lanes, 9 Nov)               -> landed
 #   the green pin b7b93282e: a hook-failed project row, a rolled-back home row, no live row -> home-behind
 #   release pull request 813 with run 42711888100 red (Changed tests 3, CI required)       -> release-red
 #   the same pull request, 18 of 18 checks green and not merged (10 Nov)                    -> release-green
-#   01:23:11Z on 10 Nov: the red pin 9f5bbb3af0d1 stands, the fixes-red commit 77c927cfa landed and its verify log
-#   says it passed only with a flaky failure set aside (fric-gate-shard-timeout)            -> red-fix-landed
+#   a red CI at the live commit pins the green pin and every home back                    -> home-behind
+# A red trunk is no state: nothing pins it or holds a go-live (fric-no-red-trunk-stop), so section 6.5's red, red-fix-landed
+# and live-held states and its t6 and t14 moves are gone.
 # Each walk takes the moves its writers make, every observation is replayed against the table as a corpus, every edge
 # of the table is seen at least once, and each state names the state of an older table that it was read from.
 set -u
@@ -70,11 +71,11 @@ see() {
 
 bash "$JM" check lane-delivery >/dev/null; expect_code 0 "$?" "the table lints"
 bash "$JM" coverage lane-delivery >/dev/null; expect_code 0 "$?" "every edge names its test"
-assert_equals 20 "$(grep -c '^state	' "$TABLES/lane-delivery.tsv")" "the table holds the 20 states of section 6.5"
-assert_equals 14 "$(awk -F'\t' '$1 == "edge" && $3 ~ /^t[0-9]+-/ { split($3, a, "-"); print a[1] }' "$TABLES/lane-delivery.tsv" | sort -u | wc -l)" "its edges carry the 14 transitions t1 to t14"
-pass "the table holds 20 states and the 14 transitions"
+assert_equals 17 "$(grep -c '^state	' "$TABLES/lane-delivery.tsv")" "the table holds the 17 states of section 6.5 that a red trunk does not make"
+assert_equals 12 "$(awk -F'\t' '$1 == "edge" && $3 ~ /^t[0-9]+-/ { split($3, a, "-"); print a[1] }' "$TABLES/lane-delivery.tsv" | sort -u | wc -l)" "its edges carry the 12 transitions t1 to t13, with no t6"
+pass "the table holds 17 states and the 12 transitions"
 
-# Walk 1, fric-s2-wait-or-final: from coding to rolled, through a refusal, a refused cleanup, a hold and a red release run.
+# Walk 1, fric-s2-wait-or-final: from coding to rolled, through a refusal, a refused cleanup and a red release run.
 L=fric-s2-wait-or-final; lane $L p1
 status $L working "on it"; see $L - coding
 status $L "done" "ready in branch feature/$L (local-trunk)"; see $L t1-done ready
@@ -87,7 +88,6 @@ land $L; see $L t4-land landed
 lstate $L "landed cleanup refused, nothing was forced: refused: the worktree has uncommitted changes"; see $L t13-refused cleanup-refused
 assert_contains "$(bash "$OBS" detail $L)" $'chain\tlanded' "a refused cleanup still names where the change is"
 rm -f "$S/$L.meta"; see $L t13-cleaned landed
-live p1 "${H[$L]}" "held:the trunk is red at 9f5bbb3af0d1"; see $L t6-held live-held
 live p1 "${H[$L]}" live; see $L t7-live live
 release p1 "${H[$L]}" 813; pr 813 OPEN none; see $L t8-release release-open
 pr 813 OPEN running; see $L t9-run release-ci-running
@@ -98,7 +98,7 @@ pr 813 MERGED green; see $L t11-merge merged
 printf '%s\n' https://github.com/umeranjum17/juggernaut/pull/813 > "$S/trunk-rolled-p1"; see $L t12-rollover rolled
 pass "walk 1: coding to rolled; a final refusal, a red release run and 18 green checks not merged are named"
 
-# Walk 2, the green pin b7b93282e and the red of 01:23:11Z.
+# Walk 2, the green pin b7b93282e, then a red CI that pins it back.
 L=b7-lane; lane $L p2; land $L; : > "$M/$L.${H[$L]}.verify.log"; see $L - landed
 printf '%s\n' "${H[$L]}" > "$S/trunk-green-p2"
 live p2 "${H[$L]}" "hook-failed:fleet: not every home is at ${H[$L]:0:12}: crewhouse (rollout stopped there)"
@@ -106,20 +106,13 @@ live p2:crewhouse "${H[$L]}" "rolled-back:missing-guard: missing: no home guard 
 live p2:primary "${H[$L]}" live; see $L t7-partial live-partial
 live p2 "${H[$L]}" live; see $L t7-live live
 live p2 "$BASE" "live,pinned-back-from:${H[$L]:0:12}"; live p2:primary "$BASE" "live,pinned-back-from:${H[$L]:0:12}"
-printf '%s\n' "${H[$L]}" > "$S/trunk-red-p2"; see $L x1-red red
-F=fric-gate-shard-timeout; lane $F p2 "${H[$L]}" "$F: a shard over its budget runs once more"$'\n\n'"fixes-red: ${H[$L]}"; land $F
-printf '%s\n' "verify: judging every change since the release base b96c903b0486" "note: passed on the rerun, so judged flaky and not charged: tests/jg-tmp-reaper.test.sh" \
-  "verify: ${H[$F]:0:12} passed only with a flaky failure set aside; the green pin stays" > "$M/$F.${H[$F]}.verify.log"
-see $L x2-fix red-fix-landed; see $F - red-fix-landed
-pass "walk 2: failed move rows are home-behind, and a red pin with a fix that passed only with a flaky failure set aside is red-fix-landed"
+see $L x1-ci-red home-behind
+pass "walk 2: failed move rows are home-behind, and a red CI that pins every home back leaves the change home-behind, never red"
 
 # Walks 3 to 10: each other edge, one project each so their records stay apart.
-L=w3; lane $L p3; land $L; see $L - landed; printf '%s\n' "${H[$L]}" > "$S/trunk-red-p3"; see $L x1-red red
-rm -f "$S/trunk-red-p3"; see $L t14-clear landed; live p3 "${H[$L]}" live; see $L t7-live live
+L=w3; lane $L p3; land $L; see $L - landed; live p3 "${H[$L]}" live; see $L t7-live live
 L=w4; lane $L p4; land $L; see $L - landed; live p4:primary "${H[$L]}" live; see $L t7-partial live-partial
-printf '%s\n' "${H[$L]}" > "$S/trunk-red-p4"; see $L x1-red red
 L=w5; lane $L p5; land $L; see $L - landed; live p5 "${H[$L]}" "hook-failed:the live hook exited 1"; see $L t7-behind home-behind
-printf '%s\n' "${H[$L]}" > "$S/trunk-red-p5"; see $L x1-red red
 L=w6; lane $L p6; land $L; see $L - landed; live p6 "${H[$L]}" "hook-failed:the live hook exited 1"; see $L t7-behind home-behind
 live p6 "${H[$L]}" live; see $L t7-live live
 L=w7; lane $L p7; land $L; see $L - landed; release p7 "${H[$L]}" 7; pr 7 OPEN none; see $L t8-release release-open

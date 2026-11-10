@@ -1,7 +1,7 @@
 machine	landing	data/jg-trunk-landing/<task>.<head>[.<ctx>].state	core/trunk-landing/trunk-landing.sh
 state	new	initial	No landing was tried for this commit yet.	-
 state	running	normal	The landing is under way right now.	epoch>0,age<6h,pid(c63db7ed)
-state	wait	normal	The landing waits for away mode, an open decision, a red trunk or a held task to clear, and is tried again.	reason
+state	wait	normal	The landing waits for away mode, an open decision or a held task to clear, and is tried again.	reason
 state	retry	normal	A landing step failed in a way a second try may fix, and it is tried again.	count,reason
 state	landed	terminal	The commit is on the local trunk. It is not live yet: it goes live on the captain's word, or by itself in a batch when the project has a go-live waiver.	-
 state	final	normal	The landing was refused for a reason that needs a change, so a new proved commit is needed. A conflict is judged again once the trunk tip it was judged on is gone.	reason

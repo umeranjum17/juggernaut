@@ -10,13 +10,13 @@
 #    refuses without the captain's recorded word, runs the hook at the green commit with it, and spends the word.
 #    The green pin moves only when verify (the whole suite, after the landing) passes.
 # T2 Every unsafe landing refuses and leaves the trunk where it was: a second commit, a conflicting change (it names its
-#    paths), a failing gate, a failing lint, an owner-guard hit, a red trunk, away mode, a ref a lane moved, a
+#    paths), a failing gate, a failing lint, an owner-guard hit, away mode, a ref a lane moved, a
 #    decision still open on linked work, a protected path, and a commit with no ticket reference.
 # T3 The seams are the only place behaviour changes: protected-landing=gate and away-landing=allowed
 #    let the same commits land, with no code change; the gate commands are policy keys with fast defaults.
 # T5 The release is ONE PR from the trunk itself into the default branch: no release branch, no
 #    force, refused without the captain's word, and a second release while it is open opens no
-#    second PR; an empty batch, a red trunk and an unverified tip refuse.
+#    second PR; an empty batch refuses.
 # T8 Only the lander moves the trunk: a hand write to it is refused by the hook the trunk installs;
 #    land records the same merged event as the local merge. A home guard (bin/jg-home-guard.sh) installed in the same
 #    repository chains the trunk guard: both still refuse, reruns and a landing change neither hook, uninstall restores it.
@@ -240,7 +240,6 @@ test_every_unsafe_landing_refuses() {
   rm "$HOME_D/state/linked-open"
   : > "$HOME_D/state/.afk"; refused 'a landing in away mode' t2 'away mode'; rm "$HOME_D/state/.afk"
   lane prot x bin/jg-merge-x.sh; refused 'a protected path' prot 'protected path'
-  printf 'abc\n' > "$HOME_D/state/trunk-red-proj"; refused 'a red trunk' t2 'is red'; rm "$HOME_D/state/trunk-red-proj"
   old=$(tip)
   plain_git -C "$PROJ" branch -f trunk "$(git -C "$PROJ" rev-parse trunk~1)" 2>/dev/null && fail "a hand write to the trunk must be refused by the hook"
   JG_TRUNK_WRITER=1 plain_git -C "$PROJ" branch -f trunk "$(git -C "$PROJ" rev-parse trunk~1)" 2>/dev/null && fail "even the lander's own writer must not rewind the trunk"
@@ -311,7 +310,6 @@ test_the_release_is_one_pr_from_the_trunk_on_his_word() {
   out=$(trunk release "$PROJ" 2>&1) || fail "a later batch must release: $out"
   [ "$(grep -c 'pr create' "$W/gh-calls")" = 1 ] || fail "a release while the PR is open must open no second PR"
   [ "$(git --git-dir="$W/origin.git" rev-parse refs/heads/trunk)" = "$(tip)" ] || fail "the open PR must carry the new commits"
-  printf 'x\n' > "$HOME_D/state/trunk-red-proj"; out=$(trunk release "$PROJ" 2>&1) && fail "a red trunk must not release"
   pass 'the release is one PR from the trunk itself, on his word, with no release branch'
 }
 
@@ -359,12 +357,12 @@ test_a_red_ci_pins_the_home_back_to_the_last_green_commit() {
   [ "$(tail -1 "$W/live-moves")" = "$c2" ] || fail "fixture: the home must be at c2"
   out=$(trunk ci "$PROJ" "$c2" red 2>&1) || fail "a red CI must record and pin back: $out"
   [ "$(tail -1 "$W/live-moves")" = "$c1" ] || fail "a red CI must move the home back to the last green live commit"
-  [ "$(cat "$HOME_D/state/trunk-red-proj")" = "$c2" ] || fail "a red CI must write the red pin"
   [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "the green pin must be the last green commit"
-  lane c3 three; refused 'a landing while CI is red' c3 "fixes-red: $c2"
+  lane c3 three; out=$(trunk land c3 2>&1) || fail "a red CI never stops a landing: $out"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c1" ] || fail "a landing after a red CI leaves the green pin on the last green commit"
   trunk word live "$PROJ" "go" >/dev/null 2>&1; trunk live "$PROJ" >/dev/null 2>&1 || fail "live after a pin-back must work with his word"
   [ "$(tail -1 "$W/live-moves")" = "$c1" ] || fail "the home must stay pinned on the last green commit"
-  pass 'a red CI writes the pin-back, returns the home to the last green commit and stops landings'
+  pass 'a red CI pins the green pin and the home back to the last green commit, and landings go on'
 }
 
 test_the_trunk_stays_safe_until_its_release_lands_then_the_next_version_is_cut() {
