@@ -133,6 +133,7 @@ wiring_tip() {
   cp "$ROOT"/core/tickets-sync/icons/* "$W/proj/core/tickets-sync/icons/"
   while IFS=$'\t' read -r name _; do
     [ "$name" != tickets-sync ] || continue
+    if [ "$name" = machines ]; then mkdir -p "$W/proj/core/machines"; printf '#!/usr/bin/env bash\nexit 0\n' > "$W/proj/core/machines/view.sh"; continue; fi
     mkdir -p "$W/proj/core/$name"
     # shellcheck disable=SC2016 # the stub expands its own variables when it runs
     printf '#!/usr/bin/env bash\n[ "${1:-}" != --dry-run ] || exit 0\nprintf "%%s %%s\\n" %s "$JG_HOME" >> "$JG_TEST_WIRING_LOG"\n' "$name" > "$W/proj/core/$name/wiring.sh"
@@ -382,6 +383,7 @@ fleet_tip() {
   printf '#!/usr/bin/env bash\n[ ! -e "$JG_HOME/state/fail-on-the-new-commit" ]\n' > "$d/bin/jg-supervision-instructions.sh"
   while IFS=$'\t' read -r name _; do
     if [ "$name" = lead-sweep ]; then cp -r "$ROOT/core/lead-sweep" "$d/core/"; continue; fi
+    if [ "$name" = machines ]; then mkdir -p "$d/core/machines"; printf '#!/usr/bin/env bash\nexit 0\n' > "$d/core/machines/view.sh"; continue; fi
     mkdir -p "$d/core/$name"; printf '#!/usr/bin/env bash\nexit 0\n' > "$d/core/$name/wiring.sh"
   done < <("$ROOT/bin/jg-host-wiring.sh" --list)
   printf '#!/usr/bin/env bash\nexit 0\n' > "$d/core/owner-guard/install-scan.sh"

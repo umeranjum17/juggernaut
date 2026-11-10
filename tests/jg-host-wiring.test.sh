@@ -146,6 +146,7 @@ pass 'the entry point refuses a run with no home named'
 env -u JG_HOME HOME="$tmp/user" XDG_DATA_HOME="$tmp/user/.local/share" XDG_CONFIG_HOME="$tmp/user/.config" \
   bash "$here/bin/jg-host-wiring.sh" --dry-run --home "$home" >"$tmp/dry.log" 2>&1 || true
 grep -q '^== git-identity' "$tmp/dry.log" || { cat "$tmp/dry.log" >&2; no 'a dry run did not reach the git-identity step'; }
+[ ! -e "$home/config/machine-view" ] || no 'dry run enabled the machine view'
 pass 'a dry run reaches each step and prints what it would write'
 
 # A Squad Lead home never wires the machine-wide units, wiring or unwiring; per-home steps still run.
@@ -161,3 +162,12 @@ for mode in --dry-run '--dry-run --unwire'; do
   grep -q '^== git-identity' "$tmp/lead.log" || no "a lead home ($mode) lost its per-home steps"
 done
 pass 'a lead home skips the machine-wide units in wire and unwire, and keeps per-home steps'
+
+# A real wiring run enables the read-only machine view for each kind of home.
+for target in "$home" "$lead"; do
+  env -u JG_HOME bash "$here/bin/jg-host-wiring.sh" --home "$target" >"$tmp/view.log" 2>&1 || true
+  [ -f "$target/config/machine-view" ] || no 'host wiring did not enable the machine view'
+  env -u JG_HOME bash "$here/bin/jg-host-wiring.sh" --home "$target" >"$tmp/view-repeat.log" 2>&1 || true
+  [ -f "$target/config/machine-view" ] || no 'repeat wiring lost the machine view'
+done
+pass 'host wiring enables the machine view in main and lead homes'

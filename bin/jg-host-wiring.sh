@@ -99,6 +99,7 @@ plan=(
   trunk-latency:home
   tmp-reaper:home
   landing-card:home
+  machines:view
   quota-failover:all
   limit-prompt-move:all-nodry
   model-gate:env
@@ -216,13 +217,14 @@ for entry in "${steps[@]}"; do
   name=${entry%%:*}
   kind=${entry##*:}
   file=wiring.sh
+  [ "$kind" != view ] || file=view.sh
   [ "$unwire" = 0 ] || file=unwiring.sh
   script=$here/core/$name/$file
   if [ "$lead_home" = 1 ] && [ "${machine_wide#*" $name "}" != "$machine_wide" ]; then continue; fi
   if [ "$changed_only" = 1 ] && ! due "$name" "$name"; then current=$((current + 1)); continue; fi
   if [ ! -f "$script" ]; then
     if [ "$unwire" = 1 ]; then
-      [ -f "$here/core/$name/wiring.sh" ] || { printf 'jg-host-wiring: %s has no wiring at %s\n' "$name" "$here/core/$name" >&2; failed="$failed $name"; continue; }
+      [ -f "$here/core/$name/wiring.sh" ] || { [ "$kind" = view ] && [ -f "$here/core/$name/view.sh" ]; } || { printf 'jg-host-wiring: %s has no wiring at %s\n' "$name" "$here/core/$name" >&2; failed="$failed $name"; continue; }
       skipped="$skipped $name"
       continue
     fi
@@ -234,7 +236,7 @@ for entry in "${steps[@]}"; do
   dryable=1
   case $kind in
     plain) ;;
-    home) args=("$home") ;;
+    home | view) args=("$home") ;;
     env) ;;
     all) args=(--all "$home") ;;
     home-nodry) args=("$home") dryable=0 ;;
