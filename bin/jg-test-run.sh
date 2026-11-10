@@ -103,9 +103,9 @@
 #   --enforce-test-speed
 #                   accepted so the nightly suite's command line stays valid; a
 #                   speed-limit breach is reported in every mode (see below).
-#   --show-limits   print the effective e2e_seconds, unit_seconds and
-#                   gate_wall_seconds from the config file and exit without
-#                   running anything.
+#   --show-limits   print the effective e2e_seconds, unit_seconds,
+#                   gate_wall_seconds and machine_runs_max from the config file
+#                   and exit without running anything.
 #   --max-wall-ms N fail the run when its measured invocation wall clock exceeds
 #                   N milliseconds, including an empty selection, and stop
 #                   starting scripts once the budget is spent so the overshoot
@@ -132,6 +132,13 @@
 #   JG_TEST_BUDGET max_wall_ms=<n> duration_ms=<n>   (only with --max-wall-ms)
 #   JG_TEST_OVERRUN budget_ms=<n> duration_ms=<n> load=<1-min load> cpus=<n> selection=<selection>
 #                                                    (only with --wall-warn-ms, and only past it)
+#
+# Machine sharing:
+#   A run that executes scripts (the --required-shards gate counts once) waits
+#   for one of machine_runs_max run slots on this machine before it starts, and
+#   every script it starts shares the caller's Go build cache, so a test that
+#   moves HOME does not compile Go again. Queue time is not charged to
+#   --max-wall-ms. bin/jg-test-host-lib.sh owns both contracts.
 #
 # Placement refusal:
 #   A task worker is assigned an isolated worktree, and that placement is
@@ -269,6 +276,8 @@ PER_SCRIPT_TIMEOUT_SECS=0
 TEST_SPEED_E2E_SECONDS=60
 TEST_SPEED_UNIT_SECONDS=5
 TEST_SPEED_GATE_SECONDS=600
+# How many runs may execute tests on this machine at once (machine_runs_max; 0 is one per 16 cpus, at least one).
+TEST_MACHINE_RUNS_MAX=0
 # Hard per-test ceiling on the automatic --changed path: max(120s, 4 x the
 # test's measured hint), so a wedged script ends as a bounded failure naming it
 # within minutes, not at a job cancel (a 1500s flat bound let tests/jg-mail hang
@@ -364,6 +373,8 @@ load_test_speed_limits() {
     case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_UNIT_SECONDS=$v ;; esac
     v=$(sed -n 's/^gate_wall_seconds=//p' "$f" | tail -n 1)
     case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_GATE_SECONDS=$v ;; esac
+    v=$(sed -n 's/^machine_runs_max=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_MACHINE_RUNS_MAX=$v ;; esac
     return 0
   done
   return 0
@@ -388,6 +399,17 @@ die() {
 
 log() {
   printf 'jg-test-run: %s\n' "$*" >&2
+}
+
+# shellcheck source=bin/jg-test-host-lib.sh
+. "$ROOT/bin/jg-test-host-lib.sh"
+
+# The effective machine_runs_max (see bin/jg-test-host-lib.sh "Run slots").
+machine_runs_max() {
+  local n=$TEST_MACHINE_RUNS_MAX
+  [ "$n" -gt 0 ] || n=$(( $(cpu_count) / 16 ))
+  [ "$n" -ge 1 ] || n=1
+  printf '%s\n' "$n"
 }
 
 # --wall-warn-ms: a run past the wall clock was slowed by the machine, not failed by a test, so it is one warning
@@ -2093,6 +2115,12 @@ if [ "${1:-}" = --required-shards ]; then
   [ "$#" -eq 3 ] || die "--required-shards needs <base-ref> <output-dir>"
   required_base=$2 required_dir=$3 required_rc=0
   mkdir -p "$required_dir" || die "cannot create required-set output directory"
+  # The gate takes one machine run slot for all eight shards, and builds the Go cores once into the shared Go build
+  # cache before they start (bin/jg-test-host-lib.sh); the shards inherit both and take no slot of their own.
+  jg_test_host_admit "$(machine_runs_max)"
+  trap jg_test_host_release EXIT
+  jg_test_host_pin_go_cache
+  jg_test_host_warm_go_cache "$ROOT"
   # The eight shards are disjoint, so they run side by side: each one in its own temp and tmux directory
   # (a short path under /tmp, because a tmux socket path is length-limited), its output kept in its own file and
   # printed in shard order afterwards so the log reads exactly as the sequential run's did. JG_REQUIRED_SHARD_PARALLEL
@@ -2374,6 +2402,7 @@ if [ "$SHOW_LIMITS" -eq 1 ]; then
   printf 'e2e_seconds=%s\n' "$TEST_SPEED_E2E_SECONDS"
   printf 'unit_seconds=%s\n' "$TEST_SPEED_UNIT_SECONDS"
   printf 'gate_wall_seconds=%s\n' "$TEST_SPEED_GATE_SECONDS"
+  printf 'machine_runs_max=%s\n' "$(machine_runs_max)"
   exit 0
 fi
 
@@ -2662,6 +2691,13 @@ if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] || [ "$CHANGED_CEILING" -eq 1 ]; then
   . "$ROOT/bin/jg-timeout-lib.sh"
 fi
 
+# A run that executes scripts holds a machine run slot until it exits, and every script it starts shares one Go
+# build cache (bin/jg-test-host-lib.sh). Time spent waiting for the slot is the machine's, so it is taken off the
+# run's own wall clock.
+jg_test_host_admit "$(machine_runs_max)"
+RUN_STARTED_MS=$((RUN_STARTED_MS + JG_TEST_HOST_WAITED_MS))
+jg_test_host_pin_go_cache
+
 RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jg-test-run.XXXXXX")
 RECORDS="$RUN_TMP/records.tsv"
 FAMILIES_TSV="$RUN_TMP/families.tsv"
@@ -2674,6 +2710,7 @@ declare -a WORKER_SCRIPTS=()
 # shellcheck disable=SC2329
 cleanup_run() {
   rm -rf "$RUN_TMP"
+  jg_test_host_release
 }
 
 trap cleanup_run EXIT

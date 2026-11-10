@@ -15,6 +15,8 @@ set -u
 
 RUNNER="$ROOT/bin/jg-test-run.sh"
 TMP_ROOT=$(jg_test_tmproot jg-test-run)
+# This suite's own runs queue among themselves, never behind the machine's real test runs.
+export JG_TEST_HOST_SLOTS="$TMP_ROOT/run-slots"
 
 # write_limits <path> <e2e-seconds> <unit-seconds> <gate-seconds>
 write_limits() {
@@ -269,6 +271,63 @@ test_a_weight_cap_defers_slow_suites_and_names_them() {
   pass 'a weight cap defers slow suites and names them'
 }
 
+# within <seconds>, <path> exists (or, with <text>, contains it); otherwise the case fails naming <what>.
+await_file() {  # <seconds> <path> <what> [<text>]
+  local deadline=$((SECONDS + $1))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ -z "${4:-}" ]; then [ ! -e "$2" ] || return 0; else ! grep -qF -- "$4" "$2" 2>/dev/null || return 0; fi
+    sleep 0.2
+  done
+  fail "$3 within $1 s: $(cat "$2" 2>/dev/null)"
+}
+
+# Past machine_runs_max a run waits for a slot, naming the runner that holds it, and starts once that run ends. A run
+# started inside an admitted run never waits on it, even one whose environment was cleared, as a landing gate clears it.
+test_a_run_past_the_machine_limit_waits_for_a_slot() {
+  local d=$TMP_ROOT/slots pid_a pid_b rc_a=0 rc_b=0
+  mkdir -p "$d"
+  printf 'machine_runs_max=1\n' >"$d/limits"
+  write_script "$d/quick.test.sh" ''
+  write_script "$d/second.test.sh" "touch '$d/b-started'"
+  write_script "$d/hold.test.sh" "bash '$RUNNER' '$d/quick.test.sh' >'$d/nested.out' 2>&1 || exit 1
+env -i PATH=\"\$PATH\" HOME=\"\$HOME\" JG_TEST_HOST_SLOTS='$d/slots' TEST_SPEED_LIMITS_FILE='$d/limits' \\
+  bash '$RUNNER' '$d/quick.test.sh' >'$d/cleared.out' 2>&1 || exit 1
+touch '$d/a-started'
+i=0; while [ ! -e '$d/release' ] && [ \"\$i\" -lt 600 ]; do sleep 0.2; i=\$((i + 1)); done"
+  env -u JG_TEST_RUN_SLOT JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
+    bash "$RUNNER" "$d/hold.test.sh" >"$d/a.out" 2>&1 &
+  pid_a=$!
+  await_file 60 "$d/a-started" 'the first run, with a run inside it and one with a cleared environment, did not start'
+  env -u JG_TEST_RUN_SLOT JG_TEST_HOST_SLOTS="$d/slots" TEST_SPEED_LIMITS_FILE="$d/limits" \
+    bash "$RUNNER" "$d/second.test.sh" >"$d/b.out" 2>&1 &
+  pid_b=$!
+  # A failed wait below still frees the first run: its script stops at release, or after 120 s.
+  await_file 30 "$d/b.out" 'the second run did not say it waits for a slot' "waiting for a test-run slot: all 1 on this machine are in use (runner pids $pid_a)"
+  [ ! -e "$d/b-started" ] || fail "the second run started while the only slot was held: $(cat "$d/b.out")"
+  touch "$d/release"
+  wait "$pid_a" || rc_a=$?
+  wait "$pid_b" || rc_b=$?
+  assert_equals 0 "$rc_a" "the run holding the slot must pass: $(cat "$d/a.out")"
+  assert_equals 0 "$rc_b" "the queued run must pass once admitted: $(cat "$d/b.out")"
+  [ -e "$d/b-started" ] || fail "the queued run never ran its script: $(cat "$d/b.out")"
+  assert_not_contains "$(cat "$d/nested.out" "$d/cleared.out")" 'waiting for a test-run slot' 'a run inside an admitted run must not queue'
+  pass 'a run past the machine limit waits for a slot and starts when it frees; runs inside an admitted run never wait'
+}
+
+# A test that moves HOME still builds Go from the caller's own build cache.
+test_a_script_that_moves_home_keeps_the_callers_go_build_cache() {
+  local d=$TMP_ROOT/gocache want out
+  command -v go >/dev/null 2>&1 || { pass 'skip: no Go toolchain on PATH'; return 0; }
+  want=$(env -u GOCACHE go env GOCACHE)
+  mkdir -p "$d"
+  write_script "$d/moves-home.test.sh" "HOME='$d/home' XDG_CACHE_HOME='$d/home/.cache'; echo \"cache=\$(go env GOCACHE)\""
+  out=$(env -u GOCACHE bash "$RUNNER" "$d/moves-home.test.sh" 2>&1) || fail "the probe run failed: $out"
+  assert_contains "$out" "cache=$want" 'a script that moves HOME must build from the caller Go build cache'
+  pass 'a script that moves HOME keeps the caller Go build cache'
+}
+
+test_a_run_past_the_machine_limit_waits_for_a_slot
+test_a_script_that_moves_home_keeps_the_callers_go_build_cache
 test_required_shards_keep_the_union_and_a_failed_shard
 test_a_required_shard_over_its_budget_is_a_warning_and_runs_every_script
 test_shards_split_a_selection_without_losing_or_repeating_a_script
