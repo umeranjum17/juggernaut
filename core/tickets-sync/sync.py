@@ -337,7 +337,10 @@ def sync():
             elif tid.startswith('jg-') and tid != upkeep_id and (old.get('project', '').lower() in INTERNAL or not old.get('asked') and not old.get('parent')):
                 publish(tid, dict(project=OWN if old.get('project', '').lower() in INTERNAL or not old.get('project') else old.get('project', ''), parent=old.get('parent') or ('' if old.get('asked') else upkeep_id)), where=f'board/{tid}')
         walked = False
-        for name, source in ordered:
+        # New lead rows must not wait behind a multi-pass walk through older main rows. Migrated ticket ids may
+        # belong to more than one home, so the ordinary main-first walk retains ownership of those rows.
+        priority_homes = [(name, source, True) for name, source in homes.items() if name != 'main'] if not options.check and not options.reconcile else []
+        for name, source, priority in priority_homes + [(name, source, False) for name, source in ordered]:
             # A home with no Beads store has no backlog to publish: the sync notes that once in its progress log (never a
             # wake) and every pass, check and clean-up skips it without a word.
             if not store_named(source):
@@ -374,17 +377,19 @@ def sync():
                 r['_project'] = '' if projects[repo].lower() in INTERNAL else projects[repo]
             ancestry, asks = request_parents(tasks)
             parents = set(ancestry.values())
-            if resume.get('home') == name and resume.get('task') in tasks: ids = ids[ids.index(resume['task']):]
+            if priority: ids = [item for item in ids if ticket(item) not in existing and tasks[item]['state'] != 'done'
+                                and not identity.TICKET.fullmatch(tasks[item]['store_id'])]
+            elif resume.get('home') == name and resume.get('task') in tasks: ids = ids[ids.index(resume['task']):]
             required = set(resume.get('required', [])) if resume.get('home') == name else set()
             for item in ids:
                 r = tasks[item]
                 # A pass always handles the row it resumed on: when the reads before the walk outlast the budget under
                 # load, a pass that stops first would save the same cursor again and the walk would never move.
-                if not options.reconcile and walked and time.monotonic() - started > budget:
+                if not priority and not options.reconcile and walked and time.monotonic() - started > budget:
                     save(cursor, dict(home=name, task=item, required=list(required), claims=claims, **({'seen': sorted(seen)} if options.check else {})))
                     note(f'tickets-sync: backfill continuing on next watcher check; {changed} changed')
                     return
-                walked = True
+                if not priority: walked = True
                 tid = ticket(item)
                 if r['state'] == 'done' and r.get('closed', '-') < cutoff and tid not in ledger and tid not in existing and item not in required: continue
                 body = r.get('body', '')

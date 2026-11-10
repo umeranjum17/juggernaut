@@ -135,6 +135,14 @@ assert_equals 1 "$(count_cards)" 'syncing twice must leave one card'
 assert_equals "done" "$(sign-off-axi ticket "$mboard" --id "$mid" --json | jq -r .ticket.state)" 'syncing must not bounce a done ticket'
 pass 'an added and a done ticket reach the board with no sync run by hand, once'
 
+# A lead does not run its own poll; its parent owns publication.
+printf 'lead-a\n' > "$mirror/.jg-squad-lead-home"
+out=$(JG_HOME="$mirror" bash "$ROOT/bin/jg-backlog.sh" add jg-lead 'Lead work' --repo demo --priority 1 2>&1) || fail "lead add failed: $out"
+assert_contains "$out" 'parent poll publishes' 'a lead must name the parent poll'
+assert_not_contains "$out" 'mirror is behind' 'a lead must not claim its expected wait is a fault'
+rm "$mirror/.jg-squad-lead-home"
+pass 'a lead names the parent poll as publisher'
+
 # A board the writer cannot reach: the backlog write still succeeds and says so.
 fakebin=$(jg_fakebin "$work/fakebin-down") || fail 'fake bin was not built'
 printf '#!/bin/sh\necho "board unreachable" >&2\nexit 1\n' > "$fakebin/sign-off-axi"

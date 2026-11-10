@@ -510,6 +510,10 @@ jg_backlog_ticket_publish() {  # <data-dir> <verb> <id>
   sync=${JG_TICKETS_SYNC:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/jg-tickets-sync/tickets-sync/sync.py}
   pointer=${JG_CONFIG_OVERRIDE:-$home/config}/fleet-board
   [ -f "$sync" ] && [ -f "$pointer" ] || return 0
+  if [ -s "$home/.jg-squad-lead-home" ] && [ "$(tr -d '[:space:]' < "$home/.jg-squad-lead-home")" != main ]; then
+    printf 'jg-backlog: the parent poll publishes %s to the board\n' "$id" >&2
+    return 0
+  fi
   IFS= read -r board < "$pointer" || true
   case "$board" in /*) ;; *) board=$home/$board ;; esac
   tool=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/jg-ticket.sh
