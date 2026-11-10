@@ -356,23 +356,37 @@ jg_dod_nav_gate() {  # <id> <meta> <text>
 # done-done run at this head holding those files (`merge-card receipt`). A PASS receipt alone is not enough. Prints one line per
 # missing input and returns 1 when any is missing; 0 and no output when all are there. The worker's done and the landing's
 # admission both call it, so neither starts on a head whose proof is incomplete.
+# A rebase with no change keeps the proof: the receipt, and the merge-card check with its sealed run, each count for this head
+# when they are bound to it, or to a head that `merge-card same-change` finds is the same change in the lane's project (the
+# lander still lints and tests the rebased commit on the tip). A proof bound to another change is named and not kept.
 # Usage: jg_dod_trunk_proof_gaps <home> <state> <id> <meta> <head>
 jg_dod_trunk_proof_gaps() {
   local home=$1 state=$2 id=$3 meta=$4 head=$5 r="$2/$3.run-receipt.json" card="${JG_DATA_OVERRIDE:-$1/data}/$3/merge-card.json" gaps=0 mc why
+  local repo rh ch rnote='' cnote=''
   mc=$_JG_GATE_LIB_DIR/../core/merge-card/merge-card
   command -v jq >/dev/null 2>&1 || { echo "the proof inputs for $id cannot be checked: jq is required"; return 1; }
-  if ! { [ -f "$r" ] && jq -e --arg h "$head" --arg g "$(sed -n 's/^spawn_gen=//p' "$meta" 2>/dev/null | tail -n 1)" \
-    '.verdict == "PASS" and .head == $h and (($g == "") or (.spawn_gen == $g))' "$r" >/dev/null 2>&1; }; then
-    echo "no completion receipt with verdict PASS for head ${head:0:12} of $id (publish it with core/receipts/bin/jg-run-receipt.sh at this head)"; gaps=1
+  repo=$(sed -n 's/^project=//p' "$meta" 2>/dev/null | tail -n 1)
+  rh=$(jq -r '.head // empty' "$r" 2>/dev/null) || rh=''
+  ch=$(jq -r 'select(.verdict == "pass") | .head // empty' "$card" 2>/dev/null) || ch=''
+  if [ -n "$rh" ] && [ "$rh" != "$head" ] && ! rnote=$("$mc" same-change "$repo" "$rh" "$head" 2>&1); then
+    rnote="; its receipt is for ${rh:0:12} and not kept: ${rnote#merge-card: }"; rh=$head
   fi
-  if ! { [ -f "$card" ] && jq -e --arg h "$head" 'select(.head == $h and .verdict == "pass") | (.check.evidence // []) | length > 0' "$card" >/dev/null 2>&1; }; then
-    echo "no approved merge-card evidence citing files for head ${head:0:12} of $id (run: JG_HOME=$home $mc check $id <worktree> $head <PR url|->)"; gaps=1
-  elif ! why=$(JG_HOME=$home "$mc" receipt "$id" "$head" 2>&1 >/dev/null); then
+  if [ -n "$ch" ] && [ "$ch" != "$head" ] && ! cnote=$("$mc" same-change "$repo" "$ch" "$head" 2>&1); then
+    cnote="; its check is for ${ch:0:12} and not kept: ${cnote#merge-card: }"; ch=$head
+  fi
+  rh=${rh:-$head}; ch=${ch:-$head}
+  if ! { [ -f "$r" ] && jq -e --arg h "$rh" --arg g "$(sed -n 's/^spawn_gen=//p' "$meta" 2>/dev/null | tail -n 1)" \
+    '.verdict == "PASS" and .head == $h and (($g == "") or (.spawn_gen == $g))' "$r" >/dev/null 2>&1; }; then
+    echo "no completion receipt with verdict PASS for head ${head:0:12} of $id (publish it with core/receipts/bin/jg-run-receipt.sh at this head$rnote)"; gaps=1
+  fi
+  if ! { [ -f "$card" ] && jq -e --arg h "$ch" 'select(.head == $h and .verdict == "pass") | (.check.evidence // []) | length > 0' "$card" >/dev/null 2>&1; }; then
+    echo "no approved merge-card evidence citing files for head ${head:0:12} of $id (run: JG_HOME=$home $mc check $id <worktree> $head <PR url|->$cnote)"; gaps=1
+  elif ! why=$(JG_HOME=$home "$mc" receipt "$id" "$ch" 2>&1 >/dev/null); then
     # merge-card names why it refused (a run that exists but cites other evidence, a changed proof context); say that,
     # not that no run exists. It prints nothing when no run holds the cited evidence at the head.
     why=${why%%$'\n'*}; why=${why#merge-card: }
-    if [ -n "$why" ]; then echo "the sealed done-done run at head ${head:0:12} of $id was refused: $why"
-    else echo "no sealed done-done run at head ${head:0:12} of $id holding the cited evidence (run the verify suite sealed: done-done run -- <suite command>; commit nothing after)"; fi
+    if [ -n "$why" ]; then echo "the sealed done-done run at head ${ch:0:12} of $id was refused: $why"
+    else echo "no sealed done-done run at head ${ch:0:12} of $id holding the cited evidence (run the verify suite sealed: done-done run -- <suite command>; commit nothing after)"; fi
     gaps=1
   fi
   [ "$gaps" = 0 ]

@@ -69,6 +69,12 @@
 #   merge-card capture-json <task-id> <head>
 #     Read-only sealed-run discovery for attachments, always marked verification: unverified.
 #     It never judges, authorizes landing or supplies the owner-signature receipt.
+#   merge-card same-change <repo> <proved-head> <head>
+#     Exit 0 when <head> is the same change as <proved-head> in <repo>, so a proof bound to <proved-head> holds for <head>
+#     (bin/jg-merge-gate-lib.sh's jg_dod_trunk_proof_gaps asks it for a lane rebased with no change). Each must be one commit
+#     with one parent, and the two must touch the same paths with the same status and modes and have the same patch id
+#     (`git patch-id --verbatim`: line numbers are ignored, every byte of every changed and context line is kept, and a binary
+#     change is compared whole). Anything else exits 1 with one line on stderr naming why.
 #     sign-off-axi writes the board under its lock: it appends and never rewrites other cards.
 # Explicit caller accounts and done-done account/pool commands own their selection.
 # Otherwise the check runs as the pool's Claude account when the home has one
@@ -694,6 +700,29 @@ receipt_run() {
   [ -z "$result" ] || printf '%s\n' "$result"
 }
 
+# change_key <repo> <commit>: one text that names the commit's change and nothing else: its paths with their status and modes
+# (the raw diff without blob ids, which differ after any rebase) and the patch id of its lines. A rebase with no change keeps
+# it. Fails for a commit that is missing, is not one commit on one parent, or changes nothing.
+change_key() {
+  local raw pid
+  [[ $2 =~ ^[0-9a-f]{40,64}$ ]] && [ "$(git -C "$1" rev-list --parents -n 1 "$2" 2>/dev/null | wc -w)" = 2 ] || return 1
+  raw=$(git -C "$1" diff-tree -r --no-commit-id --no-renames --raw "$2" | sed -E 's/^(:[0-7]+ [0-7]+) [0-9a-f]+ [0-9a-f]+ /\1 /') || return 1
+  pid=$(git -C "$1" diff-tree -p --binary --full-index --no-commit-id --no-renames --no-color --no-ext-diff --no-textconv "$2" |
+    git patch-id --verbatim | cut -d' ' -f1) || return 1
+  [ -n "$raw" ] && [ -n "$pid" ] || return 1
+  printf '%s\n%s\n' "$pid" "$raw"
+}
+
+# same_change <repo> <proved-head> <head>: the subcommand; see the header.
+same_change() {
+  local a b
+  [ "$#" -eq 3 ] || die "usage: merge-card same-change <repo> <proved-head> <head>"
+  git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || die "${1:-<no repository>} is not a git repository, so the change at ${3:0:12} cannot be compared with ${2:0:12}"
+  a=$(change_key "$1" "$2") || die "${2:0:12} is not one commit with a change on one parent in $1, so it cannot be compared"
+  b=$(change_key "$1" "$3") || die "${3:0:12} is not one commit with a change on one parent in $1, so it cannot be compared"
+  [ "$a" = "$b" ] || die "${3:0:12} is not the same change as ${2:0:12}: its changed lines, paths or modes differ"
+}
+
 # screen_none <task-id> <pr-url|->: the merge's Checks block declares `screen: none`.
 screen_none() {
   { if [ "$2" != - ] && gh pr view "$2" --json body --jq .body 2>/dev/null; then :; else cat -- "$JG_HOME/data/$1/checks.md" 2>/dev/null; fi; } |
@@ -943,6 +972,7 @@ case ${1:-} in
   # For owner-rules' merge gate: exit 0 when the merge is exempt / has a sealed clean run at <head>.
   screen-none) [ -n "${JG_HOME:-}" ] && screen_none "${2:-}" "${3:--}"; exit $? ;;
   context) shift; bind_context "$@"; exit $? ;;
+  same-change) shift; same_change "$@"; exit $? ;;
   receipt) [ -n "${JG_HOME:-}" ] && [ -n "$(receipt_run "${2:-}" "${3:-}" /dev/null)" ]; exit $? ;;
   capture-json)
     [ -n "${JG_HOME:-}" ] || exit 1
@@ -957,5 +987,5 @@ case ${1:-} in
     [ -n "$receipt" ] || exit 1
     printf '%s\n' "$receipt"
     ;;
-  *) die "usage: merge-card gate|check|post|title|generic-title|capture-json|receipt|receipt-json ... (see the header of $0)" ;;
+  *) die "usage: merge-card gate|check|post|title|generic-title|capture-json|receipt|receipt-json|same-change ... (see the header of $0)" ;;
 esac
