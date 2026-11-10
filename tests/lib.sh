@@ -366,6 +366,39 @@ jg_test_reap_procevent_homes() {
 # deleted has no lock and is skipped; that watcher exits on its own home-gone
 # check within one poll.
 
+# --- detached job reaping ---------------------------------------------------
+#
+# A job a check starts with setsid (core/trunk-landing/trunk-landing.sh run, runbatch, post and live) leads
+# its own process group and reparents to init, so neither the suite's exit nor removing its temp root stops
+# it: two post-landing jobs kept polling a lock in their deleted fixture homes for 3 hours. Each such job
+# writes `<pid> <identity>` here as it starts (JG_TEST_SEAM=1), and cleanup stops exactly those groups. A
+# pid whose identity no longer matches has been reused by someone else and is left alone.
+JG_TEST_DETACHED_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-detached.$$.XXXXXX") || return 1
+export JG_TEST_DETACHED_REGISTRY
+
+jg_test_detached_alive() {  # prints the pid of each registered job still running as it registered
+  local pid identity
+  [ -f "$JG_TEST_DETACHED_REGISTRY" ] || return 0
+  while read -r pid identity; do
+    [ -n "$pid" ] && [ -n "$identity" ] && [ "$pid" != "$$" ] || continue
+    [ "$(jg_test_pid_identity "$pid" 2>/dev/null)" = "$identity" ] && printf '%s\n' "$pid"
+  done < "$JG_TEST_DETACHED_REGISTRY"
+  return 0
+}
+
+jg_test_reap_detached() {
+  local live pid _
+  live=$(jg_test_detached_alive)
+  [ -n "$live" ] || return 0
+  for pid in $live; do kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || :; done
+  for _ in $(seq 1 30); do
+    live=$(jg_test_detached_alive)
+    [ -n "$live" ] || return 0
+    sleep 0.1
+  done
+  for pid in $live; do kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || :; done
+}
+
 JG_TEST_WATCHER_REGISTRY=$(mktemp "$JG_TEST_TMPDIR/.jg-test-watcher.$$.XXXXXX") || return 1
 
 jg_test_track_watcher_state() {  # <state-dir>
@@ -416,6 +449,8 @@ jg_test_remove_tree() {
 
 jg_test_cleanup() {
   local d
+  jg_test_reap_detached
+  rm -f -- "$JG_TEST_DETACHED_REGISTRY"
   jg_test_reap_buses
   jg_test_reap_watchers
   jg_test_reap_procevent_homes

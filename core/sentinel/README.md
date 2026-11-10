@@ -42,6 +42,12 @@ same step it rewrites the unit, so the sentinel never stops without starting
 again. A rerun with nothing to change prints `already installed` and restarts
 nothing. `--dry-run` prints the unit and copy changes and writes nothing.
 
+A throw-away home (one under a temp root or a `jg-test-run.*` folder) never
+takes an account's own unit: install, dry run included, exits 2 with one line
+when the unit dir or the copy's folder lies in this account's home or in the
+account a remote job runs for (`bin/jg-lab-home-lib.sh`). A test gives such a
+home a throw-away HOME and XDG dirs.
+
 ## Uninstall
 
     sentinel/unwiring.sh [--dry-run]
@@ -57,7 +63,8 @@ owner stops it by hand. Running it again when nothing is installed prints
 
 - `bash sentinel/tests/jg-sentinel-install.test.sh` — hermetic: a throwaway HOME
   and XDG dirs and a stub `systemctl` on `PATH`. The real user manager is never
-  read or changed.
+  read or changed. A throw-away home is refused for an account's unit dir, and,
+  by a dry run only, for this account's real one, whose bytes and mtime stay.
 - `bash sentinel/tests/jg-sentinel-model-relaunch.test.sh` — fixture-based check
   that only a Claude pane missing its recorded model is relaunched, once per event.
 - `bash sentinel/tests/jg-sentinel-one-copy.test.sh` — hermetic: the repository's

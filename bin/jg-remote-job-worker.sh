@@ -949,6 +949,7 @@ worker_run_job() { # <account-home> <job-dir>
     /usr/bin/env -i
     "PATH=$JG_REMOTE_JOB_CHILD_PATH"
     "HOME=$account_home"
+    "JG_ACCOUNT_HOME=$account_home"
     "JG_HOME=$home"
     "JG_ROOT_OVERRIDE=$root"
     JG_REMOTE_JOB_ACTIVE=1

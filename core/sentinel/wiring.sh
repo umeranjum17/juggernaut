@@ -24,6 +24,11 @@ fi
 DEST=${XDG_DATA_HOME:-$HOME/.local/share}/jg-sentinel
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 UNIT=$UNIT_DIR/jg-sentinel.service
+# A throw-away home (a test's) never takes this account's unit or copy, dry run included
+# (bin/jg-lab-home-lib.sh owns the rule and the refusal sentence).
+# shellcheck source=bin/jg-lab-home-lib.sh
+. "$SRC/../../bin/jg-lab-home-lib.sh"
+jg_lab_home_guard "$FMH" jg-sentinel-wiring "$UNIT_DIR" "$DEST" || exit 2
 STAMP=$(date +%s)
 TMP=$(mktemp -d)
 trap 'rm -rf -- "$TMP"' EXIT

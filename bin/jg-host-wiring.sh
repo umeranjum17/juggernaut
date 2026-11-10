@@ -33,7 +33,10 @@
 # units, so the last lead home to run this would take them from Main; per-home steps still run, and --unwire
 # skips the same steps. Wake engine, wake watcher and router are not wired here.
 #
-# Exit status: 0 when every step wired, 1 when a step failed, 2 on a usage error.
+# A throw-away home (a test's, under a temp root) wires nothing, dry runs and --unwire included, when HOME or an
+# XDG config or data dir is this account's own: every step writes there (bin/jg-lab-home-lib.sh owns the rule).
+#
+# Exit status: 0 when every step wired, 1 when a step failed, 2 on a usage error or a refused throw-away home.
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 
@@ -140,6 +143,10 @@ if [ ! -d "$home" ]; then
 fi
 home=$(cd "$home" && pwd -P)
 export JG_HOME=$home
+# shellcheck source=bin/jg-lab-home-lib.sh
+. "$here/bin/jg-lab-home-lib.sh"
+jg_lab_home_guard "$home" jg-host-wiring "${HOME:-}" "${XDG_CONFIG_HOME:-${HOME:-}/.config}" \
+  "${XDG_DATA_HOME:-${HOME:-}/.local/share}" || exit 2
 
 # Source the repo marker helper; a copy with no compat file beside it uses the same marker spelling.
 if [ -r "$here/bin/jg-compat.sh" ]; then

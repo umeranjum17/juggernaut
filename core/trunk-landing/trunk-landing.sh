@@ -56,6 +56,16 @@ mkdir -p "$MEM" || exit 0
 . "$FMH/bin/jg-wake-lib.sh"
 # shellcheck source=core/trunk-landing/refusal-reach.sh
 . "$(dirname "${BASH_SOURCE[0]}")/refusal-reach.sh"
+# A detached job (run, runbatch, post, live: each started with setsid) outlives whoever started it. Under a test
+# (JG_TEST_SEAM=1) it names itself in the suite's registry, so the suite's cleanup stops its process group even after
+# the fixture home is gone (tests/lib.sh jg_test_reap_detached).
+case $1 in
+  run|runbatch|post|live)
+    if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_DETACHED_REGISTRY:-}" ]; then
+      printf '%s %s\n' "$$" "$(jg_pid_identity "$$" 2>/dev/null)" >> "$JG_TEST_DETACHED_REGISTRY" 2>/dev/null || :
+    fi
+    ;;
+esac
 mval() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
 # The project a landed commit went into, from the landing's own row: teardown removes the lane's record (state/<id>.meta)
 # right after the landing, so the jobs that follow a landing must never read the project from it.
@@ -87,6 +97,8 @@ if [ "$1" = post ]; then
   [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $head =~ ^[0-9a-f]{40,64}$ && $cand =~ ^[0-9a-f]{40,64}$ ]] && proj=$(landed_project "$cand") && [ -d "$proj" ] || exit 2
   JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" verify "$proj" "$cand" >"$MEM/$id.$head.verify.log" 2>&1 || vrc=$?
   [ "$vrc" -ne 0 ] || exit 0
+  # A home removed while its suite ran has no outbox to report to; waiting on its lock would never end.
+  [ -d "$MEM" ] || exit 0
   jg_lock_acquire_wait "$MEM/.outbox.lock"
   printf 'trunk-landing: %s: the whole suite is red at %s: nothing goes live and every home stays where it was (%s)\n' "$id" "${cand:0:12}" "$MEM/$id.$head.verify.log" >> "$MEM/outbox"
   jg_lock_release "$MEM/.outbox.lock"

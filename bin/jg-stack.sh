@@ -38,7 +38,9 @@
 #   refuse   the machine's four long-running services (jg-sentinel, jg-wake-engine,
 #            jg-wake-watcher, jg-router) belong to Main, and bin/jg-unit-claim.sh owns
 #            why: a Squad Lead home that installs them takes Main's alerts away with
-#            them, so `up` refuses there with exit 2 and `status` still reports.
+#            them, so `up` refuses there with exit 2 and `status` still reports. `up` also
+#            refuses, exit 2, a throw-away home writing this account's own units or tools
+#            (bin/jg-lab-home-lib.sh).
 # Env: JG_HOME, JG_STATE_OVERRIDE; JG_STACK_UNIT_PREFIX (unit names, default jg); JG_STACK_SUPERVISOR
 # (auto|systemd|detached); JG_STACK_SKIP=1 makes `up` a no-op for a fixture that must bind no port.
 set -u
@@ -64,6 +66,13 @@ case $mode in up|status) ;; -h|--help) awk 'NR > 1 && /^#/ { print; next } NR > 
 if [ "$mode" = up ] && { [ -e "$JG_HOME/.jg-squad-lead-home" ] || [ -L "$JG_HOME/.jg-squad-lead-home" ]; }; then
   "$SCRIPT_DIR/jg-unit-claim.sh" refuse jg-stack up
   exit 2
+fi
+# A throw-away home (a test's) never installs units or tools into this account's own home
+# (bin/jg-lab-home-lib.sh owns the rule and the refusal sentence).
+if [ "$mode" = up ]; then
+  # shellcheck source=bin/jg-lab-home-lib.sh
+  . "$SCRIPT_DIR/jg-lab-home-lib.sh"
+  jg_lab_home_guard "$JG_HOME" "jg-stack up" "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user" "$NPM_CONFIG_PREFIX" || exit 2
 fi
 
 fail() {  # <part> <what is missing> <what it blocks>

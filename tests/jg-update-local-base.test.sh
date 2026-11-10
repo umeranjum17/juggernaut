@@ -118,7 +118,7 @@ wiring_tip() {
   local name
   git -C "$W/proj" checkout -q trunk
   mkdir -p "$W/proj/bin" "$W/proj/core/tickets-sync/icons"
-  cp "$ROOT/bin/jg-host-wiring.sh" "$W/proj/bin/"
+  cp "$ROOT/bin/jg-host-wiring.sh" "$ROOT/bin/jg-lab-home-lib.sh" "$W/proj/bin/"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$W/proj/bin/jg-check-register.sh"; chmod +x "$W/proj/bin/jg-check-register.sh"
   cp "$ROOT"/core/tickets-sync/*.py "$ROOT/core/tickets-sync/wiring.sh" "$W/proj/core/tickets-sync/"
   cp "$ROOT"/core/tickets-sync/icons/* "$W/proj/core/tickets-sync/icons/"

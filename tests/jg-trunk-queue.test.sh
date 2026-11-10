@@ -176,7 +176,35 @@ test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it() 
   pass 'the queue lands at a threshold, flushes on a command, and a land-next lane jumps it'
 }
 
+# A landing starts its post-landing suite with setsid, so the job leads its own process group and outlives the check
+# that started it. Two of them kept polling a lock in their deleted fixture homes for 3 hours: a suite's cleanup must stop
+# every job a check started (tests/lib.sh jg_test_reap_detached), even one still running when its fixture goes.
+test_a_job_the_landing_check_starts_never_outlives_its_fixture() {
+  local base post='' pid _
+  world reap; base=$(tip)
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -s "$ROOT/core" "$HOME_D/core"; ln -s "$ROOT/policy" "$HOME_D/policy"
+  sed -i.bak 's/^gate-verify=.*/gate-verify=sleep 300/' "$HOME_D/config/trunk-policy"  # the post-landing suite hangs
+  lane r1 one f1.txt
+  JG_HOME="$HOME_D" PATH="$W/fakebin:$PATH" bash "$ROOT/core/trunk-landing/trunk-landing.sh" check "$HOME_D" >/dev/null
+  for _ in $(seq 1 150); do
+    for pid in $(jg_test_detached_alive); do
+      ps -o args= -p "$pid" 2>/dev/null | grep -q 'trunk-landing.sh post ' && post=$pid
+    done
+    [ -z "$post" ] || break
+    sleep 0.2
+  done
+  [ "$(git -C "$PROJ" rev-list --count "$base..trunk")" = 1 ] || fail "the ready lane lands"
+  [ -n "$post" ] || fail "the landing started a post-landing job that registered itself: $(cat "$JG_TEST_DETACHED_REGISTRY")"
+  [ "$(ps -o pgid= -p "$post" | tr -d ' ')" = "$post" ] || fail "the post-landing job leads its own process group"
+  jg_test_reap_detached
+  [ -z "$(jg_test_detached_alive)" ] || fail "a job the landing check started outlived the cleanup: $(jg_test_detached_alive)"
+  ! kill -0 "$post" 2>/dev/null || fail "the hung post-landing job $post is still running"
+  ! pgrep -g "$post" >/dev/null 2>&1 || fail "a child in the post-landing job's group is still running: $(pgrep -g "$post" -a)"
+  pass 'a job the landing check starts is stopped with its process group when the suite cleans up'
+}
+
 test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected
+test_a_job_the_landing_check_starts_never_outlives_its_fixture
 test_a_red_the_suite_finds_after_a_batch_is_traced_to_its_one_commit_and_reverted
 test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_path
 test_the_queue_flushes_at_a_threshold_on_a_command_and_a_marked_lane_jumps_it

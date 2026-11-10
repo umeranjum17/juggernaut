@@ -115,3 +115,30 @@ grep -q 'Main owns the machine services' "$d/out/lead" || fail "Squad Lead refus
 [ ! -s "$LOG" ] || fail "a Squad Lead install called systemctl"
 [ "$(snapshot)" = "$before_lead" ] || fail "a Squad Lead install wrote to the tree"
 pass "install in a Squad Lead home is refused with a plain reason and changes nothing"
+
+# A throw-away home never takes an account's own unit (bin/jg-lab-home-lib.sh). On 9 Nov a remote
+# squad-lead suite ran this wiring for its fixture root as the runner's real account and rewrote the
+# machine's jg-sentinel.service to JG_HOME=/tmp/jg-test-run.*/.../remote-root. This home is under a
+# temp root; once the dirs it would write are named as an account's own (JG_ACCOUNT_HOME, which the
+# remote job worker sets), the install is refused before it writes or calls anything.
+before_lab=$(snapshot); : > "$LOG"
+rc=0; JG_ACCOUNT_HOME="$d/xdg" "$INSTALL" "$FMH" >"$d/out/lab" 2>&1 || rc=$?
+[ "$rc" -eq 2 ] || fail "install for a throw-away home into an account's own dirs should exit 2, got $rc: $(cat "$d/out/lab")"
+grep -q "is a throw-away home under" "$d/out/lab" || fail "the throw-away refusal does not say why: $(cat "$d/out/lab")"
+[ ! -s "$LOG" ] || fail "a refused throw-away install called systemctl"
+[ "$(snapshot)" = "$before_lab" ] || fail "a refused throw-away install wrote to the tree"
+pass "install for a throw-away home into an account's own unit dir is refused and changes nothing"
+
+# The same home against this account's REAL unit dir: HOME is the password database's home and no
+# XDG dir is set, exactly what the remote job gave the 9 Nov run. Only a dry run is used (it writes
+# nothing even unguarded), and the real unit is read, never written: its mtime and bytes stay.
+acct=$(unset HOME; CDPATH='' cd ~ && pwd -P)
+real_unit=$acct/.config/systemd/user/jg-sentinel.service
+real_print() { [ -e "$real_unit" ] && printf '%s %s\n' "$(stat -c %Y "$real_unit")" "$(cksum < "$real_unit")" || echo absent; }
+real_before=$(real_print); : > "$LOG"
+rc=0; env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u JG_ACCOUNT_HOME HOME="$acct" "$INSTALL" --dry-run "$FMH" >"$d/out/real" 2>&1 || rc=$?
+[ "$rc" -eq 2 ] || fail "a throw-away home's dry run against the real unit should be refused (2), got $rc: $(cat "$d/out/real")"
+grep -q "$acct/.config/systemd/user is this account's own" "$d/out/real" || fail "the refusal does not name the real unit dir: $(cat "$d/out/real")"
+[ ! -s "$LOG" ] || fail "a refused dry run called systemctl"
+[ "$(real_print)" = "$real_before" ] || fail "the real $real_unit changed"
+pass "a throw-away home is refused for this account's real unit, which stays as it was"

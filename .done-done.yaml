@@ -217,6 +217,9 @@ journeys:
     command: bash journeys/remote-squad-lead-lifecycle.sh
   unit-claim:
     command: bash journeys/unit-claim.sh
+  test-unit-isolation:
+    command: bash journeys/test-unit-isolation.sh
+    timeout: 45m
   host-memory-sampler-cpu:
     command: bash journeys/host-memory-sampler-cpu.sh
     timeout: 10m
