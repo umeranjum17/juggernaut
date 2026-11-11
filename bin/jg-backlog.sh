@@ -5,7 +5,7 @@
 #        jg-backlog.sh --help
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
-# `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `markdown`, `add`, `update`, `done`, `block`, `unblock`,
+# `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `approve-dispatch`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
 # `start`, `task`, `reopen`, `hold`, `unhold`, `public-followup` and `relink` from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
@@ -186,10 +186,39 @@ ARGS=(${_jg_keyed[@]+"${_jg_keyed[@]}"})
 unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
 beads_read() { jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}; }
+# approve-dispatch <id> --harness <h> --model <m> --effort <e>: the lead's or the owner's yes that the dispatch check
+# (core/auto-dispatch) may start this ticket by itself, on that route. It writes state/dispatch-approved/<id>, the only
+# record the check trusts: a line typed into a ticket body is not one. A worker session (JG_TASK_ID set) is refused.
+approve_dispatch() {
+  local id='' harness='' model='' effort='' dir rec
+  [ -z "${JG_TASK_ID:-}" ] || fail "approve-dispatch is refused in a worker session: only the lead or the owner approves a start"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --harness|--model|--effort) [ "$#" -ge 2 ] && [ -n "$2" ] || fail "$1 needs a value"
+        case "$1" in --harness) harness=$2 ;; --model) model=$2 ;; --effort) effort=$2 ;; esac; shift 2 ;;
+      -*) fail "approve-dispatch: unknown option $1" ;;
+      *) [ -z "$id" ] || fail "approve-dispatch takes one ticket id"; id=$1; shift ;;
+    esac
+  done
+  [ -n "$id" ] && [ -n "$harness" ] && [ -n "$model" ] && [ -n "$effort" ] \
+    || fail "usage: approve-dispatch <id> --harness <h> --model <m> --effort <e>"
+  case "$id$harness$model$effort" in *[!A-Za-z0-9._:/-]*) fail "approve-dispatch: ids and route values hold letters, digits and . _ : / - only" ;; esac
+  jg_backlog_beads_read "$JG_HOME/config" show "$id" >/dev/null 2>&1 || fail "approve-dispatch: no ticket $id in this home's store"
+  dir="${JG_STATE_OVERRIDE:-$JG_HOME/state}/dispatch-approved"
+  mkdir -p "$dir" || fail "approve-dispatch: cannot create $dir"
+  rec=$(mktemp "$dir/.$id.XXXXXX") || fail "approve-dispatch: cannot write in $dir"
+  if ! { printf 'approved-by=%s\napproved-at=%s\nharness=%s\nmodel=%s\neffort=%s\n' \
+    "$(id -un)" "$(date +%s)" "$harness" "$model" "$effort" > "$rec" && mv -f "$rec" "$dir/$id"; }; then
+    rm -f "$rec"; fail "approve-dispatch: cannot write $dir/$id"
+  fi
+  printf 'approved %s for dispatch: %s %s %s\n' "$id" "$harness" "$model" "$effort"
+}
+
 set -o pipefail
 # The task id is made here, in the one function that makes it, and handed to the writer with the ticket.
 [ "${1:-}" != task ] || { [ "${#ARGS[@]}" -eq 2 ] || fail "usage: jg-backlog.sh task <ticket-id>"; ARGS+=("$(jg_backlog_task_id "${ARGS[1]}")"); }
 case "${1:-}" in
+  approve-dispatch) approve_dispatch "${ARGS[@]:1}"; exit $? ;;
   show|view) beads_read | key_tool annotate-show; exit $? ;;
   list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
   ready)

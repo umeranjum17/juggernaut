@@ -98,6 +98,7 @@ plan=(
   stall-action:home
   lead-sweep:home
   pr-pager:home
+  auto-dispatch:home
   trunk-latency:home
   tmp-reaper:home
   landing-card:home

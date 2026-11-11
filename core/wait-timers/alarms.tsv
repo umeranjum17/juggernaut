@@ -3,3 +3,4 @@ $stop_event_key	event
 required-checks	event
 fleet-report	event
 pr-pager	event
+auto-dispatch	event

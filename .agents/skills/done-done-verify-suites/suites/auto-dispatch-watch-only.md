@@ -1,0 +1,3 @@
+# Auto-dispatch, watch only
+
+Auto-dispatch, watch only: run `done-done run -- bash tests/jg-auto-dispatch.test.sh` (it writes `auto-dispatch.log` and `auto-dispatch-rows.tsv` into `$DONE_DONE_EVIDENCE_ROOT`); a fixture home with 2 free lanes and 6 ready tickets proves the check `core/auto-dispatch/dispatch.sh` writes 2 "would start" rows and 4 "skipped" rows that name why (open decision linked, no brief, no approval record despite `auto-dispatch: yes` typed in the body, held), writes nothing on an unchanged beat, and that `bin/jg-backlog.sh approve-dispatch` run with `JG_TASK_ID` set is refused and writes no record (screen: none).
