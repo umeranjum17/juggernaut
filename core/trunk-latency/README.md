@@ -22,6 +22,7 @@ The check writes one row for each row of `data/trunk-landings.tsv` that has no r
 | `minutes` | `ready` to `landed`, rounded | |
 | `stage`, `gate_secs` | the stage that held the most seconds, and the gate's seconds | `data/trunk-landing-proofs.tsv` |
 | `load` | the one-minute host load, for a landing at most 10 minutes old | `/proc/loadavg` |
+| `queue_why` | why the lane waited: `behind <lane>`, `behind attempt of <lane>`, `first seen +N s`, or `not recorded` for a queue row the lander wrote no reason for | `data/jg-trunk-landing/<task>.<head>.queue-why`, written by `core/trunk-landing/queue-why.sh` at the landing start |
 
 `ready` and `minutes` are the numbers of table T of the plan's `measure.py`, so both readers give one number for one landing.
 A landed lane's status file is removed at cleanup, so the done lines come from the message log.
@@ -32,7 +33,7 @@ The light gate a worker runs before it writes no record, so the coding-done cloc
 
 The stages:
 
-- `queue`: from the done line to the landing start.
+- `queue`: from the done line to the landing start. The row and the alert name the reason: another lane's landing ended in that window (`behind <lane>`), another lane's attempt ended refused (`behind attempt of <lane>`), or nothing was ahead and the lander first saw the lane more than 60 s after its done line (`first seen +N s`).
 - `landing`: from the start to the gate (start lock, rebase, admission).
 - `gate`: the lint and the changed tests.
 - `before-gate`: the landing start is not on record, so the time before the gate is not split.

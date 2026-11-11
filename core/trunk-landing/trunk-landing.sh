@@ -59,6 +59,8 @@ mkdir -p "$MEM" || exit 0
 . "$FMH/bin/jg-wake-lib.sh"
 # shellcheck source=core/trunk-landing/refusal-reach.sh
 . "$(dirname "${BASH_SOURCE[0]}")/refusal-reach.sh"
+# shellcheck source=core/trunk-landing/queue-why.sh
+. "$(dirname "${BASH_SOURCE[0]}")/queue-why.sh"
 # A detached job (run, runbatch, live: each started with setsid) outlives whoever started it. Under a test
 # (JG_TEST_SEAM=1) it names itself in the suite's registry, so the suite's cleanup stops its process group even after
 # the fixture home is gone (tests/lib.sh jg_test_reap_detached).
@@ -330,6 +332,7 @@ for meta in "$STATE"/*.meta; do
     retry*) verdict_due "$st" || continue ;;
     wait*) [ -z "$QUIET" ] || verdict_due "$st" || continue; report "$id.$head" "$id waits to land: ${line#wait }" "${line#wait }" ;;
   esac
+  [ -n "$QUIET" ] || queue_seen "$MEM" "$id" "$head"
   # <epoch done> <task> <head> <project> <1, or 0 for a lane marked `land-next`> <1, or 0 for a lane once returned for a conflict>
   cands="$cands$at $id $head $(basename "$proj") $([ -e "$STATE/$id.land-next" ] && echo 0 || echo 1) $( { verdict_returned "$id" || grep -Eq "^final.*$VERDICT_CONFLICT_RE" "$MEM/retired/$id".*.state 2>/dev/null; } && echo 0 || echo 1)"$'\n'
 done
@@ -371,6 +374,11 @@ if ! busy; then
     esac
   done
   if [ "${#normal[@]}" -gt 0 ]; then ready=("${normal[@]}"); else ready=("$env_first"); fi
+  # Name why each lane did not start at its done line (core/trunk-landing/queue-why.sh); core/trunk-latency reads it.
+  stack=(); for arg in "${ready[@]}"; do stack+=("${arg%%@*}"); done
+  for arg in "${ready[@]}"; do
+    queue_why_record "$MEM" "${arg%%@*}" "${arg#*@}" "$(printf '%s' "$cands" | awk -v t="${arg%%@*}" '$2 == t { print $1; exit }')" "$now" "${stack[@]}"
+  done
   if [ "${#ready[@]}" -ge 2 ]; then
     for arg in "${ready[@]}"; do printf 'running %s\n' "$(date +%s)" > "$MEM/${arg%%@*}.${arg#*@}.state"; done
     launch_log=$(mktemp "$MEM/batch.launch-XXXXXX.log") || exit 1

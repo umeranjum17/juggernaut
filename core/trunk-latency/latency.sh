@@ -12,16 +12,18 @@
 #                                   landing row is the one that landed it)
 #   state/chat.jsonl, state/<task>.status   the lane's `done [at=<epoch>]` lines; a landed lane's status file is removed at
 #                                   cleanup, so the message log is the record that stays
+#   data/jg-trunk-landing/<task>.<head>.queue-why   why the lane waited, written by the lander at the landing start (core/trunk-landing/queue-why.sh)
 #   data/<task>/.done-done/runs/*.json      the start of the worker's first sealed test run at the head: the first record of
 #                                   a test run bound to that head (the light gate before it writes no record)
 #   /proc/loadavg                   the one-minute host load, written only for a landing at most 10 minutes old
 # It writes data/trunk-latency.tsv, one row per landing row (task and commit), with the fields
-#   task head commit first_done ready gate_start launch landed minutes stage gate_secs load
+#   task head commit first_done ready gate_start launch landed minutes stage gate_secs load queue_why
 # ready is the last done line at or before the landing row and first_done the first, as table T of the plan's measure.py
 # reads them; minutes is (landed - ready) / 60, rounded the same way. The stage is the one of queue (the done line to the
 # landing start), landing (the start to the gate: start lock, rebase, admission) and gate (the lint and the changed tests)
 # that held the most seconds, or before-gate when the start is not on record. A landing with no done line on record gets a
-# row with empty ready, minutes and stage: it is counted, not dropped.
+# row with empty ready, minutes and stage: it is counted, not dropped. A queue stage always names its reason in queue_why: behind
+# <lane>, behind attempt of <lane>, first seen +N s, or `not recorded` for a landing the lander wrote no reason for.
 # Output, which becomes a check wake: one line per landing over JG_MERGE_LATENCY_LIMIT_MINUTES (default 5, the limit
 # core/merge-on-green reads too). A landing more than an hour old when its row is written (the first run in a home, or a
 # check that was off) is recorded with no alert, and the run prints one line that counts those over the limit.
@@ -39,7 +41,9 @@ umask 077
 exec 9> "$STATE/.trunk-latency.lock" && flock -n 9 || exit 0  # one run per home writes the rows
 
 # The landing rows that have no latency row yet. The header line keeps the file non-empty, so awk reads it first.
-[ -s "$OUT" ] || printf 'task\thead\tcommit\tfirst_done\tready\tgate_start\tlaunch\tlanded\tminutes\tstage\tgate_secs\tload\n' > "$OUT"
+H1='task\thead\tcommit\tfirst_done\tready\tgate_start\tlaunch\tlanded\tminutes\tstage\tgate_secs\tload\tqueue_why'
+[ -s "$OUT" ] || printf '%b\n' "$H1" > "$OUT"
+[ "$(head -n 1 "$OUT")" != "${H1%$'\t'queue_why}" ] || sed -i "1s/\$/\tqueue_why/" "$OUT"  # a file from before the column keeps its rows
 pending=$(awk -F'\t' 'FNR == NR { seen[$1 "\t" $3] = 1; next } NF >= 4 && !(($1 "\t" $3) in seen)' "$OUT" "$LANDINGS")
 [ -n "$pending" ] || exit 0
 
@@ -93,14 +97,16 @@ while IFS=$'\t' read -r task _ commit landed _ extra; do
     n["gate"] = g; k = split(o, names, " "); best = names[1]
     for (i = 1; i <= k; i++) { if (n[names[i]] < 0) n[names[i]] = 0; if (n[names[i]] > n[best]) best = names[i] }
     printf "%.0f %s %.0f\n", t / 60, best, n[best] / 60 }')
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$task" "$head" "$commit" "${first:-}" "${ready:-}" "$gstart" \
-    "$start" "$landed" "${minutes:-}" "${stage:-}" "$gate" "$load" >> "$OUT"
+  why=$(cat "$MEM/$task.$head.queue-why" 2>/dev/null | head -n 1)
+  [ -n "$why" ] || [ "${stage:-}" != queue ] || why='not recorded'
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$task" "$head" "$commit" "${first:-}" "${ready:-}" "$gstart" \
+    "$start" "$landed" "${minutes:-}" "${stage:-}" "$gate" "$load" "$why" >> "$OUT"
   if [ $((NOW - landed)) -gt 3600 ]; then
     old=$((old + 1)); [ "${minutes:-0}" -le "$LIMIT" ] || old_over=$((old_over + 1)); continue
   fi
   [ "${minutes:-0}" -gt "$LIMIT" ] || continue
   case $stage in
-    queue) what='from its done line to the landing start' ;;
+    queue) what="from its done line to the landing start; $why" ;;
     landing) what='in the start lock, rebase and admission' ;;
     gate) what='in the lint and the changed tests' ;;
     *) what='before the gate; the landing start is not on record' ;;
