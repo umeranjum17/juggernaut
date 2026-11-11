@@ -289,7 +289,7 @@ run_spawn() {
       JG_PROJECTS_OVERRIDE="$home/projects" JG_CONFIG_OVERRIDE="$home/config" \
       JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$pane" TMUX=fake,1,0 \
       PATH="$fakebin:$PATH" "$@" \
-      "$SPAWN" "$id" "$proj" codex --mode no-mistakes --yolo off ) 2>&1
+      "$SPAWN" "$id" "$proj" codex --mode no-mistakes --yolo off --ticket "$id" ) 2>&1
 }
 
 test_spawn_refuses_and_admits() {

@@ -6,7 +6,7 @@
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
 # `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `markdown`, `add`, `update`, `done`, `block`, `unblock`,
-# `start`, `reopen`, `hold`, `unhold`, `public-followup` and `relink` from the store that
+# `start`, `task`, `reopen`, `hold`, `unhold`, `public-followup` and `relink` from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
 # absolute against the caller's working directory. Hold reasons are plain text.
@@ -47,6 +47,9 @@
 #     nothing runs. The check is ${XDG_DATA_HOME:-~/.local/share}/jg-task-priority/check.sh
 #     (JG_TASK_PRIORITY_CHECK overrides the path); when it is not installed this
 #     does nothing.
+# `task <ticket-id>` prints the task id made from the ticket (bin/jg-backlog-lib.sh's jg_backlog_task_id: every dot
+# becomes a dash) and writes it on the ticket's row as metadata.task, so every script that knows only the task id
+# reaches the row. It refuses a ticket with no row and a task id that a different row already answers to.
 # Ticket keys (bin/jg-ticket-key.sh owns the contract): a key such as JG-101 given where a
 # task id goes is resolved to its slug first, `show` prints the key under the id, `list --keys`
 # puts each row's key first, and a successful `add` keys the new ticket when the home has a
@@ -184,6 +187,8 @@ unset _jg_keyed _jg_arg _jg_slug
 key_tool() { JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$TICKET_KEY" "$@"; }
 beads_read() { jg_backlog_beads_read "$JG_HOME/config" ${ARGS[@]+"${ARGS[@]}"}; }
 set -o pipefail
+# The task id is made here, in the one function that makes it, and handed to the writer with the ticket.
+[ "${1:-}" != task ] || { [ "${#ARGS[@]}" -eq 2 ] || fail "usage: jg-backlog.sh task <ticket-id>"; ARGS+=("$(jg_backlog_task_id "${ARGS[1]}")"); }
 case "${1:-}" in
   show|view) beads_read | key_tool annotate-show; exit $? ;;
   list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
@@ -199,7 +204,7 @@ case "${1:-}" in
     fi
     beads_read; exit $? ;;
   markdown) beads_read; exit $? ;;
-  add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|public-followup|relink) ;;
+  add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|public-followup|relink) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac
 

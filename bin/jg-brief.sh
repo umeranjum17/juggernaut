@@ -14,9 +14,15 @@
 # charters still use a single `{TASK}` charter fill. Juggernaut may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only|local-trunk> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
-#        jg-brief.sh <task-id> <repo-name> --scout [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
+# Usage: jg-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only|local-trunk> [--ticket <ticket-id>] [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--migration-row <slug|none>] [--off-critical-path <captain-words>] [--forge <none|gerrit|forgejo> [--shape squash]] [--design-call <yes|no> --design-reason <text>] [--demo-call <yes|no> --demo-reason <text>] [--herdr-lab|--task-text-file <file>] [--medium <mobile|web|desktop|cli|backend>]
+#        jg-brief.sh <task-id> <repo-name> --scout [--ticket <ticket-id>] [--depth <quick|standard|deep>] [--base-branch <branch>] [--herdr-lab]
 #        jg-brief.sh <task-id> --squad-lead {<project>...|--no-projects}
+#   --ticket <ticket-id> (ship and scout) makes the brief the first step of a dispatch from a ticket: it runs
+#   `jg-backlog.sh task <ticket-id>` before anything else, which writes the task id on the ticket's row so the
+#   owner rules below find the entry by the task id, and it refuses a <task-id> that is not the one made from
+#   the ticket. The brief then carries a `# Ticket` section: the ticket id, its title, and the commit form
+#   (the trailer `Ticket: <id>` and, while bin/jg-trunk.sh's landing check reads the task id out of the commit
+#   text, the task id at the start of the subject). bin/jg-spawn.sh requires the same --ticket.
 #   --medium names the project's medium at intake, so the brief can carry this
 #   home's stack advice from config/preferred-stack.json. It is a recommendation,
 #   never a gate, and is optional.
@@ -335,6 +341,7 @@ RISK_SET=0
 PROJECT_DIR=
 PROJECT_DIR_SET=0
 MEDIUM=
+TICKET=
 POS=()
 want_value=
 for a in "$@"; do
@@ -355,6 +362,7 @@ for a in "$@"; do
       project) PROJECT_DIR=$a; PROJECT_DIR_SET=1 ;;
       medium) MEDIUM=$a ;;
       task-text-file) TASK_TEXT_FILE=$a ;;
+      ticket) TICKET=$a ;;
       design-call) DESIGN_CALL=$a ;;
       design-reason) DESIGN_REASON=$a ;;
       demo-call) DEMO_CALL=$a ;;
@@ -396,6 +404,8 @@ for a in "$@"; do
     --task-text-file=*) TASK_TEXT_FILE=${a#--task-text-file=} ;;
     --medium) want_value=medium ;;
     --medium=*) MEDIUM=${a#--medium=} ;;
+    --ticket) want_value=ticket ;;
+    --ticket=*) TICKET=${a#--ticket=} ;;
     --design-call) want_value="design-call" ;;
     --design-call=*) DESIGN_CALL=${a#--design-call=} ;;
     --design-reason) want_value="design-reason" ;;
@@ -630,6 +640,34 @@ if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]
   esac
 fi
 ID=${POS[0]}
+# From a ticket, the task id is made from it and the owner rules below find its entry by that id, so the join
+# is written first (bin/jg-backlog.sh task); the spawn calls the same verb for a dispatch with no brief before it.
+TICKET_SECTION=
+if [ -n "$TICKET" ]; then
+  [ "$KIND" != squad_lead ] || { echo "error: --ticket applies only to ship and scout briefs; a squad_lead starts a home, not a ticket" >&2; exit 1; }
+  # shellcheck source=bin/jg-backlog-lib.sh
+  . "$SCRIPT_DIR/jg-backlog-lib.sh"
+  [ "$ID" = "$(jg_backlog_task_id "$TICKET")" ] || {
+    echo "error: the task id for ticket $TICKET is $(jg_backlog_task_id "$TICKET") (every dot becomes a dash), not $ID" >&2
+    exit 1
+  }
+  TICKET_OUT=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" task "$TICKET" 2>&1) || {
+    echo "error: ticket $TICKET: $(printf '%s\n' "$TICKET_OUT" | sed -n 's/^error: *//p;1{/^error/!p}' | head -1)" >&2
+    exit 1
+  }
+  TICKET_TITLE=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" show "$TICKET" 2>/dev/null | sed -n 's/^  title: *//p' | head -1)
+  TICKET_TITLE=${TICKET_TITLE#\"}
+  TICKET_TITLE=${TICKET_TITLE%\"}
+  TICKET_SECTION="
+
+# Ticket
+Ticket: $TICKET - $TICKET_TITLE
+Task id: $ID
+Commit form: end the commit message with the trailer \`Ticket: $TICKET\`."
+  if grep -q 'the commit must carry its ticket reference' "$SCRIPT_DIR/jg-trunk.sh" 2>/dev/null; then
+    TICKET_SECTION="$TICKET_SECTION Start the subject with the task id \`$ID\`, because the landing check reads it from the commit text."
+  fi
+fi
 BRANCH="$BRANCH_PREFIX$ID"
 if ! git check-ref-format --branch "$BRANCH" >/dev/null 2>&1; then
   echo "error: --branch-prefix and task id must form a valid git branch (got '$BRANCH')" >&2
@@ -980,7 +1018,7 @@ fi
 cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
-$TASK_SECTION
+$TASK_SECTION$TICKET_SECTION
 
 $HERDR_SECTION
 
@@ -1159,7 +1197,7 @@ DOD=$(jg_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CO
 cat > "$BRIEF" <<EOF
 You are a operator: an autonomous worker agent managed by juggernaut. Work on your own; do not wait for a human.
 
-$TASK_SECTION
+$TASK_SECTION$TICKET_SECTION
 $PRIOR_ART_SECTION$TRUNK_SECTION$DESIGN_SECTION$DEMO_SECTION$UI_SECTION$RISK_SECTION
 $HERDR_SECTION
 $STACK_BLOCK$RULES_BLOCK$BUILD_RULE_BLOCK

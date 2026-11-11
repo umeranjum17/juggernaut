@@ -94,6 +94,7 @@ When the captain adds or changes an ask mid-task, append the captain's words wit
 
 ## Briefs
 
+A fresh ship or Recon spawn needs `--ticket <ticket-id>` (the brief takes it too); the task id is the ticket id with every dot a dash (`jg-x.1` runs as `jg-x-1`), `bin/jg-backlog.sh task <ticket-id>` prints it, and the spawn refuses a ticket with no row or no readable title (2 to 7 words) and a task id another row answers to. A Squad Lead and a relaunch take no `--ticket`.
 `bin/jg-brief.sh` and its help own scaffold syntax, generated variants, status protocol, delivery-mode definitions of done, and exact safety mechanics.
 Use its scaffold as the contract, then fill `## Captain's intent` (`{TASK}`) with the captain's own ask and any boundary the captain stated, plus the context needed to read it, including the substance of any report, decision, or PR the ask refers to; never widen the ask there into a general goal or an enumerated coverage list, because the reviewer treats that subsection as acceptance criteria.
 Fill `## Juggernaut spec` (`{JUGGERNAUT_SPEC}`) with only the build instructions that ask requires, naming what stays out of scope when the ask is narrow; a generalization, consistency sweep, or extra hardening the captain did not ask for is follow-up work to note, not scope to add.

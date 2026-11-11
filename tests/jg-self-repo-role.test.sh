@@ -98,8 +98,10 @@ check_as() {
 # this checkout: the check command exists to compare a task's project against
 # the running code root.
 run_role() {
-  local home=$1
+  local home=$1 tk=()
   shift
+  # A fresh ship or scout spawn starts from a ticket; the fixture's task id with no dot is its own ticket's id.
+  case " $* " in *" --relaunch "* | *" --squad-lead "* | *" --ticket "*) ;; *) tk=(--ticket "$1") ;; esac
   JG_ROOT_OVERRIDE='' JG_HOME="$home" \
     JG_CONFIG_OVERRIDE="$home/config" JG_STATE_OVERRIDE="$home/state" \
     JG_DATA_OVERRIDE="$home/data" \
@@ -549,13 +551,15 @@ write_ship_brief() {  # <home> <id> [<contract-extras>]
 }
 
 run_spawn() {  # <home> <spawn-args...>
-  local home=$1
+  local home=$1 tk=()
   shift
+  # A fresh ship or scout spawn starts from a ticket; the fixture's task id with no dot is its own ticket's id.
+  case " $* " in *" --relaunch "* | *" --squad-lead "* | *" --ticket "*) ;; *) tk=(--ticket "$1") ;; esac
   JG_ROOT_OVERRIDE='' JG_HOME="$home" \
     JG_STATE_OVERRIDE="$home/state" JG_DATA_OVERRIDE="$home/data" \
     JG_PROJECTS_OVERRIDE="$TMP_ROOT/projects-unused" JG_CONFIG_OVERRIDE="$home/config" \
     JG_SPAWN_NO_GUARD=1 JG_BACKEND=tmux PATH="$SPAWN_FAKEBIN:$BASE_PATH" \
-    "$SPAWN" "$@" 2>&1
+    "$SPAWN" "$@" ${tk[@]+"${tk[@]}"} 2>&1
 }
 BASE_PATH=${JG_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 if ! PATH=$BASE_PATH command -v go >/dev/null 2>&1 && command -v go >/dev/null 2>&1; then

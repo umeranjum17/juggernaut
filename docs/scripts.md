@@ -113,7 +113,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `jg-remote-home-seed.sh` | Register and provision a whole Squad Lead home on an SSH-reachable host              |
 | `jg-remote-readiness-lib.sh` | Shared remote Squad Lead readiness gate: check and, when needed, repair then re-check through `jg-remote-doctor.sh` |
 | [`jg-project-origin-lib.sh`](../bin/jg-project-origin-lib.sh) | Accepted origin-form owner shared by both remote provisioning boundaries |
-| `jg-spawn.sh`            | Spawn operators, Recon missions, `id=repo` batches, and Squad Leads on the resolved harness and runtime backend |
+| `jg-spawn.sh`            | Spawn operators and Recon missions from a ticket (`<task-id> <project> --ticket <ticket-id> ...`; the task id is the ticket's with each dot a dash), and Squad Leads, on the resolved harness and runtime backend |
 | [`jg-treehouse-protect.py`](../bin/jg-treehouse-protect.py) | Lease recorded Treehouse pool copies before allocation, without moving, resetting or returning them; its docstring owns the skip and refusal rules (called by spawn and home seed) |
 | `jg-git-strip-ai-trailers.sh` | Strip known AI commit trailers at commit-msg time and install that hook for a fleet launch |
 | `jg-backend.sh`          | Runtime-backend selection, meta helpers, selector resolution, and operation dispatch |

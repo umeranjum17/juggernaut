@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a operator in a treehouse or Orca worktree, or a
 # squad_lead in its isolated juggernaut home.
-# Usage: jg-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
-#        jg-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --mode <no-mistakes|direct-PR|local-only|local-trunk> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--red-fix-of <branch>] [--off-critical-path <captain-words>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+#        jg-spawn.sh <task-id> <project-dir> --ticket <ticket-id> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        jg-spawn.sh <task-id> [<juggernaut-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --squad-lead
+#   --ticket <ticket-id> is REQUIRED for every fresh ship or scout spawn: the task id is made from the
+#   ticket (bin/jg-backlog-lib.sh's jg_backlog_task_id: every dot becomes a dash, so ticket jg-x.1 runs as
+#   task jg-x-1) and the spawn refuses any other task id. It also refuses a ticket with no backlog row, a
+#   row whose title is not readable (2 to 7 words, 48 characters, no id, [tag], URL or path), and a task id
+#   that a different row already answers to. The spawn writes the task id on the ticket's row (`jg-backlog.sh
+#   task`), records `ticket=<id>` in the task record and exports JG_TICKET into the pane. --squad-lead starts a
+#   home, not a ticket, and --relaunch reads `ticket=` from the record (a lane from before has none and
+#   relaunches as it always did); both refuse --ticket.
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --squad-lead spawns. Juggernaut resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
@@ -1472,6 +1480,10 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
     echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
     exit 1
   fi
+  [ "$TICKET_SET" -eq 0 ] || {
+    echo "error: --ticket names one task's ticket; a batch spawns each id=repo pair under its own id as the ticket, so spawn a dotted ticket on its own" >&2
+    exit 2
+  }
   rc=0
   shared_args=()
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
@@ -1502,7 +1514,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
       rc=2
       continue
     fi
-    pair_args=("${pair%%=*}" "${pair#*=}" "${shared_args[@]+"${shared_args[@]}"}")
+    pair_args=("${pair%%=*}" "${pair#*=}" "${shared_args[@]+"${shared_args[@]}"}" --ticket "${pair%%=*}")
     [ "$KIND" != scout ] || pair_args+=(--scout)
     pair_rc=0
     JG_SPAWN_NO_GUARD=1 "$JG_ROOT/bin/jg-spawn.sh" "${pair_args[@]}" || pair_rc=$?
@@ -1521,6 +1533,19 @@ jg_task_id_creation_valid "$ID" || {
   echo "error: invalid task id" >&2
   exit 2
 }
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != squad_lead ]; then
+  case "$TICKET" in
+    '' | *[!A-Za-z0-9._-]* | [!A-Za-z0-9]*)
+      echo "error: --ticket '$TICKET' is not a ticket id (letters, digits, dot, dash and underscore)" >&2
+      exit 2
+      ;;
+  esac
+  TICKET_TASK=$(jg_backlog_task_id "$TICKET")
+  if [ "$ID" != "$TICKET_TASK" ]; then
+    echo "error: spawn refused: the task id for ticket $TICKET is $TICKET_TASK (every dot becomes a dash), not $ID; run bin/jg-backlog.sh task $TICKET to print it" >&2
+    exit 2
+  fi
+fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" = ship ]; then
   BRANCH="$BRANCH_PREFIX$ID"
   if ! git check-ref-format --branch "$BRANCH" >/dev/null 2>&1; then
@@ -2752,6 +2777,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     RED_FIX_OF=$(jg_meta_get "$RELAUNCH_META" red_fix_of)
     OFF_CRITICAL_PATH=$(jg_meta_get "$RELAUNCH_META" critical_override)
     MIGRATION_ROW=$(jg_meta_get "$RELAUNCH_META" migration_row)
+    TICKET=$(jg_meta_get "$RELAUNCH_META" ticket)
   elif [ "$BASE_BRANCH_SET" -eq 1 ]; then
     [ -n "$BASE_BRANCH" ] || {
       echo "error: --base-branch requires a branch name" >&2
@@ -3185,8 +3211,34 @@ herdr_projection_existing_meta_allows_flat() { # <meta>
 BACKLOG_TRANSITION=0
 BACKLOG_LANE_HANDOVER=0
 BACKLOG_ROW_STATE=
+# A fresh ship or scout starts from a ticket (bin/jg-backlog.sh task owns the join): its row exists, its title
+# reads as words, and the task id made from it is written on the row, so every script that knows only the task
+# id reaches the row. Nothing is written when a check before the write refuses.
+spawn_ticket_refuse() {
+  local out title why
+  if ! out=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" show "$TICKET" 2>&1); then
+    if printf '%s\n' "$out" | grep -q '^code: NOT_FOUND$'; then
+      echo "error: ticket $TICKET has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/jg-backlog.sh add $TICKET '[<type>] <title>' --kind $KIND --body '<why>') and re-run" >&2
+    else
+      echo "error: ticket $TICKET's backlog item could not be read before dispatch ($(printf '%s\n' "$out" | sed -n '1p'))" >&2
+    fi
+    return 1
+  fi
+  title=$(printf '%s\n' "$out" | sed -n 's/^  title: *//p' | head -1)
+  title=${title#\"}
+  title=${title%\"}
+  if ! why=$(jg_backlog_title_refusal "$title"); then
+    echo "error: ticket $TICKET has no readable title ($why); give it one with bin/jg-backlog.sh update $TICKET --title '<2 to 7 words>' and re-run" >&2
+    return 1
+  fi
+  if ! out=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" task "$TICKET" 2>&1); then
+    echo "error: spawn refused: $(printf '%s\n' "$out" | sed -n 's/^error: *//p' | head -1)" >&2
+    return 1
+  fi
+}
 if jg_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
+  if [ "$RELAUNCH" -eq 0 ]; then spawn_ticket_refuse || exit 1; fi
   if jg_backlog_row_probe "$DATA" "$ID"; then
     BACKLOG_ROW_STATE=$JG_BACKLOG_ROW_STATE
     # A fresh ship for a [captain-ask] or Recon/plan-born ticket needs a record of the captain's
@@ -4875,6 +4927,7 @@ preserve_relaunch_meta() {
   [ -z "$MIGRATION_ROW" ] || echo "migration_row=$MIGRATION_ROW"
   [ -z "$OFF_CRITICAL_PATH" ] || echo "critical_override=$OFF_CRITICAL_PATH"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"
+  [ "$RELAUNCH" -eq 1 ] || [ -z "$TICKET" ] || echo "ticket=$TICKET"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   # The worker account pin, only when this home declares one, so an unpinned
@@ -5326,6 +5379,7 @@ spawn_send_text_line "$T" "export COMPACT_ADVISER_DISABLE=1"
 # syntax of its own.
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   spawn_send_text_line "$T" "export JG_TASK_ID=$ID"
+  [ -z "$TICKET" ] || spawn_send_text_line "$T" "export JG_TICKET=$TICKET"
 fi
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and squad_lead - gets it before launch. Skipped

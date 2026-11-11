@@ -16,8 +16,8 @@ its fields stay readable on a closed row and on a row whose date has passed.
 A dated hold is status deferred: bd ready wakes a past-date row to open and clears defer_until, and until that first
 bd ready the row still reads as no longer held, so a due row reads the same on both sides of the wake;
 kind is metadata.kind, else captain for issue_type decision, else issue_type;
-parent is the parent-child edge target (upkeep by label) and item metadata.legacy_item, both only through --fields;
-show takes a row's id or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
+parent is the parent-child edge target (upkeep by label) and item metadata.task, else metadata.legacy_item, both only through --fields;
+show takes a row's id or the name it answers to: the task id its ticket was spawned under (metadata.task) or, after a migration, the slug or feed id it had before (metadata legacy_item, legacy_id, legacy_twin);
 repo is the project:<repo> label; links are external_ref, metadata.prs and metadata.reports.
 markdown prints the store in the backlog file's layout, for readers of that file's lines: ids are item, hold reasons encoded.
 Refusals print the backlog's error lines on stdout: exit 2 for a bad flag, exit 1 for an unknown id.
@@ -108,7 +108,7 @@ def mentions(row):
 
 def legacy(row):
     meta = row.get("metadata") or {}
-    return [meta[name] for name in ("legacy_item", "legacy_id", "legacy_twin") if meta.get(name)]
+    return [meta[name] for name in ("task", "legacy_item", "legacy_id", "legacy_twin") if meta.get(name)]
 
 
 def named(rows, ident):
@@ -144,7 +144,7 @@ def task(row, rows, native=None):
         # parent: the parent-child edge's target, else upkeep for the upkeep label; item: the id the home's state files use.
         "parent": next((d["depends_on_id"] for d in row.get("dependencies") or [] if d.get("type") == "parent-child"),
                        "upkeep" if "upkeep" in (row.get("labels") or []) else "-"),
-        "item": meta.get("legacy_item") or row["id"], "names": legacy(row),
+        "item": meta.get("task") or meta.get("legacy_item") or row["id"], "names": legacy(row),
     }
 
 

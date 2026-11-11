@@ -74,7 +74,7 @@ herdr_test_backlog_ticket() {
       state=$(printf '%s\n' "$shown" | awk '$1 == "state:" { print $2; exit }')
       [ "$state" = queued ] || "$backlog" reopen "$id" >/dev/null 2>&1
     else
-      "$backlog" add "$id" "[feature] Herdr fixture $id" --priority 1 --kind ship --repo demo \
+      "$backlog" add "$id" "[feature] Herdr fixture ticket" --priority 1 --kind ship --repo demo \
         --body "Fixture ticket $id" >/dev/null 2>&1
     fi
   ) || {

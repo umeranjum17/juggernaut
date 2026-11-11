@@ -86,7 +86,7 @@ fill() { sed -i 's/{TASK}/the task/;s/{JUGGERNAUT_SPEC}/the spec/' "$H/data/$1/b
 spawn() {  # <id> <spawn-args...>
   local id=$1
   shift
-  env_run "$REPO/bin/jg-spawn.sh" "$id" "$P" claude --model claude-sonnet-5-5 --mode direct-PR --yolo off "$@" 2>&1
+  env_run "$REPO/bin/jg-spawn.sh" "$id" "$P" claude --model claude-sonnet-5-5 --mode direct-PR --yolo off --ticket "$id" "$@" 2>&1
 }
 launched() { grep -q 'new-window' "$T/tmux.log"; }
 reset_tmux() { : > "$T/tmux.log"; }

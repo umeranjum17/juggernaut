@@ -201,6 +201,19 @@ jg_test_spawn_item() {
   jg_test_backlog "$home" show "$id" >/dev/null 2>&1 || jg_test_add "$home" "$id" "[feature] Spawn fixture $id"
 }
 
+# jg_test_ticket_title <home> <id>
+# A fresh spawn holds its ticket to the readable-title rule (bin/jg-backlog-lib.sh), and the fixture row of a suite that
+# tests something else carries a long or tagged title: it gets a short one, and a row that already reads as words is left.
+jg_test_ticket_title() {
+  local title
+  title=$(jg_test_backlog "$1" show "$2" 2>/dev/null | sed -n 's/^  title: *//p' | head -1)
+  [ -n "$title" ] || return 0
+  title=${title#\"}
+  title=${title%\"}
+  bash -c '. "$1"; jg_backlog_title_refusal "$2"' _ "$ROOT/bin/jg-backlog-lib.sh" "$title" >/dev/null \
+    || jg_test_backlog "$1" update "$2" --title "Spawn fixture ticket" >/dev/null 2>&1 || true
+}
+
 # jg_test_spawn_brief <home> <id> [captain-intent]
 jg_test_spawn_brief() {
   local home=$1 id=$2 intent=${3:-brief for $2}
@@ -260,7 +273,21 @@ jg_test_run_spawn() {
   # in through JG_TEST_XDG_DATA_HOME.
   local spawn_home=$home/user-home
   mkdir -p "$spawn_home"
-  case ${1:-} in ''|-*) ;; *) jg_test_spawn_item "$home" "$1" ;; esac
+  # A caller that names its own --ticket filed that ticket itself: the task id is made from it, so it has no row of its own.
+  case " $* " in
+    *" --ticket "* | *" --ticket="*) ;;
+    *) case ${1:-} in ''|-*) ;; *) jg_test_spawn_item "$home" "$1" ;; esac ;;
+  esac
+  # A fresh ship or scout spawn starts from a ticket (the fixture row is its own ticket, since a task id with no dot is its
+  # ticket's id); a relaunch, a squad lead and a batch of id=project pairs carry none.
+  local ticket=()
+  case " $* " in
+    *" --relaunch "* | *" --squad-lead "* | *" --ticket "* | *" --ticket="*) ;;
+    *) case ${1:-} in
+      '' | -* | *=*) ;;
+      *) ticket=(--ticket "$1"); jg_test_ticket_title "$home" "$1" ;;
+    esac ;;
+  esac
   JG_ROOT_OVERRIDE='' JG_HOME="$home" HOME="$spawn_home" \
     CLAUDE_CONFIG_DIR="${JG_TEST_CLAUDE_CONFIG_DIR:-}" \
     XDG_DATA_HOME="${JG_TEST_XDG_DATA_HOME:-$spawn_home/.local/share}" \
@@ -268,7 +295,7 @@ jg_test_run_spawn() {
     JG_PROJECTS_OVERRIDE="$home/projects" JG_CONFIG_OVERRIDE="$home/config" \
     JG_SPAWN_NO_GUARD=1 JG_FAKE_PANE_PATH="$pane" TMUX="${TMUX:-fake,1,0}" \
     PATH="$fakebin:$PATH" \
-    "$ROOT/bin/jg-spawn.sh" "$@" 2>&1
+    "$ROOT/bin/jg-spawn.sh" "$@" ${ticket[@]+"${ticket[@]}"} 2>&1
 }
 
 # --- send-world stubs -------------------------------------------------------

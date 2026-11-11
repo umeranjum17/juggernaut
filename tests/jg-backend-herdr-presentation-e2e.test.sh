@@ -435,7 +435,7 @@ spawn_task() {  # <id> <home> <project> [extra jg-spawn args...]; SPAWN_DEADLINE
   [ -z "${SPAWN_DEADLINE_SECONDS:-}" ] || deadline_cmd=(jg_run_timed "$SPAWN_DEADLINE_SECONDS")
   JG_GATE_REFUSE_BYPASS=1 JG_SPAWN_NO_GUARD=1 JG_HOME="$home" JG_ROOT_OVERRIDE="$ROOT" \
     ${deadline_cmd[@]+"${deadline_cmd[@]}"} "$ROOT/bin/jg-spawn.sh" "$id" "$project" "sh -c 'while :; do sleep 60; done'" \
-    --mode no-mistakes --yolo off --backend herdr "$@"
+    --mode no-mistakes --yolo off --ticket "$id" --backend herdr "$@"
 }
 
 finish_concurrent_spawn() {  # <id> <status> <stdout> <stderr>

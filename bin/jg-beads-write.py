@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """jg-beads-write.py - serve the backlog's add, update, done, block, unblock, start, reopen, hold and unhold on a Beads store.
 
-Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|relink> [args...]
+Usage: BEADS_DIR=<store> jg-beads-write.py <add|create|update|edit|done|close|block|unblock|start|task|reopen|hold|unhold|relink> [args...]
        BEADS_DIR=<store> jg-beads-write.py <stage <key>...|take <file> <key>...|drop <key>...|public-followup ...>
 
 bin/jg-backlog-lib.sh's jg_backlog_beads_write starts it after bin/jg-backlog.sh's intake and captain guards.
@@ -473,6 +473,27 @@ def start(args):
     respond(found, "start", ident, "start %s -> In flight" % ident, tips, card=False)
 
 
+def task(args):
+    """Write a ticket's task id on its row as metadata.task, so every script that knows only the task id reaches the row.
+
+    The bash verb (bin/jg-backlog.sh task) makes the task id from the ticket; a different row that already answers to it, by id or by name, is a refusal that names both."""
+    _, ids = view.flags(args, (), ())
+    if len(ids) != 2:
+        view.refuse("Expected 2 positional arguments, got %d" % len(ids), "usage: jg-backlog.sh task <ticket-id>")
+    ticket, name = ids
+    items = rows()
+    row = items.get(ticket)
+    if row is None:
+        view.refuse('Task "%s" not found in this backlog' % ticket, "Run `jg-backlog.sh list` to see existing tasks", "NOT_FOUND", 1)
+    other = [r["id"] for r in items.values() if r["id"] != ticket and (r["id"] == name or name in view.legacy(r))]
+    if other:
+        view.refuse("task id %s of ticket %s is already answered by row %s" % (name, ticket, other[0]),
+                    "Rename or close row %s, or give ticket %s another id" % (other[0], ticket), "TASK_CLASH", 1)
+    if (row.get("metadata") or {}).get("task") != name:
+        bd("update", ticket, "--set-metadata", "task=" + name)
+    print(name)
+
+
 def reopen(args):
     found, ident, row = one_row("reopen", args)
     tips = ["Run `jg-backlog.sh start %s` to move it to in flight" % ident]
@@ -659,7 +680,7 @@ def relink(_args):
 def main():
     verb = sys.argv[1] if len(sys.argv) > 1 else ""
     serve = {"add": add, "create": add, "update": update, "edit": update, "done": done, "close": done,
-             "block": block, "unblock": unblock, "start": start, "reopen": reopen, "hold": hold, "unhold": unhold,
+             "block": block, "unblock": unblock, "start": start, "task": task, "reopen": reopen, "hold": hold, "unhold": unhold,
              "stage": stage, "take": take, "drop": drop, "relink": relink,
              "public-followup": lambda args: __import__("jg-beads-followup").main(args)}.get(verb)
     if serve is None:
