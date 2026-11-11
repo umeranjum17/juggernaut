@@ -1293,7 +1293,7 @@ batch_culprit() {  # <from> <top> <verify gate>
 }
 
 cmd_verify() {
-  local sha tip rc=0 parent why from culprit='' gate base attempt bad
+  local sha tip rc=0 parent why from culprit='' gate base attempt bad green started=$SECONDS
   open_project "${1-}"
   # The tip is a ref read, which is atomic, so reading it never waits for a landing; the trunk lock is taken only for a short write.
   tip=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing in $PROJ"
@@ -1304,9 +1304,15 @@ cmd_verify() {
   # The top of a batch is judged against the trunk before the batch (its row says where that was), so one run covers the whole stack.
   from=$(awk -F'\t' -v c="$sha" '$3 == c && $6 ~ /^batch-from=/ { f = substr($6, 12) } END { print f }' "$DATA/trunk-landings.tsv" 2>/dev/null || true)
   if [ -n "$from" ] && git -C "$PROJ" merge-base --is-ancestor "$from" "$sha"; then parent=$from; else from=; fi
+  # The line judges what landed since the last green: the green pin is the base when it sits below the commit, so one run covers every
+  # commit landed since it (the pin moves up on a green run, so the next run is that much smaller).
+  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  if [ -n "$green" ] && [ "$green" != "$sha" ] && git -C "$PROJ" merge-base --is-ancestor "$green" "$sha" 2>/dev/null; then from=$green; parent=$green; else green=; fi
   if ! gate=$(jg_trunk_gate gate-verify "$PN" "$PROJ" "$sha"); then
     # No gate for this project (not Juggernaut, and neither gate-verify@$PN nor gate-full@$PN set): nothing can fail, so nothing goes red.
     echo "verify: no verify gate for $PN (no gate-verify@$PN or gate-full@$PN); nothing run, nothing marked red" >&2; gate=
+  elif [ -n "$green" ]; then
+    gate=$(gate_from "$gate" "$green"); echo "verify: judging every change since the green pin ${green:0:12}" >&2
   elif base=$(release_base "$sha"); then
     # Verify judges what the release pull request carries: every change since this trunk's release base, the set CI maps for it.
     gate=$(gate_from "$gate" "$base"); echo "verify: judging every change since the release base ${base:0:12}" >&2
@@ -1321,6 +1327,7 @@ cmd_verify() {
     [ "$rc" -eq 1 ] && [ "$attempt" = 1 ] || break
     echo "warning: the whole suite at ${sha:0:12} failed with no failed test charged to a commit; it is not pinned or reverted, and it runs once more" >&2
   done
+  echo "verify: ran ${parent:+${parent:0:12}..}${sha:0:12} in $((SECONDS - started))s (rc=$rc)" >&2
   case $rc in
     0)
       # A pass on the rerun moves the pin (the gate filed each flaky script as its own fix row), and so does a failure the commit's own
@@ -1337,7 +1344,7 @@ cmd_verify() {
       why="the whole suite fails on it where its parent ${parent:0:12} passes"
       [ -z "$from" ] || culprit=$(batch_culprit "$from" "$sha" "$gate")
       if [ -n "$culprit" ] && [ "$culprit" != "$sha" ]; then
-        why="the whole suite fails on it where the trunk before its batch ${from:0:12} passes"
+        why="the whole suite fails on it where the trunk before it (${from:0:12}) passes"
         if revert_commit "$culprit" "$why"; then exit 1; fi
       elif revert_commit "$sha" "$why"; then exit 1; fi
       # The red stays recorded (data/trunk-ci.tsv, source verify) so no later landing moves the pin over it.

@@ -163,6 +163,21 @@ test_verify_judges_every_change_since_the_release_base() {
   pass 'verify judges every change since the release base, the set CI maps for the release pull request'
 }
 
+# The line's verify judges the changes since the green pin (D8 answer a): a release base, a pin above it, two commits above the pin.
+test_verify_judges_only_the_changes_since_the_green_pin_and_prints_its_seconds() {
+  local c1 c2 c3 out
+  world greenpin
+  lane g1 one f1.txt; c1=$(tip_after_land g1); lane g2 two f2.txt; c2=$(tip_after_land g2); lane g3 three f3.txt; c3=$(tip_after_land g3)
+  printf '%s\n' "$c1" > "$HOME_D/state/trunk-green-proj"  # the pin sits on g1; g2 and g3 landed above it
+  printf 'gate-verify=git diff --name-only HEAD^ HEAD | tee -a %s/judged\n' "$W" >> "$HOME_D/config/trunk-policy"
+  out=$(trunk verify "$PROJ" "$c3" 2>&1) || fail "verify must pass: $out"
+  assert_contains "$out" "since the green pin ${c1:0:12}" "verify must say it judges from the green pin"
+  [ "$(sort "$W/judged" | paste -sd, -)" = "f2.txt,f3.txt" ] || fail "verify must select the two commits above the pin only: $(paste -sd, "$W/judged")"
+  printf '%s\n' "$out" | grep -Eq 'verify: ran .*in [0-9]+s' || fail "verify must print its seconds: $out"
+  [ "$(cat "$HOME_D/state/trunk-green-proj")" = "$c3" ] || fail "a green run moves the pin to the verified commit"
+  pass 'verify judges only the commits since the green pin and prints its seconds'
+}
+
 # The whole-suite gate of trunk-v3 at 20eb94ae6054: eight shards at 601 to 651 s of their 600 s budget, at host load 60, and no test
 # failed (total=81 failed=0). The old runner ended that run with exit 1 and the verify pinned the trunk red. Its shards now run every
 # script and print one JG_TEST_OVERRUN line each, and the verify moves the pin, warns, and keeps one machine-load row per shard.
@@ -275,6 +290,7 @@ test_a_verify_whose_only_failures_pass_on_rerun_moves_the_pin_and_files_one_row_
 test_a_landing_does_not_hold_the_trunk_while_its_gate_runs
 test_a_stack_holds_no_trunk_lock_while_its_gate_runs_and_is_judged_again_on_a_moved_tip
 test_verify_judges_every_change_since_the_release_base
+test_verify_judges_only_the_changes_since_the_green_pin_and_prints_its_seconds
 test_a_red_with_no_failed_test_never_pins_and_a_ready_lane_lands_on_it
 test_no_green_for_15_minutes_raises_one_alarm_not_two
 printf 'jg-trunk-verify: ok\n'
