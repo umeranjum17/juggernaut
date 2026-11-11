@@ -101,14 +101,18 @@
 # before cleanup. Its current working directory is only incidental process
 # state: the same worker remains the owner after changing directory, so cwd can
 # never veto teardown of that exact recorded endpoint.
-# The scan and destructive return hold a project-identity lock in the local root
+# The slot-owner scan and the destructive return (process reap through slot
+# return) hold a project-identity lock in the local root
 # Juggernaut home's state directory, as resolved by bin/jg-wake-lib.sh's
 # jg_juggernaut_root_home; a home seeded from another machine is its own local
 # root, since a lock on this filesystem cannot be held or observed across that
 # boundary. Fresh Treehouse spawns for that project in
 # every local Juggernaut home hold the same lock from before slot allocation
 # through metadata publication, closing the publication
-# gap; forced squad_lead teardown takes it and runs the same checks for every
+# gap. Slow cleanup work (landed-work proof, run abort, pane close, final-outcome
+# delivery) runs outside the lock, so cleanups and spawns of one project do not
+# queue behind each other (tests/jg-teardown-lock-hold.test.sh); the slot-owner
+# checks are repeated inside the lock. Forced squad_lead teardown takes it and runs the same checks for every
 # descendant Treehouse slot before touching any child.
 # These refusals are not relaxed by --force: --force authorizes discarding THIS
 # task's unlanded work, never another task's live work. Nothing of this task's
@@ -444,11 +448,6 @@ if [ -f "$META" ] && [ ! -L "$META" ]; then
       echo "REFUSED: cannot resolve the shared Treehouse project lock for ${TEARDOWN_LOCK_PROJECT:-<missing>}; nothing was changed" >&2
       exit 1
     }
-    jg_lock_try_acquire "$TREEHOUSE_PROJECT_LOCK" || {
-      echo "REFUSED: another Treehouse slot allocation or return is in progress for $TEARDOWN_LOCK_PROJECT; nothing was changed" >&2
-      exit 1
-    }
-    TREEHOUSE_PROJECT_LOCK_HELD=1
   fi
 fi
 CONTROL_LOCK="$STATE/.control-$ID.lock"
@@ -462,6 +461,27 @@ DESCENDANT_TASK_IDS=()
 DESCENDANT_TASK_KINDS=()
 DESCENDANT_TASK_HOMES=()
 DESCENDANT_TREEHOUSE_LOCK_PATHS=()
+# The shared project pool lock covers only what must be atomic with the slot
+# return: re-proving the slot is still this task's, reaping its processes, and
+# handing the copy back. Everything slow (the landed-work proof, the run abort,
+# the pane close, the final-outcome delivery) runs outside it, so another
+# cleanup or a spawn of the same project is never queued behind this one.
+teardown_pool_lock_acquire() {
+  [ "$TREEHOUSE_SLOT_LOCK_REQUIRED" = 1 ] || return 0
+  [ "$TREEHOUSE_PROJECT_LOCK_HELD" != 1 ] || return 0
+  jg_lock_try_acquire "$TREEHOUSE_PROJECT_LOCK" || {
+    echo "REFUSED: another Treehouse slot allocation or return is in progress for $TEARDOWN_LOCK_PROJECT; the task record is kept, rerun teardown" >&2
+    return 1
+  }
+  TREEHOUSE_PROJECT_LOCK_HELD=1
+}
+
+teardown_pool_lock_release() {
+  [ "$TREEHOUSE_PROJECT_LOCK_HELD" = 1 ] || return 0
+  jg_lock_release "$TREEHOUSE_PROJECT_LOCK" || true
+  TREEHOUSE_PROJECT_LOCK_HELD=0
+}
+
 teardown_release_locks() {
   local status=$? i
   if [ "$META_LOCK_HELD" = 1 ] \
@@ -499,10 +519,7 @@ teardown_release_locks() {
     jg_lock_release "$CONTROL_LOCK" || true
     CONTROL_LOCK_HELD=0
   fi
-  if [ "$TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
-    jg_lock_release "$TREEHOUSE_PROJECT_LOCK" || true
-    TREEHOUSE_PROJECT_LOCK_HELD=0
-  fi
+  teardown_pool_lock_release
   jg_lease_guard_release || true
   return "$status"
 }
@@ -1181,8 +1198,7 @@ if [ "$KIND" != squad_lead ] && [ "$BACKEND" != orca ] \
     echo "REFUSED: cannot resolve the shared Treehouse project lock for ${PROJ:-<missing>}; nothing was changed" >&2
     exit 1
   }
-  if [ "$TREEHOUSE_PROJECT_LOCK_HELD" != 1 ] \
-     || [ "$TREEHOUSE_PROJECT_LOCK" != "$EXPECTED_TREEHOUSE_PROJECT_LOCK" ]; then
+  if [ "$TREEHOUSE_PROJECT_LOCK" != "$EXPECTED_TREEHOUSE_PROJECT_LOCK" ]; then
     echo "REFUSED: task $ID's Treehouse project identity changed while teardown acquired its locks; nothing was changed" >&2
     exit 1
   fi
@@ -3148,6 +3164,19 @@ if [ "$BACKEND" = herdr ]; then
   fi
 fi
 
+# Fix 3 (see script header): sweep remote job workers abandoned by an already
+# pruned code root. Best effort - a sweep failure never blocks this teardown. It
+# touches no pool slot, so it runs before the pool lock is taken.
+"$SCRIPT_DIR/jg-remote-job-reap-orphans.sh" >&2 || true
+
+# From here to the slot return the pool lock is held. The slot-owner checks run
+# again inside it: a claim read before the lock could be stale by the time the
+# slot is reaped and returned.
+teardown_pool_lock_acquire || exit 1
+if [ "$TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
+  require_exclusive_task_worktree_slot || exit 1
+  require_owned_task_worktree_slot || exit 1
+fi
 # Fix 2 (see script header): reap descendants only after Herdr's exact pane
 # close is confirmed, before any branch deletion or copy return. Otherwise
 # killing the pane shell steals focus before the close can snapshot it.
@@ -3155,10 +3184,6 @@ if [ "$KIND" != squad_lead ]; then
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP" || exit 1
   teardown_reap_registered_scratch "$JG_HOME" "$STATE" "$DATA" "$ID" || exit 1
 fi
-
-# Fix 3 (see script header): sweep remote job workers abandoned by an already
-# pruned code root. Best effort - a sweep failure never blocks this teardown.
-"$SCRIPT_DIR/jg-remote-job-reap-orphans.sh" >&2 || true
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
 if [ "$BACKEND" = orca ] && [ "$KIND" != squad_lead ]; then
@@ -3218,6 +3243,7 @@ elif [ -d "$WT" ] && [ "$KIND" != squad_lead ]; then
   # whenever the return did not actually happen.
   jg_treehouse_slot_owner_release "$WT" "$ID"
 fi
+teardown_pool_lock_release
 
 if [ "$BACKEND" != herdr ] && [ "$BACKEND" != orca ] && [ "$TEARDOWN_WINDOWLESS" != 1 ]; then
   jg_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "jg-$ID" \
