@@ -3,6 +3,7 @@
 # exact head, seal the run, and write the receipt the merge gate accepts.
 #
 # Usage: jg-local-suite.sh <task-id> <PR URL>
+#        jg-local-suite.sh <task-id> --lane
 #        jg-local-suite.sh verify <state-dir> <task-id> <head> [<owner> <repo>]
 #        jg-local-suite.sh --help
 #
@@ -49,8 +50,13 @@
 # request body so a reviewer reads the proof on the pull request itself.
 # Sharding and caching are slice 2; this slice always records one shard.
 #
+# `--lane` is the same run for a local-trunk lane, which has no pull request: the lane's one commit sits on the trunk tip, so
+# its base is HEAD^ (a merge commit has no single base, so nothing is set aside), and no pull request body is read or written.
+# Run it as the sealed command (`done-done run -- bin/jg-local-suite.sh <task-id> --lane`); the set-aside scripts are printed
+# on its output and recorded in the receipt.
+#
 # A test that is red without the change never blocks the proof. When the runner fails and lint is clean, each red script is
-# run again on the pull request's base (origin/<base branch>, exported with git archive, never checked out) and compared by
+# run again on the pull request's base (origin/<base branch>, or HEAD^ for a lane, exported with git archive, never checked out) and compared by
 # jg_dod_baseline_split in bin/jg-dod-lib.sh: a red is set aside only when the base fails the same script with the same exit
 # and the same case names. A new case, a different exit, a script the base passes, a failure no script accounts for, an unreadable
 # base or a lint finding is still the lane's red and the receipt keeps the failing exit. A receipt that set a red aside records
@@ -168,16 +174,27 @@ verify_receipt() {  # <state-dir> <task-id> <candidate-head> [<owner> <repo>]
     "${aside:+, red on the base the same way and set aside: $aside}"
 }
 
-# The red scripts of a failed run that the pull request's base fails the same way: runs only those scripts on the base's
+# The commit a change's reds are compared against: the pull request's base branch, or a lane's parent commit.
+base_commit_of() {  # <worktree> <PR URL, or empty for a lane>
+  local base
+  if [ -z "$2" ]; then
+    git -C "$1" rev-parse -q --verify "HEAD^{commit}" >/dev/null 2>&1 && ! git -C "$1" rev-parse -q --verify "HEAD^2" >/dev/null 2>&1 \
+      && git -C "$1" rev-parse -q --verify "HEAD^1^{commit}" 2>/dev/null
+    return
+  fi
+  base=$(gh pr view "$2" --json baseRefName -q .baseRefName 2>/dev/null) && [ -n "$base" ] || return 1
+  git -C "$1" rev-parse -q --verify "origin/$base^{commit}" 2>/dev/null
+}
+
+# The red scripts of a failed run that the base fails the same way: runs only those scripts on the base's
 # exported tree and prints the set-aside ones, space-separated. Prints nothing (and returns 1) when any red is the lane's own.
-base_red_set_aside() {  # <worktree> <run log> <PR URL> <failed-script-count-from-the-runner>
-  local wt=$1 log=$2 url=$3 base commit dir blog mine reds base_res split charged aside n_red
+base_red_set_aside() {  # <worktree> <run log> <PR URL, or empty for a lane> <failed-script-count-from-the-runner>
+  local wt=$1 log=$2 commit dir blog mine reds base_res split charged aside n_red
   mine=$(jg_dod_test_results "$log" | awk -F'\t' '$2 != "0"')
   reds=$(printf '%s\n' "$mine" | cut -f1 | grep -c . || true)
   # A failure no script accounts for (a runner that died, a check before it) is never set aside.
   [ "$reds" -gt 0 ] && [ "$reds" = "$4" ] || return 1
-  base=$(gh pr view "$url" --json baseRefName -q .baseRefName 2>/dev/null) && [ -n "$base" ] || return 1
-  commit=$(git -C "$wt" rev-parse -q --verify "origin/$base^{commit}" 2>/dev/null) || return 1
+  commit=$(base_commit_of "$wt" "$3") || return 1
   dir=$(mktemp -d "$DATA/jg-local-suite/.base.XXXXXX") || return 1
   blog="$dir.log"
   if git -C "$wt" archive "$commit" | tar -x -C "$dir" 2>/dev/null && [ -x "$dir/bin/jg-test-run.sh" ]; then
@@ -213,13 +230,16 @@ esac
 # shellcheck source=bin/jg-pr-lib.sh
 . "$SCRIPT_DIR/jg-pr-lib.sh"
 
-if [ "$#" -ne 2 ] || ! jg_pr_task_id_valid "$1" || ! jg_pr_url_parse "$2"; then
-  echo "error: invalid local suite request: expected <task-id> <PR URL>; run --help" >&2
+LANE=0
+[ "${2:-}" != --lane ] || LANE=1
+if [ "$#" -ne 2 ] || ! jg_pr_task_id_valid "$1" || { [ "$LANE" = 0 ] && ! jg_pr_url_parse "$2"; }; then
+  echo "error: invalid local suite request: expected <task-id> <PR URL> or <task-id> --lane; run --help" >&2
   exit 2
 fi
 ID=$1
-URL=$JG_PR_URL
-if [ "$JG_PR_PROVIDER" != github ]; then
+URL=''
+[ "$LANE" = 1 ] || URL=$JG_PR_URL
+if [ "$LANE" = 0 ] && [ "$JG_PR_PROVIDER" != github ]; then
   echo "error: this receipt proves a GitHub pull request head; $URL is a $JG_PR_PROVIDER change, whose merge already requires its own head status" >&2
   exit 2
 fi
@@ -231,12 +251,14 @@ if [ -z "$WORKTREE" ] || [ ! -d "$WORKTREE" ]; then
   echo "error: task $ID has no recorded lane worktree to prove; run this in the task's own lane" >&2
   exit 1
 fi
-if ! HEAD=$(gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) || [ -z "$HEAD" ]; then
-  echo "error: could not read the head commit of $URL" >&2
-  exit 1
-fi
 if ! LOCAL_HEAD=$(git -C "$WORKTREE" rev-parse HEAD 2>/dev/null); then
   echo "error: $WORKTREE is not a git worktree" >&2
+  exit 1
+fi
+if [ "$LANE" = 1 ]; then
+  HEAD=$LOCAL_HEAD
+elif ! HEAD=$(gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) || [ -z "$HEAD" ]; then
+  echo "error: could not read the head commit of $URL" >&2
   exit 1
 fi
 if [ "$LOCAL_HEAD" != "$HEAD" ]; then
@@ -288,7 +310,8 @@ TREE=$(git -C "$WORKTREE" rev-parse "$HEAD^{tree}" 2>/dev/null) \
   || { echo "error: could not read the tree of $HEAD in $WORKTREE" >&2; exit 1; }
 receipt_seal "$RECEIPT" "$ID" "$HEAD" "$TREE" "$RC" "$STARTED" "$ENDED" "$WALL" "$SHARDS" "$LOG" "$TIP_RED"
 
-if [ "$RC" -eq 0 ]; then
+[ "$RC" -ne 0 ] || [ -z "$TIP_RED" ] || [ "$LANE" = 0 ] || echo "local-suite: set aside, red on the base the same way: $TIP_RED"
+if [ "$RC" -eq 0 ] && [ "$LANE" = 0 ]; then
   # Publish the proof where a reviewer reads it; a body update that fails is
   # reported and never changes the receipt, which is the gate's own evidence.
   BODY_TMP="$LOG_DIR/$ID-body.$$"

@@ -12,6 +12,8 @@
 # T21 A script that is red on the base the same way no longer blocks the worker's proof (bin/jg-local-suite.sh through its real
 #    entry point, with bin/jg-dod-lib.sh's comparison): the receipt exits 0 and names the script; a new case in it, or a new failing
 #    script, still leaves the failing exit.
+# T22 The same for a local-trunk lane, which has no pull request (`jg-local-suite.sh <task> --lane`, the command a worker seals): its
+#    base is the lane's parent commit; a script red on it the same way is set aside and named, and a new failing script gets no PASS.
 # shellcheck source=tests/jg-trunk-fixture.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/jg-trunk-fixture.sh"
@@ -148,4 +150,21 @@ test_a_red_the_base_has_the_same_way_is_set_aside_and_a_new_failure_is_not() {
 test_a_proved_lane_rebased_with_no_change_keeps_its_proof_and_lands
 test_a_lane_whose_change_differs_after_the_rebase_is_refused_and_named
 test_a_red_the_base_has_the_same_way_is_set_aside_and_a_new_failure_is_not
+
+test_a_trunk_lane_sets_aside_a_red_its_base_has_and_a_new_red_gets_no_pass() {
+  local out rc=0
+  baseline_world lane
+  out=$(cd "$LW" && PATH="$BW/fakebin:$PATH" JG_HOME="$BW" JG_STATE_OVERRIDE="$BSTATE" JG_DATA_OVERRIDE="$BDATA" \
+    bash "$ROOT/bin/jg-local-suite.sh" b1 --lane 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "a lane whose only red is the base's must pass, got exit $rc: $out"
+  assert_contains "$out" "set aside, red on the base the same way: tests/a.test.sh" "the sealed run names the script it set aside"
+  [ "$(sed -n 's/^tip_red=//p' "$BSTATE/b1.local-suite")" = tests/a.test.sh ] || fail "the receipt must name the set-aside script"
+  printf 'echo "not ok 1 - brand new"; exit 1\n' > "$LW/tests/n.test.sh"; commit_lane
+  rc=0; out=$(cd "$LW" && PATH="$BW/fakebin:$PATH" JG_HOME="$BW" JG_STATE_OVERRIDE="$BSTATE" JG_DATA_OVERRIDE="$BDATA" \
+    bash "$ROOT/bin/jg-local-suite.sh" b1 --lane 2>&1) || rc=$?
+  [ "$rc" != 0 ] || fail "a lane that also fails a new script must get no PASS: $out"
+  [ -z "$(sed -n 's/^tip_red=//p' "$BSTATE/b1.local-suite")" ] || fail "no red may be named as set aside"
+  pass "a lane with no pull request sets aside the red its base has and names it; a new failing script gets no PASS"
+}
+test_a_trunk_lane_sets_aside_a_red_its_base_has_and_a_new_red_gets_no_pass
 printf 'jg-trunk-proof-same-change: ok\n'
