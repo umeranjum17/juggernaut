@@ -30,7 +30,8 @@ Each line has tab-separated columns, and its first column names the line kind.
 | Line | Columns |
 | --- | --- |
 | `machine` | name, carrier (the record family), owner (the one file that owns it) |
-| `state` | name, kind (`initial`, `normal`, `terminal` or `extension`), captain sentence, required fields (`-` for none) |
+| `state` | name, kind (`initial`, `normal`, `terminal` or `extension`), captain sentence, required fields (`-` for none), then optionally mode (`active`, `waiting`, `rest` or `final`) and its limit |
+| `open` | a state (or `*`), then why it has no move out yet |
 | `edge` | from, event, to, writer (`file:function`), command, guard in words, test id |
 | `observer` | a shell command that prints the state word for the id in `$1` |
 | `group` | name, then its members (states, groups or composite stages): an edge that leaves the group leaves each member |
@@ -67,6 +68,18 @@ Every command lints the table first and refuses it, naming each defect, when it 
 - a state with no captain sentence;
 - a state that is not in the table's enum;
 - no initial state, no observer, a duplicate state, or an edge that names a state the table lacks.
+
+The rule of section 6.12 of the state-machine plan adds these (`core/machines/bin/tablelint.py`):
+
+- more than one initial state, or two first events;
+- an event with no name, or one event from one state with two targets;
+- a `waiting` state whose limit is not `<N><s|m|h|d> -> alert <name>` or `<N><s|m|h|d> -> <event that leaves the state>`;
+- a `rest` state whose limit is not an event that leaves it (the wake event);
+- a state whose captain sentence is the command of an edge that enters it (its entry action);
+- a `final` mode on a state that is not `terminal`, or the reverse;
+- a state that is not `terminal`, has no move out, and has no `open` line.
+
+A state with no mode is `final` when it is `terminal` and `active` otherwise.
 
 ## Corpus and baseline
 

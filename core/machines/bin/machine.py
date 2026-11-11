@@ -2,6 +2,9 @@
 """Machine tables: the state of a record and its legal moves, read from one TSV table (core/machines/README.md)."""
 import os, re, subprocess, sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tablelint
+
 USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | check <machine> [--corpus <file>] | coverage|diagram|events <machine> | edge-check <machine> <from> <to>"
 
 
@@ -85,20 +88,22 @@ def load(name, depth=0):
     except OSError as e:
         die(f"jg-machine: no table for machine '{name}': {e.strerror}")
     enum = next((ln.split("\t")[1] for ln in lines if ln.startswith("enum\t")), None)  # opt in: the closed list this table's states come from
-    m = {"name": name, "tdir": tdir, "states": {}, "edges": [], "observer": None, "rows": [], "groups": {}, "comp": {}, "subs": {}, "stages": {}}
+    m = {"name": name, "tdir": tdir, "states": {}, "edges": [], "observer": None, "rows": [], "groups": {}, "comp": {}, "subs": {}, "stages": {}, "open": {}}
     bad, inner = [], []
     for ln in lines:
         f = ln.split("\t") + [""] * 8
         if f[0] == "state":
             if f[1] in m["states"]:
                 bad.append(f"duplicate state {f[1]}")
-            m["states"][f[1]] = {"kind": f[2], "sentence": f[3], "requires": f[4]}
+            m["states"][f[1]] = {"kind": f[2], "sentence": f[3], "requires": f[4], "mode": f[5], "limit": f[6]}
         elif f[0] == "edge":
             m["rows"].append(dict(zip(("from", "event", "to", "writer", "command", "guard", "test"), f[1:8])))
         elif f[0] == "group":
             m["groups"][f[1]] = " ".join(f[2:]).split()
         elif f[0] == "inner":
             inner.append((f[1], f[2]))
+        elif f[0] == "open":
+            m["open"][f[1]] = f[2]
         elif f[0] == "observer":
             m["observer"] = f[1]
     if enum:
@@ -150,6 +155,7 @@ def load(name, depth=0):
             bad.append(f"unreachable state {k}")
         if not s["sentence"].strip():
             bad.append(f"state {k} has no captain sentence")
+    bad += tablelint.lint(m)
     for b in bad:
         print(f"lint {name}: {b}")
     if bad:

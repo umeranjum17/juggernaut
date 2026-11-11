@@ -4,7 +4,7 @@ state	writing	normal	One journey is being added or extended.	-
 state	running	normal	The checks run.	-
 state	judged	normal	The judge has answered.	-
 state	reviewing	normal	The reviewer reads the change.	-
-state	waiting	normal	The run waits for an answer that the worker may not give.	-
+state	waiting	normal	The run waits for an answer that the worker may not give.	-	waiting	0s -> alert stuck-wait
 state	sealed	terminal	The change is proved for this exact commit.	-
 state	failed	terminal	The change could not be proved in the allowed tries.	-
 state	aborted	terminal	The run was stopped.	-

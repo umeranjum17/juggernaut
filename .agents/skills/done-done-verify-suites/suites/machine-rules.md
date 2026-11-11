@@ -1,0 +1,3 @@
+# Machine table rules
+
+Machine table rules: run `done-done run machine-rules` (`bash journeys/machine-rules.sh`, which lints every table under `core/machines/tables/` with `bin/jg-machine.sh check`, then runs `tests/jg-machine-lint.test.sh` and writes its log and `steps.json` into the run's folder); the test lints a fixture machine for each defect of the rule of section 6.12 (a waiting state with no timeout, a state nothing reaches, two first events, a final state with a way out, an event with two targets, and the rest) and requires a refusal that names the state; it reads only generated fixtures and the shipped tables (screen: none).

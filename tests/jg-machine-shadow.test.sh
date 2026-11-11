@@ -15,6 +15,7 @@ seed() {
   { printf 'machine\t%s\trec\tx\n' "$1"
     printf 'state\tstart\tinitial\tStart.\t-\nstate\t%s\tnormal\tTarget.\t-\nstate\tother\tnormal\tOther.\t-\n' "$2"
     printf 'edge\tstart\tgo\t%s\tw:f\t-\tg\tt\nedge\tstart\tdrift\tother\tw:f\t-\tg\tt\n' "$2"
+    printf 'open\t*\tA fixture: the target states have no move out.\n'
     # shellcheck disable=SC2016 # the observer line is read later by the table, with $JG_HOME expanded then
     printf 'observer\tcat "$JG_HOME/obs-%s" 2>/dev/null\n' "$1"; } > "$TABLES/$1.tsv"
 }
@@ -37,7 +38,7 @@ both() { # <label> <machine> <target>: legal move logs nothing, an illegal one l
 
 # The fixture home holds the real bin/ scripts (linked, as a landed home has them) and the engine's code.
 for f in "$ROOT"/bin/*; do ln -s "$f" "$HOME_DIR/bin/"; done
-cp "$ROOT/core/machines/bin/machine.py" "$HOME_DIR/core/machines/bin/"
+cp "$ROOT/core/machines/bin/machine.py" "$ROOT/core/machines/bin/tablelint.py" "$HOME_DIR/core/machines/bin/"
 RUN=shadow_demo; shadow_demo() { "$HOME_DIR/bin/jg-machine-shadow.sh" demo r1 target; }
 both "helper" demo target
 RUN=shadow_nosuch; shadow_nosuch() { "$HOME_DIR/bin/jg-machine-shadow.sh" nosuch r1 x; }; expect "a machine with no table" nosuch start 0

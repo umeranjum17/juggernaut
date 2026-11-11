@@ -1,10 +1,10 @@
 machine	delivering	the inside of the ticket stage delivering (machine 20 of the state-machine plan)	core/machines/observers/ticket.sh
-state	queued	initial	Waiting for its turn at the line.	-
+state	queued	initial	Waiting for its turn at the line.	-	waiting	5m -> alert slow-delivery
 state	resolving	normal	A rebase conflict is being resolved, and only the affected journeys run again.	-
 state	rebased	normal	On the tip of the line as the same change, and the quick check runs.	-
-state	gated	normal	The quick check is green, and yolo or the owner's word decides.	-
-state	batched	normal	On the local trunk, in a batch.	-
-state	live	normal	The homes run it.	-
+state	gated	normal	The quick check is green, and yolo or the owner's word decides.	-	waiting	0s -> alert stuck-wait
+state	batched	normal	On the local trunk, in a batch.	-	waiting	48h -> alert stranded
+state	live	normal	The homes run it.	-	waiting	48h -> alert stranded
 state	joining	normal	Its merge into main is under way.	-
 state	on-main	terminal	The commit is on the default branch.	-
 state	returned	terminal	The delivery gave the ticket back to building.	-

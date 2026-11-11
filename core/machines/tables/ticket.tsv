@@ -1,10 +1,10 @@
 machine	ticket	a ticket: the one Beads row of jg-q1b3n (machine 0 of the state-machine plan)	core/machines/observers/ticket.sh
-state	intake	initial	Filed, and not yet approved to start.	-
-state	ready	normal	Approved, and waiting for a free lane.	-
+state	intake	initial	Filed, and not yet approved to start.	-	rest	approve
+state	ready	normal	Approved, and waiting for a free lane.	-	waiting	10m -> alert ready-idle
 state	building	normal	A worker has it.	-
 state	proving	composite	The worker said done, and this exact commit is being proved.	-
 state	delivering	composite	Proved or bypassed, and on its way to main with no full proof again.	-
-state	released	normal	On the default branch and running where it runs.	-
+state	released	normal	On the default branch and running where it runs.	-	waiting	10m -> alert drift
 state	closed	terminal	Cleaned up, with a resolution.	-
 inner	proving	proving
 inner	delivering	delivering
