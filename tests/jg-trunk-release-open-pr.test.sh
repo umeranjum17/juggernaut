@@ -343,6 +343,26 @@ out=$(cd "$W/stray" && JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$W/stray-state" JG_R
   fail 'a plain merge must not vouch for its second parent'
 assert_contains "$out" "no landing proof row for $stray" 'the refusal must name the commit a plain merge carried'
 pass 'release refuses a commit carried only by a merge that is not a trunk-home-converge'
+# A Revert commit has no landing proof row of its own; the record names the commit it reverts as reverts-<sha>.
+# The capture is accepted only when that row exists for the exact revert sha and the reverted commit is itself proven.
+git -C "$W/lane" checkout -q -b revert-side "$(tip)" || fail 'create revert branch'
+git -C "$W/lane" -c user.name=t -c user.email=t@example.invalid revert --no-edit "$later" >/dev/null || fail 'revert the later commit'
+revert=$(git -C "$W/lane" rev-parse HEAD)
+git -C "$W/stray" fetch -q "$W/lane" revert-side || fail 'fetch the revert commit'
+git -C "$W/stray" checkout -q --detach "$revert" || fail 'check out the revert commit'
+printf '%s\n' "$revert" > "$W/stray-state/trunk-green-proj"
+revert_capture() { (cd "$W/stray" && JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$W/stray-state" JG_RELEASE_PROJECT="$PROJ" JG_RELEASE_TRUNK=trunk \
+  JG_RELEASE_BASE="$base" JG_RELEASE_HEAD="$revert" DONE_DONE_EVIDENCE_ROOT="$W/stray-out" "$W/root/bin/jg-trunk-release-proof.sh" capture 2>&1); }
+landings="$HOME_D/data/trunk-landings.tsv"; : > "$landings"
+out=$(revert_capture) && fail 'a revert commit without a recorded revert row must refuse'
+assert_contains "$out" "no landing proof row for $revert" 'the refusal must name the revert commit'
+printf 'revert-later\tproj\t%s\t1\treverts-%s\n' "$revert" "${later:0:12}" > "$landings"
+revert_capture >/dev/null || fail 'a revert commit with a reverts- row must pass'
+assert_contains "$(cat "$W/stray-out/run.log")" "Revert landing: $revert (reverts $later)" 'the run must name the revert rule'
+printf 'revert-later\tproj\t%s\t1\treverts-%s\n' "$revert" "${stray:0:12}" > "$landings"
+out=$(revert_capture) && fail 'a revert of an unproven commit must refuse'
+assert_contains "$out" "no landing proof row for $revert" 'the refusal must name the revert commit'
+pass 'release accepts a Revert commit with a reverts- row on a proven commit and refuses it otherwise'
 # A legacy trunk can predate the version ledger. Its release retry must reconstruct and persist the base.
 awk -F "\t" '$1 != "proj" || $3 != "trunk"' "$HOME_D/data/trunk-versions.tsv" > "$W/versions-without-trunk"
 cp "$W/versions-without-trunk" "$HOME_D/data/trunk-versions.tsv"

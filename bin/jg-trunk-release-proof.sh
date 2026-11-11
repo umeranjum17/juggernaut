@@ -41,20 +41,35 @@ if [ "${1:-}" = capture ]; then
   versions=$(awk -F '\t' -v p="$pn" '$1 == p { print $2 "\t" $3 "\t" $4 }' "$DATA/trunk-versions.tsv") || fail 'cannot read trunk versions'
   {
     printf 'Release head: %s\nRelease base: %s\nGreen pin: %s\n' "$head" "$base" "$head"
+    accepted=
     while IFS= read -r sha; do
       row=$(awk -F '\t' -v p="$pn" -v h="$sha" '$2 == p && $3 == h { r=$0 } END { print r }' "$DATA/trunk-landing-proofs.tsv")
       if [ -z "$row" ]; then
         merge=$(awk -v h="$sha" '$1 == h { print $2; exit }' <<< "$converged")
         if [ -n "$merge" ]; then
           printf 'Converged landing: %s (merged by %s)\n' "$sha" "$merge"
+          accepted+="$sha"$'\n'
           continue
         fi
         if [ -n "$cutover" ] && [ "$sha" != "$cutover" ] && git merge-base --is-ancestor "$sha" "$cutover" && grep -Fxq "$sha" <<< "$first_parents"; then
           printf 'Legacy landing: %s (before %s)\n' "$sha" "$cutover"
+          accepted+="$sha"$'\n'
           continue
+        fi
+        # A Revert commit is accepted when trunk-landings.tsv records it as reverts-<sha> and the commit it reverts is itself proven.
+        if [[ $(git log -1 --format=%s "$sha") == 'Revert "'* ]]; then
+          reverted=$(awk -F '\t' -v p="$pn" -v h="$sha" '$2 == p && $3 == h && $NF ~ /^reverts-/ { sub(/^reverts-/, "", $NF); print $NF; exit }' "$DATA/trunk-landings.tsv")
+          reverted=$(git rev-parse --verify --quiet "${reverted:-HEAD}^{commit}" 2>/dev/null || true)
+          if [ -n "$reverted" ] && [ "$reverted" != "$(git rev-parse HEAD)" ] && { grep -Fxq "$reverted" <<< "$accepted" ||
+            awk -F '\t' -v p="$pn" -v h="$reverted" '$2 == p && $3 == h { f=1 } END { exit !f }' "$DATA/trunk-landing-proofs.tsv"; }; then
+            printf 'Revert landing: %s (reverts %s)\n' "$sha" "$reverted"
+            accepted+="$sha"$'\n'
+            continue
+          fi
         fi
         fail "no landing proof row for $sha"
       fi
+      accepted+="$sha"$'\n'
       printf 'Landing: %s\n' "$(cut -f1-5 <<<"$row" | tr '\t' ' ')"
     done <<< "$commits"
     # Check each old trunk's local and remote tips; a missing object cannot prove a hotfix was carried.
