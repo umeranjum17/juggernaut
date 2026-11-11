@@ -2261,7 +2261,12 @@ jg_autoarm_claim_open() {  # <state-dir> [grace]
   [ "$current" = "$JG_AUTOARM_IDENTITY" ] || return 1
   if [ "$(jg_path_age "$epoch")" -ge "$grace" ] \
     && [ "$(jg_path_age "$state/.last-watcher-beat")" -ge "$grace" ]; then
-    return 1
+    # A live, identity-matched watcher that claimed the lock after the last beacon
+    # is still in its first scan, and the old beacon is its predecessor's: the
+    # claim is working, not stuck, until the watcher's own stall bound
+    # (jg_watcher_first_scan_age owns that proof). A dead watcher, or one past the
+    # bound, still leaves the claim stuck.
+    jg_watcher_first_scan_age "$state" "$JG_WAKE_LIB_DIR/jg-watch.sh" "${JG_HOME:-}" >/dev/null || return 1
   fi
   return 0
 }

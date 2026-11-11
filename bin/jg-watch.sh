@@ -654,7 +654,9 @@ watch_inventory_load() {
   # stop signal that lands inside one can be dropped or mis-parsed, and a supervision
   # cycle must never survive a stop request.
   inv="$STATE/.watch-inventory.$$"
-  if ! "$SCRIPT_DIR/jg-watch-core.sh" inventory "${metas[@]}" > "$inv"; then
+  # A child the pass waits on: with hundreds of records on a loaded host it can run past
+  # the grace, and watcher_child keeps the beacon fresh for it, within its cap.
+  if ! watcher_child "$SCRIPT_DIR/jg-watch-core.sh" inventory "${metas[@]}" > "$inv"; then
     rm -f -- "$inv"
     return 1
   fi
@@ -2097,6 +2099,9 @@ phantom_pane_prune() {
   local tracked key w backend verdict
   for tracked in "$STATE"/.tracked-*; do
     [ -e "$tracked" ] || continue
+    # One backend probe per tracked pane can be slow on a loaded host, so each
+    # pane is a bounded unit of the scan that publishes liveness (watcher_beat).
+    watcher_beat prune-pane
     key=${tracked##*/.tracked-}
     { IFS=$(printf '\t') read -r w backend; } < "$tracked" || continue
     [ -n "$w" ] && [ -n "$backend" ] || continue

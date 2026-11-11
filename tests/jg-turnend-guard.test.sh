@@ -1957,6 +1957,52 @@ test_hook_claude_mode_blocks_on_stuck_generation_claim() {
   pass "jg-turnend-guard --claude: a stuck generation claim no longer allows a blind stop"
 }
 
+# The reported false alarm: a watcher still in a first scan on a loaded host leaves its
+# predecessor's beacon to age past the grace, which made the open auto-arm claim read as
+# stuck and the guard repeated "no watcher runs" while a live watcher held the lock. A live
+# first-scan holder keeps the claim open; a dead one, or one past the stall bound, does not.
+test_hook_claude_mode_allows_slow_first_scan_under_open_claim() {
+  local dir out status pid identity watcher wid case_name
+  for case_name in live dead stalled; do
+    dir=$(make_primary_dir "$TMP_ROOT/hook-claude-slow-first-scan-$case_name")
+    : > "$dir/state/task1.meta"
+    sleep 60 &
+    pid=$!
+    sleep 60 &
+    watcher=$!
+    identity=$(jg_test_pid_identity "$pid") || fail "could not compute a claim pid-identity"
+    wid=$(jg_test_pid_identity "$watcher") || fail "could not compute a watcher pid-identity"
+    printf 'epoch=464 owner_pid=%s outcome=arming updated_at=1\n%s\n' "$pid" "$identity" \
+      > "$dir/state/.claude-autoarm-epoch"
+    touch -d '600 seconds ago' "$dir/state/.claude-autoarm-epoch"
+    touch -d '500 seconds ago' "$dir/state/.last-watcher-beat"
+    mkdir -p "$dir/state/.watch.lock"
+    printf '%s\n' "$watcher" > "$dir/state/.watch.lock/pid"
+    printf '%s\n' "$(cd "$dir" && pwd)" > "$dir/state/.watch.lock/jg-home"
+    printf '%s\n' "$dir/bin/jg-watch.sh" > "$dir/state/.watch.lock/watcher-path"
+    printf '%s\n' "$wid" > "$dir/state/.watch.lock/pid-identity"
+    touch -d '400 seconds ago' "$dir/state/.watch.lock/pid"
+    case "$case_name" in
+      dead) kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null || true ;;
+    esac
+    if [ "$case_name" = stalled ]; then
+      out=$(JG_WATCHER_STALL_BOUND=100 JG_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
+    else
+      out=$(JG_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
+    fi
+    kill "$pid" "$watcher" 2>/dev/null || true
+    wait "$pid" "$watcher" 2>/dev/null || true
+    if [ "$case_name" = live ]; then
+      expect_code 0 "$status" "a live watcher in a slow first scan under an open claim must not alarm: $out"
+      [ -z "$out" ] || fail "slow first scan produced output: $out"
+    else
+      expect_code 2 "$status" "a $case_name first-scan watcher must still alarm"
+      assert_contains "$out" "TURN WOULD END BLIND" "$case_name first-scan watcher block must carry the blind-turn banner"
+    fi
+  done
+  pass "jg-turnend-guard --claude: a slow first scan under an open claim stays quiet; a dead or stalled watcher still alarms"
+}
+
 # The same abandoned claim on the terminal path: stepping aside for it allowed the
 # stop silently AND spent no attended alarm, so a genuinely broken automatic
 # mechanism stayed invisible. The guard must clear the claim and finish instead.
@@ -2782,6 +2828,7 @@ test_hook_claude_mode_blocks_on_pid_reused_arming_claim
 test_hook_claude_mode_blocks_on_stuck_arming_claim
 test_hook_claude_mode_allows_on_open_generation_claim
 test_hook_claude_mode_blocks_on_stuck_generation_claim
+test_hook_claude_mode_allows_slow_first_scan_under_open_claim
 test_hook_claude_mode_terminal_fail_open_clears_abandoned_claim
 test_hook_claude_mode_preserves_fresh_failed_progression
 test_hook_claude_mode_integrated_monotonic_fail_open
