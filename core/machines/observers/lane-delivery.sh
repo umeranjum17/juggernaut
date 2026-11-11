@@ -10,6 +10,7 @@
 #
 # The records, first match wins:
 #   before the landing (no row of the lane in data/trunk-landings.tsv):
+#     parked        state/<lane>.parked exists (bin/jg-teardown.sh --park); the branch it names is the commit
 #     coding        the last line of state/<lane>.status is not a done line
 #     landing       data/jg-trunk-landing/<lane>.<head>.state says running (head: the ship branch of state/<lane>.meta)
 #     refused       that state file says wait, retry or final
@@ -42,6 +43,9 @@ live_rows() { awk -F'\t' -v p="$P" -v h="${1:-}" '(h == "" && $1 == p) || (h != 
 # Before the landing: sets WORD and FROM from the lane's status, meta and landing state file.
 lane_state() {
   local meta=$STATE/$ID.meta line proj br head w
+  if [ -e "$STATE/$ID.parked" ]; then
+    WORD=parked; FROM=none; C=$(mval "$STATE/$ID.parked" head); EVIDENCE="$STATE/$ID.parked"; return 0
+  fi
   line=$(tail -n 1 "$STATE/$ID.status" 2>/dev/null)
   [ -e "$meta" ] || [ -n "$line" ] || return 1
   case $line in done\ *|done:*) ;; *) WORD=coding; FROM=none; EVIDENCE="last status line: ${line:0:120}"; return 0 ;; esac

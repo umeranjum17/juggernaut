@@ -71,9 +71,9 @@ see() {
 
 bash "$JM" check lane-delivery >/dev/null; expect_code 0 "$?" "the table lints"
 bash "$JM" coverage lane-delivery >/dev/null; expect_code 0 "$?" "every edge names its test"
-assert_equals 17 "$(grep -c '^state	' "$TABLES/lane-delivery.tsv")" "the table holds the 17 states of section 6.5 that a red trunk does not make"
+assert_equals 18 "$(grep -c '^state	' "$TABLES/lane-delivery.tsv")" "the table holds the 17 states of section 6.5 that a red trunk does not make, and parked"
 assert_equals 12 "$(awk -F'\t' '$1 == "edge" && $3 ~ /^t[0-9]+-/ { split($3, a, "-"); print a[1] }' "$TABLES/lane-delivery.tsv" | sort -u | wc -l)" "its edges carry the 12 transitions t1 to t13, with no t6"
-pass "the table holds 17 states and the 12 transitions"
+pass "the table holds 18 states and the 12 transitions"
 
 # Walk 1, fric-s2-wait-or-final: from coding to rolled, through a refusal, a refused cleanup and a red release run.
 L=fric-s2-wait-or-final; lane $L p1
@@ -125,6 +125,8 @@ L=w9; lane $L p9; land $L; see $L - landed; live p9:primary "${H[$L]}" live; see
 release p9 "${H[$L]}" 9; pr 9 OPEN none; see $L t8-release release-open
 L=w10; lane $L p10; land $L; see $L - landed; tab "revert-$L" p10 "$(mk "${H[$L]}" revert)" "$(date +%s)" "reverts-${H[$L]:0:12}" >> "$D/trunk-landings.tsv"
 see $L s18-revert reverted
+L=w12; lane $L p12; status $L working "on it"; see $L - coding
+printf 'task=%s\nhead=%s\n' "$L" "${H[$L]}" > "$S/$L.parked"; rm -f "$S/$L.meta"; see $L s27-park parked
 pass "walks 3 to 10 take every other edge"
 
 # Every observation is a state of the table, every observed move is a table edge, and every edge and state was seen.

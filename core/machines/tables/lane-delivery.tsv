@@ -1,5 +1,6 @@
 machine	lane-delivery	a lane's state/<id>.status and .meta, data/jg-trunk-landing/<id>.<head>.state, data/trunk-landings.tsv, data/trunk-live.tsv, data/trunk-releases.tsv and its release pull request	core/machines/observers/lane-delivery.sh
 state	coding	initial	The worker is still on it: its last status line is not done.	-
+state	parked	normal	The lane is parked: its branch and state/<id>.parked stay, and its copy and pane are given back.	commit
 state	ready	normal	The worker said done, and the proof for that commit is not complete yet, so the landing check does not start it.	-
 state	admitted	normal	The proof is complete and the change waits for the landing check to start it.	-
 state	landing	normal	The landing is under way right now.	-
@@ -16,6 +17,7 @@ state	release-green	normal	The change is in the release pull request, every chec
 state	merged	normal	The release pull request that holds the change merged, and the next trunk is not cut yet.	pr
 state	rolled	terminal	The change is on the main branch and a new trunk was cut after it.	pr
 state	reverted	terminal	The change was reverted on the trunk and does not run.	commit
+edge	coding	s27-park	parked	bin/jg-teardown.sh:main	-	bin/jg-teardown.sh <id> --park gives back the copy and the pane of a clean copy at its branch tip and writes state/<id>.parked	jg-machine-lane-delivery.test.sh
 edge	coding	t1-done	ready	bin/jg-lavish-guard.sh:append	-	the worker appends a done line for its head	jg-machine-lane-delivery.test.sh
 edge	ready	t2-proof	admitted	core/trunk-landing/trunk-landing.sh:check	-	bin/jg-trunk.sh proof finds the receipt, the merge-card evidence and the sealed run at the head	jg-machine-lane-delivery.test.sh
 edge	admitted	t3-start	landing	core/trunk-landing/trunk-landing.sh:check	-	no landing runs and the flush rule lets the lane go	jg-machine-lane-delivery.test.sh

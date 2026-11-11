@@ -148,6 +148,15 @@
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
 # Usage: jg-teardown.sh <task-id> [--force] [--legacy-record]
+#        jg-teardown.sh <task-id> --park
+#   --park gives back a ship lane's copy and pane and keeps its branch and one
+#   small record, state/<id>.parked; the lane's status log, steering inbox and
+#   data/<id>/ stay. It is not a cleanup and finishes no work: no landed-work
+#   test applies, and no backlog transition, outcome, final report or branch
+#   delete runs. The copy is returned only when it is clean and its HEAD is the
+#   tip of the lane's branch (bin/jg-teardown-park-lib.sh owns the rule); any
+#   other copy is refused with nothing changed, with or without a live worker.
+#   --park never combines with --force, which would discard what park keeps.
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards squad_lead child work for kind=squad_lead. Only use it
 #   when the captain has explicitly said to discard the work.
@@ -388,6 +397,8 @@ unset _teardown_source
 . "$SCRIPT_DIR/jg-pending-reply-lib.sh"
 # shellcheck source=bin/jg-nm-run-lib.sh
 . "$SCRIPT_DIR/jg-nm-run-lib.sh"
+# shellcheck source=bin/jg-teardown-park-lib.sh
+. "$SCRIPT_DIR/jg-teardown-park-lib.sh"
 if [ "$#" -lt 1 ] || ! jg_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -396,11 +407,13 @@ ID=$1
 TEARDOWN_LOST_SLOT_EXIT=4
 FORCE=
 LEGACY_RECORD_GIVEN=0
+PARK=0
 shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    --park) PARK=1 ;;
     *)
       echo "error: invalid teardown request" >&2
       exit 2
@@ -408,6 +421,10 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+if [ "$PARK" = 1 ] && [ -n "$FORCE" ]; then
+  echo "error: --park keeps the branch and never discards work, so it cannot be combined with --force" >&2
+  exit 2
+fi
 jg_backlog_directory_present "$STATE" "state directory" || {
   echo "error: teardown refused: $JG_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
@@ -1748,6 +1765,8 @@ teardown_note_dirty_return() {
 # is detached, still asks about the branch the work was done on.
 validate_worktree_teardown_safety() {
   local out rc=0 line login
+  # A park proves its own rule, never the landed-work test: the branch is kept.
+  [ "$PARK" != 1 ] || { teardown_park_gate; return; }
   [ -d "$WT" ] || return 0
   [ "$FORCE" != "--force" ] || return 0
   case "$KIND" in
@@ -2832,6 +2851,13 @@ if [ "$KIND" = squad_lead ]; then
   fi
 fi
 
+if [ "$PARK" = 1 ]; then
+  teardown_park_kind_check || exit 1
+  # A copy that is already back, or that another task now holds, is proved by the branch alone; a copy that is still this
+  # lane's is proved clean and at the branch tip below, under the lock, and again right before it is returned.
+  if [ ! -d "$WT" ] || ! teardown_owns_worktree; then teardown_park_gate branch-only || exit 1; fi
+fi
+
 if [ "$KIND" = squad_lead ] && [ "$FORCE" != "--force" ]; then
   SUB_STATE="$HOME_PATH/state"
   if [ -d "$SUB_STATE" ]; then
@@ -2904,11 +2930,11 @@ fi
 # reconcilable. Refuse while this home still owes a public reply for exactly this
 # work. Both gates live in bin/jg-public-followup-lib.sh, so a home that never
 # opted into the myjuggernaut relay runs one [ -f ] test and nothing else here.
-if [ "$FORCE" != "--force" ] && [ "$PUBLIC_FOLLOWUP_PARENT_UNRESOLVED" = 1 ]; then
+if [ "$FORCE" != "--force" ] && [ "$PARK" != 1 ] && [ "$PUBLIC_FOLLOWUP_PARENT_UNRESOLVED" = 1 ]; then
   echo "REFUSED: cannot resolve the primary home for marked squad_lead $SECOND_MATE_ID; refusing cleanup without its durable parent binding." >&2
   exit 1
 fi
-if [ "$FORCE" != "--force" ] \
+if [ "$FORCE" != "--force" ] && [ "$PARK" != 1 ] \
   && [ -n "$PUBLIC_FOLLOWUP_STATE" ] \
   && [ "$PUBLIC_FOLLOWUP_RELAY_ACTIVE" = 1 ] \
   && jg_pf_has_registrations "$PUBLIC_FOLLOWUP_STATE"; then
@@ -2936,13 +2962,17 @@ fi
 # reconcilable. A later retry that fails again rings through the relay poll
 # (state/x-followup-held), so this refusal is a wait, not a dead end.
 X_REQUEST=$(grep '^x_request=' "$META" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-if [ -n "$X_REQUEST" ] && [ "$FORCE" != "--force" ]; then
+if [ -n "$X_REQUEST" ] && [ "$FORCE" != "--force" ] && [ "$PARK" != 1 ]; then
   echo "REFUSED: task $ID still carries an uncleared Relay request link ($X_REQUEST), so its asker is owed a final reply." >&2
   echo "Post it with bin/jg-x-followup.sh $ID --final --text-file <path>, clear the link with bin/jg-x-followup.sh --clear $ID, or use --force after explicit discard approval." >&2
   exit 1
 fi
 
 if [ "$BACKEND" = orca ] && [ "$KIND" != scout ] && [ "$KIND" != squad_lead ] && [ "$FORCE" != "--force" ]; then
+  if [ "$PARK" = 1 ]; then
+    echo "REFUSED: Orca task $ID cannot be parked, because an Orca worktree is removed and not returned to a pool. Nothing was changed." >&2
+    exit 1
+  fi
   if ! inspectable_git_worktree "$WT"; then
     echo "REFUSED: Orca ship task $ID has no inspectable git worktree at ${WT:-<missing>}." >&2
     echo "Cannot verify dirty or unlanded work; restore the worktree path or get explicit OK to discard, then --force." >&2
@@ -2987,7 +3017,7 @@ BACKLOG_TRANSITION=$TEARDOWN_BACKLOG_TRANSITION
 BACKLOG_TRANSITION_FLAGS=()
 [ "$BACKLOG_TRANSITION" = close ] || BACKLOG_TRANSITION_FLAGS=(--retain)
 BACKLOG_SKIP_REASON=
-if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
+if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ] && [ "$PARK" != 1 ]; then
   backlog_done_args || {
     echo "error: the pending backlog $BACKLOG_TRANSITION for $ID is not replayable; refusing destructive teardown" >&2
     exit 1
@@ -3067,7 +3097,7 @@ fi
 if [ "$KIND" != squad_lead ]; then
   conclude_task_no_mistakes_run "$WT"
 fi
-if [ "$KIND" = ship ] && teardown_owns_worktree && [ -e "$CONFIG/pipeline-spend" ]; then
+if [ "$KIND" = ship ] && [ "$PARK" != 1 ] && teardown_owns_worktree && [ -e "$CONFIG/pipeline-spend" ]; then
   JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" JG_CONFIG_OVERRIDE="$CONFIG" \
     "$SCRIPT_DIR/jg-pipeline-spend.sh" record "$ID" >/dev/null \
     || echo "warning: could not record $ID's no-mistakes pipeline spend; cleanup continues" >&2
@@ -3213,7 +3243,8 @@ elif [ -d "$WT" ] && [ "$KIND" != squad_lead ]; then
   branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
   if [ "$branch" != "HEAD" ]; then
     if git -C "$WT" checkout --detach -q 2>/dev/null; then
-      git -C "$WT" branch -D "$branch" >/dev/null 2>&1 || true
+      # A park keeps the branch: that is the whole of what it leaves.
+      [ "$PARK" = 1 ] || git -C "$WT" branch -D "$branch" >/dev/null 2>&1 || true
     fi
   fi
   # Remove our hook file so a reused pool worktree cannot fire signals for a dead task.
@@ -3224,7 +3255,7 @@ elif [ -d "$WT" ] && [ "$KIND" != squad_lead ]; then
   # the project. teardown_treehouse_return tolerates transient and stale git locks
   # left by a killed crew process; see the script header for retry and stale-lock proof.
   post_lock_cleanup_check=
-  if [ "$FORCE" != "--force" ] && [ "$KIND" != scout ] && [ "$KIND" != squad_lead ]; then
+  if [ "$PARK" = 1 ] || { [ "$FORCE" != "--force" ] && [ "$KIND" != scout ] && [ "$KIND" != squad_lead ]; }; then
     post_lock_cleanup_check=validate_worktree_teardown_safety
   fi
   if [ "$KIND" = scout ] || [ "$FORCE" = "--force" ]; then
@@ -3248,6 +3279,39 @@ teardown_pool_lock_release
 if [ "$BACKEND" != herdr ] && [ "$BACKEND" != orca ] && [ "$TEARDOWN_WINDOWLESS" != 1 ]; then
   jg_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "jg-$ID" \
     || endpoint_close_refusal "$ID" "$BACKEND" "$T" 1 || exit 1
+fi
+# A park ends here. The pane is closed and the copy is back; the lane keeps its branch, its status log, its steering
+# inbox and data/<id>/. Nothing below runs for it: no final report, no outcome, no ticket done, no backlog close, no
+# branch delete, no fleet sync. The park record is written before the task record is removed, so a stop between the two
+# leaves both and a rerun finishes.
+if [ "$PARK" = 1 ]; then
+  teardown_park_gate branch-only || exit 1
+  teardown_park_write_record \
+    || { echo "error: the park record for $ID could not be written; the record of the task is kept - rerun the park" >&2; exit 1; }
+  remove_grok_turnend_auth "$STATE" "$ID" || exit 1
+  remove_kimi_turnend_auth "$STATE" "$ID" || exit 1
+  jg_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
+  retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
+  teardown_park_runtime_state_retire "$TASK_TMP"
+  jg_wake_queue_prune_task "$STATE" "$ID" "$T" 2>/dev/null || true
+  if [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; then
+    if teardown_herdr_journal_orphaned; then
+      rm -f "$HERDR_PRESENTATION_JOURNAL"
+    else
+      echo "warning: retaining herdr presentation journal for $ID; it still names a projected workspace the session-start sweep owns, not the closed endpoint" >&2
+    fi
+  fi
+  if ! jg_backlog_atomic_transition remove "$STATE/$ID.meta" "task record" "$STATE"; then
+    jg_lock_release "$META_LOCK"
+    META_LOCK_HELD=0
+    echo "error: $ID's pane and copy are given back and its park record is written, but its task record could not be removed ($JG_BACKLOG_TRANSITION_ERROR); rerun the park" >&2
+    exit 1
+  fi
+  jg_lock_release "$META_LOCK"
+  META_LOCK_HELD=0
+  echo "park $ID complete (window ${T:-none}, copy $WT given back; branch $TEARDOWN_PARK_BRANCH at ${TEARDOWN_PARK_HEAD:0:12} kept in $STATE/$ID.parked)"
+  [ "$TEARDOWN_POOL_SLOT_LOST" = 0 ] || exit "$TEARDOWN_LOST_SLOT_EXIT"
+  exit 0
 fi
 if [ "$KIND" != squad_lead ]; then
   if ! JG_HOME="$JG_HOME" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" \
