@@ -27,11 +27,46 @@ patterns_path() {
 
 HOOK=${1:-commit}
 PAT=$(patterns_path)
+
+# main_push_check: in a project registered local-trunk, the default branch moves only to a CI-green trunk commit by
+# fast-forward. A push whose remote ref is the project's default branch is refused unless the pushed commit has a `green` row
+# in the home's data/trunk-ci.tsv (written by `jg-trunk.sh autorelease` after it reads CI required for that commit from the
+# forge) and the old remote commit is an ancestor of it. Every other push, and every other project, is out of this rule.
+# Reads git's ref lines on stdin, like the hook.
+main_push_check() {
+  local home name default top lsha rref rsha ok=''
+  home=${JG_HOME:-}
+  [ -n "$home" ] && [ -f "$home/data/projects.md" ] || home=$(cat "$HERE/home" 2>/dev/null || true)
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  name=${top##*/}
+  grep -Eq "^- $name \[local-trunk\]" "$home/data/projects.md" 2>/dev/null || return 0
+  default=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+  default=${default:-main}
+  while read -r _lref lsha rref rsha; do
+    [ "$rref" = "refs/heads/$default" ] || continue
+    case "$lsha" in *[!0]*) ;; *) echo "owner-guard: push refused: $default of $name is never deleted by a push. This refusal is final." >&2; return 1 ;; esac
+    ok=$(awk -F'\t' -v p="$name" -v c="$lsha" '$1 == p && $2 == c && $4 == "green" { f = 1 } END { print f + 0 }' "$home/data/trunk-ci.tsv" 2>/dev/null)
+    [ "$ok" = 1 ] || { echo "owner-guard: push refused: ${lsha:0:12} has no recorded CI-green result, and $default of $name moves only to a CI-green trunk commit. This refusal is final." >&2; return 1; }
+    case "$rsha" in *[!0]*)
+      git merge-base --is-ancestor "$rsha" "$lsha" 2>/dev/null ||
+        { echo "owner-guard: push refused: ${lsha:0:12} is not a fast-forward of $default (${rsha:0:12}). This refusal is final." >&2; return 1; } ;;
+    esac
+  done
+}
+
+REFS=''
+if [ "$HOOK" = pre-push ]; then
+  REFS=$(mktemp) || exit 1
+  trap 'rm -f -- "$REFS"' EXIT
+  cat >"$REFS"
+  main_push_check <"$REFS" || exit 1
+  exec <"$REFS"
+fi
 TMP=$(mktemp) || exit 1
 CONT=$(mktemp) || exit 1
 BODY=$(mktemp) || exit 1
 HITS=$(mktemp) || exit 1
-trap 'rm -f -- "$TMP" "$CONT" "$BODY" "$HITS"' EXIT
+trap 'rm -f -- "$TMP" "$CONT" "$BODY" "$HITS" ${REFS:+"$REFS"}' EXIT
 # One extended regex per line; full-line # comments and blank lines ignored; case-insensitive.
 grep -v '^[[:space:]]*\(#\|$\)' "$PAT" 2>/dev/null >"$TMP" || true
 if [ ! -s "$TMP" ]; then
@@ -146,7 +181,7 @@ merge_gate() {
   [[ $url =~ ^https://github\.com/([^/]+)/([^/]+)/pull/[0-9]+/?$ ]] || unscanned "$url" "$head" "not a GitHub pull request URL"
   repo=https://github.com/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}.git
   scratch=$(mktemp -d) || exit 1
-  trap 'rm -f -- "$TMP" "$CONT" "$BODY" "$HITS"; rm -rf -- "$scratch"' EXIT
+  trap 'rm -f -- "$TMP" "$CONT" "$BODY" "$HITS" ${REFS:+"$REFS"}; rm -rf -- "$scratch"' EXIT
   base=$(gh pr view "$url" --json baseRefName --jq .baseRefName 2>"$scratch/err") && [ -n "$base" ] ||
     unscanned "$url" "$head" "cannot read the PR base branch: $(tail -n 1 "$scratch/err")"
   scratch_git() { env -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES git -c core.hooksPath=/dev/null "$@"; }

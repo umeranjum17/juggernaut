@@ -27,6 +27,7 @@
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
 #        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
 #        jg-trunk.sh publish <project-dir>             under the release waiver: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
+#        jg-trunk.sh autorelease <project-dir>         under the release waiver: when CI required is green on the pushed pin (read from the forge), fast-forward the default branch to it and cut the next trunk version at the tip; red leaves main and files one fix ticket
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (release/v8, ...) from the default branch
 #        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
@@ -2414,12 +2415,11 @@ last_green_before() {  # <red sha>
   printf '%s\n' "$c"
 }
 
-cmd_ci() {
-  local sha tip back
-  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
-  sha=$(rev "${2-}") || die "'${2-}' does not resolve in $PROJ"
-  git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
-  case ${3-} in
+# Record a CI result for a commit of the trunk (the caller holds the trunk lock and has run tip_ok). Green moves the green pin
+# to the commit when the pin lies below it. Red takes the green pin, and every home, back to the last green commit.
+ci_record() {  # <sha> green|red
+  local sha=$1 back
+  case $2 in
     green)
       row trunk-ci.tsv "$PN" "$sha" "$(date +%s)" green
       git -C "$PROJ" merge-base --is-ancestor "$(cat "$STATE/trunk-green-$PN")" "$sha" && put "$STATE/trunk-green-$PN" "$sha"
@@ -2430,7 +2430,17 @@ cmd_ci() {
       put "$STATE/trunk-green-$PN" "$back"
       raise_line_red "$PN-ci-${sha:0:12}" "CI is red at ${sha:0:12}; the green pin and every home go back to ${back:0:12}"
       echo "ci RED at ${sha:0:12}; pinning the green pin and the home back to ${back:0:12}; landings go on" >&2
-      LIVE_FLEET=1; go_live "$back" "$tip" ;;
+      LIVE_FLEET=1; go_live "$back" "$(rev "refs/heads/$TRUNK")" ;;
+  esac
+}
+
+cmd_ci() {
+  local sha tip
+  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok; tip=$(rev "refs/heads/$TRUNK")
+  sha=$(rev "${2-}") || die "'${2-}' does not resolve in $PROJ"
+  git -C "$PROJ" merge-base --is-ancestor "$sha" "$tip" || refuse "${sha:0:12} is not on $TRUNK"
+  case ${3-} in
+    green|red) ci_record "$sha" "$3" ;;
     *) die "usage: jg-trunk.sh ci <project-dir> <sha> green|red" ;;
   esac
 }
@@ -2505,21 +2515,46 @@ carry_proofs() {
   done <<< "$CARRY_REPLAYED"
 }
 
+default_branch() {
+  local d
+  d=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)
+  printf '%s\n' "${d:-main}"
+}
+
+# Whether the default branch's commit <main> is on the current trunk and holds the commit the last release shipped: the release
+# is on the default branch by fast-forward, so there is nothing to replay.
+main_is_ancestor_of_trunk() {  # <main commit>
+  local rel
+  rel=$(awk -F'\t' -v p="$PN" -v b="$TRUNK" '$1 == p && $2 == b { t = $3 } END { print t }' "$DATA/trunk-releases.tsv" 2>/dev/null || true)
+  [ -n "$rel" ] || return 1
+  git -C "$PROJ" merge-base --is-ancestor "$rel" "$1" 2>/dev/null \
+    && git -C "$PROJ" merge-base --is-ancestor "$1" "refs/heads/$TRUNK" 2>/dev/null
+}
+
 # Once the release PR has merged, the NEXT trunk version is cut from the default branch and the project moves onto
 # it: release/v8, release/v9, ... (the count goes on from the version the last cut recorded). Every commit that landed on the old trunk after the release is replayed onto it first (carry_over),
 # and the green pin follows its commit. The old trunk is left exactly as it was. Returns 1, changing nothing, while the PR is not merged.
 rollover_if_merged() {
-  local url ver new base default green
+  local url ver new base default green ff
   url=$(last_release_url); [ -n "$url" ] || { ROLLOVER_SKIP="no release is recorded"; return 1; }
   [ "$(cat "$STATE/trunk-rolled-$PN" 2>/dev/null)" != "$url" ] || { ROLLOVER_SKIP="release $url was already rolled over"; return 1; }
-  [ "$(pr_state "$url")" = merged ] || { ROLLOVER_SKIP="release $url is not merged"; return 1; }
-  default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
+  default=$(default_branch)
   git -C "$PROJ" fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" || die "cannot fetch origin/$default to cut the next trunk"
   base=$(rev "refs/remotes/origin/$default") || die "origin/$default is not a commit"
   ver=$(( $(cat "$STATE/trunk-version-$PN" 2>/dev/null || echo 1) + 1 )); new=$(jg_trunk_version_branch "$ver")
+  # A release that went to the default branch by fast-forward (autorelease) leaves the default branch an ancestor of the trunk:
+  # the next trunk is cut at the trunk tip itself, with nothing to replay, whether or not the forge already reads the PR as merged.
+  if main_is_ancestor_of_trunk "$base"; then ff=1
+  else
+    ff=0; [ "$(pr_state "$url")" = merged ] || { ROLLOVER_SKIP="release $url is not merged"; return 1; }
+  fi
   rev "refs/heads/$new" >/dev/null && die "$new already exists in $PROJ; the next trunk is never overwritten"
-  carry_over "$base"
-  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true); green=$(awk -v g="$green" '$1 == g { print $2 }' <<<"$CARRY_MAP")
+  if [ "$ff" = 1 ]; then
+    CARRY_TIP=$(rev "refs/heads/$TRUNK"); CARRY_REPLAYED=; green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  else
+    carry_over "$base"
+    green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true); green=$(awk -v g="$green" '$1 == g { print $2 }' <<<"$CARRY_MAP")
+  fi
   JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: version $ver after $url" "refs/heads/$new" "$CARRY_TIP" ""
   put "$STATE/trunk-tip-$PN" "$CARRY_TIP"; put "$STATE/trunk-green-$PN" "${green:-$base}"; put "$STATE/trunk-released-$PN" "$base"
   put "$STATE/trunk-branch-$PN" "$new"; put "$STATE/trunk-version-$PN" "$ver"; put "$STATE/trunk-rolled-$PN" "$url"
@@ -2527,7 +2562,7 @@ rollover_if_merged() {
   carry_proofs
   release_tickets "$url" || :
   echo "release merged: the project is now on $new (version $ver) at $CARRY_TIP, cut from $default at $base"
-  [ "$CARRY_TIP" = "$base" ] || echo "carried: $(git -C "$PROJ" rev-list --count "$base..$CARRY_TIP") landed commit(s) of $TRUNK above the release replayed onto $new with equal trees; the green pin is $(cut -c1-12 <<<"${green:-$base}")"
+  [ "$ff" = 1 ] || [ "$CARRY_TIP" = "$base" ] || echo "carried: $(git -C "$PROJ" rev-list --count "$base..$CARRY_TIP") landed commit(s) of $TRUNK above the release replayed onto $new with equal trees; the green pin is $(cut -c1-12 <<<"${green:-$base}")"
   local old=$TRUNK; TRUNK=$new
   echo "$old is cleaned up only when its work is proved on $default and carried into $new"
   retire_old
@@ -2837,6 +2872,63 @@ cmd_publish() {
   push_batch "$rel" "$n" "$prev" 0 1
 }
 
+# `CI required` on one exact commit, read from the forge: green, red, pending, absent or unknown. Only a completed check run
+# that succeeded is green; one that failed or timed out is red; a run that is queued, cancelled or skipped is pending.
+ci_required_state() {  # <release PR url> <sha>
+  local runs
+  jg_pr_url_parse "$1" && [ "$JG_PR_PROVIDER" = github ] || { echo unknown; return; }
+  runs=$(cd "$PROJ" && gh api "repos/$JG_PR_PATH/commits/$2/check-runs?filter=latest&per_page=100" --jq \
+    '[.check_runs[] | select(.name == "CI required")] | if length == 0 then "absent" else (.[0] | if .status != "completed" then "pending" elif .conclusion == "success" then "green" elif (.conclusion == "failure" or .conclusion == "timed_out") then "red" else "pending" end) end' 2>/dev/null) || runs=
+  case $runs in green|red|pending|absent) echo "$runs" ;; *) echo unknown ;; esac
+}
+
+# The fix ticket of a red CI on the pushed pin, filed once for the commit.
+file_ci_red_ticket() {  # <sha> <url>
+  local id="ci-red-$PN-${1:0:12}"
+  JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-backlog.sh" add "$id" \
+    "[blocker] CI required is red on the release of $PN at ${1:0:12}" --kind ship --priority 1 \
+    --body "CI required failed on $2 at $1; main stays where it is.
+Why: main moves only to a CI-green trunk commit, so every later commit waits behind this red.
+Done when: a fix lands on $TRUNK and its CI required run is green." >/dev/null 2>&1 \
+    || echo "warning: could not file the fix ticket $id" >&2
+}
+
+# Under the project's release waiver, main follows every CI-green trunk commit with no person in between. The commit is the one
+# the last release row names (the pushed pin of the batch pull request). `CI required` is read from the forge for that exact
+# commit: green fast-forwards the default branch to it (a push the owner guard admits only for a commit with a recorded green
+# result, never forced), then the next trunk version is cut at the trunk tip; red leaves main where it is, records the red once
+# and files one fix ticket; a run that is still going or never reported waits. Prints one `autorelease: ...` line last.
+cmd_autorelease() {
+  local rel="" url="" default main st
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never publishes to the default branch"
+  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
+  [ -n "$(jg_trunk_waiver_rule "$CONFIG/trunk-release-waiver" "$PN")" ] || { echo "autorelease: not released: it needs the captain's word (no release waiver for $PN)"; return 0; }
+  default=$(default_branch)
+  if rollover_if_merged; then echo "autorelease: main holds the release; the project is on $TRUNK"; return 0; fi
+  read -r rel url <<< "$(awk -F'\t' -v p="$PN" -v t="$TRUNK" 'NF >= 6 && $1 == p && $2 == t { c = $3; u = $6 } END { print c, u }' "$DATA/trunk-releases.tsv" 2>/dev/null)"
+  [ -n "$rel" ] || { echo "autorelease: waiting: no batch of $TRUNK is pushed yet"; return 0; }
+  git -C "$PROJ" merge-base --is-ancestor "$rel" "refs/heads/$TRUNK" || refuse "the pushed commit ${rel:0:12} is not on $TRUNK"
+  git -C "$PROJ" fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" || die "cannot fetch origin/$default"
+  main=$(rev "refs/remotes/origin/$default") || die "origin/$default is not a commit"
+  git -C "$PROJ" merge-base --is-ancestor "$main" "$rel" || refuse "$default (${main:0:12}) is not an ancestor of ${rel:0:12}; main moves only by fast-forward"
+  st=$(ci_required_state "$url" "$rel")
+  case $st in
+    green) ;;
+    red)
+      if ! grep -q "^$PN	$rel	[0-9]*	red" "$DATA/trunk-ci.tsv" 2>/dev/null; then
+        ci_record "$rel" red >&2; file_ci_red_ticket "$rel" "$url"
+      fi
+      echo "autorelease: RED: CI required failed at ${rel:0:12}; $default stays at ${main:0:12} and a fix ticket is filed"; return 0 ;;
+    *) echo "autorelease: waiting: CI required is $st at ${rel:0:12}"; return 0 ;;
+  esac
+  ci_record "$rel" green >/dev/null
+  printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$rel" "$default" "$main" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused the push to $default"
+  git -C "$PROJ" push -q origin "$rel:refs/heads/$default" || die "push of ${rel:0:12} to $default failed (never forced)"
+  put "$STATE/trunk-released-$PN" "$rel"
+  rollover_if_merged || echo "the next trunk is not cut: ${ROLLOVER_SKIP:-unknown}" >&2
+  echo "autorelease: $default is now ${rel:0:12} (CI required green): $url; the project is on $TRUNK"
+}
+
 # Reconcile an idle trunk from the landing check, under the same lock as a landing.
 cmd_reconcile() {
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok
@@ -2886,6 +2978,7 @@ case "${1:-}" in
   retire) shift; cmd_retire "$@" ;;
   release) shift; cmd_release "$@" ;;
   publish) shift; cmd_publish "$@" ;;
+  autorelease) shift; cmd_autorelease "$@" ;;
   due) shift; cmd_due "$@" ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;

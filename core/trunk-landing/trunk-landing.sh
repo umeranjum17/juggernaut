@@ -9,6 +9,7 @@
 #        trunk-landing.sh nightly <jg-home> <project>                (what a tick starts once a day from nightly-hour: bin/jg-trunk.sh nightly, the whole suite on the tip through the same verify)
 #        trunk-landing.sh verify <jg-home> <project>                 (what a tick starts while the trunk tip is above the green pin: bin/jg-trunk.sh verify, one at a time)
 #        trunk-landing.sh publish <jg-home> <project>                (what a tick starts under a release waiver: bin/jg-trunk.sh publish, the green pin or a candidate after a red)
+#        trunk-landing.sh autorelease <jg-home> <project>            (what a tick starts under a release waiver: main follows the CI-green pin)
 #
 # For each state/<task>.meta in the home with a local-style mode (the table row `local` or its old words) whose project is registered local-trunk and has a trunk
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
@@ -34,6 +35,9 @@
 # also starts `live` (a detached job, never blocking a landing), which runs `bin/jg-trunk.sh autolive` and reports a go-live,
 # a failed move, a hold or a home still behind the last go-live after 10 minutes (bin/jg-trunk-live-lag.sh) in the outbox: the homes move once the trunk has been quiet for live-quiet-minutes (20) or the
 # oldest landing not yet live is live-cap-minutes (60) old, whichever is first. Only the green pin goes live, so a red suite never does.
+# Under a release waiver (config/trunk-release-waiver) every tick also starts `autorelease` (a detached job, one at a time per project), which runs
+# `bin/jg-trunk.sh autorelease`: once CI required is green on the pushed pin, main fast-forwards to it and the next trunk version is cut; a red
+# or a refusal is reported once in the outbox, and a wait is silent (docs/trunk-flow.md).
 # A landed task resumes the lanes whose blocker says `waits-for: <task>`: one steer each, the blocker closed in the same send.
 # A landed task is then cleaned up with bin/jg-teardown.sh, never forced, in the same step that landed it and per lane: a stack's
 # output is read as it comes, and each lane is cleaned at its own `landed` line. A refusal that only needs time is retried at 15 s, 1, 2
@@ -59,8 +63,8 @@ case "${1:-}" in
   nightly) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh nightly <jg-home> <project>" >&2; exit 2; } ;;
   publish) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh publish <jg-home> <project>" >&2; exit 2; } ;;
   cleanup) [ "$#" -ge 4 ] || { echo "usage: trunk-landing.sh cleanup <jg-home> <task-id> <head> [<now>]" >&2; exit 2; } ;;
-  live) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh live <jg-home> <project>" >&2; exit 2; } ;;
-  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | cleanup <jg-home> <task-id> <head> | run <jg-home> <task-id> <head> | live <jg-home> <project> | verify <jg-home> <project> | nightly <jg-home> <project> | publish <jg-home> <project>" >&2; exit 2 ;;
+  live|autorelease) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh live|autorelease <jg-home> <project>" >&2; exit 2; } ;;
+  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | cleanup <jg-home> <task-id> <head> | run <jg-home> <task-id> <head> | live <jg-home> <project> | verify <jg-home> <project> | nightly <jg-home> <project> | publish <jg-home> <project> | autorelease <jg-home> <project>" >&2; exit 2 ;;
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -89,7 +93,7 @@ mkdir -p "$MEM" || exit 0
 # (JG_TEST_SEAM=1) it names itself in the suite's registry, so the suite's cleanup stops its process group even after
 # the fixture home is gone (tests/lib.sh jg_test_reap_detached).
 case $1 in
-  run|runbatch|cleanup|live|publish|verify|nightly)
+  run|runbatch|cleanup|live|autorelease|publish|verify|nightly)
     if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_DETACHED_REGISTRY:-}" ]; then
       printf '%s %s\n' "$$" "$(jg_pid_identity "$$" 2>/dev/null)" >> "$JG_TEST_DETACHED_REGISTRY" 2>/dev/null || :
     fi
@@ -171,6 +175,28 @@ if [ "$1" = publish ]; then
   else pub=$(printf '%s\n' "$out" | grep -E '^released ' | tail -n 1 | cut -c1-300); [ -n "$pub" ] || exit 0; fi
   jg_lock_acquire_wait "$MEM/.outbox.lock"
   printf 'trunk-landing: %s: %s\n' "$pn" "$pub" >> "$MEM/outbox"
+  jg_lock_release "$MEM/.outbox.lock"
+  exit 0
+fi
+
+# The release step for one project (bin/jg-trunk.sh autorelease decides): main follows the CI-green pin. A wait is silent; anything
+# else is reported once per distinct line. One at a time per project.
+if [ "$1" = autorelease ]; then
+  pn=$3; proj=$FMH/projects/$pn; line=; arc=0
+  [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [ -d "$proj" ] || exit 2
+  jg_lock_try_acquire "$STATE/.trunk-autorelease-$pn.lock" || exit 0
+  trap 'jg_lock_release "$STATE/.trunk-autorelease-$pn.lock"' EXIT
+  line=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" autorelease "$proj" 2>&1) || arc=$?
+  line=$(printf '%s\n' "$line" | tail -n 1 | cut -c1-300); line=${line#autorelease: }
+  case $line in
+    waiting:*|"not released: it needs"*) rm -f "$MEM/.autorelease-$pn"; exit 0 ;;
+    '') line="NOT released: the release step printed nothing (exit $arc)" ;;
+    *) [ "$arc" -eq 0 ] || line="NOT released: $line" ;;
+  esac
+  [ "$(cat "$MEM/.autorelease-$pn" 2>/dev/null)" != "$line" ] || exit 0
+  printf '%s\n' "$line" > "$MEM/.autorelease-$pn"
+  jg_lock_acquire_wait "$MEM/.outbox.lock"
+  printf 'trunk-landing: %s: %s\n' "$pn" "$line" >> "$MEM/outbox"
   jg_lock_release "$MEM/.outbox.lock"
   exit 0
 fi
@@ -366,7 +392,7 @@ for tip in "$STATE"/trunk-tip-*; do
 done
 # Every tick starts the line's verify while a trunk's tip is above its green pin (detached, so it never holds a landing back; the job
 # itself keeps one verify at a time and skips a tip a verify already ended red on). Nothing is printed: a red raises line-red.
-# start_job (unit.sh) runs each of these four jobs in its own systemd user unit when systemd-run exists, else under setsid nohup.
+# start_job (unit.sh) runs each of these five jobs in its own systemd user unit when systemd-run exists, else under setsid nohup.
 for tip in "$STATE"/trunk-tip-*; do
   [ -z "$QUIET" ] || break
   [ -f "$tip" ] || continue
@@ -405,6 +431,15 @@ for tip in "$STATE"/trunk-tip-*; do
   [ ! -e "$MEM/.publish-$pn" ] || [ -n "$(find "$MEM/.publish-$pn" -mmin +0 2>/dev/null)" ] || continue
   : > "$MEM/.publish-$pn"
   start_job publish "$pn"
+done
+# Under a release waiver every tick starts the release step (detached, so it never holds a landing back).
+for tip in "$STATE"/trunk-tip-*; do
+  [ -z "$QUIET" ] || break
+  [ -f "$tip" ] || continue
+  pn=${tip##*/trunk-tip-}
+  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-release-waiver" 2>/dev/null || continue
+  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  start_job autorelease "$pn"
 done
 report() {
   local reason=${3%%; full log:*}

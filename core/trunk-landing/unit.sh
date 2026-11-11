@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The detached jobs a tick starts (verify, nightly, live, publish) run each in its own systemd user unit when systemd-run exists, so
+# The detached jobs a tick starts (verify, nightly, live, publish, autorelease) run each in its own systemd user unit when systemd-run exists, so
 # that the host's cleanup of the tick's cgroup (a watcher's process-group stop, a session ending) cannot kill a verify half way. The
 # unit's name is recorded per kind and project, so a tick that finds that unit still active starts nothing: one verify at a time, and a
 # tip a verify is working on is not started twice. With no systemd-run (or a user manager that refuses it) the job keeps `setsid nohup`.
@@ -23,7 +23,7 @@ unit_active() {
   [ -n "$ctl" ] && "$ctl" --user is-active --quiet "$1" 2>/dev/null
 }
 
-# start_job <verify|nightly|live|publish> <project>: start `trunk-landing.sh <kind> <home> <project>` detached.
+# start_job <verify|nightly|live|publish|autorelease> <project>: start `trunk-landing.sh <kind> <home> <project>` detached.
 start_job() {
   local kind=$1 pn=$2 run rec log unit
   run=$(unit_tool systemd-run)
