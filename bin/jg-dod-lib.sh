@@ -133,6 +133,8 @@
 
 # shellcheck source=bin/jg-pr-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-pr-lib.sh"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-delivery-style.sh"
 # shellcheck source=bin/jg-classify-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/jg-classify-lib.sh"
 # shellcheck source=bin/jg-nm-run-lib.sh
@@ -188,7 +190,7 @@ jg_forge_valid_for_mode() {  # <forge> <mode> <caller>
       echo "error: $caller: unknown forge '$forge' (expected none, gerrit, or forgejo)" >&2
       return 1 ;;
   esac
-  if [ "$forge" != none ] && { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+  if [ "$forge" != none ] && jg_delivery_style_is "$mode" local; then
     echo "error: $caller: forge=$forge cannot ship mode=$mode - that mode publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; ship no-mistakes or direct-PR, which publish through the forge" >&2
     return 1
   fi
@@ -210,7 +212,7 @@ jg_base_branch_valid() {  # <base> <mode> <forge> <caller>
     echo "error: $caller: base branch '$base' is not a valid git branch name" >&2
     return 1
   fi
-  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+  if jg_delivery_style_is "$mode" local; then
     echo "error: $caller: a base branch cannot ship mode=$mode; local delivery selects its own landing branch; ship no-mistakes or direct-PR, which open a pull request against the base" >&2
     return 1
   fi
@@ -453,7 +455,7 @@ jg_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
   jg_forge_valid_for_mode "$forge" "$mode" jg_dod_block || return 1
   jg_base_branch_valid "$base" "$mode" "$forge" jg_dod_block || return 1
   if [ -n "$consent" ]; then
-    if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; }; then
+    if jg_delivery_style_is "$mode" local; then
       echo "error: jg_dod_block: upstream consent authorizes a publication that $mode never performs; drop it" >&2
       return 1
     fi
@@ -649,12 +651,11 @@ jg_dod_should_gate_ship_done() {  # <kind> <mode> <line>
   [ "$1" = ship ] || return 1
   [ "$(status_line_verb "$3")" = "done" ] || return 1
   note=$(status_line_note "$3")
-  case "$2" in
-    direct-PR|local-only|local-trunk) return 0 ;;
-    no-mistakes|'')
-      jg_dod_note_reports_ci_ready "$note" || jg_dod_note_reports_published_change "$note" ;;
-    *) return 1 ;;
-  esac
+  if [ -z "$2" ] || jg_delivery_style_is "$2" review; then
+    jg_dod_note_reports_ci_ready "$note" || jg_dod_note_reports_published_change "$note"
+  else
+    jg_delivery_style "$2" >/dev/null 2>&1  # a known style with no review needs only the done line; an unknown mode is refused
+  fi
 }
 
 # The PR/MR URL from a `done: PR <url>...` note, or empty.
@@ -785,7 +786,7 @@ jg_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
   local wt=$1 project=$2 mode=$3 sha=$4
   jg_dod_ref_contains "$wt" refs/remotes "$sha" && return 0
   jg_dod_ref_contains "$project" refs/remotes "$sha" && return 0
-  { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; } && jg_dod_ref_contains "$project" refs/heads "$sha"
+  jg_delivery_style_is "$mode" local && jg_dod_ref_contains "$project" refs/heads "$sha"
 }
 
 # 0 when <url> names a pull request outside <worktree>'s origin repository:
@@ -926,11 +927,9 @@ jg_dod_pr_checks_clear() {  # <worktree> <pr-url>
 
 # 0 when a lane of this mode is a local-trunk lane: mode local-trunk, or the legacy local-only of a project registered local-trunk.
 jg_dod_trunk_lane() {  # <mode> <project-dir>
-  case "$1" in
-    local-trunk) return 0 ;;
-    local-only) [ "$(JG_HOME="${JG_HOME:-}" "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/jg-project-mode.sh" --raw "$(basename "${2:-/}")" 2>/dev/null | cut -d' ' -f1)" = local-trunk ] ;;
-    *) return 1 ;;
-  esac
+  jg_delivery_style_is "$1" trunk && return 0
+  jg_delivery_style_is "$1" local || return 1
+  jg_delivery_style_is "$(JG_HOME="${JG_HOME:-}" "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/jg-project-mode.sh" --raw "$(basename "${2:-/}")" 2>/dev/null | cut -d' ' -f1)" trunk
 }
 
 # 0 when <line> is not a ship done: to gate, when it names the task's recorded
@@ -1004,7 +1003,7 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     jg_dod_trunk_proof_gaps "${JG_HOME:-$(dirname "$state")}" "$state" "$id" "$meta" "$design_head" || return 1
   fi
   [ -z "$run_out" ] || jg_dod_nm_custody_released "$run_out" || return 1
-  if { [ "$mode" = local-only ] || [ "$mode" = local-trunk ]; } && [ -n "$run_out" ]; then
+  if jg_delivery_style_is "$mode" local && [ -n "$run_out" ]; then
     jg_dod_nm_custody_returned "$wt" "$run_out" || return 1
   fi
   if url=$(jg_dod_pr_url_from_done_note "$(status_line_note "$line")") \

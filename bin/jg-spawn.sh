@@ -775,6 +775,8 @@ jg_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/jg-squad-lead-nudge-lib.sh"
 # shellcheck source=bin/jg-backend.sh
 . "$SCRIPT_DIR/jg-backend.sh"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 # shellcheck source=bin/jg-control-lib.sh
 . "$SCRIPT_DIR/jg-control-lib.sh"
 # shellcheck source=bin/jg-gate-refuse-lib.sh
@@ -2760,7 +2762,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     echo "error: $BRIEF ## Captain's intent has an operator-address line: $ADDRESS_LINE; write the captain's actual words without a Captain label or address before spawn, since the heading already records provenance" >&2
     exit 1
   fi
-  if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+  if [ "$KIND" = ship ] && jg_delivery_style_is "$MODE" review; then
     if jg_brief_task_heading_present "$BRIEF" "## Captain's intent"; then
       CAPTAIN_INTENT=$(jg_brief_task_heading_body "$BRIEF" "## Captain's intent")
     else
@@ -2798,7 +2800,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     # before. A mode that publishes nothing keeps no base, because
     # jg_base_branch_valid refuses one there.
     PROJ_FORGE=
-    if [ "$KIND" != squad_lead ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
+    if [ "$KIND" != squad_lead ] && ! jg_delivery_style_is "$MODE" local; then
       PROJ_FORGE=$("$JG_ROOT/bin/jg-project-mode.sh" --forge "$(basename "$PROJ_ABS")" 2>/dev/null) || PROJ_FORGE=
       if [ -z "$PROJ_FORGE" ] || [ "$PROJ_FORGE" = none ]; then
         BASE_BRANCH=$(jg_current_version_branch "$PROJ_ABS") || BASE_BRANCH=
@@ -2842,7 +2844,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     jg_brief_worker_role "$STATE" "$ID" "$JG_ROOT" &&
       printf '\n' &&
       cat "$SOURCE_BRIEF" &&
-      if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+      if [ "$KIND" = ship ] && jg_delivery_style_is "$MODE" review; then
         jg_brief_intent_overlay "$CAPTAIN_INTENT"
       fi
   } >"$BRIEF_TMP" || {
@@ -2888,11 +2890,11 @@ if [ "$KIND" = ship ]; then
   # No feature pull requests: a project with a local trunk (bin/jg-trunk.sh init) ships every lane
   # local-trunk; legacy local-only records remain interoperable. The only PR is the release one. A current explicit captain instruction
   # can still choose a pull request mode by removing the trunk record, never by this spawn.
-  if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ "$STANDING_MODE" = local-trunk ]; then
+  if ! jg_delivery_style_is "$MODE" local && jg_delivery_style_is "$STANDING_MODE" trunk; then
     echo "error: $ID cannot ship mode=$MODE: $PROJ_NAME is registered local-trunk, so it takes no feature pull request; spawn it --mode local-trunk and its one commit lands on the trunk once its done-done proof passes (docs/trunk-flow.md)" >&2
     exit 1
   fi
-  if [ "$MODE" = local-trunk ] && { [ "$STANDING_MODE" != local-trunk ] || ! spawn_trunk_branch >/dev/null; }; then
+  if jg_delivery_style_is "$MODE" trunk && { ! jg_delivery_style_is "$STANDING_MODE" trunk || ! spawn_trunk_branch >/dev/null; }; then
     echo "error: $ID requires a registered local-trunk project with an initialized trunk; run bin/jg-trunk.sh init first" >&2
     exit 1
   fi
@@ -2902,7 +2904,7 @@ if [ "$KIND" = ship ]; then
   # config/juggernaut-role, or this one task's recorded upstream consent. Every
   # other project passes through unchanged; local-only publishes nothing and
   # never reaches this gate.
-  if [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ]; then
+  if ! jg_delivery_style_is "$MODE" local; then
     gate_rc=0
     jg_role_gate_self_publish "$JG_HOME" "$CONFIG" "$PROJ_ABS" "$JG_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
     case $gate_rc in

@@ -8,6 +8,12 @@ ds="$root/bin/jg-delivery-style.sh"
 rc=0
 {
   for m in no-mistakes direct-PR local-only local-trunk; do echo "== $m"; bash "$ds" "$m" || rc=1; done
+  for m in no-mistakes direct-PR local-only local-trunk; do
+    echo "== facts $m: local=$(bash "$ds" "$m" local && echo yes || echo no) review=$(bash "$ds" "$m" review && echo yes || echo no) trunk=$(bash "$ds" "$m" trunk && echo yes || echo no)"
+  done
+  # The mode-branch count of the plan (section 12, M7): lines that branch on a mode word in bin and core outside tests..
+  pat='(local-only|local-trunk|direct-PR|no-mistakes)\)|= *"?(local-only|local-trunk|direct-PR|no-mistakes)"? *\]|== *"?(local-only|local-trunk|direct-PR|no-mistakes)'
+  echo "== mode branch lines in bin and core: $(git -C "$root" grep -n -E "$pat" -- bin core ':!*test*' | wc -l) (76 on the trunk before this slice, 81 before J7)"
   echo "== bogus"; bash "$ds" bogus && rc=1
   bash "$root/tests/jg-delivery-style.test.sh" || rc=1
 } > "$out" 2>&1
