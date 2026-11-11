@@ -120,4 +120,6 @@ The switch is read in the home that asks, so the same change can be `in-use` in 
 `core/machines/styles/delivery-styles.tsv` has one row per mode word: the line, what the style adds in delivering, how it joins main, and whether it publishes a pull request. `bin/jg-brief.sh` reads the mode list and that flag from it.
 `bin/jg-delivery-style.sh <mode>` is the one reader (`--list` prints the modes; an unknown mode exits 1).
 No row names a prover: done-done proves the commit in every mode.
+`--field <mode> <name>` prints one named column from the `columns` row, such as `publishes`, `review` or `rule1` (the first ship rule).
+`bin/jg-dod-lib.sh` reads those properties instead of testing mode words, and `tests/jg-dod-style-brief.test.sh` holds the four per-mode brief texts byte-equal to a golden.
 `tests/jg-delivery-style.test.sh` is its test.

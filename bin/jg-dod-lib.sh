@@ -236,7 +236,7 @@ jg_brief_base_branches() {  # <brief>
 
 jg_ship_rule_one() {  # <no-mistakes|direct-PR|local-only|local-trunk> <task-id> [branch] [<forge>] [<base>]
   local mode=$1 id=$2 forge=${4:-none} base=${5:-}
-  local branch=${3:-fm/$id} target='the default branch'
+  local branch=${3:-fm/$id} target='the default branch' rule
   jg_forge_valid_for_mode "$forge" "$mode" jg_ship_rule_one || return 1
   jg_base_branch_valid "$base" "$mode" "$forge" jg_ship_rule_one || return 1
   [ -z "$base" ] || target="the base branch \`$base\` or the default branch"
@@ -244,24 +244,12 @@ jg_ship_rule_one() {  # <no-mistakes|direct-PR|local-only|local-trunk> <task-id>
     printf '%s\n' "1. Never push with git and never create a change except through the one \`gerrit-axi publish --squash\` your Definition of done names. Never run \`gerrit-axi submit\`, never vote or review a change by any path, including \`gerrit review\` or a label option on a push, and never abandon one: a human reviewer approves and submits it on the server."
     return 0
   fi
-  case "$mode" in
-    direct-PR)
-      printf '%s\n' "1. Never push to $target (push only your \`$branch\` branch). Never merge a PR."
-      ;;
-    local-trunk)
-      printf '%s\n' "1. Never push, open a PR, merge, go live or release. Work only on your \`$branch\` branch; juggernaut lands it on the local trunk."
-      ;;
-    local-only)
-      printf '%s\n' "1. Never push to any remote and never open a PR. Work only on your \`$branch\` branch; juggernaut handles the merge into local \`main\`."
-      ;;
-    no-mistakes)
-      printf '%s\n' "1. Never push to $target. Never merge a PR."
-      ;;
-    *)
-      echo "error: jg_ship_rule_one: unknown delivery mode '$mode'" >&2
-      return 1
-      ;;
-  esac
+  rule=$(jg_delivery_style_field "$mode" rule1 2>/dev/null) || {
+    echo "error: jg_ship_rule_one: unknown delivery mode '$mode'" >&2
+    return 1
+  }
+  rule=${rule//\{target\}/"$target"}
+  printf '%s\n' "${rule//\{branch\}/"$branch"}"
 }
 
 # Return 0 when a Task subsection still consists only of its scaffold
@@ -680,10 +668,7 @@ jg_dod_meta_value() {  # <meta> <key>
 # fetched. A direct-PR worker pushes from its own copy, so its named head stays
 # that copy's HEAD and a later unpushed commit is refused.
 jg_dod_forge_head_is_named_head() {  # <mode>
-  case "$1" in
-    no-mistakes|'') return 0 ;;
-  esac
-  return 1
+  jg_delivery_style_is "${1:-no-mistakes}" review
 }
 
 # 0 when <url> is the task's recorded pr= and the forge holds its head:
@@ -1051,16 +1036,14 @@ jg_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   # the forge and the done is accepted; an unreadable read or a different forge
   # head keeps the refusal below. local-only stays out: its acceptance is the
   # head on the project's shared local branch, never a pull request.
-  case "$mode" in
-    direct-PR|no-mistakes|'')
-      if [ -n "$url" ] && jg_pr_url_parse "$url" && [ "$JG_PR_PROVIDER" != gerrit ] \
-        && jg_dod_forge_pr_head_live "$JG_PR_PROVIDER" "$JG_PR_HOST" "$JG_PR_PATH" "$JG_PR_NUMBER" "$url" \
-        && [ "$JG_DOD_LIVE_HEAD" = "$sha" ]; then
-        jg_dod_pr_checks_clear "$wt" "$url" || return 1
-        return 0
-      fi
-      ;;
-  esac
+  if jg_delivery_style_is "${mode:-no-mistakes}" publishes; then
+    if [ -n "$url" ] && jg_pr_url_parse "$url" && [ "$JG_PR_PROVIDER" != gerrit ] \
+      && jg_dod_forge_pr_head_live "$JG_PR_PROVIDER" "$JG_PR_HOST" "$JG_PR_PATH" "$JG_PR_NUMBER" "$url" \
+      && [ "$JG_DOD_LIVE_HEAD" = "$sha" ]; then
+      jg_dod_pr_checks_clear "$wt" "$url" || return 1
+      return 0
+    fi
+  fi
   printf '%s\n' "named head $sha is unreachable outside the worker copy"
   return 1
 }

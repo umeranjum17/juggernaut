@@ -16,12 +16,14 @@ rc=0
   echo "== mode branch lines in bin and core: $(git -C "$root" grep -n -E "$pat" -- bin core ':!*test*' | wc -l) (76 on the trunk before this slice, 81 before J7)"
   echo "== bogus"; bash "$ds" bogus && rc=1
   bash "$root/tests/jg-delivery-style.test.sh" || rc=1
+  echo "== per-mode briefs through jg-dod-lib.sh, which reads the table"
+  bash "$root/tests/jg-dod-style-brief.test.sh" || rc=1
 } > "$out" 2>&1
 cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "the shipped delivery-style table",
- "steps": ["print the row of each of the four modes", "ask for an unknown mode and require a refusal", "run the behavior test, which also checks that no row names a prover"],
+ "steps": ["print the row of each of the four modes", "ask for an unknown mode and require a refusal", "run the behavior test, which also checks that no row names a prover", "render the four per-mode briefs through the library that reads the table and require them byte-equal to the recorded golden"],
  "result": "each of the four modes prints its line, what it adds and how it joins main; an unknown mode is refused; no row names a prover"}
 JSON
 exit "$rc"

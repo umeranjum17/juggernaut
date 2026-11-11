@@ -1,6 +1,8 @@
 # Delivery styles: one row per mode word accepted today. Columns: mode, the line, what it adds in delivering, how it joins main, publishes (yes when the line goes to a forge as a pull request), review (yes when the pipeline review and its intent overlay run), trunk (yes when the lane lands as one commit on the local trunk).
 # A style changes only the stage delivering. No column names a prover: done-done proves the commit in every mode.
-style	no-mistakes	the pull request's base branch	push, the pull request and the hosted checks	the pull request's merge	yes	yes	no
-style	direct-PR	the pull request's base branch	push and the pull request	the pull request's merge	yes	no	no
-style	local-only	the local branch	nothing	the guarded local fast-forward merge on the captain's word	no	no	no
-style	local-trunk	the local trunk	the batch and the go-live	one release pull request, on the captain's recorded word	no	no	yes
+# rule1 (column 9) is the first ship rule; {target} and {branch} are filled by the brief. Columns are read by name through `jg-delivery-style.sh --field`, which uses the `columns` row.
+columns	mode	line	adds	joins	publishes	review	trunk	rule1
+style	no-mistakes	the pull request's base branch	push, the pull request and the hosted checks	the pull request's merge	yes	yes	no	1. Never push to {target}. Never merge a PR.
+style	direct-PR	the pull request's base branch	push and the pull request	the pull request's merge	yes	no	no	1. Never push to {target} (push only your `{branch}` branch). Never merge a PR.
+style	local-only	the local branch	nothing	the guarded local fast-forward merge on the captain's word	no	no	no	1. Never push to any remote and never open a PR. Work only on your `{branch}` branch; juggernaut handles the merge into local `main`.
+style	local-trunk	the local trunk	the batch and the go-live	one release pull request, on the captain's recorded word	no	no	yes	1. Never push, open a PR, merge, go live or release. Work only on your `{branch}` branch; juggernaut lands it on the local trunk.

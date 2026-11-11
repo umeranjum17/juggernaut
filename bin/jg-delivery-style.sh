@@ -5,6 +5,7 @@
 #   jg-delivery-style.sh <mode>     print the row as six `key<TAB>value` lines: line, adds, joins, publishes, review, trunk
 #   jg-delivery-style.sh <mode> <fact>  exit 0 when the fact (publishes, review, trunk, or local) is yes for a known mode, else 1
 #   jg-delivery-style.sh --list     print the mode words, one per line
+#   jg-delivery-style.sh --field <mode> <name>   print one named column (the `columns` row names them)
 # Source it to call jg_delivery_style <mode>, jg_delivery_style_modes, or jg_delivery_style_publishes <mode> (exit 0 when the mode
 # publishes a pull request, 1 when it does not or is unknown) from another script.
 #
@@ -34,9 +35,20 @@ jg_delivery_style_is() {
   awk -F'\t' -v m="${1:-}" -v k="${2:-}" '$1=="style" && $2==m && ((k=="publishes" && $6=="yes") || (k=="review" && $7=="yes") || (k=="trunk" && $8=="yes") || (k=="local" && $6!="yes")) { f=1 } END { exit f?0:1 }' "${JG_DELIVERY_STYLES:-$_jg_ds_root/core/machines/styles/delivery-styles.tsv}"
 }
 
+# jg_delivery_style_field <mode> <name>: the value of a named column of the mode's row; 1 when the mode or column is unknown.
+jg_delivery_style_field() {
+  local table=${JG_DELIVERY_STYLES:-$_jg_ds_root/core/machines/styles/delivery-styles.tsv}
+  [ -r "$table" ] || { echo "jg-delivery-style: table not readable: $table" >&2; return 2; }
+  awk -F'\t' -v m="${1:-}" -v n="${2:-}" '
+    $1=="columns" { for (i=2; i<=NF; i++) if ($i==n) c=i-1 }
+    $1=="style" && $2==m { row=1; if (c) v=$(c+1) }
+    END { if (!row || !c) exit 1; print v }' "$table"
+}
+
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case "${1:-}" in
     --list) jg_delivery_style_modes ;;
+    --field) jg_delivery_style_field "${2:-}" "${3:-}" || { echo "jg-delivery-style: no property '${3:-}' for mode '${2:-}'" >&2; exit 1; } ;;
     ""|-*) echo "usage: jg-delivery-style.sh <mode> | --list" >&2; exit 2 ;;
     *) if [ -n "${2:-}" ]; then jg_delivery_style_is "$1" "$2"; else jg_delivery_style "$1"; fi ;;
   esac
