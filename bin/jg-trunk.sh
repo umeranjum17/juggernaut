@@ -727,16 +727,45 @@ landed_effects() {  # <id> <lane head> <landed commit>   (META is the lane's rec
   JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-ticket.sh" "$1" --stage "done" --state "done" || true
 }
 
-# True when a sealed done-done run of the lane passed, clean, at a commit whose tree is the tree <candidate> would be tested at: the
-# tree hash decides, so a trunk that moved under the lane (a rebased tree) or a run that failed or was dirty never counts.
+# The scripts of a landing's changed selection, one per line, as the project's own selector names them at <candidate>: bin/jg-test-run.sh
+# --changed against the candidate's parent. Prints nothing and returns 1 when the project has no such selector (the sealed run then can
+# only be judged by its tree) and returns 2 when the selector cannot name a selection (the tests run at the landing).
+landing_selection() {  # <candidate>
+  local log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-selection.log"
+  git -C "$PROJ" cat-file -e "$1:bin/jg-test-run.sh" 2>/dev/null || return 1
+  gate_exec "$1" "bin/jg-test-run.sh --changed --base HEAD^ --list" "$log" || return 2
+  { grep -E '^[^[:space:]]+\.sh$' "$log" || :; } | sort -u
+}
+
+# True when the sealed run record <file> lists, in the changed-tests.json it wrote into its own folder, every script of <selection> as run
+# and passed. The run says what it ran: a run with no list, a list that is not the file the record holds by its hash, or a list that leaves
+# a script of the selection out, does not cover it.
+sealed_run_ran() {  # <evidence root> <record file> <selection, one script per line>
+  local rel list want got
+  rel=$(jq -r '[.files[]? | if type == "object" then .path else . end | select(. == "changed-tests.json" or endswith("/changed-tests.json"))] | first // empty' "$2" 2>/dev/null) || return 1
+  [ -n "$rel" ] || return 1
+  list="$1/$rel"; [ -f "$list" ] || return 1
+  want=$(jq -r --arg r "$rel" '[.files[]? | select(type == "object" and .path == $r) | .sha256] | first // empty' "$2" 2>/dev/null) || return 1
+  [ -z "$want" ] || [ "$(sha256sum "$list" | cut -d' ' -f1)" = "$want" ] || return 1
+  got=$(jq -r '.scripts[]? | select(.exit == 0) | .path' "$list" 2>/dev/null | sort -u) || return 1
+  [ -z "$(comm -23 <(printf '%s\n' "$3" | grep .) <(printf '%s\n' "$got" | grep .))" ]
+}
+
+# True when a sealed done-done run of the lane passed, clean, at a commit whose tree is the tree <candidate> would be tested at, and says
+# it ran the landing's changed tests: the tree hash decides which run is the lane's, the list of scripts the run wrote decides whether it
+# counts (a run that ran one journey and not its changed tests is not counted, so the tests run at the landing). A trunk that moved under
+# the lane (a rebased tree) or a run that failed or was dirty never counts. A project with no selector is judged by the tree alone.
 sealed_run_covers() {  # <id> <candidate>
-  local want c f; [ "${JG_TRUNK_SEALED_REUSE:-1}" != 0 ] || return 1  # 0 always runs the tests (the suites that test the gate itself)
+  local want c f sel='' have=0 rc=0; [ "${JG_TRUNK_SEALED_REUSE:-1}" != 0 ] || return 1  # 0 always runs the tests (the suites that test the gate itself)
   want=$(git -C "$PROJ" rev-parse --verify --quiet "$2^{tree}") || return 1
   for f in "$DATA/$1/.done-done/runs/"*.json; do
     [ -f "$f" ] || continue
     c=$(jq -r 'select(.exit == 0 and .dirty == false) | .commit // empty' "$f" 2>/dev/null) || continue
     [ -n "$c" ] || continue
-    [ "$(git -C "$PROJ" rev-parse --verify --quiet "$c^{tree}")" = "$want" ] && return 0
+    [ "$(git -C "$PROJ" rev-parse --verify --quiet "$c^{tree}")" = "$want" ] || continue
+    if [ "$have" = 0 ]; then sel=$(landing_selection "$2") || rc=$?; have=1; fi
+    case $rc in 1) return 0 ;; 2) return 1 ;; esac
+    sealed_run_ran "$DATA/$1" "$f" "$sel" && return 0
   done
   return 1
 }
