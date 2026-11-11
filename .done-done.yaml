@@ -34,6 +34,8 @@ journeys:
     command: bash journeys/wake-batch-threshold.sh
   planned-wait:
     command: bash journeys/planned-wait.sh
+  wait-quiet:
+    command: bash journeys/wait-quiet.sh
   watcher-window-inventory:
     command: bash journeys/watcher-window-inventory.sh
   migration-card:

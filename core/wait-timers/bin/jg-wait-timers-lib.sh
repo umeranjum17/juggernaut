@@ -61,6 +61,22 @@ _JG_WAIT_TIMER_DIR="${SCRIPT_DIR:-${JG_PUSH_TRANSITION_LIB_DIR:-$JG_HOME/bin}}"
 # shellcheck source=core/wait-timers/bin/jg-wait-policy-lib.sh
 . "${BASH_SOURCE[0]%/*}/jg-wait-policy-lib.sh"
 
+# A wait whose owner is already known is quiet: it arms no episode, so no timer
+# wake, no escalation and no board card come from it. Two cases only:
+#   - a pause parked to the placeholder date (wait machine state paused-no-date):
+#     the lane named no real time, so a recheck every 30 minutes only repeats the
+#     parking; whoever parked it holds the next step;
+#   - a finished lane (its last status line is `done`) whose open decision is for
+#     its owner: no worker is left to unblock it, and the owner's card carries the
+#     call.
+# A wait source (prompt, quota, silence ...), a blocked or needs-decision lane that
+# is still working, and a pause with a real date keep their rungs.
+jg_wait_timer_quiet() {  # <task> <wait-state> <wait-source>
+  [ "$2" != paused-no-date ] || return 0
+  [ -z "$3" ] || return 1
+  [ "$(status_line_verb "$(last_status_line "$STATE/$1.status")")" = "done" ]
+}
+
 jg_wait_timer_save() {  # <record> <signature> <since> <owner> <parent> <key> <misses> [card] [last]
   local file=$1 temp="${1%/*}/.${1##*/}.tmp.$$"
   shift
@@ -678,6 +694,10 @@ EOF
     # Checked before the record is read: a check made only once an episode is due
     # would clear it and let the still-declared wait re-arm it on the next poll.
     if [ -n "$declaration" ] && task_captain_call_open "$task"; then
+      declaration=''
+    fi
+    # A parked or finished lane has an owner already (jg_wait_timer_quiet).
+    if [ -n "$declaration" ] && [ "$declaration" != herdr-blocked ] && jg_wait_timer_quiet "$task" "$wait_state" "$wsrc"; then
       declaration=''
     fi
     record="$dir/$task"

@@ -89,29 +89,20 @@ age_episode() {  # <dir> [lane]
   : > "$1/events"
 }
 
-# A placeholder date is no deadline: the real watcher must recheck it after 30 minutes.
+# A placeholder date is no deadline and the lane named no owner time: the parked lane is
+# quiet (jg_wait_timer_quiet), so the real watcher arms no episode and rings nobody, even
+# after 30 minutes. tests/jg-wait-quiet.test.sh owns the two-hour journey.
 dir=$(make_case placeholder-pause)
 mkdir -p "$dir/home/config" "$dir/tmp" "$dir/config"
 printf 'kind=ship\nbackend=tmux\nwindow=fake:1\n' > "$dir/state/lane.meta"
 printf 'paused: waiting until 2026-12-31\n' > "$dir/state/lane.status"
 prime_status_seen "$dir/state" "$dir/state/lane.status"
 arm_episode "$dir"
-[ -e "$dir/state/.waiting-timers/lane" ] || fail 'placeholder pause armed no episode'
-IFS=$'\t' read -r sig since _owner _parent key _misses < "$dir/state/.waiting-timers/lane"
-printf '%s\t%s\t0\t0\t%s\t0\n' "$sig" "$(( $(date +%s) - 1801 ))" "$key" > "$dir/state/.waiting-timers/lane"
+[ ! -e "$dir/state/.waiting-timers/lane" ] || fail 'placeholder pause armed an episode'
 : > "$dir/events"
 cycle
-grep -q 'check: waiting-state lane (paused, observed .*level=owner' "$dir/events" || fail 'placeholder pause did not recheck at 30 minutes'
-pass 'placeholder pause rechecks after 30 minutes'
-
-
-# An unchanged placeholder stays on the 30-minute cadence.
-IFS=$'\t' read -r sig since _owner parent key misses card _last < "$dir/state/.waiting-timers/lane"
-old=$(( $(date +%s) - 1801 ))
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$sig" "$since" "$old" "$parent" "$key" "$misses" "$card" "$old" > "$dir/state/.waiting-timers/lane"
-: > "$dir/events"
-cycle
-grep -q 'waiting-state lane (paused, observed .*still open' "$dir/events" || fail 'placeholder pause did not recheck again after 30 minutes'
+! grep -q 'waiting-state lane' "$dir/events" || fail 'placeholder pause raised a timer wake'
+pass 'placeholder pause arms no episode and raises no timer wake'
 
 # A real future deadline stays quiet.
 printf 'paused: waiting until 2099-12-31T00:00Z\n' > "$dir/state/lane.status"

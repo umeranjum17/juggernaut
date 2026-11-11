@@ -2,7 +2,7 @@
 
 The live watcher sources this timer library and calls it on each poll.
 The escalation workflow delivers the first owner wake.
-A placeholder-date pause is rechecked every 30 minutes; a real future deadline is honoured.
+A parked lane (a pause to the placeholder date) and a finished lane whose open decision waits on its owner are quiet: they arm no episode and ring nothing. A real future deadline is honoured.
 
 ## Layout
 
@@ -28,6 +28,12 @@ provenance table now records history, not the current bytes.
 
 - Entry: `jg_wait_timers_tick` (no arguments; reads `JG_HOME` and `STATE`).
   Called once per watcher poll.
+- `jg_wait_timer_quiet <task> <wait-state> <wait-source>` — true for a wait
+  that already has an owner: a pause parked to the placeholder date, or a lane
+  whose last status line is `done` with an open decision. Such a lane arms no
+  episode (as for a captain hold). A wait source, a lane still working under an
+  open decision, a blocked lane and a pause with a real date keep their rungs
+  (`tests/jg-wait-quiet.test.sh`).
 - `jg_wait_timer_push_delivered <task> <window>` — records that an immediate
   native push already told the owner about this blocked lane, so the poll
   timer skips its duplicate owner wake. Called from the push-transition path.
