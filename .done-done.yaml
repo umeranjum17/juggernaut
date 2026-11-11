@@ -248,6 +248,8 @@ journeys:
     command: bash journeys/afk-daemon-resend.sh
   gate-quarantine:
     command: bash journeys/gate-quarantine.sh
+  gate-per-test-timeout:
+    command: bash journeys/gate-per-test-timeout.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

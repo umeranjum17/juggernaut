@@ -296,6 +296,30 @@ test_a_slow_failing_script_past_the_per_script_bound_stays_red() {
   pass 'a slow script that fails past the per-script bound stays red'
 }
 
+test_the_gate_stops_a_hung_script_with_its_children_and_temp_folder_without_a_flag() {
+  local limits hung rc=0 out marker pidfile child
+  limits="$TMP_ROOT/default-bound-limits"
+  { write_limits "$limits" 30 30 30; printf 'script_timeout_seconds=2\n' >>"$limits"; }
+  marker="jgdefaultbound$$"
+  pidfile="$TMP_ROOT/default-bound.pids"
+  hung="$TMP_ROOT/default-bound-hang.test.sh"
+  write_script "$hung" "mkdir -p \"\$TMPDIR/scratch-$marker\"
+setsid sleep 1234 >/dev/null 2>&1 < /dev/null &
+echo \$! > '$pidfile'
+sleep 1235 &
+echo \$! >> '$pidfile'
+echo \"\$TMPDIR\" > '$pidfile.tmpdir'
+sleep 1236"
+  out=$(TEST_SPEED_LIMITS_FILE="$limits" bash "$RUNNER" --gate "$hung" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a hung script must fail the gate: $out"
+  assert_contains "$out" "JG_TEST_TIMEOUT script=$hung bound_secs=2" 'the gate must name the script that timed out and the bound'
+  while read -r child; do
+    ! kill -0 "$child" 2>/dev/null || fail "child $child of the hung script is still running"
+  done <"$pidfile"
+  [ ! -e "$(cat "$pidfile.tmpdir")" ] || fail 'the hung script temp folder must be removed'
+  pass 'the gate stops a hung script with its children and temp folder without a flag'
+}
+
 test_a_test_within_its_limits_is_unaffected() {
   local limits fast out rc=0
   limits="$TMP_ROOT/normal-limits"
@@ -564,6 +588,7 @@ test_a_wall_failure_with_no_functional_failure_stays_red_in_aggregate
 test_a_hanging_test_is_killed_and_reported_instead_of_holding_the_run
 test_a_slow_passing_script_past_the_per_script_bound_warns_and_passes
 test_a_slow_failing_script_past_the_per_script_bound_stays_red
+test_the_gate_stops_a_hung_script_with_its_children_and_temp_folder_without_a_flag
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
 test_a_deleted_journey_does_not_refuse_the_changed_selection

@@ -86,11 +86,14 @@
 #                   1 (serial) except for plain --changed and a plain list of
 #                   script paths, which use the bounded automatic scheduler.
 #   --per-script-timeout-secs N
-#                   advise on a script that runs longer than N seconds (0
-#                   disables, the default): a JG_TEST_SLOW line, and the script
+#                   advise on a script that runs longer than N seconds (default:
+#                   script_timeout_seconds from the limits file, 1800, so every
+#                   run bounds every script; an explicit 0 disables): a JG_TEST_SLOW line, and the script
 #                   keeps its own result while it keeps writing output. A script
 #                   whose output stops for a whole N seconds is hung and ends as
-#                   exit 124. --changed applies a per-test bound automatically,
+#                   exit 124: its process group and every descendant still
+#                   carrying its mark are killed, its private temp folder is
+#                   removed, and a JG_TEST_TIMEOUT line names it. --changed applies a per-test bound automatically,
 #                   max(120s, 4 x the test's CI hint), by the same rule: a slow
 #                   script that passes stays green. --max-wall-ms is checked
 #                   after the run and so cannot catch a hang on its own.
@@ -107,7 +110,7 @@
 #                   accepted so the nightly suite's command line stays valid; a
 #                   speed-limit breach is reported in every mode (see below).
 #   --show-limits   print the effective e2e_seconds, unit_seconds,
-#                   gate_wall_seconds and machine_runs_max from the config file
+#                   gate_wall_seconds, script_timeout_seconds and machine_runs_max from the config file
 #                   and exit without running anything.
 #   --max-wall-ms N fail the run when its measured invocation wall clock exceeds
 #                   N milliseconds, including an empty selection, and stop
@@ -273,7 +276,9 @@ JOBS_EXPLICIT=0
 JOBS_MAX=8
 MAX_WALL_MS=
 WARN_WALL_MS=
-PER_SCRIPT_TIMEOUT_SECS=0
+PER_SCRIPT_TIMEOUT_SECS=
+PER_SCRIPT_EXPLICIT=0
+TEST_SPEED_SCRIPT_TIMEOUT_SECONDS=1800
 # Per-test speed limits and the gate's whole-run budget, read from
 # defaults/test-speed-limits and overridden by JG_HOME/config/test-speed-limits.
 # A test over its limit is reported naming its measured time; it is never a
@@ -378,6 +383,8 @@ load_test_speed_limits() {
     case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_UNIT_SECONDS=$v ;; esac
     v=$(sed -n 's/^gate_wall_seconds=//p' "$f" | tail -n 1)
     case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_GATE_SECONDS=$v ;; esac
+    v=$(sed -n 's/^script_timeout_seconds=//p' "$f" | tail -n 1)
+    case $v in ''|*[!0-9]*) ;; *) TEST_SPEED_SCRIPT_TIMEOUT_SECONDS=$v ;; esac
     v=$(sed -n 's/^machine_runs_max=//p' "$f" | tail -n 1)
     case $v in ''|*[!0-9]*) ;; *) TEST_MACHINE_RUNS_MAX=$v ;; esac
     return 0
@@ -2354,10 +2361,12 @@ while [ "$#" -gt 0 ]; do
     --per-script-timeout-secs)
       [ "$#" -gt 1 ] || die "--per-script-timeout-secs requires a whole number of seconds"
       PER_SCRIPT_TIMEOUT_SECS=$2
+      PER_SCRIPT_EXPLICIT=1
       shift 2
       ;;
     --per-script-timeout-secs=*)
       PER_SCRIPT_TIMEOUT_SECS=${1#--per-script-timeout-secs=}
+      PER_SCRIPT_EXPLICIT=1
       shift
       ;;
     --enforce-test-speed)
@@ -2482,6 +2491,7 @@ if [ "$SHOW_LIMITS" -eq 1 ]; then
   printf 'e2e_seconds=%s\n' "$TEST_SPEED_E2E_SECONDS"
   printf 'unit_seconds=%s\n' "$TEST_SPEED_UNIT_SECONDS"
   printf 'gate_wall_seconds=%s\n' "$TEST_SPEED_GATE_SECONDS"
+  printf 'script_timeout_seconds=%s\n' "$TEST_SPEED_SCRIPT_TIMEOUT_SECONDS"
   printf 'machine_runs_max=%s\n' "$(machine_runs_max)"
   exit 0
 fi
@@ -2540,6 +2550,10 @@ if [ -n "$WARN_WALL_MS" ]; then
   [ -z "$MAX_WALL_MS" ] || die "--wall-warn-ms and --max-wall-ms cannot be given together"
 fi
 
+# Every run bounds every script: a caller that names no bound gets the configured
+# script_timeout_seconds, so no caller (the landing gate's --all and its rerun
+# included) can leave a hung script holding the run. Only an explicit 0 disables.
+[ "$PER_SCRIPT_EXPLICIT" -eq 1 ] || PER_SCRIPT_TIMEOUT_SECS=$TEST_SPEED_SCRIPT_TIMEOUT_SECONDS
 case "$PER_SCRIPT_TIMEOUT_SECS" in
   ''|*[!0-9]*) die "--per-script-timeout-secs requires a whole number of seconds (0 disables)" ;;
 esac
@@ -2683,7 +2697,7 @@ done
 # and --all is a deliberate complete regression.
 AUTO_CONCURRENCY=0
 if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq 0 ]; then
-  if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ] && [ "$PER_SCRIPT_TIMEOUT_SECS" -eq 0 ]; then
+  if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ] && [ "$PER_SCRIPT_EXPLICIT" -eq 0 ]; then
     CHANGED_CEILING=1
   fi
   auto_admissible=0
@@ -2894,6 +2908,18 @@ record_script_result() {  # <script> <rc> <duration> <out> <end_iso> <stream>
   TOTAL=$((TOTAL + 1))
 }
 
+# Kill every process still carrying <mark> in its environment, after the bound has
+# stopped the script's process group. A descendant that moved into a process group of
+# its own (setsid) is outside that signal; it still inherits the script's environment,
+# so /proc finds it. Hosts without /proc keep the group kill alone.
+reap_marked_processes() {  # <mark>
+  local mark=$1 pid
+  [ -n "$mark" ] && [ -d /proc/self ] || return 0
+  while read -r pid; do
+    [ "$pid" != "$$" ] && [ "$pid" != "$BASHPID" ] && kill -KILL "$pid" 2>/dev/null || :
+  done < <(grep -al "JG_TEST_SCRIPT_MARK=$mark" /proc/[0-9]*/environ 2>/dev/null | cut -d/ -f3)
+}
+
 # Run <script>, capturing output to <out>. <stream> 1 also echoes it live.
 # <id> only has to be unique within this run. The script runs under the bound
 # script_speed_bound_secs names, and a script that outruns it is terminated and
@@ -2908,9 +2934,21 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   local GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
   # shellcheck source=tests/git-config-helpers.sh
   . "$ROOT/tests/git-config-helpers.sh" || return
-  local rc bound
+  local rc bound scratch mark scratch_root=${TMPDIR:-/tmp}
+  local TMPDIR JG_TEST_SCRIPT_MARK
+  TMPDIR=$scratch_root
   : "$id"
   bound=$(script_speed_bound_secs "$script")
+  # A bounded script gets a private temp folder and an environment mark, so a
+  # timeout can remove what the killed script never cleaned up and find the
+  # descendants that left its process group.
+  scratch=
+  mark=
+  if [ "$bound" -gt 0 ]; then
+    scratch=$(mktemp -d "$scratch_root/jg-script.XXXXXX") || return
+    mark="jg-script-mark-$$-$(now_ms)-$RANDOM"
+    export TMPDIR="$scratch" JG_TEST_SCRIPT_MARK="$mark"
+  fi
   # ONE owner of what a behavior script inherits, for the serial and the
   # concurrent path alike: a script must see the same environment in CI and
   # under a live home. A squad_lead launch prefixes every process it starts
@@ -2959,12 +2997,16 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   if [ "$verdict" = hung ] && [ "$rc" -eq 124 ]; then
     printf 'not ok - %s exceeded the per-script bound of %ss with no output for %ss and was terminated as hung\n' \
       "$script" "$bound" "$bound" >>"$out"
+    reap_marked_processes "$mark"
     [ "$stream" -eq 1 ] && tail -1 "$out"
+    printf 'JG_TEST_TIMEOUT script=%s bound_secs=%s\n' "$script" "$bound"
+    printf 'JG_TEST_TIMEOUT script=%s bound_secs=%s\n' "$script" "$bound" >&2
   elif [ "$verdict" = slow ]; then
     printf 'JG_TEST_SLOW %s ran past the per-script bound of %ss and was not stopped: it kept writing output (advice only, exit %s; shards that run side by side slow each other)\n' \
       "$script" "$bound" "$rc" >>"$out"
     [ "$stream" -eq 1 ] && tail -1 "$out"
   fi
+  [ -z "$scratch" ] || rm -rf -- "$scratch"
   return "$rc"
 }
 
