@@ -23,9 +23,13 @@
 tip_after_land() { trunk land "$1" >/dev/null 2>&1 || fail "$1 must land"; tip; }
 
 # A gate that records what it judged and stays open, until the test releases it, on a commit whose tree holds SLOW.
+# It also ends when this test script is gone: a case that fails before the release must not leave it looping, because
+# the orphan holds the sealed run's output open until the script time bound.
+# One gate slot: with two, a lane landed while this gate runs is gated on top of the SLOW commit and waits for the release
+# that only comes after it lands, so the case would hang for ever. Gating two lanes at once is tests/jg-trunk-two-gates.test.sh.
 slow_gate() {
-  printf '#!/usr/bin/%s bash\ngit log -1 --format=%%s >> %s/gate-seen\nif git grep -q SLOW; then while [ ! -e %s/release ]; do sleep 0.1; done; fi\n' env "$W" "$W" > "$W/slow-gate.sh"
-  printf 'gate-full=bash %s/slow-gate.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
+  printf '#!/usr/bin/%s bash\ngit log -1 --format=%%s >> %s/gate-seen\nif git grep -q SLOW; then while [ ! -e %s/release ] && kill -0 %s 2>/dev/null; do sleep 0.1; done; fi\n' env "$W" "$W" "$$" > "$W/slow-gate.sh"
+  printf 'gate-full=bash %s/slow-gate.sh\ngate-slots=1\n' "$W" >> "$HOME_D/config/trunk-policy"
 }
 
 seen() { local n; n=$(grep -c "^$1\$" "$W/gate-seen" 2>/dev/null || :); echo "${n:-0}"; }  # how often the gate judged the commit with this subject
@@ -40,7 +44,7 @@ test_queued_verifies_run_one_at_a_time_and_only_the_newest_runs() {
   lane q1 one; c1=$(tip_after_land q1); lane q2 two; c2=$(tip_after_land q2); lane q3 three; c3=$(tip_after_land q3)
   printf '%s\n' "$c1" > "$HOME_D/state/trunk-green-proj"  # a pin under the tip, as a red found after a landing leaves it
   # A whole-suite run that records which commit it ran at and stays open until the test releases it.
-  printf '#!/usr/bin/env bash\ngit rev-parse HEAD >> %s/verify-ran\nwhile [ ! -e %s/release ]; do sleep 0.1; done\n' "$W" "$W" > "$W/slow.sh"
+  printf '#!/usr/bin/env bash\ngit rev-parse HEAD >> %s/verify-ran\nwhile [ ! -e %s/release ] && kill -0 %s 2>/dev/null; do sleep 0.1; done\n' "$W" "$W" "$$" > "$W/slow.sh"
   printf 'gate-verify=bash %s/slow.sh\n' "$W" >> "$HOME_D/config/trunk-policy"
   trunk verify "$PROJ" "$c1" > "$W/v1.out" 2>&1 & p1=$!
   for n in $(seq 1 100); do [ -s "$W/verify-ran" ] && break; sleep 0.1; done
