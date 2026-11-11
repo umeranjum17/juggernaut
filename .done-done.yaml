@@ -258,6 +258,8 @@ journeys:
     command: bash journeys/delivery-style.sh
   ticket-statechart:
     command: bash journeys/ticket-statechart.sh
+  machine-enums:
+    command: bash journeys/machine-enums.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'

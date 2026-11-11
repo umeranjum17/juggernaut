@@ -1,0 +1,7 @@
+# hold: the closed list of states of the machine "Captain hold and board card".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+raised	initial	waiting	a question waits for the owner
+deferred	-	rest	the owner said later, to a date
+answered	-	active	the owner answered, and the answer is not routed yet
+diverged	-	waiting	two records of the same call disagree
+closed	final	final	the question is settled

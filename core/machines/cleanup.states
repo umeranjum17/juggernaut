@@ -1,0 +1,7 @@
+# cleanup: the closed list of states of the machine "Cleanup and reaper".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+requested	initial	waiting	a cleanup was asked for
+checking	-	active	the lane is being tested for unlanded work
+refused	-	waiting	unlanded work stops the cleanup
+removing	-	active	the lane's files and session are being removed
+done	final	final	nothing of the lane is left

@@ -25,3 +25,4 @@ edge	released	revert-released	building	bin/jg-trunk.sh:revert	-	a red found on m
 edge	released	close	closed	bin/jg-teardown.sh:main	-	cleanup passed, unforced	jg-machine-ticket:moves
 edge	open	drop	closed	bin/jg-backlog.sh:drop	-	the lead or the owner says drop, with the resolution	jg-machine-ticket:moves
 observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/ticket.sh" "$1"
+enum	ticket

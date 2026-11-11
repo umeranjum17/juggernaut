@@ -1,0 +1,5 @@
+# proof-level: how much proof a ticket gets.
+# value<TAB>mark (initial, final or -)<TAB>meaning
+full	initial	done-done decides what matters; the default
+minimum	-	only the checks the lead names; the receipt lists what did not run
+bypass	-	no proof, by the owner's recorded word only

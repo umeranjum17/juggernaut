@@ -1,0 +1,8 @@
+# release: the closed list of states of the machine "Release".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+open	initial	waiting	a release pull request is open and no check has started
+checking	-	active	its hosted checks run
+red	-	waiting	a required check failed
+ready	-	waiting	every check is green, and the merge waits for yolo or a word
+merged	final	final	the release is on main
+abandoned	final	final	the release was closed unmerged

@@ -52,7 +52,7 @@ pass "every stage is left from each of its sub-states"
 copy_tables() { rm -rf "$T/t"; mkdir -p "$T/t"; cp "$TABLES"/{ticket,delivering,proving}.tsv "$T/t/"; }
 defect() {  # <name> <table> <expected text> <line to append>
   copy_tables; printf '%s\n' "$4" >> "$T/t/$2.tsv"
-  OUT=$(JG_MACHINES_TABLES="$T/t" bash "$JM" check ticket 2>&1); RC=$?; expect_code 1 "$RC" "lint should refuse: $1"; assert_contains "$OUT" "$3" "lint should name: $1"
+  OUT=$(JG_MACHINES_TABLES="$T/t" JG_MACHINES_ENUMS="$ROOT/core/machines" bash "$JM" check ticket 2>&1); RC=$?; expect_code 1 "$RC" "lint should refuse: $1"; assert_contains "$OUT" "$3" "lint should name: $1"
 }
 defect "an event with two targets from one sub-state" ticket "duplicate edge proving.waiting answer" "$(tab edge proving.waiting answer closed w:f - g t)"
 defect "a way out of an end inside the inner table" proving "terminal state sealed has an exit edge" "$(tab edge sealed again planned w:f - g t)"

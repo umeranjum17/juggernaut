@@ -23,3 +23,4 @@ edge	live	join	joining	bin/jg-trunk.sh:release	-	the release that carries the co
 edge	joining	land-on-main	on-main	bin/jg-trunk.sh:release	-	the commit is on the default branch and runs where it runs	jg-machine-ticket:delivering
 edge	on-the-line	revert	returned	bin/jg-trunk.sh:verify	-	a red found after the commit joined the line is traced to it, and the commit is reverted	jg-machine-ticket:delivering
 observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/ticket.sh" "$1" | sed -n 's/^delivering\.//p'
+enum	delivering

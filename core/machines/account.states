@@ -1,0 +1,7 @@
+# account: the closed list of states of the machine "Account and quota".
+# value<TAB>mark (initial, final or -)<TAB>kind (active, waiting, rest, final)<TAB>meaning
+available	initial	rest	signed in, and nobody uses it
+in-use	-	active	one worker or more uses it
+limited	-	rest	its quota is used up until a reset time
+signed-out	-	waiting	its login does not work
+retired	final	final	it is out of the pool for good

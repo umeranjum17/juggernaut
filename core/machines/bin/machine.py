@@ -2,7 +2,7 @@
 """Machine tables: the state of a record and its legal moves, read from one TSV table (core/machines/README.md)."""
 import os, re, subprocess, sys
 
-USAGE = "usage: jg-machine.sh show|next <machine> <id> | check <machine> [--corpus <file>] | coverage|diagram|events <machine> | edge-check <machine> <from> <to>"
+USAGE = "usage: jg-machine.sh show|next <machine> <id> | enum <name> | check <machine> [--corpus <file>] | coverage|diagram|events <machine> | edge-check <machine> <from> <to>"
 
 
 def die(msg, rc=2):
@@ -24,6 +24,57 @@ def entry(m, x):
     return next(c for c in m["comp"][x] if m["states"][c]["kind"] == "entry") if x in m["comp"] else x
 
 
+def load_enum(name):
+    """Read <enums>/<name>.states, the closed list of one machine's states: value, mark, [kind,] meaning. Returns (values, defects)."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+        die(f"jg-machine: '{name}' is not a plain enum name")
+    edir = os.environ.get("JG_MACHINES_ENUMS") or os.path.dirname(os.environ["JG_MACHINES_TABLES"].rstrip("/"))
+    try:
+        lines = open(f"{edir}/{name}.states", encoding="utf-8").read().splitlines()
+    except OSError as e:
+        die(f"jg-machine: no enum '{name}': {e.strerror}")
+    vals, bad, width = {}, [], None
+    for n, ln in enumerate(lines, 1):
+        if not ln.strip() or ln.startswith("#"):
+            continue
+        f = ln.split("\t")
+        width = width or len(f)
+        if len(f) != width or width not in (3, 4):
+            bad.append(f"line {n}: want value, mark, [kind,] meaning in {width or 3}-4 tab-separated columns, got {len(f)}")
+            continue
+        v, mark, kind, meaning = (f[0], f[1], f[2] if width == 4 else None, f[-1])
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", v):
+            bad.append(f"line {n}: value '{v}' is not a plain word")
+        if v in vals:
+            bad.append(f"line {n}: duplicate value {v}")
+        if mark not in ("initial", "final", "-"):
+            bad.append(f"value {v}: mark '{mark}' is not initial, final or -")
+        if kind is not None and kind not in ("active", "waiting", "rest", "final"):
+            bad.append(f"value {v}: kind '{kind}' is not active, waiting, rest or final")
+        if kind is not None and (mark == "final") != (kind == "final"):
+            bad.append(f"value {v}: mark {mark} and kind {kind} disagree about being final")
+        if not meaning.strip():
+            bad.append(f"value {v} has no meaning")
+        vals[v] = {"mark": mark, "kind": kind, "meaning": meaning}
+    init = [v for v, x in vals.items() if x["mark"] == "initial"]
+    if len(init) > 1:
+        bad.append(f"{len(init)} initial values ({' '.join(init)}), at most one")
+    if width == 4 and not init:
+        bad.append("no initial value")
+    if not vals:
+        bad.append("no values")
+    return vals, bad
+
+
+def check_enum(name):
+    vals, bad = load_enum(name)
+    for b in bad:
+        print(f"lint enum {name}: {b}")
+    if bad:
+        sys.exit(1)
+    return vals
+
+
 def load(name, depth=0):
     """Parse <tables>/<name>.tsv and refuse a table that breaks a lint rule, naming each defect."""
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) or depth > 2:
@@ -33,6 +84,7 @@ def load(name, depth=0):
         lines = open(f"{tdir}/{name}.tsv", encoding="utf-8").read().splitlines()
     except OSError as e:
         die(f"jg-machine: no table for machine '{name}': {e.strerror}")
+    enum = next((ln.split("\t")[1] for ln in lines if ln.startswith("enum\t")), None)  # opt in: the closed list this table's states come from
     m = {"name": name, "tdir": tdir, "states": {}, "edges": [], "observer": None, "rows": [], "groups": {}, "comp": {}, "subs": {}, "stages": {}}
     bad, inner = [], []
     for ln in lines:
@@ -49,6 +101,9 @@ def load(name, depth=0):
             inner.append((f[1], f[2]))
         elif f[0] == "observer":
             m["observer"] = f[1]
+    if enum:
+        legal = check_enum(enum)
+        bad += [f"state {k} is not in enum {enum} (legal: {' '.join(legal)})" for k in m["states"] if k not in legal]
     for stage, sub_name in inner:  # a composite stage holds the states of another table, named <stage>.<state>
         if m["states"].get(stage, {}).get("kind") != "composite":
             bad.append(f"inner {stage} is not a composite state")
@@ -207,6 +262,10 @@ def main(a):
         check(load(a[1]), None)
     if len(a) == 4 and a[0] == "check" and a[2] == "--corpus":
         check(load(a[1]), a[3])
+    if len(a) == 2 and a[0] == "enum":
+        vals = check_enum(a[1])
+        print(f"ok enum {a[1]}: {len(vals)} values")
+        return
     if len(a) == 2 and a[0] in ("coverage", "diagram", "events"):
         {"coverage": coverage, "diagram": diagram, "events": events}[a[0]](load(a[1]))
         return

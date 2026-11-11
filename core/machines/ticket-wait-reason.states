@@ -1,0 +1,11 @@
+# ticket-wait-reason: why the ticket waits.
+# value<TAB>mark (initial, final or -)<TAB>meaning
+decision	-	a choice is needed
+blocker	-	something is in the way
+dependency	-	another ticket must end first
+quota	-	an account, a model or a slot is used up
+ci	-	a hosted check runs
+approval	-	a yes to merge or land
+review	-	a review finding or a critic round
+parked	-	set aside by the lead
+date	-	held to a date
