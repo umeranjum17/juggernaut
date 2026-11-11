@@ -34,7 +34,7 @@ func (a *app) recordLeg(leg, id string) {
 // beat tells `gateway status --row` the service is polling: serve calls it at start and after every
 // poll that succeeded, an idle one that returned nothing included, never after a failed one.
 func (a *app) beat(ad Adapter) {
-	_ = os.WriteFile(filepath.Join(a.state, "captain-chat", ad.Name()+".alive"), []byte(strconv.FormatInt(time.Now().Unix(), 10)+"\n"), 0o600)
+	writeFileAtomic(filepath.Join(a.state, "captain-chat", ad.Name()+".alive"), []byte(strconv.FormatInt(time.Now().Unix(), 10)+"\n"))
 }
 
 // pollRecord is the poll record: the last good poll, the failed polls in a row since, the last
@@ -75,7 +75,16 @@ func (a *app) recordPoll(ad Adapter, err error, token string) {
 		r.fails++
 		r.attempt, r.why = now, clampChars(detail(redact(err.Error(), token)), 160)
 	}
-	_ = os.WriteFile(a.pollFile(ad), []byte(fmt.Sprintf("%d\t%d\t%d\t%s\n", r.ok, r.fails, r.attempt, r.why)), 0o600)
+	writeFileAtomic(a.pollFile(ad), []byte(fmt.Sprintf("%d\t%d\t%d\t%s\n", r.ok, r.fails, r.attempt, r.why)))
+}
+
+// writeFileAtomic replaces path in one rename, so a reader (the status row, the next recordPoll)
+// never sees the empty file a plain truncating write leaves for a moment.
+func writeFileAtomic(path string, data []byte) {
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, data, 0o600) != nil || os.Rename(tmp, path) != nil {
+		_ = os.Remove(tmp)
+	}
 }
 
 // gatewayRow prints `state TAB detail` for the migration card and always exits 0.

@@ -100,3 +100,38 @@ func TestGatewayPollHealth(t *testing.T) {
 	}
 	t.Logf("after the API recovered: the status row reads %q and telegram.poll holds %q (0 failures in a row)", got, strings.TrimSpace(string(rec)))
 }
+
+// The poll record is read while the serve loop rewrites it (the status row, the next poll's failure
+// count). A reader must never see it empty: recordPoll replaces it in one rename.
+func TestGatewayPollRecordNeverReadEmpty(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "captain-chat"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a, ad := &app{state: state}, &telegram{}
+	a.recordPoll(ad, nil, "tok")
+	stop, empty := make(chan struct{}), 0
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, found := a.readPoll(ad); !found {
+				empty++
+			}
+		}
+	}()
+	for i := 0; i < 3000; i++ {
+		a.recordPoll(ad, nil, "tok")
+	}
+	close(stop)
+	<-done
+	if empty > 0 {
+		t.Fatalf("the poll record read empty %d times while recordPoll rewrote it", empty)
+	}
+	t.Logf("3000 rewrites of the poll record, read back concurrently: never empty")
+}
