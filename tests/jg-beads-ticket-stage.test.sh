@@ -5,7 +5,8 @@
 # writers, which are not on this trunk yet, so each fixture lays them with bd directly. The same rows are read by jg-q1b3n's rule
 # (section 6.5), held here as a second table, and the two must agree for every row that table already names. JG_BEADS_TEST_BD and
 # JG_BEADS_TEST_DOLT name the builds; without them the run skips plainly.
-# It proves bin/jg-beads-stage.py (the rule) and bin/jg-beads-moment.py (the writer), the files the changed-test selector maps to it.
+# It also proves the drift check (slice J4, bin/jg-beads-drift.py) through jg-backlog.sh ticket-drift.
+# It proves bin/jg-beads-stage.py (the rule), bin/jg-beads-drift.py and bin/jg-beads-moment.py (the writer), the files the changed-test selector maps to it.
 set -u
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -174,6 +175,31 @@ axi wait jg-w1 nobody decision >/dev/null && fail "a who outside the closed list
 axi wait jg-w1 owner whim >/dev/null && fail "a reason outside the closed list must be refused"
 axi wait jg-w1 lead >/dev/null && fail "a wait with no reason must be refused"
 pass "a wait writes three keys in one update and adds no child row"
+
+# Drift (slice J4): the row and the records outside Beads differ. The trunk's landing record is a fixture file in the home's data folder;
+# the forge is a stub gh on PATH. A row that agrees prints nothing; each difference prints one line and the row's health reads lost.
+drift() { axi ticket-drift "$@" 2>&1; }
+printf 'jg-e1\tproj\tabc1234567890def\t1\tfast\njg-e2\tproj\tfeed1234567890\t2\tfast\nrevert-jg-e3\tproj\tbeef12345678\t3\tfast\njg-e3\tproj\tbeef12345678\t1\tfast\n' > "$T/home/data/trunk-landings.tsv"
+new jg-e1; new jg-e2; new jg-e3; new jg-e4
+meta jg-e2 landed_at=$t1 commit=feed123
+meta jg-e3 ready_at=$t1
+out=$(drift jg-e1); n_lines=$(grep -c . <<<"$out")
+[ "$n_lines" = 1 ] && [ "$out" = "$(printf 'drift\tjg-e1\tlost\tthe trunk landed commit abc123456789 and the row has no landed_at')" ] || fail "a landed commit with no landed_at must print one drift line, got [$out]"
+[ -z "$(drift jg-e2)" ] || fail "a row that agrees with the landing record must print no drift line: $(drift jg-e2)"
+[ -z "$(drift jg-e3)" ] || fail "a landing taken back (a revert row) is not drift: $(drift jg-e3)"
+[ -z "$(drift jg-e4)" ] || fail "a row with no landing record must print no drift line: $(drift jg-e4)"
+[ "$(row jg-e1 | jq -c '.metadata | has("landed_at")')" = false ] || fail "the observer must not write a moment"
+pass "a landed commit with no landed_at prints one drift line, and a row that agrees prints none"
+mkdir -p "$T/bin"
+# shellcheck disable=SC2016  # the stub's text expands when the stub runs
+printf '#!/bin/sh\nprintf "state=MERGED\\nmerged=%%s\\n" "${FAKE_MERGED:-true}"\n' > "$T/bin/gh"; chmod +x "$T/bin/gh"
+new jg-f1; bd update jg-f1 --external-ref $pr >/dev/null; bd update jg-f1 -s in_progress -a w1 >/dev/null
+[ -z "$(drift jg-f1)" ] || fail "the forge is read only with --forge"
+out=$(PATH="$T/bin:$PATH" drift jg-f1 --forge)
+[ "$out" = "$(printf 'drift\tjg-f1\tlost\tpull request %s is merged and the row is in_progress' "$pr")" ] || fail "a merged pull request on an open row must print one drift line, got [$out]"
+[ -z "$(FAKE_MERGED=false PATH="$T/bin:$PATH" drift jg-f1 --forge)" ] || fail "an open pull request is not drift"
+meta jg-f1 released_at=$t2; [ -z "$(PATH="$T/bin:$PATH" drift jg-f1 --forge)" ] || fail "a released row agrees with a merged pull request"
+pass "a merged pull request on an open row prints one drift line"
 
 # The time of one write.
 out=$(axi moment jg-w1 approved_at) || fail "timed write: $out"

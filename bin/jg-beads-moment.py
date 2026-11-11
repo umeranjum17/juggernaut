@@ -4,6 +4,7 @@
 Usage: BEADS_DIR=<store> jg-beads-write.py moment <ticket> <moment> [--at <RFC3339>] [--returned-to <stage>]
        BEADS_DIR=<store> jg-beads-write.py wait <ticket> <who> [<reason>] [--at <RFC3339>]
        BEADS_DIR=<store> jg-beads-write.py ticket-stage <ticket> [--proof <state of the proof run>]
+       BEADS_DIR=<store> jg-beads-write.py ticket-drift <ticket> [--forge]
 
 moment writes one of six moments of the ticket machine: approved_at, proved_at, landing_at, gated_at, returned_at and release_opened_at.
 Each is a provenance event first and then the row's metadata, in that order, because the row write is the signal a reader can poll and
@@ -15,6 +16,8 @@ wait writes the three wait keys, wait (who owes the next move), wait_reason and 
 who `none`. The words are the closed lists of core/machines/ticket-wait.states and ticket-wait-reason.states. A wait adds no child row.
 No stage word is stored, `bd set-state` is never called, and hold_kind is not written: the stage is worked out by bin/jg-beads-stage.py.
 Every write prints one line with the seconds it took.
+ticket-drift prints one line `drift<TAB><ticket><TAB>lost<TAB><difference>` for each way the row and the records outside Beads differ
+(bin/jg-beads-drift.py) and nothing when they agree. The forge is read only with --forge. It never writes.
 """
 import datetime
 import json
@@ -26,6 +29,7 @@ import time
 sys.dont_write_bytecode = True
 view = __import__("jg-beads-view")
 rule = __import__("jg-beads-stage")
+drifts = __import__("jg-beads-drift")
 
 WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jg-beads.sh")
 # moment -> (provenance source, kind). bd has fixed kinds, so the source tells the moments apart.
@@ -133,5 +137,17 @@ def ticket_stage(args):
     print("%s\t%s" % (name, health))
 
 
+def ticket_drift(args):
+    switches, ids = view.flags(args, (), ("--forge",))
+    if len(ids) != 1:
+        view.refuse("usage: ticket-drift <ticket> [--forge]")
+    row = fetch(ids[0])
+    data = os.environ.get("JG_DATA_OVERRIDE") or os.path.join(os.environ.get("JG_HOME") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."), "data")
+    landed, reverted = drifts.landings(os.path.join(data, "trunk-landings.tsv"))
+    merged = drifts.pr_merged(row.get("external_ref")) if "--forge" in switches else None
+    for line in drifts.drift(row, landed, reverted, merged):
+        print(line)
+
+
 def main(verb, args):
-    {"moment": moment, "wait": wait, "ticket-stage": ticket_stage}[verb](args)
+    {"moment": moment, "wait": wait, "ticket-stage": ticket_stage, "ticket-drift": ticket_drift}[verb](args)

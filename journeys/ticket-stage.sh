@@ -14,7 +14,7 @@ cat "$out"
 cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
 {"target": {"version": "$(git -C "$root" rev-parse --short HEAD)"},
  "start": "a new Beads store with fixture rows, written and read through jg-backlog.sh",
- "steps": ["lay each fixture row of the rule table and read its stage, sub-state and health", "read the same row with jg-q1b3n's rule and compare", "write the six new moments with an event first and a UTC string on the row", "refuse a moment moved back", "write the three wait keys and count the rows before and after", "time one write"],
- "result": "every fixture row reads as the rule table says, the two rules agree except for the rows that start a new try, a wait adds no child row, and one write takes under a second"}
+ "steps": ["lay each fixture row of the rule table and read its stage, sub-state and health", "read the same row with jg-q1b3n's rule and compare", "write the six new moments with an event first and a UTC string on the row", "refuse a moment moved back", "write the three wait keys and count the rows before and after", "print the drift of a landed commit with no landed_at and of a merged pull request on an open row, and none for rows that agree", "time one write"],
+ "result": "every fixture row reads as the rule table says, the two rules agree except for the rows that start a new try, a wait adds no child row, a row that differs from the records outside Beads prints one drift line and one that agrees prints none, and one write takes under a second"}
 JSON
 exit "$rc"
