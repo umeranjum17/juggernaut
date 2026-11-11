@@ -87,3 +87,10 @@ The switch is read in the home that asks, so the same change can be `in-use` in 
 
 `tests/jg-machine-delivery.test.sh` walks a switched-off and a switched-on change through every delivery state and the live-claim verdict.
 `tests/jg-machine.test.sh` generates a fixture machine, refuses each lint defect, matches the golden output, and walks a record to its terminal state using only `next` output.
+
+## Delivery styles
+
+`core/machines/styles/delivery-styles.tsv` has one row per mode word: the line, what the style adds in delivering, and how it joins main.
+`bin/jg-delivery-style.sh <mode>` is the one reader (`--list` prints the modes; an unknown mode exits 1).
+No row names a prover: done-done proves the commit in every mode.
+`tests/jg-delivery-style.test.sh` is its test.
