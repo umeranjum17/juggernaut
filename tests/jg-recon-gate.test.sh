@@ -237,6 +237,46 @@ test_quick_and_legacy_are_exempt() {
   pass "jg-recon-gate.sh: quick and a legacy brief are exempt, and --depth overrides the brief"
 }
 
+test_a_critic_task_passes_on_its_critic_md() {
+  local dir=$HOME_DIR/data/rg-critic
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-brief.sh" rg-critic some-proj --scout --depth deep >/dev/null 2>&1 || fail "critic scaffold failed"
+  run_gate rg-critic
+  expect_code 1 "$RC" "a deep task with no report and no critic.md is refused (got: $OUT)"
+  printf 'Critic: rg-critic\nRound 1: new gaps 2\n- a gap\n' > "$dir/critic.md"
+  run_gate rg-critic
+  expect_code 0 "$RC" "a critic task passes on its critic.md, with no report (got: $OUT)"
+  assert_contains "$OUT" "critic task" "the pass line did not say it judged a critic task"
+  JG_HOME="$HOME_DIR" bash "$GATE" rg-critic --is-critic || fail "--is-critic should accept the critic task"
+  printf 'Critic: rg-critic\n' > "$dir/critic.md"
+  expect_refused rg-critic "no 'Round <n>: new gaps <k>' line" "a critic.md with no round line"
+  printf 'Critic: someone-else\nRound 1: new gaps 0\n' > "$dir/critic.md"
+  expect_refused rg-critic "report.md is missing" "a critic.md naming another critic is not a critic task"
+  make_recon rg-notcritic deep
+  JG_HOME="$HOME_DIR" bash "$GATE" rg-notcritic --is-critic && fail "a researcher is not a critic task"
+  pass "jg-recon-gate.sh: a critic task passes on its critic.md and a researcher is not one"
+}
+
+test_a_waiver_by_main_is_a_file_the_gate_reads() {
+  local wdir=$HOME_DIR/state/recon-gate-waiver
+  make_recon rg-waive deep
+  rm -f "$HOME_DIR/data/rg-waive/report.md"
+  expect_refused rg-waive "report.md is missing" "a deep Recon with no report, no waiver yet"
+  mkdir -p "$wdir"
+  printf 'reason: the owner dropped the report\n' > "$wdir/rg-waive"
+  expect_refused rg-waive "needs a 'waived-by: Main' line" "a waiver with no author"
+  printf 'waived-by: Main\n' > "$wdir/rg-waive"
+  expect_refused rg-waive "needs a 'waived-by: Main' line" "a waiver with no reason"
+  printf 'waived-by: Main\nreason: the owner dropped the report\n' > "$wdir/rg-waive"
+  run_gate rg-waive
+  expect_code 0 "$RC" "a whole waiver passes the gate (got: $OUT)"
+  assert_contains "$OUT" "WAIVED by Main" "the pass line did not say it was waived"
+  assert_contains "$OUT" "the owner dropped the report" "the pass line did not carry the reason"
+  make_recon rg-nowaive deep
+  rm -f "$HOME_DIR/data/rg-nowaive/report.md"
+  expect_refused rg-nowaive "report.md is missing" "a waiver for one task does not cover another"
+  pass "jg-recon-gate.sh: a waiver by Main is read from a file and covers only its own task"
+}
+
 test_usage_errors() {
   local out rc
   out=$(JG_HOME="$HOME_DIR" bash "$GATE" 2>&1); rc=$?
@@ -257,4 +297,6 @@ test_critic_is_required
 test_closure_check_closes_the_last_round
 test_source_budget
 test_quick_and_legacy_are_exempt
+test_a_critic_task_passes_on_its_critic_md
+test_a_waiver_by_main_is_a_file_the_gate_reads
 test_usage_errors

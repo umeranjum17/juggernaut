@@ -24,6 +24,19 @@
 # flag existed). The depth is read from data/<task-id>/brief.md unless --depth is
 # given. The data directory is JG_DATA_OVERRIDE, else <JG_HOME>/data.
 #
+# A critic task is judged on its critic.md alone. Its data directory holds a
+# critic.md whose `Critic:` line names the task itself and no report.md; the
+# researcher's report is not its product. It passes with that `Critic:` line and
+# one `Round <n>: new gaps <k>` line, at any depth. `--is-critic` only asks
+# whether the task is one: exit 0 when it is, 1 when it is not, nothing printed.
+#
+# A waiver by Main is a file the gate reads: <state>/recon-gate-waiver/<task-id>
+# (the state directory is JG_STATE_OVERRIDE, else <JG_HOME>/state), written by
+# Main with a `waived-by: Main` line and a non-empty `reason: <why>` line. With
+# a whole waiver the depth checks are skipped and the gate prints the reason;
+# a waiver missing either line is refused, so a half-written file never passes.
+# It waives this depth gate only, never the owner-call completion gate.
+#
 # It prints one line and exits 0 on success, one line per refusal and exits 1
 # otherwise, and exits 2 on a usage error. A "board link missing" refusal waits
 # for the board report surface and is not built here.
@@ -32,10 +45,12 @@ die() { echo "jg-recon-gate: $*" >&2; exit 2; }
 
 task=
 depth=
+is_critic=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --depth) [ "$#" -ge 2 ] || die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]"; depth=$2; shift 2 ;;
     --depth=*) depth=${1#--depth=}; shift ;;
+    --is-critic) is_critic=1; shift ;;
     -*) die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]" ;;
     *) [ -z "$task" ] || die "usage: jg-recon-gate.sh <task-id> [--depth <quick|standard|deep>]"; task=$1; shift ;;
   esac
@@ -47,6 +62,35 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 data=${JG_DATA_OVERRIDE:-${JG_HOME:-$root}/data}
 dir=$data/$task
 [ -d "$dir" ] || die "no task directory at $dir"
+
+# A critic task: critic.md names this task as its critic and there is no report.
+critic_task=
+if [ ! -f "$dir/report.md" ] && [ -f "$dir/critic.md" ]; then
+  critic_who=$(sed -n 's/^Critic:[[:space:]]*//p' "$dir/critic.md" | head -1 | tr -d '[:space:]')
+  [ "$(printf '%s' "$critic_who" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')" ] || critic_task=1
+fi
+if [ -n "$is_critic" ]; then [ -n "$critic_task" ]; exit; fi
+
+state=${JG_STATE_OVERRIDE:-${JG_HOME:-$root}/state}
+waiver=$state/recon-gate-waiver/$task
+if [ -f "$waiver" ]; then
+  waiver_reason=$(sed -n 's/^reason:[[:space:]]*//p' "$waiver" | head -1)
+  if grep -Eqi '^waived-by:[[:space:]]*Main[[:space:]]*$' "$waiver" && [ -n "$waiver_reason" ]; then
+    echo "recon gate: WAIVED by Main - $task: $waiver_reason"
+    exit 0
+  fi
+  echo "jg-recon-gate: refused: the waiver $waiver needs a 'waived-by: Main' line and a 'reason: <why>' line" >&2
+  exit 1
+fi
+
+if [ -n "$critic_task" ]; then
+  if grep -Eq '^Round[[:space:]]+[0-9]+:[[:space:]]*new gaps[[:space:]]+[0-9]+' "$dir/critic.md"; then
+    echo "recon gate: PASS - critic task $task: critic.md names its critic and its rounds"
+    exit 0
+  fi
+  echo "jg-recon-gate: refused: critic.md has no 'Round <n>: new gaps <k>' line" >&2
+  exit 1
+fi
 
 if [ -z "$depth" ] && [ -f "$dir/brief.md" ]; then
   depth=$(sed -n 's/^Recon depth:[[:space:]]*//p' "$dir/brief.md" | head -1 | tr -d '[:space:]')

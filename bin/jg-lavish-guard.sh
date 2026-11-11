@@ -33,6 +33,15 @@
 # bin/jg-crew-state.sh still judges it. The home is JG_HOME, else the status
 # file's parent directory, as in jg_dod_accept_ship_done.
 #
+# The Recon done check (--append only). When the lane record names a Recon
+# (kind=scout) and a line of the text opens with `done`, the guard asks the two
+# questions the cleanup asks, so a Recon never says done and then cannot be
+# cleaned: the depth gate (bin/jg-recon-gate.sh, which judges a critic task on
+# its critic.md and honours a waiver by Main) and the owner-call completion gate
+# (bin/jg-captain-hold.sh verify). A Recon with no report.md is refused too,
+# except a critic task, whose product is critic.md. A refused done writes
+# nothing and lists every gap on stderr. Another kind of lane is not judged here.
+#
 # The hold record check (--append on a .status file). A blocked: or needs-decision: line that names the captain or Main
 # as its cause must carry the id of a hold on record (bin/jg-captain-hold.sh open); without one it is refused with
 # "no such hold is on record" and nothing is written.
@@ -59,6 +68,7 @@ done_proof_gate() {  # <status-file> <text>
   home=${JG_HOME:-$(dirname -- "$state")}
   _unchecked() { echo "warning: the proof of $id was not checked before this done: $1" >&2; }
   [ -f "$meta" ] || { _unchecked "no lane record at $meta"; return 0; }
+  [ "$(jg_dod_meta_value "$meta" kind)" != scout ] || return 0  # a Recon: recon_done_gate judges it
   command -v jq >/dev/null 2>&1 || { _unchecked 'jq is not installed'; return 0; }
   mode=$(jg_dod_meta_value "$meta" mode)
   JG_HOME=$home jg_dod_trunk_lane "$mode" "$(jg_dod_meta_value "$meta" project)" \
@@ -71,6 +81,39 @@ done_proof_gate() {  # <status-file> <text>
     printf 'done refused: the landing would refuse head %s of %s for missing proof, so nothing was written to %s:\n' "${head:0:12}" "$id" "$file"
     printf '%s\n' "$gaps" | sed 's/^/  - /'
     echo 'Complete the proof at this head and append done again; if it cannot be finished, append a blocked: line that says why.'
+  } >&2
+  return 1
+}
+
+# 0 when <text> may be appended to a Recon's <status-file>: it carries no done line, the lane is not a
+# Recon, or the depth gate, the report and the completion gate all pass. 1 with every gap on stderr.
+recon_done_gate() {  # <status-file> <text>
+  local file=$1 text=$2 state id meta home data gate hold line said_done='' gaps='' out dir
+  while IFS= read -r line; do
+    [ "$(status_line_verb "$line")" = "done" ] && { said_done=1; break; }
+  done <<< "$text"
+  [ -n "$said_done" ] || return 0
+  state=$(dirname -- "$file"); id=$(basename -- "$file" .status); meta=$state/$id.meta
+  [ -f "$meta" ] && [ "$(jg_dod_meta_value "$meta" kind)" = scout ] || return 0
+  home=${JG_HOME:-$(dirname -- "$state")}
+  data=${JG_DATA_OVERRIDE:-$home/data}; dir=$data/$id
+  gate="$(dirname -- "${BASH_SOURCE[0]}")/jg-recon-gate.sh"
+  hold="$(dirname -- "${BASH_SOURCE[0]}")/jg-captain-hold.sh"
+  if [ -f "$gate" ]; then
+    out=$(JG_HOME=$home JG_DATA_OVERRIDE=$data JG_STATE_OVERRIDE=$state bash "$gate" "$id" 2>&1 >/dev/null) && out=''
+    [ -z "$out" ] || gaps=$(printf '%s\n' "$out" | sed 's/^jg-recon-gate: refused: /depth gate: /')
+  fi
+  if [ ! -f "$dir/report.md" ] && ! { [ -f "$gate" ] && JG_HOME=$home JG_DATA_OVERRIDE=$data bash "$gate" "$id" --is-critic >/dev/null 2>&1; }; then
+    gaps=${gaps:+$gaps$'\n'}"no report at $dir/report.md; the report is the work product"
+  fi
+  if [ -f "$hold" ] && ! JG_HOME=$home JG_STATE_OVERRIDE=$state JG_DATA_OVERRIDE=$data bash "$hold" verify "$id" >/dev/null 2>&1; then
+    gaps=${gaps:+$gaps$'\n'}"completion gate: the captain-call inventory is not attested; inventory the report's open calls with bin/jg-captain-hold.sh complete $id"
+  fi
+  [ -n "$gaps" ] || return 0
+  {
+    printf 'done refused: Recon %s would not be cleanable, so nothing was written to %s:\n' "$id" "$file"
+    printf '%s\n' "$gaps" | sed 's/^/  - /'
+    echo 'Close the gaps and append done again; if they cannot be closed, append a blocked: line that says why.'
   } >&2
   return 1
 }
@@ -120,6 +163,7 @@ if [ -n "$APPEND" ]; then
       # shellcheck source=bin/jg-dod-lib.sh
       . "$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/jg-dod-lib.sh"
       hold_record_gate "$text" || exit 1
+      recon_done_gate "$APPEND" "$text" || exit 1
       done_proof_gate "$APPEND" "$text" || exit 1
       ;;
   esac

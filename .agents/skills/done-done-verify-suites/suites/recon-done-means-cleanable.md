@@ -1,0 +1,3 @@
+# Recon done means cleanable
+
+Recon done means cleanable: run `done-done run -- bash tests/jg-lavish-guard.test.sh` and `done-done run -- bash tests/jg-recon-gate.test.sh`; the real status command (`bin/jg-lavish-guard.sh --append`) over a fixture Recon home with the real depth gate and the real completion gate proves a Recon `done` with no report is refused with both gaps and an unchanged status file, a waiver by Main (`state/recon-gate-waiver/<task>`) passes only the depth gate, a Recon past both gates is written, and a critic task is written on its `critic.md` with no report (screen: none).
