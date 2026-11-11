@@ -122,4 +122,5 @@ The switch is read in the home that asks, so the same change can be `in-use` in 
 No row names a prover: done-done proves the commit in every mode.
 `--field <mode> <name>` prints one named column from the `columns` row, such as `publishes`, `review` or `rule1` (the first ship rule).
 `bin/jg-dod-lib.sh` reads those properties instead of testing mode words, and `tests/jg-dod-style-brief.test.sh` holds the four per-mode brief texts byte-equal to a golden.
+The same file holds two `knob` rows, `pr` and `local`, and a `word` row for each registry word: `bin/jg-delivery-style.sh knob <word>` prints the knob (direct-PR and no-mistakes read as `pr`, local-only and local-trunk as `local`). yolo stays the merge knob.
 `tests/jg-delivery-style.test.sh` is its test.

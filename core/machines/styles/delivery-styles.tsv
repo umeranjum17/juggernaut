@@ -6,3 +6,12 @@ style	no-mistakes	the pull request's base branch	push, the pull request and the 
 style	direct-PR	the pull request's base branch	push and the pull request	the pull request's merge	yes	no	no	1. Never push to {target} (push only your `{branch}` branch). Never merge a PR.
 style	local-only	the local branch	nothing	the guarded local fast-forward merge on the captain's word	no	no	no	1. Never push to any remote and never open a PR. Work only on your `{branch}` branch; juggernaut handles the merge into local `main`.
 style	local-trunk	the local trunk	the batch and the go-live	one release pull request, on the captain's recorded word	no	no	yes	1. Never push, open a PR, merge, go live or release. Work only on your `{branch}` branch; juggernaut lands it on the local trunk.
+# Knobs: the delivery table has two rows, `pr` and `local`; yolo stays the merge knob. A `word` row reads a registry word as a knob: direct-PR and no-mistakes read as pr, local-only and local-trunk as local, and nothing else is read from the old word (the reviewer runs for every lane). The style rows above stay until the slices that retire them.
+knob	pr	the pull request's base branch	push and the pull request	the pull request's merge	yes
+knob	local	the local branch or the local trunk	nothing until the go-live	the guarded local landing, on the merge knob yolo	no
+word	no-mistakes	pr
+word	direct-PR	pr
+word	local-only	local
+word	local-trunk	local
+word	pr	pr
+word	local	local

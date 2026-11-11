@@ -14,6 +14,7 @@ rc=0
   # The mode-branch count of the plan (section 12, M7): lines that branch on a mode word in bin and core outside tests..
   pat='(local-only|local-trunk|direct-PR|no-mistakes)\)|= *"?(local-only|local-trunk|direct-PR|no-mistakes)"? *\]|== *"?(local-only|local-trunk|direct-PR|no-mistakes)'
   echo "== mode branch lines in bin and core: $(git -C "$root" grep -n -E "$pat" -- bin core ':!*test*' | wc -l) (76 on the trunk before this slice, 81 before J7)"
+  for m in no-mistakes direct-PR local-only local-trunk; do echo "== knob $m: $(bash "$ds" knob "$m")"; done
   echo "== bogus"; bash "$ds" bogus && rc=1
   bash "$root/tests/jg-delivery-style.test.sh" || rc=1
   echo "== per-mode briefs through jg-dod-lib.sh, which reads the table"
