@@ -281,8 +281,11 @@ jg_lint_classify_root() {  # <rc> <root-stderr-file>
 #   bin/jg-spawn.sh                          16,781,220 KiB    13,499,424 KiB
 #   bin/jg-teardown.sh                       16,781,220 KiB    14,097,224 KiB
 #   bin/jg-watch.sh                          16,781,220 KiB     9,503,488 KiB
+#   bin/jg-pr-merge.sh                       13,631,488 KiB     7,767,996 KiB
 #   tests/jg-launch-prompt-signals-live-e2e  16,781,220 KiB    13,014,784 KiB
 #
+# bin/jg-pr-merge.sh: rc=251 at the 12 GiB default, clean at 13,631,488 KiB (the
+# table row is the lowest limit tried that completed, so its real peak is lower).
 # 24 GiB is the measured 16,781,220 KiB peak plus about 43% headroom, so the
 # allowance is still a real ceiling that bounds runaway growth instead of
 # accommodating it. A heavy root with no entry here keeps the default envelope
@@ -297,7 +300,7 @@ jg_lint_classify_root() {  # <rc> <root-stderr-file>
 # confirms the table's number is real on the hosted runner, not just here.
 jg_lint_root_allowance() {  # <path>
   case "${1#./}" in
-    bin/jg-spawn.sh|bin/jg-teardown.sh|bin/jg-watch.sh|tests/jg-launch-prompt-signals-live-e2e.test.sh)
+    bin/jg-spawn.sh|bin/jg-teardown.sh|bin/jg-watch.sh|bin/jg-pr-merge.sh|tests/jg-launch-prompt-signals-live-e2e.test.sh)
       printf '%s\n' 25165824
       ;;
   esac
