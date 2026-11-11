@@ -201,6 +201,20 @@ jg_write_meta "$HOME_D/state/proof.meta" "project=$PROJ" 'mode=local-trunk' 'bra
 prove proof; ready proof
 trunk land proof || fail 'legacy fixture lane must land'
 legacy=$(tip)
+# A home converge merges a commit only a home carried into the trunk; the commit reaches the trunk by the merge's second parent.
+merge_in() {  # <branch> <side> <base> <message>: <branch> is <base> with <side> merged in; prints its commit
+  git -C "$W/lane" checkout -q -b "$1" "$3" || fail "create $1"
+  git -C "$W/lane" -c user.name=t -c user.email=t@example.invalid merge -q --no-ff -m "$4" "$2" || fail "merge $2"
+  git -C "$W/lane" rev-parse HEAD
+}
+git -C "$W/lane" fetch -q "$PROJ" trunk || fail 'fetch trunk for the converge fixture'
+git -C "$W/lane" checkout -q -b home-only "$legacy^" || fail 'create home-only branch'
+commit_in "$W/lane" home.txt home 'home-only commit'
+home=$(git -C "$W/lane" rev-parse HEAD)
+converge=$(merge_in converge home-only "$legacy" 'trunk-home-converge: merge the home-only commit into the trunk')
+git -C "$PROJ" fetch -q "$W/lane" converge:refs/heads/converge || fail 'import converge merge'
+JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref refs/heads/trunk "$converge" "$legacy" || fail 'move trunk to the converge merge'
+printf '%s\n' "$converge" > "$HOME_D/state/trunk-green-proj"
 : > "$HOME_D/data/trunk-landing-proofs.tsv"
 lane first first; trunk land first >/dev/null 2>&1 || fail 'first proof lane must land'
 lane later later; trunk land later >/dev/null 2>&1 || fail 'later fixture lane must land'
@@ -270,6 +284,26 @@ fi
 SH
 export JG_TEST_CHANGE_PIN="$W/change-pin" JG_TEST_JUDGE_ACCOUNT="$W/judge-account" JG_TEST_PR_BODY="$W/pr-body"
 chmod +x "$W/fakebin/done-done"
+# The board is a file of cards; this stand-in keeps the calls merge-card makes (list, post, dismiss, restore) so the
+# test needs no installed sign-off-axi, which a CI runner lacks.
+cat > "$W/fakebin/sign-off-axi" <<'SH'
+#!/usr/bin/env bash
+set -eu
+cmd=$1; shift
+store() { local board=$1; [ -f "$board" ] || printf '{"decisions":[]}\n' > "$board"; }
+case "$cmd" in
+  list) store "$1"; cat "$1" ;;
+  post)
+    board=$1; shift; store "$board"; from=
+    while [ "$#" -gt 0 ]; do case "$1" in --from) from=$2; shift ;; esac; shift; done
+    jq --slurpfile c "$from" '.decisions += [{key: $c[0].key, dismissed: false, evidence: {commit: ($c[0].run.commit? // null)}}]' "$board" > "$board.t" && mv "$board.t" "$board" ;;
+  dismiss|restore)
+    key=$1; board=$2; store "$board"; flag=true; [ "$cmd" = dismiss ] || flag=false
+    jq --arg k "$key" --argjson f "$flag" '.decisions |= map(if .key == $k then .dismissed = $f else . end)' "$board" > "$board.t" && mv "$board.t" "$board" ;;
+  *) printf 'unexpected sign-off-axi command: %s\n' "$cmd" >&2; exit 1 ;;
+esac
+SH
+chmod +x "$W/fakebin/sign-off-axi"
 # The first proof refuses a missing landing row after publishing; retry needs no new word or push.
 proofs="$HOME_D/data/trunk-landing-proofs.tsv"
 cp "$proofs" "$W/saved-proofs"
@@ -294,6 +328,21 @@ cp "$W/saved-versions" "$HOME_D/data/trunk-versions.tsv"
 out=$(trunk release "$PROJ" 2>&1) && fail 'a changed green pin must refuse'
 assert_contains "$out" 'green pin changed' 'the refusal must identify the changed pin'
 rm "$W/change-pin"
+# A merge that is not a trunk-home-converge does not vouch for the commit it carries. The capture runs the helper the
+# release runs inside done-done, here on a clone of the lane at that merge, so the real trunk and its record stay put.
+git -C "$W/lane" checkout -q -b stray-side "$legacy^" || fail 'create stray branch'
+commit_in "$W/lane" stray.txt stray 'stray commit'
+stray=$(git -C "$W/lane" rev-parse HEAD)
+plain=$(merge_in plain stray-side "$(tip)" "Merge branch 'stray-side' into trunk")
+base=$(awk -F '\t' '$1 == "proj" && $3 == "trunk" { print $4 }' "$HOME_D/data/trunk-versions.tsv")
+git clone -q --shared --no-checkout "$W/lane" "$W/stray" || fail 'clone the stray merge'
+git -C "$W/stray" checkout -q --detach "$plain" || fail 'check out the stray merge'
+mkdir -p "$W/stray-state" "$W/stray-out"; printf '%s\n' "$plain" > "$W/stray-state/trunk-green-proj"
+out=$(cd "$W/stray" && JG_HOME="$HOME_D" JG_STATE_OVERRIDE="$W/stray-state" JG_RELEASE_PROJECT="$PROJ" JG_RELEASE_TRUNK=trunk \
+  JG_RELEASE_BASE="$base" JG_RELEASE_HEAD="$plain" DONE_DONE_EVIDENCE_ROOT="$W/stray-out" "$W/root/bin/jg-trunk-release-proof.sh" capture 2>&1) &&
+  fail 'a plain merge must not vouch for its second parent'
+assert_contains "$out" "no landing proof row for $stray" 'the refusal must name the commit a plain merge carried'
+pass 'release refuses a commit carried only by a merge that is not a trunk-home-converge'
 # A legacy trunk can predate the version ledger. Its release retry must reconstruct and persist the base.
 awk -F "\t" '$1 != "proj" || $3 != "trunk"' "$HOME_D/data/trunk-versions.tsv" > "$W/versions-without-trunk"
 cp "$W/versions-without-trunk" "$HOME_D/data/trunk-versions.tsv"
@@ -302,8 +351,10 @@ git -C "$PROJ" config remote.origin.pushurl "$W/no-such-remote.git"
 out=$(trunk release "$PROJ" 2>&1) || fail "proof retry failed: $out"
 [ "$(awk -F '\t' '$1 == "proj" && $3 == "trunk" { print $4 }' "$HOME_D/data/trunk-versions.tsv")" = "$expected_base" ] || fail 'the missing trunk version must record its merge base'
 pass 'a release retry reconstructs and records the missing trunk release base from the default branch'
-assert_contains "$(cat "$DONE_DONE_HOME/evidence/"*/run.log)" "Legacy landing: $legacy" 'the old trunk commit must be proven'
-pass 'release retry accepts the earlier trunk landing after the missing proof is restored'
+log=$(cat "$DONE_DONE_HOME/evidence/"*/run.log)
+assert_contains "$log" "Legacy landing: $legacy" 'the old trunk commit must be proven'
+assert_contains "$log" "Converged landing: $home (merged by $converge)" 'the home-only commit must be proven by its converge merge'
+pass 'release retry accepts the earlier trunk landing and the converge-merged commit after the missing proof is restored'
 [ "$(wc -l < "$HOME_D/data/trunk-releases.tsv")" = "$rows" ] || fail 'retry must not publish a second release'
 head=$(tip)
 # Drive the merge's real proof gate before inspecting the missing receipt.

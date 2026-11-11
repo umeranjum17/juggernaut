@@ -29,12 +29,26 @@ if [ "${1:-}" = capture ]; then
       break
     fi
   done <<< "$first_parents"
+  # A trunk-home-converge merge puts commits only a home carried onto the trunk; they arrive by its second parent.
+  # The merge is itself a first-parent commit, so it still needs its own proof row or an earlier-landing claim below.
+  merges=$(git log --first-parent --merges --format='%H %s' "$head") || fail 'cannot read trunk merges'
+  converged=
+  while read -r merge subject; do
+    case $subject in
+      'trunk-home-converge:'*) converged+=$(git rev-list "$merge^1..$merge^2" | sed "s/\$/ $merge/")$'\n' ;;
+    esac
+  done <<< "$merges"
   versions=$(awk -F '\t' -v p="$pn" '$1 == p { print $2 "\t" $3 "\t" $4 }' "$DATA/trunk-versions.tsv") || fail 'cannot read trunk versions'
   {
     printf 'Release head: %s\nRelease base: %s\nGreen pin: %s\n' "$head" "$base" "$head"
     while IFS= read -r sha; do
       row=$(awk -F '\t' -v p="$pn" -v h="$sha" '$2 == p && $3 == h { r=$0 } END { print r }' "$DATA/trunk-landing-proofs.tsv")
       if [ -z "$row" ]; then
+        merge=$(awk -v h="$sha" '$1 == h { print $2; exit }' <<< "$converged")
+        if [ -n "$merge" ]; then
+          printf 'Converged landing: %s (merged by %s)\n' "$sha" "$merge"
+          continue
+        fi
         if [ -n "$cutover" ] && [ "$sha" != "$cutover" ] && git merge-base --is-ancestor "$sha" "$cutover" && grep -Fxq "$sha" <<< "$first_parents"; then
           printf 'Legacy landing: %s (before %s)\n' "$sha" "$cutover"
           continue
@@ -60,7 +74,7 @@ if [ "${1:-}" = capture ]; then
     done <<< "$versions"
     printf 'Full-suite CI is a later release pull request gate.\n'
   } > "$out/run.log"
-  jq -n --arg h "$head" '{target:{version:$h},start:"A published trunk release has landing proof records.",steps:["Read the release head and green pin.","Check each landing proof and old trunk tip."],result:"The release head has landing proof or earlier trunk history for every commit and no uncarried old trunk hotfix; full-suite CI remains a later gate."}' > "$out/steps.json"
+  jq -n --arg h "$head" '{target:{version:$h},start:"A published trunk release has landing proof records.",steps:["Read the release head and green pin.","Check each landing proof and old trunk tip."],result:"The release head has landing proof, earlier trunk history or a recorded home converge for every commit and no uncarried old trunk hotfix; full-suite CI remains a later gate."}' > "$out/steps.json"
   exit 0
 fi
 
@@ -97,7 +111,7 @@ root=${record%/.done-done/runs/*}
 [ -d "$root/$run" ] || fail 'done-done capture folder is missing'
 cp -R "$root/$run" "$dir/" || fail 'cannot copy the sealed capture'
 cp "$record" "$dir/.done-done/runs/$run.json" || fail 'cannot copy the sealed record'
-outcome="Release head $head: every commit has a landing proof or earlier trunk history, the green pin matches, and no old trunk hotfix is uncarried; whole-suite CI is a later gate"
+outcome="Release head $head: every commit has a landing proof, earlier trunk history or a recorded home converge, the green pin matches, and no old trunk hotfix is uncarried; whole-suite CI is a later gate"
 (cd "$clone" && JG_HOME=$HOME_DIR "$HERE/jg-checks-write.sh" "$id" --head "$head" --outcome "$outcome" --screen none) || fail 'cannot write the Checks block'
 JG_HOME=$HOME_DIR "$HERE/../core/merge-on-green/checks-lint.sh" "$dir/checks.md" "$dir" || fail 'draft Checks lint failed'
 # Keep the existing PR body and append a fresh Checks block; the newest block is authoritative.
