@@ -17,7 +17,7 @@ A home's own session may also stop a process whose resolved cwd is under that ho
 The home is proved by the guard's ancestry reaching the harness whose pid that home's `state/.lock` records (found from the harness cwd upward); a data entry linked outside `data/`, the account home or a parent of it never qualifies.
 Everything else keeps the final refusal, and nothing is matched by name or pattern.
 
-Fleet ownership uses resolved cwd or absolute command-line paths under the primary home, `~/.treehouse/<pool>[/<slot>]/juggernaut*`, or `~/.local/{share,bin}/jg-*` feature tools.
+Fleet ownership uses resolved cwd or absolute command-line paths under the primary home, `~/firstmate*`, `~/.treehouse/<pool>[/<slot>]/{juggernaut,firstmate}*`, or `~/.local/{share,bin}/jg-*` feature tools.
 Project worktrees also qualify when their resolved Git common directory is under the primary home's `projects/`.
 Symlinks resolve before comparison and directory boundaries matter.
 Process start time is read before and after identity collection, and checked again before Main approval.

@@ -52,12 +52,13 @@ try {
   let rows = fs.readFileSync(audit, 'utf8').trim().split('\n').map(JSON.parse);
   assert.deepEqual([rows[0].pid, rows[0].starttime, rows[0].caller], [5001, '12345', process.pid]);
   assert(!JSON.stringify(rows).includes('private')); assert.equal(rows[0].cwd, `${home}/projects/demo`);
-  for (const cwd of [`${account}/.treehouse/juggernaut-abc/4/juggernaut`, `${account}/.treehouse/addons-abc/3/juggernaut-addons`, `${account}/.local/share/jg-preview`]) {
+  for (const cwd of [`${account}/.treehouse/juggernaut-abc/4/juggernaut`, `${account}/.treehouse/addons-abc/3/juggernaut-addons`, `${account}/.treehouse/firstmate-cff959/4/firstmate`, `${account}/firstmate/projects/demo`, `${account}/.local/share/jg-preview`]) {
     put(5001, 'sleep', cwd); allow('kill 5001');
   }
   put(5001, 'node', '/outside', 1, ['node', `${home}/bin/watch.mjs`, '--token=private']); allow('kill 5001');
   put(5001, 'sleep', project); allow('kill 5001');
   put(5001, 'sleep', '/outside'); deny('kill 5001');
+  put(5001, 'sleep', `${account}/.treehouse/other-abc/4/notfirstmate`); deny('kill 5001');
   put(5001, 'sleep', `${home}-other`); deny('kill 5001');
   put(5001, 'sleep', `${home}/link-away`); deny('kill 5001');
   put(5001, 'sleep');
