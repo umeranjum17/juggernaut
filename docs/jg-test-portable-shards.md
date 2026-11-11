@@ -88,6 +88,9 @@ Each shard is still strictly serial in itself, and separate runners mean no two 
 `.github/workflows/behavior.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the suite unrun.
 
 Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/jg-test-run.sh`.
+The 2026-11-11 refresh increases hints from successful samples in green runs [42284298891](https://github.com/umeranjum17/juggernaut/actions/runs/42284298891), [42283465414](https://github.com/umeranjum17/juggernaut/actions/runs/42283465414), and [42278174221](https://github.com/umeranjum17/juggernaut/actions/runs/42278174221), and the completed shard of partial run [42471652449](https://github.com/umeranjum17/juggernaut/actions/runs/42471652449).
+Only samples for scripts unchanged since each run are used, and existing higher hints remain in place.
+Twelve shards provide modeled headroom without changing the timeout.
 [Verification inputs](#verification-inputs) owns the measurement provenance and exceptions.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
