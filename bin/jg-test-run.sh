@@ -878,6 +878,7 @@ tests/jg-trunk-live.test.sh 44000
 tests/jg-trunk-gate.test.sh 35000
 tests/jg-trunk-queue.test.sh 31000
 tests/jg-trunk-retry.test.sh 20000
+tests/jg-trunk-golive-guard.test.sh 30000
 tests/jg-trunk-verify.test.sh 15000
 tests/jg-trunk-spawn.test.sh 49000
 tests/jg-spawn-load-admission.test.sh 45000

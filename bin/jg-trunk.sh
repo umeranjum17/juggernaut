@@ -297,10 +297,26 @@ tip_adopt_forward() {
 # A gate that needs another variable goes red on its first run, and the miss is added here by name.
 GATE_ENV='HOME PATH USER LOGNAME SHELL LANG LC_ALL TMPDIR JG_HOME'
 
+# A gate marks itself while it runs (state/.trunk-gate-<project>-<pid>.lock) and never starts while a move of the homes is pending
+# (state/.trunk-move-<project>.lock): the move (go_live, begin_move) waits for every marked gate to end, and a gate that would start
+# waits for the move, so a move never kills a running gate and no gate runs twice because a home moved. The gate takes its mark
+# first and then looks for the move; the move takes its place first and then looks for marks, so one of them always sees the other.
+gate_enter() {
+  local mark="$STATE/.trunk-gate-$PN-${BASHPID:-$$}.lock" move="$STATE/.trunk-move-$PN.lock"
+  while :; do
+    jg_lock_try_acquire "$mark" || die "cannot mark the gate as running"
+    LOCKS="$mark $LOCKS"
+    if jg_lock_try_acquire "$move"; then jg_lock_release "$move"; return 0; fi
+    unlock "$mark"; sleep 0.2  # the homes are moving: the gate starts after the move
+  done
+}
+gate_leave() { unlock "$STATE/.trunk-gate-$PN-${BASHPID:-$$}.lock"; }
+
 # Run a command at a commit's exact tree in a clean clone, logging to <log>; returns the command's exit status.
 # <envfile>, when given, receives the environment the command ended with (NUL separated), so a rerun can use the same one.
 gate_exec() {  # <commit> <command> <log> [<envfile>]
   local rc=0 cmd=$2 name
+  gate_enter
   local -a clean=(env -i)
   for name in $GATE_ENV; do [ -z "${!name+set}" ] || clean+=("$name=${!name}"); done
   mkdir -p "$DATA/trunk"
@@ -311,6 +327,7 @@ gate_exec() {  # <commit> <command> <log> [<envfile>]
   [ -z "${4:-}" ] || cmd="trap 'env -0 > \"\$JG_GATE_ENV_OUT\"' EXIT; $2"
   (cd "$WORK/tree" && "${clean[@]}" JG_GATE_ENV_OUT="${4:-/dev/null}" JG_TRUNK_GATE_OUTPUT="${3%.log}.proof" bash -c "$cmd") > "$3" 2>&1 || rc=$?
   rm -rf -- "$WORK"; WORK=
+  gate_leave
   record_overruns "$1" "$3"
   return "$rc"
 }
@@ -1226,9 +1243,42 @@ cmd_green_alarm() {
   echo "green-alarm: raised: $note"
 }
 
+# A move of the homes never lands on a running gate. begin_move takes the move's place (state/.trunk-move-<project>.lock), so no new
+# gate starts, and waits until every gate that is running has ended (gate_enter marks them). The trunk lock is let go while it waits,
+# because a landing needs it to finish, and taken again before the move. The wait is bounded by JG_TRUNK_MOVE_WAIT_MAX seconds (default
+# 2700); past it the move is not made and is tried again on the next tick. It runs in the process that holds the trunk lock, never in
+# a `$(...)` subshell, which cannot release its parent's lock: a caller that captures go_live's output calls begin_move first.
+running_gate() {  # prints the pid of a gate that is running, and returns 0; returns 1 when none is
+  local m
+  for m in "$STATE"/.trunk-gate-"$PN"-*.lock; do
+    [ -e "$m" ] || continue
+    if jg_lock_try_acquire "$m"; then jg_lock_release "$m"; else cat "$m/pid" 2>/dev/null || echo '?'; return 0; fi
+  done
+  return 1
+}
+begin_move() {
+  local held='' busy said='' deadline
+  [ "$BASHPID" = "$$" ] || die "begin_move must run in the main process, before go_live is captured in a subshell"
+  case " $LOCKS" in *" $STATE/.trunk-$PN.lock "*) held=1; unlock "$STATE/.trunk-$PN.lock" ;; esac
+  lock "$STATE/.trunk-move-$PN.lock"
+  deadline=$(( SECONDS + ${JG_TRUNK_MOVE_WAIT_MAX:-2700} ))
+  while busy=$(running_gate); do
+    [ -n "$said" ] || { echo "live: waiting: a landing's gate is running (pid $busy); the homes move when it ends, before the next gate starts"; said=1; }
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      row trunk-live.tsv "$PN" "${1:-none}" "$(date +%s)" "hook-failed:a landing's gate still ran after ${JG_TRUNK_MOVE_WAIT_MAX:-2700}s; the homes stay where they were"
+      echo "error: the move waited ${JG_TRUNK_MOVE_WAIT_MAX:-2700}s for a landing's gate and made no move; the next tick tries again" >&2; exit 3
+    fi
+    sleep 0.2
+  done
+  [ -z "$held" ] || { lock "$STATE/.trunk-$PN.lock"; tip_ok; }
+  MOVE_HELD=1
+}
+
 # Move the home to <sha> through the project's live hook and record it. Exit 3 when the home did not move.
 go_live() {  # <sha> <tip>   LIVE_FLEET=1 (cmd_live) moves every home; a pin-back moves this one
   local sha=$1 hook status=landed-not-live here there why hook_out hook_rc reason
+  [ -n "${MOVE_HELD:-}" ] || begin_move "$sha"
+  set -- "$sha" "$(rev "refs/heads/$TRUNK")"  # the tip as it stands once the gates have ended
   hook="$CONFIG/live-hook.$PN"
   if [ ! -x "$hook" ]; then
     here=$(git -C "$JG_ROOT" remote get-url origin 2>/dev/null || echo a); there=$(git -C "$PROJ" remote get-url origin 2>/dev/null || echo b)
@@ -1310,7 +1360,9 @@ cmd_autolive() {
     wait_s=$(( quiet - (now - newest) )); [ $(( cap - (now - oldest) )) -ge "$wait_s" ] || wait_s=$(( cap - (now - oldest) ))
     echo "autolive: waiting: live in about $(( (wait_s + 59) / 60 )) min (quiet $(( quiet / 60 )) min, cap $(( cap / 60 )) min)"; return 0
   fi
-  LIVE_FLEET=1; out=$(go_live "$green" "$tip" 2>&1) && rc=0 || rc=$?
+  LIVE_FLEET=1; begin_move "$green"  # in this process: the capture below is a subshell, which cannot let go of the trunk lock
+  green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || echo "$green"); tip=$(rev "refs/heads/$TRUNK")  # as they stand once the gates have ended
+  out=$(go_live "$green" "$tip" 2>&1) && rc=0 || rc=$?
   if [ "$rc" -ne 0 ]; then echo "autolive: NOT live, the move failed: $(printf '%s' "$out" | tail -n 1 | cut -c1-200)"; return "$rc"; fi
   echo "autolive: live at ${green:0:12} on every home ($(awk -F'\t' -v s="$green" '$2 == s && $4 ~ /^skipped/ { n++ } END { print n + 0 }' "$DATA/trunk-live.tsv" 2>/dev/null || echo 0) skipped, see data/trunk-live.tsv)"
 }
