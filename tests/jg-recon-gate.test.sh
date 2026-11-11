@@ -288,6 +288,43 @@ test_usage_errors() {
   pass "jg-recon-gate.sh: usage errors exit 2"
 }
 
+test_board_report_is_written_by_the_command() {
+  local dir page card first
+  make_recon rg-page standard
+  dir="$HOME_DIR/data/rg-page"
+  page="$dir/board-report/page.html"; card="$dir/board-report/report.json"
+  sed -i '/^## 8\. Implementation plan$/,/^## 9\. /{/^Body of/c\
+| Slice | Owner | Outcome |\
+| --- | --- | --- |\
+| J1 | lead | The ticket table is the first drawing |
+}' "$dir/report.md"
+  printf '%s\n' '{"key":"rg-page-1","title":"Page of {{count:moves}} moves","filed":"2026-11-12T00:00:00Z","filer":"rg-page","project":"Juggernaut",' \
+    ' "drawings":[{"label":"Delivering","machine":"delivering"}],' \
+    ' "counts":[{"label":"Moves the table lacks","ledger":"moves"}]}' > "$dir/page.json"
+  printf 'moves\t230\tshadow log\n' > "$dir/ledger.tsv"
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-report-page.sh" build rg-page >/dev/null || fail "the page should build"
+  first=$(cat "$page" "$card")
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-report-page.sh" build rg-page >/dev/null
+  [ "$first" = "$(cat "$page" "$card")" ] || fail "two builds from the same sources should match byte for byte"
+  assert_contains "$(cat "$page")" "resolving" "the page should draw the machine's states from its table"
+  assert_contains "$(cat "$card")" '"title": "Page of 230 moves"' "the card should take the count from the ledger"
+  assert_contains "$(cat "$card")" '"title": "J1"' "the card should take the plan from section 8"
+  run_gate rg-page
+  expect_code 0 "$RC" "a page the command wrote should pass (got: $OUT)"
+  printf 'moves\t231\tshadow log\n' > "$dir/ledger.tsv"
+  expect_refused rg-page "board-report/page.html is stale" "a ledger count that changed after the build"
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-report-page.sh" build rg-page >/dev/null
+  assert_contains "$(cat "$card")" "Page of 231 moves" "a changed ledger count should change the card on the next run"
+  sed -i 's/resolving/resolvingX/' "$page"
+  expect_refused rg-page "board-report/page.html was edited by hand" "a hand edit of the page"
+  JG_HOME="$HOME_DIR" "$ROOT/bin/jg-report-page.sh" build rg-page >/dev/null
+  sed -i 's/"project": "Juggernaut"/"project": "Other"/' "$card"
+  expect_refused rg-page "board-report/report.json was edited by hand" "a hand edit of the card"
+  printf '{"title":"typed"}\n' > "$card"
+  expect_refused rg-page "board-report/report.json carries no jg-report-page stamp" "a card the command did not write"
+  pass "jg-recon-gate.sh: a board page and card must be written by jg-report-page.sh"
+}
+
 test_passing_recons_pass
 test_missing_and_empty_sections_are_refused
 test_deep_may_not_skip_plan_or_acceptance
@@ -300,3 +337,4 @@ test_quick_and_legacy_are_exempt
 test_a_critic_task_passes_on_its_critic_md
 test_a_waiver_by_main_is_a_file_the_gate_reads
 test_usage_errors
+test_board_report_is_written_by_the_command

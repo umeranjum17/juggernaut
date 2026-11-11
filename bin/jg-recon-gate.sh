@@ -18,6 +18,8 @@
 #     researcher's own task id, closing all k gaps); a deep critic may not be
 #     `self` or the researcher's own task id, and a deep Recon allows 3 rounds
 #     that found new gaps;
+#   - board-report/ holds a page or card that bin/jg-report-page.sh did not write
+#     (a content hash in the file must match), or whose sources changed since;
 #   - sources.jsonl is under the level's budget: standard 8 sources over 3 kinds,
 #     deep 20 over 5.
 # Quick is exempt, and so is a brief with no depth line (a brief made before the
@@ -100,6 +102,10 @@ case "$depth" in
   standard|deep) ;;
   *) die "unknown depth '$depth'" ;;
 esac
+
+if [ -d "$dir/board-report" ]; then
+  JG_DATA_OVERRIDE=$data "$root/bin/jg-report-page.sh" check "$task" >/dev/null || exit 1
+fi
 
 python3 -I - "$dir" "$task" "$depth" <<'PY'
 import json, os, re, sys
