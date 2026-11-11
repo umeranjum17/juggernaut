@@ -39,6 +39,8 @@
 #                              other composer text; NOT a delivery terminal
 #   <task>.inbox/.escalated    oldest-message name already surfaced as stale,
 #                              so later polls suppress another escalation
+#   <task>.inbox/.composer-seen  a lead's pending composer text: hash, first-seen
+#                              epoch, submitted flag (the unchanged-text submit)
 #   <task>.inbox/.retry-ring   name of a fire-and-forget record still owed its
 #                              one retry ring (jg_task_inbox_mark_retry)
 #
@@ -115,6 +117,9 @@
 #   JG_TASK_INBOX_BUSY_MAX     default 2; consecutive busy-deferred due polls before
 #                              the one stuck-busy report (delivery stays owed)
 #   JG_TASK_INBOX_HELD_SECS   default 30; minimum age before one Codex retry
+#   JG_TASK_INBOX_COMPOSER_SUBMIT_SECS  default 120; a lead's composer text that stays
+#                              unchanged this long is submitted once, then the doorbell
+#                              rings (jg_task_inbox_unchanged_composer_submit)
 
 _JG_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Both dependencies are canonical lint roots in their own right. Keep them as
@@ -673,6 +678,51 @@ jg_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
   [ -n "$held" ] && [ "$(printf '%s' "$held" | tr -d '[:space:]')" = "$(printf '%s' "$3" | tr -d '[:space:]')" ]
 }
 
+# A lead's composer that keeps the same pending text is a draft nobody will
+# finish, and the steer behind it sits unread. Once the exact text has stayed
+# unchanged for JG_TASK_INBOX_COMPOSER_SUBMIT_SECS (default 120), submit it once,
+# so the doorbell can ring. State under <inbox>/.composer-seen is
+# "<content hash>\t<first-seen epoch>\t<submitted 0|1>"; changed text restarts
+# the clock, and a submitted hash is never submitted again. Prints "submitted"
+# when it pressed Enter; any other outcome prints "wait". A composer that is not
+# pending, or a worker that is not a lead, never gets a key press.
+jg_task_inbox_composer_submit_secs() {
+  local s=${JG_TASK_INBOX_COMPOSER_SUBMIT_SECS:-120}
+  case "$s" in ''|*[!0-9]*) s=120 ;; esac
+  printf '%s' "$s"
+}
+
+jg_task_inbox_unchanged_composer_submit() {  # <state-dir> <task-id> <backend> <target> <label>
+  local dir cap held hash seen_hash seen_at submitted now
+  dir=$(jg_task_inbox_dir "$1" "$2")
+  jg_task_is_lead "$1/$2.meta" || { printf 'wait'; return 0; }
+  jg_backend_source "$3" || { printf 'wait'; return 0; }
+  cap=$(jg_backend_capture "$3" "$4" "$JG_COMPOSER_CAPTURE_LINES" "$5" 2>/dev/null) || { printf 'wait'; return 0; }
+  held=$(jg_composer_extract_selected_content styled=0 "$cap") || { printf 'wait'; return 0; }
+  [ -n "$held" ] || { rm -f "$dir/.composer-seen" 2>/dev/null; printf 'wait'; return 0; }
+  hash=$(printf '%s' "$held" | cksum | cut -d' ' -f1)
+  now=$(date +%s)
+  { IFS=$(printf '\t') read -r seen_hash seen_at submitted < "$dir/.composer-seen"; } 2>/dev/null || true
+  case "${seen_at:-}" in ''|*[!0-9]*) seen_hash= ;; esac
+  if [ "${seen_hash:-}" != "$hash" ]; then
+    { printf '%s\t%s\t0\n' "$hash" "$now" > "$dir/.composer-seen"; } 2>/dev/null || true
+    printf 'wait'
+    return 0
+  fi
+  if [ "${submitted:-0}" = 1 ] || [ "$((now - seen_at))" -lt "$(jg_task_inbox_composer_submit_secs)" ]; then
+    printf 'wait'
+    return 0
+  fi
+  { printf '%s\t%s\t1\n' "$hash" "$seen_at" > "$dir/.composer-seen"; } 2>/dev/null || { printf 'wait'; return 0; }
+  jg_backend_send_key "$3" "$4" Enter "$5" >/dev/null 2>&1 || { printf 'wait'; return 0; }
+  sleep 0.5
+  printf 'submitted'
+}
+
+jg_task_is_lead() {  # <meta-path>
+  [ "$(jg_meta_get "$1" kind 2>/dev/null)" = squad_lead ]
+}
+
 jg_task_inbox_is_fire_and_forget() {  # <record-path>
   local rec=$1
   if [ ! -f "$rec" ]; then
@@ -971,6 +1021,12 @@ _jg_ladder_step() {  # <state-dir> <task> <window> <backend> <label>
     ring)
       ring_rc=0
       jg_task_inbox_ring "$backend" "$w" "$rec" "$label" || ring_rc=$?
+      if [ "$ring_rc" -eq 1 ] \
+        && [ "$(jg_task_inbox_unchanged_composer_submit "$state" "$task" "$backend" "$w" "$label")" = submitted ]; then
+        "$log" "steer-inbox lead composer text unchanged for $(jg_task_inbox_composer_submit_secs)s was submitted: $task ${rec##*/}"
+        ring_rc=0
+        jg_task_inbox_ring "$backend" "$w" "$rec" "$label" || ring_rc=$?
+      fi
       if [ "$ring_rc" -eq 3 ]; then
         _jg_ladder_escalate_unavailable "$state" "$task" "$w" "$rec" || return 1
         return 0
