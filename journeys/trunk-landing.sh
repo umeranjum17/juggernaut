@@ -27,7 +27,7 @@ git -C "$candidate/tree" checkout -q --detach "$(git -C "$root" rev-parse HEAD)"
 rc=0
 (cd "$candidate/tree" && bash bin/jg-test-run.sh \
   tests/jg-trunk.test.sh tests/jg-trunk-live.test.sh tests/jg-trunk-gate.test.sh tests/jg-trunk-sealed-ran.test.sh tests/jg-trunk-queue.test.sh \
-  tests/jg-trunk-retry.test.sh tests/jg-trunk-release-open-pr.test.sh tests/jg-trunk-release-merge-first.test.sh tests/jg-trunk-two-gates.test.sh \
+  tests/jg-trunk-retry.test.sh tests/jg-trunk-release-open-pr.test.sh tests/jg-trunk-release-merge-first.test.sh tests/jg-trunk-two-gates.test.sh tests/jg-trunk-publish.test.sh \
   tests/jg-trunk-verify.test.sh tests/jg-trunk-spawn.test.sh tests/jg-trunk-scope.test.sh \
   tests/jg-on.test.sh tests/migration-card-live.test.sh tests/jg-afk-inject-e2e.test.sh \
   tests/jg-wake-watcher.test.sh tests/jg-beads.test.sh tests/jg-beads-native-n6.test.sh \
@@ -44,7 +44,8 @@ cat > "$DONE_DONE_EVIDENCE_ROOT/steps.json" <<JSON
  "publish the real local-trunk task receipt, sweep automatic landing and run real unforced cleanup with no remote release ref; the exact head is on trunk, the task record is removed and its board note retains local-trunk",
  "sweep the trunk-landing check (the watcher runs it on its 30-second tick): it lands the done task by itself after one fast check and cleans it up unforced, ignores the task that is not done, reports a conflict once with its paths, retries a time-only refusal without repeating it, lands three lanes ready at once in order, starts no whole-suite run after a landing, and never goes live",
  "prove same-clock and concurrent producer order before publication, legacy tie replay, and live watcher delivery; run real Beads and ticket journeys with the candidate code bound read-only into private jails and valid board descriptions",
- "prove the landing prerequisites through real probes on deterministic tool paths: the remote doctor reports missing and fixture-installed harnesses, the migration card measures absent and installed CLIs over a real private bus, and a private tmux fixture delivers exactly one notification after a swallowed Enter without reading host service bindings"],
+ "prove the landing prerequisites through real probes on deterministic tool paths: the remote doctor reports missing and fixture-installed harnesses, the migration card measures absent and installed CLIs over a real private bus, and a private tmux fixture delivers exactly one notification after a swallowed Enter without reading host service bindings",
+ "publish under the standing release word: the green pin is pushed once the trunk holds enough, never forced; a trunk with fewer commits, no waiver, an open batch pull request or a CI run in flight pushes nothing; after a red the tip is pushed once as a candidate and its green result moves the pin past the red; the landing check starts the publish step within one tick"],
  "result": "a done commit lands on the local trunk after one fast check with no human step and is never live until the captain says so, every unsafe landing is refused with the reason, the batch goes out as one trunk-to-main release PR on his word, and a red CI returns the home to the last green commit"}
 JSON
 exit "$rc"

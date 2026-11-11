@@ -5,6 +5,7 @@
 #        trunk-landing.sh run <jg-home> <task-id> <head>      (what `check` starts in the background)
 #        trunk-landing.sh runbatch <jg-home> <task-id>@<head>...     (what `check` starts when 2 or more lanes are queued: one stack)
 #        trunk-landing.sh live <jg-home> <project>                   (what a tick starts under a go-live waiver: the batched live step)
+#        trunk-landing.sh publish <jg-home> <project>                (what a tick starts under a release waiver: bin/jg-trunk.sh publish, the green pin or a candidate after a red)
 #
 # For each state/<task>.meta in the home with mode=local-trunk (or legacy local-only) whose project is registered local-trunk and has a trunk
 # (state/trunk-tip-<project>, made by bin/jg-trunk.sh init), whose ship branch is not on the trunk yet and whose
@@ -46,8 +47,9 @@ case "${1:-}" in
   check|next) [ "$#" -eq 2 ] || { echo "usage: trunk-landing.sh check|next <jg-home>" >&2; exit 2; } ;;
   runbatch) [ "$#" -ge 4 ] || { echo "usage: trunk-landing.sh runbatch <jg-home> <task-id>@<head> <task-id>@<head>..." >&2; exit 2; } ;;
   run) [ "$#" -eq 4 ] || { echo "usage: trunk-landing.sh run <jg-home> <task-id> <head>" >&2; exit 2; } ;;
+  publish) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh publish <jg-home> <project>" >&2; exit 2; } ;;
   live) [ "$#" -eq 3 ] || { echo "usage: trunk-landing.sh live <jg-home> <project>" >&2; exit 2; } ;;
-  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | run <jg-home> <task-id> <head> | live <jg-home> <project>" >&2; exit 2 ;;
+  *) echo "usage: trunk-landing.sh check|next <jg-home> | runbatch <jg-home> <task-id>@<head>... | run <jg-home> <task-id> <head> | live <jg-home> <project> | publish <jg-home> <project>" >&2; exit 2 ;;
 esac
 [ -d "$2/state" ] || { echo "trunk-landing: $2 has no state directory" >&2; exit 2; }
 FMH=$(cd "$2" && pwd -P)
@@ -68,7 +70,7 @@ mkdir -p "$MEM" || exit 0
 # (JG_TEST_SEAM=1) it names itself in the suite's registry, so the suite's cleanup stops its process group even after
 # the fixture home is gone (tests/lib.sh jg_test_reap_detached).
 case $1 in
-  run|runbatch|live)
+  run|runbatch|live|publish)
     if [ "${JG_TEST_SEAM:-}" = 1 ] && [ -n "${JG_TEST_DETACHED_REGISTRY:-}" ]; then
       printf '%s %s\n' "$$" "$(jg_pid_identity "$$" 2>/dev/null)" >> "$JG_TEST_DETACHED_REGISTRY" 2>/dev/null || :
     fi
@@ -112,6 +114,22 @@ if [ "$1" = live ]; then
   esac
   jg_lock_acquire_wait "$MEM/.outbox.lock"
   printf 'trunk-landing: %s: %s\n' "$pn" "$live" >> "$MEM/outbox"
+  jg_lock_release "$MEM/.outbox.lock"
+  exit 0
+fi
+
+# The publish step for one project (bin/jg-trunk.sh publish decides; this reports a push or a refusal worth a line). One at a time
+# per project: a tick that finds the last one still running does nothing.
+if [ "$1" = publish ]; then
+  pn=$3; proj=$FMH/projects/$pn; prc=0; pub=; out=
+  [[ $pn =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [ -d "$proj" ] || exit 2
+  jg_lock_try_acquire "$STATE/.trunk-publish-$pn.lock" || exit 0
+  trap 'jg_lock_release "$STATE/.trunk-publish-$pn.lock"' EXIT
+  out=$(JG_HOME="$FMH" "$FMH/bin/jg-trunk.sh" publish "$proj" 2>&1) || prc=$?
+  if [ "$prc" -ne 0 ]; then pub="NOT published: $(printf '%s\n' "$out" | grep -v '^$' | tail -n 1 | cut -c1-300)"
+  else pub=$(printf '%s\n' "$out" | grep -E '^released ' | tail -n 1 | cut -c1-300); [ -n "$pub" ] || exit 0; fi
+  jg_lock_acquire_wait "$MEM/.outbox.lock"
+  printf 'trunk-landing: %s: %s\n' "$pn" "$pub" >> "$MEM/outbox"
   jg_lock_release "$MEM/.outbox.lock"
   exit 0
 fi
@@ -269,6 +287,17 @@ for tip in "$STATE"/trunk-tip-*; do
   awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-live-waiver" 2>/dev/null || continue
   [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
   setsid nohup "$SELF" live "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
+done
+# Under a release waiver every tick starts the publish step (detached, so it never holds a landing back; at most once a minute).
+for tip in "$STATE"/trunk-tip-*; do
+  [ -z "$QUIET" ] || break
+  [ -f "$tip" ] || continue
+  pn=${tip##*/trunk-tip-}
+  awk -v p="$pn" '$1 == p { f = 1 } END { exit !f }' "$FMH/config/trunk-release-waiver" 2>/dev/null || continue
+  [ -d "$FMH/projects/$pn" ] && [ "$(local_trunk "$FMH/projects/$pn")" = yes ] || continue
+  [ ! -e "$MEM/.publish-$pn" ] || [ -n "$(find "$MEM/.publish-$pn" -mmin +0 2>/dev/null)" ] || continue
+  : > "$MEM/.publish-$pn"
+  setsid nohup "$SELF" publish "$FMH" "$pn" >/dev/null 2>&1 < /dev/null &
 done
 report() {
   local reason=${3%%; full log:*}

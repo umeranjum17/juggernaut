@@ -20,6 +20,7 @@
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --release   Overwatch only: the captain's standing word lets this project's green release pull request merge by itself
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
 #        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
+#        jg-trunk.sh publish <project-dir>             under the release waiver: push the green pin once the trunk holds enough, or the tip as a candidate after a red; one batch at a time, never forced
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (trunk-v2, ...) from the default branch
 #        jg-trunk.sh retire <project-dir>              clean up an old trunk unforced: only when its release is proved on main and every hotfix is carried; unlanded work is kept and listed
 #        jg-trunk.sh due <project-dir>                 exit 0 when the oldest unreleased commit is past release-after-hours
@@ -783,16 +784,23 @@ pin_green() {  # <sha>
 # (a red never stops a landing); only the pin, and with it live, waits, until a whole-suite pass past the red moves it, or the
 # no-green alarm tells Overwatch. Called with the trunk lock held.
 pin_landed() {  # <landed sha>
-  local green r
+  local green
   green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
-  if [ -n "$green" ]; then
-    while IFS= read -r r; do
-      git -C "$PROJ" merge-base --is-ancestor "$r" "$1" 2>/dev/null || continue
-      ! git -C "$PROJ" merge-base --is-ancestor "$r" "$green" 2>/dev/null || continue
-      git -C "$PROJ" log --format=%B "$r..$1" | grep -qx "reverts: $r" || return 0
-    done < <(awk -F'\t' -v p="$PN" '$1 == p && $4 == "red" { print $2 }' "$DATA/trunk-ci.tsv" 2>/dev/null | sort -u)
-  fi
+  if [ -n "$green" ] && blocking_red "$1" "$green" >/dev/null; then return 0; fi
   pin_green "$1"
+}
+
+# The recorded red that holds the green pin below <sha>: a red CI or charged verify red (data/trunk-ci.tsv) on a commit that is an
+# ancestor of <sha>, above <green>, and that no commit up to <sha> reverts. Prints it and returns 0, or returns 1 when none holds.
+blocking_red() {  # <sha> <green>
+  local r
+  while IFS= read -r r; do
+    git -C "$PROJ" merge-base --is-ancestor "$r" "$1" 2>/dev/null || continue
+    ! git -C "$PROJ" merge-base --is-ancestor "$r" "$2" 2>/dev/null || continue
+    git -C "$PROJ" log --format=%B "$r..$1" | grep -qx "reverts: $r" && continue
+    printf '%s\n' "$r"; return 0
+  done < <(awk -F'\t' -v p="$PN" '$1 == p && $4 == "red" { print $2 }' "$DATA/trunk-ci.tsv" 2>/dev/null | sort -u)
+  return 1
 }
 
 # A commit found red after it landed takes the green pin with it: a pin at or above it goes back to its parent, so no home goes
@@ -1683,7 +1691,17 @@ last_green_before() {  # <red sha>
     git -C "$PROJ" merge-base --is-ancestor "$c" "$1" 2>/dev/null || continue
     echo "$c"; return 0
   done < <(awk -F'\t' -v p="$PN" '$1 == p && $4 ~ /^live/ { print $2 }' "$DATA/trunk-live.tsv" 2>/dev/null | tac)
-  cat "$STATE/trunk-released-$PN"
+  # No live commit below it: the last release that is not the red commit itself (the released mark moves at the push, so it can be
+  # the very commit CI found red), else the commit before it.
+  while IFS= read -r c; do
+    [ "$c" != "$1" ] || continue
+    grep -Eq "^$PN	$c	[0-9]+	red(	|$)" "$DATA/trunk-ci.tsv" 2>/dev/null && continue
+    git -C "$PROJ" merge-base --is-ancestor "$c" "$1" 2>/dev/null || continue
+    echo "$c"; return 0
+  done < <(awk -F'\t' -v p="$PN" 'NF >= 6 && $1 == p { print $3 }' "$DATA/trunk-releases.tsv" 2>/dev/null | tac)
+  c=$(cat "$STATE/trunk-released-$PN")
+  [ "$c" != "$1" ] || c=$(rev "$1^")
+  printf '%s\n' "$c"
 }
 
 cmd_ci() {
@@ -1913,8 +1931,43 @@ adopt_pushed_release() {  # <commit>
   echo "release already pushed: $url; resuming its proof, nothing pushed"
 }
 
+# The push both `release` and `publish` make: <rel> goes to origin/<trunk> (never forced) and the ONE release PR from the trunk
+# into the default branch carries it (an open <prev> already does: the push is its new head). Writes the release row, moves the
+# released mark, records the release task, and runs the release proof for a commit that is the green pin. Called with the trunk
+# lock held; it lets the lock go before the proof. <spend> 1 spends the captain's release word; <proof> 0 skips the proof.
+push_batch() {  # <rel> <n> <prev> <spend 0|1> <proof 0|1>
+  local rel=$1 n=$2 prev=$3 default base body url
+  base=$(cat "$STATE/trunk-released-$PN")
+  default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
+  printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$rel" "$TRUNK" "$base" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused the batch"
+  git -C "$PROJ" push -q origin "$rel:refs/heads/$TRUNK" || die "push of $TRUNK failed (never forced)"
+  # The release PR is the trunk itself going into the default branch: no release branch, one PR.
+  # While the last release PR is still open, the push above already carried the new commits into it.
+  if [ -n "$prev" ] && [ "$(pr_state "$prev")" = open ]; then
+    url=$prev
+  else
+    body=$(mktemp); WORK=$body
+    { echo "Release batch from the local $TRUNK: $n commits, one per ticket."; echo
+      git -C "$PROJ" log --reverse --format='- %h %s' "$base..$rel"; } > "$body"
+    open_release_pr "$default" "Release: $n tickets from the local $TRUNK" "$body"; url=$REL_URL
+  fi
+  put "$STATE/trunk-release-pending-$PN" "$rel"
+  if ! awk -F '\t' -v p="$PN" -v t="$TRUNK" -v h="$rel" -v u="$url" '$1 == p && $2 == t && $3 == h && $6 == u { found=1 } END { exit !found }' "$DATA/trunk-releases.tsv" 2>/dev/null; then
+    row trunk-releases.tsv "$PN" "$TRUNK" "$rel" "$n" "$(date +%s)" "$url"
+  fi
+  put "$STATE/trunk-released-$PN" "$rel"; [ "$4" != 1 ] || spend_word release
+  rm -f -- "$STATE/trunk-release-pending-$PN"
+  echo "released $n commits from $TRUNK: $url"
+  record_release_task "$url" "$rel"
+  [ "$5" = 1 ] || { unlock "$STATE/.trunk-$PN.lock"; return 0; }
+  base=$(release_base "$rel") || refuse "cannot find the release base for ${rel:0:12}"
+  unlock "$STATE/.trunk-$PN.lock"
+  "$SCRIPT_DIR/jg-trunk-release-proof.sh" "$PROJ" "$TRUNK" "$base" "$rel" "$url"
+}
+
+
 cmd_release() {
-  local rel base n default body url prev waiting
+  local rel base n url prev waiting
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
   rollover_if_merged || true
   rel=$(release_commit)
@@ -1939,30 +1992,61 @@ cmd_release() {
     waiting=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-pr-state.sh" --all "$prev") || refuse "cannot read the checks of the open release PR $prev; nothing is pushed into it"
     [ -n "$waiting" ] || refuse "the release PR $prev is green and merges on the captain's standing word; nothing is pushed into it, and the later commits go out in the release after it"
   fi
-  default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
-  printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$rel" "$TRUNK" "$base" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused the batch"
-  git -C "$PROJ" push -q origin "$rel:refs/heads/$TRUNK" || die "push of $TRUNK failed (never forced)"
-  # The release PR is the trunk itself going into the default branch: no release branch, one PR.
-  # While the last release PR is still open, the push above already carried the new commits into it.
-  if [ -n "$prev" ] && [ "$(pr_state "$prev")" = open ]; then
-    url=$prev
-  else
-    body=$(mktemp); WORK=$body
-    { echo "Release batch from the local $TRUNK: $n commits, one per ticket."; echo
-      git -C "$PROJ" log --reverse --format='- %h %s' "$base..$rel"; } > "$body"
-    open_release_pr "$default" "Release: $n tickets from the local $TRUNK" "$body"; url=$REL_URL
+  push_batch "$rel" "$n" "$prev" 1 1
+}
+
+# "Enough" on the trunk, one rule for a release: the commits above the last release number release-after-commits, or the oldest of
+# them is release-after-hours old. Usage: holds_enough <commit>; the commits counted are released..<commit>.
+holds_enough() {
+  local n first
+  n=$(git -C "$PROJ" rev-list --count "$(cat "$STATE/trunk-released-$PN")..$1")
+  [ "$n" -gt 0 ] || return 1
+  [ "$n" -lt "$(pol release-after-commits)" ] || return 0
+  first=$(git -C "$PROJ" log --reverse --format=%ct "$(cat "$STATE/trunk-released-$PN")..$1" | head -1)
+  [ $(( $(date +%s) - first )) -ge $(( $(pol release-after-hours) * 3600 )) ]
+}
+
+# A CI run of the release PR is in flight: a check pending, or none reported yet on the pushed head.
+ci_in_flight() {  # <url>
+  local out
+  out=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-pr-state.sh" --all "$1") || return 0  # unreadable: assume a run, push nothing
+  grep -Eiq '^CHECKS: none reported yet|^CHECKS: no required check has reported|^CHECK: .*\((pending|in_progress|queued|waiting|requested|expected)\)' <<<"$out"
+}
+
+# Under the captain's standing release word (config/trunk-release-waiver) the tick publishes the trunk by itself, one batch at a
+# time, and never forces:
+#   - a due batch: the green pin, once the trunk holds enough (holds_enough), when no release PR is open; the push opens the batch
+#     PR, writes the release row, and runs the release proof, exactly as `release` does;
+#   - a candidate: after a recorded red (data/trunk-ci.tsv) holds the pin down and a commit landed above it, the trunk tip once for
+#     each new tip (state/trunk-candidate-<project>), unless a CI run of the batch is in flight. A green `ci` result on the tip
+#     moves the pin past the red. No release proof: it is made for the green pin, and the candidate is not one yet.
+# With no waiver nothing is pushed: the word of the captain starts a release (`release`). Prints one line saying what it did.
+cmd_publish() {
+  local green rel tip prev open=0 n
+  open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
+  [ -n "$(release_waiver_rule)" ] || { echo "publish: $PN has no release waiver; nothing pushed"; return 0; }
+  rollover_if_merged >/dev/null 2>&1 || true
+  tip=$(rev "refs/heads/$TRUNK"); green=$(cat "$STATE/trunk-green-$PN" 2>/dev/null || true)
+  [ -n "$green" ] || { echo "publish: no green commit is recorded yet; nothing pushed"; return 0; }
+  prev=$(last_release_url)
+  [ -z "$prev" ] || [ "$(pr_state "$prev")" != open ] || open=1
+  if blocking_red "$tip" "$green" >/dev/null; then
+    # After a red: the fix goes out as a candidate, once for each new tip.
+    grep -Eq "^$PN	$tip	[0-9]+	(red|green)(	|$)" "$DATA/trunk-ci.tsv" 2>/dev/null && { echo "publish: the tip ${tip:0:12} has its CI result; nothing pushed"; return 0; }
+    [ "$(cat "$STATE/trunk-candidate-$PN" 2>/dev/null || true)" != "$tip" ] || { echo "publish: the tip ${tip:0:12} was pushed as a candidate already; waiting for its result"; return 0; }
+    git -C "$PROJ" merge-base --is-ancestor "$(cat "$STATE/trunk-released-$PN")" "$tip" || { echo "publish: the released mark is not under the tip; nothing pushed"; return 0; }
+    [ "$open" = 0 ] || ! ci_in_flight "$prev" || { echo "publish: a CI run of $prev is in flight; the candidate ${tip:0:12} waits"; return 0; }
+    n=$(git -C "$PROJ" rev-list --count "$(cat "$STATE/trunk-released-$PN")..$tip")
+    echo "publish: pushing the tip ${tip:0:12} as a candidate after a red"
+    push_batch "$tip" "$n" "$prev" 0 0
+    put "$STATE/trunk-candidate-$PN" "$tip"
+    return 0
   fi
-  put "$STATE/trunk-release-pending-$PN" "$rel"
-  if ! awk -F '\t' -v p="$PN" -v t="$TRUNK" -v h="$rel" -v u="$url" '$1 == p && $2 == t && $3 == h && $6 == u { found=1 } END { exit !found }' "$DATA/trunk-releases.tsv" 2>/dev/null; then
-    row trunk-releases.tsv "$PN" "$TRUNK" "$rel" "$n" "$(date +%s)" "$url"
-  fi
-  put "$STATE/trunk-released-$PN" "$rel"; spend_word release
-  rm -f -- "$STATE/trunk-release-pending-$PN"
-  echo "released $n commits from $TRUNK: $url"
-  record_release_task "$url" "$rel"
-  base=$(release_base "$rel") || refuse "cannot find the release base for ${rel:0:12}"
-  unlock "$STATE/.trunk-$PN.lock"
-  "$SCRIPT_DIR/jg-trunk-release-proof.sh" "$PROJ" "$TRUNK" "$base" "$rel" "$url"
+  rel=$green
+  holds_enough "$rel" || { echo "publish: the trunk does not hold enough for a release yet; nothing pushed"; return 0; }
+  [ "$open" = 0 ] || { echo "publish: the release PR $prev is open; nothing is pushed into it"; return 0; }
+  n=$(git -C "$PROJ" rev-list --count "$(cat "$STATE/trunk-released-$PN")..$rel")
+  push_batch "$rel" "$n" "$prev" 0 1
 }
 
 # Reconcile an idle trunk from the landing check, under the same lock as a landing.
@@ -2008,6 +2092,7 @@ case "${1:-}" in
   rollover) shift; cmd_rollover "$@" ;;
   retire) shift; cmd_retire "$@" ;;
   release) shift; cmd_release "$@" ;;
+  publish) shift; cmd_publish "$@" ;;
   due) shift; cmd_due "$@" ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;

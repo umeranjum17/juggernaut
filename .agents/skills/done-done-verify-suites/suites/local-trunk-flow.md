@@ -9,3 +9,5 @@ The same trunk-landing journey checks that a final refusal and an exhausted retr
 A legacy trunk with no version row: `bash tests/jg-trunk-release-open-pr.test.sh` drives the release retry, reconstructs the merge base from the default branch, and checks the recorded row (screen: none).
 
 Diverged trunk recovery: the same journey creates eight recorded commits and one divergent actual commit, reports both tips, prepares a merge, refuses missing proof and a third ref, and lands only the exact proved merge while retaining both histories (screen: none).
+
+The publish step under the standing release word: run `bash tests/jg-trunk-publish.test.sh` (the same journey runs it); the green pin is pushed once the trunk holds enough, a candidate after a red is pushed once for each new tip, and a green result on it moves the pin (screen: none).
