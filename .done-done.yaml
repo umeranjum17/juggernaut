@@ -48,6 +48,8 @@ journeys:
     command: bash tests/jg-pre-push.test.sh > "$DONE_DONE_EVIDENCE_ROOT/${RUN_ID}.log" 2>&1
   spawn-dispatch-profile:
     command: bash journeys/spawn-dispatch-profile.sh
+  claude-account-by-model:
+    command: bash journeys/claude-account-by-model.sh
   claude-1m-context:
     command: bash journeys/claude-1m-context.sh
   spawn-load-admission:

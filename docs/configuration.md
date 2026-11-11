@@ -1305,6 +1305,22 @@ Pi ranks a root's stored logins above environment variables, so a pinned Pi laun
 
 A home that authenticates Claude through environment credentials on purpose should leave the pin absent.
 
+### Per-model Claude account (config/claude-account-by-model)
+
+A home can send some Claude models to a different account than its pin.
+The file is local, gitignored, and opt-in: with no file, every launch is unchanged.
+Each line holds `<model-id> <ordinary|absolute path>`; blank lines and `#` comments are skipped, and a `[1m]` suffix on the launching model is ignored.
+A launch whose model has a line runs on that account, with the same directory and sign-in checks as the pin.
+Every other model keeps `config/claude-account`.
+Juggernaut reads the map at every spawn and relaunch and records the result as `account=`.
+A malformed line refuses the launch and names the file.
+The map never edits or replaces the pin; only the captain changes a pin.
+Example, Sonnet on a second login and everything else on the pin:
+
+```
+claude-sonnet-5-5 /home/you/.claude-accounts/second
+```
+
 ### Failures, reporting, and inheritance
 
 A malformed file, a root that is not a readable directory, or a signed-out account refuses the launch and names the file to fix; Juggernaut never falls back to the ambient account and never changes a global login or copies a credential.

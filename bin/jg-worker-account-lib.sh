@@ -35,6 +35,12 @@
 # leading CLAUDE_CONFIG_DIR or shed-credential assignment would override the
 # pin; a home with config/claude-account refuses such a command.
 #
+# A Claude home may also map models to accounts in config/claude-account-by-model:
+# one `<model-id> <ordinary|absolute path>` entry per line, blank lines and `#`
+# comments skipped, a `[1m]` suffix on the launching model ignored. A launch whose
+# model has an entry uses that account instead of the pin; every other model keeps
+# the pin, and an absent file changes nothing. The map never edits the pin.
+#
 # The sign-in check asks the runner itself, with only HOME, PATH, TMPDIR,
 # USER, LOGNAME, and the selected root in its environment, so a credential
 # variable left in the caller cannot answer for a root that has no login:
@@ -115,18 +121,56 @@ jg_worker_account_read() {
   ' -- "$1" "$2"
 }
 
-# jg_worker_account_resolve <harness> <config-dir>
+# jg_worker_account_by_model <config-dir> <model>
+# Prints the account config/claude-account-by-model maps <model> to, nothing
+# when the file is absent or has no entry for it. Returns 1 with one error when
+# the file is unreadable or any line is malformed, so a typo never silently
+# falls back to the pin.
+jg_worker_account_by_model() {
+  local file="$1/claude-account-by-model" model=${2%\[1m\]} line key value n=0
+  [ -e "$file" ] || return 0
+  [ -f "$file" ] && [ -r "$file" ] || {
+    echo "error: config/claude-account-by-model must be a readable regular file: $file" >&2
+    return 1
+  }
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case "$line" in '' | '#'*) continue ;; esac
+    read -r key value <<<"$line"
+    if [[ ! "$key" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || [[ ! "$value" =~ ^(ordinary|/[^[:cntrl:][:space:]]*)$ ]] ||
+      [ "$line" != "$key $value" ]; then
+      echo "error: config/claude-account-by-model line $n must be '<model-id> ordinary' or '<model-id> <absolute path>': $file" >&2
+      return 1
+    fi
+    if [ "$key" = "$model" ] && [ -n "$model" ]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done <"$file"
+}
+
+# jg_worker_account_resolve <harness> <config-dir> [<model>]
 # Prints "declared<TAB>root<TAB>providers" for a valid pin, where root is the
 # directory the launch selects (empty for ordinary Claude, meaning
 # CLAUDE_CONFIG_DIR unset). Prints nothing and returns 0 when the runner is
 # not pinnable or the home has no pin. On refusal prints one error naming the
 # file and returns 1.
 jg_worker_account_resolve() {
-  local harness=$1 config=$2 file cfg token rc declared root fallback
+  local harness=$1 config=$2 model=${3:-} file cfg token rc declared root fallback mapped=
   file=$(jg_worker_account_file "$harness") || return 0
   cfg="$config/$file"
-  token=$(jg_worker_account_read "$harness" "$cfg")
-  rc=$?
+  if [ "$harness" = claude ]; then
+    mapped=$(jg_worker_account_by_model "$config" "$model") || return 1
+  fi
+  if [ -n "$mapped" ]; then
+    file=claude-account-by-model
+    cfg="$config/$file"
+    token=$mapped$'\t'
+    rc=0
+  else
+    token=$(jg_worker_account_read "$harness" "$cfg")
+    rc=$?
+  fi
   case "$rc" in
   0) ;;
   3) return 0 ;;
@@ -239,7 +283,7 @@ jg_worker_account_check() {
 # agent.
 jg_worker_account_select() {
   local harness=$1 config=$2 model=$3 executable=$4 raw=${5:-} selection declared root providers word provider=
-  selection=$(jg_worker_account_resolve "$harness" "$config") || return 1
+  selection=$(jg_worker_account_resolve "$harness" "$config" "$model") || return 1
   [ -n "$selection" ] || return 0
   declared=${selection%%$'\t'*}
   root=${selection#*$'\t'}
