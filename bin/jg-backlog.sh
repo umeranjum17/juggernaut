@@ -5,7 +5,7 @@
 #        jg-backlog.sh --help
 #
 # Every routine juggernaut backlog read or mutation goes through this command. It serves
-# `show`, `view`, `list`, `ready`, `markdown`, `add`, `update`, `done`, `block`, `unblock`,
+# `show`, `view`, `list`, `ready`, `ready --spawnable` (the tickets this home can start now, bin/jg-backlog-spawnable.sh, ended at 10 seconds with exit 124), `markdown`, `add`, `update`, `done`, `block`, `unblock`,
 # `start`, `reopen`, `hold`, `unhold`, `public-followup` and `relink` from the store that
 # `config/beads-dir` names (bin/jg-backlog-lib.sh); any other verb exits 2 with nothing
 # run. A relative value of `--to` or any `--*-file` flag (`--body-file`, ...) is made
@@ -187,7 +187,18 @@ set -o pipefail
 case "${1:-}" in
   show|view) beads_read | key_tool annotate-show; exit $? ;;
   list) if [ "$LIST_KEYS" = 1 ]; then beads_read | key_tool annotate; else beads_read; fi; exit $? ;;
-  ready|markdown) beads_read; exit $? ;;
+  ready)
+    if [ "${ARGS[1]:-}" = --spawnable ]; then
+      [ "${#ARGS[@]}" -eq 2 ] || fail "ready --spawnable takes no other argument"
+      # shellcheck source=bin/jg-timeout-lib.sh disable=SC1091
+      . "$SCRIPT_DIR/jg-timeout-lib.sh"
+      JG_HOME="$JG_HOME" jg_run_timed "${JG_BACKLOG_SPAWNABLE_LIMIT:-10}" "$SCRIPT_DIR/jg-backlog-spawnable.sh"
+      _jg_rc=$?
+      [ "$_jg_rc" -ne 124 ] || printf 'jg-backlog: ready --spawnable did not finish in %s seconds\n' "${JG_BACKLOG_SPAWNABLE_LIMIT:-10}" >&2
+      exit "$_jg_rc"
+    fi
+    beads_read; exit $? ;;
+  markdown) beads_read; exit $? ;;
   add|create|update|edit|done|close|block|unblock|start|reopen|hold|unhold|public-followup|relink) ;;
   *) fail "the beads backlog does not serve ${1:-this command}" ;;
 esac

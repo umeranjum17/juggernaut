@@ -15,9 +15,9 @@ lane() {  # <home> <task> <last status line>
   printf '%s\n' "$3" > "$1/state/$2.status"
 }
 
-home() {  # <dir> <ready> [target] -> a home whose watcher beat just now
+home() {  # <dir> <ready> [target] -> a home whose watcher beat just now and whose summary is fresh
   mkdir -p "$1/state" "$1/config"
-  printf '{"ready_work":%s}\n' "$2" > "$1/state/home-summary.json"
+  printf '{"ready_work":%s,"generated_epoch":%s}\n' "$2" "$(date +%s)" > "$1/state/home-summary.json"
   [ -z "${3-}" ] || printf '%s\n' "$3" > "$1/config/lane-target"
   touch "$1/state/.last-watcher-beat"
 }
@@ -135,7 +135,7 @@ test_a_lane_list_never_pauses_a_home_and_is_named() {
     "data/paused-for-juggernaut.md is not a pause declaration (first line: # Paused lanes for the Juggernaut-only push), so this home is not paused" \
     "the heartbeat must name the refused file and its first line"
   # Live work keeps its alarm: ready work with a free lane still turns GAP.
-  printf '{"ready_work":2}\n' > "$d/main/state/home-summary.json"
+  printf '{"ready_work":2,"generated_epoch":%s}\n' "$(date +%s)" > "$d/main/state/home-summary.json"
   out=$(hb "$d" check)
   assert_contains "$out" "overwatch GAP" \
     "live work beside a refused pause record must still raise its alarm"
@@ -240,6 +240,108 @@ test_a_goal_step_waiting_is_ready_work_named_in_the_row() {
   pass "rows count a Goal step waiting for the lead as ready work and name it"
 }
 test_a_goal_step_waiting_is_ready_work_named_in_the_row
+
+# The ready count is the store's count of tickets that can start, written by the real refresh
+# and read by the real heartbeat. A stand-in bd serves 200 ready rows, 6 of which name a
+# registered project and can start; the rest name no project or another one.
+store_home() {  # <dir> -> a home with a stand-in store, its pinned tools, and one registered project
+  local d=$1 os arch
+  mkdir -p "$d/bin" "$d/state" "$d/config" "$d/data" "$d/store/.beads/embeddeddolt/jg"
+  printf '{"dolt_mode": "embedded", "dolt_database": "jg"}\n' > "$d/store/.beads/metadata.json"
+  printf 'no-git-ops: true\n' > "$d/store/.beads/config.yaml"
+  cat > "$d/bin/bd" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  ready) [ -z "${STUB_SLEEP:-}" ] || sleep "$STUB_SLEEP"; cat "$ROWS_READY" ;;
+  list) cat "$ROWS_ALL" ;;
+  blocked) echo '[]' ;;
+esac
+SH
+  { cat "$d/bin/bd"; printf '# dolt\n'; } > "$d/bin/dolt"
+  chmod +x "$d"/bin/*
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+  sha() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | cut -d' ' -f1; }
+  printf 'bd 1.3.4\ndolt 2.6.0\nbd-sha256-%s-%s %s\ndolt-sha256-%s-%s %s\n' \
+    "$os" "$arch" "$(sha "$d/bin/bd")" "$os" "$arch" "$(sha "$d/bin/dolt")" > "$d/pins"
+  printf '%s\n' "$d/store/.beads" > "$d/config/beads-dir"
+  printf -- '- proj [local-trunk] - the one project (added 2026-11-01)\n' > "$d/data/projects.md"
+  python3 - "$d" <<'PY'
+import json, sys
+d = sys.argv[1]
+rows = []
+for i in range(200):
+    labels = ["project:proj"] if i < 6 else (["project:other"] if i < 100 else [])
+    rows.append({"id": "t%d" % i, "title": "[feature] row %d" % i, "status": "open", "issue_type": "task",
+                 "created_at": "2026-11-01T00:00:00Z", "labels": labels, "metadata": {},
+                 "dependency_count": 0, "dependent_count": 0})
+json.dump(rows, open(d + "/ready.json", "w"))
+json.dump(rows, open(d + "/all.json", "w"))
+PY
+  touch "$d/state/.last-watcher-beat"
+}
+
+store_env() {  # <dir> command...: run with the home's stand-in store
+  local d=$1
+  shift
+  env JG_HOME="$d" JG_PIN_FILE_OVERRIDE="$d/pins" JG_BEADS_BD="$d/bin/bd" JG_BEADS_DOLT="$d/bin/dolt" \
+    ROWS_READY="$d/ready.json" ROWS_ALL="$d/all.json" "$@"
+}
+
+test_ready_count_is_what_can_start_and_never_from_an_old_number() {
+  local d=$TMP_ROOT/spawnable out
+  store_home "$d"
+  out=$(store_env "$d" "$ROOT/bin/jg-backlog.sh" ready --spawnable 2>&1) || fail "ready --spawnable failed: $out"
+  assert_contains "$out" "count: 6" "6 of 200 ready rows can start"
+  assert_contains "$(store_env "$d" "$ROOT/bin/jg-backlog-spawnable.sh" 2>&1)" "count: 6" "the reader behind it gives the same count"
+  # A lane holding one of the six takes it out of the count.
+  printf 'kind=ship\n' > "$d/state/t0.meta"; printf 'working [at=1]: x\n' > "$d/state/t0.status"
+  assert_contains "$(store_env "$d" "$ROOT/bin/jg-backlog.sh" ready --spawnable 2>&1)" "count: 5" "a ticket a live lane holds cannot start"
+  rm -f "$d/state/t0.meta" "$d/state/t0.status"
+  store_env "$d" "$ROOT/bin/jg-home-summary-refresh.sh" || fail "refresh failed"
+  assert_equals "$(jq -r .ready_work "$d/state/home-summary.json")" 6 "the summary carries the count the store gives"
+  # All lanes busy: no GAP.
+  printf '1\n' > "$d/config/lane-target"
+  lane "$d" ship-a 'working [at=1]: building'
+  out=$(env JG_HOME="$d" "$HB" rows)
+  assert_equals "$(verdict "$out" overwatch)" MOVING "every lane busy is no gap, whatever the ready rows"
+  # A free lane: GAP naming 6.
+  printf '2\n' > "$d/config/lane-target"
+  out=$(env JG_HOME="$d" "$HB" rows)
+  assert_equals "$(verdict "$out" overwatch)" GAP "a free lane with ready work is a gap"
+  assert_contains "$out" "6 ready, 1 of 2 lanes working" "the GAP names the count the store gives"
+  # A summary 59 hours old: ready not known, no GAP, one stale line.
+  jq --argjson t "$(( $(date +%s) - 59 * 3600 ))" '.generated_epoch = $t' "$d/state/home-summary.json" > "$d/s.tmp" \
+    && mv "$d/s.tmp" "$d/state/home-summary.json"
+  out=$(env JG_HOME="$d" "$HB" rows)
+  assert_not_contains "$(verdict "$out" overwatch)" GAP "an old number never makes a gap"
+  assert_contains "$out" "summary is stale (3540 min old), ready not known" "the row says the summary is stale, once"
+  assert_equals "$(printf '%s\n' "$out" | grep -o 'summary is stale' | wc -l | tr -d ' ')" 1 "one stale line"
+  assert_equals "$(printf '%s\t' "$out" | cut -f5)" '?' "the ready count is not known"
+  assert_equals "$(env JG_HOME="$d" "$HB" check | grep -c GAP)" 0 "the check wakes nobody for an old number"
+  pass "the ready count is what can start, and an old number is not known"
+}
+test_ready_count_is_what_can_start_and_never_from_an_old_number
+
+test_a_slow_store_ends_the_read_at_its_limit_and_the_heartbeat_stays_fast() {
+  local d=$TMP_ROOT/slow start took out
+  store_home "$d"
+  start=$(date +%s)
+  out=$(STUB_SLEEP=70 JG_BACKLOG_SPAWNABLE_LIMIT=2 store_env "$d" "$ROOT/bin/jg-backlog.sh" ready --spawnable 2>&1); code=$?
+  took=$(( $(date +%s) - start ))
+  expect_code 124 "$code" "a store that sleeps 70 s ends at its limit: $out"
+  [ "$took" -lt 10 ] || fail "the read ran $took s, past its limit"
+  start=$(date +%s)
+  STUB_SLEEP=70 JG_BACKLOG_SPAWNABLE_LIMIT=2 store_env "$d" "$ROOT/bin/jg-home-summary-refresh.sh" || fail "refresh failed"
+  took=$(( $(date +%s) - start ))
+  [ "$took" -lt 20 ] || fail "the refresh ran $took s with a 2-second store limit"
+  assert_equals "$(jq -r '.ready_work' "$d/state/home-summary.json")" null "a store that did not answer leaves the count not known"
+  start=$(date +%s)
+  STUB_SLEEP=70 env JG_HOME="$d" "$HB" rows >/dev/null
+  [ $(( $(date +%s) - start )) -lt 5 ] || fail "the heartbeat waited on the store"
+  pass "a slow store ends the read at its limit and the heartbeat answers in its normal time"
+}
+test_a_slow_store_ends_the_read_at_its_limit_and_the_heartbeat_stays_fast
 
 test_rows_give_every_home_one_verdict
 test_an_open_wait_is_a_gap_and_filled_lanes_are_moving

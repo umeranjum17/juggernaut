@@ -16,7 +16,9 @@
 #          working  state/<task>.meta of kind ship or scout whose last state
 #                   line is not paused, blocked, needs-decision, done or failed;
 #          target   config/lane-target (one positive integer);
-#          ready    ready_work in state/home-summary.json, plus one for each open Goal whose
+#          ready    ready_work in state/home-summary.json (the tickets that can start; "?" when
+#                   the summary is older than JG_READY_MAX_AGE, default 900 s, and the why says
+#                   "summary is stale"; an old number never makes a GAP), plus one for each open Goal whose
 #                   next step waits (a data/jg-goal-loop/<goal>.next record, which
 #                   core/goal-loop writes and removes), named in the why;
 #          waits    open wait-timer episodes in state/.waiting-timers/ that are
@@ -84,6 +86,7 @@ JG_HOME="${JG_HOME:-${JG_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 STATE="$JG_HOME/state"
 BEACON_SECS=${JG_FLEET_HEARTBEAT_BEACON_SECS:-900}
 REFIRE_SECS=${JG_FLEET_HEARTBEAT_REFIRE_SECS:-600}
+READY_MAX_AGE=${JG_READY_MAX_AGE:-900}
 NOW=$(date +%s)
 
 die() { printf 'jg-fleet-heartbeat: %s\n' "$1" >&2; exit "${2:-1}"; }
@@ -100,7 +103,7 @@ wait_is_paused() {  # <state-dir> <task>
 
 # home_row <id> <home-dir>: one TSV row.
 home_row() {
-  local id=$1 home=$2 st meta kind last working=0 goals target=- ready='?' waits=0 paused_waits=0 paused=0 age why verdict note refused=''
+  local id=$1 home=$2 st meta kind last working=0 goals target=- ready='?' waits=0 paused_waits=0 paused=0 age why verdict note refused='' stale='' summary_age=
   [ -d "$home" ] || { printf '%s\tSTALLED\t0\t-\t?\t0\t-\thome %s is not a directory\n' "$id" "$home"; return; }
   if [ "$id" != overwatch ] && squad_lead_dormant "$STATE" "$id"; then
     printf '%s\tDORMANT\t0\t-\t-\t0\t-\tno open work; stopped, wakes on routed work\n' "$id"
@@ -123,8 +126,17 @@ EOF
   done
   target=$(awk 'NF { print; exit }' "$home/config/lane-target" 2>/dev/null)
   case "$target" in ''|*[!0-9]*|0) target=- ;; esac
-  ready=$(jq -r '.ready_work // empty | numbers' "$st/home-summary.json" 2>/dev/null) || ready=
+  # A count from a summary older than READY_MAX_AGE is not known: it never makes a GAP.
+  # The count is the summary's own (tickets that can start), never recomputed here.
+  ready=$(jq -r --argjson now "$NOW" --argjson max "$READY_MAX_AGE" \
+    'if ((.generated_epoch | type) == "number") and ($now - .generated_epoch) <= $max
+     then (.ready_work // empty | numbers) else empty end' "$st/home-summary.json" 2>/dev/null) || ready=
   [ -n "$ready" ] || ready='?'
+  summary_age=$(jq -r --argjson now "$NOW" 'if (.generated_epoch | type) == "number" then $now - .generated_epoch else empty end' \
+    "$st/home-summary.json" 2>/dev/null) || summary_age=
+  if [ -n "$summary_age" ] && [ "$summary_age" -gt "$READY_MAX_AGE" ]; then
+    stale="summary is stale ($((summary_age / 60)) min old), ready not known"
+  fi
   goals=$(find "$home/data/jg-goal-loop" -maxdepth 1 -name '*.next' 2>/dev/null | wc -l)
   if [ "$goals" -gt 0 ]; then
     [ "$ready" != '?' ] || ready=0
@@ -168,6 +180,7 @@ EOF
   elif [ "$paused_waits" -gt 0 ] && [ "$verdict" != STALLED ]; then
     why="$why, $paused_waits paused wait(s)"
   fi
+  [ -z "$stale" ] || why="$why, $stale"
   [ "$goals" -eq 0 ] || why="$why, $goals Goal step(s) next"
   [ -z "$refused" ] || why="$why, $refused"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$verdict" "$working" "$target" "$ready" "$waits" "$age" "$why"
