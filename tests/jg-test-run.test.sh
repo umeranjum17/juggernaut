@@ -354,6 +354,33 @@ test_a_deleted_journey_does_not_refuse_the_changed_selection() {
   pass 'a deleted journey selects only a test that still names it and never refuses the changed selection'
 }
 
+# The hosted job (--hosted) leaves out a script tests/hosted-needs.tsv lists while a tool it needs is not on the runner's PATH,
+# and names it; the same selection without the flag still lists every one, so the scripts run on our host.
+test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks() {
+  local bin=$TMP_ROOT/hosted-bin t hosted local_sel s
+  mkdir -p "$bin"
+  for t in bash awk sed grep git sort cat env dirname basename mktemp tr head tail wc date ls rm mkdir cut uniq xargs find ps sleep sh; do
+    command -v "$t" >/dev/null 2>&1 && ln -sf "$(command -v "$t")" "$bin/$t"
+  done
+  hosted=$(PATH=$bin /bin/bash "$RUNNER" --list --hosted tests/jg-trunk-release-open-pr.test.sh tests/jg-browser-reaper.test.sh \
+    tests/jg-trunk-rollover.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a hosted list was refused: $hosted"
+  local_sel=$(PATH=$bin /bin/bash "$RUNNER" --list tests/jg-trunk-release-open-pr.test.sh tests/jg-browser-reaper.test.sh \
+    tests/jg-trunk-rollover.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a local list was refused: $local_sel"
+  for s in jg-trunk-release-open-pr jg-browser-reaper jg-trunk-rollover; do
+    case $(printf '%s\n' "$hosted" | grep -v 'not run on the hosted runner') in
+      *"$s"*) fail "the hosted selection kept $s: $hosted" ;;
+    esac
+    assert_contains "$hosted" "not run on the hosted runner" 'a dropped script must be named'
+    assert_contains "$local_sel" "tests/$s.test.sh" "the local selection must still list $s"
+  done
+  assert_contains "$hosted" 'tests/jg-ship-local.test.sh' 'a script with no listed need must stay selected'
+  # A tool on the PATH keeps the script.
+  printf '#!/bin/sh\n' >"$bin/bd"; chmod +x "$bin/bd"
+  hosted=$(PATH=$bin /bin/bash "$RUNNER" --list --hosted tests/jg-browser-reaper.test.sh 2>&1) || fail "a hosted list was refused: $hosted"
+  assert_contains "$hosted" 'tests/jg-browser-reaper.test.sh' 'a script whose tool is present must stay selected'
+  pass 'the hosted selection drops scripts whose tool the runner lacks and the local selection keeps them'
+}
+
 test_a_weight_cap_defers_slow_suites_and_names_them() {
   local out
   out=$(bash "$RUNNER" --list --max-weight-ms 60000 tests/jg-teardown.test.sh tests/jg-ship-local.test.sh 2>&1) || fail "a capped list was refused: $out"
@@ -632,6 +659,7 @@ test_the_gate_stops_a_hung_script_with_its_children_and_temp_folder_without_a_fl
 test_a_test_within_its_limits_is_unaffected
 test_a_weight_cap_defers_slow_suites_and_names_them
 test_the_hosted_selection_drops_scripts_that_hit_the_time_bound_or_have_no_hosted_time
+test_the_hosted_selection_drops_scripts_whose_tool_the_runner_lacks
 test_a_deleted_journey_does_not_refuse_the_changed_selection
 test_a_changed_shared_file_selects_the_scripts_that_name_it
 test_a_changed_core_script_selects_the_scripts_that_name_it

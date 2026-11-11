@@ -63,6 +63,10 @@
 #                   hosted run per line, oldest first: <script> <exit> <duration_ms>;
 #                   '#' lines are comments. The script still runs on our host, in the
 #                   proof and in the line's verify. Remove with the hosted shell test job.
+#   --hosted        drop the scripts tests/hosted-needs.tsv lists when a tool they need is not on this
+#                   PATH, and name each one on stderr with the missing tool. The hosted CI job passes it;
+#                   without it the selection is unchanged, so the same scripts still run on our host.
+#                   Interim, until the hosted shell test job is removed.
 #   --shard <k>of<n>
 #                   keep only shard k of n of the selection, after the exclusions and
 #                   the weight cap, so one pull request selection can run on n runners
@@ -277,6 +281,7 @@ SCRIPTS=()
 EXCLUDE_FAMILIES=()
 MAX_WEIGHT_MS=
 HOSTED_TIMINGS=
+HOSTED=0
 SHARD=
 FAIL_ON_GATE_SKIP=
 JOBS=1
@@ -1852,9 +1857,9 @@ families_for_changed_path() {
           || printf '%s\n' "__unmapped__:$path"
       fi
       ;;
-    tests/gate-quarantine.tsv)
+    tests/gate-quarantine.tsv|tests/hosted-needs.tsv)
       # The gate's quarantine list is read by the runner's own suite.
-      scripts_for_test_reference gate-quarantine.tsv \
+      scripts_for_test_reference "$(basename "$path")" \
         || printf '%s\n' "__unmapped__:$path"
       ;;
     tests/jg-trunk-fixture.sh|tests/jg-machine-call-fixture.sh)
@@ -2051,6 +2056,25 @@ apply_quarantine() {
     why=$(awk -F'\t' -v s="$s" '$1 == s { print $2; exit }' "$ROOT/tests/gate-quarantine.tsv")
     if [ -n "$why" ]; then
       printf 'JG_TEST_QUARANTINED %s reason=%s\n' "$s" "$why"
+    else
+      kept+=("$s")
+    fi
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
+# apply_hosted drops, on --hosted, each script tests/hosted-needs.tsv (script<TAB>tool) lists while its tool is not on PATH, and
+# names it with the tool. The scripts still run on our host: in a change's proof and in the line's verify.
+apply_hosted() {
+  local s tool
+  local -a kept=()
+  [ "$HOSTED" -eq 1 ] || return 0
+  [ -f "$ROOT/tests/hosted-needs.tsv" ] || return 0
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    tool=$(awk -F'\t' -v s="$s" '$1 == s && $2 !~ /^#/ { print $2 }' "$ROOT/tests/hosted-needs.tsv" \
+      | while IFS= read -r t; do command -v "$t" >/dev/null 2>&1 || { printf '%s\n' "$t"; break; }; done)
+    if [ -n "$tool" ]; then
+      log "not run on the hosted runner (needs $tool, which it lacks): $s"
     else
       kept+=("$s")
     fi
@@ -2474,6 +2498,10 @@ while [ "$#" -gt 0 ]; do
       EXCLUDE_FAMILIES+=("${1#--exclude-family=}")
       shift
       ;;
+    --hosted)
+      HOSTED=1
+      shift
+      ;;
     --max-weight-ms)
       [ "$#" -gt 1 ] || die "--max-weight-ms requires a number"
       case "$2" in ''|*[!0-9]*) die "--max-weight-ms requires a number" ;; esac
@@ -2658,6 +2686,7 @@ esac
 
 apply_exclude_families
 apply_quarantine
+apply_hosted
 apply_max_weight
 apply_hosted_timings
 apply_shard
