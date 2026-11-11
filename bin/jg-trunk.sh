@@ -70,6 +70,8 @@
 # and the trunk moves only if it is still there (else the lane is rebased onto the new tip and gated again). `verify` (run on demand,
 # never per landing) never waits for a landing: it reads the tip as a ref and takes that lock only for its short pin write; it registers in a one-slot queue
 # (state/trunk-verify-want-<project>) where the newest commit wins, so a verify for an older commit gives up at once and the newest runs.
+# Two gates at once: a lane that starts while another gates on the tip is gated on top of that lane's commit and lands right behind it; if
+# the lane ahead does not land, it is gated again on the tip. gate-slots (default 2; 1 turns it off) is the most gates at once.
 # The queue's threshold: the landing check does not land ready lanes one by one. It holds them until flush-at-ready (default 3) are ready or the
 # oldest has waited flush-after-minutes (default 20), then lands all of them (batch-max at a time, the rest at once after). `flush` skips the wait
 # for one project: it records state/trunk-flush-<project>, which the check honours until the project has no ready lane left. `land-next` records
@@ -352,11 +354,12 @@ record_overruns() {  # <commit> <log>
 }
 
 # Run a gate command at a commit's exact tree in a clean clone; the log is kept under data/.
-run_gate() {  # <commit> <command> <label>
+run_gate_try() {  # <commit> <command> <label>: returns 1 after printing the refusal, for a caller that judges the red itself
   local log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}-$(date +%s)-$$}-$3.log" rc=0
   gate_exec "$1" "$2" "$log" || rc=$?
-  [ "$rc" -eq 0 ] || { tail -n 20 "$log" >&2; refuse "gate '$3' failed (exit $rc) at ${1:0:12}; full log: $log"; }
+  [ "$rc" -eq 0 ] || { tail -n 20 "$log" >&2; echo "REFUSED: gate '$3' failed (exit $rc) at ${1:0:12}; full log: $log" >&2; return 1; }
 }
+run_gate() { run_gate_try "$@" || exit 1; }
 
 # What a refused landing means, read from its output (and any gate logs after it): `wait` (only time clears it), `retry` (the machine failed it, not the lane: a full
 # or quota-limited temp directory, a failed checkout, a gate shard whose result is missing, a slow backlog read) or `final` (a change is
@@ -457,6 +460,8 @@ flaky_on_base() {  # <base> <envfile> <script>...
 report_tip_red() {  # <tip> <script>...
   local tip=$1 tree ledger fresh='' s ticket note
   shift
+  # A speculative base is the commit of a lane still gating, not a tip: its red is not reported (two gates at once).
+  [ -z "${GATE_SPECULATIVE:-}" ] || return 0
   tree=$(git -C "$PROJ" rev-parse "$tip^{tree}")
   ledger="$DATA/trunk/tip-red-reported-$PN.tsv"; touch "$ledger"
   for s in "$@"; do grep -qxF "$tree	$s" "$ledger" || fresh="$fresh $s"; done
@@ -769,8 +774,54 @@ unpin_green() {  # <red sha>
   put "$STATE/trunk-green-$PN" "$(rev "$1^")"
 }
 
+# --- Two gates at once (docs/trunk-flow.md "Two gates at once") ---
+# The lane that gates on the real trunk tip is the front: it holds state/.trunk-front-<project>.lock and publishes `<tip> <commit>` in
+# state/trunk-front-<project>. A second lane started while the front gates is speculative: it is admitted and gated on top of the front's
+# commit, waits for the front to end, and lands only if the trunk then stands on that commit. If the front did not land, the lane is
+# gated again on the tip (one more gate). gate-slots (default 2; 1 turns this off) is the most gates that run at once; the lander
+# starts the second one (core/trunk-landing/trunk-landing.sh).
+FRONT=
+front_lock() { printf '%s\n' "$STATE/.trunk-front-$PN.lock"; }
+front_publish() {  # <tip> <commit>: the lane that gates on the real tip becomes the front, when no other lane is
+  [ -n "$FRONT" ] || { jg_lock_try_acquire "$(front_lock)" || return 0; LOCKS="$(front_lock) $LOCKS"; FRONT=1; }
+  put "$STATE/trunk-front-$PN" "$1 $2"
+}
+front_release() {
+  [ -z "$FRONT" ] || { rm -f -- "$STATE/trunk-front-$PN"; unlock "$(front_lock)"; FRONT=; }
+}
+front_alive() {  # true while another lane holds the front
+  local pid; pid=$(cat "$(front_lock)/pid" 2>/dev/null || true)
+  [ -n "$pid" ] && [ "$pid" != "${BASHPID:-$$}" ] && jg_pid_alive "$pid"
+}
+front_spec() {  # <tip> <lane head>: prints the front's commit when this lane may be gated on top of it
+  local ftip='' fcand='' i
+  [ -z "$FRONT" ] && [ "$(pol gate-slots)" -ge 2 ] 2>/dev/null || return 1
+  for i in 1 2 3 4 5 6 7 8; do  # the front publishes right after its admission: wait for that, briefly
+    front_alive || return 1
+    { read -r ftip fcand < "$STATE/trunk-front-$PN"; } 2>/dev/null && [ "$ftip" = "$1" ] && [ -n "$fcand" ] && break
+    fcand=; sleep 0.25
+  done
+  # A conflict with the front is judged on the tip, not on a commit that may not land.
+  [ -n "$fcand" ] && rebase_commit "$fcand" "$2" >/dev/null || return 1
+  printf '%s\n' "$fcand"
+}
+front_wait() {  # until the front has ended: it landed (the trunk stands on its commit) or it did not
+  while front_alive; do sleep 0.2; done
+}
+
+# The landing's gates over <cand> judged against <base>: the lint over the changed files, then the changed files' tests. Sets GATE_KIND;
+# returns 1 after printing the refusal, and the caller decides what a red means.
+land_gates() {  # <id> <candidate> <base>
+  local id=$1 cand=$2 base=$3 gate
+  # Only a repository that carries Juggernaut's own suite gets its default gates; any other project runs the gates its home set for it, if any.
+  if gate=$(jg_trunk_gate gate-lint "$PN" "$PROJ" "$cand"); then run_gate_try "$cand" "$gate" lint || return 1; else echo "land: $PN has no lint gate; none run" >&2; fi
+  if gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand") && sealed_run_covers "$id" "$cand"; then GATE_KIND=sealed-run; echo "land: ${cand:0:12} has the tree of $id's passing sealed run; the tests ran there, so only the lint ran here" >&2
+  elif gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand"); then full_gate "$cand" "$gate" "$base" || return 1
+  else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >&2; fi
+}
+
 land_candidate() {
-  local id=${1-} tip cand gate GATE_KIND='' GATE_FIGURES='' still=
+  local id=${1-} tip base spec cand GATE_KIND='' GATE_FIGURES='' GATE_SPECULATIVE='' gate_rc still=
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: land takes only the task id; there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   [ $# -le 1 ] || refuse "land takes only the task id; there is no option that forces or skips a gate"
   lane_meta "$id"
@@ -782,26 +833,32 @@ land_candidate() {
   # lane is rebased onto the new tip (a conflict refuses, with its paths) and gated again.
   for _ in 1 2 3; do
     lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok; tip=$(rev "refs/heads/$TRUNK"); unlock "$STATE/.trunk-$PN.lock"
-    lane_admit "$id" "$tip" "$LAND_HEAD" 0
+    # A lane that starts while another gates on the tip is gated on top of that lane's commit (two gates at once).
+    if base=$(front_spec "$tip" "$LAND_HEAD"); then spec=1; else base=$tip; spec=; fi
+    lane_admit "$id" "$base" "$LAND_HEAD" 0
     cand=$LANE_CAND
     if [ -n "$LANE_LANDED" ]; then echo "already landed $id at $cand; not live"; return 0; fi
-    # One fast check: the lint over the changed files, then the changed files' tests judged against the tip's own result.
-    # Only a repository that carries Juggernaut's own suite gets its default gates; any other project runs the gates its home set for it, if any.
-    if gate=$(jg_trunk_gate gate-lint "$PN" "$PROJ" "$cand"); then run_gate "$cand" "$gate" lint; else echo "land: $PN has no lint gate; none run" >&2; fi
-    if gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand") && sealed_run_covers "$id" "$cand"; then GATE_KIND=sealed-run; echo "land: ${cand:0:12} has the tree of $id's passing sealed run; the tests ran there, so only the lint ran here" >&2
-    elif gate=$(jg_trunk_gate gate-full "$PN" "$PROJ" "$cand"); then full_gate "$cand" "$gate" "$tip" || exit 1; else GATE_KIND=no-gate; echo "land: $PN has no landing gate (no gate-full@$PN); none run" >&2; fi
+    [ -n "$spec" ] || front_publish "$tip" "$cand"
+    # A red on a speculative base is not charged until the lane ahead has ended: it may be that lane's red, and then this lane is gated again.
+    GATE_SPECULATIVE=$spec; gate_rc=0; land_gates "$id" "$cand" "$base" || gate_rc=$?
+    if [ -n "$spec" ]; then
+      front_wait
+      if [ "$gate_rc" -ne 0 ] && [ "$(rev "refs/heads/$TRUNK")" = "$base" ]; then exit 1; fi  # the lane ahead landed: the red is this lane's
+    elif [ "$gate_rc" -ne 0 ]; then exit 1; fi
     lock "$STATE/.trunk-$PN.lock"; tip_adopt_forward; tip_ok
-    if [ "$(rev "refs/heads/$TRUNK")" = "$tip" ]; then still=1; break; fi
-    unlock "$STATE/.trunk-$PN.lock"; echo "note: $TRUNK moved to $(rev "refs/heads/$TRUNK" | cut -c1-12) while $id was gated at ${tip:0:12}; rebasing it onto the new tip and gating it again" >&2
+    if [ "$gate_rc" -eq 0 ] && [ "$(rev "refs/heads/$TRUNK")" = "$base" ]; then still=1; break; fi
+    unlock "$STATE/.trunk-$PN.lock"
+    if [ -n "$spec" ]; then echo "note: the lane ahead of $id did not land; gating it again on the $TRUNK tip $(rev "refs/heads/$TRUNK" | cut -c1-12)" >&2
+    else echo "note: $TRUNK moved to $(rev "refs/heads/$TRUNK" | cut -c1-12) while $id was gated at ${tip:0:12}; rebasing it onto the new tip and gating it again" >&2; fi
   done
   [ -n "$still" ] || refuse "the trunk kept moving while $id was gated; it lands on the next try"
-  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$tip" || refuse "$TRUNK changed while landing $id"
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: land $id" "refs/heads/$TRUNK" "$cand" "$base" || refuse "$TRUNK changed while landing $id"
   put "$STATE/trunk-tip-$PN" "$cand"; pin_landed "$cand"
   row trunk-landings.tsv "$id" "$PN" "$cand" "$(date +%s)" "$GATE_KIND"
-  unlock "$STATE/.trunk-$PN.lock"
+  unlock "$STATE/.trunk-$PN.lock"; front_release
   [ "$cand" = "$LANE_HEAD" ] || lane_follow "$LANE_BRANCH" "$LANE_HEAD" "$cand" "$(jg_dod_meta_value "$META" worktree)"
   landed_effects "$id" "$LANE_HEAD" "$cand"
-  echo "landed $id on $TRUNK (${tip:0:12} -> ${cand:0:12}, gate=$GATE_KIND) in $PROJ; not live: it goes live only on the captain's word"
+  echo "landed $id on $TRUNK (${base:0:12} -> ${cand:0:12}, gate=$GATE_KIND) in $PROJ; not live: it goes live only on the captain's word"
 }
 
 # --- The merge queue: two or more queued lanes land as one stack (docs/trunk-flow.md "Batch landing") ---

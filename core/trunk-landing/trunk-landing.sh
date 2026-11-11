@@ -12,8 +12,10 @@
 # the outcome in <home>/data/jg-trunk-landing/<task>.<head>.state. The worker's done is the signal, and the lane's whole proof must be there at its head (completion
 # receipt, approved merge-card evidence, sealed done-done run: `jg-trunk.sh proof`) before a landing starts; a lane without it is
 # reported once and left, and lands on its own once the proof is complete. The owner signature is never waited for. The lander rebases the lane's
-# commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land one at a time, oldest done first, and a
-# finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step.
+# commit onto the trunk tip by itself, so a moved trunk is never a refusal. Lanes land oldest done first, and a
+# finished landing starts the next at once (`next`), so three lanes ready together land in order with no human or lead step. While one
+# lane gates on the trunk tip a second may start, gated on top of the first one's commit (at most gate-slots, default 2, gates at once: the
+# second lands right behind the first, or is gated again on the tip when the first does not land; bin/jg-trunk.sh owns it).
 # When 2 or more lanes are ready, the check stacks up to batch-max (5) of them, oldest done first, into one `bin/jg-trunk.sh land-batch`:
 # one gate over the stack, one trunk move, and only a lane that conflicts or causes a red is returned (reported once, like any refusal).
 # A single ready lane keeps the path above. A landed commit is green at once (its gate moves the green pin, unless a recorded red lies
@@ -267,15 +269,29 @@ run_alive() {
   read -r _w ep pid <<<"$1"
   if [ -n "${pid:-}" ]; then jg_pid_alive "$pid"; else [ $(( $(date +%s) - ${ep:-0} )) -lt 120 ]; fi
 }
-# A landing in progress: lanes land one at a time, so a second lane never races the first for the trunk. Only a lane's own
-# `<task>.<head>.state` counts; the lander's admission records (`<task>.<head>.<context>.state`) are not landings.
-busy() {
-  local f l
+# The landings in progress: a lane's own `<task>.<head>.state` counts; the lander's admission records
+# (`<task>.<head>.<context>.state`) are not landings. Prints how many are running.
+running_count() {
+  local f l n=0
   for f in "$MEM"/*.state; do
     [ -f "$f" ] || continue
     ! printf '%s' "${f##*/}" | grep -Eq '\.[0-9a-f]{40,64}\.[0-9a-f]{40,64}\.state$' || continue
     l=$(cat "$f" 2>/dev/null || true)
-    case $l in running*) run_alive "$l" && return 0 ;; esac
+    case $l in running*) run_alive "$l" && n=$((n + 1)) ;; esac
+  done
+  printf '%s\n' "$n"
+}
+# Two gates at once: while exactly one single landing gates on the tip (it holds the project's front, bin/jg-trunk.sh), a second lane of
+# that project may start and is gated on top of the first one's commit. Prints the project when that second slot is free.
+second_slot_project() {
+  local lock pn pid
+  for lock in "$STATE"/.trunk-front-*.lock; do
+    [ -d "$lock" ] || continue
+    pn=${lock##*/.trunk-front-}; pn=${pn%.lock}
+    pid=$(cat "$lock/pid" 2>/dev/null || true)
+    [ -n "$pid" ] && jg_pid_alive "$pid" || continue
+    [ "$(polnum gate-slots "$pn" 2)" -ge 2 ] || continue
+    printf '%s\n' "$pn"; return 0
   done
   return 1
 }
@@ -347,13 +363,17 @@ if ! mkdir "$MEM/.start" 2>/dev/null; then
   [ -n "$(find "$MEM/.start" -mmin +1 2>/dev/null)" ] || exit 0
   rmdir "$MEM/.start" 2>/dev/null; mkdir "$MEM/.start" 2>/dev/null || exit 0
 fi
-if ! busy; then
+# Lanes land one at a time, except that a second one may gate on top of the first (second_slot_project): at most 2 gates at once.
+only_pn=; running=$(running_count)
+if [ "$running" -eq 1 ]; then only_pn=$(second_slot_project) || { rmdir "$MEM/.start" 2>/dev/null; exit 0; }; fi
+if [ "$running" -le 1 ]; then
   # The flush rule (bin/jg-trunk-policy-lib.sh): a project's ready lanes wait until flush-at-ready of them are ready, or the oldest has
   # waited flush-after-minutes, or `jg-trunk.sh flush` was run; then they all land (up to batch-max, oldest done first; the rest follow
   # at once). A lane marked `land-next` goes first and lands at once, with or without the others. One project per stack.
   now=$(date +%s); ready=(); id=; head=
   while read -r pn; do
     [ -n "$pn" ] || continue
+    [ -z "$only_pn" ] || [ "$pn" = "$only_pn" ] || continue
     list=$(printf '%s' "$cands" | awk -v p="$pn" '$4 == p' | sort -k5,5n -k6,6n -k1,1n -k2,2)
     oldest=$(printf '%s\n' "$list" | sort -n -k1,1 | head -n 1 | cut -d' ' -f1)
     at_ready=$(polnum flush-at-ready "$pn" 3); after=$(polnum flush-after-minutes "$pn" 20)
@@ -361,7 +381,8 @@ if ! busy; then
       list=$(printf '%s\n' "$list" | awk '$5 == 0')
     fi
     [ -n "$list" ] || continue
-    batch=$(printf '%s\n' "$list" | head -n "$(jg_trunk_policy batch-max "$pn")" | awk '{ printf "%s%s@%s", (NR > 1 ? " " : ""), $2, $3 }')
+    take=$(jg_trunk_policy batch-max "$pn"); [ -z "$only_pn" ] || take=1  # the second slot is one lane, never a stack
+    batch=$(printf '%s\n' "$list" | head -n "$take" | awk '{ printf "%s%s@%s", (NR > 1 ? " " : ""), $2, $3 }')
     read -r -a ready <<< "$batch"; break
   done < <(printf '%s' "$cands" | sort -n -k1,1 | awk '!seen[$4]++ { print $4 }')
   [ "${#ready[@]}" -gt 0 ] || { rmdir "$MEM/.start" 2>/dev/null; exit 0; }

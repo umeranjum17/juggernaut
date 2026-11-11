@@ -32,6 +32,7 @@
 #                                     (empty: no note, the alert still goes out)
 #   release-after-hours   48          age of the oldest unreleased commit that makes a release due
 #   batch-max             5           the most queued lanes the merge queue stacks into one landing (2 or more queued lanes land as one stack)
+#   gate-slots            2           the most landing gates that run at once: a second lane is gated on top of the first one's commit and lands right behind it; 1 lands one lane at a time
 #   flush-at-ready        3           the landing check holds ready lanes until this many are ready (or flush-after-minutes passes), then lands them all as one batch; 1 lands every lane as soon as it is ready
 #   flush-after-minutes   20          ...or until the oldest ready lane has waited this long, whichever is first
 #   live-quiet-minutes    20          under a go-live waiver: the trunk goes live once no landing has happened for this long
@@ -89,6 +90,7 @@ jg_trunk_policy() {  # <key> [<project>]
       gate-red-ticket) val=core-self-checks-red ;;
       release-after-hours) val=48 ;;
       batch-max) val=5 ;;
+      gate-slots) val=2 ;;
       flush-at-ready) val=3 ;;
       flush-after-minutes) val=20 ;;
       live-quiet-minutes) val=20 ;;
