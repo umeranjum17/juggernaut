@@ -89,7 +89,7 @@ SH
 # A cycle keeps the four-second budget it always had, minus its one hard edge: it
 # never stops inside a scan. A scan that overruns the budget (a loaded runner) is
 # allowed to finish, so the wake it was about to report is not lost with it. The
-# watcher stamps its liveness beacon after each complete scan, so the wait ends at
+# watcher publishes scan completion after each complete scan, so the wait ends at
 # a scan boundary instead of in the middle of one.
 cycle() {  # <home> [absent]
   local h=$1 rc=0 seq gen pid successor=0 mark
@@ -136,12 +136,14 @@ cycle_until() {  # <home> <extended-regex> [absent]
 # Wait for one owned watcher cycle. Return its exit status when the watcher
 # reports a wake. Otherwise stop it after <budget> hundred-millisecond polls, or
 # after <limit> polls when a scan that was already running crossed that budget:
-# that scan finishes and the cycle ends on its beacon, not inside it.
+# that scan finishes and the cycle ends on its completion marker, not inside it.
 wait_for_scan() {  # <pid> <state> <mark> <budget> <limit>
   local pid=$1 state=$2 mark=$3 budget=${4:-40} limit=${5:-600} i=0
   while [ "$i" -lt "$limit" ]; do
     is_live_non_zombie "$pid" || break
-    if [ "$i" -ge "$budget" ] && [ "$state/.last-watcher-beat" -nt "$mark" ]; then
+    # Ignore scans completed before the budget; another scan may be under way.
+    [ "$i" -ne "$budget" ] || touch "$mark"
+    if [ "$i" -ge "$budget" ] && [ "$state/.watch.lock/scan-complete" -nt "$mark" ]; then
       break
     fi
     sleep 0.1
@@ -172,7 +174,7 @@ slow_panes() {  # <home> <secs>
   local t="$1/fakebin/tmux"
   mv "$t" "$t.real"
   # shellcheck disable=SC2016 # the wrapper expands its own arguments when run
-  printf '#!/usr/bin/env bash\nsleep %s\nexec "$(dirname "$0")/tmux.real" "$@"\n' "$2" > "$t"
+  printf '#!/usr/bin/env bash\nsleep %s\n[ ! -e "$JG_HOME/state/.last-watcher-beat" ] || [ -e "$JG_HOME/state/.watch.lock/scan-complete" ] || touch "$JG_HOME/progress-before-completion"\nexec "$(dirname "$0")/tmux.real" "$@"\n' "$2" > "$t"
   chmod +x "$t"
 }
 
@@ -206,6 +208,11 @@ lead_home() {  # <name> <main> -> lead home path
   local l
   l=$(home "$1")
   mkdir -p "$l/data"
+  # A real lead has this required check registered; without it the repair wake
+  # ends the first watcher cycle before the backlog timer can run.
+  printf '#!/usr/bin/env bash\nexec %q check %q\n' "$FORK/core/trunk-latency/latency.sh" "$l" > "$l/state/trunk-latency.check.sh"
+  chmod 700 "$l/state/trunk-latency.check.sh"
+  JG_HOME="$l" "$FORK/bin/jg-check-register.sh" trunk-latency >/dev/null
   printf 'lead1\n' > "$l/.jg-squad-lead-home"
   printf 'schema=jg-squad-lead-parent.v1\nroute=local\nparent_home=%s\n' "$2" > "$l/.jg-squad-lead-parent"
   printf '%s\n' "$l"
@@ -454,6 +461,11 @@ test_dead_lead_still_reaches_the_board_and_relaunch_represents() {
   printf 'needs-decision [key=q]: pick a database\n' > "$l/state/w1.status"
   prime_status_seen "$l/state" "$l/state/w1.status"
   printf 'session-one\n' > "$l/state/.lock-session"
+  # A lead home has its required check installed before supervision starts.
+  cp -a "$FORK/bin" "$l/bin"
+  mkdir -p "$l/core"
+  cp -a "$FORK/core/trunk-latency" "$l/core/"
+  HOME="$l/home" JG_HOME="$l" bash "$l/core/trunk-latency/wiring.sh" "$l" >/dev/null
   PANES=1 cycle "$l"
   backdate "$l" w1 10
   PANES=1 cycle "$l"
@@ -1024,6 +1036,7 @@ test_a_slow_scan_reports_the_wake_it_found() {
   printf '%s\n' "$TRUST" > "$m/panes/3"
   slow_panes "$m" 2.5
   PANES='1 2 3' cycle "$m"
+  [ -e "$m/progress-before-completion" ] || fail "the slow scan never published progress before completion"
   grep -q '^stale: fake:3 (permission prompt' "$m/events" \
     || fail "a wake found on the last pane of a slow scan was lost: $(cat "$m/events")"
   pass "a cycle waits for the scan that finds its wake, however slow the runner is"
