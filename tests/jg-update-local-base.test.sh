@@ -409,6 +409,11 @@ fleet_world() {
     mkdir -p "$W/$id/state"; touch "$W/$id/state/.last-watcher-beat"
   done
 }
+# grace_now: the beacon grace the health check will derive. Host load is pinned to 1 unless the caller sets JG_HOST_LOAD, so
+# the grace cannot drift between this read and the move.
+export JG_HOST_LOAD=${JG_HOST_LOAD:-1}
+# shellcheck source=/dev/null
+grace_now() { ( . "$ROOT/bin/jg-wake-lib.sh"; jg_poll_derived_grace ); }
 # fleet_move: the move to TIP with the real health check and the real wiring, in a throwaway user home.
 fleet_move() {
   env -u JG_HOST_WIRING_SKIP JG_ROOT_OVERRIDE="$W/main" JG_HOME="$W/home" JG_STACK_SKIP=1 \
@@ -422,8 +427,9 @@ test_the_fleet_moves_past_a_home_with_an_old_fault() {
   # lead-1: a launch overlay written by an older installer (no reference-transaction hook) and no task record for it.
   "$ROOT/bin/jg-git-strip-ai-trailers.sh" install "$W/lead-1/state/old.git-hooks" "$W/lead-1" >/dev/null || fail "overlay install"
   chmod u+w "$W/lead-1/state/old.git-hooks"; rm -f "$W/lead-1/state/old.git-hooks/reference-transaction"; chmod 500 "$W/lead-1/state/old.git-hooks"
-  # lead-2: its watcher beat is 438 s old before the move and still is after it (the lead home of 09:37:55Z).
-  touch -d '438 seconds ago' "$W/lead-2/state/.last-watcher-beat"
+  # lead-2: its watcher beat is older than the grace before the move and still is after it (the lead home of 09:37:55Z).
+  # The grace stretches with host load (jg_host_load_scale), so the age is read from the same derivation, 138 s past it.
+  touch -d "$(( $(grace_now) + 138 )) seconds ago" "$W/lead-2/state/.last-watcher-beat"
   out=$(fleet_move) || rc=$?
   [ "$rc" -eq 0 ] || fail "a fleet with an old overlay and an old beacon fault must move whole (rc=$rc): $out"
   for id in "$W/lead-1" "$W/lead-2" "$W/lead-3" "$W/main"; do
