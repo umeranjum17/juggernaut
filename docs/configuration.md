@@ -401,8 +401,9 @@ A Goal lives in a small Goal-only Beads store of its own. `config/goal-beads-dir
 The `start`, `reopen` and `done` moves write only if the row still has the status they read, so a row a second writer moved refuses with exit 13, `code: STALE_WRITE`, and changes nothing.
 [`bin/jg-backlog-transition-lib.sh`](../bin/jg-backlog-transition-lib.sh) drives the same provider directly, so spawn, teardown and bootstrap keep their gates on that store.
 `bin/jg-pr-merge.sh`, `bin/jg-merge-local.sh` and `core/merge-on-green/` read holds and linked decisions through `bin/jg-captain-hold.sh`, close rows through that provider, and refuse a merge when the store cannot be read.
-The lane on a row is the assignee, set to the task record's `spawn_gen`, and `metadata.agent`, set to its harness.
-A fresh spawn takes the row only if it has no owner, so a second spawn on a row another lane holds refuses with exit 13 and starts nothing that stays; a relaunch hands the row over from the owner it read, `done` keeps the assignee as history, and `reopen` clears it.
+A worker's row is owned by its Herdr agent name (`jg_backend_herdr_agent_name_for` of the task id), the same across a relaunch; `metadata.lane` is the task record's `spawn_gen` and `metadata.agent` is its harness.
+A spawn whose `spawn_gen` is not the one on the row refuses with exit 13 and starts nothing that stays; a relaunch takes the row over, `done` keeps the assignee as history, and `reopen` clears all three.
+bd has no guard on metadata, so that check is a read then a write with a short gap, and the owner guard alone cannot tell a second spawn from a relaunch.
 The session digest, the fleet snapshot, the inbox status, the owner's asks, the Squad Lead dormant sweep, ticket keys, the what's-left view, voice status, the flow check and the owner rules read that store, and a failed read reports the failure rather than an empty backlog.
 `bin/jg-backlog-handoff.sh` moves rows between homes by `bd export` and `bd import`, and keeps the body, holds, blockers and links.
 A crash leaves the rows on both sides and rerunning the same handoff finishes the move.

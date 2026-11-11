@@ -18,9 +18,11 @@ start, reopen and done move status only from the status they expect, so a row th
 nothing, with one refusal line on stdout. A held row keeps its status on reopen. start takes an open row or a deferred
 row past its date: one status column cannot read in flight and held at once, so where the backlog would start a held or
 done row this refuses.
-A worker's lane owns its row: the assignee is the lane named by JG_BACKLOG_LANE and metadata.agent is JG_BACKLOG_AGENT.
-start claims a row with no owner, and JG_BACKLOG_LANE_HANDOVER=1 takes it from the owner it read, so a row another lane
-took first exits 13. done keeps the assignee as history, reopen clears both, and each moves only from the owner it read.
+A worker owns its row: the assignee is the worker's Herdr agent name in JG_BACKLOG_LANE, the same across a relaunch,
+metadata.lane is the spawn generation in JG_BACKLOG_SPAWN_GEN, and metadata.agent is JG_BACKLOG_AGENT.
+start claims a row with no owner. A start whose generation is not the one on the row exits 13, unless JG_BACKLOG_LANE_HANDOVER=1
+(a relaunch) takes it; a row another worker took first exits 13 too. done keeps the assignee as history, reopen clears all
+three, and each moves only from the owner it read.
 With no lane named, start claims an unowned row for the actor (BEADS_ACTOR, else juggernaut), so every in-flight row has an owner.
 bin/jg-beads.sh makes the lane the actor of every bd call, so a comment or an event carries who wrote it.
 bd takes --if-assignee or --force, never both, so closing a blocked row or a parent with an open child is guarded by status alone.
@@ -70,12 +72,22 @@ def bd(*args):
 
 
 def lane(row):
-    """Return the flags that make this run's lane the row's owner, or nothing with no lane named."""
-    name, agent = os.environ.get("JG_BACKLOG_LANE"), os.environ.get("JG_BACKLOG_AGENT")
+    """Return the flags that make this run's worker the row's owner, or nothing with no lane named.
+
+    The assignee is the agent name and survives a relaunch, so the owner guard alone cannot tell a second spawn from a
+    relaunch: metadata.lane carries the spawn generation and a start from another one is refused here. bd has no guard on
+    metadata, so that check is a read and then a write with a short gap; a second spawn landing in the gap is not caught.
+    """
+    name, agent, gen = (os.environ.get(key) for key in ("JG_BACKLOG_LANE", "JG_BACKLOG_AGENT", "JG_BACKLOG_SPAWN_GEN"))
     if not name:
         return []
-    owner = row.get("assignee") or "" if os.environ.get("JG_BACKLOG_LANE_HANDOVER") else ""
-    return ["-a", name, "--if-assignee", owner] + (["--set-metadata", "agent=" + agent] if agent else [])
+    handover = os.environ.get("JG_BACKLOG_LANE_HANDOVER")
+    held = (row.get("metadata") or {}).get("lane")
+    if row.get("assignee") == name and held and gen and held != gen and not handover:
+        view.refuse("stale write refused: %s is held by lane \"%s\", expected \"%s\"" % (row["id"], held, gen),
+                    "Run `jg-backlog.sh show %s` and decide again" % row["id"], "STALE_WRITE", STALE)
+    owner = row.get("assignee") or "" if handover or row.get("assignee") == name else ""
+    return ["-a", name, "--if-assignee", owner] + (["--set-metadata", "lane=" + gen] if gen else []) + (["--set-metadata", "agent=" + agent] if agent else [])
 
 
 def unowned(row):
@@ -88,7 +100,7 @@ def unowned(row):
 def released(row):
     """Return the flags that take a lane off its row, guarded on the owner read."""
     owner = row.get("assignee")
-    return ["-a", "", "--unset-metadata", "agent", "--if-assignee", owner] if owner else []
+    return ["-a", "", "--unset-metadata", "agent", "--unset-metadata", "lane", "--if-assignee", owner] if owner else []
 
 
 def rows():
@@ -449,7 +461,7 @@ def start(args):
     found, ident, row = one_row("start", args)
     tips = ["Run `jg-backlog.sh done %s --pr <url>` when it ships" % ident]
     owner, status, held = lane(row) or unowned(row), row["status"], view.holding(row)
-    mine = owner and row.get("assignee") == owner[1]
+    mine = owner and row.get("assignee") == owner[1] and (row.get("metadata") or {}).get("lane") == os.environ.get("JG_BACKLOG_SPAWN_GEN")
     if status == "in_progress" or (held and view.flying(row)):
         if owner and not mine:
             bd("update", ident, *owner, "--if-status", status)
