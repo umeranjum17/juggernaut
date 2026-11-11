@@ -2459,6 +2459,31 @@ jg_composer_own_doorbell_length() {  # <composer-content> <doorbell-line>
   printf '%s' "${#got}"
 }
 
+# What <composer-content> is, to a repair that may key into the primary's box
+# (task jg-7v6uw-s32): `whole` for a complete doorbell line of ours - the shape
+# <prefix> <path> <suffix>, from ANY record, since a stale line names an older
+# record than the one a fresh doorbell would - `partial` for a leading part of
+# <fresh-line> (jg_composer_own_doorbell_length), and nothing, with return 1,
+# for everything else. A person's draft, a draft glued before or after our line,
+# and a line that only starts like ours all return 1, so only provably-ours text
+# is ever cleared. Whitespace is ignored for the reasons given above.
+jg_composer_own_line_kind() {  # <composer-content> <fresh-line> <prefix> <suffix>
+  local got=${1//[[:space:]]/} fresh=${2-} prefix=${3//[[:space:]]/} suffix=${4//[[:space:]]/} middle
+  [ -n "$got" ] && [ -n "$prefix" ] && [ -n "$suffix" ] || return 1
+  case "$got" in
+    "$prefix"*"$suffix")
+      middle=${got#"$prefix"}
+      middle=${middle%"$suffix"}
+      case "$middle" in
+        ''|*[!0-9A-Za-z/_.-]*) ;;
+        *) printf 'whole'; return 0 ;;
+      esac
+      ;;
+  esac
+  jg_composer_own_doorbell_length "$1" "$fresh" >/dev/null || return 1
+  printf 'partial'
+}
+
 # Pi stderr notice rows (task jg-composer-warning-fp1): an extension
 # console.warn fired between TUI frames writes plain, unstyled text straight
 # to the terminal, overwriting the editor input row IN PLACE, so the pane

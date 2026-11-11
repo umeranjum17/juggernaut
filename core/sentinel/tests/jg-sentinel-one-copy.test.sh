@@ -14,7 +14,7 @@
 #   - the forwarder is short, holds no sentinel code, and prints the core copy's usage;
 #   - the installed copy is the core copy byte for byte, and its unit runs it;
 #   - one tick of the installed copy, which runs its home's own bin/, warns on /tmp
-#     use, opens a deferred-wake episode and sends one captain alert, and a tick
+#     use, defers the wake and tells the captain nothing, and a tick
 #     through the forwarder, for a home with no bin/ of its own, does the same;
 #   - both entries refuse `unit` in a Squad Lead home with the owner's reason;
 #   - `unit` names the entry it was run through.
@@ -50,10 +50,10 @@ home() {
   [ "${2:-}" != with-bin ] || ln -s "$REPO/bin" "$1/bin"
 }
 
-# tick <entry> <home>: one pass with every wake deferring and the alert due at once.
+# tick <entry> <home>: one pass with every wake deferring; the captain must hear nothing about it.
 tick() {
   JG_HOME=$2 JG_SENTINEL_HERDR_SESSION=jg-one-copy-lab JG_TMP_ROOT=$d/tmproot JG_TMP_WARN_PCT=0 \
-    JG_SENTINEL_TMP_SWEEP_SECS=0 JG_SENTINEL_DEFER_ALERT_SECS=0 JG_SENTINEL_CAPTAIN_SAY=$d/stub/say \
+    JG_SENTINEL_TMP_SWEEP_SECS=0 JG_SENTINEL_CAPTAIN_SAY=$d/stub/say \
     "$1" tick
 }
 
@@ -61,9 +61,7 @@ tick() {
 expect_tick_outcome() {
   grep -q 'WARNING: .*space' "$1/state/.sentinel.log" || fail "$2: no /tmp warning in the log: $(cat "$1/state/.sentinel.log" 2>/dev/null)"
   grep -q 'no single Herdr pane runs session' "$1/state/.sentinel.log" || fail "$2: the wake did not defer: $(cat "$1/state/.sentinel.log")"
-  [ "$(cut -d' ' -f2 "$1/state/.sentinel-wake-deferred" 2>/dev/null)" = 1 ] || fail "$2: no alerted deferred-wake episode"
-  [ "$(grep -c 'not taking a waiting message' "$d/alerts.log" 2>/dev/null)" = "$3" ] \
-    || fail "$2: expected $3 captain alerts in total, got: $(cat "$d/alerts.log" 2>/dev/null)"
+  [ ! -s "$d/alerts.log" ] || fail "$2: the captain was called about a deferred wake: $(cat "$d/alerts.log")"
 }
 
 # --- one copy: the forwarder holds no sentinel ---------------------------------
@@ -87,13 +85,13 @@ cmp -s "$INSTALLED" "$CORE" || fail "the installed copy differs from the core co
 grep -qx "ExecStart=\"$INSTALLED\" loop" "$d/xdg/config/systemd/user/jg-sentinel.service" \
   || fail "the unit does not run the installed copy"
 tick "$INSTALLED" "$d/main" >/dev/null 2>&1 || fail "installed tick failed: $(cat "$d/main/state/.sentinel.log" 2>/dev/null)"
-expect_tick_outcome "$d/main" "installed copy" 1
-pass "the installed copy warns on /tmp use, defers the wake and sends one captain alert"
+expect_tick_outcome "$d/main" "installed copy"
+pass "the installed copy warns on /tmp use, defers the wake and tells the captain nothing"
 
 # --- the forwarder runs the same copy with this checkout's bin/ ------------------
 home "$d/bare"
 tick "$FORWARDER" "$d/bare" >/dev/null 2>&1 || fail "forwarder tick failed: $(cat "$d/bare/state/.sentinel.log" 2>/dev/null)"
-expect_tick_outcome "$d/bare" "forwarder" 2
+expect_tick_outcome "$d/bare" "forwarder"
 [ ! -e "$d/bare/bin" ] || fail "the forwarder tick created a bin/ in the home"
 pass "the forwarder runs the same tick for a home with no bin/ of its own"
 

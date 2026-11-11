@@ -1006,6 +1006,39 @@ jg_backend_withdraw_typed() {  # <backend> <target> <text> [expected-label]
   printf 'stuck'
 }
 
+# jg_backend_repair_own_line: make the composer of <target> empty when, and only
+# when, what it holds is provably our own doorbell line or a leading part of one
+# (jg_composer_own_line_kind; <prefix> and <suffix> are the doorbell's fixed
+# ends, <fresh-line> the one about to be typed). A complete line on an idle agent
+# is submitted with Enter, so the agent reads the record it names; a complete
+# line on an agent mid-turn, and any partial line, is cleared with the clear key,
+# which is safe in a turn because the key only edits the box. The box is read
+# again before every key, so a person who starts typing is never keyed over.
+# Echoes `clear` (nothing was there), `cleared`, `submitted`, `foreign` (a
+# person's text, or text that is not provably ours: no key was sent) or `stuck`
+# (ours, but it would not go away).
+jg_backend_repair_own_line() {  # <backend> <target> <fresh-line> <prefix> <suffix> [expected-label]
+  local backend=$1 target=$2 fresh=$3 prefix=$4 suffix=$5 label=${6:-} held kind i=0
+  jg_backend_source "$backend" || return 1
+  while [ "$i" -le 3 ]; do
+    held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) \
+      && held=$(jg_composer_extract_selected_content styled=0 "$held") || held=
+    if [ -z "${held//[[:space:]]/}" ]; then
+      if [ "$i" -eq 0 ]; then printf 'clear'; else printf 'cleared'; fi
+      return 0
+    fi
+    kind=$(jg_composer_own_line_kind "$held" "$fresh" "$prefix" "$suffix") || { printf 'foreign'; return 0; }
+    if [ "$i" -eq 0 ] && [ "$kind" = whole ] && [ "$(jg_backend_busy_state "$backend" "$target")" = idle ]; then
+      [ "$(jg_backend_resubmit_typed "$backend" "$target" "$held" 2 0.4 "$label")" != empty ] || { printf 'submitted'; return 0; }
+    fi
+    [ "$i" -lt 3 ] || break
+    jg_backend_send_key "$backend" "$target" C-u "$label" >/dev/null 2>&1 || break
+    sleep 0.2
+    i=$((i + 1))
+  done
+  printf 'stuck'
+}
+
 # jg_backend_resubmit_typed: submit <text> again (Enter only, never retyped) if,
 # and only if, the composer holds exactly that text, ignoring whitespace,
 # wrapping, and trailing control residue. Echoes `foreign` (other content: a

@@ -47,11 +47,14 @@
 #      The primary is the Herdr pane whose agent session is state/.lock-session.
 #      The wake is typed only when that pane reads not busy and its composer
 #      reads exactly empty, as the away daemon's injection does, so it never
-#      lands mid-turn or on top of the captain's typing; a deferred wake stays
-#      pending for the next tick. A wake still deferred JG_SENTINEL_DEFER_ALERT_SECS
-#      (300) after the first deferral sends the captain one chat alert for that
-#      episode (state/.sentinel-wake-deferred); a delivered wake or a healthy
-#      beacon ends the episode. The typed text is an operational-input
+#      lands mid-turn or on top of a person's typing; a deferred wake stays
+#      pending for the next tick and is logged, and the captain is never told
+#      (task jg-7v6uw-s32). Text of our own doorbell left in the box, whole or
+#      a leading part of one, is repaired first (jg_backend_repair_own_line):
+#      cleared by key in a turn or when partial, submitted when whole and the
+#      agent is idle, one row each in data/composer-repairs.tsv. A repair that
+#      fails twice in a row for the same wake calls the guarded relaunch of the
+#      primary once (JG_SENTINEL_PRIMARY_RELAUNCH replaces its command). The typed text is an operational-input
 #      doorbell whose record says what happened; handling it is an ordinary
 #      turn, and that turn's end re-arms supervision through the primary's own
 #      re-arm owner (docs/watcher-continuity.md).
@@ -166,7 +169,6 @@ SESSION=${JG_SENTINEL_HERDR_SESSION:-${HERDR_SESSION:-default}}
 INTERVAL=${JG_SENTINEL_INTERVAL:-60}
 REWAKE=${JG_SENTINEL_REWAKE_SECS:-1800}
 GRACE=${JG_GUARD_GRACE:-300}
-DEFER_ALERT_SECS=${JG_SENTINEL_DEFER_ALERT_SECS:-300}
 INBOX_GRACE=${JG_SENTINEL_INBOX_GRACE:-60}
 INBOX_REWAKE=${JG_SENTINEL_INBOX_REWAKE_SECS:-300}
 TMP_REWARN=${JG_SENTINEL_TMP_REWARN_SECS:-21600}
@@ -450,31 +452,57 @@ primary_target() {
   printf '%s:%s\n' "$SESSION" "$panes"
 }
 
-# A deferred wake is normal for a moment (a turn is running, the captain is typing). A wake that
-# stays deferred means the primary is not taking it, so the captain hears once per episode: the
-# first deferral opens the episode, the alert goes out when it has lasted DEFER_ALERT_SECS, and a
-# delivered wake (or a healthy watcher beacon, see tick) closes it. A fresh episode alerts again.
-defer_wake() {  # <log line> <plain cause for the captain>
-  local file="$STATE/.sentinel-wake-deferred" first alerted now
+# A deferred wake is normal for a moment (a turn is running, a person is typing). It waits for
+# the next tick and says so in the sentinel log, one line per tick; it never writes to the captain,
+# because a busy or occupied primary is the fleet's own business (task jg-7v6uw-s32). The lead
+# sees the waits in that log and in the repair rows below.
+defer_wake() {  # <log line>
   say "$1"
-  [ "$DRY_RUN" = 0 ] || return 1
-  now=$(date +%s)
-  read -r first alerted <"$file" 2>/dev/null || true
-  [ -n "${first:-}" ] || { first=$now; alerted=0; printf '%s 0\n' "$first" >"$file"; }
-  if [ "${alerted:-0}" = 0 ] && [ $(( now - first )) -ge "$DEFER_ALERT_SECS" ]; then
-    printf '%s 1\n' "$first" >"$file"
-    "${JG_SENTINEL_CAPTAIN_SAY:-$BIN/jg-captain-say.sh}" --key sentinel-wake-deferred \
-      "The main session is not taking a waiting message. It has been $(( (now - first) / 60 )) minutes. $2. Open the main session or restart it." >/dev/null 2>&1 \
-      || say "primary: could not send the deferred-wake alert"
-  fi
   return 1
 }
 
+# One row per repair of the primary's input box in data/composer-repairs.tsv: epoch, UTC time,
+# pane, what was found, what was done, and the wake it was for. A person's draft is a wait, not a
+# repair, so it gets a log line and no row.
+repair_row() {  # <pane> <found> <action> <wake-sum>
+  [ "$DRY_RUN" = 0 ] || return 0
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "$4" \
+    >>"$JG_HOME/data/composer-repairs.tsv" 2>/dev/null || say "primary: could not write the composer repair row"
+}
+
+# Count a repair that did not clear the box. The second failure in a row for the same wake calls
+# the guarded relaunch of the primary (jg-control.sh primary relaunch --clear-composer, slice 34;
+# JG_SENTINEL_PRIMARY_RELAUNCH names a stand-in command) once, and never again for that wake.
+# state/.sentinel-repair-failed holds "<wake-sum> <failures> <relaunched>"; any other wake, or
+# a box that cleared, resets it.
+repair_failed() {  # <pane> <wake-sum>
+  local file="$STATE/.sentinel-repair-failed" sum fails relaunched cmd=("$BIN/jg-control.sh" primary relaunch --clear-composer)
+  [ "$DRY_RUN" = 0 ] || return 0
+  [ -z "${JG_SENTINEL_PRIMARY_RELAUNCH:-}" ] || cmd=("$JG_SENTINEL_PRIMARY_RELAUNCH")
+  read -r sum fails relaunched <"$file" 2>/dev/null || true
+  [ "${sum:-}" = "$2" ] || { fails=0; relaunched=0; }
+  fails=$(( ${fails:-0} + 1 ))
+  if [ "$fails" -ge 2 ] && [ "${relaunched:-0}" = 0 ]; then
+    relaunched=1
+    repair_row "$1" own-line-stuck relaunch "$2"
+    if "${cmd[@]}" >/dev/null 2>&1; then
+      say "primary: $1 input box would not clear twice; relaunch requested"
+    else
+      say "primary: $1 input box would not clear twice; the relaunch command failed"
+    fi
+  fi
+  printf '%s %s %s\n' "$2" "$fails" "${relaunched:-0}" >"$file"
+}
+
+# Remove the record a wake wrote when the wake did not go out: the next tick writes its own.
+drop_wake_record() {  # <doorbell>
+  local record
+  jg_operational_doorbell_path "$1" record && rm -f "$record"
+}
+
 wake_primary() {  # <body>
-  local target doorbell verdict
-  target=$(primary_target) || { defer_wake "primary: no single Herdr pane runs session $(head -n 1 "$STATE/.lock-session" 2>/dev/null); wake deferred" "No single window runs the main session"; return 1; }
-  [ "$(jg_backend_busy_state herdr "$target")" != busy ] || { defer_wake "primary: $target mid-turn; wake deferred" "The main session has been busy the whole time"; return 1; }
-  [ "$(jg_backend_composer_state herdr "$target")" = empty ] || { defer_wake "primary: $target composer not empty; wake deferred" "Unsent text sits in the main session input box"; return 1; }
+  local target doorbell verdict sum
+  target=$(primary_target) || { defer_wake "primary: no single Herdr pane runs session $(head -n 1 "$STATE/.lock-session" 2>/dev/null); wake deferred"; return 1; }
   jg_operational_record_write "$STATE" watcher "$1" doorbell || { say "primary: could not write the wake record"; return 1; }
   # A captain at the screen (no away record, or quiet mode) never gets a typed
   # doorbell: it can stick in his message box and swallow his own words. The
@@ -483,13 +511,26 @@ wake_primary() {  # <body>
     say "primary: $target attended; wake left to the Stop hook and the record"
     return 0
   fi
+  # Text of OUR OWN doorbell left in the box is repaired, never waited behind; anything else in
+  # the box is a person's, and the wake waits for it (jg_backend_repair_own_line owns the test).
+  sum=$(printf '%s' "$1" | cksum | cut -d' ' -f1)
+  case "$(jg_backend_repair_own_line herdr "$target" "$doorbell" "$JG_OPERATIONAL_DOORBELL_PREFIX" "$JG_OPERATIONAL_DOORBELL_SUFFIX")" in
+    clear) ;;
+    cleared) repair_row "$target" own-line cleared-by-key "$sum"; say "primary: $target stale doorbell line cleared" ;;
+    submitted) repair_row "$target" own-line submitted "$sum"; say "primary: $target stale doorbell line submitted" ;;
+    stuck) repair_row "$target" own-line-stuck none "$sum"; repair_failed "$target" "$sum"
+      drop_wake_record "$doorbell"; defer_wake "primary: $target stale doorbell line would not clear; wake deferred"; return 1 ;;
+    *) drop_wake_record "$doorbell"; defer_wake "primary: $target input box holds someone else's text; wake deferred"; return 1 ;;
+  esac
+  rm -f "$STATE/.sentinel-repair-failed"
+  [ "$(jg_backend_busy_state herdr "$target")" != busy ] || { drop_wake_record "$doorbell"; defer_wake "primary: $target mid-turn; wake deferred"; return 1; }
+  [ "$(jg_backend_composer_state herdr "$target")" = empty ] || { drop_wake_record "$doorbell"; defer_wake "primary: $target composer not empty; wake deferred"; return 1; }
   verdict=$(jg_backend_send_nudge herdr "$target" "$doorbell" 3 0.5 0.5 2>/dev/null)
   if [ "$verdict" != empty ]; then
     # The record stays: typed text that was not confirmed can still be submitted,
     # and a ring whose record is gone sends its reader to a missing file.
-    defer_wake "primary: wake typed into $target but not confirmed ($verdict)" "The main session did not confirm the message"; return 1;
+    defer_wake "primary: wake typed into $target but not confirmed ($verdict)"; return 1;
   fi
-  [ "$DRY_RUN" = 1 ] || rm -f "$STATE/.sentinel-wake-deferred"
   say "primary: woke $target"
 }
 
@@ -692,7 +733,7 @@ tick() {
     return "$rc"
   fi
   ring_for_inbox || true
-  jg_supervision_unhealthy "$STATE" "$GRACE" || { [ "$DRY_RUN" = 1 ] || rm -f "$STATE/.sentinel-wake-deferred"; return "$rc"; }
+  jg_supervision_unhealthy "$STATE" "$GRACE" || return "$rc"
   beat=$(jg_path_mtime "$STATE/.last-watcher-beat")
   read -r last woken_beat <"$STATE/.sentinel-wake-last" 2>/dev/null || true
   age=$(( $(date +%s) - ${last:-0} ))

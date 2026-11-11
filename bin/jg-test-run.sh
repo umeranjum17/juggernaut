@@ -762,6 +762,7 @@ tests/core-suites-report-all.test.sh 158
 tests/jg-comms-feed.test.sh 1014
 tests/jg-compat-old-records.test.sh 1127
 tests/jg-composer-matrix-live-e2e.test.sh 244
+tests/jg-composer-self-repair.test.sh 51000
 tests/jg-control.test.sh 94076
 tests/jg-cursor-primary-live-e2e.test.sh 384
 tests/jg-deprecated-paths-check.test.sh 3000
@@ -976,7 +977,6 @@ tests/jg-proof-gate.test.sh 502
 tests/jg-red-ci-ticket.test.sh 554
 tests/jg-rejected-state-check-once.test.sh 26500
 tests/jg-sentinel-inbox-ring.test.sh 19000
-tests/jg-sentinel-wake-deferred-alert.test.sh 25
 tests/jg-ticket-link-guard.test.sh 1152
 tests/jg-trunk-live-home.test.sh 2500
 tests/jg-unit-claim.test.sh 7478
