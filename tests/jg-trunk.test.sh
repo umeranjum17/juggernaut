@@ -694,6 +694,42 @@ test_l3_environment_facts_retirement_and_self_init() {
   pass 'changed hook facts admit once, superseded final retires, and registered projects self-init'
 }
 
+test_recover_diverged_trunk() {
+  local base pin actual out merge third i
+  world recovery
+  git -C "$PROJ" config user.name fixture
+  git -C "$PROJ" config user.email fixture@example.invalid
+  base=$(tip)
+  for i in 1 2 3 4 5 6 7 8; do lane "p$i" "$i" "p$i.txt"; trunk land "p$i" >/dev/null 2>&1 || fail "pin lane $i"; done
+  pin=$(tip)
+  git -C "$PROJ" worktree add -q --detach "$W/actual-wt" "$base"
+  commit_in "$W/actual-wt" actual.txt actual 'actual branch'
+  actual=$(git -C "$W/actual-wt" rev-parse HEAD)
+  plain_git -C "$PROJ" -c core.hooksPath=/dev/null update-ref refs/heads/trunk "$actual" "$pin"
+  out=$(trunk land p1 2>&1) && fail 'ordinary landing must refuse divergence'
+  out=$(trunk recover "$PROJ" 2>&1) || fail "report: $out"
+  assert_contains "$out" "$pin" 'report pin'
+  assert_contains "$out" "$actual" 'report actual'
+  out=$(trunk recover "$PROJ" --prepare recovery 2>&1) || fail "prepare: $out"
+  merge=$(git -C "$PROJ" rev-parse refs/heads/fm/recovery)
+  [ "$(tip)" = "$actual" ] || fail 'prepare moves no trunk'
+  jg_write_meta "$HOME_D/state/recovery.meta" "project=$PROJ" "mode=local-trunk" "branch=fm/recovery"
+  out=$(trunk recover "$PROJ" --land recovery 2>&1) && fail 'missing proof must refuse'
+  prove recovery
+  third=$(git -C "$PROJ" -c user.name=t -c user.email=t@example.invalid commit-tree "$(git -C "$PROJ" rev-parse "$actual^{tree}")" -p "$actual" -m third)
+  plain_git -C "$PROJ" -c core.hooksPath=/dev/null update-ref refs/heads/trunk "$third" "$actual"
+  out=$(trunk recover "$PROJ" --land recovery 2>&1) && fail 'third ref must refuse'
+  [ "$(tip)" = "$third" ] || fail 'third ref preserved'
+  plain_git -C "$PROJ" -c core.hooksPath=/dev/null update-ref refs/heads/trunk "$actual" "$third"
+  trunk recover "$PROJ" --land recovery >/dev/null || fail 'proved merge must land'
+  [ "$(tip)" = "$merge" ] || fail 'exact merge landed'
+  git -C "$PROJ" merge-base --is-ancestor "$pin" "$merge" || fail 'pin retained'
+  git -C "$PROJ" merge-base --is-ancestor "$actual" "$merge" || fail 'actual retained'
+  lane next next next.txt; trunk land next >/dev/null 2>&1 || fail 'ordinary landing resumes after recovery'
+  pass 'divergent trunk recovers only the exact proved merge'
+}
+
+test_recover_diverged_trunk
 test_l3_environment_wait_is_not_retried_in_batches
 test_l3_environment_facts_retirement_and_self_init
 test_configured_hooks_and_the_launch_overlay_preserve_trunk_protection

@@ -12,6 +12,7 @@
 #        jg-trunk.sh verify <project-dir> [<sha>]      on demand only: run the whole suite at a landed commit (default: the tip), one verify at a time and the newest wins; a red it finds reverts the commit that caused it
 #        jg-trunk.sh green-alarm <project-dir>         raise one alarm to Overwatch once the trunk has had no green commit for no-green-alarm-minutes (15)
 #        jg-trunk.sh word live|release <project-dir> "<his words>"   record the captain's word for the commit that would go live or out (both: the last green commit, never the tip)
+#        jg-trunk.sh recover <project-dir> [--prepare <task-id>|--land <task-id>]   report divergence, prepare a merge, or land its exact proved head
 #        jg-trunk.sh adopt-tip <project-dir> --reason <text> [--carried-by <task-id>]   Overwatch only: record the trunk's present tip as the lander's own after something else moved it; only if the record is its ancestor or the tip is on origin/<default>
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word (or a waiver); --home moves one lead only
 #        jg-trunk.sh autolive <project-dir>            the batched live step: under a waiver, move every home to the green pin once the trunk is quiet or the hourly cap is due
@@ -205,7 +206,7 @@ open_project() {  # <project-dir>: sets PROJ PN TRUNK
   # The trunk flow is for local-trunk projects ONLY: a no-mistakes, direct-PR or local-only project keeps its own rules.
   mode=$(JG_HOME="$JG_HOME" JG_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/jg-project-mode.sh" --raw "$PN" 2>/dev/null | cut -d' ' -f1 || true)
   [ "$mode" = local-trunk ] || refuse "$PN is registered ${mode:-as nothing} in data/projects.md, not local-trunk; the trunk flow applies to local-trunk projects only and this project's own delivery rules are unchanged"
-  ensure_guard
+  [ "${2:-}" = read-only ] || ensure_guard
   [ "$(pol trunk-owner)" = this-home ] || refuse "trunk-owner=$(pol trunk-owner) is not built; only this-home is, and the owner is an open captain call"
 }
 
@@ -1384,6 +1385,61 @@ adopt_facts() {  # <record> <tip> [fetch]
   ADOPT_LOST_N=$(printf '%s' "$ADOPT_LOST" | grep -c . || true)
 }
 
+# Report divergent recorded and actual tips without modifying the project. Prepare retains both parents in a new
+# task branch; land accepts only that exact merge with its complete head-bound proof and an unchanged record and ref.
+cmd_recover() {
+  local dir=${1-} action=${2-} id=${3-} pin actual tree branch merge meta gaps parents released linked hit rc=0
+  [ "$#" -eq 1 ] || [ "$#" -eq 3 ] || die "usage: recover <project-dir> [--prepare <task-id>|--land <task-id>]"
+  case "$action" in ''|--prepare|--land) ;; *) die "unknown recover action: $action" ;; esac
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never recovers a trunk"
+  open_project "$dir" read-only
+  [ -z "$action" ] || lock "$STATE/.trunk-$PN.lock"
+  pin=$(cat "$STATE/trunk-tip-$PN" 2>/dev/null) || refuse "no recorded trunk tip"
+  pin=$(rev "$pin") || refuse "recorded trunk tip is not a commit"
+  actual=$(rev "refs/heads/$TRUNK") || refuse "trunk branch $TRUNK is missing"
+  printf 'recorded: %s\nactual: %s\n' "$pin" "$actual"
+  [ -n "$action" ] || return 0
+  jg_pr_task_id_valid "$id" || die "invalid task id"
+  branch="fm/$id"
+  if [ "$action" = --prepare ]; then
+    [ "$pin" != "$actual" ] || refuse "recorded and actual tips already agree"
+    ! git -C "$PROJ" merge-base --is-ancestor "$pin" "$actual" || refuse "recorded tip is already on the trunk"
+    ! git -C "$PROJ" merge-base --is-ancestor "$actual" "$pin" || refuse "actual tip is a rewind, not divergence"
+    tree=$(git -C "$PROJ" merge-tree --write-tree "$actual" "$pin") || refuse "tips do not merge cleanly; no branch was created"
+    merge=$(git -C "$PROJ" commit-tree "$tree" -p "$actual" -p "$pin" -m "$id: recover divergent trunk") || die "cannot create recovery merge"
+    git -C "$PROJ" update-ref "refs/heads/$branch" "$merge" "" || refuse "recovery branch $branch already exists"
+    echo "prepared: $branch $merge; prove this exact head before landing"
+    return
+  fi
+  meta=$STATE/$id.meta; [ -f "$meta" ] || refuse "no task record for $id"
+  [ "$(jg_dod_meta_value "$meta" project)" = "$PROJ" ] || refuse "task project does not match"
+  branch=$(jg_dod_meta_value "$meta" branch); branch=${branch:-fm/$id}
+  merge=$(rev "refs/heads/$branch") || refuse "recovery branch is missing"
+  parents=$(git -C "$PROJ" rev-list --parents -n 1 "$merge")
+  [ "$parents" = "$merge $actual $pin" ] || refuse "recovery merge parents do not match the current actual and recorded tips"
+  tree=$(git -C "$PROJ" merge-tree --write-tree "$actual" "$pin") || refuse "tips do not merge cleanly"
+  [ "$(git -C "$PROJ" rev-parse "$merge^{tree}")" = "$tree" ] || refuse "recovery tree is not the merge of both tips"
+  released=$(cat "$STATE/trunk-released-$PN" 2>/dev/null || true)
+  [ -z "$released" ] || git -C "$PROJ" merge-base --is-ancestor "$released" "$merge" || refuse "recovery does not retain the release"
+  gaps=$(jg_dod_trunk_proof_gaps "$JG_HOME" "$STATE" "$id" "$meta" "$merge") || refuse "recovery proof is incomplete: $(printf '%s' "$gaps" | tr '\n' ';')"
+  if hit=$(touches_protected "$actual" "$merge") && [ "$(pol protected-landing)" = refuse ]; then
+    refuse "$hit is a protected path; recovery requires approval of protected-landing=gate"
+  fi
+  linked=$(JG_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/jg-captain-hold.sh" blocking "$id") || rc=$?
+  case $rc in
+    0) refuse "task $id has an open linked decision: $linked" ;;
+    1) ;;
+    *) refuse "could not read linked decisions for $id" ;;
+  esac
+  jg_dod_local_landing_gates "$SCRIPT_DIR" "$CONFIG" "$JG_HOME" "$STATE" "$id" "$meta" "$PROJ" "$actual" "$merge" trunk || refuse "recovery landing gates refused"
+  printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$merge" "$TRUNK" "$actual" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused recovery"
+  ensure_guard
+  JG_TRUNK_WRITER=1 git -C "$PROJ" update-ref -m "trunk: recover $id" "refs/heads/$TRUNK" "$merge" "$actual" || refuse "trunk changed during recovery"
+  put "$STATE/trunk-tip-$PN" "$merge"
+  row trunk-landings.tsv "$id" "$PN" "$merge" "$(date +%s)" recovery
+  echo "recovered $TRUNK at $merge; not live"
+}
+
 # The one command that ends a trunk the lander did not leave (tip_ok); Overwatch only.
 cmd_adopt_tip() {
   local dir=${1-} reason='' carried='' want have epoch keep lane meta branch head red released green
@@ -1742,6 +1798,7 @@ case "${1:-}" in
   proof) shift; cmd_proof "$@" ;;
   word) shift; cmd_word "$@" ;;
   adopt-tip) shift; cmd_adopt_tip "$@" ;;
+  recover) shift; cmd_recover "$@" ;;
   reconcile) shift; cmd_reconcile "$@" ;;
   live) shift; cmd_live "$@" ;;
   autolive) shift; cmd_autolive "$@" ;;
