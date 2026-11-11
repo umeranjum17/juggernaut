@@ -1921,6 +1921,36 @@ test_delivery_risk_reason() {
 test_delivery_risk_reason
 test_preferred_stack_is_advice_never_a_gate
 
+# The delivery-style table decides which modes exist and which publish, so the six ship briefs (the four modes, and
+# local-only and local-trunk on a local-trunk project) are enforced byte for byte against goldens captured before
+# jg-brief.sh read the table. tests/fixtures/ship-brief is regenerated only on an intended brief-text change.
+test_ship_briefs_match_goldens() {
+  local home golden id proj mode extra
+  home="$TMP_ROOT/ship-golden-home"
+  mkdir -p "$home/data" "$home/config"
+  printf -- '- trunk-proj [local-trunk] - fixture (added 2026-11-09)\n' > "$home/data/projects.md"
+  while read -r id proj mode extra; do
+    # shellcheck disable=SC2086 # extra is empty or the two --risk words.
+    JG_HOME="$home" "$ROOT/bin/jg-brief.sh" "$id" "$proj" --mode "$mode" $extra >/dev/null 2>&1 \
+      || fail "$id: the $mode ship brief should scaffold"
+    sed -e "s#$home#@HOME@#g" -e "s#$ROOT#@ROOT@#g" "$home/data/$id/brief.md" > "$TMP_ROOT/$id.normalized.md"
+    golden="$ROOT/tests/fixtures/ship-brief/$id.golden"
+    cmp -s "$TMP_ROOT/$id.normalized.md" "$golden" \
+      || fail "$id: the $mode brief drifted from its golden: $(diff "$golden" "$TMP_ROOT/$id.normalized.md" | head -5)"
+  done <<'LIST'
+nm some-proj no-mistakes --risk release
+dp some-proj direct-PR
+lo some-proj local-only
+lt some-proj local-trunk
+tlo trunk-proj local-only
+tlt trunk-proj local-trunk
+LIST
+  out=$(JG_HOME="$home" "$ROOT/bin/jg-brief.sh" bad-mode some-proj --mode bogus 2>&1) && fail "an unknown mode should be refused"
+  assert_contains "$out" "no-mistakes, direct-PR, local-only, local-trunk" "the refusal lists the modes from the table"
+  pass "jg-brief.sh: the six ship briefs equal their goldens and an unknown mode is refused with the table's mode list"
+}
+test_ship_briefs_match_goldens
+
 # Recon depth (--depth quick|standard|deep). Quick is today's scout brief byte
 # for byte, enforced against a golden captured before the flag existed.
 # Standard is the default and, with deep, adds the depth section that names the

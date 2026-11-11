@@ -1,6 +1,6 @@
-# Delivery styles: one row per mode word accepted today. Columns: mode, the line, what it adds in delivering, how it joins main.
+# Delivery styles: one row per mode word accepted today. Columns: mode, the line, what it adds in delivering, how it joins main, publishes (yes when the line goes to a forge as a pull request).
 # A style changes only the stage delivering. No column names a prover: done-done proves the commit in every mode.
-style	no-mistakes	the pull request's base branch	push, the pull request and the hosted checks	the pull request's merge
-style	direct-PR	the pull request's base branch	push and the pull request	the pull request's merge
-style	local-only	the local branch	nothing	the guarded local fast-forward merge on the captain's word
-style	local-trunk	the local trunk	the batch and the go-live	one release pull request, on the captain's recorded word
+style	no-mistakes	the pull request's base branch	push, the pull request and the hosted checks	the pull request's merge	yes
+style	direct-PR	the pull request's base branch	push and the pull request	the pull request's merge	yes
+style	local-only	the local branch	nothing	the guarded local fast-forward merge on the captain's word	no
+style	local-trunk	the local trunk	the batch and the go-live	one release pull request, on the captain's recorded word	no

@@ -256,6 +256,8 @@ esac
 . "$SCRIPT_DIR/jg-herdr-lab-brief-lib.sh"
 # shellcheck source=bin/jg-marker-lib.sh
 . "$SCRIPT_DIR/jg-marker-lib.sh"
+# shellcheck source=bin/jg-delivery-style.sh
+. "$SCRIPT_DIR/jg-delivery-style.sh"
 # shellcheck source=bin/jg-classify-lib.sh
 . "$SCRIPT_DIR/jg-classify-lib.sh"
 # shellcheck source=bin/jg-dod-lib.sh
@@ -436,13 +438,14 @@ if [ "$KIND" = ship ]; then
     echo "error: ship briefs require --mode <no-mistakes|direct-PR|local-only|local-trunk>; resolve it at intake from the captain's instruction and the project's registered posture in data/projects.md" >&2
     exit 1
   }
-  case "$MODE" in
-    no-mistakes|direct-PR|local-only|local-trunk) ;;
-    no-mistakes-prod-only)
-      echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake" >&2
-      exit 1 ;;
-    *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only, local-trunk (got '$MODE')" >&2; exit 1 ;;
-  esac
+  if [ "$MODE" = no-mistakes-prod-only ]; then
+    echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake" >&2
+    exit 1
+  fi
+  jg_delivery_style_modes | grep -qx -- "$MODE" || {
+    echo "error: --mode must be one of $(jg_delivery_style_modes | paste -sd, - | sed 's/,/, /g') (got '$MODE')" >&2
+    exit 1
+  }
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a squad_lead charter is not a delivery contract" >&2
   exit 1
@@ -564,7 +567,7 @@ fi
 # brief that disagrees, so the two can never drift.
 # bin/jg-version-branch-lib.sh owns which branch that is, and a project without
 # one keeps the default-branch setup sentence and its --base-branch flag path.
-if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] \
+if [ "$BASE_BRANCH_SET" -eq 0 ] && [ "$KIND" = ship ] && jg_delivery_style_publishes "$MODE" \
   && [ "$FORGE" = none ] && [ "$PROJECT_DIR_SET" -eq 1 ] && [ -n "$PROJECT_DIR" ]; then
   BASE_BRANCH=$(jg_current_version_branch "$PROJECT_DIR") || BASE_BRANCH=
 fi
@@ -623,7 +626,7 @@ fi
 # Self-repository pre-gate for a publishing ship brief: detectable only when
 # --project was passed, so the check runs here only then. bin/jg-spawn.sh
 # repeats it at launch with the resolved project path.
-if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$MODE" != local-trunk ] && [ "$PROJECT_DIR_SET" -eq 1 ]; then
+if [ "$KIND" = ship ] && jg_delivery_style_publishes "$MODE" && [ "$PROJECT_DIR_SET" -eq 1 ]; then
   [ -n "$PROJECT_DIR" ] || {
     echo "error: --project requires a non-empty directory" >&2
     exit 1
@@ -1076,18 +1079,11 @@ fi
 # The block opens with the fixed "Delivery contract: mode=<mode>" line that
 # bin/jg-spawn.sh checks against its own explicit --mode and the project's
 # registered forge before launching.
-case "$MODE" in
-  direct-PR)
-    SETUP2=""
-    ;;
-  local-only|local-trunk)
-    SETUP2=""
-    ;;
-  *)  # no-mistakes
-    SETUP2="
+SETUP2=""
+if [ "$MODE" = no-mistakes ]; then
+  SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
-    ;;
-esac
+fi
 # Every ship brief carries the prior-art step: new or complex work starts from
 # what already exists, and a change that is neither records that in one line.
 # bin/jg-prior-art-gate.sh refuses the section left empty or holding this
@@ -1105,7 +1101,7 @@ PRIOR_ART_SECTION=$'\n'${PRIOR_ART_SECTION%$'\n'}$'\n'
 TRUNK_SECTION=
 TRUNK_NAME=$(JG_HOME="$JG_HOME" jg_trunk_branch "$REPO" "$STATE" 2>/dev/null || true)
 : "${TRUNK_NAME:=trunk}"
-if { [ "$MODE" = local-only ] || [ "$MODE" = local-trunk ]; } && jg_brief_local_trunk "$REPO"; then
+if ! jg_delivery_style_publishes "$MODE" && jg_brief_local_trunk "$REPO"; then
   TRUNK_SECTION="
 # Local trunk lane
 This project is registered local-trunk: there is no feature pull request, and the only pull request is the release one, raised on the captain's word.

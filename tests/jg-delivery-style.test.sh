@@ -10,11 +10,14 @@ assert_equals "no-mistakes direct-PR local-only local-trunk" "$(bash "$DS" --lis
 for m in no-mistakes direct-PR local-only local-trunk; do
   out=$(bash "$DS" "$m" 2>&1); rc=$?
   expect_code 0 "$rc" "$m prints"
-  assert_equals "line adds joins" "$(printf '%s\n' "$out" | cut -f1 | tr '\n' ' ' | sed 's/ $//')" "$m row has three fields"
+  assert_equals "line adds joins publishes" "$(printf '%s\n' "$out" | cut -f1 | tr '\n' ' ' | sed 's/ $//')" "$m row has four fields"
   if printf '%s\n' "$out" | cut -f2 | grep -qv .; then fail "$m has an empty field"; fi
 done
 assert_contains "$(bash "$DS" local-trunk)" "the local trunk" "local-trunk line"
 assert_contains "$(bash "$DS" direct-PR)" "pull request" "direct-PR joins by pull request"
+
+assert_contains "$(bash "$DS" local-only)" "publishes	no" "local-only publishes nothing"
+assert_contains "$(bash "$DS" direct-PR)" "publishes	yes" "direct-PR publishes"
 
 out=$(bash "$DS" bogus 2>&1); rc=$?
 expect_code 1 "$rc" "unknown mode refused"; assert_contains "$out" "unknown mode 'bogus'" "refusal names the mode"

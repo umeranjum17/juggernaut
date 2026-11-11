@@ -264,6 +264,8 @@ journeys:
     command: bash journeys/machine-enums.sh
   machine-rules:
     command: bash journeys/machine-rules.sh
+  ship-brief-style:
+    command: bash journeys/ship-brief-style.sh
 secrets:
   allow:
     - '^key=waiting-timer-[A-Za-z0-9._-]+\]?$'
