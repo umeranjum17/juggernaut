@@ -26,7 +26,6 @@ The `Ask` column is the command that prints a record's state and its legal moves
 | `squad-lead` | `a registered Squad Lead home: its data/squad_leads.md line, config/parked-homes and the relaunch ledger (id: the Squad Lead id; machine 2 of the state-machine plan)` | `core/machines/observers/squad-lead.sh` | 6 | 10 | `bin/jg-machine.sh next squad-lead <id>` |
 | `status-verb` | `state/<id>.status prefix` | `core/classify/cmd/jg-classify/classify.go` | 14 | 13 | `bin/jg-machine.sh next status-verb <id>` |
 | `supervision` | `one supervisor session per home: state/.lock, state/.last-watcher-beat and state/.wake-queue (id: the home name; machine 3 of the state-machine plan)` | `core/machines/observers/supervision.sh` | 5 | 9 | `bin/jg-machine.sh next supervision <id>` |
-| `task-inbox` | `state/<task>.inbox/NNN.msg with .delivery.jsonl and the ladder markers (id: <task>:<NNN>)` | `bin/jg-task-inbox-lib.sh` | 12 | 40 | `bin/jg-machine.sh next task-inbox <id>` |
 | `task` | `a task's backlog row, status log and delivery` | `core/machines/observers/task.sh` | 14 | 24 | `bin/jg-machine.sh next task <id>` |
 | `ticket` | `a ticket: the one Beads row of jg-q1b3n (machine 0 of the state-machine plan)` | `core/machines/observers/ticket.sh` | 7 | 15 | `bin/jg-machine.sh next ticket <id>` |
 | `trunk-pointers` | `state/trunk-{tip,green,released,rolled,word-live}-<project> and data/trunk-live.tsv` | `bin/jg-trunk.sh` | 8 | 20 | `bin/jg-machine.sh next trunk-pointers <id>` |

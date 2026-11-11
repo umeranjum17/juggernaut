@@ -872,7 +872,7 @@ EOF
   [ "$rec_base" = "$base" ] || count=0
   case "$count" in ''|*[!0-9]*) count=0 ;; esac
   [ -d "$dir" ] || return 0
-  "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" task-inbox "$2:${base%.msg}" ring-counted || true  # shadow report of the move (jg-machine-shadow.sh)
+  "${BASH_SOURCE[0]%/*}/jg-machine-shadow.sh" message "$2:${base%.msg}" rung || true  # shadow report of the move (jg-machine-shadow.sh)
   if ! { printf '%s\t%s\t%s\n' "$base" "$((count + 1))" "$(date +%s)" > "$dir/.ring-state"; } 2>/dev/null; then
     [ -d "$dir" ] || return 0
     return 1

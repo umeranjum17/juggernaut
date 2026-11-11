@@ -45,7 +45,7 @@ RUN=shadow_nosuch; shadow_nosuch() { "$HOME_DIR/bin/jg-machine-shadow.sh" nosuch
 
 RUN=inbox_ring; mkdir -p "$HOME_DIR/state/t1.inbox"
 inbox_ring() { bash -c '. "$1/bin/jg-task-inbox-lib.sh"; jg_task_inbox_record_ring "$2" t1 "$2/t1.inbox/001.msg"' _ "$ROOT" "$HOME_DIR/state"; }
-both "inbox ring" task-inbox ring-counted
+both "inbox ring" message rung
 
 RUN=backlog_close
 backlog_close() { bash -c '. "$1/bin/jg-backlog-transition-lib.sh"; jg_backlog_close_transition "" "$2/t1.marker" "$2/data" t1 "$2/state"' _ "$ROOT" "$HOME_DIR" >/dev/null 2>&1; true; }
