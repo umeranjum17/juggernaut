@@ -487,6 +487,11 @@ start_cause() {
 }
 # The worker's own ready report: the last line of its status file is `done [at=<epoch>]: ...`. Prints the epoch of that report.
 ready_at() { jg_fact_ready_at "$STATE" "$1"; }  # the typed ready fact (bin/jg-facts-lib.sh)
+# The task machine owns admission: a lane lands only when it says ready-to-land. A head already refused (`final`) is reported again by the
+# sweep below, and a new head is judged by the machine afresh.
+machine_admits() {  # <task id>
+  [ "$(JG_HOME="$FMH" "$FMH/bin/jg-machine.sh" show task "$1" 2>/dev/null | awk -F '\t' '$1 == "state" {print $2}')" = ready-to-land ]
+}
 cands=
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
@@ -515,6 +520,7 @@ for meta in "$STATE"/*.meta; do
     fi ;;
   esac
   at=$(ready_at "$id") || continue
+  case $line in final*) ;; *) machine_admits "$id" || continue ;; esac
   # The merge switch of the style `local` (docs/trunk-flow.md): a lane of mode `local` lands by itself with yolo on, or once the lead
   # recorded merge=approved; with yolo off it waits for that word. A record with an old word is read as before.
   if [ "$(mval "$meta" mode)" = local ] && [ "$(mval "$meta" yolo)" != on ] && [ "$(mval "$meta" merge)" != approved ]; then

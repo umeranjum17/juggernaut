@@ -206,6 +206,21 @@ test_a_job_the_landing_check_starts_never_outlives_its_fixture() {
   pass 'a job the landing check starts is stopped with its process group when the suite cleans up'
 }
 
+test_rework_lane_is_not_admitted() {
+  local head state
+  world machine-rework
+  cp -r "$W/root/bin" "$HOME_D/bin"; ln -sn "$ROOT/core" "$HOME_D/core"; ln -sn "$ROOT/policy" "$HOME_D/policy"
+  lane r1 one f1.txt
+  head=$(git -C "$PROJ" rev-parse fm/r1)
+  printf 'revert-r1\tproj\n' >> "$HOME_D/data/trunk-landings.tsv"
+  state=$(JG_HOME="$HOME_D" "$ROOT/bin/jg-machine.sh" show task r1 | awk -F '\t' '$1 == "state" {print $2}')
+  [ "$state" = rework ] || fail "the task machine must report rework: $state"
+  sweep >/dev/null
+  [ ! -e "$HOME_D/data/jg-trunk-landing/r1.$head.state" ] || fail "a rework lane must not be admitted"
+  pass 'the landing check does not admit a lane the task machine calls rework'
+}
+
+test_rework_lane_is_not_admitted
 test_queued_lanes_land_as_one_stack_and_a_red_stack_is_bisected
 test_a_job_the_landing_check_starts_never_outlives_its_fixture
 test_the_landing_check_stacks_ready_lanes_and_keeps_a_single_lane_on_its_own_path

@@ -236,6 +236,7 @@ git -C "$PROJ" push -q origin "\$M:refs/heads/main"; echo merged > "$W/pr-state-
 SH
   printf '#!/usr/bin/env bash\necho "checks-lint: PASS"\n' > "$W/checks-lint"
   ln -sn "$W/root/bin" "$HOME_D/bin"   # the merge check runs the home's own bin
+  ln -sn "$ROOT/core" "$HOME_D/core"   # the task machine the landing check asks reads the home's own tables
   chmod +x "$W/fakebin/gh-axi" "$W/fakebin/gh" "$W/root/bin/jg-pr-state.sh" "$W/root/bin/jg-pr-merge.sh" "$W/checks-lint"
 }
 
