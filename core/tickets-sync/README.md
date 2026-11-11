@@ -77,6 +77,13 @@ A captain ask is never closed, held or edited: it is listed with a keep tip.
 Everything else is left alone.
 `core/tickets-sync/tests/tidy.test.sh` proves each rule on a real Beads store.
 
+### The pre-Beads drop
+
+`sync.py --drop-pre-beads DATE` carries out the captain's 11 Nov order, "All pre-7-Nov open": every open row of each home filed before DATE (the Beads cut) is closed through that home's `bin/jg-backlog.sh done` with the note `dropped by captain 11 Nov`, so it is closed and never deleted, and `reopen` brings it back. Without `--apply` it prints the counts and changes nothing; the full list, with each home's open count before and after, goes to `state/tickets-sync/drop-pre-beads-<day>.txt`.
+It keeps and lists an owner decision (his ask or quoted words, a captain hold, a design pick), a row a waiting board card names, a row whose worker is live, and a row with no filing date. A row filed on or after DATE is never dropped.
+In the main home it also closes each open board ticket no home's row answers to (the old sign-off board), through `sign-off-axi ticket`. A lead home reads only its own store, so it cannot tell another home's tickets from leftovers: it closes its own rows and leaves the board to its parent.
+The drop reads each store's rows itself and closes by store id, because the publish walk keys rows by item name and one name can belong to an open row and a done twin. `tests/drop.test.sh` proves it on a real Beads store.
+
 ### Card reconcile
 
 The same daily pass reads every waiting sign-off card that asks for an answer (a card with buttons, or a sign-in) and checks its source with read-only calls; `reconcile.py` owns the rules. It archives with `sign-off-axi dismiss <card> --reason ...` only on clear evidence: the card's `ticket` is done, or the backlog item named by `ask_ref` or by the `fm-<hash>-<task>-<stamp>` key is closed or no longer held (`done-elsewhere`); every GitHub PR the card links is merged (`done-elsewhere`); a sign-in link has expired (`not-relevant`); or a newer card asks the same title (`replaced`). A card with an open ticket, held task or open PR is kept. A card that holds the captain's own words is archived only on the first two or the PR evidence, never on the weaker expiry or duplicate signals. Each dismissal is one line in `state/tickets-sync/card-reconcile.log`. A card whose linked changes are all closed unmerged is never archived on any route (its own link, its done ticket or its done task): it asks whether to delete that closed work, so the work being closed cannot delete the question, and it stays until the captain answers (`tests/cleanup-keeps-question.test.sh`).

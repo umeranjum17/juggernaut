@@ -26,6 +26,7 @@ import identity
 import legacy
 import reconcile
 import release
+import drop
 import tidy
 from hierarchy import UPKEEP, INTERNAL, OWN, parents as request_parents, title as request_title
 # jg-compat shim (slice S4, deleted by S10): an old FM_* name still resolves here
@@ -144,6 +145,33 @@ def tidy_report(items, homes, home, state, apply, run):
             f"{'deferred' if apply else 'would defer'} {count['deferred']} idle; {count['captain-ask']} captain asks listed, none touched; {count['untouched']} left alone"
             + (f'; {len(failed)} failed' if failed else '') + f'; full list {listing}')
 
+def drop_report(homes, existing, home, board, state, before, apply, run):
+    """Plan the drop of every pre-Beads open ticket, write the full list beside the sync state, return the summary line.
+    It reads each store's own rows, not the publish walk's, because that walk keys a row by its item name and one name can
+    belong to an open row and a done twin."""
+    items = []
+    for name, source in homes.items():
+        if not store_named(source): continue
+        env = {k: v for k, v in os.environ.items() if k not in ('JG_DATA_OVERRIDE', 'JG_ROOT_OVERRIDE')} | {'JG_HOME': str(source)}
+        for r in rows(['bash', str(home / 'bin/jg-backlog.sh'), 'list', '--all'], env, extra=',item'):
+            items.append(dict(name=name, source=source, row=r, tid=identity.ticket_id(name, r['item'], r['id'])))
+    carded = drop.waiting_cards(json.loads(run(['sign-off-axi', 'list', str(board), '--json'])).get('decisions', []))
+    # A lead home sees only its own rows, so it cannot tell another home's board tickets from leftovers: it leaves them to the parent.
+    board_open = [] if identity.is_lead(home) else [t for t in existing.values() if t.get('state') != 'done' and t.get('stage') != 'done']
+    decisions = drop.plan(items, before, carded, board_open, {i['tid'] for i in items})
+    applied, failed = drop.apply(decisions, homes, home, board, run) if apply else (0, [])
+    count, per_home = drop.counts(decisions, failed if apply else None)
+    day = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    listing = state / f'drop-pre-beads-{day}.txt'
+    listing.write_text(f'{len(decisions)} open tickets, filed before {before}, {day}, {"applied" if apply else "plan only"}\n'
+                       + ''.join(f'{h}: {b} open before, {a} open after\n' for h, (b, a) in per_home.items())
+                       + ''.join(f'{k}: {n}/{i} - {e}\n' for k, n, i, e in decisions if k in drop.KEPT)
+                       + ''.join(f'failed: {l} - {w}\n' for l, w in failed))
+    after = sum(a for _b, a in per_home.values())
+    return (f"tickets-drop: {len(decisions)} open before, {after} after; {'dropped' if apply else 'would drop'} {count['drop']} rows and {count['drop-board']} board-only tickets; "
+            f"kept {count['kept-owner']} owner decisions, {count['kept-card']} with a waiting card, {count['kept-live']} with a live worker, {count['kept-undated']} undated; "
+            f"{count['later']} filed on or after {before}" + (f'; {len(failed)} failed' if failed else '') + f'; full list {listing}')
+
 def sync():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--audit', action='store_true')
@@ -152,19 +180,20 @@ def sync():
     parser.add_argument('--migrate-legacy', action='store_true', help='one-off: release the legacy fm- rows that hold with no reason; with --check, print the plan and write nothing')
     parser.add_argument('--reconcile', action='store_true', help='read every home without the watcher time budget')
     parser.add_argument('--tidy', action='store_true', help="apply the captain's clean-up rules to every home's open tickets: print the plan and counts, change no row")
-    parser.add_argument('--apply', action='store_true', help='with --tidy, carry the plan out: close with evidence, defer idle unclear rows')
+    parser.add_argument('--apply', action='store_true', help='with --tidy or --drop-pre-beads, carry the plan out')
+    parser.add_argument('--drop-pre-beads', metavar='DATE', help="the captain's 11 Nov order: print the plan to close every open ticket filed before DATE (the Beads cut) and every board-only leftover, change none")
     parser.add_argument('--close', metavar='HOME/ITEM', help='record an authorized cancellation or supersession on the board only')
     parser.add_argument('--reason', choices=['superseded', 'cancelled'])
     options = parser.parse_args()
     if bool(options.close) != bool(options.reason): parser.error('--close and --reason are required together')
-    if options.apply and not options.tidy: parser.error('--apply needs --tidy')
-    if options.cleanup or options.tidy: options.check = options.reconcile = True  # reads like --check, without the watcher budget
+    if options.apply and not (options.tidy or options.drop_pre_beads): parser.error('--apply needs --tidy or --drop-pre-beads')
+    if options.cleanup or options.tidy or options.drop_pre_beads: options.check = options.reconcile = True  # reads like --check, without the watcher budget
     started = time.monotonic()
     budget = float(os.environ.get('JG_TICKETS_SYNC_BUDGET_SECS', '20'))
     home = Path(os.environ['JG_HOME']).resolve()
     # The parent's poll reads this lead home with every other registered one; a second writer here published its rows
     # as main/<item> twins and judged the whole shared board from one home.
-    if identity.is_lead(home): return
+    if identity.is_lead(home) and not options.drop_pre_beads: return  # the drop closes this home's own rows only; the parent's poll owns the shared board
     board = Path((home / 'config/fleet-board').read_text().strip())
     if not board.is_absolute(): board = home / board
     if options.audit: print(run(['sign-off-axi', 'ticket', str(board), '--json'])); return
@@ -181,7 +210,7 @@ def sync():
         prs = json.loads(pr_file.read_text()) if pr_file.exists() else {}
         closures_file = state / 'closures.json'
         closures = json.loads(closures_file.read_text()) if closures_file.exists() else {}
-        homes = {'main': home}
+        homes = {identity.home_name(home) if options.drop_pre_beads else 'main': home}
         registry = home / 'data/squad_leads.md'
         for line in registry.read_text().splitlines() if registry.exists() else []:
             m = re.match(r'- (\S+) - .*\(home: ([^;]+);', line)
@@ -253,7 +282,7 @@ def sync():
             nonlocal changed, feed_ends
             seen.add(tid)
             if options.check:
-                if options.cleanup or options.tidy: return
+                if options.cleanup or options.tidy or options.drop_pre_beads: return
                 # A row whose work another ticket already covers is left alone on purpose (the board keeps one open
                 # ticket per piece of work), so its missing state is not a disagreement to report.
                 if any(o != tid for o in tracked.get(work_key(desired), [])): return
@@ -323,6 +352,8 @@ def sync():
             name, sep, item = options.close.partition('/')
             if name not in homes or not sep or not item: raise RuntimeError('--close requires a registered HOME/ITEM')
 
+        if options.drop_pre_beads:
+            print(drop_report(homes, existing, home, board, state, options.drop_pre_beads, options.apply, run)); return
         upkeep_id = identity.ticket_id('fleet', ':upkeep')
         # A fleet-wide row owns nothing in the registry, so it names the home that publishes it rather than going blank,
         # and it is no lane's work: no worker words on a grouping row.
