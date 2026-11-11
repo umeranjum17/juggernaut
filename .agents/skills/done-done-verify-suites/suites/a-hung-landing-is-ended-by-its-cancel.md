@@ -1,0 +1,3 @@
+# A hung landing is ended by its own cancel (no raw kill)
+
+A hung landing run: run `done-done run -- bash -c 'set -e; bash tests/jg-trunk-cancel.test.sh > "$DONE_DONE_EVIDENCE_ROOT/trunk-cancel.log" 2>&1'`; over a fixture home with real git, the real landing check and a gate that sleeps, it proves that `bin/jg-trunk.sh cancel <task> --reason <text>` stops the run's process group, clears its running state and every lock it held, records why (`data/jg-trunk-landing/cancelled.tsv` and the outbox), and starts the next ready lane by itself; that naming any one lane ends a whole stack; and that a cancel with nothing running, with no reason, or from a worker refuses with its reason (screen: none).

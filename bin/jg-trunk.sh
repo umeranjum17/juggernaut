@@ -9,6 +9,7 @@
 #        jg-trunk.sh land-batch <id>[@<head>]...       land 2 to batch-max queued lanes as one stack: one gate over their changed files, one move; a red stack is halved to find and return only the lane that caused it
 #        jg-trunk.sh flush <project-dir>               Overwatch only: land every ready lane of the project now, in batches, whatever the threshold says
 #        jg-trunk.sh land-next <task-id>               Overwatch only: mark one ready lane so the landing check lands it at once, ahead of the queue
+#        jg-trunk.sh cancel <task-id> --reason <text>   Overwatch only: end the task's running landing (a single run or the stack it is in) through the landing check's own path: stops its process group, clears its running state and locks, records why, starts the next ready lane
 #        jg-trunk.sh verify <project-dir> [<sha>]      run the verify gate over every change since the green pin (default: the tip), one verify at a time and the newest wins; green moves the pin, a red it finds reverts the commit that caused it and raises line-red
 #        jg-trunk.sh verify-due <project-dir>          print the tip and exit 0 when a tick should start a verify (tip above the pin, none running, tip not already ended red)
 #        jg-trunk.sh green-alarm <project-dir>         raise one alarm to Overwatch once the trunk has had no green commit for no-green-alarm-minutes (15)
@@ -1630,6 +1631,15 @@ cmd_land_next() {
   echo "land-next recorded for $id: the landing check lands it at once, ahead of the queue"
 }
 
+# The landing check owns the running landing, so its own script ends one (core/trunk-landing/cancel.sh).
+cmd_cancel() {
+  local id=${1-} reason=''
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never cancels a landing"
+  if [ "$#" -eq 3 ] && [ "$2" = --reason ]; then reason=$3; fi
+  if [ -z "$reason" ] || ! jg_pr_task_id_valid "$id"; then die "usage: jg-trunk.sh cancel <task-id> --reason <text>"; fi
+  exec "$SCRIPT_DIR/../core/trunk-landing/cancel.sh" "$JG_HOME" "$id" "$reason"
+}
+
 cmd_word() {
   local kind=${1-} sha quote=${3-}
   case $kind in live|release) ;; *) die "usage: jg-trunk.sh word live|release <project-dir> \"<his words>\"" ;; esac
@@ -2162,6 +2172,7 @@ case "${1:-}" in
   land-batch) shift; cmd_land_batch "$@" ;;
   flush) shift; cmd_flush "$@" ;;
   land-next) shift; cmd_land_next "$@" ;;
+  cancel) shift; cmd_cancel "$@" ;;
   classify) shift; [ "$#" -ge 1 ] && [ -f "$1" ] || die "classify takes an output file and, after it, any gate logs"; classify_refusal "$@" ;;
   verify) shift; cmd_verify "$@" ;;
   verify-due) shift; cmd_verify_due "$@" ;;
