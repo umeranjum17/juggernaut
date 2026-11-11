@@ -2425,6 +2425,40 @@ jg_composer_queued_enter_verdict() {  # <composer-state> <busy|idle|unknown>
   fi
 }
 
+# --- OUR OWN TYPED DOORBELL (task doorbell-composer-cleanup) ------------------
+# A doorbell is one printable-ASCII line this fleet types into a composer (the
+# steering ring in bin/jg-task-inbox-lib.sh, and the away daemon's record-backed
+# doorbell for a Claude primary). A swallowed Enter leaves it sitting there: the
+# next ring types a second line onto the first, and a human's own next sentence
+# is submitted glued onto it (captured in the captain's own message box, where
+# his words arrived counted as one wrong message). Reading the composer as OURS is
+# what makes removal safe - text that is provably a leading part of the line we
+# typed, and nothing else, is ours to delete; a draft beside it never is.
+#
+# Whitespace is ignored on both sides because a TUI wraps a long line at
+# arbitrary columns and a doorbell is wider than a narrow pane, so row
+# boundaries are not characters. A part shorter than
+# JG_COMPOSER_DOORBELL_PARTIAL_MIN proves nothing (the human may have typed a
+# leading ':'), and content LONGER than the line is a draft glued after it,
+# which stays untouched.
+# shellcheck disable=SC2034  # read by bin/jg-backend.sh
+JG_COMPOSER_DOORBELL_WAIT_DEFAULT=10  # seconds jg_backend_withdraw_typed waits before keying
+JG_COMPOSER_DOORBELL_PARTIAL_MIN=8
+
+# How many of our own doorbell characters the composer content holds: the whole
+# line (stuck), or a leading part of it (partial). Prints that count and returns
+# 0; prints nothing and returns 1 for any other content.
+jg_composer_own_doorbell_length() {  # <composer-content> <doorbell-line>
+  local content=${1-} line=${2-} want got
+  want=${line//[[:space:]]/}
+  got=${content//[[:space:]]/}
+  [ -n "$want" ] && [ -n "$got" ] || return 1
+  [ "${#got}" -le "${#want}" ] || return 1
+  [ "${#got}" -ge "$JG_COMPOSER_DOORBELL_PARTIAL_MIN" ] || return 1
+  [ "${want#"$got"}" != "$want" ] || return 1
+  printf '%s' "${#got}"
+}
+
 # Pi stderr notice rows (task jg-composer-warning-fp1): an extension
 # console.warn fired between TUI frames writes plain, unstyled text straight
 # to the terminal, overwriting the editor input row IN PLACE, so the pane

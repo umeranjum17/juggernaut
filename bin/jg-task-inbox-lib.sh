@@ -608,9 +608,17 @@ _jg_task_inbox_ring_attempt() {  # <backend> <target> <record-path> <expected-la
   case "$cstate" in
     pending)
       [ -z "$submit_dir" ] || return 1
-      jg_task_inbox_composer_holds "$backend" "$target" "$line" "$label" \
-        && [ "$(jg_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] \
-        || return 1
+      if ! jg_task_inbox_composer_holds "$backend" "$target" "$line" "$label"; then
+        # Not our whole line: a leading part of it is an interrupted typing of
+        # ours and is withdrawn (never submitted as a fragment); anything else
+        # is a human's draft and defers the ring.
+        case "$(jg_backend_withdraw_typed "$backend" "$target" "$line" "$label")" in
+          withdrawn) JG_TASK_INBOX_RING_REASON="the partly typed doorbell was withdrawn from the composer"; return 2 ;;
+          stuck) JG_TASK_INBOX_RING_REASON="the doorbell is still in the composer and could not be cleared"; return 2 ;;
+        esac
+        return 1
+      fi
+      [ "$(jg_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] || return 1
       jg_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
       sleep 0.3
       jg_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0

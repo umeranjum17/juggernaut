@@ -580,6 +580,14 @@ jg_afk_mode() {
   esac
 }
 
+# jg_afk_unattended <state>
+# Succeeds only when the captain is away: an away-mode record exists. No record,
+# or quiet mode (captain present), is attended, and nothing machine-typed may go
+# into the captain's composer there (task doorbell-composer-cleanup).
+jg_afk_unattended() {
+  [ -e "$1/.afk" ] && [ "$(jg_afk_mode "$1")" = away ]
+}
+
 # jg_watcher_supervision_verdict <state> <watch-path> [grace] [home] [root]
 # Model-aware "is supervision healthy right now" verdict for the pull warning
 # guard (bin/jg-guard.sh), NOT the arm layer or the turn-end guard. Sets:

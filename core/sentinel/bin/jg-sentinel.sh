@@ -476,6 +476,13 @@ wake_primary() {  # <body>
   [ "$(jg_backend_busy_state herdr "$target")" != busy ] || { defer_wake "primary: $target mid-turn; wake deferred" "The main session has been busy the whole time"; return 1; }
   [ "$(jg_backend_composer_state herdr "$target")" = empty ] || { defer_wake "primary: $target composer not empty; wake deferred" "Unsent text sits in the main session input box"; return 1; }
   jg_operational_record_write "$STATE" watcher "$1" doorbell || { say "primary: could not write the wake record"; return 1; }
+  # A captain at the screen (no away record, or quiet mode) never gets a typed
+  # doorbell: it can stick in his message box and swallow his own words. The
+  # record above and the Stop-hook wake reach the primary without typing.
+  if ! jg_afk_unattended "$STATE"; then
+    say "primary: $target attended; wake left to the Stop hook and the record"
+    return 0
+  fi
   verdict=$(jg_backend_send_nudge herdr "$target" "$doorbell" 3 0.5 0.5 2>/dev/null)
   if [ "$verdict" != empty ]; then
     # The record stays: typed text that was not confirmed can still be submitted,

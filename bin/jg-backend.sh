@@ -976,20 +976,29 @@ jg_backend_send_nudge() {  # <backend> <target> <text> <retries> <enter-sleep> <
 }
 
 # jg_backend_withdraw_typed: take <text> back out of the composer if, and only
-# if, the composer holds exactly that text (ignoring whitespace and wrapping).
+# if, the composer holds that text (ignoring whitespace and wrapping) or a
+# leading part of it left by an interrupted typing (jg_composer_own_doorbell_
+# length). A composer that still holds it is given JG_COMPOSER_DOORBELL_WAIT
+# seconds (default 10) to take the submit, then cleared with the clear key.
 # Echoes `empty` (nothing there to withdraw), `withdrawn`, `foreign` (other
-# content: a human's, never keyed), or `stuck` (ours, but it will not clear).
+# content: a human's, or a draft glued after our line; never keyed), or
+# `stuck` (ours, but it will not clear).
 jg_backend_withdraw_typed() {  # <backend> <target> <text> [expected-label]
-  local backend=$1 target=$2 want=${3//[[:space:]]/} label=${4:-} held i=0
+  local backend=$1 target=$2 text=$3 label=${4:-} held i=0 waited=0
+  local polls=$(( ${JG_COMPOSER_DOORBELL_WAIT:-$JG_COMPOSER_DOORBELL_WAIT_DEFAULT} * 2 ))
   while [ "$i" -lt 6 ]; do
     held=$(jg_backend_capture "$backend" "$target" "$JG_COMPOSER_CAPTURE_LINES" "$label" 2>/dev/null) \
       && held=$(jg_composer_extract_selected_content styled=0 "$held") || held=
-    held=${held//[[:space:]]/}
-    if [ -z "$held" ]; then
+    if [ -z "${held//[[:space:]]/}" ]; then
       if [ "$i" -eq 0 ]; then printf 'empty'; else printf 'withdrawn'; fi
       return 0
     fi
-    [ "$held" = "$want" ] || { printf 'foreign'; return 0; }
+    jg_composer_own_doorbell_length "$held" "$text" >/dev/null || { printf 'foreign'; return 0; }
+    if [ "$i" -eq 0 ] && [ "$waited" -lt "$polls" ]; then
+      sleep 0.5
+      waited=$((waited + 1))
+      continue
+    fi
     jg_backend_send_key "$backend" "$target" C-u "$label" >/dev/null 2>&1 || break
     sleep 0.2
     i=$((i + 1))
