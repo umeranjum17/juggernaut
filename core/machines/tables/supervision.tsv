@@ -1,0 +1,18 @@
+machine	supervision	one supervisor session per home: state/.lock, state/.last-watcher-beat and state/.wake-queue (id: the home name; machine 3 of the state-machine plan)	core/machines/observers/supervision.sh
+enum	supervision
+state	off	initial	No session holds the lock.	-	rest	lock
+state	starting	normal	A session holds the lock and the watcher has not beaten yet.	-	active
+state	watching	normal	The session waits for a wake.	-	rest	wake
+state	handling	normal	The session handles the wakes it drained.	-	active
+state	read-only	normal	The session could not take the lock and may change nothing.	-	waiting	0s -> alert supervision-down
+group	locked	starting	watching	handling
+edge	(none)	open	off	bin/jg-lock.sh:status	-	the home exists and no lock is held	jg-machine-supervision
+edge	off	lock	starting	bin/jg-lock.sh:confirm_own_lock	-	the lock is free	jg-machine-supervision
+edge	off	refuse-lock	read-only	bin/jg-lock.sh:refuse_live_owner	-	the lock is held or cannot be verified	jg-machine-supervision
+edge	starting	arm	watching	bin/jg-watch.sh:beat	-	the watcher beats	jg-machine-supervision
+edge	watching	wake	handling	bin/jg-wake-lib.sh:jg_wake_drain	-	a wake is queued and presence is not away	jg-machine-supervision
+edge	handling	ack	watching	bin/jg-wake-lib.sh:jg_wake_ack	-	every drained wake is acknowledged	jg-machine-supervision
+edge	watching	miss	starting	bin/jg-watch.sh:tick	-	2 beats missed: the tick starts the watcher again	jg-machine-supervision
+edge	locked	end	off	bin/jg-lock.sh:on_lock_exit	-	the session ends and the lock is freed	jg-machine-supervision
+edge	read-only	close	off	bin/jg-lock.sh:on_lock_exit	-	the session ends	jg-machine-supervision
+observer	bash "$(dirname "$JG_MACHINES_TABLES")/observers/supervision.sh" "$1"

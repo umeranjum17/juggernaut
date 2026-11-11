@@ -8,6 +8,8 @@ journeys:
     command: bash journeys/learnings.sh
   message-table:
     command: bash journeys/message-table.sh
+  machine-observers:
+    command: bash journeys/machine-observers.sh
   brief-lint:
     command: bash journeys/brief-lint-real-briefs.sh
   teardown-missing-record:
