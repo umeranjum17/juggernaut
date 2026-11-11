@@ -506,7 +506,7 @@ gate_figures() {  # <first-run log> <start epoch>
 # reason no test script accounts for. The base is the trunk tip for a landing and the commit's parent for a verify.
 full_gate() {  # <candidate> <command> <base>
   local cand=$1 log="${LAND_ATTEMPT:-$DATA/trunk/gate-$PN-${1:0:12}}-full.log" envf rc=0 mine tipres line s ex sig tex tsig bad='' old='' unexplained quoted again settled now flaky='' t0 passing='' byself='' byparent=''
-  t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=
+  t0=$(date +%s); GATE_KIND=full; GATE_FIGURES=; GATE_BAD=
   envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX" 2>/dev/null) || { mkdir -p "$DATA/trunk"; envf=$(mktemp "$DATA/trunk/.gate-env.XXXXXX"); }
   gate_exec "$cand" "$2" "$log" "$envf" || rc=$?
   [ "$rc" -ne 0 ] || { rm -f -- "$envf"; gate_figures "$log" "$t0"; return 0; }
@@ -557,6 +557,7 @@ full_gate() {  # <candidate> <command> <base>
   # shellcheck disable=SC2086
   [ -z "$old" ] || report_tip_red "$3" $old
   if [ -n "$bad" ]; then
+    GATE_BAD=${bad# }
     tail -n 20 "$log" >&2
     echo "REFUSED: gate 'full' failed (exit $rc) at ${cand:0:12}; this lane introduced or changed the failure of:$bad; full log: $log" >&2
     return 2
@@ -804,7 +805,7 @@ land_candidate() {
 
 # --- The merge queue: two or more queued lanes land as one stack (docs/trunk-flow.md "Batch landing") ---
 # B_* are the lanes of one batch, by position: id, original lane commit (C0), its commit as it now sits in the stack (CUR), lane head, branch, record, why it was returned.
-B_ID=(); B_C0=(); B_CUR=(); B_HEAD=(); B_BRANCH=(); B_META=(); B_WHY=(); B_CLASS=(); B_TIP=; B_BASE0=; CHAIN=(); CHAIN_CHANGED=; LANDED=(); LAST_RED=; LAST_RED_CLASS=
+B_ID=(); B_C0=(); B_CUR=(); B_HEAD=(); B_BRANCH=(); B_META=(); B_WHY=(); B_CLASS=(); B_TIP=; B_BASE0=; CHAIN=(); CHAIN_CHANGED=; LANDED=(); LAST_RED=; LAST_RED_CLASS=; GATE_BAD=
 
 # The lanes <idx>... stacked on <top>, in order: a commit already on its place stays, any other is rebased by the lander onto it.
 # A lane that no longer merges clean drops out (B_WHY). Sets CHAIN (the lanes that stack) and CHAIN_CHANGED (1 when any commit was rebuilt or dropped).
@@ -868,6 +869,39 @@ batch_gate() {  # <top> <stack size>   (B_TIP is the trunk tip the stack sits on
   [ "$rc" -eq 0 ]
 }
 
+# The one lane of CHAIN that owns every script the last gate blamed (GATE_BAD): the script is among that lane's own changed files and no
+# other lane of the stack changed it. Prints its index; prints nothing, and the red is unclear, when a blamed script has no owner or two,
+# when the owners differ, or when the red was not charged to a script. An unclear red is halved.
+red_pick() {
+  local s i owner='' hit
+  [ -n "$GATE_BAD" ] && [ "${LAST_RED_CLASS:-final}" = final ] || return 0
+  for s in $GATE_BAD; do
+    hit=
+    for i in "${CHAIN[@]}"; do
+      git -C "$PROJ" diff-tree --no-commit-id --name-only -r "${B_CUR[$i]}" | grep -qxF -- "$s" || continue
+      [ -z "$hit" ] || return 0
+      hit=$i
+    done
+    [ -n "$hit" ] || return 0
+    [ -z "$owner" ] || [ "$owner" = "$hit" ] || return 0
+    owner=$hit
+  done
+  printf '%s\n' "$owner"
+}
+
+# A red stack with a clear owner costs one more gate: the owner is set aside and the rest of CHAIN is gated once on the tip. Green: the
+# rest lands and the owner is returned (it never ran alone: its red is the stack's gate's). Returns 0 then, 1 when the pick did not hold
+# (the rest is red too, so the caller halves the whole stack as before) and 2 when the trunk moved while the rest was gated.
+red_pick_try() {  # <idx>   (LAST_RED and LAST_RED_CLASS hold the stack's red)
+  local pick=$1 why=$LAST_RED class=$LAST_RED_CLASS i rest=()
+  for i in "${CHAIN[@]}"; do [ "$i" = "$pick" ] || rest+=("$i"); done
+  chain_on "$B_TIP" "${rest[@]}"
+  [ "${#CHAIN[@]}" -gt 0 ] || return 1
+  batch_gate "${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}" "${#CHAIN[@]}" || return 1
+  land_group || return 2
+  B_WHY[pick]="REFUSED: this lane is the red in its batch: $why"; B_CLASS[pick]=$class
+}
+
 # The lanes in CHAIN land in one move: the trunk fast-forwards over the whole stack. One trunk-landings.tsv row per lane.
 land_group() {
   local top=${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]} i
@@ -892,10 +926,10 @@ land_group() {
 # stack (auto-rebased; a lane that conflicts drops out and is returned, as a single landing would refuse it). One gate runs over the union
 # of the stack's changed files and, on green, the trunk fast-forwards over the whole stack in one move. On red the stack is halved: the first
 # half is judged alone, lands if green, and the rest is judged on the new tip, until the lane that caused the red stands alone; only it is
-# returned. Prints `landed <id> ...` or `returned <id>: <reason>` for every lane. Exit 0 once every lane has an outcome.
+# returned; a red whose failing scripts one lane owns skips the halving (red_pick). Prints `landed <id> ...` or `returned <id>: <reason>` for every lane. Exit 0 once every lane has an outcome.
 cmd_land_batch() {
-  local a id i n max proj0='' errf g flag top half res moved rounds=0 l branch head
-  local -a exp todo stack members first rest remaining
+  local a id i n max proj0='' errf g flag top half res moved rounds=0 l branch head pick
+  local -a exp todo stack members first rest remaining orig
   case " $* " in *" --force"*|*" -f "*|*" --no-verify "*|*" --skip"*) refuse "a landing is never forced: there is no flag that lands past a conflict, a stale base or a failing check" ;; esac
   n=$#; [ "$n" -ge 2 ] || refuse "a batch stacks 2 or more queued lanes; one lane lands with: jg-trunk.sh land <task>"
   i=0
@@ -936,9 +970,17 @@ cmd_land_batch() {
     chain_on "$B_TIP" "${members[@]}"
     [ "${#CHAIN[@]}" -gt 0 ] || continue
     top=${B_CUR[${CHAIN[${#CHAIN[@]}-1]}]}
+    GATE_BAD=
     if [ "$flag" = 1 ] && [ -z "$CHAIN_CHANGED" ]; then :; elif batch_gate "$top" "${#CHAIN[@]}"; then if land_group; then continue; fi; moved=1; break; fi
     if [ "${#CHAIN[@]}" -eq 1 ]; then
       B_WHY[CHAIN[0]]="REFUSED: this lane is the red in its batch: $LAST_RED"; B_CLASS[CHAIN[0]]=$LAST_RED_CLASS; continue
+    fi
+    pick=$(red_pick); orig=("${CHAIN[@]}")
+    if [ -n "$pick" ]; then
+      res=0; red_pick_try "$pick" || res=$?
+      [ "$res" -ne 0 ] || continue
+      [ "$res" -ne 2 ] || { moved=1; break; }
+      CHAIN=("${orig[@]}")
     fi
     half=$(( ${#CHAIN[@]} / 2 )); first=("${CHAIN[@]:0:half}"); rest=("${CHAIN[@]:half}")
     stack+=("1:${rest[*]}" "0:${first[*]}")
