@@ -12,6 +12,10 @@
 #   1. JG_HOME=<home> checks-lint.sh <PR URL> <home>/data/<task> - use done-done lint, or the legacy Juggernaut lint if unavailable.
 #   2. state/<task>.run-receipt.json - require verdict PASS, head == pr_head, spawn_gen == the meta's spawn_gen.
 #   3. JG_HOME=<home> bin/jg-pr-merge.sh <task> <PR URL> - never --auto, never gh merge directly.
+# A release record (kind=release, written by bin/jg-trunk.sh release) is merged on the captain's standing word,
+# config/trunk-release-waiver: its merge=approved counts only while that line stands, so removing the rule stops the
+# merge; its done is the release proof's receipt; and after its merge `jg-trunk.sh rollover` cuts the next trunk
+# version in the same pass. Every other gate below applies to it unchanged.
 # Any refusal or FAIL: one wake line naming the task, the PR URL and the first refusal reason, so the lead
 # acts; the refusal is remembered per task+head+reason+receipt state and repeats stay silent until pr_head,
 # the run receipt or the reason changes. An evidence gate or the merge this check itself kills on its
@@ -41,6 +45,10 @@ STATE=$FMH/state
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 LINT=${JG_MOG_CHECKS_LINT:-$SRC/checks-lint.sh}
 DATA=$FMH/data/jg-merge-on-green
+# The release record's standing word is read through the trunk policy lib, from this script's own checkout; where it is absent no release merges.
+# shellcheck source=bin/jg-trunk-policy-lib.sh
+[ ! -r "$SRC/../../bin/jg-trunk-policy-lib.sh" ] || . "$SRC/../../bin/jg-trunk-policy-lib.sh"
+type jg_trunk_waiver_rule >/dev/null 2>&1 || jg_trunk_waiver_rule() { :; }
 umask 077
 # One third of the watcher's per-check bound per command (floor 5s). Gate commands start only while
 # under 80% of the bound and a merge only when it fits inside the whole bound, so the watcher's kill
@@ -84,6 +92,8 @@ record_latency() { # <task> <pr>
   local done_at merged_at when minutes
   # A worker's hand-off line: `done` or `ready`, `[at=<epoch>]` with optional extra keys.
   done_at=$(sed -n -E 's/^(done|ready)[[:space:]]*\[at=([0-9]+)[^]]*\].*/\2/p' "$STATE/$1.status" 2>/dev/null | tail -1)
+  # A release has no worker: its hand-off is the release proof's completion receipt.
+  [ -n "$done_at" ] || [ "$kind" != release ] || done_at=$(jq -r '.at // empty' "$STATE/$1.run-receipt.json" 2>/dev/null) || done_at=
   [ -n "$done_at" ] || return 0
   merged_at=
   when=$(timeout "$BUDGET" gh pr view "$2" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || when=
@@ -112,12 +122,16 @@ for m in "$STATE"/*.meta; do
   task=$(basename "$m" .meta)
   case "$task" in [A-Za-z0-9]*) ;; *) continue ;; esac
   yolo=$(meta_get "$m" yolo); pr=$(meta_get "$m" pr); pr_head=$(meta_get "$m" pr_head); gen=$(meta_get "$m" spawn_gen)
-  approved=$(meta_get "$m" merge)
+  approved=$(meta_get "$m" merge); kind=$(meta_get "$m" kind)
   # Authority is the project's yolo posture or the captain's own recorded word:
   # the lead writes `merge=approved` into the task's record when he says to land
   # that change, which is the durable form of an approval that would otherwise
   # live only in chat. Neither is inferred from anything else.
   [ "$yolo" = on ] || [ "$approved" = approved ] || continue
+  # A release record's approval is the standing release word: gone when that rule is gone, whatever the record says.
+  if [ "$kind" = release ]; then
+    [ -n "$(jg_trunk_waiver_rule "$FMH/config/trunk-release-waiver" "$(basename "$(meta_get "$m" project)")")" ] || continue
+  fi
   # The lead marks merge=manual at intake on destructive, irreversible or security-sensitive work and
   # on work waiting for the captain's own review.
   [ "$(meta_get "$m" merge)" = manual ] && continue
@@ -148,7 +162,9 @@ for m in "$STATE"/*.meta; do
   # check, or a merged or closed state, and nothing when the pull request is open with every reported
   # check green. A false done, a lookup error and a merged pull request therefore stay silent, burn no
   # head and are read again next sweep; jg-pr-merge below still makes the final live green call.
-  cs=$(JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-crew-state.sh" "$task" 2>/dev/null) || continue
+  # A release has no worker and no status log, so its forge state alone decides, read the same way.
+  if [ "$kind" = release ]; then cs="state: done · source: status-log"
+  else cs=$(JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-crew-state.sh" "$task" 2>/dev/null) || continue; fi
   case "$cs" in
     *"checks green: PR ready"*|*"checks green: PR held for merge"*) ;;
     "state: done · source: status-log"*)
@@ -237,10 +253,16 @@ for m in "$STATE"/*.meta; do
     else
       echo "merge-on-green: merged $task $pr through jg-pr-merge; lead: run the post-merge steps (install from main, teardown)"
     fi
-    # The normal merged line, so the lead relays it, plus the fleet-ledger hook every status append runs.
-    echo "done [at=$(date +%s)]: merged $pr" >> "$STATE/$task.status"
-    [ ! -e "$FMH/config/fleet-ledger" ] \
-      || "$FMH/bin/jg-fleet-ledger.sh" appended "$FMH/config" "$STATE/$task.status" >/dev/null 2>&1 || :
+    if [ "$kind" = release ]; then
+      # The release merged: cut the next trunk version now. A cut that fails or is cut short is retried by the landing check.
+      roll=$(JG_HOME="$FMH" timeout "$BUDGET" "$FMH/bin/jg-trunk.sh" rollover "$(meta_get "$m" project)" 2>&1); roll_rc=$?
+      echo "merge-on-green: rollover after $task: $(first_reason "$roll" "$roll_rc")"
+    else
+      # The normal merged line, so the lead relays it, plus the fleet-ledger hook every status append runs.
+      echo "done [at=$(date +%s)]: merged $pr" >> "$STATE/$task.status"
+      [ ! -e "$FMH/config/fleet-ledger" ] \
+        || "$FMH/bin/jg-fleet-ledger.sh" appended "$FMH/config" "$STATE/$task.status" >/dev/null 2>&1 || :
+    fi
   else
     echo "merge-on-green: NOT merging $task $pr: jg-pr-merge refused: $(first_reason "$merge_out" "$merge_rc"); $LEAD_NOTE"
   fi

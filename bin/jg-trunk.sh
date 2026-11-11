@@ -17,6 +17,7 @@
 #        jg-trunk.sh live <project-dir> [--home <lead-home>]   move every home to the last fully green commit; refuses without his word (or a waiver); --home moves one lead only
 #        jg-trunk.sh autolive <project-dir>            the batched live step: under a waiver, move every home to the green pin once the trunk is quiet or the hourly cap is due
 #        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>   Overwatch only: the captain waived his word for this project's live until the stable point
+#        jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> --release   Overwatch only: the captain's standing word lets this project's green release pull request merge by itself
 #        jg-trunk.sh ci <project-dir> <sha> green|red  record the CI result for a live commit; red moves the green pin, and every home, back to the last green one
 #        jg-trunk.sh release <project-dir>             push the last green commit of the trunk and open the ONE release PR trunk -> default branch, owned by task release-<project>-<trunk>; refuses without his word
 #        jg-trunk.sh rollover <project-dir>            after the release PR merged, cut the next trunk version (trunk-v2, ...) from the default branch
@@ -1372,7 +1373,8 @@ fleet_move() {  # <sha> <tip>
   JG_HOME="$JG_HOME" JG_ROOT_OVERRIDE="$JG_ROOT" JG_STATE_OVERRIDE="$STATE" JG_DATA_OVERRIDE="$DATA" "$mover" "${args[@]}"
 }
 
-waiver_rule() { awk -v p="$PN" '$1 == p { r = $2 } END { print r }' "$CONFIG/trunk-live-waiver" 2>/dev/null || true; }
+waiver_rule() { jg_trunk_waiver_rule "$CONFIG/trunk-live-waiver" "$PN"; }
+release_waiver_rule() { jg_trunk_waiver_rule "$CONFIG/trunk-release-waiver" "$PN"; }
 
 # The batched live step, run on every tick of the landing check for a project with a go-live waiver. It moves every home to the
 # green pin once the trunk has been quiet (no landing for live-quiet-minutes) or the oldest landing that is not live yet is
@@ -1422,15 +1424,16 @@ cmd_live() {
 
 # The captain waived his go-live word for one project until the stable point; only the Overwatch path records it.
 cmd_waiver() {
-  local rule=${3-} others
-  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never writes a go-live waiver"
-  [ "${2-}" = --rule ] && [ -n "$rule" ] || refuse "a go-live waiver names the owner rule that grants it: jg-trunk.sh waiver <project-dir> --rule <owner-rule-id>"
+  local rule=${3-} others wfile=trunk-live-waiver what="go-live"
+  [ -z "${JG_TASK_ID:-}" ] || refuse "a worker never writes a waiver"
+  case "${4-}" in '') ;; '--release') wfile='trunk-release-waiver'; what="release-merge" ;; *) refuse "unknown waiver option '${4}'; the only one is --release" ;; esac
+  [ "${2-}" = --rule ] && [ -n "$rule" ] || refuse "a $what waiver names the owner rule that grants it: jg-trunk.sh waiver <project-dir> --rule <owner-rule-id> [--release]"
   case $rule in owner-rule-[A-Za-z0-9]*) ;; *) refuse "'$rule' is not an owner rule id (owner-rule-<id>)" ;; esac
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"
   mkdir -p "$CONFIG"
-  others=$(grep -v "^$PN " "$CONFIG/trunk-live-waiver" 2>/dev/null || true)
-  put "$CONFIG/trunk-live-waiver" "${others:+$others$'\n'}$PN $rule $(date +%s) until=stable"
-  echo "go-live waiver recorded for $PN under $rule; delete its line in config/trunk-live-waiver to restore the word"
+  others=$(grep -v "^$PN " "$CONFIG/$wfile" 2>/dev/null || true)
+  put "$CONFIG/$wfile" "${others:+$others$'\n'}$PN $rule $(date +%s) until=stable"
+  echo "$what waiver recorded for $PN under $rule; delete its line in config/$wfile to restore the word"
 }
 
 cmd_flush() {
@@ -1766,10 +1769,12 @@ open_release_pr() {  # <default> <title> <body-file>
 # The release PR's owning task record, state/release-<project>-<trunk>.meta: the guarded merge path (bin/jg-pr-check.sh,
 # bin/jg-pr-merge.sh) records, watches and merges a PR only under a task, and bin/jg-version-branch-lib.sh
 # jg_is_release_head admits this trunk as the head of the one PR allowed into the default branch. No worker owns the
-# release, so the record names no window, worktree or branch, and cleanup touches only the record; yolo=off keeps
-# merge-on-green from merging a release by itself, so its merge stays an explicit bin/jg-pr-merge.sh <id> <url>. A record
-# already there is kept, and the PR is recorded and armed through jg-pr-check.sh unless the record already names it.
-record_release_task() {  # <url>
+# release, so the record names no window, worktree or branch, and cleanup touches only the record. yolo=off stays, so
+# merge-on-green merges the release only on the captain's standing word: under config/trunk-release-waiver the record
+# carries `merge=approved` and `merge_rule=<owner rule>` (release_merge_authority), and without that line its merge is an
+# explicit bin/jg-pr-merge.sh <id> <url>. A record already there is kept, and the PR is recorded and armed through
+# jg-pr-check.sh unless the record already names this PR at this head.
+record_release_task() {  # <url> [<head>]
   local id=release-$PN-$TRUNK meta proj
   jg_pr_task_id_valid "$id" || die "the release task id '$id' is not a valid task id; the release PR $1 is open but has no task record"
   meta=$STATE/$id.meta
@@ -1777,10 +1782,21 @@ record_release_task() {  # <url>
     proj=$(cd "$PROJ" && pwd -P)
     (umask 077; printf 'kind=release\nproject=%s\nmode=local-trunk\nyolo=off\n' "$proj" > "$meta.tmp.$$") && mv -f "$meta.tmp.$$" "$meta"
   fi
-  [ "$(jg_dod_meta_value "$meta" pr)" != "$1" ] || return 0
+  release_merge_authority "$meta"
+  if [ "$(jg_dod_meta_value "$meta" pr)" = "$1" ] && { [ -z "${2-}" ] || [ "$(jg_dod_meta_value "$meta" pr_head)" = "$2" ]; }; then return 0; fi
   JG_HOME=$JG_HOME JG_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/jg-pr-check.sh" "$id" "$1" >&2 \
     || die "the release PR $1 is open but its task $id was not recorded; fix the cause above, then run bin/jg-pr-check.sh $id $1"
+  # jg-pr-check reads a head only from a worktree, and a release has none: the head this release pushed is the PR's head.
+  if [ -n "${2-}" ]; then sed -i '/^pr_head=/d' "$meta"; printf 'pr_head=%s\n' "$2" >> "$meta"; fi
   echo "release task: $id owns the release PR"
+}
+
+# The merge authority of the release record: the captain's standing release word (config/trunk-release-waiver) writes
+# `merge=approved` and the rule it comes from; with no such rule the lines are removed, so a record never outlives the word.
+release_merge_authority() {  # <meta>
+  local rule; rule=$(release_waiver_rule)
+  sed -i -e '/^merge=approved$/d' -e '/^merge_rule=/d' "$1"
+  [ -z "$rule" ] || printf 'merge=approved\nmerge_rule=%s\n' "$rule" >> "$1"
 }
 
 # The commit a release carries and the captain's release word names: the green pin (state/trunk-green-<project>), never the
@@ -1812,7 +1828,7 @@ adopt_pushed_release() {  # <commit>
 }
 
 cmd_release() {
-  local rel base n default body url prev
+  local rel base n default body url prev waiting
   open_project "${1-}"; lock "$STATE/.trunk-$PN.lock"; tip_ok
   rollover_if_merged || true
   rel=$(release_commit)
@@ -1831,12 +1847,17 @@ cmd_release() {
     return
   fi
   need_word release "$rel"
+  prev=$(last_release_url)
+  if [ -n "$prev" ] && [ -n "$(release_waiver_rule)" ] && [ "$(pr_state "$prev")" = open ]; then
+    # The standing word merges a green release by itself: a push would restart its checks and move its head.
+    waiting=$(JG_HOME=$JG_HOME "$SCRIPT_DIR/jg-pr-state.sh" --all "$prev") || refuse "cannot read the checks of the open release PR $prev; nothing is pushed into it"
+    [ -n "$waiting" ] || refuse "the release PR $prev is green and merges on the captain's standing word; nothing is pushed into it, and the later commits go out in the release after it"
+  fi
   default=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true); default=${default:-main}
   printf 'refs/heads/%s %s refs/heads/%s %s\n' "$TRUNK" "$rel" "$TRUNK" "$base" | (cd "$PROJ" && "$SCRIPT_DIR/../core/owner-guard/owner-guard" pre-push) || refuse "owner-guard refused the batch"
   git -C "$PROJ" push -q origin "$rel:refs/heads/$TRUNK" || die "push of $TRUNK failed (never forced)"
   # The release PR is the trunk itself going into the default branch: no release branch, one PR.
   # While the last release PR is still open, the push above already carried the new commits into it.
-  prev=$(last_release_url)
   if [ -n "$prev" ] && [ "$(pr_state "$prev")" = open ]; then
     url=$prev
   else
@@ -1852,7 +1873,7 @@ cmd_release() {
   put "$STATE/trunk-released-$PN" "$rel"; spend_word release
   rm -f -- "$STATE/trunk-release-pending-$PN"
   echo "released $n commits from $TRUNK: $url"
-  record_release_task "$url"
+  record_release_task "$url" "$rel"
   base=$(release_base "$rel") || refuse "cannot find the release base for ${rel:0:12}"
   unlock "$STATE/.trunk-$PN.lock"
   "$SCRIPT_DIR/jg-trunk-release-proof.sh" "$PROJ" "$TRUNK" "$base" "$rel" "$url"

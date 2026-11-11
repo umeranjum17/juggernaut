@@ -119,3 +119,11 @@ jg_project_trunk_branch() {
   [ "$mode" = local-trunk ] && [ -e "$state/trunk-tip-$pn" ] || return 1
   jg_trunk_branch "$pn" "$state"
 }
+
+# The owner rule that waives one captain word for a project (config/trunk-live-waiver for going live, config/trunk-release-waiver
+# for merging a green release pull request), printed from the project's last line, or nothing when it has none. Both files hold one
+# line per project, `<project> <owner-rule-id> <epoch> until=stable`, written only by `jg-trunk.sh waiver`; deleting the line
+# restores the word. Usage: jg_trunk_waiver_rule <waiver-file> <project>
+jg_trunk_waiver_rule() {
+  awk -v p="$2" '$1 == p { r = $2 } END { print r }' "$1" 2>/dev/null || true
+}
