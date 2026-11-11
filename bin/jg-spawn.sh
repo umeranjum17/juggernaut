@@ -5525,4 +5525,9 @@ jg_account_hook spawn-line
 if [ "$BACKEND" = herdr ]; then
   jg_backend_herdr_pin_agent_name "${T%%:*}" "${T#*:}" "$ID"
 fi
+# One row per launch - copy, pane, task id, start epoch - in data/copy-tasks.tsv, so the Fable pulse
+# (core/fleet-pulse/bin/fleet-fable.sh) can name the task of a pooled copy after its record is removed.
+# Best effort: a write failure never blocks the launch.
+[ "$KIND" = squad_lead ] || printf '%s\t%s\t%s\t%s\n' "$WT" "$META_WINDOW" "$ID" "$(date +%s)" \
+  >> "$DATA/copy-tasks.tsv" 2>/dev/null || true
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"

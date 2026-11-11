@@ -5,6 +5,9 @@
 # The guard decides: a session whose working folder is a task's worktree (state/*.meta worktree= in any home
 # fleet-homes.sh lists), or a quota-failover one-line test's folder for a task (jg-probe-<task-id>.XXXXXX), is
 # skipped when `refuse-model.sh allowed <task-id>` passes, so allow-tasks beside the installed guard is the one list.
+# A copy no record names any more is named by data/copy-tasks.tsv (jg-spawn.sh appends "<copy>\t<pane>\t<task-id>\t<start>"
+# per launch): the row for that copy with the latest start not after the session's first line, so a later task in the
+# same pooled copy is named itself. No row means no task, and the session folder names the alarm as before.
 # A route-level test names no task, so it is named by its session folder like any session no task owns.
 # With no guard installed this host has no Fable ban, so nothing is reported.
 # Prints one wake line and exits 0 when due (at most once per 15 min); silent exit 1 otherwise.
@@ -57,11 +60,21 @@ tasks=$(while IFS= read -r home; do
   done
 done < <("$here/fleet-homes.sh" "$main"))
 
+copy_task() { # <cwd> <epoch>
+  [ -f "$main/data/copy-tasks.tsv" ] || return 1
+  awk -F'\t' -v c="$1" -v t="$2" 'c != "" && (c == $1 || index(c, $1 "/") == 1) && $4 <= t && $4 >= best { best = $4; id = $3 } END { if (id != "") print id; else exit 1 }' "$main/data/copy-tasks.tsv"
+}
+
 names=()
 while IFS= read -r log; do
   cwd=$(grep -m1 -o '"cwd":"[^"]*"' "$log" | sed 's/^"cwd":"//; s/"$//' || true)
   task=$(awk -F'\t' -v c="$cwd" 'c != "" && (c == $1 || index(c, $1 "/") == 1) { print $2; exit }' <<<"$tasks")
   [ -n "$task" ] || task=$(jg_probe_folder_task "$cwd") || task=
+  if [ -z "$task" ]; then
+    ts=$(grep -m1 -o '"timestamp":"[^"]*"' "$log" | sed 's/^"timestamp":"//; s/"$//' || true)
+    at=$(date -d "$ts" +%s 2>/dev/null || stat -c %Y "$log")
+    task=$(copy_task "$cwd" "$at") || task=
+  fi
   [ -n "$task" ] && "$guard" allowed "$task" </dev/null && continue
   name=${task:-$(basename "$(dirname "$log")")}
   case " ${names[*]} " in *" $name "*) ;; *) names+=("$name") ;; esac

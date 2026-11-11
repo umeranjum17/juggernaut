@@ -14,6 +14,9 @@ mkdir -p "$evidence"
   bash "$repo/quota-failover/tests/quota-failover-e2e.sh"
   echo "== disposable Claude config: guard install, hook refusals, allowed <task-id>, unwiring"
   bash "$repo/claude-model-guard/tests/claude-model-guard.test.sh"
+  echo "== fixture home: a copy's task from data/copy-tasks.tsv: allowed quiet, a later unlisted task named, no row names the folder"
+  bash "$repo/../tests/jg-fleet-fable-copy-map.test.sh" 2>&1 | tee "$evidence/copy-map.txt"
+  test "${PIPESTATUS[0]}" -eq 0
   echo "== live main home $main: what wiring would retarget (dry run, writes nothing)"
   bash "$repo/fleet-pulse/wiring.sh" --dry-run "$main"
   guard=$(bash "$repo/claude-model-guard/wiring.sh" --where)
@@ -24,6 +27,6 @@ test "${PIPESTATUS[0]}" -eq 0
 cat >"$evidence/steps.json" <<'J'
 {"target":{"version":"fleet-pulse bin/fleet-fable.sh, wiring.sh, quota-failover and claude-model-guard refuse-model.sh from this checkout"},
  "start":"a disposable main home and lead home whose pulse check carries the old inline Fable block, the guard installed in a disposable Claude config with allow-tasks listing fable-*, and fresh Fable session logs",
- "steps":["run the old check: it wakes for an allowed fable-* task","run wiring.sh: the block now calls fleet-fable.sh","run the check again: allowed tasks are quiet, an unlisted task wakes by name","add quota-failover one-line test sessions: one for an allowed task is quiet, one for an unlisted task wakes by that task, a route-level one wakes by its folder","run quota-failover passes: a task's pinned test runs in a folder naming that task, a route test in one naming none","install, query and unwire the guard in a disposable config","dry-run the wiring against the live main home and print the live allow-tasks"],
+ "steps":["run the old check: it wakes for an allowed fable-* task","run wiring.sh: the block now calls fleet-fable.sh","run the check again: allowed tasks are quiet, an unlisted task wakes by name","add quota-failover one-line test sessions: one for an allowed task is quiet, one for an unlisted task wakes by that task, a route-level one wakes by its folder","run quota-failover passes: a task's pinned test runs in a folder naming that task, a route test in one naming none","install, query and unwire the guard in a disposable config","read data/copy-tasks.tsv for a copy no record names: an allowed task stays quiet, a later unlisted task in the copy is named, a copy with no row is named by its folder","dry-run the wiring against the live main home and print the live allow-tasks"],
  "result":"all three journeys print PASS; the live main home's check is reported as one the wiring would retarget onto fleet-fable.sh"}
 J
